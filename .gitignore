@@ -1,32 +1,51 @@
-# Prerequisites
+# Build directory
+/build/
+
+# Generated CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Configuration files
+CMakeConfigureLog.yaml
+
+# Dependency files
 *.d
 
-# Compiled Object files
-*.slo
-*.lo
-*.o
-*.obj
+# Generated binaries
+/inference_engine
+*.elf
+*.map
 
-# Precompiled Headers
-*.gch
-*.pch
+# Temporary files
+CMakeTmp/
+CMakeScratch/
+*.log
+*.tmp
 
-# Compiled Dynamic libraries
-*.so
-*.dylib
-*.dll
+# CMake cache (in subfolders)
+**/CMakeFiles/
+**/CMakeCache.txt
+**/Makefile
+**/cmake_install.cmake
 
-# Fortran module files
-*.mod
-*.smod
+# DNN torchs model
+*.pt
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
+# Python files
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
 
-# Executables
-*.exe
-*.out
-*.app
+# Virtual environments
+.venv/
+venv/
+
+# VSCode
+.vscode/
+
+# CLion / JetBrains
+.idea/
+cmake-build-*/
