@@ -15,7 +15,7 @@ struct ProgramOptions
 
 void display_help(const char* prog_name) 
 {
-	std::cout << "Usage: " << prog_name << " [OPTIONS]\n"
+  std::cout << "Usage: " << prog_name << " [OPTIONS]\n"
             << "\nOptions:\n"
             << "  --scheduler [name]    Scheduler type (default: lws)\n"
             << "  --iterations [num]    Number of iterations (default: 1)\n"
