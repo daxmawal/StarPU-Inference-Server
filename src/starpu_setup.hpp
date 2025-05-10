@@ -18,9 +18,10 @@ class StarPUSetup
     }
 
     starpu_codelet_init(&codelet_);
+    codelet_.nbuffers = 1;
     codelet_.cpu_funcs[0] = cpu_codelet_func;
     codelet_.cpu_funcs_name[0] = "cpu_codelet_func";
-    codelet_.modes[0] = STARPU_RW;
+    codelet_.modes[0] = STARPU_W;
     codelet_.name = "cpu_double";
   }
 
@@ -41,6 +42,10 @@ class StarPUSetup
       torch::Tensor input = torch::rand({1, 3, 224, 224});
       at::Tensor output = module.forward({input}).toTensor();  
       std::cout << "Inference done. Output size: " << output.sizes() << std::endl;
+      std::cout << "First 10 values: " << output.flatten().slice(0, 0, 10) << std::endl;
+
+      float* result_ptr = (float*)STARPU_VARIABLE_GET_PTR(buffers[0]);
+      std::memcpy(result_ptr, output.data_ptr<float>(), output.numel() * sizeof(float));      
     }
     catch (const c10::Error& e)
     {
