@@ -18,7 +18,9 @@ class StarPUSetup
     }
 
     starpu_codelet_init(&codelet_);
-    codelet_.nbuffers = 1;
+    codelet_.nbuffers = STARPU_VARIABLE_NBUFFERS;
+    codelet_.max_parallelism = INT_MAX;
+    codelet_.type = STARPU_FORKJOIN;
     codelet_.cpu_funcs[0] = cpu_codelet_func;
     codelet_.cpu_funcs_name[0] = "cpu_codelet_func";
     codelet_.modes[0] = STARPU_W;
@@ -35,6 +37,13 @@ class StarPUSetup
  private:
   static void cpu_codelet_func(void *buffers[], void *cl_arg)
   {
+    float* data = reinterpret_cast<float *>(STARPU_VECTOR_GET_PTR(buffers[0]));
+    for (int j = 0; j < 10; ++j)
+    {
+      std::cout << data[j] << " ";
+    }
+    std::cout << std::endl;
+
     const char* model_path = static_cast<const char*>(cl_arg);
     try
     {
