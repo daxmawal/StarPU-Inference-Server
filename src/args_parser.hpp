@@ -12,7 +12,7 @@ struct ProgramOptions
   std::string scheduler = "lws";
   std::string model_path;
   int iterations = 1;
-  std::vector<int64_t> input_shape;  // <-- nouveau champ
+  std::vector<int64_t> input_shape;
   bool show_help = false;
   bool valid = true;
 };
