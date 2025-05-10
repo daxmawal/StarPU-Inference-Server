@@ -34,7 +34,18 @@ class StarPUSetup
  private:
   static void cpu_codelet_func(void *buffers[], void *cl_arg)
   {
-    std::cout << "Hello World" << std::endl;
+    const char* model_path = static_cast<const char*>(cl_arg);
+    try
+    {
+      torch::jit::script::Module module = torch::jit::load(model_path);
+      torch::Tensor input = torch::rand({1, 3, 224, 224});
+      at::Tensor output = module.forward({input}).toTensor();  
+      std::cout << "Inference done. Output size: " << output.sizes() << std::endl;
+    }
+    catch (const c10::Error& e)
+    {
+      std::cerr << "Error loading or running the model: " << e.what() << std::endl;
+    }
   }
 
   struct starpu_conf conf_;

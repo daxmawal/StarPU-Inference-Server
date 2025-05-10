@@ -26,6 +26,8 @@ int main(int argc, char* argv[])
     {
       struct starpu_task* task = starpu_task_create();
       task->cl = starpu.codelet();
+      task->cl_arg = (void*)opts.model_path.c_str();
+      task->cl_arg_size = opts.model_path.size() + 1;
 
       int ret = starpu_task_submit(task);
       if (ret != 0)
