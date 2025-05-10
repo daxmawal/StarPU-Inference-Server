@@ -1,33 +1,7 @@
 #include "starpu_setup.hpp"
 #include "args_parser.hpp"
+#include <torch/torch.h>
 #include <iostream>
-
-class VectorTest 
-{
- public:
-  std::unique_ptr<float[]> data_;
-  size_t size;
-  size_t data_size;
-  starpu_data_handle_t in_handle;
-
-  VectorTest(size_t n) : size(n), data_size(sizeof(float)) 
-  {
-    data_ = std::make_unique<float[]>(size);
-    for (size_t i = 0; i < size; ++i) {
-      data_[i] = static_cast<float>(i);
-    }
-  }
-
-  void register_vector() 
-  {
-    starpu_vector_data_register(&in_handle, STARPU_MAIN_RAM,
-      reinterpret_cast<uintptr_t> (data_.get()), size, data_size);
-  }
-
-  void cleanup() {
-    starpu_data_unregister(in_handle);
-  }
-};
 
 int main(int argc, char* argv[])
 {
@@ -42,8 +16,8 @@ int main(int argc, char* argv[])
   if (!opts.valid)
     return 1;
 
-  std::cout << "Scheduler : " << opts.scheduler << "\n";
-  std::cout << "Iteration   : " << opts.iterations << "\n";
+  std::cout << "Scheduler  : " << opts.scheduler << "\n";
+  std::cout << "Iterations : " << opts.iterations << "\n";
 
   try
   {
@@ -51,40 +25,58 @@ int main(int argc, char* argv[])
 
     for (int i = 0; i < opts.iterations; ++i)
     {
-      int N = 1000;
-      float* output_buffer = static_cast<float*>(malloc(N * sizeof(float)));
-      starpu_data_handle_t output_handle;
-      starpu_variable_data_register(&output_handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(output_buffer), N * sizeof(float));      
+      // Créer un tenseur d’entrée arbitraire
+      if (opts.input_shape.empty()) {
+        std::cerr << "Error: you must provide --shape for the input tensor.\n";
+        return 1;
+      }
+      torch::Tensor input_tensor = torch::rand(opts.input_shape);
+      float* input_ptr = input_tensor.data_ptr<float>();
+      int64_t input_size = input_tensor.numel();
+      
+      // Enregistrer le buffer dans StarPU
+      starpu_data_handle_t input_handle;
+      starpu_variable_data_register(&input_handle, STARPU_MAIN_RAM,
+        reinterpret_cast<uintptr_t>(input_ptr), input_size * sizeof(float));
+      
+      // Préparer les arguments pour la codelet
+      InferenceParams* args = new InferenceParams();
+      std::strncpy(args->model_path, opts.model_path.c_str(), sizeof(args->model_path));
+      args->input_size = input_size;
 
-      int num_buffers = 1;
+      auto sizes = input_tensor.sizes();
+      args->ndims = sizes.size();
+      if (args->ndims > 8) {
+        std::cerr << "Error: the tensor has more than 8 dimensions, which is not supported" << std::endl;
+        return 1;
+      }
+      for (int i = 0; i < args->ndims; ++i) {
+        args->dims[i] = sizes[i];
+      }
 
+      // Créer et configurer la tâche
       struct starpu_task* task = starpu_task_create();
-      task->handles[0] = output_handle;
+      task->handles[0] = input_handle;
+      task->nbuffers = 1;
       task->cl = starpu.codelet();
       task->synchronous = 1;
+      task->cl_arg = args;
+      task->cl_arg_size = sizeof(InferenceParams);
       task->cl_arg_free = 1;
-      task->cl_arg = (void*)opts.model_path.c_str();
-      task->cl_arg_size = opts.model_path.size() + 1;
-      task->dyn_handles = (starpu_data_handle_t*)malloc(num_buffers * sizeof(*(task->dyn_handles)));
-      task->dyn_modes = (starpu_data_access_mode*)malloc(num_buffers * sizeof(*(task->dyn_modes)));
-      task->nbuffers = num_buffers;
 
-      //Input handle
-      VectorTest vec(10);
-      vec.register_vector();
-
-      task->dyn_handles[0] = vec.in_handle;    
-      task->dyn_modes[0] = STARPU_R;
-
+      // Soumettre la tâche
       int ret = starpu_task_submit(task);
       if (ret != 0)
-			{
-        std::cerr << "Task submission error : " << ret << std::endl;
-			}
+      {
+        std::cerr << "Task submission error: " << ret << std::endl;
+      }
+
       starpu_task_wait_for_all();
-      std::cout << "end" << std::endl;
-      vec.cleanup();      
-	  }
+
+      // Nettoyage
+      starpu_data_unregister(input_handle);
+      std::cout << "End of iteration " << i << std::endl;
+    }
   }
   catch (const std::exception& e)
   {

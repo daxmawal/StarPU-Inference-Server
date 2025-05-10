@@ -4,6 +4,16 @@
 #include <starpu.h>
 #include <torch/script.h>
 #include <iostream>
+#include <cstring>
+#include <vector>
+
+struct InferenceParams
+{
+  char model_path[512];
+  int64_t input_size;
+  int64_t dims[8];
+  int ndims;
+};
 
 class StarPUSetup
 {
@@ -13,7 +23,7 @@ class StarPUSetup
     starpu_conf_init(&conf_);
     conf_.sched_policy_name = sched_policy;
     if (starpu_init(&conf_) != 0)
-    {		
+    {
       throw std::runtime_error("StarPU initialization error");
     }
 
@@ -23,8 +33,8 @@ class StarPUSetup
     codelet_.type = STARPU_FORKJOIN;
     codelet_.cpu_funcs[0] = cpu_codelet_func;
     codelet_.cpu_funcs_name[0] = "cpu_codelet_func";
-    codelet_.modes[0] = STARPU_W;
-    codelet_.name = "cpu_double";
+    codelet_.modes[0] = STARPU_R;
+    codelet_.name = "cpu_inference";
   }
 
   ~StarPUSetup()
@@ -37,24 +47,19 @@ class StarPUSetup
  private:
   static void cpu_codelet_func(void *buffers[], void *cl_arg)
   {
-    float* data = reinterpret_cast<float *>(STARPU_VECTOR_GET_PTR(buffers[0]));
-    for (int j = 0; j < 10; ++j)
-    {
-      std::cout << data[j] << " ";
-    }
-    std::cout << std::endl;
+    float* data = reinterpret_cast<float *>(STARPU_VARIABLE_GET_PTR(buffers[0]));
+    InferenceParams* params = static_cast<InferenceParams*>(cl_arg);
 
-    const char* model_path = static_cast<const char*>(cl_arg);
     try
     {
-      torch::jit::script::Module module = torch::jit::load(model_path);
-      torch::Tensor input = torch::rand({1, 3, 224, 224});
-      at::Tensor output = module.forward({input}).toTensor();  
+      torch::jit::script::Module module = torch::jit::load(params->model_path);
+
+      std::vector<int64_t> shape(params->dims, params->dims + params->ndims);
+      torch::Tensor input = torch::from_blob(data, shape, torch::kFloat32).clone();
+
+      at::Tensor output = module.forward({input}).toTensor();
       std::cout << "Inference done. Output size: " << output.sizes() << std::endl;
       std::cout << "First 10 values: " << output.flatten().slice(0, 0, 10) << std::endl;
-
-      float* result_ptr = (float*)STARPU_VARIABLE_GET_PTR(buffers[0]);
-      std::memcpy(result_ptr, output.data_ptr<float>(), output.numel() * sizeof(float));      
     }
     catch (const c10::Error& e)
     {
