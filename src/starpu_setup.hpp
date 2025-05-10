@@ -2,6 +2,7 @@
 #define STARPU_SETUP_HPP
 
 #include <starpu.h>
+#include <torch/script.h>
 #include <iostream>
 
 class StarPUSetup

@@ -8,6 +8,7 @@
 struct ProgramOptions 
 {
   std::string scheduler = "lws";
+  std::string model_path;
   int iterations = 1;
   bool show_help = false;
   bool valid = true;
@@ -18,6 +19,7 @@ void display_help(const char* prog_name)
   std::cout << "Usage: " << prog_name << " [OPTIONS]\n"
             << "\nOptions:\n"
             << "  --scheduler [name]    Scheduler type (default: lws)\n"
+            << "  --model [path]        Path to TorchScript model file (.pt)\n"
             << "  --iterations [num]    Number of iterations (default: 1)\n"
             << "  --help                Show this help message\n";
 }
@@ -33,6 +35,10 @@ ProgramOptions parse_arguments(int argc, char* argv[])
     if (arg == "--scheduler" && i + 1 < argc) 
     {
       opts.scheduler = argv[++i];
+    }
+    else if (arg == "--model" && i + 1 < argc)
+    {
+      opts.model_path = argv[++i];
     }
     else if (arg == "--iterations" && i + 1 < argc) 
     {
@@ -63,6 +69,13 @@ ProgramOptions parse_arguments(int argc, char* argv[])
       return opts;
     }
   }
+
+  if (opts.model_path.empty()) 
+  {
+    std::cerr << "Error: --model option is required.\n";
+    opts.valid = false;
+  }
+
   return opts;
 }
 
