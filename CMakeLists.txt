@@ -21,7 +21,13 @@ include_directories(
 )
 
 # Executable Definition
-add_executable(inference_engine src/main.cpp)
+add_executable(inference_engine
+    src/main.cpp
+    src/args_parser.cpp
+    src/inference_runner.cpp
+    src/inference_task.cpp
+    src/inference_validator.cpp
+)
 
 # Target Includes
 target_include_directories(inference_engine PRIVATE

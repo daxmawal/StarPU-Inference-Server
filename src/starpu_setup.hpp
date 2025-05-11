@@ -1,6 +1,4 @@
-#ifndef STARPU_SETUP_HPP
-#define STARPU_SETUP_HPP
-
+#pragma once
 #include <starpu.h>
 #include <torch/script.h>
 #include <iostream>
@@ -44,7 +42,10 @@ class StarPUSetup
     starpu_shutdown();
   }
 
-  struct starpu_codelet* codelet() { return &codelet_; }
+  struct starpu_codelet* codelet() 
+  { 
+    return &codelet_; 
+  }
 
  private:
   static void cpu_codelet_func(void *buffers[], void *cl_arg)
@@ -74,5 +75,3 @@ class StarPUSetup
   struct starpu_conf conf_;
   struct starpu_codelet codelet_;
 };
-
-#endif // STARPU_SETUP_HPP
