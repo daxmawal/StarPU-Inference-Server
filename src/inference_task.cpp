@@ -9,6 +9,7 @@ struct InferenceCallbackContext {
   int                  iteration;
   starpu_data_handle_t input_handle;
   starpu_data_handle_t output_handle;
+  std::chrono::high_resolution_clock::time_point start_time;
 };
 
 void cleanup_inference_context(InferenceCallbackContext* ctx) {
@@ -22,6 +23,12 @@ void cleanup_inference_context(InferenceCallbackContext* ctx) {
 // Callback called after data has been acquired
 void output_tensor_ready_callback(void* arg) {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
+
+  auto end_time = std::chrono::high_resolution_clock::now();
+  auto latency = std::chrono::duration_cast<std::chrono::microseconds>(end_time - ctx->start_time).count();
+
+  std::cout << "Latency (user-visible) for iteration " << ctx->iteration
+          << ": " << latency << " µs" << std::endl;
 
   std::cout << "Output (first 10 values): " << ctx->output_tensor.flatten().slice(0, 0, 10)
             << std::endl;
@@ -40,7 +47,8 @@ void submit_inference_task(StarPUSetup&                starpu,
                            torch::jit::script::Module& module,
                            const ProgramOptions&       opts,
                            const torch::Tensor&        output_direct,
-                           int                         iteration) {
+                           int                         iteration,
+                           std::chrono::high_resolution_clock::time_point start_time) {
   int num_buffers = 2;
   // Extract raw pointers and sizes for input and output tensors
   float*  input_ptr   = input_tensor.data_ptr<float>();
@@ -74,7 +82,7 @@ void submit_inference_task(StarPUSetup&                starpu,
   }
 
   auto* ctx = new InferenceCallbackContext{
-      output_direct.clone(), output_tensor, opts, iteration, input_handle, output_handle};
+      output_direct.clone(), output_tensor, opts, iteration, input_handle, output_handle, start_time};
 
   // Create and configure the StarPU task
   struct starpu_task* task = starpu_task_create();
