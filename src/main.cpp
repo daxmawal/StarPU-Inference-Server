@@ -18,11 +18,11 @@ int main(int argc, char* argv[])
   std::cout << "Scheduler  : " << opts.scheduler << "\n";
   std::cout << "Iterations : " << opts.iterations << "\n";
 
-  try 
+  try
   {
     StarPUSetup starpu(opts.scheduler.c_str());
     run_inference_loop(opts, starpu);
-  } catch (const std::exception& e) 
+  } catch (const std::exception& e)
   {
     std::cerr << e.what() << std::endl;
     return -1;
