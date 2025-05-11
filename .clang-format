@@ -64,4 +64,4 @@ ReflowComments: true
 Cpp11BracedListStyle: true
 DerivePointerAlignment: false
 PointerAlignment: Left
-Standard: Cpp17
+Standard: c++17
