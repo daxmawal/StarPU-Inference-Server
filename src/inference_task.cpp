@@ -3,7 +3,8 @@
 void submit_inference_task(StarPUSetup& starpu,
                            const torch::Tensor& input_tensor,
                            torch::Tensor& output_tensor,
-                           const std::string& model_path)
+                           torch::jit::script::Module& module,
+                           const ProgramOptions& opts)
 {
   float* input_ptr = input_tensor.data_ptr<float>();
   float* output_ptr = output_tensor.data_ptr<float>();
@@ -17,11 +18,12 @@ void submit_inference_task(StarPUSetup& starpu,
     reinterpret_cast<uintptr_t>(output_ptr), output_size * sizeof(float));
 
   InferenceParams* args = new InferenceParams();
-  std::strncpy(args->model_path, model_path.c_str(), sizeof(args->model_path));
+  std::strncpy(args->model_path, opts.model_path.c_str(), sizeof(args->model_path));
   args->input_size = input_size;
   args->output_size = output_size;
   auto sizes = input_tensor.sizes();
   args->ndims = sizes.size();
+  args->module = module;
   
   for (int i = 0; i < args->ndims; ++i)
   {
@@ -33,7 +35,7 @@ void submit_inference_task(StarPUSetup& starpu,
   task->handles[1] = output_handle;
   task->nbuffers = 2;
   task->cl = starpu.codelet();
-  task->synchronous = 1;
+  task->synchronous = opts.synchronous ? 1 : 0;
   task->cl_arg = args;
   task->cl_arg_size = sizeof(InferenceParams);
   task->cl_arg_free = 1;

@@ -8,6 +8,7 @@ void display_help(const char* prog_name)
             << "  --model [path]          Path to TorchScript model file (.pt)\n"
             << "  --iterations [num]      Number of iterations (default: 1)\n"
             << "  --shape 1x3x224x224     Shape of input tensor (e.g., for image models)\n"
+            << "  --sync                  Run tasks in synchronous mode (default: async)\n"
             << "  --help                  Show this help message\n";
 }
 
@@ -50,6 +51,10 @@ ProgramOptions parse_arguments(int argc, char* argv[])
     else if (arg == "--model" && i + 1 < argc)
     {
       opts.model_path = argv[++i];
+    }
+    else if (arg == "--sync")
+    {
+      opts.synchronous = true;
     }
     else if (arg == "--iterations" && i + 1 < argc) 
     {

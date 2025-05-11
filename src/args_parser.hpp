@@ -13,6 +13,7 @@ struct ProgramOptions
   int iterations = 1;
   std::vector<int64_t> input_shape;
   bool show_help = false;
+  bool synchronous = false;
   bool valid = true;
 };
 

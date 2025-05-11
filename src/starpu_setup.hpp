@@ -7,6 +7,7 @@
 
 struct InferenceParams
 {
+  torch::jit::script::Module module;
   char model_path[512];
   int64_t input_size;
   int64_t output_size;
@@ -56,12 +57,10 @@ class StarPUSetup
 
     try
     {
-      torch::jit::script::Module module = torch::jit::load(params->model_path);
-
       std::vector<int64_t> shape(params->dims, params->dims + params->ndims);
       torch::Tensor input = torch::from_blob(input_data, shape, torch::kFloat32).clone();
 
-      at::Tensor output = module.forward({input}).toTensor();
+      at::Tensor output = params->module.forward({input}).toTensor();
 
       std::memcpy(output_data, output.data_ptr<float>(), params->output_size * sizeof(float));
       std::cout << "Inference done." << std::endl;
