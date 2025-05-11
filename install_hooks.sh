@@ -1,13 +1,18 @@
 #!/bin/bash
 
-HOOK_SRC="hooks/pre-commit"
-HOOK_DST=".git/hooks/pre-commit"
+HOOK_SRC_DIR="hooks"
+HOOK_DST_DIR=".git/hooks"
 
-if [ ! -f "$HOOK_SRC" ]; then
-    echo "Hook not found at $HOOK_SRC"
+if [ ! -d "$HOOK_SRC_DIR" ]; then
+    echo "Hook source directory not found: $HOOK_SRC_DIR"
     exit 1
 fi
 
-cp "$HOOK_SRC" "$HOOK_DST"
-chmod +x "$HOOK_DST"
-echo "Git pre-commit hook installed successfully."
+for hook in "$HOOK_SRC_DIR"/*; do
+    hook_name=$(basename "$hook")
+    cp "$hook" "$HOOK_DST_DIR/$hook_name"
+    chmod +x "$HOOK_DST_DIR/$hook_name"
+    echo "Installed $hook_name hook."
+done
+
+echo "All git hooks installed successfully."
