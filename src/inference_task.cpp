@@ -7,6 +7,7 @@ void submit_inference_task(StarPUSetup& starpu,
                            torch::jit::script::Module& module,
                            const ProgramOptions& opts)
 {
+  int num_buffers = 2;
   // Extract raw pointers and sizes for input and output tensors
   float* input_ptr = input_tensor.data_ptr<float>();
   float* output_ptr = output_tensor.data_ptr<float>();
@@ -22,7 +23,6 @@ void submit_inference_task(StarPUSetup& starpu,
   
   // Set up inference parameters to pass to the codelet
   InferenceParams* args = new InferenceParams();
-  std::strncpy(args->model_path, opts.model_path.c_str(), sizeof(args->model_path));
   args->input_size = input_size;
   args->output_size = output_size;
   auto sizes = input_tensor.sizes();
@@ -39,12 +39,21 @@ void submit_inference_task(StarPUSetup& starpu,
   struct starpu_task* task = starpu_task_create();
   task->handles[0] = input_handle;
   task->handles[1] = output_handle;
-  task->nbuffers = 2;
+  task->nbuffers = num_buffers;
   task->cl = starpu.codelet();
   task->synchronous = opts.synchronous ? 1 : 0;
   task->cl_arg = args;
   task->cl_arg_size = sizeof(InferenceParams);
   task->cl_arg_free = 1;
+  task->dyn_handles = (starpu_data_handle_t*)malloc(num_buffers * sizeof(*(task->dyn_handles)));
+  task->dyn_modes = (starpu_data_access_mode*)malloc(num_buffers * sizeof(*(task->dyn_modes)));
+  task->callback_func = &StarPUSetup::task_end_callback;
+  
+  task->dyn_handles[0] = input_handle;    
+  task->dyn_modes[0] = STARPU_R;
+
+  task->dyn_handles[1] = output_handle;
+  task->dyn_modes[1] = STARPU_W;
 
   // Submit the task to StarPU runtime system
   int ret = starpu_task_submit(task);

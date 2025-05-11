@@ -9,7 +9,6 @@
 struct InferenceParams
 {
   torch::jit::script::Module module;
-  char model_path[512];
   int64_t input_size;
   int64_t output_size;
   int64_t dims[8];
@@ -31,7 +30,7 @@ class StarPUSetup
 
     // Initialize the codelet that will perform inference on CPU
     starpu_codelet_init(&codelet_);
-    codelet_.nbuffers = 2;
+    codelet_.nbuffers = STARPU_VARIABLE_NBUFFERS;
     codelet_.max_parallelism = INT_MAX;
     codelet_.type = STARPU_FORKJOIN;
     codelet_.cpu_funcs[0] = cpu_codelet_func;
@@ -49,6 +48,11 @@ class StarPUSetup
   struct starpu_codelet* codelet() 
   { 
     return &codelet_; 
+  }
+
+  static void task_end_callback(void *args)
+  {
+    std::cout << "Task end callback" << std::endl;
   }
 
  private:
