@@ -43,8 +43,8 @@ void output_tensor_ready_callback(void* arg) {
 
 // Submit an inference task using StarPU and TorchScript
 void submit_inference_task(StarPUSetup&                                   starpu,
-                           const torch::Tensor&                           input_tensor,
-                           torch::Tensor&                                 output_tensor,
+                           const torch::Tensor                            input_tensor,
+                           torch::Tensor                                  output_tensor,
                            torch::jit::script::Module&                    module,
                            const ProgramOptions&                          opts,
                            const torch::Tensor&                           output_direct,
