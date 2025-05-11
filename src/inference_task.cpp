@@ -7,8 +7,19 @@ struct InferenceCallbackContext {
   torch::Tensor output_tensor;
   ProgramOptions opts;
   int iteration;
+  starpu_data_handle_t input_handle;
   starpu_data_handle_t output_handle;
 };
+
+void cleanup_inference_context(InferenceCallbackContext* ctx)
+{
+  if (ctx)
+  {
+    starpu_data_unregister_submit(ctx->input_handle);
+    starpu_data_unregister_submit(ctx->output_handle);
+    delete ctx;
+  }
+}
 
 // Callback called after data has been acquired
 void output_tensor_ready_callback(void* arg)
@@ -22,8 +33,7 @@ void output_tensor_ready_callback(void* arg)
 
   std::cout << "End of iteration " << ctx->iteration << std::endl;
 
-  starpu_data_unregister_submit(ctx->output_handle);
-  delete ctx;
+  cleanup_inference_context(ctx);
 }
 
 // Submit an inference task using StarPU and TorchScript
@@ -67,6 +77,7 @@ void submit_inference_task(StarPUSetup& starpu,
     output_tensor,
     opts,
     iteration,
+    input_handle,
     output_handle
   };
 
@@ -99,11 +110,6 @@ void submit_inference_task(StarPUSetup& starpu,
   if (ret != 0) 
   {
     std::cerr << "Task submission error: " << ret << std::endl;
-    delete ctx;
-    starpu_data_unregister_submit(input_handle);
-    starpu_data_unregister_submit(output_handle);
+    cleanup_inference_context(ctx);
   }
-
-  // Unregister StarPU data inputs handles
-  starpu_data_unregister_submit(input_handle);
 }
