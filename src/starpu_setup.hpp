@@ -5,6 +5,7 @@
 #include <cstring>
 #include <vector>
 
+// Structure holding the parameters required for an inference task
 struct InferenceParams
 {
   torch::jit::script::Module module;
@@ -15,6 +16,7 @@ struct InferenceParams
   int ndims;
 };
 
+// StarPUSetup encapsulates StarPU initialization and codelet configuration
 class StarPUSetup
 {
  public:
@@ -27,6 +29,7 @@ class StarPUSetup
       throw std::runtime_error("StarPU initialization error");
     }
 
+    // Initialize the codelet that will perform inference on CPU
     starpu_codelet_init(&codelet_);
     codelet_.nbuffers = 2;
     codelet_.max_parallelism = INT_MAX;
@@ -49,6 +52,7 @@ class StarPUSetup
   }
 
  private:
+   // CPU function executed by StarPU when the task runs
   static void cpu_codelet_func(void *buffers[], void *cl_arg)
   {
     float* input_data = reinterpret_cast<float *>(STARPU_VARIABLE_GET_PTR(buffers[0]));
