@@ -2,7 +2,9 @@
 #include "inference_runner.hpp"
 #include "starpu_setup.hpp"
 
-int main(int argc, char* argv[]) {
+int
+main(int argc, char* argv[])
+{
   ProgramOptions opts = parse_arguments(argc, argv);
   if (opts.show_help) {
     display_help("Inference Engine");
@@ -18,7 +20,8 @@ int main(int argc, char* argv[]) {
   try {
     StarPUSetup starpu(opts.scheduler.c_str());
     run_inference_loop(opts, starpu);
-  } catch (const std::exception& e) {
+  }
+  catch (const std::exception& e) {
     std::cerr << e.what() << std::endl;
     return -1;
   }
