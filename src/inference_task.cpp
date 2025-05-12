@@ -2,8 +2,6 @@
 
 #include <iostream>
 
-#include "inference_validator.hpp"
-
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
   torch::Tensor output_direct;
@@ -35,15 +33,9 @@ output_tensor_ready_callback(void* arg)
                      end_time - ctx->start_time)
                      .count();
 
-  std::cout << "Latency (user-visible) for iteration " << ctx->iteration << ": "
-            << latency << " µs" << std::endl;
-
-  std::cout << "Output (first 10 values): "
-            << ctx->job->output_tensor.flatten().slice(0, 0, 10) << std::endl;
-
-  validate_outputs(ctx->output_direct, ctx->job->output_tensor);
-
-  std::cout << "End of iteration " << ctx->iteration << std::endl;
+  if (ctx->job->on_complete) {
+    ctx->job->on_complete(ctx->job->output_tensor, latency);
+  }
 
   cleanup_inference_context(ctx);
 }
