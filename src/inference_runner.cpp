@@ -12,13 +12,6 @@
 
 #include "inference_task.hpp"
 
-struct InferenceJob {
-  torch::Tensor input_tensor;
-  torch::Tensor output_tensor;
-  int job_id;
-  bool is_shutdown_signal = false;
-};
-
 class InferenceQueue {
  public:
   void push(const std::shared_ptr<InferenceJob>& job)
@@ -53,7 +46,7 @@ client_thread(
     job->output_tensor = torch::empty_like(output_ref);
     job->job_id = i;
     queue.push(job);
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    std::this_thread::sleep_for(std::chrono::milliseconds(0));
   }
   auto shutdown_job = std::make_shared<InferenceJob>();
   shutdown_job->is_shutdown_signal = true;
@@ -74,9 +67,7 @@ server_thread(
       break;
 
     auto start_time = std::chrono::high_resolution_clock::now();
-    submit_inference_task(
-        starpu, job->input_tensor, job->output_tensor, module, opts, output_ref,
-        job->job_id, start_time);
+    submit_inference_task(starpu, job, module, opts, output_ref, start_time);
   }
 }
 

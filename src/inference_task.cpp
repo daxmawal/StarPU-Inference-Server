@@ -5,8 +5,8 @@
 #include "inference_validator.hpp"
 
 struct InferenceCallbackContext {
+  std::shared_ptr<InferenceJob> job;
   torch::Tensor output_direct;
-  torch::Tensor output_tensor;
   ProgramOptions opts;
   int iteration;
   starpu_data_handle_t input_handle;
@@ -39,9 +39,9 @@ output_tensor_ready_callback(void* arg)
             << latency << " µs" << std::endl;
 
   std::cout << "Output (first 10 values): "
-            << ctx->output_tensor.flatten().slice(0, 0, 10) << std::endl;
+            << ctx->job->output_tensor.flatten().slice(0, 0, 10) << std::endl;
 
-  validate_outputs(ctx->output_direct, ctx->output_tensor);
+  validate_outputs(ctx->output_direct, ctx->job->output_tensor);
 
   std::cout << "End of iteration " << ctx->iteration << std::endl;
 
@@ -51,42 +51,39 @@ output_tensor_ready_callback(void* arg)
 // Submit an inference task using StarPU and TorchScript
 void
 submit_inference_task(
-    StarPUSetup& starpu, const torch::Tensor input_tensor,
-    torch::Tensor output_tensor, torch::jit::script::Module& module,
-    const ProgramOptions& opts, const torch::Tensor& output_direct,
-    int iteration, std::chrono::high_resolution_clock::time_point start_time)
+    StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
+    torch::jit::script::Module& module, const ProgramOptions& opts,
+    const torch::Tensor& output_direct,
+    std::chrono::high_resolution_clock::time_point start_time)
 {
   int num_buffers = 2;
-  // Extract raw pointers and sizes for input and output tensors
-  float* input_ptr = input_tensor.data_ptr<float>();
-  float* output_ptr = output_tensor.data_ptr<float>();
-  int64_t input_size = input_tensor.numel();
-  int64_t output_size = output_tensor.numel();
 
   // Register input and output data with StarPU
   starpu_data_handle_t input_handle, output_handle;
   starpu_vector_data_register(
-      &input_handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(input_ptr),
-      input_size, sizeof(float));
+      &input_handle, STARPU_MAIN_RAM,
+      reinterpret_cast<uintptr_t>(job->input_tensor.data_ptr<float>()),
+      job->input_tensor.numel(), sizeof(float));
   starpu_vector_data_register(
-      &output_handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(output_ptr),
-      output_size, sizeof(float));
+      &output_handle, STARPU_MAIN_RAM,
+      reinterpret_cast<uintptr_t>(job->output_tensor.data_ptr<float>()),
+      job->output_tensor.numel(), sizeof(float));
 
   // Set up inference parameters to pass to the codelet
   InferenceParams* args = new InferenceParams();
-  args->input_size = input_size;
-  args->output_size = output_size;
-  args->ndims = input_tensor.sizes().size();
+  args->input_size = job->input_tensor.numel();
+  args->output_size = job->output_tensor.numel();
+  args->ndims = job->input_tensor.sizes().size();
   args->module = module;
 
   // Store tensor dimensions
   for (int i = 0; i < args->ndims; ++i) {
-    args->dims[i] = input_tensor.sizes()[i];
+    args->dims[i] = job->input_tensor.sizes()[i];
   }
 
   auto* ctx = new InferenceCallbackContext{
-      output_direct.clone(), output_tensor, opts,      iteration,
-      input_handle,          output_handle, start_time};
+      job,          output_direct, opts,      job->job_id,
+      input_handle, output_handle, start_time};
 
   // Create and configure the StarPU task
   struct starpu_task* task = starpu_task_create();

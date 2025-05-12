@@ -67,7 +67,6 @@ class StarPUSetup {
       std::memcpy(
           output_data, output.data_ptr<float>(),
           params->output_size * sizeof(float));
-      std::cout << "Inference done." << std::endl;
     }
     catch (const c10::Error& e) {
       std::cerr << "Error loading or running the model: " << e.what()
