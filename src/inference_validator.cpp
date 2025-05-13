@@ -3,21 +3,17 @@
 #include <iostream>
 
 bool
-validate_outputs(
-    const at::Tensor& output_direct, const at::Tensor& output_starpu,
-    double tolerance)
+validate_inference_result(
+    const InferenceResult& r, torch::jit::script::Module& module)
 {
-  at::Tensor diff = torch::abs(output_direct - output_starpu);
-  double max_diff = diff.max().item<double>();
-  std::cout << "Max difference with direct inference: " << max_diff
-            << std::endl;
+  torch::Tensor ref = module.forward({r.input}).toTensor();
+  bool is_valid = torch::allclose(ref, r.result, /*rtol=*/1e-3, /*atol=*/1e-5);
 
-  if (max_diff < tolerance) {
-    std::cout << "StarPU output matches direct inference (within tolerance).\n";
-    return true;
-  } else {
-    std::cerr << "Mismatch between StarPU and direct inference! Max diff = "
-              << max_diff << "\n";
-    return false;
+  if (!is_valid) {
+    std::cerr << "[Validator] Mismatch detected for job " << r.job_id << "!\n";
+    std::cerr << "  Reference: " << ref.flatten().slice(0, 0, 10) << "\n";
+    std::cerr << "  Obtained : " << r.result.flatten().slice(0, 0, 10) << "\n";
   }
+
+  return is_valid;
 }

@@ -2,6 +2,13 @@
 #include "args_parser.hpp"
 #include "starpu_setup.hpp"
 
+struct InferenceResult {
+  int job_id;
+  torch::Tensor input;
+  torch::Tensor result;
+  int64_t latency;
+};
+
 struct InferenceJob {
   torch::Tensor input_tensor;
   torch::Tensor output_tensor;
@@ -13,3 +20,6 @@ struct InferenceJob {
 };
 
 void run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu);
+
+bool validate_inference_result(
+    const InferenceResult& r, torch::jit::script::Module& module);

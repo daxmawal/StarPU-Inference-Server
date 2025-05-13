@@ -4,7 +4,6 @@
 
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
-  torch::Tensor output_direct;
   ProgramOptions opts;
   int iteration;
   starpu_data_handle_t input_handle;
@@ -43,43 +42,41 @@ output_tensor_ready_callback(void* arg)
 void
 submit_inference_task(
     StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
-    torch::jit::script::Module& module, const ProgramOptions& opts,
-    const torch::Tensor& output_direct)
+    torch::jit::script::Module& module, const ProgramOptions& opts)
 {
-  int num_buffers = 2;
+  size_t num_buffers = 2;
 
   // Register input and output data with StarPU
   starpu_data_handle_t input_handle, output_handle;
   starpu_vector_data_register(
       &input_handle, STARPU_MAIN_RAM,
       reinterpret_cast<uintptr_t>(job->input_tensor.data_ptr<float>()),
-      job->input_tensor.numel(), sizeof(float));
+      static_cast<size_t>(job->input_tensor.numel()), sizeof(float));
   starpu_vector_data_register(
       &output_handle, STARPU_MAIN_RAM,
       reinterpret_cast<uintptr_t>(job->output_tensor.data_ptr<float>()),
-      job->output_tensor.numel(), sizeof(float));
+      static_cast<size_t>(job->output_tensor.numel()), sizeof(float));
 
   // Set up inference parameters to pass to the codelet
   InferenceParams* args = new InferenceParams();
-  args->input_size = job->input_tensor.numel();
-  args->output_size = job->output_tensor.numel();
-  args->ndims = job->input_tensor.sizes().size();
+  args->input_size = static_cast<int64_t>(job->input_tensor.numel());
+  args->output_size = static_cast<int64_t>(job->output_tensor.numel());
+  args->ndims = static_cast<size_t>(job->input_tensor.sizes().size());
   args->module = module;
 
   // Store tensor dimensions
-  for (int i = 0; i < args->ndims; ++i) {
-    args->dims[i] = job->input_tensor.sizes()[i];
+  for (size_t i = 0; i < args->ndims; ++i) {
+    args->dims[i] = static_cast<int64_t>(job->input_tensor.sizes()[i]);
   }
 
   auto* ctx = new InferenceCallbackContext{
-      job,          output_direct, opts,      job->job_id,
-      input_handle, output_handle};
+      job, opts, job->job_id, input_handle, output_handle};
 
   // Create and configure the StarPU task
   struct starpu_task* task = starpu_task_create();
   task->handles[0] = input_handle;
   task->handles[1] = output_handle;
-  task->nbuffers = num_buffers;
+  task->nbuffers = static_cast<size_t>(num_buffers);
   task->cl = starpu.codelet();
   task->synchronous = opts.synchronous ? 1 : 0;
   task->cl_arg = args;
@@ -97,9 +94,9 @@ submit_inference_task(
 
   // Callback: asynchronous output data retrieval
   task->callback_func = [](void* arg) {
-    auto* ctx = static_cast<InferenceCallbackContext*>(arg);
+    auto* cb_ctx = static_cast<InferenceCallbackContext*>(arg);
     starpu_data_acquire_cb(
-        ctx->output_handle, STARPU_R, output_tensor_ready_callback, ctx);
+        cb_ctx->output_handle, STARPU_R, output_tensor_ready_callback, cb_ctx);
   };
   task->callback_arg = ctx;
 

@@ -12,7 +12,7 @@ struct InferenceParams {
   int64_t input_size;
   int64_t output_size;
   int64_t dims[8];
-  int ndims;
+  size_t ndims;
 };
 
 // StarPUSetup encapsulates StarPU initialization and codelet configuration
@@ -42,11 +42,6 @@ class StarPUSetup {
 
   struct starpu_codelet* codelet() { return &codelet_; }
 
-  static void task_end_callback(void* args)
-  {
-    std::cout << "Task end callback" << std::endl;
-  }
-
  private:
   // CPU function executed by StarPU when the task runs
   static void cpu_codelet_func(void* buffers[], void* cl_arg)
@@ -66,7 +61,7 @@ class StarPUSetup {
 
       std::memcpy(
           output_data, output.data_ptr<float>(),
-          params->output_size * sizeof(float));
+          static_cast<size_t>(params->output_size) * sizeof(float));
     }
     catch (const c10::Error& e) {
       std::cerr << "Error loading or running the model: " << e.what()

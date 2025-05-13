@@ -2,6 +2,7 @@
 
 #include <torch/torch.h>
 
-bool validate_outputs(
-    const at::Tensor& output_direct, const at::Tensor& output_starpu,
-    double tolerance = 1e-5);
+#include "inference_runner.hpp"
+
+bool validate_inference_result(
+    const InferenceResult& r, torch::jit::script::Module& module);

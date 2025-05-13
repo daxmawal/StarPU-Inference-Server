@@ -13,12 +13,6 @@
 #include "inference_task.hpp"
 #include "inference_validator.hpp"
 
-struct InferenceResult {
-  int job_id;
-  torch::Tensor result;
-  int64_t latency;
-};
-
 class InferenceQueue {
  public:
   void push(const std::shared_ptr<InferenceJob>& job)
@@ -44,12 +38,12 @@ class InferenceQueue {
 
 void
 client_thread(
-    InferenceQueue& queue, const torch::Tensor& input_ref,
+    InferenceQueue& queue, const ProgramOptions& opts,
     const torch::Tensor& output_ref, int iterations)
 {
   for (int i = 0; i < iterations; ++i) {
     auto job = std::make_shared<InferenceJob>();
-    job->input_tensor = input_ref.clone();
+    job->input_tensor = torch::rand(opts.input_shape);
     job->output_tensor = torch::empty_like(output_ref);
     job->job_id = i;
     job->start_time = std::chrono::high_resolution_clock::now();
@@ -65,9 +59,8 @@ void
 server_thread(
     InferenceQueue& queue, torch::jit::script::Module& module,
     StarPUSetup& starpu, const ProgramOptions& opts,
-    const torch::Tensor& output_ref, std::vector<InferenceResult>& results,
-    std::mutex& results_mutex, std::atomic<int>& completed_jobs,
-    std::condition_variable& all_done_cv, std::mutex& all_done_mutex)
+    std::vector<InferenceResult>& results, std::mutex& results_mutex,
+    std::atomic<int>& completed_jobs, std::condition_variable& all_done_cv)
 {
   while (true) {
     std::shared_ptr<InferenceJob> job;
@@ -76,19 +69,19 @@ server_thread(
     if (job->is_shutdown_signal)
       break;
 
-    job->on_complete = [id = job->job_id, &results, &results_mutex,
-                        &completed_jobs,
+    job->on_complete = [id = job->job_id, input = job->input_tensor, &results,
+                        &results_mutex, &completed_jobs,
                         &all_done_cv](torch::Tensor result, int64_t latency) {
       {
         std::lock_guard<std::mutex> lock(results_mutex);
-        results.push_back({id, result, latency});
+        results.push_back({id, input, result, latency});
       }
 
       completed_jobs.fetch_add(1);
       all_done_cv.notify_one();
     };
 
-    submit_inference_task(starpu, job, module, opts, output_ref);
+    submit_inference_task(starpu, job, module, opts);
   }
 }
 
@@ -102,8 +95,8 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
     return;
   }
 
-  torch::Tensor input_ref = torch::rand(opts.input_shape);
-  torch::Tensor output_ref = module.forward({input_ref}).toTensor();
+  torch::Tensor output_ref =
+      module.forward({torch::rand(opts.input_shape)}).toTensor();
 
   InferenceQueue queue;
   std::vector<InferenceResult> results;
@@ -115,12 +108,12 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
 
   std::thread server([&]() {
     server_thread(
-        queue, module, starpu, opts, output_ref, results, results_mutex,
-        completed_jobs, all_done_cv, all_done_mutex);
+        queue, module, starpu, opts, results, results_mutex, completed_jobs,
+        all_done_cv);
   });
 
   std::thread client(
-      [&]() { client_thread(queue, input_ref, output_ref, opts.iterations); });
+      [&]() { client_thread(queue, opts, output_ref, opts.iterations); });
 
   client.join();
   server.join();
@@ -132,13 +125,10 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   }
 
   std::lock_guard<std::mutex> lock(results_mutex);
-  std::cout << "results size : " << results.size() << std::endl;
 
   for (const auto& r : results) {
     std::cout << "[Client] Job " << r.job_id << " done. Latency = " << r.latency
               << " µs\n";
-    std::cout << "[Client] Result (first 10): "
-              << r.result.flatten().slice(0, 0, 10) << "\n";
-    validate_outputs(output_ref, r.result);
+    validate_inference_result(r, module);
   }
 }
