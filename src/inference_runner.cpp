@@ -52,6 +52,7 @@ client_thread(
     job->input_tensor = input_ref.clone();
     job->output_tensor = torch::empty_like(output_ref);
     job->job_id = i;
+    job->start_time = std::chrono::high_resolution_clock::now();
     queue.push(job);
     std::this_thread::sleep_for(std::chrono::milliseconds(0));
   }
@@ -87,8 +88,7 @@ server_thread(
       all_done_cv.notify_one();
     };
 
-    auto start_time = std::chrono::high_resolution_clock::now();
-    submit_inference_task(starpu, job, module, opts, output_ref, start_time);
+    submit_inference_task(starpu, job, module, opts, output_ref);
   }
 }
 

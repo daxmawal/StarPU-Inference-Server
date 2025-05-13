@@ -7,6 +7,7 @@ struct InferenceJob {
   torch::Tensor output_tensor;
   int job_id;
   bool is_shutdown_signal = false;
+  std::chrono::high_resolution_clock::time_point start_time;
 
   std::function<void(torch::Tensor, int64_t)> on_complete;
 };

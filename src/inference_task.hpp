@@ -13,5 +13,4 @@ void output_tensor_ready_callback(void* arg);
 void submit_inference_task(
     StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module& module, const ProgramOptions& opts,
-    const torch::Tensor& output_direct,
-    std::chrono::high_resolution_clock::time_point start_time);
+    const torch::Tensor& output_direct);

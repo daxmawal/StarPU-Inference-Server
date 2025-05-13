@@ -9,7 +9,6 @@ struct InferenceCallbackContext {
   int iteration;
   starpu_data_handle_t input_handle;
   starpu_data_handle_t output_handle;
-  std::chrono::high_resolution_clock::time_point start_time;
 };
 
 void
@@ -30,7 +29,7 @@ output_tensor_ready_callback(void* arg)
 
   auto end_time = std::chrono::high_resolution_clock::now();
   auto latency = std::chrono::duration_cast<std::chrono::microseconds>(
-                     end_time - ctx->start_time)
+                     end_time - ctx->job->start_time)
                      .count();
 
   if (ctx->job->on_complete) {
@@ -45,8 +44,7 @@ void
 submit_inference_task(
     StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module& module, const ProgramOptions& opts,
-    const torch::Tensor& output_direct,
-    std::chrono::high_resolution_clock::time_point start_time)
+    const torch::Tensor& output_direct)
 {
   int num_buffers = 2;
 
@@ -75,7 +73,7 @@ submit_inference_task(
 
   auto* ctx = new InferenceCallbackContext{
       job,          output_direct, opts,      job->job_id,
-      input_handle, output_handle, start_time};
+      input_handle, output_handle};
 
   // Create and configure the StarPU task
   struct starpu_task* task = starpu_task_create();
