@@ -6,6 +6,8 @@
 #include <iostream>
 #include <vector>
 
+#include "exceptions.hpp"
+
 // Structure holding the parameters required for an inference task
 struct InferenceParams {
   torch::jit::script::Module module;
@@ -64,8 +66,9 @@ class StarPUSetup {
           static_cast<size_t>(params->output_size) * sizeof(float));
     }
     catch (const c10::Error& e) {
-      std::cerr << "Error loading or running the model: " << e.what()
-                << std::endl;
+      throw InferenceExecutionException(
+          std::string("Error during model inference in StarPU task: ") +
+          e.what());
     }
   }
 

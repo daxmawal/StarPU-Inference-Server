@@ -10,6 +10,7 @@
 #include <thread>
 #include <vector>
 
+#include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "inference_validator.hpp"
 
@@ -81,8 +82,36 @@ server_thread(
       all_done_cv.notify_one();
     };
 
-    submit_inference_task(starpu, job, module, opts);
+    auto fail_job = [&](const std::string& error_msg) {
+      std::cerr << error_msg << std::endl;
+      if (job->on_complete) {
+        job->on_complete(torch::Tensor(), -1);
+      }
+    };
+
+    try {
+      submit_inference_task(starpu, job, module, opts);
+    }
+    catch (const InferenceEngineException& e) {
+      fail_job(
+          "[Inference Error] Job " + std::to_string(job->job_id) + ": " +
+          e.what());
+    }
+    catch (const std::exception& e) {
+      fail_job(
+          "[Unhandled Exception] Job " + std::to_string(job->job_id) + ": " +
+          e.what());
+    }
   }
+}
+
+bool
+is_supported_dtype(const torch::Dtype& dtype)
+{
+  static const std::unordered_set<torch::Dtype> supported_types = {
+      torch::kFloat32,  // later : torch::kFloat16, torch::kInt8...
+  };
+  return supported_types.count(dtype) > 0;
 }
 
 void
@@ -91,12 +120,19 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   torch::jit::script::Module module = torch::jit::load(opts.model_path);
 
   if (opts.input_shape.empty()) {
-    std::cerr << "Error: you must provide --shape for the input tensor.\n";
-    return;
+    throw InvalidInputShapeException(
+        "You must provide --shape for the input tensor.");
   }
 
-  torch::Tensor output_ref =
-      module.forward({torch::rand(opts.input_shape)}).toTensor();
+  torch::Tensor input_ref = torch::rand(opts.input_shape);
+  torch::Tensor output_ref = module.forward({input_ref}).toTensor();
+
+  if (!is_supported_dtype(output_ref.scalar_type())) {
+    throw UnsupportedDtypeException(
+        "Unsupported tensor dtype: " +
+        std::string(torch::toString(output_ref.dtype())) +
+        ". Only float32 (kFloat32) is currently supported.");
+  }
 
   InferenceQueue queue;
   std::vector<InferenceResult> results;
@@ -127,8 +163,12 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   std::lock_guard<std::mutex> lock(results_mutex);
 
   for (const auto& r : results) {
-    std::cout << "[Client] Job " << r.job_id << " done. Latency = " << r.latency
-              << " µs\n";
-    validate_inference_result(r, module);
+    if (!r.result.defined()) {
+      std::cerr << "[Client] Job " << r.job_id << " failed.\n";
+    } else {
+      std::cout << "[Client] Job " << r.job_id
+                << " done. Latency = " << r.latency << " µs\n";
+      validate_inference_result(r, module);
+    }
   }
 }

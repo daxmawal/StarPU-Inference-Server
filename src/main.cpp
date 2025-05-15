@@ -1,4 +1,5 @@
 #include "args_parser.hpp"
+#include "exceptions.hpp"
 #include "inference_runner.hpp"
 #include "starpu_setup.hpp"
 
@@ -21,8 +22,12 @@ main(int argc, char* argv[])
     StarPUSetup starpu(opts.scheduler.c_str());
     run_inference_loop(opts, starpu);
   }
+  catch (const InferenceEngineException& e) {
+    std::cerr << "[Inference Error] " << e.what() << std::endl;
+    return 2;
+  }
   catch (const std::exception& e) {
-    std::cerr << e.what() << std::endl;
+    std::cerr << "[General Error] " << e.what() << std::endl;
     return -1;
   }
 

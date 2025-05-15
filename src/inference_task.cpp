@@ -2,6 +2,8 @@
 
 #include <iostream>
 
+#include "exceptions.hpp"
+
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
   ProgramOptions opts;
@@ -47,8 +49,8 @@ submit_inference_task(
   size_t num_buffers = 2;
 
   if (!job || !job->input_tensor.defined() || !job->output_tensor.defined()) {
-    std::cerr << "Invalid job or tensors" << std::endl;
-    return;
+    throw InvalidInferenceJobException(
+        "Job is null or contains undefined tensors.");
   }
 
   // Register input and output data with StarPU
@@ -57,12 +59,18 @@ submit_inference_task(
       &input_handle, STARPU_MAIN_RAM,
       reinterpret_cast<uintptr_t>(job->input_tensor.data_ptr<float>()),
       static_cast<size_t>(job->input_tensor.numel()), sizeof(float));
-  STARPU_ASSERT(input_handle != nullptr);
+  if (input_handle == nullptr) {
+    throw StarPURegistrationException(
+        "Failed to register input handle with StarPU.");
+  }
   starpu_vector_data_register(
       &output_handle, STARPU_MAIN_RAM,
       reinterpret_cast<uintptr_t>(job->output_tensor.data_ptr<float>()),
       static_cast<size_t>(job->output_tensor.numel()), sizeof(float));
-  STARPU_ASSERT(output_handle != nullptr);
+  if (output_handle == nullptr) {
+    throw StarPURegistrationException(
+        "Failed to register output_handle handle with StarPU.");
+  }
 
   // Set up inference parameters to pass to the codelet
   InferenceParams* args = new InferenceParams();
@@ -95,15 +103,15 @@ submit_inference_task(
   task->dyn_modes =
       (starpu_data_access_mode*)malloc(num_buffers * sizeof(*task->dyn_modes));
   if (!task->dyn_handles || !task->dyn_modes) {
-    std::cerr << "Memory allocation failed for dyn_handles or dyn_modes"
-              << std::endl;
     cleanup_inference_context(ctx);
     if (task->dyn_handles)
       free(task->dyn_handles);
     if (task->dyn_modes)
       free(task->dyn_modes);
     starpu_task_destroy(task);
-    return;
+
+    throw MemoryAllocationException(
+        "Memory allocation failed for dyn_handles or dyn_modes.");
   }
 
   task->dyn_handles[0] = input_handle;
@@ -122,7 +130,8 @@ submit_inference_task(
 
   int ret = starpu_task_submit(task);
   if (ret != 0) {
-    std::cerr << "Task submission error: " << ret << std::endl;
     cleanup_inference_context(ctx);
+    throw StarPUTaskSubmissionException(
+        "Failed to submit task to StarPU (code " + std::to_string(ret) + ").");
   }
 }
