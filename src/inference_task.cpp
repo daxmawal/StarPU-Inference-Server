@@ -22,7 +22,7 @@ cleanup_inference_context(InferenceCallbackContext* ctx)
 
 // Callback called after data has been acquired
 void
-output_tensor_ready_callback(void* arg)
+handle_output_tensor_after_acquire(void* arg)
 {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
 
@@ -46,16 +46,23 @@ submit_inference_task(
 {
   size_t num_buffers = 2;
 
+  if (!job || !job->input_tensor.defined() || !job->output_tensor.defined()) {
+    std::cerr << "Invalid job or tensors" << std::endl;
+    return;
+  }
+
   // Register input and output data with StarPU
   starpu_data_handle_t input_handle, output_handle;
   starpu_vector_data_register(
       &input_handle, STARPU_MAIN_RAM,
       reinterpret_cast<uintptr_t>(job->input_tensor.data_ptr<float>()),
       static_cast<size_t>(job->input_tensor.numel()), sizeof(float));
+  STARPU_ASSERT(input_handle != nullptr);
   starpu_vector_data_register(
       &output_handle, STARPU_MAIN_RAM,
       reinterpret_cast<uintptr_t>(job->output_tensor.data_ptr<float>()),
       static_cast<size_t>(job->output_tensor.numel()), sizeof(float));
+  STARPU_ASSERT(output_handle != nullptr);
 
   // Set up inference parameters to pass to the codelet
   InferenceParams* args = new InferenceParams();
@@ -82,10 +89,22 @@ submit_inference_task(
   task->cl_arg = args;
   task->cl_arg_size = sizeof(InferenceParams);
   task->cl_arg_free = 1;
+  task->destroy = 1;
   task->dyn_handles =
       (starpu_data_handle_t*)malloc(num_buffers * sizeof(*task->dyn_handles));
   task->dyn_modes =
       (starpu_data_access_mode*)malloc(num_buffers * sizeof(*task->dyn_modes));
+  if (!task->dyn_handles || !task->dyn_modes) {
+    std::cerr << "Memory allocation failed for dyn_handles or dyn_modes"
+              << std::endl;
+    cleanup_inference_context(ctx);
+    if (task->dyn_handles)
+      free(task->dyn_handles);
+    if (task->dyn_modes)
+      free(task->dyn_modes);
+    starpu_task_destroy(task);
+    return;
+  }
 
   task->dyn_handles[0] = input_handle;
   task->dyn_modes[0] = STARPU_R;
@@ -96,7 +115,8 @@ submit_inference_task(
   task->callback_func = [](void* arg) {
     auto* cb_ctx = static_cast<InferenceCallbackContext*>(arg);
     starpu_data_acquire_cb(
-        cb_ctx->output_handle, STARPU_R, output_tensor_ready_callback, cb_ctx);
+        cb_ctx->output_handle, STARPU_R, handle_output_tensor_after_acquire,
+        cb_ctx);
   };
   task->callback_arg = ctx;
 

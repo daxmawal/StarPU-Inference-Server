@@ -48,7 +48,7 @@ client_thread(
     job->job_id = i;
     job->start_time = std::chrono::high_resolution_clock::now();
     queue.push(job);
-    std::this_thread::sleep_for(std::chrono::milliseconds(0));
+    std::this_thread::sleep_for(std::chrono::milliseconds(opts.delay_ms));
   }
   auto shutdown_job = std::make_shared<InferenceJob>();
   shutdown_job->is_shutdown_signal = true;

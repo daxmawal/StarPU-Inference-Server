@@ -14,6 +14,7 @@ struct ProgramOptions {
   bool show_help = false;
   bool synchronous = false;
   bool valid = true;
+  int delay_ms = 0;
 };
 
 void display_help(const char* prog_name);

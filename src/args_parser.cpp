@@ -13,6 +13,8 @@ display_help(const char* prog_name)
          "models)\n"
       << "  --sync                  Run tasks in synchronous mode (default: "
          "async)\n"
+      << "  --delay [ms]            Delay in milliseconds between inference "
+         "jobs (default: 0)\n"
       << "  --help                  Show this help message\n";
 }
 
@@ -75,6 +77,17 @@ parse_arguments(int argc, char* argv[])
     } else if (arg == "--help") {
       opts.show_help = true;
       return opts;
+    } else if (arg == "--delay" && i + 1 < argc) {
+      try {
+        opts.delay_ms = std::stoi(argv[++i]);
+        if (opts.delay_ms < 0)
+          throw std::invalid_argument("Delay must be non-negative.");
+      }
+      catch (const std::exception& e) {
+        std::cerr << "Invalid value for delay: " << e.what() << "\n";
+        opts.valid = false;
+        return opts;
+      }
     } else {
       std::cerr << "Unknown argument: " << arg << "\n";
       opts.valid = false;
