@@ -16,6 +16,7 @@ struct InferenceParams {
   int64_t output_size;
   int64_t dims[8][8];
   size_t num_dims[16];
+  at::ScalarType input_types[16];
 };
 
 // StarPUSetup encapsulates StarPU initialization and codelet configuration
@@ -55,22 +56,50 @@ class StarPUSetup {
       std::vector<torch::Tensor> inputs;
 
       for (size_t i = 0; i < params->num_inputs; ++i) {
-        float* input_data =
-            reinterpret_cast<float*>(STARPU_VARIABLE_GET_PTR(buffers[i]));
+        void* raw_ptr = reinterpret_cast<void*>(
+            static_cast<uintptr_t>(STARPU_VARIABLE_GET_PTR(buffers[i])));
 
         std::vector<int64_t> shape(
             params->dims[i], params->dims[i] + params->num_dims[i]);
 
-        torch::Tensor input =
-            torch::from_blob(input_data, shape, torch::kFloat32).clone();
+        torch::Tensor input;
+
+        switch (params->input_types[i]) {
+          case at::kFloat:
+            input = torch::from_blob(
+                        reinterpret_cast<float*>(raw_ptr), shape, at::kFloat)
+                        .clone();
+            break;
+          case at::kInt:
+            input = torch::from_blob(
+                        reinterpret_cast<int32_t*>(raw_ptr), shape, at::kInt)
+                        .clone();
+            break;
+          case at::kLong:
+            input = torch::from_blob(
+                        reinterpret_cast<int64_t*>(raw_ptr), shape, at::kLong)
+                        .clone();
+            break;
+          case at::kBool:
+            input = torch::from_blob(
+                        reinterpret_cast<bool*>(raw_ptr), shape, at::kBool)
+                        .clone();
+            break;
+          default:
+            throw std::runtime_error(
+                "Unsupported input type in StarPU codelet");
+        }
+
         inputs.push_back(input);
       }
 
+      // Convert to IValue inputs
       std::vector<c10::IValue> ivalue_inputs;
       for (const auto& tensor : inputs) {
         ivalue_inputs.push_back(tensor);
       }
 
+      // Output
       float* output_data = reinterpret_cast<float*>(
           STARPU_VARIABLE_GET_PTR(buffers[params->num_inputs]));
 
@@ -86,6 +115,7 @@ class StarPUSetup {
           e.what());
     }
   }
+
 
   struct starpu_conf conf_;
   struct starpu_codelet codelet_;

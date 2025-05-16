@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ATen/core/ScalarType.h>
+
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -10,11 +12,13 @@ struct ProgramOptions {
   std::string scheduler = "lws";
   std::string model_path;
   int iterations = 1;
-  std::vector<std::vector<int64_t>> input_shapes;
-  bool show_help = false;
   bool synchronous = false;
-  bool valid = true;
   int delay_ms = 0;
+  bool show_help = false;
+  bool valid = true;
+
+  std::vector<std::vector<int64_t>> input_shapes;
+  std::vector<at::ScalarType> input_types;
 };
 
 void display_help(const char* prog_name);

@@ -13,6 +13,7 @@
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "inference_validator.hpp"
+#include "input_generator.hpp"
 
 class InferenceQueue {
  public:
@@ -44,9 +45,10 @@ client_thread(
 {
   for (int i = 0; i < iterations; ++i) {
     auto job = std::make_shared<InferenceJob>();
-    for (const auto& long_shape : opts.input_shapes) {
-      std::vector<int64_t> shape(long_shape.begin(), long_shape.end());
-      job->input_tensors.push_back(torch::rand(shape));
+    job->input_tensors =
+        generate_random_inputs(opts.input_shapes, opts.input_types);
+    for (size_t j = 0; j < job->input_tensors.size(); ++j) {
+      job->input_types.push_back(job->input_tensors[j].scalar_type());
     }
     job->output_tensor = torch::empty_like(output_ref);
     job->job_id = i;
@@ -108,47 +110,20 @@ server_thread(
   }
 }
 
-bool
-is_supported_dtype(const torch::Dtype& dtype)
-{
-  static const std::unordered_set<torch::Dtype> supported_types = {
-      torch::kFloat32,  // later : torch::kFloat16, torch::kInt8...
-  };
-  return supported_types.count(dtype) > 0;
-}
-
 void
 run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
 {
   torch::jit::script::Module module = torch::jit::load(opts.model_path);
 
   std::vector<torch::Tensor> inputs;
-  for (const auto& shape : opts.input_shapes) {
-    inputs.push_back(torch::rand(shape));
-  }
+  inputs = generate_random_inputs(opts.input_shapes, opts.input_types);
 
   std::vector<torch::IValue> input_ivalues;
   for (const auto& input : inputs) {
     input_ivalues.push_back(input);
   }
 
-  for (size_t i = 0; i < inputs.size(); ++i) {
-    if (!is_supported_dtype(inputs[i].scalar_type())) {
-      throw UnsupportedDtypeException(
-          "Input tensor " + std::to_string(i) + " is of type " +
-          std::string(torch::toString(inputs[i].dtype())) +
-          ", expected float32 (kFloat32).");
-    }
-  }
-
   torch::Tensor output_ref = module.forward(input_ivalues).toTensor();
-
-  if (!is_supported_dtype(output_ref.scalar_type())) {
-    throw UnsupportedDtypeException(
-        "Unsupported tensor dtype: " +
-        std::string(torch::toString(output_ref.dtype())) +
-        ". Only output float32 (kFloat32) is currently supported.");
-  }
 
   InferenceQueue queue;
   std::vector<InferenceResult> results;

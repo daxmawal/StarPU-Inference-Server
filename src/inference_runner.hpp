@@ -11,6 +11,7 @@ struct InferenceResult {
 
 struct InferenceJob {
   std::vector<torch::Tensor> input_tensors;
+  std::vector<at::ScalarType> input_types;
   torch::Tensor output_tensor;
   int job_id;
   bool is_shutdown_signal = false;

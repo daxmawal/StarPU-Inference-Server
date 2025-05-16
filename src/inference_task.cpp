@@ -60,10 +60,19 @@ submit_inference_task(
   std::vector<starpu_data_handle_t> input_handles(num_inputs);
 
   for (size_t i = 0; i < num_inputs; ++i) {
+    auto& tensor = job->input_tensors[i];
+    int64_t numel = tensor.numel();
+    auto dtype = tensor.dtype();
+
+    void* data_ptr = tensor.data_ptr();
+
+    int64_t element_size = tensor.element_size();
+
     starpu_vector_data_register(
         &input_handles[i], STARPU_MAIN_RAM,
-        reinterpret_cast<uintptr_t>(job->input_tensors[i].data_ptr<float>()),
-        static_cast<size_t>(job->input_tensors[i].numel()), sizeof(float));
+        reinterpret_cast<uintptr_t>(data_ptr), static_cast<size_t>(numel),
+        static_cast<size_t>(element_size));
+
     if (input_handles[i] == nullptr) {
       throw StarPURegistrationException(
           "Failed to register input handle with StarPU.");
@@ -84,6 +93,9 @@ submit_inference_task(
   // Set up inference parameters to pass to the codelet
   InferenceParams* args = new InferenceParams();
   args->num_inputs = num_inputs;
+  for (size_t i = 0; i < job->input_types.size(); ++i) {
+    args->input_types[i] = job->input_types[i];
+  }
   args->num_outputs = num_outputs;
   args->output_size = job->output_tensor.numel();
   args->module = module;
@@ -104,7 +116,7 @@ submit_inference_task(
 
   // Create and configure the StarPU task
   struct starpu_task* task = starpu_task_create();
-  task->nbuffers = static_cast<size_t>(num_buffers);
+  task->nbuffers = static_cast<int>(num_buffers);
   task->cl = starpu.codelet();
   task->synchronous = opts.synchronous ? 1 : 0;
   task->cl_arg = args;

@@ -15,6 +15,8 @@ display_help(const char* prog_name)
       << "  --shape 1x3x224x224     Shape of a single input tensor\n"
       << "  --shapes shape1,shape2  Shapes for multiple input tensors, e.g. "
          "1x3x224x224,1x10\n"
+      << "  --types float,int       Types for input tensors, e.g. float,int "
+         "(default: float)\n"
       << "  --sync                  Run tasks in synchronous mode (default: "
          "async)\n"
       << "  --delay [ms]            Delay in milliseconds between inference "
@@ -61,6 +63,54 @@ parse_shapes_string(const std::string& shapes_str)
   return shapes;
 }
 
+at::ScalarType
+parse_type_string(const std::string& type_str)
+{
+  if (type_str == "float" || type_str == "float32")
+    return at::kFloat;
+  if (type_str == "double" || type_str == "float64")
+    return at::kDouble;
+  if (type_str == "half" || type_str == "float16")
+    return at::kHalf;
+  if (type_str == "bfloat16")
+    return at::kBFloat16;
+
+  if (type_str == "int" || type_str == "int32")
+    return at::kInt;
+  if (type_str == "long" || type_str == "int64")
+    return at::kLong;
+  if (type_str == "short" || type_str == "int16")
+    return at::kShort;
+  if (type_str == "char" || type_str == "int8")
+    return at::kChar;
+
+  if (type_str == "byte" || type_str == "uint8")
+    return at::kByte;
+
+  if (type_str == "bool")
+    return at::kBool;
+  if (type_str == "complex64")
+    return at::kComplexFloat;
+  if (type_str == "complex128")
+    return at::kComplexDouble;
+
+  throw std::invalid_argument("Unsupported type: " + type_str);
+}
+
+std::vector<at::ScalarType>
+parse_types_string(const std::string& types_str)
+{
+  std::vector<at::ScalarType> types;
+  std::stringstream ss(types_str);
+  std::string type_str;
+
+  while (std::getline(ss, type_str, ',')) {
+    types.push_back(parse_type_string(type_str));
+  }
+
+  return types;
+}
+
 ProgramOptions
 parse_arguments(int argc, char* argv[])
 {
@@ -104,6 +154,15 @@ parse_arguments(int argc, char* argv[])
         opts.valid = false;
         return opts;
       }
+    } else if (arg == "--types" && i + 1 < argc) {
+      try {
+        opts.input_types = parse_types_string(argv[++i]);
+      }
+      catch (const std::exception& e) {
+        std::cerr << "Invalid types: " << e.what() << "\n";
+        opts.valid = false;
+        return opts;
+      }
     } else if (arg == "--delay" && i + 1 < argc) {
       try {
         opts.delay_ms = std::stoi(argv[++i]);
@@ -127,6 +186,17 @@ parse_arguments(int argc, char* argv[])
 
   if (opts.model_path.empty()) {
     std::cerr << "Error: --model option is required.\n";
+    opts.valid = false;
+  }
+
+  if (!opts.input_types.empty() &&
+      opts.input_types.size() != opts.input_shapes.size()) {
+    std::cerr << "Error: Number of types must match number of input shapes.\n";
+    opts.valid = false;
+  }
+
+  if (opts.input_shapes.empty() || opts.input_types.empty()) {
+    std::cerr << "Error: both --shape/--shapes and --types must be provided.\n";
     opts.valid = false;
   }
 
