@@ -1,5 +1,8 @@
 #include "args_parser.hpp"
 
+#include <iostream>
+#include <sstream>
+
 void
 display_help(const char* prog_name)
 {
@@ -9,8 +12,9 @@ display_help(const char* prog_name)
       << "  --scheduler [name]      Scheduler type (default: lws)\n"
       << "  --model [path]          Path to TorchScript model file (.pt)\n"
       << "  --iterations [num]      Number of iterations (default: 1)\n"
-      << "  --shape 1x3x224x224     Shape of input tensor (e.g., for image "
-         "models)\n"
+      << "  --shape 1x3x224x224     Shape of a single input tensor\n"
+      << "  --shapes shape1,shape2  Shapes for multiple input tensors, e.g. "
+         "1x3x224x224,1x10\n"
       << "  --sync                  Run tasks in synchronous mode (default: "
          "async)\n"
       << "  --delay [ms]            Delay in milliseconds between inference "
@@ -40,6 +44,23 @@ parse_shape_string(const std::string& shape_str)
   return shape;
 }
 
+std::vector<std::vector<int64_t>>
+parse_shapes_string(const std::string& shapes_str)
+{
+  std::vector<std::vector<int64_t>> shapes;
+  std::stringstream ss(shapes_str);
+  std::string shape_str;
+
+  while (std::getline(ss, shape_str, ',')) {
+    shapes.push_back(parse_shape_string(shape_str));
+  }
+
+  if (shapes.empty())
+    throw std::invalid_argument("No valid shapes were provided.");
+
+  return shapes;
+}
+
 ProgramOptions
 parse_arguments(int argc, char* argv[])
 {
@@ -67,16 +88,22 @@ parse_arguments(int argc, char* argv[])
       }
     } else if (arg == "--shape" && i + 1 < argc) {
       try {
-        opts.input_shape = parse_shape_string(argv[++i]);
+        opts.input_shapes = {parse_shape_string(argv[++i])};
       }
       catch (const std::exception& e) {
         std::cerr << "Invalid shape: " << e.what() << "\n";
         opts.valid = false;
         return opts;
       }
-    } else if (arg == "--help") {
-      opts.show_help = true;
-      return opts;
+    } else if (arg == "--shapes" && i + 1 < argc) {
+      try {
+        opts.input_shapes = parse_shapes_string(argv[++i]);
+      }
+      catch (const std::exception& e) {
+        std::cerr << "Invalid shapes: " << e.what() << "\n";
+        opts.valid = false;
+        return opts;
+      }
     } else if (arg == "--delay" && i + 1 < argc) {
       try {
         opts.delay_ms = std::stoi(argv[++i]);
@@ -88,6 +115,9 @@ parse_arguments(int argc, char* argv[])
         opts.valid = false;
         return opts;
       }
+    } else if (arg == "--help") {
+      opts.show_help = true;
+      return opts;
     } else {
       std::cerr << "Unknown argument: " << arg << "\n";
       opts.valid = false;

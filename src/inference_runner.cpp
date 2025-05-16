@@ -44,7 +44,10 @@ client_thread(
 {
   for (int i = 0; i < iterations; ++i) {
     auto job = std::make_shared<InferenceJob>();
-    job->input_tensor = torch::rand(opts.input_shape);
+    for (const auto& long_shape : opts.input_shapes) {
+      std::vector<int64_t> shape(long_shape.begin(), long_shape.end());
+      job->input_tensors.push_back(torch::rand(shape));
+    }
     job->output_tensor = torch::empty_like(output_ref);
     job->job_id = i;
     job->start_time = std::chrono::high_resolution_clock::now();
@@ -70,12 +73,12 @@ server_thread(
     if (job->is_shutdown_signal)
       break;
 
-    job->on_complete = [id = job->job_id, input = job->input_tensor, &results,
+    job->on_complete = [id = job->job_id, inputs = job->input_tensors, &results,
                         &results_mutex, &completed_jobs,
                         &all_done_cv](torch::Tensor result, int64_t latency) {
       {
         std::lock_guard<std::mutex> lock(results_mutex);
-        results.push_back({id, input, result, latency});
+        results.push_back({id, inputs, result, latency});
       }
 
       completed_jobs.fetch_add(1);
@@ -119,19 +122,32 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
 {
   torch::jit::script::Module module = torch::jit::load(opts.model_path);
 
-  if (opts.input_shape.empty()) {
-    throw InvalidInputShapeException(
-        "You must provide --shape for the input tensor.");
+  std::vector<torch::Tensor> inputs;
+  for (const auto& shape : opts.input_shapes) {
+    inputs.push_back(torch::rand(shape));
   }
 
-  torch::Tensor input_ref = torch::rand(opts.input_shape);
-  torch::Tensor output_ref = module.forward({input_ref}).toTensor();
+  std::vector<torch::IValue> input_ivalues;
+  for (const auto& input : inputs) {
+    input_ivalues.push_back(input);
+  }
+
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    if (!is_supported_dtype(inputs[i].scalar_type())) {
+      throw UnsupportedDtypeException(
+          "Input tensor " + std::to_string(i) + " is of type " +
+          std::string(torch::toString(inputs[i].dtype())) +
+          ", expected float32 (kFloat32).");
+    }
+  }
+
+  torch::Tensor output_ref = module.forward(input_ivalues).toTensor();
 
   if (!is_supported_dtype(output_ref.scalar_type())) {
     throw UnsupportedDtypeException(
         "Unsupported tensor dtype: " +
         std::string(torch::toString(output_ref.dtype())) +
-        ". Only float32 (kFloat32) is currently supported.");
+        ". Only output float32 (kFloat32) is currently supported.");
   }
 
   InferenceQueue queue;

@@ -4,13 +4,13 @@
 
 struct InferenceResult {
   int job_id;
-  torch::Tensor input;
+  std::vector<torch::Tensor> inputs;
   torch::Tensor result;
   int64_t latency;
 };
 
 struct InferenceJob {
-  torch::Tensor input_tensor;
+  std::vector<torch::Tensor> input_tensors;
   torch::Tensor output_tensor;
   int job_id;
   bool is_shutdown_signal = false;

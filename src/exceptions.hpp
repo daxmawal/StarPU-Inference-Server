@@ -15,14 +15,6 @@ class UnsupportedDtypeException : public std::runtime_error {
   }
 };
 
-class InvalidInputShapeException : public std::runtime_error {
- public:
-  explicit InvalidInputShapeException(const std::string& msg)
-      : std::runtime_error(msg)
-  {
-  }
-};
-
 class InferenceExecutionException : public InferenceEngineException {
  public:
   using InferenceEngineException::InferenceEngineException;

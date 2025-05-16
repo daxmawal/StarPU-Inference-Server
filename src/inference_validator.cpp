@@ -6,7 +6,13 @@ bool
 validate_inference_result(
     const InferenceResult& r, torch::jit::script::Module& module)
 {
-  torch::Tensor ref = module.forward({r.input}).toTensor();
+  std::vector<torch::IValue> input_ivalues;
+  for (const auto& input : r.inputs) {
+    input_ivalues.push_back(input);
+  }
+
+  torch::Tensor ref = module.forward(input_ivalues).toTensor();
+
   bool is_valid = torch::allclose(ref, r.result, /*rtol=*/1e-3, /*atol=*/1e-5);
 
   if (!is_valid) {

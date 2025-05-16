@@ -11,10 +11,11 @@
 // Structure holding the parameters required for an inference task
 struct InferenceParams {
   torch::jit::script::Module module;
-  int64_t input_size;
+  size_t num_inputs;
+  size_t num_outputs;
   int64_t output_size;
-  int64_t dims[8];
-  size_t ndims;
+  int64_t dims[8][8];
+  size_t num_dims[16];
 };
 
 // StarPUSetup encapsulates StarPU initialization and codelet configuration
@@ -48,18 +49,32 @@ class StarPUSetup {
   // CPU function executed by StarPU when the task runs
   static void cpu_codelet_func(void* buffers[], void* cl_arg)
   {
-    float* input_data =
-        reinterpret_cast<float*>(STARPU_VARIABLE_GET_PTR(buffers[0]));
-    float* output_data =
-        reinterpret_cast<float*>(STARPU_VARIABLE_GET_PTR(buffers[1]));
     InferenceParams* params = static_cast<InferenceParams*>(cl_arg);
 
     try {
-      std::vector<int64_t> shape(params->dims, params->dims + params->ndims);
-      torch::Tensor input =
-          torch::from_blob(input_data, shape, torch::kFloat32).clone();
+      std::vector<torch::Tensor> inputs;
 
-      at::Tensor output = params->module.forward({input}).toTensor();
+      for (size_t i = 0; i < params->num_inputs; ++i) {
+        float* input_data =
+            reinterpret_cast<float*>(STARPU_VARIABLE_GET_PTR(buffers[i]));
+
+        std::vector<int64_t> shape(
+            params->dims[i], params->dims[i] + params->num_dims[i]);
+
+        torch::Tensor input =
+            torch::from_blob(input_data, shape, torch::kFloat32).clone();
+        inputs.push_back(input);
+      }
+
+      std::vector<c10::IValue> ivalue_inputs;
+      for (const auto& tensor : inputs) {
+        ivalue_inputs.push_back(tensor);
+      }
+
+      float* output_data = reinterpret_cast<float*>(
+          STARPU_VARIABLE_GET_PTR(buffers[params->num_inputs]));
+
+      at::Tensor output = params->module.forward(ivalue_inputs).toTensor();
 
       std::memcpy(
           output_data, output.data_ptr<float>(),
