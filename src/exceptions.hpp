@@ -39,3 +39,8 @@ class StarPUTaskSubmissionException : public InferenceEngineException {
  public:
   using InferenceEngineException::InferenceEngineException;
 };
+
+class StarPUTaskCreationException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
