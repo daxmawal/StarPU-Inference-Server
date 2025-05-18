@@ -1,17 +1,8 @@
 #include "inference_task.hpp"
 
-#include "exceptions.hpp"
-
-struct InferenceCallbackContext {
-  std::shared_ptr<InferenceJob> job;
-  ProgramOptions opts;
-  int id;
-  std::vector<starpu_data_handle_t> input_handles;
-  starpu_data_handle_t output_handle;
-};
 
 void
-cleanup_inference_context(InferenceCallbackContext* ctx)
+InferenceTask::cleanup(InferenceCallbackContext* ctx)
 {
   if (ctx) {
     for (size_t i = 0; i < ctx->input_handles.size(); ++i) {
@@ -27,7 +18,7 @@ cleanup_inference_context(InferenceCallbackContext* ctx)
 }
 
 void
-on_output_ready(void* arg)
+InferenceTask::on_output_ready_and_cleanup(void* arg)
 {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
 
@@ -40,87 +31,86 @@ on_output_ready(void* arg)
     ctx->job->on_complete(ctx->job->output_tensor, latency_us);
   }
 
-  cleanup_inference_context(ctx);
+  cleanup(ctx);
 }
 
-InferenceParams*
-create_inference_params(
-    const std::shared_ptr<InferenceJob>& job,
-    torch::jit::script::Module* module)
+std::shared_ptr<InferenceParams>
+InferenceTask::create_inference_params()
 {
-  if (job->input_tensors.size() > InferLimits::MaxInputs) {
+  if (job_->input_tensors.size() > InferLimits::MaxInputs) {
     throw InferenceExecutionException(
-        "[ERROR] Too many input tensors, the maximum is : " +
+        "[ERROR] Too many input tensors, the maximum is: " +
         std::to_string(InferLimits::MaxInputs));
   }
 
-  auto* inference_params = new InferenceParams();
-  inference_params->num_inputs = job->input_tensors.size();
+  auto inference_params = std::make_shared<InferenceParams>();
+  inference_params->module = &module_;
+  inference_params->num_inputs = job_->input_tensors.size();
   inference_params->num_outputs = 1;
-  inference_params->output_size = job->output_tensor.numel();
-  inference_params->module = module;
+  inference_params->output_size = job_->output_tensor.numel();
 
-  for (size_t i = 0; i < job->input_types.size(); ++i)
-    inference_params->input_types[i] = job->input_types[i];
+  auto offset = static_cast<std::ptrdiff_t>(inference_params->num_inputs);
+  std::copy(
+      job_->input_types.begin(), job_->input_types.begin() + offset,
+      inference_params->input_types.begin());
 
-  for (size_t i = 0; i < job->input_tensors.size(); ++i) {
-    const auto& tensor = job->input_tensors[i];
-    if (tensor.dim() > InferLimits::MaxDims) {
-      throw InferenceExecutionException(
-          "[ERROR] Too many dimensions for input " + std::to_string(i));
-    }
-    inference_params->num_dims[i] = tensor.dim();
-    for (int_fast64_t j = 0; j < tensor.dim(); ++j) {
-      inference_params->dims[i][j] = tensor.size(j);
-    }
+  for (size_t i = 0; i < inference_params->num_inputs; ++i) {
+    const auto& tensor = job_->input_tensors[i];
+    auto dim = tensor.dim();
+    inference_params->num_dims[i] = dim;
+    std::copy_n(tensor.sizes().data(), dim, inference_params->dims[i].begin());
   }
 
   return inference_params;
 }
 
-std::vector<starpu_data_handle_t>
-register_input_handles(const std::vector<torch::Tensor>& input_tensors)
+starpu_data_handle_t
+InferenceTask::safe_register_tensor_vector(
+    const torch::Tensor& tensor, const std::string& label)
 {
-  std::vector<starpu_data_handle_t> handles(input_tensors.size());
+  if (!tensor.defined() || !tensor.data_ptr()) {
+    throw StarPURegistrationException(
+        "[ERROR] Tensor '" + label + "' is undefined or has no data pointer.");
+  }
+
+  starpu_data_handle_t handle = nullptr;
+
+  starpu_vector_data_register(
+      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(tensor.data_ptr()),
+      static_cast<size_t>(tensor.numel()),
+      static_cast<size_t>(tensor.element_size()));
+
+  if (!handle) {
+    throw StarPURegistrationException(
+        "[ERROR] Failed to register tensor '" + label + "' with StarPU.");
+  }
+
+  return handle;
+}
+
+std::vector<starpu_data_handle_t>
+InferenceTask::register_input_handles(
+    const std::vector<torch::Tensor>& input_tensors)
+{
+  std::vector<starpu_data_handle_t> handles;
+  handles.reserve(input_tensors.size());
 
   for (size_t i = 0; i < input_tensors.size(); ++i) {
-    const auto& tensor = input_tensors[i];
-    starpu_vector_data_register(
-        &handles[i], STARPU_MAIN_RAM,
-        reinterpret_cast<uintptr_t>(tensor.data_ptr()),
-        static_cast<size_t>(tensor.numel()),
-        static_cast<size_t>(tensor.element_size()));
-
-    if (!handles[i]) {
-      throw StarPURegistrationException(
-          "[ERROR] Failed to register input handle at index " +
-          std::to_string(i));
-    }
+    handles.push_back(safe_register_tensor_vector(
+        input_tensors[i], "input[" + std::to_string(i) + "]"));
   }
 
   return handles;
 }
 
 starpu_data_handle_t
-register_output_handle(const torch::Tensor& output_tensor)
+InferenceTask::register_output_handle(const torch::Tensor& output_tensor)
 {
-  starpu_data_handle_t handle = nullptr;
-  starpu_vector_data_register(
-      &handle, STARPU_MAIN_RAM,
-      reinterpret_cast<uintptr_t>(output_tensor.data_ptr()),
-      static_cast<size_t>(output_tensor.numel()),
-      static_cast<size_t>(output_tensor.element_size()));
-
-  if (!handle) {
-    throw StarPURegistrationException(
-        "[ERROR] Failed to register output handle.");
-  }
-
-  return handle;
+  return safe_register_tensor_vector(output_tensor, "output");
 }
 
 void
-log_exception(const std::string& context)
+InferenceTask::log_exception(const std::string& context)
 {
   try {
     throw;
@@ -143,7 +133,7 @@ log_exception(const std::string& context)
 }
 
 void
-starpu_output_callback(void* arg)
+InferenceTask::starpu_output_callback(void* arg)
 {
   try {
     auto* ctx = static_cast<InferenceCallbackContext*>(arg);
@@ -151,7 +141,7 @@ starpu_output_callback(void* arg)
         ctx->output_handle, STARPU_R,
         [](void* cb_arg) {
           try {
-            on_output_ready(cb_arg);
+            InferenceTask::on_output_ready_and_cleanup(cb_arg);
           }
           catch (...) {
             log_exception("on_output_ready");
@@ -165,11 +155,9 @@ starpu_output_callback(void* arg)
 }
 
 starpu_task*
-create_starpu_task(
-    StarPUSetup& starpu, InferenceParams* inference_params,
+InferenceTask::create_task(
     std::vector<starpu_data_handle_t> input_handles,
-    starpu_data_handle_t output_handle, InferenceCallbackContext* ctx,
-    const ProgramOptions& opts)
+    starpu_data_handle_t output_handle, InferenceCallbackContext* ctx)
 {
   size_t num_inputs = input_handles.size();
   size_t num_outputs = 1;
@@ -180,24 +168,25 @@ create_starpu_task(
     throw StarPUTaskCreationException("Failed to create StarPU task.");
   }
   task->nbuffers = static_cast<int>(num_buffers);
-  task->cl = starpu.codelet();
-  task->synchronous = opts.synchronous ? 1 : 0;
-  task->cl_arg = inference_params;
+  task->cl = starpu_.codelet();
+  task->synchronous = opts_.synchronous ? 1 : 0;
+  task->cl_arg = ctx->inference_params.get();
   task->cl_arg_size = sizeof(InferenceParams);
-  task->cl_arg_free = 1;
-  task->destroy = 1;
-
-  task->dyn_handles =
-      (starpu_data_handle_t*)malloc(num_buffers * sizeof(*task->dyn_handles));
-  task->dyn_modes =
-      (starpu_data_access_mode*)malloc(num_buffers * sizeof(*task->dyn_modes));
+  task->priority = STARPU_MAX_PRIO - ctx->job->job_id;
+  task->dyn_handles = static_cast<starpu_data_handle_t*>(
+      malloc(num_buffers * sizeof(starpu_data_handle_t)));
+  task->dyn_modes = static_cast<starpu_data_access_mode*>(
+      malloc(num_buffers * sizeof(starpu_data_access_mode)));
 
   if (!task->dyn_handles || !task->dyn_modes) {
-    free(task->dyn_handles);
-    free(task->dyn_modes);
+    if (task->dyn_handles)
+      free(task->dyn_handles);
+    if (task->dyn_modes)
+      free(task->dyn_modes);
     starpu_task_destroy(task);
+    cleanup(ctx);
     throw MemoryAllocationException(
-        "[ERROR] Memory allocation failed for dyn_handles or dyn_modes.");
+        "Memory allocation failed for task buffers.");
   }
 
   for (size_t i = 0; i < num_inputs; ++i) {
@@ -208,39 +197,33 @@ create_starpu_task(
   task->dyn_handles[num_inputs] = output_handle;
   task->dyn_modes[num_inputs] = STARPU_W;
 
-  task->callback_func = starpu_output_callback;
+  task->callback_func = InferenceTask::starpu_output_callback;
   task->callback_arg = ctx;
 
   return task;
 }
 
 void
-submit_inference_task(
-    StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
-    torch::jit::script::Module& module, const ProgramOptions& opts)
+InferenceTask::submit()
 {
-  if (!job) {
+  if (!job_) {
     throw InvalidInferenceJobException("[ERROR] Job is null.");
   }
 
-  size_t num_inputs = job->input_tensors.size();
-  size_t num_outputs = 1;
-  size_t num_buffers = num_outputs + num_inputs;
+  auto input_handles = register_input_handles(job_->input_tensors);
+  auto output_handle = register_output_handle(job_->output_tensor);
 
-  auto input_handles = register_input_handles(job->input_tensors);
-  auto output_handle = register_output_handle(job->output_tensor);
+  std::shared_ptr<InferenceParams> inference_params = create_inference_params();
 
-  InferenceParams* inference_params = create_inference_params(job, &module);
+  auto* ctx = new InferenceCallbackContext{job_,          inference_params,
+                                           opts_,         job_->job_id,
+                                           input_handles, output_handle};
 
-  auto* ctx = new InferenceCallbackContext{
-      job, opts, job->job_id, input_handles, output_handle};
-
-  struct starpu_task* task = create_starpu_task(
-      starpu, inference_params, input_handles, output_handle, ctx, opts);
+  struct starpu_task* task = create_task(input_handles, output_handle, ctx);
 
   int ret = starpu_task_submit(task);
   if (ret != 0) {
-    cleanup_inference_context(ctx);
+    cleanup(ctx);
     throw StarPUTaskSubmissionException(
         "[ERROR] StarPU task submission failed (code " + std::to_string(ret) +
         ").");

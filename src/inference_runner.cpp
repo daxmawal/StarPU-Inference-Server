@@ -95,7 +95,8 @@ server_worker(
     };
 
     try {
-      submit_inference_task(starpu, job, module, opts);
+      InferenceTask inferenceTask(starpu, job, module, opts);
+      inferenceTask.submit();
     }
     catch (const InferenceEngineException& e) {
       fail_job(
