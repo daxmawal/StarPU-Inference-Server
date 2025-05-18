@@ -27,6 +27,8 @@ add_executable(inference_engine
     src/inference_runner.cpp
     src/inference_task.cpp
     src/inference_validator.cpp
+    src/tensor_builder.cpp
+    src/starpu_setup.cpp
 )
 
 # Target Includes

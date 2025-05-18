@@ -1,5 +1,11 @@
 #include "inference_task.hpp"
 
+InferenceTask::InferenceTask(
+    StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
+    torch::jit::script::Module& module, const ProgramOptions& opts)
+    : starpu_(starpu), job_(std::move(job)), module_(module), opts_(opts)
+{
+}
 
 void
 InferenceTask::cleanup(InferenceCallbackContext* ctx)

@@ -40,6 +40,28 @@ class InferenceQueue {
   std::condition_variable cv_;
 };
 
+InferenceJob::InferenceJob(
+    std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
+    int id, std::function<void(torch::Tensor, int64_t)> callback)
+    : input_tensors(std::move(inputs)), input_types(std::move(types)),
+      job_id(id), on_complete(std::move(callback)),
+      start_time(std::chrono::high_resolution_clock::now())
+{
+}
+
+std::shared_ptr<InferenceJob>
+InferenceJob::make_shutdown_job()
+{
+  auto job = std::make_shared<InferenceJob>();
+  job->is_shutdown_signal_ = true;
+  return job;
+}
+
+bool
+InferenceJob::is_shutdown() const
+{
+  return is_shutdown_signal_;
+}
 void
 client_worker(
     InferenceQueue& queue, const ProgramOptions& opts,

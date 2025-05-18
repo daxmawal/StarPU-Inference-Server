@@ -22,10 +22,7 @@ class InferenceTask {
  public:
   InferenceTask(
       StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
-      torch::jit::script::Module& module, const ProgramOptions& opts)
-      : starpu_(starpu), job_(std::move(job)), module_(module), opts_(opts)
-  {
-  }
+      torch::jit::script::Module& module, const ProgramOptions& opts);
 
   static void cleanup(InferenceCallbackContext* ctx);
   static void on_output_ready_and_cleanup(void* arg);

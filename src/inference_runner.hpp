@@ -15,21 +15,11 @@ class InferenceJob {
 
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-      int id, std::function<void(torch::Tensor, int64_t)> callback = nullptr)
-      : input_tensors(std::move(inputs)), input_types(std::move(types)),
-        job_id(id), on_complete(std::move(callback)),
-        start_time(std::chrono::high_resolution_clock::now())
-  {
-  }
+      int id, std::function<void(torch::Tensor, int64_t)> callback = nullptr);
 
-  static std::shared_ptr<InferenceJob> make_shutdown_job()
-  {
-    auto job = std::make_shared<InferenceJob>();
-    job->is_shutdown_signal_ = true;
-    return job;
-  }
+  static std::shared_ptr<InferenceJob> make_shutdown_job();
 
-  bool is_shutdown() const { return is_shutdown_signal_; }
+  bool is_shutdown() const;
 
   std::vector<torch::Tensor> input_tensors;
   std::vector<at::ScalarType> input_types;
