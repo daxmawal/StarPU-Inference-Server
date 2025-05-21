@@ -2,7 +2,7 @@
 
 std::vector<torch::Tensor>
 TensorBuilder::from_starpu_buffers(
-    const InferenceParams* params, void* buffers[])
+    const InferenceParams* params, void* buffers[], torch::Device device)
 {
   if (params->num_inputs > InferLimits::MaxInputs)
     throw std::runtime_error("[ERROR] Too many input tensors");
@@ -18,7 +18,8 @@ TensorBuilder::from_starpu_buffers(
 
     std::vector<int64_t> shape(
         params->dims[i].begin(), params->dims[i].begin() + params->num_dims[i]);
-    inputs.emplace_back(from_raw_ptr(raw_ptr, params->input_types[i], shape));
+    inputs.emplace_back(
+        from_raw_ptr(raw_ptr, params->input_types[i], shape, device));
   }
 
   return inputs;
@@ -41,20 +42,23 @@ TensorBuilder::copy_output_to_buffer(
 
 torch::Tensor
 TensorBuilder::from_raw_ptr(
-    void* ptr, at::ScalarType type, const std::vector<int64_t>& shape)
+    void* ptr, at::ScalarType type, const std::vector<int64_t>& shape,
+    torch::Device device)
 {
+  auto options = torch::TensorOptions().dtype(type).device(device);
+
   switch (type) {
     case at::kFloat:
-      return torch::from_blob(reinterpret_cast<float*>(ptr), shape, at::kFloat)
+      return torch::from_blob(reinterpret_cast<float*>(ptr), shape, options)
           .contiguous();
     case at::kInt:
-      return torch::from_blob(reinterpret_cast<int32_t*>(ptr), shape, at::kInt)
+      return torch::from_blob(reinterpret_cast<int32_t*>(ptr), shape, options)
           .contiguous();
     case at::kLong:
-      return torch::from_blob(reinterpret_cast<int64_t*>(ptr), shape, at::kLong)
+      return torch::from_blob(reinterpret_cast<int64_t*>(ptr), shape, options)
           .contiguous();
     case at::kBool:
-      return torch::from_blob(reinterpret_cast<bool*>(ptr), shape, at::kBool)
+      return torch::from_blob(reinterpret_cast<bool*>(ptr), shape, options)
           .contiguous();
     default:
       throw std::runtime_error("[ERROR] Unsupported input type");

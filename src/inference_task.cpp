@@ -2,8 +2,10 @@
 
 InferenceTask::InferenceTask(
     StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
-    torch::jit::script::Module& module, const ProgramOptions& opts)
-    : starpu_(starpu), job_(std::move(job)), module_(module), opts_(opts)
+    torch::jit::script::Module& modele_cpu,
+    torch::jit::script::Module& modele_gpu, const ProgramOptions& opts)
+    : starpu_(starpu), job_(std::move(job)), modele_cpu_(modele_cpu),
+      modele_gpu_(modele_gpu), opts_(opts)
 {
 }
 
@@ -27,9 +29,12 @@ void
 InferenceTask::on_output_ready_and_cleanup(void* arg)
 {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
+  float* output_ptr =
+      static_cast<float*>(starpu_data_get_user_data(ctx->output_handle));
+  starpu_data_release(ctx->output_handle);
 
   auto end_time = std::chrono::high_resolution_clock::now();
-  auto latency_us = std::chrono::duration_cast<std::chrono::microseconds>(
+  auto latency_us = std::chrono::duration_cast<std::chrono::milliseconds>(
                         end_time - ctx->job->start_time)
                         .count();
 
@@ -50,10 +55,12 @@ InferenceTask::create_inference_params()
   }
 
   auto inference_params = std::make_shared<InferenceParams>();
-  inference_params->module = &module_;
+  inference_params->modele_cpu = &modele_cpu_;
+  inference_params->modele_gpu = &modele_gpu_;
   inference_params->num_inputs = job_->input_tensors.size();
   inference_params->num_outputs = 1;
   inference_params->output_size = job_->output_tensor.numel();
+  inference_params->job_id = job_->job_id;
 
   auto offset = static_cast<std::ptrdiff_t>(inference_params->num_inputs);
   std::copy(
@@ -112,7 +119,9 @@ InferenceTask::register_input_handles(
 starpu_data_handle_t
 InferenceTask::register_output_handle(const torch::Tensor& output_tensor)
 {
-  return safe_register_tensor_vector(output_tensor, "output");
+  auto output_handle = safe_register_tensor_vector(output_tensor, "output");
+  starpu_data_set_user_data(output_handle, output_tensor.data_ptr());
+  return output_handle;
 }
 
 void

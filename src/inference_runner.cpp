@@ -7,6 +7,7 @@
 #include <iostream>
 #include <mutex>
 #include <queue>
+#include <random>
 #include <thread>
 #include <vector>
 
@@ -62,33 +63,50 @@ InferenceJob::is_shutdown() const
 {
   return is_shutdown_signal_;
 }
+
 void
 client_worker(
     InferenceQueue& queue, const ProgramOptions& opts,
     const torch::Tensor& output_ref, int iterations)
 {
+  std::vector<std::vector<torch::Tensor>> pregen_inputs;
+  for (int i = 0; i < 10; ++i) {
+    pregen_inputs.push_back(
+        generate_random_inputs(opts.input_shapes, opts.input_types));
+  }
+
+  std::mt19937 rng(std::random_device{}());
+  std::uniform_int_distribution<> dist(0, 9);
+
   for (int i = 0; i < iterations; ++i) {
     auto job = std::make_shared<InferenceJob>();
-    job->input_tensors =
-        generate_random_inputs(opts.input_shapes, opts.input_types);
-    for (size_t j = 0; j < job->input_tensors.size(); ++j) {
-      job->input_types.emplace_back(job->input_tensors[j].scalar_type());
+
+    const auto& chosen_inputs = pregen_inputs[dist(rng)];
+    job->input_tensors = chosen_inputs;
+
+    job->input_types.clear();
+    for (const auto& t : job->input_tensors) {
+      job->input_types.emplace_back(t.scalar_type());
     }
+
     job->output_tensor = torch::empty_like(output_ref);
     job->job_id = i;
     job->start_time = std::chrono::high_resolution_clock::now();
     queue.push(job);
+
     std::this_thread::sleep_for(std::chrono::milliseconds(opts.delay_ms));
   }
+
   queue.shutdown();
 }
 
 void
 server_worker(
-    InferenceQueue& queue, torch::jit::script::Module& module,
-    StarPUSetup& starpu, const ProgramOptions& opts,
-    std::vector<InferenceResult>& results, std::mutex& results_mutex,
-    std::atomic<int>& completed_jobs, std::condition_variable& all_done_cv)
+    InferenceQueue& queue, torch::jit::script::Module& model_cpu,
+    torch::jit::script::Module& model_gpu, StarPUSetup& starpu,
+    const ProgramOptions& opts, std::vector<InferenceResult>& results,
+    std::mutex& results_mutex, std::atomic<int>& completed_jobs,
+    std::condition_variable& all_done_cv)
 {
   while (true) {
     std::shared_ptr<InferenceJob> job;
@@ -117,7 +135,7 @@ server_worker(
     };
 
     try {
-      InferenceTask inferenceTask(starpu, job, module, opts);
+      InferenceTask inferenceTask(starpu, job, model_cpu, model_gpu, opts);
       inferenceTask.submit();
     }
     catch (const InferenceEngineException& e) {
@@ -133,19 +151,25 @@ server_worker(
   }
 }
 
-std::pair<torch::jit::script::Module, torch::Tensor>
+std::tuple<
+    torch::jit::script::Module, torch::jit::script::Module, torch::Tensor>
 load_model_and_reference_output(const ProgramOptions& opts)
 {
-  torch::jit::script::Module module;
+  torch::jit::script::Module model_cpu;
+  torch::jit::script::Module model_gpu;
   torch::Tensor output_ref;
 
   try {
-    module = torch::jit::load(opts.model_path);
+    model_cpu = torch::jit::load(opts.model_path);
+    model_gpu = model_cpu.clone();
+
+    torch::Device device(torch::kCUDA, /*opts.device_id*/ 0);
+    model_gpu.to(device);
 
     auto inputs = generate_random_inputs(opts.input_shapes, opts.input_types);
     std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
 
-    output_ref = module.forward(input_ivalues).toTensor();
+    output_ref = model_cpu.forward(input_ivalues).toTensor();
   }
   catch (const c10::Error& e) {
     std::cerr << "[Error] Failed to load model or run reference inference: "
@@ -153,17 +177,19 @@ load_model_and_reference_output(const ProgramOptions& opts)
     throw;
   }
 
-  return {module, output_ref};
+  return {model_cpu, model_gpu, output_ref};
 }
 
 void
 run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
 {
-  torch::jit::script::Module module;
+  torch::jit::script::Module model_cpu;
+  torch::jit::script::Module model_gpu;
   torch::Tensor output_ref;
 
   try {
-    std::tie(module, output_ref) = load_model_and_reference_output(opts);
+    std::tie(model_cpu, model_gpu, output_ref) =
+        load_model_and_reference_output(opts);
   }
   catch (...) {
     return;
@@ -180,8 +206,8 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
 
   std::thread server([&]() {
     server_worker(
-        queue, module, starpu, opts, results, results_mutex, completed_jobs,
-        all_done_cv);
+        queue, model_cpu, model_gpu, starpu, opts, results, results_mutex,
+        completed_jobs, all_done_cv);
   });
 
   std::thread client(
@@ -203,8 +229,8 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
       std::cerr << "[Client] Job " << r.job_id << " failed.\n";
     } else {
       std::cout << "[Client] Job " << r.job_id
-                << " done. Latency = " << r.latency_us << " µs\n";
-      validate_inference_result(r, module);
+                << " done. Latency = " << r.latency_us << " ms\n";
+      validate_inference_result(r, model_cpu);
     }
   }
 }

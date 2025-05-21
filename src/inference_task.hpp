@@ -22,7 +22,8 @@ class InferenceTask {
  public:
   InferenceTask(
       StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
-      torch::jit::script::Module& module, const ProgramOptions& opts);
+      torch::jit::script::Module& modele_cpu,
+      torch::jit::script::Module& modele_gpu, const ProgramOptions& opts);
 
   static void cleanup(InferenceCallbackContext* ctx);
   static void on_output_ready_and_cleanup(void* arg);
@@ -43,6 +44,7 @@ class InferenceTask {
  private:
   StarPUSetup& starpu_;
   std::shared_ptr<InferenceJob> job_;
-  torch::jit::script::Module& module_;
+  torch::jit::script::Module& modele_cpu_;
+  torch::jit::script::Module& modele_gpu_;
   ProgramOptions opts_;
 };
