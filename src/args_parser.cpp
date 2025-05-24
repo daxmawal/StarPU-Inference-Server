@@ -21,6 +21,7 @@ display_help(const char* prog_name)
          "async)\n"
       << "  --delay [ms]            Delay in milliseconds between inference "
          "jobs (default: 0)\n"
+      << "  --no_cpu                Disable CPU utilisation by the scheduler\n"
       << "  --help                  Show this help message\n";
 }
 
@@ -171,6 +172,25 @@ parse_arguments(int argc, char* argv[])
       }
       catch (const std::exception& e) {
         std::cerr << "Invalid value for delay: " << e.what() << "\n";
+        opts.valid = false;
+        return opts;
+      }
+    } else if (arg == "--no_cpu") {
+      opts.use_cpu = false;
+    } else if (arg == "--device-ids" && i + 1 < argc) {
+      try {
+        opts.use_cuda = true;
+        std::stringstream ss(argv[++i]);
+        std::string id_str;
+        while (std::getline(ss, id_str, ',')) {
+          opts.device_ids.push_back(std::stoi(id_str));
+        }
+        if (opts.device_ids.empty()) {
+          throw std::invalid_argument("No device IDs provided.");
+        }
+      }
+      catch (const std::exception& e) {
+        std::cerr << "Invalid device IDs: " << e.what() << "\n";
         opts.valid = false;
         return opts;
       }

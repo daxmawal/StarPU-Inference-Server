@@ -1,3 +1,5 @@
+#include <torch/torch.h>
+
 #include "args_parser.hpp"
 #include "exceptions.hpp"
 #include "inference_runner.hpp"
@@ -15,11 +17,12 @@ main(int argc, char* argv[])
     return 1;
   }
 
+  std::cout << "LibTorch version: " << TORCH_VERSION << std::endl;
   std::cout << "Scheduler  : " << opts.scheduler << "\n";
   std::cout << "Iterations : " << opts.iterations << "\n";
 
   try {
-    StarPUSetup starpu(opts.scheduler.c_str());
+    StarPUSetup starpu(opts);
     run_inference_loop(opts, starpu);
   }
   catch (const InferenceEngineException& e) {

@@ -34,12 +34,15 @@ InferenceTask::on_output_ready_and_cleanup(void* arg)
   starpu_data_release(ctx->output_handle);
 
   auto end_time = std::chrono::high_resolution_clock::now();
-  auto latency_us = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        end_time - ctx->job->start_time)
-                        .count();
+  auto latency_ms =
+      std::chrono::duration<double, std::milli>(end_time - ctx->job->start_time)
+          .count();
+
+  ctx->job->timing_info.callback_end_time =
+      std::chrono::high_resolution_clock::now();
 
   if (ctx->job->on_complete) {
-    ctx->job->on_complete(ctx->job->output_tensor, latency_us);
+    ctx->job->on_complete(ctx->job->output_tensor, latency_ms);
   }
 
   cleanup(ctx);
@@ -61,6 +64,12 @@ InferenceTask::create_inference_params()
   inference_params->num_outputs = 1;
   inference_params->output_size = job_->output_tensor.numel();
   inference_params->job_id = job_->job_id;
+  inference_params->executed_on = &job_->executed_on;
+  inference_params->codelet_start_time =
+      &(job_->timing_info.codelet_start_time);
+  inference_params->codelet_end_time = &(job_->timing_info.codelet_end_time);
+  inference_params->inference_start_time =
+      &(job_->timing_info.inference_start_time);
 
   auto offset = static_cast<std::ptrdiff_t>(inference_params->num_inputs);
   std::copy(
@@ -152,6 +161,8 @@ InferenceTask::starpu_output_callback(void* arg)
 {
   try {
     auto* ctx = static_cast<InferenceCallbackContext*>(arg);
+    ctx->job->timing_info.callback_start_time =
+        std::chrono::high_resolution_clock::now();
     starpu_data_acquire_cb(
         ctx->output_handle, STARPU_R,
         [](void* cb_arg) {
@@ -236,6 +247,8 @@ InferenceTask::submit()
 
   struct starpu_task* task = create_task(input_handles, output_handle, ctx);
 
+  job_->timing_info.before_starpu_submitted_time =
+      std::chrono::high_resolution_clock::now();
   int ret = starpu_task_submit(task);
   if (ret != 0) {
     cleanup(ctx);

@@ -3,6 +3,8 @@
 
 #include <array>
 
+#include "device_type.hpp"
+
 namespace InferLimits {
 constexpr size_t MaxInputs = 16;
 constexpr size_t MaxDims = 8;
@@ -15,6 +17,10 @@ struct InferenceParams {
   size_t num_outputs = 0;
   int64_t output_size = 0;
   int job_id = 0;
+  DeviceType* executed_on = nullptr;
+  std::chrono::high_resolution_clock::time_point* codelet_start_time;
+  std::chrono::high_resolution_clock::time_point* codelet_end_time;
+  std::chrono::high_resolution_clock::time_point* inference_start_time;
 
   std::array<std::array<int64_t, InferLimits::MaxDims>, InferLimits::MaxInputs>
       dims{};

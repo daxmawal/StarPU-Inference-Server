@@ -6,6 +6,7 @@
 #include <iostream>
 #include <vector>
 
+#include "args_parser.hpp"
 #include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "tensor_builder.hpp"
@@ -24,7 +25,7 @@ class InferenceCodelet {
 
 class StarPUSetup {
  public:
-  explicit StarPUSetup(const char* sched_policy);
+  explicit StarPUSetup(const ProgramOptions& opts);
   ~StarPUSetup();
 
   struct starpu_codelet* codelet();

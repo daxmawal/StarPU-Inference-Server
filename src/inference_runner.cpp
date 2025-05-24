@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
 #include <queue>
@@ -92,6 +93,7 @@ client_worker(
     job->output_tensor = torch::empty_like(output_ref);
     job->job_id = i;
     job->start_time = std::chrono::high_resolution_clock::now();
+    job->timing_info.enqueued_time = std::chrono::high_resolution_clock::now();
     queue.push(job);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(opts.delay_ms));
@@ -115,12 +117,15 @@ server_worker(
     if (job->is_shutdown())
       break;
 
-    job->on_complete = [id = job->job_id, inputs = job->input_tensors, &results,
-                        &results_mutex, &completed_jobs, &all_done_cv](
-                           torch::Tensor result, int64_t latency_us) {
+    job->on_complete = [id = job->job_id, inputs = job->input_tensors,
+                        &executed_on = job->executed_on,
+                        &timing_info = job->timing_info, &results,
+                        &results_mutex, &completed_jobs,
+                        &all_done_cv](torch::Tensor result, double latency_ms) {
       {
         std::lock_guard<std::mutex> lock(results_mutex);
-        results.push_back({id, inputs, result, latency_us});
+        results.push_back(
+            {id, inputs, result, latency_ms, executed_on, timing_info});
       }
 
       completed_jobs.fetch_add(1);
@@ -135,6 +140,8 @@ server_worker(
     };
 
     try {
+      job->timing_info.dequeued_time =
+          std::chrono::high_resolution_clock::now();
       InferenceTask inferenceTask(starpu, job, model_cpu, model_gpu, opts);
       inferenceTask.submit();
     }
@@ -228,8 +235,31 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
     if (!r.result.defined()) {
       std::cerr << "[Client] Job " << r.job_id << " failed.\n";
     } else {
+      auto& t = r.timing_info;
+      using duration_f = std::chrono::duration<double, std::milli>;
+      auto queue_duration = duration_f(t.dequeued_time - t.enqueued_time);
+      auto submit_duration =
+          duration_f(t.before_starpu_submitted_time - t.dequeued_time);
+      auto scheduling_duration =
+          duration_f(t.codelet_start_time - t.before_starpu_submitted_time);
+      auto codelet_duration =
+          duration_f(t.codelet_end_time - t.codelet_start_time);
+      auto inference_duration =
+          duration_f(t.callback_start_time - t.inference_start_time);
+      auto callback_duration =
+          duration_f(t.callback_end_time - t.callback_start_time);
+
+      std::cout << std::fixed << std::setprecision(3);
+
       std::cout << "[Client] Job " << r.job_id
-                << " done. Latency = " << r.latency_us << " ms\n";
+                << " done. Latency = " << r.latency_ms << " ms | "
+                << "Queue = " << queue_duration.count() << " ms, "
+                << "Submit = " << submit_duration.count() << " ms, "
+                << "Scheduling = " << scheduling_duration.count() << " ms, "
+                << "Codelet = " << codelet_duration.count() << " ms, "
+                << "Inference = " << inference_duration.count() << " ms, "
+                << "Callback = " << callback_duration.count() << " ms\n";
+
       validate_inference_result(r, model_cpu);
     }
   }
