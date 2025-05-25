@@ -29,7 +29,7 @@ validate_inference_result(
   torch::Tensor ref = module.forward(input_ivalues).toTensor();
   torch::Tensor result_on_device = r.result.to(device);
 
-  bool is_valid =
+  const bool is_valid =
       torch::allclose(ref, result_on_device, /*rtol=*/1e-3, /*atol=*/1e-5);
 
   auto device_str = [](DeviceType dev) {

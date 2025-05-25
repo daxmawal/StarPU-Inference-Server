@@ -8,7 +8,7 @@
 int
 main(int argc, char* argv[])
 {
-  ProgramOptions opts = parse_arguments(argc, argv);
+  const ProgramOptions opts = parse_arguments(argc, argv);
   if (opts.show_help) {
     display_help("Inference Engine");
     return 0;

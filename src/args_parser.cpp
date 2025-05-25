@@ -1,7 +1,12 @@
 #include "args_parser.hpp"
 
+#include <functional>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 void
 display_help(const char* prog_name)
@@ -21,7 +26,9 @@ display_help(const char* prog_name)
          "async)\n"
       << "  --delay [ms]            Delay in milliseconds between inference "
          "jobs (default: 0)\n"
-      << "  --no_cpu                Disable CPU utilisation by the scheduler\n"
+      << "  --no_cpu                Disable CPU utilisation by the scheduler "
+      << "  --device-ids            Cuda device id, where to perform "
+         "inference\n"
       << "  --help                  Show this help message\n";
 }
 
@@ -36,8 +43,9 @@ parse_shape_string(const std::string& shape_str)
     try {
       shape.push_back(std::stoll(item));
     }
-    catch (...) {
-      throw std::invalid_argument("Shape contains non-integer values.");
+    catch (const std::exception& e) {
+      throw std::invalid_argument(
+          std::string("Shape contains non-integer values: ") + e.what());
     }
   }
 
@@ -112,91 +120,125 @@ parse_types_string(const std::string& types_str)
   return types;
 }
 
+template <typename Func>
+bool
+try_parse(
+    const std::string& argname, const char* value, std::ostream& err,
+    Func&& func)
+{
+  try {
+    func(value);
+    return true;
+  }
+  catch (const std::exception& e) {
+    err << "Invalid value for " << argname << ": " << e.what() << "\n";
+    return false;
+  }
+}
+
+
 ProgramOptions
 parse_arguments(int argc, char* argv[])
 {
   ProgramOptions opts;
 
+  std::unordered_map<std::string, std::function<bool(int&, char**)>> dispatch =
+      {{"--scheduler",
+        [&](int& i, char** args) {
+          if (i + 1 >= argc)
+            return false;
+          opts.scheduler = args[++i];
+          return true;
+        }},
+       {"--model",
+        [&](int& i, char** args) {
+          if (i + 1 >= argc)
+            return false;
+          opts.model_path = args[++i];
+          return true;
+        }},
+       {"--iterations",
+        [&](int& i, char** args) {
+          if (i + 1 >= argc)
+            return false;
+          return try_parse(
+              "iterations", args[++i], std::cerr, [&](const char* val) {
+                opts.iterations = std::stoi(val);
+                if (opts.iterations <= 0)
+                  throw std::invalid_argument("Iterations must be positive.");
+              });
+        }},
+       {"--shape",
+        [&](int& i, char** args) {
+          if (i + 1 >= argc)
+            return false;
+          return try_parse("shape", args[++i], std::cerr, [&](const char* val) {
+            opts.input_shapes = {parse_shape_string(val)};
+          });
+        }},
+       {"--shapes",
+        [&](int& i, char** args) {
+          if (i + 1 >= argc)
+            return false;
+          return try_parse(
+              "shapes", args[++i], std::cerr, [&](const char* val) {
+                opts.input_shapes = parse_shapes_string(val);
+              });
+        }},
+       {"--types",
+        [&](int& i, char** args) {
+          if (i + 1 >= argc)
+            return false;
+          return try_parse("types", args[++i], std::cerr, [&](const char* val) {
+            opts.input_types = parse_types_string(val);
+          });
+        }},
+       {"--delay",
+        [&](int& i, char** args) {
+          if (i + 1 >= argc)
+            return false;
+          return try_parse("delay", args[++i], std::cerr, [&](const char* val) {
+            opts.delay_ms = std::stoi(val);
+            if (opts.delay_ms < 0)
+              throw std::invalid_argument("Delay must be non-negative.");
+          });
+        }},
+       {"--device-ids", [&](int& i, char** args) {
+          if (i + 1 >= argc)
+            return false;
+          return try_parse(
+              "device-ids", args[++i], std::cerr, [&](const char* val) {
+                opts.use_cuda = true;
+                std::stringstream ss(val);
+                std::string id_str;
+                while (std::getline(ss, id_str, ',')) {
+                  int id = std::stoi(id_str);
+                  if (id < 0)
+                    throw std::invalid_argument(
+                        "Device ID must be non-negative.");
+                  opts.device_ids.push_back(static_cast<unsigned int>(id));
+                }
+                if (opts.device_ids.empty()) {
+                  throw std::invalid_argument("No device IDs provided.");
+                }
+              });
+        }}};
+
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
 
-    if (arg == "--scheduler" && i + 1 < argc) {
-      opts.scheduler = argv[++i];
-    } else if (arg == "--model" && i + 1 < argc) {
-      opts.model_path = argv[++i];
-    } else if (arg == "--sync") {
+    if (arg == "--sync") {
       opts.synchronous = true;
-    } else if (arg == "--iterations" && i + 1 < argc) {
-      try {
-        opts.iterations = std::stoi(argv[++i]);
-        if (opts.iterations <= 0)
-          throw std::invalid_argument("Iterations must be positive.");
-      }
-      catch (const std::exception& e) {
-        std::cerr << "Invalid value for iterations: " << e.what() << "\n";
-        opts.valid = false;
-        return opts;
-      }
-    } else if (arg == "--shape" && i + 1 < argc) {
-      try {
-        opts.input_shapes = {parse_shape_string(argv[++i])};
-      }
-      catch (const std::exception& e) {
-        std::cerr << "Invalid shape: " << e.what() << "\n";
-        opts.valid = false;
-        return opts;
-      }
-    } else if (arg == "--shapes" && i + 1 < argc) {
-      try {
-        opts.input_shapes = parse_shapes_string(argv[++i]);
-      }
-      catch (const std::exception& e) {
-        std::cerr << "Invalid shapes: " << e.what() << "\n";
-        opts.valid = false;
-        return opts;
-      }
-    } else if (arg == "--types" && i + 1 < argc) {
-      try {
-        opts.input_types = parse_types_string(argv[++i]);
-      }
-      catch (const std::exception& e) {
-        std::cerr << "Invalid types: " << e.what() << "\n";
-        opts.valid = false;
-        return opts;
-      }
-    } else if (arg == "--delay" && i + 1 < argc) {
-      try {
-        opts.delay_ms = std::stoi(argv[++i]);
-        if (opts.delay_ms < 0)
-          throw std::invalid_argument("Delay must be non-negative.");
-      }
-      catch (const std::exception& e) {
-        std::cerr << "Invalid value for delay: " << e.what() << "\n";
-        opts.valid = false;
-        return opts;
-      }
     } else if (arg == "--no_cpu") {
       opts.use_cpu = false;
-    } else if (arg == "--device-ids" && i + 1 < argc) {
-      try {
-        opts.use_cuda = true;
-        std::stringstream ss(argv[++i]);
-        std::string id_str;
-        while (std::getline(ss, id_str, ',')) {
-          opts.device_ids.push_back(std::stoi(id_str));
-        }
-        if (opts.device_ids.empty()) {
-          throw std::invalid_argument("No device IDs provided.");
-        }
-      }
-      catch (const std::exception& e) {
-        std::cerr << "Invalid device IDs: " << e.what() << "\n";
-        opts.valid = false;
-        return opts;
-      }
     } else if (arg == "--help") {
       opts.show_help = true;
       return opts;
+    } else if (auto it = dispatch.find(arg); it != dispatch.end()) {
+      if (!it->second(i, argv)) {
+        opts.valid = false;
+        return opts;
+      }
     } else {
       std::cerr << "Unknown argument: " << arg << "\n";
       opts.valid = false;

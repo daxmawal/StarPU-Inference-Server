@@ -81,8 +81,11 @@ client_worker(
 
   for (int i = 0; i < iterations; ++i) {
     auto job = std::make_shared<InferenceJob>();
-
-    const auto& chosen_inputs = pregen_inputs[dist(rng)];
+    auto idx = dist(rng);
+    TORCH_CHECK(
+        idx >= 0 && static_cast<size_t>(idx) < pregen_inputs.size(),
+        "Invalid index from RNG");
+    const auto& chosen_inputs = pregen_inputs[static_cast<size_t>(idx)];
     job->input_tensors = chosen_inputs;
 
     job->input_types.clear();
@@ -170,7 +173,7 @@ load_model_and_reference_output(const ProgramOptions& opts)
     model_cpu = torch::jit::load(opts.model_path);
     model_gpu = model_cpu.clone();
 
-    torch::Device device(torch::kCUDA, /*opts.device_id*/ 0);
+    const torch::Device device(torch::kCUDA, /*opts.device_id*/ 0);
     model_gpu.to(device);
 
     auto inputs = generate_random_inputs(opts.input_shapes, opts.input_types);
@@ -206,7 +209,9 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   std::vector<InferenceResult> results;
   std::mutex results_mutex;
 
-  results.reserve(opts.iterations);
+  if (opts.iterations > 0) {
+    results.reserve(static_cast<size_t>(opts.iterations));
+  }
   std::atomic<int> completed_jobs = 0;
   std::condition_variable all_done_cv;
   std::mutex all_done_mutex;

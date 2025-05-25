@@ -249,7 +249,7 @@ InferenceTask::submit()
 
   job_->timing_info.before_starpu_submitted_time =
       std::chrono::high_resolution_clock::now();
-  int ret = starpu_task_submit(task);
+  const int ret = starpu_task_submit(task);
   if (ret != 0) {
     cleanup(ctx);
     throw StarPUTaskSubmissionException(

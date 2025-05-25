@@ -81,10 +81,16 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
       throw std::runtime_error("[ERROR] TorchScript module is null");
     }
 
-    cudaStream_t stream = starpu_cuda_get_local_stream();
-    at::cuda::CUDAStream torch_stream =
-        at::cuda::getStreamFromExternal(stream, starpu_worker_get_id());
-    at::cuda::CUDAStreamGuard guard(torch_stream);
+    const cudaStream_t stream = starpu_cuda_get_local_stream();
+    const int worker_id = starpu_worker_get_id();
+    TORCH_CHECK(
+        worker_id <= std::numeric_limits<c10::DeviceIndex>::max(),
+        "Worker ID too large");
+    const at::cuda::CUDAStream torch_stream = at::cuda::getStreamFromExternal(
+        stream, static_cast<c10::DeviceIndex>(worker_id));
+
+
+    const at::cuda::CUDAStreamGuard guard(torch_stream);
 
     *params->inference_start_time = std::chrono::high_resolution_clock::now();
     at::Tensor output = params->modele_gpu->forward(ivalue_inputs).toTensor();

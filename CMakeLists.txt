@@ -1,8 +1,10 @@
 cmake_minimum_required(VERSION 3.12)
 project(inference_engine)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # C++ Standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # External Dependencies
@@ -11,12 +13,12 @@ find_package(Torch REQUIRED)
 
 # StarPU Configuration
 set(STARPU_DIR $ENV{STARPU_DIR})
-set(STARPU_INCLUDE_DIR "${STARPU_DIR}/include/starpu/1.4")
+set(STARPU_INCLUDE_DIR "${STARPU_DIR}/include")
 set(STARPU_LIBRARY "${STARPU_DIR}/lib/libstarpu-1.4.so")
 
 # Include Directories
 include_directories(
-    ${STARPU_INCLUDE_DIR}
+    ${STARPU_INCLUDE_DIR}/starpu/1.4
     src
 )
 
@@ -33,8 +35,8 @@ add_executable(inference_engine
 
 # Target Includes
 target_include_directories(inference_engine PRIVATE
+    ${STARPU_INCLUDE_DIR}/starpu/1.4
     src
-    ${STARPU_INCLUDE_DIR}
 )
 
 # Link Libraries
@@ -70,5 +72,5 @@ endif()
 
 # Messages for verification
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")
-message(STATUS "StarPU include directory: ${STARPU_INCLUDE_DIR}")
+message(STATUS "StarPU include directory: ${STARPU_INCLUDE_DIR}/starpu/1.4")
 message(STATUS "StarPU library: ${STARPU_LIBRARY}")
