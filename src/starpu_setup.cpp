@@ -29,7 +29,7 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
   if (params->executed_on) {
     *(params->executed_on) = DeviceType::CPU;
   }
-
+  *params->device_id = starpu_worker_get_id();
   try {
     auto inputs =
         TensorBuilder::from_starpu_buffers(params, buffers, torch::kCPU);
@@ -69,7 +69,7 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
   if (params->executed_on) {
     *(params->executed_on) = DeviceType::CUDA;
   }
-
+  *params->device_id = starpu_worker_get_id();
   try {
     auto inputs =
         TensorBuilder::from_starpu_buffers(params, buffers, torch::kCUDA);

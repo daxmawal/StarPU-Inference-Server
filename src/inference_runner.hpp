@@ -21,6 +21,7 @@ struct InferenceResult {
   double latency_ms;
   DeviceType executed_on = DeviceType::Unknown;
   TimingInfo timing_info;
+  int device_id;
 };
 
 class InferenceJob {
@@ -42,6 +43,7 @@ class InferenceJob {
   std::chrono::high_resolution_clock::time_point start_time;
   torch::Tensor output_tensor;
   DeviceType executed_on = DeviceType::Unknown;
+  int device_id = -1;
   TimingInfo timing_info;
 
  private:

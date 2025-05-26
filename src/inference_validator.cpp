@@ -50,7 +50,8 @@ validate_inference_result(
     std::cerr << "  Obtained : " << r.result.flatten().slice(0, 0, 10) << "\n";
   } else {
     std::cout << "[Validator] Job " << r.job_id << " passed on "
-              << device_str(r.executed_on) << "\n";
+              << device_str(r.executed_on) << " on device id " << r.device_id
+              << "\n";
   }
 
   return is_valid;

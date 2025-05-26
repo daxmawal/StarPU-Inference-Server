@@ -70,6 +70,7 @@ InferenceTask::create_inference_params()
   inference_params->output_size = job_->output_tensor.numel();
   inference_params->job_id = job_->job_id;
   inference_params->executed_on = &job_->executed_on;
+  inference_params->device_id = &job_->device_id;
   inference_params->codelet_start_time =
       &(job_->timing_info.codelet_start_time);
   inference_params->codelet_end_time = &(job_->timing_info.codelet_end_time);

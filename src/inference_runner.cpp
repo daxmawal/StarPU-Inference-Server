@@ -110,20 +110,21 @@ server_worker(
     if (job->is_shutdown())
       break;
 
-    job->on_complete = [id = job->job_id, inputs = job->input_tensors,
-                        &executed_on = job->executed_on,
-                        &timing_info = job->timing_info, &results,
-                        &results_mutex, &completed_jobs,
-                        &all_done_cv](torch::Tensor result, double latency_ms) {
-      {
-        std::lock_guard<std::mutex> lock(results_mutex);
-        results.push_back(
-            {id, inputs, result, latency_ms, executed_on, timing_info});
-      }
+    job->on_complete =
+        [id = job->job_id, inputs = job->input_tensors,
+         &executed_on = job->executed_on, &timing_info = job->timing_info,
+         &device_id = job->device_id, &results, &results_mutex, &completed_jobs,
+         &all_done_cv](torch::Tensor result, double latency_ms) {
+          {
+            std::lock_guard<std::mutex> lock(results_mutex);
+            results.push_back(
+                {id, inputs, result, latency_ms, executed_on, timing_info,
+                 device_id});
+          }
 
-      completed_jobs.fetch_add(1);
-      all_done_cv.notify_one();
-    };
+          completed_jobs.fetch_add(1);
+          all_done_cv.notify_one();
+        };
 
     auto fail_job = [&](const std::string& error_msg) {
       std::cerr << error_msg << std::endl;
