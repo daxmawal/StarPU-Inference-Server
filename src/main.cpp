@@ -1,9 +1,7 @@
 #include <torch/torch.h>
 
-#include "args_parser.hpp"
 #include "exceptions.hpp"
 #include "inference_runner.hpp"
-#include "starpu_setup.hpp"
 
 int
 main(int argc, char* argv[])

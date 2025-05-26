@@ -2,7 +2,6 @@
 
 #include <torch/torch.h>
 
-#include <stdexcept>
 #include <vector>
 
 inline std::vector<torch::Tensor>

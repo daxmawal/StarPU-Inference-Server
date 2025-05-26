@@ -1,10 +1,5 @@
 #pragma once
 #include <starpu.h>
-#include <torch/script.h>
-
-#include <cstring>
-#include <stdexcept>
-#include <vector>
 
 #include "inference_params.hpp"
 

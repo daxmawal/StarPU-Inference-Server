@@ -1,12 +1,7 @@
 #include "args_parser.hpp"
 
 #include <functional>
-#include <iostream>
-#include <sstream>
-#include <stdexcept>
-#include <string>
 #include <unordered_map>
-#include <vector>
 
 void
 display_help(const char* prog_name)

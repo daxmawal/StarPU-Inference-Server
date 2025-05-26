@@ -1,16 +1,6 @@
 #include "inference_runner.hpp"
 
-#include <torch/script.h>
-
-#include <atomic>
-#include <condition_variable>
-#include <iomanip>
-#include <iostream>
-#include <mutex>
-#include <queue>
 #include <random>
-#include <thread>
-#include <vector>
 
 #include "exceptions.hpp"
 #include "inference_task.hpp"

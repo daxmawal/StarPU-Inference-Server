@@ -1,6 +1,4 @@
 #pragma once
-#include <stdexcept>
-#include <string>
 
 class InferenceEngineException : public std::runtime_error {
  public:

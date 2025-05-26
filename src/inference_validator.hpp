@@ -1,7 +1,5 @@
 #pragma once
 
-#include <torch/torch.h>
-
 #include "inference_runner.hpp"
 
 bool validate_inference_result(

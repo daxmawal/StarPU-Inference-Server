@@ -1,5 +1,10 @@
 #include "inference_task.hpp"
 
+#include <chrono>
+
+#include "exceptions.hpp"
+#include "starpu_setup.hpp"
+
 InferenceTask::InferenceTask(
     StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module& modele_cpu,

@@ -1,14 +1,5 @@
 #pragma once
-#include <starpu.h>
-#include <torch/script.h>
-
-#include <cstring>
-#include <iostream>
-#include <vector>
-
 #include "args_parser.hpp"
-#include "exceptions.hpp"
-#include "inference_params.hpp"
 #include "tensor_builder.hpp"
 
 class InferenceCodelet {
