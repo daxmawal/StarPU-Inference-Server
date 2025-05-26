@@ -7,6 +7,7 @@
 #include "inference_task.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
+#include "server_worker.hpp"
 #include "warmup.hpp"
 
 constexpr int NUM_PREGENERATED_INPUTS = 10;
@@ -77,63 +78,6 @@ client_worker(
   queue.shutdown();
 }
 
-void
-server_worker(
-    InferenceQueue& queue, torch::jit::script::Module& model_cpu,
-    torch::jit::script::Module& model_gpu, StarPUSetup& starpu,
-    const ProgramOptions& opts, std::vector<InferenceResult>& results,
-    std::mutex& results_mutex, std::atomic<unsigned int>& completed_jobs,
-    std::condition_variable& all_done_cv)
-{
-  while (true) {
-    std::shared_ptr<InferenceJob> job;
-    queue.wait_and_pop(job);
-
-    if (job->is_shutdown())
-      break;
-
-    job->on_complete =
-        [id = job->job_id, inputs = job->input_tensors,
-         &executed_on = job->executed_on, &timing_info = job->timing_info,
-         &device_id = job->device_id, &results, &results_mutex, &completed_jobs,
-         &all_done_cv](torch::Tensor result, double latency_ms) {
-          {
-            std::lock_guard<std::mutex> lock(results_mutex);
-            results.push_back(
-                {id, inputs, result, latency_ms, executed_on, timing_info,
-                 device_id});
-          }
-
-          completed_jobs.fetch_add(1);
-          all_done_cv.notify_one();
-        };
-
-    auto fail_job = [&](const std::string& error_msg) {
-      std::cerr << error_msg << std::endl;
-      if (job->on_complete) {
-        job->on_complete(torch::Tensor(), -1);
-      }
-    };
-
-    try {
-      job->timing_info.dequeued_time =
-          std::chrono::high_resolution_clock::now();
-      InferenceTask inferenceTask(starpu, job, model_cpu, model_gpu, opts);
-      inferenceTask.submit();
-    }
-    catch (const InferenceEngineException& e) {
-      fail_job(
-          "[Inference Error] Job " + std::to_string(job->job_id) + ": " +
-          e.what());
-    }
-    catch (const std::exception& e) {
-      fail_job(
-          "[Unhandled Exception] Job " + std::to_string(job->job_id) + ": " +
-          e.what());
-    }
-  }
-}
-
 std::tuple<
     torch::jit::script::Module, torch::jit::script::Module, torch::Tensor>
 load_model_and_reference_output(const ProgramOptions& opts)
@@ -198,11 +142,11 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   std::condition_variable all_done_cv;
   std::mutex all_done_mutex;
 
-  std::thread server([&]() {
-    server_worker(
-        queue, model_cpu, model_gpu, starpu, opts, results, results_mutex,
-        completed_jobs, all_done_cv);
-  });
+  ServerWorker worker(
+      queue, model_cpu, model_gpu, starpu, opts, results, results_mutex,
+      completed_jobs, all_done_cv);
+
+  std::thread server(&ServerWorker::run, &worker);
 
   std::thread client(
       [&]() { client_worker(queue, opts, output_ref, opts.iterations); });

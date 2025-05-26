@@ -42,6 +42,7 @@ add_executable(inference_engine
     src/tensor_builder.cpp
     src/starpu_setup.cpp
     src/warmup.cpp
+    src/server_worker.cpp
 )
 
 if (ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
