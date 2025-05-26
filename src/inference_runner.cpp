@@ -2,39 +2,19 @@
 
 #include <random>
 
+#include "Inference_queue.hpp"
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
+#include "warmup.hpp"
 
-class InferenceQueue {
- public:
-  void push(const std::shared_ptr<InferenceJob>& job)
-  {
-    std::unique_lock<std::mutex> lock(mutex_);
-    queue_.push(job);
-    cv_.notify_one();
-  }
-
-  void wait_and_pop(std::shared_ptr<InferenceJob>& job)
-  {
-    std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [&] { return !queue_.empty(); });
-    job = queue_.front();
-    queue_.pop();
-  }
-
-  void shutdown() { push(InferenceJob::make_shutdown_job()); }
-
- private:
-  std::queue<std::shared_ptr<InferenceJob>> queue_;
-  std::mutex mutex_;
-  std::condition_variable cv_;
-};
+constexpr int NUM_PREGENERATED_INPUTS = 10;
+constexpr int NUM_WARMUP_ITERATIONS = 2;
 
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-    int id, std::function<void(torch::Tensor, int64_t)> callback)
+    unsigned int id, std::function<void(torch::Tensor, int64_t)> callback)
     : input_tensors(std::move(inputs)), input_types(std::move(types)),
       job_id(id), on_complete(std::move(callback)),
       start_time(std::chrono::high_resolution_clock::now())
@@ -58,18 +38,20 @@ InferenceJob::is_shutdown() const
 void
 client_worker(
     InferenceQueue& queue, const ProgramOptions& opts,
-    const torch::Tensor& output_ref, int iterations)
+    const torch::Tensor& output_ref, unsigned int iterations)
 {
   std::vector<std::vector<torch::Tensor>> pregen_inputs;
-  for (int i = 0; i < 10; ++i) {
+  pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
+
+  for (int i = 0; i < NUM_PREGENERATED_INPUTS; ++i) {
     pregen_inputs.push_back(
         generate_random_inputs(opts.input_shapes, opts.input_types));
   }
 
   std::mt19937 rng(std::random_device{}());
-  std::uniform_int_distribution<> dist(0, 9);
+  std::uniform_int_distribution<> dist(0, NUM_PREGENERATED_INPUTS - 1);
 
-  for (int i = 0; i < iterations; ++i) {
+  for (unsigned int i = 0; i < iterations; ++i) {
     auto job = std::make_shared<InferenceJob>();
     auto idx = dist(rng);
     TORCH_CHECK(
@@ -86,7 +68,7 @@ client_worker(
     job->output_tensor = torch::empty_like(output_ref);
     job->job_id = i;
     job->start_time = std::chrono::high_resolution_clock::now();
-    job->timing_info.enqueued_time = std::chrono::high_resolution_clock::now();
+    job->timing_info.enqueued_time = job->start_time;
     queue.push(job);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(opts.delay_ms));
@@ -100,7 +82,7 @@ server_worker(
     InferenceQueue& queue, torch::jit::script::Module& model_cpu,
     torch::jit::script::Module& model_gpu, StarPUSetup& starpu,
     const ProgramOptions& opts, std::vector<InferenceResult>& results,
-    std::mutex& results_mutex, std::atomic<int>& completed_jobs,
+    std::mutex& results_mutex, std::atomic<unsigned int>& completed_jobs,
     std::condition_variable& all_done_cv)
 {
   while (true) {
@@ -198,6 +180,13 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
     return;
   }
 
+  const unsigned int warmup_iterations = NUM_WARMUP_ITERATIONS;
+  std::cout << "[Info] Starting warmup with " << warmup_iterations
+            << " iterations per CUDA devices...\n";
+  run_warmup_phase(
+      opts, starpu, model_cpu, model_gpu, output_ref, warmup_iterations);
+  std::cout << "[Info] Warmup complete. Proceeding to real inference.\n";
+
   InferenceQueue queue;
   std::vector<InferenceResult> results;
   std::mutex results_mutex;
@@ -205,7 +194,7 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   if (opts.iterations > 0) {
     results.reserve(static_cast<size_t>(opts.iterations));
   }
-  std::atomic<int> completed_jobs = 0;
+  std::atomic<unsigned int> completed_jobs = 0;
   std::condition_variable all_done_cv;
   std::mutex all_done_mutex;
 

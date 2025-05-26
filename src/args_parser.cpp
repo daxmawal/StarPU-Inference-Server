@@ -158,9 +158,10 @@ parse_arguments(int argc, char* argv[])
             return false;
           return try_parse(
               "iterations", args[++i], std::cerr, [&](const char* val) {
-                opts.iterations = std::stoi(val);
-                if (opts.iterations <= 0)
+                int tmp = std::stoi(val);
+                if (tmp <= 0)
                   throw std::invalid_argument("Iterations must be positive.");
+                opts.iterations = static_cast<unsigned int>(tmp);
               });
         }},
        {"--shape",

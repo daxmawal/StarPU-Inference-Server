@@ -1,4 +1,6 @@
 #pragma once
+#include <optional>
+
 #include "args_parser.hpp"
 #include "inference_runner.hpp"
 
@@ -6,7 +8,7 @@ struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
   std::shared_ptr<InferenceParams> inference_params;
   ProgramOptions opts;
-  int id;
+  unsigned int id;
   std::vector<starpu_data_handle_t> input_handles;
   starpu_data_handle_t output_handle;
 };

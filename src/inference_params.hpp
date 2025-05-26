@@ -16,7 +16,7 @@ struct InferenceParams {
   size_t num_inputs = 0;
   size_t num_outputs = 0;
   int64_t output_size = 0;
-  int job_id = -1;
+  unsigned int job_id = 0;
   int* device_id;
   DeviceType* executed_on = nullptr;
   std::chrono::high_resolution_clock::time_point* codelet_start_time;

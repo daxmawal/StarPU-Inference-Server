@@ -232,6 +232,11 @@ InferenceTask::create_task(
   task->callback_func = InferenceTask::starpu_output_callback;
   task->callback_arg = ctx;
 
+  if (job_->fixed_worker_id.has_value()) {
+    task->execute_on_a_specific_worker = 1;
+    task->workerid = job_->fixed_worker_id.value();
+  }
+
   return task;
 }
 

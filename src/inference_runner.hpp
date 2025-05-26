@@ -15,7 +15,7 @@ struct TimingInfo {
 };
 
 struct InferenceResult {
-  int job_id;
+  unsigned int job_id;
   std::vector<torch::Tensor> inputs;
   torch::Tensor result;
   double latency_ms;
@@ -30,7 +30,8 @@ class InferenceJob {
 
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-      int id, std::function<void(torch::Tensor, int64_t)> callback = nullptr);
+      unsigned int id,
+      std::function<void(torch::Tensor, int64_t)> callback = nullptr);
 
   static std::shared_ptr<InferenceJob> make_shutdown_job();
 
@@ -38,19 +39,17 @@ class InferenceJob {
 
   std::vector<torch::Tensor> input_tensors;
   std::vector<at::ScalarType> input_types;
-  int job_id = -1;
+  unsigned int job_id = 0;
   std::function<void(torch::Tensor, double)> on_complete;
   std::chrono::high_resolution_clock::time_point start_time;
   torch::Tensor output_tensor;
   DeviceType executed_on = DeviceType::Unknown;
   int device_id = -1;
   TimingInfo timing_info;
+  std::optional<unsigned int> fixed_worker_id;
 
  private:
   bool is_shutdown_signal_ = false;
 };
 
 void run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu);
-
-bool validate_inference_result(
-    const InferenceResult& r, torch::jit::script::Module& module);

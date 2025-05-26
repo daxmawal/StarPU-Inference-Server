@@ -8,7 +8,7 @@
 struct ProgramOptions {
   std::string scheduler = "lws";
   std::string model_path;
-  int iterations = 1;
+  unsigned int iterations = 1;
   bool synchronous = false;
   int delay_ms = 0;
   bool show_help = false;
