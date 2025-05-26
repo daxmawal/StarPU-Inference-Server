@@ -29,7 +29,7 @@ void
 InferenceTask::on_output_ready_and_cleanup(void* arg)
 {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
-  float* output_ptr =
+  const float* output_ptr =
       static_cast<float*>(starpu_data_get_user_data(ctx->output_handle));
   starpu_data_release(ctx->output_handle);
 
@@ -182,8 +182,8 @@ InferenceTask::starpu_output_callback(void* arg)
 
 starpu_task*
 InferenceTask::create_task(
-    std::vector<starpu_data_handle_t> input_handles,
-    starpu_data_handle_t output_handle, InferenceCallbackContext* ctx)
+    const std::vector<starpu_data_handle_t>& input_handles,
+    const starpu_data_handle_t& output_handle, InferenceCallbackContext* ctx)
 {
   size_t num_inputs = input_handles.size();
   size_t num_outputs = 1;

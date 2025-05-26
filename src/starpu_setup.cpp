@@ -42,6 +42,7 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
       throw std::runtime_error("[ERROR] TorchScript module is null");
     }
 
+    *params->inference_start_time = std::chrono::high_resolution_clock::now();
     at::Tensor output = params->modele_cpu->forward(ivalue_inputs).toTensor();
     if (output.numel() != params->output_size) {
       throw std::runtime_error("[ERROR] Output size mismatch");

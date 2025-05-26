@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.12)
 project(inference_engine)
 
+option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
+option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # C++ Standard
@@ -22,6 +25,13 @@ include_directories(
     src
 )
 
+if (ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(STATUS "Code coverage enabled")
+    set(COVERAGE_FLAGS "-fprofile-arcs -ftest-coverage -O0 -g")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COVERAGE_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${COVERAGE_FLAGS}")
+endif()
+
 # Executable Definition
 add_executable(inference_engine
     src/main.cpp
@@ -32,6 +42,13 @@ add_executable(inference_engine
     src/tensor_builder.cpp
     src/starpu_setup.cpp
 )
+
+if (ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(STATUS "Sanitizers enabled")
+    set(SANITIZER_FLAGS -fsanitize=address,undefined -g)
+    target_compile_options(inference_engine PRIVATE ${SANITIZER_FLAGS})
+    target_link_options(inference_engine PRIVATE ${SANITIZER_FLAGS})
+endif()
 
 # Target Includes
 target_include_directories(inference_engine PRIVATE

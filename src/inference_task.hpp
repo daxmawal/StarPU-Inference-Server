@@ -29,16 +29,18 @@ class InferenceTask {
   static void on_output_ready_and_cleanup(void* arg);
   static void log_exception(const std::string& context);
   static void starpu_output_callback(void* arg);
-  std::vector<starpu_data_handle_t> register_input_handles(
-      const std::vector<torch::Tensor>& input_tensors);
-  starpu_data_handle_t register_output_handle(
-      const torch::Tensor& output_tensor);
-  starpu_task* create_task(
-      std::vector<starpu_data_handle_t> input_handles,
-      starpu_data_handle_t output_handle, InferenceCallbackContext* ctx);
-  std::shared_ptr<InferenceParams> create_inference_params();
-  starpu_data_handle_t safe_register_tensor_vector(
+
+  static starpu_data_handle_t safe_register_tensor_vector(
       const torch::Tensor& tensor, const std::string& label);
+  static std::vector<starpu_data_handle_t> register_input_handles(
+      const std::vector<torch::Tensor>& input_tensors);
+  static starpu_data_handle_t register_output_handle(
+      const torch::Tensor& output_tensor);
+
+  starpu_task* create_task(
+      const std::vector<starpu_data_handle_t>& input_handles,
+      const starpu_data_handle_t& output_handle, InferenceCallbackContext* ctx);
+  std::shared_ptr<InferenceParams> create_inference_params();
   void submit();
 
  private:

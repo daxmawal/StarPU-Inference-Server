@@ -37,7 +37,7 @@ class InferenceJob {
 
   std::vector<torch::Tensor> input_tensors;
   std::vector<at::ScalarType> input_types;
-  int job_id;
+  int job_id = -1;
   std::function<void(torch::Tensor, double)> on_complete;
   std::chrono::high_resolution_clock::time_point start_time;
   torch::Tensor output_tensor;

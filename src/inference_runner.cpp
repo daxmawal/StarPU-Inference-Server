@@ -171,10 +171,12 @@ load_model_and_reference_output(const ProgramOptions& opts)
 
   try {
     model_cpu = torch::jit::load(opts.model_path);
-    model_gpu = model_cpu.clone();
 
-    const torch::Device device(torch::kCUDA, /*opts.device_id*/ 0);
-    model_gpu.to(device);
+    if (opts.use_cuda) {
+      model_gpu = model_cpu.clone();
+      const torch::Device device(torch::kCUDA, 0);
+      model_gpu.to(device);
+    }
 
     auto inputs = generate_random_inputs(opts.input_shapes, opts.input_types);
     std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
@@ -234,7 +236,6 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   }
 
   server.join();
-  std::lock_guard<std::mutex> lock(results_mutex);
 
   for (const auto& r : results) {
     if (!r.result.defined()) {

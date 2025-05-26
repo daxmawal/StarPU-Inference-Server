@@ -22,9 +22,9 @@ validate_inference_result(
   module.to(device);
 
   std::vector<torch::IValue> input_ivalues;
-  for (const auto& input : r.inputs) {
-    input_ivalues.push_back(input.to(device));
-  }
+  std::transform(
+      r.inputs.begin(), r.inputs.end(), std::back_inserter(input_ivalues),
+      [&](const auto& t) { return t.to(device); });
 
   torch::Tensor ref = module.forward(input_ivalues).toTensor();
   torch::Tensor result_on_device = r.result.to(device);
