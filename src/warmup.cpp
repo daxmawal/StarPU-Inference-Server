@@ -53,9 +53,11 @@ client_worker_warmup(
       job->start_time = std::chrono::high_resolution_clock::now();
       job->timing_info.enqueued_time = job->start_time;
 
-      std::cout << "[Warmup] Job ID " << job_id << ", Iteration " << i + 1
-                << "/" << iterations_per_device << ", device ID " << device_id
-                << std::endl;
+      log_trace(
+          opts.verbosity, "[Warmup] Job ID " + std::to_string(job->job_id) +
+                              ", Iteration " + std::to_string(i + 1) + "/" +
+                              std::to_string(iterations_per_device) +
+                              ", device ID " + std::to_string(device_id));
 
 
       queue.push(job);

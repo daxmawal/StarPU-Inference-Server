@@ -8,12 +8,21 @@
 void
 ServerWorker::run()
 {
+  log_info(opts_.verbosity, "ServerWorker started.");
+
   while (true) {
     std::shared_ptr<InferenceJob> job;
     queue_.wait_and_pop(job);
 
-    if (job->is_shutdown())
+    if (job->is_shutdown()) {
+      log_info(
+          opts_.verbosity,
+          "Received shutdown signal. Exiting ServerWorker loop.");
       break;
+    }
+
+    log_trace(
+        opts_.verbosity, "Dequeued job ID: " + std::to_string(job->job_id));
 
     job->on_complete =
         [this, id = job->job_id, inputs = job->input_tensors,
@@ -26,12 +35,17 @@ ServerWorker::run()
                  device_id});
           }
 
+          log_stats(
+              opts_.verbosity, "Completed job ID: " + std::to_string(id) +
+                                   ", latency: " + std::to_string(latency_ms) +
+                                   " ms");
+
           completed_jobs_.fetch_add(1);
           all_done_cv_.notify_one();
         };
 
     auto fail_job = [&](const std::string& error_msg) {
-      std::cerr << error_msg << std::endl;
+      log_error(error_msg);
       if (job->on_complete) {
         job->on_complete(torch::Tensor(), -1);
       }
@@ -40,6 +54,10 @@ ServerWorker::run()
     try {
       job->timing_info.dequeued_time =
           std::chrono::high_resolution_clock::now();
+
+      log_debug(
+          opts_.verbosity, "Submitting job ID: " + std::to_string(job->job_id));
+
       InferenceTask inferenceTask(starpu_, job, model_cpu_, model_gpu_, opts_);
       inferenceTask.submit();
     }
@@ -54,4 +72,6 @@ ServerWorker::run()
           e.what());
     }
   }
+
+  log_info(opts_.verbosity, "ServerWorker stopped.");
 }

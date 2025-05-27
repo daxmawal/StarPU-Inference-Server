@@ -24,8 +24,11 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 {
   InferenceParams* params = static_cast<InferenceParams*>(cl_arg);
   *params->codelet_start_time = std::chrono::high_resolution_clock::now();
-  std::cout << "CPU, worker id, job id : " << starpu_worker_get_id() << " "
-            << params->job_id << std::endl;
+
+  log_trace(
+      params->verbosity,
+      "CPU, worker id, job id : " + std::to_string(starpu_worker_get_id()) +
+          " " + std::to_string(params->job_id));
   if (params->executed_on) {
     *(params->executed_on) = DeviceType::CPU;
   }
@@ -64,8 +67,11 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 {
   InferenceParams* params = static_cast<InferenceParams*>(cl_arg);
   *params->codelet_start_time = std::chrono::high_resolution_clock::now();
-  std::cout << "GPU, worker id, job id : " << starpu_worker_get_id() << " "
-            << params->job_id << std::endl;
+
+  log_trace(
+      params->verbosity,
+      "GPU, worker id, job id : " + std::to_string(starpu_worker_get_id()) +
+          " " + std::to_string(params->job_id));
   if (params->executed_on) {
     *(params->executed_on) = DeviceType::CUDA;
   }

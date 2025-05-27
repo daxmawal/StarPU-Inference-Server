@@ -36,6 +36,32 @@ InferenceJob::is_shutdown() const
   return is_shutdown_signal_;
 }
 
+
+std::string
+current_time_formatted(const std::chrono::high_resolution_clock::time_point& tp)
+{
+  using namespace std::chrono;
+
+  auto now_ms = time_point_cast<milliseconds>(tp);
+  auto value = now_ms.time_since_epoch();
+
+  auto h = duration_cast<std::chrono::hours>(value);
+  value -= h;
+  auto m = duration_cast<std::chrono::minutes>(value);
+  value -= m;
+  auto s = duration_cast<std::chrono::seconds>(value);
+  value -= s;
+  auto ms = duration_cast<std::chrono::milliseconds>(value);
+
+  std::ostringstream oss;
+  oss << std::setfill('0') << std::setw(2) << h.count() % 24 << ":"
+      << std::setfill('0') << std::setw(2) << m.count() << ":"
+      << std::setfill('0') << std::setw(2) << s.count() << "."
+      << std::setfill('0') << std::setw(3) << ms.count();
+
+  return oss.str();
+}
+
 void
 client_worker(
     InferenceQueue& queue, const ProgramOptions& opts,
@@ -70,6 +96,14 @@ client_worker(
     job->job_id = i;
     job->start_time = std::chrono::high_resolution_clock::now();
     job->timing_info.enqueued_time = job->start_time;
+
+    log_trace(
+        opts.verbosity,
+        "[Inference] Job ID " + std::to_string(job->job_id) + ", Iteration " +
+            std::to_string(i + 1) + "/" + std::to_string(iterations) +
+            ", Enqueued at " +
+            current_time_formatted(job->timing_info.enqueued_time));
+
     queue.push(job);
 
     std::this_thread::sleep_for(std::chrono::milliseconds(opts.delay_ms));
@@ -101,8 +135,9 @@ load_model_and_reference_output(const ProgramOptions& opts)
     output_ref = model_cpu.forward(input_ivalues).toTensor();
   }
   catch (const c10::Error& e) {
-    std::cerr << "[Error] Failed to load model or run reference inference: "
-              << e.what() << std::endl;
+    log_error(
+        std::string("Failed to load model or run reference inference: ") +
+        e.what());
     throw;
   }
 
@@ -125,11 +160,14 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   }
 
   const unsigned int warmup_iterations = NUM_WARMUP_ITERATIONS;
-  std::cout << "[Info] Starting warmup with " << warmup_iterations
-            << " iterations per CUDA devices...\n";
+
+  log_info(
+      opts.verbosity, "Starting warmup with " +
+                          std::to_string(warmup_iterations) +
+                          " iterations per CUDA device...");
   run_warmup_phase(
       opts, starpu, model_cpu, model_gpu, output_ref, warmup_iterations);
-  std::cout << "[Info] Warmup complete. Proceeding to real inference.\n";
+  log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 
   InferenceQueue queue;
   std::vector<InferenceResult> results;
@@ -163,7 +201,7 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
 
   for (const auto& r : results) {
     if (!r.result.defined()) {
-      std::cerr << "[Client] Job " << r.job_id << " failed.\n";
+      log_error("[Client] Job " + std::to_string(r.job_id) + " failed.");
     } else {
       auto& t = r.timing_info;
       using duration_f = std::chrono::duration<double, std::milli>;
@@ -179,18 +217,18 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
       auto callback_duration =
           duration_f(t.callback_end_time - t.callback_start_time);
 
-      std::cout << std::fixed << std::setprecision(3);
+      std::ostringstream oss;
+      oss << std::fixed << std::setprecision(3);
+      oss << "Job " << r.job_id << " done. Latency = " << r.latency_ms
+          << " ms | " << "Queue = " << queue_duration.count() << " ms, "
+          << "Submit = " << submit_duration.count() << " ms, "
+          << "Scheduling = " << scheduling_duration.count() << " ms, "
+          << "Codelet = " << codelet_duration.count() << " ms, "
+          << "Inference = " << inference_duration.count() << " ms, "
+          << "Callback = " << callback_duration.count() << " ms";
+      log_stats(opts.verbosity, oss.str());
 
-      std::cout << "[Client] Job " << r.job_id
-                << " done. Latency = " << r.latency_ms << " ms | "
-                << "Queue = " << queue_duration.count() << " ms, "
-                << "Submit = " << submit_duration.count() << " ms, "
-                << "Scheduling = " << scheduling_duration.count() << " ms, "
-                << "Codelet = " << codelet_duration.count() << " ms, "
-                << "Inference = " << inference_duration.count() << " ms, "
-                << "Callback = " << callback_duration.count() << " ms\n";
-
-      validate_inference_result(r, model_cpu);
+      validate_inference_result(r, model_cpu, opts.verbosity);
     }
   }
 }

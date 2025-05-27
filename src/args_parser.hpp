@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "logger.hpp"
+
 struct ProgramOptions {
   std::string scheduler = "lws";
   std::string model_path;
@@ -17,6 +19,7 @@ struct ProgramOptions {
   std::vector<unsigned int> device_ids;
   bool use_cuda = false;
 
+  VerbosityLevel verbosity = VerbosityLevel::Info;
   std::vector<std::vector<int64_t>> input_shapes;
   std::vector<at::ScalarType> input_types;
 };

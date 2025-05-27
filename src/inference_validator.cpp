@@ -4,7 +4,8 @@
 
 bool
 validate_inference_result(
-    const InferenceResult& r, torch::jit::script::Module& module)
+    const InferenceResult& r, torch::jit::script::Module& module,
+    const VerbosityLevel& verbosity)
 {
   torch::Device device(torch::kCPU);
   switch (r.executed_on) {
@@ -15,7 +16,8 @@ validate_inference_result(
       device = torch::Device(torch::kCPU);
       break;
     default:
-      std::cerr << "[Validator] Unknown device for job " << r.job_id << "\n";
+      log_error(
+          "[Validator] Unknown device for job " + std::to_string(r.job_id));
       return false;
   }
 
@@ -44,14 +46,16 @@ validate_inference_result(
   };
 
   if (!is_valid) {
-    std::cerr << "[Validator] Mismatch detected for job " << r.job_id << "!\n";
-    std::cerr << "  Executed on: " << device_str(r.executed_on) << "\n";
-    std::cerr << "  Reference: " << ref.flatten().slice(0, 0, 10) << "\n";
-    std::cerr << "  Obtained : " << r.result.flatten().slice(0, 0, 10) << "\n";
+    log_error(
+        "[Validator] Mismatch detected for job " + std::to_string(r.job_id));
+    log_error("  Executed on: " + std::string(device_str(r.executed_on)));
+    log_error("  Reference: " + ref.flatten().slice(0, 0, 10).toString());
+    log_error("  Obtained : " + r.result.flatten().slice(0, 0, 10).toString());
   } else {
-    std::cout << "[Validator] Job " << r.job_id << " passed on "
-              << device_str(r.executed_on) << " on device id " << r.device_id
-              << "\n";
+    log_info(
+        verbosity, "[Validator] Job " + std::to_string(r.job_id) +
+                       " passed on " + device_str(r.executed_on) +
+                       " on device id " + std::to_string(r.device_id));
   }
 
   return is_valid;

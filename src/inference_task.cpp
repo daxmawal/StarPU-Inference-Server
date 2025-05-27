@@ -89,6 +89,8 @@ InferenceTask::create_inference_params()
     std::copy_n(tensor.sizes().data(), dim, inference_params->dims[i].begin());
   }
 
+  inference_params->verbosity = opts_.verbosity;
+
   return inference_params;
 }
 
@@ -146,19 +148,16 @@ InferenceTask::log_exception(const std::string& context)
     throw;
   }
   catch (const InferenceExecutionException& e) {
-    std::cerr << "[ERROR] InferenceExecutionException in " << context << ": "
-              << e.what() << std::endl;
+    log_error("InferenceExecutionException in " + context + ": " + e.what());
   }
   catch (const StarPUTaskSubmissionException& e) {
-    std::cerr << "[ERROR] StarPU submission error in " << context << ": "
-              << e.what() << std::endl;
+    log_error("StarPU submission error in " + context + ": " + e.what());
   }
   catch (const std::exception& e) {
-    std::cerr << "[ERROR] std::exception in " << context << ": " << e.what()
-              << std::endl;
+    log_error("std::exception in " + context + ": " + e.what());
   }
   catch (...) {
-    std::cerr << "[ERROR] Unknown exception in " << context << "." << std::endl;
+    log_error("Unknown exception in " + context + ".");
   }
 }
 

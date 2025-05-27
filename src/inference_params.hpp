@@ -4,6 +4,7 @@
 #include <array>
 
 #include "device_type.hpp"
+#include "logger.hpp"
 
 namespace InferLimits {
 constexpr size_t MaxInputs = 16;
@@ -23,6 +24,7 @@ struct InferenceParams {
   std::chrono::high_resolution_clock::time_point* codelet_end_time;
   std::chrono::high_resolution_clock::time_point* inference_start_time;
 
+  VerbosityLevel verbosity;
   std::array<std::array<int64_t, InferLimits::MaxDims>, InferLimits::MaxInputs>
       dims{};
   std::array<int64_t, InferLimits::MaxInputs> num_dims{};
