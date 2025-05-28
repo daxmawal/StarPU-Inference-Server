@@ -12,56 +12,67 @@ enum class VerbosityLevel {
   Trace = 4
 };
 
+// =============================================================================
+// Utility: color and label mapping for verbosity levels
+// =============================================================================
+inline std::pair<const char*, const char*>
+verbosity_style(VerbosityLevel level)
+{
+  switch (level) {
+    case VerbosityLevel::Info:
+      return {"\033[1;32m", "[INFO] "};  // Green
+    case VerbosityLevel::Stats:
+      return {"\033[1;35m", "[STATS] "};  // Magenta
+    case VerbosityLevel::Debug:
+      return {"\033[1;34m", "[DEBUG] "};  // Blue
+    case VerbosityLevel::Trace:
+      return {"\033[1;90m", "[TRACE] "};  // Gray
+    default:
+      return {"", ""};
+  }
+}
+
+// =============================================================================
+// Verbosity-controlled logging
+// =============================================================================
 inline void
 log_verbose(
     VerbosityLevel level, VerbosityLevel current_level,
     const std::string& message)
 {
   if (static_cast<int>(current_level) >= static_cast<int>(level)) {
-    switch (level) {
-      case VerbosityLevel::Info:
-        std::cout << "\033[1;32m[INFO] ";
-        break;  // Green
-      case VerbosityLevel::Stats:
-        std::cout << "\033[1;35m[STATS] ";
-        break;  // Magenta
-      case VerbosityLevel::Debug:
-        std::cout << "\033[1;34m[DEBUG] ";
-        break;  // Blue
-      case VerbosityLevel::Trace:
-        std::cout << "\033[1;90m[TRACE] ";
-        break;  // Gray
-      default:
-        break;
-    }
-    std::cout << message << "\033[0m" << std::endl;
+    auto [color, label] = verbosity_style(level);
+    std::cout << color << label << message << "\033[0m" << std::endl;
   }
 }
 
+// =============================================================================
+// Shortcut wrappers
+// =============================================================================
 inline void
-log_info(VerbosityLevel current_level, const std::string& message)
+log_info(VerbosityLevel lvl, const std::string& msg)
 {
-  log_verbose(VerbosityLevel::Info, current_level, message);
+  log_verbose(VerbosityLevel::Info, lvl, msg);
+}
+inline void
+log_stats(VerbosityLevel lvl, const std::string& msg)
+{
+  log_verbose(VerbosityLevel::Stats, lvl, msg);
+}
+inline void
+log_debug(VerbosityLevel lvl, const std::string& msg)
+{
+  log_verbose(VerbosityLevel::Debug, lvl, msg);
+}
+inline void
+log_trace(VerbosityLevel lvl, const std::string& msg)
+{
+  log_verbose(VerbosityLevel::Trace, lvl, msg);
 }
 
-inline void
-log_stats(VerbosityLevel current_level, const std::string& message)
-{
-  log_verbose(VerbosityLevel::Stats, current_level, message);
-}
-
-inline void
-log_debug(VerbosityLevel current_level, const std::string& message)
-{
-  log_verbose(VerbosityLevel::Debug, current_level, message);
-}
-
-inline void
-log_trace(VerbosityLevel current_level, const std::string& message)
-{
-  log_verbose(VerbosityLevel::Trace, current_level, message);
-}
-
+// =============================================================================
+// Unconditional stderr logging
+// =============================================================================
 inline void
 log_warning(const std::string& message)
 {

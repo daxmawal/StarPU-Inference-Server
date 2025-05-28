@@ -5,6 +5,9 @@
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 
+// =============================================================================
+// Constructor
+// =============================================================================
 ServerWorker::ServerWorker(
     InferenceQueue& queue, torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu, StarPUSetup& starpu,
@@ -18,6 +21,9 @@ ServerWorker::ServerWorker(
 {
 }
 
+// =============================================================================
+// Main loop
+// =============================================================================
 void
 ServerWorker::run()
 {
@@ -37,15 +43,16 @@ ServerWorker::run()
     log_trace(
         opts_.verbosity, "Dequeued job ID: " + std::to_string(job->job_id));
 
+    // Completion callback for this job
     job->on_complete =
         [this, id = job->job_id, inputs = job->input_tensors,
          &executed_on = job->executed_on, &timing_info = job->timing_info,
          &device_id = job->device_id](torch::Tensor result, double latency_ms) {
           {
             std::lock_guard<std::mutex> lock(results_mutex_);
-            results_.push_back(
-                {id, inputs, result, latency_ms, executed_on, timing_info,
-                 device_id});
+            results_.emplace_back(InferenceResult{
+                id, inputs, result, latency_ms, executed_on, device_id,
+                timing_info});
           }
 
           log_stats(
@@ -57,13 +64,7 @@ ServerWorker::run()
           all_done_cv_.notify_one();
         };
 
-    auto fail_job = [&](const std::string& error_msg) {
-      log_error(error_msg);
-      if (job->on_complete) {
-        job->on_complete(torch::Tensor(), -1);
-      }
-    };
-
+    // Submission with error handling
     try {
       job->timing_info.dequeued_time =
           std::chrono::high_resolution_clock::now();
@@ -75,14 +76,18 @@ ServerWorker::run()
       inferenceTask.submit();
     }
     catch (const InferenceEngineException& e) {
-      fail_job(
+      log_error(
           "[Inference Error] Job " + std::to_string(job->job_id) + ": " +
           e.what());
+      if (job->on_complete)
+        job->on_complete(torch::Tensor(), -1);
     }
     catch (const std::exception& e) {
-      fail_job(
+      log_error(
           "[Unhandled Exception] Job " + std::to_string(job->job_id) + ": " +
           e.what());
+      if (job->on_complete)
+        job->on_complete(torch::Tensor(), -1);
     }
   }
 

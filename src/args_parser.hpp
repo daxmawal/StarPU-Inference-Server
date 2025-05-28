@@ -1,5 +1,4 @@
 #pragma once
-
 #include <ATen/core/ScalarType.h>
 
 #include <string>
@@ -7,23 +6,34 @@
 
 #include "logger.hpp"
 
+// =============================================================================
+// Struct representing all command-line options
+// =============================================================================
 struct ProgramOptions {
-  std::string scheduler = "lws";
-  std::string model_path;
-  unsigned int iterations = 1;
-  bool synchronous = false;
-  int delay_ms = 0;
-  bool show_help = false;
-  bool valid = true;
-  bool use_cpu = true;
-  std::vector<unsigned int> device_ids;
-  bool use_cuda = false;
+  // General configuration
+  std::string scheduler = "lws";  // Scheduling policy
+  std::string model_path;         // Path to ONNX or TorchScript model
+  unsigned int iterations = 1;    // Number of inference iterations
+  bool synchronous = false;       // Run synchronously or asynchronously
+  int delay_ms = 0;               // Artificial delay between inferences (ms)
+  bool show_help = false;         // Show help message and exit
+  bool valid = true;              // Was parsing successful
 
+  // Device configuration
+  bool use_cpu = true;                   // Use CPU for inference
+  bool use_cuda = false;                 // Use CUDA-enabled GPUs
+  std::vector<unsigned int> device_ids;  // GPU device IDs
+
+  // Logging
   VerbosityLevel verbosity = VerbosityLevel::Info;
-  std::vector<std::vector<int64_t>> input_shapes;
-  std::vector<at::ScalarType> input_types;
+
+  // Model input specifications
+  std::vector<std::vector<int64_t>> input_shapes;  // Expected input shapes
+  std::vector<at::ScalarType> input_types;  // Corresponding input data types
 };
 
+// =============================================================================
+// Helper functions to parse CLI arguments and shapes
+// =============================================================================
 void display_help(const char* prog_name);
-std::vector<int64_t> parse_shape_string(const std::string& shape_str);
 ProgramOptions parse_arguments(int argc, char* argv[]);

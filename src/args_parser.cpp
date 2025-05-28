@@ -1,8 +1,13 @@
 #include "args_parser.hpp"
 
 #include <functional>
+#include <iostream>
+#include <sstream>
 #include <unordered_map>
 
+// =============================================================================
+// Display help
+// =============================================================================
 void
 display_help(const char* prog_name)
 {
@@ -13,21 +18,19 @@ display_help(const char* prog_name)
       << "  --model [path]          Path to TorchScript model file (.pt)\n"
       << "  --iterations [num]      Number of iterations (default: 1)\n"
       << "  --shape 1x3x224x224     Shape of a single input tensor\n"
-      << "  --shapes shape1,shape2  Shapes for multiple input tensors, e.g. "
-         "1x3x224x224,1x10\n"
-      << "  --types float,int       Types for input tensors, e.g. float,int "
-         "(default: float)\n"
-      << "  --sync                  Run tasks in synchronous mode (default: "
-         "async)\n"
-      << "  --delay [ms]            Delay in milliseconds between inference "
-         "jobs (default: 0)\n"
-      << "  --no_cpu                Disable CPU utilisation by the scheduler\n "
-      << " --device-ids            Cuda device id, where to perform inference\n"
-      << "  --verbose [0-4]         Verbosity level: 0=silent, 1=info "
-         "(default), 2=debug, 3=trace\n"
+      << "  --shapes shape1,shape2  Shapes for multiple input tensors\n"
+      << "  --types float,int       Input tensor types (default: float)\n"
+      << "  --sync                  Run tasks in synchronous mode\n"
+      << "  --delay [ms]            Delay between jobs (default: 0)\n"
+      << "  --no_cpu                Disable CPU usage\n"
+      << "  --device-ids 0,1        GPU device IDs for inference\n"
+      << "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
       << "  --help                  Show this help message\n";
 }
 
+// =============================================================================
+// Parsing utilities
+// =============================================================================
 std::vector<int64_t>
 parse_shape_string(const std::string& shape_str)
 {
@@ -41,7 +44,7 @@ parse_shape_string(const std::string& shape_str)
     }
     catch (const std::exception& e) {
       throw std::invalid_argument(
-          std::string("Shape contains non-integer values: ") + e.what());
+          "Shape contains non-integer: " + std::string(e.what()));
     }
   }
 
@@ -63,7 +66,7 @@ parse_shapes_string(const std::string& shapes_str)
   }
 
   if (shapes.empty())
-    throw std::invalid_argument("No valid shapes were provided.");
+    throw std::invalid_argument("No valid shapes provided.");
 
   return shapes;
 }
@@ -71,35 +74,32 @@ parse_shapes_string(const std::string& shapes_str)
 at::ScalarType
 parse_type_string(const std::string& type_str)
 {
-  if (type_str == "float" || type_str == "float32")
-    return at::kFloat;
-  if (type_str == "double" || type_str == "float64")
-    return at::kDouble;
-  if (type_str == "half" || type_str == "float16")
-    return at::kHalf;
-  if (type_str == "bfloat16")
-    return at::kBFloat16;
+  static const std::unordered_map<std::string, at::ScalarType> type_map = {
+      {"float", at::kFloat},
+      {"float32", at::kFloat},
+      {"double", at::kDouble},
+      {"float64", at::kDouble},
+      {"half", at::kHalf},
+      {"float16", at::kHalf},
+      {"bfloat16", at::kBFloat16},
+      {"int", at::kInt},
+      {"int32", at::kInt},
+      {"long", at::kLong},
+      {"int64", at::kLong},
+      {"short", at::kShort},
+      {"int16", at::kShort},
+      {"char", at::kChar},
+      {"int8", at::kChar},
+      {"byte", at::kByte},
+      {"uint8", at::kByte},
+      {"bool", at::kBool},
+      {"complex64", at::kComplexFloat},
+      {"complex128", at::kComplexDouble}};
 
-  if (type_str == "int" || type_str == "int32")
-    return at::kInt;
-  if (type_str == "long" || type_str == "int64")
-    return at::kLong;
-  if (type_str == "short" || type_str == "int16")
-    return at::kShort;
-  if (type_str == "char" || type_str == "int8")
-    return at::kChar;
-
-  if (type_str == "byte" || type_str == "uint8")
-    return at::kByte;
-
-  if (type_str == "bool")
-    return at::kBool;
-  if (type_str == "complex64")
-    return at::kComplexFloat;
-  if (type_str == "complex128")
-    return at::kComplexDouble;
-
-  throw std::invalid_argument("Unsupported type: " + type_str);
+  auto it = type_map.find(type_str);
+  if (it == type_map.end())
+    throw std::invalid_argument("Unsupported type: " + type_str);
+  return it->second;
 }
 
 std::vector<at::ScalarType>
@@ -114,20 +114,6 @@ parse_types_string(const std::string& types_str)
   }
 
   return types;
-}
-
-template <typename Func>
-bool
-try_parse(const std::string& argname, const char* value, Func&& func)
-{
-  try {
-    func(value);
-    return true;
-  }
-  catch (const std::exception& e) {
-    log_error("Invalid value for " + argname + ": " + e.what());
-    return false;
-  }
 }
 
 VerbosityLevel
@@ -150,6 +136,23 @@ parse_verbosity_level(const std::string& val)
   }
 }
 
+template <typename Func>
+bool
+try_parse(const std::string& argname, const char* value, Func&& func)
+{
+  try {
+    func(value);
+    return true;
+  }
+  catch (const std::exception& e) {
+    log_error("Invalid value for " + argname + ": " + e.what());
+    return false;
+  }
+}
+
+// =============================================================================
+// Argument parser
+// =============================================================================
 ProgramOptions
 parse_arguments(int argc, char* argv[])
 {
@@ -177,7 +180,7 @@ parse_arguments(int argc, char* argv[])
           return try_parse("iterations", args[++i], [&](const char* val) {
             int tmp = std::stoi(val);
             if (tmp <= 0)
-              throw std::invalid_argument("Iterations must be positive.");
+              throw std::invalid_argument("Must be > 0.");
             opts.iterations = static_cast<unsigned int>(tmp);
           });
         }},
@@ -220,7 +223,7 @@ parse_arguments(int argc, char* argv[])
           return try_parse("delay", args[++i], [&](const char* val) {
             opts.delay_ms = std::stoi(val);
             if (opts.delay_ms < 0)
-              throw std::invalid_argument("Delay must be non-negative.");
+              throw std::invalid_argument("Must be >= 0.");
           });
         }},
        {"--device-ids", [&](int& i, char** args) {
@@ -233,12 +236,11 @@ parse_arguments(int argc, char* argv[])
             while (std::getline(ss, id_str, ',')) {
               int id = std::stoi(id_str);
               if (id < 0)
-                throw std::invalid_argument("Device ID must be non-negative.");
+                throw std::invalid_argument("Must be >= 0.");
               opts.device_ids.push_back(static_cast<unsigned int>(id));
             }
-            if (opts.device_ids.empty()) {
+            if (opts.device_ids.empty())
               throw std::invalid_argument("No device IDs provided.");
-            }
           });
         }}};
 
@@ -265,19 +267,20 @@ parse_arguments(int argc, char* argv[])
     }
   }
 
+  // Post-validation
   if (opts.model_path.empty()) {
-    log_error("--model option is required.\n");
+    log_error("--model option is required.");
     opts.valid = false;
   }
 
   if (!opts.input_types.empty() &&
       opts.input_types.size() != opts.input_shapes.size()) {
-    log_error("Number of types must match number of input shapes.\n");
+    log_error("Number of --types must match number of input shapes.");
     opts.valid = false;
   }
 
   if (opts.input_shapes.empty() || opts.input_types.empty()) {
-    log_error("Error: both --shape/--shapes and --types must be provided.\n");
+    log_error("Both --shape/--shapes and --types must be provided.");
     opts.valid = false;
   }
 

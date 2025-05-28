@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 
 #include <condition_variable>
 #include <memory>
@@ -8,8 +7,12 @@
 
 #include "inference_runner.hpp"
 
+// =============================================================================
+// Thread-safe job queue for asynchronous inference execution
+// =============================================================================
 class InferenceQueue {
  public:
+  // Enqueue a new inference job
   void push(const std::shared_ptr<InferenceJob>& job)
   {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -17,6 +20,7 @@ class InferenceQueue {
     cv_.notify_one();
   }
 
+  // Wait until a job is available, then dequeue it
   void wait_and_pop(std::shared_ptr<InferenceJob>& job)
   {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -25,6 +29,7 @@ class InferenceQueue {
     queue_.pop();
   }
 
+  // Gracefully shutdown by pushing a special "shutdown" job
   void shutdown() { push(InferenceJob::make_shutdown_job()); }
 
  private:
