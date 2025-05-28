@@ -113,20 +113,25 @@ client_worker(
 }
 
 std::tuple<
-    torch::jit::script::Module, torch::jit::script::Module, torch::Tensor>
+    torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+    torch::Tensor>
 load_model_and_reference_output(const ProgramOptions& opts)
 {
   torch::jit::script::Module model_cpu;
-  torch::jit::script::Module model_gpu;
+  std::vector<torch::jit::script::Module> models_gpu;
+  models_gpu.reserve(opts.device_ids.size());
   torch::Tensor output_ref;
 
   try {
     model_cpu = torch::jit::load(opts.model_path);
 
     if (opts.use_cuda) {
-      model_gpu = model_cpu.clone();
-      const torch::Device device(torch::kCUDA, 0);
-      model_gpu.to(device);
+      for (auto i = 0; i < opts.device_ids.size(); ++i) {
+        torch::jit::script::Module model_gpu = model_cpu.clone();
+        const torch::Device device(torch::kCUDA, opts.device_ids[i]);
+        model_gpu.to(device);
+        models_gpu.emplace_back(std::move(model_gpu));
+      }
     }
 
     auto inputs = generate_random_inputs(opts.input_shapes, opts.input_types);
@@ -141,18 +146,18 @@ load_model_and_reference_output(const ProgramOptions& opts)
     throw;
   }
 
-  return {model_cpu, model_gpu, output_ref};
+  return {model_cpu, models_gpu, output_ref};
 }
 
 void
 run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
 {
   torch::jit::script::Module model_cpu;
-  torch::jit::script::Module model_gpu;
+  std::vector<torch::jit::script::Module> models_gpu;
   torch::Tensor output_ref;
 
   try {
-    std::tie(model_cpu, model_gpu, output_ref) =
+    std::tie(model_cpu, models_gpu, output_ref) =
         load_model_and_reference_output(opts);
   }
   catch (...) {
@@ -166,7 +171,7 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
                           std::to_string(warmup_iterations) +
                           " iterations per CUDA device...");
   run_warmup_phase(
-      opts, starpu, model_cpu, model_gpu, output_ref, warmup_iterations);
+      opts, starpu, model_cpu, models_gpu, output_ref, warmup_iterations);
   log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 
   InferenceQueue queue;
@@ -181,7 +186,7 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   std::mutex all_done_mutex;
 
   ServerWorker worker(
-      queue, model_cpu, model_gpu, starpu, opts, results, results_mutex,
+      queue, model_cpu, models_gpu, starpu, opts, results, results_mutex,
       completed_jobs, all_done_cv);
 
   std::thread server(&ServerWorker::run, &worker);

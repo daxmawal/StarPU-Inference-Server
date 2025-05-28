@@ -70,8 +70,8 @@ client_worker_warmup(
 void
 run_warmup_phase(
     const ProgramOptions& opts, StarPUSetup& starpu,
-    const torch::jit::script::Module& model_cpu,
-    const torch::jit::script::Module& model_gpu,
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
     const torch::Tensor& output_ref, const unsigned int iterations_per_device)
 {
   if (!opts.use_cuda) {
@@ -86,9 +86,8 @@ run_warmup_phase(
   std::mutex dummy_results_mutex;
 
   ServerWorker worker(
-      warmup_queue, const_cast<torch::jit::script::Module&>(model_cpu),
-      const_cast<torch::jit::script::Module&>(model_gpu), starpu, opts,
-      dummy_results, dummy_results_mutex, dummy_completed_jobs, dummy_cv);
+      warmup_queue, model_cpu, models_gpu, starpu, opts, dummy_results,
+      dummy_results_mutex, dummy_completed_jobs, dummy_cv);
 
   std::thread server(&ServerWorker::run, &worker);
 

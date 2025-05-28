@@ -41,12 +41,12 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
     float* output_data = reinterpret_cast<float*>(
         STARPU_VARIABLE_GET_PTR(buffers[params->num_inputs]));
 
-    if (!params->modele_cpu) {
+    if (!params->model_cpu) {
       throw std::runtime_error("[ERROR] TorchScript module is null");
     }
 
     *params->inference_start_time = std::chrono::high_resolution_clock::now();
-    at::Tensor output = params->modele_cpu->forward(ivalue_inputs).toTensor();
+    at::Tensor output = params->model_cpu->forward(ivalue_inputs).toTensor();
     if (output.numel() != params->output_size) {
       throw std::runtime_error("[ERROR] Output size mismatch");
     }
@@ -84,7 +84,7 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
     float* output_data = reinterpret_cast<float*>(
         STARPU_VARIABLE_GET_PTR(buffers[params->num_inputs]));
 
-    if (!params->modele_gpu) {
+    if (!params->models_gpu[*params->device_id]) {
       throw std::runtime_error("[ERROR] TorchScript module is null");
     }
 
@@ -100,7 +100,9 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
     const at::cuda::CUDAStreamGuard guard(torch_stream);
 
     *params->inference_start_time = std::chrono::high_resolution_clock::now();
-    at::Tensor output = params->modele_gpu->forward(ivalue_inputs).toTensor();
+    at::Tensor output = params->models_gpu[*params->device_id]
+                            ->forward(ivalue_inputs)
+                            .toTensor();
 
     at::Tensor output_wrapper = torch::from_blob(
         output_data, output.sizes(),

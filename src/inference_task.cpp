@@ -7,10 +7,11 @@
 
 InferenceTask::InferenceTask(
     StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
-    torch::jit::script::Module& modele_cpu,
-    torch::jit::script::Module& modele_gpu, const ProgramOptions& opts)
-    : starpu_(starpu), job_(std::move(job)), modele_cpu_(modele_cpu),
-      modele_gpu_(modele_gpu), opts_(opts)
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const ProgramOptions& opts)
+    : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
+      models_gpu_(models_gpu), opts_(opts)
 {
 }
 
@@ -56,42 +57,57 @@ InferenceTask::on_output_ready_and_cleanup(void* arg)
 std::shared_ptr<InferenceParams>
 InferenceTask::create_inference_params()
 {
-  if (job_->input_tensors.size() > InferLimits::MaxInputs) {
+  // Checking the number of entries
+  const size_t num_inputs = job_->input_tensors.size();
+  if (num_inputs > InferLimits::MaxInputs) {
     throw InferenceExecutionException(
         "[ERROR] Too many input tensors, the maximum is: " +
         std::to_string(InferLimits::MaxInputs));
   }
 
-  auto inference_params = std::make_shared<InferenceParams>();
-  inference_params->modele_cpu = &modele_cpu_;
-  inference_params->modele_gpu = &modele_gpu_;
-  inference_params->num_inputs = job_->input_tensors.size();
-  inference_params->num_outputs = 1;
-  inference_params->output_size = job_->output_tensor.numel();
-  inference_params->job_id = job_->job_id;
-  inference_params->executed_on = &job_->executed_on;
-  inference_params->device_id = &job_->device_id;
-  inference_params->codelet_start_time =
-      &(job_->timing_info.codelet_start_time);
-  inference_params->codelet_end_time = &(job_->timing_info.codelet_end_time);
-  inference_params->inference_start_time =
-      &(job_->timing_info.inference_start_time);
+  // CPU allocation and model
+  auto params = std::make_shared<InferenceParams>();
+  params->model_cpu = &model_cpu_;
 
-  auto offset = static_cast<std::ptrdiff_t>(inference_params->num_inputs);
-  std::copy(
-      job_->input_types.begin(), job_->input_types.begin() + offset,
-      inference_params->input_types.begin());
+  // GPU models: verification and assignment
+  if (models_gpu_.size() > InferLimits::MaxModelsGPU) {
+    throw std::runtime_error(
+        "Too many GPU models: increase InferLimits::MaxModelsGPU");
+  }
+  for (size_t i = 0; i < models_gpu_.size(); ++i) {
+    params->models_gpu[i] = &models_gpu_[i];
+  }
+  params->num_models_gpu = models_gpu_.size();
 
-  for (size_t i = 0; i < inference_params->num_inputs; ++i) {
+  // General parameters
+  params->num_inputs = num_inputs;
+  params->num_outputs = 1;
+  params->output_size = job_->output_tensor.numel();
+  params->job_id = job_->job_id;
+
+  // Execution information
+  params->executed_on = &job_->executed_on;
+  params->device_id = &job_->device_id;
+  params->codelet_start_time = &job_->timing_info.codelet_start_time;
+  params->codelet_end_time = &job_->timing_info.codelet_end_time;
+  params->inference_start_time = &job_->timing_info.inference_start_time;
+
+  // Input types
+  std::copy_n(
+      job_->input_types.begin(), num_inputs, params->input_types.begin());
+
+  // Entrance dimensions
+  for (size_t i = 0; i < num_inputs; ++i) {
     const auto& tensor = job_->input_tensors[i];
     auto dim = tensor.dim();
-    inference_params->num_dims[i] = dim;
-    std::copy_n(tensor.sizes().data(), dim, inference_params->dims[i].begin());
+    params->num_dims[i] = dim;
+    std::copy_n(tensor.sizes().data(), dim, params->dims[i].begin());
   }
 
-  inference_params->verbosity = opts_.verbosity;
+  // Verbosity
+  params->verbosity = opts_.verbosity;
 
-  return inference_params;
+  return params;
 }
 
 starpu_data_handle_t

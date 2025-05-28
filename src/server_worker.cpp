@@ -5,6 +5,19 @@
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 
+ServerWorker::ServerWorker(
+    InferenceQueue& queue, torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu, StarPUSetup& starpu,
+    const ProgramOptions& opts, std::vector<InferenceResult>& results,
+    std::mutex& results_mutex, std::atomic<unsigned int>& completed_jobs,
+    std::condition_variable& all_done_cv)
+    : queue_(queue), model_cpu_(model_cpu), models_gpu_(models_gpu),
+      starpu_(starpu), opts_(opts), results_(results),
+      results_mutex_(results_mutex), completed_jobs_(completed_jobs),
+      all_done_cv_(all_done_cv)
+{
+}
+
 void
 ServerWorker::run()
 {
@@ -58,7 +71,7 @@ ServerWorker::run()
       log_debug(
           opts_.verbosity, "Submitting job ID: " + std::to_string(job->job_id));
 
-      InferenceTask inferenceTask(starpu_, job, model_cpu_, model_gpu_, opts_);
+      InferenceTask inferenceTask(starpu_, job, model_cpu_, models_gpu_, opts_);
       inferenceTask.submit();
     }
     catch (const InferenceEngineException& e) {
