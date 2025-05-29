@@ -239,7 +239,7 @@ InferenceTask::on_output_ready_and_cleanup(void* arg)
 
   ctx->job->timing_info.callback_end_time = end_time;
 
-  if (ctx->job->on_complete) {
+  if (ctx->job && ctx->job->on_complete) {
     ctx->job->on_complete(ctx->job->output_tensor, latency_ms);
   }
 

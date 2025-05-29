@@ -14,8 +14,10 @@ InferenceCodelet::InferenceCodelet()
   starpu_codelet_init(&codelet_);
   codelet_.nbuffers = STARPU_VARIABLE_NBUFFERS;
   codelet_.type = STARPU_FORKJOIN;
+  codelet_.max_parallelism = INT_MAX,
   codelet_.cpu_funcs[0] = &InferenceCodelet::cpu_inference_func;
   codelet_.cuda_funcs[0] = &InferenceCodelet::cuda_inference_func;
+  codelet_.cuda_flags[0] = STARPU_CUDA_ASYNC;
 }
 
 struct starpu_codelet*
@@ -27,18 +29,20 @@ InferenceCodelet::get_codelet()
 void
 InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 {
+  const int worker_id = starpu_worker_get_id();
+
   auto* params = static_cast<InferenceParams*>(cl_arg);
   *params->timing.codelet_start_time =
       std::chrono::high_resolution_clock::now();
 
   log_trace(
       params->verbosity,
-      "CPU, worker id, job id : " + std::to_string(starpu_worker_get_id()) +
-          " " + std::to_string(params->job_id));
+      "CPU, worker id, job id : " + std::to_string(worker_id) + " " +
+          std::to_string(params->job_id));
 
   if (params->device.executed_on)
     *params->device.executed_on = DeviceType::CPU;
-  *params->device.device_id = starpu_worker_get_id();
+  *params->device.device_id = worker_id;
 
   try {
     auto inputs =
@@ -48,14 +52,14 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
     float* output_data = reinterpret_cast<float*>(
         STARPU_VARIABLE_GET_PTR(buffers[params->num_inputs]));
 
-    if (!params->models.model_cpu)
-      throw std::runtime_error("[ERROR] TorchScript module is null");
+
+    auto* model = params->models.model_cpu;
+    TORCH_CHECK(model, "TorchScript module is null");
 
     *params->timing.inference_start_time =
         std::chrono::high_resolution_clock::now();
 
-    at::Tensor output =
-        params->models.model_cpu->forward(ivalue_inputs).toTensor();
+    at::Tensor output = model->forward(ivalue_inputs).toTensor();
     if (output.numel() != params->output_size)
       throw std::runtime_error("[ERROR] Output size mismatch");
 
@@ -72,18 +76,20 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 void
 InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 {
+  const int worker_id = starpu_worker_get_id();
+
   auto* params = static_cast<InferenceParams*>(cl_arg);
   *params->timing.codelet_start_time =
       std::chrono::high_resolution_clock::now();
 
   log_trace(
       params->verbosity,
-      "GPU, worker id, job id : " + std::to_string(starpu_worker_get_id()) +
-          " " + std::to_string(params->job_id));
+      "GPU, worker id, job id : " + std::to_string(worker_id) + " " +
+          std::to_string(params->job_id));
 
   if (params->device.executed_on)
     *params->device.executed_on = DeviceType::CUDA;
-  *params->device.device_id = starpu_worker_get_id();
+  *params->device.device_id = worker_id;
 
   try {
     auto inputs =
@@ -97,12 +103,11 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
     if (device_id >= params->models.models_gpu.size()) {
       throw std::runtime_error("[ERROR] Invalid device ID");
     }
-    if (!params->models.models_gpu[device_id]) {
-      throw std::runtime_error("[ERROR] TorchScript module is null");
-    }
+
+    auto* model = params->models.models_gpu[device_id];
+    TORCH_CHECK(model, "TorchScript module is null");
 
     const cudaStream_t stream = starpu_cuda_get_local_stream();
-    const int worker_id = starpu_worker_get_id();
 
     TORCH_CHECK(
         worker_id <= std::numeric_limits<c10::DeviceIndex>::max(),
@@ -111,21 +116,19 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
     const at::cuda::CUDAStream torch_stream = at::cuda::getStreamFromExternal(
         stream, static_cast<c10::DeviceIndex>(worker_id));
 
-    const at::cuda::CUDAStreamGuard guard(torch_stream);
+    c10::InferenceMode no_autograd;
+    at::cuda::CUDAStreamGuard guard(torch_stream);
 
     *params->timing.inference_start_time =
         std::chrono::high_resolution_clock::now();
 
-    at::Tensor output =
-        params->models.models_gpu[device_id]->forward(ivalue_inputs).toTensor();
+    at::Tensor output = model->forward(ivalue_inputs).toTensor();
 
     at::Tensor output_wrapper = torch::from_blob(
         output_data, output.sizes(),
         torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA));
 
     output_wrapper.copy_(output, true);
-
-    cudaStreamSynchronize(stream);
   }
   catch (const c10::Error& e) {
     throw std::runtime_error(
