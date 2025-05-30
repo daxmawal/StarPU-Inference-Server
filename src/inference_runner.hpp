@@ -35,6 +35,7 @@ struct InferenceResult {
   double latency_ms = 0.0;
   DeviceType executed_on = DeviceType::Unknown;
   int device_id = -1;
+  int worker_id = -1;
   TimingInfo timing_info;
 };
 
@@ -71,6 +72,7 @@ class InferenceJob {
   torch::Tensor output_tensor;
   DeviceType executed_on = DeviceType::Unknown;
   int device_id = -1;
+  int worker_id = -1;
   TimingInfo timing_info;
 
   // Optional scheduling hint

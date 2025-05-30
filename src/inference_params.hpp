@@ -33,6 +33,7 @@ struct Timing {
 struct DeviceInfo {
   int* device_id =
       nullptr;  // Where the task was executed (CPU/GPU, which device)
+  int* worker_id = nullptr;  // Where the task was executed, wich StarPU worker
   DeviceType* executed_on = nullptr;
 };
 

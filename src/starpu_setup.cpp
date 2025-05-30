@@ -30,6 +30,7 @@ void
 InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 {
   const int worker_id = starpu_worker_get_id();
+  const int device_id = starpu_worker_get_devid(worker_id);
 
   auto* params = static_cast<InferenceParams*>(cl_arg);
   *params->timing.codelet_start_time =
@@ -37,12 +38,13 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 
   log_trace(
       params->verbosity,
-      "CPU, worker id, job id : " + std::to_string(worker_id) + " " +
-          std::to_string(params->job_id));
+      "CPU, device id, worker id, job id : " + std::to_string(device_id) + " " +
+          std::to_string(worker_id) + " " + std::to_string(params->job_id));
 
   if (params->device.executed_on)
     *params->device.executed_on = DeviceType::CPU;
-  *params->device.device_id = worker_id;
+  *params->device.worker_id = worker_id;
+  *params->device.device_id = device_id;
 
   try {
     auto inputs =
@@ -77,6 +79,7 @@ void
 InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 {
   const int worker_id = starpu_worker_get_id();
+  const int device_id = starpu_worker_get_devid(worker_id);
 
   auto* params = static_cast<InferenceParams*>(cl_arg);
   *params->timing.codelet_start_time =
@@ -84,12 +87,13 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 
   log_trace(
       params->verbosity,
-      "GPU, worker id, job id : " + std::to_string(worker_id) + " " +
-          std::to_string(params->job_id));
+      "GPU, device id, worker id, job id : " + std::to_string(device_id) + " " +
+          std::to_string(worker_id) + " " + std::to_string(params->job_id));
 
   if (params->device.executed_on)
     *params->device.executed_on = DeviceType::CUDA;
-  *params->device.device_id = worker_id;
+  *params->device.worker_id = worker_id;
+  *params->device.device_id = device_id;
 
   try {
     auto inputs =
@@ -99,22 +103,13 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
     float* output_data = reinterpret_cast<float*>(
         STARPU_VARIABLE_GET_PTR(buffers[params->num_inputs]));
 
-    size_t device_id = static_cast<size_t>(*params->device.device_id);
-    if (device_id >= params->models.models_gpu.size()) {
-      throw std::runtime_error("[ERROR] Invalid device ID");
-    }
-
-    auto* model = params->models.models_gpu[device_id];
+    auto* model = params->models.models_gpu[static_cast<size_t>(device_id)];
     TORCH_CHECK(model, "TorchScript module is null");
 
     const cudaStream_t stream = starpu_cuda_get_local_stream();
 
-    TORCH_CHECK(
-        worker_id <= std::numeric_limits<c10::DeviceIndex>::max(),
-        "Worker ID too large");
-
     const at::cuda::CUDAStream torch_stream = at::cuda::getStreamFromExternal(
-        stream, static_cast<c10::DeviceIndex>(worker_id));
+        stream, static_cast<c10::DeviceIndex>(device_id));
 
     c10::InferenceMode no_autograd;
     at::cuda::CUDAStreamGuard guard(torch_stream);
@@ -175,4 +170,27 @@ struct starpu_codelet*
 StarPUSetup::codelet()
 {
   return codelet_.get_codelet();
+}
+
+const std::map<int, std::vector<int>>
+StarPUSetup::get_cuda_workers_by_device(
+    const std::vector<unsigned int>& device_ids)
+{
+  std::map<int, std::vector<int>> device_to_workers;
+
+  for (int device_id : device_ids) {
+    int workerids[STARPU_NMAXWORKERS];
+    int nworkers = starpu_worker_get_stream_workerids(
+        device_id, workerids, STARPU_CUDA_WORKER);
+
+    if (nworkers < 0) {
+      throw std::runtime_error(
+          "Failed to get CUDA workers for device " + std::to_string(device_id));
+    }
+
+    device_to_workers[device_id] =
+        std::vector<int>(workerids, workerids + nworkers);
+  }
+
+  return device_to_workers;
 }

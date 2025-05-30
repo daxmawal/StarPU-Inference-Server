@@ -47,12 +47,13 @@ ServerWorker::run()
     job->on_complete =
         [this, id = job->job_id, inputs = job->input_tensors,
          &executed_on = job->executed_on, &timing_info = job->timing_info,
-         &device_id = job->device_id](torch::Tensor result, double latency_ms) {
+         &device_id = job->device_id,
+         &worker_id = job->worker_id](torch::Tensor result, double latency_ms) {
           {
             std::lock_guard<std::mutex> lock(results_mutex_);
             results_.emplace_back(InferenceResult{
                 id, inputs, result, latency_ms, executed_on, device_id,
-                timing_info});
+                worker_id, timing_info});
           }
 
           log_stats(

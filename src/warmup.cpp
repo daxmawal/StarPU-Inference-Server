@@ -18,9 +18,11 @@ constexpr int NUM_PREGENERATED_INPUTS = 2;
 void
 client_worker_warmup(
     InferenceQueue& queue, const ProgramOptions& opts,
-    const torch::Tensor& output_ref, const unsigned int iterations_per_device)
+    const torch::Tensor& output_ref, const unsigned int iterations_per_worker,
+    const std::map<int, std::vector<int>>&
+        device_workers)  // <-- pass by const ref
 {
-  // Pre-generate a few random input tensors to reuse
+  // Pre-generate a small pool of random input tensors to avoid reallocation
   std::vector<std::vector<torch::Tensor>> pregen_inputs;
   pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
 
@@ -29,51 +31,45 @@ client_worker_warmup(
         generate_random_inputs(opts.input_shapes, opts.input_types));
   }
 
-  // RNG setup to select randomly among pre-generated inputs
+  // RNG setup to randomly pick pre-generated inputs for warmup jobs
   std::mt19937 rng(std::random_device{}());
   std::uniform_int_distribution<> dist(0, NUM_PREGENERATED_INPUTS - 1);
 
-  // Generate and enqueue warmup jobs
   unsigned int job_id = 0;
-  for (size_t device_index = 0; device_index < opts.device_ids.size();
-       ++device_index) {
-    unsigned int device_id = opts.device_ids[device_index];
 
-    for (unsigned int i = 0; i < iterations_per_device; ++i) {
-      auto job = std::make_shared<InferenceJob>();
+  // Iterate over each device ID and its associated StarPU worker IDs
+  for (const auto& [device_id, worker_ids] : device_workers) {
+    for (int worker_id : worker_ids) {
+      for (unsigned int i = 0; i < iterations_per_worker; ++i) {
+        auto job = std::make_shared<InferenceJob>();
 
-      auto index = dist(rng);
-      if (index < 0 || static_cast<size_t>(index) >= pregen_inputs.size()) {
-        throw std::runtime_error("Generated index is out of range.");
+        const auto& chosen_inputs = pregen_inputs[dist(rng)];
+        job->input_tensors = chosen_inputs;
+
+        job->input_types.clear();
+        for (const auto& t : chosen_inputs) {
+          job->input_types.emplace_back(t.scalar_type());
+        }
+
+        job->output_tensor = torch::empty_like(output_ref);
+        job->job_id = job_id++;
+        job->fixed_worker_id = worker_id;
+        job->start_time = std::chrono::high_resolution_clock::now();
+        job->timing_info.enqueued_time = job->start_time;
+
+        log_trace(
+            opts.verbosity, "[Warmup] Job ID " + std::to_string(job->job_id) +
+                                ", Iteration " + std::to_string(i + 1) + "/" +
+                                std::to_string(iterations_per_worker) +
+                                ", device ID " + std::to_string(device_id) +
+                                ", worker ID " + std::to_string(worker_id));
+
+        queue.push(job);
       }
-      const auto& chosen_inputs = pregen_inputs[static_cast<size_t>(index)];
-
-      job->input_tensors = chosen_inputs;
-
-      // Infer input types from tensors
-      job->input_types.clear();
-      for (const auto& t : chosen_inputs) {
-        job->input_types.emplace_back(t.scalar_type());
-      }
-
-      // Create output tensor with same shape/type as reference
-      job->output_tensor = torch::empty_like(output_ref);
-      job->job_id = job_id++;
-      job->fixed_worker_id = static_cast<int>(device_id);
-      job->start_time = std::chrono::high_resolution_clock::now();
-      job->timing_info.enqueued_time = job->start_time;
-
-      log_trace(
-          opts.verbosity, "[Warmup] Job ID " + std::to_string(job->job_id) +
-                              ", Iteration " + std::to_string(i + 1) + "/" +
-                              std::to_string(iterations_per_device) +
-                              ", device ID " + std::to_string(device_id));
-
-      queue.push(job);
     }
   }
 
-  queue.shutdown();  // Signal the end of job submission
+  queue.shutdown();
 }
 
 // =============================================================================
@@ -84,7 +80,7 @@ run_warmup_phase(
     const ProgramOptions& opts, StarPUSetup& starpu,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const torch::Tensor& output_ref, const unsigned int iterations_per_device)
+    const torch::Tensor& output_ref, const unsigned int iterations_per_worker)
 {
   if (!opts.use_cuda) {
     return;  // No warmup needed without GPU
@@ -105,19 +101,29 @@ run_warmup_phase(
 
   std::thread server(&ServerWorker::run, &worker);
 
+  const auto device_workers =
+      starpu.get_cuda_workers_by_device(opts.device_ids);
+
   // Launch client thread to feed warmup jobs
   std::thread client([&]() {
-    client_worker_warmup(warmup_queue, opts, output_ref, iterations_per_device);
+    client_worker_warmup(
+        warmup_queue, opts, output_ref, iterations_per_worker, device_workers);
   });
 
   // Wait for client thread to finish pushing jobs
   client.join();
 
+  // Count the total number of CUDA workers
+  int total_worker_count = 0;
+  for (const auto& [device_id, worker_list] : device_workers) {
+    total_worker_count += static_cast<int>(worker_list.size());
+  }
+
   // Wait until all warmup jobs are marked completed
   {
     std::unique_lock<std::mutex> lock(dummy_mutex);
     const size_t total_jobs =
-        static_cast<size_t>(iterations_per_device) * opts.device_ids.size();
+        static_cast<size_t>(iterations_per_worker) * total_worker_count;
     dummy_cv.wait(
         lock, [&]() { return dummy_completed_jobs.load() >= total_jobs; });
   }

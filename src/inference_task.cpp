@@ -82,6 +82,7 @@ InferenceTask::create_inference_params()
 
   params->device.executed_on = &job_->executed_on;
   params->device.device_id = &job_->device_id;
+  params->device.worker_id = &job_->worker_id;
 
   params->timing.codelet_start_time = &job_->timing_info.codelet_start_time;
   params->timing.codelet_end_time = &job_->timing_info.codelet_end_time;

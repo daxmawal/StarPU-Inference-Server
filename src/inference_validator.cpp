@@ -63,7 +63,8 @@ validate_inference_result(
     log_info(
         verbosity, "[Validator] Job " + std::to_string(r.job_id) +
                        " passed on " + to_string(r.executed_on) +
-                       " (device id " + std::to_string(r.device_id) + ")");
+                       " (device id " + std::to_string(r.device_id) +
+                       " worker id " + std::to_string(r.worker_id) + ")");
   }
 
   return is_valid;
