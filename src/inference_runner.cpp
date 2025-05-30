@@ -25,7 +25,8 @@ constexpr int NUM_WARMUP_ITERATIONS = 2;     // Warmup runs per GPU
 // =============================================================================
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-    unsigned int id, std::function<void(torch::Tensor, int64_t)> callback)
+    unsigned int id,
+    std::function<void(std::vector<torch::Tensor>, double)> callback)
     : input_tensors(std::move(inputs)), input_types(std::move(types)),
       job_id(id), on_complete(std::move(callback)),
       start_time(std::chrono::high_resolution_clock::now())
@@ -82,7 +83,7 @@ current_time_formatted(const std::chrono::high_resolution_clock::time_point& tp)
 void
 client_worker(
     InferenceQueue& queue, const ProgramOptions& opts,
-    const torch::Tensor& output_ref, unsigned int iterations)
+    const std::vector<torch::Tensor>& outputs_ref, unsigned int iterations)
 {
   std::vector<std::vector<torch::Tensor>> pregen_inputs;
   pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
@@ -105,11 +106,15 @@ client_worker(
     const auto& chosen_inputs = pregen_inputs[static_cast<size_t>(idx)];
     job->input_tensors = chosen_inputs;
 
-    job->input_types.clear();
+    job->input_types.reserve(job->input_tensors.size());
     for (const auto& t : job->input_tensors)
       job->input_types.emplace_back(t.scalar_type());
 
-    job->output_tensor = torch::empty_like(output_ref);
+    job->outputs_tensors.reserve(outputs_ref.size());
+    for (const auto& ref : outputs_ref) {
+      job->outputs_tensors.emplace_back(torch::empty_like(ref));
+    }
+
     job->job_id = i;
     job->start_time = std::chrono::high_resolution_clock::now();
     job->timing_info.enqueued_time = job->start_time;
@@ -135,13 +140,13 @@ client_worker(
 // =============================================================================
 std::tuple<
     torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-    torch::Tensor>
+    std::vector<torch::Tensor>>
 load_model_and_reference_output(const ProgramOptions& opts)
 {
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   models_gpu.reserve(opts.device_ids.size());
-  torch::Tensor output_ref;
+  std::vector<torch::Tensor> output_refs;
 
   try {
     model_cpu = torch::jit::load(opts.model_path);
@@ -158,7 +163,24 @@ load_model_and_reference_output(const ProgramOptions& opts)
 
     auto inputs = generate_random_inputs(opts.input_shapes, opts.input_types);
     std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
-    output_ref = model_cpu.forward(input_ivalues).toTensor();
+    auto output = model_cpu.forward(input_ivalues);
+
+    // Manage different types of output
+    if (output.isTensor()) {
+      output_refs.push_back(output.toTensor());
+    } else if (output.isTuple()) {
+      for (const auto& val : output.toTuple()->elements()) {
+        if (val.isTensor())
+          output_refs.push_back(val.toTensor());
+      }
+    } else if (output.isTensorList()) {
+      for (const auto& t : output.toTensorList()) {
+        output_refs.push_back(t);
+      }
+    } else {
+      log_error("Unsupported output type from model.");
+      throw std::runtime_error("Unsupported model output type");
+    }
   }
   catch (const c10::Error& e) {
     log_error(
@@ -167,7 +189,7 @@ load_model_and_reference_output(const ProgramOptions& opts)
     throw;
   }
 
-  return {model_cpu, models_gpu, output_ref};
+  return {model_cpu, models_gpu, output_refs};
 }
 
 
@@ -179,10 +201,10 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
 {
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
-  torch::Tensor output_ref;
+  std::vector<torch::Tensor> outputs_ref;
 
   try {
-    std::tie(model_cpu, models_gpu, output_ref) =
+    std::tie(model_cpu, models_gpu, outputs_ref) =
         load_model_and_reference_output(opts);
   }
   catch (...) {
@@ -194,7 +216,7 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
                           std::to_string(NUM_WARMUP_ITERATIONS) +
                           " iterations per CUDA device...");
   run_warmup_phase(
-      opts, starpu, model_cpu, models_gpu, output_ref, NUM_WARMUP_ITERATIONS);
+      opts, starpu, model_cpu, models_gpu, outputs_ref, NUM_WARMUP_ITERATIONS);
   log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 
   InferenceQueue queue;
@@ -213,7 +235,7 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
       completed_jobs, all_done_cv);
   std::thread server(&ServerWorker::run, &worker);
   std::thread client(
-      [&]() { client_worker(queue, opts, output_ref, opts.iterations); });
+      [&]() { client_worker(queue, opts, outputs_ref, opts.iterations); });
 
   client.join();
 
@@ -226,7 +248,7 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   server.join();
 
   for (const auto& r : results) {
-    if (!r.result.defined()) {
+    if (!r.results[0].defined()) {
       log_error("[Client] Job " + std::to_string(r.job_id) + " failed.");
       continue;
     }

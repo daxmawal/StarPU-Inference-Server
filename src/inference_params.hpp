@@ -65,7 +65,6 @@ struct InferenceParams {
   TensorLayout layout;      // Tensor dimensions and types
   size_t num_inputs = 0;    // Number of input tensors
   size_t num_outputs = 0;   // Number of output tensors
-  int64_t output_size = 0;  // Total size of the output tensors
   unsigned int job_id = 0;  // Job identifier for logging/debugging
   DeviceInfo device;
   Timing timing;             // Timing data (for benchmarking)

@@ -13,7 +13,7 @@ validate_inference_result(
     const InferenceResult& r, torch::jit::script::Module& module,
     const VerbosityLevel& verbosity)
 {
-  // Select the appropriate device based on where the job was executed
+  // Select the device used for inference
   torch::Device device(torch::kCPU);
   switch (r.executed_on) {
     case DeviceType::CUDA:
@@ -28,38 +28,70 @@ validate_inference_result(
       return false;
   }
 
-  // Move model and inputs to the correct device
   module.to(device);
 
+  // Prepare input tensors
   std::vector<torch::IValue> input_ivalues;
   std::transform(
       r.inputs.begin(), r.inputs.end(), std::back_inserter(input_ivalues),
       [&](const torch::Tensor& t) { return t.to(device); });
 
   // Run reference inference
-  torch::Tensor reference_output = module.forward(input_ivalues).toTensor();
+  torch::IValue output = module.forward(input_ivalues);
 
-  // Move the actual result to the same device for fair comparison
-  torch::Tensor result_on_device = r.result.to(device);
-
-  // Compare result and reference (element-wise)
-  const bool is_valid = torch::allclose(
-      reference_output, result_on_device, /*rtol=*/1e-3, /*atol=*/1e-5);
-
-  // Logging
-  if (!is_valid) {
-    log_error(
-        "[Validator] Mismatch detected for job " + std::to_string(r.job_id));
-    log_error(
-        "  Absolute diff max: " +
-        std::to_string(
-            (reference_output - result_on_device).abs().max().item<float>()));
-    log_error("  Executed on: " + std::string(to_string(r.executed_on)));
-    log_error(
-        "  Reference: " +
-        reference_output.flatten().slice(0, 0, 10).toString());
-    log_error("  Obtained : " + r.result.flatten().slice(0, 0, 10).toString());
+  // Convert reference output to a vector of tensors
+  std::vector<torch::Tensor> reference_outputs;
+  if (output.isTensor()) {
+    reference_outputs.push_back(output.toTensor());
+  } else if (output.isTuple()) {
+    auto elements = output.toTuple()->elements();
+    for (const auto& val : elements) {
+      if (val.isTensor()) {
+        reference_outputs.push_back(val.toTensor());
+      } else {
+        log_error(
+            "[Validator] Non-tensor output in tuple for job " +
+            std::to_string(r.job_id));
+        return false;
+      }
+    }
   } else {
+    log_error(
+        "[Validator] Unsupported output type for job " +
+        std::to_string(r.job_id));
+    return false;
+  }
+
+  // Check that the number of outputs matches
+  if (reference_outputs.size() != r.results.size()) {
+    log_error(
+        "[Validator] Output count mismatch for job " +
+        std::to_string(r.job_id));
+    return false;
+  }
+
+  // Compare each output tensor
+  bool all_valid = true;
+  for (size_t i = 0; i < reference_outputs.size(); ++i) {
+    torch::Tensor ref = reference_outputs[i].to(device);
+    torch::Tensor res = r.results[i].to(device);
+
+    bool is_valid = torch::allclose(ref, res, /*rtol=*/1e-3, /*atol=*/1e-5);
+    all_valid &= is_valid;
+
+    if (!is_valid) {
+      log_error(
+          "[Validator] Mismatch on output #" + std::to_string(i) + " for job " +
+          std::to_string(r.job_id));
+      log_error(
+          "  Absolute diff max: " +
+          std::to_string((ref - res).abs().max().item<float>()));
+      log_error("  Reference: " + ref.flatten().slice(0, 0, 10).toString());
+      log_error("  Obtained : " + res.flatten().slice(0, 0, 10).toString());
+    }
+  }
+
+  if (all_valid) {
     log_info(
         verbosity, "[Validator] Job " + std::to_string(r.job_id) +
                        " passed on " + to_string(r.executed_on) +
@@ -67,5 +99,5 @@ validate_inference_result(
                        " worker id " + std::to_string(r.worker_id) + ")");
   }
 
-  return is_valid;
+  return all_valid;
 }

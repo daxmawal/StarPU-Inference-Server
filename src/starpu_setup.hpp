@@ -42,7 +42,7 @@ class StarPUSetup {
   struct starpu_codelet* codelet();
 
   // Returns the map of CUDA workers grouped by device ID
-  const std::map<int, std::vector<int>> get_cuda_workers_by_device(
+  const std::map<unsigned int, std::vector<int>> get_cuda_workers_by_device(
       const std::vector<unsigned int>& device_ids);
 
  private:

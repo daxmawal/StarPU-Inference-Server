@@ -47,12 +47,12 @@ ServerWorker::run()
     job->on_complete =
         [this, id = job->job_id, inputs = job->input_tensors,
          &executed_on = job->executed_on, &timing_info = job->timing_info,
-         &device_id = job->device_id,
-         &worker_id = job->worker_id](torch::Tensor result, double latency_ms) {
+         &device_id = job->device_id, &worker_id = job->worker_id](
+            std::vector<torch::Tensor> results, double latency_ms) {
           {
             std::lock_guard<std::mutex> lock(results_mutex_);
             results_.emplace_back(InferenceResult{
-                id, inputs, result, latency_ms, executed_on, device_id,
+                id, inputs, results, latency_ms, executed_on, device_id,
                 worker_id, timing_info});
           }
 
@@ -81,14 +81,14 @@ ServerWorker::run()
           "[Inference Error] Job " + std::to_string(job->job_id) + ": " +
           e.what());
       if (job->on_complete)
-        job->on_complete(torch::Tensor(), -1);
+        job->on_complete({}, -1);
     }
     catch (const std::exception& e) {
       log_error(
           "[Unhandled Exception] Job " + std::to_string(job->job_id) + ": " +
           e.what());
       if (job->on_complete)
-        job->on_complete(torch::Tensor(), -1);
+        job->on_complete({}, -1);
     }
   }
 

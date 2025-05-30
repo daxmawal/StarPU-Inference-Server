@@ -18,8 +18,9 @@ constexpr int NUM_PREGENERATED_INPUTS = 2;
 void
 client_worker_warmup(
     InferenceQueue& queue, const ProgramOptions& opts,
-    const torch::Tensor& output_ref, const unsigned int iterations_per_worker,
-    const std::map<int, std::vector<int>>&
+    const std::vector<torch::Tensor>& outputs_ref,
+    const unsigned int iterations_per_worker,
+    const std::map<unsigned int, std::vector<int>>&
         device_workers)  // <-- pass by const ref
 {
   // Pre-generate a small pool of random input tensors to avoid reallocation
@@ -43,15 +44,20 @@ client_worker_warmup(
       for (unsigned int i = 0; i < iterations_per_worker; ++i) {
         auto job = std::make_shared<InferenceJob>();
 
-        const auto& chosen_inputs = pregen_inputs[dist(rng)];
+        const auto& chosen_inputs =
+            pregen_inputs[static_cast<std::size_t>(dist(rng))];
         job->input_tensors = chosen_inputs;
 
-        job->input_types.clear();
+        job->input_types.reserve(chosen_inputs.size());
         for (const auto& t : chosen_inputs) {
           job->input_types.emplace_back(t.scalar_type());
         }
 
-        job->output_tensor = torch::empty_like(output_ref);
+        job->outputs_tensors.reserve(outputs_ref.size());
+        for (const auto& ref : outputs_ref) {
+          job->outputs_tensors.emplace_back(torch::empty_like(ref));
+        }
+
         job->job_id = job_id++;
         job->fixed_worker_id = worker_id;
         job->start_time = std::chrono::high_resolution_clock::now();
@@ -80,7 +86,8 @@ run_warmup_phase(
     const ProgramOptions& opts, StarPUSetup& starpu,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const torch::Tensor& output_ref, const unsigned int iterations_per_worker)
+    const std::vector<torch::Tensor>& outputs_ref,
+    const unsigned int iterations_per_worker)
 {
   if (!opts.use_cuda) {
     return;  // No warmup needed without GPU
@@ -107,16 +114,16 @@ run_warmup_phase(
   // Launch client thread to feed warmup jobs
   std::thread client([&]() {
     client_worker_warmup(
-        warmup_queue, opts, output_ref, iterations_per_worker, device_workers);
+        warmup_queue, opts, outputs_ref, iterations_per_worker, device_workers);
   });
 
   // Wait for client thread to finish pushing jobs
   client.join();
 
   // Count the total number of CUDA workers
-  int total_worker_count = 0;
+  size_t total_worker_count = 0;
   for (const auto& [device_id, worker_list] : device_workers) {
-    total_worker_count += static_cast<int>(worker_list.size());
+    total_worker_count += worker_list.size();
   }
 
   // Wait until all warmup jobs are marked completed

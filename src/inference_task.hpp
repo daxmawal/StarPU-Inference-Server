@@ -17,8 +17,21 @@ struct InferenceCallbackContext {
   ProgramOptions opts;   // Program settings
   unsigned int id = 0;   // Task ID (for logging/debugging)
   std::vector<starpu_data_handle_t>
-      input_handles;  // Registered input data handles
-  starpu_data_handle_t output_handle = nullptr;  // Output data handle
+      inputs_handles;  // Registered input data handles
+  std::vector<starpu_data_handle_t> outputs_handles;  // Output data handles
+  std::atomic<int> remaining_outputs_to_acquire = 0;
+  std::mutex mutex;
+
+  InferenceCallbackContext(
+      std::shared_ptr<InferenceJob> job_,
+      std::shared_ptr<InferenceParams> params_, const ProgramOptions& opts_,
+      unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
+      std::vector<starpu_data_handle_t> outputs_)
+      : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
+        id(id_), inputs_handles(std::move(inputs_)),
+        outputs_handles(std::move(outputs_))
+  {
+  }
 };
 
 // =============================================================================
@@ -54,19 +67,20 @@ class InferenceTask {
       const torch::Tensor& tensor, const std::string& label);
 
   /// Registers input tensors with StarPU and returns their handles
-  static std::vector<starpu_data_handle_t> register_input_handles(
+  static std::vector<starpu_data_handle_t> register_inputs_handles(
       const std::vector<torch::Tensor>& input_tensors);
 
   /// Registers output tensor with StarPU
-  static starpu_data_handle_t register_output_handle(
-      const torch::Tensor& output_tensor);
+  static std::vector<starpu_data_handle_t> register_outputs_handles(
+      const std::vector<torch::Tensor>& outputs_tensors);
 
   // ---- Instance methods for preparing and submitting the task ----
 
   /// Creates a StarPU task with the given input/output and context
   starpu_task* create_task(
-      const std::vector<starpu_data_handle_t>& input_handles,
-      const starpu_data_handle_t& output_handle, InferenceCallbackContext* ctx);
+      const std::vector<starpu_data_handle_t>& inputs_handles,
+      const std::vector<starpu_data_handle_t>& outputs_handles,
+      InferenceCallbackContext* ctx);
 
   /// Prepares the inference parameters (model, layout, etc.)
   std::shared_ptr<InferenceParams> create_inference_params();
