@@ -251,18 +251,22 @@ InferenceTask::on_output_ready_and_cleanup(void* arg)
   }
 
   auto end_time = std::chrono::high_resolution_clock::now();
-  double latency_ms =
-      std::chrono::duration<double, std::milli>(end_time - ctx->job->start_time)
-          .count();
 
-  ctx->job->timing_info.callback_end_time = end_time;
+  if (ctx->job) {
+    double latency_ms = std::chrono::duration<double, std::milli>(
+                            end_time - ctx->job->start_time)
+                            .count();
 
-  if (ctx->job && ctx->job->on_complete) {
-    ctx->job->on_complete(ctx->job->outputs_tensors, latency_ms);
+    ctx->job->timing_info.callback_end_time = end_time;
+
+    if (ctx->job->on_complete) {
+      ctx->job->on_complete(ctx->job->outputs_tensors, latency_ms);
+    }
   }
 
   cleanup(ctx);
 }
+
 
 void
 InferenceTask::starpu_output_callback(void* arg)

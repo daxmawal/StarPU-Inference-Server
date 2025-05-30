@@ -174,9 +174,10 @@ load_model_and_reference_output(const ProgramOptions& opts)
           output_refs.push_back(val.toTensor());
       }
     } else if (output.isTensorList()) {
-      for (const auto& t : output.toTensorList()) {
-        output_refs.push_back(t);
-      }
+      output_refs.insert(
+          output_refs.end(), output.toTensorList().begin(),
+          output.toTensorList().end());
+
     } else {
       log_error("Unsupported output type from model.");
       throw std::runtime_error("Unsupported model output type");

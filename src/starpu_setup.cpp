@@ -40,9 +40,10 @@ extract_tensors_from_output(const c10::IValue& result)
       outputs.emplace_back(val.toTensor());
     }
   } else if (result.isTensorList()) {
-    for (const auto& t : result.toTensorList()) {
-      outputs.emplace_back(t);
-    }
+    outputs.insert(
+        outputs.end(), result.toTensorList().begin(),
+        result.toTensorList().end());
+
   } else {
     throw std::runtime_error("Unsupported model output type");
   }
@@ -113,6 +114,7 @@ run_codelet_inference(
   *params->timing.codelet_end_time = std::chrono::high_resolution_clock::now();
 }
 
+// CPU codelet
 void
 InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 {
@@ -125,6 +127,7 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
       DeviceType::CPU);
 }
 
+// GPU codelet
 void
 InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 {
