@@ -14,6 +14,7 @@
 // =============================================================================
 // TimingInfo: precise timestamps for latency profiling
 // =============================================================================
+namespace detail {
 struct TimingInfo {
   std::chrono::high_resolution_clock::time_point enqueued_time;
   std::chrono::high_resolution_clock::time_point dequeued_time;
@@ -24,6 +25,7 @@ struct TimingInfo {
   std::chrono::high_resolution_clock::time_point callback_start_time;
   std::chrono::high_resolution_clock::time_point callback_end_time;
 };
+}  // namespace detail
 
 // =============================================================================
 // InferenceResult: output of a completed job, including diagnostics
@@ -36,7 +38,7 @@ struct InferenceResult {
   DeviceType executed_on = DeviceType::Unknown;
   int device_id = -1;
   int worker_id = -1;
-  TimingInfo timing_info;
+  detail::TimingInfo timing_info;
 };
 
 // =============================================================================
@@ -74,7 +76,7 @@ class InferenceJob {
   DeviceType executed_on = DeviceType::Unknown;
   int device_id = -1;
   int worker_id = -1;
-  TimingInfo timing_info;
+  detail::TimingInfo timing_info;
 
   // Optional scheduling hint
   std::optional<unsigned int> fixed_worker_id;

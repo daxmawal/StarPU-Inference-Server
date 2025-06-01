@@ -16,7 +16,7 @@ enum class VerbosityLevel {
 // Utility: color and label mapping for verbosity levels
 // =============================================================================
 inline std::pair<const char*, const char*>
-verbosity_style(VerbosityLevel level)
+verbosity_style(const VerbosityLevel level)
 {
   switch (level) {
     case VerbosityLevel::Info:
@@ -37,7 +37,7 @@ verbosity_style(VerbosityLevel level)
 // =============================================================================
 inline void
 log_verbose(
-    VerbosityLevel level, VerbosityLevel current_level,
+    const VerbosityLevel level, const VerbosityLevel current_level,
     const std::string& message)
 {
   if (static_cast<int>(current_level) >= static_cast<int>(level)) {
@@ -50,22 +50,22 @@ log_verbose(
 // Shortcut wrappers
 // =============================================================================
 inline void
-log_info(VerbosityLevel lvl, const std::string& msg)
+log_info(const VerbosityLevel lvl, const std::string& msg)
 {
   log_verbose(VerbosityLevel::Info, lvl, msg);
 }
 inline void
-log_stats(VerbosityLevel lvl, const std::string& msg)
+log_stats(const VerbosityLevel lvl, const std::string& msg)
 {
   log_verbose(VerbosityLevel::Stats, lvl, msg);
 }
 inline void
-log_debug(VerbosityLevel lvl, const std::string& msg)
+log_debug(const VerbosityLevel lvl, const std::string& msg)
 {
   log_verbose(VerbosityLevel::Debug, lvl, msg);
 }
 inline void
-log_trace(VerbosityLevel lvl, const std::string& msg)
+log_trace(const VerbosityLevel lvl, const std::string& msg)
 {
   log_verbose(VerbosityLevel::Trace, lvl, msg);
 }

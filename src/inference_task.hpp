@@ -26,12 +26,7 @@ struct InferenceCallbackContext {
       std::shared_ptr<InferenceJob> job_,
       std::shared_ptr<InferenceParams> params_, const ProgramOptions& opts_,
       unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
-      std::vector<starpu_data_handle_t> outputs_)
-      : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
-        id(id_), inputs_handles(std::move(inputs_)),
-        outputs_handles(std::move(outputs_))
-  {
-  }
+      std::vector<starpu_data_handle_t> outputs_);
 };
 
 // =============================================================================

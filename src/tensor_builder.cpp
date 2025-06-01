@@ -1,11 +1,26 @@
 #include "tensor_builder.hpp"
 
+#include <ATen/core/ScalarType.h>
+#include <c10/core/Device.h>
+#include <c10/core/ScalarType.h>
+#include <c10/util/Exception.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "inference_params.hpp"
+
 // ============================================================================
 // Converts StarPU buffers into Torch tensors on the specified device
 // ============================================================================
-std::vector<torch::Tensor>
+auto
 TensorBuilder::from_starpu_buffers(
-    const InferenceParams* params, void* buffers[], torch::Device device)
+    const InferenceParams* params, void* buffers[],
+    const torch::Device device) -> std::vector<torch::Tensor>
 {
   if (params->num_inputs > InferLimits::MaxInputs) {
     throw std::runtime_error("[ERROR] Too many input tensors");
@@ -14,23 +29,23 @@ TensorBuilder::from_starpu_buffers(
   std::vector<torch::Tensor> inputs;
   inputs.reserve(params->num_inputs);
 
-  for (size_t i = 0; i < params->num_inputs; ++i) {
+  for (size_t idx = 0; idx < params->num_inputs; ++idx) {
     void* input_data = reinterpret_cast<void*>(
-        static_cast<uintptr_t>(STARPU_VARIABLE_GET_PTR(buffers[i])));
+        static_cast<uintptr_t>(STARPU_VARIABLE_GET_PTR(buffers[idx])));
 
-    if (!input_data) {
+    if (input_data == nullptr) {
       throw std::runtime_error(
-          "[ERROR] Null buffer pointer for input " + std::to_string(i));
+          "[ERROR] Null buffer pointer for input " + std::to_string(idx));
     }
 
-    const auto& dims = params->layout.dims[i];
-    const auto raw_ndim = params->layout.num_dims[i];
+    const auto& dims = params->layout.dims[idx];
+    const auto raw_ndim = params->layout.num_dims[idx];
     TORCH_CHECK(
         raw_ndim >= 0, "Invalid number of dimensions (must be non-negative)");
-    const size_t ndim = static_cast<size_t>(raw_ndim);
-    std::vector<int64_t> shape(dims.begin(), dims.begin() + ndim);
+    const auto ndim = static_cast<size_t>(raw_ndim);
+    const std::vector<int64_t> shape(dims.begin(), dims.begin() + ndim);
 
-    at::ScalarType dtype = params->layout.input_types[i];
+    const at::ScalarType dtype = params->layout.input_types[idx];
     inputs.emplace_back(from_raw_ptr(input_data, dtype, shape, device));
   }
 
@@ -42,7 +57,7 @@ TensorBuilder::from_starpu_buffers(
 // ============================================================================
 void
 TensorBuilder::copy_output_to_buffer(
-    const at::Tensor& output, void* buffer_ptr, int64_t expected_numel)
+    const at::Tensor& output, void* buffer_ptr, const int64_t expected_numel)
 {
   if (output.numel() != expected_numel) {
     throw std::runtime_error("[ERROR] Output size mismatch");
@@ -60,10 +75,10 @@ TensorBuilder::copy_output_to_buffer(
 // ============================================================================
 // Constructs a Torch tensor from a raw pointer with shape and type
 // ============================================================================
-torch::Tensor
+auto
 TensorBuilder::from_raw_ptr(
-    void* ptr, at::ScalarType type, const std::vector<int64_t>& shape,
-    torch::Device device)
+    void* ptr, const at::ScalarType type, const std::vector<int64_t>& shape,
+    const torch::Device device) -> torch::Tensor
 {
   auto options = torch::TensorOptions().dtype(type).device(device);
 

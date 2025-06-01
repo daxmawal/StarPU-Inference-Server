@@ -13,7 +13,7 @@ enum class DeviceType : uint8_t {
 
 // Optional: utility for converting DeviceType to string (for logs/debug)
 inline const char*
-to_string(DeviceType type)
+to_string(const DeviceType& type)
 {
   switch (type) {
     case DeviceType::CPU:

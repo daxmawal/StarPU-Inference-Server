@@ -1,10 +1,30 @@
 #include "starpu_setup.hpp"
 
-#include <ATen/cuda/CUDAContext.h>
+#include <ATen/core/TensorBody.h>
+#include <c10/core/Device.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
+#include <c10/util/Exception.h>
+#include <starpu.h>
+#include <starpu_config.h>
+#include <starpu_cuda.h>
+#include <torch/types.h>
 
-#include "exceptions.hpp"
+#include <chrono>
+#include <climits>
+#include <cstddef>
+#include <exception>
+#include <functional>
+#include <map>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "args_parser.hpp"
+#include "device_type.hpp"
+#include "inference_params.hpp"
+#include "logger.hpp"
+#include "tensor_builder.hpp"
 
 // =============================================================================
 // InferenceCodelet: Setup and execution functions for StarPU codelets
@@ -20,15 +40,16 @@ InferenceCodelet::InferenceCodelet()
   codelet_.cuda_flags[0] = STARPU_CUDA_ASYNC;
 }
 
-struct starpu_codelet*
-InferenceCodelet::get_codelet()
+auto
+InferenceCodelet::get_codelet() -> struct starpu_codelet*
 {
   return &codelet_;
 }
 
 // Convert output IValue to vector of Tensors
-std::vector<at::Tensor>
+auto
 extract_tensors_from_output(const c10::IValue& result)
+    -> std::vector<at::Tensor>
 {
   std::vector<at::Tensor> outputs;
 
@@ -54,12 +75,14 @@ extract_tensors_from_output(const c10::IValue& result)
 // Unified inference execution
 inline void
 run_inference(
-    InferenceParams* params, void* buffers[], torch::Device device,
+    InferenceParams* params, void* buffers[], const torch::Device device,
     torch::jit::script::Module* model,
-    std::function<void(const at::Tensor&, void* buffer_ptr)> copy_output_fn)
+    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+        copy_output_fn)
 {
-  auto inputs = TensorBuilder::from_starpu_buffers(params, buffers, device);
-  std::vector<c10::IValue> ivalue_inputs(inputs.begin(), inputs.end());
+  const auto inputs =
+      TensorBuilder::from_starpu_buffers(params, buffers, device);
+  const std::vector<c10::IValue> ivalue_inputs(inputs.begin(), inputs.end());
 
   *params->timing.inference_start_time =
       std::chrono::high_resolution_clock::now();
@@ -81,9 +104,9 @@ run_inference(
 template <typename CopyOutputFn>
 void
 run_codelet_inference(
-    InferenceParams* params, void* buffers[], torch::Device device,
+    InferenceParams* params, void* buffers[], const torch::Device device,
     torch::jit::script::Module* model, CopyOutputFn copy_output_fn,
-    DeviceType executed_on_type)
+    const DeviceType executed_on_type)
 {
   *params->timing.codelet_start_time =
       std::chrono::high_resolution_clock::now();
@@ -98,8 +121,9 @@ run_codelet_inference(
                              std::to_string(worker_id) + " " +
                              std::to_string(params->job_id));
 
-  if (params->device.executed_on)
+  if (params->device.executed_on) {
     *params->device.executed_on = executed_on_type;
+  }
   *params->device.worker_id = worker_id;
   *params->device.device_id = device_id;
 
@@ -135,19 +159,19 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
 
-  const cudaStream_t stream = starpu_cuda_get_local_stream();
+  cudaStream_t stream = starpu_cuda_get_local_stream();
   const at::cuda::CUDAStream torch_stream = at::cuda::getStreamFromExternal(
       stream, static_cast<c10::DeviceIndex>(device_id));
 
-  c10::InferenceMode no_autograd;
-  at::cuda::CUDAStreamGuard guard(torch_stream);
+  const c10::InferenceMode no_autograd;
+  const at::cuda::CUDAStreamGuard guard(torch_stream);
 
   run_codelet_inference(
       params, buffers,
       torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)),
       params->models.models_gpu[static_cast<size_t>(device_id)],
       [device_id](const at::Tensor& out, void* buffer_ptr) {
-        at::Tensor wrapper = torch::from_blob(
+        const at::Tensor wrapper = torch::from_blob(
             buffer_ptr, out.sizes(),
             torch::TensorOptions()
                 .dtype(torch::kFloat32)
@@ -160,25 +184,28 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 // =============================================================================
 // StarPUSetup: StarPU initialization and resource management
 // =============================================================================
-StarPUSetup::StarPUSetup(const ProgramOptions& opts)
+StarPUSetup::StarPUSetup(const ProgramOptions& opts) : conf_{}
 {
   starpu_conf_init(&conf_);
   conf_.sched_policy_name = opts.scheduler.c_str();
 
-  if (!opts.use_cpu)
+  if (!opts.use_cpu) {
     conf_.ncpus = 0;
+  }
 
   if (!opts.use_cuda) {
     conf_.ncuda = 0;
   } else {
-    conf_.use_explicit_workers_cuda_gpuid = 1;
+    conf_.use_explicit_workers_cuda_gpuid = 1U;
     conf_.ncuda = static_cast<int>(opts.device_ids.size());
-    for (size_t i = 0; i < opts.device_ids.size(); ++i)
-      conf_.workers_cuda_gpuid[i] = opts.device_ids[i];
+    for (size_t idx = 0; idx < opts.device_ids.size(); ++idx) {
+      conf_.workers_cuda_gpuid[idx] = opts.device_ids[idx];
+    }
   }
 
-  if (starpu_init(&conf_) != 0)
+  if (starpu_init(&conf_) != 0) {
     throw std::runtime_error("[ERROR] StarPU initialization error");
+  }
 }
 
 StarPUSetup::~StarPUSetup()
@@ -186,22 +213,23 @@ StarPUSetup::~StarPUSetup()
   starpu_shutdown();
 }
 
-struct starpu_codelet*
-StarPUSetup::codelet()
+auto
+StarPUSetup::get_codelet() -> struct starpu_codelet*
 {
   return codelet_.get_codelet();
 }
 
-const std::map<unsigned int, std::vector<int>>
+auto
 StarPUSetup::get_cuda_workers_by_device(
     const std::vector<unsigned int>& device_ids)
+    -> std::map<unsigned int, std::vector<int>>
 {
   std::map<unsigned int, std::vector<int>> device_to_workers;
 
   for (auto device_id : device_ids) {
-    int workerids[STARPU_NMAXWORKERS];
-    int nworkers = starpu_worker_get_stream_workerids(
-        device_id, workerids, STARPU_CUDA_WORKER);
+    std::array<int, STARPU_NMAXWORKERS> workerids{};
+    const int nworkers = starpu_worker_get_stream_workerids(
+        device_id, workerids.data(), STARPU_CUDA_WORKER);
 
     if (nworkers < 0) {
       throw std::runtime_error(
@@ -209,7 +237,7 @@ StarPUSetup::get_cuda_workers_by_device(
     }
 
     device_to_workers[device_id] =
-        std::vector<int>(workerids, workerids + nworkers);
+        std::vector<int>(workerids.begin(), workerids.begin() + nworkers);
   }
 
   return device_to_workers;

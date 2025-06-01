@@ -1,10 +1,16 @@
-#include <torch/torch.h>
+#include <torch/version.h>
 
+#include <exception>
+#include <iostream>
+
+#include "args_parser.hpp"
 #include "exceptions.hpp"
 #include "inference_runner.hpp"
+#include "logger.hpp"
+#include "starpu_setup.hpp"
 
-int
-main(int argc, char* argv[])
+auto
+main(int argc, char* argv[]) -> int
 {
   // Parse and validate command-line options
   const ProgramOptions opts = parse_arguments(argc, argv);
@@ -15,8 +21,7 @@ main(int argc, char* argv[])
   }
 
   if (!opts.valid) {
-    std::cerr << "[ERROR] Invalid program options.\n";
-    return 1;
+    log_fatal("Invalid program options.\n");
   }
 
   // Display configuration summary

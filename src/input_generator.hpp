@@ -30,7 +30,7 @@ generate_random_inputs(
     const auto& shape = shapes[i];
     at::ScalarType type = (i < types.size()) ? types[i] : at::kFloat;
 
-    torch::TensorOptions options = torch::TensorOptions().dtype(type);
+    const torch::TensorOptions options = torch::TensorOptions().dtype(type);
     torch::Tensor tensor;
 
     switch (type) {

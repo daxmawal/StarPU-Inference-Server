@@ -1,9 +1,19 @@
 #include "args_parser.hpp"
 
+#include <c10/core/ScalarType.h>
+
+#include <cstdint>
+#include <cstdlib>
+#include <exception>
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <vector>
+
+#include "logger.hpp"
 
 // =============================================================================
 // Display help
@@ -31,14 +41,14 @@ display_help(const char* prog_name)
 // =============================================================================
 // Parsing utilities
 // =============================================================================
-std::vector<int64_t>
-parse_shape_string(const std::string& shape_str)
+auto
+parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
 {
   std::vector<int64_t> shape;
-  std::stringstream ss(shape_str);
+  std::stringstream shape_stream(shape_str);
   std::string item;
 
-  while (std::getline(ss, item, 'x')) {
+  while (std::getline(shape_stream, item, 'x')) {
     try {
       shape.push_back(std::stoll(item));
     }
@@ -48,31 +58,34 @@ parse_shape_string(const std::string& shape_str)
     }
   }
 
-  if (shape.empty())
+  if (shape.empty()) {
     throw std::invalid_argument("Shape string is empty or invalid.");
+  }
 
   return shape;
 }
 
-std::vector<std::vector<int64_t>>
+auto
 parse_shapes_string(const std::string& shapes_str)
+    -> std::vector<std::vector<int64_t>>
 {
   std::vector<std::vector<int64_t>> shapes;
-  std::stringstream ss(shapes_str);
+  std::stringstream shape_stream(shapes_str);
   std::string shape_str;
 
-  while (std::getline(ss, shape_str, ',')) {
+  while (std::getline(shape_stream, shape_str, ',')) {
     shapes.push_back(parse_shape_string(shape_str));
   }
 
-  if (shapes.empty())
+  if (shapes.empty()) {
     throw std::invalid_argument("No valid shapes provided.");
+  }
 
   return shapes;
 }
 
-at::ScalarType
-parse_type_string(const std::string& type_str)
+auto
+parse_type_string(const std::string& type_str) -> at::ScalarType
 {
   static const std::unordered_map<std::string, at::ScalarType> type_map = {
       {"float", at::kFloat},
@@ -96,30 +109,31 @@ parse_type_string(const std::string& type_str)
       {"complex64", at::kComplexFloat},
       {"complex128", at::kComplexDouble}};
 
-  auto it = type_map.find(type_str);
-  if (it == type_map.end())
+  auto iterator = type_map.find(type_str);
+  if (iterator == type_map.end()) {
     throw std::invalid_argument("Unsupported type: " + type_str);
-  return it->second;
+  }
+  return iterator->second;
 }
 
-std::vector<at::ScalarType>
-parse_types_string(const std::string& types_str)
+auto
+parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 {
   std::vector<at::ScalarType> types;
-  std::stringstream ss(types_str);
+  std::stringstream shape_stream(types_str);
   std::string type_str;
 
-  while (std::getline(ss, type_str, ',')) {
+  while (std::getline(shape_stream, type_str, ',')) {
     types.push_back(parse_type_string(type_str));
   }
 
   return types;
 }
 
-VerbosityLevel
-parse_verbosity_level(const std::string& val)
+auto
+parse_verbosity_level(const std::string& val) -> VerbosityLevel
 {
-  int level = std::stoi(val);
+  const int level = std::stoi(val);
   switch (level) {
     case 0:
       return VerbosityLevel::Silent;
@@ -137,8 +151,9 @@ parse_verbosity_level(const std::string& val)
 }
 
 template <typename Func>
-bool
-try_parse(const std::string& argname, const char* value, Func&& func)
+auto
+try_parse(const std::string& argname, const char* value, const Func&& func)
+    -> bool
 {
   try {
     func(value);
@@ -153,99 +168,191 @@ try_parse(const std::string& argname, const char* value, Func&& func)
 // =============================================================================
 // Argument parser
 // =============================================================================
-ProgramOptions
-parse_arguments(int argc, char* argv[])
+void
+check_required(
+    const bool condition, const std::string& option_name,
+    std::vector<std::string>& missing)
+{
+  if (!condition) {
+    missing.push_back(option_name);
+  }
+}
+
+
+// -------------------- Generic helpers --------------------
+
+template <typename Func>
+auto
+try_parse(const char* val, Func&& parser) -> bool
+{
+  try {
+    std::forward<Func>(parser)(val);
+    return true;
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("Invalid value: ") + e.what());
+    return false;
+  }
+}
+
+template <typename Func>
+auto
+expect_and_parse(int& idx, int argc, char** args, Func&& parser) -> bool
+{
+  if (idx + 1 >= argc) {
+    return false;
+  }
+  return try_parse(args[++idx], std::forward<Func>(parser));
+}
+
+// -------------------- Individual parsers --------------------
+
+namespace parsers {
+auto
+parse_model(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  if (idx + 1 >= argc) {
+    return false;
+  }
+  opts.model_path = args[++idx];
+  return true;
+}
+
+auto
+parse_iterations(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  return expect_and_parse(idx, argc, args, [&](const char* val) {
+    const int tmp = std::stoi(val);
+    if (tmp <= 0) {
+      throw std::invalid_argument("Must be > 0.");
+    }
+    opts.iterations = static_cast<unsigned int>(tmp);
+  });
+}
+
+auto
+parse_shape(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  return expect_and_parse(idx, argc, args, [&](const char* val) {
+    opts.input_shapes = {parse_shape_string(val)};
+  });
+}
+
+auto
+parse_shapes(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  return expect_and_parse(idx, argc, args, [&](const char* val) {
+    opts.input_shapes = parse_shapes_string(val);
+  });
+}
+
+auto
+parse_types(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  return expect_and_parse(idx, argc, args, [&](const char* val) {
+    opts.input_types = parse_types_string(val);
+  });
+}
+
+auto
+parse_verbose(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  return expect_and_parse(idx, argc, args, [&](const char* val) {
+    opts.verbosity = parse_verbosity_level(val);
+  });
+}
+
+auto
+parse_delay(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  return expect_and_parse(idx, argc, args, [&](const char* val) {
+    opts.delay_ms = std::stoi(val);
+    if (opts.delay_ms < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+  });
+}
+
+auto
+parse_device_ids(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  return expect_and_parse(idx, argc, args, [&](const char* val) {
+    opts.use_cuda = true;
+    std::stringstream shape_stream(val);
+    std::string id_str;
+    while (std::getline(shape_stream, id_str, ',')) {
+      int device_id = std::stoi(id_str);
+      if (device_id < 0) {
+        throw std::invalid_argument("Must be >= 0.");
+      }
+      opts.device_ids.push_back(static_cast<unsigned int>(device_id));
+    }
+    if (opts.device_ids.empty()) {
+      throw std::invalid_argument("No device IDs provided.");
+    }
+  });
+}
+
+auto
+parse_scheduler(ProgramOptions& opts, int& idx, int argc, char** args) -> bool
+{
+  if (idx + 1 >= argc) {
+    return false;
+  }
+  opts.scheduler = args[++idx];
+  return true;
+}
+}  // namespace parsers
+
+// -------------------- Principal function --------------------
+
+auto
+parse_arguments(int argc, char* argv[]) -> ProgramOptions
 {
   ProgramOptions opts;
 
-  std::unordered_map<std::string, std::function<bool(int&, char**)>> dispatch =
-      {{"--scheduler",
-        [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          opts.scheduler = args[++i];
-          return true;
-        }},
-       {"--model",
-        [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          opts.model_path = args[++i];
-          return true;
-        }},
-       {"--iterations",
-        [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          return try_parse("iterations", args[++i], [&](const char* val) {
-            int tmp = std::stoi(val);
-            if (tmp <= 0)
-              throw std::invalid_argument("Must be > 0.");
-            opts.iterations = static_cast<unsigned int>(tmp);
-          });
-        }},
-       {"--shape",
-        [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          return try_parse("shape", args[++i], [&](const char* val) {
-            opts.input_shapes = {parse_shape_string(val)};
-          });
-        }},
-       {"--shapes",
-        [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          return try_parse("shapes", args[++i], [&](const char* val) {
-            opts.input_shapes = parse_shapes_string(val);
-          });
-        }},
-       {"--types",
-        [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          return try_parse("types", args[++i], [&](const char* val) {
-            opts.input_types = parse_types_string(val);
-          });
-        }},
-       {"--verbose",
-        [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          return try_parse("verbose", args[++i], [&](const char* val) {
-            opts.verbosity = parse_verbosity_level(val);
-          });
-        }},
-       {"--delay",
-        [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          return try_parse("delay", args[++i], [&](const char* val) {
-            opts.delay_ms = std::stoi(val);
-            if (opts.delay_ms < 0)
-              throw std::invalid_argument("Must be >= 0.");
-          });
-        }},
-       {"--device-ids", [&](int& i, char** args) {
-          if (i + 1 >= argc)
-            return false;
-          return try_parse("device-ids", args[++i], [&](const char* val) {
-            opts.use_cuda = true;
-            std::stringstream ss(val);
-            std::string id_str;
-            while (std::getline(ss, id_str, ',')) {
-              int id = std::stoi(id_str);
-              if (id < 0)
-                throw std::invalid_argument("Must be >= 0.");
-              opts.device_ids.push_back(static_cast<unsigned int>(id));
-            }
-            if (opts.device_ids.empty())
-              throw std::invalid_argument("No device IDs provided.");
-          });
-        }}};
+  const std::unordered_map<std::string, std::function<bool(int&, char**)>>
+      dispatch = {
+          {"--model",
+           [&](int& idx, char** args) {
+             return parsers::parse_model(opts, idx, argc, args);
+           }},
+          {"--iterations",
+           [&](int& idx, char** args) {
+             return parsers::parse_iterations(opts, idx, argc, args);
+           }},
+          {"--shape",
+           [&](int& idx, char** args) {
+             return parsers::parse_shape(opts, idx, argc, args);
+           }},
+          {"--shapes",
+           [&](int& idx, char** args) {
+             return parsers::parse_shapes(opts, idx, argc, args);
+           }},
+          {"--types",
+           [&](int& idx, char** args) {
+             return parsers::parse_types(opts, idx, argc, args);
+           }},
+          {"--verbose",
+           [&](int& idx, char** args) {
+             return parsers::parse_verbose(opts, idx, argc, args);
+           }},
+          {"--delay",
+           [&](int& idx, char** args) {
+             return parsers::parse_delay(opts, idx, argc, args);
+           }},
+          {"--device-ids",
+           [&](int& idx, char** args) {
+             return parsers::parse_device_ids(opts, idx, argc, args);
+           }},
+          {"--scheduler",
+           [&](int& idx, char** args) {
+             return parsers::parse_scheduler(opts, idx, argc, args);
+           }},
+      };
 
-  for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
+  for (int idx = 1; idx < argc; ++idx) {
+    const std::string arg = argv[idx];
 
     if (arg == "--sync") {
       opts.synchronous = true;
@@ -254,8 +361,8 @@ parse_arguments(int argc, char* argv[])
     } else if (arg == "--help") {
       opts.show_help = true;
       return opts;
-    } else if (auto it = dispatch.find(arg); it != dispatch.end()) {
-      if (!it->second(i, argv)) {
+    } else if (auto iterator = dispatch.find(arg); iterator != dispatch.end()) {
+      if (!iterator->second(idx, argv)) {
         opts.valid = false;
         return opts;
       }
@@ -268,19 +375,20 @@ parse_arguments(int argc, char* argv[])
   }
 
   // Post-validation
-  if (opts.model_path.empty()) {
-    log_error("--model option is required.");
-    opts.valid = false;
-  }
+  std::vector<std::string> missing;
+  check_required(!opts.model_path.empty(), "--model", missing);
+  check_required(!opts.input_shapes.empty(), "--shape or --shapes", missing);
+  check_required(!opts.input_types.empty(), "--types", missing);
 
-  if (!opts.input_types.empty() &&
-      opts.input_types.size() != opts.input_shapes.size()) {
+  if (opts.input_shapes.size() != opts.input_types.size()) {
     log_error("Number of --types must match number of input shapes.");
     opts.valid = false;
   }
 
-  if (opts.input_shapes.empty() || opts.input_types.empty()) {
-    log_error("Both --shape/--shapes and --types must be provided.");
+  if (!missing.empty()) {
+    for (const auto& opt : missing) {
+      log_error(opt + " option is required.");
+    }
     opts.valid = false;
   }
 

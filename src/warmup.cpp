@@ -1,14 +1,27 @@
 #include "warmup.hpp"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstddef>
+#include <iterator>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <random>
+#include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include "Inference_queue.hpp"
-#include "exceptions.hpp"
-#include "inference_task.hpp"
-#include "inference_validator.hpp"
+#include "args_parser.hpp"
+#include "inference_runner.hpp"
 #include "input_generator.hpp"
+#include "logger.hpp"
 #include "server_worker.hpp"
+#include "starpu_setup.hpp"
 
 constexpr int NUM_PREGENERATED_INPUTS = 2;
 
@@ -20,17 +33,17 @@ client_worker_warmup(
     InferenceQueue& queue, const ProgramOptions& opts,
     const std::vector<torch::Tensor>& outputs_ref,
     const unsigned int iterations_per_worker,
-    const std::map<unsigned int, std::vector<int>>&
-        device_workers)  // <-- pass by const ref
+    const std::map<unsigned int, std::vector<int>>& device_workers)
 {
   // Pre-generate a small pool of random input tensors to avoid reallocation
   std::vector<std::vector<torch::Tensor>> pregen_inputs;
   pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
 
-  for (int i = 0; i < NUM_PREGENERATED_INPUTS; ++i) {
-    pregen_inputs.emplace_back(
-        generate_random_inputs(opts.input_shapes, opts.input_types));
-  }
+  pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
+  std::generate_n(
+      std::back_inserter(pregen_inputs), NUM_PREGENERATED_INPUTS, [&]() {
+        return generate_random_inputs(opts.input_shapes, opts.input_types);
+      });
 
   // RNG setup to randomly pick pre-generated inputs for warmup jobs
   std::mt19937 rng(std::random_device{}());
@@ -40,7 +53,7 @@ client_worker_warmup(
 
   // Iterate over each device ID and its associated StarPU worker IDs
   for (const auto& [device_id, worker_ids] : device_workers) {
-    for (int worker_id : worker_ids) {
+    for (const int worker_id : worker_ids) {
       for (unsigned int i = 0; i < iterations_per_worker; ++i) {
         auto job = std::make_shared<InferenceJob>();
 
@@ -49,8 +62,8 @@ client_worker_warmup(
         job->input_tensors = chosen_inputs;
 
         job->input_types.reserve(chosen_inputs.size());
-        for (const auto& t : chosen_inputs) {
-          job->input_types.emplace_back(t.scalar_type());
+        for (const auto& tensor : chosen_inputs) {
+          job->input_types.emplace_back(tensor.scalar_type());
         }
 
         job->outputs_tensors.reserve(outputs_ref.size());
@@ -109,7 +122,7 @@ run_warmup_phase(
   std::thread server(&ServerWorker::run, &worker);
 
   const auto device_workers =
-      starpu.get_cuda_workers_by_device(opts.device_ids);
+      StarPUSetup::get_cuda_workers_by_device(opts.device_ids);
 
   // Launch client thread to feed warmup jobs
   std::thread client([&]() {

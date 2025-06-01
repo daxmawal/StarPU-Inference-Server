@@ -17,6 +17,7 @@ constexpr size_t MaxDims = 8;        // Max number of dimensions per tensor
 constexpr size_t MaxModelsGPU = 32;  // Max number of GPU
 }  // namespace InferLimits
 
+namespace detail {
 // =============================================================================
 // Timing info for measuring durations
 // =============================================================================
@@ -57,16 +58,18 @@ struct TensorLayout {
   std::array<at::ScalarType, InferLimits::MaxInputs> input_types{};
 };
 
+}  // namespace detail
+
 // =============================================================================
 // Parameters passed to an inference task
 // =============================================================================
 struct InferenceParams {
-  ModelPointers models;     // Model handles (CPU + GPU replicas)
-  TensorLayout layout;      // Tensor dimensions and types
-  size_t num_inputs = 0;    // Number of input tensors
-  size_t num_outputs = 0;   // Number of output tensors
-  unsigned int job_id = 0;  // Job identifier for logging/debugging
-  DeviceInfo device;
-  Timing timing;             // Timing data (for benchmarking)
+  detail::ModelPointers models;  // Model handles (CPU + GPU replicas)
+  detail::TensorLayout layout;   // Tensor dimensions and types
+  size_t num_inputs = 0;         // Number of input tensors
+  size_t num_outputs = 0;        // Number of output tensors
+  unsigned int job_id = 0;       // Job identifier for logging/debugging
+  detail::DeviceInfo device;
+  detail::Timing timing;     // Timing data (for benchmarking)
   VerbosityLevel verbosity;  // Logging verbosity
 };

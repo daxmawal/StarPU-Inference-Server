@@ -1,9 +1,21 @@
 #include "server_worker.hpp"
 
-#include <iostream>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <exception>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
 
+#include "Inference_queue.hpp"
+#include "args_parser.hpp"
 #include "exceptions.hpp"
+#include "inference_runner.hpp"
 #include "inference_task.hpp"
+#include "logger.hpp"
+#include "starpu_setup.hpp"
 
 // =============================================================================
 // Constructor
@@ -45,19 +57,19 @@ ServerWorker::run()
 
     // Completion callback for this job
     job->on_complete =
-        [this, id = job->job_id, inputs = job->input_tensors,
+        [this, idx = job->job_id, inputs = job->input_tensors,
          &executed_on = job->executed_on, &timing_info = job->timing_info,
          &device_id = job->device_id, &worker_id = job->worker_id](
-            std::vector<torch::Tensor> results, double latency_ms) {
+            const std::vector<torch::Tensor>& results, double latency_ms) {
           {
-            std::lock_guard<std::mutex> lock(results_mutex_);
+            const std::lock_guard<std::mutex> lock(results_mutex_);
             results_.emplace_back(InferenceResult{
-                id, inputs, results, latency_ms, executed_on, device_id,
+                idx, inputs, results, latency_ms, executed_on, device_id,
                 worker_id, timing_info});
           }
 
           log_stats(
-              opts_.verbosity, "Completed job ID: " + std::to_string(id) +
+              opts_.verbosity, "Completed job ID: " + std::to_string(idx) +
                                    ", latency: " + std::to_string(latency_ms) +
                                    " ms");
 
@@ -80,15 +92,17 @@ ServerWorker::run()
       log_error(
           "[Inference Error] Job " + std::to_string(job->job_id) + ": " +
           e.what());
-      if (job->on_complete)
+      if (job->on_complete) {
         job->on_complete({}, -1);
+      }
     }
     catch (const std::exception& e) {
       log_error(
           "[Unhandled Exception] Job " + std::to_string(job->job_id) + ": " +
           e.what());
-      if (job->on_complete)
+      if (job->on_complete) {
         job->on_complete({}, -1);
+      }
     }
   }
 

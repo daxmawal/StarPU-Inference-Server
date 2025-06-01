@@ -39,10 +39,10 @@ class StarPUSetup {
   ~StarPUSetup();
 
   // Returns the associated inference codelet
-  struct starpu_codelet* codelet();
+  struct starpu_codelet* get_codelet();
 
   // Returns the map of CUDA workers grouped by device ID
-  const std::map<unsigned int, std::vector<int>> get_cuda_workers_by_device(
+  static std::map<unsigned int, std::vector<int>> get_cuda_workers_by_device(
       const std::vector<unsigned int>& device_ids);
 
  private:
