@@ -22,6 +22,11 @@ struct InferenceCallbackContext {
   std::atomic<int> remaining_outputs_to_acquire = 0;
   std::mutex mutex;
 
+  starpu_data_handle_t* dyn_handles = nullptr;
+  starpu_data_access_mode* dyn_modes = nullptr;
+
+  std::shared_ptr<void> self_keep_alive;
+
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
       std::shared_ptr<InferenceParams> params_, const ProgramOptions& opts_,
@@ -44,7 +49,7 @@ class InferenceTask {
   // ---- Static utility methods for task lifecycle ----
 
   /// Cleans up after task completion
-  static void cleanup(InferenceCallbackContext* ctx);
+  static void cleanup(std::shared_ptr<InferenceCallbackContext> ctx_sptr);
 
   /// Called after output is ready, triggers cleanup
   static void on_output_ready_and_cleanup(void* arg);
@@ -75,7 +80,7 @@ class InferenceTask {
   starpu_task* create_task(
       const std::vector<starpu_data_handle_t>& inputs_handles,
       const std::vector<starpu_data_handle_t>& outputs_handles,
-      InferenceCallbackContext* ctx);
+      std::shared_ptr<InferenceCallbackContext> ctx_sptr);
 
   /// Prepares the inference parameters (model, layout, etc.)
   std::shared_ptr<InferenceParams> create_inference_params();

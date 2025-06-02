@@ -56,7 +56,7 @@ InferenceTask::submit()
   const std::shared_ptr<InferenceParams> inference_params =
       create_inference_params();
 
-  auto* ctx = new InferenceCallbackContext(
+  auto ctx = std::make_shared<InferenceCallbackContext>(
       job_, inference_params, opts_, job_->job_id, inputs_handles,
       outputs_handles);
 
@@ -193,11 +193,10 @@ auto
 InferenceTask::create_task(
     const std::vector<starpu_data_handle_t>& inputs_handles,
     const std::vector<starpu_data_handle_t>& outputs_handles,
-    InferenceCallbackContext* ctx) -> starpu_task*
+    std::shared_ptr<InferenceCallbackContext> ctx) -> starpu_task*
 {
   const size_t num_inputs = inputs_handles.size();
   const size_t num_buffers = num_inputs + outputs_handles.size();
-  ;
 
   auto* task = starpu_task_create();
   if (task == nullptr) {
@@ -216,9 +215,7 @@ InferenceTask::create_task(
   task->dyn_modes = static_cast<starpu_data_access_mode*>(
       malloc(num_buffers * sizeof(starpu_data_access_mode)));
 
-  if (task->dyn_handles == nullptr || task->dyn_modes == nullptr) {
-    free(static_cast<void*>(task->dyn_handles));
-    free(task->dyn_modes);
+  if (!task->dyn_handles || !task->dyn_modes) {
     starpu_task_destroy(task);
     cleanup(ctx);
     throw MemoryAllocationException("Failed to allocate task buffers.");
@@ -235,13 +232,13 @@ InferenceTask::create_task(
   }
 
   task->callback_func = InferenceTask::starpu_output_callback;
-  task->callback_arg = ctx;
+  ctx->self_keep_alive = ctx;
+  task->callback_arg = ctx.get();
 
   if (job_->fixed_worker_id.has_value()) {
     task->workerid = job_->fixed_worker_id.value();
     task->execute_on_a_specific_worker = 1;
   }
-
 
   return task;
 }
@@ -250,7 +247,7 @@ InferenceTask::create_task(
 // Callbacks & Cleanup
 // =============================================================================
 void
-InferenceTask::cleanup(InferenceCallbackContext* ctx)
+InferenceTask::cleanup(std::shared_ptr<InferenceCallbackContext> ctx)
 {
   if (ctx == nullptr) {
     return;
@@ -259,16 +256,16 @@ InferenceTask::cleanup(InferenceCallbackContext* ctx)
   for (auto& handle : ctx->inputs_handles) {
     if (handle != nullptr) {
       starpu_data_unregister_submit(handle);
+      handle == nullptr;
     }
   }
 
   for (auto& handle : ctx->outputs_handles) {
     if (handle != nullptr) {
       starpu_data_unregister_submit(handle);
+      handle == nullptr;
     }
   }
-
-  delete ctx;
 }
 
 void
@@ -280,6 +277,12 @@ InferenceTask::on_output_ready_and_cleanup(void* arg)
     if (handle != nullptr) {
       starpu_data_release(handle);
     }
+  }
+
+  auto ctx_sptr =
+      std::static_pointer_cast<InferenceCallbackContext>(ctx->self_keep_alive);
+  if (ctx_sptr) {
+    InferenceTask::cleanup(ctx_sptr);
   }
 
   const auto end_time = std::chrono::high_resolution_clock::now();
@@ -296,9 +299,8 @@ InferenceTask::on_output_ready_and_cleanup(void* arg)
     }
   }
 
-  cleanup(ctx);
+  ctx->self_keep_alive.reset();
 }
-
 
 void
 InferenceTask::starpu_output_callback(void* arg)
