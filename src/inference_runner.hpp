@@ -51,7 +51,7 @@ class InferenceJob {
 
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-      unsigned int id,
+      unsigned int job_id,
       std::function<void(std::vector<torch::Tensor>, double)> callback =
           nullptr);
 

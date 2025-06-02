@@ -43,10 +43,10 @@ constexpr int HOURS_PER_DAY = 24;
 // =============================================================================
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-    unsigned int job_id,
+    unsigned int job_identifier,
     std::function<void(std::vector<torch::Tensor>, double)> callback)
     : input_tensors(std::move(inputs)), input_types(std::move(types)),
-      job_id(job_id), on_complete(std::move(callback)),
+      job_id(job_identifier), on_complete(std::move(callback)),
       start_time(std::chrono::high_resolution_clock::now())
 {
 }

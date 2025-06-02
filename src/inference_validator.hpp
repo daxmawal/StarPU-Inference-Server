@@ -12,5 +12,5 @@
 // from the same model on the same device. Returns true if close enough.
 // =============================================================================
 bool validate_inference_result(
-    const InferenceResult& r, torch::jit::script::Module& module,
+    const InferenceResult& result, torch::jit::script::Module& module,
     const VerbosityLevel& verbosity);
