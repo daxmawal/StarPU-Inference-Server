@@ -29,7 +29,7 @@ struct InferenceCallbackContext {
 
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
-      std::shared_ptr<InferenceParams> params_, const ProgramOptions& opts_,
+      std::shared_ptr<InferenceParams> params_, ProgramOptions opts_,
       unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
       std::vector<starpu_data_handle_t> outputs_);
 };
@@ -43,13 +43,12 @@ class InferenceTask {
   InferenceTask(
       StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
       torch::jit::script::Module& model_cpu,
-      std::vector<torch::jit::script::Module>& models_gpu,
-      const ProgramOptions& opts);
+      std::vector<torch::jit::script::Module>& models_gpu, ProgramOptions opts);
 
   // ---- Static utility methods for task lifecycle ----
 
   /// Cleans up after task completion
-  static void cleanup(std::shared_ptr<InferenceCallbackContext> ctx_sptr);
+  static void cleanup(const std::shared_ptr<InferenceCallbackContext>& ctx);
 
   /// Called after output is ready, triggers cleanup
   static void on_output_ready_and_cleanup(void* arg);
@@ -80,7 +79,7 @@ class InferenceTask {
   starpu_task* create_task(
       const std::vector<starpu_data_handle_t>& inputs_handles,
       const std::vector<starpu_data_handle_t>& outputs_handles,
-      std::shared_ptr<InferenceCallbackContext> ctx_sptr);
+      const std::shared_ptr<InferenceCallbackContext>& ctx);
 
   /// Prepares the inference parameters (model, layout, etc.)
   std::shared_ptr<InferenceParams> create_inference_params();

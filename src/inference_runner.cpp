@@ -69,9 +69,9 @@ InferenceJob::is_shutdown() const -> bool
 // =============================================================================
 // Utility: Time formatting
 // =============================================================================
-std::string
-current_time_formatted(
-    const std::chrono::high_resolution_clock::time_point& time_point)
+auto
+current_time_formatted(const std::chrono::high_resolution_clock::time_point&
+                           time_point) -> std::string
 {
   using std::chrono::duration_cast;
   using std::chrono::hours;

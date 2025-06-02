@@ -13,7 +13,8 @@ auto
 main(int argc, char* argv[]) -> int
 {
   // Parse and validate command-line options
-  const ProgramOptions opts = parse_arguments(argc, argv);
+  const ProgramOptions opts =
+      parse_arguments(std::span<char*>(argv, static_cast<size_t>(argc)));
 
   if (opts.show_help) {
     display_help("Inference Engine");
@@ -25,7 +26,8 @@ main(int argc, char* argv[]) -> int
   }
 
   // Display configuration summary
-  std::cout << "LibTorch version: " << TORCH_VERSION << "\n"
+  std::cout << "__cplusplus = " << __cplusplus << "\n"
+            << "LibTorch version: " << TORCH_VERSION << "\n"
             << "Scheduler       : " << opts.scheduler << "\n"
             << "Iterations      : " << opts.iterations << "\n";
 

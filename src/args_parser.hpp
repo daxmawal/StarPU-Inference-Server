@@ -1,6 +1,7 @@
 #pragma once
 #include <ATen/core/ScalarType.h>
 
+#include <span>
 #include <string>
 #include <vector>
 
@@ -36,4 +37,4 @@ struct ProgramOptions {
 // Helper functions to parse CLI arguments and shapes
 // =============================================================================
 void display_help(const char* prog_name);
-ProgramOptions parse_arguments(int argc, char* argv[]);
+ProgramOptions parse_arguments(std::span<char*> args_span);

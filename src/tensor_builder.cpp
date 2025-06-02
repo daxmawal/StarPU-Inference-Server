@@ -5,6 +5,7 @@
 #include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -19,7 +20,7 @@
 // ============================================================================
 auto
 TensorBuilder::from_starpu_buffers(
-    const InferenceParams* params, void* buffers[],
+    const InferenceParams* params, const std::vector<void*>& buffers,
     const torch::Device device) -> std::vector<torch::Tensor>
 {
   if (params->num_inputs > InferLimits::MaxInputs) {
@@ -30,22 +31,17 @@ TensorBuilder::from_starpu_buffers(
   inputs.reserve(params->num_inputs);
 
   for (size_t idx = 0; idx < params->num_inputs; ++idx) {
-    void* input_data = reinterpret_cast<void*>(
-        static_cast<uintptr_t>(STARPU_VARIABLE_GET_PTR(buffers[idx])));
+    auto* var_iface = static_cast<starpu_variable_interface*>(buffers[idx]);
+    auto input_data = var_iface->ptr;
 
-    if (input_data == nullptr) {
-      throw std::runtime_error(
-          "[ERROR] Null buffer pointer for input " + std::to_string(idx));
-    }
-
-    const auto& dims = params->layout.dims[idx];
-    const auto raw_ndim = params->layout.num_dims[idx];
+    const auto& dims = params->layout.dims.at(idx);
+    const auto raw_ndim = params->layout.num_dims.at(idx);
     TORCH_CHECK(
         raw_ndim >= 0, "Invalid number of dimensions (must be non-negative)");
     const auto ndim = static_cast<size_t>(raw_ndim);
     const std::vector<int64_t> shape(dims.begin(), dims.begin() + ndim);
 
-    const at::ScalarType dtype = params->layout.input_types[idx];
+    const at::ScalarType dtype = params->layout.input_types.at(idx);
     inputs.emplace_back(from_raw_ptr(input_data, dtype, shape, device));
   }
 
@@ -77,23 +73,23 @@ TensorBuilder::copy_output_to_buffer(
 // ============================================================================
 auto
 TensorBuilder::from_raw_ptr(
-    void* ptr, const at::ScalarType type, const std::vector<int64_t>& shape,
+    uintptr_t ptr, const at::ScalarType type, const std::vector<int64_t>& shape,
     const torch::Device device) -> torch::Tensor
 {
   auto options = torch::TensorOptions().dtype(type).device(device);
 
   switch (type) {
     case at::kFloat:
-      return torch::from_blob(static_cast<float*>(ptr), shape, options)
+      return torch::from_blob(std::bit_cast<float*>(ptr), shape, options)
           .contiguous();
     case at::kInt:
-      return torch::from_blob(static_cast<int32_t*>(ptr), shape, options)
+      return torch::from_blob(std::bit_cast<int32_t*>(ptr), shape, options)
           .contiguous();
     case at::kLong:
-      return torch::from_blob(static_cast<int64_t*>(ptr), shape, options)
+      return torch::from_blob(std::bit_cast<int64_t*>(ptr), shape, options)
           .contiguous();
     case at::kBool:
-      return torch::from_blob(static_cast<bool*>(ptr), shape, options)
+      return torch::from_blob(std::bit_cast<bool*>(ptr), shape, options)
           .contiguous();
     default:
       throw std::runtime_error("[ERROR] Unsupported input type for tensor");

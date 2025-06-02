@@ -10,6 +10,7 @@
 #include <starpu_cuda.h>
 #include <torch/types.h>
 
+#include <bit>
 #include <chrono>
 #include <climits>
 #include <cstddef>
@@ -29,7 +30,7 @@
 // =============================================================================
 // InferenceCodelet: Setup and execution functions for StarPU codelets
 // =============================================================================
-InferenceCodelet::InferenceCodelet()
+InferenceCodelet::InferenceCodelet() : codelet_{}
 {
   starpu_codelet_init(&codelet_);
   codelet_.nbuffers = STARPU_VARIABLE_NBUFFERS;
@@ -37,7 +38,7 @@ InferenceCodelet::InferenceCodelet()
   codelet_.max_parallelism = INT_MAX,
   codelet_.cpu_funcs[0] = &InferenceCodelet::cpu_inference_func;
   codelet_.cuda_funcs[0] = &InferenceCodelet::cuda_inference_func;
-  codelet_.cuda_flags[0] = STARPU_CUDA_ASYNC;
+  codelet_.cuda_flags[0] = 1U;
 }
 
 auto
@@ -75,8 +76,8 @@ extract_tensors_from_output(const c10::IValue& result)
 // Unified inference execution
 inline void
 run_inference(
-    InferenceParams* params, void* buffers[], const torch::Device device,
-    torch::jit::script::Module* model,
+    InferenceParams* params, const std::vector<void*>& buffers,
+    const torch::Device device, torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, void* buffer_ptr)>&
         copy_output_fn)
 {
@@ -95,8 +96,9 @@ run_inference(
       "Mismatch between model outputs and StarPU buffers");
 
   for (size_t i = 0; i < params->num_outputs; ++i) {
-    void* buffer = reinterpret_cast<void*>(
-        STARPU_VARIABLE_GET_PTR(buffers[params->num_inputs + i]));
+    auto* var_iface = static_cast<starpu_variable_interface*>(
+        buffers[params->num_inputs + i]);
+    void* buffer = reinterpret_cast<void*>(var_iface->ptr);  // NOLINT
     copy_output_fn(outputs[i], buffer);
   }
 }
@@ -104,9 +106,9 @@ run_inference(
 template <typename CopyOutputFn>
 void
 run_codelet_inference(
-    InferenceParams* params, void* buffers[], const torch::Device device,
-    torch::jit::script::Module* model, CopyOutputFn copy_output_fn,
-    const DeviceType executed_on_type)
+    InferenceParams* params, const std::vector<void*>& buffers,
+    const torch::Device device, torch::jit::script::Module* model,
+    CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
   *params->timing.codelet_start_time =
       std::chrono::high_resolution_clock::now();
@@ -143,8 +145,11 @@ void
 InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
+  const std::vector<void*> buffers_vec(
+      buffers, buffers + params->num_inputs + params->num_outputs);
+
   run_codelet_inference(
-      params, buffers, torch::kCPU, params->models.model_cpu,
+      params, buffers_vec, torch::kCPU, params->models.model_cpu,
       [](const at::Tensor& out, void* buffer_ptr) {
         TensorBuilder::copy_output_to_buffer(out, buffer_ptr, out.numel());
       },
@@ -156,6 +161,8 @@ void
 InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
+  const std::vector<void*> buffers_vec(
+      buffers, buffers + params->num_inputs + params->num_outputs);
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
 
@@ -167,9 +174,9 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
   const at::cuda::CUDAStreamGuard guard(torch_stream);
 
   run_codelet_inference(
-      params, buffers,
+      params, buffers_vec,
       torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)),
-      params->models.models_gpu[static_cast<size_t>(device_id)],
+      params->models.models_gpu.at(static_cast<size_t>(device_id)),
       [device_id](const at::Tensor& out, void* buffer_ptr) {
         const at::Tensor wrapper = torch::from_blob(
             buffer_ptr, out.sizes(),

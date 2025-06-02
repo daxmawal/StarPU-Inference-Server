@@ -2,6 +2,7 @@
 
 #include <ATen/core/ScalarType.h>
 
+#include <bit>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -23,20 +24,19 @@
 InferenceTask::InferenceTask(
     StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module& model_cpu,
-    std::vector<torch::jit::script::Module>& models_gpu,
-    const ProgramOptions& opts)
+    std::vector<torch::jit::script::Module>& models_gpu, ProgramOptions opts)
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), opts_(opts)
+      models_gpu_(models_gpu), opts_(std::move(opts))
 {
 }
 
 InferenceCallbackContext::InferenceCallbackContext(
     std::shared_ptr<InferenceJob> job_,
-    std::shared_ptr<InferenceParams> params_, const ProgramOptions& opts_,
+    std::shared_ptr<InferenceParams> params_, ProgramOptions opts_,
     unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
     std::vector<starpu_data_handle_t> outputs_)
-    : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
-      id(id_), inputs_handles(std::move(inputs_)),
+    : job(std::move(job_)), inference_params(std::move(params_)),
+      opts(std::move(opts_)), id(id_), inputs_handles(std::move(inputs_)),
       outputs_handles(std::move(outputs_))
 {
 }
@@ -96,7 +96,7 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
         "Too many GPU models for the current configuration.");
   }
   for (size_t i = 0; i < models_gpu_.size(); ++i) {
-    params->models.models_gpu[i] = &models_gpu_[i];
+    params->models.models_gpu.at(i) = &models_gpu_[i];
   }
 
   params->num_inputs = num_inputs;
@@ -118,8 +118,8 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
   for (size_t i = 0; i < num_inputs; ++i) {
     const auto& tensor = job_->input_tensors[i];
     const int64_t dim = tensor.dim();
-    params->layout.num_dims[i] = dim;
-    std::copy_n(tensor.sizes().data(), dim, params->layout.dims[i].begin());
+    params->layout.num_dims.at(i) = dim;
+    std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
   }
 
   params->verbosity = opts_.verbosity;
@@ -142,7 +142,7 @@ InferenceTask::safe_register_tensor_vector(
   starpu_data_handle_t handle = nullptr;
 
   starpu_vector_data_register(
-      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(tensor.data_ptr()),
+      &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(tensor.data_ptr()),
       static_cast<size_t>(static_cast<uint64_t>(tensor.numel())),
       static_cast<size_t>(static_cast<uint64_t>(tensor.element_size())));
 
@@ -193,7 +193,7 @@ auto
 InferenceTask::create_task(
     const std::vector<starpu_data_handle_t>& inputs_handles,
     const std::vector<starpu_data_handle_t>& outputs_handles,
-    std::shared_ptr<InferenceCallbackContext> ctx) -> starpu_task*
+    const std::shared_ptr<InferenceCallbackContext>& ctx) -> starpu_task*
 {
   const size_t num_inputs = inputs_handles.size();
   const size_t num_buffers = num_inputs + outputs_handles.size();
@@ -209,13 +209,12 @@ InferenceTask::create_task(
   task->cl_arg = ctx->inference_params.get();
   task->cl_arg_size = sizeof(InferenceParams);
   task->priority = STARPU_MAX_PRIO - ctx->job->job_id;
-
   task->dyn_handles = static_cast<starpu_data_handle_t*>(
       malloc(num_buffers * sizeof(starpu_data_handle_t)));
   task->dyn_modes = static_cast<starpu_data_access_mode*>(
       malloc(num_buffers * sizeof(starpu_data_access_mode)));
 
-  if (!task->dyn_handles || !task->dyn_modes) {
+  if (task->dyn_handles == nullptr || task->dyn_modes == nullptr) {
     starpu_task_destroy(task);
     cleanup(ctx);
     throw MemoryAllocationException("Failed to allocate task buffers.");
@@ -247,7 +246,7 @@ InferenceTask::create_task(
 // Callbacks & Cleanup
 // =============================================================================
 void
-InferenceTask::cleanup(std::shared_ptr<InferenceCallbackContext> ctx)
+InferenceTask::cleanup(const std::shared_ptr<InferenceCallbackContext>& ctx)
 {
   if (ctx == nullptr) {
     return;
@@ -256,14 +255,14 @@ InferenceTask::cleanup(std::shared_ptr<InferenceCallbackContext> ctx)
   for (auto& handle : ctx->inputs_handles) {
     if (handle != nullptr) {
       starpu_data_unregister_submit(handle);
-      handle == nullptr;
+      handle = nullptr;
     }
   }
 
   for (auto& handle : ctx->outputs_handles) {
     if (handle != nullptr) {
       starpu_data_unregister_submit(handle);
-      handle == nullptr;
+      handle = nullptr;
     }
   }
 }

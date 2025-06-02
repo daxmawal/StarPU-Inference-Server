@@ -19,7 +19,7 @@ class TensorBuilder {
   /// device   Target device (CPU or CUDA)
   /// Vector of Torch tensors on the target device
   static std::vector<torch::Tensor> from_starpu_buffers(
-      const InferenceParams* params, void* buffers[],
+      const InferenceParams* params, const std::vector<void*>& buffers,
       const torch::Device device);
 
   /// Copies a Torch tensor into a raw StarPU output buffer.
@@ -41,6 +41,6 @@ class TensorBuilder {
   /// device  Target device for the tensor
   /// Tensor referencing the raw memory
   static torch::Tensor from_raw_ptr(
-      void* ptr, const at::ScalarType type, const std::vector<int64_t>& shape,
-      const torch::Device device);
+      uintptr_t ptr, const at::ScalarType type,
+      const std::vector<int64_t>& shape, const torch::Device device);
 };
