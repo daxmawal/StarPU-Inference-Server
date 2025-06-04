@@ -21,10 +21,10 @@
 #include <string>
 #include <vector>
 
-#include "args_parser.hpp"
 #include "device_type.hpp"
 #include "inference_params.hpp"
 #include "logger.hpp"
+#include "runtime_config.hpp"
 #include "tensor_builder.hpp"
 
 // =============================================================================
@@ -191,7 +191,7 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 // =============================================================================
 // StarPUSetup: StarPU initialization and resource management
 // =============================================================================
-StarPUSetup::StarPUSetup(const ProgramOptions& opts) : conf_{}
+StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
 {
   starpu_conf_init(&conf_);
   conf_.sched_policy_name = opts.scheduler.c_str();

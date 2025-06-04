@@ -16,33 +16,38 @@
 #include <vector>
 
 #include "Inference_queue.hpp"
-#include "args_parser.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
+#include "runtime_config.hpp"
 #include "server_worker.hpp"
 #include "starpu_setup.hpp"
 
 constexpr int NUM_PREGENERATED_INPUTS = 2;
 
-// =============================================================================
-// client_worker_warmup: generates warmup jobs and pushes them to the queue
-// =============================================================================
-void
-client_worker_warmup(
-    InferenceQueue& queue, const ProgramOptions& opts,
-    const std::vector<torch::Tensor>& outputs_ref,
-    const unsigned int iterations_per_worker,
-    const std::map<unsigned int, std::vector<int>>& device_workers)
+WarmupRunner::WarmupRunner(
+    const RuntimeConfig& opts, StarPUSetup& starpu,
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<torch::Tensor>& outputs_ref)
+    : opts_(opts), starpu_(starpu), model_cpu_(model_cpu),
+      models_gpu_(models_gpu), outputs_ref_(outputs_ref),
+      dummy_completed_jobs_(0)
 {
-  // Pre-generate a small pool of random input tensors to avoid reallocation
+}
+
+void
+WarmupRunner::client_worker(
+    const std::map<unsigned int, std::vector<int32_t>> device_workers,
+    InferenceQueue& queue, const int iterations_per_worker)
+{
+  // Pre-generate random input tensors
   std::vector<std::vector<torch::Tensor>> pregen_inputs;
   pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
 
-  pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
   std::generate_n(
       std::back_inserter(pregen_inputs), NUM_PREGENERATED_INPUTS, [&]() {
-        return generate_random_inputs(opts.input_shapes, opts.input_types);
+        return generate_random_inputs(opts_.input_shapes, opts_.input_types);
       });
 
   // RNG setup to randomly pick pre-generated inputs for warmup jobs
@@ -59,29 +64,36 @@ client_worker_warmup(
 
         const auto& chosen_inputs =
             pregen_inputs[static_cast<std::size_t>(dist(rng))];
-        job->input_tensors = chosen_inputs;
+        job->set_input_tensors(chosen_inputs);
 
-        job->input_types.reserve(chosen_inputs.size());
+        std::vector<at::ScalarType> types;
+        types.reserve(chosen_inputs.size());
         for (const auto& tensor : chosen_inputs) {
-          job->input_types.emplace_back(tensor.scalar_type());
+          types.emplace_back(tensor.scalar_type());
         }
+        job->set_input_types(types);
 
-        job->outputs_tensors.reserve(outputs_ref.size());
-        for (const auto& ref : outputs_ref) {
-          job->outputs_tensors.emplace_back(torch::empty_like(ref));
+        std::vector<torch::Tensor> outputs;
+        outputs.reserve(outputs_ref_.size());
+        for (const auto& ref : outputs_ref_) {
+          outputs.emplace_back(torch::empty_like(ref));
         }
+        job->set_outputs_tensors(outputs);
 
-        job->job_id = job_id++;
-        job->fixed_worker_id = worker_id;
-        job->start_time = std::chrono::high_resolution_clock::now();
-        job->timing_info.enqueued_time = job->start_time;
+        job->set_job_id(job_id++);
+        job->set_fixed_worker_id(worker_id);
+
+        auto now = std::chrono::high_resolution_clock::now();
+        job->set_start_time(now);
+        job->timing_info().enqueued_time = now;
 
         log_trace(
-            opts.verbosity, "[Warmup] Job ID " + std::to_string(job->job_id) +
-                                ", Iteration " + std::to_string(i + 1) + "/" +
-                                std::to_string(iterations_per_worker) +
-                                ", device ID " + std::to_string(device_id) +
-                                ", worker ID " + std::to_string(worker_id));
+            opts_.verbosity, "[Warmup] Job ID " +
+                                 std::to_string(job->get_job_id()) +
+                                 ", Iteration " + std::to_string(i + 1) + "/" +
+                                 std::to_string(iterations_per_worker) +
+                                 ", device ID " + std::to_string(device_id) +
+                                 ", worker ID " + std::to_string(worker_id));
 
         queue.push(job);
       }
@@ -91,23 +103,15 @@ client_worker_warmup(
   queue.shutdown();
 }
 
-// =============================================================================
-// run_warmup_phase: sets up client/server threads to run warmup tasks
-// =============================================================================
 void
-run_warmup_phase(
-    const ProgramOptions& opts, StarPUSetup& starpu,
-    torch::jit::script::Module& model_cpu,
-    std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<torch::Tensor>& outputs_ref,
-    unsigned int iterations_per_worker)
+WarmupRunner::run(const int iterations_per_worker)
 {
-  if (!opts.use_cuda) {
-    return;  // No warmup needed without GPU
+  if (!opts_.use_cuda) {
+    return;
   }
 
   // Dummy resources (since warmup results aren't needed)
-  InferenceQueue warmup_queue;
+  InferenceQueue queue;
   std::atomic<unsigned int> dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
   std::mutex dummy_results_mutex;
@@ -116,19 +120,17 @@ run_warmup_phase(
 
   // Launch server thread
   ServerWorker worker(
-      &warmup_queue, &model_cpu, &models_gpu, &starpu, &opts, &dummy_results,
+      &queue, &model_cpu_, &models_gpu_, &starpu_, &opts_, &dummy_results,
       &dummy_results_mutex, &dummy_completed_jobs, &dummy_cv);
 
   std::thread server(&ServerWorker::run, &worker);
 
   const auto device_workers =
-      StarPUSetup::get_cuda_workers_by_device(opts.device_ids);
+      StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);
 
   // Launch client thread to feed warmup jobs
-  std::thread client([&]() {
-    client_worker_warmup(
-        warmup_queue, opts, outputs_ref, iterations_per_worker, device_workers);
-  });
+  std::thread client(
+      [&]() { client_worker(device_workers, queue, iterations_per_worker); });
 
   // Wait for client thread to finish pushing jobs
   client.join();

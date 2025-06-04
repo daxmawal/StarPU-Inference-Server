@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "Inference_queue.hpp"
-#include "args_parser.hpp"
+#include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
 // ============================================================================
@@ -24,7 +24,7 @@ class ServerWorker {
   ServerWorker(
       InferenceQueue* queue, torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
-      const ProgramOptions* opts, std::vector<InferenceResult>* results,
+      const RuntimeConfig* opts, std::vector<InferenceResult>* results,
       std::mutex* results_mutex, std::atomic<unsigned int>* completed_jobs,
       std::condition_variable* all_done_cv);
 
@@ -37,7 +37,7 @@ class ServerWorker {
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
   StarPUSetup* starpu_;
-  const ProgramOptions* opts_;
+  const RuntimeConfig* opts_;
 
   // Output and synchronization
   std::vector<InferenceResult>* results_;

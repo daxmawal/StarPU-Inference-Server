@@ -15,33 +15,8 @@
 #include <vector>
 
 #include "logger.hpp"
+#include "runtime_config.hpp"
 
-// =============================================================================
-// Display help
-// =============================================================================
-void
-display_help(const char* prog_name)
-{
-  std::cout
-      << "Usage: " << prog_name << " [OPTIONS]\n"
-      << "\nOptions:\n"
-      << "  --scheduler [name]      Scheduler type (default: lws)\n"
-      << "  --model [path]          Path to TorchScript model file (.pt)\n"
-      << "  --iterations [num]      Number of iterations (default: 1)\n"
-      << "  --shape 1x3x224x224     Shape of a single input tensor\n"
-      << "  --shapes shape1,shape2  Shapes for multiple input tensors\n"
-      << "  --types float,int       Input tensor types (default: float)\n"
-      << "  --sync                  Run tasks in synchronous mode\n"
-      << "  --delay [ms]            Delay between jobs (default: 0)\n"
-      << "  --no_cpu                Disable CPU usage\n"
-      << "  --device-ids 0,1        GPU device IDs for inference\n"
-      << "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
-      << "  --help                  Show this help message\n";
-}
-
-// =============================================================================
-// Parsing utilities
-// =============================================================================
 auto
 parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
 {
@@ -151,24 +126,6 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
   }
 }
 
-template <typename Func>
-auto
-try_parse(const std::string& argname, const char* value, const Func&& func)
-    -> bool
-{
-  try {
-    func(value);
-    return true;
-  }
-  catch (const std::exception& e) {
-    log_error("Invalid value for " + argname + ": " + e.what());
-    return false;
-  }
-}
-
-// =============================================================================
-// Argument parser
-// =============================================================================
 void
 check_required(
     const bool condition, const std::string& option_name,
@@ -178,9 +135,6 @@ check_required(
     missing.push_back(option_name);
   }
 }
-
-
-// -------------------- Generic helpers --------------------
 
 template <typename Func>
 auto
@@ -206,12 +160,8 @@ expect_and_parse(size_t& idx, std::span<char*> args, Func&& parser) -> bool
   return try_parse(args[++idx], std::forward<Func>(parser));
 }
 
-// -------------------- Individual parsers --------------------
-
-namespace parsers {
-
 auto
-parse_model(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
+parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
     return false;
@@ -222,7 +172,7 @@ parse_model(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 auto
-parse_iterations(ProgramOptions& opts, size_t& idx, std::span<char*> args)
+parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   return expect_and_parse(idx, args, [&](const char* val) {
@@ -235,7 +185,7 @@ parse_iterations(ProgramOptions& opts, size_t& idx, std::span<char*> args)
 }
 
 auto
-parse_shape(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
+parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&](const char* val) {
     opts.input_shapes = {parse_shape_string(val)};
@@ -243,7 +193,7 @@ parse_shape(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 auto
-parse_shapes(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
+parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&](const char* val) {
     opts.input_shapes = parse_shapes_string(val);
@@ -251,7 +201,7 @@ parse_shapes(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 auto
-parse_types(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
+parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&](const char* val) {
     opts.input_types = parse_types_string(val);
@@ -259,7 +209,7 @@ parse_types(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 auto
-parse_verbose(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
+parse_verbose(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&](const char* val) {
     opts.verbosity = parse_verbosity_level(val);
@@ -267,7 +217,7 @@ parse_verbose(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 auto
-parse_delay(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
+parse_delay(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&](const char* val) {
     opts.delay_ms = std::stoi(val);
@@ -278,7 +228,7 @@ parse_delay(ProgramOptions& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 auto
-parse_device_ids(ProgramOptions& opts, size_t& idx, std::span<char*> args)
+parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   return expect_and_parse(idx, args, [&](const char* val) {
@@ -299,8 +249,7 @@ parse_device_ids(ProgramOptions& opts, size_t& idx, std::span<char*> args)
 }
 
 auto
-parse_scheduler(ProgramOptions& opts, size_t& idx, std::span<char*> args)
-    -> bool
+parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
     return false;
@@ -308,53 +257,30 @@ parse_scheduler(ProgramOptions& opts, size_t& idx, std::span<char*> args)
   opts.scheduler = args[++idx];
   return true;
 }
-}  // namespace parsers
-
-// -------------------- Principal function --------------------
 
 auto
-parse_arguments(std::span<char*> args_span) -> ProgramOptions
+parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 {
-  ProgramOptions opts;
-
   static const std::unordered_map<std::string, std::function<bool(size_t&)>>
       dispatch = {
           {"--model",
-           [&](size_t& idx) {
-             return parsers::parse_model(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_model(opts, idx, args_span); }},
           {"--iterations",
-           [&](size_t& idx) {
-             return parsers::parse_iterations(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_iterations(opts, idx, args_span); }},
           {"--shape",
-           [&](size_t& idx) {
-             return parsers::parse_shape(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_shape(opts, idx, args_span); }},
           {"--shapes",
-           [&](size_t& idx) {
-             return parsers::parse_shapes(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_shapes(opts, idx, args_span); }},
           {"--types",
-           [&](size_t& idx) {
-             return parsers::parse_types(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_types(opts, idx, args_span); }},
           {"--verbose",
-           [&](size_t& idx) {
-             return parsers::parse_verbose(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_verbose(opts, idx, args_span); }},
           {"--delay",
-           [&](size_t& idx) {
-             return parsers::parse_delay(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_delay(opts, idx, args_span); }},
           {"--device-ids",
-           [&](size_t& idx) {
-             return parsers::parse_device_ids(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_device_ids(opts, idx, args_span); }},
           {"--scheduler",
-           [&](size_t& idx) {
-             return parsers::parse_scheduler(opts, idx, args_span);
-           }},
+           [&](size_t& idx) { return parse_scheduler(opts, idx, args_span); }},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
@@ -366,21 +292,24 @@ parse_arguments(std::span<char*> args_span) -> ProgramOptions
       opts.use_cpu = false;
     } else if (arg == "--help" || arg == "-h") {
       opts.show_help = true;
-      return opts;
-    } else if (auto iterator = dispatch.find(arg); iterator != dispatch.end()) {
-      if (!iterator->second(idx)) {
-        opts.valid = false;
-        return opts;
+      return true;
+    } else if (auto it = dispatch.find(arg); it != dispatch.end()) {
+      if (!it->second(idx)) {
+        return false;
       }
     } else {
       log_error(
           "Unknown argument: " + arg + ". Use --help to see valid options.");
-      opts.valid = false;
-      return opts;
+      return false;
     }
   }
 
-  // Post-validation
+  return true;
+}
+
+auto
+validate_config(RuntimeConfig& opts) -> void
+{
   std::vector<std::string> missing;
   check_required(!opts.model_path.empty(), "--model", missing);
   check_required(!opts.input_shapes.empty(), "--shape or --shapes", missing);
@@ -396,6 +325,21 @@ parse_arguments(std::span<char*> args_span) -> ProgramOptions
       log_error(opt + " option is required.");
     }
     opts.valid = false;
+  }
+}
+
+auto
+parse_arguments(std::span<char*> args_span) -> RuntimeConfig
+{
+  RuntimeConfig opts;
+
+  if (!parse_argument_values(args_span, opts)) {
+    opts.valid = false;
+    return opts;
+  }
+
+  if (!opts.show_help) {
+    validate_config(opts);
   }
 
   return opts;

@@ -10,11 +10,11 @@
 #include <vector>
 
 #include "Inference_queue.hpp"
-#include "args_parser.hpp"
 #include "exceptions.hpp"
 #include "inference_runner.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
+#include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
 // =============================================================================
@@ -23,7 +23,7 @@
 ServerWorker::ServerWorker(
     InferenceQueue* queue, torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
-    const ProgramOptions* opts, std::vector<InferenceResult>* results,
+    const RuntimeConfig* opts, std::vector<InferenceResult>* results,
     std::mutex* results_mutex, std::atomic<unsigned int>* completed_jobs,
     std::condition_variable* all_done_cv)
     : queue_(queue), model_cpu_(model_cpu), models_gpu_(models_gpu),
@@ -52,57 +52,60 @@ ServerWorker::run()
       break;
     }
 
-    log_trace(
-        opts_->verbosity, "Dequeued job ID: " + std::to_string(job->job_id));
+    const auto job_id = job->get_job_id();
+    log_trace(opts_->verbosity, "Dequeued job ID: " + std::to_string(job_id));
 
-    // Completion callback for this job
-    job->on_complete =
-        [this, idx = job->job_id, inputs = job->input_tensors,
-         &executed_on = job->executed_on, &timing_info = job->timing_info,
-         &device_id = job->device_id, &worker_id = job->worker_id](
+    // Copy required data and references
+    const auto inputs = job->get_input_tensors();
+    auto& executed_on = job->get_executed_on();
+    auto& timing_info = job->timing_info();
+    auto& device_id = job->get_device_id();
+    auto& worker_id = job->get_worker_id();
+
+    // Set completion callback
+    job->set_on_complete(
+        [this, job_id, inputs, &executed_on, &timing_info, &device_id,
+         &worker_id](
             const std::vector<torch::Tensor>& results, double latency_ms) {
           {
             const std::lock_guard<std::mutex> lock(*results_mutex_);
             results_->emplace_back(InferenceResult{
-                idx, inputs, results, latency_ms, executed_on, device_id,
+                job_id, inputs, results, latency_ms, executed_on, device_id,
                 worker_id, timing_info});
           }
 
           log_stats(
-              opts_->verbosity, "Completed job ID: " + std::to_string(idx) +
+              opts_->verbosity, "Completed job ID: " + std::to_string(job_id) +
                                     ", latency: " + std::to_string(latency_ms) +
                                     " ms");
 
           completed_jobs_->fetch_add(1);
           all_done_cv_->notify_one();
-        };
+        });
 
-    // Submission with error handling
     try {
-      job->timing_info.dequeued_time =
+      job->timing_info().dequeued_time =
           std::chrono::high_resolution_clock::now();
 
       log_debug(
-          opts_->verbosity,
-          "Submitting job ID: " + std::to_string(job->job_id));
+          opts_->verbosity, "Submitting job ID: " + std::to_string(job_id));
 
       InferenceTask inferenceTask(starpu_, job, model_cpu_, models_gpu_, opts_);
       inferenceTask.submit();
     }
     catch (const InferenceEngineException& e) {
       log_error(
-          "[Inference Error] Job " + std::to_string(job->job_id) + ": " +
-          e.what());
-      if (job->on_complete) {
-        job->on_complete({}, -1);
+          "[Inference Error] Job " + std::to_string(job_id) + ": " + e.what());
+      if (job->has_on_complete()) {
+        job->get_on_complete()({}, -1);
       }
     }
     catch (const std::exception& e) {
       log_error(
-          "[Unhandled Exception] Job " + std::to_string(job->job_id) + ": " +
+          "[Unhandled Exception] Job " + std::to_string(job_id) + ": " +
           e.what());
-      if (job->on_complete) {
-        job->on_complete({}, -1);
+      if (job->has_on_complete()) {
+        job->get_on_complete()({}, -1);
       }
     }
   }

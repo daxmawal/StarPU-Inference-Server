@@ -26,10 +26,10 @@
 #include <vector>
 
 #include "Inference_queue.hpp"
-#include "args_parser.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
+#include "runtime_config.hpp"
 #include "server_worker.hpp"
 #include "starpu_setup.hpp"
 #include "warmup.hpp"
@@ -45,9 +45,9 @@ InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
     unsigned int job_identifier,
     std::function<void(std::vector<torch::Tensor>, double)> callback)
-    : input_tensors(std::move(inputs)), input_types(std::move(types)),
-      job_id(job_identifier), on_complete(std::move(callback)),
-      start_time(std::chrono::high_resolution_clock::now())
+    : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
+      job_id_(job_identifier), on_complete_(std::move(callback)),
+      start_time_(std::chrono::high_resolution_clock::now())
 {
 }
 
@@ -58,13 +58,6 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
   job->is_shutdown_signal_ = true;
   return job;
 }
-
-[[nodiscard]] auto
-InferenceJob::is_shutdown() const -> bool
-{
-  return is_shutdown_signal_;
-}
-
 
 // =============================================================================
 // Utility: Time formatting
@@ -100,20 +93,18 @@ current_time_formatted(const std::chrono::high_resolution_clock::time_point&
   return oss.str();
 }
 
-
 // =============================================================================
 // Client thread: generates jobs and feeds the queue
 // =============================================================================
 void
 client_worker(
-    InferenceQueue& queue, const ProgramOptions& opts,
+    InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref,
     const unsigned int iterations)
 {
   std::vector<std::vector<torch::Tensor>> pregen_inputs;
   pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
 
-  pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
   std::generate_n(
       std::back_inserter(pregen_inputs), NUM_PREGENERATED_INPUTS, [&]() {
         return generate_random_inputs(opts.input_shapes, opts.input_types);
@@ -124,34 +115,40 @@ client_worker(
 
   for (unsigned int job_id = 0; job_id < iterations; ++job_id) {
     auto job = std::make_shared<InferenceJob>();
+
     const auto idx = dist(rng);
     TORCH_CHECK(
         idx >= 0 && static_cast<size_t>(idx) < pregen_inputs.size(),
         "Invalid index from RNG");
 
     const auto& chosen_inputs = pregen_inputs[static_cast<size_t>(idx)];
-    job->input_tensors = chosen_inputs;
+    job->set_input_tensors(chosen_inputs);
 
-    job->input_types.reserve(job->input_tensors.size());
-    for (const auto& tensor : job->input_tensors) {
-      job->input_types.emplace_back(tensor.scalar_type());
+    std::vector<at::ScalarType> types;
+    types.reserve(chosen_inputs.size());
+    for (const auto& tensor : chosen_inputs) {
+      types.emplace_back(tensor.scalar_type());
     }
+    job->set_input_types(types);
 
-    job->outputs_tensors.reserve(outputs_ref.size());
+    std::vector<torch::Tensor> outputs;
+    outputs.reserve(outputs_ref.size());
     for (const auto& ref : outputs_ref) {
-      job->outputs_tensors.emplace_back(torch::empty_like(ref));
+      outputs.emplace_back(torch::empty_like(ref));
     }
+    job->set_outputs_tensors(outputs);
 
-    job->job_id = job_id;
-    job->start_time = std::chrono::high_resolution_clock::now();
-    job->timing_info.enqueued_time = job->start_time;
+    job->set_job_id(job_id);
+
+    auto now = std::chrono::high_resolution_clock::now();
+    job->set_start_time(now);
+    job->timing_info().enqueued_time = now;
 
     log_trace(
-        opts.verbosity,
-        "[Inference] Job ID " + std::to_string(job->job_id) + ", Iteration " +
-            std::to_string(job_id + 1) + "/" + std::to_string(iterations) +
-            ", Enqueued at " +
-            current_time_formatted(job->timing_info.enqueued_time));
+        opts.verbosity, "[Inference] Job ID " + std::to_string(job_id) +
+                            ", Iteration " + std::to_string(job_id + 1) + "/" +
+                            std::to_string(iterations) + ", Enqueued at " +
+                            current_time_formatted(now));
 
     queue.push(job);
 
@@ -161,12 +158,11 @@ client_worker(
   queue.shutdown();
 }
 
-
 // =============================================================================
 // Load model and generate reference output
 // =============================================================================
 auto
-load_model_and_reference_output(const ProgramOptions& opts)
+load_model_and_reference_output(const RuntimeConfig& opts)
     -> std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>
@@ -229,7 +225,7 @@ load_model_and_reference_output(const ProgramOptions& opts)
 // Inference runner: orchestrates the whole process
 // =============================================================================
 void
-run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
+run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
@@ -247,8 +243,10 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
       opts.verbosity, "Starting warmup with " +
                           std::to_string(NUM_WARMUP_ITERATIONS) +
                           " iterations per CUDA device...");
-  run_warmup_phase(
-      opts, starpu, model_cpu, models_gpu, outputs_ref, NUM_WARMUP_ITERATIONS);
+
+  WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+  warmup_runner.run(NUM_WARMUP_ITERATIONS);
+
   log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 
   InferenceQueue queue;
@@ -280,6 +278,7 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   }
 
   server.join();
+  cudaDeviceSynchronize();
 
   for (const auto& result : results) {
     if (!result.results[0].defined()) {

@@ -7,13 +7,14 @@
 #include "exceptions.hpp"
 #include "inference_runner.hpp"
 #include "logger.hpp"
+#include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
 auto
 main(int argc, char* argv[]) -> int
 {
   // Parse and validate command-line options
-  const ProgramOptions opts =
+  const RuntimeConfig opts =
       parse_arguments(std::span<char*>(argv, static_cast<size_t>(argc)));
 
   if (opts.show_help) {

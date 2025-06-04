@@ -11,7 +11,7 @@ enum class DeviceType : uint8_t {
   Unknown  // Fallback or undefined execution context
 };
 
-// Optional: utility for converting DeviceType to string (for logs/debug)
+// Utility for converting DeviceType to string (for logs/debug)
 inline auto
 to_string(const DeviceType& type) -> const char*
 {

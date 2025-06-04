@@ -12,10 +12,10 @@
 #include <utility>
 #include <vector>
 
-#include "args_parser.hpp"
 #include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "inference_runner.hpp"
+#include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
 // =============================================================================
@@ -25,7 +25,7 @@ InferenceTask::InferenceTask(
     StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu,
-    const ProgramOptions* opts)
+    const RuntimeConfig* opts)
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
       models_gpu_(models_gpu), opts_(opts)
 {
@@ -33,7 +33,7 @@ InferenceTask::InferenceTask(
 
 InferenceCallbackContext::InferenceCallbackContext(
     std::shared_ptr<InferenceJob> job_,
-    std::shared_ptr<InferenceParams> params_, const ProgramOptions* opts_,
+    std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
     unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
     std::vector<starpu_data_handle_t> outputs_)
     : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
@@ -52,17 +52,17 @@ InferenceTask::submit()
     throw InvalidInferenceJobException("[ERROR] Job is null.");
   }
 
-  auto inputs_handles = register_inputs_handles(job_->input_tensors);
-  auto outputs_handles = register_outputs_handles(job_->outputs_tensors);
+  auto inputs_handles = register_inputs_handles(job_->get_input_tensors());
+  auto outputs_handles = register_outputs_handles(job_->get_output_tensors());
   std::shared_ptr<InferenceParams> inference_params = create_inference_params();
 
   auto ctx = std::make_shared<InferenceCallbackContext>(
-      job_, std::move(inference_params), opts_, job_->job_id, inputs_handles,
-      outputs_handles);
+      job_, std::move(inference_params), opts_, job_->get_job_id(),
+      inputs_handles, outputs_handles);
 
   starpu_task* task = create_task(inputs_handles, outputs_handles, ctx);
 
-  job_->timing_info.before_starpu_submitted_time =
+  job_->timing_info().before_starpu_submitted_time =
       std::chrono::high_resolution_clock::now();
 
   const int ret = starpu_task_submit(task);
@@ -80,7 +80,7 @@ InferenceTask::submit()
 auto
 InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
 {
-  const size_t num_inputs = job_->input_tensors.size();
+  const size_t num_inputs = job_->get_input_tensors().size();
   if (num_inputs > InferLimits::MaxInputs) {
     throw InferenceExecutionException(
         "Too many input tensors: max is " +
@@ -100,23 +100,24 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
   }
 
   params->num_inputs = num_inputs;
-  params->num_outputs = job_->outputs_tensors.size();
-  params->job_id = job_->job_id;
+  params->num_outputs = job_->get_output_tensors().size();
+  params->job_id = job_->get_job_id();
 
-  params->device.executed_on = &job_->executed_on;
-  params->device.device_id = &job_->device_id;
-  params->device.worker_id = &job_->worker_id;
+  params->device.executed_on = &job_->get_executed_on();
+  params->device.device_id = &job_->get_device_id();
+  params->device.worker_id = &job_->get_worker_id();
 
-  params->timing.codelet_start_time = &job_->timing_info.codelet_start_time;
-  params->timing.codelet_end_time = &job_->timing_info.codelet_end_time;
-  params->timing.inference_start_time = &job_->timing_info.inference_start_time;
+  params->timing.codelet_start_time = &job_->timing_info().codelet_start_time;
+  params->timing.codelet_end_time = &job_->timing_info().codelet_end_time;
+  params->timing.inference_start_time =
+      &job_->timing_info().inference_start_time;
 
   std::copy_n(
-      job_->input_types.begin(), num_inputs,
+      job_->get_input_types().begin(), num_inputs,
       params->layout.input_types.begin());
 
   for (size_t i = 0; i < num_inputs; ++i) {
-    const auto& tensor = job_->input_tensors[i];
+    const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
     params->layout.num_dims.at(i) = dim;
     std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
@@ -208,7 +209,7 @@ InferenceTask::create_task(
   task->synchronous = opts_->synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
   task->cl_arg_size = sizeof(InferenceParams);
-  task->priority = STARPU_MAX_PRIO - ctx->job->job_id;
+  task->priority = STARPU_MAX_PRIO - ctx->job->get_job_id();
   task->dyn_handles = static_cast<starpu_data_handle_t*>(
       malloc(num_buffers * sizeof(starpu_data_handle_t)));
   task->dyn_modes = static_cast<starpu_data_access_mode*>(
@@ -234,11 +235,10 @@ InferenceTask::create_task(
   ctx->self_keep_alive = ctx;
   task->callback_arg = ctx.get();
 
-  if (job_->fixed_worker_id.has_value()) {
-    task->workerid = job_->fixed_worker_id.value();
+  if (job_->get_fixed_worker_id().has_value()) {
+    task->workerid = job_->get_fixed_worker_id().value();
     task->execute_on_a_specific_worker = 1;
   }
-
   return task;
 }
 
@@ -288,13 +288,15 @@ InferenceTask::on_output_ready_and_cleanup(void* arg)
 
   if (ctx->job) {
     const double latency_ms = std::chrono::duration<double, std::milli>(
-                                  end_time - ctx->job->start_time)
+                                  end_time - ctx->job->get_start_time())
                                   .count();
 
-    ctx->job->timing_info.callback_end_time = end_time;
 
-    if (ctx->job->on_complete) {
-      ctx->job->on_complete(ctx->job->outputs_tensors, latency_ms);
+    ctx->job->timing_info().callback_end_time = end_time;
+
+    if (ctx->job->has_on_complete()) {
+      const auto& callback = ctx->job->get_on_complete();
+      callback(ctx->job->get_output_tensors(), latency_ms);
     }
   }
 
@@ -306,7 +308,7 @@ InferenceTask::starpu_output_callback(void* arg)
 {
   try {
     auto* ctx = static_cast<InferenceCallbackContext*>(arg);
-    ctx->job->timing_info.callback_start_time =
+    ctx->job->timing_info().callback_start_time =
         std::chrono::high_resolution_clock::now();
 
     ctx->remaining_outputs_to_acquire =

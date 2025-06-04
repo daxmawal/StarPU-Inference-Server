@@ -2,7 +2,7 @@
 
 #include <starpu.h>
 
-#include "args_parser.hpp"
+#include "runtime_config.hpp"
 #include "tensor_builder.hpp"
 
 // ============================================================================
@@ -32,7 +32,7 @@ class InferenceCodelet {
 class StarPUSetup {
  public:
   // Initializes StarPU using the provided program options
-  explicit StarPUSetup(const ProgramOptions& opts);
+  explicit StarPUSetup(const RuntimeConfig& opts);
 
   // Shuts down StarPU on destruction
   ~StarPUSetup();

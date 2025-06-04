@@ -5,7 +5,7 @@
 #include <mutex>
 #include <string>
 
-enum class VerbosityLevel {
+enum class VerbosityLevel : std::uint8_t {
   Silent = 0,
   Info = 1,
   Stats = 2,

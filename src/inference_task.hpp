@@ -4,8 +4,8 @@
 #include <optional>
 #include <vector>
 
-#include "args_parser.hpp"
 #include "inference_runner.hpp"
+#include "runtime_config.hpp"
 
 // =============================================================================
 // InferenceCallbackContext: passed to StarPU callbacks
@@ -13,9 +13,9 @@
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;  // Job associated with the callback
   std::shared_ptr<InferenceParams>
-      inference_params;        // Parameters used in the StarPU codelet
-  const ProgramOptions* opts;  // Program settings
-  unsigned int id = 0;         // Task ID (for logging/debugging)
+      inference_params;       // Parameters used in the StarPU codelet
+  const RuntimeConfig* opts;  // Program settings
+  unsigned int id = 0;        // Task ID (for logging/debugging)
   std::vector<starpu_data_handle_t>
       inputs_handles;  // Registered input data handles
   std::vector<starpu_data_handle_t> outputs_handles;  // Output data handles
@@ -29,7 +29,7 @@ struct InferenceCallbackContext {
 
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
-      std::shared_ptr<InferenceParams> params_, const ProgramOptions* opts_,
+      std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
       unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
       std::vector<starpu_data_handle_t> outputs_);
 };
@@ -44,7 +44,7 @@ class InferenceTask {
       StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
       torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu,
-      const ProgramOptions* opts);
+      const RuntimeConfig* opts);
 
   // ---- Static utility methods for task lifecycle ----
 
@@ -97,5 +97,5 @@ class InferenceTask {
   std::shared_ptr<InferenceJob> job_;
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
-  const ProgramOptions* opts_;
+  const RuntimeConfig* opts_;
 };
