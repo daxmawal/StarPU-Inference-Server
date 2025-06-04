@@ -100,7 +100,7 @@ run_warmup_phase(
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref,
-    const unsigned int iterations_per_worker)
+    unsigned int iterations_per_worker)
 {
   if (!opts.use_cuda) {
     return;  // No warmup needed without GPU
@@ -116,8 +116,8 @@ run_warmup_phase(
 
   // Launch server thread
   ServerWorker worker(
-      warmup_queue, model_cpu, models_gpu, starpu, opts, dummy_results,
-      dummy_results_mutex, dummy_completed_jobs, dummy_cv);
+      &warmup_queue, &model_cpu, &models_gpu, &starpu, &opts, &dummy_results,
+      &dummy_results_mutex, &dummy_completed_jobs, &dummy_cv);
 
   std::thread server(&ServerWorker::run, &worker);
 

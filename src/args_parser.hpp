@@ -37,4 +37,4 @@ struct ProgramOptions {
 // Helper functions to parse CLI arguments and shapes
 // =============================================================================
 void display_help(const char* prog_name);
-ProgramOptions parse_arguments(std::span<char*> args_span);
+auto parse_arguments(std::span<char*> args_span) -> ProgramOptions;

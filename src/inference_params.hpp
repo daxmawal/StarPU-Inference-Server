@@ -70,6 +70,6 @@ struct InferenceParams {
   size_t num_outputs = 0;        // Number of output tensors
   unsigned int job_id = 0;       // Job identifier for logging/debugging
   detail::DeviceInfo device;
-  detail::Timing timing;     // Timing data (for benchmarking)
-  VerbosityLevel verbosity;  // Logging verbosity
+  detail::Timing timing;  // Timing data (for benchmarking)
+  VerbosityLevel verbosity = VerbosityLevel::Silent;  // Logging verbosity
 };

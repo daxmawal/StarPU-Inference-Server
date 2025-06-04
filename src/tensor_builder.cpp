@@ -21,7 +21,7 @@
 auto
 TensorBuilder::from_starpu_buffers(
     const InferenceParams* params, const std::vector<void*>& buffers,
-    const torch::Device device) -> std::vector<torch::Tensor>
+    torch::Device device) -> std::vector<torch::Tensor>
 {
   if (params->num_inputs > InferLimits::MaxInputs) {
     throw std::runtime_error("[ERROR] Too many input tensors");
@@ -53,7 +53,7 @@ TensorBuilder::from_starpu_buffers(
 // ============================================================================
 void
 TensorBuilder::copy_output_to_buffer(
-    const at::Tensor& output, void* buffer_ptr, const int64_t expected_numel)
+    const at::Tensor& output, void* buffer_ptr, int64_t expected_numel)
 {
   if (output.numel() != expected_numel) {
     throw std::runtime_error("[ERROR] Output size mismatch");
@@ -73,8 +73,8 @@ TensorBuilder::copy_output_to_buffer(
 // ============================================================================
 auto
 TensorBuilder::from_raw_ptr(
-    uintptr_t ptr, const at::ScalarType type, const std::vector<int64_t>& shape,
-    const torch::Device device) -> torch::Tensor
+    uintptr_t ptr, at::ScalarType type, const std::vector<int64_t>& shape,
+    torch::Device device) -> torch::Tensor
 {
   auto options = torch::TensorOptions().dtype(type).device(device);
 

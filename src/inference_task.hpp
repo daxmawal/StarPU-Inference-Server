@@ -13,9 +13,9 @@
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;  // Job associated with the callback
   std::shared_ptr<InferenceParams>
-      inference_params;  // Parameters used in the StarPU codelet
-  ProgramOptions opts;   // Program settings
-  unsigned int id = 0;   // Task ID (for logging/debugging)
+      inference_params;        // Parameters used in the StarPU codelet
+  const ProgramOptions* opts;  // Program settings
+  unsigned int id = 0;         // Task ID (for logging/debugging)
   std::vector<starpu_data_handle_t>
       inputs_handles;  // Registered input data handles
   std::vector<starpu_data_handle_t> outputs_handles;  // Output data handles
@@ -29,7 +29,7 @@ struct InferenceCallbackContext {
 
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
-      std::shared_ptr<InferenceParams> params_, ProgramOptions opts_,
+      std::shared_ptr<InferenceParams> params_, const ProgramOptions* opts_,
       unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
       std::vector<starpu_data_handle_t> outputs_);
 };
@@ -41,9 +41,10 @@ class InferenceTask {
  public:
   // Constructor
   InferenceTask(
-      StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
-      torch::jit::script::Module& model_cpu,
-      std::vector<torch::jit::script::Module>& models_gpu, ProgramOptions opts);
+      StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
+      torch::jit::script::Module* model_cpu,
+      std::vector<torch::jit::script::Module>* models_gpu,
+      const ProgramOptions* opts);
 
   // ---- Static utility methods for task lifecycle ----
 
@@ -62,36 +63,39 @@ class InferenceTask {
   // ---- Static data registration methods ----
 
   /// Registers a tensor with StarPU as a vector handle (safe wrapper)
-  static starpu_data_handle_t safe_register_tensor_vector(
-      const torch::Tensor& tensor, const std::string& label);
+  static auto safe_register_tensor_vector(
+      const torch::Tensor& tensor,
+      const std::string& label) -> starpu_data_handle_t;
 
   /// Registers input tensors with StarPU and returns their handles
-  static std::vector<starpu_data_handle_t> register_inputs_handles(
-      const std::vector<torch::Tensor>& input_tensors);
+  static auto register_inputs_handles(
+      const std::vector<torch::Tensor>& input_tensors)
+      -> std::vector<starpu_data_handle_t>;
 
   /// Registers output tensor with StarPU
-  static std::vector<starpu_data_handle_t> register_outputs_handles(
-      const std::vector<torch::Tensor>& outputs_tensors);
+  static auto register_outputs_handles(
+      const std::vector<torch::Tensor>& outputs_tensors)
+      -> std::vector<starpu_data_handle_t>;
 
   // ---- Instance methods for preparing and submitting the task ----
 
   /// Creates a StarPU task with the given input/output and context
-  starpu_task* create_task(
+  auto create_task(
       const std::vector<starpu_data_handle_t>& inputs_handles,
       const std::vector<starpu_data_handle_t>& outputs_handles,
-      const std::shared_ptr<InferenceCallbackContext>& ctx);
+      const std::shared_ptr<InferenceCallbackContext>& ctx) -> starpu_task*;
 
   /// Prepares the inference parameters (model, layout, etc.)
-  std::shared_ptr<InferenceParams> create_inference_params();
+  auto create_inference_params() -> std::shared_ptr<InferenceParams>;
 
   /// Submits the task to StarPU
   void submit();
 
  private:
   // Internal state
-  StarPUSetup& starpu_;
+  StarPUSetup* starpu_;
   std::shared_ptr<InferenceJob> job_;
-  torch::jit::script::Module& model_cpu_;
-  std::vector<torch::jit::script::Module>& models_gpu_;
-  ProgramOptions opts_;
+  torch::jit::script::Module* model_cpu_;
+  std::vector<torch::jit::script::Module>* models_gpu_;
+  const ProgramOptions* opts_;
 };

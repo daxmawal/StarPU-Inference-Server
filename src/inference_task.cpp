@@ -22,21 +22,22 @@
 // Constructors
 // =============================================================================
 InferenceTask::InferenceTask(
-    StarPUSetup& starpu, std::shared_ptr<InferenceJob> job,
-    torch::jit::script::Module& model_cpu,
-    std::vector<torch::jit::script::Module>& models_gpu, ProgramOptions opts)
+    StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
+    torch::jit::script::Module* model_cpu,
+    std::vector<torch::jit::script::Module>* models_gpu,
+    const ProgramOptions* opts)
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), opts_(std::move(opts))
+      models_gpu_(models_gpu), opts_(opts)
 {
 }
 
 InferenceCallbackContext::InferenceCallbackContext(
     std::shared_ptr<InferenceJob> job_,
-    std::shared_ptr<InferenceParams> params_, ProgramOptions opts_,
+    std::shared_ptr<InferenceParams> params_, const ProgramOptions* opts_,
     unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
     std::vector<starpu_data_handle_t> outputs_)
-    : job(std::move(job_)), inference_params(std::move(params_)),
-      opts(std::move(opts_)), id(id_), inputs_handles(std::move(inputs_)),
+    : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
+      id(id_), inputs_handles(std::move(inputs_)),
       outputs_handles(std::move(outputs_))
 {
 }
@@ -53,11 +54,10 @@ InferenceTask::submit()
 
   auto inputs_handles = register_inputs_handles(job_->input_tensors);
   auto outputs_handles = register_outputs_handles(job_->outputs_tensors);
-  const std::shared_ptr<InferenceParams> inference_params =
-      create_inference_params();
+  std::shared_ptr<InferenceParams> inference_params = create_inference_params();
 
   auto ctx = std::make_shared<InferenceCallbackContext>(
-      job_, inference_params, opts_, job_->job_id, inputs_handles,
+      job_, std::move(inference_params), opts_, job_->job_id, inputs_handles,
       outputs_handles);
 
   starpu_task* task = create_task(inputs_handles, outputs_handles, ctx);
@@ -88,15 +88,15 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
   }
 
   auto params = std::make_shared<InferenceParams>();
-  params->models.model_cpu = &model_cpu_;
-  params->models.num_models_gpu = models_gpu_.size();
+  params->models.model_cpu = model_cpu_;
+  params->models.num_models_gpu = models_gpu_->size();
 
-  if (models_gpu_.size() > InferLimits::MaxModelsGPU) {
+  if (models_gpu_->size() > InferLimits::MaxModelsGPU) {
     throw std::runtime_error(
         "Too many GPU models for the current configuration.");
   }
-  for (size_t i = 0; i < models_gpu_.size(); ++i) {
-    params->models.models_gpu.at(i) = &models_gpu_[i];
+  for (size_t i = 0; i < models_gpu_->size(); ++i) {
+    params->models.models_gpu.at(i) = &(models_gpu_->at(i));
   }
 
   params->num_inputs = num_inputs;
@@ -122,7 +122,7 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
     std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
   }
 
-  params->verbosity = opts_.verbosity;
+  params->verbosity = opts_->verbosity;
 
   return params;
 }
@@ -204,8 +204,8 @@ InferenceTask::create_task(
   }
 
   task->nbuffers = static_cast<int>(num_buffers);
-  task->cl = starpu_.get_codelet();
-  task->synchronous = opts_.synchronous ? 1 : 0;
+  task->cl = starpu_->get_codelet();
+  task->synchronous = opts_->synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
   task->cl_arg_size = sizeof(InferenceParams);
   task->priority = STARPU_MAX_PRIO - ctx->job->job_id;

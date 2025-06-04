@@ -9,6 +9,10 @@
 
 #include <vector>
 
+constexpr int64_t DEFAULT_INT_HIGH = 10;
+constexpr int64_t BERT_VOCAB_SIZE = 30522;
+constexpr int64_t EMBEDDING_THRESHOLD = 64;
+
 // =============================================================================
 // generate_random_inputs
 // Given a set of shapes and data types, generate a vector of random tensors.
@@ -18,10 +22,10 @@
 // - Bool uses [0,2)
 // Throws if an unsupported type is encountered.
 // =============================================================================
-inline std::vector<torch::Tensor>
+inline auto
 generate_random_inputs(
     const std::vector<std::vector<int64_t>>& shapes,
-    const std::vector<at::ScalarType>& types)
+    const std::vector<at::ScalarType>& types) -> std::vector<torch::Tensor>
 {
   std::vector<torch::Tensor> inputs;
   inputs.reserve(shapes.size());
@@ -43,13 +47,13 @@ generate_random_inputs(
       case at::kLong:
       case at::kShort:
       case at::kChar: {
-        int64_t low = 0;
-        int64_t high = 10;
+        const int64_t low = 0;
+        int64_t high = DEFAULT_INT_HIGH;
 
         // Special heuristic: use higher vocab-like range for first tensor with
         // >= 64 elements in dim 1
-        if (i == 0 && shape.size() == 2 && shape[1] >= 64) {
-          high = 30522;
+        if (i == 0 && shape.size() == 2 && shape[1] >= EMBEDDING_THRESHOLD) {
+          high = BERT_VOCAB_SIZE;
         }
 
         tensor = torch::randint(low, high, shape, options);

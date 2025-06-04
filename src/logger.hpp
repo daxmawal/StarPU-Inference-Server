@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <mutex>
 #include <string>
 
 enum class VerbosityLevel {
@@ -15,8 +16,9 @@ enum class VerbosityLevel {
 // =============================================================================
 // Utility: color and label mapping for verbosity levels
 // =============================================================================
-inline std::pair<const char*, const char*>
+inline auto
 verbosity_style(const VerbosityLevel level)
+    -> std::pair<const char*, const char*>
 {
   switch (level) {
     case VerbosityLevel::Info:
@@ -42,7 +44,7 @@ log_verbose(
 {
   if (static_cast<int>(current_level) >= static_cast<int>(level)) {
     auto [color, label] = verbosity_style(level);
-    std::cout << color << label << message << "\033[0m" << std::endl;
+    std::cout << color << label << message << "\033[0m\n";
   }
 }
 
@@ -76,18 +78,23 @@ log_trace(const VerbosityLevel lvl, const std::string& msg)
 inline void
 log_warning(const std::string& message)
 {
-  std::cerr << "\033[1;33m[WARNING] " << message << "\033[0m" << std::endl;
+  std::cerr << "\033[1;33m[WARNING] " << message << "\033[0m\n";
 }
 
 inline void
 log_error(const std::string& message)
 {
-  std::cerr << "\033[1;31m[ERROR] " << message << "\033[0m" << std::endl;
+  std::cerr << "\033[1;31m[ERROR] " << message << "\033[0m\n";
 }
+
 
 inline void
 log_fatal(const std::string& message)
 {
-  std::cerr << "\033[1;41m[FATAL] " << message << "\033[0m" << std::endl;
-  std::exit(EXIT_FAILURE);
+  static std::mutex log_mutex;
+  {
+    const std::lock_guard<std::mutex> lock(log_mutex);
+    std::cerr << "\033[1;41m[FATAL] " << message << "\033[0m\n";
+  }
+  std::terminate();
 }

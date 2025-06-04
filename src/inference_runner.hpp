@@ -56,10 +56,10 @@ class InferenceJob {
           nullptr);
 
   // Factory
-  static std::shared_ptr<InferenceJob> make_shutdown_job();
+  static auto make_shutdown_job() -> std::shared_ptr<InferenceJob>;
 
   // Job properties
-  bool is_shutdown() const;
+  [[nodiscard]] auto is_shutdown() const -> bool;
 
   // Input and metadata
   std::vector<torch::Tensor> input_tensors;

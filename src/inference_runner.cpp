@@ -59,7 +59,7 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
   return job;
 }
 
-auto
+[[nodiscard]] auto
 InferenceJob::is_shutdown() const -> bool
 {
   return is_shutdown_signal_;
@@ -264,8 +264,9 @@ run_inference_loop(const ProgramOptions& opts, StarPUSetup& starpu)
   std::mutex all_done_mutex;
 
   ServerWorker worker(
-      queue, model_cpu, models_gpu, starpu, opts, results, results_mutex,
-      completed_jobs, all_done_cv);
+      &queue, &model_cpu, &models_gpu, &starpu, &opts, &results, &results_mutex,
+      &completed_jobs, &all_done_cv);
+
   std::thread server(&ServerWorker::run, &worker);
   std::thread client(
       [&]() { client_worker(queue, opts, outputs_ref, opts.iterations); });

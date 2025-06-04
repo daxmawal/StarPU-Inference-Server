@@ -14,4 +14,4 @@ void run_warmup_phase(
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref,
-    const unsigned int iterations_per_worker);
+    unsigned int iterations_per_worker);
