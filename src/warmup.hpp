@@ -14,11 +14,11 @@ class WarmupRunner {
       torch::jit::script::Module& model_cpu,
       std::vector<torch::jit::script::Module>& models_gpu,
       const std::vector<torch::Tensor>& outputs_ref);
-
+  ~WarmupRunner() = default;
   WarmupRunner(const WarmupRunner&) = delete;
-  WarmupRunner& operator=(const WarmupRunner&) = delete;
+  auto operator=(const WarmupRunner&) -> WarmupRunner& = delete;
   WarmupRunner(WarmupRunner&&) = delete;
-  WarmupRunner& operator=(WarmupRunner&&) = delete;
+  auto operator=(WarmupRunner&&) -> WarmupRunner& = delete;
 
   void run(unsigned int iterations_per_worker);
 

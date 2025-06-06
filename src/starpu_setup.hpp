@@ -12,6 +12,7 @@
 class InferenceCodelet {
  public:
   InferenceCodelet();
+  ~InferenceCodelet() = default;
   InferenceCodelet(const InferenceCodelet&) = delete;
   auto operator=(const InferenceCodelet&) -> InferenceCodelet& = delete;
   InferenceCodelet(InferenceCodelet&&) = delete;

@@ -174,4 +174,6 @@ validate_inference_result(
     log_error(
         "[Validator] Unknown error in job " + std::to_string(result.job_id));
   }
+
+  return false;
 }
