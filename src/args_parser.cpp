@@ -17,6 +17,10 @@
 #include "logger.hpp"
 #include "runtime_config.hpp"
 
+// =============================================================================
+// Shape and Type Parsing: Handle --shape, --shapes, and --types arguments
+// =============================================================================
+
 auto
 parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
 {
@@ -106,6 +110,10 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
   return types;
 }
 
+// =============================================================================
+// Verbosity Parsing
+// =============================================================================
+
 auto
 parse_verbosity_level(const std::string& val) -> VerbosityLevel
 {
@@ -125,6 +133,11 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
       throw std::invalid_argument("Invalid verbosity level: " + val);
   }
 }
+
+// =============================================================================
+// Argument Parsing Utilities: Helpers for optional and positional argument
+// parsing
+// =============================================================================
 
 void
 check_required(
@@ -159,6 +172,11 @@ expect_and_parse(size_t& idx, std::span<char*> args, Func&& parser) -> bool
   }
   return try_parse(args[++idx], std::forward<Func>(parser));
 }
+
+// =============================================================================
+// Individual Argument Parsers for --model, --shape, etc.
+// =============================================================================
+
 
 auto
 parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
@@ -258,6 +276,10 @@ parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   return true;
 }
 
+// =============================================================================
+// Dispatch Argument Parser (Main parser loop)
+// =============================================================================
+
 auto
 parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 {
@@ -293,8 +315,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
     } else if (arg == "--help" || arg == "-h") {
       opts.show_help = true;
       return true;
-    } else if (auto it = dispatch.find(arg); it != dispatch.end()) {
-      if (!it->second(idx)) {
+    } else if (auto iter = dispatch.find(arg); iter != dispatch.end()) {
+      if (!iter->second(idx)) {
         return false;
       }
     } else {
@@ -306,6 +328,10 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 
   return true;
 }
+
+// =============================================================================
+// Config Validation: Ensures all required fields are present and consistent
+// =============================================================================
 
 auto
 validate_config(RuntimeConfig& opts) -> void
@@ -327,6 +353,10 @@ validate_config(RuntimeConfig& opts) -> void
     opts.valid = false;
   }
 }
+
+// =============================================================================
+// Top-Level Entry: Parses all arguments into a RuntimeConfig object
+// =============================================================================
 
 auto
 parse_arguments(std::span<char*> args_span) -> RuntimeConfig

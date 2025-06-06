@@ -28,18 +28,24 @@ class ServerWorker {
       std::mutex* results_mutex, std::atomic<unsigned int>* completed_jobs,
       std::condition_variable* all_done_cv);
 
-  /// Main job-processing loop
   void run();
+  auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
+  [[nodiscard]] auto should_shutdown(
+      const std::shared_ptr<InferenceJob>& job) const -> bool;
+  void prepare_job_completion_callback(
+      const std::shared_ptr<InferenceJob>& job);
+  void submit_inference_task(const std::shared_ptr<InferenceJob>& job);
+  static void handle_job_exception(
+      const std::shared_ptr<InferenceJob>& job,
+      const std::exception& exception);
 
  private:
-  // Input
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
   StarPUSetup* starpu_;
   const RuntimeConfig* opts_;
 
-  // Output and synchronization
   std::vector<InferenceResult>* results_;
   std::mutex* results_mutex_;
   std::atomic<unsigned int>* completed_jobs_;

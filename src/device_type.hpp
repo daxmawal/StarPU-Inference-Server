@@ -5,6 +5,7 @@
 // =============================================================================
 // DeviceType enum defines where an inference task is executed.
 // =============================================================================
+
 enum class DeviceType : uint8_t {
   CPU,     // Inference runs on CPU
   CUDA,    // Inference runs on CUDA-capable GPU

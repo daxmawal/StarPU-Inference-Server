@@ -16,6 +16,7 @@ enum class VerbosityLevel : std::uint8_t {
 // =============================================================================
 // Utility: color and label mapping for verbosity levels
 // =============================================================================
+
 inline auto
 verbosity_style(const VerbosityLevel level)
     -> std::pair<const char*, const char*>
@@ -37,6 +38,7 @@ verbosity_style(const VerbosityLevel level)
 // =============================================================================
 // Verbosity-controlled logging
 // =============================================================================
+
 inline void
 log_verbose(
     const VerbosityLevel level, const VerbosityLevel current_level,
@@ -51,6 +53,7 @@ log_verbose(
 // =============================================================================
 // Shortcut wrappers
 // =============================================================================
+
 inline void
 log_info(const VerbosityLevel lvl, const std::string& msg)
 {
@@ -75,6 +78,7 @@ log_trace(const VerbosityLevel lvl, const std::string& msg)
 // =============================================================================
 // Unconditional stderr logging
 // =============================================================================
+
 inline void
 log_warning(const std::string& message)
 {
@@ -86,7 +90,6 @@ log_error(const std::string& message)
 {
   std::cerr << "\033[1;31m[ERROR] " << message << "\033[0m\n";
 }
-
 
 inline void
 log_fatal(const std::string& message)

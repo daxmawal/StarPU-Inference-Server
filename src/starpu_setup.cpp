@@ -28,8 +28,9 @@
 #include "tensor_builder.hpp"
 
 // =============================================================================
-// InferenceCodelet: Setup and execution functions for StarPU codelets
+// InferenceCodelet: constructor and access to codelet
 // =============================================================================
+
 InferenceCodelet::InferenceCodelet() : codelet_{}
 {
   starpu_codelet_init(&codelet_);
@@ -47,7 +48,10 @@ InferenceCodelet::get_codelet() -> struct starpu_codelet*
   return &codelet_;
 }
 
-// Convert output IValue to vector of Tensors
+// =============================================================================
+// Utility: extract list of tensors from torch::IValue output
+// =============================================================================
+
 auto
 extract_tensors_from_output(const c10::IValue& result)
     -> std::vector<at::Tensor>
@@ -73,7 +77,10 @@ extract_tensors_from_output(const c10::IValue& result)
   return outputs;
 }
 
-// Unified inference execution
+// =============================================================================
+// Inference execution (common to CPU and GPU codelets)
+// =============================================================================
+
 inline void
 run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
@@ -140,7 +147,10 @@ run_codelet_inference(
   *params->timing.codelet_end_time = std::chrono::high_resolution_clock::now();
 }
 
-// CPU codelet
+// =============================================================================
+// StarPU CPU codelet implementation
+// =============================================================================
+
 void
 InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 {
@@ -156,7 +166,10 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
       DeviceType::CPU);
 }
 
-// GPU codelet
+// =============================================================================
+// StarPU CUDA codelet implementation
+// =============================================================================
+
 void
 InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 {
@@ -189,8 +202,9 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 }
 
 // =============================================================================
-// StarPUSetup: StarPU initialization and resource management
+// StarPUSetup: constructor and destructor (handles StarPU global state)
 // =============================================================================
+
 StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
 {
   starpu_conf_init(&conf_);
@@ -219,6 +233,10 @@ StarPUSetup::~StarPUSetup()
 {
   starpu_shutdown();
 }
+
+// =============================================================================
+// StarPUSetup: access to codelet and CUDA worker mapping
+// =============================================================================
 
 auto
 StarPUSetup::get_codelet() -> struct starpu_codelet*
