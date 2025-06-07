@@ -34,16 +34,16 @@ endif()
 
 # Executable Definition
 add_executable(inference_engine
-    src/main.cpp
-    src/args_parser.cpp
-    src/inference_runner.cpp
-    src/inference_task.cpp
-    src/inference_validator.cpp
-    src/tensor_builder.cpp
-    src/starpu_setup.cpp
-    src/warmup.cpp
-    src/server_worker.cpp
-    src/client_utils.cpp
+    src/cli/main.cpp
+    src/cli/args_parser.cpp
+    src/core/inference_runner.cpp
+    src/core/inference_task.cpp
+    src/utils/inference_validator.cpp
+    src/core/tensor_builder.cpp
+    src/core/starpu_setup.cpp
+    src/core/warmup.cpp
+    src/server/server_worker.cpp
+    src/utils/client_utils.cpp
 )
 
 if (ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -57,6 +57,10 @@ endif()
 target_include_directories(inference_engine PRIVATE
     ${STARPU_INCLUDE_DIR}/starpu/1.4
     src
+    src/core
+    src/server
+    src/cli
+    src/utils
 )
 
 # Link Libraries
