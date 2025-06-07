@@ -10,6 +10,7 @@
 // =============================================================================
 // Thread-safe job queue for asynchronous inference execution
 // =============================================================================
+
 class InferenceQueue {
  public:
   // Enqueue a new inference job

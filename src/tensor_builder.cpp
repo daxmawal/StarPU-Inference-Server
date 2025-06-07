@@ -15,9 +15,10 @@
 
 #include "inference_params.hpp"
 
-// ============================================================================
-// Converts StarPU buffers into Torch tensors on the specified device
-// ============================================================================
+// =============================================================================
+// Build input tensors from StarPU raw buffers and layout metadata
+// =============================================================================
+
 auto
 TensorBuilder::from_starpu_buffers(
     const InferenceParams* params, const std::vector<void*>& buffers,
@@ -31,9 +32,11 @@ TensorBuilder::from_starpu_buffers(
   inputs.reserve(params->num_inputs);
 
   for (size_t idx = 0; idx < params->num_inputs; ++idx) {
+    // Cast StarPU buffer to custom interface and extract raw pointer
     auto* var_iface = static_cast<starpu_variable_interface*>(buffers[idx]);
     auto input_data = var_iface->ptr;
 
+    // Extract shape from layout metadata
     const auto& dims = params->layout.dims.at(idx);
     const auto raw_ndim = params->layout.num_dims.at(idx);
     TORCH_CHECK(
@@ -41,6 +44,7 @@ TensorBuilder::from_starpu_buffers(
     const auto ndim = static_cast<size_t>(raw_ndim);
     const std::vector<int64_t> shape(dims.begin(), dims.begin() + ndim);
 
+    // Extract tensor type and wrap raw buffer into a torch::Tensor
     const at::ScalarType dtype = params->layout.input_types.at(idx);
     inputs.emplace_back(from_raw_ptr(input_data, dtype, shape, device));
   }
@@ -48,9 +52,10 @@ TensorBuilder::from_starpu_buffers(
   return inputs;
 }
 
-// ============================================================================
-// Copies the inference output tensor into a raw StarPU buffer
-// ============================================================================
+// =============================================================================
+// Copy output tensor to raw buffer, with size and type checks
+// =============================================================================
+
 void
 TensorBuilder::copy_output_to_buffer(
     const at::Tensor& output, void* buffer_ptr, int64_t expected_numel)
@@ -68,9 +73,10 @@ TensorBuilder::copy_output_to_buffer(
       static_cast<size_t>(output.numel()) * sizeof(float));
 }
 
-// ============================================================================
-// Constructs a Torch tensor from a raw pointer with shape and type
-// ============================================================================
+// =============================================================================
+// Wrap raw memory into a tensor view (non-owning, no copy)
+// =============================================================================
+
 auto
 TensorBuilder::from_raw_ptr(
     uintptr_t ptr, at::ScalarType type, const std::vector<int64_t>& shape,

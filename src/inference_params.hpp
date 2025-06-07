@@ -11,6 +11,7 @@
 // =============================================================================
 // Constants for inference limitations
 // =============================================================================
+
 namespace InferLimits {
 constexpr size_t MaxInputs = 16;     // Max number of input tensors
 constexpr size_t MaxDims = 8;        // Max number of dimensions per tensor
@@ -21,6 +22,7 @@ namespace detail {
 // =============================================================================
 // Timing info for measuring durations
 // =============================================================================
+
 struct Timing {
   std::chrono::high_resolution_clock::time_point* codelet_start_time = nullptr;
   std::chrono::high_resolution_clock::time_point* codelet_end_time = nullptr;
@@ -31,6 +33,7 @@ struct Timing {
 // =============================================================================
 // Device-related info (on which device the inference ran)
 // =============================================================================
+
 struct DeviceInfo {
   int* device_id =
       nullptr;  // Where the task was executed (CPU/GPU, which device)
@@ -41,6 +44,7 @@ struct DeviceInfo {
 // =============================================================================
 // Model pointer container (CPU + replicated GPU modules)
 // =============================================================================
+
 struct ModelPointers {
   torch::jit::script::Module* model_cpu = nullptr;
   std::array<torch::jit::script::Module*, InferLimits::MaxModelsGPU>
@@ -51,6 +55,7 @@ struct ModelPointers {
 // =============================================================================
 // Describes the expected input layout
 // =============================================================================
+
 struct TensorLayout {
   std::array<std::array<int64_t, InferLimits::MaxDims>, InferLimits::MaxInputs>
       dims{};
@@ -63,6 +68,7 @@ struct TensorLayout {
 // =============================================================================
 // Parameters passed to an inference task
 // =============================================================================
+
 struct InferenceParams {
   detail::ModelPointers models;  // Model handles (CPU + GPU replicas)
   detail::TensorLayout layout;   // Tensor dimensions and types

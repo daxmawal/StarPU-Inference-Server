@@ -19,8 +19,9 @@
 #include "starpu_setup.hpp"
 
 // =============================================================================
-// Constructors
+// Constructor
 // =============================================================================
+
 InferenceTask::InferenceTask(
     StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module* model_cpu,
@@ -30,6 +31,12 @@ InferenceTask::InferenceTask(
       models_gpu_(models_gpu), opts_(opts)
 {
 }
+
+// =============================================================================
+// InferenceCallbackContext
+// Holds job metadata and StarPU handles needed during task lifecycle.
+// Used as StarPU's callback context.
+// =============================================================================
 
 InferenceCallbackContext::InferenceCallbackContext(
     std::shared_ptr<InferenceJob> job_,
@@ -43,94 +50,24 @@ InferenceCallbackContext::InferenceCallbackContext(
 }
 
 // =============================================================================
-// Submission
+// Handle Registration
+// Register input/output tensors as StarPU data handles.
 // =============================================================================
-void
-InferenceTask::submit()
-{
-  if (!job_) {
-    throw InvalidInferenceJobException("[ERROR] Job is null.");
-  }
 
-  auto inputs_handles = register_inputs_handles(job_->get_input_tensors());
-  auto outputs_handles = register_outputs_handles(job_->get_output_tensors());
-  std::shared_ptr<InferenceParams> inference_params = create_inference_params();
-
-  auto ctx = std::make_shared<InferenceCallbackContext>(
-      job_, std::move(inference_params), opts_, job_->get_job_id(),
-      inputs_handles, outputs_handles);
-
-  starpu_task* task = create_task(inputs_handles, outputs_handles, ctx);
-
-  job_->timing_info().before_starpu_submitted_time =
-      std::chrono::high_resolution_clock::now();
-
-  const int ret = starpu_task_submit(task);
-  if (ret != 0) {
-    cleanup(ctx);
-    throw StarPUTaskSubmissionException(
-        "[ERROR] StarPU task submission failed (code " + std::to_string(ret) +
-        ").");
-  }
-}
-
-// =============================================================================
-// Inference parameter construction
-// =============================================================================
 auto
-InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
+InferenceTask::prepare_input_handles() const
+    -> std::vector<starpu_data_handle_t>
 {
-  const size_t num_inputs = job_->get_input_tensors().size();
-  if (num_inputs > InferLimits::MaxInputs) {
-    throw InferenceExecutionException(
-        "Too many input tensors: max is " +
-        std::to_string(InferLimits::MaxInputs));
-  }
-
-  auto params = std::make_shared<InferenceParams>();
-  params->models.model_cpu = model_cpu_;
-  params->models.num_models_gpu = models_gpu_->size();
-
-  if (models_gpu_->size() > InferLimits::MaxModelsGPU) {
-    throw std::runtime_error(
-        "Too many GPU models for the current configuration.");
-  }
-  for (size_t i = 0; i < models_gpu_->size(); ++i) {
-    params->models.models_gpu.at(i) = &(models_gpu_->at(i));
-  }
-
-  params->num_inputs = num_inputs;
-  params->num_outputs = job_->get_output_tensors().size();
-  params->job_id = job_->get_job_id();
-
-  params->device.executed_on = &job_->get_executed_on();
-  params->device.device_id = &job_->get_device_id();
-  params->device.worker_id = &job_->get_worker_id();
-
-  params->timing.codelet_start_time = &job_->timing_info().codelet_start_time;
-  params->timing.codelet_end_time = &job_->timing_info().codelet_end_time;
-  params->timing.inference_start_time =
-      &job_->timing_info().inference_start_time;
-
-  std::copy_n(
-      job_->get_input_types().begin(), num_inputs,
-      params->layout.input_types.begin());
-
-  for (size_t i = 0; i < num_inputs; ++i) {
-    const auto& tensor = job_->get_input_tensors()[i];
-    const int64_t dim = tensor.dim();
-    params->layout.num_dims.at(i) = dim;
-    std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
-  }
-
-  params->verbosity = opts_->verbosity;
-
-  return params;
+  return register_inputs_handles(job_->get_input_tensors());
 }
 
-// =============================================================================
-// StarPU data registration
-// =============================================================================
+auto
+InferenceTask::prepare_output_handles() const
+    -> std::vector<starpu_data_handle_t>
+{
+  return register_outputs_handles(job_->get_output_tensors());
+}
+
 auto
 InferenceTask::safe_register_tensor_vector(
     const torch::Tensor& tensor,
@@ -188,63 +125,102 @@ InferenceTask::register_outputs_handles(
 }
 
 // =============================================================================
-// StarPU task creation
+// Inference Parameters Setup
+// Fill inference configuration structures passed to StarPU.
 // =============================================================================
+
 auto
-InferenceTask::create_task(
-    const std::vector<starpu_data_handle_t>& inputs_handles,
-    const std::vector<starpu_data_handle_t>& outputs_handles,
-    const std::shared_ptr<InferenceCallbackContext>& ctx) -> starpu_task*
+InferenceTask::create_context(
+    const std::vector<starpu_data_handle_t>& inputs,
+    const std::vector<starpu_data_handle_t>& outputs)
+    -> std::shared_ptr<InferenceCallbackContext>
 {
-  const size_t num_inputs = inputs_handles.size();
-  const size_t num_buffers = num_inputs + outputs_handles.size();
+  auto params = create_inference_params();
+  return std::make_shared<InferenceCallbackContext>(
+      job_, std::move(params), opts_, job_->get_job_id(), inputs, outputs);
+}
 
-  auto* task = starpu_task_create();
-  if (task == nullptr) {
-    throw StarPUTaskCreationException("Failed to create StarPU task.");
+void
+InferenceTask::check_limits(size_t num_inputs) const
+{
+  if (num_inputs > InferLimits::MaxInputs) {
+    throw InferenceExecutionException(
+        "Too many input tensors: max is " +
+        std::to_string(InferLimits::MaxInputs));
   }
 
-  task->nbuffers = static_cast<int>(num_buffers);
-  task->cl = starpu_->get_codelet();
-  task->synchronous = opts_->synchronous ? 1 : 0;
-  task->cl_arg = ctx->inference_params.get();
-  task->cl_arg_size = sizeof(InferenceParams);
-  task->priority = STARPU_MAX_PRIO - ctx->job->get_job_id();
-  task->dyn_handles = static_cast<starpu_data_handle_t*>(
-      malloc(num_buffers * sizeof(starpu_data_handle_t)));
-  task->dyn_modes = static_cast<starpu_data_access_mode*>(
-      malloc(num_buffers * sizeof(starpu_data_access_mode)));
-
-  if (task->dyn_handles == nullptr || task->dyn_modes == nullptr) {
-    starpu_task_destroy(task);
-    cleanup(ctx);
-    throw MemoryAllocationException("Failed to allocate task buffers.");
+  if (models_gpu_->size() > InferLimits::MaxModelsGPU) {
+    throw std::runtime_error(
+        "Too many GPU models for the current configuration.");
   }
+}
 
-  for (size_t idx = 0; idx < num_inputs; ++idx) {
-    task->dyn_handles[idx] = inputs_handles[idx];
-    task->dyn_modes[idx] = STARPU_R;
+auto
+InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
+{
+  const size_t num_inputs = job_->get_input_tensors().size();
+  check_limits(num_inputs);
+
+  auto params = std::make_shared<InferenceParams>();
+
+  fill_model_pointers(params);
+  bind_runtime_job_info(params);
+  fill_input_layout(params, num_inputs);
+
+  params->num_inputs = num_inputs;
+  params->num_outputs = job_->get_output_tensors().size();
+  params->verbosity = opts_->verbosity;
+
+  return params;
+}
+
+void
+InferenceTask::fill_model_pointers(
+    const std::shared_ptr<InferenceParams>& params) const
+{
+  params->models.model_cpu = model_cpu_;
+  params->models.num_models_gpu = models_gpu_->size();
+
+  for (size_t i = 0; i < models_gpu_->size(); ++i) {
+    params->models.models_gpu.at(i) = &(models_gpu_->at(i));
   }
+}
 
-  for (size_t idx = num_inputs; idx < num_buffers; ++idx) {
-    task->dyn_handles[idx] = outputs_handles[idx - num_inputs];
-    task->dyn_modes[idx] = STARPU_W;
+void
+InferenceTask::bind_runtime_job_info(
+    const std::shared_ptr<InferenceParams>& params) const
+{
+  params->job_id = job_->get_job_id();
+  params->device.executed_on = &job_->get_executed_on();
+  params->device.device_id = &job_->get_device_id();
+  params->device.worker_id = &job_->get_worker_id();
+  params->timing.codelet_start_time = &job_->timing_info().codelet_start_time;
+  params->timing.codelet_end_time = &job_->timing_info().codelet_end_time;
+  params->timing.inference_start_time =
+      &job_->timing_info().inference_start_time;
+}
+
+void
+InferenceTask::fill_input_layout(
+    std::shared_ptr<InferenceParams>& params, size_t num_inputs) const
+{
+  std::copy_n(
+      job_->get_input_types().begin(), num_inputs,
+      params->layout.input_types.begin());
+
+  for (size_t i = 0; i < num_inputs; ++i) {
+    const auto& tensor = job_->get_input_tensors()[i];
+    const int64_t dim = tensor.dim();
+    params->layout.num_dims.at(i) = dim;
+    std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
   }
-
-  task->callback_func = InferenceTask::starpu_output_callback;
-  ctx->self_keep_alive = ctx;
-  task->callback_arg = ctx.get();
-
-  if (job_->get_fixed_worker_id().has_value()) {
-    task->workerid = job_->get_fixed_worker_id().value();
-    task->execute_on_a_specific_worker = 1;
-  }
-  return task;
 }
 
 // =============================================================================
-// Callbacks & Cleanup
+// StarPU Task Construction
+// Build, configure, and submit the StarPU task for execution.
 // =============================================================================
+
 void
 InferenceTask::cleanup(const std::shared_ptr<InferenceCallbackContext>& ctx)
 {
@@ -268,40 +244,112 @@ InferenceTask::cleanup(const std::shared_ptr<InferenceCallbackContext>& ctx)
 }
 
 void
-InferenceTask::on_output_ready_and_cleanup(void* arg)
+InferenceTask::submit()
 {
-  auto* ctx = static_cast<InferenceCallbackContext*>(arg);
-
-  for (auto& handle : ctx->outputs_handles) {
-    if (handle != nullptr) {
-      starpu_data_release(handle);
-    }
+  if (!job_) {
+    throw InvalidInferenceJobException("[ERROR] Job is null.");
   }
 
-  auto ctx_sptr =
-      std::static_pointer_cast<InferenceCallbackContext>(ctx->self_keep_alive);
-  if (ctx_sptr) {
-    InferenceTask::cleanup(ctx_sptr);
+  auto inputs_handles = prepare_input_handles();
+  auto outputs_handles = prepare_output_handles();
+  auto ctx = create_context(inputs_handles, outputs_handles);
+  starpu_task* task = create_task(inputs_handles, outputs_handles, ctx);
+
+  job_->timing_info().before_starpu_submitted_time =
+      std::chrono::high_resolution_clock::now();
+
+  const int ret = starpu_task_submit(task);
+  if (ret != 0) {
+    cleanup(ctx);
+    throw StarPUTaskSubmissionException(
+        "[ERROR] StarPU task submission failed (code " + std::to_string(ret) +
+        ").");
   }
-
-  const auto end_time = std::chrono::high_resolution_clock::now();
-
-  if (ctx->job) {
-    const double latency_ms = std::chrono::duration<double, std::milli>(
-                                  end_time - ctx->job->get_start_time())
-                                  .count();
-
-
-    ctx->job->timing_info().callback_end_time = end_time;
-
-    if (ctx->job->has_on_complete()) {
-      const auto& callback = ctx->job->get_on_complete();
-      callback(ctx->job->get_output_tensors(), latency_ms);
-    }
-  }
-
-  ctx->self_keep_alive.reset();
 }
+
+auto
+InferenceTask::create_task(
+    const std::vector<starpu_data_handle_t>& inputs_handles,
+    const std::vector<starpu_data_handle_t>& outputs_handles,
+    const std::shared_ptr<InferenceCallbackContext>& ctx) -> starpu_task*
+{
+  const size_t num_inputs = inputs_handles.size();
+  const size_t num_buffers = num_inputs + outputs_handles.size();
+
+  auto* task = starpu_task_create();
+  if (task == nullptr) {
+    throw StarPUTaskCreationException("Failed to create StarPU task.");
+  }
+
+  task->nbuffers = static_cast<int>(num_buffers);
+  task->cl = starpu_->get_codelet();
+  task->synchronous = opts_->synchronous ? 1 : 0;
+  task->cl_arg = ctx->inference_params.get();
+  task->cl_arg_size = sizeof(InferenceParams);
+  task->priority = STARPU_MAX_PRIO - ctx->job->get_job_id();
+
+  InferenceTask::allocate_task_buffers(task, num_buffers, ctx);
+  InferenceTask::fill_task_buffers(task, inputs_handles, outputs_handles);
+
+  task->callback_func = InferenceTask::starpu_output_callback;
+  ctx->self_keep_alive = ctx;
+  task->callback_arg = ctx.get();
+
+  assign_fixed_worker_if_needed(task);
+
+  return task;
+}
+
+void
+InferenceTask::allocate_task_buffers(
+    starpu_task* task, size_t num_buffers,
+    const std::shared_ptr<InferenceCallbackContext>& ctx)
+{
+  task->dyn_handles = static_cast<starpu_data_handle_t*>(
+      malloc(num_buffers * sizeof(starpu_data_handle_t)));
+  task->dyn_modes = static_cast<starpu_data_access_mode*>(
+      malloc(num_buffers * sizeof(starpu_data_access_mode)));
+
+  if (task->dyn_handles == nullptr || task->dyn_modes == nullptr) {
+    starpu_task_destroy(task);
+    cleanup(ctx);
+    throw MemoryAllocationException("Failed to allocate task buffers.");
+  }
+}
+
+void
+InferenceTask::fill_task_buffers(
+    starpu_task* task, const std::vector<starpu_data_handle_t>& inputs,
+    const std::vector<starpu_data_handle_t>& outputs)
+{
+  const size_t num_inputs = inputs.size();
+  const size_t num_buffers = num_inputs + outputs.size();
+
+  for (size_t idx = 0; idx < num_inputs; ++idx) {
+    task->dyn_handles[idx] = inputs[idx];
+    task->dyn_modes[idx] = STARPU_R;
+  }
+
+  for (size_t idx = num_inputs; idx < num_buffers; ++idx) {
+    task->dyn_handles[idx] = outputs[idx - num_inputs];
+    task->dyn_modes[idx] = STARPU_W;
+  }
+}
+
+void
+InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
+{
+  if (job_->get_fixed_worker_id().has_value()) {
+    task->workerid = job_->get_fixed_worker_id().value();
+    task->execute_on_a_specific_worker = 1;
+  }
+}
+
+// =============================================================================
+// StarPU Output Callback & Completion
+// Finalize job upon output readiness. Release data handles and trigger user
+// completion callbacks with measured latency.
+// =============================================================================
 
 void
 InferenceTask::starpu_output_callback(void* arg)
@@ -314,28 +362,8 @@ InferenceTask::starpu_output_callback(void* arg)
     ctx->remaining_outputs_to_acquire =
         static_cast<int>(ctx->outputs_handles.size());
 
-    for (auto& handle : ctx->outputs_handles) {
-      if (handle != nullptr) {
-        starpu_data_acquire_cb(
-            handle, STARPU_R,
-            [](void* cb_arg) {
-              auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);
-
-              if (--cb_ctx->remaining_outputs_to_acquire == 0) {
-                try {
-                  InferenceTask::on_output_ready_and_cleanup(cb_ctx);
-                }
-                catch (...) {
-                  log_exception("on_output_ready");
-                }
-              }
-            },
-            ctx);
-      } else {
-        if (--ctx->remaining_outputs_to_acquire == 0) {
-          InferenceTask::on_output_ready_and_cleanup(ctx);
-        }
-      }
+    for (const auto& handle : ctx->outputs_handles) {
+      InferenceTask::process_output_handle(handle, ctx);
     }
   }
   catch (...) {
@@ -343,9 +371,104 @@ InferenceTask::starpu_output_callback(void* arg)
   }
 }
 
+void
+InferenceTask::acquire_output_handle(
+    starpu_data_handle_t handle, InferenceCallbackContext* ctx)
+{
+  starpu_data_acquire_cb(
+      handle, STARPU_R,
+      [](void* cb_arg) {
+        auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);
+        if (--cb_ctx->remaining_outputs_to_acquire == 0) {
+          try {
+            InferenceTask::finalize_inference_task(cb_ctx);
+          }
+          catch (...) {
+            log_exception("on_output_ready");
+          }
+        }
+      },
+      ctx);
+}
+
+void
+InferenceTask::process_output_handle(
+    starpu_data_handle_t handle, InferenceCallbackContext* ctx)
+{
+  if (handle != nullptr) {
+    InferenceTask::acquire_output_handle(handle, ctx);
+  } else {
+    if (--ctx->remaining_outputs_to_acquire == 0) {
+      InferenceTask::finalize_inference_task(ctx);
+    }
+  }
+}
+
+void
+InferenceTask::finalize_inference_task(void* arg)
+{
+  auto* ctx = static_cast<InferenceCallbackContext*>(arg);
+
+  InferenceTask::release_output_data(ctx->outputs_handles);
+
+  auto ctx_sptr =
+      std::static_pointer_cast<InferenceCallbackContext>(ctx->self_keep_alive);
+
+  InferenceTask::finalize_context(ctx_sptr);
+
+  const auto end_time = std::chrono::high_resolution_clock::now();
+
+  InferenceTask::record_and_run_completion_callback(ctx, end_time);
+
+  ctx->self_keep_alive.reset();
+}
+
+void
+InferenceTask::finalize_context(
+    const std::shared_ptr<InferenceCallbackContext>& ctx_sptr)
+{
+  if (ctx_sptr) {
+    InferenceTask::cleanup(ctx_sptr);
+  }
+}
+
+void
+InferenceTask::release_output_data(
+    const std::vector<starpu_data_handle_t>& handles)
+{
+  for (const auto& handle : handles) {
+    if (handle != nullptr) {
+      starpu_data_release(handle);
+    }
+  }
+}
+
+void
+InferenceTask::record_and_run_completion_callback(
+    InferenceCallbackContext* ctx,
+    std::chrono::high_resolution_clock::time_point end_time)
+{
+  if (!ctx->job) {
+    return;
+  }
+
+  const double latency_ms = std::chrono::duration<double, std::milli>(
+                                end_time - ctx->job->get_start_time())
+                                .count();
+
+  ctx->job->timing_info().callback_end_time = end_time;
+
+  if (ctx->job->has_on_complete()) {
+    const auto& callback = ctx->job->get_on_complete();
+    callback(ctx->job->get_output_tensors(), latency_ms);
+  }
+}
+
 // =============================================================================
-// Exception handling
+// Exception Logging
+// Catch and log known exceptions raised during job lifecycle.
 // =============================================================================
+
 void
 InferenceTask::log_exception(const std::string& context)
 {

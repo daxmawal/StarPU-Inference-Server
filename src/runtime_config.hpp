@@ -7,6 +7,17 @@
 
 #include "logger.hpp"
 
+// =============================================================================
+// RuntimeConfig
+// -----------------------------------------------------------------------------
+// Global configuration structure for inference runtime.
+//
+// Contains:
+//   - General settings (model, scheduler, etc.)
+//   - Device configuration (CPU, CUDA, GPU IDs)
+//   - Logging level
+//   - Model input layout (shapes and types)
+// =============================================================================
 struct RuntimeConfig {
   // General configuration
   std::string scheduler = "lws";  // Scheduling policy
@@ -20,7 +31,7 @@ struct RuntimeConfig {
   // Device configuration
   bool use_cpu = true;                   // Use CPU for inference
   bool use_cuda = false;                 // Use CUDA-enabled GPUs
-  std::vector<unsigned int> device_ids;  // GPU device IDs
+  std::vector<unsigned int> device_ids;  // Given available GPU device IDs
 
   // Logging
   VerbosityLevel verbosity = VerbosityLevel::Info;

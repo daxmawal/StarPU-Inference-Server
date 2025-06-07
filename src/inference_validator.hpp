@@ -1,9 +1,5 @@
 #pragma once
 
-// ----------------------------------------------------------------------------
-// inference_validator.hpp
-// Provides a function to validate inference results against reference output
-// ----------------------------------------------------------------------------
 #include "inference_runner.hpp"
 
 

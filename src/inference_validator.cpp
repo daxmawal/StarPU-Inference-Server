@@ -13,80 +13,93 @@
 constexpr int kPreviewLimit = 10;
 
 // =============================================================================
-// Validate the result of an inference by comparing it to the reference output
+// Device and Input Preparation Utilities
 // =============================================================================
+
+// Returns the device on which the inference ran (CPU or CUDA)
 auto
-validate_inference_result(
-    const InferenceResult& result, torch::jit::script::Module& module,
-    const VerbosityLevel& verbosity) -> bool
+get_inference_device(const InferenceResult& result) -> torch::Device
 {
-  // Select the device used for inference
-  torch::Device device(torch::kCPU);
   switch (result.executed_on) {
     case DeviceType::CUDA:
-      device = torch::Device(torch::kCUDA);
-      break;
+      return {torch::kCUDA};
     case DeviceType::CPU:
-      device = torch::Device(torch::kCPU);
-      break;
+      return {torch::kCPU};
     default:
       log_error(
           "[Validator] Unknown device for job " +
           std::to_string(result.job_id));
-      return false;
+      throw std::runtime_error("Unknown device");
   }
+}
 
-  module.to(device);
-
-  // Prepare input tensors
+// Converts input tensors to the appropriate device and wraps them in IValues
+auto
+prepare_inputs(
+    const std::vector<torch::Tensor>& inputs,
+    const torch::Device& device) -> std::vector<torch::IValue>
+{
   std::vector<torch::IValue> input_ivalues;
   std::transform(
-      result.inputs.begin(), result.inputs.end(),
-      std::back_inserter(input_ivalues),
+      inputs.begin(), inputs.end(), std::back_inserter(input_ivalues),
       [&](const torch::Tensor& tensor) { return tensor.to(device); });
+  return input_ivalues;
+}
 
-  // Run reference inference
-  const torch::IValue output = module.forward(input_ivalues);
+// =============================================================================
+// Output Extraction and Comparison
+// =============================================================================
 
-  // Convert reference output to a vector of tensors
-  std::vector<torch::Tensor> reference_outputs;
+// Converts model output (Tensor or Tuple) to a list of tensors
+auto
+extract_reference_outputs(
+    const torch::IValue& output,
+    const InferenceResult& result) -> std::vector<torch::Tensor>
+{
+  std::vector<torch::Tensor> tensors;
+
   if (output.isTensor()) {
-    reference_outputs.push_back(output.toTensor());
+    tensors.push_back(output.toTensor());
   } else if (output.isTuple()) {
-    auto elements = output.toTuple()->elements();
-    for (const auto& val : elements) {
-      if (val.isTensor()) {
-        reference_outputs.push_back(val.toTensor());
-      } else {
+    for (const auto& val : output.toTuple()->elements()) {
+      if (!val.isTensor()) {
         log_error(
             "[Validator] Non-tensor output in tuple for job " +
             std::to_string(result.job_id));
-        return false;
+        throw std::runtime_error("Invalid tuple element");
       }
+      tensors.push_back(val.toTensor());
     }
   } else {
     log_error(
         "[Validator] Unsupported output type for job " +
         std::to_string(result.job_id));
-    return false;
+    throw std::runtime_error("Unsupported output type");
   }
 
-  // Check that the number of outputs matches
-  if (reference_outputs.size() != result.results.size()) {
+  return tensors;
+}
+
+// Compares two lists of tensors (reference vs actual), with logging on mismatch
+auto
+compare_outputs(
+    const std::vector<torch::Tensor>& reference,
+    const std::vector<torch::Tensor>& actual, const InferenceResult& result,
+    const torch::Device& device) -> bool
+{
+  if (reference.size() != actual.size()) {
     log_error(
         "[Validator] Output count mismatch for job " +
         std::to_string(result.job_id));
     return false;
   }
 
-  // Compare each output tensor
   bool all_valid = true;
-  for (size_t i = 0; i < reference_outputs.size(); ++i) {
-    const torch::Tensor ref = reference_outputs[i].to(device);
-    const torch::Tensor res = result.results[i].to(device);
+  for (size_t i = 0; i < reference.size(); ++i) {
+    const torch::Tensor& ref = reference[i].to(device);
+    const torch::Tensor& res = actual[i].to(device);
 
-    const bool is_valid =
-        torch::allclose(ref, res, /*rtol=*/1e-3, /*atol=*/1e-5);
+    const bool is_valid = torch::allclose(ref, res, 1e-3, 1e-5);
     all_valid &= is_valid;
 
     if (!is_valid) {
@@ -105,13 +118,62 @@ validate_inference_result(
     }
   }
 
-  if (all_valid) {
-    log_info(
-        verbosity, "[Validator] Job " + std::to_string(result.job_id) +
-                       " passed on " + to_string(result.executed_on) +
-                       " (device id " + std::to_string(result.device_id) +
-                       " worker id " + std::to_string(result.worker_id) + ")");
+  return all_valid;
+}
+
+// =============================================================================
+// Entry Point: Validate One Inference Result Against the Model
+// =============================================================================
+
+auto
+validate_inference_result(
+    const InferenceResult& result, torch::jit::script::Module& module,
+    const VerbosityLevel& verbosity) -> bool
+{
+  try {
+    const torch::Device device = get_inference_device(result);
+
+    module.to(device);
+    auto input_ivalues = prepare_inputs(result.inputs, device);
+
+    const torch::IValue output = module.forward(input_ivalues);
+    auto reference_outputs = extract_reference_outputs(output, result);
+
+    if (reference_outputs.size() != result.results.size()) {
+      log_error(
+          "[Validator] Output count mismatch for job " +
+          std::to_string(result.job_id));
+      return false;
+    }
+
+    const bool all_valid =
+        compare_outputs(reference_outputs, result.results, result, device);
+
+    if (all_valid) {
+      log_info(
+          verbosity, "[Validator] Job " + std::to_string(result.job_id) +
+                         " passed on " + to_string(result.executed_on) +
+                         " (device id " + std::to_string(result.device_id) +
+                         " worker id " + std::to_string(result.worker_id) +
+                         ")");
+    }
+
+    return all_valid;
+  }
+  catch (const c10::Error& e) {
+    log_error(
+        "[Validator] C10 error in job " + std::to_string(result.job_id) + ": " +
+        e.what());
+  }
+  catch (const std::exception& e) {
+    log_error(
+        "[Validator] Exception in job " + std::to_string(result.job_id) + ": " +
+        e.what());
+  }
+  catch (...) {
+    log_error(
+        "[Validator] Unknown error in job " + std::to_string(result.job_id));
   }
 
-  return all_valid;
+  return false;
 }

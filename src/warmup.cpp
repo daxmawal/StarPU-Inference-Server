@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "Inference_queue.hpp"
+#include "client_utils.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
@@ -23,7 +24,11 @@
 #include "server_worker.hpp"
 #include "starpu_setup.hpp"
 
-constexpr int NUM_PREGENERATED_INPUTS = 2;
+constexpr size_t NUM_PREGENERATED_INPUTS = 2;
+
+// =============================================================================
+// Constructor
+// =============================================================================
 
 WarmupRunner::WarmupRunner(
     const RuntimeConfig& opts, StarPUSetup& starpu,
@@ -36,81 +41,62 @@ WarmupRunner::WarmupRunner(
 {
 }
 
+// =============================================================================
+// Client thread: generate and enqueue jobs for warmup
+// =============================================================================
+
 void
 WarmupRunner::client_worker(
-    const std::map<unsigned int, std::vector<int32_t>> device_workers,
-    InferenceQueue& queue, const int iterations_per_worker)
+    const std::map<unsigned int, std::vector<int32_t>>& device_workers,
+    InferenceQueue& queue, unsigned int iterations_per_worker) const
 {
-  // Pre-generate random input tensors
-  std::vector<std::vector<torch::Tensor>> pregen_inputs;
-  pregen_inputs.reserve(NUM_PREGENERATED_INPUTS);
-
-  std::generate_n(
-      std::back_inserter(pregen_inputs), NUM_PREGENERATED_INPUTS, [&]() {
-        return generate_random_inputs(opts_.input_shapes, opts_.input_types);
-      });
-
-  // RNG setup to randomly pick pre-generated inputs for warmup jobs
+  // Pre-generates a small set of random inputs for reuse
+  auto pregen_inputs =
+      client_utils::pre_generate_inputs(opts_, NUM_PREGENERATED_INPUTS);
   std::mt19937 rng(std::random_device{}());
-  std::uniform_int_distribution<> dist(0, NUM_PREGENERATED_INPUTS - 1);
 
   unsigned int job_id = 0;
+  const std::size_t total =
+      std::accumulate(
+          device_workers.begin(), device_workers.end(), std::size_t{0},
+          [](std::size_t sum, const auto& pair) {
+            return sum + pair.second.size();
+          }) *
+      iterations_per_worker;
 
-  // Iterate over each device ID and its associated StarPU worker IDs
+  // Sends jobs to the queue, fixing the targeted workers
   for (const auto& [device_id, worker_ids] : device_workers) {
     for (const int worker_id : worker_ids) {
-      for (unsigned int i = 0; i < iterations_per_worker; ++i) {
-        auto job = std::make_shared<InferenceJob>();
-
-        const auto& chosen_inputs =
-            pregen_inputs[static_cast<std::size_t>(dist(rng))];
-        job->set_input_tensors(chosen_inputs);
-
-        std::vector<at::ScalarType> types;
-        types.reserve(chosen_inputs.size());
-        for (const auto& tensor : chosen_inputs) {
-          types.emplace_back(tensor.scalar_type());
-        }
-        job->set_input_types(types);
-
-        std::vector<torch::Tensor> outputs;
-        outputs.reserve(outputs_ref_.size());
-        for (const auto& ref : outputs_ref_) {
-          outputs.emplace_back(torch::empty_like(ref));
-        }
-        job->set_outputs_tensors(outputs);
-
-        job->set_job_id(job_id++);
+      for (unsigned int iteration = 0; iteration < iterations_per_worker;
+           ++iteration) {
+        const auto& inputs =
+            client_utils::pick_random_input(pregen_inputs, rng);
+        auto job = client_utils::create_job(inputs, outputs_ref_, job_id);
         job->set_fixed_worker_id(worker_id);
 
-        auto now = std::chrono::high_resolution_clock::now();
-        job->set_start_time(now);
-        job->timing_info().enqueued_time = now;
-
-        log_trace(
-            opts_.verbosity, "[Warmup] Job ID " +
-                                 std::to_string(job->get_job_id()) +
-                                 ", Iteration " + std::to_string(i + 1) + "/" +
-                                 std::to_string(iterations_per_worker) +
-                                 ", device ID " + std::to_string(device_id) +
-                                 ", worker ID " + std::to_string(worker_id));
+        client_utils::log_job_enqueued(
+            opts_, job_id, total, job->timing_info().enqueued_time);
 
         queue.push(job);
+        job_id++;
       }
     }
   }
 
-  queue.shutdown();
+  queue.shutdown();  // Tells the server that there are no more jobs
 }
 
+// =============================================================================
+// Warmup execution: launch server and client threads and wait for completion
+// =============================================================================
+
 void
-WarmupRunner::run(const int iterations_per_worker)
+WarmupRunner::run(unsigned int iterations_per_worker)
 {
   if (!opts_.use_cuda) {
     return;
   }
 
-  // Dummy resources (since warmup results aren't needed)
   InferenceQueue queue;
   std::atomic<unsigned int> dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
@@ -118,7 +104,7 @@ WarmupRunner::run(const int iterations_per_worker)
   std::condition_variable dummy_cv;
   std::vector<InferenceResult> dummy_results;
 
-  // Launch server thread
+  // Start the server (consumes jobs in the queue)
   ServerWorker worker(
       &queue, &model_cpu_, &models_gpu_, &starpu_, &opts_, &dummy_results,
       &dummy_results_mutex, &dummy_completed_jobs, &dummy_cv);
@@ -128,20 +114,18 @@ WarmupRunner::run(const int iterations_per_worker)
   const auto device_workers =
       StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);
 
-  // Launch client thread to feed warmup jobs
+  // Launch the client (generates the jobs to be run)
   std::thread client(
       [&]() { client_worker(device_workers, queue, iterations_per_worker); });
 
-  // Wait for client thread to finish pushing jobs
-  client.join();
+  client.join();  // wait for jobs to finish sending
 
-  // Count the total number of CUDA workers
+  // Calculation of the total number of jobs to expect
   size_t total_worker_count = 0;
   for (const auto& [device_id, worker_list] : device_workers) {
     total_worker_count += worker_list.size();
   }
 
-  // Wait until all warmup jobs are marked completed
   {
     std::unique_lock<std::mutex> lock(dummy_mutex);
     const size_t total_jobs =
@@ -150,6 +134,5 @@ WarmupRunner::run(const int iterations_per_worker)
         lock, [&]() { return dummy_completed_jobs.load() >= total_jobs; });
   }
 
-  // Join server thread
   server.join();
 }

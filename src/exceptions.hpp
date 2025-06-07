@@ -6,6 +6,7 @@
 // =============================================================================
 // Base class for all inference-related exceptions
 // =============================================================================
+
 class InferenceEngineException : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
@@ -14,6 +15,7 @@ class InferenceEngineException : public std::runtime_error {
 // =============================================================================
 // Specific exception types for common failure cases
 // =============================================================================
+
 /// Thrown when an unsupported data type is used
 class UnsupportedDtypeException : public InferenceEngineException {
  public:
