@@ -10,6 +10,8 @@
 #include <memory>
 #include <mutex>
 #include <random>
+#include <sstream>
+#include <iomanip>
 #include <string>
 #include <thread>
 #include <utility>
