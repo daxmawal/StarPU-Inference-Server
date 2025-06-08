@@ -12,7 +12,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # External Dependencies
 set(CMAKE_PREFIX_PATH "/local/home/jd258565/Install/libtorch")
+list(APPEND CMAKE_PREFIX_PATH "/local/home/jd258565/Install/grpc")
+
 find_package(Torch REQUIRED)
+find_package(Protobuf REQUIRED)
+find_package(gRPC CONFIG REQUIRED)
 
 # StarPU Configuration
 set(STARPU_DIR $ENV{STARPU_DIR})
@@ -67,6 +71,7 @@ target_include_directories(inference_engine PRIVATE
 target_link_libraries(inference_engine PRIVATE
     ${TORCH_LIBRARIES}
     ${STARPU_LIBRARY}
+    gRPC::grpc++
 )
 
 # Compile Definitions

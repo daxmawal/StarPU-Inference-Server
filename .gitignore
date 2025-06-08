@@ -49,3 +49,7 @@ venv/
 # CLion / JetBrains
 .idea/
 cmake-build-*/
+
+# Files generated automatically by protoc
+*.pb.cc
+*.pb.h
