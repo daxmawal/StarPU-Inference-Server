@@ -177,7 +177,6 @@ expect_and_parse(size_t& idx, std::span<char*> args, Func&& parser) -> bool
 // Individual Argument Parsers for --model, --shape, etc.
 // =============================================================================
 
-
 auto
 parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
