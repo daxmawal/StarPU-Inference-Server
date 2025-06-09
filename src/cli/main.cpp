@@ -5,13 +5,10 @@
 
 #include "args_parser.hpp"
 #include "exceptions.hpp"
-#include "inference.grpc.pb.h"
-#include "inference.pb.h"
 #include "inference_runner.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
-
 
 auto
 main(int argc, char* argv[]) -> int
