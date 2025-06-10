@@ -37,15 +37,4 @@ class WarmupRunner {
       models_gpu_;  // GPU models (TorchScript)
   const std::vector<torch::Tensor>&
       outputs_ref_;  // Reference outputs to validate warmup jobs
-
-  // *****************************************************************************
-  // Dummy result collection and synchronization primitives
-  // *****************************************************************************
-  std::atomic<unsigned int>
-      dummy_completed_jobs_;          // Tracks how many jobs completed
-  std::mutex dummy_mutex_;            // Protects dummy CV
-  std::mutex dummy_results_mutex_;    // Protects dummy result list
-  std::condition_variable dummy_cv_;  // Used to wait for all warmup jobs
-  std::vector<InferenceResult>
-      dummy_results_;  // Results discarded after warmup
 };

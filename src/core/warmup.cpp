@@ -36,8 +36,7 @@ WarmupRunner::WarmupRunner(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref)
     : opts_(opts), starpu_(starpu), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), outputs_ref_(outputs_ref),
-      dummy_completed_jobs_(0)
+      models_gpu_(models_gpu), outputs_ref_(outputs_ref)
 {
 }
 

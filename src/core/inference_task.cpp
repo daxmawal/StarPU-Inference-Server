@@ -118,7 +118,7 @@ InferenceTask::register_outputs_handles(
 
   for (size_t i = 0; i < outputs_tensors.size(); ++i) {
     handles.push_back(safe_register_tensor_vector(
-        outputs_tensors[i], "input[" + std::to_string(i) + "]"));
+        outputs_tensors[i], "output[" + std::to_string(i) + "]"));
   }
 
   return handles;
