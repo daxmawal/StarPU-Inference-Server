@@ -1,4 +1,5 @@
 #include <grpcpp/grpcpp.h>
+#include <torch/script.h>
 
 #include <iostream>
 #include <memory>
@@ -48,11 +49,18 @@ class InferenceClient {
     auto* input = request.add_inputs();
     input->set_name("input");
     input->set_datatype("FP32");
-    input->add_shape(16);
+    input->add_shape(32);
+    input->add_shape(3);
+    input->add_shape(224);
+    input->add_shape(224);
+
+    auto tensor = torch::rand({32, 3, 224, 224}, torch::kFloat32);
+    auto flat = tensor.view({-1});
 
     auto* contents = input->mutable_contents();
-    for (int i = 0; i < 16; ++i) {
-      contents->add_fp32_contents(static_cast<float>(i));
+    contents->mutable_fp32_contents()->Reserve(flat.numel());
+    for (int64_t i = 0; i < flat.numel(); ++i) {
+      contents->add_fp32_contents(flat[i].item<float>());
     }
 
     ModelInferResponse response;
@@ -77,8 +85,16 @@ class InferenceClient {
 int
 main()
 {
-  InferenceClient client(grpc::CreateChannel(
-      "localhost:50051", grpc::InsecureChannelCredentials()));
+  grpc::ChannelArguments ch_args;
+  const int max_msg_size = 32 * 1024 * 1024;
+  ch_args.SetMaxReceiveMessageSize(max_msg_size);
+  ch_args.SetMaxSendMessageSize(max_msg_size);
+
+  auto channel = grpc::CreateCustomChannel(
+      "localhost:50051", grpc::InsecureChannelCredentials(), ch_args);
+
+  InferenceClient client(channel);
+
   client.ServerIsLive();
   client.ModelInfer();
   return 0;

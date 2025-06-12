@@ -17,7 +17,12 @@ target_link_libraries(grpc_client_example PRIVATE
 add_executable(grpc_server server/server_main.cpp)
 set_target_properties(grpc_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 target_compile_features(grpc_server PRIVATE cxx_std_20)
-target_include_directories(grpc_server PRIVATE ${CMAKE_SOURCE_DIR}/src ${STARPU_DIR}/include/starpu/1.4)
+target_include_directories(grpc_server PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CORE_DIR}
+    ${UTILS_DIR}
+    ${STARPU_DIR}/include/starpu/1.4
+)
 target_compile_definitions(grpc_server PRIVATE -D_GLIBCXX_USE_CXX11_ABI=1)
 target_link_libraries(grpc_server PRIVATE
     ${TORCH_LIBRARIES}
