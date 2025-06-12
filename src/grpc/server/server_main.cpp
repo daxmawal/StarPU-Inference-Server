@@ -1,9 +1,12 @@
+#include <ATen/ATen.h>
 #include <grpcpp/grpcpp.h>
+#include <torch/script.h>
 
 #include <iostream>
 #include <memory>
 #include <string>
 
+#include "core/starpu_setup.hpp"
 #include "grpc_service.grpc.pb.h"
 
 using grpc::Server;
@@ -37,10 +40,25 @@ class InferenceServiceImpl final : public GRPCInferenceService::Service {
       const auto& input = request->inputs(0);
       const auto& contents = input.contents();
 
+      std::vector<int64_t> shape;
+      shape.reserve(input.shape_size());
+      for (int i = 0; i < input.shape_size(); ++i) {
+        shape.push_back(input.shape(i));
+      }
+
+      std::vector<float> data;
+      data.reserve(contents.fp32_contents_size());
+      for (int i = 0; i < contents.fp32_contents_size(); ++i) {
+        data.push_back(contents.fp32_contents(i));
+      }
+
+      auto tensor = torch::from_blob(data.data(), shape, torch::kFloat).clone();
+
+      std::cout << "Received tensor of size " << tensor.sizes() << std::endl;
       std::cout << "First values of input tensor '" << input.name() << "': ";
-      const int count = std::min(10, contents.fp32_contents_size());
+      const int count = std::min<int64_t>(10, tensor.numel());
       for (int i = 0; i < count; ++i) {
-        std::cout << contents.fp32_contents(i) << ' ';
+        std::cout << tensor.view({-1})[i].item<float>() << ' ';
       }
       std::cout << std::endl;
     }
@@ -60,6 +78,10 @@ RunServer()
   ServerBuilder builder;
   builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
+
+  const int max_msg_size = 32 * 1024 * 1024;  // 32MB, adjust as needed
+  builder.SetMaxReceiveMessageSize(max_msg_size);
+  builder.SetMaxSendMessageSize(max_msg_size);
 
   std::unique_ptr<Server> server(builder.BuildAndStart());
   std::cout << "Server listen on " << server_address << std::endl;
