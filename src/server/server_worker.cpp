@@ -75,9 +75,10 @@ ServerWorker::prepare_job_completion_callback(
   auto& device_id = job->get_device_id();
   auto& worker_id = job->get_worker_id();
 
+  auto prev_callback = job->get_on_complete();
   job->set_on_complete(
-      [this, job_id, inputs, &executed_on, &timing_info, &device_id,
-       &worker_id](
+      [this, job_id, inputs, &executed_on, &timing_info, &device_id, &worker_id,
+       prev_callback](
           const std::vector<torch::Tensor>& results, double latency_ms) {
         {
           const std::lock_guard<std::mutex> lock(*results_mutex_);
@@ -90,6 +91,10 @@ ServerWorker::prepare_job_completion_callback(
             opts_->verbosity, "Completed job ID: " + std::to_string(job_id) +
                                   ", latency: " + std::to_string(latency_ms) +
                                   " ms");
+
+        if (prev_callback) {
+          prev_callback(results, latency_ms);
+        }
 
         completed_jobs_->fetch_add(1);
         all_done_cv_->notify_one();

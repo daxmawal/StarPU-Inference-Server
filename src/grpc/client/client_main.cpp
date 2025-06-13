@@ -15,6 +15,11 @@ using inference::ModelInferResponse;
 using inference::ServerLiveRequest;
 using inference::ServerLiveResponse;
 
+constexpr int BATCH_SIZE = 1;
+constexpr int CHANNELS = 3;
+constexpr int HEIGHT = 224;
+constexpr int WIDTH = 224;
+
 class InferenceClient {
  public:
   explicit InferenceClient(std::shared_ptr<Channel>& channel)
@@ -49,12 +54,13 @@ class InferenceClient {
     auto* input = request.add_inputs();
     input->set_name("input");
     input->set_datatype("FP32");
-    input->add_shape(32);
-    input->add_shape(3);
-    input->add_shape(224);
-    input->add_shape(224);
+    input->add_shape(BATCH_SIZE);
+    input->add_shape(CHANNELS);
+    input->add_shape(HEIGHT);
+    input->add_shape(WIDTH);
 
-    auto tensor = torch::rand({32, 3, 224, 224}, torch::kFloat32);
+    auto tensor =
+        torch::rand({BATCH_SIZE, CHANNELS, HEIGHT, WIDTH}, torch::kFloat32);
     auto flat = tensor.view({-1});
 
     auto* contents = input->mutable_contents();
