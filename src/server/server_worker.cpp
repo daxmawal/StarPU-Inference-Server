@@ -4,8 +4,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <exception>
+#include <iomanip>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -65,6 +67,44 @@ ServerWorker::should_shutdown(const std::shared_ptr<InferenceJob>& job) const
 // =============================================================================
 
 void
+ServerWorker::log_job_timings(
+    int job_id, double latency_ms, const detail::TimingInfo& timing_info) const
+{
+  using duration_f = std::chrono::duration<double, std::milli>;
+  std::ostringstream oss;
+  oss << std::fixed << std::setprecision(3);
+  oss << "Job " << job_id << " done. Latency = " << latency_ms << " ms | "
+      << "Queue = "
+      << duration_f(timing_info.dequeued_time - timing_info.enqueued_time)
+             .count()
+      << " ms, " << "Submit = "
+      << duration_f(
+             timing_info.before_starpu_submitted_time -
+             timing_info.dequeued_time)
+             .count()
+      << " ms, " << "Scheduling = "
+      << duration_f(
+             timing_info.codelet_start_time -
+             timing_info.before_starpu_submitted_time)
+             .count()
+      << " ms, " << "Codelet = "
+      << duration_f(
+             timing_info.codelet_end_time - timing_info.codelet_start_time)
+             .count()
+      << " ms, " << "Inference = "
+      << duration_f(
+             timing_info.callback_start_time - timing_info.inference_start_time)
+             .count()
+      << " ms, " << "Callback = "
+      << duration_f(
+             timing_info.callback_end_time - timing_info.callback_start_time)
+             .count()
+      << " ms";
+
+  log_stats(opts_->verbosity, oss.str());
+}
+
+void
 ServerWorker::prepare_job_completion_callback(
     const std::shared_ptr<InferenceJob>& job)
 {
@@ -87,10 +127,7 @@ ServerWorker::prepare_job_completion_callback(
               worker_id, timing_info});
         }
 
-        log_stats(
-            opts_->verbosity, "Completed job ID: " + std::to_string(job_id) +
-                                  ", latency: " + std::to_string(latency_ms) +
-                                  " ms");
+        log_job_timings(job_id, latency_ms, timing_info);
 
         if (prev_callback) {
           prev_callback(results, latency_ms);

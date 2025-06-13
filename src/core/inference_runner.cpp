@@ -232,37 +232,6 @@ process_results(
       continue;
     }
 
-    const auto& time_info = result.timing_info;
-    using duration_f = std::chrono::duration<double, std::milli>;
-
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(3);
-    oss << "Job " << result.job_id << " done. Latency = " << result.latency_ms
-        << " ms | " << "Queue = "
-        << duration_f(time_info.dequeued_time - time_info.enqueued_time).count()
-        << " ms, " << "Submit = "
-        << duration_f(
-               time_info.before_starpu_submitted_time - time_info.dequeued_time)
-               .count()
-        << " ms, " << "Scheduling = "
-        << duration_f(
-               time_info.codelet_start_time -
-               time_info.before_starpu_submitted_time)
-               .count()
-        << " ms, " << "Codelet = "
-        << duration_f(time_info.codelet_end_time - time_info.codelet_start_time)
-               .count()
-        << " ms, " << "Inference = "
-        << duration_f(
-               time_info.callback_start_time - time_info.inference_start_time)
-               .count()
-        << " ms, " << "Callback = "
-        << duration_f(
-               time_info.callback_end_time - time_info.callback_start_time)
-               .count()
-        << " ms";
-
-    log_stats(verbosity, oss.str());
     validate_inference_result(result, model_cpu, verbosity);
   }
 }

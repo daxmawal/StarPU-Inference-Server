@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Inference_queue.hpp"
+#include "inference_runner.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
@@ -38,6 +39,9 @@ class ServerWorker {
   static void handle_job_exception(
       const std::shared_ptr<InferenceJob>& job,
       const std::exception& exception);
+  void log_job_timings(
+      int job_id, double latency_ms,
+      const detail::TimingInfo& timing_info) const;
 
  private:
   InferenceQueue* queue_;
