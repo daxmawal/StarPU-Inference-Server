@@ -19,7 +19,10 @@ set_target_properties(grpc_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BI
 target_compile_features(grpc_server PRIVATE cxx_std_20)
 target_include_directories(grpc_server PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CLI_DIR}
     ${CORE_DIR}
+    ${UTILS_DIR}
+    ${SERVER_DIR}
     ${UTILS_DIR}
     ${STARPU_DIR}/include/starpu/1.4
 )

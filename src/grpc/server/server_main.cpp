@@ -6,8 +6,13 @@
 #include <memory>
 #include <string>
 
+#include "cli/args_parser.hpp"
+#include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
 #include "grpc_service.grpc.pb.h"
+#include "utils/exceptions.hpp"
+#include "utils/logger.hpp"
+#include "utils/runtime_config.hpp"
 
 using grpc::Server;
 using grpc::ServerBuilder;
