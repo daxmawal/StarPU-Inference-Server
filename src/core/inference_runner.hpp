@@ -154,4 +154,15 @@ class InferenceJob {
 // Entry point: launches warmup and execution loop
 // =============================================================================
 
+auto load_model_and_reference_output(const RuntimeConfig& opts)
+    -> std::tuple<
+        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+        std::vector<torch::Tensor>>;
+
+void run_warmup(
+    const RuntimeConfig& opts, StarPUSetup& starpu,
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<torch::Tensor>& outputs_ref);
+
 void run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu);

@@ -1,101 +1,69 @@
-#include <ATen/ATen.h>
-#include <grpcpp/grpcpp.h>
-#include <torch/script.h>
-
 #include <iostream>
-#include <memory>
-#include <string>
+#include <thread>
 
 #include "cli/args_parser.hpp"
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
-#include "grpc_service.grpc.pb.h"
+#include "core/warmup.hpp"
+#include "inference_service.hpp"
+#include "server/Inference_queue.hpp"
+#include "server/server_worker.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 #include "utils/runtime_config.hpp"
 
-using grpc::Server;
-using grpc::ServerBuilder;
-using grpc::ServerContext;
-using grpc::Status;
-using inference::GRPCInferenceService;
-using inference::ModelInferRequest;
-using inference::ModelInferResponse;
-using inference::ServerLiveRequest;
-using inference::ServerLiveResponse;
+auto
+main(int argc, char* argv[]) -> int
+{
+  const RuntimeConfig opts =
+      parse_arguments(std::span<char*>(argv, static_cast<size_t>(argc)));
 
-class InferenceServiceImpl final : public GRPCInferenceService::Service {
- public:
-  Status ServerLive(
-      ServerContext* context, const ServerLiveRequest* request,
-      ServerLiveResponse* reply) override
-  {
-    std::cout << "Received ServerLive request" << std::endl;
-    reply->set_live(true);
-    return Status::OK;
+  if (opts.show_help) {
+    display_help("Inference Engine");
+    return 0;
   }
 
-  Status ModelInfer(
-      ServerContext* context, const ModelInferRequest* request,
-      ModelInferResponse* reply) override
-  {
-    std::cout << "Received ModelInfer request" << std::endl;
-
-    if (request->inputs_size() > 0) {
-      const auto& input = request->inputs(0);
-      const auto& contents = input.contents();
-
-      std::vector<int64_t> shape;
-      shape.reserve(input.shape_size());
-      for (int i = 0; i < input.shape_size(); ++i) {
-        shape.push_back(input.shape(i));
-      }
-
-      std::vector<float> data;
-      data.reserve(contents.fp32_contents_size());
-      for (int i = 0; i < contents.fp32_contents_size(); ++i) {
-        data.push_back(contents.fp32_contents(i));
-      }
-
-      auto tensor = torch::from_blob(data.data(), shape, torch::kFloat).clone();
-
-      std::cout << "Received tensor of size " << tensor.sizes() << std::endl;
-      std::cout << "First values of input tensor '" << input.name() << "': ";
-      const int count = std::min<int64_t>(10, tensor.numel());
-      for (int i = 0; i < count; ++i) {
-        std::cout << tensor.view({-1})[i].item<float>() << ' ';
-      }
-      std::cout << std::endl;
-    }
-
-    reply->set_model_name(request->model_name());
-    reply->set_model_version(request->model_version());
-    return Status::OK;
+  if (!opts.valid) {
+    log_fatal("Invalid program options.\n");
   }
-};
 
-void
-RunServer()
-{
-  std::string server_address("0.0.0.0:50051");
-  InferenceServiceImpl service;
+  std::cout << "__cplusplus = " << __cplusplus << "\n"
+            << "LibTorch version: " << TORCH_VERSION << "\n"
+            << "Scheduler       : " << opts.scheduler << "\n"
+            << "Iterations      : " << opts.iterations << "\n";
 
-  ServerBuilder builder;
-  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-  builder.RegisterService(&service);
+  try {
+    StarPUSetup starpu(opts);
 
-  const int max_msg_size = 32 * 1024 * 1024;  // 32MB, adjust as needed
-  builder.SetMaxReceiveMessageSize(max_msg_size);
-  builder.SetMaxSendMessageSize(max_msg_size);
+    torch::jit::script::Module model_cpu;
+    std::vector<torch::jit::script::Module> models_gpu;
+    std::vector<torch::Tensor> reference_outputs;
+    std::tie(model_cpu, models_gpu, reference_outputs) =
+        load_model_and_reference_output(opts);
 
-  std::unique_ptr<Server> server(builder.BuildAndStart());
-  std::cout << "Server listen on " << server_address << std::endl;
-  server->Wait();
-}
+    run_warmup(opts, starpu, model_cpu, models_gpu, reference_outputs);
 
-int
-main()
-{
-  RunServer();
+    InferenceQueue queue;
+    std::vector<InferenceResult> results;
+    std::mutex results_mutex;
+    std::atomic<unsigned int> completed_jobs = 0;
+    std::condition_variable all_done_cv;
+
+    ServerWorker worker(
+        &queue, &model_cpu, &models_gpu, &starpu, &opts, &results,
+        &results_mutex, &completed_jobs, &all_done_cv);
+
+    std::thread worker_thread(&ServerWorker::run, &worker);
+    RunServer(queue, reference_outputs);
+  }
+  catch (const InferenceEngineException& e) {
+    std::cerr << "\033[1;31m[Inference Error] " << e.what() << "\033[0m\n";
+    return 2;
+  }
+  catch (const std::exception& e) {
+    std::cerr << "\033[1;31m[General Error] " << e.what() << "\033[0m\n";
+    return -1;
+  }
+
   return 0;
 }

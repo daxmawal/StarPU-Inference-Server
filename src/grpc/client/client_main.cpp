@@ -17,12 +17,12 @@ using inference::ServerLiveResponse;
 
 class InferenceClient {
  public:
-  InferenceClient(std::shared_ptr<Channel> channel)
+  explicit InferenceClient(std::shared_ptr<Channel>& channel)
       : stub_(GRPCInferenceService::NewStub(channel))
   {
   }
 
-  bool ServerIsLive()
+  auto ServerIsLive() -> bool
   {
     ServerLiveRequest request;
     ServerLiveResponse response;
@@ -30,17 +30,17 @@ class InferenceClient {
 
     Status status = stub_->ServerLive(&context, request, &response);
 
-    if (status.ok()) {
-      std::cout << "Server live: " << std::boolalpha << response.live()
-                << std::endl;
-      return response.live();
-    } else {
+    if (!status.ok()) {
       std::cerr << "RPC failed: " << status.error_message() << std::endl;
       return false;
     }
+
+    std::cout << "Server live: " << std::boolalpha << response.live()
+              << std::endl;
+    return response.live();
   }
 
-  bool ModelInfer()
+  auto ModelInfer() -> bool
   {
     ModelInferRequest request;
     request.set_model_name("example");
@@ -68,22 +68,22 @@ class InferenceClient {
 
     Status status = stub_->ModelInfer(&context, request, &response);
 
-    if (status.ok()) {
-      std::cout << "ModelInfer call succeeded" << std::endl;
-      return true;
-    } else {
+    if (!status.ok()) {
       std::cerr << "ModelInfer RPC failed: " << status.error_message()
                 << std::endl;
       return false;
     }
+
+    std::cout << "ModelInfer call succeeded" << std::endl;
+    return true;
   }
 
  private:
   std::unique_ptr<GRPCInferenceService::Stub> stub_;
 };
 
-int
-main()
+auto
+main() -> int
 {
   grpc::ChannelArguments ch_args;
   const int max_msg_size = 32 * 1024 * 1024;
