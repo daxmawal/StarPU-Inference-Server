@@ -103,7 +103,11 @@ InferenceServiceImpl::ModelInfer(
         result_promise.set_value(outs);
       });
 
-  queue_->push(job);
+  if (!queue_->push(job)) {
+    return Status(
+        grpc::StatusCode::RESOURCE_EXHAUSTED,
+        "Inference queue is full. Job dropped.");
+  }
   auto outputs = result_future.get();
 
   reply->set_model_name(request->model_name());

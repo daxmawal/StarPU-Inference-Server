@@ -77,7 +77,9 @@ WarmupRunner::client_worker(
         client_utils::log_job_enqueued(
             opts_, job_id, total, job->timing_info().enqueued_time);
 
-        queue.push(job);
+        if (!queue.push(job)) {
+          log_warning("Warmup job dropped due to full queue.");
+        }
         job_id++;
       }
     }
@@ -97,7 +99,7 @@ WarmupRunner::run(unsigned int iterations_per_worker)
     return;
   }
 
-  InferenceQueue queue;
+  InferenceQueue queue(opts_.max_queue_size);
   std::atomic<unsigned int> dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
   std::mutex dummy_results_mutex;

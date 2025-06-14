@@ -36,6 +36,9 @@ struct RuntimeConfig {
   // Logging
   VerbosityLevel verbosity = VerbosityLevel::Info;
 
+  // Queue configuration
+  size_t max_queue_size = 0;  // 0 means unlimited
+
   // Model input specifications
   std::vector<std::vector<int64_t>> input_shapes;  // Expected input shapes
   std::vector<at::ScalarType> input_types;  // Corresponding input data types

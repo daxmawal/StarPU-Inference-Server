@@ -45,7 +45,7 @@ main(int argc, char* argv[]) -> int
 
     run_warmup(opts, starpu, model_cpu, models_gpu, reference_outputs);
 
-    InferenceQueue queue;
+    InferenceQueue queue(opts.max_queue_size);
     std::vector<InferenceResult> results;
     std::mutex results_mutex;
     std::atomic<unsigned int> completed_jobs = 0;

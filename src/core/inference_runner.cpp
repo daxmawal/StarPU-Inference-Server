@@ -81,7 +81,9 @@ client_worker(
 
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
-    queue.push(job);
+    if (!queue.push(job)) {
+      log_warning("Job dropped due to full queue.");
+    }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(opts.delay_ms));
   }
@@ -138,8 +140,8 @@ generate_inputs(
 
 auto
 run_reference_inference(
-    torch::jit::script::Module& model,
-    const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
+    torch::jit::script::Module& model, const std::vector<torch::Tensor>& inputs)
+    -> std::vector<torch::Tensor>
 {
   std::vector<torch::Tensor> output_refs;
   const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
@@ -172,10 +174,9 @@ run_reference_inference(
 // =============================================================================
 
 auto
-load_model_and_reference_output(const RuntimeConfig& opts)
-    -> std::tuple<
-        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-        std::vector<torch::Tensor>>
+load_model_and_reference_output(const RuntimeConfig& opts) -> std::tuple<
+    torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+    std::vector<torch::Tensor>>
 {
   try {
     auto model_cpu = load_model(opts.model_path);
@@ -268,7 +269,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 
   run_warmup(opts, starpu, model_cpu, models_gpu, outputs_ref);
 
-  InferenceQueue queue;
+  InferenceQueue queue(opts.max_queue_size);
   std::vector<InferenceResult> results;
   std::mutex results_mutex;
 
