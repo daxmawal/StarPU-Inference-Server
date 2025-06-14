@@ -1,4 +1,6 @@
+#include <csignal>
 #include <iostream>
+#include <memory>
 #include <thread>
 
 #include "cli/args_parser.hpp"

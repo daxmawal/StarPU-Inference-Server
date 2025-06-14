@@ -1,5 +1,6 @@
 #include "inference_service.hpp"
 
+#include <cstring>
 #include <future>
 #include <iostream>
 
@@ -14,6 +15,8 @@ using inference::ModelInferResponse;
 using inference::ServerLiveRequest;
 using inference::ServerLiveResponse;
 
+std::unique_ptr<Server> g_server;
+
 namespace {
 // Convert gRPC input to torch::Tensor
 auto
@@ -25,9 +28,7 @@ convert_input_to_tensor(const ModelInferRequest::InferInputTensor& input)
   float* dest_ptr = tensor.data_ptr<float>();
   const auto& contents = input.contents().fp32_contents();
 
-  std::span<float> dest(dest_ptr, contents.size());
-
-  std::copy(contents.begin(), contents.end(), dest.begin());
+  std::memcpy(dest_ptr, contents.data(), contents.size() * sizeof(float));
 
   return tensor;
 }
@@ -80,6 +81,15 @@ InferenceServiceImpl::ModelInfer(
   std::vector<torch::Tensor> inputs;
   inputs.reserve(request->inputs_size());
   for (const auto& input : request->inputs()) {
+    size_t expected = 1;
+    for (const auto dim : input.shape()) {
+      expected *= static_cast<size_t>(dim);
+    }
+    if (expected != input.contents().fp32_contents().size()) {
+      return Status(
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Input tensor shape does not match provided contents size");
+    }
     inputs.push_back(convert_input_to_tensor(input));
   }
 
@@ -117,7 +127,7 @@ RunServer(
   builder.SetMaxReceiveMessageSize(max_msg_size);
   builder.SetMaxSendMessageSize(max_msg_size);
 
-  std::unique_ptr<Server> server(builder.BuildAndStart());
+  g_server = builder.BuildAndStart();
   std::cout << "Server listening on " << server_address << std::endl;
-  server->Wait();
+  g_server->Wait();
 }

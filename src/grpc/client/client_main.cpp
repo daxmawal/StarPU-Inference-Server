@@ -44,8 +44,8 @@ FormatTimestamp(const std::chrono::high_resolution_clock::time_point& tp)
 
   std::time_t t = std::chrono::system_clock::to_time_t(
       std::chrono::time_point_cast<std::chrono::system_clock::duration>(tp));
-  std::tm tm = *std::localtime(&t);
-
+  std::tm tm{};
+  localtime_r(&t, &tm);
   std::ostringstream oss;
   oss << std::put_time(&tm, "%H:%M:%S") << '.' << std::setfill('0')
       << std::setw(3) << ms.count();
