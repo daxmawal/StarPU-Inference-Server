@@ -4,7 +4,7 @@
 #include <torch/torch.h>
 
 #include "grpc_service.grpc.pb.h"
-#include "server/Inference_queue.hpp"
+#include "server/inference_queue.hpp"
 
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {

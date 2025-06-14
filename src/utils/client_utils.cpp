@@ -5,19 +5,19 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <iomanip>
 #include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <random>
 #include <sstream>
-#include <iomanip>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#include "Inference_queue.hpp"
+#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Inference_queue.hpp"
+#include "inference_queue.hpp"
 #include "starpu_setup.hpp"
 
 // =============================================================================

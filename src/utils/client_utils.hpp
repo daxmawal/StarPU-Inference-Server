@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "Inference_queue.hpp"
+#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"

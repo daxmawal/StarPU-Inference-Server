@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "Inference_queue.hpp"
 #include "exceptions.hpp"
+#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"

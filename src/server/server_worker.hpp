@@ -7,7 +7,7 @@
 #include <mutex>
 #include <vector>
 
-#include "Inference_queue.hpp"
+#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"

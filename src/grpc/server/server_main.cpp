@@ -8,7 +8,7 @@
 #include "core/starpu_setup.hpp"
 #include "core/warmup.hpp"
 #include "inference_service.hpp"
-#include "server/Inference_queue.hpp"
+#include "server/inference_queue.hpp"
 #include "server/server_worker.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
