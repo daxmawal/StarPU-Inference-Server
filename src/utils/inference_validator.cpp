@@ -133,7 +133,6 @@ validate_inference_result(
   try {
     const torch::Device device = get_inference_device(result);
 
-    module.to(device);
     auto input_ivalues = prepare_inputs(result.inputs, device);
 
     const torch::IValue output = module.forward(input_ivalues);

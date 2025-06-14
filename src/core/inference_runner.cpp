@@ -224,7 +224,9 @@ run_warmup(
 void
 process_results(
     const std::vector<InferenceResult>& results,
-    torch::jit::script::Module& model_cpu, VerbosityLevel verbosity)
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    VerbosityLevel verbosity)
 {
   for (const auto& result : results) {
     if (!result.results[0].defined()) {
@@ -232,7 +234,15 @@ process_results(
       continue;
     }
 
-    validate_inference_result(result, model_cpu, verbosity);
+    torch::jit::script::Module* module = &model_cpu;
+    if (result.executed_on == DeviceType::CUDA) {
+      const auto id = static_cast<size_t>(result.device_id);
+      if (id < models_gpu.size()) {
+        module = &models_gpu[id];
+      }
+    }
+
+    validate_inference_result(result, *module, verbosity);
   }
 }
 
@@ -287,7 +297,9 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   }
 
   server.join();
-  cudaDeviceSynchronize();
+  if (opts.use_cuda) {
+    cudaDeviceSynchronize();
+  }
 
-  process_results(results, model_cpu, opts.verbosity);
+  process_results(results, model_cpu, models_gpu, opts.verbosity);
 }

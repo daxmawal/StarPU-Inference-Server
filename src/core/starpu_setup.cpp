@@ -158,6 +158,8 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
   const std::vector<void*> buffers_vec(
       buffers, buffers + params->num_inputs + params->num_outputs);
 
+  const c10::InferenceMode no_autograd;
+
   run_codelet_inference(
       params, buffers_vec, torch::kCPU, params->models.model_cpu,
       [](const at::Tensor& out, void* buffer_ptr) {
@@ -194,7 +196,7 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
         const at::Tensor wrapper = torch::from_blob(
             buffer_ptr, out.sizes(),
             torch::TensorOptions()
-                .dtype(torch::kFloat32)
+                .dtype(out.scalar_type())
                 .device(torch::kCUDA, device_id));
         wrapper.copy_(out, true);
       },

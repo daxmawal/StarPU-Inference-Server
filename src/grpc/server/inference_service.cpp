@@ -27,9 +27,7 @@ convert_input_to_tensor(const ModelInferRequest::InferInputTensor& input)
 
   std::span<float> dest(dest_ptr, contents.size());
 
-  for (size_t i = 0; i < contents.size(); ++i) {
-    dest[i] = contents.Get(i);
-  }
+  std::copy(contents.begin(), contents.end(), dest.begin());
 
   return tensor;
 }
