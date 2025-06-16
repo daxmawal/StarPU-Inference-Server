@@ -3,6 +3,7 @@
 #include <cstring>
 #include <future>
 #include <iostream>
+#include <string>
 
 #include "utils/client_utils.hpp"
 
@@ -20,15 +21,13 @@ std::unique_ptr<Server> g_server;
 namespace {
 // Convert gRPC input to torch::Tensor
 auto
-convert_input_to_tensor(const ModelInferRequest::InferInputTensor& input)
-    -> torch::Tensor
+convert_input_to_tensor(
+    const ModelInferRequest::InferInputTensor& input, const std::string& raw)
 {
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
   auto tensor = torch::empty(shape, torch::kFloat32);
   float* dest_ptr = tensor.data_ptr<float>();
-  const auto& contents = input.contents().fp32_contents();
-
-  std::memcpy(dest_ptr, contents.data(), contents.size() * sizeof(float));
+  std::memcpy(dest_ptr, raw.data(), raw.size());
 
   return tensor;
 }
@@ -48,11 +47,9 @@ fill_output_tensor(
     }
 
     auto flat = out.view({-1});
-    auto* contents = out_tensor->mutable_contents();
-    contents->mutable_fp32_contents()->Reserve(flat.numel());
-    for (int64_t i = 0; i < flat.numel(); ++i) {
-      contents->add_fp32_contents(flat[i].item<float>());
-    }
+    reply->add_raw_output_contents()->assign(
+        reinterpret_cast<const char*>(flat.data_ptr<float>()),
+        flat.numel() * sizeof(float));
   }
 }
 }  // namespace
@@ -78,19 +75,28 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
+  if (request->raw_input_contents_size() != request->inputs_size()) {
+    return Status(
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Number of raw inputs does not match number of input tensors");
+  }
+
   std::vector<torch::Tensor> inputs;
   inputs.reserve(request->inputs_size());
-  for (const auto& input : request->inputs()) {
-    size_t expected = 1;
+  for (int i = 0; i < request->inputs_size(); ++i) {
+    const auto& input = request->inputs(i);
+    const auto& raw = request->raw_input_contents(i);
+
+    size_t expected = sizeof(float);
     for (const auto dim : input.shape()) {
       expected *= static_cast<size_t>(dim);
     }
-    if (expected != input.contents().fp32_contents().size()) {
+    if (expected != raw.size()) {
       return Status(
           grpc::StatusCode::INVALID_ARGUMENT,
-          "Input tensor shape does not match provided contents size");
+          "Input tensor shape does not match raw content size");
     }
-    inputs.push_back(convert_input_to_tensor(input));
+    inputs.push_back(convert_input_to_tensor(input, raw));
   }
 
   auto job =

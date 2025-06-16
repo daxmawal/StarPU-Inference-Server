@@ -6,6 +6,7 @@
 #include <iostream>
 #include <memory>
 #include <random>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -96,11 +97,9 @@ class InferenceClient {
     input->add_shape(WIDTH);
 
     auto flat = tensor.view({-1});
-    auto* contents = input->mutable_contents();
-    contents->mutable_fp32_contents()->Reserve(flat.numel());
-    for (int64_t i = 0; i < flat.numel(); ++i) {
-      contents->add_fp32_contents(flat[i].item<float>());
-    }
+    request.add_raw_input_contents()->assign(
+        reinterpret_cast<const char*>(flat.data_ptr<float>()),
+        flat.numel() * sizeof(float));
 
     auto* call = new AsyncClientCall;
     call->request_id = current_id;
