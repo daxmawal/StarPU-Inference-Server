@@ -704,6 +704,14 @@ message ModelInferRequest
   //@@     must not be specified for any input tensor.
   //@@
   repeated bytes raw_input_contents = 7;
+
+  //@@
+  //@@  .. cpp:var:: uint64 client_send_ms
+  //@@
+  //@@     Timestamp when the client sent the request, expressed as
+  //@@     milliseconds since the epoch.
+  //@@
+  uint64 client_send_ms = 8;
 }
 
 //@@
@@ -811,6 +819,21 @@ message ModelInferResponse
   //@@     must not be specified for any output tensor.
   //@@
   repeated bytes raw_output_contents = 6;
+
+  //@@
+  //@@  .. cpp:var:: uint64 server_receive_ms
+  //@@
+  //@@     Timestamp when the server received the request, expressed as
+  //@@     milliseconds since the epoch.
+  //@@
+  uint64 server_receive_ms = 7;
+
+  //@@  .. cpp:var:: uint64 server_send_ms
+  //@@
+  //@@     Timestamp when the server sent the response, expressed as
+  //@@     milliseconds since the epoch.
+  //@@
+  uint64 server_send_ms = 8;
 }
 
 //@@

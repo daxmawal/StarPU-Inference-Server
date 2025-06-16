@@ -1,6 +1,7 @@
 #include <grpcpp/grpcpp.h>
 #include <torch/script.h>
 
+#include <chrono>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -82,11 +83,19 @@ class InferenceClient {
   {
     int current_id = next_request_id_++;
 
+    auto* call = new AsyncClientCall;
+    call->request_id = current_id;
+    call->start_time = std::chrono::high_resolution_clock::now();
+
     std::cout << "Sending request ID: " << current_id << std::endl;
 
     ModelInferRequest request;
     request.set_model_name("example");
     request.set_model_version("1");
+    request.set_client_send_ms(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            call->start_time.time_since_epoch())
+            .count());
 
     auto* input = request.add_inputs();
     input->set_name("input");
@@ -101,9 +110,6 @@ class InferenceClient {
         reinterpret_cast<const char*>(flat.data_ptr<float>()),
         flat.numel() * sizeof(float));
 
-    auto* call = new AsyncClientCall;
-    call->request_id = current_id;
-    call->start_time = std::chrono::high_resolution_clock::now();
     call->response_reader =
         stub_->AsyncModelInfer(&call->context, request, &cq_);
     call->response_reader->Finish(&call->reply, &call->status, call);
@@ -123,10 +129,22 @@ class InferenceClient {
       auto sent_time_str = FormatTimestamp(call->start_time);
       auto recv_time_str = FormatTimestamp(end);
 
+      auto start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          call->start_time.time_since_epoch())
+                          .count();
+      auto request_tx = call->reply.server_receive_ms() - start_ms;
+      auto response_tx = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             end.time_since_epoch())
+                             .count() -
+                         call->reply.server_send_ms();
+
+
       if (call->status.ok()) {
         std::cout << "Request ID " << call->request_id << " sent at "
                   << sent_time_str << ", received at " << recv_time_str
-                  << ", latency: " << latency << " ms" << std::endl;
+                  << ", latency: " << latency << " ms"
+                  << ", req_tx: " << request_tx << " ms"
+                  << ", resp_tx: " << response_tx << " ms" << std::endl;
       } else {
         std::cerr << "Request ID " << call->request_id << " failed at "
                   << recv_time_str << ": " << call->status.error_message()

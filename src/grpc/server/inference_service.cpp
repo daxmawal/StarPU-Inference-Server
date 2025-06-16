@@ -1,5 +1,6 @@
 #include "inference_service.hpp"
 
+#include <chrono>
 #include <cstring>
 #include <future>
 #include <iostream>
@@ -75,6 +76,11 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
+  auto recv_tp = std::chrono::high_resolution_clock::now();
+  auto recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     recv_tp.time_since_epoch())
+                     .count();
+
   if (request->raw_input_contents_size() != request->inputs_size()) {
     return Status(
         grpc::StatusCode::INVALID_ARGUMENT,
@@ -115,6 +121,14 @@ InferenceServiceImpl::ModelInfer(
   reply->set_model_name(request->model_name());
   reply->set_model_version(request->model_version());
   fill_output_tensor(reply, outputs);
+
+  auto send_tp = std::chrono::high_resolution_clock::now();
+  auto send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                     send_tp.time_since_epoch())
+                     .count();
+
+  reply->set_server_receive_ms(recv_ms);
+  reply->set_server_send_ms(send_ms);
 
   return Status::OK;
 }
