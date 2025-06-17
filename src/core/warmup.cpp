@@ -109,16 +109,14 @@ WarmupRunner::run(unsigned int iterations_per_worker)
       &queue, &model_cpu_, &models_gpu_, &starpu_, &opts_, &dummy_results,
       &dummy_results_mutex, &dummy_completed_jobs, &dummy_cv);
 
-  std::thread server(&ServerWorker::run, &worker);
+  std::jthread server(&ServerWorker::run, &worker);
 
   const auto device_workers =
       StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);
 
   // Launch the client (generates the jobs to be run)
-  std::thread client(
+  std::jthread client(
       [&]() { client_worker(device_workers, queue, iterations_per_worker); });
-
-  client.join();  // wait for jobs to finish sending
 
   // Calculation of the total number of jobs to expect
   size_t total_worker_count = 0;
@@ -133,6 +131,4 @@ WarmupRunner::run(unsigned int iterations_per_worker)
     dummy_cv.wait(
         lock, [&]() { return dummy_completed_jobs.load() >= total_jobs; });
   }
-
-  server.join();
 }

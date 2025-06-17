@@ -55,7 +55,7 @@ main(int argc, char* argv[]) -> int
         &queue, &model_cpu, &models_gpu, &starpu, &opts, &results,
         &results_mutex, &completed_jobs, &all_done_cv);
 
-    std::thread worker_thread(&ServerWorker::run, &worker);
+    std::jthread worker_thread(&ServerWorker::run, &worker);
     RunServer(queue, reference_outputs);
   }
   catch (const InferenceEngineException& e) {

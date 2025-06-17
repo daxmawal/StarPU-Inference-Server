@@ -192,7 +192,7 @@ main() -> int
   std::uniform_int_distribution<int> dist(0, NUM_TENSORS - 1);
 
   constexpr int NUM_REQUESTS = 100;
-  std::thread cq_thread(&InferenceClient::AsyncCompleteRpc, &client);
+  std::jthread cq_thread(&InferenceClient::AsyncCompleteRpc, &client);
   for (int i = 0; i < NUM_REQUESTS; ++i) {
     const auto& t = tensor_pool[dist(rng)];
     client.AsyncModelInfer(t);
@@ -200,7 +200,6 @@ main() -> int
   }
 
   client.Shutdown();
-  cq_thread.join();
 
   return 0;
 }

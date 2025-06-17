@@ -284,11 +284,9 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
       &queue, &model_cpu, &models_gpu, &starpu, &opts, &results, &results_mutex,
       &completed_jobs, &all_done_cv);
 
-  std::thread server(&ServerWorker::run, &worker);
-  std::thread client(
+  std::jthread server(&ServerWorker::run, &worker);
+  std::jthread client(
       [&]() { client_worker(queue, opts, outputs_ref, opts.iterations); });
-
-  client.join();
 
   {
     std::unique_lock<std::mutex> lock(all_done_mutex);
@@ -296,7 +294,6 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
         lock, [&]() { return completed_jobs.load() >= opts.iterations; });
   }
 
-  server.join();
   if (opts.use_cuda) {
     cudaDeviceSynchronize();
   }
