@@ -7,10 +7,12 @@
 #include <iostream>
 #include <memory>
 #include <random>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
 
+#include "client_args.hpp"
 #include "grpc_service.grpc.pb.h"
 
 using grpc::Channel;
@@ -22,35 +24,34 @@ using inference::ModelInferResponse;
 using inference::ServerLiveRequest;
 using inference::ServerLiveResponse;
 
-constexpr int BATCH_SIZE = 1;
-constexpr int CHANNELS = 3;
-constexpr int HEIGHT = 224;
-constexpr int WIDTH = 224;
+constexpr int MillisecondsPerSecond = 1000;
 
 struct AsyncClientCall {
-  int request_id;
+  int request_id = 0;
   ModelInferResponse reply;
   ClientContext context;
   Status status;
   std::unique_ptr<grpc::ClientAsyncResponseReader<ModelInferResponse>>
-      response_reader;
+      response_reader = nullptr;
   std::chrono::high_resolution_clock::time_point start_time;
 };
 
-std::string
-FormatTimestamp(const std::chrono::high_resolution_clock::time_point& tp)
+auto
+FormatTimestamp(const std::chrono::high_resolution_clock::time_point&
+                    time_point) -> std::string
 {
-  auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                tp.time_since_epoch()) %
-            1000;
+  auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          time_point.time_since_epoch()) %
+                      MillisecondsPerSecond;
 
-  std::time_t t = std::chrono::system_clock::to_time_t(
-      std::chrono::time_point_cast<std::chrono::system_clock::duration>(tp));
-  std::tm tm{};
-  localtime_r(&t, &tm);
+  std::time_t time = std::chrono::system_clock::to_time_t(
+      std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+          time_point));
+  std::tm local_tm{};
+  localtime_r(&time, &local_tm);
   std::ostringstream oss;
-  oss << std::put_time(&tm, "%H:%M:%S") << '.' << std::setfill('0')
-      << std::setw(3) << ms.count();
+  oss << std::put_time(&local_tm, "%H:%M:%S") << '.' << std::setfill('0')
+      << std::setw(3) << milliseconds.count();
   return oss.str();
 }
 
@@ -63,7 +64,7 @@ class InferenceClient {
 
   auto ServerIsLive() -> bool
   {
-    ServerLiveRequest request;
+    const ServerLiveRequest request;
     ServerLiveResponse response;
     ClientContext context;
 
@@ -79,9 +80,9 @@ class InferenceClient {
     return response.live();
   }
 
-  void AsyncModelInfer(const torch::Tensor& tensor)
+  void AsyncModelInfer(const torch::Tensor& tensor, const ClientConfig& cfg)
   {
-    int current_id = next_request_id_++;
+    const int current_id = next_request_id_++;
 
     auto* call = new AsyncClientCall;
     call->request_id = current_id;
@@ -99,16 +100,15 @@ class InferenceClient {
 
     auto* input = request.add_inputs();
     input->set_name("input");
-    input->set_datatype("FP32");
-    input->add_shape(BATCH_SIZE);
-    input->add_shape(CHANNELS);
-    input->add_shape(HEIGHT);
-    input->add_shape(WIDTH);
+    input->set_datatype(scalar_type_to_string(cfg.type));
+    for (auto dim : cfg.shape) {
+      input->add_shape(dim);
+    }
 
     auto flat = tensor.view({-1});
     request.add_raw_input_contents()->assign(
-        reinterpret_cast<const char*>(flat.data_ptr<float>()),
-        flat.numel() * sizeof(float));
+        reinterpret_cast<const char*>(flat.data_ptr()),
+        flat.numel() * flat.element_size());
 
     call->response_reader =
         stub_->AsyncModelInfer(&call->context, request, &cq_);
@@ -118,8 +118,8 @@ class InferenceClient {
   void AsyncCompleteRpc()
   {
     void* got_tag = nullptr;
-    bool ok = false;
-    while (cq_.Next(&got_tag, &ok)) {
+    bool call_ctx = false;
+    while (cq_.Next(&got_tag, &call_ctx)) {
       auto* call = static_cast<AsyncClientCall*>(got_tag);
       auto end = std::chrono::high_resolution_clock::now();
       auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -164,8 +164,19 @@ class InferenceClient {
 };
 
 auto
-main() -> int
+main(int argc, char* argv[]) -> int
 {
+  std::vector<const char*> const_argv(argv, argv + argc);
+  std::span<const char*> args{const_argv};
+  const ClientConfig config = parse_client_args(args);
+  if (config.show_help) {
+    display_client_help(args.front());
+    return 0;
+  }
+  if (!config.valid) {
+    std::cerr << "Invalid program options." << std::endl;
+    return 1;
+  }
   grpc::ChannelArguments ch_args;
   const int max_msg_size = 32 * 1024 * 1024;
   ch_args.SetMaxReceiveMessageSize(max_msg_size);
@@ -184,19 +195,17 @@ main() -> int
   std::vector<torch::Tensor> tensor_pool;
   tensor_pool.reserve(NUM_TENSORS);
   for (int i = 0; i < NUM_TENSORS; ++i) {
-    tensor_pool.push_back(
-        torch::rand({BATCH_SIZE, CHANNELS, HEIGHT, WIDTH}, torch::kFloat32));
+    tensor_pool.push_back(torch::rand(config.shape, torch::kFloat32));
   }
 
   std::mt19937 rng(std::random_device{}());
   std::uniform_int_distribution<int> dist(0, NUM_TENSORS - 1);
 
-  constexpr int NUM_REQUESTS = 100;
   std::jthread cq_thread(&InferenceClient::AsyncCompleteRpc, &client);
-  for (int i = 0; i < NUM_REQUESTS; ++i) {
-    const auto& t = tensor_pool[dist(rng)];
-    client.AsyncModelInfer(t);
-    std::this_thread::sleep_for(std::chrono::milliseconds(0));
+  for (int i = 0; i < config.iterations; ++i) {
+    const auto& tensor = tensor_pool[dist(rng)];
+    client.AsyncModelInfer(tensor, config);
+    std::this_thread::sleep_for(std::chrono::milliseconds(config.delay_ms));
   }
 
   client.Shutdown();
