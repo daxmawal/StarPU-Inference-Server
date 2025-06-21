@@ -4,7 +4,10 @@
 #include <iostream>
 #include <span>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -91,71 +94,162 @@ display_client_help(const char* prog_name)
             << "  --help            Show this help message\n";
 }
 
+// =============================================================================
+// Argument Parsing Utilities: Helpers for optional and positional argument
+// parsing
+// =============================================================================
+
+void
+check_required(
+    const bool condition, const std::string& option_name,
+    std::vector<std::string>& missing)
+{
+  if (!condition) {
+    missing.push_back(option_name);
+  }
+}
+
+template <typename Func>
+auto
+try_parse(const char* val, Func&& parser) -> bool
+{
+  ClientConfig cfg;
+  try {
+    std::forward<Func>(parser)(val);
+    return true;
+  }
+  catch (const std::exception& e) {
+    std::cerr << "Invalid value: " << e.what() << '\n';
+    return false;
+  }
+}
+
+template <typename Func>
+auto
+expect_and_parse(size_t& idx, std::span<const char*> args, Func&& parser)
+    -> bool
+{
+  if (idx + 1 >= args.size()) {
+    return false;
+  }
+  return try_parse(args[++idx], std::forward<Func>(parser));
+}
+
+// =============================================================================
+// Individual Argument Parsers for --model, --shape, etc.
+// =============================================================================
+
+auto
+parse_iterations(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
+    -> bool
+{
+  return expect_and_parse(idx, args, [&](const char* val) {
+    const int tmp = std::stoi(val);
+    if (tmp <= 0) {
+      throw std::invalid_argument("Must be > 0.");
+    }
+    cfg.iterations = tmp;
+  });
+}
+
+auto
+parse_delay(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
+{
+  return expect_and_parse(idx, args, [&](const char* val) {
+    cfg.delay_ms = std::stoi(val);
+    if (cfg.delay_ms < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+  });
+}
+
+auto
+parse_shape(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
+{
+  return expect_and_parse(
+      idx, args, [&](const char* val) { cfg.shape = parse_shape_string(val); });
+}
+
+auto
+parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
+{
+  return expect_and_parse(
+      idx, args, [&](const char* val) { cfg.type = parse_type_string(val); });
+}
+
+// =============================================================================
+// Dispatch Argument Parser (Main parser loop)
+// =============================================================================
+
+auto
+parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
+    -> bool
+{
+  static const std::unordered_map<std::string, std::function<bool(size_t&)>>
+      dispatch = {
+          {"--iterations",
+           [&](size_t& idx) { return parse_iterations(cfg, idx, args_span); }},
+          {"--delay",
+           [&](size_t& idx) { return parse_delay(cfg, idx, args_span); }},
+          {"--shape",
+           [&](size_t& idx) { return parse_shape(cfg, idx, args_span); }},
+          {"--type",
+           [&](size_t& idx) { return parse_type(cfg, idx, args_span); }},
+      };
+
+  for (size_t idx = 1; idx < args_span.size(); ++idx) {
+    const std::string arg = args_span[idx];
+
+    if (arg == "--help" || arg == "-h") {
+      cfg.show_help = true;
+      return true;
+    } else if (auto iter = dispatch.find(arg); iter != dispatch.end()) {
+      if (!iter->second(idx)) {
+        return false;
+      }
+    } else {
+      std::cerr << "Unknown argument: " << arg
+                << ". Use --help to see valid options." << std::endl;
+      return false;
+    }
+  }
+
+  return true;
+}
+
+// =============================================================================
+// Config Validation: Ensures all required fields are present and consistent
+// =============================================================================
+
+auto
+validate_config(ClientConfig& cfg) -> void
+{
+  std::vector<std::string> missing;
+  check_required(!cfg.shape.empty(), "--shape", missing);
+  if (!missing.empty()) {
+    for (const auto& opt : missing) {
+      std::cerr << opt << " option is required." << std::endl;
+    }
+    cfg.valid = false;
+  }
+}
+
+// =============================================================================
+// Top-Level Entry: Parses all arguments into a RuntimeConfig object
+// =============================================================================
+
 auto
 parse_client_args(const std::span<const char*> args) -> ClientConfig
 {
   ClientConfig cfg;
 
-  using Handler = std::function<void(size_t&)>;
-  std::unordered_map<std::string, Handler> handlers;
-
-  handlers["--iterations"] = [&](size_t& iteration) {
-    if (iteration + 1 >= args.size()) {
-      throw std::invalid_argument("Missing value for --iterations");
-    }
-    cfg.iterations = std::stoi(args[++iteration]);
-    if (cfg.iterations <= 0) {
-      throw std::invalid_argument("--iterations must be > 0");
-    }
-  };
-
-  handlers["--delay"] = [&](size_t& iteration) {
-    if (iteration + 1 >= args.size()) {
-      throw std::invalid_argument("Missing value for --delay");
-    }
-    cfg.delay_ms = std::stoi(args[++iteration]);
-    if (cfg.delay_ms < 0) {
-      throw std::invalid_argument("--delay must be >= 0");
-    }
-  };
-
-  handlers["--shape"] = [&](size_t& iteration) {
-    if (iteration + 1 >= args.size()) {
-      throw std::invalid_argument("Missing value for --shape");
-    }
-    cfg.shape = parse_shape_string(args[++iteration]);
-  };
-
-  handlers["--type"] = [&](size_t& iteration) {
-    if (iteration + 1 >= args.size()) {
-      throw std::invalid_argument("Missing value for --type");
-    }
-    cfg.type = parse_type_string(args[++iteration]);
-  };
-
-  handlers["--help"] = [&](size_t&) { cfg.show_help = true; };
-
-  handlers["-h"] = handlers["--help"];  // alias
-
-  for (size_t idx = 1; idx < args.size(); ++idx) {
-    const std::string arg = args[idx];
-    try {
-      if (auto iterator = handlers.find(arg); iterator != handlers.end()) {
-        iterator->second(idx);
-      } else {
-        std::cerr << "Unknown option: " << arg << "\n";
-        cfg.valid = false;
-      }
-    }
-    catch (const std::exception& e) {
-      std::cerr << e.what() << "\n";
-      cfg.valid = false;
-    }
+  if (!parse_argument_values(args, cfg)) {
+    cfg.valid = false;
+    return cfg;
   }
 
-  if (!cfg.show_help && cfg.shape.empty()) {
-    std::cerr << "--shape is required\n";
-    cfg.valid = false;
+  if (!cfg.show_help) {
+    validate_config(cfg);
   }
 
   return cfg;
