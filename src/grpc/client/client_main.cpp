@@ -84,7 +84,7 @@ class InferenceClient {
   {
     const int current_id = next_request_id_++;
 
-    auto* call = new AsyncClientCall;
+    auto call = std::make_unique<AsyncClientCall>();
     call->request_id = current_id;
     call->start_time = std::chrono::high_resolution_clock::now();
 
@@ -112,7 +112,8 @@ class InferenceClient {
 
     call->response_reader =
         stub_->AsyncModelInfer(&call->context, request, &cq_);
-    call->response_reader->Finish(&call->reply, &call->status, call);
+    call->response_reader->Finish(&call->reply, &call->status, call.get());
+    call.release();
   }
 
   void AsyncCompleteRpc()
@@ -120,7 +121,8 @@ class InferenceClient {
     void* got_tag = nullptr;
     bool call_ctx = false;
     while (cq_.Next(&got_tag, &call_ctx)) {
-      auto* call = static_cast<AsyncClientCall*>(got_tag);
+      std::unique_ptr<AsyncClientCall> call(
+          static_cast<AsyncClientCall*>(got_tag));
       auto end = std::chrono::high_resolution_clock::now();
       auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                          end - call->start_time)
@@ -150,7 +152,6 @@ class InferenceClient {
                   << recv_time_str << ": " << call->status.error_message()
                   << std::endl;
       }
-      delete call;
     }
   }
 
