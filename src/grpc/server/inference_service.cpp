@@ -34,11 +34,11 @@ datatype_to_scalar_type(const std::string& dtype) -> at::ScalarType
       {"INT16", at::kShort},   {"INT8", at::kChar},   {"UINT8", at::kByte},
       {"BOOL", at::kBool}};
 
-  const auto it = type_map.find(dtype);
-  if (it == type_map.end()) {
+  const auto iterator = type_map.find(dtype);
+  if (iterator == type_map.end()) {
     throw std::invalid_argument("Unsupported tensor datatype: " + dtype);
   }
-  return it->second;
+  return iterator->second;
 }
 
 auto
@@ -80,7 +80,7 @@ element_size(at::ScalarType type) -> size_t
       return sizeof(double);
     case at::kHalf:
     case at::kBFloat16:
-      return 2u;
+      return 2U;
     case at::kInt:
       return sizeof(int32_t);
     case at::kLong:
