@@ -10,8 +10,8 @@
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "server_worker.hpp"
 #include "starpu_setup.hpp"
+#include "starpu_task_worker.hpp"
 
 // =============================================================================
 // client_utils: Helper utilities for inference input preparation and job setup
@@ -26,12 +26,12 @@ auto pick_random_input(
     std::mt19937& rng) -> const std::vector<torch::Tensor>&;
 
 void log_job_enqueued(
-    const RuntimeConfig& opts, unsigned int job_id, size_t iterations,
+    const RuntimeConfig& opts, int job_id, int iterations,
     std::chrono::high_resolution_clock::time_point now);
 
 auto create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref,
-    unsigned int job_id) -> std::shared_ptr<InferenceJob>;
+    int job_id) -> std::shared_ptr<InferenceJob>;
 
 }  // namespace client_utils

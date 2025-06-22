@@ -17,7 +17,7 @@ format_timestamp(const std::chrono::high_resolution_clock::time_point&
                           time_point.time_since_epoch()) %
                       MillisecondsPerSecond;
 
-  std::time_t time = std::chrono::system_clock::to_time_t(
+  const std::time_t time = std::chrono::system_clock::to_time_t(
       std::chrono::time_point_cast<std::chrono::system_clock::duration>(
           time_point));
   std::tm local_tm{};

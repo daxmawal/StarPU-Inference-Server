@@ -1,4 +1,4 @@
-#include "server_worker.hpp"
+#include "starpu_task_worker.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -27,7 +27,7 @@ StarPUTaskRunner::StarPUTaskRunner(
     InferenceQueue* queue, torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
     const RuntimeConfig* opts, std::vector<InferenceResult>* results,
-    std::mutex* results_mutex, std::atomic<unsigned int>* completed_jobs,
+    std::mutex* results_mutex, std::atomic<int>* completed_jobs,
     std::condition_variable* all_done_cv)
     : queue_(queue), model_cpu_(model_cpu), models_gpu_(models_gpu),
       starpu_(starpu), opts_(opts), results_(results),

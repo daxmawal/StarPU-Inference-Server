@@ -29,7 +29,7 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
   std::string item;
 
   while (std::getline(shape_stream, item, 'x')) {
-    long long dim;
+    int64_t dim = 0;
     try {
       dim = std::stoll(item);
     }
@@ -204,7 +204,7 @@ parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
     }
-    opts.iterations = static_cast<unsigned int>(tmp);
+    opts.iterations = static_cast<int>(tmp);
   });
 }
 
@@ -260,11 +260,11 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     std::stringstream shape_stream(val);
     std::string id_str;
     while (std::getline(shape_stream, id_str, ',')) {
-      int device_id = std::stoi(id_str);
+      const int device_id = std::stoi(id_str);
       if (device_id < 0) {
         throw std::invalid_argument("Must be >= 0.");
       }
-      opts.device_ids.push_back(static_cast<unsigned int>(device_id));
+      opts.device_ids.push_back(device_id);
     }
     if (opts.device_ids.empty()) {
       throw std::invalid_argument("No device IDs provided.");
@@ -287,7 +287,7 @@ parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   return expect_and_parse(idx, args, [&](const char* val) {
-    int tmp = std::stoi(val);
+    const int tmp = std::stoi(val);
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
     }

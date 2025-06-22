@@ -22,8 +22,8 @@
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "server_worker.hpp"
 #include "starpu_setup.hpp"
+#include "starpu_task_worker.hpp"
 #include "time_utils.hpp"
 
 namespace client_utils {
@@ -73,7 +73,7 @@ pick_random_input(
 
 void
 log_job_enqueued(
-    const RuntimeConfig& opts, unsigned int job_id, size_t iterations,
+    const RuntimeConfig& opts, int job_id, int iterations,
     std::chrono::high_resolution_clock::time_point now)
 {
   log_trace(
@@ -91,7 +91,7 @@ auto
 create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref,
-    unsigned int job_id) -> std::shared_ptr<InferenceJob>
+    int job_id) -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
   job->set_input_tensors(inputs);

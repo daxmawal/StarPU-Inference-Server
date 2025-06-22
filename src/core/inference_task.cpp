@@ -41,7 +41,7 @@ InferenceTask::InferenceTask(
 InferenceCallbackContext::InferenceCallbackContext(
     std::shared_ptr<InferenceJob> job_,
     std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
-    unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
+    int id_, std::vector<starpu_data_handle_t> inputs_,
     std::vector<starpu_data_handle_t> outputs_)
     : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
       id(id_), inputs_handles(std::move(inputs_)),
@@ -339,8 +339,14 @@ InferenceTask::fill_task_buffers(
 void
 InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
 {
-  if (job_->get_fixed_worker_id().has_value()) {
-    task->workerid = job_->get_fixed_worker_id().value();
+  if (auto fixed_id = job_->get_fixed_worker_id(); fixed_id.has_value()) {
+    int id = fixed_id.value();
+
+    if (id < 0) {
+      throw std::invalid_argument("Fixed worker ID must be non-negative");
+    }
+
+    task->workerid = static_cast<unsigned>(id);
     task->execute_on_a_specific_worker = 1;
   }
 }

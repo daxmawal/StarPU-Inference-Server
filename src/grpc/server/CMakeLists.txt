@@ -2,7 +2,7 @@ file(GLOB_RECURSE SERVER_SOURCES
     ${CLI_DIR}/args_parser.cpp
     ${CORE_DIR}/*.cpp
     ${UTILS_DIR}/*.cpp
-    ${SERVER_DIR}/*.cpp
+    ${STARPU_TASK_WORKER_DIR}/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp
 )
 
@@ -15,7 +15,7 @@ target_include_directories(grpc_server PRIVATE
     ${CLI_DIR}
     ${CORE_DIR}
     ${UTILS_DIR}
-    ${SERVER_DIR}
+    ${STARPU_TASK_WORKER_DIR}
     ${STARPU_DIR}/include/starpu/1.4
 )
 target_compile_definitions(grpc_server PRIVATE -D_GLIBCXX_USE_CXX11_ABI=1)

@@ -26,7 +26,7 @@ class StarPUTaskRunner {
       InferenceQueue* queue, torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
       const RuntimeConfig* opts, std::vector<InferenceResult>* results,
-      std::mutex* results_mutex, std::atomic<unsigned int>* completed_jobs,
+      std::mutex* results_mutex, std::atomic<int>* completed_jobs,
       std::condition_variable* all_done_cv);
 
   void run();
@@ -52,6 +52,6 @@ class StarPUTaskRunner {
 
   std::vector<InferenceResult>* results_;
   std::mutex* results_mutex_;
-  std::atomic<unsigned int>* completed_jobs_;
+  std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;
 };

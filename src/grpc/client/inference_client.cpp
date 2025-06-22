@@ -20,8 +20,8 @@ InferenceClient::InferenceClient(
 {
 }
 
-bool
-InferenceClient::ServerIsLive()
+auto
+InferenceClient::ServerIsLive() -> bool
 {
   const inference::ServerLiveRequest request;
   inference::ServerLiveResponse response;
@@ -40,8 +40,8 @@ InferenceClient::ServerIsLive()
   return response.live();
 }
 
-bool
-InferenceClient::ServerIsReady()
+auto
+InferenceClient::ServerIsReady() -> bool
 {
   const inference::ServerReadyRequest request;
   inference::ServerReadyResponse response;
@@ -60,9 +60,9 @@ InferenceClient::ServerIsReady()
   return response.ready();
 }
 
-bool
+auto
 InferenceClient::ModelIsReady(
-    const std::string& name, const std::string& version)
+    const std::string& name, const std::string& version) -> bool
 {
   inference::ModelReadyRequest request;
   request.set_name(name);

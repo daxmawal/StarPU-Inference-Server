@@ -179,13 +179,15 @@ InferenceServiceImpl::ModelInfer(
 
   std::vector<torch::Tensor> inputs;
   Status status = validate_and_convert_inputs(request, inputs);
-  if (!status.ok())
+  if (!status.ok()) {
     return status;
+  }
 
   std::vector<torch::Tensor> outputs;
   status = submit_job_and_wait(inputs, outputs);
-  if (!status.ok())
+  if (!status.ok()) {
     return status;
+  }
 
   auto send_tp = std::chrono::high_resolution_clock::now();
   int64_t send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(

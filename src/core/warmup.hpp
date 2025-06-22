@@ -20,12 +20,12 @@ class WarmupRunner {
   WarmupRunner(WarmupRunner&&) = delete;
   auto operator=(WarmupRunner&&) -> WarmupRunner& = delete;
 
-  void run(unsigned int iterations_per_worker);
+  void run(int iterations_per_worker);
 
  private:
   void client_worker(
-      const std::map<unsigned int, std::vector<int32_t>>& device_workers,
-      InferenceQueue& queue, unsigned int iterations_per_worker) const;
+      const std::map<int, std::vector<int32_t>>& device_workers,
+      InferenceQueue& queue, int iterations_per_worker) const;
 
   // *****************************************************************************
   // Configuration and model references (owned externally)

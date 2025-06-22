@@ -4,7 +4,7 @@
 #include <torch/torch.h>
 
 #include "grpc_service.grpc.pb.h"
-#include "server/inference_queue.hpp"
+#include "starpu_task_worker/inference_queue.hpp"
 
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
@@ -30,7 +30,7 @@ class InferenceServiceImpl final
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply) -> grpc::Status override;
 
-  void populate_response(
+  static void populate_response(
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
@@ -40,14 +40,14 @@ class InferenceServiceImpl final
       const std::vector<torch::Tensor>& inputs,
       std::vector<torch::Tensor>& outputs) -> grpc::Status;
 
-  auto validate_and_convert_inputs(
+  static auto validate_and_convert_inputs(
       const inference::ModelInferRequest* request,
       std::vector<torch::Tensor>& inputs) -> grpc::Status;
 
  private:
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
-  std::atomic<unsigned int> next_job_id_{0};
+  std::atomic<int> next_job_id_{0};
 };
 
 void RunGrpcServer(

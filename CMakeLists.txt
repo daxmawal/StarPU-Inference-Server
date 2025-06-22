@@ -13,7 +13,7 @@ set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 set(CLI_DIR ${SRC_DIR}/cli)
 set(CORE_DIR ${SRC_DIR}/core)
 set(UTILS_DIR ${SRC_DIR}/utils)
-set(SERVER_DIR ${SRC_DIR}/server)
+set(STARPU_TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
 
 # === Dependencies ===
 find_package(Torch REQUIRED)
@@ -47,7 +47,7 @@ file(GLOB_RECURSE SOURCES
     ${CLI_DIR}/*.cpp
     ${CORE_DIR}/*.cpp
     ${UTILS_DIR}/*.cpp
-    ${SERVER_DIR}/*.cpp
+    ${STARPU_TASK_WORKER_DIR}/*.cpp
 )
 
 # === Executable ===
@@ -63,7 +63,7 @@ target_include_directories(inference_engine PRIVATE
     ${CORE_DIR}
     ${UTILS_DIR}
     ${CLI_DIR}
-    ${SERVER_DIR}
+    ${STARPU_TASK_WORKER_DIR}
 )
 
 # === Compiler Warnings ===

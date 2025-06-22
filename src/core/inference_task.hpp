@@ -16,7 +16,7 @@ struct InferenceCallbackContext {
   std::shared_ptr<InferenceParams>
       inference_params;       // Parameters used in the StarPU codelet
   const RuntimeConfig* opts;  // Program settings
-  unsigned int id = 0;        // Task ID (for logging/debugging)
+  int id = 0;                 // Task ID (for logging/debugging)
   std::vector<starpu_data_handle_t>
       inputs_handles;  // Registered input data handles
   std::vector<starpu_data_handle_t> outputs_handles;  // Output data handles
@@ -31,7 +31,7 @@ struct InferenceCallbackContext {
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
       std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
-      unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
+      int id_, std::vector<starpu_data_handle_t> inputs_,
       std::vector<starpu_data_handle_t> outputs_);
 };
 

@@ -19,9 +19,10 @@ class InferenceClient {
   explicit InferenceClient(
       std::shared_ptr<grpc::Channel>& channel, VerbosityLevel verbosity);
 
-  bool ServerIsLive();
-  bool ServerIsReady();
-  bool ModelIsReady(const std::string& name, const std::string& version);
+  auto ServerIsLive() -> bool;
+  auto ServerIsReady() -> bool;
+  auto ModelIsReady(const std::string& name, const std::string& version)
+      -> bool;
   void AsyncModelInfer(const torch::Tensor& tensor, const ClientConfig& cfg);
   void AsyncCompleteRpc();
   void Shutdown();

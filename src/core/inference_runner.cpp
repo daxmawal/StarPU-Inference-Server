@@ -31,12 +31,12 @@
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "server_worker.hpp"
 #include "starpu_setup.hpp"
+#include "starpu_task_worker.hpp"
 #include "warmup.hpp"
 
 constexpr size_t NUM_PREGENERATED_INPUTS = 10;
-constexpr unsigned int NUM_WARMUP_ITERATIONS = 2;
+constexpr int NUM_WARMUP_ITERATIONS = 2;
 
 // =============================================================================
 // InferenceJob: Encapsulates a single inference task, including input data,
@@ -45,7 +45,7 @@ constexpr unsigned int NUM_WARMUP_ITERATIONS = 2;
 
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-    unsigned int job_identifier,
+    int job_identifier,
     std::function<void(std::vector<torch::Tensor>, double)> callback)
     : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
       job_id_(job_identifier), on_complete_(std::move(callback)),
@@ -68,21 +68,18 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 void
 client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
-    const std::vector<torch::Tensor>& outputs_ref,
-    const unsigned int iterations)
+    const std::vector<torch::Tensor>& outputs_ref, const int iterations)
 {
   auto pregen_inputs =
       client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS);
   std::mt19937 rng(std::random_device{}());
 
-  for (unsigned int job_id = 0; job_id < iterations; ++job_id) {
+  for (auto job_id = 0; job_id < iterations; ++job_id) {
     const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
     auto job = client_utils::create_job(inputs, outputs_ref, job_id);
-
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
     queue.push(job);
-
     std::this_thread::sleep_for(std::chrono::milliseconds(opts.delay_ms));
   }
 
@@ -108,7 +105,7 @@ load_model(const std::string& model_path) -> torch::jit::script::Module
 auto
 clone_model_to_gpus(
     const torch::jit::script::Module& model_cpu,
-    const std::vector<unsigned int>& device_ids)
+    const std::vector<int>& device_ids)
     -> std::vector<torch::jit::script::Module>
 {
   std::vector<torch::jit::script::Module> models_gpu;
@@ -236,9 +233,9 @@ process_results(
 
     torch::jit::script::Module* module = &model_cpu;
     if (result.executed_on == DeviceType::CUDA) {
-      const auto id = static_cast<size_t>(result.device_id);
-      if (id < models_gpu.size()) {
-        module = &models_gpu[id];
+      const auto device_id = static_cast<size_t>(result.device_id);
+      if (device_id < models_gpu.size()) {
+        module = &models_gpu[device_id];
       }
     }
 
@@ -276,7 +273,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
     results.reserve(static_cast<size_t>(opts.iterations));
   }
 
-  std::atomic<unsigned int> completed_jobs = 0;
+  std::atomic<int> completed_jobs = 0;
   std::condition_variable all_done_cv;
   std::mutex all_done_mutex;
 
@@ -284,8 +281,8 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
       &queue, &model_cpu, &models_gpu, &starpu, &opts, &results, &results_mutex,
       &completed_jobs, &all_done_cv);
 
-  std::jthread server(&StarPUTaskRunner::run, &worker);
-  std::jthread client(
+  const std::jthread server(&StarPUTaskRunner::run, &worker);
+  const std::jthread client(
       [&]() { client_worker(queue, opts, outputs_ref, opts.iterations); });
 
   {

@@ -39,9 +39,8 @@ class StarPUSetup {
 
   auto get_codelet() -> struct starpu_codelet*;
 
-  static auto get_cuda_workers_by_device(
-      const std::vector<unsigned int>& device_ids)
-      -> std::map<unsigned int, std::vector<int>>;
+  static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
+      -> std::map<int, std::vector<int>>;
 
   StarPUSetup(const StarPUSetup&) = delete;
   auto operator=(const StarPUSetup&) -> StarPUSetup& = delete;

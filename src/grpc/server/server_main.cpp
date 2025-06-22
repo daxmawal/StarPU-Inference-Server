@@ -9,8 +9,8 @@
 #include "core/starpu_setup.hpp"
 #include "core/warmup.hpp"
 #include "inference_service.hpp"
-#include "server/inference_queue.hpp"
-#include "server/server_worker.hpp"
+#include "starpu_task_worker/inference_queue.hpp"
+#include "starpu_task_worker/starpu_task_worker.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 #include "utils/runtime_config.hpp"
@@ -31,8 +31,8 @@ signal_handler(int /*signal*/)
   g_stop_cv.notify_one();
 }
 
-RuntimeConfig
-handle_program_arguments(int argc, char* argv[])
+auto
+handle_program_arguments(int argc, char* argv[]) -> RuntimeConfig
 {
   const RuntimeConfig opts =
       parse_arguments(std::span<char*>(argv, static_cast<size_t>(argc)));
@@ -77,7 +77,7 @@ launch_threads(
 
   std::vector<InferenceResult> results;
   std::mutex results_mutex;
-  std::atomic<unsigned int> completed_jobs = 0;
+  std::atomic<int> completed_jobs = 0;
   std::condition_variable all_done_cv;
 
   StarPUTaskRunner worker(
@@ -98,8 +98,8 @@ launch_threads(
   }
 }
 
-int
-main(int argc, char* argv[])
+auto
+main(int argc, char* argv[]) -> int
 {
   try {
     RuntimeConfig opts = handle_program_arguments(argc, argv);
