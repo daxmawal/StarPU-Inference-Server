@@ -7,25 +7,26 @@
 #include <mutex>
 #include <vector>
 
-#include "Inference_queue.hpp"
+#include "inference_queue.hpp"
+#include "inference_runner.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
 // ============================================================================
-// ServerWorker
+// StarPUTaskRunner
 // ----------------------------------------------------------------------------
 // Threaded worker responsible for:
 //  - Pulling jobs from the inference queue
 //  - Submitting them to StarPU
 //  - Collecting and storing results
 // ============================================================================
-class ServerWorker {
+class StarPUTaskRunner {
  public:
-  ServerWorker(
+  StarPUTaskRunner(
       InferenceQueue* queue, torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
       const RuntimeConfig* opts, std::vector<InferenceResult>* results,
-      std::mutex* results_mutex, std::atomic<unsigned int>* completed_jobs,
+      std::mutex* results_mutex, std::atomic<int>* completed_jobs,
       std::condition_variable* all_done_cv);
 
   void run();
@@ -38,6 +39,9 @@ class ServerWorker {
   static void handle_job_exception(
       const std::shared_ptr<InferenceJob>& job,
       const std::exception& exception);
+  void log_job_timings(
+      int job_id, double latency_ms,
+      const detail::TimingInfo& timing_info) const;
 
  private:
   InferenceQueue* queue_;
@@ -48,6 +52,6 @@ class ServerWorker {
 
   std::vector<InferenceResult>* results_;
   std::mutex* results_mutex_;
-  std::atomic<unsigned int>* completed_jobs_;
+  std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;
 };

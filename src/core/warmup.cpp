@@ -9,20 +9,21 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <random>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#include "Inference_queue.hpp"
 #include "client_utils.hpp"
+#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "server_worker.hpp"
 #include "starpu_setup.hpp"
+#include "starpu_task_worker.hpp"
 
 constexpr size_t NUM_PREGENERATED_INPUTS = 2;
 
@@ -36,8 +37,7 @@ WarmupRunner::WarmupRunner(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref)
     : opts_(opts), starpu_(starpu), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), outputs_ref_(outputs_ref),
-      dummy_completed_jobs_(0)
+      models_gpu_(models_gpu), outputs_ref_(outputs_ref)
 {
 }
 
@@ -47,28 +47,37 @@ WarmupRunner::WarmupRunner(
 
 void
 WarmupRunner::client_worker(
-    const std::map<unsigned int, std::vector<int32_t>>& device_workers,
-    InferenceQueue& queue, unsigned int iterations_per_worker) const
+    const std::map<int, std::vector<int32_t>>& device_workers,
+    InferenceQueue& queue, int iterations_per_worker) const
 {
   // Pre-generates a small set of random inputs for reuse
   auto pregen_inputs =
       client_utils::pre_generate_inputs(opts_, NUM_PREGENERATED_INPUTS);
   std::mt19937 rng(std::random_device{}());
 
-  unsigned int job_id = 0;
-  const std::size_t total =
+  if (iterations_per_worker < 0) {
+    throw std::invalid_argument("iterations_per_worker must be non-negative");
+  }
+
+  const size_t total_size_t =
       std::accumulate(
           device_workers.begin(), device_workers.end(), std::size_t{0},
           [](std::size_t sum, const auto& pair) {
             return sum + pair.second.size();
           }) *
-      iterations_per_worker;
+      static_cast<std::size_t>(iterations_per_worker);
+
+  if (total_size_t > static_cast<size_t>(std::numeric_limits<int>::max())) {
+    throw std::overflow_error("Total dépasse la capacité de int");
+  }
+
+  const int total = static_cast<int>(total_size_t);
+  int job_id = 0;
 
   // Sends jobs to the queue, fixing the targeted workers
   for (const auto& [device_id, worker_ids] : device_workers) {
     for (const int worker_id : worker_ids) {
-      for (unsigned int iteration = 0; iteration < iterations_per_worker;
-           ++iteration) {
+      for (auto iteration = 0; iteration < iterations_per_worker; ++iteration) {
         const auto& inputs =
             client_utils::pick_random_input(pregen_inputs, rng);
         auto job = client_utils::create_job(inputs, outputs_ref_, job_id);
@@ -91,34 +100,32 @@ WarmupRunner::client_worker(
 // =============================================================================
 
 void
-WarmupRunner::run(unsigned int iterations_per_worker)
+WarmupRunner::run(int iterations_per_worker)
 {
   if (!opts_.use_cuda) {
     return;
   }
 
   InferenceQueue queue;
-  std::atomic<unsigned int> dummy_completed_jobs = 0;
+  std::atomic<int> dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
   std::mutex dummy_results_mutex;
   std::condition_variable dummy_cv;
   std::vector<InferenceResult> dummy_results;
 
   // Start the server (consumes jobs in the queue)
-  ServerWorker worker(
+  StarPUTaskRunner worker(
       &queue, &model_cpu_, &models_gpu_, &starpu_, &opts_, &dummy_results,
       &dummy_results_mutex, &dummy_completed_jobs, &dummy_cv);
 
-  std::thread server(&ServerWorker::run, &worker);
+  const std::jthread server(&StarPUTaskRunner::run, &worker);
 
   const auto device_workers =
       StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);
 
   // Launch the client (generates the jobs to be run)
-  std::thread client(
+  const std::jthread client(
       [&]() { client_worker(device_workers, queue, iterations_per_worker); });
-
-  client.join();  // wait for jobs to finish sending
 
   // Calculation of the total number of jobs to expect
   size_t total_worker_count = 0;
@@ -130,9 +137,13 @@ WarmupRunner::run(unsigned int iterations_per_worker)
     std::unique_lock<std::mutex> lock(dummy_mutex);
     const size_t total_jobs =
         static_cast<size_t>(iterations_per_worker) * total_worker_count;
-    dummy_cv.wait(
-        lock, [&]() { return dummy_completed_jobs.load() >= total_jobs; });
+    dummy_cv.wait(lock, [&]() {
+      int count = dummy_completed_jobs.load();
+      if (count < 0) {
+        throw std::runtime_error(
+            "dummy_completed_jobs became negative, which should not happen.");
+      }
+      return static_cast<size_t>(count) >= total_jobs;
+    });
   }
-
-  server.join();
 }

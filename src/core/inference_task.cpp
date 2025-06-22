@@ -41,7 +41,7 @@ InferenceTask::InferenceTask(
 InferenceCallbackContext::InferenceCallbackContext(
     std::shared_ptr<InferenceJob> job_,
     std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
-    unsigned int id_, std::vector<starpu_data_handle_t> inputs_,
+    int id_, std::vector<starpu_data_handle_t> inputs_,
     std::vector<starpu_data_handle_t> outputs_)
     : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
       id(id_), inputs_handles(std::move(inputs_)),
@@ -118,7 +118,7 @@ InferenceTask::register_outputs_handles(
 
   for (size_t i = 0; i < outputs_tensors.size(); ++i) {
     handles.push_back(safe_register_tensor_vector(
-        outputs_tensors[i], "input[" + std::to_string(i) + "]"));
+        outputs_tensors[i], "output[" + std::to_string(i) + "]"));
   }
 
   return handles;
@@ -211,6 +211,11 @@ InferenceTask::fill_input_layout(
   for (size_t i = 0; i < num_inputs; ++i) {
     const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
+    if (dim > static_cast<int64_t>(InferLimits::MaxDims)) {
+      throw InferenceExecutionException(
+          "Input tensor has too many dimensions: max is " +
+          std::to_string(InferLimits::MaxDims));
+    }
     params->layout.num_dims.at(i) = dim;
     std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
   }
@@ -339,8 +344,14 @@ InferenceTask::fill_task_buffers(
 void
 InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
 {
-  if (job_->get_fixed_worker_id().has_value()) {
-    task->workerid = job_->get_fixed_worker_id().value();
+  if (auto fixed_id = job_->get_fixed_worker_id(); fixed_id.has_value()) {
+    int id = fixed_id.value();
+
+    if (id < 0) {
+      throw std::invalid_argument("Fixed worker ID must be non-negative");
+    }
+
+    task->workerid = static_cast<unsigned>(id);
     task->execute_on_a_specific_worker = 1;
   }
 }

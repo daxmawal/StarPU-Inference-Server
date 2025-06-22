@@ -1,0 +1,75 @@
+#include <grpcpp/grpcpp.h>
+#include <torch/script.h>
+
+#include <chrono>
+#include <iostream>
+#include <memory>
+#include <random>
+#include <span>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "client_args.hpp"
+#include "grpc_service.grpc.pb.h"
+#include "inference_client.hpp"
+#include "utils/logger.hpp"
+
+auto
+main(int argc, char* argv[]) -> int
+{
+  std::vector<const char*> const_argv(argv, argv + argc);
+  std::span<const char*> args{const_argv};
+  const ClientConfig config = parse_client_args(args);
+  if (config.show_help) {
+    display_client_help(args.front());
+    return 0;
+  }
+  if (!config.valid) {
+    log_error("Invalid program options.");
+    return 1;
+  }
+  grpc::ChannelArguments ch_args;
+  const int max_msg_size = 32 * 1024 * 1024;
+  ch_args.SetMaxReceiveMessageSize(max_msg_size);
+  ch_args.SetMaxSendMessageSize(max_msg_size);
+
+  auto channel = grpc::CreateCustomChannel(
+      config.server_address, grpc::InsecureChannelCredentials(), ch_args);
+
+  InferenceClient client(channel, config.verbosity);
+
+  if (!client.ServerIsLive()) {
+    return 1;
+  }
+
+  if (!client.ServerIsReady()) {
+    return 1;
+  }
+
+  if (!client.ModelIsReady(config.model_name, config.model_version)) {
+    return 1;
+  }
+
+  constexpr int NUM_TENSORS = 5;
+  std::vector<torch::Tensor> tensor_pool;
+  tensor_pool.reserve(NUM_TENSORS);
+  for (int i = 0; i < NUM_TENSORS; ++i) {
+    tensor_pool.push_back(
+        torch::rand(config.shape, torch::TensorOptions().dtype(config.type)));
+  }
+
+  std::mt19937 rng(std::random_device{}());
+  std::uniform_int_distribution<int> dist(0, NUM_TENSORS - 1);
+
+  std::jthread cq_thread(&InferenceClient::AsyncCompleteRpc, &client);
+  for (int i = 0; i < config.iterations; ++i) {
+    const auto& tensor = tensor_pool[dist(rng)];
+    client.AsyncModelInfer(tensor, config);
+    std::this_thread::sleep_for(std::chrono::milliseconds(config.delay_ms));
+  }
+
+  client.Shutdown();
+
+  return 0;
+}

@@ -158,6 +158,8 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
   const std::vector<void*> buffers_vec(
       buffers, buffers + params->num_inputs + params->num_outputs);
 
+  const c10::InferenceMode no_autograd;
+
   run_codelet_inference(
       params, buffers_vec, torch::kCPU, params->models.model_cpu,
       [](const at::Tensor& out, void* buffer_ptr) {
@@ -194,7 +196,7 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
         const at::Tensor wrapper = torch::from_blob(
             buffer_ptr, out.sizes(),
             torch::TensorOptions()
-                .dtype(torch::kFloat32)
+                .dtype(out.scalar_type())
                 .device(torch::kCUDA, device_id));
         wrapper.copy_(out, true);
       },
@@ -220,7 +222,12 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
     conf_.use_explicit_workers_cuda_gpuid = 1U;
     conf_.ncuda = static_cast<int>(opts.device_ids.size());
     for (size_t idx = 0; idx < opts.device_ids.size(); ++idx) {
-      conf_.workers_cuda_gpuid[idx] = opts.device_ids[idx];
+      int id = opts.device_ids[idx];
+      if (id < 0) {
+        throw std::invalid_argument(
+            "[ERROR] Invalid CUDA device ID: must be >= 0");
+      }
+      conf_.workers_cuda_gpuid[idx] = static_cast<unsigned int>(id);
     }
   }
 
@@ -245,16 +252,20 @@ StarPUSetup::get_codelet() -> struct starpu_codelet*
 }
 
 auto
-StarPUSetup::get_cuda_workers_by_device(
-    const std::vector<unsigned int>& device_ids)
-    -> std::map<unsigned int, std::vector<int>>
+StarPUSetup::get_cuda_workers_by_device(const std::vector<int>& device_ids)
+    -> std::map<int, std::vector<int>>
 {
-  std::map<unsigned int, std::vector<int>> device_to_workers;
+  std::map<int, std::vector<int>> device_to_workers;
 
   for (auto device_id : device_ids) {
+    if (device_id < 0) {
+      throw std::invalid_argument("device_id must be non-negative");
+    }
+
     std::array<int, STARPU_NMAXWORKERS> workerids{};
     const int nworkers = starpu_worker_get_stream_workerids(
-        device_id, workerids.data(), STARPU_CUDA_WORKER);
+        static_cast<unsigned int>(device_id), workerids.data(),
+        STARPU_CUDA_WORKER);
 
     if (nworkers < 0) {
       throw std::runtime_error(

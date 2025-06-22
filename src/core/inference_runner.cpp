@@ -25,18 +25,18 @@
 #include <utility>
 #include <vector>
 
-#include "Inference_queue.hpp"
 #include "client_utils.hpp"
+#include "inference_queue.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "server_worker.hpp"
 #include "starpu_setup.hpp"
+#include "starpu_task_worker.hpp"
 #include "warmup.hpp"
 
 constexpr size_t NUM_PREGENERATED_INPUTS = 10;
-constexpr unsigned int NUM_WARMUP_ITERATIONS = 2;
+constexpr int NUM_WARMUP_ITERATIONS = 2;
 
 // =============================================================================
 // InferenceJob: Encapsulates a single inference task, including input data,
@@ -45,7 +45,7 @@ constexpr unsigned int NUM_WARMUP_ITERATIONS = 2;
 
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-    unsigned int job_identifier,
+    int job_identifier,
     std::function<void(std::vector<torch::Tensor>, double)> callback)
     : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
       job_id_(job_identifier), on_complete_(std::move(callback)),
@@ -68,21 +68,18 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 void
 client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
-    const std::vector<torch::Tensor>& outputs_ref,
-    const unsigned int iterations)
+    const std::vector<torch::Tensor>& outputs_ref, const int iterations)
 {
   auto pregen_inputs =
       client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS);
   std::mt19937 rng(std::random_device{}());
 
-  for (unsigned int job_id = 0; job_id < iterations; ++job_id) {
+  for (auto job_id = 0; job_id < iterations; ++job_id) {
     const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
     auto job = client_utils::create_job(inputs, outputs_ref, job_id);
-
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
     queue.push(job);
-
     std::this_thread::sleep_for(std::chrono::milliseconds(opts.delay_ms));
   }
 
@@ -108,7 +105,7 @@ load_model(const std::string& model_path) -> torch::jit::script::Module
 auto
 clone_model_to_gpus(
     const torch::jit::script::Module& model_cpu,
-    const std::vector<unsigned int>& device_ids)
+    const std::vector<int>& device_ids)
     -> std::vector<torch::jit::script::Module>
 {
   std::vector<torch::jit::script::Module> models_gpu;
@@ -224,7 +221,9 @@ run_warmup(
 void
 process_results(
     const std::vector<InferenceResult>& results,
-    torch::jit::script::Module& model_cpu, VerbosityLevel verbosity)
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    VerbosityLevel verbosity)
 {
   for (const auto& result : results) {
     if (!result.results[0].defined()) {
@@ -232,38 +231,15 @@ process_results(
       continue;
     }
 
-    const auto& time_info = result.timing_info;
-    using duration_f = std::chrono::duration<double, std::milli>;
+    torch::jit::script::Module* module = &model_cpu;
+    if (result.executed_on == DeviceType::CUDA) {
+      const auto device_id = static_cast<size_t>(result.device_id);
+      if (device_id < models_gpu.size()) {
+        module = &models_gpu[device_id];
+      }
+    }
 
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(3);
-    oss << "Job " << result.job_id << " done. Latency = " << result.latency_ms
-        << " ms | " << "Queue = "
-        << duration_f(time_info.dequeued_time - time_info.enqueued_time).count()
-        << " ms, " << "Submit = "
-        << duration_f(
-               time_info.before_starpu_submitted_time - time_info.dequeued_time)
-               .count()
-        << " ms, " << "Scheduling = "
-        << duration_f(
-               time_info.codelet_start_time -
-               time_info.before_starpu_submitted_time)
-               .count()
-        << " ms, " << "Codelet = "
-        << duration_f(time_info.codelet_end_time - time_info.codelet_start_time)
-               .count()
-        << " ms, " << "Inference = "
-        << duration_f(
-               time_info.callback_start_time - time_info.inference_start_time)
-               .count()
-        << " ms, " << "Callback = "
-        << duration_f(
-               time_info.callback_end_time - time_info.callback_start_time)
-               .count()
-        << " ms";
-
-    log_stats(verbosity, oss.str());
-    validate_inference_result(result, model_cpu, verbosity);
+    validate_inference_result(result, *module, verbosity);
   }
 }
 
@@ -297,19 +273,17 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
     results.reserve(static_cast<size_t>(opts.iterations));
   }
 
-  std::atomic<unsigned int> completed_jobs = 0;
+  std::atomic<int> completed_jobs = 0;
   std::condition_variable all_done_cv;
   std::mutex all_done_mutex;
 
-  ServerWorker worker(
+  StarPUTaskRunner worker(
       &queue, &model_cpu, &models_gpu, &starpu, &opts, &results, &results_mutex,
       &completed_jobs, &all_done_cv);
 
-  std::thread server(&ServerWorker::run, &worker);
-  std::thread client(
+  const std::jthread server(&StarPUTaskRunner::run, &worker);
+  const std::jthread client(
       [&]() { client_worker(queue, opts, outputs_ref, opts.iterations); });
-
-  client.join();
 
   {
     std::unique_lock<std::mutex> lock(all_done_mutex);
@@ -317,8 +291,9 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
         lock, [&]() { return completed_jobs.load() >= opts.iterations; });
   }
 
-  server.join();
-  cudaDeviceSynchronize();
+  if (opts.use_cuda) {
+    cudaDeviceSynchronize();
+  }
 
-  process_results(results, model_cpu, opts.verbosity);
+  process_results(results, model_cpu, models_gpu, opts.verbosity);
 }

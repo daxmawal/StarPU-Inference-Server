@@ -29,13 +29,20 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
   std::string item;
 
   while (std::getline(shape_stream, item, 'x')) {
+    int64_t dim = 0;
     try {
-      shape.push_back(std::stoll(item));
+      dim = std::stoll(item);
     }
     catch (const std::exception& e) {
       throw std::invalid_argument(
           "Shape contains non-integer: " + std::string(e.what()));
     }
+
+    if (dim <= 0) {
+      throw std::invalid_argument("Shape dimension must be positive.");
+    }
+
+    shape.push_back(dim);
   }
 
   if (shape.empty()) {
@@ -197,7 +204,7 @@ parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
     }
-    opts.iterations = static_cast<unsigned int>(tmp);
+    opts.iterations = static_cast<int>(tmp);
   });
 }
 
@@ -253,15 +260,38 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     std::stringstream shape_stream(val);
     std::string id_str;
     while (std::getline(shape_stream, id_str, ',')) {
-      int device_id = std::stoi(id_str);
+      const int device_id = std::stoi(id_str);
       if (device_id < 0) {
         throw std::invalid_argument("Must be >= 0.");
       }
-      opts.device_ids.push_back(static_cast<unsigned int>(device_id));
+      opts.device_ids.push_back(device_id);
     }
     if (opts.device_ids.empty()) {
       throw std::invalid_argument("No device IDs provided.");
     }
+  });
+}
+
+auto
+parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  if (idx + 1 >= args.size()) {
+    return false;
+  }
+  opts.server_address = args[++idx];
+  return true;
+}
+
+auto
+parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  return expect_and_parse(idx, args, [&](const char* val) {
+    const int tmp = std::stoi(val);
+    if (tmp <= 0) {
+      throw std::invalid_argument("Must be > 0.");
+    }
+    opts.max_message_bytes = tmp;
   });
 }
 
@@ -302,6 +332,12 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
            [&](size_t& idx) { return parse_device_ids(opts, idx, args_span); }},
           {"--scheduler",
            [&](size_t& idx) { return parse_scheduler(opts, idx, args_span); }},
+          {"--address",
+           [&](size_t& idx) { return parse_address(opts, idx, args_span); }},
+          {"--max-msg-size",
+           [&](size_t& idx) {
+             return parse_max_msg_size(opts, idx, args_span);
+           }},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {

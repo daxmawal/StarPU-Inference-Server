@@ -24,6 +24,8 @@ display_help(const char* prog_name)
       << "  --delay [ms]            Delay between jobs (default: 0)\n"
       << "  --no_cpu                Disable CPU usage\n"
       << "  --device-ids 0,1        GPU device IDs for inference\n"
+      << "  --address ADDR          gRPC server listen address\n"
+      << "  --max-msg-size BYTES    Max gRPC message size in bytes\n"
       << "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
       << "  --help                  Show this help message\n";
 }

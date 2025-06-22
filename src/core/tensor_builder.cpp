@@ -64,13 +64,52 @@ TensorBuilder::copy_output_to_buffer(
     throw std::runtime_error("[ERROR] Output size mismatch");
   }
 
-  if (output.scalar_type() != at::kFloat) {
-    throw std::runtime_error("[ERROR] Expected float output tensor");
-  }
+  const auto type = output.scalar_type();
 
-  std::memcpy(
-      buffer_ptr, output.data_ptr<float>(),
-      static_cast<size_t>(output.numel()) * sizeof(float));
+  switch (type) {
+    case at::kFloat:
+      std::memcpy(
+          buffer_ptr, output.data_ptr<float>(),
+          static_cast<size_t>(output.numel()) * sizeof(float));
+      break;
+    case at::kDouble:
+      std::memcpy(
+          buffer_ptr, output.data_ptr<double>(),
+          static_cast<size_t>(output.numel()) * sizeof(double));
+      break;
+    case at::kInt:
+      std::memcpy(
+          buffer_ptr, output.data_ptr<int32_t>(),
+          static_cast<size_t>(output.numel()) * sizeof(int32_t));
+      break;
+    case at::kLong:
+      std::memcpy(
+          buffer_ptr, output.data_ptr<int64_t>(),
+          static_cast<size_t>(output.numel()) * sizeof(int64_t));
+      break;
+    case at::kShort:
+      std::memcpy(
+          buffer_ptr, output.data_ptr<int16_t>(),
+          static_cast<size_t>(output.numel()) * sizeof(int16_t));
+      break;
+    case at::kChar:
+      std::memcpy(
+          buffer_ptr, output.data_ptr<int8_t>(),
+          static_cast<size_t>(output.numel()) * sizeof(int8_t));
+      break;
+    case at::kByte:
+      std::memcpy(
+          buffer_ptr, output.data_ptr<uint8_t>(),
+          static_cast<size_t>(output.numel()) * sizeof(uint8_t));
+      break;
+    case at::kBool:
+      std::memcpy(
+          buffer_ptr, output.data_ptr<bool>(),
+          static_cast<size_t>(output.numel()) * sizeof(bool));
+      break;
+    default:
+      throw std::runtime_error("[ERROR] Unsupported output tensor type");
+  }
 }
 
 // =============================================================================
@@ -86,17 +125,21 @@ TensorBuilder::from_raw_ptr(
 
   switch (type) {
     case at::kFloat:
-      return torch::from_blob(std::bit_cast<float*>(ptr), shape, options)
-          .contiguous();
+      return torch::from_blob(std::bit_cast<float*>(ptr), shape, options);
+    case at::kDouble:
+      return torch::from_blob(std::bit_cast<double*>(ptr), shape, options);
     case at::kInt:
-      return torch::from_blob(std::bit_cast<int32_t*>(ptr), shape, options)
-          .contiguous();
+      return torch::from_blob(std::bit_cast<int32_t*>(ptr), shape, options);
     case at::kLong:
-      return torch::from_blob(std::bit_cast<int64_t*>(ptr), shape, options)
-          .contiguous();
+      return torch::from_blob(std::bit_cast<int64_t*>(ptr), shape, options);
+    case at::kShort:
+      return torch::from_blob(std::bit_cast<int16_t*>(ptr), shape, options);
+    case at::kChar:
+      return torch::from_blob(std::bit_cast<int8_t*>(ptr), shape, options);
+    case at::kByte:
+      return torch::from_blob(std::bit_cast<uint8_t*>(ptr), shape, options);
     case at::kBool:
-      return torch::from_blob(std::bit_cast<bool*>(ptr), shape, options)
-          .contiguous();
+      return torch::from_blob(std::bit_cast<bool*>(ptr), shape, options);
     default:
       throw std::runtime_error("[ERROR] Unsupported input type for tensor");
   }

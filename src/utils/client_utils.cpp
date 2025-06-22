@@ -5,28 +5,26 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <iomanip>
 #include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <random>
 #include <sstream>
-#include <iomanip>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#include "Inference_queue.hpp"
+#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "server_worker.hpp"
 #include "starpu_setup.hpp"
-
-
-constexpr int HOURS_PER_DAY = 24;
+#include "starpu_task_worker.hpp"
+#include "time_utils.hpp"
 
 namespace client_utils {
 
@@ -38,31 +36,7 @@ auto
 current_time_formatted(const std::chrono::high_resolution_clock::time_point&
                            time_point) -> std::string
 {
-  using std::chrono::duration_cast;
-  using std::chrono::hours;
-  using std::chrono::milliseconds;
-  using std::chrono::minutes;
-  using std::chrono::seconds;
-  using std::chrono::time_point_cast;
-
-  const auto now_ms = time_point_cast<milliseconds>(time_point);
-  auto value = now_ms.time_since_epoch();
-
-  const auto hour = duration_cast<hours>(value);
-  value -= hour;
-  const auto minute = duration_cast<minutes>(value);
-  value -= minute;
-  const auto second = duration_cast<seconds>(value);
-  value -= second;
-  const auto milli_second = duration_cast<milliseconds>(value);
-
-  std::ostringstream oss;
-  oss << std::setfill('0') << std::setw(2) << hour.count() % HOURS_PER_DAY
-      << ":" << std::setfill('0') << std::setw(2) << minute.count() << ":"
-      << std::setfill('0') << std::setw(2) << second.count() << "."
-      << std::setfill('0') << std::setw(3) << milli_second.count();
-
-  return oss.str();
+  return time_utils::format_timestamp(time_point);
 }
 
 // =============================================================================
@@ -99,7 +73,7 @@ pick_random_input(
 
 void
 log_job_enqueued(
-    const RuntimeConfig& opts, unsigned int job_id, size_t iterations,
+    const RuntimeConfig& opts, int job_id, int iterations,
     std::chrono::high_resolution_clock::time_point now)
 {
   log_trace(
@@ -117,7 +91,7 @@ auto
 create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref,
-    unsigned int job_id) -> std::shared_ptr<InferenceJob>
+    int job_id) -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
   job->set_input_tensors(inputs);

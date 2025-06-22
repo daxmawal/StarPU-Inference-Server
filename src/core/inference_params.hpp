@@ -37,7 +37,7 @@ struct Timing {
 struct DeviceInfo {
   int* device_id =
       nullptr;  // Where the task was executed (CPU/GPU, which device)
-  int* worker_id = nullptr;  // Where the task was executed, wich StarPU worker
+  int* worker_id = nullptr;  // Where the task was executed, which StarPU worker
   DeviceType* executed_on = nullptr;
 };
 
@@ -74,7 +74,7 @@ struct InferenceParams {
   detail::TensorLayout layout;   // Tensor dimensions and types
   size_t num_inputs = 0;         // Number of input tensors
   size_t num_outputs = 0;        // Number of output tensors
-  unsigned int job_id = 0;       // Job identifier for logging/debugging
+  int job_id = 0;                // Job identifier for logging/debugging
   detail::DeviceInfo device;
   detail::Timing timing;  // Timing data (for benchmarking)
   VerbosityLevel verbosity = VerbosityLevel::Silent;  // Logging verbosity
