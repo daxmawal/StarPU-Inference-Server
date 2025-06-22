@@ -18,6 +18,8 @@ using inference::ModelInferRequest;
 using inference::ModelInferResponse;
 using inference::ServerLiveRequest;
 using inference::ServerLiveResponse;
+using inference::ServerReadyRequest;
+using inference::ServerReadyResponse;
 
 std::unique_ptr<Server> g_server;
 
@@ -144,6 +146,15 @@ InferenceServiceImpl::ServerLive(
     ServerLiveResponse* reply) -> Status
 {
   reply->set_live(true);
+  return Status::OK;
+}
+
+auto
+InferenceServiceImpl::ServerReady(
+    ServerContext* /*context*/, const ServerReadyRequest* /*request*/,
+    ServerReadyResponse* reply) -> Status
+{
+  reply->set_ready(true);
   return Status::OK;
 }
 

@@ -25,6 +25,8 @@ using inference::ModelInferRequest;
 using inference::ModelInferResponse;
 using inference::ServerLiveRequest;
 using inference::ServerLiveResponse;
+using inference::ServerReadyRequest;
+using inference::ServerReadyResponse;
 
 constexpr int MillisecondsPerSecond = 1000;
 
@@ -82,6 +84,25 @@ class InferenceClient {
         verbosity_,
         std::string("Server live: ") + (response.live() ? "true" : "false"));
     return response.live();
+  }
+
+  auto ServerIsReady() -> bool
+  {
+    const ServerReadyRequest request;
+    ServerReadyResponse response;
+    ClientContext context;
+
+    Status status = stub_->ServerReady(&context, request, &response);
+
+    if (!status.ok()) {
+      std::cerr << "RPC failed: " << status.error_message() << std::endl;
+      return false;
+    }
+
+    log_info(
+        verbosity_,
+        std::string("Server ready: ") + (response.ready() ? "true" : "false"));
+    return response.ready();
   }
 
   void AsyncModelInfer(const torch::Tensor& tensor, const ClientConfig& cfg)
@@ -196,6 +217,10 @@ main(int argc, char* argv[]) -> int
   InferenceClient client(channel, config.verbosity);
 
   if (!client.ServerIsLive()) {
+    return 1;
+  }
+
+  if (!client.ServerIsReady()) {
     return 1;
   }
 
