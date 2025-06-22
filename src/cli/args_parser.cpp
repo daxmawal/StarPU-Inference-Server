@@ -29,13 +29,20 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
   std::string item;
 
   while (std::getline(shape_stream, item, 'x')) {
+    long long dim;
     try {
-      shape.push_back(std::stoll(item));
+      dim = std::stoll(item);
     }
     catch (const std::exception& e) {
       throw std::invalid_argument(
           "Shape contains non-integer: " + std::string(e.what()));
     }
+
+    if (dim <= 0) {
+      throw std::invalid_argument("Shape dimension must be positive.");
+    }
+
+    shape.push_back(dim);
   }
 
   if (shape.empty()) {

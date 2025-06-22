@@ -86,12 +86,16 @@ scalar_type_to_string(at::ScalarType type) -> std::string
 void
 display_client_help(const char* prog_name)
 {
-  std::cout << "Usage: " << prog_name << " [OPTIONS]\n"
-            << "  --iterations N    Number of requests to send (default: 1)\n"
-            << "  --delay MS        Delay between requests in ms (default: 0)\n"
-            << "  --shape WxHxC     Input tensor shape (e.g., 1x3x224x224)\n"
-            << "  --type TYPE       Input tensor type (e.g., float32)\n"
-            << "  --help            Show this help message\n";
+  std::cout
+      << "Usage: " << prog_name << " [OPTIONS]\n"
+      << "  --iterations N    Number of requests to send (default: 1)\n"
+      << "  --delay MS        Delay between requests in ms (default: 0)\n"
+      << "  --shape WxHxC     Input tensor shape (e.g., 1x3x224x224)\n"
+      << "  --type TYPE       Input tensor type (e.g., float32)\n"
+      << "  --server ADDR     gRPC server address (default: localhost:50051)\n"
+      << "  --model NAME      Model name (default: example)\n"
+      << "  --version VER     Model version (default: 1)\n"
+      << "  --help            Show this help message\n";
 }
 
 // =============================================================================
@@ -113,7 +117,6 @@ template <typename Func>
 auto
 try_parse(const char* val, Func&& parser) -> bool
 {
-  ClientConfig cfg;
   try {
     std::forward<Func>(parser)(val);
     return true;
@@ -177,6 +180,29 @@ parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
       idx, args, [&](const char* val) { cfg.type = parse_type_string(val); });
 }
 
+auto
+parse_server(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
+    -> bool
+{
+  return expect_and_parse(
+      idx, args, [&](const char* val) { cfg.server_address = val; });
+}
+
+auto
+parse_model(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
+{
+  return expect_and_parse(
+      idx, args, [&](const char* val) { cfg.model_name = val; });
+}
+
+auto
+parse_version(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
+    -> bool
+{
+  return expect_and_parse(
+      idx, args, [&](const char* val) { cfg.model_version = val; });
+}
+
 // =============================================================================
 // Dispatch Argument Parser (Main parser loop)
 // =============================================================================
@@ -195,6 +221,12 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
            [&](size_t& idx) { return parse_shape(cfg, idx, args_span); }},
           {"--type",
            [&](size_t& idx) { return parse_type(cfg, idx, args_span); }},
+          {"--server",
+           [&](size_t& idx) { return parse_server(cfg, idx, args_span); }},
+          {"--model",
+           [&](size_t& idx) { return parse_model(cfg, idx, args_span); }},
+          {"--version",
+           [&](size_t& idx) { return parse_version(cfg, idx, args_span); }},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {

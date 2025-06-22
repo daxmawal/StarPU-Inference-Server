@@ -91,8 +91,8 @@ class InferenceClient {
     std::cout << "Sending request ID: " << current_id << std::endl;
 
     ModelInferRequest request;
-    request.set_model_name("example");
-    request.set_model_version("1");
+    request.set_model_name(cfg.model_name);
+    request.set_model_version(cfg.model_version);
     request.set_client_send_ms(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             call->start_time.time_since_epoch())
@@ -161,7 +161,7 @@ class InferenceClient {
  private:
   std::unique_ptr<GRPCInferenceService::Stub> stub_;
   grpc::CompletionQueue cq_;
-  std::atomic<int> next_request_id_;
+  std::atomic<int> next_request_id_{0};
 };
 
 auto
@@ -184,7 +184,7 @@ main(int argc, char* argv[]) -> int
   ch_args.SetMaxSendMessageSize(max_msg_size);
 
   auto channel = grpc::CreateCustomChannel(
-      "localhost:50051", grpc::InsecureChannelCredentials(), ch_args);
+      config.server_address, grpc::InsecureChannelCredentials(), ch_args);
 
   InferenceClient client(channel);
 
@@ -196,7 +196,8 @@ main(int argc, char* argv[]) -> int
   std::vector<torch::Tensor> tensor_pool;
   tensor_pool.reserve(NUM_TENSORS);
   for (int i = 0; i < NUM_TENSORS; ++i) {
-    tensor_pool.push_back(torch::rand(config.shape, torch::kFloat32));
+    tensor_pool.push_back(
+        torch::rand(config.shape, torch::TensorOptions().dtype(config.type)));
   }
 
   std::mt19937 rng(std::random_device{}());

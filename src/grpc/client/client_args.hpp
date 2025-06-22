@@ -11,6 +11,9 @@ struct ClientConfig {
   int delay_ms = 0;
   std::vector<int64_t> shape;
   at::ScalarType type = at::kFloat;
+  std::string server_address = "localhost:50051";
+  std::string model_name = "example";
+  std::string model_version = "1";
   bool show_help = false;
   bool valid = true;
 };
