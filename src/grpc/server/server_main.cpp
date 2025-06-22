@@ -1,3 +1,4 @@
+#include <atomic>
 #include <csignal>
 #include <iostream>
 #include <memory>
@@ -15,14 +16,12 @@
 #include "utils/runtime_config.hpp"
 
 static InferenceQueue* g_queue_ptr = nullptr;
+static std::atomic<bool> g_stop_requested(false);
 
 void
 signal_handler(int /*signal*/)
 {
-  if (g_queue_ptr) {
-    g_queue_ptr->shutdown();
-  }
-  StopServer();
+  g_stop_requested.store(true);
 }
 
 auto
@@ -71,8 +70,22 @@ main(int argc, char* argv[]) -> int
     g_queue_ptr = &queue;
     std::signal(SIGINT, signal_handler);
 
-    RunGrpcServer(
-        queue, reference_outputs, opts.server_address, opts.max_message_bytes);
+    std::jthread grpc_thread([&]() {
+      RunGrpcServer(
+          queue, reference_outputs, opts.server_address,
+          opts.max_message_bytes);
+    });
+
+    while (!g_stop_requested.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    StopServer();
+    queue.shutdown();
+
+    if (grpc_thread.joinable()) {
+      grpc_thread.join();
+    }
 
     if (worker_thread.joinable()) {
       worker_thread.join();

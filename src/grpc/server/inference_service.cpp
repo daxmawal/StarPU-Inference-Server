@@ -165,6 +165,7 @@ RunGrpcServer(
   g_server = builder.BuildAndStart();
   std::cout << "Server listening on " << address << std::endl;
   g_server->Wait();
+  g_server.reset();
 }
 
 void
@@ -172,7 +173,5 @@ StopServer()
 {
   if (g_server) {
     g_server->Shutdown();
-    g_server->Wait();
-    g_server.reset();
   }
 }
