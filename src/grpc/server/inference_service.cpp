@@ -9,6 +9,7 @@
 #include <unordered_map>
 
 #include "utils/client_utils.hpp"
+#include "utils/datatype_utils.hpp"
 
 using grpc::Server;
 using grpc::ServerBuilder;
@@ -24,79 +25,6 @@ using inference::ServerReadyResponse;
 std::unique_ptr<Server> g_server;
 
 namespace {
-// Map datatype strings to torch::ScalarType
-auto
-datatype_to_scalar_type(const std::string& dtype) -> at::ScalarType
-{
-  static const std::unordered_map<std::string, at::ScalarType> type_map = {
-      {"FP32", at::kFloat},    {"FP64", at::kDouble}, {"FP16", at::kHalf},
-      {"BF16", at::kBFloat16}, {"INT32", at::kInt},   {"INT64", at::kLong},
-      {"INT16", at::kShort},   {"INT8", at::kChar},   {"UINT8", at::kByte},
-      {"BOOL", at::kBool}};
-
-  const auto iterator = type_map.find(dtype);
-  if (iterator == type_map.end()) {
-    throw std::invalid_argument("Unsupported tensor datatype: " + dtype);
-  }
-  return iterator->second;
-}
-
-auto
-scalar_type_to_datatype(at::ScalarType type) -> std::string
-{
-  switch (type) {
-    case at::kFloat:
-      return "FP32";
-    case at::kDouble:
-      return "FP64";
-    case at::kHalf:
-      return "FP16";
-    case at::kBFloat16:
-      return "BF16";
-    case at::kInt:
-      return "INT32";
-    case at::kLong:
-      return "INT64";
-    case at::kShort:
-      return "INT16";
-    case at::kChar:
-      return "INT8";
-    case at::kByte:
-      return "UINT8";
-    case at::kBool:
-      return "BOOL";
-    default:
-      return "FP32";
-  }
-}
-
-auto
-element_size(at::ScalarType type) -> size_t
-{
-  switch (type) {
-    case at::kFloat:
-      return sizeof(float);
-    case at::kDouble:
-      return sizeof(double);
-    case at::kHalf:
-    case at::kBFloat16:
-      return 2U;
-    case at::kInt:
-      return sizeof(int32_t);
-    case at::kLong:
-      return sizeof(int64_t);
-    case at::kShort:
-      return sizeof(int16_t);
-    case at::kChar:
-      return sizeof(int8_t);
-    case at::kByte:
-      return sizeof(uint8_t);
-    case at::kBool:
-      return sizeof(bool);
-    default:
-      return sizeof(float);
-  }
-}
 
 // Convert gRPC input to torch::Tensor
 auto
@@ -222,7 +150,7 @@ InferenceServiceImpl::ModelInfer(
 }
 
 void
-RunServer(
+RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::string& address, int max_message_bytes)
 {
@@ -237,4 +165,14 @@ RunServer(
   g_server = builder.BuildAndStart();
   std::cout << "Server listening on " << address << std::endl;
   g_server->Wait();
+}
+
+void
+StopServer()
+{
+  if (g_server) {
+    g_server->Shutdown();
+    g_server->Wait();
+    g_server.reset();
+  }
 }

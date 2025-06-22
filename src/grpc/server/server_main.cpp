@@ -14,6 +14,17 @@
 #include "utils/logger.hpp"
 #include "utils/runtime_config.hpp"
 
+static InferenceQueue* g_queue_ptr = nullptr;
+
+void
+signal_handler(int /*signal*/)
+{
+  if (g_queue_ptr) {
+    g_queue_ptr->shutdown();
+  }
+  StopServer();
+}
+
 auto
 main(int argc, char* argv[]) -> int
 {
@@ -51,13 +62,21 @@ main(int argc, char* argv[]) -> int
     std::atomic<unsigned int> completed_jobs = 0;
     std::condition_variable all_done_cv;
 
-    ServerWorker worker(
+    StarPUTaskRunner worker(
         &queue, &model_cpu, &models_gpu, &starpu, &opts, &results,
         &results_mutex, &completed_jobs, &all_done_cv);
 
-    std::jthread worker_thread(&ServerWorker::run, &worker);
-    RunServer(
+    std::jthread worker_thread(&StarPUTaskRunner::run, &worker);
+
+    g_queue_ptr = &queue;
+    std::signal(SIGINT, signal_handler);
+
+    RunGrpcServer(
         queue, reference_outputs, opts.server_address, opts.max_message_bytes);
+
+    if (worker_thread.joinable()) {
+      worker_thread.join();
+    }
   }
   catch (const InferenceEngineException& e) {
     std::cerr << "\033[1;31m[Inference Error] " << e.what() << "\033[0m\n";

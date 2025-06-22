@@ -23,7 +23,7 @@
 // Constructor
 // =============================================================================
 
-ServerWorker::ServerWorker(
+StarPUTaskRunner::StarPUTaskRunner(
     InferenceQueue* queue, torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
     const RuntimeConfig* opts, std::vector<InferenceResult>* results,
@@ -42,7 +42,7 @@ ServerWorker::ServerWorker(
 // =============================================================================
 
 auto
-ServerWorker::wait_for_next_job() -> std::shared_ptr<InferenceJob>
+StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
 {
   std::shared_ptr<InferenceJob> job;
   queue_->wait_and_pop(job);
@@ -50,13 +50,13 @@ ServerWorker::wait_for_next_job() -> std::shared_ptr<InferenceJob>
 }
 
 auto
-ServerWorker::should_shutdown(const std::shared_ptr<InferenceJob>& job) const
-    -> bool
+StarPUTaskRunner::should_shutdown(
+    const std::shared_ptr<InferenceJob>& job) const -> bool
 {
   if (job->is_shutdown()) {
     log_info(
         opts_->verbosity,
-        "Received shutdown signal. Exiting ServerWorker loop.");
+        "Received shutdown signal. Exiting StarPUTaskRunner loop.");
     return true;
   }
   return false;
@@ -67,7 +67,7 @@ ServerWorker::should_shutdown(const std::shared_ptr<InferenceJob>& job) const
 // =============================================================================
 
 void
-ServerWorker::log_job_timings(
+StarPUTaskRunner::log_job_timings(
     int job_id, double latency_ms, const detail::TimingInfo& timing_info) const
 {
   using duration_f = std::chrono::duration<double, std::milli>;
@@ -105,7 +105,7 @@ ServerWorker::log_job_timings(
 }
 
 void
-ServerWorker::prepare_job_completion_callback(
+StarPUTaskRunner::prepare_job_completion_callback(
     const std::shared_ptr<InferenceJob>& job)
 {
   const auto job_id = job->get_job_id();
@@ -143,7 +143,7 @@ ServerWorker::prepare_job_completion_callback(
 // =============================================================================
 
 void
-ServerWorker::handle_job_exception(
+StarPUTaskRunner::handle_job_exception(
     const std::shared_ptr<InferenceJob>& job, const std::exception& exception)
 {
   const auto job_id = job->get_job_id();
@@ -160,7 +160,8 @@ ServerWorker::handle_job_exception(
 // =============================================================================
 
 void
-ServerWorker::submit_inference_task(const std::shared_ptr<InferenceJob>& job)
+StarPUTaskRunner::submit_inference_task(
+    const std::shared_ptr<InferenceJob>& job)
 {
   InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
   task.submit();
@@ -171,9 +172,9 @@ ServerWorker::submit_inference_task(const std::shared_ptr<InferenceJob>& job)
 // =============================================================================
 
 void
-ServerWorker::run()
+StarPUTaskRunner::run()
 {
-  log_info(opts_->verbosity, "ServerWorker started.");
+  log_info(opts_->verbosity, "StarPUTaskRunner started.");
 
   while (true) {
     auto job = wait_for_next_job();
@@ -196,9 +197,9 @@ ServerWorker::run()
       submit_inference_task(job);
     }
     catch (const std::exception& exception) {
-      ServerWorker::handle_job_exception(job, exception);
+      StarPUTaskRunner::handle_job_exception(job, exception);
     }
   }
 
-  log_info(opts_->verbosity, "ServerWorker stopped.");
+  log_info(opts_->verbosity, "StarPUTaskRunner stopped.");
 }

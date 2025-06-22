@@ -13,16 +13,16 @@
 #include "starpu_setup.hpp"
 
 // ============================================================================
-// ServerWorker
+// StarPUTaskRunner
 // ----------------------------------------------------------------------------
 // Threaded worker responsible for:
 //  - Pulling jobs from the inference queue
 //  - Submitting them to StarPU
 //  - Collecting and storing results
 // ============================================================================
-class ServerWorker {
+class StarPUTaskRunner {
  public:
-  ServerWorker(
+  StarPUTaskRunner(
       InferenceQueue* queue, torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
       const RuntimeConfig* opts, std::vector<InferenceResult>* results,

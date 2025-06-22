@@ -105,11 +105,11 @@ WarmupRunner::run(unsigned int iterations_per_worker)
   std::vector<InferenceResult> dummy_results;
 
   // Start the server (consumes jobs in the queue)
-  ServerWorker worker(
+  StarPUTaskRunner worker(
       &queue, &model_cpu_, &models_gpu_, &starpu_, &opts_, &dummy_results,
       &dummy_results_mutex, &dummy_completed_jobs, &dummy_cv);
 
-  std::jthread server(&ServerWorker::run, &worker);
+  std::jthread server(&StarPUTaskRunner::run, &worker);
 
   const auto device_workers =
       StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);

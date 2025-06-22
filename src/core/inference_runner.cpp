@@ -280,11 +280,11 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   std::condition_variable all_done_cv;
   std::mutex all_done_mutex;
 
-  ServerWorker worker(
+  StarPUTaskRunner worker(
       &queue, &model_cpu, &models_gpu, &starpu, &opts, &results, &results_mutex,
       &completed_jobs, &all_done_cv);
 
-  std::jthread server(&ServerWorker::run, &worker);
+  std::jthread server(&StarPUTaskRunner::run, &worker);
   std::jthread client(
       [&]() { client_worker(queue, opts, outputs_ref, opts.iterations); });
 

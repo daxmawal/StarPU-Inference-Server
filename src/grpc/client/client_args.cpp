@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 
 namespace {
@@ -54,35 +55,6 @@ parse_type_string(const std::string& type_str) -> at::ScalarType
 }
 
 }  // namespace
-
-auto
-scalar_type_to_string(at::ScalarType type) -> std::string
-{
-  switch (type) {
-    case at::kFloat:
-      return "FP32";
-    case at::kDouble:
-      return "FP64";
-    case at::kHalf:
-      return "FP16";
-    case at::kBFloat16:
-      return "BF16";
-    case at::kInt:
-      return "INT32";
-    case at::kLong:
-      return "INT64";
-    case at::kShort:
-      return "INT16";
-    case at::kChar:
-      return "INT8";
-    case at::kByte:
-      return "UINT8";
-    case at::kBool:
-      return "BOOL";
-    default:
-      return "FP32";
-  }
-}
 
 auto
 parse_verbosity_level(const std::string& val) -> VerbosityLevel

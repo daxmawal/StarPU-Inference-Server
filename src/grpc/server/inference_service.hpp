@@ -32,6 +32,8 @@ class InferenceServiceImpl final
   std::atomic<unsigned int> next_job_id_{0};
 };
 
-void RunServer(
+void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::string& address, int max_message_bytes);
+
+void StopServer();

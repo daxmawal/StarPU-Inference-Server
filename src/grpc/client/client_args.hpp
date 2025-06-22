@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 
 struct ClientConfig {
@@ -23,4 +24,3 @@ struct ClientConfig {
 
 void display_client_help(const char* prog_name);
 auto parse_client_args(const std::span<const char*> args) -> ClientConfig;
-auto scalar_type_to_string(at::ScalarType type) -> std::string;
