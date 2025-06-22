@@ -146,6 +146,10 @@ class InferenceClient {
     void* got_tag = nullptr;
     bool call_ctx = false;
     while (cq_.Next(&got_tag, &call_ctx)) {
+      if (!call_ctx) {
+        log_warning("Received invalid RPC completion, exiting CQ loop");
+        break;
+      }
       std::unique_ptr<AsyncClientCall> call(
           static_cast<AsyncClientCall*>(got_tag));
       auto end = std::chrono::high_resolution_clock::now();
@@ -156,17 +160,17 @@ class InferenceClient {
       auto sent_time_str = FormatTimestamp(call->start_time);
       auto recv_time_str = FormatTimestamp(end);
 
-      auto start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          call->start_time.time_since_epoch())
-                          .count();
-      auto request_tx = call->reply.server_receive_ms() - start_ms;
-      auto response_tx = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             end.time_since_epoch())
-                             .count() -
-                         call->reply.server_send_ms();
-
-
       if (call->status.ok()) {
+        auto start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            call->start_time.time_since_epoch())
+                            .count();
+        auto request_tx = call->reply.server_receive_ms() - start_ms;
+        auto response_tx =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                end.time_since_epoch())
+                .count() -
+            call->reply.server_send_ms();
+
         log_info(
             verbosity_,
             "Request ID " + std::to_string(call->request_id) + " sent at " +

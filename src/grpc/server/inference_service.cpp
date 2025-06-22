@@ -134,6 +134,10 @@ InferenceServiceImpl::ModelInfer(
   queue_->push(job);
   auto outputs = result_future.get();
 
+  if (outputs.empty()) {
+    return Status(grpc::StatusCode::INTERNAL, "Inference failed");
+  }
+
   reply->set_model_name(request->model_name());
   reply->set_model_version(request->model_version());
   fill_output_tensor(reply, outputs);

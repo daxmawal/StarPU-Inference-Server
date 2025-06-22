@@ -17,11 +17,18 @@
 
 static InferenceQueue* g_queue_ptr = nullptr;
 static std::atomic<bool> g_stop_requested(false);
+static std::mutex g_stop_mutex;
+static std::condition_variable g_stop_cv;
 
 void
 signal_handler(int /*signal*/)
 {
   g_stop_requested.store(true);
+  StopServer();
+  if (g_queue_ptr != nullptr) {
+    g_queue_ptr->shutdown();
+  }
+  g_stop_cv.notify_one();
 }
 
 auto
@@ -76,12 +83,10 @@ main(int argc, char* argv[]) -> int
           opts.max_message_bytes);
     });
 
-    while (!g_stop_requested.load()) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    {
+      std::unique_lock<std::mutex> lk(g_stop_mutex);
+      g_stop_cv.wait(lk, [] { return g_stop_requested.load(); });
     }
-
-    StopServer();
-    queue.shutdown();
 
     if (grpc_thread.joinable()) {
       grpc_thread.join();
