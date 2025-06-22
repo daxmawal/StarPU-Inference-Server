@@ -98,22 +98,16 @@ InferenceServiceImpl::ModelReady(
 }
 
 auto
-InferenceServiceImpl::ModelInfer(
-    ServerContext* /*context*/, const ModelInferRequest* request,
-    ModelInferResponse* reply) -> Status
+InferenceServiceImpl::validate_and_convert_inputs(
+    const ModelInferRequest* request,
+    std::vector<torch::Tensor>& inputs) -> Status
 {
-  auto recv_tp = std::chrono::high_resolution_clock::now();
-  auto recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     recv_tp.time_since_epoch())
-                     .count();
-
   if (request->raw_input_contents_size() != request->inputs_size()) {
     return Status(
         grpc::StatusCode::INVALID_ARGUMENT,
         "Number of raw inputs does not match number of input tensors");
   }
 
-  std::vector<torch::Tensor> inputs;
   inputs.reserve(request->inputs_size());
   for (int i = 0; i < request->inputs_size(); ++i) {
     const auto& input = request->inputs(i);
@@ -129,9 +123,18 @@ InferenceServiceImpl::ModelInfer(
           grpc::StatusCode::INVALID_ARGUMENT,
           "Input tensor shape does not match raw content size");
     }
+
     inputs.push_back(convert_input_to_tensor(input, raw));
   }
 
+  return Status::OK;
+}
+
+auto
+InferenceServiceImpl::submit_job_and_wait(
+    const std::vector<torch::Tensor>& inputs,
+    std::vector<torch::Tensor>& outputs) -> Status
+{
   auto job =
       client_utils::create_job(inputs, *reference_outputs_, next_job_id_++);
   std::promise<std::vector<torch::Tensor>> result_promise;
@@ -143,24 +146,53 @@ InferenceServiceImpl::ModelInfer(
       });
 
   queue_->push(job);
-  auto outputs = result_future.get();
+  outputs = result_future.get();
 
   if (outputs.empty()) {
     return Status(grpc::StatusCode::INTERNAL, "Inference failed");
   }
 
+  return Status::OK;
+}
+
+void
+InferenceServiceImpl::populate_response(
+    const ModelInferRequest* request, ModelInferResponse* reply,
+    const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms)
+{
   reply->set_model_name(request->model_name());
   reply->set_model_version(request->model_version());
-  fill_output_tensor(reply, outputs);
-
-  auto send_tp = std::chrono::high_resolution_clock::now();
-  auto send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                     send_tp.time_since_epoch())
-                     .count();
-
   reply->set_server_receive_ms(recv_ms);
   reply->set_server_send_ms(send_ms);
+  fill_output_tensor(reply, outputs);
+}
 
+auto
+InferenceServiceImpl::ModelInfer(
+    ServerContext* /*context*/, const ModelInferRequest* request,
+    ModelInferResponse* reply) -> Status
+{
+  auto recv_tp = std::chrono::high_resolution_clock::now();
+  int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        recv_tp.time_since_epoch())
+                        .count();
+
+  std::vector<torch::Tensor> inputs;
+  Status status = validate_and_convert_inputs(request, inputs);
+  if (!status.ok())
+    return status;
+
+  std::vector<torch::Tensor> outputs;
+  status = submit_job_and_wait(inputs, outputs);
+  if (!status.ok())
+    return status;
+
+  auto send_tp = std::chrono::high_resolution_clock::now();
+  int64_t send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        send_tp.time_since_epoch())
+                        .count();
+
+  populate_response(request, reply, outputs, recv_ms, send_ms);
   return Status::OK;
 }
 
