@@ -135,19 +135,18 @@ InferenceServiceImpl::ModelInfer(
 
 void
 RunServer(
-    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs)
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::string& address, int max_message_bytes)
 {
-  const std::string server_address("0.0.0.0:50051");
   InferenceServiceImpl service(&queue, &reference_outputs);
 
   ServerBuilder builder;
-  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+  builder.AddListeningPort(address, grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
-  const int max_msg_size = 32 * 1024 * 1024;
-  builder.SetMaxReceiveMessageSize(max_msg_size);
-  builder.SetMaxSendMessageSize(max_msg_size);
+  builder.SetMaxReceiveMessageSize(max_message_bytes);
+  builder.SetMaxSendMessageSize(max_message_bytes);
 
   g_server = builder.BuildAndStart();
-  std::cout << "Server listening on " << server_address << std::endl;
+  std::cout << "Server listening on " << address << std::endl;
   g_server->Wait();
 }

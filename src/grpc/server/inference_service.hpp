@@ -28,4 +28,5 @@ class InferenceServiceImpl final
 };
 
 void RunServer(
-    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs);
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::string& address, int max_message_bytes);

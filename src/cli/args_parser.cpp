@@ -273,6 +273,29 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 }
 
 auto
+parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  if (idx + 1 >= args.size()) {
+    return false;
+  }
+  opts.server_address = args[++idx];
+  return true;
+}
+
+auto
+parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  return expect_and_parse(idx, args, [&](const char* val) {
+    int tmp = std::stoi(val);
+    if (tmp <= 0) {
+      throw std::invalid_argument("Must be > 0.");
+    }
+    opts.max_message_bytes = tmp;
+  });
+}
+
+auto
 parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
@@ -309,6 +332,12 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
            [&](size_t& idx) { return parse_device_ids(opts, idx, args_span); }},
           {"--scheduler",
            [&](size_t& idx) { return parse_scheduler(opts, idx, args_span); }},
+          {"--address",
+           [&](size_t& idx) { return parse_address(opts, idx, args_span); }},
+          {"--max-msg-size",
+           [&](size_t& idx) {
+             return parse_max_msg_size(opts, idx, args_span);
+           }},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {

@@ -36,6 +36,10 @@ struct RuntimeConfig {
   // Logging
   VerbosityLevel verbosity = VerbosityLevel::Info;
 
+  // Server configuration
+  std::string server_address = "0.0.0.0:50051";
+  int max_message_bytes = 32 * 1024 * 1024;
+
   // Model input specifications
   std::vector<std::vector<int64_t>> input_shapes;  // Expected input shapes
   std::vector<at::ScalarType> input_types;  // Corresponding input data types

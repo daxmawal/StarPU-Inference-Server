@@ -235,15 +235,19 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
     if (arg == "--help" || arg == "-h") {
       cfg.show_help = true;
       return true;
-    } else if (auto iter = dispatch.find(arg); iter != dispatch.end()) {
+    }
+
+    auto iter = dispatch.find(arg);
+    if (iter != dispatch.end()) {
       if (!iter->second(idx)) {
         return false;
       }
-    } else {
-      std::cerr << "Unknown argument: " << arg
-                << ". Use --help to see valid options." << std::endl;
-      return false;
+      continue;
     }
+
+    std::cerr << "Unknown argument: " << arg
+              << ". Use --help to see valid options.\n";
+    return false;
   }
 
   return true;
@@ -260,7 +264,7 @@ validate_config(ClientConfig& cfg) -> void
   check_required(!cfg.shape.empty(), "--shape", missing);
   if (!missing.empty()) {
     for (const auto& opt : missing) {
-      std::cerr << opt << " option is required." << std::endl;
+      std::cerr << opt << " option is required.\n";
     }
     cfg.valid = false;
   }

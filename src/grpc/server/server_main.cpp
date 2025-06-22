@@ -56,7 +56,8 @@ main(int argc, char* argv[]) -> int
         &results_mutex, &completed_jobs, &all_done_cv);
 
     std::jthread worker_thread(&ServerWorker::run, &worker);
-    RunServer(queue, reference_outputs);
+    RunServer(
+        queue, reference_outputs, opts.server_address, opts.max_message_bytes);
   }
   catch (const InferenceEngineException& e) {
     std::cerr << "\033[1;31m[Inference Error] " << e.what() << "\033[0m\n";
