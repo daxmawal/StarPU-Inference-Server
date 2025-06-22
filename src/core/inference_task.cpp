@@ -211,6 +211,11 @@ InferenceTask::fill_input_layout(
   for (size_t i = 0; i < num_inputs; ++i) {
     const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
+    if (dim > static_cast<int64_t>(InferLimits::MaxDims)) {
+      throw InferenceExecutionException(
+          "Input tensor has too many dimensions: max is " +
+          std::to_string(InferLimits::MaxDims));
+    }
     params->layout.num_dims.at(i) = dim;
     std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
   }

@@ -15,10 +15,12 @@
 #include "utils/logger.hpp"
 #include "utils/runtime_config.hpp"
 
+namespace {
 static InferenceQueue* g_queue_ptr = nullptr;
 static std::atomic<bool> g_stop_requested(false);
 static std::mutex g_stop_mutex;
 static std::condition_variable g_stop_cv;
+}  // namespace
 
 void
 signal_handler(int /*signal*/)

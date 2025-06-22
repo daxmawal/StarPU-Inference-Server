@@ -24,9 +24,10 @@ using inference::ServerLiveResponse;
 using inference::ServerReadyRequest;
 using inference::ServerReadyResponse;
 
-std::unique_ptr<Server> g_server;
 
 namespace {
+
+std::unique_ptr<Server> g_server;
 
 // Convert gRPC input to torch::Tensor
 auto
