@@ -17,6 +17,8 @@ using grpc::ServerContext;
 using grpc::Status;
 using inference::ModelInferRequest;
 using inference::ModelInferResponse;
+using inference::ModelReadyRequest;
+using inference::ModelReadyResponse;
 using inference::ServerLiveRequest;
 using inference::ServerLiveResponse;
 using inference::ServerReadyRequest;
@@ -81,6 +83,15 @@ auto
 InferenceServiceImpl::ServerReady(
     ServerContext* /*context*/, const ServerReadyRequest* /*request*/,
     ServerReadyResponse* reply) -> Status
+{
+  reply->set_ready(true);
+  return Status::OK;
+}
+
+auto
+InferenceServiceImpl::ModelReady(
+    ServerContext* /*context*/, const ModelReadyRequest* /*request*/,
+    ModelReadyResponse* reply) -> Status
 {
   reply->set_ready(true);
   return Status::OK;

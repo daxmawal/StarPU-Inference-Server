@@ -22,6 +22,10 @@ class InferenceServiceImpl final
       const inference::ServerReadyRequest* request,
       inference::ServerReadyResponse* reply) -> grpc::Status override;
 
+  auto ModelReady(
+      grpc::ServerContext* context, const inference::ModelReadyRequest* request,
+      inference::ModelReadyResponse* reply) -> grpc::Status override;
+
   auto ModelInfer(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply) -> grpc::Status override;

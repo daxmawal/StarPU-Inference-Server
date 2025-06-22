@@ -23,6 +23,8 @@ using grpc::Status;
 using inference::GRPCInferenceService;
 using inference::ModelInferRequest;
 using inference::ModelInferResponse;
+using inference::ModelReadyRequest;
+using inference::ModelReadyResponse;
 using inference::ServerLiveRequest;
 using inference::ServerLiveResponse;
 using inference::ServerReadyRequest;
@@ -102,6 +104,27 @@ class InferenceClient {
     log_info(
         verbosity_,
         std::string("Server ready: ") + (response.ready() ? "true" : "false"));
+    return response.ready();
+  }
+
+  auto ModelIsReady(const std::string& name, const std::string& version) -> bool
+  {
+    ModelReadyRequest request;
+    request.set_name(name);
+    request.set_version(version);
+    ModelReadyResponse response;
+    ClientContext context;
+
+    Status status = stub_->ModelReady(&context, request, &response);
+
+    if (!status.ok()) {
+      log_error("RPC failed: " + status.error_message());
+      return false;
+    }
+
+    log_info(
+        verbosity_,
+        std::string("Model ready: ") + (response.ready() ? "true" : "false"));
     return response.ready();
   }
 
@@ -225,6 +248,10 @@ main(int argc, char* argv[]) -> int
   }
 
   if (!client.ServerIsReady()) {
+    return 1;
+  }
+
+  if (!client.ModelIsReady(config.model_name, config.model_version)) {
     return 1;
   }
 
