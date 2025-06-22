@@ -1,13 +1,14 @@
 #include "client_args.hpp"
 
 #include <functional>
-#include <iostream>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "utils/logger.hpp"
 
 namespace {
 
@@ -83,6 +84,26 @@ scalar_type_to_string(at::ScalarType type) -> std::string
   }
 }
 
+auto
+parse_verbosity_level(const std::string& val) -> VerbosityLevel
+{
+  const int level = std::stoi(val);
+  switch (level) {
+    case 0:
+      return VerbosityLevel::Silent;
+    case 1:
+      return VerbosityLevel::Info;
+    case 2:
+      return VerbosityLevel::Stats;
+    case 3:
+      return VerbosityLevel::Debug;
+    case 4:
+      return VerbosityLevel::Trace;
+    default:
+      throw std::invalid_argument("Invalid verbosity level: " + val);
+  }
+}
+
 void
 display_client_help(const char* prog_name)
 {
@@ -95,6 +116,7 @@ display_client_help(const char* prog_name)
       << "  --server ADDR     gRPC server address (default: localhost:50051)\n"
       << "  --model NAME      Model name (default: example)\n"
       << "  --version VER     Model version (default: 1)\n"
+      << "  --verbose [0-4]   Verbosity level: 0=silent to 4=trace\n"
       << "  --help            Show this help message\n";
 }
 
@@ -122,7 +144,7 @@ try_parse(const char* val, Func&& parser) -> bool
     return true;
   }
   catch (const std::exception& e) {
-    std::cerr << "Invalid value: " << e.what() << '\n';
+    log_error(std::string("Invalid value: ") + e.what());
     return false;
   }
 }
@@ -203,6 +225,15 @@ parse_version(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
       idx, args, [&](const char* val) { cfg.model_version = val; });
 }
 
+auto
+parse_verbose(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
+    -> bool
+{
+  return expect_and_parse(idx, args, [&](const char* val) {
+    cfg.verbosity = parse_verbosity_level(val);
+  });
+}
+
 // =============================================================================
 // Dispatch Argument Parser (Main parser loop)
 // =============================================================================
@@ -227,6 +258,8 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
            [&](size_t& idx) { return parse_model(cfg, idx, args_span); }},
           {"--version",
            [&](size_t& idx) { return parse_version(cfg, idx, args_span); }},
+          {"--verbose",
+           [&](size_t& idx) { return parse_verbose(cfg, idx, args_span); }},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
@@ -245,8 +278,8 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       continue;
     }
 
-    std::cerr << "Unknown argument: " << arg
-              << ". Use --help to see valid options.\n";
+    log_error(
+        "Unknown argument: " + arg + ". Use --help to see valid options.");
     return false;
   }
 
@@ -264,7 +297,7 @@ validate_config(ClientConfig& cfg) -> void
   check_required(!cfg.shape.empty(), "--shape", missing);
   if (!missing.empty()) {
     for (const auto& opt : missing) {
-      std::cerr << opt << " option is required.\n";
+      log_error(opt + " option is required.");
     }
     cfg.valid = false;
   }

@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "utils/logger.hpp"
+
 struct ClientConfig {
   int iterations = 1;
   int delay_ms = 0;
@@ -14,6 +16,7 @@ struct ClientConfig {
   std::string server_address = "localhost:50051";
   std::string model_name = "example";
   std::string model_version = "1";
+  VerbosityLevel verbosity = VerbosityLevel::Info;
   bool show_help = false;
   bool valid = true;
 };

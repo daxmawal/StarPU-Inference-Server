@@ -1,10 +1,12 @@
 #include "inference_service.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <future>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 
 #include "utils/client_utils.hpp"
 
@@ -20,15 +22,89 @@ using inference::ServerLiveResponse;
 std::unique_ptr<Server> g_server;
 
 namespace {
+// Map datatype strings to torch::ScalarType
+auto
+datatype_to_scalar_type(const std::string& dtype) -> at::ScalarType
+{
+  static const std::unordered_map<std::string, at::ScalarType> type_map = {
+      {"FP32", at::kFloat},    {"FP64", at::kDouble}, {"FP16", at::kHalf},
+      {"BF16", at::kBFloat16}, {"INT32", at::kInt},   {"INT64", at::kLong},
+      {"INT16", at::kShort},   {"INT8", at::kChar},   {"UINT8", at::kByte},
+      {"BOOL", at::kBool}};
+
+  const auto it = type_map.find(dtype);
+  if (it == type_map.end()) {
+    throw std::invalid_argument("Unsupported tensor datatype: " + dtype);
+  }
+  return it->second;
+}
+
+auto
+scalar_type_to_datatype(at::ScalarType type) -> std::string
+{
+  switch (type) {
+    case at::kFloat:
+      return "FP32";
+    case at::kDouble:
+      return "FP64";
+    case at::kHalf:
+      return "FP16";
+    case at::kBFloat16:
+      return "BF16";
+    case at::kInt:
+      return "INT32";
+    case at::kLong:
+      return "INT64";
+    case at::kShort:
+      return "INT16";
+    case at::kChar:
+      return "INT8";
+    case at::kByte:
+      return "UINT8";
+    case at::kBool:
+      return "BOOL";
+    default:
+      return "FP32";
+  }
+}
+
+auto
+element_size(at::ScalarType type) -> size_t
+{
+  switch (type) {
+    case at::kFloat:
+      return sizeof(float);
+    case at::kDouble:
+      return sizeof(double);
+    case at::kHalf:
+    case at::kBFloat16:
+      return 2u;
+    case at::kInt:
+      return sizeof(int32_t);
+    case at::kLong:
+      return sizeof(int64_t);
+    case at::kShort:
+      return sizeof(int16_t);
+    case at::kChar:
+      return sizeof(int8_t);
+    case at::kByte:
+      return sizeof(uint8_t);
+    case at::kBool:
+      return sizeof(bool);
+    default:
+      return sizeof(float);
+  }
+}
+
 // Convert gRPC input to torch::Tensor
 auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input, const std::string& raw)
 {
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
-  auto tensor = torch::empty(shape, torch::kFloat32);
-  float* dest_ptr = tensor.data_ptr<float>();
-  std::memcpy(dest_ptr, raw.data(), raw.size());
+  const auto dtype = datatype_to_scalar_type(input.datatype());
+  auto tensor = torch::empty(shape, torch::TensorOptions().dtype(dtype));
+  std::memcpy(tensor.data_ptr(), raw.data(), raw.size());
 
   return tensor;
 }
@@ -42,15 +118,15 @@ fill_output_tensor(
     const auto& out = outputs[idx].to(torch::kCPU);
     auto* out_tensor = reply->add_outputs();
     out_tensor->set_name("output" + std::to_string(idx));
-    out_tensor->set_datatype("FP32");
+    out_tensor->set_datatype(scalar_type_to_datatype(out.scalar_type()));
     for (const auto dim : out.sizes()) {
       out_tensor->add_shape(dim);
     }
 
     auto flat = out.view({-1});
     reply->add_raw_output_contents()->assign(
-        reinterpret_cast<const char*>(flat.data_ptr<float>()),
-        flat.numel() * sizeof(float));
+        reinterpret_cast<const char*>(flat.data_ptr()),
+        flat.numel() * flat.element_size());
   }
 }
 }  // namespace
@@ -93,7 +169,8 @@ InferenceServiceImpl::ModelInfer(
     const auto& input = request->inputs(i);
     const auto& raw = request->raw_input_contents(i);
 
-    size_t expected = sizeof(float);
+    const auto dtype = datatype_to_scalar_type(input.datatype());
+    size_t expected = element_size(dtype);
     for (const auto dim : input.shape()) {
       expected *= static_cast<size_t>(dim);
     }

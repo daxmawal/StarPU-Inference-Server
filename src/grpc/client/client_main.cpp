@@ -8,12 +8,14 @@
 #include <memory>
 #include <random>
 #include <span>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "client_args.hpp"
 #include "grpc_service.grpc.pb.h"
+#include "utils/logger.hpp"
 
 using grpc::Channel;
 using grpc::ClientContext;
@@ -57,8 +59,9 @@ FormatTimestamp(const std::chrono::high_resolution_clock::time_point&
 
 class InferenceClient {
  public:
-  explicit InferenceClient(std::shared_ptr<Channel>& channel)
-      : stub_(GRPCInferenceService::NewStub(channel))
+  explicit InferenceClient(
+      std::shared_ptr<Channel>& channel, VerbosityLevel verbosity)
+      : stub_(GRPCInferenceService::NewStub(channel)), verbosity_(verbosity)
   {
   }
 
@@ -71,12 +74,13 @@ class InferenceClient {
     Status status = stub_->ServerLive(&context, request, &response);
 
     if (!status.ok()) {
-      std::cerr << "RPC failed: " << status.error_message() << std::endl;
+      log_error("RPC failed: " + status.error_message());
       return false;
     }
 
-    std::cout << "Server live: " << std::boolalpha << response.live()
-              << std::endl;
+    log_info(
+        verbosity_,
+        std::string("Server live: ") + (response.live() ? "true" : "false"));
     return response.live();
   }
 
@@ -88,7 +92,7 @@ class InferenceClient {
     call->request_id = current_id;
     call->start_time = std::chrono::high_resolution_clock::now();
 
-    std::cout << "Sending request ID: " << current_id << std::endl;
+    log_info(verbosity_, "Sending request ID: " + std::to_string(current_id));
 
     ModelInferRequest request;
     request.set_model_name(cfg.model_name);
@@ -142,15 +146,17 @@ class InferenceClient {
 
 
       if (call->status.ok()) {
-        std::cout << "Request ID " << call->request_id << " sent at "
-                  << sent_time_str << ", received at " << recv_time_str
-                  << ", latency: " << latency << " ms"
-                  << ", req_tx: " << request_tx << " ms"
-                  << ", resp_tx: " << response_tx << " ms" << std::endl;
+        log_info(
+            verbosity_,
+            "Request ID " + std::to_string(call->request_id) + " sent at " +
+                sent_time_str + ", received at " + recv_time_str +
+                ", latency: " + std::to_string(latency) + " ms" +
+                ", req_tx: " + std::to_string(request_tx) + " ms" +
+                ", resp_tx: " + std::to_string(response_tx) + " ms");
       } else {
-        std::cerr << "Request ID " << call->request_id << " failed at "
-                  << recv_time_str << ": " << call->status.error_message()
-                  << std::endl;
+        log_error(
+            "Request ID " + std::to_string(call->request_id) + " failed at " +
+            recv_time_str + ": " + call->status.error_message());
       }
     }
   }
@@ -162,6 +168,7 @@ class InferenceClient {
   std::unique_ptr<GRPCInferenceService::Stub> stub_;
   grpc::CompletionQueue cq_;
   std::atomic<int> next_request_id_{0};
+  VerbosityLevel verbosity_;
 };
 
 auto
@@ -175,7 +182,7 @@ main(int argc, char* argv[]) -> int
     return 0;
   }
   if (!config.valid) {
-    std::cerr << "Invalid program options." << std::endl;
+    log_error("Invalid program options.");
     return 1;
   }
   grpc::ChannelArguments ch_args;
@@ -186,7 +193,7 @@ main(int argc, char* argv[]) -> int
   auto channel = grpc::CreateCustomChannel(
       config.server_address, grpc::InsecureChannelCredentials(), ch_args);
 
-  InferenceClient client(channel);
+  InferenceClient client(channel, config.verbosity);
 
   if (!client.ServerIsLive()) {
     return 1;
