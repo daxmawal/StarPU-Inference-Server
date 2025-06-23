@@ -70,7 +70,6 @@ main(int argc, char* argv[]) -> int
     std::this_thread::sleep_until(next_time);
     next_time += delay;
 
-    std::uniform_int_distribution<int> dist(0, NUM_TENSORS - 1);
     const auto idx = static_cast<size_t>(dist(rng));
     client.AsyncModelInfer(tensor_pool[idx], config);
   }
