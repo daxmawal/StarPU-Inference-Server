@@ -63,10 +63,15 @@ main(int argc, char* argv[]) -> int
   std::uniform_int_distribution<int> dist(0, NUM_TENSORS - 1);
 
   std::jthread cq_thread(&InferenceClient::AsyncCompleteRpc, &client);
+
+  auto next_time = std::chrono::steady_clock::now();
+  const auto delay = std::chrono::milliseconds(config.delay_ms);
   for (int i = 0; i < config.iterations; ++i) {
+    std::this_thread::sleep_until(next_time);
+    next_time += delay;
+
     const auto& tensor = tensor_pool[dist(rng)];
     client.AsyncModelInfer(tensor, config);
-    std::this_thread::sleep_for(std::chrono::milliseconds(config.delay_ms));
   }
 
   client.Shutdown();
