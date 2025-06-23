@@ -93,7 +93,35 @@ InferenceClient::AsyncModelInfer(
   call->request_id = current_id;
   call->start_time = std::chrono::high_resolution_clock::now();
 
-  log_info(verbosity_, "Sending request ID: " + std::to_string(current_id));
+  // Conversion du temps en HH:MM:SS:MS
+  auto start_time_point =
+      std::chrono::time_point_cast<std::chrono::milliseconds>(call->start_time);
+  auto epoch_duration = start_time_point.time_since_epoch();
+
+  auto hours = std::chrono::duration_cast<std::chrono::hours>(epoch_duration);
+  epoch_duration -= hours;
+
+  auto minutes =
+      std::chrono::duration_cast<std::chrono::minutes>(epoch_duration);
+  epoch_duration -= minutes;
+
+  auto seconds =
+      std::chrono::duration_cast<std::chrono::seconds>(epoch_duration);
+  epoch_duration -= seconds;
+
+  auto milliseconds =
+      std::chrono::duration_cast<std::chrono::milliseconds>(epoch_duration);
+
+  std::ostringstream time_stream;
+  time_stream << std::setw(2) << std::setfill('0') << (hours.count() % 24)
+              << ":" << std::setw(2) << std::setfill('0') << minutes.count()
+              << ":" << std::setw(2) << std::setfill('0') << seconds.count()
+              << ":" << std::setw(3) << std::setfill('0')
+              << milliseconds.count();
+
+  log_info(
+      verbosity_, "Sending request ID: " + std::to_string(current_id) +
+                      " | Start time: " + time_stream.str());
 
   inference::ModelInferRequest request;
   request.set_model_name(cfg.model_name);
@@ -150,13 +178,14 @@ InferenceClient::AsyncCompleteRpc()
                              .count() -
                          call->reply.server_send_ms();
 
-      log_info(
+      /*log_info(
           verbosity_, "Request ID " + std::to_string(call->request_id) +
                           " sent at " + sent_time_str + ", received at " +
                           recv_time_str +
                           ", latency: " + std::to_string(latency) + " ms" +
                           ", req_tx: " + std::to_string(request_tx) + " ms" +
-                          ", resp_tx: " + std::to_string(response_tx) + " ms");
+                          ", resp_tx: " + std::to_string(response_tx) + "
+         ms");*/
     } else {
       log_error(
           "Request ID " + std::to_string(call->request_id) + " failed at " +
