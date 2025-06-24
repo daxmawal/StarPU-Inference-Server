@@ -1,0 +1,10 @@
+# .pre-commit-config.yaml
+repos:
+  - repo: local
+    hooks:
+      - id: clang-format-check
+        name: Check C++ formatting with clang-format
+        entry: .hooks/clang-format-check.sh
+        language: script
+        types: [c++, header]
+        files: \.(cpp|cc|cxx|h|hpp)$
