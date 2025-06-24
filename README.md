@@ -1,3 +1,4 @@
+[![CI](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml)
 # ⚠️ Project Status: In Development
 This project is currently under active development. There are no releases yet, and the interface or features will change frequently. 
 
