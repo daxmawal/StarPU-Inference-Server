@@ -8,3 +8,9 @@ repos:
         language: script
         types: [c++, header]
         files: \.(cpp|cc|cxx|h|hpp)$
+
+      - id: commit-msg-check
+        name: Enforce conventional commits
+        entry: .hooks/commit-msg.sh
+        language: script
+        stages: [commit-msg]
