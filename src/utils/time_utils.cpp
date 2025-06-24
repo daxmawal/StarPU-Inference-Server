@@ -6,7 +6,7 @@
 #include <sstream>
 #include <string>
 
-namespace time_utils {
+namespace starpu_server { namespace time_utils {
 
 auto
 format_timestamp(const std::chrono::high_resolution_clock::time_point&
@@ -28,4 +28,4 @@ format_timestamp(const std::chrono::high_resolution_clock::time_point&
   return oss.str();
 }
 
-}  // namespace time_utils
+}}  // namespace starpu_server::time_utils

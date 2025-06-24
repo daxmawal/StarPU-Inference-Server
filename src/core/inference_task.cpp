@@ -18,6 +18,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -499,3 +500,4 @@ InferenceTask::log_exception(const std::string& context)
     log_error("Unknown exception in " + context + ".");
   }
 }
+}  // namespace starpu_server

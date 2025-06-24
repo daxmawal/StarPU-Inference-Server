@@ -12,6 +12,7 @@
 #include "utils/logger.hpp"
 #include "utils/time_utils.hpp"
 
+namespace starpu_server {
 struct AsyncClientCall;
 
 class InferenceClient {
@@ -33,3 +34,4 @@ class InferenceClient {
   std::atomic<int> next_request_id_{0};
   VerbosityLevel verbosity_;
 };
+}  // namespace starpu_server

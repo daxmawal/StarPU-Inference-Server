@@ -19,6 +19,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -203,3 +204,4 @@ StarPUTaskRunner::run()
 
   log_info(opts_->verbosity, "StarPUTaskRunner stopped.");
 }
+}  // namespace starpu_server

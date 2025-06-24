@@ -25,6 +25,7 @@
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
 
+namespace starpu_server {
 constexpr size_t NUM_PREGENERATED_INPUTS = 2;
 
 // =============================================================================
@@ -147,3 +148,4 @@ WarmupRunner::run(int iterations_per_worker)
     });
   }
 }
+}  // namespace starpu_server

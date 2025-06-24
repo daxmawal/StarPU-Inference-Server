@@ -7,6 +7,7 @@
 
 #include "inference_runner.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // Thread-safe job queue for asynchronous inference execution
 // =============================================================================
@@ -38,3 +39,4 @@ class InferenceQueue {
   std::mutex mutex_;
   std::condition_variable cv_;
 };
+}  // namespace starpu_server

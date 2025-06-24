@@ -14,7 +14,7 @@ CMakeConfigureLog.yaml
 *.d
 
 # Generated binaries
-/inference_engine
+/starpu_server
 *.elf
 *.map
 

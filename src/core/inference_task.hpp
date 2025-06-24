@@ -7,6 +7,7 @@
 #include "inference_runner.hpp"
 #include "runtime_config.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // InferenceCallbackContext: passed to StarPU callbacks
 // =============================================================================
@@ -133,3 +134,4 @@ class InferenceTask {
   std::vector<torch::jit::script::Module>* models_gpu_;
   const RuntimeConfig* opts_;
 };
+}  // namespace starpu_server

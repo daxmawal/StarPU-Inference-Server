@@ -27,6 +27,7 @@
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // InferenceCodelet: constructor and access to codelet
 // =============================================================================
@@ -278,3 +279,4 @@ StarPUSetup::get_cuda_workers_by_device(const std::vector<int>& device_ids)
 
   return device_to_workers;
 }
+}  // namespace starpu_server

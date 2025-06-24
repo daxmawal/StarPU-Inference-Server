@@ -9,6 +9,7 @@
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 
+namespace starpu_server {
 struct ClientConfig {
   int iterations = 1;
   int delay_ms = 0;
@@ -24,3 +25,4 @@ struct ClientConfig {
 
 void display_client_help(const char* prog_name);
 auto parse_client_args(const std::span<const char*> args) -> ClientConfig;
+}  // namespace starpu_server

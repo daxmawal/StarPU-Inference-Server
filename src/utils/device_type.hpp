@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+namespace starpu_server {
 // =============================================================================
 // DeviceType enum defines where an inference task is executed.
 // =============================================================================
@@ -27,3 +28,4 @@ to_string(const DeviceType& type) -> const char*
       return "InvalidDeviceType";
   }
 }
+}  // namespace starpu_server

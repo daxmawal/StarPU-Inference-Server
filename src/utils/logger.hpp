@@ -6,6 +6,7 @@
 #include <string>
 
 
+namespace starpu_server {
 // Logging utilities
 // -----------------
 // Writes to stdout/stderr are guarded by a static mutex so
@@ -115,3 +116,4 @@ log_fatal(const std::string& message)
   }
   std::terminate();
 }
+}  // namespace starpu_server

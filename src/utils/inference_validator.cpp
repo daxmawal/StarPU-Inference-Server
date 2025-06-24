@@ -10,6 +10,7 @@
 #include "inference_runner.hpp"
 #include "logger.hpp"
 
+namespace starpu_server {
 constexpr int kPreviewLimit = 10;
 
 // =============================================================================
@@ -176,3 +177,4 @@ validate_inference_result(
 
   return false;
 }
+}  // namespace starpu_server

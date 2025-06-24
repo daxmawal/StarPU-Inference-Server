@@ -16,6 +16,7 @@
 
 #include "logger.hpp"
 #include "runtime_config.hpp"
+namespace starpu_server {
 
 // =============================================================================
 // Shape and Type Parsing: Handle --shape, --shapes, and --types arguments
@@ -409,3 +410,5 @@ parse_arguments(std::span<char*> args_span) -> RuntimeConfig
 
   return opts;
 }
+
+}  // namespace starpu_server

@@ -35,6 +35,7 @@
 #include "starpu_task_worker.hpp"
 #include "warmup.hpp"
 
+namespace starpu_server {
 constexpr size_t NUM_PREGENERATED_INPUTS = 10;
 constexpr int NUM_WARMUP_ITERATIONS = 2;
 
@@ -300,3 +301,4 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 
   process_results(results, model_cpu, models_gpu, opts.verbosity);
 }
+}  // namespace starpu_server

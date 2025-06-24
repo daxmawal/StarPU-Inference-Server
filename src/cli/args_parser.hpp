@@ -8,6 +8,7 @@
 #include "logger.hpp"
 #include "runtime_config.hpp"
 
+namespace starpu_server {
 inline void
 display_help(const char* prog_name)
 {
@@ -31,3 +32,4 @@ display_help(const char* prog_name)
 }
 
 auto parse_arguments(std::span<char*> args_span) -> RuntimeConfig;
+}  // namespace starpu_server

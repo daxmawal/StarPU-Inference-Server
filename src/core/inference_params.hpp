@@ -8,6 +8,7 @@
 #include "device_type.hpp"
 #include "logger.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // Constants for inference limitations
 // =============================================================================
@@ -79,3 +80,4 @@ struct InferenceParams {
   detail::Timing timing;  // Timing data (for benchmarking)
   VerbosityLevel verbosity = VerbosityLevel::Silent;  // Logging verbosity
 };
+}  // namespace starpu_server

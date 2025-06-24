@@ -5,6 +5,7 @@
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // Encapsulates a StarPU codelet for CPU/GPU inference execution
 // =============================================================================
@@ -51,3 +52,4 @@ class StarPUSetup {
   struct starpu_conf conf_;
   InferenceCodelet codelet_;
 };
+}  // namespace starpu_server

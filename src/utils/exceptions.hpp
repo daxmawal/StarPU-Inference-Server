@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <string>
 
+namespace starpu_server {
 // =============================================================================
 // Base class for all inference-related exceptions
 // =============================================================================
@@ -60,3 +61,4 @@ class StarPUTaskCreationException : public InferenceEngineException {
  public:
   using InferenceEngineException::InferenceEngineException;
 };
+}  // namespace starpu_server

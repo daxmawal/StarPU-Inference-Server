@@ -3,6 +3,7 @@
 #include "inference_queue.hpp"
 #include "starpu_setup.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // Runs a warmup phase by simulating inference jobs across StarPU workers
 // =============================================================================
@@ -38,3 +39,4 @@ class WarmupRunner {
   const std::vector<torch::Tensor>&
       outputs_ref_;  // Reference outputs to validate warmup jobs
 };
+}  // namespace starpu_server

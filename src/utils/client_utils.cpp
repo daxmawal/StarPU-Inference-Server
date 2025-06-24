@@ -26,7 +26,7 @@
 #include "starpu_task_worker.hpp"
 #include "time_utils.hpp"
 
-namespace client_utils {
+namespace starpu_server { namespace client_utils {
 
 // =============================================================================
 // Time Utilities: Format timestamp for logging/debugging
@@ -119,4 +119,4 @@ create_job(
   return job;
 }
 
-}  // namespace client_utils
+}}  // namespace starpu_server::client_utils

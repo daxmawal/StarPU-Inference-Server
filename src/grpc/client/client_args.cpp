@@ -11,6 +11,7 @@
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 
+namespace starpu_server {
 namespace {
 
 auto
@@ -295,3 +296,4 @@ parse_client_args(const std::span<const char*> args) -> ClientConfig
 
   return cfg;
 }
+}  // namespace starpu_server

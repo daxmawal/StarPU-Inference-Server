@@ -11,6 +11,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // TimingInfo: precise timestamps for latency profiling
 // =============================================================================
@@ -165,3 +166,4 @@ void run_warmup(
     const std::vector<torch::Tensor>& outputs_ref);
 
 void run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu);
+}  // namespace starpu_server
