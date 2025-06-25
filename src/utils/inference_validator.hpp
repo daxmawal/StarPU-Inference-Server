@@ -8,6 +8,6 @@ namespace starpu_server {
 // from the same model on the same device. Returns true if close enough.
 // =============================================================================
 auto validate_inference_result(
-    const InferenceResult& result, torch::jit::script::Module& module,
+    const InferenceResult& result, torch::jit::script::Module& jit_model,
     const VerbosityLevel& verbosity) -> bool;
 }  // namespace starpu_server

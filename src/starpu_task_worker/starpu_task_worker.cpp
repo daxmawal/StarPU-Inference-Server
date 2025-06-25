@@ -122,7 +122,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
        prev_callback](
           const std::vector<torch::Tensor>& results, double latency_ms) {
         {
-          const std::lock_guard<std::mutex> lock(*results_mutex_);
+          const std::scoped_lock lock(*results_mutex_);
           results_->emplace_back(InferenceResult{
               job_id, inputs, results, latency_ms, executed_on, device_id,
               worker_id, timing_info});

@@ -108,7 +108,7 @@ WarmupRunner::run(int iterations_per_worker)
   }
 
   InferenceQueue queue;
-  std::atomic<int> dummy_completed_jobs = 0;
+  std::atomic dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
   std::mutex dummy_results_mutex;
   std::condition_variable dummy_cv;

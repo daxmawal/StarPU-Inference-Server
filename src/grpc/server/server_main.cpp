@@ -16,10 +16,10 @@
 #include "utils/runtime_config.hpp"
 
 namespace {
-static starpu_server::InferenceQueue* g_queue_ptr = nullptr;
-static std::atomic<bool> g_stop_requested(false);
-static std::mutex g_stop_mutex;
-static std::condition_variable g_stop_cv;
+starpu_server::InferenceQueue* g_queue_ptr = nullptr;
+std::atomic<bool> g_stop_requested(false);
+std::mutex g_stop_mutex;
+std::condition_variable g_stop_cv;
 }  // namespace
 
 void
@@ -82,7 +82,7 @@ launch_threads(
 
   std::vector<starpu_server::InferenceResult> results;
   std::mutex results_mutex;
-  std::atomic<int> completed_jobs = 0;
+  std::atomic completed_jobs{0};
   std::condition_variable all_done_cv;
 
   starpu_server::StarPUTaskRunner worker(
@@ -114,11 +114,11 @@ main(int argc, char* argv[]) -> int
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
   }
   catch (const starpu_server::InferenceEngineException& e) {
-    std::cerr << "\033[1;31m[Inference Error] " << e.what() << "\033[0m\n";
+    std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";
     return 2;
   }
   catch (const std::exception& e) {
-    std::cerr << "\033[1;31m[General Error] " << e.what() << "\033[0m\n";
+    std::cerr << "\o{33}[1;31m[General Error] " << e.what() << "\o{33}[0m\n";
     return -1;
   }
 

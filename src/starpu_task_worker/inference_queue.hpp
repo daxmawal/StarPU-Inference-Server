@@ -17,7 +17,7 @@ class InferenceQueue {
   // Enqueue a new inference job
   void push(const std::shared_ptr<InferenceJob>& job)
   {
-    const std::lock_guard<std::mutex> lock(mutex_);
+    const std::scoped_lock lock(mutex_);
     queue_.push(job);
     cv_.notify_one();
   }

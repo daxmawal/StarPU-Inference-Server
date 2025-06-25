@@ -30,15 +30,16 @@ inline auto
 verbosity_style(const VerbosityLevel level)
     -> std::pair<const char*, const char*>
 {
+  using enum VerbosityLevel;
   switch (level) {
-    case VerbosityLevel::Info:
-      return {"\033[1;32m", "[INFO] "};  // Green
-    case VerbosityLevel::Stats:
-      return {"\033[1;35m", "[STATS] "};  // Magenta
-    case VerbosityLevel::Debug:
-      return {"\033[1;34m", "[DEBUG] "};  // Blue
-    case VerbosityLevel::Trace:
-      return {"\033[1;90m", "[TRACE] "};  // Gray
+    case Info:
+      return {"\o{33}[1;32m", "[INFO] "};  // Green
+    case Stats:
+      return {"\o{33}[1;35m", "[STATS] "};  // Magenta
+    case Debug:
+      return {"\o{33}[1;34m", "[DEBUG] "};  // Blue
+    case Trace:
+      return {"\o{33}[1;90m", "[TRACE] "};  // Gray
     default:
       return {"", ""};
   }
@@ -56,8 +57,8 @@ log_verbose(
   static std::mutex log_mutex;
   if (static_cast<int>(current_level) >= static_cast<int>(level)) {
     auto [color, label] = verbosity_style(level);
-    const std::lock_guard<std::mutex> lock(log_mutex);
-    std::cout << color << label << message << "\033[0m\n";
+    const std::scoped_lock lock(log_mutex);
+    std::cout << color << label << message << "\o{33}[0m\n";
   }
 }
 
@@ -94,25 +95,25 @@ inline void
 log_warning(const std::string& message)
 {
   static std::mutex log_mutex;
-  const std::lock_guard<std::mutex> lock(log_mutex);
-  std::cerr << "\033[1;33m[WARNING] " << message << "\033[0m\n";
+  const std::scoped_lock lock(log_mutex);
+  std::cerr << "\o{33}[1;33m[WARNING] " << message << "\o{33}[0m\n";
 }
 
 inline void
 log_error(const std::string& message)
 {
   static std::mutex log_mutex;
-  const std::lock_guard<std::mutex> lock(log_mutex);
-  std::cerr << "\033[1;31m[ERROR] " << message << "\033[0m\n";
+  const std::scoped_lock lock(log_mutex);
+  std::cerr << "\o{33}[1;31m[ERROR] " << message << "\o{33}[0m\n";
 }
 
-inline void
+[[noreturn]] inline void
 log_fatal(const std::string& message)
 {
   static std::mutex log_mutex;
   {
-    const std::lock_guard<std::mutex> lock(log_mutex);
-    std::cerr << "\033[1;41m[FATAL] " << message << "\033[0m\n";
+    const std::scoped_lock lock(log_mutex);
+    std::cerr << "\o{33}[1;41m[FATAL] " << message << "\o{33}[0m\n";
   }
   std::terminate();
 }
