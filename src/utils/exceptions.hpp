@@ -20,10 +20,7 @@ class InferenceEngineException : public std::runtime_error {
 /// Thrown when an unsupported data type is used
 class UnsupportedDtypeException : public InferenceEngineException {
  public:
-  explicit UnsupportedDtypeException(const std::string& msg)
-      : InferenceEngineException(msg)
-  {
-  }
+  using InferenceEngineException::InferenceEngineException;
 };
 
 /// Thrown when inference execution fails

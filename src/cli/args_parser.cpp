@@ -72,32 +72,43 @@ parse_shapes_string(const std::string& shapes_str)
   return shapes;
 }
 
+struct TransparentHash {
+  using is_transparent = void;
+  std::size_t operator()(std::string_view key) const noexcept
+  {
+    return std::hash<std::string_view>{}(key);
+  }
+};
+
 auto
 parse_type_string(const std::string& type_str) -> at::ScalarType
 {
-  static const std::unordered_map<std::string, at::ScalarType> type_map = {
-      {"float", at::kFloat},
-      {"float32", at::kFloat},
-      {"double", at::kDouble},
-      {"float64", at::kDouble},
-      {"half", at::kHalf},
-      {"float16", at::kHalf},
-      {"bfloat16", at::kBFloat16},
-      {"int", at::kInt},
-      {"int32", at::kInt},
-      {"long", at::kLong},
-      {"int64", at::kLong},
-      {"short", at::kShort},
-      {"int16", at::kShort},
-      {"char", at::kChar},
-      {"int8", at::kChar},
-      {"byte", at::kByte},
-      {"uint8", at::kByte},
-      {"bool", at::kBool},
-      {"complex64", at::kComplexFloat},
-      {"complex128", at::kComplexDouble}};
+  static const std::unordered_map<
+      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
+      type_map = {
+          {"float", at::kFloat},
+          {"float32", at::kFloat},
+          {"double", at::kDouble},
+          {"float64", at::kDouble},
+          {"half", at::kHalf},
+          {"float16", at::kHalf},
+          {"bfloat16", at::kBFloat16},
+          {"int", at::kInt},
+          {"int32", at::kInt},
+          {"long", at::kLong},
+          {"int64", at::kLong},
+          {"short", at::kShort},
+          {"int16", at::kShort},
+          {"char", at::kChar},
+          {"int8", at::kChar},
+          {"byte", at::kByte},
+          {"uint8", at::kByte},
+          {"bool", at::kBool},
+          {"complex64", at::kComplexFloat},
+          {"complex128", at::kComplexDouble},
+      };
 
-  auto iterator = type_map.find(type_str);
+  auto iterator = type_map.find(std::string_view(type_str));
   if (iterator == type_map.end()) {
     throw std::invalid_argument("Unsupported type: " + type_str);
   }

@@ -1,6 +1,8 @@
 #pragma once
 #include <starpu.h>
 
+#include <span>
+
 #include "inference_params.hpp"
 
 namespace starpu_server {
@@ -13,7 +15,7 @@ class TensorBuilder {
   TensorBuilder() = delete;
 
   [[nodiscard]] static auto from_starpu_buffers(
-      const InferenceParams* params, const std::vector<void*>& buffers,
+      const InferenceParams* params, std::span<void* const> buffers,
       torch::Device device) -> std::vector<torch::Tensor>;
 
   static void copy_output_to_buffer(

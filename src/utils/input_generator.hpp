@@ -3,7 +3,8 @@
 
 #include <vector>
 
-namespace starpu_server {
+namespace starpu_server::input_generator {
+
 // =============================================================================
 // input_generator
 // -----------------------------------------------------------------------------
@@ -15,7 +16,6 @@ namespace starpu_server {
 // -----------------------------------------------------------------------------
 // Constants used for integer bounds
 // -----------------------------------------------------------------------------
-namespace input_generator {
 constexpr int64_t DEFAULT_INT_HIGH = 10;
 constexpr int64_t BERT_VOCAB_SIZE = 30522;
 constexpr int64_t EMBEDDING_THRESHOLD = 64;
@@ -87,5 +87,4 @@ generate_random_inputs(
   return inputs;
 }
 
-}  // namespace input_generator
-}  // namespace starpu_server
+}  // namespace starpu_server::input_generator

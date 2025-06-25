@@ -17,7 +17,11 @@
 
 namespace {
 starpu_server::InferenceQueue* g_queue_ptr = nullptr;
+<<<<<<< pipeline_ci
+std::atomic g_stop_requested(false);
+=======
 std::atomic<bool> g_stop_requested(false);
+>>>>>>> main
 std::mutex g_stop_mutex;
 std::condition_variable g_stop_cv;
 }  // namespace
@@ -98,7 +102,7 @@ launch_threads(
   std::signal(SIGINT, signal_handler);
 
   {
-    std::unique_lock<std::mutex> lk(g_stop_mutex);
+    std::unique_lock lk(g_stop_mutex);
     g_stop_cv.wait(lk, [] { return g_stop_requested.load(); });
   }
 }

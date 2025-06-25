@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -22,7 +23,7 @@ namespace starpu_server {
 
 auto
 TensorBuilder::from_starpu_buffers(
-    const InferenceParams* params, const std::vector<void*>& buffers,
+    const InferenceParams* params, std::span<void* const> buffers,
     torch::Device device) -> std::vector<torch::Tensor>
 {
   if (params->num_inputs > InferLimits::MaxInputs) {
