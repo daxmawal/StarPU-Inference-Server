@@ -11,6 +11,7 @@
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 
+namespace starpu_server {
 namespace {
 
 auto
@@ -59,18 +60,19 @@ parse_type_string(const std::string& type_str) -> at::ScalarType
 auto
 parse_verbosity_level(const std::string& val) -> VerbosityLevel
 {
+  using enum VerbosityLevel;
   const int level = std::stoi(val);
   switch (level) {
     case 0:
-      return VerbosityLevel::Silent;
+      return Silent;
     case 1:
-      return VerbosityLevel::Info;
+      return Info;
     case 2:
-      return VerbosityLevel::Stats;
+      return Stats;
     case 3:
-      return VerbosityLevel::Debug;
+      return Debug;
     case 4:
-      return VerbosityLevel::Trace;
+      return Trace;
     default:
       throw std::invalid_argument("Invalid verbosity level: " + val);
   }
@@ -129,7 +131,8 @@ expect_and_parse(size_t& idx, std::span<const char*> args, Func&& parser)
   if (idx + 1 >= args.size()) {
     return false;
   }
-  return try_parse(args[++idx], std::forward<Func>(parser));
+  ++idx;
+  return try_parse(args[idx], std::forward<Func>(parser));
 }
 
 // =============================================================================
@@ -217,21 +220,37 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
   static const std::unordered_map<std::string, std::function<bool(size_t&)>>
       dispatch = {
           {"--iterations",
-           [&](size_t& idx) { return parse_iterations(cfg, idx, args_span); }},
+           [&cfg, &args_span](size_t& idx) {
+             return parse_iterations(cfg, idx, args_span);
+           }},
           {"--delay",
-           [&](size_t& idx) { return parse_delay(cfg, idx, args_span); }},
+           [&cfg, &args_span](size_t& idx) {
+             return parse_delay(cfg, idx, args_span);
+           }},
           {"--shape",
-           [&](size_t& idx) { return parse_shape(cfg, idx, args_span); }},
+           [&cfg, &args_span](size_t& idx) {
+             return parse_shape(cfg, idx, args_span);
+           }},
           {"--type",
-           [&](size_t& idx) { return parse_type(cfg, idx, args_span); }},
+           [&cfg, &args_span](size_t& idx) {
+             return parse_type(cfg, idx, args_span);
+           }},
           {"--server",
-           [&](size_t& idx) { return parse_server(cfg, idx, args_span); }},
+           [&cfg, &args_span](size_t& idx) {
+             return parse_server(cfg, idx, args_span);
+           }},
           {"--model",
-           [&](size_t& idx) { return parse_model(cfg, idx, args_span); }},
+           [&cfg, &args_span](size_t& idx) {
+             return parse_model(cfg, idx, args_span);
+           }},
           {"--version",
-           [&](size_t& idx) { return parse_version(cfg, idx, args_span); }},
+           [&cfg, &args_span](size_t& idx) {
+             return parse_version(cfg, idx, args_span);
+           }},
           {"--verbose",
-           [&](size_t& idx) { return parse_verbose(cfg, idx, args_span); }},
+           [&cfg, &args_span](size_t& idx) {
+             return parse_verbose(cfg, idx, args_span);
+           }},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
@@ -242,8 +261,8 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       return true;
     }
 
-    auto iter = dispatch.find(arg);
-    if (iter != dispatch.end()) {
+
+    if (auto iter = dispatch.find(arg); iter != dispatch.end()) {
       if (!iter->second(idx)) {
         return false;
       }
@@ -295,3 +314,4 @@ parse_client_args(const std::span<const char*> args) -> ClientConfig
 
   return cfg;
 }
+}  // namespace starpu_server

@@ -15,6 +15,7 @@
 
 #include "inference_params.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // Build input tensors from StarPU raw buffers and layout metadata
 // =============================================================================
@@ -144,3 +145,4 @@ TensorBuilder::from_raw_ptr(
       throw std::runtime_error("[ERROR] Unsupported input type for tensor");
   }
 }
+}  // namespace starpu_server

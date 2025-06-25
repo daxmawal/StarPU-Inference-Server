@@ -3,6 +3,7 @@
 
 #include "inference_params.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // TensorBuilder: utility class for wrapping StarPU buffers as torch::Tensor
 // =============================================================================
@@ -23,3 +24,4 @@ class TensorBuilder {
       uintptr_t ptr, at::ScalarType type, const std::vector<int64_t>& shape,
       torch::Device device) -> torch::Tensor;
 };
+}  // namespace starpu_server

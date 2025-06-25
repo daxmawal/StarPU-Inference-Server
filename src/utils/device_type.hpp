@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+namespace starpu_server {
 // =============================================================================
 // DeviceType enum defines where an inference task is executed.
 // =============================================================================
@@ -16,14 +17,16 @@ enum class DeviceType : uint8_t {
 inline auto
 to_string(const DeviceType& type) -> const char*
 {
+  using enum DeviceType;
   switch (type) {
-    case DeviceType::CPU:
+    case CPU:
       return "CPU";
-    case DeviceType::CUDA:
+    case CUDA:
       return "CUDA";
-    case DeviceType::Unknown:
+    case Unknown:
       return "Unknown";
     default:
       return "InvalidDeviceType";
   }
 }
+}  // namespace starpu_server

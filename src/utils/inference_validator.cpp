@@ -10,6 +10,7 @@
 #include "inference_runner.hpp"
 #include "logger.hpp"
 
+namespace starpu_server {
 constexpr int kPreviewLimit = 10;
 
 // =============================================================================
@@ -40,8 +41,8 @@ prepare_inputs(
     const torch::Device& device) -> std::vector<torch::IValue>
 {
   std::vector<torch::IValue> input_ivalues;
-  std::transform(
-      inputs.begin(), inputs.end(), std::back_inserter(input_ivalues),
+  std::ranges::transform(
+      inputs, std::back_inserter(input_ivalues),
       [&](const torch::Tensor& tensor) { return tensor.to(device); });
   return input_ivalues;
 }
@@ -127,7 +128,7 @@ compare_outputs(
 
 auto
 validate_inference_result(
-    const InferenceResult& result, torch::jit::script::Module& module,
+    const InferenceResult& result, torch::jit::script::Module& jit_model,
     const VerbosityLevel& verbosity) -> bool
 {
   try {
@@ -135,7 +136,7 @@ validate_inference_result(
 
     auto input_ivalues = prepare_inputs(result.inputs, device);
 
-    const torch::IValue output = module.forward(input_ivalues);
+    const torch::IValue output = jit_model.forward(input_ivalues);
     auto reference_outputs = extract_reference_outputs(output, result);
 
     if (reference_outputs.size() != result.results.size()) {
@@ -169,10 +170,7 @@ validate_inference_result(
         "[Validator] Exception in job " + std::to_string(result.job_id) + ": " +
         e.what());
   }
-  catch (...) {
-    log_error(
-        "[Validator] Unknown error in job " + std::to_string(result.job_id));
-  }
 
   return false;
 }
+}  // namespace starpu_server

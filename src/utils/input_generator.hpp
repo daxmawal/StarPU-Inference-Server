@@ -3,6 +3,7 @@
 
 #include <vector>
 
+namespace starpu_server {
 // =============================================================================
 // input_generator
 // -----------------------------------------------------------------------------
@@ -87,3 +88,4 @@ generate_random_inputs(
 }
 
 }  // namespace input_generator
+}  // namespace starpu_server

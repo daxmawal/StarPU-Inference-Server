@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 
+namespace starpu_server {
 // =============================================================================
 // datatype_utils
 // -----------------------------------------------------------------------------
@@ -92,3 +93,4 @@ element_size(at::ScalarType type) -> size_t
       return sizeof(float);
   }
 }
+}  // namespace starpu_server

@@ -7,6 +7,7 @@
 
 #include "logger.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // RuntimeConfig
 // -----------------------------------------------------------------------------
@@ -44,3 +45,4 @@ struct RuntimeConfig {
   std::vector<std::vector<int64_t>> input_shapes;  // Expected input shapes
   std::vector<at::ScalarType> input_types;  // Corresponding input data types
 };
+}  // namespace starpu_server

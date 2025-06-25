@@ -2,6 +2,7 @@
 
 #include "utils/time_utils.hpp"
 
+namespace starpu_server {
 struct AsyncClientCall {
   int request_id = 0;
   inference::ModelInferResponse reply;
@@ -170,3 +171,4 @@ InferenceClient::Shutdown()
 {
   cq_.Shutdown();
 }
+}  // namespace starpu_server

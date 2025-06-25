@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.12)
-project(inference_engine LANGUAGES CXX)
+project(starpu_server LANGUAGES CXX)
 
 # === Options ===
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
@@ -51,13 +51,13 @@ file(GLOB_RECURSE SOURCES
 )
 
 # === Executable ===
-add_executable(inference_engine ${SOURCES})
+add_executable(starpu_server ${SOURCES})
 
 # === C++ Features ===
-target_compile_features(inference_engine PRIVATE cxx_std_20)
+target_compile_features(starpu_server PRIVATE cxx_std_23)
 
 # === Include Paths ===
-target_include_directories(inference_engine PRIVATE
+target_include_directories(starpu_server PRIVATE
     ${STARPU_DIR}/include/starpu/1.4
     ${SRC_DIR}
     ${CORE_DIR}
@@ -68,7 +68,7 @@ target_include_directories(inference_engine PRIVATE
 
 # === Compiler Warnings ===
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(inference_engine PRIVATE
+    target_compile_options(starpu_server PRIVATE
         -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion
         -Wshadow -Wold-style-cast -Wcast-align -Wunused
         -Woverloaded-virtual -Wnull-dereference -Wdouble-promotion -Wformat=2
@@ -77,24 +77,24 @@ endif()
 
 # === Coverage Flags ===
 if (ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(inference_engine PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
-    target_link_options(inference_engine PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
+    target_compile_options(starpu_server PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
+    target_link_options(starpu_server PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
 endif()
 
 # === Sanitizers ===
 if (ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(inference_engine PRIVATE -fsanitize=address,undefined -g)
-    target_link_options(inference_engine PRIVATE -fsanitize=address,undefined -g)
+    target_compile_options(starpu_server PRIVATE -fsanitize=address,undefined -g)
+    target_link_options(starpu_server PRIVATE -fsanitize=address,undefined -g)
 endif()
 
 # === Linking ===
-target_link_libraries(inference_engine PRIVATE
+target_link_libraries(starpu_server PRIVATE
     ${TORCH_LIBRARIES}
     starpu-1.4
 )
 
 # === Compatibility for libtorch ===
-target_compile_definitions(inference_engine PRIVATE -D_GLIBCXX_USE_CXX11_ABI=1)
+target_compile_definitions(starpu_server PRIVATE -D_GLIBCXX_USE_CXX11_ABI=1)
 
 # === Status Messages ===
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")

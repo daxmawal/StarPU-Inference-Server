@@ -12,6 +12,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
+namespace starpu_server {
 // ============================================================================
 // StarPUTaskRunner
 // ----------------------------------------------------------------------------
@@ -55,3 +56,4 @@ class StarPUTaskRunner {
   std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;
 };
+}  // namespace starpu_server

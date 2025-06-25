@@ -6,6 +6,7 @@
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
 
+namespace starpu_server {
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
  public:
@@ -55,3 +56,4 @@ void RunGrpcServer(
     const std::string& address, int max_message_bytes);
 
 void StopServer();
+}  // namespace starpu_server

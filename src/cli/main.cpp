@@ -14,16 +14,16 @@ auto
 main(int argc, char* argv[]) -> int
 {
   // Parse and validate command-line options
-  const RuntimeConfig opts =
-      parse_arguments(std::span<char*>(argv, static_cast<size_t>(argc)));
+  const starpu_server::RuntimeConfig opts = starpu_server::parse_arguments(
+      std::span<char*>(argv, static_cast<size_t>(argc)));
 
   if (opts.show_help) {
-    display_help("Inference Engine");
+    starpu_server::display_help("Inference Engine");
     return 0;
   }
 
   if (!opts.valid) {
-    log_fatal("Invalid program options.\n");
+    starpu_server::log_fatal("Invalid program options.\n");
   }
 
   // Display configuration summary
@@ -34,15 +34,15 @@ main(int argc, char* argv[]) -> int
 
   // Launch inference process
   try {
-    StarPUSetup starpu(opts);
-    run_inference_loop(opts, starpu);
+    starpu_server::StarPUSetup starpu(opts);
+    starpu_server::run_inference_loop(opts, starpu);
   }
-  catch (const InferenceEngineException& e) {
-    std::cerr << "\033[1;31m[Inference Error] " << e.what() << "\033[0m\n";
+  catch (const starpu_server::InferenceEngineException& e) {
+    std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";
     return 2;
   }
   catch (const std::exception& e) {
-    std::cerr << "\033[1;31m[General Error] " << e.what() << "\033[0m\n";
+    std::cerr << "\o{33}[1;31m[General Error] " << e.what() << "\o{33}[0m\n";
     return -1;
   }
 

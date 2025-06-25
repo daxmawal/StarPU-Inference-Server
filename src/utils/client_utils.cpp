@@ -26,7 +26,7 @@
 #include "starpu_task_worker.hpp"
 #include "time_utils.hpp"
 
-namespace client_utils {
+namespace starpu_server { namespace client_utils {
 
 // =============================================================================
 // Time Utilities: Format timestamp for logging/debugging
@@ -61,7 +61,7 @@ pick_random_input(
     const std::vector<std::vector<torch::Tensor>>& pool,
     std::mt19937& rng) -> const std::vector<torch::Tensor>&
 {
-  std::uniform_int_distribution<> dist(0, static_cast<int>(pool.size()) - 1);
+  std::uniform_int_distribution dist(0, static_cast<int>(pool.size()) - 1);
   const auto idx = static_cast<size_t>(dist(rng));
   TORCH_CHECK(idx < pool.size(), "Random index out of bounds.");
   return pool[idx];
@@ -98,15 +98,15 @@ create_job(
 
   std::vector<at::ScalarType> types;
   types.reserve(inputs.size());
-  std::transform(
-      inputs.begin(), inputs.end(), std::back_inserter(types),
+  std::ranges::transform(
+      inputs, std::back_inserter(types),
       [](const auto& tensor) { return tensor.scalar_type(); });
   job->set_input_types(types);
 
   std::vector<torch::Tensor> outputs;
   outputs.reserve(outputs_ref.size());
-  std::transform(
-      outputs_ref.begin(), outputs_ref.end(), std::back_inserter(outputs),
+  std::ranges::transform(
+      outputs_ref, std::back_inserter(outputs),
       [](const auto& ref) { return torch::empty_like(ref); });
   job->set_outputs_tensors(outputs);
 
@@ -119,4 +119,4 @@ create_job(
   return job;
 }
 
-}  // namespace client_utils
+}}  // namespace starpu_server::client_utils

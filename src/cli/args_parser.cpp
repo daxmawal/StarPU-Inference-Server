@@ -16,6 +16,7 @@
 
 #include "logger.hpp"
 #include "runtime_config.hpp"
+namespace starpu_server {
 
 // =============================================================================
 // Shape and Type Parsing: Handle --shape, --shapes, and --types arguments
@@ -124,18 +125,19 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 auto
 parse_verbosity_level(const std::string& val) -> VerbosityLevel
 {
+  using enum VerbosityLevel;
   const int level = std::stoi(val);
   switch (level) {
     case 0:
-      return VerbosityLevel::Silent;
+      return Silent;
     case 1:
-      return VerbosityLevel::Info;
+      return Info;
     case 2:
-      return VerbosityLevel::Stats;
+      return Stats;
     case 3:
-      return VerbosityLevel::Debug;
+      return Debug;
     case 4:
-      return VerbosityLevel::Trace;
+      return Trace;
     default:
       throw std::invalid_argument("Invalid verbosity level: " + val);
   }
@@ -177,7 +179,8 @@ expect_and_parse(size_t& idx, std::span<char*> args, Func&& parser) -> bool
   if (idx + 1 >= args.size()) {
     return false;
   }
-  return try_parse(args[++idx], std::forward<Func>(parser));
+  ++idx;
+  return try_parse(args[idx], std::forward<Func>(parser));
 }
 
 // =============================================================================
@@ -199,53 +202,59 @@ auto
 parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
-    const int tmp = std::stoi(val);
+  auto& iterations = opts.iterations;
+  return expect_and_parse(idx, args, [&iterations](const char* val) {
+    const auto tmp = std::stoi(val);
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
     }
-    opts.iterations = static_cast<int>(tmp);
+    iterations = tmp;
   });
 }
 
 auto
 parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
-    opts.input_shapes = {parse_shape_string(val)};
+  auto& input_shapes = opts.input_shapes;
+  return expect_and_parse(idx, args, [&input_shapes](const char* val) {
+    input_shapes = {parse_shape_string(val)};
   });
 }
 
 auto
 parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
-    opts.input_shapes = parse_shapes_string(val);
+  auto& input_shapes = opts.input_shapes;
+  return expect_and_parse(idx, args, [&input_shapes](const char* val) {
+    input_shapes = parse_shapes_string(val);
   });
 }
 
 auto
 parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
-    opts.input_types = parse_types_string(val);
+  auto& input_types = opts.input_types;
+  return expect_and_parse(idx, args, [&input_types](const char* val) {
+    input_types = parse_types_string(val);
   });
 }
 
 auto
 parse_verbose(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
-    opts.verbosity = parse_verbosity_level(val);
+  auto& verbosity = opts.verbosity;
+  return expect_and_parse(idx, args, [&verbosity](const char* val) {
+    verbosity = parse_verbosity_level(val);
   });
 }
 
 auto
 parse_delay(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
-    opts.delay_ms = std::stoi(val);
-    if (opts.delay_ms < 0) {
+  auto& delay_ms = opts.delay_ms;
+  return expect_and_parse(idx, args, [&delay_ms](const char* val) {
+    delay_ms = std::stoi(val);
+    if (delay_ms < 0) {
       throw std::invalid_argument("Must be >= 0.");
     }
   });
@@ -255,7 +264,7 @@ auto
 parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
+  return expect_and_parse(idx, args, [&opts](const char* val) {
     opts.use_cuda = true;
     std::stringstream shape_stream(val);
     std::string id_str;
@@ -278,7 +287,8 @@ parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   if (idx + 1 >= args.size()) {
     return false;
   }
-  opts.server_address = args[++idx];
+  ++idx;
+  opts.server_address = args[idx];
   return true;
 }
 
@@ -286,12 +296,13 @@ auto
 parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
+  auto& max_message_bytes = opts.max_message_bytes;
+  return expect_and_parse(idx, args, [&max_message_bytes](const char* val) {
     const int tmp = std::stoi(val);
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
     }
-    opts.max_message_bytes = tmp;
+    max_message_bytes = tmp;
   });
 }
 
@@ -301,7 +312,8 @@ parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   if (idx + 1 >= args.size()) {
     return false;
   }
-  opts.scheduler = args[++idx];
+  ++idx;
+  opts.scheduler = args[idx];
   return true;
 }
 
@@ -315,27 +327,47 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
   static const std::unordered_map<std::string, std::function<bool(size_t&)>>
       dispatch = {
           {"--model",
-           [&](size_t& idx) { return parse_model(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_model(opts, idx, args_span);
+           }},
           {"--iterations",
-           [&](size_t& idx) { return parse_iterations(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_iterations(opts, idx, args_span);
+           }},
           {"--shape",
-           [&](size_t& idx) { return parse_shape(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_shape(opts, idx, args_span);
+           }},
           {"--shapes",
-           [&](size_t& idx) { return parse_shapes(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_shapes(opts, idx, args_span);
+           }},
           {"--types",
-           [&](size_t& idx) { return parse_types(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_types(opts, idx, args_span);
+           }},
           {"--verbose",
-           [&](size_t& idx) { return parse_verbose(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_verbose(opts, idx, args_span);
+           }},
           {"--delay",
-           [&](size_t& idx) { return parse_delay(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_delay(opts, idx, args_span);
+           }},
           {"--device-ids",
-           [&](size_t& idx) { return parse_device_ids(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_device_ids(opts, idx, args_span);
+           }},
           {"--scheduler",
-           [&](size_t& idx) { return parse_scheduler(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_scheduler(opts, idx, args_span);
+           }},
           {"--address",
-           [&](size_t& idx) { return parse_address(opts, idx, args_span); }},
+           [&opts, &args_span](size_t& idx) {
+             return parse_address(opts, idx, args_span);
+           }},
           {"--max-msg-size",
-           [&](size_t& idx) {
+           [&opts, &args_span](size_t& idx) {
              return parse_max_msg_size(opts, idx, args_span);
            }},
       };
@@ -409,3 +441,5 @@ parse_arguments(std::span<char*> args_span) -> RuntimeConfig
 
   return opts;
 }
+
+}  // namespace starpu_server

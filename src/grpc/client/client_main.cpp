@@ -20,13 +20,14 @@ main(int argc, char* argv[]) -> int
 {
   std::vector<const char*> const_argv(argv, argv + argc);
   std::span<const char*> args{const_argv};
-  const ClientConfig config = parse_client_args(args);
+  const starpu_server::ClientConfig config =
+      starpu_server::parse_client_args(args);
   if (config.show_help) {
-    display_client_help(args.front());
+    starpu_server::display_client_help(args.front());
     return 0;
   }
   if (!config.valid) {
-    log_error("Invalid program options.");
+    starpu_server::log_error("Invalid program options.");
     return 1;
   }
   grpc::ChannelArguments ch_args;
@@ -37,7 +38,7 @@ main(int argc, char* argv[]) -> int
   auto channel = grpc::CreateCustomChannel(
       config.server_address, grpc::InsecureChannelCredentials(), ch_args);
 
-  InferenceClient client(channel, config.verbosity);
+  starpu_server::InferenceClient client(channel, config.verbosity);
 
   if (!client.ServerIsLive()) {
     return 1;
@@ -62,11 +63,17 @@ main(int argc, char* argv[]) -> int
   std::mt19937 rng(std::random_device{}());
   std::uniform_int_distribution<int> dist(0, NUM_TENSORS - 1);
 
-  std::jthread cq_thread(&InferenceClient::AsyncCompleteRpc, &client);
+  std::jthread cq_thread(
+      &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
+
+  auto next_time = std::chrono::steady_clock::now();
+  const auto delay = std::chrono::milliseconds(config.delay_ms);
   for (int i = 0; i < config.iterations; ++i) {
-    const auto& tensor = tensor_pool[dist(rng)];
-    client.AsyncModelInfer(tensor, config);
-    std::this_thread::sleep_for(std::chrono::milliseconds(config.delay_ms));
+    std::this_thread::sleep_until(next_time);
+    next_time += delay;
+
+    const auto idx = static_cast<size_t>(dist(rng));
+    client.AsyncModelInfer(tensor_pool[idx], config);
   }
 
   client.Shutdown();

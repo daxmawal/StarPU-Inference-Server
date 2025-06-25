@@ -7,6 +7,7 @@
 #include "inference_runner.hpp"
 #include "runtime_config.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // InferenceCallbackContext: passed to StarPU callbacks
 // =============================================================================
@@ -20,7 +21,7 @@ struct InferenceCallbackContext {
   std::vector<starpu_data_handle_t>
       inputs_handles;  // Registered input data handles
   std::vector<starpu_data_handle_t> outputs_handles;  // Output data handles
-  std::atomic<int> remaining_outputs_to_acquire = 0;
+  std::atomic<int> remaining_outputs_to_acquire{0};
   std::mutex mutex;
 
   starpu_data_handle_t* dyn_handles = nullptr;
@@ -124,7 +125,8 @@ class InferenceTask {
   static void finalize_inference_task(void* arg);
 
   // === Utilities ===
-  static void log_exception(const std::string& context);
+  static void log_exception(
+      const std::string& context, const std::exception& e);
 
  private:
   StarPUSetup* starpu_;
@@ -133,3 +135,4 @@ class InferenceTask {
   std::vector<torch::jit::script::Module>* models_gpu_;
   const RuntimeConfig* opts_;
 };
+}  // namespace starpu_server

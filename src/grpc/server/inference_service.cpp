@@ -11,6 +11,7 @@
 #include "utils/client_utils.hpp"
 #include "utils/datatype_utils.hpp"
 
+namespace starpu_server {
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
@@ -225,3 +226,4 @@ StopServer()
     g_server->Shutdown();
   }
 }
+}  // namespace starpu_server

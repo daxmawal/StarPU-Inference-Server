@@ -18,6 +18,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
+namespace starpu_server {
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -377,8 +378,8 @@ InferenceTask::starpu_output_callback(void* arg)
       InferenceTask::process_output_handle(handle, ctx);
     }
   }
-  catch (...) {
-    log_exception("starpu_output_callback");
+  catch (const std::exception& e) {
+    log_exception("starpu_output_callback", e);
   }
 }
 
@@ -394,8 +395,8 @@ InferenceTask::acquire_output_handle(
           try {
             InferenceTask::finalize_inference_task(cb_ctx);
           }
-          catch (...) {
-            log_exception("on_output_ready");
+          catch (const std::exception& e) {
+            log_exception("starpu_output_callback", e);
           }
         }
       },
@@ -481,21 +482,18 @@ InferenceTask::record_and_run_completion_callback(
 // =============================================================================
 
 void
-InferenceTask::log_exception(const std::string& context)
+InferenceTask::log_exception(
+    const std::string& context, const std::exception& e)
 {
-  try {
-    throw;
-  }
-  catch (const InferenceExecutionException& e) {
-    log_error("InferenceExecutionException in " + context + ": " + e.what());
-  }
-  catch (const StarPUTaskSubmissionException& e) {
-    log_error("StarPU submission error in " + context + ": " + e.what());
-  }
-  catch (const std::exception& e) {
+  if (const auto* iee = dynamic_cast<const InferenceExecutionException*>(&e)) {
+    log_error("InferenceExecutionException in " + context + ": " + iee->what());
+  } else if (
+      const auto* spe =
+          dynamic_cast<const StarPUTaskSubmissionException*>(&e)) {
+    log_error("StarPU submission error in " + context + ": " + spe->what());
+  } else {
     log_error("std::exception in " + context + ": " + e.what());
   }
-  catch (...) {
-    log_error("Unknown exception in " + context + ".");
-  }
 }
+
+}  // namespace starpu_server
