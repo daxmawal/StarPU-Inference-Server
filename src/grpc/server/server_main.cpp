@@ -17,11 +17,7 @@
 
 namespace {
 starpu_server::InferenceQueue* g_queue_ptr = nullptr;
-<<<<<<< pipeline_ci
 std::atomic g_stop_requested(false);
-=======
-std::atomic<bool> g_stop_requested(false);
->>>>>>> main
 std::mutex g_stop_mutex;
 std::condition_variable g_stop_cv;
 }  // namespace

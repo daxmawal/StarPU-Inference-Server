@@ -13,11 +13,8 @@
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
 
-<<<<<<< pipeline_ci
 namespace starpu_server::client_utils {
-=======
-namespace starpu_server {
->>>>>>> main
+
 // =============================================================================
 // client_utils: Helper utilities for inference input preparation and job setup
 // =============================================================================
@@ -37,10 +34,5 @@ auto create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref,
     int job_id) -> std::shared_ptr<InferenceJob>;
-
-<<<<<<< pipeline_ci
+    
 }  // namespace starpu_server::client_utils
-=======
-}  // namespace client_utils
-}  // namespace starpu_server
->>>>>>> main
