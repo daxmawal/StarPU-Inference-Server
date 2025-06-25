@@ -25,7 +25,7 @@ class InferenceQueue {
   // Wait until a job is available, then dequeue it
   void wait_and_pop(std::shared_ptr<InferenceJob>& job)
   {
-    std::unique_lock<std::mutex> lock(mutex_);
+    std::unique_lock lock(mutex_);
     cv_.wait(lock, [this] { return !queue_.empty(); });
     job = queue_.front();
     queue_.pop();
