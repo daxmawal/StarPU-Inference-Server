@@ -61,7 +61,7 @@ main(int argc, char* argv[]) -> int
   }
 
   std::mt19937 rng(std::random_device{}());
-  std::uniform_int_distribution<int> dist(0, NUM_TENSORS - 1);
+  std::uniform_int_distribution dist(0, NUM_TENSORS - 1);
 
   std::jthread cq_thread(
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);

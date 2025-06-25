@@ -111,10 +111,10 @@ StarPUTaskRunner::prepare_job_completion_callback(
 {
   const auto job_id = job->get_job_id();
   const auto inputs = job->get_input_tensors();
-  auto& executed_on = job->get_executed_on();
-  auto& timing_info = job->timing_info();
-  auto& device_id = job->get_device_id();
-  auto& worker_id = job->get_worker_id();
+  const auto& executed_on = job->get_executed_on();
+  const auto& timing_info = job->timing_info();
+  const auto& device_id = job->get_device_id();
+  const auto& worker_id = job->get_worker_id();
 
   auto prev_callback = job->get_on_complete();
   job->set_on_complete(

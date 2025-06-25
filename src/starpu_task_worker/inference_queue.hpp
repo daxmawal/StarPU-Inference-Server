@@ -26,7 +26,7 @@ class InferenceQueue {
   void wait_and_pop(std::shared_ptr<InferenceJob>& job)
   {
     std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [&] { return !queue_.empty(); });
+    cv_.wait(lock, [this] { return !queue_.empty(); });
     job = queue_.front();
     queue_.pop();
   }

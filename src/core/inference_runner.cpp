@@ -279,13 +279,15 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
       &completed_jobs, &all_done_cv);
 
   const std::jthread server(&StarPUTaskRunner::run, &worker);
-  const std::jthread client(
-      [&]() { client_worker(queue, opts, outputs_ref, opts.iterations); });
+  const std::jthread client([&queue, &opts, &outputs_ref]() {
+    client_worker(queue, opts, outputs_ref, opts.iterations);
+  });
 
   {
     std::unique_lock<std::mutex> lock(all_done_mutex);
-    all_done_cv.wait(
-        lock, [&]() { return completed_jobs.load() >= opts.iterations; });
+    all_done_cv.wait(lock, [&completed_jobs, &opts]() {
+      return completed_jobs.load() >= opts.iterations;
+    });
   }
 
   if (opts.use_cuda) {

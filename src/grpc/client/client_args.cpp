@@ -143,7 +143,7 @@ auto
 parse_iterations(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
     -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
+  return expect_and_parse(idx, args, [&cfg](const char* val) {
     const int tmp = std::stoi(val);
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
@@ -155,7 +155,7 @@ parse_iterations(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
 auto
 parse_delay(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
+  return expect_and_parse(idx, args, [&cfg](const char* val) {
     cfg.delay_ms = std::stoi(val);
     if (cfg.delay_ms < 0) {
       throw std::invalid_argument("Must be >= 0.");
@@ -166,15 +166,18 @@ parse_delay(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 auto
 parse_shape(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
-  return expect_and_parse(
-      idx, args, [&](const char* val) { cfg.shape = parse_shape_string(val); });
+  return expect_and_parse(idx, args, [&cfg](const char* val) {
+    cfg.shape = parse_shape_string(val);
+  });
 }
+
 
 auto
 parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
-  return expect_and_parse(
-      idx, args, [&](const char* val) { cfg.type = parse_type_string(val); });
+  return expect_and_parse(idx, args, [&cfg](const char* val) {
+    cfg.type = parse_type_string(val);
+  });
 }
 
 auto
@@ -182,14 +185,14 @@ parse_server(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
     -> bool
 {
   return expect_and_parse(
-      idx, args, [&](const char* val) { cfg.server_address = val; });
+      idx, args, [&cfg](const char* val) { cfg.server_address = val; });
 }
 
 auto
 parse_model(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(
-      idx, args, [&](const char* val) { cfg.model_name = val; });
+      idx, args, [&cfg](const char* val) { cfg.model_name = val; });
 }
 
 auto
@@ -197,14 +200,14 @@ parse_version(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
     -> bool
 {
   return expect_and_parse(
-      idx, args, [&](const char* val) { cfg.model_version = val; });
+      idx, args, [&cfg](const char* val) { cfg.model_version = val; });
 }
 
 auto
 parse_verbose(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
     -> bool
 {
-  return expect_and_parse(idx, args, [&](const char* val) {
+  return expect_and_parse(idx, args, [&cfg](const char* val) {
     cfg.verbosity = parse_verbosity_level(val);
   });
 }

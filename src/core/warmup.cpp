@@ -135,10 +135,10 @@ WarmupRunner::run(int iterations_per_worker)
   }
 
   {
-    std::unique_lock<std::mutex> lock(dummy_mutex);
+    std::unique_lock lock(dummy_mutex);
     const size_t total_jobs =
         static_cast<size_t>(iterations_per_worker) * total_worker_count;
-    dummy_cv.wait(lock, [&]() {
+    dummy_cv.wait(lock, [total_jobs, &dummy_completed_jobs]() {
       int count = dummy_completed_jobs.load();
       if (count < 0) {
         throw std::runtime_error(
