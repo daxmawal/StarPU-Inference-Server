@@ -1,8 +1,4 @@
 [![CI](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml)
-<<<<<<< pipeline_ci
-=======
-[![SonarQube Cloud](https://sonarcloud.io/images/project_badges/sonarcloud-dark.svg)](https://sonarcloud.io/summary/new_code?id=daxmawal_StarPU-Inference-Server)
->>>>>>> main
 # ⚠️ Project Status: In Development
 This project is currently under active development. There are no releases yet, and the interface or features will change frequently. 
 
