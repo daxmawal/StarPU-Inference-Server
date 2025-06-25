@@ -6,7 +6,7 @@ add_executable(grpc_client_example
 
 set_target_properties(grpc_client_example PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
-target_compile_features(grpc_client_example PRIVATE cxx_std_20)
+target_compile_features(grpc_client_example PRIVATE cxx_std_23)
 
 target_include_directories(grpc_client_example PRIVATE 
     ${CMAKE_SOURCE_DIR}/src 

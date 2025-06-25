@@ -54,7 +54,7 @@ file(GLOB_RECURSE SOURCES
 add_executable(starpu_server ${SOURCES})
 
 # === C++ Features ===
-target_compile_features(starpu_server PRIVATE cxx_std_20)
+target_compile_features(starpu_server PRIVATE cxx_std_23)
 
 # === Include Paths ===
 target_include_directories(starpu_server PRIVATE
