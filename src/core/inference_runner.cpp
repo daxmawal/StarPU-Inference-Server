@@ -284,7 +284,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   });
 
   {
-    std::unique_lock<std::mutex> lock(all_done_mutex);
+    std::unique_lock lock(all_done_mutex);
     all_done_cv.wait(lock, [&completed_jobs, &opts]() {
       return completed_jobs.load() >= opts.iterations;
     });
