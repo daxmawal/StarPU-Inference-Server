@@ -9,9 +9,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "transparent_hash.hpp"
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
+#include "utils/transparent_hash.hpp"
 
 namespace starpu_server {
 namespace {
