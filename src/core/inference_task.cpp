@@ -5,6 +5,7 @@
 #include <bit>
 #include <chrono>
 #include <cstddef>
+#include <format>
 #include <functional>
 #include <memory>
 #include <stdexcept>
@@ -103,7 +104,7 @@ InferenceTask::register_inputs_handles(
 
   for (size_t i = 0; i < input_tensors.size(); ++i) {
     handles.push_back(safe_register_tensor_vector(
-        input_tensors[i], "input[" + std::to_string(i) + "]"));
+        input_tensors[i], std::format("input[{}]", i)));
   }
 
   return handles;
@@ -119,7 +120,7 @@ InferenceTask::register_outputs_handles(
 
   for (size_t i = 0; i < outputs_tensors.size(); ++i) {
     handles.push_back(safe_register_tensor_vector(
-        outputs_tensors[i], "output[" + std::to_string(i) + "]"));
+        outputs_tensors[i], std::format("input[{}]", i)));
   }
 
   return handles;
@@ -145,13 +146,12 @@ void
 InferenceTask::check_limits(size_t num_inputs) const
 {
   if (num_inputs > InferLimits::MaxInputs) {
-    throw InferenceExecutionException(
-        "Too many input tensors: max is " +
-        std::to_string(InferLimits::MaxInputs));
+    throw InferenceExecutionException(std::format(
+        "Too many input tensors: max is {}", InferLimits::MaxInputs));
   }
 
   if (models_gpu_->size() > InferLimits::MaxModelsGPU) {
-    throw std::runtime_error(
+    throw TooManyGpuModelsException(
         "Too many GPU models for the current configuration.");
   }
 }
@@ -213,9 +213,9 @@ InferenceTask::fill_input_layout(
     const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
     if (dim > static_cast<int64_t>(InferLimits::MaxDims)) {
-      throw InferenceExecutionException(
-          "Input tensor has too many dimensions: max is " +
-          std::to_string(InferLimits::MaxDims));
+      throw InferenceExecutionException(std::format(
+          "Input tensor has too many dimensions: max is {}",
+          InferLimits::MaxDims));
     }
     params->layout.num_dims.at(i) = dim;
     std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
@@ -268,8 +268,7 @@ InferenceTask::submit()
   if (ret != 0) {
     cleanup(ctx);
     throw StarPUTaskSubmissionException(
-        "[ERROR] StarPU task submission failed (code " + std::to_string(ret) +
-        ").");
+        std::format("[ERROR] StarPU task submission failed (code {})", ret));
   }
 }
 
@@ -378,7 +377,7 @@ InferenceTask::starpu_output_callback(void* arg)
       InferenceTask::process_output_handle(handle, ctx);
     }
   }
-  catch (const std::exception& e) {
+  catch (const InferenceEngineException& e) {
     log_exception("starpu_output_callback", e);
   }
 }
@@ -395,7 +394,7 @@ InferenceTask::acquire_output_handle(
           try {
             InferenceTask::finalize_inference_task(cb_ctx);
           }
-          catch (const std::exception& e) {
+          catch (const InferenceEngineException& e) {
             log_exception("starpu_output_callback", e);
           }
         }

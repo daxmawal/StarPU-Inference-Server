@@ -177,10 +177,13 @@ try_parse(const char* val, Func&& parser) -> bool
     std::forward<Func>(parser)(val);
     return true;
   }
-  catch (const std::exception& e) {
-    log_error(std::string("Invalid value: ") + e.what());
-    return false;
+  catch (const std::invalid_argument& e) {
+    log_error(std::string("Invalid argument: ") + e.what());
   }
+  catch (const std::out_of_range& e) {
+    log_error(std::string("Out of range: ") + e.what());
+  }
+  return false;
 }
 
 template <typename Func>
@@ -331,11 +334,20 @@ parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 // =============================================================================
 // Dispatch Argument Parser (Main parser loop)
 // =============================================================================
+struct TransparentEqual {
+  using is_transparent = void;
+  bool operator()(std::string_view lhs, std::string_view rhs) const noexcept
+  {
+    return lhs == rhs;
+  }
+};
 
 auto
 parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 {
-  static const std::unordered_map<std::string, std::function<bool(size_t&)>>
+  static const std::unordered_map<
+      std::string, std::function<bool(size_t&)>, TransparentHash,
+      TransparentEqual>
       dispatch = {
           {"--model",
            [&opts, &args_span](size_t& idx) {
