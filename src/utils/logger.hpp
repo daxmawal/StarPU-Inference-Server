@@ -1,10 +1,10 @@
 #pragma once
 
+#include <concepts>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <string>
-
 
 namespace starpu_server {
 // Logging utilities
@@ -55,10 +55,11 @@ log_verbose(
     const std::string& message)
 {
   static std::mutex log_mutex;
-  if (static_cast<int>(current_level) >= static_cast<int>(level)) {
+
+  if (std::to_underlying(current_level) >= std::to_underlying(level)) {
     auto [color, label] = verbosity_style(level);
     const std::scoped_lock lock(log_mutex);
-    std::cout << color << label << message << "\o{33}[0m\n";
+    std::cout << color << label << message << "\033[0m\n";
   }
 }
 

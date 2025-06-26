@@ -3,6 +3,8 @@
 
 #include <vector>
 
+#include "exceptions.hpp"
+
 namespace starpu_server::input_generator {
 
 // =============================================================================
@@ -62,7 +64,7 @@ generate_random_tensor(
       return torch::randint(0, 2, shape, options);
 
     default:
-      throw std::runtime_error("Unsupported input type");
+      throw UnsupportedDtypeException("Unsupported input type");
   }
 }
 

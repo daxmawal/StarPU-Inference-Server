@@ -15,6 +15,7 @@
 #include <climits>
 #include <cstddef>
 #include <exception>
+#include <format>
 #include <functional>
 #include <map>
 #include <stdexcept>
@@ -22,6 +23,7 @@
 #include <vector>
 
 #include "device_type.hpp"
+#include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
@@ -72,7 +74,7 @@ extract_tensors_from_output(const c10::IValue& result)
         result.toTensorList().end());
 
   } else {
-    throw std::runtime_error("Unsupported model output type");
+    throw UnsupportedModelOutputTypeException("Unsupported model output type");
   }
 
   return outputs;
@@ -106,7 +108,7 @@ run_inference(
   for (size_t i = 0; i < params->num_outputs; ++i) {
     auto* var_iface = static_cast<starpu_variable_interface*>(
         buffers[params->num_inputs + i]);
-    void* buffer = reinterpret_cast<void*>(var_iface->ptr);  // NOLINT
+    auto* buffer = reinterpret_cast<void*>(var_iface->ptr);
     copy_output_fn(outputs[i], buffer);
   }
 }
@@ -125,11 +127,11 @@ run_codelet_inference(
   const int device_id = starpu_worker_get_devid(worker_id);
 
   log_trace(
-      params->verbosity, (executed_on_type == DeviceType::CPU ? "CPU" : "GPU") +
-                             std::string(", device id, worker id, job id : ") +
-                             std::to_string(device_id) + " " +
-                             std::to_string(worker_id) + " " +
-                             std::to_string(params->job_id));
+      params->verbosity,
+      std::format(
+          "{}, device id, worker id, job id : {} {} {}",
+          (executed_on_type == DeviceType::CPU ? "CPU" : "GPU"), device_id,
+          worker_id, params->job_id));
 
   if (params->device.executed_on) {
     *params->device.executed_on = executed_on_type;
@@ -141,8 +143,8 @@ run_codelet_inference(
     run_inference(params, buffers, device, model, copy_output_fn);
   }
   catch (const std::exception& e) {
-    throw std::runtime_error(
-        "[ERROR] Codelet failure: " + std::string(e.what()));
+    throw StarPUCodeletException(
+        std::format("[ERROR] Codelet failure: {}", e.what()));
   }
 
   *params->timing.codelet_end_time = std::chrono::high_resolution_clock::now();
@@ -233,7 +235,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
   }
 
   if (starpu_init(&conf_) != 0) {
-    throw std::runtime_error("[ERROR] StarPU initialization error");
+    throw StarPUInitializationException("[ERROR] StarPU initialization error");
   }
 }
 
@@ -269,8 +271,8 @@ StarPUSetup::get_cuda_workers_by_device(const std::vector<int>& device_ids)
         STARPU_CUDA_WORKER);
 
     if (nworkers < 0) {
-      throw std::runtime_error(
-          "Failed to get CUDA workers for device " + std::to_string(device_id));
+      throw StarPUWorkerQueryException(
+          std::format("Failed to get CUDA workers for device {}", device_id));
     }
 
     device_to_workers[device_id] =

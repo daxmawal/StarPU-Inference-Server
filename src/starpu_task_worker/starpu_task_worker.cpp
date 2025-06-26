@@ -4,6 +4,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <exception>
+#include <format>
 #include <iomanip>
 #include <memory>
 #include <mutex>
@@ -72,37 +73,36 @@ StarPUTaskRunner::log_job_timings(
     int job_id, double latency_ms, const detail::TimingInfo& timing_info) const
 {
   using duration_f = std::chrono::duration<double, std::milli>;
-  std::ostringstream oss;
-  oss << std::fixed << std::setprecision(3);
-  oss << "Job " << job_id << " done. Latency = " << latency_ms << " ms | "
-      << "Queue = "
-      << duration_f(timing_info.dequeued_time - timing_info.enqueued_time)
-             .count()
-      << " ms, " << "Submit = "
-      << duration_f(
-             timing_info.before_starpu_submitted_time -
-             timing_info.dequeued_time)
-             .count()
-      << " ms, " << "Scheduling = "
-      << duration_f(
-             timing_info.codelet_start_time -
-             timing_info.before_starpu_submitted_time)
-             .count()
-      << " ms, " << "Codelet = "
-      << duration_f(
-             timing_info.codelet_end_time - timing_info.codelet_start_time)
-             .count()
-      << " ms, " << "Inference = "
-      << duration_f(
-             timing_info.callback_start_time - timing_info.inference_start_time)
-             .count()
-      << " ms, " << "Callback = "
-      << duration_f(
-             timing_info.callback_end_time - timing_info.callback_start_time)
-             .count()
-      << " ms";
+  const auto queue_ms =
+      duration_f(timing_info.dequeued_time - timing_info.enqueued_time).count();
+  const auto submit_ms =
+      duration_f(
+          timing_info.before_starpu_submitted_time - timing_info.dequeued_time)
+          .count();
+  const auto scheduling_ms = duration_f(
+                                 timing_info.codelet_start_time -
+                                 timing_info.before_starpu_submitted_time)
+                                 .count();
+  const auto codelet_ms =
+      duration_f(timing_info.codelet_end_time - timing_info.codelet_start_time)
+          .count();
+  const auto inference_ms =
+      duration_f(
+          timing_info.callback_start_time - timing_info.inference_start_time)
+          .count();
+  const auto callback_ms =
+      duration_f(
+          timing_info.callback_end_time - timing_info.callback_start_time)
+          .count();
 
-  log_stats(opts_->verbosity, oss.str());
+  log_stats(
+      opts_->verbosity,
+      std::format(
+          "Job {} done. Latency = {:.3f} ms | Queue = {:.3f} ms, Submit = "
+          "{:.3f} ms, Scheduling = {:.3f} ms, Codelet = {:.3f} ms, Inference = "
+          "{:.3f} ms, Callback = {:.3f} ms",
+          job_id, latency_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
+          inference_ms, callback_ms));
 }
 
 void
@@ -123,9 +123,9 @@ StarPUTaskRunner::prepare_job_completion_callback(
           const std::vector<torch::Tensor>& results, double latency_ms) {
         {
           const std::scoped_lock lock(*results_mutex_);
-          results_->emplace_back(InferenceResult{
+          results_->emplace_back(
               job_id, inputs, results, latency_ms, executed_on, device_id,
-              worker_id, timing_info});
+              worker_id, timing_info);
         }
 
         log_job_timings(job_id, latency_ms, timing_info);
@@ -148,8 +148,7 @@ StarPUTaskRunner::handle_job_exception(
     const std::shared_ptr<InferenceJob>& job, const std::exception& exception)
 {
   const auto job_id = job->get_job_id();
-  log_error(
-      "[Exception] Job " + std::to_string(job_id) + ": " + exception.what());
+  log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
 
   if (job->has_on_complete()) {
     job->get_on_complete()({}, -1);
@@ -184,7 +183,7 @@ StarPUTaskRunner::run()
     }
 
     const auto job_id = job->get_job_id();
-    log_trace(opts_->verbosity, "Dequeued job ID: " + std::to_string(job_id));
+    log_trace(opts_->verbosity, std::format("Dequeued job ID: {}", job_id));
 
     prepare_job_completion_callback(job);
 
@@ -192,8 +191,7 @@ StarPUTaskRunner::run()
       job->timing_info().dequeued_time =
           std::chrono::high_resolution_clock::now();
 
-      log_debug(
-          opts_->verbosity, "Submitting job ID: " + std::to_string(job_id));
+      log_debug(opts_->verbosity, std::format("Submitting job ID: {}", job_id));
 
       submit_inference_task(job);
     }

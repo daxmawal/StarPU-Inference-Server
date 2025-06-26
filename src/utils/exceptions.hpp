@@ -58,4 +58,34 @@ class StarPUTaskCreationException : public InferenceEngineException {
  public:
   using InferenceEngineException::InferenceEngineException;
 };
+
+/// Thrown when the model output type is not supported
+class UnsupportedModelOutputTypeException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+class TooManyGpuModelsException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when execution of a StarPU codelet fails
+class StarPUCodeletException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when StarPU initialization fails
+class StarPUInitializationException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when retrieving CUDA workers fails
+class StarPUWorkerQueryException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
 }  // namespace starpu_server

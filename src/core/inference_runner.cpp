@@ -10,6 +10,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <format>
 #include <functional>
 #include <iomanip>
 #include <iostream>
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include "client_utils.hpp"
+#include "exceptions.hpp"
 #include "inference_queue.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
@@ -159,7 +161,7 @@ run_reference_inference(
         output.toTensorList().end());
   } else {
     log_error("Unsupported output type from model.");
-    throw std::runtime_error("Unsupported model output type");
+    throw UnsupportedModelOutputTypeException("Unsupported model output type");
   }
 
   return output_refs;
@@ -206,9 +208,10 @@ run_warmup(
     const std::vector<torch::Tensor>& outputs_ref)
 {
   log_info(
-      opts.verbosity, "Starting warmup with " +
-                          std::to_string(NUM_WARMUP_ITERATIONS) +
-                          " iterations per CUDA device...");
+      opts.verbosity,
+      std::format(
+          "Starting warmup with {} iterations per CUDA device...",
+          NUM_WARMUP_ITERATIONS));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
   warmup_runner.run(NUM_WARMUP_ITERATIONS);
@@ -229,7 +232,7 @@ process_results(
 {
   for (const auto& result : results) {
     if (!result.results[0].defined()) {
-      log_error("[Client] Job " + std::to_string(result.job_id) + " failed.");
+      log_error(std::format("[Client] Job {} failed.", result.job_id));
       continue;
     }
 

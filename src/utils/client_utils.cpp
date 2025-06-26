@@ -5,6 +5,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <format>
 #include <iomanip>
 #include <iterator>
 #include <map>
@@ -77,10 +78,10 @@ log_job_enqueued(
     std::chrono::high_resolution_clock::time_point now)
 {
   log_trace(
-      opts.verbosity, "[Inference] Job ID " + std::to_string(job_id) +
-                          ", Iteration " + std::to_string(job_id + 1) + "/" +
-                          std::to_string(iterations) + ", Enqueued at " +
-                          current_time_formatted(now));
+      opts.verbosity,
+      std::format(
+          "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
+          job_id + 1, iterations, current_time_formatted(now)));
 }
 
 // =============================================================================
