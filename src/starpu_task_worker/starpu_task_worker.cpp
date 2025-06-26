@@ -25,16 +25,12 @@ namespace starpu_server {
 // Constructor
 // =============================================================================
 
-StarPUTaskRunner::StarPUTaskRunner(
-    InferenceQueue* queue, torch::jit::script::Module* model_cpu,
-    std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
-    const RuntimeConfig* opts, std::vector<InferenceResult>* results,
-    std::mutex* results_mutex, std::atomic<int>* completed_jobs,
-    std::condition_variable* all_done_cv)
-    : queue_(queue), model_cpu_(model_cpu), models_gpu_(models_gpu),
-      starpu_(starpu), opts_(opts), results_(results),
-      results_mutex_(results_mutex), completed_jobs_(completed_jobs),
-      all_done_cv_(all_done_cv)
+StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
+    : queue_(config.queue), model_cpu_(config.model_cpu),
+      models_gpu_(config.models_gpu), starpu_(config.starpu),
+      opts_(config.opts), results_(config.results),
+      results_mutex_(config.results_mutex),
+      completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv)
 {
 }
 

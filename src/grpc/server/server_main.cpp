@@ -16,21 +16,33 @@
 #include "utils/runtime_config.hpp"
 
 namespace {
-starpu_server::InferenceQueue* g_queue_ptr = nullptr;
-std::atomic g_stop_requested(false);
-std::mutex g_stop_mutex;
-std::condition_variable g_stop_cv;
+// Encapsulates state shared between the worker threads and the signal handler.
+struct ServerContext {
+  starpu_server::InferenceQueue* queue_ptr = nullptr;
+  std::unique_ptr<grpc::Server> server;
+  std::atomic<bool> stop_requested{false};
+  std::mutex stop_mutex;
+  std::condition_variable stop_cv;
+};
+
+auto
+server_context() -> ServerContext&
+{
+  static ServerContext ctx;
+  return ctx;
+}
 }  // namespace
 
 void
 signal_handler(int /*signal*/)
 {
-  g_stop_requested.store(true);
-  starpu_server::StopServer();
-  if (g_queue_ptr != nullptr) {
-    g_queue_ptr->shutdown();
+  auto& ctx = server_context();
+  ctx.stop_requested.store(true);
+  starpu_server::StopServer(ctx.server);
+  if (ctx.queue_ptr != nullptr) {
+    ctx.queue_ptr->shutdown();
   }
-  g_stop_cv.notify_one();
+  ctx.stop_cv.notify_one();
 }
 
 auto
@@ -78,28 +90,38 @@ launch_threads(
     std::vector<torch::Tensor>& reference_outputs)
 {
   static starpu_server::InferenceQueue queue;
-  g_queue_ptr = &queue;
+  auto& ctx = server_context();
+  ctx.queue_ptr = &queue;
 
   std::vector<starpu_server::InferenceResult> results;
   std::mutex results_mutex;
   std::atomic completed_jobs{0};
   std::condition_variable all_done_cv;
 
-  starpu_server::StarPUTaskRunner worker(
-      &queue, &model_cpu, &models_gpu, &starpu, &opts, &results, &results_mutex,
-      &completed_jobs, &all_done_cv);
+  starpu_server::StarPUTaskRunnerConfig config{};
+  config.queue = &queue;
+  config.model_cpu = &model_cpu;
+  config.models_gpu = &models_gpu;
+  config.starpu = &starpu;
+  config.opts = &opts;
+  config.results = &results;
+  config.results_mutex = &results_mutex;
+  config.completed_jobs = &completed_jobs;
+  config.all_done_cv = &all_done_cv;
+  starpu_server::StarPUTaskRunner worker(config);
 
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
   std::jthread grpc_thread([&]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, opts.server_address, opts.max_message_bytes);
+        queue, reference_outputs, opts.server_address, opts.max_message_bytes,
+        ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);
 
   {
-    std::unique_lock lk(g_stop_mutex);
-    g_stop_cv.wait(lk, [] { return g_stop_requested.load(); });
+    std::unique_lock lk(ctx.stop_mutex);
+    ctx.stop_cv.wait(lk, [] { return server_context().stop_requested.load(); });
   }
 }
 

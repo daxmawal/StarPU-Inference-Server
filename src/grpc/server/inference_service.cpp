@@ -28,8 +28,6 @@ using inference::ServerReadyResponse;
 
 namespace {
 
-std::unique_ptr<Server> g_server;
-
 // Convert gRPC input to torch::Tensor
 auto
 convert_input_to_tensor(
@@ -203,7 +201,8 @@ InferenceServiceImpl::ModelInfer(
 void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
-    const std::string& address, int max_message_bytes)
+    const std::string& address, int max_message_bytes,
+    std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(&queue, &reference_outputs);
 
@@ -213,17 +212,17 @@ RunGrpcServer(
   builder.SetMaxReceiveMessageSize(max_message_bytes);
   builder.SetMaxSendMessageSize(max_message_bytes);
 
-  g_server = builder.BuildAndStart();
+  server = builder.BuildAndStart();
   std::cout << "Server listening on " << address << std::endl;
-  g_server->Wait();
-  g_server.reset();
+  server->Wait();
+  server.reset();
 }
 
 void
-StopServer()
+StopServer(std::unique_ptr<Server>& server)
 {
-  if (g_server) {
-    g_server->Shutdown();
+  if (server) {
+    server->Shutdown();
   }
 }
 }  // namespace starpu_server

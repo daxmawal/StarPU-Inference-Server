@@ -14,3 +14,9 @@ repos:
         entry: .hooks/commit-msg.sh
         language: script
         stages: [commit-msg]
+
+      - id: build-check
+        name: Build project
+        entry: .hooks/build-check.sh
+        language: script
+        pass_filenames: false
