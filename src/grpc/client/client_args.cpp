@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "transparent_hash.hpp"
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 
@@ -43,16 +44,17 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
 auto
 parse_type_string(const std::string& type_str) -> at::ScalarType
 {
-  static const std::unordered_map<std::string, at::ScalarType> type_map = {
-      {"float", at::kFloat},       {"float32", at::kFloat},
-      {"double", at::kDouble},     {"float64", at::kDouble},
-      {"half", at::kHalf},         {"float16", at::kHalf},
-      {"bfloat16", at::kBFloat16}, {"int", at::kInt},
-      {"int32", at::kInt},         {"long", at::kLong},
-      {"int64", at::kLong},        {"short", at::kShort},
-      {"int16", at::kShort},       {"char", at::kChar},
-      {"int8", at::kChar},         {"byte", at::kByte},
-      {"uint8", at::kByte},        {"bool", at::kBool}};
+  static const std::unordered_map<
+      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
+      type_map = {{"float", at::kFloat},       {"float32", at::kFloat},
+                  {"double", at::kDouble},     {"float64", at::kDouble},
+                  {"half", at::kHalf},         {"float16", at::kHalf},
+                  {"bfloat16", at::kBFloat16}, {"int", at::kInt},
+                  {"int32", at::kInt},         {"long", at::kLong},
+                  {"int64", at::kLong},        {"short", at::kShort},
+                  {"int16", at::kShort},       {"char", at::kChar},
+                  {"int8", at::kChar},         {"byte", at::kByte},
+                  {"uint8", at::kByte},        {"bool", at::kBool}};
   auto iterator = type_map.find(type_str);
   if (iterator == type_map.end()) {
     throw std::invalid_argument("Unsupported type: " + type_str);
@@ -128,10 +130,6 @@ try_parse(const char* val, Func&& parser) -> bool
   }
   catch (const std::out_of_range& e) {
     log_error(std::format("Value out of range: {}", e.what()));
-    return false;
-  }
-  catch (const std::exception& e) {
-    log_error(std::format("Error parsing value: {}", e.what()));
     return false;
   }
 }
@@ -233,7 +231,9 @@ auto
 parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
     -> bool
 {
-  static const std::unordered_map<std::string, std::function<bool(size_t&)>>
+  static const std::unordered_map<
+      std::string, std::function<bool(size_t&)>, TransparentHash,
+      std::equal_to<>>
       dispatch = {
           {"--iterations",
            [&cfg, &args_span](size_t& idx) {

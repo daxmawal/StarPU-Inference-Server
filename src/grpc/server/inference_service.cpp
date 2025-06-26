@@ -51,7 +51,7 @@ fill_output_tensor(
   for (size_t idx = 0; idx < outputs.size(); ++idx) {
     const auto& out = outputs[idx].to(torch::kCPU);
     auto* out_tensor = reply->add_outputs();
-    out_tensor->set_name("output" + std::to_string(idx));
+    out_tensor->set_name(std::format("output{}", idx));
     out_tensor->set_datatype(scalar_type_to_datatype(out.scalar_type()));
     for (const auto dim : out.sizes()) {
       out_tensor->add_shape(dim);

@@ -159,10 +159,6 @@ validate_inference_result(
     log_error(std::format(
         "[Validator] C10 error in job {}: {}", result.job_id, e.what()));
   }
-  catch (const std::exception& e) {
-    log_error(std::format(
-        "[Validator] Exception in job {}: {}", result.job_id, e.what()));
-  }
 
   return false;
 }

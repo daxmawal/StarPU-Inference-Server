@@ -195,7 +195,7 @@ StarPUTaskRunner::run()
 
       submit_inference_task(job);
     }
-    catch (const std::exception& exception) {
+    catch (const InferenceEngineException& exception) {
       StarPUTaskRunner::handle_job_exception(job, exception);
     }
   }

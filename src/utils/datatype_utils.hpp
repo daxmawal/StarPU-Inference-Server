@@ -6,6 +6,8 @@
 #include <string>
 #include <unordered_map>
 
+#include "transparent_hash.hpp"
+
 namespace starpu_server {
 // =============================================================================
 // datatype_utils
@@ -14,7 +16,6 @@ namespace starpu_server {
 // Triton-style datatypes. Also provides utility to obtain the element size of
 // a tensor element given its scalar type.
 // =============================================================================
-
 inline auto
 scalar_type_to_datatype(at::ScalarType type) -> std::string
 {
@@ -45,17 +46,20 @@ scalar_type_to_datatype(at::ScalarType type) -> std::string
 }
 
 inline auto
-datatype_to_scalar_type(const std::string& dtype) -> at::ScalarType
+datatype_to_scalar_type(std::string_view dtype) -> at::ScalarType
 {
-  static const std::unordered_map<std::string, at::ScalarType> type_map = {
-      {"FP32", at::kFloat},    {"FP64", at::kDouble}, {"FP16", at::kHalf},
-      {"BF16", at::kBFloat16}, {"INT32", at::kInt},   {"INT64", at::kLong},
-      {"INT16", at::kShort},   {"INT8", at::kChar},   {"UINT8", at::kByte},
-      {"BOOL", at::kBool}};
+  static const std::unordered_map<
+      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
+      type_map = {{"FP32", at::kFloat},  {"FP64", at::kDouble},
+                  {"FP16", at::kHalf},   {"BF16", at::kBFloat16},
+                  {"INT32", at::kInt},   {"INT64", at::kLong},
+                  {"INT16", at::kShort}, {"INT8", at::kChar},
+                  {"UINT8", at::kByte},  {"BOOL", at::kBool}};
 
   const auto iter = type_map.find(dtype);
   if (iter == type_map.end()) {
-    throw std::invalid_argument("Unsupported tensor datatype: " + dtype);
+    throw std::invalid_argument(
+        "Unsupported tensor datatype: " + std::string(dtype));
   }
   return iter->second;
 }
