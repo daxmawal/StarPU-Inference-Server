@@ -85,9 +85,17 @@ launch_threads(
   std::atomic completed_jobs{0};
   std::condition_variable all_done_cv;
 
-  starpu_server::StarPUTaskRunner worker(
-      &queue, &model_cpu, &models_gpu, &starpu, &opts, &results, &results_mutex,
-      &completed_jobs, &all_done_cv);
+  starpu_server::StarPUTaskRunnerConfig config{};
+  config.queue = &queue;
+  config.model_cpu = &model_cpu;
+  config.models_gpu = &models_gpu;
+  config.starpu = &starpu;
+  config.opts = &opts;
+  config.results = &results;
+  config.results_mutex = &results_mutex;
+  config.completed_jobs = &completed_jobs;
+  config.all_done_cv = &all_done_cv;
+  starpu_server::StarPUTaskRunner worker(config);
 
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
   std::jthread grpc_thread([&]() {

@@ -116,9 +116,17 @@ WarmupRunner::run(int iterations_per_worker)
   std::vector<InferenceResult> dummy_results;
 
   // Start the server (consumes jobs in the queue)
-  StarPUTaskRunner worker(
-      &queue, &model_cpu_, &models_gpu_, &starpu_, &opts_, &dummy_results,
-      &dummy_results_mutex, &dummy_completed_jobs, &dummy_cv);
+  StarPUTaskRunnerConfig config{};
+  config.queue = &queue;
+  config.model_cpu = &model_cpu_;
+  config.models_gpu = &models_gpu_;
+  config.starpu = &starpu_;
+  config.opts = &opts_;
+  config.results = &dummy_results;
+  config.results_mutex = &dummy_results_mutex;
+  config.completed_jobs = &dummy_completed_jobs;
+  config.all_done_cv = &dummy_cv;
+  StarPUTaskRunner worker(config);
 
   const std::jthread server(&StarPUTaskRunner::run, &worker);
 

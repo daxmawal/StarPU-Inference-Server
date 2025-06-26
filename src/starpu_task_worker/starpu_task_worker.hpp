@@ -21,14 +21,21 @@ namespace starpu_server {
 //  - Submitting them to StarPU
 //  - Collecting and storing results
 // ============================================================================
+struct StarPUTaskRunnerConfig {
+  InferenceQueue* queue{};
+  torch::jit::script::Module* model_cpu{};
+  std::vector<torch::jit::script::Module>* models_gpu{};
+  StarPUSetup* starpu{};
+  const RuntimeConfig* opts{};
+  std::vector<InferenceResult>* results{};
+  std::mutex* results_mutex{};
+  std::atomic<int>* completed_jobs{};
+  std::condition_variable* all_done_cv{};
+};
+
 class StarPUTaskRunner {
  public:
-  StarPUTaskRunner(
-      InferenceQueue* queue, torch::jit::script::Module* model_cpu,
-      std::vector<torch::jit::script::Module>* models_gpu, StarPUSetup* starpu,
-      const RuntimeConfig* opts, std::vector<InferenceResult>* results,
-      std::mutex* results_mutex, std::atomic<int>* completed_jobs,
-      std::condition_variable* all_done_cv);
+  explicit StarPUTaskRunner(const StarPUTaskRunnerConfig& config);
 
   void run();
   auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
