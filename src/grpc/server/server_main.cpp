@@ -17,6 +17,7 @@
 
 namespace {
 starpu_server::InferenceQueue* g_queue_ptr = nullptr;
+std::unique_ptr<grpc::Server> g_server;
 std::atomic g_stop_requested(false);
 std::mutex g_stop_mutex;
 std::condition_variable g_stop_cv;
@@ -26,7 +27,7 @@ void
 signal_handler(int /*signal*/)
 {
   g_stop_requested.store(true);
-  starpu_server::StopServer();
+  starpu_server::StopServer(g_server);
   if (g_queue_ptr != nullptr) {
     g_queue_ptr->shutdown();
   }
@@ -100,7 +101,8 @@ launch_threads(
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
   std::jthread grpc_thread([&]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, opts.server_address, opts.max_message_bytes);
+        queue, reference_outputs, opts.server_address, opts.max_message_bytes,
+        g_server);
   });
 
   std::signal(SIGINT, signal_handler);
