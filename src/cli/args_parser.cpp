@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <format>
 #include <functional>
 #include <iostream>
 #include <span>
@@ -34,9 +35,13 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
     try {
       dim = std::stoll(item);
     }
-    catch (const std::exception& e) {
+    catch (const std::invalid_argument& e) {
       throw std::invalid_argument(
           "Shape contains non-integer: " + std::string(e.what()));
+    }
+    catch (const std::out_of_range& e) {
+      throw std::out_of_range(
+          "Shape value out of range: " + std::string(e.what()));
     }
 
     if (dim <= 0) {
@@ -178,10 +183,10 @@ try_parse(const char* val, Func&& parser) -> bool
     return true;
   }
   catch (const std::invalid_argument& e) {
-    log_error(std::string("Invalid argument: ") + e.what());
+    log_error(std::format("Invalid argument: {}", e.what()));
   }
   catch (const std::out_of_range& e) {
-    log_error(std::string("Out of range: ") + e.what());
+    log_error(std::format("Out of range: {}", e.what()));
   }
   return false;
 }
@@ -410,8 +415,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
         return false;
       }
     } else {
-      log_error(
-          "Unknown argument: " + arg + ". Use --help to see valid options.");
+      log_error(std::format(
+          "Unknown argument: {}. Use --help to see valid options.", arg));
       return false;
     }
   }
@@ -438,7 +443,7 @@ validate_config(RuntimeConfig& opts) -> void
 
   if (!missing.empty()) {
     for (const auto& opt : missing) {
-      log_error(opt + " option is required.");
+      log_error(std::format("{} option is required.", opt));
     }
     opts.valid = false;
   }

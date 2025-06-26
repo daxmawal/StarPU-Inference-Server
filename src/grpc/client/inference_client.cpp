@@ -1,5 +1,7 @@
 #include "inference_client.hpp"
 
+#include <format>
+
 #include "utils/time_utils.hpp"
 
 namespace starpu_server {
@@ -31,13 +33,13 @@ InferenceClient::ServerIsLive() -> bool
   grpc::Status status = stub_->ServerLive(&context, request, &response);
 
   if (!status.ok()) {
-    log_error("RPC failed: " + status.error_message());
+    log_error(std::format("RPC failed: {}", status.error_message()));
     return false;
   }
 
   log_info(
       verbosity_,
-      std::string("Server live: ") + (response.live() ? "true" : "false"));
+      std::format("Server live: {}", response.live() ? "true" : "false"));
   return response.live();
 }
 
@@ -57,7 +59,7 @@ InferenceClient::ServerIsReady() -> bool
 
   log_info(
       verbosity_,
-      std::string("Server ready: ") + (response.ready() ? "true" : "false"));
+      std::format("Server ready: {}", response.ready() ? "true" : "false"));
   return response.ready();
 }
 
@@ -74,13 +76,13 @@ InferenceClient::ModelIsReady(
   grpc::Status status = stub_->ModelReady(&context, request, &response);
 
   if (!status.ok()) {
-    log_error("RPC failed: " + status.error_message());
+    log_error(std::format("RPC failed: {}", status.error_message()));
     return false;
   }
 
   log_info(
       verbosity_,
-      std::string("Model ready: ") + (response.ready() ? "true" : "false"));
+      std::format("Model ready: {}", response.ready() ? "true" : "false"));
   return response.ready();
 }
 
@@ -94,7 +96,7 @@ InferenceClient::AsyncModelInfer(
   call->request_id = current_id;
   call->start_time = std::chrono::high_resolution_clock::now();
 
-  log_info(verbosity_, "Sending request ID: " + std::to_string(current_id));
+  log_info(verbosity_, std::format("Sending request ID: {}", current_id));
 
   inference::ModelInferRequest request;
   request.set_model_name(cfg.model_name);
@@ -131,7 +133,8 @@ InferenceClient::AsyncCompleteRpc()
       log_warning("Received invalid RPC completion, exiting CQ loop");
       break;
     }
-    std::unique_ptr<AsyncClientCall> call(
+
+    auto call = std::unique_ptr<AsyncClientCall>(
         static_cast<AsyncClientCall*>(got_tag));
     auto end = std::chrono::high_resolution_clock::now();
     auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -152,16 +155,15 @@ InferenceClient::AsyncCompleteRpc()
                          call->reply.server_send_ms();
 
       log_info(
-          verbosity_, "Request ID " + std::to_string(call->request_id) +
-                          " sent at " + sent_time_str + ", received at " +
-                          recv_time_str +
-                          ", latency: " + std::to_string(latency) + " ms" +
-                          ", req_tx: " + std::to_string(request_tx) + " ms" +
-                          ", resp_tx: " + std::to_string(response_tx) + " ms");
+          verbosity_, std::format(
+                          "Request ID {} sent at {} received at {} latency: {} "
+                          "ms, req_tx: {} ms, resp_tx: {} ms",
+                          call->request_id, sent_time_str, recv_time_str,
+                          latency, request_tx, response_tx));
     } else {
-      log_error(
-          "Request ID " + std::to_string(call->request_id) + " failed at " +
-          recv_time_str + ": " + call->status.error_message());
+      log_error(std::format(
+          "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
+          call->status.error_message()));
     }
   }
 }

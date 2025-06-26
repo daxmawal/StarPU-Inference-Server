@@ -1,5 +1,6 @@
 #include "client_args.hpp"
 
+#include <format>
 #include <functional>
 #include <span>
 #include <sstream>
@@ -24,9 +25,13 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
     try {
       shape.push_back(std::stoll(item));
     }
-    catch (const std::exception& e) {
+    catch (const std::invalid_argument& e) {
       throw std::invalid_argument(
           "Shape contains non-integer: " + std::string(e.what()));
+    }
+    catch (const std::out_of_range& e) {
+      throw std::out_of_range(
+          "Shape value out of range: " + std::string(e.what()));
     }
   }
   if (shape.empty()) {
@@ -117,8 +122,16 @@ try_parse(const char* val, Func&& parser) -> bool
     std::forward<Func>(parser)(val);
     return true;
   }
+  catch (const std::invalid_argument& e) {
+    log_error(std::format("Invalid value: {}", e.what()));
+    return false;
+  }
+  catch (const std::out_of_range& e) {
+    log_error(std::format("Value out of range: {}", e.what()));
+    return false;
+  }
   catch (const std::exception& e) {
-    log_error(std::string("Invalid value: ") + e.what());
+    log_error(std::format("Error parsing value: {}", e.what()));
     return false;
   }
 }
@@ -272,8 +285,8 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       continue;
     }
 
-    log_error(
-        "Unknown argument: " + arg + ". Use --help to see valid options.");
+    log_error(std::format(
+        "Unknown argument: {}. Use --help to see valid options.", arg));
     return false;
   }
 
@@ -291,7 +304,7 @@ validate_config(ClientConfig& cfg) -> void
   check_required(!cfg.shape.empty(), "--shape", missing);
   if (!missing.empty()) {
     for (const auto& opt : missing) {
-      log_error(opt + " option is required.");
+      log_error(std::format("{} option is required.", opt));
     }
     cfg.valid = false;
   }

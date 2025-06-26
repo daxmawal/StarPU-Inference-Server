@@ -73,7 +73,7 @@ WarmupRunner::client_worker(
     throw std::overflow_error("Total dépasse la capacité de int");
   }
 
-  const int total = static_cast<int>(total_size_t);
+  const auto total = static_cast<int>(total_size_t);
   int job_id = 0;
 
   // Sends jobs to the queue, fixing the targeted workers
