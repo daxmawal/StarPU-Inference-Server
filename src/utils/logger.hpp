@@ -59,7 +59,7 @@ log_verbose(
   if (std::to_underlying(current_level) >= std::to_underlying(level)) {
     auto [color, label] = verbosity_style(level);
     const std::scoped_lock lock(log_mutex);
-    std::cout << color << label << message << "\033[0m\n";
+    std::cout << color << label << message << "\o{33}[0m\n";
   }
 }
 

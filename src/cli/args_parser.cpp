@@ -17,6 +17,8 @@
 
 #include "logger.hpp"
 #include "runtime_config.hpp"
+#include "transparent_hash.hpp"
+
 namespace starpu_server {
 
 // =============================================================================
@@ -76,14 +78,6 @@ parse_shapes_string(const std::string& shapes_str)
 
   return shapes;
 }
-
-struct TransparentHash {
-  using is_transparent = void;
-  std::size_t operator()(std::string_view key) const noexcept
-  {
-    return std::hash<std::string_view>{}(key);
-  }
-};
 
 auto
 parse_type_string(const std::string& type_str) -> at::ScalarType
