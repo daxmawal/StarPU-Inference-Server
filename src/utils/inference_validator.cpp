@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "device_type.hpp"
+#include "exceptions.hpp"
 #include "inference_runner.hpp"
 #include "logger.hpp"
 
@@ -30,7 +31,7 @@ get_inference_device(const InferenceResult& result) -> torch::Device
       log_error(
           "[Validator] Unknown device for job " +
           std::to_string(result.job_id));
-      throw std::runtime_error("Unknown device");
+      throw InferenceExecutionException("Unknown device");
   }
 }
 
@@ -67,7 +68,7 @@ extract_reference_outputs(
         log_error(
             "[Validator] Non-tensor output in tuple for job " +
             std::to_string(result.job_id));
-        throw std::runtime_error("Invalid tuple element");
+        throw InferenceExecutionException("Invalid tuple element");
       }
       tensors.push_back(val.toTensor());
     }
@@ -75,7 +76,7 @@ extract_reference_outputs(
     log_error(
         "[Validator] Unsupported output type for job " +
         std::to_string(result.job_id));
-    throw std::runtime_error("Unsupported output type");
+    throw InferenceExecutionException("Unsupported output type");
   }
 
   return tensors;

@@ -143,8 +143,8 @@ run_codelet_inference(
     run_inference(params, buffers, device, model, copy_output_fn);
   }
   catch (const std::exception& e) {
-    throw std::runtime_error(
-        "[ERROR] Codelet failure: " + std::string(e.what()));
+    throw StarPUCodeletException(
+        std::format("[ERROR] Codelet failure: {}", e.what()));
   }
 
   *params->timing.codelet_end_time = std::chrono::high_resolution_clock::now();
@@ -235,7 +235,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
   }
 
   if (starpu_init(&conf_) != 0) {
-    throw std::runtime_error("[ERROR] StarPU initialization error");
+    throw StarPUInitializationException("[ERROR] StarPU initialization error");
   }
 }
 
@@ -271,7 +271,7 @@ StarPUSetup::get_cuda_workers_by_device(const std::vector<int>& device_ids)
         STARPU_CUDA_WORKER);
 
     if (nworkers < 0) {
-      throw std::runtime_error(
+      throw StarPUWorkerQueryException(
           std::format("Failed to get CUDA workers for device {}", device_id));
     }
 

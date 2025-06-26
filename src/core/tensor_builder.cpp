@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "exceptions.hpp"
 #include "inference_params.hpp"
 
 namespace starpu_server {
@@ -27,7 +28,7 @@ TensorBuilder::from_starpu_buffers(
     torch::Device device) -> std::vector<torch::Tensor>
 {
   if (params->num_inputs > InferLimits::MaxInputs) {
-    throw std::runtime_error("[ERROR] Too many input tensors");
+    throw InferenceExecutionException("[ERROR] Too many input tensors");
   }
 
   std::vector<torch::Tensor> inputs;
@@ -63,7 +64,7 @@ TensorBuilder::copy_output_to_buffer(
     const at::Tensor& output, void* buffer_ptr, int64_t expected_numel)
 {
   if (output.numel() != expected_numel) {
-    throw std::runtime_error("[ERROR] Output size mismatch");
+    throw InferenceExecutionException("[ERROR] Output size mismatch");
   }
 
   const auto type = output.scalar_type();
@@ -110,7 +111,8 @@ TensorBuilder::copy_output_to_buffer(
           static_cast<size_t>(output.numel()) * sizeof(bool));
       break;
     default:
-      throw std::runtime_error("[ERROR] Unsupported output tensor type");
+      throw InferenceExecutionException(
+          "[ERROR] Unsupported output tensor type");
   }
 }
 
@@ -143,7 +145,8 @@ TensorBuilder::from_raw_ptr(
     case at::kBool:
       return torch::from_blob(std::bit_cast<bool*>(ptr), shape, options);
     default:
-      throw std::runtime_error("[ERROR] Unsupported input type for tensor");
+      throw InferenceExecutionException(
+          "[ERROR] Unsupported input type for tensor");
   }
 }
 }  // namespace starpu_server

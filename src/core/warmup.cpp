@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "client_utils.hpp"
+#include "exceptions.hpp"
 #include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
@@ -141,7 +142,7 @@ WarmupRunner::run(int iterations_per_worker)
     dummy_cv.wait(lock, [total_jobs, &dummy_completed_jobs]() {
       int count = dummy_completed_jobs.load();
       if (count < 0) {
-        throw std::runtime_error(
+        throw InferenceExecutionException(
             "dummy_completed_jobs became negative, which should not happen.");
       }
       return static_cast<size_t>(count) >= total_jobs;
