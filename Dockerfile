@@ -9,26 +9,24 @@ ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
 
 # Create working directories
-RUN mkdir -p $INSTALL_DIR $HOME/.cache
-
-# Install base dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    git \
-    autoconf \
-    automake \
-    libtool \
-    libltdl-dev \
-    libtool-bin \
-    libhwloc-dev \
-    m4 \
-    pkg-config \
-    wget \
-    unzip \
-    cmake \
-    libssl-dev \
-    ninja-build \
-    software-properties-common \
+RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
+    apt-get update && apt-get install -y \
+        autoconf \
+        automake \
+        build-essential \
+        cmake \
+        git \
+        libhwloc-dev \
+        libltdl-dev \
+        libssl-dev \
+        libtool \
+        libtool-bin \
+        m4 \
+        ninja-build \
+        pkg-config \
+        software-properties-common \
+        unzip \
+        wget \
     && rm -rf /var/lib/apt/lists/*
 
 # === Install GCC 13 and set it as default ===
@@ -116,7 +114,9 @@ RUN git clone -b v1.62.0 --recurse-submodules https://github.com/grpc/grpc.git /
 
 # Copy source code
 WORKDIR /app
-COPY . /app
+COPY CMakeLists.txt /app/
+COPY src/ /app/src/
+COPY include/ /app/include/
 
 # Build project
 WORKDIR /app/build
