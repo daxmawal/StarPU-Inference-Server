@@ -4,6 +4,7 @@ project(starpu_server LANGUAGES CXX)
 # === Options ===
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(BUILD_TESTS "Build unit tests" OFF)
 
 # === C++ Settings ===
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -19,6 +20,16 @@ set(STARPU_TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
 find_package(Torch REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
+
+include(FetchContent)
+if(BUILD_TESTS)
+    enable_testing()
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+    )
+    FetchContent_MakeAvailable(googletest)
+endif()
 
 add_subdirectory(${SRC_DIR}/proto)
 
@@ -102,3 +113,7 @@ message(STATUS "StarPU include directory: ${STARPU_DIR}/include/starpu/1.4")
 message(STATUS "StarPU library: ${STARPU_DIR}/lib/libstarpu-1.4.so")
 
 add_subdirectory(${SRC_DIR}/grpc)
+
+if(BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
