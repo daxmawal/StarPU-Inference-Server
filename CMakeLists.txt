@@ -5,6 +5,7 @@ project(starpu_server LANGUAGES CXX)
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(BUILD_TESTS "Build unit tests" OFF)
+add_compile_definitions(-D_GLIBCXX_USE_CXX11_ABI=1)
 
 # === C++ Settings ===
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -39,8 +40,11 @@ endif()
 add_subdirectory(${SRC_DIR}/proto)
 
 
-# === Sources ===
-set(SOURCES
+# === Executable ===
+add_executable(starpu_server)
+target_sources(
+    starpu_server
+    PRIVATE
     ${SRC_DIR}/cli/args_parser.cpp
     ${SRC_DIR}/cli/main.cpp
     ${SRC_DIR}/core/inference_runner.cpp
@@ -54,9 +58,6 @@ set(SOURCES
     ${SRC_DIR}/starpu_task_worker/starpu_task_worker.cpp
 )
 
-# === Executable ===
-add_executable(starpu_server)
-target_sources(starpu_server PRIVATE ${SOURCES})
 target_compile_features(starpu_server PRIVATE cxx_std_23)
 
 # === Include Directories ===
@@ -97,9 +98,6 @@ target_link_libraries(starpu_server PRIVATE
     StarPU::starpu
     ${ABSL_LIBS}
 )
-
-# === ABI Compatibility for libtorch ===
-target_compile_definitions(starpu_server PRIVATE -D_GLIBCXX_USE_CXX11_ABI=1)
 
 # === Status Messages ===
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")

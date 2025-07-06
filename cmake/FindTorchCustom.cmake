@@ -1,3 +1,5 @@
+include_guard(GLOBAL)
+
 find_package(Torch REQUIRED)
 
 if(NOT TARGET Torch::Torch)

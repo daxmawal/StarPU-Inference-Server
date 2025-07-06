@@ -1,3 +1,5 @@
+include_guard(GLOBAL)
+
 if(NOT STARPU_DIR AND DEFINED ENV{STARPU_DIR})
     set(STARPU_DIR $ENV{STARPU_DIR} CACHE PATH "Root directory of StarPU installation")
 endif()

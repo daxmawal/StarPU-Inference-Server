@@ -1,4 +1,4 @@
-set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
+set(SRC_DIR ${PROJECT_SOURCE_DIR}/src)
 set(UTILS_DIR ${SRC_DIR}/utils)
 
 add_executable(grpc_client_example 
@@ -12,9 +12,7 @@ set_target_properties(grpc_client_example PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${
 target_compile_features(grpc_client_example PRIVATE cxx_std_23)
 
 target_include_directories(grpc_client_example PRIVATE 
-    ${CMAKE_SOURCE_DIR}/src )
-
-target_compile_definitions(grpc_client_example PRIVATE -D_GLIBCXX_USE_CXX11_ABI=1)
+    ${PROJECT_SOURCE_DIR}/src )
 
 find_package(absl REQUIRED)
 

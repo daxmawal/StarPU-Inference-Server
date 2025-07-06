@@ -1,4 +1,4 @@
-set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
+set(SRC_DIR ${PROJECT_SOURCE_DIR}/src)
 set(UTILS_DIR ${SRC_DIR}/utils)
 
 add_executable(unit_tests
