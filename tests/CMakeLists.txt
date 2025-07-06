@@ -1,3 +1,6 @@
+set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
+set(UTILS_DIR ${SRC_DIR}/utils)
+
 add_executable(unit_tests
     test_datatype_utils.cpp
     test_time_utils.cpp
@@ -12,13 +15,13 @@ target_compile_features(unit_tests PRIVATE cxx_std_23)
 target_include_directories(unit_tests PRIVATE
     ${SRC_DIR}
     ${UTILS_DIR}
-    ${STARPU_DIR}/include/starpu/1.4
 )
 
 target_link_libraries(unit_tests PRIVATE
     gtest
     gtest_main
-    ${TORCH_LIBRARIES}
+    Torch::Torch
+    StarPU::starpu
 )
 
 add_test(NAME unit_tests COMMAND unit_tests)
