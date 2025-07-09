@@ -11,6 +11,7 @@ add_executable(unit_tests
 set_target_properties(unit_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
 target_compile_features(unit_tests PRIVATE cxx_std_23)
+target_compile_definitions(starpu_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 target_include_directories(unit_tests PRIVATE
     ${SRC_DIR}

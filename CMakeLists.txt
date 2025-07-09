@@ -5,7 +5,6 @@ project(starpu_server LANGUAGES CXX)
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(BUILD_TESTS "Build unit tests" OFF)
-add_compile_definitions(-D_GLIBCXX_USE_CXX11_ABI=1)
 
 # === C++ Settings ===
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -20,6 +19,7 @@ find_package(StarPU REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
 set(ABSL_LIBS
     absl::log_internal_check_op
@@ -59,6 +59,7 @@ target_sources(
 )
 
 target_compile_features(starpu_server PRIVATE cxx_std_23)
+target_compile_definitions(starpu_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 # === Include Directories ===
 target_include_directories(starpu_server PRIVATE
