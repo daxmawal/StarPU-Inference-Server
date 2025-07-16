@@ -17,10 +17,10 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.26
         with:
           cuda: '12.9.1'
-          sub-packages: ""
-          non-cuda-sub-packages: ""
+          sub-packages: '[]'
+          non-cuda-sub-packages: '[]'
           method: local
-          linux-local-args: "--toolkit"
+          linux-local-args: '["--toolkit"]'
           use-github-cache: true
           use-local-cache: true
 
