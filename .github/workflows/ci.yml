@@ -13,6 +13,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Setup CUDA
+        uses: Jimver/cuda-toolkit@v0.2.26
+        with:
+          cuda: '12.9.1'
+
       - name: Install dependencies
         run: bash .github/scripts/install_dependencies.sh
 
