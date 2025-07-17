@@ -17,7 +17,7 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.26
         with:
           cuda: '12.9.1'
-          sub-packages: '[]'
+          sub-packages: '["nvtx"]'
           non-cuda-sub-packages: '[]'
           method: local
           linux-local-args: '["--toolkit"]'
