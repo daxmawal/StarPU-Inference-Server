@@ -47,7 +47,7 @@ cd / && rm -rf /tmp/protobuf
 git clone --branch starpu-1.4.8 https://gitlab.inria.fr/starpu/starpu.git /tmp/starpu
 cd /tmp/starpu
 ./autogen.sh
-./configure --prefix=$STARPU_DIR --enable-tracing --with-fxt --disable-hip --disable-opencl --disable-mpi --enable-cuda --disable-fortran --disable-openmp
+./configure --prefix=$STARPU_DIR --enable-tracing --with-fxt --disable-hip --disable-opencl --disable-mpi --enable-cuda --disable-fortran --disable-openmp --disable-starpupy
 make -j"$(nproc)"
 sudo make install
 # chmod -R u+w /tmp/starpu/starpupy/src/starpupy.egg-info || true
@@ -62,6 +62,10 @@ cmake .. \
   -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" \
   -DgRPC_INSTALL=ON \
   -DgRPC_BUILD_TESTS=OFF \
+  -DgRPC_BUILD_CODEGEN=OFF \
+  -DgRPC_BUILD_GRPC_CPP_PLUGIN=OFF \
+  -DgRPC_BUILD_CSHARP_EXT=OFF \
+  -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF \
   -DgRPC_PROTOBUF_PROVIDER=package \
   -DgRPC_ABSL_PROVIDER=package \
   -DProtobuf_DIR=$INSTALL_DIR/protobuf/lib/cmake/protobuf \
@@ -69,9 +73,9 @@ cmake .. \
   -DBUILD_SHARED_LIBS=OFF \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build . --parallel
+cmake --build . --parallel 2
 sudo cmake --install .
-cd / && rm -rf /tmp/grpc
+cd / && sudo rm -rf /tmp/grpc
 
 # Export environment variables for later steps
 {
