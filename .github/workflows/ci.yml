@@ -17,13 +17,12 @@ jobs:
         uses: Jimver/cuda-toolkit@v0.2.26
         with:
           cuda: '12.9.1'
-          sub-packages: '["nvtx"]'
-          method: network
-
-      - name: Debug CUDA content
-        run: |
-          ls -l /usr/local/cuda*/targets/x86_64-linux/lib/libnvToolsExt*
-          ls -l /usr/local/cuda*/include/nvToolsExt.h || true
+          sub-packages: '[]'
+          non-cuda-sub-packages: '[]'
+          method: local
+          linux-local-args: '["--toolkit"]'
+          use-github-cache: true
+          use-local-cache: true
 
       - name: Install dependencies
         run: bash .github/scripts/install_dependencies.sh
