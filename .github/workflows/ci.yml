@@ -18,11 +18,7 @@ jobs:
         with:
           cuda: '12.9.1'
           sub-packages: '["nvtx"]'
-          non-cuda-sub-packages: '[]'
-          method: local
-          linux-local-args: '["--toolkit"]'
-          use-github-cache: true
-          use-local-cache: true
+          method: network
 
       - name: Debug CUDA content
         run: |
