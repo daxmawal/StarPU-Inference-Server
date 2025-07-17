@@ -13,27 +13,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup CUDA
-        uses: Jimver/cuda-toolkit@v0.2.26
-        with:
-          cuda: '12.9.1'
-          sub-packages: '[]'
-          non-cuda-sub-packages: '[]'
-          method: local
-          linux-local-args: '["--toolkit"]'
-          use-github-cache: true
-          use-local-cache: true
-
-      - name: Install dependencies
-        run: bash .github/scripts/install_dependencies.sh
-
-      - name: Configure CMake
+      - name: Configure and Build
         run: |
-          source $GITHUB_ENV
-          cmake -DBUILD_TESTS=ON -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH:/usr/local/cuda" -S . -B build
-
-      - name: Build
-        run: cmake --build build
+          cmake -S . -B build \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_SANITIZERS=OFF \
+            -DCMAKE_PREFIX_PATH="$HOME/Install/protobuf-install;$HOME/Install/grpc;$HOME/Install/libtorch;/usr/local/cuda"
+          cmake --build build
 
       - name: Run tests
         run: ctest --test-dir build
