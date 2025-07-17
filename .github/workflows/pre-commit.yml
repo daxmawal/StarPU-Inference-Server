@@ -1,4 +1,4 @@
-1name: pre-commit
+name: pre-commit
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   
 jobs:
   run-pre-commit:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Checkout code

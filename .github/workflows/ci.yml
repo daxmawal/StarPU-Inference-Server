@@ -1,4 +1,4 @@
-name: Simple CI
+name: CI
 
 on: [push, pull_request]
 
@@ -13,61 +13,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ make
-
-      - name: Configure CMake
-        run: cmake -S . -B build
-
-      - name: Build
-        run: cmake --build build
-
-  coverage:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ make lcov
-
-      - name: Configure CMake
-        run: cmake -DENABLE_COVERAGE=ON -S . -B build
-
-      - name: Build
-        run: cmake --build build
-
-      - name: Run tests
-        run: ctest --test-dir build || true
-
-      - name: Collect coverage
-        run: |
-          lcov --capture --directory build --output-file coverage.info
-          lcov --remove coverage.info '/usr/*' --output-file coverage.info
-          lcov --list coverage.info
-
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v3
+      - name: Setup CUDA
+        uses: Jimver/cuda-toolkit@v0.2.26
         with:
-          name: coverage-info
-          path: coverage.info
-
-  sanitizers:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+          cuda: '12.9.1'
+          sub-packages: '[]'
+          non-cuda-sub-packages: '[]'
+          method: local
+          linux-local-args: '["--toolkit"]'
+          use-github-cache: true
+          use-local-cache: true
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake g++ make
+        run: bash .github/scripts/install_dependencies.sh
 
       - name: Configure CMake
-        run: cmake -DENABLE_SANITIZERS=ON -S . -B build
+        run: |
+          source $GITHUB_ENV
+          export CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.9
+          cmake -DBUILD_TESTS=ON \
+                -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH:/usr/local/cuda:/usr/local/cuda-12.9" \
+                -DCUDA_TOOLKIT_ROOT_DIR=$CUDA_TOOLKIT_ROOT_DIR \
+                -S . -B build
 
       - name: Build
         run: cmake --build build
 
       - name: Run tests
-        run: ctest --test-dir build || true
+        run: ctest --test-dir build

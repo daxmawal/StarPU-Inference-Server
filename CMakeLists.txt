@@ -1,69 +1,73 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.28)
 project(starpu_server LANGUAGES CXX)
 
 # === Options ===
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(BUILD_TESTS "Build unit tests" OFF)
 
 # === C++ Settings ===
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # === Source Directories ===
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
-set(CLI_DIR ${SRC_DIR}/cli)
-set(CORE_DIR ${SRC_DIR}/core)
-set(UTILS_DIR ${SRC_DIR}/utils)
-set(STARPU_TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
 
 # === Dependencies ===
-find_package(Torch REQUIRED)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(FindTorchCustom)
+find_package(StarPU REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
+find_package(absl CONFIG REQUIRED)
+find_package(Threads REQUIRED)
+
+set(ABSL_LIBS
+    absl::log_internal_check_op
+    absl::strings
+    absl::base
+)
+
+include(FetchContent)
+if(BUILD_TESTS)
+    enable_testing()
+    FetchContent_Declare(
+        googletest
+        URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+    )
+    FetchContent_MakeAvailable(googletest)
+endif()
 
 add_subdirectory(${SRC_DIR}/proto)
 
-# === StarPU ===
-set(STARPU_DIR $ENV{STARPU_DIR})
-if (NOT STARPU_DIR OR NOT EXISTS "${STARPU_DIR}/include/starpu/1.4/starpu.h")
-    message(FATAL_ERROR "Valid STARPU_DIR environment variable must be set")
-endif()
-
-message(STATUS "Using STARPU_DIR: ${STARPU_DIR}")
-include_directories(${STARPU_DIR}/include)
-link_directories(${STARPU_DIR}/lib)
-
-# === Abseil (gRPC dependency) ===
-set(ABSL_HINT "$ENV{HOME}/Install/grpc/lib")
-foreach(lib IN ITEMS absl_log_internal_check_op absl_strings absl_base)
-    find_library(${lib}_PATH ${lib} HINTS "${ABSL_HINT}" REQUIRED)
-    if(NOT ${lib}_PATH)
-        message(FATAL_ERROR "Could not find ${lib} in ${ABSL_HINT}")
-    endif()
-    list(APPEND ABSL_LIBS ${${lib}_PATH})
-endforeach()
-
-# === Source Files ===
-file(GLOB_RECURSE SOURCES
-    ${CLI_DIR}/*.cpp
-    ${CORE_DIR}/*.cpp
-    ${UTILS_DIR}/*.cpp
-    ${STARPU_TASK_WORKER_DIR}/*.cpp
-)
 
 # === Executable ===
-add_executable(starpu_server ${SOURCES})
+add_executable(starpu_server)
+target_sources(
+    starpu_server
+    PRIVATE
+    ${SRC_DIR}/cli/args_parser.cpp
+    ${SRC_DIR}/cli/main.cpp
+    ${SRC_DIR}/core/inference_runner.cpp
+    ${SRC_DIR}/core/inference_task.cpp
+    ${SRC_DIR}/core/starpu_setup.cpp
+    ${SRC_DIR}/core/tensor_builder.cpp
+    ${SRC_DIR}/core/warmup.cpp
+    ${SRC_DIR}/utils/client_utils.cpp
+    ${SRC_DIR}/utils/inference_validator.cpp
+    ${SRC_DIR}/utils/time_utils.cpp
+    ${SRC_DIR}/starpu_task_worker/starpu_task_worker.cpp
+)
 
-# === C++ Features ===
 target_compile_features(starpu_server PRIVATE cxx_std_23)
+target_compile_definitions(starpu_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
-# === Include Paths ===
+# === Include Directories ===
 target_include_directories(starpu_server PRIVATE
-    ${STARPU_DIR}/include/starpu/1.4
     ${SRC_DIR}
-    ${CORE_DIR}
-    ${UTILS_DIR}
-    ${CLI_DIR}
-    ${STARPU_TASK_WORKER_DIR}
+    ${SRC_DIR}/core
+    ${SRC_DIR}/utils
+    ${SRC_DIR}/cli
+    ${SRC_DIR}/starpu_task_worker
 )
 
 # === Compiler Warnings ===
@@ -89,16 +93,20 @@ endif()
 
 # === Linking ===
 target_link_libraries(starpu_server PRIVATE
-    ${TORCH_LIBRARIES}
-    starpu-1.4
+    Torch::Torch
+    protobuf::libprotobuf
+    gRPC::grpc++
+    StarPU::starpu
+    ${ABSL_LIBS}
 )
-
-# === Compatibility for libtorch ===
-target_compile_definitions(starpu_server PRIVATE -D_GLIBCXX_USE_CXX11_ABI=1)
 
 # === Status Messages ===
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")
 message(STATUS "StarPU include directory: ${STARPU_DIR}/include/starpu/1.4")
-message(STATUS "StarPU library: ${STARPU_DIR}/lib/libstarpu-1.4.so")
+message(STATUS "StarPU library: ${STARPU_LIBRARY}")
 
 add_subdirectory(${SRC_DIR}/grpc)
+
+if(BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
