@@ -10,7 +10,7 @@ sudo apt-get install -y \
     autoconf automake build-essential cmake git \
     libhwloc-dev libltdl-dev libssl-dev libtool libtool-bin \
     m4 ninja-build pkg-config software-properties-common \
-    unzip wget libfxt-dev lcov
+    unzip wget libfxt-dev lcov libnvtoolsext-dev
 
 # GCC 13
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
@@ -73,7 +73,7 @@ cmake .. \
   -DBUILD_SHARED_LIBS=OFF \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build . --parallel 2
+cmake --build . --parallel
 sudo cmake --install .
 cd / && sudo rm -rf /tmp/grpc
 
