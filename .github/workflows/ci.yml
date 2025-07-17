@@ -30,7 +30,7 @@ jobs:
       - name: Configure CMake
         run: |
           source $GITHUB_ENV
-          cmake -DBUILD_TESTS=ON -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" -S . -B build
+          cmake -DBUILD_TESTS=ON -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH:/usr/local/cuda" -S . -B build
 
       - name: Build
         run: cmake --build build
