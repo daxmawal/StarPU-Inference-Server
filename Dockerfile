@@ -2,7 +2,7 @@ FROM nvidia/cuda:12.8.0-devel-ubuntu22.04 AS build-base
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
-ENV HOME=/local/home/jd258565
+ENV HOME=/root
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"

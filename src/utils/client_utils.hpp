@@ -34,5 +34,5 @@ auto create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref,
     int job_id) -> std::shared_ptr<InferenceJob>;
-    
+
 }  // namespace starpu_server::client_utils
