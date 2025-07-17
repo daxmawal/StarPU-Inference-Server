@@ -19,7 +19,7 @@ jobs:
           cuda: '12.9.1'
           sub-packages: '["nvtx"]'
           non-cuda-sub-packages: '[]'
-          method: local
+          method: network
           linux-local-args: '["--toolkit"]'
           use-github-cache: true
           use-local-cache: true
