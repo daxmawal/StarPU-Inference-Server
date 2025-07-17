@@ -28,61 +28,12 @@ jobs:
         run: bash .github/scripts/install_dependencies.sh
 
       - name: Configure CMake
-        run: cmake -DBUILD_TESTS=ON -S . -B build
+        run: |
+          source $GITHUB_ENV
+          cmake -DBUILD_TESTS=ON -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" -S . -B build
 
       - name: Build
         run: cmake --build build
 
       - name: Run tests
         run: ctest --test-dir build
-
-  coverage:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Install dependencies
-        run: bash .github/scripts/install_dependencies.sh
-
-      - name: Configure CMake
-        run: cmake -DENABLE_COVERAGE=ON -DBUILD_TESTS=ON -S . -B build
-
-      - name: Build
-        run: cmake --build build
-
-      - name: Run tests
-        run: ctest --test-dir build || true
-
-      - name: Collect coverage
-        run: |
-          lcov --capture --directory build --output-file coverage.info
-          lcov --remove coverage.info '/usr/*' --output-file coverage.info
-          lcov --list coverage.info
-
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-info
-          path: coverage.info
-
-  sanitizers:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Install dependencies
-        run: bash .github/scripts/install_dependencies.sh
-
-      - name: Configure CMake
-        run: cmake -DENABLE_SANITIZERS=ON -DBUILD_TESTS=ON -S . -B build
-
-      - name: Build
-        run: cmake --build build
-
-      - name: Run tests
-        run: ctest --test-dir build || true
-        
