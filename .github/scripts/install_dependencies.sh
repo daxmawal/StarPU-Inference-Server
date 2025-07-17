@@ -50,8 +50,9 @@ cd /tmp/starpu
 ./configure --prefix=$STARPU_DIR --enable-tracing --with-fxt --disable-hip --disable-opencl --disable-mpi --enable-cuda --disable-fortran --disable-openmp
 make -j"$(nproc)"
 sudo make install
-chmod -R u+w /tmp/starpu/starpupy/src/starpupy.egg-info || true
-cd / && rm -rf /tmp/starpu
+# chmod -R u+w /tmp/starpu/starpupy/src/starpupy.egg-info || true
+cd /
+sudo rm -rf /tmp/starpu
 
 # Build and install gRPC
 git clone -b v1.62.0 --recurse-submodules https://github.com/grpc/grpc.git /tmp/grpc
