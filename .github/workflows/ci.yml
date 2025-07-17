@@ -30,7 +30,11 @@ jobs:
       - name: Configure CMake
         run: |
           source $GITHUB_ENV
-          cmake -DBUILD_TESTS=ON -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH:/usr/local/cuda" -S . -B build
+          export CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.9
+          cmake -DBUILD_TESTS=ON \
+                -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH:/usr/local/cuda:/usr/local/cuda-12.9" \
+                -DCUDA_TOOLKIT_ROOT_DIR=$CUDA_TOOLKIT_ROOT_DIR \
+                -S . -B build
 
       - name: Build
         run: cmake --build build
