@@ -82,3 +82,28 @@ cd / && sudo rm -rf /tmp/grpc
   echo "STARPU_DIR=$STARPU_DIR"
   echo "CMAKE_PREFIX_PATH=$INSTALL_DIR/libtorch;$INSTALL_DIR/grpc;$STARPU_DIR;$INSTALL_DIR/protobuf;$INSTALL_DIR/absl"
 } >> "$GITHUB_ENV"
+
+# --- Manually install nvToolsExt from CUDA 12.3 runfile ---
+mkdir -p /tmp/nvtx
+cd /tmp/nvtx
+
+# Téléchargement de l'installeur CUDA 12.3
+wget https://developer.download.nvidia.com/compute/cuda/12.3.0/local_installers/cuda_12.3.0_545.23.08_linux.run
+
+# Extraction silencieuse (sans affecter le système global)
+sh cuda_12.3.0_545.23.08_linux.run --silent --toolkit --toolkitpath=/tmp/nvtx/cuda
+
+# Création des répertoires au cas où
+sudo mkdir -p /usr/local/cuda-12.9/include
+sudo mkdir -p /usr/local/cuda-12.9/lib64
+
+# Copie des fichiers nécessaires
+sudo cp /tmp/nvtx/cuda/targets/x86_64-linux/include/nvToolsExt.h /usr/local/cuda-12.9/include/
+sudo cp /tmp/nvtx/cuda/targets/x86_64-linux/lib/libnvToolsExt.so /usr/local/cuda-12.9/lib64/
+
+# Nettoyage
+rm -rf /tmp/nvtx
+
+echo "✅ nvToolsExt installation complete:"
+ls -l /usr/local/cuda-12.9/include/nvToolsExt.h || echo "❌ Header not found"
+ls -l /usr/local/cuda-12.9/lib64/libnvToolsExt.so || echo "❌ Library not found"
