@@ -10,7 +10,7 @@ sudo apt-get install -y \
     autoconf automake build-essential cmake git \
     libhwloc-dev libltdl-dev libssl-dev libtool libtool-bin \
     m4 ninja-build pkg-config software-properties-common \
-    unzip wget libfxt-dev lcov
+    unzip wget libfxt-dev lcov libnvtoolsext1
 
 # GCC 13
 sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
