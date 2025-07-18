@@ -1,4 +1,4 @@
-name: Build and Test CI
+name: pipeline
 
 on: [push, pull_request]
 
@@ -6,6 +6,30 @@ permissions:
   contents: read
 
 jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install pre-commit
+        run: pip install pre-commit
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      - name: Check commit message
+        run: |
+          COMMIT_MSG_FILE=$(mktemp)
+          git log -1 --pretty=%B HEAD > "$COMMIT_MSG_FILE"
+          pre-commit run --hook-stage commit-msg --commit-msg-filename "$COMMIT_MSG_FILE"
+
   cmake-format:
     runs-on: ubuntu-latest
     steps:
@@ -44,7 +68,7 @@ jobs:
           clang-format --dry-run --Werror $FILES
 
   build:
-    needs: [clang-format, cmake-format]
+    needs: [pre-commit, clang-format, cmake-format]
     runs-on: self-hosted
 
     steps:
@@ -85,16 +109,16 @@ jobs:
         working-directory: build
         run: |
           chmod +x unit_tests || true
-          
+
       - name: Run tests
-        working-directory: build
-        run: ctest --output-on-failure
+        run: ctest --test-dir build --output-on-failure
 
       - name: Generate coverage report (HTML)
         working-directory: build
         run: |
           gcovr --root .. --html --html-details -o coverage.html
           gcovr --root .. --txt > coverage.txt
+          gcovr --root .. --lcov -o coverage.lcov
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -103,3 +127,4 @@ jobs:
           path: |
             build/coverage.html
             build/coverage.txt
+            build/coverage.lcov
