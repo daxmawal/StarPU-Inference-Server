@@ -1,4 +1,4 @@
-name: CI
+name: Build and Test CI
 
 on: [push, pull_request]
 
@@ -6,7 +6,22 @@ permissions:
   contents: read
 
 jobs:
+  clang-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install clang-format
+        run: sudo apt-get install -y clang-format
+
+      - name: Check formatting
+        run: |
+          FILES=$(find . -regex '.*\.\(cpp\|hpp\|c\|h\)' -not -path "./build/*")
+          clang-format --dry-run --Werror $FILES
+
   build:
+    needs: clang-format
     runs-on: self-hosted
 
     steps:
@@ -22,6 +37,8 @@ jobs:
             -DENABLE_SANITIZERS=OFF \
             -DCMAKE_PREFIX_PATH="$HOME/Install/protobuf-install;$HOME/Install/grpc;$HOME/Install/libtorch;/usr/local/cuda"
           cmake --build build
+        shell: bash
 
       - name: Run tests
-        run: ctest --test-dir build
+        working-directory: build
+        run: ctest --output-on-failure
