@@ -51,18 +51,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Cache dependencies
-        id: cache-install
-        uses: actions/cache@v3
-        with:
-          path: ${{ env.HOME }}/Install
-          key: install-${{ hashFiles('install_dependencies.sh') }}
-
-      - name: Install dependencies
-        if: steps.cache-install.outputs.cache-hit != 'true'
-        run: ./install_dependencies.sh
-        shell: bash
-
       - name: Configure and Build
         run: |
           cmake -S . -B build \
