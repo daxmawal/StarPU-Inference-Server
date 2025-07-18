@@ -44,7 +44,7 @@ jobs:
           clang-format --dry-run --Werror $FILES
 
   build:
-    needs: clang-format
+    needs: [clang-format, cmake-format]
     runs-on: self-hosted
 
     steps:
@@ -56,12 +56,52 @@ jobs:
           cmake -S . -B build \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DBUILD_TESTS=ON \
-            -DENABLE_COVERAGE=OFF \
+            -DENABLE_COVERAGE=ON \
             -DENABLE_SANITIZERS=OFF \
+            -DCMAKE_CXX_FLAGS="--coverage" \
+            -DCMAKE_C_FLAGS="--coverage" \
+            -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
             -DCMAKE_PREFIX_PATH="$HOME/Install/protobuf-install;$HOME/Install/grpc;$HOME/Install/libtorch;/usr/local/cuda"
           cmake --build build
         shell: bash
 
+      - name: Save build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-folder
+          path: build/
+
+  test-and-coverage:
+    needs: build
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-folder
+          path: build/
+
       - name: Run tests
         working-directory: build
         run: ctest --output-on-failure
+
+      - name: Install gcovr
+        run: pip install gcovr
+
+      - name: Generate coverage report (HTML)
+        working-directory: build
+        run: |
+          gcovr --root .. --html --html-details -o coverage.html
+          gcovr --root .. --txt > coverage.txt
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: |
+            build/coverage.html
+            build/coverage.txt
