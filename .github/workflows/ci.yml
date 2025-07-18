@@ -51,6 +51,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Cache dependencies
+        id: cache-install
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.HOME }}/Install
+          key: install-${{ hashFiles('install_dependencies.sh') }}
+
+      - name: Install dependencies
+        if: steps.cache-install.outputs.cache-hit != 'true'
+        run: ./install_dependencies.sh
+        shell: bash
+
       - name: Configure and Build
         run: |
           cmake -S . -B build \
@@ -85,16 +97,16 @@ jobs:
         working-directory: build
         run: |
           chmod +x unit_tests || true
-          
+
       - name: Run tests
-        working-directory: build
-        run: ctest --output-on-failure
+        run: ctest --test-dir build --output-on-failure
 
       - name: Generate coverage report (HTML)
         working-directory: build
         run: |
           gcovr --root .. --html --html-details -o coverage.html
           gcovr --root .. --txt > coverage.txt
+          gcovr --root .. --lcov -o coverage.lcov
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -103,3 +115,4 @@ jobs:
           path: |
             build/coverage.html
             build/coverage.txt
+            build/coverage.lcov
