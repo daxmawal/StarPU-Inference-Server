@@ -1,4 +1,4 @@
-name: Build and Test CI
+name: pipeline
 
 on: [push, pull_request]
 
