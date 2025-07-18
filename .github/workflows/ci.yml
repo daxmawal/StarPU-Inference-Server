@@ -57,10 +57,7 @@ jobs:
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=ON \
-            -DENABLE_SANITIZERS=OFF \
-            -DCMAKE_CXX_FLAGS="--coverage" \
-            -DCMAKE_C_FLAGS="--coverage" \
-            -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+            -DENABLE_SANITIZERS=OFF
           cmake --build build
         shell: bash
 
@@ -84,12 +81,14 @@ jobs:
           name: build-folder
           path: build/
 
+      - name: Restore execute permission on test binaries
+        working-directory: build
+        run: |
+          chmod +x unit_tests || true
+          
       - name: Run tests
         working-directory: build
         run: ctest --output-on-failure
-
-      - name: Install gcovr
-        run: pip install gcovr
 
       - name: Generate coverage report (HTML)
         working-directory: build
