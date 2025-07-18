@@ -39,7 +39,7 @@ InferenceCodelet::InferenceCodelet() : codelet_{}
   starpu_codelet_init(&codelet_);
   codelet_.nbuffers = STARPU_VARIABLE_NBUFFERS;
   codelet_.type = STARPU_FORKJOIN;
-  codelet_.max_parallelism = INT_MAX,
+  codelet_.max_parallelism = INT_MAX;
   codelet_.cpu_funcs[0] = &InferenceCodelet::cpu_inference_func;
   codelet_.cuda_funcs[0] = &InferenceCodelet::cuda_inference_func;
   codelet_.cuda_flags[0] = 1U;

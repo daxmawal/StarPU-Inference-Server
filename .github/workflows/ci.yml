@@ -1,4 +1,4 @@
-name: CI
+name: Build and Test CI
 
 on: [push, pull_request]
 
@@ -6,38 +6,100 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  cmake-format:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install cmake-format
+        run: pip install cmakelang
+
+      - name: Check CMake formatting
+        run: |
+          FILES=$(find . -name 'CMakeLists.txt' -o -name '*.cmake')
+          echo "Checking format for: $FILES"
+
+          fail=0
+          for file in $FILES; do
+            if ! diff -u "$file" <(cmake-format "$file"); then
+              echo "::error file=$file::File is not properly formatted"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  clang-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install clang-format
+        run: sudo apt-get install -y clang-format
+
+      - name: Check formatting
+        run: |
+          FILES=$(find . -regex '.*\.\(cpp\|hpp\|c\|h\)' -not -path "./build/*")
+          clang-format --dry-run --Werror $FILES
+
+  build:
+    needs: [clang-format, cmake-format]
+    runs-on: self-hosted
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Setup CUDA
-        uses: Jimver/cuda-toolkit@v0.2.26
-        with:
-          cuda: '12.9.1'
-          sub-packages: '[]'
-          non-cuda-sub-packages: '[]'
-          method: local
-          linux-local-args: '["--toolkit"]'
-          use-github-cache: true
-          use-local-cache: true
-
-      - name: Install dependencies
-        run: bash .github/scripts/install_dependencies.sh
-
-      - name: Configure CMake
+      - name: Configure and Build
         run: |
-          source $GITHUB_ENV
-          export CUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.9
-          cmake -DBUILD_TESTS=ON \
-                -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH:/usr/local/cuda:/usr/local/cuda-12.9" \
-                -DCUDA_TOOLKIT_ROOT_DIR=$CUDA_TOOLKIT_ROOT_DIR \
-                -S . -B build
+          cmake -S . -B build \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=ON \
+            -DENABLE_SANITIZERS=OFF
+          cmake --build build
+        shell: bash
 
-      - name: Build
-        run: cmake --build build
+      - name: Save build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-folder
+          path: build/
 
+  test-and-coverage:
+    needs: build
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-folder
+          path: build/
+
+      - name: Restore execute permission on test binaries
+        working-directory: build
+        run: |
+          chmod +x unit_tests || true
+          
       - name: Run tests
-        run: ctest --test-dir build
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Generate coverage report (HTML)
+        working-directory: build
+        run: |
+          gcovr --root .. --html --html-details -o coverage.html
+          gcovr --root .. --txt > coverage.txt
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            build/coverage.html
+            build/coverage.txt

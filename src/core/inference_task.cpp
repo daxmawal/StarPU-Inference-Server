@@ -120,7 +120,7 @@ InferenceTask::register_outputs_handles(
 
   for (size_t i = 0; i < outputs_tensors.size(); ++i) {
     handles.push_back(safe_register_tensor_vector(
-        outputs_tensors[i], std::format("input[{}]", i)));
+        outputs_tensors[i], std::format("output[{}]", i)));
   }
 
   return handles;
