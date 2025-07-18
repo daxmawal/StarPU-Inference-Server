@@ -6,6 +6,29 @@ permissions:
   contents: read
 
 jobs:
+  cmake-format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install cmake-format
+        run: pip install cmakelang
+
+      - name: Check CMake formatting
+        run: |
+          FILES=$(find . -name 'CMakeLists.txt' -o -name '*.cmake')
+          echo "Checking format for: $FILES"
+
+          fail=0
+          for file in $FILES; do
+            if ! diff -u "$file" <(cmake-format "$file"); then
+              echo "::error file=$file::File is not properly formatted"
+              fail=1
+            fi
+          done
+          exit $fail
+
   clang-format:
     runs-on: ubuntu-latest
     steps:
