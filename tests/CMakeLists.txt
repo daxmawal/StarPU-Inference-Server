@@ -5,7 +5,7 @@ add_executable(unit_tests test_datatype_utils.cpp test_time_utils.cpp
                           test_input_generator.cpp ${UTILS_DIR}/time_utils.cpp)
 
 set_target_properties(unit_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                                            {CMAKE_BINARY_DIR})
+                                            ${CMAKE_BINARY_DIR})
 
 target_compile_features(unit_tests PRIVATE cxx_std_23)
 target_compile_definitions(starpu_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
