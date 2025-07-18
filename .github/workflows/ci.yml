@@ -60,7 +60,7 @@ jobs:
             -DENABLE_SANITIZERS=OFF \
             -DCMAKE_CXX_FLAGS="--coverage" \
             -DCMAKE_C_FLAGS="--coverage" \
-            -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
+            -DCMAKE_EXE_LINKER_FLAGS="--coverage"
           cmake --build build
         shell: bash
 
