@@ -1,5 +1,4 @@
 #!/bin/bash
-set -euo pipefail
 
 # Find modified C++ files staged for commit
 CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|cc|cxx|h|hpp)$')
