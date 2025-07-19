@@ -137,11 +137,11 @@ main(int argc, char* argv[]) -> int
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
   }
   catch (const starpu_server::InferenceEngineException& e) {
-    std::cerr << "\033[1;31m[Inference Error] " << e.what() << "\033[0m\n";
+    std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";
     return 2;
   }
   catch (const std::exception& e) {
-    std::cerr << "\033[1;31m[General Error] " << e.what() << "\033[0m\n";
+    std::cerr << "\o{33}[1;31m[General Error] " << e.what() << "\o{33}[0m\n";
     return -1;
   }
 
