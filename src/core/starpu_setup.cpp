@@ -225,12 +225,12 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
     conf_.use_explicit_workers_cuda_gpuid = 1U;
     conf_.ncuda = static_cast<int>(opts.device_ids.size());
     for (size_t idx = 0; idx < opts.device_ids.size(); ++idx) {
-      int id = opts.device_ids[idx];
-      if (id < 0) {
+      int device_id = opts.device_ids[idx];
+      if (device_id < 0) {
         throw std::invalid_argument(
             "[ERROR] Invalid CUDA device ID: must be >= 0");
       }
-      conf_.workers_cuda_gpuid[idx] = static_cast<unsigned int>(id);
+      conf_.workers_cuda_gpuid[idx] = static_cast<unsigned int>(device_id);
     }
   }
 

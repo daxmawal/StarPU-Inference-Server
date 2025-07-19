@@ -1,5 +1,5 @@
-#!/bin/sh
-# Enforce conventional commits: type: message
+#!/bin/bash
+set -euo pipefail
 
 pattern="^(feat|fix|docs|style|refactor|test|chore|perf|build|ci|revert): .+"
 message=$(head -n1 "$1")

@@ -19,7 +19,7 @@ namespace {
 // Encapsulates state shared between the worker threads and the signal handler.
 struct ServerContext {
   starpu_server::InferenceQueue* queue_ptr = nullptr;
-  std::unique_ptr<grpc::Server> server;
+  std::unique_ptr<grpc::Server> server{};
   std::atomic<bool> stop_requested{false};
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
@@ -120,8 +120,9 @@ launch_threads(
   std::signal(SIGINT, signal_handler);
 
   {
-    std::unique_lock lk(ctx.stop_mutex);
-    ctx.stop_cv.wait(lk, [] { return server_context().stop_requested.load(); });
+    std::unique_lock lock(ctx.stop_mutex);
+    ctx.stop_cv.wait(
+        lock, [] { return server_context().stop_requested.load(); });
   }
 }
 
@@ -136,11 +137,11 @@ main(int argc, char* argv[]) -> int
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
   }
   catch (const starpu_server::InferenceEngineException& e) {
-    std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";
+    std::cerr << "\033[1;31m[Inference Error] " << e.what() << "\033[0m\n";
     return 2;
   }
   catch (const std::exception& e) {
-    std::cerr << "\o{33}[1;31m[General Error] " << e.what() << "\o{33}[0m\n";
+    std::cerr << "\033[1;31m[General Error] " << e.what() << "\033[0m\n";
     return -1;
   }
 

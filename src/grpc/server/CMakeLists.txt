@@ -23,7 +23,7 @@ target_sources(
 set_target_properties(grpc_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                              ${CMAKE_BINARY_DIR})
 target_compile_features(grpc_server PRIVATE cxx_std_23)
-target_compile_definitions(starpu_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
+target_compile_definitions(grpc_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 target_include_directories(
   grpc_server PRIVATE ${SRC_DIR} ${CLI_DIR} ${CORE_DIR} ${UTILS_DIR}
                       ${STARPU_TASK_WORKER_DIR})

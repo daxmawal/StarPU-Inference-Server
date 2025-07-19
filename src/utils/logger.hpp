@@ -33,13 +33,13 @@ verbosity_style(const VerbosityLevel level)
   using enum VerbosityLevel;
   switch (level) {
     case Info:
-      return {"\o{33}[1;32m", "[INFO] "};  // Green
+      return {"\033[1;32m", "[INFO] "};  // Green
     case Stats:
-      return {"\o{33}[1;35m", "[STATS] "};  // Magenta
+      return {"\033[1;35m", "[STATS] "};  // Magenta
     case Debug:
-      return {"\o{33}[1;34m", "[DEBUG] "};  // Blue
+      return {"\033[1;34m", "[DEBUG] "};  // Blue
     case Trace:
-      return {"\o{33}[1;90m", "[TRACE] "};  // Gray
+      return {"\033[1;90m", "[TRACE] "};  // Gray
     default:
       return {"", ""};
   }
@@ -59,7 +59,7 @@ log_verbose(
   if (std::to_underlying(current_level) >= std::to_underlying(level)) {
     auto [color, label] = verbosity_style(level);
     const std::scoped_lock lock(log_mutex);
-    std::cout << color << label << message << "\o{33}[0m\n";
+    std::cout << color << label << message << "\033[0m\n";
   }
 }
 
@@ -97,7 +97,7 @@ log_warning(const std::string& message)
 {
   static std::mutex log_mutex;
   const std::scoped_lock lock(log_mutex);
-  std::cerr << "\o{33}[1;33m[WARNING] " << message << "\o{33}[0m\n";
+  std::cerr << "\033[1;33m[WARNING] " << message << "\033[0m\n";
 }
 
 inline void
@@ -105,7 +105,7 @@ log_error(const std::string& message)
 {
   static std::mutex log_mutex;
   const std::scoped_lock lock(log_mutex);
-  std::cerr << "\o{33}[1;31m[ERROR] " << message << "\o{33}[0m\n";
+  std::cerr << "\033[1;31m[ERROR] " << message << "\033[0m\n";
 }
 
 [[noreturn]] inline void
@@ -114,7 +114,7 @@ log_fatal(const std::string& message)
   static std::mutex log_mutex;
   {
     const std::scoped_lock lock(log_mutex);
-    std::cerr << "\o{33}[1;41m[FATAL] " << message << "\o{33}[0m\n";
+    std::cerr << "\033[1;41m[FATAL] " << message << "\033[0m\n";
   }
   std::terminate();
 }

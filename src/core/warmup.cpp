@@ -70,7 +70,7 @@ WarmupRunner::client_worker(
       static_cast<std::size_t>(iterations_per_worker);
 
   if (total_size_t > static_cast<size_t>(std::numeric_limits<int>::max())) {
-    throw std::overflow_error("Total dépasse la capacité de int");
+    throw std::overflow_error("Total exceeds int capacity");
   }
 
   const auto total = static_cast<int>(total_size_t);
