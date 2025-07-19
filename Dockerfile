@@ -116,7 +116,6 @@ RUN git clone -b v1.62.0 --recurse-submodules https://github.com/grpc/grpc.git /
 WORKDIR /app
 COPY CMakeLists.txt /app/
 COPY src/ /app/src/
-COPY include/ /app/include/
 
 # Build project
 WORKDIR /app/build

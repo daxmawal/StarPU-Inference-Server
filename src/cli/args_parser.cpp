@@ -335,7 +335,8 @@ parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 // =============================================================================
 struct TransparentEqual {
   using is_transparent = void;
-  bool operator()(std::string_view lhs, std::string_view rhs) const noexcept
+  auto operator()(std::string_view lhs, std::string_view rhs) const noexcept
+      -> bool
   {
     return lhs == rhs;
   }

@@ -19,7 +19,7 @@ namespace {
 // Encapsulates state shared between the worker threads and the signal handler.
 struct ServerContext {
   starpu_server::InferenceQueue* queue_ptr = nullptr;
-  std::unique_ptr<grpc::Server> server;
+  std::unique_ptr<grpc::Server> server{};
   std::atomic<bool> stop_requested{false};
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
@@ -120,8 +120,9 @@ launch_threads(
   std::signal(SIGINT, signal_handler);
 
   {
-    std::unique_lock lk(ctx.stop_mutex);
-    ctx.stop_cv.wait(lk, [] { return server_context().stop_requested.load(); });
+    std::unique_lock lock(ctx.stop_mutex);
+    ctx.stop_cv.wait(
+        lock, [] { return server_context().stop_requested.load(); });
   }
 }
 
