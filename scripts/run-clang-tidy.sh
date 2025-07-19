@@ -44,6 +44,7 @@ CLANG_TIDY_ARGS=(
 
 jq -r '.[].file' "$BUILD_DIR/compile_commands.json" | sort -u | \
   grep -vE '\.pb\.cc$|\.grpc\.pb\.cc$' | \
+  grep -v '/_deps/' | \
   while read -r file; do
     echo "====> Analyzing $file"
     clang-tidy "$file" "${CLANG_TIDY_ARGS[@]}"
