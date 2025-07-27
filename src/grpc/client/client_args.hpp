@@ -11,13 +11,13 @@
 
 namespace starpu_server {
 struct ClientConfig {
-  int iterations = 1;
-  int delay_ms = 0;
   std::vector<int64_t> shape;
-  at::ScalarType type = at::kFloat;
   std::string server_address = "localhost:50051";
   std::string model_name = "example";
   std::string model_version = "1";
+  int iterations = 1;
+  int delay_ms = 0;
+  at::ScalarType type = at::kFloat;
   VerbosityLevel verbosity = VerbosityLevel::Info;
   bool show_help = false;
   bool valid = true;

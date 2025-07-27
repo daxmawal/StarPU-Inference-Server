@@ -71,13 +71,14 @@ struct TensorLayout {
 // =============================================================================
 
 struct InferenceParams {
-  detail::ModelPointers models;  // Model handles (CPU + GPU replicas)
-  detail::TensorLayout layout;   // Tensor dimensions and types
-  size_t num_inputs = 0;         // Number of input tensors
-  size_t num_outputs = 0;        // Number of output tensors
-  int job_id = 0;                // Job identifier for logging/debugging
+  detail::ModelPointers models;
+  detail::TensorLayout layout;
   detail::DeviceInfo device;
-  detail::Timing timing;  // Timing data (for benchmarking)
-  VerbosityLevel verbosity = VerbosityLevel::Silent;  // Logging verbosity
+  detail::Timing timing;
+  size_t num_inputs = 0;
+  size_t num_outputs = 0;
+  int job_id = 0;
+  VerbosityLevel verbosity = VerbosityLevel::Silent;
 };
+
 }  // namespace starpu_server

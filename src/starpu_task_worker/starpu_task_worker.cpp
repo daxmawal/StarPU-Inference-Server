@@ -120,8 +120,8 @@ StarPUTaskRunner::prepare_job_completion_callback(
         {
           const std::scoped_lock lock(*results_mutex_);
           results_->emplace_back(
-              job_id, inputs, results, latency_ms, executed_on, device_id,
-              worker_id, timing_info);
+              inputs, results, latency_ms, timing_info, job_id, device_id,
+              worker_id, executed_on);
         }
 
         log_job_timings(job_id, latency_ms, timing_info);

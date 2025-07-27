@@ -16,13 +16,13 @@
 #include "utils/runtime_config.hpp"
 
 namespace {
-// Encapsulates state shared between the worker threads and the signal handler.
+// Encapsulates state shared between the worker threads and the signal handler
 struct ServerContext {
   starpu_server::InferenceQueue* queue_ptr = nullptr;
   std::unique_ptr<grpc::Server> server{};
-  std::atomic<bool> stop_requested{false};
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
+  std::atomic<bool> stop_requested{false};
 };
 
 auto

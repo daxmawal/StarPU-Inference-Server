@@ -6,7 +6,6 @@
 
 namespace starpu_server {
 struct AsyncClientCall {
-  int request_id = 0;
   inference::ModelInferResponse reply;
   grpc::ClientContext context;
   grpc::Status status;
@@ -14,6 +13,7 @@ struct AsyncClientCall {
       grpc::ClientAsyncResponseReader<inference::ModelInferResponse>>
       response_reader = nullptr;
   std::chrono::high_resolution_clock::time_point start_time;
+  int request_id = 0;
 };
 
 InferenceClient::InferenceClient(

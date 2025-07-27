@@ -74,7 +74,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             -Woverloaded-virtual
             -Wnull-dereference
             -Wdouble-promotion
-            -Wpadded
             -Wformat=2
             -Wundef
             -Wmissing-declarations
