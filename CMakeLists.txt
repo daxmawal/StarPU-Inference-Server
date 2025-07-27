@@ -74,7 +74,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             -Woverloaded-virtual
             -Wnull-dereference
             -Wdouble-promotion
-            -Wformat=2)
+            -Wpadded
+            -Wformat=2
+            -Wundef
+            -Wmissing-declarations
+            -Wmissing-include-dirs
+            -Winline)
 endif()
 
 # === Coverage Flags ===

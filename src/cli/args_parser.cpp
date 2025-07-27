@@ -25,7 +25,7 @@ namespace starpu_server {
 // Shape and Type Parsing: Handle --shape, --shapes, and --types arguments
 // =============================================================================
 
-auto
+static auto
 parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
 {
   std::vector<int64_t> shape;
@@ -60,7 +60,7 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
   return shape;
 }
 
-auto
+static auto
 parse_shapes_string(const std::string& shapes_str)
     -> std::vector<std::vector<int64_t>>
 {
@@ -79,7 +79,7 @@ parse_shapes_string(const std::string& shapes_str)
   return shapes;
 }
 
-auto
+static auto
 parse_type_string(const std::string& type_str) -> at::ScalarType
 {
   static const std::unordered_map<
@@ -114,7 +114,7 @@ parse_type_string(const std::string& type_str) -> at::ScalarType
   return iterator->second;
 }
 
-auto
+static auto
 parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 {
   std::vector<at::ScalarType> types;
@@ -132,7 +132,7 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 // Verbosity Parsing
 // =============================================================================
 
-auto
+static auto
 parse_verbosity_level(const std::string& val) -> VerbosityLevel
 {
   using enum VerbosityLevel;
@@ -158,7 +158,7 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
 // parsing
 // =============================================================================
 
-void
+static void
 check_required(
     const bool condition, const std::string& option_name,
     std::vector<std::string>& missing)
@@ -200,7 +200,7 @@ expect_and_parse(size_t& idx, std::span<char*> args, Func&& parser) -> bool
 // Individual Argument Parsers for --model, --shape, etc.
 // =============================================================================
 
-auto
+static auto
 parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
@@ -211,7 +211,7 @@ parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   return true;
 }
 
-auto
+static auto
 parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
@@ -225,7 +225,7 @@ parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   });
 }
 
-auto
+static auto
 parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& input_shapes = opts.input_shapes;
@@ -234,7 +234,7 @@ parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   });
 }
 
-auto
+static auto
 parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& input_shapes = opts.input_shapes;
@@ -243,7 +243,7 @@ parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   });
 }
 
-auto
+static auto
 parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& input_types = opts.input_types;
@@ -252,7 +252,7 @@ parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   });
 }
 
-auto
+static auto
 parse_verbose(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& verbosity = opts.verbosity;
@@ -261,7 +261,7 @@ parse_verbose(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   });
 }
 
-auto
+static auto
 parse_delay(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& delay_ms = opts.delay_ms;
@@ -273,7 +273,7 @@ parse_delay(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   });
 }
 
-auto
+static auto
 parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
@@ -294,7 +294,7 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   });
 }
 
-auto
+static auto
 parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
@@ -305,7 +305,7 @@ parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   return true;
 }
 
-auto
+static auto
 parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
@@ -319,7 +319,7 @@ parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   });
 }
 
-auto
+static auto
 parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
@@ -342,7 +342,7 @@ struct TransparentEqual {
   }
 };
 
-auto
+static auto
 parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 {
   static const std::unordered_map<
@@ -423,7 +423,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 // Config Validation: Ensures all required fields are present and consistent
 // =============================================================================
 
-auto
+static auto
 validate_config(RuntimeConfig& opts) -> void
 {
   std::vector<std::string> missing;

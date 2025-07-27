@@ -68,7 +68,7 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 // Client Logic: Generates and enqueues inference jobs into the shared queue
 // =============================================================================
 
-void
+static void
 client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, const int iterations)
@@ -96,7 +96,7 @@ client_worker(
 // Model Loading and Cloning to GPU
 // =============================================================================
 
-auto
+static auto
 load_model(const std::string& model_path) -> torch::jit::script::Module
 {
   try {
@@ -108,7 +108,7 @@ load_model(const std::string& model_path) -> torch::jit::script::Module
   }
 }
 
-auto
+static auto
 clone_model_to_gpus(
     const torch::jit::script::Module& model_cpu,
     const std::vector<int>& device_ids)
@@ -131,7 +131,7 @@ clone_model_to_gpus(
 // Input Generation and Reference Inference Execution (CPU only)
 // =============================================================================
 
-auto
+static auto
 generate_inputs(
     const std::vector<std::vector<int64_t>>& shapes,
     const std::vector<torch::Dtype>& types) -> std::vector<torch::Tensor>
@@ -139,7 +139,7 @@ generate_inputs(
   return input_generator::generate_random_inputs(shapes, types);
 }
 
-auto
+static auto
 run_reference_inference(
     torch::jit::script::Module& model,
     const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
@@ -223,7 +223,7 @@ run_warmup(
 // Result Processing: Print latency breakdowns and validate results
 // =============================================================================
 
-void
+static void
 process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
