@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <iostream>
+#include <memory>
 
 #include "args_parser.hpp"
 #include "exceptions.hpp"
@@ -34,8 +35,8 @@ main(int argc, char* argv[]) -> int
 
   // Launch inference process
   try {
-    starpu_server::StarPUSetup starpu(opts);
-    starpu_server::run_inference_loop(opts, starpu);
+    auto starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
+    starpu_server::run_inference_loop(opts, *starpu);
   }
   catch (const starpu_server::InferenceEngineException& e) {
     std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";

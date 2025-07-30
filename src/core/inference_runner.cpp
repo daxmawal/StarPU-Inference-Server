@@ -75,7 +75,7 @@ client_worker(
 {
   auto pregen_inputs =
       client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS);
-  std::mt19937 rng(std::random_device{}());
+  thread_local std::mt19937 rng(std::random_device{}());
 
   auto next_time = std::chrono::steady_clock::now();
   const auto delay = std::chrono::milliseconds(opts.delay_ms);

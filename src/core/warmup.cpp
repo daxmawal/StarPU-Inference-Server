@@ -55,7 +55,7 @@ WarmupRunner::client_worker(
   // Pre-generates a small set of random inputs for reuse
   auto pregen_inputs =
       client_utils::pre_generate_inputs(opts_, NUM_PREGENERATED_INPUTS);
-  std::mt19937 rng(std::random_device{}());
+  thread_local std::mt19937 rng(std::random_device{}());
 
   if (iterations_per_worker < 0) {
     throw std::invalid_argument("iterations_per_worker must be non-negative");

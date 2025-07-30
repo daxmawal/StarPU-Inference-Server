@@ -29,7 +29,7 @@ struct InferenceCallbackContext {
       std::shared_ptr<InferenceJob> job_,
       std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
       int id_, std::vector<starpu_data_handle_t> inputs_,
-      std::vector<starpu_data_handle_t> outputs_);
+      std::vector<starpu_data_handle_t> outputs_) noexcept;
 };
 
 // =============================================================================
@@ -45,7 +45,7 @@ class InferenceTask {
       StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
       torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu,
-      const RuntimeConfig* opts);
+      const RuntimeConfig* opts) noexcept;
 
   // --- Tensor Registration with StarPU ---
   static auto safe_register_tensor_vector(
