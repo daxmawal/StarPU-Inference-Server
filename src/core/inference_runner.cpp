@@ -74,7 +74,8 @@ client_worker(
     const std::vector<torch::Tensor>& outputs_ref, const int iterations)
 {
   auto pregen_inputs =
-      client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS);
+      std::make_unique<std::vector<std::vector<torch::Tensor>>>(
+          client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS));
   thread_local std::mt19937 rng(std::random_device{}());
 
   auto next_time = std::chrono::steady_clock::now();
@@ -82,7 +83,7 @@ client_worker(
   for (auto job_id = 0; job_id < iterations; ++job_id) {
     std::this_thread::sleep_until(next_time);
     next_time += delay;
-    const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
+    const auto& inputs = client_utils::pick_random_input(*pregen_inputs, rng);
     auto job = client_utils::create_job(inputs, outputs_ref, job_id);
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
