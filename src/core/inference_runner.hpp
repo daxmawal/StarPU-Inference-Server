@@ -34,14 +34,14 @@ struct TimingInfo {
 // =============================================================================
 
 struct InferenceResult {
-  int job_id;
   std::vector<torch::Tensor> inputs;
   std::vector<torch::Tensor> results;
   double latency_ms = 0.0;
-  DeviceType executed_on = DeviceType::Unknown;
+  detail::TimingInfo timing_info;
+  int job_id;
   int device_id = -1;
   int worker_id = -1;
-  detail::TimingInfo timing_info;
+  DeviceType executed_on = DeviceType::Unknown;
 };
 
 // =============================================================================

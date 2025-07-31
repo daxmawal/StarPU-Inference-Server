@@ -68,21 +68,22 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 // Client Logic: Generates and enqueues inference jobs into the shared queue
 // =============================================================================
 
-void
+static void
 client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, const int iterations)
 {
   auto pregen_inputs =
-      client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS);
-  std::mt19937 rng(std::random_device{}());
+      std::make_unique<std::vector<std::vector<torch::Tensor>>>(
+          client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS));
+  thread_local std::mt19937 rng(std::random_device{}());
 
   auto next_time = std::chrono::steady_clock::now();
   const auto delay = std::chrono::milliseconds(opts.delay_ms);
   for (auto job_id = 0; job_id < iterations; ++job_id) {
     std::this_thread::sleep_until(next_time);
     next_time += delay;
-    const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
+    const auto& inputs = client_utils::pick_random_input(*pregen_inputs, rng);
     auto job = client_utils::create_job(inputs, outputs_ref, job_id);
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
@@ -96,7 +97,7 @@ client_worker(
 // Model Loading and Cloning to GPU
 // =============================================================================
 
-auto
+static auto
 load_model(const std::string& model_path) -> torch::jit::script::Module
 {
   try {
@@ -108,7 +109,7 @@ load_model(const std::string& model_path) -> torch::jit::script::Module
   }
 }
 
-auto
+static auto
 clone_model_to_gpus(
     const torch::jit::script::Module& model_cpu,
     const std::vector<int>& device_ids)
@@ -131,7 +132,7 @@ clone_model_to_gpus(
 // Input Generation and Reference Inference Execution (CPU only)
 // =============================================================================
 
-auto
+static auto
 generate_inputs(
     const std::vector<std::vector<int64_t>>& shapes,
     const std::vector<torch::Dtype>& types) -> std::vector<torch::Tensor>
@@ -139,7 +140,7 @@ generate_inputs(
   return input_generator::generate_random_inputs(shapes, types);
 }
 
-auto
+static auto
 run_reference_inference(
     torch::jit::script::Module& model,
     const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
@@ -223,7 +224,7 @@ run_warmup(
 // Result Processing: Print latency breakdowns and validate results
 // =============================================================================
 
-void
+static void
 process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,

@@ -9,6 +9,12 @@ repos:
         types: [c++, header]
         files: \.(cpp|cc|cxx|h|hpp)$
 
+      - id: cmake-format-check
+        name: Check CMake formatting with cmake-format
+        entry: .hooks/cmake-format-check.sh
+        language: script
+        files: (CMakeLists\.txt$|\.cmake$)
+        
       - id: commit-msg-check
         name: Enforce conventional commits
         entry: .hooks/commit-msg.sh

@@ -59,22 +59,53 @@ target_include_directories(
                         ${SRC_DIR}/cli ${SRC_DIR}/starpu_task_worker)
 
 # === Compiler Warnings ===
+set(DEBUG_MIN_FRAME_SIZE
+    1024
+    CACHE STRING "Minimum stack frame size for warning")
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(
     starpu_server
     PRIVATE -Wall
             -Wextra
             -Wpedantic
-            -Wconversion
-            -Wsign-conversion
-            -Wshadow
-            -Wold-style-cast
+            -Walloca
             -Wcast-align
-            -Wunused
-            -Woverloaded-virtual
-            -Wnull-dereference
+            -Wcast-qual
+            -Wcomma-subscript
+            -Wctor-dtor-privacy
+            -Wdeprecated-copy-dtor
             -Wdouble-promotion
-            -Wformat=2)
+            -Wduplicated-branches
+            -Wduplicated-cond
+            -Wenum-conversion
+            -Wextra-semi
+            -Wfloat-equal
+            -Wformat=2
+            -Wframe-larger-than=${DEBUG_MIN_FRAME_SIZE}
+            -Wlogical-op
+            -Wmismatched-tags
+            -Wmissing-braces
+            -Wmultichar
+            -Wnoexcept
+            -Wnon-virtual-dtor
+            -Woverloaded-virtual
+            -Wpointer-arith
+            -Wrange-loop-construct
+            -Wrestrict
+            -Wshadow
+            -Wstrict-null-sentinel
+            -Wsuggest-attribute=format
+            -Wsuggest-attribute=malloc
+            -Wvla
+            -Wvolatile
+            -Wwrite-strings
+            -Wmissing-declarations
+            -Wmissing-include-dirs
+            -Winline
+            -Wundef
+            -Wnull-dereference
+            -Wold-style-cast)
 endif()
 
 # === Coverage Flags ===

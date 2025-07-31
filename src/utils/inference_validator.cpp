@@ -20,7 +20,7 @@ constexpr int kPreviewLimit = 10;
 // =============================================================================
 
 // Returns the device on which the inference ran (CPU or CUDA)
-auto
+static auto
 get_inference_device(const InferenceResult& result) -> torch::Device
 {
   switch (result.executed_on) {
@@ -36,7 +36,7 @@ get_inference_device(const InferenceResult& result) -> torch::Device
 }
 
 // Converts input tensors to the appropriate device and wraps them in IValues
-auto
+static auto
 prepare_inputs(
     const std::vector<torch::Tensor>& inputs,
     const torch::Device& device) -> std::vector<torch::IValue>
@@ -53,7 +53,7 @@ prepare_inputs(
 // =============================================================================
 
 // Converts model output (Tensor or Tuple) to a list of tensors
-auto
+static auto
 extract_reference_outputs(
     const torch::IValue& output,
     const InferenceResult& result) -> std::vector<torch::Tensor>
@@ -81,7 +81,7 @@ extract_reference_outputs(
 }
 
 // Compares two lists of tensors (reference vs actual), with logging on mismatch
-auto
+static auto
 compare_outputs(
     const std::vector<torch::Tensor>& reference,
     const std::vector<torch::Tensor>& actual, const InferenceResult& result,

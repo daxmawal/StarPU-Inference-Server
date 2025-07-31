@@ -54,8 +54,9 @@ WarmupRunner::client_worker(
 {
   // Pre-generates a small set of random inputs for reuse
   auto pregen_inputs =
-      client_utils::pre_generate_inputs(opts_, NUM_PREGENERATED_INPUTS);
-  std::mt19937 rng(std::random_device{}());
+      std::make_unique<std::vector<std::vector<torch::Tensor>>>(
+          client_utils::pre_generate_inputs(opts_, NUM_PREGENERATED_INPUTS));
+  thread_local std::mt19937 rng(std::random_device{}());
 
   if (iterations_per_worker < 0) {
     throw std::invalid_argument("iterations_per_worker must be non-negative");
@@ -81,7 +82,7 @@ WarmupRunner::client_worker(
     for (const int worker_id : worker_ids) {
       for (auto iteration = 0; iteration < iterations_per_worker; ++iteration) {
         const auto& inputs =
-            client_utils::pick_random_input(pregen_inputs, rng);
+            client_utils::pick_random_input(*pregen_inputs, rng);
         auto job = client_utils::create_job(inputs, outputs_ref_, job_id);
         job->set_fixed_worker_id(worker_id);
 

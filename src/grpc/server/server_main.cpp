@@ -16,13 +16,13 @@
 #include "utils/runtime_config.hpp"
 
 namespace {
-// Encapsulates state shared between the worker threads and the signal handler.
+// Encapsulates state shared between the worker threads and the signal handler
 struct ServerContext {
   starpu_server::InferenceQueue* queue_ptr = nullptr;
   std::unique_ptr<grpc::Server> server{};
-  std::atomic<bool> stop_requested{false};
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
+  std::atomic<bool> stop_requested{false};
 };
 
 auto
@@ -137,11 +137,11 @@ main(int argc, char* argv[]) -> int
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
   }
   catch (const starpu_server::InferenceEngineException& e) {
-    std::cerr << "\033[1;31m[Inference Error] " << e.what() << "\033[0m\n";
+    std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";
     return 2;
   }
   catch (const std::exception& e) {
-    std::cerr << "\033[1;31m[General Error] " << e.what() << "\033[0m\n";
+    std::cerr << "\o{33}[1;31m[General Error] " << e.what() << "\o{33}[0m\n";
     return -1;
   }
 

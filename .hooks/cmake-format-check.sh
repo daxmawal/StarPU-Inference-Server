@@ -1,11 +1,13 @@
 #!/bin/bash
 
-CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|cc|cxx|h|hpp)$')
+# Find modified CMake files staged for commit
+CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '(CMakeLists.txt|\\.cmake$)')
 
 HAS_ERRORS=0
 
 for FILE in $CHANGED_FILES; do
-    DIFF=$(clang-format --style=file "$FILE" | diff -u "$FILE" -)
+    # Generate diff to see if file is properly formatted
+    DIFF=$(cmake-format "$FILE" | diff -u "$FILE" -)
 
     if [ ! -z "$DIFF" ]; then
         echo "✗ $FILE is not properly formatted."
@@ -19,7 +21,7 @@ done
 if [ "$HAS_ERRORS" -eq 1 ]; then
     echo ""
     echo "X Formatting issues detected. Please run:"
-    echo "    clang-format -i <files>"
+    echo "    cmake-format -i <files>"
     exit 1
 fi
 

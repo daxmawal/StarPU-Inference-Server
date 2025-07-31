@@ -13,27 +13,23 @@ namespace starpu_server {
 // =============================================================================
 
 struct InferenceCallbackContext {
-  std::shared_ptr<InferenceJob> job;  // Job associated with the callback
-  std::shared_ptr<InferenceParams>
-      inference_params;       // Parameters used in the StarPU codelet
-  const RuntimeConfig* opts;  // Program settings
-  int id = 0;                 // Task ID (for logging/debugging)
-  std::vector<starpu_data_handle_t>
-      inputs_handles;  // Registered input data handles
-  std::vector<starpu_data_handle_t> outputs_handles;  // Output data handles
-  std::atomic<int> remaining_outputs_to_acquire{0};
-  std::mutex mutex;
-
+  std::shared_ptr<InferenceJob> job;
+  std::shared_ptr<InferenceParams> inference_params;
+  std::shared_ptr<void> self_keep_alive;
+  const RuntimeConfig* opts = nullptr;
   starpu_data_handle_t* dyn_handles = nullptr;
   starpu_data_access_mode* dyn_modes = nullptr;
-
-  std::shared_ptr<void> self_keep_alive;
+  std::vector<starpu_data_handle_t> inputs_handles;
+  std::vector<starpu_data_handle_t> outputs_handles;
+  int id = 0;
+  std::atomic<int> remaining_outputs_to_acquire{0};
+  std::mutex mutex;
 
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
       std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
       int id_, std::vector<starpu_data_handle_t> inputs_,
-      std::vector<starpu_data_handle_t> outputs_);
+      std::vector<starpu_data_handle_t> outputs_) noexcept;
 };
 
 // =============================================================================
@@ -49,7 +45,7 @@ class InferenceTask {
       StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
       torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu,
-      const RuntimeConfig* opts);
+      const RuntimeConfig* opts) noexcept;
 
   // --- Tensor Registration with StarPU ---
   static auto safe_register_tensor_vector(

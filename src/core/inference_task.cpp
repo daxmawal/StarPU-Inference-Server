@@ -28,7 +28,7 @@ InferenceTask::InferenceTask(
     StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu,
-    const RuntimeConfig* opts)
+    const RuntimeConfig* opts) noexcept
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
       models_gpu_(models_gpu), opts_(opts)
 {
@@ -44,10 +44,10 @@ InferenceCallbackContext::InferenceCallbackContext(
     std::shared_ptr<InferenceJob> job_,
     std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
     int id_, std::vector<starpu_data_handle_t> inputs_,
-    std::vector<starpu_data_handle_t> outputs_)
+    std::vector<starpu_data_handle_t> outputs_) noexcept
     : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
-      id(id_), inputs_handles(std::move(inputs_)),
-      outputs_handles(std::move(outputs_))
+      inputs_handles(std::move(inputs_)), outputs_handles(std::move(outputs_)),
+      id(id_)
 {
 }
 
