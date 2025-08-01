@@ -43,6 +43,31 @@ jobs:
           FILES=$(find . -regex '.*\.\(cpp\|hpp\|c\|h\)' -not -path "./build/*")
           clang-format --dry-run --Werror $FILES
 
+  clang-analyzer:
+    needs: [clang-format, cmake-format]
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Clang Static Analyzer
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_SANITIZERS=OFF
+          scan-build --status-bugs -o clang-analyzer cmake --build build
+        shell: bash
+
+      - name: Upload analyzer report
+        uses: actions/upload-artifact@v4
+        with:
+          name: clang-analyzer-report
+          path: clang-analyzer
+
   build:
     needs: [clang-format, cmake-format]
     runs-on: self-hosted

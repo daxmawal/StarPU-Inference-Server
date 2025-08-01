@@ -60,6 +60,7 @@ main(int argc, char* argv[]) -> int
         torch::rand(config.shape, torch::TensorOptions().dtype(config.type)));
   }
 
+  // RNG for synthetic test data only; not used for security.  // NOSONAR
   thread_local std::mt19937 rng(std::random_device{}());
   std::uniform_int_distribution dist(0, NUM_TENSORS - 1);
 
