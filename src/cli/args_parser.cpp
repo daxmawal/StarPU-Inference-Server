@@ -345,7 +345,7 @@ struct TransparentEqual {
 static auto
 parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 {
-  static const std::unordered_map<
+  const std::unordered_map<
       std::string, std::function<bool(size_t&)>, TransparentHash,
       TransparentEqual>
       dispatch = {

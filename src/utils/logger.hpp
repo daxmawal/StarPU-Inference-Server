@@ -9,10 +9,12 @@
 namespace starpu_server {
 // Logging utilities
 // -----------------
-// Writes to stdout/stderr are guarded by a static mutex so
+// Writes to stdout/stderr are guarded by a global mutex so
 // that concurrent logging from multiple threads does not
 // interleave. Keep the lock scope minimal for better
 // concurrency.
+
+inline std::mutex log_mutex;
 
 enum class VerbosityLevel : std::uint8_t {
   Silent = 0,
@@ -54,8 +56,6 @@ log_verbose(
     const VerbosityLevel level, const VerbosityLevel current_level,
     const std::string& message)
 {
-  static std::mutex log_mutex;
-
   if (std::to_underlying(current_level) >= std::to_underlying(level)) {
     auto [color, label] = verbosity_style(level);
     const std::scoped_lock lock(log_mutex);
@@ -95,7 +95,6 @@ log_trace(const VerbosityLevel lvl, const std::string& msg)
 inline void
 log_warning(const std::string& message)
 {
-  static std::mutex log_mutex;
   const std::scoped_lock lock(log_mutex);
   std::cerr << "\o{33}[1;33m[WARNING] " << message << "\o{33}[0m\n";
 }
@@ -103,7 +102,6 @@ log_warning(const std::string& message)
 inline void
 log_error(const std::string& message)
 {
-  static std::mutex log_mutex;
   const std::scoped_lock lock(log_mutex);
   std::cerr << "\o{33}[1;31m[ERROR] " << message << "\o{33}[0m\n";
 }
@@ -111,7 +109,6 @@ log_error(const std::string& message)
 [[noreturn]] inline void
 log_fatal(const std::string& message)
 {
-  static std::mutex log_mutex;
   {
     const std::scoped_lock lock(log_mutex);
     std::cerr << "\o{33}[1;41m[FATAL] " << message << "\o{33}[0m\n";

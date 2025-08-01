@@ -82,6 +82,9 @@ jobs:
           name: build-folder
           path: build/
 
+      - name: Prepare analyzer directory
+        run: mkdir -p clang-analyzer          
+
       - name: Run Clang Static Analyzer
         run: |
           scan-build --status-bugs -o clang-analyzer cmake --build build
@@ -92,7 +95,8 @@ jobs:
         with:
           name: clang-analyzer-report
           path: clang-analyzer
-
+          if-no-files-found: ignore
+          
   test-and-coverage:
     needs: build
     runs-on: self-hosted

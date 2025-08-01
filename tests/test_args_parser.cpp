@@ -23,7 +23,7 @@ TEST(ArgsParser, ParsesRequiredOptions)
   EXPECT_EQ(opts.input_types[0], at::kFloat);
 }
 
-/*TODO : There is a core dumped in this test
+/*TODO : There is a core dumped in this test*/
 TEST(ArgsParser, MissingRequiredOptions)
 {
   std::array<char*, 5> argv = {
@@ -49,4 +49,3 @@ TEST(ArgsParser, InvalidNumericValue)
 
   EXPECT_FALSE(opts.valid);
 }
-*/
