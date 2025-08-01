@@ -59,7 +59,7 @@ jobs:
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=ON \
             -DENABLE_SANITIZERS=OFF
-          cmake --build build
+          cmake --build build -- -j$(nproc)
         shell: bash
 
       - name: Save build artifacts

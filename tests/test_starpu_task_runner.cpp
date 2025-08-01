@@ -29,3 +29,17 @@ TEST(StarPUTaskRunnerTest, HandleJobExceptionCallback)
   EXPECT_TRUE(results_arg.empty());
   EXPECT_EQ(latency_arg, -1);
 }
+
+TEST(StarPUTaskRunnerTest, ShouldShutdown)
+{
+  RuntimeConfig opts;
+  StarPUTaskRunnerConfig config{};
+  config.opts = &opts;
+  StarPUTaskRunner runner(config);
+
+  auto shutdown_job = InferenceJob::make_shutdown_job();
+  auto normal_job = std::make_shared<InferenceJob>();
+
+  EXPECT_TRUE(runner.should_shutdown(shutdown_job));
+  EXPECT_FALSE(runner.should_shutdown(normal_job));
+}

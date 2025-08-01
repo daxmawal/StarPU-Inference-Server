@@ -50,3 +50,22 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
   EXPECT_EQ(job->get_start_time(), job->timing_info().enqueued_time);
   EXPECT_GT(job->get_start_time().time_since_epoch().count(), 0);
 }
+
+TEST(ClientUtils, PreGenerateInputsProducesValidTensors)
+{
+  RuntimeConfig opts;
+  opts.input_shapes = {{2, 3}, {1}};
+  opts.input_types = {at::kFloat, at::kInt};
+
+  const size_t N = 3;
+  auto batches = pre_generate_inputs(opts, N);
+
+  ASSERT_EQ(batches.size(), N);
+  for (const auto& tensors : batches) {
+    ASSERT_EQ(tensors.size(), opts.input_shapes.size());
+    EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{2, 3}));
+    EXPECT_EQ(tensors[0].dtype(), at::kFloat);
+    EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1}));
+    EXPECT_EQ(tensors[1].dtype(), at::kInt);
+  }
+}
