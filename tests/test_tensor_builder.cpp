@@ -77,3 +77,13 @@ TEST(TensorBuilder, CopyOutputToBufferSizeMismatch)
       TensorBuilder::copy_output_to_buffer(tensor, buffer, 3),
       InferenceExecutionException);
 }
+
+TEST(TensorBuilder, CopyOutputToBufferUnsupportedType)
+{
+  auto tensor =
+      torch::zeros({2}, torch::TensorOptions().dtype(at::kComplexFloat));
+  float buffer[2] = {0.0f, 0.0f};
+  EXPECT_THROW(
+      TensorBuilder::copy_output_to_buffer(tensor, buffer, 2),
+      InferenceExecutionException);
+}
