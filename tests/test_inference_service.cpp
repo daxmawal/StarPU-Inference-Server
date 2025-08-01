@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cstring>
+
 #include "grpc/server/inference_service.hpp"
 
 using namespace starpu_server;
@@ -57,4 +59,39 @@ TEST(InferenceService, RawContentSizeMismatch)
   std::vector<torch::Tensor> inputs;
   auto status = InferenceServiceImpl::validate_and_convert_inputs(&req, inputs);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(InferenceService, PopulateResponseFillsFields)
+{
+  inference::ModelInferRequest req;
+  req.set_model_name("model");
+  req.set_model_version("1");
+
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 10;
+  int64_t send_ms = 20;
+
+  InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, send_ms);
+
+  EXPECT_EQ(reply.model_name(), "model");
+  EXPECT_EQ(reply.model_version(), "1");
+  EXPECT_EQ(reply.server_receive_ms(), recv_ms);
+  EXPECT_EQ(reply.server_send_ms(), send_ms);
+
+  ASSERT_EQ(reply.outputs_size(), 1);
+  ASSERT_EQ(reply.raw_output_contents_size(), 1);
+
+  const auto& out = reply.outputs(0);
+  EXPECT_EQ(out.name(), "output0");
+  EXPECT_EQ(out.datatype(), "INT32");
+  ASSERT_EQ(out.shape_size(), 1);
+  EXPECT_EQ(out.shape(0), 3);
+
+  auto flat = outputs[0].view({-1});
+  const auto& raw = reply.raw_output_contents(0);
+  ASSERT_EQ(raw.size(), flat.numel() * flat.element_size());
+  EXPECT_EQ(0, std::memcmp(raw.data(), flat.data_ptr(), raw.size()));
 }

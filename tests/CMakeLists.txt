@@ -11,6 +11,7 @@ add_executable(
   test_time_utils.cpp
   test_device_type.cpp
   test_transparent_hash.cpp
+  test_warmup_runner.cpp
   test_input_generator.cpp
   test_logger.cpp
   test_input_generator_utils.cpp
@@ -22,9 +23,14 @@ add_executable(
   test_starpu_task_runner.cpp
   test_client_utils.cpp
   test_args_parser.cpp
+  test_inference_task_registration.cpp
+  test_inference_runner_utils.cpp
+  test_inference_service_impl_methods.cpp
+  test_log_exception.cpp
   test_inference_task.cpp
   ${CLI_DIR}/args_parser.cpp
   ${CORE_DIR}/inference_task.cpp
+  ${CORE_DIR}/warmup.cpp
   ${CORE_DIR}/tensor_builder.cpp
   ${CORE_DIR}/starpu_setup.cpp
   ${GRPC_SERVER_DIR}/inference_service.cpp
