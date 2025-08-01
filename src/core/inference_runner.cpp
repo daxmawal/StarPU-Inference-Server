@@ -76,6 +76,7 @@ client_worker(
   auto pregen_inputs =
       std::make_unique<std::vector<std::vector<torch::Tensor>>>(
           client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS));
+  // RNG for synthetic test data only; not used for security.  // NOSONAR
   thread_local std::mt19937 rng(std::random_device{}());
 
   auto next_time = std::chrono::steady_clock::now();

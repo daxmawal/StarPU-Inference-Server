@@ -56,6 +56,7 @@ WarmupRunner::client_worker(
   auto pregen_inputs =
       std::make_unique<std::vector<std::vector<torch::Tensor>>>(
           client_utils::pre_generate_inputs(opts_, NUM_PREGENERATED_INPUTS));
+  // RNG for synthetic test data only; not used for security.  // NOSONAR
   thread_local std::mt19937 rng(std::random_device{}());
 
   if (iterations_per_worker < 0) {
