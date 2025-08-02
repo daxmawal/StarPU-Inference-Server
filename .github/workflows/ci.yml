@@ -152,3 +152,15 @@ jobs:
           flags: unittests
           name: codecov-coverage
           verbose: true
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: build/coverage.html
+
+      - name: Upload coverage summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          path: build/coverage.txt
