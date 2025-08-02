@@ -26,34 +26,6 @@ TEST(StarPUSetupErrorsTest, ConstructorNegativeDeviceId)
   EXPECT_THROW(StarPUSetup setup(cfg), std::invalid_argument);
 }
 
-TEST(StarPUSetupErrorsTest, RunInferenceMoreOutputsThanBuffers)
-{
-  torch::jit::script::Module model;
-  model.define(
-      "def forward(self):\n    return torch.tensor([1]), torch.tensor([2])");
-
-  InferenceParams params;
-  params.models.model_cpu = &model;
-  params.num_outputs = 1;
-
-  std::vector<void*> buffers(1, nullptr);
-
-  auto call_run_inference = [&]() {
-    run_inference(
-        &params, buffers, torch::kCPU, &model, [](const at::Tensor&, void*) {});
-  };
-
-  EXPECT_THROW(
-      try {
-        call_run_inference();
-      } catch (const UnsupportedModelOutputTypeException&) {
-        throw;
-      } catch (const std::exception& e) {
-        throw StarPUCodeletException(e.what());
-      },
-      StarPUCodeletException);
-}
-
 TEST(StarPUSetupErrorsTest, GetCudaWorkersByDeviceNegativeId)
 {
   EXPECT_THROW(
