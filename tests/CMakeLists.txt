@@ -18,6 +18,7 @@ add_executable(
   test_inference_queue.cpp
   test_inference_validator.cpp
   test_inference_service.cpp
+  test_inference_runner_helpers.cpp
   test_tensor_builder.cpp
   test_tensor_builder_from_starpu.cpp
   test_starpu_task_runner.cpp

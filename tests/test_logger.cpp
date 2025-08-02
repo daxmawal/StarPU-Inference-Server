@@ -22,6 +22,7 @@ TEST(Logger, VerbosityStyle)
   check(Debug, "\033[1;34m", "[DEBUG] ");
   check(Trace, "\033[1;90m", "[TRACE] ");
   check(Silent, "", "");
+  check(static_cast<VerbosityLevel>(255), "", "");
 }
 
 TEST(Logger, LogsWhenLevelEnabled)
@@ -71,5 +72,10 @@ TEST(Logger, LogError)
 
 TEST(Logger, LogFatalDeath)
 {
-  EXPECT_DEATH({ log_fatal("boom"); }, "boom");
+  EXPECT_DEATH({ log_fatal("boom"); }, "\\[FATAL\\] boom");
+}
+
+TEST(Logger, LogFatalDeathMessage)
+{
+  EXPECT_DEATH({ log_fatal("second"); }, "second");
 }

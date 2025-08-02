@@ -21,7 +21,7 @@ TEST(DatatypeUtils, DatatypeToScalar)
   EXPECT_THROW(datatype_to_scalar_type("BADTYPE"), std::invalid_argument);
 }
 
-TEST(DatatypeUtils, DatatypeToScalarInvalid)
+TEST(DatatypeUtils, DatatypeToScalarUnknown)
 {
   EXPECT_THROW(datatype_to_scalar_type("UNKNOWN"), std::invalid_argument);
 }
@@ -37,4 +37,14 @@ TEST(DatatypeUtils, ElementSize)
 TEST(DatatypeUtils, ScalarTypeToString)
 {
   EXPECT_EQ(scalar_type_to_string(at::kShort), "INT16");
+}
+
+TEST(DatatypeUtils, ScalarToDatatypeComplexFloat)
+{
+  EXPECT_EQ(scalar_type_to_datatype(at::kComplexFloat), "FP32");
+}
+
+TEST(DatatypeUtils, ElementSizeComplexFloat)
+{
+  EXPECT_EQ(element_size(at::kComplexFloat), sizeof(float));
 }
