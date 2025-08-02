@@ -111,8 +111,12 @@ jobs:
           name: build-folder
           path: build/
 
-      - name: Install gcovr
-        run: pip install gcovr
+      - name: Setup Python venv and install gcovr
+        run: |
+          python3 -m venv gcovr-venv
+          source gcovr-venv/bin/activate
+          pip install gcovr
+        shell: bash
 
       - name: Restore execute permission on test binaries
         working-directory: build
@@ -123,22 +127,9 @@ jobs:
           ctest --test-dir build --output-on-failure -T Test --no-compress-output
           cp build/Testing/*/Test.xml build/junit.xml
 
-      - name: Generate coverage report
+      - name: Generate coverage report using gcovr in venv
         working-directory: build
         run: |
-          gcovr --root .. --html --html-details -o coverage.html
-          gcovr --root .. --txt > coverage.txt
-          gcovr --root .. --lcov -o coverage.lcov
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: build/coverage.lcov
-          fail_ci_if_error: true
-          token: ${{ secrets.CODECOV_TOKEN }}
-
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          ../gcovr-venv/bin/gcovr --root .. --html --html-details -o coverage.html
+          ../gcovr-venv/bin/gcovr --root .. --txt > coverage.txt
+          ../gcovr-venv/bin/gcovr --root .. --lcov -o coverage.lcov
