@@ -137,6 +137,12 @@ jobs:
           ../gcovr-venv/bin/gcovr --root .. --txt > coverage.txt
           ../gcovr-venv/bin/gcovr --root .. --lcov -o coverage.lcov
 
+      - name: DEBUG check for rogue codecov
+        run: |
+          which codecov || echo "codecov not found"
+          type codecov || echo "codecov not defined"
+          pip show codecov-cli || echo "codecov-cli not installed"
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
