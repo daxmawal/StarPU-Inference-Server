@@ -116,33 +116,28 @@ jobs:
         run: |
           chmod +x unit_tests || true
 
-      - name: Install lcov
-        run: sudo apt-get install -y lcov
-
       - name: Run tests
         run: ctest --test-dir build --output-on-failure
 
-      - name: Generate coverage report
+      - name: Generate coverage report (HTML)
         working-directory: build
         run: |
-          lcov --capture --directory . --output-file coverage.info
-          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
-          lcov --list coverage.info
+          gcovr --root .. --html --html-details -o coverage.html
+          gcovr --root .. --txt > coverage.txt
+          gcovr --root .. --lcov -o coverage.lcov
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: build/coverage.info
+          path: |
+            build/coverage.html
+            build/coverage.txt
+            build/coverage.lcov
 
-      - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@v2
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
         with:
-          projectBaseDir: .
-          args: >
-            -Dsonar.projectKey=daxmawal_StarPU-Inference-Server
-            -Dsonar.organization=daxmawal
-            -Dsonar.cfamily.compile-commands=build/compile_commands.json
-            -Dsonar.coverageReportPaths=build/coverage.info
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          files: build/coverage.lcov
+          fail_ci_if_error: true
+          

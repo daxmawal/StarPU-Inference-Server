@@ -1,4 +1,4 @@
-[![CI](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml) [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=daxmawal_StarPU-Inference-Server&metric=coverage)](https://sonarcloud.io/summary/new_code?id=daxmawal_StarPU-Inference-Server)
+[![CI](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml) ![Coverage](https://img.shields.io/endpoint?url=https://codecov.io/gh/daxmawal/StarPU-Inference-Server/branch/main/graph/badge.json)
 # ⚠️ Project Status: In Development
 This project is currently under active development. There are no releases yet, and the interface or features will change frequently. 
 
