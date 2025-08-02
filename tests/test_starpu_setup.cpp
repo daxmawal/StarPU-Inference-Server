@@ -10,14 +10,6 @@
 
 using namespace starpu_server;
 
-namespace starpu_server {
-void run_inference(
-    InferenceParams* params, const std::vector<void*>& buffers,
-    const torch::Device device, torch::jit::script::Module* model,
-    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
-        copy_output_fn);
-}  // namespace starpu_server
-
 TEST(StarPUSetupErrorsTest, ConstructorNegativeDeviceId)
 {
   RuntimeConfig cfg;

@@ -4,6 +4,9 @@ on: [push, pull_request]
 
 permissions:
   contents: read
+  actions: read
+  checks: write
+  pull-requests: write
 
 jobs:
   cmake-format:
@@ -140,3 +143,6 @@ jobs:
           files: build/coverage.lcov
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unittests
+          name: codecov-coverage
+          verbose: true

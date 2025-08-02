@@ -8,17 +8,6 @@
 
 using namespace starpu_server;
 
-static auto
-make_add_one_model() -> torch::jit::script::Module
-{
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
-      def forward(self, x):
-          return x + 1
-  )JIT");
-  return m;
-}
-
 TEST(StarPUSetupCodelet, GetCodeletNotNull)
 {
   RuntimeConfig opts;
