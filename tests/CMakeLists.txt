@@ -21,8 +21,11 @@ add_executable(
   test_tensor_builder.cpp
   test_tensor_builder_from_starpu.cpp
   test_starpu_task_runner.cpp
+  test_inference_task_utils.cpp
   test_client_utils.cpp
   test_args_parser.cpp
+  test_starpu_setup_codelet.cpp
+  test_inference_runner.cpp
   test_inference_task_registration.cpp
   test_inference_runner_utils.cpp
   test_inference_service_impl_methods.cpp
@@ -34,6 +37,7 @@ add_executable(
   ${CORE_DIR}/warmup.cpp
   ${CORE_DIR}/tensor_builder.cpp
   ${CORE_DIR}/starpu_setup.cpp
+  ${CORE_DIR}/inference_runner.cpp
   ${GRPC_SERVER_DIR}/inference_service.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
   ${UTILS_DIR}/inference_validator.cpp

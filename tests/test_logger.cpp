@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <sstream>
 #include <utility>
 
@@ -50,4 +51,9 @@ TEST(Logger, LogError)
 
   std::cerr.rdbuf(old_buf);
   EXPECT_EQ(oss.str(), "\033[1;31m[ERROR] err\033[0m\n");
+}
+
+TEST(Logger, LogFatalDeath)
+{
+  EXPECT_DEATH({ log_fatal("boom"); }, "boom");
 }

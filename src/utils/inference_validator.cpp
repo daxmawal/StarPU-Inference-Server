@@ -68,6 +68,7 @@ extract_reference_outputs(
         log_error(std::format(
             "[Validator] Non-tensor output in tuple for job {}",
             result.job_id));
+        throw InferenceExecutionException("Non-tensor tuple element");
       }
       tensors.push_back(val.toTensor());
     }

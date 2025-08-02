@@ -8,16 +8,6 @@
 
 using namespace starpu_server;
 
-// Provide local definition of make_shutdown_job to avoid linking full
-// inference_runner.cpp
-auto
-InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
-{
-  auto job = std::make_shared<InferenceJob>();
-  job->is_shutdown_signal_ = true;
-  return job;
-}
-
 TEST(InferenceQueue, FifoAndShutdown)
 {
   InferenceQueue queue;

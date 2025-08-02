@@ -2,6 +2,8 @@
 #include <starpu.h>
 #include <torch/script.h>
 
+#include <limits>
+
 #include "core/inference_task.hpp"
 #include "utils/exceptions.hpp"
 

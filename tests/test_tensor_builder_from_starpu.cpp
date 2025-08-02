@@ -1,3 +1,4 @@
+#include <c10/util/Exception.h>
 #include <gtest/gtest.h>
 
 #include "core/inference_params.hpp"
@@ -48,4 +49,22 @@ TEST(TensorBuilderFromStarPU, TooManyInputsThrows)
       TensorBuilder::from_starpu_buffers(
           &params, dummy, torch::Device(torch::kCPU)),
       InferenceExecutionException);
+}
+
+TEST(TensorBuilderFromStarPU, NegativeNumDimsThrows)
+{
+  float input0[1] = {0.0f};
+  starpu_variable_interface buf;
+  buf.ptr = reinterpret_cast<uintptr_t>(input0);
+
+  InferenceParams params{};
+  params.num_inputs = 1;
+  params.layout.num_dims[0] = -1;
+
+  std::array<void*, 1> buffers{&buf};
+
+  EXPECT_THROW(
+      TensorBuilder::from_starpu_buffers(
+          &params, buffers, torch::Device(torch::kCPU)),
+      c10::Error);
 }

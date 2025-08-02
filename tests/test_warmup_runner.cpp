@@ -124,3 +124,27 @@ TEST(WarmupRunnerTest, RunNoCudaReturnsImmediately)
           .count();
   EXPECT_LT(elapsed_ms, 100);
 }
+
+TEST(WarmupRunnerTest, ClientWorkerOverflowIterations)
+{
+  RuntimeConfig opts;
+  opts.input_shapes = {{1}};
+  opts.input_types = {at::kFloat};
+  opts.use_cuda = false;
+
+  StarPUSetup starpu(opts);
+  auto model_cpu = make_identity_model();
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
+
+  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+
+  std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
+  InferenceQueue queue;
+
+  const int iterations = std::numeric_limits<int>::max();
+
+  EXPECT_THROW(
+      runner.client_worker(device_workers, queue, iterations),
+      std::overflow_error);
+}

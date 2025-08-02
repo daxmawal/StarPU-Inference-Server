@@ -58,6 +58,72 @@ TEST(TensorBuilder, CopyOutputToBufferInt)
   }
 }
 
+TEST(TensorBuilder, CopyOutputToBufferDouble)
+{
+  auto tensor =
+      torch::tensor({1.0, 2.0, 3.0}, torch::TensorOptions().dtype(at::kDouble));
+  double buffer[3] = {0.0, 0.0, 0.0};
+  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_DOUBLE_EQ(buffer[i], tensor[i].item<double>());
+  }
+}
+
+TEST(TensorBuilder, CopyOutputToBufferLong)
+{
+  auto tensor =
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kLong));
+  int64_t buffer[3] = {0, 0, 0};
+  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(buffer[i], tensor[i].item<int64_t>());
+  }
+}
+
+TEST(TensorBuilder, CopyOutputToBufferShort)
+{
+  auto tensor =
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kShort));
+  int16_t buffer[3] = {0, 0, 0};
+  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(buffer[i], tensor[i].item<int16_t>());
+  }
+}
+
+TEST(TensorBuilder, CopyOutputToBufferChar)
+{
+  auto tensor =
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kChar));
+  int8_t buffer[3] = {0, 0, 0};
+  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(buffer[i], tensor[i].item<int8_t>());
+  }
+}
+
+TEST(TensorBuilder, CopyOutputToBufferByte)
+{
+  auto tensor =
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kByte));
+  uint8_t buffer[3] = {0, 0, 0};
+  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(buffer[i], tensor[i].item<uint8_t>());
+  }
+}
+
+TEST(TensorBuilder, CopyOutputToBufferBool)
+{
+  auto tensor = torch::tensor(
+      {true, false, true}, torch::TensorOptions().dtype(at::kBool));
+  bool buffer[3] = {false, false, false};
+  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  for (int i = 0; i < 3; ++i) {
+    EXPECT_EQ(buffer[i], tensor[i].item<bool>());
+  }
+}
+
 TEST(TensorBuilder, CopyOutputToBufferSizeMismatch)
 {
   auto tensor = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
