@@ -43,52 +43,6 @@ run_reference_inference(
 }
 
 // -----------------------------------------------------------------------------
-// Stubbed validate_inference_result and process_results for unit testing
-// -----------------------------------------------------------------------------
-static bool
-validate_inference_result_stub(
-    const InferenceResult& result, torch::jit::script::Module& jit_model,
-    VerbosityLevel verbosity)
-{
-  const std::vector<torch::IValue> ivals(
-      result.inputs.begin(), result.inputs.end());
-  auto out = jit_model.forward(ivals).toTensor();
-  bool ok = torch::allclose(out, result.results[0]);
-  if (ok) {
-    log_info(
-        verbosity, std::format(
-                       "[Validator] Job {} passed on {}", result.job_id,
-                       to_string(result.executed_on)));
-  }
-  return ok;
-}
-
-static void
-process_results_local(
-    const std::vector<InferenceResult>& results,
-    torch::jit::script::Module& model_cpu,
-    std::vector<torch::jit::script::Module>& models_gpu,
-    VerbosityLevel verbosity)
-{
-  for (const auto& result : results) {
-    if (!result.results[0].defined()) {
-      log_error(std::format("[Client] Job {} failed.", result.job_id));
-      continue;
-    }
-
-    torch::jit::script::Module* cpu_model = &model_cpu;
-    if (result.executed_on == DeviceType::CUDA) {
-      const auto device_id = static_cast<size_t>(result.device_id);
-      if (device_id < models_gpu.size()) {
-        cpu_model = &models_gpu[device_id];
-      }
-    }
-
-    validate_inference_result_stub(result, *cpu_model, verbosity);
-  }
-}
-
-// -----------------------------------------------------------------------------
 // run_reference_inference tests
 // -----------------------------------------------------------------------------
 
@@ -174,53 +128,4 @@ TEST(InferenceRunnerHelpers, LoadModelAndReferenceOutputError)
   EXPECT_NE(
       oss.str().find("Failed to load model or run reference inference"),
       std::string::npos);
-}
-
-// -----------------------------------------------------------------------------
-// process_results tests
-// -----------------------------------------------------------------------------
-
-TEST(InferenceRunnerHelpers, ProcessResultsLogsErrorOnUndefined)
-{
-  torch::jit::script::Module model_cpu("m");
-  model_cpu.define(R"JIT(def forward(self, x): return x)JIT");
-  std::vector<torch::jit::script::Module> models_gpu;
-
-  InferenceResult result;
-  result.job_id = 1;
-  result.results = {torch::Tensor{}};  // undefined tensor
-
-  std::ostringstream err;
-  auto* old_cerr = std::cerr.rdbuf(err.rdbuf());
-  process_results_local(
-      {result}, model_cpu, models_gpu, VerbosityLevel::Silent);
-  std::cerr.rdbuf(old_cerr);
-
-  EXPECT_NE(err.str().find("Job 1 failed"), std::string::npos);
-}
-
-TEST(InferenceRunnerHelpers, ProcessResultsUsesCorrectCudaModel)
-{
-  torch::jit::script::Module model_cpu("cpu");
-  model_cpu.define(R"JIT(def forward(self, x): return x + 1)JIT");
-
-  torch::jit::script::Module model_gpu0 = model_cpu.clone();
-  torch::jit::script::Module model_gpu1("gpu1");
-  model_gpu1.define(R"JIT(def forward(self, x): return x + 2)JIT");
-  std::vector<torch::jit::script::Module> models_gpu{model_gpu0, model_gpu1};
-
-  auto input = torch::ones({1});
-  InferenceResult result;
-  result.job_id = 2;
-  result.inputs = {input};
-  result.results = {input + 2};
-  result.executed_on = DeviceType::CUDA;
-  result.device_id = 1;
-
-  std::ostringstream out;
-  auto* old_cout = std::cout.rdbuf(out.rdbuf());
-  process_results_local({result}, model_cpu, models_gpu, VerbosityLevel::Info);
-  std::cout.rdbuf(old_cout);
-
-  EXPECT_NE(out.str().find("Job 2 passed on CUDA"), std::string::npos);
 }
