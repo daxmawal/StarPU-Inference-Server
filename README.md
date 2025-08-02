@@ -1,4 +1,4 @@
-[![CI](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml) ![Coverage](https://img.shields.io/endpoint?url=https://codecov.io/gh/daxmawal/StarPU-Inference-Server/branch/main/graph/badge.json)
+[![CI](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg)](https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml) [![codecov](https://codecov.io/github/daxmawal/StarPU-Inference-Server/graph/badge.svg?token=WV7HQ2N4T6)](https://codecov.io/github/daxmawal/StarPU-Inference-Server)
 # ⚠️ Project Status: In Development
 This project is currently under active development. There are no releases yet, and the interface or features will change frequently. 
 
@@ -27,4 +27,9 @@ The main goal is to **maximize throughput** while maintaining **latency control*
 ```bash
 Coming soon
 ```
+
+###### Code Coverage
+
+![Codecov sunburst](https://codecov.io/github/daxmawal/StarPU-Inference-Server/graphs/sunburst.svg?token=WV7HQ2N4T6)
+
 [![SonarQube Cloud](https://sonarcloud.io/images/project_badges/sonarcloud-dark.svg)](https://sonarcloud.io/summary/new_code?id=daxmawal_StarPU-Inference-Server)

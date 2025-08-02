@@ -116,8 +116,10 @@ jobs:
         run: |
           chmod +x unit_tests || true
 
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
+      - name: Run tests and generate JUnit XML
+        run: |
+          ctest --test-dir build --output-on-failure -T Test --no-compress-output
+          cp build/Testing/*/Test.xml build/junit.xml
 
       - name: Generate coverage report (HTML)
         working-directory: build
@@ -140,4 +142,9 @@ jobs:
         with:
           files: build/coverage.lcov
           fail_ci_if_error: true
-          
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
