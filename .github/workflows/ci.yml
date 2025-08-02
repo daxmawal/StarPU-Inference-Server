@@ -96,7 +96,7 @@ jobs:
           name: clang-analyzer-report
           path: clang-analyzer
           if-no-files-found: ignore
-          
+
   test-and-coverage:
     needs: build
     runs-on: self-hosted
@@ -111,39 +111,32 @@ jobs:
           name: build-folder
           path: build/
 
+      - name: Install gcovr
+        run: pip install gcovr
+
       - name: Restore execute permission on test binaries
         working-directory: build
-        run: |
-          chmod +x unit_tests || true
+        run: chmod +x unit_tests || true
 
       - name: Run tests and generate JUnit XML
         run: |
           ctest --test-dir build --output-on-failure -T Test --no-compress-output
           cp build/Testing/*/Test.xml build/junit.xml
 
-      - name: Generate coverage report (HTML)
+      - name: Generate coverage report
         working-directory: build
         run: |
           gcovr --root .. --html --html-details -o coverage.html
           gcovr --root .. --txt > coverage.txt
           gcovr --root .. --lcov -o coverage.lcov
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: |
-            build/coverage.html
-            build/coverage.txt
-            build/coverage.lcov
-
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           files: build/coverage.lcov
           fail_ci_if_error: true
           token: ${{ secrets.CODECOV_TOKEN }}
-          
+
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@v1
