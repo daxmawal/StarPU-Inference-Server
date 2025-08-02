@@ -1,21 +1,10 @@
 #include <gtest/gtest.h>
 
+#define private public
 #include "core/tensor_builder.hpp"
+#undef private
+
 #include "utils/exceptions.hpp"
-
-namespace starpu_server {
-
-class TensorBuilderTestAccessor {
- public:
-  static at::Tensor from_raw_ptr(
-      uintptr_t ptr, at::ScalarType type, const std::vector<int64_t>& shape,
-      torch::Device device)
-  {
-    return TensorBuilder::from_raw_ptr(ptr, type, shape, device);
-  }
-};
-
-}  // namespace starpu_server
 
 using namespace starpu_server;
 
@@ -24,7 +13,7 @@ TEST(TensorBuilder, FromRawPtrFloat)
   float buffer[4] = {1.0f, 2.0f, 3.0f, 4.0f};
   std::vector<int64_t> shape = {2, 2};
   torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilderTestAccessor::from_raw_ptr(
+  auto tensor = TensorBuilder::from_raw_ptr(
       reinterpret_cast<uintptr_t>(buffer), at::kFloat, shape, device);
 
   EXPECT_EQ(tensor.sizes(), (torch::IntArrayRef{2, 2}));
@@ -38,7 +27,7 @@ TEST(TensorBuilder, FromRawPtrInt)
   int32_t buffer[3] = {1, 2, 3};
   std::vector<int64_t> shape = {3};
   torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilderTestAccessor::from_raw_ptr(
+  auto tensor = TensorBuilder::from_raw_ptr(
       reinterpret_cast<uintptr_t>(buffer), at::kInt, shape, device);
 
   EXPECT_EQ(tensor.sizes(), (torch::IntArrayRef{3}));

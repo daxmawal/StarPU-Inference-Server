@@ -1,6 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <format>
+#include <sstream>
+
 #include "utils/client_utils.hpp"
+#include "utils/logger.hpp"
+#include "utils/time_utils.hpp"
 
 using namespace starpu_server;
 using namespace starpu_server::client_utils;
@@ -68,4 +73,32 @@ TEST(ClientUtils, PreGenerateInputsProducesValidTensors)
     EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1}));
     EXPECT_EQ(tensors[1].dtype(), at::kInt);
   }
+}
+
+TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
+{
+  RuntimeConfig opts;
+  opts.verbosity = VerbosityLevel::Trace;
+
+  const int job_id = 2;
+  const int iterations = 5;
+  auto now = std::chrono::high_resolution_clock::now();
+
+  std::ostringstream oss;
+  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
+
+  log_job_enqueued(opts, job_id, iterations, now);
+
+  std::cout.rdbuf(old_buf);
+
+  auto timestamp = time_utils::format_timestamp(now);
+  auto [color, label] = verbosity_style(VerbosityLevel::Trace);
+  std::string expected =
+      std::string(color) + label +
+      std::format(
+          "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
+          job_id + 1, iterations, timestamp) +
+      "\033[0m\n";
+
+  EXPECT_EQ(oss.str(), expected);
 }

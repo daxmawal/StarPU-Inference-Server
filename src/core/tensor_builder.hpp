@@ -7,15 +7,10 @@
 
 namespace starpu_server {
 
-class TensorBuilderTestAccessor;
-
 // =============================================================================
 // TensorBuilder: utility class for wrapping StarPU buffers as torch::Tensor
 // =============================================================================
-
 class TensorBuilder {
-  friend class TensorBuilderTestAccessor;
-
  public:
   TensorBuilder() = delete;
 

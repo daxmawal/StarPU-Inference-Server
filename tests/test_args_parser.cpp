@@ -23,7 +23,6 @@ TEST(ArgsParser, ParsesRequiredOptions)
   EXPECT_EQ(opts.input_types[0], at::kFloat);
 }
 
-/*TODO : There is a core dumped in this test*/
 TEST(ArgsParser, MissingRequiredOptions)
 {
   std::array<char*, 5> argv = {
@@ -52,7 +51,7 @@ TEST(ArgsParser, InvalidNumericValue)
 
 TEST(ArgsParser, ParsesAllOptions)
 {
-  std::array<char*, 27> argv = {
+  std::array<char*, 24> argv = {
       const_cast<char*>("program"),
       const_cast<char*>("--model"),
       const_cast<char*>("model.pt"),
@@ -161,6 +160,49 @@ TEST(ArgsParser, MismatchedShapesAndTypes)
       const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
       const_cast<char*>("1x2,2x3"),  const_cast<char*>("--types"),
       const_cast<char*>("float")};
+
+  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+
+  EXPECT_FALSE(opts.valid);
+}
+
+TEST(ArgsParser, ShapeContainsNonInteger)
+{
+  std::array<char*, 7> argv = {
+      const_cast<char*>("program"),  const_cast<char*>("--model"),
+      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
+      const_cast<char*>("1xax2"),    const_cast<char*>("--types"),
+      const_cast<char*>("float")};
+
+  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+
+  EXPECT_FALSE(opts.valid);
+}
+
+TEST(ArgsParser, ShapeDimensionOutOfRange)
+{
+  std::array<char*, 7> argv = {
+      const_cast<char*>("program"),
+      const_cast<char*>("--model"),
+      const_cast<char*>("model.pt"),
+      const_cast<char*>("--shape"),
+      const_cast<char*>("9223372036854775808"),
+      const_cast<char*>("--types"),
+      const_cast<char*>("float")};
+
+  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+
+  EXPECT_FALSE(opts.valid);
+}
+
+TEST(ArgsParser, InvalidVerboseValue)
+{
+  std::array<char*, 9> argv = {
+      const_cast<char*>("program"),  const_cast<char*>("--model"),
+      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
+      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
+      const_cast<char*>("float"),    const_cast<char*>("--verbose"),
+      const_cast<char*>("5")};
 
   auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
 

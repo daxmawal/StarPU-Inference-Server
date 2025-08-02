@@ -8,6 +8,9 @@ TEST(DatatypeUtils, ScalarToDatatype)
 {
   EXPECT_EQ(scalar_type_to_datatype(at::kFloat), "FP32");
   EXPECT_EQ(scalar_type_to_datatype(at::kInt), "INT32");
+  EXPECT_EQ(scalar_type_to_datatype(at::kHalf), "FP16");
+  EXPECT_EQ(scalar_type_to_datatype(at::kBFloat16), "BF16");
+  EXPECT_EQ(scalar_type_to_datatype(at::kLong), "INT64");
 }
 
 TEST(DatatypeUtils, DatatypeToScalar)
@@ -21,4 +24,10 @@ TEST(DatatypeUtils, ElementSize)
 {
   EXPECT_EQ(element_size(at::kDouble), sizeof(double));
   EXPECT_EQ(element_size(at::kByte), sizeof(uint8_t));
+  EXPECT_EQ(element_size(at::kHalf), 2U);
+}
+
+TEST(DatatypeUtils, ScalarTypeToString)
+{
+  EXPECT_EQ(scalar_type_to_string(at::kShort), "INT16");
 }

@@ -29,3 +29,25 @@ TEST(Logger, NoOutputWhenLevelTooLow)
   std::cout.rdbuf(old_buf);
   EXPECT_EQ(oss.str(), "");
 }
+
+TEST(Logger, LogWarning)
+{
+  std::ostringstream oss;
+  auto* old_buf = std::cerr.rdbuf(oss.rdbuf());
+
+  log_warning("msg");
+
+  std::cerr.rdbuf(old_buf);
+  EXPECT_EQ(oss.str(), "\033[1;33m[WARNING] msg\033[0m\n");
+}
+
+TEST(Logger, LogError)
+{
+  std::ostringstream oss;
+  auto* old_buf = std::cerr.rdbuf(oss.rdbuf());
+
+  log_error("err");
+
+  std::cerr.rdbuf(old_buf);
+  EXPECT_EQ(oss.str(), "\033[1;31m[ERROR] err\033[0m\n");
+}

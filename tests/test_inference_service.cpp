@@ -95,3 +95,80 @@ TEST(InferenceService, PopulateResponseFillsFields)
   ASSERT_EQ(raw.size(), flat.numel() * flat.element_size());
   EXPECT_EQ(0, std::memcmp(raw.data(), flat.data_ptr(), raw.size()));
 }
+
+TEST(InferenceService, SubmitJobAndWaitReturnsInternalOnEmptyOutput)
+{
+  InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs = {torch::zeros({1})};
+  InferenceServiceImpl service(&queue, &ref_outputs);
+
+  std::vector<torch::Tensor> inputs = {torch::tensor({1})};
+  std::vector<torch::Tensor> outputs;
+
+  std::thread worker([&] {
+    std::shared_ptr<InferenceJob> job;
+    queue.wait_and_pop(job);
+    job->get_on_complete()({}, 0.0);
+  });
+
+  auto status = service.submit_job_and_wait(inputs, outputs);
+  worker.join();
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+}
+
+TEST(InferenceService, ModelInferReturnsValidationError)
+{
+  InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  InferenceServiceImpl service(&queue, &ref_outputs);
+
+  auto req = make_valid_request();
+  req.add_raw_input_contents()->assign("", 0);  // trigger validation failure
+  req.set_model_name("m");
+  req.set_model_version("1");
+
+  grpc::ServerContext ctx;
+  inference::ModelInferResponse reply;
+
+  auto status = service.ModelInfer(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(reply.model_name(), "");
+  EXPECT_EQ(reply.model_version(), "");
+  EXPECT_EQ(reply.outputs_size(), 0);
+  EXPECT_EQ(reply.raw_output_contents_size(), 0);
+  EXPECT_EQ(reply.server_receive_ms(), 0);
+  EXPECT_EQ(reply.server_send_ms(), 0);
+}
+
+TEST(InferenceService, ModelInferPropagatesSubmitError)
+{
+  InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs = {torch::zeros({1})};
+  InferenceServiceImpl service(&queue, &ref_outputs);
+
+  auto req = make_valid_request();
+  req.set_model_name("m");
+  req.set_model_version("1");
+
+  std::thread worker([&] {
+    std::shared_ptr<InferenceJob> job;
+    queue.wait_and_pop(job);
+    // return empty outputs to trigger error inside submit_job_and_wait
+    job->get_on_complete()({}, 0.0);
+  });
+
+  grpc::ServerContext ctx;
+  inference::ModelInferResponse reply;
+  auto status = service.ModelInfer(&ctx, &req, &reply);
+  worker.join();
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(reply.model_name(), "");
+  EXPECT_EQ(reply.model_version(), "");
+  EXPECT_EQ(reply.outputs_size(), 0);
+  EXPECT_EQ(reply.raw_output_contents_size(), 0);
+  EXPECT_EQ(reply.server_receive_ms(), 0);
+  EXPECT_EQ(reply.server_send_ms(), 0);
+}

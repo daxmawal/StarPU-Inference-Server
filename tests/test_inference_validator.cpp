@@ -19,6 +19,28 @@ make_add_one_model() -> torch::jit::script::Module
   return m;
 }
 
+static auto
+make_tuple_non_tensor_model() -> torch::jit::script::Module
+{
+  torch::jit::script::Module m{"m"};
+  m.define(R"JIT(
+      def forward(self, x):
+          return (x, 1)
+  )JIT");
+  return m;
+}
+
+static auto
+make_string_model() -> torch::jit::script::Module
+{
+  torch::jit::script::Module m{"m"};
+  m.define(R"JIT(
+      def forward(self, x):
+          return "hello"
+  )JIT");
+  return m;
+}
+
 TEST(InferenceValidator, SuccessfulValidation)
 {
   auto model = make_add_one_model();
@@ -73,4 +95,33 @@ TEST(InferenceValidator, OutputCountMismatch)
 
   EXPECT_FALSE(
       validate_inference_result(result, model, VerbosityLevel::Silent));
+}
+
+TEST(InferenceValidator, ThrowsOnNonTensorTupleElement)
+{
+  auto model = make_tuple_non_tensor_model();
+
+  InferenceResult result;
+  result.inputs = {torch::tensor({1})};
+  result.results = {torch::tensor({1})};
+  result.job_id = 46;
+  result.executed_on = DeviceType::CPU;
+
+  EXPECT_THROW(
+      validate_inference_result(result, model, VerbosityLevel::Silent),
+      InferenceExecutionException);
+}
+
+TEST(InferenceValidator, ThrowsOnUnsupportedOutputType)
+{
+  auto model = make_string_model();
+
+  InferenceResult result;
+  result.inputs = {torch::tensor({1})};
+  result.job_id = 47;
+  result.executed_on = DeviceType::CPU;
+
+  EXPECT_THROW(
+      validate_inference_result(result, model, VerbosityLevel::Silent),
+      InferenceExecutionException);
 }
