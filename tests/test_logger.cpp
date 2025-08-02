@@ -8,6 +8,22 @@
 
 using namespace starpu_server;
 
+TEST(Logger, VerbosityStyle)
+{
+  using enum VerbosityLevel;
+  auto check = [](VerbosityLevel level, const char* color, const char* label) {
+    auto [got_color, got_label] = verbosity_style(level);
+    EXPECT_STREQ(got_color, color);
+    EXPECT_STREQ(got_label, label);
+  };
+
+  check(Info, "\033[1;32m", "[INFO] ");
+  check(Stats, "\033[1;35m", "[STATS] ");
+  check(Debug, "\033[1;34m", "[DEBUG] ");
+  check(Trace, "\033[1;90m", "[TRACE] ");
+  check(Silent, "", "");
+}
+
 TEST(Logger, LogsWhenLevelEnabled)
 {
   std::ostringstream oss;

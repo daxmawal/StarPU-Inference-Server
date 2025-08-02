@@ -19,7 +19,7 @@ make_identity_model() -> torch::jit::script::Module
   return m;
 }
 
-TEST(WarmupRunnerTest, ClientWorkerNegativeIterations)
+TEST(WarmupRunnerTest, ClientWorkerThrowsOnNegativeIterations)
 {
   RuntimeConfig opts;
   opts.input_shapes = {{1}};
@@ -101,7 +101,7 @@ TEST(WarmupRunnerTest, ClientWorkerPositiveIterations)
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
 }
 
-TEST(WarmupRunnerTest, RunNoCudaReturnsImmediately)
+TEST(WarmupRunnerTest, RunReturnsImmediatelyWhenCudaDisabled)
 {
   RuntimeConfig opts;
   opts.input_shapes = {{1}};
@@ -125,7 +125,7 @@ TEST(WarmupRunnerTest, RunNoCudaReturnsImmediately)
   EXPECT_LT(elapsed_ms, 100);
 }
 
-TEST(WarmupRunnerTest, ClientWorkerOverflowIterations)
+TEST(WarmupRunnerTest, ClientWorkerThrowsOnIterationOverflow)
 {
   RuntimeConfig opts;
   opts.input_shapes = {{1}};

@@ -11,6 +11,7 @@ TEST(DatatypeUtils, ScalarToDatatype)
   EXPECT_EQ(scalar_type_to_datatype(at::kHalf), "FP16");
   EXPECT_EQ(scalar_type_to_datatype(at::kBFloat16), "BF16");
   EXPECT_EQ(scalar_type_to_datatype(at::kLong), "INT64");
+  EXPECT_EQ(scalar_type_to_datatype(static_cast<at::ScalarType>(-1)), "FP32");
 }
 
 TEST(DatatypeUtils, DatatypeToScalar)
@@ -20,11 +21,17 @@ TEST(DatatypeUtils, DatatypeToScalar)
   EXPECT_THROW(datatype_to_scalar_type("BADTYPE"), std::invalid_argument);
 }
 
+TEST(DatatypeUtils, DatatypeToScalarInvalid)
+{
+  EXPECT_THROW(datatype_to_scalar_type("UNKNOWN"), std::invalid_argument);
+}
+
 TEST(DatatypeUtils, ElementSize)
 {
   EXPECT_EQ(element_size(at::kDouble), sizeof(double));
   EXPECT_EQ(element_size(at::kByte), sizeof(uint8_t));
   EXPECT_EQ(element_size(at::kHalf), 2U);
+  EXPECT_EQ(element_size(static_cast<at::ScalarType>(-1)), sizeof(float));
 }
 
 TEST(DatatypeUtils, ScalarTypeToString)
