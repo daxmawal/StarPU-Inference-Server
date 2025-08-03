@@ -55,7 +55,7 @@ InferenceCodelet::get_codelet() -> struct starpu_codelet*
 // Utility: extract list of tensors from torch::IValue output
 // =============================================================================
 
-static auto
+auto
 extract_tensors_from_output(const c10::IValue& result)
     -> std::vector<at::Tensor>
 {

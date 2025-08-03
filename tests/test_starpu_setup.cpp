@@ -10,6 +10,10 @@
 
 using namespace starpu_server;
 
+namespace starpu_server {
+std::vector<at::Tensor> extract_tensors_from_output(const c10::IValue& result);
+}
+
 TEST(StarPUSetupErrorsTest, ConstructorNegativeDeviceId)
 {
   RuntimeConfig cfg;
@@ -22,4 +26,12 @@ TEST(StarPUSetupErrorsTest, GetCudaWorkersByDeviceNegativeId)
 {
   EXPECT_THROW(
       StarPUSetup::get_cuda_workers_by_device({-1}), std::invalid_argument);
+}
+
+TEST(StarPUSetupErrorsTest, ExtractTensorsFromOutputUnsupportedType)
+{
+  c10::IValue non_tensor{42};
+  EXPECT_THROW(
+      extract_tensors_from_output(non_tensor),
+      UnsupportedModelOutputTypeException);
 }
