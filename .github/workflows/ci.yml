@@ -135,30 +135,33 @@ jobs:
         run: |
           ROOTDIR="$(cd .. && pwd)"
           ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
-            --exclude '.*/build/.*' \
-            --exclude '.*/build/_deps/.*' \
-            --exclude '.*/tests/.*' \
-            --exclude '.*/external/.*' \
-            --exclude '.*/usr/.*' \
-            --exclude '.*/Install/.*' \
+            --filter "$ROOTDIR/src" \
+            --exclude '^build/.*' \
+            --exclude '^build/_deps/.*' \
+            --exclude '^tests/.*' \
+            --exclude '^external/.*' \
+            --exclude '^usr/.*' \
+            --exclude '^Install/.*' \
             --html --html-details -o coverage.html
 
           ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
-            --exclude '.*/build/.*' \
-            --exclude '.*/build/_deps/.*' \
-            --exclude '.*/tests/.*' \
-            --exclude '.*/external/.*' \
-            --exclude '.*/usr/.*' \
-            --exclude '.*/Install/.*' \
+            --filter "$ROOTDIR/src" \
+            --exclude '^build/.*' \
+            --exclude '^build/_deps/.*' \
+            --exclude '^tests/.*' \
+            --exclude '^external/.*' \
+            --exclude '^usr/.*' \
+            --exclude '^Install/.*' \
             --txt > coverage.txt
 
           ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
-            --exclude '.*/build/.*' \
-            --exclude '.*/build/_deps/.*' \
-            --exclude '.*/tests/.*' \
-            --exclude '.*/external/.*' \
-            --exclude '.*/usr/.*' \
-            --exclude '.*/Install/.*' \
+            --filter "$ROOTDIR/src" \
+            --exclude '^build/.*' \
+            --exclude '^build/_deps/.*' \
+            --exclude '^tests/.*' \
+            --exclude '^external/.*' \
+            --exclude '^usr/.*' \
+            --exclude '^Install/.*' \
             --lcov -o coverage.lcov
 
       - name: Upload coverage to Codecov
