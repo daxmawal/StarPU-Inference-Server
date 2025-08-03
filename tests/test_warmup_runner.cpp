@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 
 #define private public
 #include "core/warmup.hpp"
@@ -147,4 +151,60 @@ TEST(WarmupRunnerTest, ClientWorkerThrowsOnIterationOverflow)
   EXPECT_THROW(
       runner.client_worker(device_workers, queue, iterations),
       std::overflow_error);
+}
+
+TEST(WarmupRunnerTest, WarmupRunWithMockedWorkers)
+{
+  RuntimeConfig opts;
+  opts.input_shapes = {{1}};
+  opts.input_types = {at::kFloat};
+  opts.use_cuda = true;
+
+  StarPUSetup starpu(opts);
+  auto model_cpu = make_identity_model();
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
+
+  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+
+  std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
+  InferenceQueue queue;
+
+  std::atomic<int> completed_jobs{0};
+  std::condition_variable cv;
+  std::mutex m;
+
+  std::jthread server([&]() {
+    while (true) {
+      std::shared_ptr<InferenceJob> job;
+      queue.wait_and_pop(job);
+      if (job->is_shutdown()) {
+        break;
+      }
+      completed_jobs.fetch_add(1);
+      cv.notify_one();
+    }
+  });
+
+  const int iterations_per_worker = 1;
+  std::jthread client([&]() {
+    runner.client_worker(device_workers, queue, iterations_per_worker);
+  });
+
+  size_t total_worker_count = 0;
+  for (const auto& [device, workers] : device_workers) {
+    (void)device;
+    total_worker_count += workers.size();
+  }
+  const size_t total_jobs =
+      static_cast<size_t>(iterations_per_worker) * total_worker_count;
+
+  {
+    std::unique_lock lock(m);
+    cv.wait(lock, [&]() {
+      return static_cast<size_t>(completed_jobs.load()) >= total_jobs;
+    });
+  }
+
+  EXPECT_EQ(static_cast<size_t>(completed_jobs.load()), total_jobs);
 }
