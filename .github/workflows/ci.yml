@@ -135,6 +135,7 @@ jobs:
         run: |
           ROOTDIR="$(realpath ..)"
           ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --exclude '.*/build/.*' \          
             --exclude '.*/build/_deps/.*' \
             --exclude '.*/tests/.*' \
             --exclude '.*/external/.*' \
@@ -143,6 +144,7 @@ jobs:
             --html --html-details -o coverage.html
 
           ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --exclude '.*/build/.*' \          
             --exclude '.*/build/_deps/.*' \
             --exclude '.*/tests/.*' \
             --exclude '.*/external/.*' \
@@ -151,6 +153,7 @@ jobs:
             --txt > coverage.txt
 
           ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --exclude '.*/build/.*' \          
             --exclude '.*/build/_deps/.*' \
             --exclude '.*/tests/.*' \
             --exclude '.*/external/.*' \
