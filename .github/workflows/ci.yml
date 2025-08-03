@@ -133,25 +133,29 @@ jobs:
       - name: Generate coverage report using gcovr in venv
         working-directory: build
         run: |
-          ../gcovr-venv/bin/gcovr --root .. \
-            --filter '.*src/.*' \
-            --exclude '.*build/_deps/.*' \
-            --exclude '.*tests/.*' \
-            --exclude '.*external/.*' \
+          ROOTDIR="$(realpath ..)"
+          ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --filter '^src/' \
+            --exclude '^build/' \
+            --exclude '^tests/' \
+            --exclude '^external/' \
+            --exclude '^_deps/' \
             --html --html-details -o coverage.html
 
-          ../gcovr-venv/bin/gcovr --root .. \
-            --filter '.*src/.*' \
-            --exclude '.*build/_deps/.*' \
-            --exclude '.*tests/.*' \
-            --exclude '.*external/.*' \
+          ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --filter '^src/' \
+            --exclude '^build/' \
+            --exclude '^tests/' \
+            --exclude '^external/' \
+            --exclude '^_deps/' \
             --txt > coverage.txt
 
-          ../gcovr-venv/bin/gcovr --root .. \
-            --filter '.*src/.*' \
-            --exclude '.*build/_deps/.*' \
-            --exclude '.*tests/.*' \
-            --exclude '.*external/.*' \
+          ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --filter '^src/' \
+            --exclude '^build/' \
+            --exclude '^tests/' \
+            --exclude '^external/' \
+            --exclude '^_deps/' \
             --lcov -o coverage.lcov
 
       - name: Upload coverage to Codecov
