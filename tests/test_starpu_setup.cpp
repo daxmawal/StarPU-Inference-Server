@@ -10,10 +10,6 @@
 
 using namespace starpu_server;
 
-namespace starpu_server {
-std::vector<at::Tensor> extract_tensors_from_output(const c10::IValue& result);
-}
-
 TEST(StarPUSetupErrorsTest, ConstructorNegativeDeviceId)
 {
   RuntimeConfig cfg;
