@@ -134,21 +134,21 @@ jobs:
         working-directory: build
         run: |
           ../gcovr-venv/bin/gcovr --root .. \
-            --exclude 'build/_deps/.*' \
-            --exclude 'tests/.*' \
-            --exclude 'external/.*' \
+            --exclude '.*build.*' \
+            --exclude '.*external.*' \
+            --exclude '.*tests.*' \
             --html --html-details -o coverage.html
 
           ../gcovr-venv/bin/gcovr --root .. \
-            --exclude 'build/_deps/.*' \
-            --exclude 'tests/.*' \
-            --exclude 'external/.*' \
+            --exclude '.*build.*' \
+            --exclude '.*external.*' \
+            --exclude '.*tests.*' \
             --txt > coverage.txt
 
           ../gcovr-venv/bin/gcovr --root .. \
-            --exclude 'build/_deps/.*' \
-            --exclude 'tests/.*' \
-            --exclude 'external/.*' \
+            --exclude '.*build.*' \
+            --exclude '.*external.*' \
+            --exclude '.*tests.*' \
             --lcov -o coverage.lcov
 
       - name: Upload coverage to Codecov
