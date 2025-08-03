@@ -130,23 +130,29 @@ jobs:
           ctest --test-dir build --output-on-failure -T Test --no-compress-output --no-tests=error
           cp build/Testing/*/Test.xml build/junit.xml
 
+      - run: find build -name '*.gcda' -print
+        working-directory: build
+
       - name: Generate coverage report using gcovr in venv
         working-directory: build
         run: |
           ../gcovr-venv/bin/gcovr \
             --root .. \
+            --object-directory . \
             --filter 'src/' \
             --exclude 'build/_deps' \
             --exclude '(^|/)tests(/|$)' \
             --html --html-details -o coverage.html
           ../gcovr-venv/bin/gcovr \
             --root .. \
+            --object-directory . \
             --filter 'src/' \
             --exclude 'build/_deps' \
             --exclude '(^|/)tests(/|$)' \
             --txt > coverage.txt
           ../gcovr-venv/bin/gcovr \
             --root .. \
+            --object-directory . \
             --filter 'src/' \
             --exclude 'build/_deps' \
             --exclude '(^|/)tests(/|$)' \
@@ -155,6 +161,7 @@ jobs:
       - name: Fail if no coverage data found
         working-directory: build
         run: |
+          [ -f coverage.txt ] && cat coverage.txt        
           if [ ! -s coverage.txt ] || ! grep -q '^lines:' coverage.txt; then
             echo "No coverage data found by gcovr"
             exit 1
