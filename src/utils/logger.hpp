@@ -72,16 +72,19 @@ log_info(const VerbosityLevel lvl, const std::string& msg)
 {
   log_verbose(VerbosityLevel::Info, lvl, msg);
 }
+
 inline void
 log_stats(const VerbosityLevel lvl, const std::string& msg)
 {
   log_verbose(VerbosityLevel::Stats, lvl, msg);
 }
+
 inline void
 log_debug(const VerbosityLevel lvl, const std::string& msg)
 {
   log_verbose(VerbosityLevel::Debug, lvl, msg);
 }
+
 inline void
 log_trace(const VerbosityLevel lvl, const std::string& msg)
 {

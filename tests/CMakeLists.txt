@@ -14,7 +14,6 @@ add_executable(
   test_warmup_runner.cpp
   test_input_generator.cpp
   test_logger.cpp
-  test_input_generator_utils.cpp
   test_inference_queue.cpp
   test_inference_validator.cpp
   test_inference_service.cpp

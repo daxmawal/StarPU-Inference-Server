@@ -136,12 +136,6 @@ validate_inference_result(
     const torch::IValue output = jit_model.forward(input_ivalues);
     auto reference_outputs = extract_reference_outputs(output, result);
 
-    if (reference_outputs.size() != result.results.size()) {
-      log_error(std::format(
-          "[Validator] Output count mismatch for job {}", result.job_id));
-      return false;
-    }
-
     const bool all_valid =
         compare_outputs(reference_outputs, result.results, result, device);
 

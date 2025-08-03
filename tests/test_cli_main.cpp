@@ -109,3 +109,16 @@ TEST(CliMain, ReturnsMinusOneOnStdException)
   starpu_server::run_inference_loop_hook = nullptr;
   EXPECT_EQ(result, -1);
 }
+
+TEST(CliMain, ReturnsFatalOnInvalidOptions)
+{
+  std::array<char*, 7> argv = {
+      const_cast<char*>("program"),  const_cast<char*>("--model"),
+      const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
+      const_cast<char*>("1x2,2x3"),  const_cast<char*>("--types"),
+      const_cast<char*>("float")};
+
+  EXPECT_DEATH(
+      { cli_main(static_cast<int>(argv.size()), argv.data()); },
+      "Invalid program options\\.");
+}

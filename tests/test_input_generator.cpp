@@ -4,6 +4,20 @@
 
 using namespace starpu_server::input_generator;
 
+TEST(InputGeneratorUtils, UpperBoundEmbedding)
+{
+  std::vector<int64_t> shape = {2, 70};
+  int64_t result = get_integer_upper_bound(shape, 0);
+  EXPECT_EQ(result, BERT_VOCAB_SIZE);
+}
+
+TEST(InputGeneratorUtils, UpperBoundDefault)
+{
+  std::vector<int64_t> shape = {2, 10};
+  int64_t result = get_integer_upper_bound(shape, 0);
+  EXPECT_EQ(result, DEFAULT_INT_HIGH);
+}
+
 TEST(InputGenerator, GeneratesShapesAndTypes)
 {
   std::vector<std::vector<int64_t>> shapes = {{2, 3}, {1, 128}};
@@ -43,4 +57,22 @@ TEST(InputGenerator, ThrowsOnUnsupportedType)
   EXPECT_THROW(
       generate_random_inputs(shapes, types),
       starpu_server::UnsupportedDtypeException);
+}
+
+TEST(InputGenerator, GeneratesBooleanTensor)
+{
+  std::vector<std::vector<int64_t>> shapes = {{2, 2}};
+  std::vector<at::ScalarType> types = {at::kBool};
+
+  auto tensors = generate_random_inputs(shapes, types);
+  ASSERT_EQ(tensors.size(), 1u);
+
+  auto& tensor = tensors[0];
+  EXPECT_EQ(tensor.sizes(), (torch::IntArrayRef{2, 2}));
+  EXPECT_EQ(tensor.dtype(), torch::kBool);
+
+  auto min_val = tensor.min().item<uint8_t>();
+  auto max_val = tensor.max().item<uint8_t>();
+  EXPECT_GE(min_val, 0);
+  EXPECT_LE(max_val, 1);
 }
