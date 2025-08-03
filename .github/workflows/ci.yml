@@ -133,9 +133,9 @@ jobs:
       - name: Generate coverage report using gcovr in venv
         working-directory: build
         run: |
-          ../gcovr-venv/bin/gcovr --root .. --exclude 'build/_deps' --exclude 'tests' --html --html-details -o coverage.html
-          ../gcovr-venv/bin/gcovr --root .. --exclude 'build/_deps' --exclude 'tests' --txt > coverage.txt
-          ../gcovr-venv/bin/gcovr --root .. --exclude 'build/_deps' --exclude 'tests' --lcov -o coverage.lcov
+          ../gcovr-venv/bin/gcovr --root .. --exclude 'build/_deps' --exclude 'tests/' --html --html-details -o coverage.html
+          ../gcovr-venv/bin/gcovr --root .. --exclude 'build/_deps' --exclude 'tests/' --txt > coverage.txt
+          ../gcovr-venv/bin/gcovr --root .. --exclude 'build/_deps' --exclude 'tests/' --lcov -o coverage.lcov
 
       - name: DEBUG check for rogue codecov
         run: |

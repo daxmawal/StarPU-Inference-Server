@@ -72,10 +72,4 @@ target_link_libraries(
           ${ABSL_LIBS}
           StarPU::starpu)
 
-if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(unit_tests PRIVATE -fprofile-arcs -ftest-coverage -O0
-                                            -g)
-  target_link_options(unit_tests PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
-endif()
-
 add_test(NAME unit_tests COMMAND unit_tests)
