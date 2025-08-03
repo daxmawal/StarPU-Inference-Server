@@ -28,8 +28,4 @@ The main goal is to **maximize throughput** while maintaining **latency control*
 Coming soon
 ```
 
-###### Code Coverage
-
-![Codecov sunburst](https://codecov.io/github/daxmawal/StarPU-Inference-Server/graphs/sunburst.svg?token=WV7HQ2N4T6)
-
 [![SonarQube Cloud](https://sonarcloud.io/images/project_badges/sonarcloud-dark.svg)](https://sonarcloud.io/summary/new_code?id=daxmawal_StarPU-Inference-Server)
