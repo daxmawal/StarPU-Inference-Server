@@ -3,6 +3,7 @@
 #include <torch/script.h>
 
 #include "core/inference_task.hpp"
+#include "utils/exceptions.hpp"
 
 using namespace starpu_server;
 
@@ -53,3 +54,60 @@ TEST(InferenceTaskErrors, RecordAndRunCompletionCallbackNoCallback)
   EXPECT_EQ(job->timing_info().callback_end_time, end);
   EXPECT_FALSE(job->has_on_complete());
 }
+
+TEST(InferenceTaskErrors, CheckLimitsTooManyInputs)
+{
+  auto job = std::make_shared<InferenceJob>();
+  torch::jit::script::Module model_cpu{"m"};
+  std::vector<torch::jit::script::Module> models_gpu;
+  RuntimeConfig opts;
+  InferenceTask task(nullptr, job, &model_cpu, &models_gpu, &opts);
+  const size_t num_inputs = InferLimits::MaxInputs + 1;
+  EXPECT_THROW(task.check_limits(num_inputs), InferenceExecutionException);
+}
+
+TEST(InferenceTaskErrors, CheckLimitsTooManyGpuModels)
+{
+  auto job = std::make_shared<InferenceJob>();
+  torch::jit::script::Module model_cpu{"m"};
+  std::vector<torch::jit::script::Module> models_gpu;
+  for (size_t i = 0; i < InferLimits::MaxModelsGPU + 1; ++i) {
+    models_gpu.emplace_back(
+        torch::jit::script::Module{std::string{"m"} + std::to_string(i)});
+  }
+  RuntimeConfig opts;
+  InferenceTask task(nullptr, job, &model_cpu, &models_gpu, &opts);
+  EXPECT_THROW(task.check_limits(1), TooManyGpuModelsException);
+}
+
+/* TODO: there is a core dumped inside this test
+TEST(InferenceTaskErrors, FinalizeInferenceTaskCleansHandlesAndInvokesCallback)
+{
+  auto job = std::make_shared<InferenceJob>();
+  job->set_outputs_tensors({torch::tensor({1})});
+  bool called = false;
+  job->set_on_complete(
+      [&called](std::vector<torch::Tensor>, double) { called = true; });
+  job->set_start_time(std::chrono::high_resolution_clock::now());
+
+  torch::Tensor in_tensor = torch::tensor({1});
+  torch::Tensor out_tensor = torch::tensor({2});
+  auto in_handle = InferenceTask::safe_register_tensor_vector(in_tensor, "in");
+  auto out_handle =
+      InferenceTask::safe_register_tensor_vector(out_tensor, "out");
+
+  RuntimeConfig opts;
+  auto ctx = std::make_shared<InferenceCallbackContext>(
+      job, nullptr, &opts, 0, std::vector<starpu_data_handle_t>{in_handle},
+      std::vector<starpu_data_handle_t>{out_handle});
+  ctx->self_keep_alive = ctx;
+
+  InferenceTask::finalize_inference_task(ctx.get());
+
+  EXPECT_EQ(ctx->inputs_handles[0], nullptr);
+  EXPECT_EQ(ctx->outputs_handles[0], nullptr);
+  EXPECT_TRUE(called);
+  EXPECT_FALSE(ctx->self_keep_alive);
+  EXPECT_GT(job->timing_info().callback_end_time, job->get_start_time());
+}
+*/

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <complex>
+
 #define private public
 #include "core/tensor_builder.hpp"
 #undef private
@@ -34,6 +36,29 @@ TEST(TensorBuilder, FromRawPtrInt)
   EXPECT_EQ(tensor.dtype(), torch::kInt);
   EXPECT_EQ(tensor.device(), device);
   EXPECT_EQ(tensor.data_ptr<int32_t>(), buffer);
+}
+
+TEST(TensorBuilder, FromRawPtrUnsupportedHalf)
+{
+  uint16_t buffer[1] = {0};
+  std::vector<int64_t> shape = {1};
+  torch::Device device(torch::kCPU);
+  EXPECT_THROW(
+      TensorBuilder::from_raw_ptr(
+          reinterpret_cast<uintptr_t>(buffer), at::kHalf, shape, device),
+      InferenceExecutionException);
+}
+
+TEST(TensorBuilder, FromRawPtrUnsupportedComplex)
+{
+  std::complex<float> buffer[1] = {std::complex<float>(0.0f, 0.0f)};
+  std::vector<int64_t> shape = {1};
+  torch::Device device(torch::kCPU);
+  EXPECT_THROW(
+      TensorBuilder::from_raw_ptr(
+          reinterpret_cast<uintptr_t>(buffer), at::kComplexFloat, shape,
+          device),
+      InferenceExecutionException);
 }
 
 TEST(TensorBuilder, CopyOutputToBufferFloat)
@@ -130,6 +155,16 @@ TEST(TensorBuilder, CopyOutputToBufferSizeMismatch)
   int32_t buffer[2];
   EXPECT_THROW(
       TensorBuilder::copy_output_to_buffer(tensor, buffer, 3),
+      InferenceExecutionException);
+}
+
+TEST(TensorBuilder, CopyOutputToBufferExpectedNumelTooSmall)
+{
+  auto tensor =
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt));
+  int32_t buffer[3];
+  EXPECT_THROW(
+      TensorBuilder::copy_output_to_buffer(tensor, buffer, 2),
       InferenceExecutionException);
 }
 

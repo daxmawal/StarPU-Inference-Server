@@ -28,6 +28,7 @@ add_executable(
   test_starpu_setup_codelet.cpp
   test_inference_task_limits.cpp
   test_warmup_runner_edges.cpp
+  test_inference_task_errors.cpp
   test_inference_runner.cpp
   test_inference_task_registration.cpp
   test_inference_runner_errors.cpp

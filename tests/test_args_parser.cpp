@@ -303,3 +303,67 @@ TEST(ArgsParser, NegativeMaxMessageSize)
 
   EXPECT_FALSE(opts.valid);
 }
+
+TEST(ArgsParser, ShapesConsecutiveComma)
+{
+  std::array<char*, 7> argv = {
+      const_cast<char*>("program"),  const_cast<char*>("--model"),
+      const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
+      const_cast<char*>("1x2,,3"),   const_cast<char*>("--types"),
+      const_cast<char*>("float,int")};
+
+  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+
+  EXPECT_FALSE(opts.valid);
+}
+
+TEST(ArgsParser, MissingModelValue)
+{
+  std::array<char*, 6> argv = {
+      const_cast<char*>("program"), const_cast<char*>("--shape"),
+      const_cast<char*>("1x3"),     const_cast<char*>("--types"),
+      const_cast<char*>("float"),   const_cast<char*>("--model")};
+
+  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+
+  EXPECT_FALSE(opts.valid);
+}
+
+TEST(ArgsParser, MissingIterationsValue)
+{
+  std::array<char*, 8> argv = {
+      const_cast<char*>("program"),  const_cast<char*>("--model"),
+      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
+      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
+      const_cast<char*>("float"),    const_cast<char*>("--iterations")};
+
+  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+
+  EXPECT_FALSE(opts.valid);
+}
+
+TEST(ArgsParser, VerboseLevels)
+{
+  using enum VerbosityLevel;
+  const std::array<std::pair<const char*, VerbosityLevel>, 5> cases = {{
+      {"0", Silent},
+      {"1", Info},
+      {"2", Stats},
+      {"3", Debug},
+      {"4", Trace},
+  }};
+
+  for (const auto& [level_str, expected] : cases) {
+    std::array<char*, 9> argv = {
+        const_cast<char*>("program"),  const_cast<char*>("--model"),
+        const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
+        const_cast<char*>("1x3"),      const_cast<char*>("--types"),
+        const_cast<char*>("float"),    const_cast<char*>("--verbose"),
+        const_cast<char*>(level_str)};
+
+    auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+
+    ASSERT_TRUE(opts.valid);
+    EXPECT_EQ(opts.verbosity, expected);
+  }
+}

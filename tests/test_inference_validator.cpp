@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <torch/script.h>
 
+#include <string>
+
 #include "core/inference_runner.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/inference_validator.hpp"
@@ -41,6 +43,17 @@ make_string_model() -> torch::jit::script::Module
   return m;
 }
 
+static auto
+make_error_model() -> torch::jit::script::Module
+{
+  torch::jit::script::Module m{"m"};
+  m.define(R"JIT(
+      def forward(self, x):
+          return torch.mm(x, x)
+  )JIT");
+  return m;
+}
+
 TEST(InferenceValidator, SuccessfulValidation)
 {
   auto model = make_add_one_model();
@@ -64,8 +77,11 @@ TEST(InferenceValidator, FailsOnMismatch)
   result.job_id = 43;
   result.executed_on = DeviceType::CPU;
 
+  testing::internal::CaptureStderr();
   EXPECT_FALSE(
       validate_inference_result(result, model, VerbosityLevel::Silent));
+  std::string logs = testing::internal::GetCapturedStderr();
+  EXPECT_NE(logs.find("Mismatch on output"), std::string::npos);
 }
 
 TEST(InferenceValidator, ThrowsOnUnknownDevice)
@@ -77,6 +93,21 @@ TEST(InferenceValidator, ThrowsOnUnknownDevice)
   result.results = {torch::tensor({2, 3, 4})};
   result.job_id = 44;
   result.executed_on = DeviceType::Unknown;
+
+  EXPECT_THROW(
+      validate_inference_result(result, model, VerbosityLevel::Silent),
+      InferenceExecutionException);
+}
+
+TEST(InferenceValidator, ThrowsOnInvalidDeviceValue)
+{
+  auto model = make_add_one_model();
+
+  InferenceResult result;
+  result.inputs = {torch::tensor({1, 2, 3})};
+  result.results = {torch::tensor({2, 3, 4})};
+  result.job_id = 144;
+  result.executed_on = static_cast<DeviceType>(255);
 
   EXPECT_THROW(
       validate_inference_result(result, model, VerbosityLevel::Silent),
@@ -125,3 +156,22 @@ TEST(InferenceValidator, ThrowsOnUnsupportedOutputType)
       validate_inference_result(result, model, VerbosityLevel::Silent),
       InferenceExecutionException);
 }
+
+/* TODO: There is a core dump on this test
+TEST(InferenceValidator, ReturnsFalseOnC10Error)
+{
+  auto model = make_error_model();
+
+  InferenceResult result;
+  result.inputs = {torch::tensor({1, 2, 3})};
+  result.results = {torch::tensor({2, 3, 4})};
+  result.job_id = 145;
+  result.executed_on = DeviceType::CPU;
+
+  testing::internal::CaptureStderr();
+  EXPECT_FALSE(
+      validate_inference_result(result, model, VerbosityLevel::Silent));
+  std::string logs = testing::internal::GetCapturedStderr();
+  EXPECT_NE(logs.find("C10 error"), std::string::npos);
+}
+*/

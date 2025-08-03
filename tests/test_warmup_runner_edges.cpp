@@ -104,3 +104,31 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnIterationOverflow)
       runner.client_worker(device_workers, queue, iterations),
       std::overflow_error);
 }
+
+TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow)
+{
+  RuntimeConfig opts;
+  opts.input_shapes = {{1}};
+  opts.input_types = {at::kFloat};
+  opts.use_cuda = false;
+
+  StarPUSetup starpu(opts);
+  auto model_cpu = make_identity_model();
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
+
+  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+
+  const int iterations = 1000;
+  const size_t worker_count =
+      static_cast<size_t>(std::numeric_limits<int>::max()) /
+          static_cast<size_t>(iterations) +
+      1;
+  std::vector<int32_t> many_workers(worker_count, 0);
+  std::map<int, std::vector<int32_t>> device_workers = {{0, many_workers}};
+  InferenceQueue queue;
+
+  EXPECT_THROW(
+      runner.client_worker(device_workers, queue, iterations),
+      std::overflow_error);
+}
