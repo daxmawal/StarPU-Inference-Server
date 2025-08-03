@@ -133,9 +133,23 @@ jobs:
       - name: Generate coverage report using gcovr in venv
         working-directory: build
         run: |
-          ../gcovr-venv/bin/gcovr --root .. --html --html-details -o coverage.html
-          ../gcovr-venv/bin/gcovr --root .. --txt > coverage.txt
-          ../gcovr-venv/bin/gcovr --root .. --lcov -o coverage.lcov
+          ../gcovr-venv/bin/gcovr --root .. \
+            --exclude '.*build.*' \
+            --exclude '.*external.*' \
+            --exclude '.*tests.*' \
+            --html --html-details -o coverage.html
+
+          ../gcovr-venv/bin/gcovr --root .. \
+            --exclude '.*build.*' \
+            --exclude '.*external.*' \
+            --exclude '.*tests.*' \
+            --txt > coverage.txt
+
+          ../gcovr-venv/bin/gcovr --root .. \
+            --exclude '.*build.*' \
+            --exclude '.*external.*' \
+            --exclude '.*tests.*' \
+            --lcov -o coverage.lcov
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
