@@ -77,8 +77,10 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnNegativeIterations)
   std::map<int, std::vector<int32_t>> device_workers;
   InferenceQueue queue;
 
+  const int iterations_per_worker = -1;
   EXPECT_THROW(
-      runner.client_worker(device_workers, queue, -1), std::invalid_argument);
+      runner.client_worker(device_workers, queue, iterations_per_worker),
+      std::invalid_argument);
 }
 
 TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnIterationOverflow)

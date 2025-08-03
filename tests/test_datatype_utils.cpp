@@ -39,6 +39,11 @@ TEST(DatatypeUtils, ScalarTypeToString)
   EXPECT_EQ(scalar_type_to_string(at::kShort), "INT16");
 }
 
+TEST(DatatypeUtils, ScalarTypeToStringUnknown)
+{
+  EXPECT_EQ(scalar_type_to_string(static_cast<at::ScalarType>(-1)), "FP32");
+}
+
 TEST(DatatypeUtils, ScalarToDatatypeComplexFloat)
 {
   EXPECT_EQ(scalar_type_to_datatype(at::kComplexFloat), "FP32");
@@ -47,4 +52,16 @@ TEST(DatatypeUtils, ScalarToDatatypeComplexFloat)
 TEST(DatatypeUtils, ElementSizeComplexFloat)
 {
   EXPECT_EQ(element_size(at::kComplexFloat), sizeof(float));
+}
+
+TEST(DatatypeUtils, StringToDtypeCaseInsensitive)
+{
+  EXPECT_EQ(datatype_to_scalar_type("fp32"), at::kFloat);
+  EXPECT_EQ(datatype_to_scalar_type("Fp64"), at::kDouble);
+  EXPECT_EQ(datatype_to_scalar_type("INT8"), at::kChar);
+}
+
+TEST(DatatypeUtils, StringToDtypeInvalid)
+{
+  EXPECT_THROW(datatype_to_scalar_type("notatype"), std::invalid_argument);
 }

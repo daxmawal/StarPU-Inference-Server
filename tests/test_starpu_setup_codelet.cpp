@@ -27,3 +27,9 @@ TEST(StarPUSetupCodelet, GetCudaWorkersSingleDevice)
   auto workers = StarPUSetup::get_cuda_workers_by_device({0});
   EXPECT_FALSE(workers.empty());
 }
+
+TEST(StarPUSetupCodelet, GetCudaWorkersNegativeDeviceThrows)
+{
+  EXPECT_THROW(
+      StarPUSetup::get_cuda_workers_by_device({-1}), std::invalid_argument);
+}
