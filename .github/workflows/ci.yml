@@ -130,9 +130,6 @@ jobs:
           ctest --test-dir build --output-on-failure -T Test --no-compress-output --no-tests=error
           cp build/Testing/*/Test.xml build/junit.xml
 
-      - run: find build -name '*.gcda' -print
-        working-directory: build
-
       - name: Generate coverage report using gcovr in venv
         working-directory: build
         run: |
@@ -166,12 +163,6 @@ jobs:
             echo "No coverage data found by gcovr"
             exit 1
           fi
-
-      - name: DEBUG check for rogue codecov
-        run: |
-          which codecov || echo "codecov not found"
-          type codecov || echo "codecov not defined"
-          pip show codecov-cli || echo "codecov-cli not installed"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
