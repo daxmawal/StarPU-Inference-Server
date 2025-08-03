@@ -23,6 +23,10 @@ main(int argc, char* argv[]) -> int
     return 0;
   }
 
+  if (!opts.valid) {
+    starpu_server::log_fatal("Invalid program options.\n");
+  }
+
   // Display configuration summary
   std::cout << "__cplusplus = " << __cplusplus << "\n"
             << "LibTorch version: " << TORCH_VERSION << "\n"
