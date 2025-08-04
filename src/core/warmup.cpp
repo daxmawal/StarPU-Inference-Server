@@ -106,6 +106,10 @@ WarmupRunner::client_worker(
 void
 WarmupRunner::run(int iterations_per_worker)
 {
+  if (iterations_per_worker < 0) {
+    throw std::invalid_argument("iterations_per_worker must be non-negative");
+  }
+
   if (!opts_.use_cuda) {
     return;
   }
