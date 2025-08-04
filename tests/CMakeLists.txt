@@ -35,7 +35,7 @@ add_executable(
   test_inference_service_impl_methods.cpp
   test_log_exception.cpp
   test_run_inference.cpp
-  test_run_codelet_inference.cpp
+  test_inference_task_lifecycle.cpp
   test_cli_main.cpp
   test_starpu_setup.cpp
   test_inference_service_validation.cpp
