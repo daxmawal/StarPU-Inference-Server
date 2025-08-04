@@ -5,8 +5,6 @@
 #include "core/tensor_builder.hpp"
 #include "utils/exceptions.hpp"
 
-using namespace starpu_server;
-
 TEST(TensorBuilderFromStarPU, BuildsTensors)
 {
   float input0[3] = {1.0f, 2.0f, 3.0f};
@@ -15,7 +13,7 @@ TEST(TensorBuilderFromStarPU, BuildsTensors)
   buffers_raw[0].ptr = reinterpret_cast<uintptr_t>(input0);
   buffers_raw[1].ptr = reinterpret_cast<uintptr_t>(input1);
 
-  InferenceParams params{};
+  starpu_server::InferenceParams params{};
   params.num_inputs = 2;
   params.layout.num_dims[0] = 1;
   params.layout.dims[0][0] = 3;
@@ -26,7 +24,7 @@ TEST(TensorBuilderFromStarPU, BuildsTensors)
   params.layout.input_types[1] = at::kInt;
 
   std::array<void*, 2> buffers{&buffers_raw[0], &buffers_raw[1]};
-  auto tensors = TensorBuilder::from_starpu_buffers(
+  auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
       &params, buffers, torch::Device(torch::kCPU));
 
   ASSERT_EQ(tensors.size(), 2u);
@@ -41,14 +39,14 @@ TEST(TensorBuilderFromStarPU, BuildsTensors)
 
 TEST(TensorBuilderFromStarPU, TooManyInputsThrows)
 {
-  InferenceParams params{};
-  params.num_inputs = InferLimits::MaxInputs + 1;
+  starpu_server::InferenceParams params{};
+  params.num_inputs = starpu_server::InferLimits::MaxInputs + 1;
   std::vector<void*> dummy(params.num_inputs, nullptr);
 
   EXPECT_THROW(
-      TensorBuilder::from_starpu_buffers(
+      starpu_server::TensorBuilder::from_starpu_buffers(
           &params, dummy, torch::Device(torch::kCPU)),
-      InferenceExecutionException);
+      starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilderFromStarPU, NegativeNumDimsThrows)
@@ -57,14 +55,14 @@ TEST(TensorBuilderFromStarPU, NegativeNumDimsThrows)
   starpu_variable_interface buf;
   buf.ptr = reinterpret_cast<uintptr_t>(input0);
 
-  InferenceParams params{};
+  starpu_server::InferenceParams params{};
   params.num_inputs = 1;
   params.layout.num_dims[0] = -1;
 
   std::array<void*, 1> buffers{&buf};
 
   EXPECT_THROW(
-      TensorBuilder::from_starpu_buffers(
+      starpu_server::TensorBuilder::from_starpu_buffers(
           &params, buffers, torch::Device(torch::kCPU)),
       c10::Error);
 }

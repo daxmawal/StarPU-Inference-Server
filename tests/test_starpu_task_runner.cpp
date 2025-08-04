@@ -1,18 +1,66 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+
 #include "core/inference_params.hpp"
 #include "core/inference_runner.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
-
-using namespace starpu_server;
 
 struct SomeException : public std::exception {
   const char* what() const noexcept override { return "SomeException"; }
 };
 
-TEST(StarPUTaskRunnerTest, HandleJobExceptionCallback)
+class StarPUTaskRunnerFixture : public ::testing::Test {
+ protected:
+  starpu_server::InferenceQueue queue_;
+  torch::jit::script::Module model_cpu_;
+  std::vector<torch::jit::script::Module> models_gpu_;
+  starpu_server::RuntimeConfig opts_;
+  std::vector<starpu_server::InferenceResult> results_;
+  std::mutex results_mutex_;
+  std::atomic<int> completed_jobs_;
+  std::condition_variable cv_;
+
+  starpu_server::StarPUTaskRunnerConfig config_{};
+  std::unique_ptr<starpu_server::StarPUTaskRunner> runner_;
+
+  void SetUp() override
+  {
+    completed_jobs_ = 0;
+    config_.queue = &queue_;
+    config_.model_cpu = &model_cpu_;
+    config_.models_gpu = &models_gpu_;
+    config_.starpu = nullptr;
+    config_.opts = &opts_;
+    config_.results = &results_;
+    config_.results_mutex = &results_mutex_;
+    config_.completed_jobs = &completed_jobs_;
+    config_.all_done_cv = &cv_;
+    runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+  }
+
+  starpu_server::StarPUTaskRunner& get_runner() { return *runner_; }
+  starpu_server::InferenceQueue& get_queue() { return queue_; }
+  torch::jit::script::Module& get_model_cpu() { return model_cpu_; }
+  std::vector<torch::jit::script::Module>& get_models_gpu()
+  {
+    return models_gpu_;
+  }
+  starpu_server::RuntimeConfig& get_opts() { return opts_; }
+  std::vector<starpu_server::InferenceResult>& get_results()
+  {
+    return results_;
+  }
+  std::mutex& get_results_mutex() { return results_mutex_; }
+  std::atomic<int>& get_completed_jobs() { return completed_jobs_; }
+  std::condition_variable& get_cv() { return cv_; }
+};
+
+TEST_F(StarPUTaskRunnerFixture, HandleJobExceptionCallback)
 {
-  auto job = std::make_shared<InferenceJob>();
+  auto job = std::make_shared<starpu_server::InferenceJob>();
   bool called = false;
   std::vector<torch::Tensor> results_arg;
   double latency_arg = 0.0;
@@ -24,52 +72,24 @@ TEST(StarPUTaskRunnerTest, HandleJobExceptionCallback)
         latency_arg = latency;
       });
 
-  StarPUTaskRunner::handle_job_exception(job, SomeException{});
+  starpu_server::StarPUTaskRunner::handle_job_exception(job, SomeException{});
 
   EXPECT_TRUE(called);
   EXPECT_TRUE(results_arg.empty());
   EXPECT_EQ(latency_arg, -1);
 }
 
-TEST(StarPUTaskRunnerTest, ShouldShutdown)
+TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
 {
-  RuntimeConfig opts;
-  StarPUTaskRunnerConfig config{};
-  config.opts = &opts;
-  StarPUTaskRunner runner(config);
-
-  auto shutdown_job = InferenceJob::make_shutdown_job();
-  auto normal_job = std::make_shared<InferenceJob>();
-
-  EXPECT_TRUE(runner.should_shutdown(shutdown_job));
-  EXPECT_FALSE(runner.should_shutdown(normal_job));
+  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
+  auto normal_job = std::make_shared<starpu_server::InferenceJob>();
+  EXPECT_TRUE(get_runner().should_shutdown(shutdown_job));
+  EXPECT_FALSE(get_runner().should_shutdown(normal_job));
 }
 
-TEST(StarPUTaskRunnerTest, PrepareJobCompletionCallback)
+TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
 {
-  InferenceQueue queue;
-  torch::jit::script::Module model_cpu;
-  std::vector<torch::jit::script::Module> models_gpu;
-  RuntimeConfig opts;
-  std::vector<InferenceResult> results;
-  std::mutex results_mutex;
-  std::atomic<int> completed_jobs{0};
-  std::condition_variable cv;
-
-  StarPUTaskRunnerConfig config{};
-  config.queue = &queue;
-  config.model_cpu = &model_cpu;
-  config.models_gpu = &models_gpu;
-  config.starpu = nullptr;
-  config.opts = &opts;
-  config.results = &results;
-  config.results_mutex = &results_mutex;
-  config.completed_jobs = &completed_jobs;
-  config.all_done_cv = &cv;
-
-  StarPUTaskRunner runner(config);
-
-  auto job = std::make_shared<InferenceJob>();
+  auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_job_id(7);
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   job->set_input_tensors(inputs);
@@ -84,13 +104,15 @@ TEST(StarPUTaskRunnerTest, PrepareJobCompletionCallback)
     orig_latency = l;
   });
 
-  runner.prepare_job_completion_callback(job);
+  get_runner().prepare_job_completion_callback(job);
 
   std::vector<torch::Tensor> outputs = {torch::tensor({2})};
   const double latency = 5.0;
   job->get_on_complete()(outputs, latency);
 
   EXPECT_TRUE(original_called);
+  auto& results = get_results();
+  auto& completed_jobs = get_completed_jobs();
   ASSERT_EQ(results.size(), 1u);
   EXPECT_EQ(completed_jobs.load(), 1);
   EXPECT_EQ(results[0].job_id, 7);
@@ -101,51 +123,22 @@ TEST(StarPUTaskRunnerTest, PrepareJobCompletionCallback)
   EXPECT_EQ(orig_latency, latency);
 }
 
-TEST(StarPUTaskRunnerTest, RunHandlesShutdownJob)
+TEST_F(StarPUTaskRunnerFixture, RunHandlesShutdownJob)
 {
-  InferenceQueue queue;
-  RuntimeConfig opts;
-  StarPUTaskRunnerConfig config{};
-  config.queue = &queue;
-  config.opts = &opts;
-
-  StarPUTaskRunner runner(config);
-
-  queue.push(InferenceJob::make_shutdown_job());
-
+  get_queue().push(starpu_server::InferenceJob::make_shutdown_job());
   testing::internal::CaptureStdout();
-  runner.run();
+  get_runner().run();
   std::string output = testing::internal::GetCapturedStdout();
 
   EXPECT_NE(output.find("Received shutdown signal"), std::string::npos);
 }
 
-TEST(StarPUTaskRunnerTest, RunHandlesSubmissionException)
+TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
 {
-  InferenceQueue queue;
-  torch::jit::script::Module model_cpu;
-  std::vector<torch::jit::script::Module> models_gpu(
-      InferLimits::MaxModelsGPU + 1);
-  RuntimeConfig opts;
-  std::vector<InferenceResult> results;
-  std::mutex results_mutex;
-  std::atomic<int> completed_jobs{0};
-  std::condition_variable cv;
+  auto& models_gpu = get_models_gpu();
+  models_gpu.resize(starpu_server::InferLimits::MaxModelsGPU + 1);
 
-  StarPUTaskRunnerConfig config{};
-  config.queue = &queue;
-  config.model_cpu = &model_cpu;
-  config.models_gpu = &models_gpu;
-  config.starpu = nullptr;
-  config.opts = &opts;
-  config.results = &results;
-  config.results_mutex = &results_mutex;
-  config.completed_jobs = &completed_jobs;
-  config.all_done_cv = &cv;
-
-  StarPUTaskRunner runner(config);
-
-  auto job = std::make_shared<InferenceJob>();
+  auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_job_id(1);
   job->set_input_tensors({torch::tensor({1})});
 
@@ -158,28 +151,25 @@ TEST(StarPUTaskRunnerTest, RunHandlesSubmissionException)
     cb_latency = l;
   });
 
-  queue.push(job);
-  queue.push(InferenceJob::make_shutdown_job());
+  get_queue().push(job);
+  get_queue().push(starpu_server::InferenceJob::make_shutdown_job());
 
-  runner.run();
+  get_runner().run();
 
   EXPECT_TRUE(called);
   EXPECT_TRUE(cb_results.empty());
   EXPECT_EQ(cb_latency, -1);
+  auto& results = get_results();
+  auto& completed_jobs = get_completed_jobs();
   ASSERT_EQ(results.size(), 1u);
   EXPECT_TRUE(results[0].results.empty());
   EXPECT_EQ(results[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs.load(), 1);
 }
 
-TEST(StarPUTaskRunnerTest, LogJobTimingsComputesComponents)
+TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 {
-  RuntimeConfig opts;
-  opts.verbosity = VerbosityLevel::Stats;
-  StarPUTaskRunnerConfig config{};
-  config.opts = &opts;
-
-  StarPUTaskRunner runner(config);
+  get_opts().verbosity = starpu_server::VerbosityLevel::Stats;
 
   starpu_server::detail::TimingInfo t;
   using clock = std::chrono::high_resolution_clock;
@@ -194,7 +184,7 @@ TEST(StarPUTaskRunnerTest, LogJobTimingsComputesComponents)
   t.callback_end_time = base + std::chrono::milliseconds(140);
 
   testing::internal::CaptureStdout();
-  runner.log_job_timings(42, 150.0, t);
+  get_runner().log_job_timings(42, 150.0, t);
   std::string output = testing::internal::GetCapturedStdout();
 
   EXPECT_NE(output.find("Queue = 10.000 ms"), std::string::npos);

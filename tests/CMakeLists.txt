@@ -21,7 +21,6 @@ add_executable(
   test_tensor_builder.cpp
   test_tensor_builder_from_starpu.cpp
   test_starpu_task_runner.cpp
-  test_inference_task_utils.cpp
   test_client_utils.cpp
   test_args_parser.cpp
   test_starpu_setup_codelet.cpp

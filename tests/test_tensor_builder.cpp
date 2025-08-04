@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <complex>
+#include <vector>
 
 #define private public
 #include "core/tensor_builder.hpp"
@@ -8,35 +9,84 @@
 
 #include "utils/exceptions.hpp"
 
-using namespace starpu_server;
+namespace {
+float float_buffer[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+int32_t int_buffer[3] = {1, 2, 3};
+double double_buffer[2] = {1.0, 2.0};
+int64_t long_buffer[2] = {1, 2};
+int16_t short_buffer[2] = {1, 2};
+int8_t char_buffer[2] = {1, 2};
+uint8_t byte_buffer[2] = {1, 2};
+bool bool_buffer[2] = {true, false};
 
-TEST(TensorBuilder, FromRawPtrFloat)
+struct FromRawPtrParam {
+  at::ScalarType dtype;
+  void* buffer;
+  std::vector<int64_t> shape;
+};
+}  // namespace
+
+class TensorBuilderFromRawPtr
+    : public ::testing::TestWithParam<FromRawPtrParam> {
+ protected:
+  torch::Device device{torch::kCPU};
+  torch::Tensor build_tensor() const
+  {
+    const auto& param = GetParam();
+    return starpu_server::TensorBuilder::from_raw_ptr(
+        reinterpret_cast<uintptr_t>(param.buffer), param.dtype, param.shape,
+        device);
+  }
+};
+
+TEST_P(TensorBuilderFromRawPtr, ConstructsTensor)
 {
-  float buffer[4] = {1.0f, 2.0f, 3.0f, 4.0f};
-  std::vector<int64_t> shape = {2, 2};
-  torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilder::from_raw_ptr(
-      reinterpret_cast<uintptr_t>(buffer), at::kFloat, shape, device);
-
-  EXPECT_EQ(tensor.sizes(), (torch::IntArrayRef{2, 2}));
-  EXPECT_EQ(tensor.dtype(), torch::kFloat);
+  const auto& param = GetParam();
+  auto tensor = build_tensor();
+  EXPECT_EQ(tensor.sizes(), torch::IntArrayRef(param.shape));
+  EXPECT_EQ(tensor.dtype(), param.dtype);
   EXPECT_EQ(tensor.device(), device);
-  EXPECT_EQ(tensor.data_ptr<float>(), buffer);
+  switch (param.dtype) {
+    case at::kFloat:
+      EXPECT_EQ(tensor.data_ptr<float>(), param.buffer);
+      break;
+    case at::kInt:
+      EXPECT_EQ(tensor.data_ptr<int32_t>(), param.buffer);
+      break;
+    case at::kDouble:
+      EXPECT_EQ(tensor.data_ptr<double>(), param.buffer);
+      break;
+    case at::kLong:
+      EXPECT_EQ(tensor.data_ptr<int64_t>(), param.buffer);
+      break;
+    case at::kShort:
+      EXPECT_EQ(tensor.data_ptr<int16_t>(), param.buffer);
+      break;
+    case at::kChar:
+      EXPECT_EQ(tensor.data_ptr<int8_t>(), param.buffer);
+      break;
+    case at::kByte:
+      EXPECT_EQ(tensor.data_ptr<uint8_t>(), param.buffer);
+      break;
+    case at::kBool:
+      EXPECT_EQ(tensor.data_ptr<bool>(), param.buffer);
+      break;
+    default:
+      FAIL() << "Unsupported dtype";
+  }
 }
 
-TEST(TensorBuilder, FromRawPtrInt)
-{
-  int32_t buffer[3] = {1, 2, 3};
-  std::vector<int64_t> shape = {3};
-  torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilder::from_raw_ptr(
-      reinterpret_cast<uintptr_t>(buffer), at::kInt, shape, device);
-
-  EXPECT_EQ(tensor.sizes(), (torch::IntArrayRef{3}));
-  EXPECT_EQ(tensor.dtype(), torch::kInt);
-  EXPECT_EQ(tensor.device(), device);
-  EXPECT_EQ(tensor.data_ptr<int32_t>(), buffer);
-}
+INSTANTIATE_TEST_SUITE_P(
+    TensorBuilder, TensorBuilderFromRawPtr,
+    ::testing::Values(
+        FromRawPtrParam{at::kFloat, float_buffer, {2, 2}},
+        FromRawPtrParam{at::kInt, int_buffer, {3}},
+        FromRawPtrParam{at::kDouble, double_buffer, {2}},
+        FromRawPtrParam{at::kLong, long_buffer, {2}},
+        FromRawPtrParam{at::kShort, short_buffer, {2}},
+        FromRawPtrParam{at::kChar, char_buffer, {2}},
+        FromRawPtrParam{at::kByte, byte_buffer, {2}},
+        FromRawPtrParam{at::kBool, bool_buffer, {2}}));
 
 TEST(TensorBuilder, FromRawPtrUnsupportedHalf)
 {
@@ -44,9 +94,9 @@ TEST(TensorBuilder, FromRawPtrUnsupportedHalf)
   std::vector<int64_t> shape = {1};
   torch::Device device(torch::kCPU);
   EXPECT_THROW(
-      TensorBuilder::from_raw_ptr(
+      starpu_server::TensorBuilder::from_raw_ptr(
           reinterpret_cast<uintptr_t>(buffer), at::kHalf, shape, device),
-      InferenceExecutionException);
+      starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilder, FromRawPtrUnsupportedComplex)
@@ -55,10 +105,10 @@ TEST(TensorBuilder, FromRawPtrUnsupportedComplex)
   std::vector<int64_t> shape = {1};
   torch::Device device(torch::kCPU);
   EXPECT_THROW(
-      TensorBuilder::from_raw_ptr(
+      starpu_server::TensorBuilder::from_raw_ptr(
           reinterpret_cast<uintptr_t>(buffer), at::kComplexFloat, shape,
           device),
-      InferenceExecutionException);
+      starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilder, CopyOutputToBufferFloat)
@@ -66,7 +116,7 @@ TEST(TensorBuilder, CopyOutputToBufferFloat)
   auto tensor = torch::tensor(
       {1.0f, 2.0f, 3.0f}, torch::TensorOptions().dtype(at::kFloat));
   float buffer[3] = {0.0f, 0.0f, 0.0f};
-  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
   for (int i = 0; i < 3; ++i) {
     EXPECT_FLOAT_EQ(buffer[i], tensor[i].item<float>());
   }
@@ -77,7 +127,7 @@ TEST(TensorBuilder, CopyOutputToBufferInt)
   auto tensor =
       torch::tensor({1, 2, 3, 4}, torch::TensorOptions().dtype(at::kInt));
   int32_t buffer[4] = {0, 0, 0, 0};
-  TensorBuilder::copy_output_to_buffer(tensor, buffer, 4);
+  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 4);
   for (int i = 0; i < 4; ++i) {
     EXPECT_EQ(buffer[i], tensor[i].item<int32_t>());
   }
@@ -88,7 +138,7 @@ TEST(TensorBuilder, CopyOutputToBufferDouble)
   auto tensor =
       torch::tensor({1.0, 2.0, 3.0}, torch::TensorOptions().dtype(at::kDouble));
   double buffer[3] = {0.0, 0.0, 0.0};
-  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
   for (int i = 0; i < 3; ++i) {
     EXPECT_DOUBLE_EQ(buffer[i], tensor[i].item<double>());
   }
@@ -99,7 +149,7 @@ TEST(TensorBuilder, CopyOutputToBufferLong)
   auto tensor =
       torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kLong));
   int64_t buffer[3] = {0, 0, 0};
-  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
   for (int i = 0; i < 3; ++i) {
     EXPECT_EQ(buffer[i], tensor[i].item<int64_t>());
   }
@@ -110,7 +160,7 @@ TEST(TensorBuilder, CopyOutputToBufferShort)
   auto tensor =
       torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kShort));
   int16_t buffer[3] = {0, 0, 0};
-  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
   for (int i = 0; i < 3; ++i) {
     EXPECT_EQ(buffer[i], tensor[i].item<int16_t>());
   }
@@ -121,7 +171,7 @@ TEST(TensorBuilder, CopyOutputToBufferChar)
   auto tensor =
       torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kChar));
   int8_t buffer[3] = {0, 0, 0};
-  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
   for (int i = 0; i < 3; ++i) {
     EXPECT_EQ(buffer[i], tensor[i].item<int8_t>());
   }
@@ -132,7 +182,7 @@ TEST(TensorBuilder, CopyOutputToBufferByte)
   auto tensor =
       torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kByte));
   uint8_t buffer[3] = {0, 0, 0};
-  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
   for (int i = 0; i < 3; ++i) {
     EXPECT_EQ(buffer[i], tensor[i].item<uint8_t>());
   }
@@ -143,7 +193,7 @@ TEST(TensorBuilder, CopyOutputToBufferBool)
   auto tensor = torch::tensor(
       {true, false, true}, torch::TensorOptions().dtype(at::kBool));
   bool buffer[3] = {false, false, false};
-  TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
+  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
   for (int i = 0; i < 3; ++i) {
     EXPECT_EQ(buffer[i], tensor[i].item<bool>());
   }
@@ -154,8 +204,8 @@ TEST(TensorBuilder, CopyOutputToBufferSizeMismatch)
   auto tensor = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
   int32_t buffer[2];
   EXPECT_THROW(
-      TensorBuilder::copy_output_to_buffer(tensor, buffer, 3),
-      InferenceExecutionException);
+      starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3),
+      starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilder, CopyOutputToBufferExpectedNumelTooSmall)
@@ -164,8 +214,8 @@ TEST(TensorBuilder, CopyOutputToBufferExpectedNumelTooSmall)
       torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt));
   int32_t buffer[3];
   EXPECT_THROW(
-      TensorBuilder::copy_output_to_buffer(tensor, buffer, 2),
-      InferenceExecutionException);
+      starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 2),
+      starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilder, CopyOutputToBufferUnsupportedType)
@@ -174,21 +224,22 @@ TEST(TensorBuilder, CopyOutputToBufferUnsupportedType)
       torch::zeros({2}, torch::TensorOptions().dtype(at::kComplexFloat));
   float buffer[2] = {0.0f, 0.0f};
   EXPECT_THROW(
-      TensorBuilder::copy_output_to_buffer(tensor, buffer, 2),
-      InferenceExecutionException);
+      starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 2),
+      starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilder, FromStarpuBuffersTooManyInputs)
 {
-  InferenceParams params;
-  params.num_inputs = InferLimits::MaxInputs + 1;
+  starpu_server::InferenceParams params;
+  params.num_inputs = starpu_server::InferLimits::MaxInputs + 1;
 
   std::vector<void*> buffers(params.num_inputs, nullptr);
   torch::Device device(torch::kCPU);
 
   EXPECT_THROW(
-      TensorBuilder::from_starpu_buffers(&params, buffers, device),
-      InferenceExecutionException);
+      starpu_server::TensorBuilder::from_starpu_buffers(
+          &params, buffers, device),
+      starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilder, FromStarpuBuffersSuccess)
@@ -200,7 +251,7 @@ TEST(TensorBuilder, FromStarpuBuffersSuccess)
 
   std::vector<void*> buffers = {&fake_var};
 
-  InferenceParams params;
+  starpu_server::InferenceParams params;
   params.num_inputs = 1;
   params.layout.input_types = {at::kFloat};
   params.layout.num_dims = {2};
@@ -208,84 +259,13 @@ TEST(TensorBuilder, FromStarpuBuffersSuccess)
 
   torch::Device device(torch::kCPU);
 
-  auto tensors = TensorBuilder::from_starpu_buffers(&params, buffers, device);
+  auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
+      &params, buffers, device);
   ASSERT_EQ(tensors.size(), 1);
   EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{2, 2}));
   EXPECT_EQ(tensors[0].dtype(), torch::kFloat);
   EXPECT_EQ(tensors[0].device(), device);
   EXPECT_EQ(tensors[0].data_ptr<float>(), data);
-}
-
-TEST(TensorBuilder, FromRawPtrDouble)
-{
-  double buffer[2] = {1.0, 2.0};
-  std::vector<int64_t> shape = {2};
-  torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilder::from_raw_ptr(
-      reinterpret_cast<uintptr_t>(buffer), at::kDouble, shape, device);
-
-  EXPECT_EQ(tensor.dtype(), at::kDouble);
-  EXPECT_EQ(tensor.data_ptr<double>(), buffer);
-}
-
-TEST(TensorBuilder, FromRawPtrLong)
-{
-  int64_t buffer[2] = {1, 2};
-  std::vector<int64_t> shape = {2};
-  torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilder::from_raw_ptr(
-      reinterpret_cast<uintptr_t>(buffer), at::kLong, shape, device);
-
-  EXPECT_EQ(tensor.dtype(), at::kLong);
-  EXPECT_EQ(tensor.data_ptr<int64_t>(), buffer);
-}
-
-TEST(TensorBuilder, FromRawPtrShort)
-{
-  int16_t buffer[2] = {1, 2};
-  std::vector<int64_t> shape = {2};
-  torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilder::from_raw_ptr(
-      reinterpret_cast<uintptr_t>(buffer), at::kShort, shape, device);
-
-  EXPECT_EQ(tensor.dtype(), at::kShort);
-  EXPECT_EQ(tensor.data_ptr<int16_t>(), buffer);
-}
-
-TEST(TensorBuilder, FromRawPtrChar)
-{
-  int8_t buffer[2] = {1, 2};
-  std::vector<int64_t> shape = {2};
-  torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilder::from_raw_ptr(
-      reinterpret_cast<uintptr_t>(buffer), at::kChar, shape, device);
-
-  EXPECT_EQ(tensor.dtype(), at::kChar);
-  EXPECT_EQ(tensor.data_ptr<int8_t>(), buffer);
-}
-
-TEST(TensorBuilder, FromRawPtrByte)
-{
-  uint8_t buffer[2] = {1, 2};
-  std::vector<int64_t> shape = {2};
-  torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilder::from_raw_ptr(
-      reinterpret_cast<uintptr_t>(buffer), at::kByte, shape, device);
-
-  EXPECT_EQ(tensor.dtype(), at::kByte);
-  EXPECT_EQ(tensor.data_ptr<uint8_t>(), buffer);
-}
-
-TEST(TensorBuilder, FromRawPtrBool)
-{
-  bool buffer[2] = {true, false};
-  std::vector<int64_t> shape = {2};
-  torch::Device device(torch::kCPU);
-  auto tensor = TensorBuilder::from_raw_ptr(
-      reinterpret_cast<uintptr_t>(buffer), at::kBool, shape, device);
-
-  EXPECT_EQ(tensor.dtype(), at::kBool);
-  EXPECT_EQ(tensor.data_ptr<bool>(), buffer);
 }
 
 TEST(TensorBuilder, FromRawPtrUnsupportedQuantized)
@@ -294,7 +274,7 @@ TEST(TensorBuilder, FromRawPtrUnsupportedQuantized)
   std::vector<int64_t> shape = {1};
   torch::Device device(torch::kCPU);
   EXPECT_THROW(
-      TensorBuilder::from_raw_ptr(
+      starpu_server::TensorBuilder::from_raw_ptr(
           reinterpret_cast<uintptr_t>(&dummy), at::kQInt8, shape, device),
-      InferenceExecutionException);
+      starpu_server::InferenceExecutionException);
 }

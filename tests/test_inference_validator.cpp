@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/inference_runner.hpp"
+#include "inference_validator_test_utils.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/inference_validator.hpp"
 #include "utils/logger.hpp"
@@ -80,26 +81,18 @@ make_shape_error_model() -> torch::jit::script::Module
 TEST(InferenceValidator, SuccessfulValidation)
 {
   auto model = make_add_one_model();
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1, 2, 3})};
-  result.results = {torch::tensor({2, 3, 4})};
-  result.job_id = 42;
-  result.executed_on = DeviceType::CPU;
-
+  auto result = make_result(
+      {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4})}, 42,
+      DeviceType::CPU);
   EXPECT_TRUE(validate_inference_result(result, model, VerbosityLevel::Silent));
 }
 
 TEST(InferenceValidator, FailsOnMismatch)
 {
   auto model = make_add_one_model();
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1, 2, 3})};
-  result.results = {torch::tensor({1, 2, 3})};
-  result.job_id = 43;
-  result.executed_on = DeviceType::CPU;
-
+  auto result = make_result(
+      {torch::tensor({1, 2, 3})}, {torch::tensor({1, 2, 3})}, 43,
+      DeviceType::CPU);
   testing::internal::CaptureStderr();
   EXPECT_FALSE(
       validate_inference_result(result, model, VerbosityLevel::Silent));
@@ -110,13 +103,9 @@ TEST(InferenceValidator, FailsOnMismatch)
 TEST(InferenceValidator, ThrowsOnUnknownDevice)
 {
   auto model = make_add_one_model();
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1, 2, 3})};
-  result.results = {torch::tensor({2, 3, 4})};
-  result.job_id = 44;
-  result.executed_on = DeviceType::Unknown;
-
+  auto result = make_result(
+      {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4})}, 44,
+      DeviceType::Unknown);
   EXPECT_THROW(
       validate_inference_result(result, model, VerbosityLevel::Silent),
       InferenceExecutionException);
@@ -125,13 +114,9 @@ TEST(InferenceValidator, ThrowsOnUnknownDevice)
 TEST(InferenceValidator, ThrowsOnInvalidDeviceValue)
 {
   auto model = make_add_one_model();
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1, 2, 3})};
-  result.results = {torch::tensor({2, 3, 4})};
-  result.job_id = 144;
-  result.executed_on = static_cast<DeviceType>(255);
-
+  auto result = make_result(
+      {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4})}, 144,
+      static_cast<DeviceType>(255));
   EXPECT_THROW(
       validate_inference_result(result, model, VerbosityLevel::Silent),
       InferenceExecutionException);
@@ -140,13 +125,8 @@ TEST(InferenceValidator, ThrowsOnInvalidDeviceValue)
 TEST(InferenceValidator, ThrowsOnNonTensorTupleElement)
 {
   auto model = make_tuple_non_tensor_model();
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1})};
-  result.results = {torch::tensor({1})};
-  result.job_id = 46;
-  result.executed_on = DeviceType::CPU;
-
+  auto result = make_result(
+      {torch::tensor({1})}, {torch::tensor({1})}, 46, DeviceType::CPU);
   EXPECT_THROW(
       validate_inference_result(result, model, VerbosityLevel::Silent),
       InferenceExecutionException);
@@ -155,12 +135,7 @@ TEST(InferenceValidator, ThrowsOnNonTensorTupleElement)
 TEST(InferenceValidator, ThrowsOnUnsupportedOutputType)
 {
   auto model = make_string_model();
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1})};
-  result.job_id = 47;
-  result.executed_on = DeviceType::CPU;
-
+  auto result = make_result({torch::tensor({1})}, {}, 47, DeviceType::CPU);
   EXPECT_THROW(
       validate_inference_result(result, model, VerbosityLevel::Silent),
       InferenceExecutionException);
@@ -169,13 +144,7 @@ TEST(InferenceValidator, ThrowsOnUnsupportedOutputType)
 TEST(InferenceValidator, EmptyTupleOutput)
 {
   auto model = make_empty_tuple_model();
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1})};
-  result.results = {};
-  result.job_id = 48;
-  result.executed_on = DeviceType::CPU;
-
+  auto result = make_result({torch::tensor({1})}, {}, 48, DeviceType::CPU);
   EXPECT_TRUE(validate_inference_result(result, model, VerbosityLevel::Silent));
 }
 
@@ -184,18 +153,11 @@ TEST(InferenceValidator, SuccessfulValidationCuda)
   if (!torch::cuda::is_available()) {
     GTEST_SKIP() << "CUDA is not available";
   }
-
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1, 2, 3}).to(torch::kCUDA)};
-  result.results = {torch::tensor({2, 3, 4}).to(torch::kCUDA)};
-  result.job_id = 100;
-  result.executed_on = DeviceType::CUDA;
-  result.device_id = 0;
-  result.worker_id = 0;
-
+  auto result = make_result(
+      {torch::tensor({1, 2, 3}).to(torch::kCUDA)},
+      {torch::tensor({2, 3, 4}).to(torch::kCUDA)}, 100, DeviceType::CUDA);
   EXPECT_TRUE(validate_inference_result(result, model, VerbosityLevel::Silent));
 }
 
@@ -204,18 +166,11 @@ TEST(InferenceValidator, FailsOnMismatchCuda)
   if (!torch::cuda::is_available()) {
     GTEST_SKIP() << "CUDA is not available";
   }
-
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1, 2, 3}).to(torch::kCUDA)};
-  result.results = {torch::tensor({1, 2, 3}).to(torch::kCUDA)};
-  result.job_id = 101;
-  result.executed_on = DeviceType::CUDA;
-  result.device_id = 0;
-  result.worker_id = 0;
-
+  auto result = make_result(
+      {torch::tensor({1, 2, 3}).to(torch::kCUDA)},
+      {torch::tensor({1, 2, 3}).to(torch::kCUDA)}, 101, DeviceType::CUDA);
   testing::internal::CaptureStderr();
   EXPECT_FALSE(
       validate_inference_result(result, model, VerbosityLevel::Silent));
@@ -228,31 +183,21 @@ TEST(InferenceValidator, CudaModelOnCpuInputsThrows)
   if (!torch::cuda::is_available()) {
     GTEST_SKIP() << "CUDA is not available";
   }
-
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1, 2, 3})};
-  result.results = {torch::tensor({2, 3, 4}).to(torch::kCUDA)};
-  result.job_id = 102;
-  result.executed_on = DeviceType::CUDA;
-  result.device_id = 0;
-  result.worker_id = 0;
-
+  auto result = make_result(
+      {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4}).to(torch::kCUDA)},
+      102, DeviceType::CUDA);
   EXPECT_TRUE(validate_inference_result(result, model, VerbosityLevel::Silent));
 }
 
 TEST(InferenceValidator, OutputCountMismatch)
 {
   auto model = make_add_one_model();
-
-  InferenceResult result;
-  result.inputs = {torch::tensor({1, 2, 3})};
-  result.results = {torch::tensor({2, 3, 4}), torch::tensor({2, 3, 4})};
-  result.job_id = 45;
-  result.executed_on = DeviceType::CPU;
-
+  auto result = make_result(
+      {torch::tensor({1, 2, 3})},
+      {torch::tensor({2, 3, 4}), torch::tensor({2, 3, 4})}, 45,
+      DeviceType::CPU);
   testing::internal::CaptureStderr();
   EXPECT_FALSE(
       validate_inference_result(result, model, VerbosityLevel::Silent));

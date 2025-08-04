@@ -5,29 +5,37 @@
 
 #include <chrono>
 #include <climits>
+#include <memory>
 
 #include "core/inference_params.hpp"
 #include "core/starpu_setup.hpp"
 #include "core/tensor_builder.hpp"
+#include "starpu_runtime_guard.hpp"
+#include "test_helpers.hpp"
 
 using namespace starpu_server;
 
-TEST(StarPUSetupCodelet, GetCodeletNotNull)
+class StarPUSetupCodeletTest : public ::testing::Test {
+ protected:
+  std::unique_ptr<StarPUSetup> starpu;
+
+  void SetUp() override
+  {
+    RuntimeConfig opts;
+    opts.use_cpu = true;
+    opts.use_cuda = true;
+    opts.device_ids = {0};
+    starpu = std::make_unique<StarPUSetup>(opts);
+  }
+};
+
+TEST_F(StarPUSetupCodeletTest, GetCodeletNotNull)
 {
-  RuntimeConfig opts;
-  opts.use_cpu = true;
-  opts.use_cuda = false;
-  StarPUSetup starpu(opts);
-  EXPECT_NE(starpu.get_codelet(), nullptr);
+  EXPECT_NE(starpu->get_codelet(), nullptr);
 }
 
-TEST(StarPUSetupCodelet, GetCudaWorkersSingleDevice)
+TEST_F(StarPUSetupCodeletTest, GetCudaWorkersSingleDevice)
 {
-  RuntimeConfig opts;
-  opts.use_cpu = true;
-  opts.use_cuda = true;
-  opts.device_ids = {0};
-  StarPUSetup starpu(opts);
   auto workers = StarPUSetup::get_cuda_workers_by_device({0});
   EXPECT_FALSE(workers.empty());
 }
@@ -52,22 +60,15 @@ TEST(InferenceCodelet, FieldsAreInitialized)
 
 TEST(InferenceCodelet, CpuInferenceFuncExecutesAndSetsMetadata)
 {
-  starpu_init(nullptr);
+  StarpuRuntimeGuard starpu_guard;
 
   float input_data[3] = {1.0f, 2.0f, 3.0f};
   float output_data[3] = {0.0f, 0.0f, 0.0f};
 
-  starpu_variable_interface input_iface;
-  input_iface.ptr = reinterpret_cast<uintptr_t>(input_data);
-  starpu_variable_interface output_iface;
-  output_iface.ptr = reinterpret_cast<uintptr_t>(output_data);
+  auto input_iface = make_variable_interface(input_data);
+  auto output_iface = make_variable_interface(output_data);
 
-  InferenceParams params{};
-  params.num_inputs = 1;
-  params.num_outputs = 1;
-  params.layout.num_dims[0] = 1;
-  params.layout.dims[0][0] = 3;
-  params.layout.input_types[0] = at::kFloat;
+  auto params = make_basic_params(3);
 
   DeviceType executed_on = DeviceType::Unknown;
   params.device.executed_on = &executed_on;
@@ -101,6 +102,4 @@ TEST(InferenceCodelet, CpuInferenceFuncExecutesAndSetsMetadata)
   EXPECT_TRUE(start_time >= before);
   EXPECT_TRUE(end_time <= after);
   EXPECT_TRUE(end_time >= start_time);
-
-  starpu_shutdown();
 }

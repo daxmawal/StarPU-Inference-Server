@@ -5,15 +5,31 @@
 
 using namespace starpu_server;
 
+namespace {
+
+auto
+parse(std::initializer_list<const char*> args) -> RuntimeConfig
+{
+  std::vector<char*> argv;
+  argv.reserve(args.size());
+  for (const char* arg : args) {
+    argv.push_back(const_cast<char*>(arg));
+  }
+  return parse_arguments({argv.data(), argv.size()});
+}
+
+void
+expect_invalid(std::initializer_list<const char*> args)
+{
+  EXPECT_FALSE(parse(args).valid);
+}
+}  // namespace
+
 TEST(ArgsParser, ParsesRequiredOptions)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),     const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"),    const_cast<char*>("--shape"),
-      const_cast<char*>("1x3x224x224"), const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+  const auto opts = parse(
+      {"program", "--model", "model.pt", "--shape", "1x3x224x224", "--types",
+       "float"});
 
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.model_path, "model.pt");
@@ -25,60 +41,42 @@ TEST(ArgsParser, ParsesRequiredOptions)
 
 TEST(ArgsParser, MissingRequiredOptions)
 {
-  std::array<char*, 5> argv = {
-      const_cast<char*>("program"), const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3x3")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid({"program", "--model", "model.pt", "--shape", "1x3x3"});
 }
 
 TEST(ArgsParser, InvalidNumericValue)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3x3"),    const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--iterations"),
-      const_cast<char*>("0")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3x3", "--types", "float",
+       "--iterations", "0"});
 }
 
 TEST(ArgsParser, ParsesAllOptions)
 {
-  std::array<char*, 24> argv = {
-      const_cast<char*>("program"),
-      const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"),
-      const_cast<char*>("--shapes"),
-      const_cast<char*>("1x3x224x224,2x1"),
-      const_cast<char*>("--types"),
-      const_cast<char*>("float,int"),
-      const_cast<char*>("--iterations"),
-      const_cast<char*>("5"),
-      const_cast<char*>("--device-ids"),
-      const_cast<char*>("0,1"),
-      const_cast<char*>("--verbose"),
-      const_cast<char*>("3"),
-      const_cast<char*>("--delay"),
-      const_cast<char*>("42"),
-      const_cast<char*>("--scheduler"),
-      const_cast<char*>("lws"),
-      const_cast<char*>("--address"),
-      const_cast<char*>("127.0.0.1:1234"),
-      const_cast<char*>("--max-msg-size"),
-      const_cast<char*>("512"),
-      const_cast<char*>("--sync"),
-      const_cast<char*>("--no_cpu"),
-      nullptr};
-
-  auto args_span = std::span<char*>(argv.data(), argv.size() - 1);
-  auto opts = parse_arguments(args_span);
+  const auto opts = parse(
+      {"program",
+       "--model",
+       "model.pt",
+       "--shapes",
+       "1x3x224x224,2x1",
+       "--types",
+       "float,int",
+       "--iterations",
+       "5",
+       "--device-ids",
+       "0,1",
+       "--verbose",
+       "3",
+       "--delay",
+       "42",
+       "--scheduler",
+       "lws",
+       "--address",
+       "127.0.0.1:1234",
+       "--max-msg-size",
+       "512",
+       "--sync",
+       "--no_cpu"});
 
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.scheduler, "lws");
@@ -102,244 +100,124 @@ TEST(ArgsParser, ParsesAllOptions)
 
 TEST(ArgsParser, InvalidShapeString)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x-3x3"),   const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x-3x3", "--types",
+       "float"});
 }
 
 TEST(ArgsParser, InvalidTypeString)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("unknown")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types",
+       "unknown"});
 }
 
 TEST(ArgsParser, InvalidDeviceID)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--device-ids"),
-      const_cast<char*>("-1")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--device-ids", "-1"});
 }
 
 TEST(ArgsParser, UnknownArgument)
 {
-  std::array<char*, 8> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--unknown")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--unknown"});
 }
 
 TEST(ArgsParser, MismatchedShapesAndTypes)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
-      const_cast<char*>("1x2,2x3"),  const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shapes", "1x2,2x3", "--types",
+       "float"});
 }
 
 TEST(ArgsParser, ShapeContainsNonInteger)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1xax2"),    const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1xax2", "--types",
+       "float"});
 }
 
 TEST(ArgsParser, ShapeDimensionOutOfRange)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),
-      const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"),
-      const_cast<char*>("--shape"),
-      const_cast<char*>("9223372036854775808"),
-      const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "9223372036854775808",
+       "--types", "float"});
 }
 
 TEST(ArgsParser, InvalidVerboseValue)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--verbose"),
-      const_cast<char*>("5")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--verbose", "5"});
 }
 
 TEST(ArgsParser, EmptyShapeString)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>(""),         const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "", "--types", "float"});
 }
 
 TEST(ArgsParser, EmptyShapesString)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
-      const_cast<char*>(""),         const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shapes", "", "--types", "float"});
 }
 
 TEST(ArgsParser, ShapesTrailingComma)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
-      const_cast<char*>("1x2,"),     const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shapes", "1x2,", "--types",
+       "float"});
 }
 
 TEST(ArgsParser, NegativeIterations)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--iterations"),
-      const_cast<char*>("-1")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--iterations", "-1"});
 }
 
 TEST(ArgsParser, NegativeDelay)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--delay"),
-      const_cast<char*>("-1")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--delay", "-1"});
 }
 
 TEST(ArgsParser, ZeroMaxMessageSize)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--max-msg-size"),
-      const_cast<char*>("0")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--max-msg-size", "0"});
 }
 
 TEST(ArgsParser, NegativeMaxMessageSize)
 {
-  std::array<char*, 9> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--max-msg-size"),
-      const_cast<char*>("-1")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--max-msg-size", "-1"});
 }
 
 TEST(ArgsParser, ShapesConsecutiveComma)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
-      const_cast<char*>("1x2,,3"),   const_cast<char*>("--types"),
-      const_cast<char*>("float,int")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shapes", "1x2,,3", "--types",
+       "float,int"});
 }
 
 TEST(ArgsParser, MissingModelValue)
 {
-  std::array<char*, 6> argv = {
-      const_cast<char*>("program"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),     const_cast<char*>("--types"),
-      const_cast<char*>("float"),   const_cast<char*>("--model")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid({"program", "--shape", "1x3", "--types", "float", "--model"});
 }
 
 TEST(ArgsParser, MissingIterationsValue)
 {
-  std::array<char*, 8> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-      const_cast<char*>("float"),    const_cast<char*>("--iterations")};
-
-  auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
-
-  EXPECT_FALSE(opts.valid);
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--iterations"});
 }
 
 TEST(ArgsParser, VerboseLevels)
@@ -354,14 +232,9 @@ TEST(ArgsParser, VerboseLevels)
   }};
 
   for (const auto& [level_str, expected] : cases) {
-    std::array<char*, 9> argv = {
-        const_cast<char*>("program"),  const_cast<char*>("--model"),
-        const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-        const_cast<char*>("1x3"),      const_cast<char*>("--types"),
-        const_cast<char*>("float"),    const_cast<char*>("--verbose"),
-        const_cast<char*>(level_str)};
-
-    auto opts = parse_arguments(std::span<char*>(argv.data(), argv.size()));
+    const auto opts = parse(
+        {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+         "--verbose", level_str});
 
     ASSERT_TRUE(opts.valid);
     EXPECT_EQ(opts.verbosity, expected);

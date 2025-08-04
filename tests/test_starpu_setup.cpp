@@ -8,62 +8,77 @@
 #include "core/starpu_setup.hpp"
 #include "utils/exceptions.hpp"
 
-using namespace starpu_server;
+struct ExtractTensorsParam {
+  c10::IValue input;
+  std::vector<at::Tensor> expected;
+};
+
+class StarPUSetupExtractTensorsTest
+    : public ::testing::TestWithParam<ExtractTensorsParam> {};
 
 TEST(StarPUSetupErrorsTest, ConstructorNegativeDeviceId)
 {
-  RuntimeConfig cfg;
+  starpu_server::RuntimeConfig cfg;
   cfg.use_cuda = true;
   cfg.device_ids = {-1};
-  EXPECT_THROW(StarPUSetup setup(cfg), std::invalid_argument);
+  EXPECT_THROW(starpu_server::StarPUSetup setup(cfg), std::invalid_argument);
 }
 
 TEST(StarPUSetupErrorsTest, GetCudaWorkersByDeviceNegativeId)
 {
   EXPECT_THROW(
-      StarPUSetup::get_cuda_workers_by_device({-1}), std::invalid_argument);
+      starpu_server::StarPUSetup::get_cuda_workers_by_device({-1}),
+      std::invalid_argument);
 }
 
 TEST(StarPUSetupErrorsTest, ExtractTensorsFromOutputUnsupportedType)
 {
   c10::IValue non_tensor{42};
   EXPECT_THROW(
-      extract_tensors_from_output(non_tensor),
-      UnsupportedModelOutputTypeException);
+      starpu_server::extract_tensors_from_output(non_tensor),
+      starpu_server::UnsupportedModelOutputTypeException);
 }
 
-TEST(StarPUSetupExtractTensorsTest, SingleTensor)
+TEST_P(StarPUSetupExtractTensorsTest, Extract)
 {
-  at::Tensor tensor = torch::arange(6).view({2, 3});
-  c10::IValue iv{tensor};
-  auto outputs = extract_tensors_from_output(iv);
-  ASSERT_EQ(outputs.size(), 1);
-  EXPECT_EQ(outputs[0].sizes().vec(), tensor.sizes().vec());
-  EXPECT_TRUE(outputs[0].equal(tensor));
+  const auto& param = GetParam();
+  auto outputs = starpu_server::extract_tensors_from_output(param.input);
+  ASSERT_EQ(outputs.size(), param.expected.size());
+  for (size_t i = 0; i < param.expected.size(); ++i) {
+    EXPECT_TRUE(outputs[i].equal(param.expected[i]));
+  }
 }
 
-TEST(StarPUSetupExtractTensorsTest, TupleOfTensors)
-{
-  at::Tensor t1 = torch::ones({2, 2});
-  at::Tensor t2 = torch::zeros({1, 3});
-  auto tuple = c10::ivalue::Tuple::create({t1, t2});
-  c10::IValue iv{tuple};
-  auto outputs = extract_tensors_from_output(iv);
-  ASSERT_EQ(outputs.size(), 2);
-  EXPECT_TRUE(outputs[0].equal(t1));
-  EXPECT_TRUE(outputs[1].equal(t2));
-}
-
-TEST(StarPUSetupExtractTensorsTest, TensorList)
-{
-  at::Tensor t1 = torch::rand({2});
-  at::Tensor t2 = torch::rand({3});
-  c10::List<at::Tensor> list;
-  list.push_back(t1);
-  list.push_back(t2);
-  c10::IValue iv{list};
-  auto outputs = extract_tensors_from_output(iv);
-  ASSERT_EQ(outputs.size(), 2);
-  EXPECT_TRUE(outputs[0].equal(t1));
-  EXPECT_TRUE(outputs[1].equal(t2));
-}
+INSTANTIATE_TEST_SUITE_P(
+    StarPUSetupExtractTensorsTestCases, StarPUSetupExtractTensorsTest,
+    ::testing::Values(
+        []() {
+          at::Tensor tensor = torch::arange(6).view({2, 3});
+          return ExtractTensorsParam{c10::IValue(tensor), {tensor}};
+        }(),
+        []() {
+          at::Tensor t1 = torch::ones({2, 2});
+          at::Tensor t2 = torch::zeros({1, 3});
+          auto tuple = c10::ivalue::Tuple::create({t1, t2});
+          return ExtractTensorsParam{c10::IValue(tuple), {t1, t2}};
+        }(),
+        []() {
+          at::Tensor t1 = torch::rand({2});
+          at::Tensor t2 = torch::rand({3});
+          c10::List<at::Tensor> list;
+          list.push_back(t1);
+          list.push_back(t2);
+          return ExtractTensorsParam{c10::IValue(list), {t1, t2}};
+        }()),
+    [](const ::testing::TestParamInfo<ExtractTensorsParam>& info) {
+      switch (info.index) {
+        case 0:
+          return std::string{"SingleTensor"};
+        case 1:
+          return std::string{"TupleOfTensors"};
+        case 2:
+          return std::string{"TensorList"};
+        default:
+          return std::string{"Unknown"};
+      }
+    });

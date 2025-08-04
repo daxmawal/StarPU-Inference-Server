@@ -3,14 +3,27 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <limits>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #define private public
 #include "core/warmup.hpp"
 #undef private
 
-using namespace starpu_server;
+template <class F>
+static auto
+measure_ms(F&& f) -> long
+{
+  const auto start = std::chrono::steady_clock::now();
+  f();
+  const auto end = std::chrono::steady_clock::now();
+  return std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+      .count();
+}
 
 static auto
 make_identity_model() -> torch::jit::script::Module
@@ -23,74 +36,60 @@ make_identity_model() -> torch::jit::script::Module
   return m;
 }
 
-TEST(WarmupRunnerTest, ClientWorkerThrowsOnNegativeIterations)
-{
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
+class WarmupRunnerTest : public ::testing::Test {
+ protected:
+  starpu_server::RuntimeConfig opts;
 
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
+  std::unique_ptr<starpu_server::StarPUSetup> starpu;
+  torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
+  std::vector<torch::Tensor> outputs_ref;
+  std::unique_ptr<starpu_server::WarmupRunner> runner;
 
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+  void SetUp() override { init(false); }
 
+  void init(bool use_cuda)
+  {
+    opts = starpu_server::RuntimeConfig{};
+    opts.input_shapes = {{1}};
+    opts.input_types = {at::kFloat};
+    opts.use_cuda = use_cuda;
+
+    starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
+    model_cpu = make_identity_model();
+    models_gpu.clear();
+    outputs_ref = {torch::zeros({1})};
+    runner = std::make_unique<starpu_server::WarmupRunner>(
+        opts, *starpu, model_cpu, models_gpu, outputs_ref);
+  }
+};
+
+TEST_F(WarmupRunnerTest, ClientWorkerThrowsOnNegativeIterations)
+{
   std::map<int, std::vector<int32_t>> device_workers;
-  InferenceQueue queue;
-
+  starpu_server::InferenceQueue queue;
   EXPECT_THROW(
-      runner.client_worker(device_workers, queue, -1), std::invalid_argument);
+      runner->client_worker(device_workers, queue, -1), std::invalid_argument);
 }
 
-TEST(WarmupRunnerTest, WarmupRunnerRunNoCuda)
+TEST_F(WarmupRunnerTest, WarmupRunnerRunNoCuda)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-
-  const auto start = std::chrono::high_resolution_clock::now();
-  runner.run(42);
-  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::high_resolution_clock::now() - start)
-                           .count();
-
-  EXPECT_LT(elapsed, 1000);
+  auto elapsed_ms = measure_ms([&]() { runner->run(42); });
+  EXPECT_LT(elapsed_ms, 1000);
 }
 
-TEST(WarmupRunnerTest, ClientWorkerPositiveIterations)
+TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-
   std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
-  InferenceQueue queue;
+  starpu_server::InferenceQueue queue;
 
-  runner.client_worker(device_workers, queue, 2);
+  runner->client_worker(device_workers, queue, 2);
 
   std::vector<int> job_ids;
   std::vector<int> worker_ids;
 
   while (true) {
-    std::shared_ptr<InferenceJob> job;
+    std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
     if (job->is_shutdown()) {
       break;
@@ -105,87 +104,33 @@ TEST(WarmupRunnerTest, ClientWorkerPositiveIterations)
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
 }
 
-TEST(WarmupRunnerTest, RunReturnsImmediatelyWhenCudaDisabled)
+TEST_F(WarmupRunnerTest, RunReturnsImmediatelyWhenCudaDisabled)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-
-  auto start = std::chrono::steady_clock::now();
-  runner.run(100);
-  auto end = std::chrono::steady_clock::now();
-
-  auto elapsed_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-          .count();
+  auto elapsed_ms = measure_ms([&]() { runner->run(100); });
   EXPECT_LT(elapsed_ms, 100);
 }
 
-TEST(WarmupRunnerTest, WarmupRunnerRunNegativeIterations)
+TEST_F(WarmupRunnerTest, WarmupRunnerRunNegativeIterations)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = true;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-
-  EXPECT_THROW(runner.run(-1), std::invalid_argument);
+  init(true);
+  EXPECT_THROW(runner->run(-1), std::invalid_argument);
 }
 
-TEST(WarmupRunnerTest, ClientWorkerThrowsOnIterationOverflow)
+TEST_F(WarmupRunnerTest, ClientWorkerThrowsOnIterationOverflow)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-
   std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
-  InferenceQueue queue;
-
+  starpu_server::InferenceQueue queue;
   const int iterations = std::numeric_limits<int>::max();
-
   EXPECT_THROW(
-      runner.client_worker(device_workers, queue, iterations),
+      runner->client_worker(device_workers, queue, iterations),
       std::overflow_error);
 }
 
-TEST(WarmupRunnerTest, WarmupRunWithMockedWorkers)
+TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = true;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-
+  init(true);
   std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
-  InferenceQueue queue;
+  starpu_server::InferenceQueue queue;
 
   std::atomic<int> completed_jobs{0};
   std::condition_variable cv;
@@ -193,7 +138,7 @@ TEST(WarmupRunnerTest, WarmupRunWithMockedWorkers)
 
   std::jthread server([&]() {
     while (true) {
-      std::shared_ptr<InferenceJob> job;
+      std::shared_ptr<starpu_server::InferenceJob> job;
       queue.wait_and_pop(job);
       if (job->is_shutdown()) {
         break;
@@ -205,7 +150,7 @@ TEST(WarmupRunnerTest, WarmupRunWithMockedWorkers)
 
   const int iterations_per_worker = 1;
   std::jthread client([&]() {
-    runner.client_worker(device_workers, queue, iterations_per_worker);
+    runner->client_worker(device_workers, queue, iterations_per_worker);
   });
 
   size_t total_worker_count = 0;
@@ -226,30 +171,12 @@ TEST(WarmupRunnerTest, WarmupRunWithMockedWorkers)
   EXPECT_EQ(static_cast<size_t>(completed_jobs.load()), total_jobs);
 }
 
-TEST(WarmupRunnerTest, WarmupRunnerRunZeroIterations)
+TEST_F(WarmupRunnerTest, WarmupRunnerRunZeroIterations)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = true;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-
-  auto start = std::chrono::steady_clock::now();
-  runner.run(0);
-  auto end = std::chrono::steady_clock::now();
-
-  auto elapsed_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-          .count();
-
+  init(true);
+  auto elapsed_ms = measure_ms([&]() { runner->run(0); });
   auto device_workers =
-      StarPUSetup::get_cuda_workers_by_device(opts.device_ids);
+      starpu_server::StarPUSetup::get_cuda_workers_by_device(opts.device_ids);
   EXPECT_TRUE(device_workers.empty());
   EXPECT_LT(elapsed_ms, 100);
 }

@@ -8,8 +8,6 @@
 #include "core/inference_task.hpp"
 #include "utils/exceptions.hpp"
 
-using namespace starpu_server;
-
 namespace {
 int unregister_call_count = 0;
 std::vector<starpu_data_handle_t> unregister_handles;
@@ -33,121 +31,98 @@ make_add_one_model() -> torch::jit::script::Module
   return m;
 }
 
-TEST(InferenceTask, TooManyInputs)
-{
-  const size_t num_inputs = InferLimits::MaxInputs + 1;
-  std::vector<torch::Tensor> inputs(num_inputs);
-  std::vector<at::ScalarType> types(num_inputs, at::kFloat);
-  for (size_t i = 0; i < num_inputs; ++i) {
-    inputs[i] = torch::ones({1}, torch::TensorOptions().dtype(at::kFloat));
+class InferenceTaskTest : public ::testing::Test {
+ protected:
+  auto make_job(int job_id, size_t num_inputs, bool set_outputs = true)
+      -> std::shared_ptr<starpu_server::InferenceJob>
+  {
+    auto job = std::make_shared<starpu_server::InferenceJob>();
+    job->set_job_id(job_id);
+    std::vector<torch::Tensor> inputs(num_inputs);
+    std::vector<at::ScalarType> types(num_inputs, at::kFloat);
+    for (size_t i = 0; i < num_inputs; ++i) {
+      inputs[i] = torch::ones({1}, torch::TensorOptions().dtype(at::kFloat));
+    }
+    job->set_input_tensors(inputs);
+    job->set_input_types(types);
+    if (set_outputs) {
+      job->set_outputs_tensors({torch::zeros({1})});
+    }
+    return job;
   }
 
-  auto job = std::make_shared<InferenceJob>();
-  job->set_job_id(0);
-  job->set_input_tensors(inputs);
-  job->set_input_types(types);
-  job->set_outputs_tensors({torch::zeros({1})});
-
-  auto model_cpu = make_add_one_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  RuntimeConfig opts;
-  InferenceTask task(nullptr, job, &model_cpu, &models_gpu, &opts);
-
-  EXPECT_THROW(task.create_inference_params(), InferenceExecutionException);
-}
-
-TEST(InferenceTask, TooManyGpuModels)
-{
-  const size_t num_inputs = 1;
-  std::vector<torch::Tensor> inputs(num_inputs, torch::ones({1}));
-  std::vector<at::ScalarType> types(num_inputs, at::kFloat);
-
-  auto job = std::make_shared<InferenceJob>();
-  job->set_job_id(1);
-  job->set_input_tensors(inputs);
-  job->set_input_types(types);
-  job->set_outputs_tensors({torch::zeros({1})});
-
-  auto model_cpu = make_add_one_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  for (size_t i = 0; i < InferLimits::MaxModelsGPU + 1; ++i) {
-    models_gpu.push_back(make_add_one_model());
+  auto make_task(
+      const std::shared_ptr<starpu_server::InferenceJob>& job,
+      size_t num_gpu_models = 0) -> starpu_server::InferenceTask
+  {
+    model_cpu_ = make_add_one_model();
+    models_gpu_.clear();
+    for (size_t i = 0; i < num_gpu_models; ++i) {
+      models_gpu_.push_back(make_add_one_model());
+    }
+    opts_ = starpu_server::RuntimeConfig{};
+    return starpu_server::InferenceTask(
+        nullptr, job, &model_cpu_, &models_gpu_, &opts_);
   }
-  RuntimeConfig opts;
-  InferenceTask task(nullptr, job, &model_cpu, &models_gpu, &opts);
+  torch::jit::script::Module model_cpu_;
+  std::vector<torch::jit::script::Module> models_gpu_;
+  starpu_server::RuntimeConfig opts_;
+};
 
-  EXPECT_THROW(task.create_inference_params(), TooManyGpuModelsException);
+TEST_F(InferenceTaskTest, TooManyInputs)
+{
+  const size_t num_inputs = starpu_server::InferLimits::MaxInputs + 1;
+  auto job = make_job(0, num_inputs);
+  auto task = make_task(job);
+  EXPECT_THROW(
+      task.create_inference_params(),
+      starpu_server::InferenceExecutionException);
 }
 
-TEST(InferenceTask, InvalidFixedWorker)
+TEST_F(InferenceTaskTest, TooManyGpuModels)
 {
-  const size_t num_inputs = 1;
-  std::vector<torch::Tensor> inputs(num_inputs, torch::ones({1}));
-  std::vector<at::ScalarType> types(num_inputs, at::kFloat);
+  auto job = make_job(1, 1);
+  auto task = make_task(job, starpu_server::InferLimits::MaxModelsGPU + 1);
+  EXPECT_THROW(
+      task.create_inference_params(), starpu_server::TooManyGpuModelsException);
+}
 
-  auto job = std::make_shared<InferenceJob>();
-  job->set_job_id(2);
-  job->set_input_tensors(inputs);
-  job->set_input_types(types);
-  job->set_outputs_tensors({torch::zeros({1})});
+TEST_F(InferenceTaskTest, InvalidFixedWorker)
+{
+  auto job = make_job(2, 1);
   job->set_fixed_worker_id(-1);
-
-  auto model_cpu = make_add_one_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  RuntimeConfig opts;
-  InferenceTask task(nullptr, job, &model_cpu, &models_gpu, &opts);
-
+  auto task = make_task(job);
   starpu_task task_struct{};
   EXPECT_THROW(
       task.assign_fixed_worker_if_needed(&task_struct), std::invalid_argument);
 }
 
-TEST(InferenceTask, AssignFixedWorkerValid)
+TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
 {
-  const size_t num_inputs = 1;
-  std::vector<torch::Tensor> inputs(num_inputs, torch::ones({1}));
-  std::vector<at::ScalarType> types(num_inputs, at::kFloat);
-
-  auto job = std::make_shared<InferenceJob>();
-  job->set_job_id(3);
-  job->set_input_tensors(inputs);
-  job->set_input_types(types);
-  job->set_outputs_tensors({torch::zeros({1})});
+  auto job = make_job(3, 1);
   job->set_fixed_worker_id(2);
-
-  auto model_cpu = make_add_one_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  RuntimeConfig opts;
-  InferenceTask task(nullptr, job, &model_cpu, &models_gpu, &opts);
-
+  auto task = make_task(job);
   starpu_task task_struct{};
   task.assign_fixed_worker_if_needed(&task_struct);
-
   EXPECT_EQ(task_struct.workerid, 2u);
   EXPECT_EQ(task_struct.execute_on_a_specific_worker, 1u);
 }
 
-TEST(InferenceTask, CreateInferenceParamsPopulatesFields)
+TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
 {
-  auto job = std::make_shared<InferenceJob>();
-  job->set_job_id(4);
+  auto job = make_job(4, 1);
   job->set_input_tensors({torch::ones({2, 3})});
-  job->set_input_types({at::kFloat});
   job->set_outputs_tensors({torch::zeros({2, 3})});
 
-  auto model_cpu = make_add_one_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  RuntimeConfig opts;
-  opts.verbosity = VerbosityLevel::Debug;
-  InferenceTask task(nullptr, job, &model_cpu, &models_gpu, &opts);
-
+  auto task = make_task(job);
+  opts_.verbosity = starpu_server::VerbosityLevel::Debug;
   auto params = task.create_inference_params();
 
   ASSERT_EQ(params->num_inputs, 1u);
   ASSERT_EQ(params->num_outputs, 1u);
   EXPECT_EQ(params->job_id, 4);
-  EXPECT_EQ(params->verbosity, opts.verbosity);
-  EXPECT_EQ(params->models.model_cpu, &model_cpu);
+  EXPECT_EQ(params->verbosity, opts_.verbosity);
+  EXPECT_EQ(params->models.model_cpu, &model_cpu_);
   EXPECT_EQ(params->models.num_models_gpu, 0u);
   EXPECT_EQ(params->device.device_id, &job->get_device_id());
   EXPECT_EQ(params->device.worker_id, &job->get_worker_id());
@@ -162,34 +137,42 @@ TEST(InferenceTask, SafeRegisterTensorVectorThrows)
 {
   torch::Tensor undef;
   EXPECT_THROW(
-      InferenceTask::safe_register_tensor_vector(undef, "x"),
-      StarPURegistrationException);
+      starpu_server::InferenceTask::safe_register_tensor_vector(undef, "x"),
+      starpu_server::StarPURegistrationException);
 }
 
 TEST(InferenceTask, RecordAndRunCompletionCallback)
 {
-  auto job = std::make_shared<InferenceJob>();
-  job->set_outputs_tensors({torch::tensor({1})});
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<torch::Tensor> outputs{torch::tensor({1})};
+  job->set_outputs_tensors(outputs);
 
   bool called = false;
-  double latency_ms = 0.0;
-  job->set_on_complete([&called, &latency_ms](
-                           const std::vector<torch::Tensor>&, double latency) {
-    called = true;
-    latency_ms = latency;
-  });
+  std::vector<torch::Tensor> results_arg;
+  double latency_ms = -1.0;
+  job->set_on_complete(
+      [&called, &results_arg, &latency_ms](
+          const std::vector<torch::Tensor>& results, double latency) {
+        called = true;
+        results_arg = results;
+        latency_ms = latency;
+      });
 
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
 
-  RuntimeConfig opts;
-  InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
+  starpu_server::RuntimeConfig opts;
+  starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
 
-  InferenceTask::record_and_run_completion_callback(&ctx, end);
+  starpu_server::InferenceTask::record_and_run_completion_callback(&ctx, end);
 
   EXPECT_TRUE(called);
-  EXPECT_GT(latency_ms, 0.0);
+  ASSERT_EQ(results_arg.size(), outputs.size());
+  EXPECT_TRUE(torch::equal(results_arg[0], outputs[0]));
+  const double expected_latency =
+      std::chrono::duration<double, std::milli>(end - start).count();
+  EXPECT_DOUBLE_EQ(latency_ms, expected_latency);
 }
 
 TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
@@ -204,10 +187,10 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
   std::vector<starpu_data_handle_t> inputs{h1};
   std::vector<starpu_data_handle_t> outputs{h2, h3};
 
-  auto ctx = std::make_shared<InferenceCallbackContext>(
+  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
       nullptr, nullptr, nullptr, 0, inputs, outputs);
 
-  InferenceTask::cleanup(ctx);
+  starpu_server::InferenceTask::cleanup(ctx);
 
   EXPECT_EQ(unregister_call_count, 3);
   ASSERT_EQ(unregister_handles.size(), 3u);

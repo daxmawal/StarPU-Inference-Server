@@ -8,6 +8,20 @@
 
 using namespace starpu_server;
 
+struct CaptureStream {
+  explicit CaptureStream(std::ostream& s)
+      : stream{s}, old_buf{s.rdbuf(buffer.rdbuf())}
+  {
+  }
+  ~CaptureStream() { stream.rdbuf(old_buf); }
+  [[nodiscard]] auto str() const -> std::string { return buffer.str(); }
+
+ private:
+  std::ostream& stream;
+  std::ostringstream buffer;
+  std::streambuf* old_buf;
+};
+
 TEST(Logger, VerbosityStyle)
 {
   using enum VerbosityLevel;
@@ -25,177 +39,103 @@ TEST(Logger, VerbosityStyle)
   check(static_cast<VerbosityLevel>(255), "", "");
 }
 
-TEST(Logger, LogsWhenLevelEnabled)
+struct VerboseParam {
+  VerbosityLevel level;
+  const char* message;
+};
+
+class LogVerboseLevels : public ::testing::TestWithParam<VerboseParam> {};
+
+TEST_P(LogVerboseLevels, LogsWhenEnabled)
 {
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_verbose(VerbosityLevel::Info, VerbosityLevel::Info, "hello");
-
-  std::cout.rdbuf(old_buf);
-  auto [color, label] = verbosity_style(VerbosityLevel::Info);
-  EXPECT_EQ(oss.str(), std::string(color) + label + "hello\o{33}[0m\n");
+  const auto& p = GetParam();
+  CaptureStream capture{std::cout};
+  log_verbose(p.level, p.level, p.message);
+  auto [color, label] = verbosity_style(p.level);
+  EXPECT_EQ(
+      capture.str(), std::string(color) + label + p.message + "\o{33}[0m\n");
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    Logger, LogVerboseLevels,
+    ::testing::Values(
+        VerboseParam{VerbosityLevel::Info, "hello"},
+        VerboseParam{VerbosityLevel::Stats, "statline"},
+        VerboseParam{VerbosityLevel::Debug, "debugline"},
+        VerboseParam{VerbosityLevel::Trace, "traceline"}));
 
 TEST(Logger, NoOutputWhenLevelTooLow)
 {
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
+  CaptureStream capture{std::cout};
   log_verbose(VerbosityLevel::Stats, VerbosityLevel::Info, "hidden");
-
-  std::cout.rdbuf(old_buf);
-  EXPECT_EQ(oss.str(), "");
+  EXPECT_EQ(capture.str(), "");
 }
 
-TEST(Logger, LogStatsLevel)
+using WrapperFn = void (*)(VerbosityLevel, const std::string&);
+struct WrapperParam {
+  WrapperFn fn;
+  VerbosityLevel call_level;
+  VerbosityLevel inherent_level;
+  const char* message;
+  bool expect_output;
+};
+
+class LogWrappers : public ::testing::TestWithParam<WrapperParam> {};
+
+TEST_P(LogWrappers, ProducesExpectedOutput)
 {
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_verbose(VerbosityLevel::Stats, VerbosityLevel::Stats, "statline");
-
-  std::cout.rdbuf(old_buf);
-  auto [color, label] = verbosity_style(VerbosityLevel::Stats);
-  EXPECT_EQ(oss.str(), std::string(color) + label + "statline\o{33}[0m\n");
+  const auto& p = GetParam();
+  CaptureStream capture{std::cout};
+  p.fn(p.call_level, p.message);
+  if (p.expect_output) {
+    auto [color, label] = verbosity_style(p.inherent_level);
+    EXPECT_EQ(
+        capture.str(), std::string(color) + label + p.message + "\o{33}[0m\n");
+  } else {
+    EXPECT_EQ(capture.str(), "");
+  }
 }
 
-TEST(Logger, LogDebugLevel)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_verbose(VerbosityLevel::Debug, VerbosityLevel::Debug, "debugline");
-
-  std::cout.rdbuf(old_buf);
-  auto [color, label] = verbosity_style(VerbosityLevel::Debug);
-  EXPECT_EQ(oss.str(), std::string(color) + label + "debugline\o{33}[0m\n");
-}
-
-TEST(Logger, LogTraceLevel)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_verbose(VerbosityLevel::Trace, VerbosityLevel::Trace, "traceline");
-
-  std::cout.rdbuf(old_buf);
-  auto [color, label] = verbosity_style(VerbosityLevel::Trace);
-  EXPECT_EQ(oss.str(), std::string(color) + label + "traceline\o{33}[0m\n");
-}
-
-TEST(Logger, LogInfoWrapper)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_info(VerbosityLevel::Info, "wrapped info");
-
-  std::cout.rdbuf(old_buf);
-  auto [color, label] = verbosity_style(VerbosityLevel::Info);
-  EXPECT_EQ(oss.str(), std::string(color) + label + "wrapped info\o{33}[0m\n");
-}
-
-TEST(Logger, LogInfoWrapperBelowLevel)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_info(VerbosityLevel::Silent, "should not appear");
-
-  std::cout.rdbuf(old_buf);
-  EXPECT_EQ(oss.str(), "");
-}
-
-TEST(Logger, LogStatsWrapper)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_stats(VerbosityLevel::Stats, "wrapped stats");
-
-  std::cout.rdbuf(old_buf);
-  auto [color, label] = verbosity_style(VerbosityLevel::Stats);
-  EXPECT_EQ(oss.str(), std::string(color) + label + "wrapped stats\o{33}[0m\n");
-}
-
-TEST(Logger, LogStatsWrapperBelowLevel)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_stats(VerbosityLevel::Info, "should not appear");
-
-  std::cout.rdbuf(old_buf);
-  EXPECT_EQ(oss.str(), "");
-}
-
-TEST(Logger, LogDebugWrapper)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_debug(VerbosityLevel::Debug, "wrapped debug");
-
-  std::cout.rdbuf(old_buf);
-  auto [color, label] = verbosity_style(VerbosityLevel::Debug);
-  EXPECT_EQ(oss.str(), std::string(color) + label + "wrapped debug\o{33}[0m\n");
-}
-
-TEST(Logger, LogDebugWrapperBelowLevel)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_debug(VerbosityLevel::Info, "should not appear");
-
-  std::cout.rdbuf(old_buf);
-  EXPECT_EQ(oss.str(), "");
-}
-
-TEST(Logger, LogTraceWrapper)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_trace(VerbosityLevel::Trace, "wrapped trace");
-
-  std::cout.rdbuf(old_buf);
-  auto [color, label] = verbosity_style(VerbosityLevel::Trace);
-  EXPECT_EQ(oss.str(), std::string(color) + label + "wrapped trace\o{33}[0m\n");
-}
-
-TEST(Logger, LogTraceWrapperBelowLevel)
-{
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
-
-  log_trace(VerbosityLevel::Info, "should not appear");
-
-  std::cout.rdbuf(old_buf);
-  EXPECT_EQ(oss.str(), "");
-}
+INSTANTIATE_TEST_SUITE_P(
+    Logger, LogWrappers,
+    ::testing::Values(
+        WrapperParam{
+            log_info, VerbosityLevel::Info, VerbosityLevel::Info,
+            "wrapped info", true},
+        WrapperParam{
+            log_info, VerbosityLevel::Silent, VerbosityLevel::Info,
+            "should not appear", false},
+        WrapperParam{
+            log_stats, VerbosityLevel::Stats, VerbosityLevel::Stats,
+            "wrapped stats", true},
+        WrapperParam{
+            log_stats, VerbosityLevel::Info, VerbosityLevel::Stats,
+            "should not appear", false},
+        WrapperParam{
+            log_debug, VerbosityLevel::Debug, VerbosityLevel::Debug,
+            "wrapped debug", true},
+        WrapperParam{
+            log_debug, VerbosityLevel::Info, VerbosityLevel::Debug,
+            "should not appear", false},
+        WrapperParam{
+            log_trace, VerbosityLevel::Trace, VerbosityLevel::Trace,
+            "wrapped trace", true},
+        WrapperParam{
+            log_trace, VerbosityLevel::Info, VerbosityLevel::Trace,
+            "should not appear", false}));
 
 TEST(Logger, LogWarning)
 {
-  std::ostringstream oss;
-  auto* old_buf = std::cerr.rdbuf(oss.rdbuf());
-
+  CaptureStream capture{std::cerr};
   log_warning("msg");
-
-  std::cerr.rdbuf(old_buf);
-  EXPECT_EQ(oss.str(), "\o{33}[1;33m[WARNING] msg\o{33}[0m\n");
+  EXPECT_EQ(capture.str(), "\o{33}[1;33m[WARNING] msg\o{33}[0m\n");
 }
 
 TEST(Logger, LogError)
 {
-  std::ostringstream oss;
-  auto* old_buf = std::cerr.rdbuf(oss.rdbuf());
-
+  CaptureStream capture{std::cerr};
   log_error("err");
-
-  std::cerr.rdbuf(old_buf);
-  EXPECT_EQ(oss.str(), "\o{33}[1;31m[ERROR] err\o{33}[0m\n");
+  EXPECT_EQ(capture.str(), "\o{33}[1;31m[ERROR] err\o{33}[0m\n");
 }
 
 TEST(Logger, LogFatalDeath)

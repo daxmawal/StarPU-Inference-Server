@@ -7,6 +7,7 @@
 
 #include "core/inference_params.hpp"
 #include "core/tensor_builder.hpp"
+#include "test_helpers.hpp"
 
 using namespace starpu_server;
 
@@ -23,17 +24,10 @@ TEST(StarPUSetupRunInference, BuildsExecutesCopiesAndTimes)
   float input_data[3] = {1.0f, 2.0f, 3.0f};
   float output_data[3] = {0.0f, 0.0f, 0.0f};
 
-  starpu_variable_interface input_iface;
-  input_iface.ptr = reinterpret_cast<uintptr_t>(input_data);
-  starpu_variable_interface output_iface;
-  output_iface.ptr = reinterpret_cast<uintptr_t>(output_data);
+  auto input_iface = make_variable_interface(input_data);
+  auto output_iface = make_variable_interface(output_data);
 
-  InferenceParams params{};
-  params.num_inputs = 1;
-  params.num_outputs = 1;
-  params.layout.num_dims[0] = 1;
-  params.layout.dims[0][0] = 3;
-  params.layout.input_types[0] = at::kFloat;
+  auto params = make_basic_params(3);
 
   std::chrono::high_resolution_clock::time_point inference_start;
   params.timing.inference_start_time = &inference_start;

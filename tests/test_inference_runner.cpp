@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <vector>
+
 #include "core/inference_runner.hpp"
 
 using namespace starpu_server;
@@ -44,7 +47,7 @@ TEST(InferenceJob, SettersAndGettersAndCallback)
   EXPECT_EQ(job->get_input_types()[0], at::kFloat);
   ASSERT_EQ(job->get_output_tensors().size(), 1);
   EXPECT_TRUE(job->get_output_tensors()[0].equal(outputs[0]));
-  EXPECT_TRUE(job->get_start_time() == start);
+  EXPECT_EQ(job->get_start_time(), start);
   ASSERT_TRUE(job->get_fixed_worker_id().has_value());
   EXPECT_EQ(job->get_fixed_worker_id().value(), 3);
   ASSERT_TRUE(job->has_on_complete());

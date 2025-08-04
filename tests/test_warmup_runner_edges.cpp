@@ -7,9 +7,9 @@
 #include "core/warmup.hpp"
 #undef private
 
-using namespace starpu_server;
+namespace {
 
-static auto
+auto
 make_identity_model() -> torch::jit::script::Module
 {
   torch::jit::script::Module m{"m"};
@@ -20,31 +20,42 @@ make_identity_model() -> torch::jit::script::Module
   return m;
 }
 
-static auto
+auto
 count_threads() -> int
 {
   namespace fs = std::filesystem;
-  int count = 0;
-  for (const auto& entry : fs::directory_iterator("/proc/self/task")) {
-    (void)entry;
-    ++count;
-  }
-  return count;
+  return std::distance(fs::directory_iterator("/proc/self/task"), {});
 }
+
+struct WarmupTestFixture {
+  starpu_server::RuntimeConfig opts;
+  starpu_server::StarPUSetup starpu;
+  torch::jit::script::Module model_cpu;
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> outputs_ref;
+
+  WarmupTestFixture()
+      : opts{}, starpu(opts), model_cpu(make_identity_model()), models_gpu{},
+        outputs_ref{torch::zeros({1})}
+  {
+    opts.input_shapes = {{1}};
+    opts.input_types = {at::kFloat};
+    opts.use_cuda = false;
+  }
+
+  auto make_runner() -> starpu_server::WarmupRunner
+  {
+    return starpu_server::WarmupRunner(
+        opts, starpu, model_cpu, models_gpu, outputs_ref);
+  }
+};
+
+}  // namespace
 
 TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+  WarmupTestFixture fixture;
+  auto runner = fixture.make_runner();
 
   const auto threads_before = count_threads();
   const auto start = std::chrono::steady_clock::now();
@@ -62,64 +73,34 @@ TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads)
 
 TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnNegativeIterations)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+  WarmupTestFixture fixture;
+  auto runner = fixture.make_runner();
 
   std::map<int, std::vector<int32_t>> device_workers;
-  InferenceQueue queue;
+  starpu_server::InferenceQueue queue;
 
-  const int iterations_per_worker = -1;
   EXPECT_THROW(
-      runner.client_worker(device_workers, queue, iterations_per_worker),
-      std::invalid_argument);
+      runner.client_worker(device_workers, queue, -1), std::invalid_argument);
 }
 
 TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnIterationOverflow)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+  WarmupTestFixture fixture;
+  auto runner = fixture.make_runner();
 
   std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
-  InferenceQueue queue;
-
-  const int iterations = std::numeric_limits<int>::max();
+  starpu_server::InferenceQueue queue;
 
   EXPECT_THROW(
-      runner.client_worker(device_workers, queue, iterations),
+      runner.client_worker(
+          device_workers, queue, std::numeric_limits<int>::max()),
       std::overflow_error);
 }
 
 TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow)
 {
-  RuntimeConfig opts;
-  opts.input_shapes = {{1}};
-  opts.input_types = {at::kFloat};
-  opts.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-  auto model_cpu = make_identity_model();
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref = {torch::zeros({1})};
-
-  WarmupRunner runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+  WarmupTestFixture fixture;
+  auto runner = fixture.make_runner();
 
   const int iterations = 1000;
   const size_t worker_count =
@@ -128,7 +109,7 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow)
       1;
   std::vector<int32_t> many_workers(worker_count, 0);
   std::map<int, std::vector<int32_t>> device_workers = {{0, many_workers}};
-  InferenceQueue queue;
+  starpu_server::InferenceQueue queue;
 
   EXPECT_THROW(
       runner.client_worker(device_workers, queue, iterations),

@@ -1,15 +1,25 @@
 #include <gtest/gtest.h>
 
-#include <array>
+#include <initializer_list>
+#include <vector>
 
 #include "cli/args_parser.hpp"
 #include "utils/exceptions.hpp"
+
+constexpr char kInvalidOptionsRegex[] = "Invalid program options\\.";
 
 namespace starpu_server {
 struct RuntimeConfig;
 class StarPUSetup;
 using RunLoopPtr = void (*)(const RuntimeConfig&, StarPUSetup&);
 static RunLoopPtr run_inference_loop_hook = nullptr;
+
+struct RunLoopHookGuard {
+  explicit RunLoopHookGuard(RunLoopPtr hook) { run_inference_loop_hook = hook; }
+
+  ~RunLoopHookGuard() { run_inference_loop_hook = nullptr; }
+};
+
 inline void
 fake_run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
@@ -24,15 +34,23 @@ fake_run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 
 #undef run_inference_loop
 
+static std::vector<char*>
+build_argv(std::initializer_list<const char*> args)
+{
+  std::vector<char*> argv;
+  argv.reserve(args.size());
+  for (const char* arg : args) {
+    argv.push_back(const_cast<char*>(arg));
+  }
+  return argv;
+}
+
 TEST(CliMain, ShowsHelpMessage)
 {
-  std::array<char*, 2> argv = {
-      const_cast<char*>("program"), const_cast<char*>("--help")};
-
+  auto argv = build_argv({"program", "--help"});
   testing::internal::CaptureStdout();
   int result = cli_main(static_cast<int>(argv.size()), argv.data());
   std::string output = testing::internal::GetCapturedStdout();
-
   EXPECT_EQ(result, 0);
   const std::string expected =
       "Usage: Inference Engine [OPTIONS]\n"
@@ -56,16 +74,12 @@ TEST(CliMain, ShowsHelpMessage)
 
 TEST(CliMain, InvalidOptionsDeath)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
-      const_cast<char*>("1x2,2x3"),  const_cast<char*>("--types"),
-      const_cast<char*>("float"),
-  };
-
+  auto argv = build_argv(
+      {"program", "--model", "model.pt", "--shapes", "1x2,2x3", "--types",
+       "float"});
   EXPECT_DEATH(
       { cli_main(static_cast<int>(argv.size()), argv.data()); },
-      "Invalid program options.");
+      kInvalidOptionsRegex);
 }
 
 namespace starpu_server {
@@ -84,41 +98,28 @@ throw_std_error(const RuntimeConfig&, StarPUSetup&)
 
 TEST(CliMain, ReturnsTwoOnInferenceEngineException)
 {
-  starpu_server::run_inference_loop_hook = starpu_server::throw_inference_error;
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x1"),      const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
+  starpu_server::RunLoopHookGuard guard(starpu_server::throw_inference_error);
+  auto argv = build_argv(
+      {"program", "--model", "model.pt", "--shape", "1x1", "--types", "float"});
   int result = cli_main(static_cast<int>(argv.size()), argv.data());
-  starpu_server::run_inference_loop_hook = nullptr;
   EXPECT_EQ(result, 2);
 }
 
 TEST(CliMain, ReturnsMinusOneOnStdException)
 {
-  starpu_server::run_inference_loop_hook = starpu_server::throw_std_error;
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shape"),
-      const_cast<char*>("1x1"),      const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
+  starpu_server::RunLoopHookGuard guard(starpu_server::throw_std_error);
+  auto argv = build_argv(
+      {"program", "--model", "model.pt", "--shape", "1x1", "--types", "float"});
   int result = cli_main(static_cast<int>(argv.size()), argv.data());
-  starpu_server::run_inference_loop_hook = nullptr;
   EXPECT_EQ(result, -1);
 }
 
 TEST(CliMain, ReturnsFatalOnInvalidOptions)
 {
-  std::array<char*, 7> argv = {
-      const_cast<char*>("program"),  const_cast<char*>("--model"),
-      const_cast<char*>("model.pt"), const_cast<char*>("--shapes"),
-      const_cast<char*>("1x2,2x3"),  const_cast<char*>("--types"),
-      const_cast<char*>("float")};
-
+  auto argv = build_argv(
+      {"program", "--model", "model.pt", "--shapes", "1x2,2x3", "--types",
+       "float"});
   EXPECT_DEATH(
       { cli_main(static_cast<int>(argv.size()), argv.data()); },
-      "Invalid program options\\.");
+      kInvalidOptionsRegex);
 }
