@@ -3,11 +3,24 @@
 #include <torch/script.h>
 
 #include <limits>
+#include <vector>
 
 #include "core/inference_task.hpp"
 #include "utils/exceptions.hpp"
 
 using namespace starpu_server;
+
+namespace {
+int unregister_call_count = 0;
+std::vector<starpu_data_handle_t> unregister_handles;
+}  // namespace
+
+extern "C" void
+starpu_data_unregister_submit(starpu_data_handle_t handle)
+{
+  ++unregister_call_count;
+  unregister_handles.push_back(handle);
+}
 
 static auto
 make_add_one_model() -> torch::jit::script::Module
@@ -151,4 +164,58 @@ TEST(InferenceTask, SafeRegisterTensorVectorThrows)
   EXPECT_THROW(
       InferenceTask::safe_register_tensor_vector(undef, "x"),
       StarPURegistrationException);
+}
+
+TEST(InferenceTask, RecordAndRunCompletionCallback)
+{
+  auto job = std::make_shared<InferenceJob>();
+  job->set_outputs_tensors({torch::tensor({1})});
+
+  bool called = false;
+  double latency_ms = 0.0;
+  job->set_on_complete([&called, &latency_ms](
+                           const std::vector<torch::Tensor>&, double latency) {
+    called = true;
+    latency_ms = latency;
+  });
+
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::milliseconds(5);
+  job->set_start_time(start);
+
+  RuntimeConfig opts;
+  InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
+
+  InferenceTask::record_and_run_completion_callback(&ctx, end);
+
+  EXPECT_TRUE(called);
+  EXPECT_GT(latency_ms, 0.0);
+}
+
+TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
+{
+  unregister_call_count = 0;
+  unregister_handles.clear();
+
+  const auto h1 = reinterpret_cast<starpu_data_handle_t>(0x1);
+  const auto h2 = reinterpret_cast<starpu_data_handle_t>(0x2);
+  const auto h3 = reinterpret_cast<starpu_data_handle_t>(0x3);
+
+  std::vector<starpu_data_handle_t> inputs{h1};
+  std::vector<starpu_data_handle_t> outputs{h2, h3};
+
+  auto ctx = std::make_shared<InferenceCallbackContext>(
+      nullptr, nullptr, nullptr, 0, inputs, outputs);
+
+  InferenceTask::cleanup(ctx);
+
+  EXPECT_EQ(unregister_call_count, 3);
+  ASSERT_EQ(unregister_handles.size(), 3u);
+  EXPECT_EQ(unregister_handles[0], h1);
+  EXPECT_EQ(unregister_handles[1], h2);
+  EXPECT_EQ(unregister_handles[2], h3);
+
+  EXPECT_EQ(ctx->inputs_handles[0], nullptr);
+  EXPECT_EQ(ctx->outputs_handles[0], nullptr);
+  EXPECT_EQ(ctx->outputs_handles[1], nullptr);
 }
