@@ -7,11 +7,11 @@
 #include <climits>
 #include <memory>
 
+#include "../test_helpers.hpp"
 #include "core/inference_params.hpp"
 #include "core/starpu_setup.hpp"
 #include "core/tensor_builder.hpp"
 #include "starpu_runtime_guard.hpp"
-#include "test_helpers.hpp"
 
 using namespace starpu_server;
 
