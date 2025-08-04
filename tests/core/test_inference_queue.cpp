@@ -6,16 +6,14 @@
 #include "core/inference_runner.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 
-using namespace starpu_server;
-
 TEST(InferenceQueue, FifoAndShutdown)
 {
-  InferenceQueue queue;
+  starpu_server::InferenceQueue queue;
   std::vector<int> popped_ids;
 
   std::thread consumer([&]() {
     while (true) {
-      std::shared_ptr<InferenceJob> job;
+      std::shared_ptr<starpu_server::InferenceJob> job;
       queue.wait_and_pop(job);
       if (job->is_shutdown()) {
         popped_ids.push_back(-1);
@@ -26,7 +24,7 @@ TEST(InferenceQueue, FifoAndShutdown)
   });
 
   for (int i = 0; i < 3; ++i) {
-    auto job = std::make_shared<InferenceJob>();
+    auto job = std::make_shared<starpu_server::InferenceJob>();
     job->set_job_id(i);
     queue.push(job);
   }

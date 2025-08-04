@@ -9,8 +9,6 @@
 #include "core/inference_params.hpp"
 #include "core/tensor_builder.hpp"
 
-using namespace starpu_server;
-
 namespace starpu_server {
 void run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
@@ -24,10 +22,10 @@ TEST(StarPUSetupRunInference, BuildsExecutesCopiesAndTimes)
   float input_data[3] = {1.0f, 2.0f, 3.0f};
   float output_data[3] = {0.0f, 0.0f, 0.0f};
 
-  auto input_iface = make_variable_interface(input_data);
-  auto output_iface = make_variable_interface(output_data);
+  auto input_iface = starpu_server::make_variable_interface(input_data);
+  auto output_iface = starpu_server::make_variable_interface(output_data);
 
-  auto params = make_basic_params(3);
+  auto params = starpu_server::make_basic_params(3);
 
   std::chrono::high_resolution_clock::time_point inference_start;
   params.timing.inference_start_time = &inference_start;
@@ -41,10 +39,11 @@ TEST(StarPUSetupRunInference, BuildsExecutesCopiesAndTimes)
     )JIT");
 
   auto before = std::chrono::high_resolution_clock::now();
-  run_inference(
+  starpu_server::run_inference(
       &params, buffers, torch::Device(torch::kCPU), &model,
       [](const at::Tensor& out, void* buffer_ptr) {
-        TensorBuilder::copy_output_to_buffer(out, buffer_ptr, out.numel());
+        starpu_server::TensorBuilder::copy_output_to_buffer(
+            out, buffer_ptr, out.numel());
       });
   auto after = std::chrono::high_resolution_clock::now();
 

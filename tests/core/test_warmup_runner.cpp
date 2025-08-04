@@ -14,6 +14,8 @@
 #include "core/warmup.hpp"
 #undef private
 
+#include "inference_runner_test_utils.hpp"
+
 template <class F>
 static auto
 measure_ms(F&& f) -> long
@@ -23,17 +25,6 @@ measure_ms(F&& f) -> long
   const auto end = std::chrono::steady_clock::now();
   return std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
       .count();
-}
-
-static auto
-make_identity_model() -> torch::jit::script::Module
-{
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
-        def forward(self, x):
-            return x
-    )JIT");
-  return m;
 }
 
 class WarmupRunnerTest : public ::testing::Test {
@@ -56,7 +47,7 @@ class WarmupRunnerTest : public ::testing::Test {
     opts.use_cuda = use_cuda;
 
     starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
-    model_cpu = make_identity_model();
+    model_cpu = starpu_server::make_identity_model();
     models_gpu.clear();
     outputs_ref = {torch::zeros({1})};
     runner = std::make_unique<starpu_server::WarmupRunner>(

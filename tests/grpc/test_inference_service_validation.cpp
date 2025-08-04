@@ -1,34 +1,16 @@
 #include <gtest/gtest.h>
 
-#include <thread>
-
-#include "grpc/server/inference_service.hpp"
-
-using namespace starpu_server;
-
-static inference::ModelInferRequest
-make_valid_request()
-{
-  inference::ModelInferRequest req;
-  auto* input = req.add_inputs();
-  input->set_name("input0");
-  input->set_datatype("FP32");
-  input->add_shape(2);
-  input->add_shape(2);
-
-  std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
-  req.add_raw_input_contents()->assign(
-      reinterpret_cast<const char*>(data.data()), data.size() * sizeof(float));
-  return req;
-}
+#include "../test_helpers.hpp"
+#include "inference_service_test.hpp"
 
 TEST(InferenceServiceValidation, RawInputCountMismatch)
 {
-  auto req = make_valid_request();
-  // add an extra raw input to cause mismatch
+  auto req = starpu_server::make_valid_request();
   req.add_raw_input_contents()->assign("", 0);
   std::vector<torch::Tensor> inputs;
-  auto status = InferenceServiceImpl::validate_and_convert_inputs(&req, inputs);
+  auto status =
+      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
+          &req, inputs);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
@@ -40,31 +22,30 @@ TEST(InferenceServiceValidation, RawContentSizeMismatch)
   input->set_datatype("FP32");
   input->add_shape(2);
   input->add_shape(2);
-  // only 3 floats provided but shape expects 4
   std::vector<float> data = {1.0f, 2.0f, 3.0f};
   req.add_raw_input_contents()->assign(
       reinterpret_cast<const char*>(data.data()), data.size() * sizeof(float));
   std::vector<torch::Tensor> inputs;
-  auto status = InferenceServiceImpl::validate_and_convert_inputs(&req, inputs);
+  auto status =
+      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
+          &req, inputs);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceServiceValidation, SubmitJobAndWaitInternalError)
+TEST_F(InferenceServiceTest, SubmitJobAndWaitInternalError)
 {
-  InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs = {torch::zeros({1})};
-  InferenceServiceImpl service(&queue, &ref_outputs);
+  ref_outputs = {torch::zeros({1})};
 
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   std::vector<torch::Tensor> outputs;
 
   std::thread worker([&] {
-    std::shared_ptr<InferenceJob> job;
+    std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
     job->get_on_complete()({}, 0.0);
   });
 
-  auto status = service.submit_job_and_wait(inputs, outputs);
+  auto status = service->submit_job_and_wait(inputs, outputs);
   worker.join();
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
@@ -82,7 +63,7 @@ TEST(InferenceServiceValidation, PopulateResponseSetsServerTimes)
   int64_t recv_ms = 10;
   int64_t send_ms = 20;
 
-  InferenceServiceImpl::populate_response(
+  starpu_server::InferenceServiceImpl::populate_response(
       &req, &reply, outputs, recv_ms, send_ms);
 
   EXPECT_EQ(reply.server_receive_ms(), recv_ms);

@@ -2,8 +2,8 @@
 
 #include <functional>
 #include <memory>
-#include <sstream>
 
+#include "../test_helpers.hpp"
 #include "core/inference_task.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
@@ -15,22 +15,15 @@ struct ExceptionCase {
   std::string expected;
 };
 
-class LogExceptionTest : public ::testing::TestWithParam<ExceptionCase> {
- protected:
-  std::ostringstream oss;
-  std::streambuf* old_buf;
-
-  void SetUp() override { old_buf = std::cerr.rdbuf(oss.rdbuf()); }
-
-  void TearDown() override { std::cerr.rdbuf(old_buf); }
-};
+class LogExceptionTest : public ::testing::TestWithParam<ExceptionCase> {};
 
 TEST_P(LogExceptionTest, LogsExpectedMessage)
 {
   auto param = GetParam();
   auto e = param.make_exception();
+  CaptureStream capture{std::cerr};
   InferenceTask::log_exception("ctx", *e);
-  EXPECT_EQ(oss.str(), param.expected);
+  EXPECT_EQ(capture.str(), param.expected);
 }
 
 INSTANTIATE_TEST_SUITE_P(

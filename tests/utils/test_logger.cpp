@@ -1,26 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
-#include <sstream>
 #include <utility>
 
+#include "../test_helpers.hpp"
 #include "utils/logger.hpp"
 
 using namespace starpu_server;
-
-struct CaptureStream {
-  explicit CaptureStream(std::ostream& s)
-      : stream{s}, old_buf{s.rdbuf(buffer.rdbuf())}
-  {
-  }
-  ~CaptureStream() { stream.rdbuf(old_buf); }
-  [[nodiscard]] auto str() const -> std::string { return buffer.str(); }
-
- private:
-  std::ostream& stream;
-  std::ostringstream buffer;
-  std::streambuf* old_buf;
-};
 
 TEST(Logger, VerbosityStyle)
 {

@@ -5,11 +5,9 @@
 
 #include "core/inference_runner.hpp"
 
-using namespace starpu_server;
-
 TEST(InferenceRunner, MakeShutdownJob)
 {
-  auto job = InferenceJob::make_shutdown_job();
+  auto job = starpu_server::InferenceJob::make_shutdown_job();
   ASSERT_NE(job, nullptr);
   EXPECT_TRUE(job->is_shutdown());
 }
@@ -21,7 +19,7 @@ TEST(InferenceJob, SettersAndGettersAndCallback)
   std::vector<at::ScalarType> types{at::kFloat};
   std::vector<torch::Tensor> outputs{torch::zeros({2, 2})};
 
-  auto job = std::make_shared<InferenceJob>();
+  auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_job_id(7);
   job->set_input_tensors(inputs);
   job->set_input_types(types);

@@ -2,53 +2,45 @@
 
 #include <thread>
 
-#include "grpc/server/inference_service.hpp"
+#include "inference_service_test.hpp"
 
-using namespace starpu_server;
-
-TEST(InferenceServiceImpl, BasicLivenessAndReadiness)
+TEST_F(InferenceServiceTest, BasicLivenessAndReadiness)
 {
-  InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  InferenceServiceImpl service(&queue, &ref_outputs);
-
   grpc::ServerContext ctx;
   inference::ServerLiveRequest live_req;
   inference::ServerLiveResponse live_resp;
-  auto status = service.ServerLive(&ctx, &live_req, &live_resp);
+  auto status = service->ServerLive(&ctx, &live_req, &live_resp);
   ASSERT_TRUE(status.ok());
   EXPECT_TRUE(live_resp.live());
 
   inference::ServerReadyRequest ready_req;
   inference::ServerReadyResponse ready_resp;
-  status = service.ServerReady(&ctx, &ready_req, &ready_resp);
+  status = service->ServerReady(&ctx, &ready_req, &ready_resp);
   ASSERT_TRUE(status.ok());
   EXPECT_TRUE(ready_resp.ready());
 
   inference::ModelReadyRequest model_req;
   inference::ModelReadyResponse model_resp;
-  status = service.ModelReady(&ctx, &model_req, &model_resp);
+  status = service->ModelReady(&ctx, &model_req, &model_resp);
   ASSERT_TRUE(status.ok());
   EXPECT_TRUE(model_resp.ready());
 }
 
-TEST(InferenceServiceImpl, SubmitJobAndWaitReturnsOutputs)
+TEST_F(InferenceServiceTest, SubmitJobAndWaitReturnsOutputs)
 {
-  InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs = {torch::zeros({1})};
-  InferenceServiceImpl service(&queue, &ref_outputs);
+  ref_outputs = {torch::zeros({1})};
 
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   std::vector<torch::Tensor> expected = {torch::tensor({42})};
 
   std::vector<torch::Tensor> outputs;
   std::thread worker([&] {
-    std::shared_ptr<InferenceJob> job;
+    std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
     job->get_on_complete()(expected, 0.0);
   });
 
-  auto status = service.submit_job_and_wait(inputs, outputs);
+  auto status = service->submit_job_and_wait(inputs, outputs);
   worker.join();
 
   ASSERT_TRUE(status.ok());
@@ -64,7 +56,8 @@ TEST(InferenceServiceImpl, PopulateResponseFillsFields)
 
   std::vector<torch::Tensor> outs = {torch::tensor({3.0f, 4.0f})};
   inference::ModelInferResponse resp;
-  InferenceServiceImpl::populate_response(&req, &resp, outs, 10, 20);
+  starpu_server::InferenceServiceImpl::populate_response(
+      &req, &resp, outs, 10, 20);
 
   EXPECT_EQ(resp.model_name(), "mymodel");
   EXPECT_EQ(resp.model_version(), "1");

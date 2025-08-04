@@ -1,9 +1,7 @@
 #include <gtest/gtest.h>
 
-#include <initializer_list>
-#include <vector>
-
 #include "cli/args_parser.hpp"
+#include "cli_test_utils.hpp"
 #include "utils/exceptions.hpp"
 
 constexpr char kInvalidOptionsRegex[] = "Invalid program options\\.";
@@ -33,17 +31,6 @@ fake_run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 #undef main
 
 #undef run_inference_loop
-
-static std::vector<char*>
-build_argv(std::initializer_list<const char*> args)
-{
-  std::vector<char*> argv;
-  argv.reserve(args.size());
-  for (const char* arg : args) {
-    argv.push_back(const_cast<char*>(arg));
-  }
-  return argv;
-}
 
 TEST(CliMain, ShowsHelpMessage)
 {

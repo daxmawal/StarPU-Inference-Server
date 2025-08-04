@@ -2,31 +2,17 @@
 
 #include <cstring>
 
+#include "../test_helpers.hpp"
 #include "grpc/server/inference_service.hpp"
-
-using namespace starpu_server;
-
-static inference::ModelInferRequest
-make_valid_request()
-{
-  inference::ModelInferRequest req;
-  auto* input = req.add_inputs();
-  input->set_name("input0");
-  input->set_datatype("FP32");
-  input->add_shape(2);
-  input->add_shape(2);
-
-  std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
-  req.add_raw_input_contents()->assign(
-      reinterpret_cast<const char*>(data.data()), data.size() * sizeof(float));
-  return req;
-}
+#include "inference_service_test.hpp"
 
 TEST(InferenceService, ValidateInputsSuccess)
 {
-  auto req = make_valid_request();
+  auto req = starpu_server::make_valid_request();
   std::vector<torch::Tensor> inputs;
-  auto status = InferenceServiceImpl::validate_and_convert_inputs(&req, inputs);
+  auto status =
+      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
+          &req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1u);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
@@ -58,7 +44,9 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
       data1.size() * sizeof(int64_t));
 
   std::vector<torch::Tensor> inputs;
-  auto status = InferenceServiceImpl::validate_and_convert_inputs(&req, inputs);
+  auto status =
+      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
+          &req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 2u);
 
@@ -73,10 +61,12 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
 
 TEST(InferenceService, RawInputCountMismatch)
 {
-  auto req = make_valid_request();
+  auto req = starpu_server::make_valid_request();
   req.add_raw_input_contents()->assign("", 0);
   std::vector<torch::Tensor> inputs;
-  auto status = InferenceServiceImpl::validate_and_convert_inputs(&req, inputs);
+  auto status =
+      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
+          &req, inputs);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
@@ -92,7 +82,9 @@ TEST(InferenceService, RawContentSizeMismatch)
   req.add_raw_input_contents()->assign(
       reinterpret_cast<const char*>(data.data()), data.size() * sizeof(float));
   std::vector<torch::Tensor> inputs;
-  auto status = InferenceServiceImpl::validate_and_convert_inputs(&req, inputs);
+  auto status =
+      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
+          &req, inputs);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
@@ -108,7 +100,7 @@ TEST(InferenceService, PopulateResponseFillsFields)
   int64_t recv_ms = 10;
   int64_t send_ms = 20;
 
-  InferenceServiceImpl::populate_response(
+  starpu_server::InferenceServiceImpl::populate_response(
       &req, &reply, outputs, recv_ms, send_ms);
 
   EXPECT_EQ(reply.model_name(), "model");
@@ -131,34 +123,28 @@ TEST(InferenceService, PopulateResponseFillsFields)
   EXPECT_EQ(0, std::memcmp(raw.data(), flat.data_ptr(), raw.size()));
 }
 
-TEST(InferenceService, SubmitJobAndWaitReturnsInternalOnEmptyOutput)
+TEST_F(InferenceServiceTest, SubmitJobAndWaitReturnsInternalOnEmptyOutput)
 {
-  InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs = {torch::zeros({1})};
-  InferenceServiceImpl service(&queue, &ref_outputs);
+  ref_outputs = {torch::zeros({1})};
 
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   std::vector<torch::Tensor> outputs;
 
   std::thread worker([&] {
-    std::shared_ptr<InferenceJob> job;
+    std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
     job->get_on_complete()({}, 0.0);
   });
 
-  auto status = service.submit_job_and_wait(inputs, outputs);
+  auto status = service->submit_job_and_wait(inputs, outputs);
   worker.join();
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
 }
 
-TEST(InferenceService, ModelInferReturnsValidationError)
+TEST_F(InferenceServiceTest, ModelInferReturnsValidationError)
 {
-  InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  InferenceServiceImpl service(&queue, &ref_outputs);
-
-  auto req = make_valid_request();
+  auto req = starpu_server::make_valid_request();
   req.add_raw_input_contents()->assign("", 0);
   req.set_model_name("m");
   req.set_model_version("1");
@@ -166,7 +152,7 @@ TEST(InferenceService, ModelInferReturnsValidationError)
   grpc::ServerContext ctx;
   inference::ModelInferResponse reply;
 
-  auto status = service.ModelInfer(&ctx, &req, &reply);
+  auto status = service->ModelInfer(&ctx, &req, &reply);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   EXPECT_EQ(reply.model_name(), "");
@@ -177,25 +163,23 @@ TEST(InferenceService, ModelInferReturnsValidationError)
   EXPECT_EQ(reply.server_send_ms(), 0);
 }
 
-TEST(InferenceService, ModelInferPropagatesSubmitError)
+TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
 {
-  InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs = {torch::zeros({1})};
-  InferenceServiceImpl service(&queue, &ref_outputs);
+  ref_outputs = {torch::zeros({1})};
 
-  auto req = make_valid_request();
+  auto req = starpu_server::make_valid_request();
   req.set_model_name("m");
   req.set_model_version("1");
 
   std::thread worker([&] {
-    std::shared_ptr<InferenceJob> job;
+    std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
     job->get_on_complete()({}, 0.0);
   });
 
   grpc::ServerContext ctx;
   inference::ModelInferResponse reply;
-  auto status = service.ModelInfer(&ctx, &req, &reply);
+  auto status = service->ModelInfer(&ctx, &req, &reply);
   worker.join();
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
@@ -207,18 +191,16 @@ TEST(InferenceService, ModelInferPropagatesSubmitError)
   EXPECT_EQ(reply.server_send_ms(), 0);
 }
 
-TEST(InferenceService, ModelInferReturnsOutputs)
+TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
 {
-  InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs = {torch::zeros({2, 2})};
-  InferenceServiceImpl service(&queue, &ref_outputs);
+  ref_outputs = {torch::zeros({2, 2})};
 
-  auto req = make_valid_request();
+  auto req = starpu_server::make_valid_request();
   req.set_model_name("m");
   req.set_model_version("1");
 
   std::thread worker([&] {
-    std::shared_ptr<InferenceJob> job;
+    std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
     std::vector<torch::Tensor> outs = {
         torch::tensor({10.0f, 20.0f, 30.0f, 40.0f}).view({2, 2})};
@@ -227,7 +209,7 @@ TEST(InferenceService, ModelInferReturnsOutputs)
 
   grpc::ServerContext ctx;
   inference::ModelInferResponse reply;
-  auto status = service.ModelInfer(&ctx, &req, &reply);
+  auto status = service->ModelInfer(&ctx, &req, &reply);
   worker.join();
 
   ASSERT_TRUE(status.ok());
@@ -253,19 +235,20 @@ TEST(InferenceService, ModelInferReturnsOutputs)
 
 TEST(GrpcServer, StartAndStop)
 {
-  InferenceQueue queue;
+  starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
   std::unique_ptr<grpc::Server> server;
 
   std::thread server_thread([&]() {
-    RunGrpcServer(queue, reference_outputs, "127.0.0.1:0", 4, server);
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, "127.0.0.1:0", 4, server);
   });
 
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 
-  StopServer(server);
+  starpu_server::StopServer(server);
   server_thread.join();
 
   EXPECT_EQ(server, nullptr);
@@ -274,6 +257,6 @@ TEST(GrpcServer, StartAndStop)
 TEST(GrpcServer, StopServerNullptr)
 {
   std::unique_ptr<grpc::Server> server;
-  EXPECT_NO_THROW(StopServer(server));
+  EXPECT_NO_THROW(starpu_server::StopServer(server));
   EXPECT_EQ(server, nullptr);
 }

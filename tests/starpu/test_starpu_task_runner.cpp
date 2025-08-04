@@ -40,22 +40,6 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     config_.all_done_cv = &cv_;
     runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
   }
-
-  starpu_server::StarPUTaskRunner& get_runner() { return *runner_; }
-  starpu_server::InferenceQueue& get_queue() { return queue_; }
-  torch::jit::script::Module& get_model_cpu() { return model_cpu_; }
-  std::vector<torch::jit::script::Module>& get_models_gpu()
-  {
-    return models_gpu_;
-  }
-  starpu_server::RuntimeConfig& get_opts() { return opts_; }
-  std::vector<starpu_server::InferenceResult>& get_results()
-  {
-    return results_;
-  }
-  std::mutex& get_results_mutex() { return results_mutex_; }
-  std::atomic<int>& get_completed_jobs() { return completed_jobs_; }
-  std::condition_variable& get_cv() { return cv_; }
 };
 
 TEST_F(StarPUTaskRunnerFixture, HandleJobExceptionCallback)
@@ -83,8 +67,8 @@ TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
 {
   auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
   auto normal_job = std::make_shared<starpu_server::InferenceJob>();
-  EXPECT_TRUE(get_runner().should_shutdown(shutdown_job));
-  EXPECT_FALSE(get_runner().should_shutdown(normal_job));
+  EXPECT_TRUE(runner_->should_shutdown(shutdown_job));
+  EXPECT_FALSE(runner_->should_shutdown(normal_job));
 }
 
 TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
@@ -104,15 +88,15 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
     orig_latency = l;
   });
 
-  get_runner().prepare_job_completion_callback(job);
+  runner_->prepare_job_completion_callback(job);
 
   std::vector<torch::Tensor> outputs = {torch::tensor({2})};
   const double latency = 5.0;
   job->get_on_complete()(outputs, latency);
 
   EXPECT_TRUE(original_called);
-  auto& results = get_results();
-  auto& completed_jobs = get_completed_jobs();
+  auto& results = results_;
+  auto& completed_jobs = completed_jobs_;
   ASSERT_EQ(results.size(), 1u);
   EXPECT_EQ(completed_jobs.load(), 1);
   EXPECT_EQ(results[0].job_id, 7);
@@ -125,9 +109,9 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
 
 TEST_F(StarPUTaskRunnerFixture, RunHandlesShutdownJob)
 {
-  get_queue().push(starpu_server::InferenceJob::make_shutdown_job());
+  queue_.push(starpu_server::InferenceJob::make_shutdown_job());
   testing::internal::CaptureStdout();
-  get_runner().run();
+  runner_->run();
   std::string output = testing::internal::GetCapturedStdout();
 
   EXPECT_NE(output.find("Received shutdown signal"), std::string::npos);
@@ -135,7 +119,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesShutdownJob)
 
 TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
 {
-  auto& models_gpu = get_models_gpu();
+  auto& models_gpu = models_gpu_;
   models_gpu.resize(starpu_server::InferLimits::MaxModelsGPU + 1);
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
@@ -151,16 +135,16 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
     cb_latency = l;
   });
 
-  get_queue().push(job);
-  get_queue().push(starpu_server::InferenceJob::make_shutdown_job());
+  queue_.push(job);
+  queue_.push(starpu_server::InferenceJob::make_shutdown_job());
 
-  get_runner().run();
+  runner_->run();
 
   EXPECT_TRUE(called);
   EXPECT_TRUE(cb_results.empty());
   EXPECT_EQ(cb_latency, -1);
-  auto& results = get_results();
-  auto& completed_jobs = get_completed_jobs();
+  auto& results = results_;
+  auto& completed_jobs = completed_jobs_;
   ASSERT_EQ(results.size(), 1u);
   EXPECT_TRUE(results[0].results.empty());
   EXPECT_EQ(results[0].latency_ms, -1);
@@ -169,7 +153,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
 
 TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 {
-  get_opts().verbosity = starpu_server::VerbosityLevel::Stats;
+  opts_.verbosity = starpu_server::VerbosityLevel::Stats;
 
   starpu_server::detail::TimingInfo t;
   using clock = std::chrono::high_resolution_clock;
@@ -184,7 +168,7 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   t.callback_end_time = base + std::chrono::milliseconds(140);
 
   testing::internal::CaptureStdout();
-  get_runner().log_job_timings(42, 150.0, t);
+  runner_->log_job_timings(42, 150.0, t);
   std::string output = testing::internal::GetCapturedStdout();
 
   EXPECT_NE(output.find("Queue = 10.000 ms"), std::string::npos);

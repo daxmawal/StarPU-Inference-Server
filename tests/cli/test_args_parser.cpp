@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "cli/args_parser.hpp"
+#include "cli_test_utils.hpp"
 #include "utils/runtime_config.hpp"
 
 using namespace starpu_server;
@@ -10,11 +11,7 @@ namespace {
 auto
 parse(std::initializer_list<const char*> args) -> RuntimeConfig
 {
-  std::vector<char*> argv;
-  argv.reserve(args.size());
-  for (const char* arg : args) {
-    argv.push_back(const_cast<char*>(arg));
-  }
+  auto argv = build_argv(args);
   return parse_arguments({argv.data(), argv.size()});
 }
 

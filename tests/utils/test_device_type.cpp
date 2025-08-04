@@ -2,12 +2,14 @@
 
 #include "utils/device_type.hpp"
 
-using namespace starpu_server;
-
 TEST(DeviceTypeTest, ToString)
 {
-  EXPECT_STREQ(to_string(DeviceType::CPU), "CPU");
-  EXPECT_STREQ(to_string(DeviceType::CUDA), "CUDA");
-  EXPECT_STREQ(to_string(DeviceType::Unknown), "Unknown");
-  EXPECT_STREQ(to_string(static_cast<DeviceType>(42)), "InvalidDeviceType");
+  EXPECT_STREQ(starpu_server::to_string(starpu_server::DeviceType::CPU), "CPU");
+  EXPECT_STREQ(
+      starpu_server::to_string(starpu_server::DeviceType::CUDA), "CUDA");
+  EXPECT_STREQ(
+      starpu_server::to_string(starpu_server::DeviceType::Unknown), "Unknown");
+  EXPECT_STREQ(
+      starpu_server::to_string(static_cast<starpu_server::DeviceType>(42)),
+      "InvalidDeviceType");
 }

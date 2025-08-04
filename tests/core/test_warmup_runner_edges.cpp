@@ -7,18 +7,9 @@
 #include "core/warmup.hpp"
 #undef private
 
-namespace {
+#include "inference_runner_test_utils.hpp"
 
-auto
-make_identity_model() -> torch::jit::script::Module
-{
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
-        def forward(self, x):
-            return x
-    )JIT");
-  return m;
-}
+namespace {
 
 auto
 count_threads() -> int
@@ -35,8 +26,8 @@ struct WarmupTestFixture {
   std::vector<torch::Tensor> outputs_ref;
 
   WarmupTestFixture()
-      : opts{}, starpu(opts), model_cpu(make_identity_model()), models_gpu{},
-        outputs_ref{torch::zeros({1})}
+      : opts{}, starpu(opts), model_cpu(starpu_server::make_identity_model()),
+        models_gpu{}, outputs_ref{torch::zeros({1})}
   {
     opts.input_shapes = {{1}};
     opts.input_types = {at::kFloat};

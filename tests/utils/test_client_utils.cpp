@@ -1,14 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <format>
-#include <sstream>
 
+#include "../test_helpers.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/logger.hpp"
 #include "utils/time_utils.hpp"
-
-using namespace starpu_server;
-using namespace starpu_server::client_utils;
 
 TEST(ClientUtils, PickRandomInputDeterministic)
 {
@@ -22,7 +19,8 @@ TEST(ClientUtils, PickRandomInputDeterministic)
   std::mt19937 rng_b(123);
 
   for (int i = 0; i < 5; ++i) {
-    const auto& chosen = pick_random_input(pool, rng_a);
+    const auto& chosen =
+        starpu_server::client_utils::pick_random_input(pool, rng_a);
     int expected_idx =
         std::uniform_int_distribution<int>(0, pool.size() - 1)(rng_b);
     ASSERT_EQ(&chosen, &pool[expected_idx]);
@@ -36,7 +34,7 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
   std::vector<torch::Tensor> inputs = {torch::empty({}), torch::empty({})};
   std::vector<torch::Tensor> outputs_ref = {torch::empty({}), torch::empty({})};
 
-  auto job = create_job(inputs, outputs_ref, 7);
+  auto job = starpu_server::client_utils::create_job(inputs, outputs_ref, 7);
 
   ASSERT_EQ(job->get_job_id(), 7);
   ASSERT_EQ(job->get_input_tensors().size(), inputs.size());
@@ -58,12 +56,12 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
 
 TEST(ClientUtils, PreGenerateInputsProducesValidTensors)
 {
-  RuntimeConfig opts;
+  starpu_server::RuntimeConfig opts;
   opts.input_shapes = {{2, 3}, {1}};
   opts.input_types = {at::kFloat, at::kInt};
 
   const size_t N = 3;
-  auto batches = pre_generate_inputs(opts, N);
+  auto batches = starpu_server::client_utils::pre_generate_inputs(opts, N);
 
   ASSERT_EQ(batches.size(), N);
   for (const auto& tensors : batches) {
@@ -77,22 +75,19 @@ TEST(ClientUtils, PreGenerateInputsProducesValidTensors)
 
 TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
 {
-  RuntimeConfig opts;
-  opts.verbosity = VerbosityLevel::Trace;
+  starpu_server::RuntimeConfig opts;
+  opts.verbosity = starpu_server::VerbosityLevel::Trace;
 
   const int job_id = 2;
   const int iterations = 5;
   auto now = std::chrono::high_resolution_clock::now();
 
-  std::ostringstream oss;
-  auto* old_buf = std::cout.rdbuf(oss.rdbuf());
+  starpu_server::CaptureStream capture{std::cout};
 
-  log_job_enqueued(opts, job_id, iterations, now);
+  starpu_server::client_utils::log_job_enqueued(opts, job_id, iterations, now);
 
-  std::cout.rdbuf(old_buf);
-
-  auto timestamp = time_utils::format_timestamp(now);
-  auto [color, label] = verbosity_style(VerbosityLevel::Trace);
+  auto timestamp = starpu_server::time_utils::format_timestamp(now);
+  auto [color, label] = verbosity_style(starpu_server::VerbosityLevel::Trace);
   std::string expected =
       std::string(color) + label +
       std::format(
@@ -100,5 +95,5 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
           job_id + 1, iterations, timestamp) +
       "\033[0m\n";
 
-  EXPECT_EQ(oss.str(), expected);
+  EXPECT_EQ(capture.str(), expected);
 }

@@ -6,41 +6,8 @@
 #include <vector>
 
 #include "core/inference_runner.hpp"
+#include "inference_runner_test_utils.hpp"
 #include "utils/exceptions.hpp"
-#include "utils/logger.hpp"
-
-using namespace starpu_server;
-
-// -----------------------------------------------------------------------------
-// Local copy of run_reference_inference from inference_runner.cpp
-// -----------------------------------------------------------------------------
-static auto
-run_reference_inference(
-    torch::jit::script::Module& model,
-    const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
-{
-  std::vector<torch::Tensor> output_refs;
-  const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
-
-  if (const auto output = model.forward(input_ivalues); output.isTensor()) {
-    output_refs.push_back(output.toTensor());
-  } else if (output.isTuple()) {
-    for (const auto& val : output.toTuple()->elements()) {
-      if (val.isTensor()) {
-        output_refs.push_back(val.toTensor());
-      }
-    }
-  } else if (output.isTensorList()) {
-    output_refs.insert(
-        output_refs.end(), output.toTensorList().begin(),
-        output.toTensorList().end());
-  } else {
-    log_error("Unsupported output type from model.");
-    throw UnsupportedModelOutputTypeException("Unsupported model output type");
-  }
-
-  return output_refs;
-}
 
 // -----------------------------------------------------------------------------
 // run_reference_inference tests
@@ -55,7 +22,7 @@ TEST(InferenceRunnerHelpers, RunReferenceInferenceTensor)
     )JIT");
 
   std::vector<torch::Tensor> inputs{torch::ones({2})};
-  auto outputs = run_reference_inference(m, inputs);
+  auto outputs = starpu_server::run_reference_inference(m, inputs);
 
   ASSERT_EQ(outputs.size(), 1u);
   EXPECT_TRUE(torch::allclose(outputs[0], inputs[0] * 2));
@@ -70,7 +37,7 @@ TEST(InferenceRunnerHelpers, RunReferenceInferenceTuple)
     )JIT");
 
   std::vector<torch::Tensor> inputs{torch::ones({2})};
-  auto outputs = run_reference_inference(m, inputs);
+  auto outputs = starpu_server::run_reference_inference(m, inputs);
 
   ASSERT_EQ(outputs.size(), 2u);
   EXPECT_TRUE(torch::allclose(outputs[0], inputs[0]));
@@ -86,7 +53,7 @@ TEST(InferenceRunnerHelpers, RunReferenceInferenceTensorList)
     )JIT");
 
   std::vector<torch::Tensor> inputs{torch::ones({2})};
-  auto outputs = run_reference_inference(m, inputs);
+  auto outputs = starpu_server::run_reference_inference(m, inputs);
 
   ASSERT_EQ(outputs.size(), 2u);
   EXPECT_TRUE(torch::allclose(outputs[0], inputs[0]));
@@ -104,7 +71,8 @@ TEST(InferenceRunnerHelpers, RunReferenceInferenceUnsupported)
   std::vector<torch::Tensor> inputs{torch::ones({1})};
 
   EXPECT_THROW(
-      run_reference_inference(m, inputs), UnsupportedModelOutputTypeException);
+      starpu_server::run_reference_inference(m, inputs),
+      starpu_server::UnsupportedModelOutputTypeException);
 }
 
 // -----------------------------------------------------------------------------
@@ -113,7 +81,7 @@ TEST(InferenceRunnerHelpers, RunReferenceInferenceUnsupported)
 
 TEST(InferenceRunnerHelpers, LoadModelAndReferenceOutputError)
 {
-  RuntimeConfig opts;
+  starpu_server::RuntimeConfig opts;
   opts.model_path = "nonexistent_model.pt";
   opts.input_shapes = {{1}};
   opts.input_types = {torch::kFloat32};
