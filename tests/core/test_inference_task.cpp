@@ -103,11 +103,9 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   auto job = make_job(4, 1);
   job->set_input_tensors({torch::ones({2, 3})});
   job->set_outputs_tensors({torch::zeros({2, 3})});
-
   auto task = make_task(job);
   opts_.verbosity = starpu_server::VerbosityLevel::Debug;
   auto params = task.create_inference_params();
-
   ASSERT_EQ(params->num_inputs, 1u);
   ASSERT_EQ(params->num_outputs, 1u);
   EXPECT_EQ(params->job_id, 4);
@@ -136,7 +134,6 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
   auto job = std::make_shared<starpu_server::InferenceJob>();
   std::vector<torch::Tensor> outputs{torch::tensor({1})};
   job->set_outputs_tensors(outputs);
-
   bool called = false;
   std::vector<torch::Tensor> results_arg;
   double latency_ms = -1.0;
@@ -147,16 +144,12 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
         results_arg = results;
         latency_ms = latency;
       });
-
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
-
   starpu_server::RuntimeConfig opts;
   starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
-
   starpu_server::InferenceTask::record_and_run_completion_callback(&ctx, end);
-
   EXPECT_TRUE(called);
   ASSERT_EQ(results_arg.size(), outputs.size());
   EXPECT_TRUE(torch::equal(results_arg[0], outputs[0]));
@@ -169,25 +162,19 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
 {
   unregister_call_count = 0;
   unregister_handles.clear();
-
   const auto h1 = reinterpret_cast<starpu_data_handle_t>(0x1);
   const auto h2 = reinterpret_cast<starpu_data_handle_t>(0x2);
   const auto h3 = reinterpret_cast<starpu_data_handle_t>(0x3);
-
   std::vector<starpu_data_handle_t> inputs{h1};
   std::vector<starpu_data_handle_t> outputs{h2, h3};
-
   auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
       nullptr, nullptr, nullptr, 0, inputs, outputs);
-
   starpu_server::InferenceTask::cleanup(ctx);
-
   EXPECT_EQ(unregister_call_count, 3);
   ASSERT_EQ(unregister_handles.size(), 3u);
   EXPECT_EQ(unregister_handles[0], h1);
   EXPECT_EQ(unregister_handles[1], h2);
   EXPECT_EQ(unregister_handles[2], h3);
-
   EXPECT_EQ(ctx->inputs_handles[0], nullptr);
   EXPECT_EQ(ctx->outputs_handles[0], nullptr);
   EXPECT_EQ(ctx->outputs_handles[1], nullptr);

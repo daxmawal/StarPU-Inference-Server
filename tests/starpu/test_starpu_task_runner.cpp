@@ -7,25 +7,11 @@
 #include "core/inference_params.hpp"
 #include "core/inference_runner.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
+#include "test_utils.hpp"
 
 struct SomeException : public std::exception {
   const char* what() const noexcept override { return "SomeException"; }
 };
-
-namespace {
-std::shared_ptr<starpu_server::InferenceJob>
-make_job_with_callback(
-    bool& called, std::vector<torch::Tensor>& results, double& latency)
-{
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_on_complete([&](const std::vector<torch::Tensor>& r, double l) {
-    called = true;
-    results = r;
-    latency = l;
-  });
-  return job;
-}
-}  // namespace
 
 class StarPUTaskRunnerFixture : public ::testing::Test {
  protected:
@@ -60,7 +46,8 @@ TEST_F(StarPUTaskRunnerFixture, HandleJobExceptionCallback)
   bool called = false;
   std::vector<torch::Tensor> results_arg;
   double latency_arg = 0.0;
-  auto job = make_job_with_callback(called, results_arg, latency_arg);
+  auto job =
+      starpu_server::make_job_with_callback(called, results_arg, latency_arg);
   starpu_server::StarPUTaskRunner::handle_job_exception(job, SomeException{});
   EXPECT_TRUE(called);
   EXPECT_TRUE(results_arg.empty());
@@ -80,8 +67,8 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   bool original_called = false;
   std::vector<torch::Tensor> orig_results;
   double orig_latency = 0.0;
-  auto job =
-      make_job_with_callback(original_called, orig_results, orig_latency);
+  auto job = starpu_server::make_job_with_callback(
+      original_called, orig_results, orig_latency);
   job->set_job_id(7);
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   job->set_input_tensors(inputs);
@@ -118,7 +105,8 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   bool called = false;
   std::vector<torch::Tensor> cb_results;
   double cb_latency = 0.0;
-  auto job = make_job_with_callback(called, cb_results, cb_latency);
+  auto job =
+      starpu_server::make_job_with_callback(called, cb_results, cb_latency);
   job->set_job_id(1);
   job->set_input_tensors({torch::tensor({1})});
   queue_.push(job);

@@ -10,7 +10,6 @@ TEST(InferenceQueue, FifoAndShutdown)
 {
   starpu_server::InferenceQueue queue;
   std::vector<int> popped_ids;
-
   std::thread consumer([&]() {
     while (true) {
       std::shared_ptr<starpu_server::InferenceJob> job;
@@ -22,19 +21,16 @@ TEST(InferenceQueue, FifoAndShutdown)
       popped_ids.push_back(job->get_job_id());
     }
   });
-
   for (int i = 0; i < 3; ++i) {
     auto job = std::make_shared<starpu_server::InferenceJob>();
     job->set_job_id(i);
     queue.push(job);
   }
-
   queue.shutdown();
   consumer.join();
-
   ASSERT_EQ(popped_ids.size(), 4u);
   EXPECT_EQ(popped_ids[0], 0);
   EXPECT_EQ(popped_ids[1], 1);
   EXPECT_EQ(popped_ids[2], 2);
-  EXPECT_EQ(popped_ids[3], -1);  // shutdown job
+  EXPECT_EQ(popped_ids[3], -1);
 }

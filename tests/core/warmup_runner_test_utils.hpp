@@ -26,7 +26,6 @@ struct WarmupRunnerTestFixture {
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;
-
   void init(bool use_cuda = false)
   {
     opts = starpu_server::RuntimeConfig{};
@@ -39,7 +38,6 @@ struct WarmupRunnerTestFixture {
     models_gpu.clear();
     outputs_ref = {torch::zeros({1})};
   }
-
   auto make_runner() -> starpu_server::WarmupRunner
   {
     return starpu_server::WarmupRunner(

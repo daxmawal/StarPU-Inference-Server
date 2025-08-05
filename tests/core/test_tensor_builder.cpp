@@ -232,10 +232,8 @@ TEST(TensorBuilder, FromStarpuBuffersTooManyInputs)
 {
   starpu_server::InferenceParams params;
   params.num_inputs = starpu_server::InferLimits::MaxInputs + 1;
-
   std::vector<void*> buffers(params.num_inputs, nullptr);
   torch::Device device(torch::kCPU);
-
   EXPECT_THROW(
       starpu_server::TensorBuilder::from_starpu_buffers(
           &params, buffers, device),
@@ -245,20 +243,15 @@ TEST(TensorBuilder, FromStarpuBuffersTooManyInputs)
 TEST(TensorBuilder, FromStarpuBuffersSuccess)
 {
   float data[] = {1.0f, 2.0f, 3.0f, 4.0f};
-
   starpu_variable_interface fake_var;
   fake_var.ptr = reinterpret_cast<uintptr_t>(data);
-
   std::vector<void*> buffers = {&fake_var};
-
   starpu_server::InferenceParams params;
   params.num_inputs = 1;
   params.layout.input_types = {at::kFloat};
   params.layout.num_dims = {2};
   params.layout.dims = {{2, 2}};
-
   torch::Device device(torch::kCPU);
-
   auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
       &params, buffers, device);
   ASSERT_EQ(tensors.size(), 1);

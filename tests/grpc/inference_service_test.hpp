@@ -9,8 +9,6 @@
 #include "../test_helpers.hpp"
 #include "grpc/server/inference_service.hpp"
 
-// Test fixture providing a ready-to-use InferenceServiceImpl instance along
-// with its required dependencies.
 class InferenceServiceTest : public ::testing::Test {
  protected:
   void SetUp() override
@@ -31,3 +29,13 @@ class InferenceServiceTest : public ::testing::Test {
   grpc::ServerContext ctx;
   inference::ModelInferResponse reply;
 };
+
+struct SubmitJobAndWaitCase {
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<torch::Tensor> worker_outputs;
+  grpc::StatusCode expected_status;
+};
+
+class SubmitJobAndWaitTest
+    : public InferenceServiceTest,
+      public ::testing::WithParamInterface<SubmitJobAndWaitCase> {};

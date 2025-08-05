@@ -14,11 +14,9 @@ TEST(InferenceRunner, MakeShutdownJob)
 
 TEST(InferenceJob, SettersAndGettersAndCallback)
 {
-  // Create dummy tensors and types
   std::vector<torch::Tensor> inputs{torch::ones({2, 2})};
   std::vector<at::ScalarType> types{at::kFloat};
   std::vector<torch::Tensor> outputs{torch::zeros({2, 2})};
-
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_job_id(7);
   job->set_input_tensors(inputs);
@@ -27,7 +25,6 @@ TEST(InferenceJob, SettersAndGettersAndCallback)
   job->set_fixed_worker_id(3);
   auto start = std::chrono::high_resolution_clock::now();
   job->set_start_time(start);
-
   bool callback_called = false;
   std::vector<torch::Tensor> cb_tensors;
   double cb_latency = 0.0;
@@ -36,8 +33,6 @@ TEST(InferenceJob, SettersAndGettersAndCallback)
     cb_tensors = std::move(t);
     cb_latency = latency;
   });
-
-  // Verify getters
   EXPECT_EQ(job->get_job_id(), 7);
   ASSERT_EQ(job->get_input_tensors().size(), 1);
   EXPECT_TRUE(job->get_input_tensors()[0].equal(inputs[0]));
@@ -49,8 +44,6 @@ TEST(InferenceJob, SettersAndGettersAndCallback)
   ASSERT_TRUE(job->get_fixed_worker_id().has_value());
   EXPECT_EQ(job->get_fixed_worker_id().value(), 3);
   ASSERT_TRUE(job->has_on_complete());
-
-  // Trigger callback and verify
   job->get_on_complete()(job->get_output_tensors(), 123.0);
   EXPECT_TRUE(callback_called);
   ASSERT_EQ(cb_tensors.size(), 1);

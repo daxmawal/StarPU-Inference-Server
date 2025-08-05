@@ -39,35 +39,35 @@ TEST(CliMain, ShowsHelpMessage)
   int result = cli_main(static_cast<int>(argv.size()), argv.data());
   std::string output = testing::internal::GetCapturedStdout();
   EXPECT_EQ(result, 0);
-  const std::string expected =
-      "Usage: Inference Engine [OPTIONS]\n"
-      "\nOptions:\n"
-      "  --scheduler [name]      Scheduler type (default: lws)\n"
-      "  --model [path]          Path to TorchScript model file (.pt)\n"
-      "  --iterations [num]      Number of iterations (default: 1)\n"
-      "  --shape 1x3x224x224     Shape of a single input tensor\n"
-      "  --shapes shape1,shape2  Shapes for multiple input tensors\n"
-      "  --types float,int       Input tensor types (default: float)\n"
-      "  --sync                  Run tasks in synchronous mode\n"
-      "  --delay [ms]            Delay between jobs (default: 0)\n"
-      "  --no_cpu                Disable CPU usage\n"
-      "  --device-ids 0,1        GPU device IDs for inference\n"
-      "  --address ADDR          gRPC server listen address\n"
-      "  --max-msg-size BYTES    Max gRPC message size in bytes\n"
-      "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
-      "  --help                  Show this help message\n";
-  EXPECT_EQ(output, expected);
+  EXPECT_NE(output.find(kCliHelpMessage), std::string::npos);
 }
 
-TEST(CliMain, InvalidOptionsDeath)
+class CliMainInvalidOptionsDeath
+    : public ::testing::TestWithParam<std::vector<const char*>> {};
+
+TEST_P(CliMainInvalidOptionsDeath, Fatal)
 {
-  auto argv = build_argv(
-      {"program", "--model", "model.pt", "--shapes", "1x2,2x3", "--types",
-       "float"});
+  const auto& args = GetParam();
+  std::vector<char*> argv;
+  argv.reserve(args.size());
+  for (const char* arg : args) {
+    argv.push_back(const_cast<char*>(arg));
+  }
   EXPECT_DEATH(
       { cli_main(static_cast<int>(argv.size()), argv.data()); },
       kInvalidOptionsRegex);
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    InvalidArguments, CliMainInvalidOptionsDeath,
+    ::testing::Values(
+        std::vector<const char*>{
+            "program", "--model", "model.pt", "--shapes", "1x2,2x3", "--types",
+            "float"},
+        std::vector<const char*>{
+            "program", "--shape", "1x1", "--types", "float"},
+        std::vector<const char*>{
+            "program", "--model", "model.pt", "--shape", "1x1"}));
 
 namespace starpu_server {
 static void
@@ -97,14 +97,4 @@ TEST(CliMain, ReturnsMinusOneOnStdException)
   auto argv = build_valid_cli_args();
   int result = cli_main(static_cast<int>(argv.size()), argv.data());
   EXPECT_EQ(result, -1);
-}
-
-TEST(CliMain, ReturnsFatalOnInvalidOptions)
-{
-  auto argv = build_argv(
-      {"program", "--model", "model.pt", "--shapes", "1x2,2x3", "--types",
-       "float"});
-  EXPECT_DEATH(
-      { cli_main(static_cast<int>(argv.size()), argv.data()); },
-      kInvalidOptionsRegex);
 }

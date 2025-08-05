@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <vector>
+
 #include "cli/args_parser.hpp"
 #include "cli_test_utils.hpp"
 #include "utils/runtime_config.hpp"

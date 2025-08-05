@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #define private public
@@ -15,14 +16,6 @@
 
 #include "inference_runner_test_utils.hpp"
 #include "warmup_runner_test_utils.hpp"
-
-TEST_F(WarmupRunnerTest, ClientWorkerThrowsOnNegativeIterations)
-{
-  std::map<int, std::vector<int32_t>> device_workers;
-  starpu_server::InferenceQueue queue;
-  EXPECT_THROW(
-      runner->client_worker(device_workers, queue, -1), std::invalid_argument);
-}
 
 TEST_F(WarmupRunnerTest, WarmupRunnerRunNoCuda)
 {
@@ -34,12 +27,9 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations)
 {
   std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
   starpu_server::InferenceQueue queue;
-
   runner->client_worker(device_workers, queue, 2);
-
   std::vector<int> job_ids;
   std::vector<int> worker_ids;
-
   while (true) {
     std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
@@ -50,7 +40,6 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations)
     ASSERT_TRUE(job->get_fixed_worker_id().has_value());
     worker_ids.push_back(*job->get_fixed_worker_id());
   }
-
   ASSERT_EQ(job_ids.size(), 4u);
   EXPECT_EQ(job_ids, (std::vector<int>{0, 1, 2, 3}));
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
@@ -68,26 +57,41 @@ TEST_F(WarmupRunnerTest, WarmupRunnerRunNegativeIterations)
   EXPECT_THROW(runner->run(-1), std::invalid_argument);
 }
 
-TEST_F(WarmupRunnerTest, ClientWorkerThrowsOnIterationOverflow)
+class WarmupRunnerClientWorkerInvalidIterationsTest
+    : public WarmupRunnerTest,
+      public ::testing::WithParamInterface<std::pair<int, bool>> {};
+
+TEST_P(WarmupRunnerClientWorkerInvalidIterationsTest, ThrowsOnInvalidIterations)
 {
   std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
   starpu_server::InferenceQueue queue;
-  const int iterations = std::numeric_limits<int>::max();
-  EXPECT_THROW(
-      runner->client_worker(device_workers, queue, iterations),
-      std::overflow_error);
+  auto [iterations, expect_overflow] = GetParam();
+  if (expect_overflow) {
+    EXPECT_THROW(
+        runner->client_worker(device_workers, queue, iterations),
+        std::overflow_error);
+  } else {
+    EXPECT_THROW(
+        runner->client_worker(device_workers, queue, iterations),
+        std::invalid_argument);
+  }
 }
+
+INSTANTIATE_TEST_SUITE_P(
+    ClientWorkerInvalidIterationTests,
+    WarmupRunnerClientWorkerInvalidIterationsTest,
+    ::testing::Values(
+        std::make_pair(-1, false),
+        std::make_pair(std::numeric_limits<int>::max(), true)));
 
 TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
 {
   init(true);
   std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
   starpu_server::InferenceQueue queue;
-
   std::atomic<int> completed_jobs{0};
   std::condition_variable cv;
   std::mutex m;
-
   std::jthread server([&]() {
     while (true) {
       std::shared_ptr<starpu_server::InferenceJob> job;
@@ -99,12 +103,10 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
       cv.notify_one();
     }
   });
-
   const int iterations_per_worker = 1;
   std::jthread client([&]() {
     runner->client_worker(device_workers, queue, iterations_per_worker);
   });
-
   size_t total_worker_count = 0;
   for (const auto& [device, workers] : device_workers) {
     (void)device;
@@ -119,7 +121,6 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
       return static_cast<size_t>(completed_jobs.load()) >= total_jobs;
     });
   }
-
   EXPECT_EQ(static_cast<size_t>(completed_jobs.load()), total_jobs);
 }
 

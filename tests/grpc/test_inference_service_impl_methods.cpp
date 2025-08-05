@@ -22,26 +22,25 @@ TEST_F(InferenceServiceTest, BasicLivenessAndReadiness)
   EXPECT_TRUE(model_resp.ready());
 }
 
-TEST_F(InferenceServiceTest, SubmitJobAndWaitReturnsOutputs)
+TEST_P(SubmitJobAndWaitTest, ReturnsExpectedStatus)
 {
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
-  std::vector<torch::Tensor> expected = {torch::tensor({42})};
   std::vector<torch::Tensor> outputs;
-  auto worker = prepare_job({torch::zeros({1})}, expected);
+  auto worker = prepare_job(GetParam().ref_outputs, GetParam().worker_outputs);
   auto status = service->submit_job_and_wait(inputs, outputs);
-  ASSERT_TRUE(status.ok());
-  ASSERT_EQ(outputs.size(), expected.size());
-  EXPECT_TRUE(torch::equal(outputs[0], expected[0]));
+  EXPECT_EQ(status.error_code(), GetParam().expected_status);
+  if (status.ok()) {
+    ASSERT_EQ(outputs.size(), GetParam().worker_outputs.size());
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      EXPECT_TRUE(torch::equal(outputs[i], GetParam().worker_outputs[i]));
+    }
+  }
 }
 
-TEST(InferenceServiceImpl, PopulateResponseFillsFields)
-{
-  auto req = starpu_server::make_model_request("mymodel", "1");
-  std::vector<torch::Tensor> outs = {torch::tensor({3.0f, 4.0f})};
-  inference::ModelInferResponse resp;
-  int64_t recv_ms = 10;
-  int64_t send_ms = 20;
-  starpu_server::InferenceServiceImpl::populate_response(
-      &req, &resp, outs, recv_ms, send_ms);
-  starpu_server::verify_populate_response(req, resp, outs, recv_ms, send_ms);
-}
+INSTANTIATE_TEST_SUITE_P(
+    SubmitJobAndWaitScenarios, SubmitJobAndWaitTest,
+    ::testing::Values(
+        SubmitJobAndWaitCase{
+            {torch::zeros({1})}, {}, grpc::StatusCode::INTERNAL},
+        SubmitJobAndWaitCase{
+            {torch::zeros({1})}, {torch::tensor({42})}, grpc::StatusCode::OK}));

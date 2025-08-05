@@ -31,27 +31,3 @@ TEST(InferenceServiceValidation, RawContentSizeMismatch)
           &req, inputs);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
-
-TEST_F(InferenceServiceTest, SubmitJobAndWaitInternalError)
-{
-  ref_outputs = {torch::zeros({1})};
-  std::vector<torch::Tensor> inputs = {torch::tensor({1})};
-  std::vector<torch::Tensor> outputs;
-  auto worker = prepare_job({torch::zeros({1})});
-  auto status = service->submit_job_and_wait(inputs, outputs);
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
-}
-
-TEST(InferenceServiceValidation, PopulateResponseSetsServerTimes)
-{
-  auto req = starpu_server::make_model_request("model", "1");
-  std::vector<torch::Tensor> outputs = {
-      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt))};
-  inference::ModelInferResponse reply;
-  int64_t recv_ms = 10;
-  int64_t send_ms = 20;
-  starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, send_ms);
-  starpu_server::verify_populate_response(
-      req, reply, outputs, recv_ms, send_ms);
-}
