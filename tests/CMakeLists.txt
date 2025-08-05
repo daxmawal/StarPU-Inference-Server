@@ -4,6 +4,7 @@ set(CORE_DIR ${SRC_DIR}/core)
 set(CLI_DIR ${SRC_DIR}/cli)
 set(TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
 set(GRPC_SERVER_DIR ${SRC_DIR}/grpc/server)
+set(GRPC_CLIENT_DIR ${SRC_DIR}/grpc/client)
 
 add_executable(
   unit_tests
@@ -18,6 +19,9 @@ add_executable(
   core/test_run_inference.cpp
   core/test_warmup_runner.cpp
   grpc/test_inference_service.cpp
+  e2e/test_full_inference.cpp
+  integration/test_run_inference_loop.cpp
+  integration/test_grpc_client_server.cpp
   starpu/test_starpu_setup.cpp
   starpu/test_starpu_task_runner.cpp
   starpu/test_tensor_builder_from_starpu.cpp
@@ -34,6 +38,7 @@ add_executable(
   ${CORE_DIR}/starpu_setup.cpp
   ${CORE_DIR}/inference_runner.cpp
   ${GRPC_SERVER_DIR}/inference_service.cpp
+  ${GRPC_CLIENT_DIR}/inference_client.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
   ${UTILS_DIR}/inference_validator.cpp
   ${UTILS_DIR}/client_utils.cpp
@@ -46,8 +51,14 @@ target_compile_features(unit_tests PRIVATE cxx_std_23)
 target_compile_definitions(unit_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 target_include_directories(
-  unit_tests PRIVATE ${SRC_DIR} ${UTILS_DIR} ${CLI_DIR} ${CORE_DIR}
-                     ${TASK_WORKER_DIR} ${GRPC_SERVER_DIR})
+  unit_tests
+  PRIVATE ${SRC_DIR}
+          ${UTILS_DIR}
+          ${CLI_DIR}
+          ${CORE_DIR}
+          ${TASK_WORKER_DIR}
+          ${GRPC_SERVER_DIR}
+          ${GRPC_CLIENT_DIR})
 
 target_link_libraries(
   unit_tests
