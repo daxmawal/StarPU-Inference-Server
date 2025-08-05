@@ -127,19 +127,13 @@ make_model_infer_request(const std::vector<InputSpec>& specs)
   return req;
 }
 
+inline const InputSpec kValidInputSpec{
+    {2, 2}, at::kFloat, to_raw_data<float>({1.0f, 2.0f, 3.0f, 4.0f})};
+
 inline inference::ModelInferRequest
 make_valid_request()
 {
-  inference::ModelInferRequest req;
-  auto* input = req.add_inputs();
-  input->set_name("input0");
-  input->set_datatype("FP32");
-  input->add_shape(2);
-  input->add_shape(2);
-  std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
-  req.add_raw_input_contents()->assign(
-      reinterpret_cast<const char*>(data.data()), data.size() * sizeof(float));
-  return req;
+  return make_model_infer_request({kValidInputSpec});
 }
 
 inline inference::ModelInferRequest
