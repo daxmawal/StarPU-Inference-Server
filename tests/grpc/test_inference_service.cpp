@@ -1,10 +1,54 @@
 #include <gtest/gtest.h>
+#include <torch/torch.h>
 
 #include <cstring>
+#include <memory>
+#include <vector>
 
 #include "../test_helpers.hpp"
 #include "grpc/server/inference_service.hpp"
-#include "inference_service_test.hpp"
+
+inline void
+expect_empty_infer_response(const inference::ModelInferResponse& resp)
+{
+  EXPECT_EQ(resp.model_name(), "");
+  EXPECT_EQ(resp.model_version(), "");
+  EXPECT_EQ(resp.outputs_size(), 0);
+  EXPECT_EQ(resp.raw_output_contents_size(), 0);
+  EXPECT_EQ(resp.server_receive_ms(), 0);
+  EXPECT_EQ(resp.server_send_ms(), 0);
+}
+
+class InferenceServiceTest : public ::testing::Test {
+ protected:
+  void SetUp() override
+  {
+    service = std::make_unique<starpu_server::InferenceServiceImpl>(
+        &queue, &ref_outputs);
+  }
+  auto prepare_job(
+      std::vector<torch::Tensor> ref_outs,
+      std::vector<torch::Tensor> worker_outs = {}) -> std::jthread
+  {
+    ref_outputs = std::move(ref_outs);
+    return starpu_server::run_single_job(queue, std::move(worker_outs));
+  }
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::unique_ptr<starpu_server::InferenceServiceImpl> service;
+  grpc::ServerContext ctx;
+  inference::ModelInferResponse reply;
+};
+
+struct SubmitJobAndWaitCase {
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<torch::Tensor> worker_outputs;
+  grpc::StatusCode expected_status;
+};
+
+class SubmitJobAndWaitTest
+    : public InferenceServiceTest,
+      public ::testing::WithParamInterface<SubmitJobAndWaitCase> {};
 
 TEST(InferenceService, ValidateInputsSuccess)
 {
@@ -77,6 +121,48 @@ TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
       req, reply, outs, reply.server_receive_ms(), reply.server_send_ms());
 }
 
+TEST_F(InferenceServiceTest, BasicLivenessAndReadiness)
+{
+  inference::ServerLiveRequest live_req;
+  inference::ServerLiveResponse live_resp;
+  auto status = service->ServerLive(&ctx, &live_req, &live_resp);
+  ASSERT_TRUE(status.ok());
+  EXPECT_TRUE(live_resp.live());
+  inference::ServerReadyRequest ready_req;
+  inference::ServerReadyResponse ready_resp;
+  status = service->ServerReady(&ctx, &ready_req, &ready_resp);
+  ASSERT_TRUE(status.ok());
+  EXPECT_TRUE(ready_resp.ready());
+  inference::ModelReadyRequest model_req;
+  inference::ModelReadyResponse model_resp;
+  status = service->ModelReady(&ctx, &model_req, &model_resp);
+  ASSERT_TRUE(status.ok());
+  EXPECT_TRUE(model_resp.ready());
+}
+
+TEST_P(SubmitJobAndWaitTest, ReturnsExpectedStatus)
+{
+  std::vector<torch::Tensor> inputs = {torch::tensor({1})};
+  std::vector<torch::Tensor> outputs;
+  auto worker = prepare_job(GetParam().ref_outputs, GetParam().worker_outputs);
+  auto status = service->submit_job_and_wait(inputs, outputs);
+  EXPECT_EQ(status.error_code(), GetParam().expected_status);
+  if (status.ok()) {
+    ASSERT_EQ(outputs.size(), GetParam().worker_outputs.size());
+    for (size_t i = 0; i < outputs.size(); ++i) {
+      EXPECT_TRUE(torch::equal(outputs[i], GetParam().worker_outputs[i]));
+    }
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    SubmitJobAndWaitScenarios, SubmitJobAndWaitTest,
+    ::testing::Values(
+        SubmitJobAndWaitCase{
+            {torch::zeros({1})}, {}, grpc::StatusCode::INTERNAL},
+        SubmitJobAndWaitCase{
+            {torch::zeros({1})}, {torch::tensor({42})}, grpc::StatusCode::OK}));
+
 TEST(GrpcServer, StartAndStop)
 {
   starpu_server::InferenceQueue queue;
@@ -114,3 +200,44 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   starpu_server::verify_populate_response(
       req, reply, outputs, recv_ms, send_ms);
 }
+
+struct InvalidRequestCase {
+  const char* name;
+  inference::ModelInferRequest request;
+};
+
+class InferenceServiceValidation
+    : public ::testing::TestWithParam<InvalidRequestCase> {};
+
+TEST_P(InferenceServiceValidation, InvalidRequests)
+{
+  auto req = GetParam().request;
+  std::vector<torch::Tensor> inputs;
+  auto status =
+      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
+          &req, inputs);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    , InferenceServiceValidation,
+    ::testing::Values(
+        InvalidRequestCase{
+            "RawInputCountMismatch",
+            [] {
+              std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
+              auto req = starpu_server::make_model_infer_request(
+                  {{{2, 2}, at::kFloat, starpu_server::to_raw_data(data)}});
+              req.add_raw_input_contents()->assign("", 0);
+              return req;
+            }()},
+        InvalidRequestCase{
+            "RawContentSizeMismatch",
+            [] {
+              std::vector<float> data = {1.0f, 2.0f, 3.0f};
+              return starpu_server::make_model_infer_request(
+                  {{{2, 2}, at::kFloat, starpu_server::to_raw_data(data)}});
+            }()}),
+    [](const testing::TestParamInfo<InvalidRequestCase>& info) {
+      return info.param.name;
+    });

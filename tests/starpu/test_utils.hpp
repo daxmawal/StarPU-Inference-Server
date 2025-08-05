@@ -1,7 +1,11 @@
 #pragma once
 
+#include <starpu.h>
+
+#include <cassert>
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
 #include <utility>
 
 #include "../test_helpers.hpp"
@@ -46,6 +50,26 @@ capture_stdout(F&& func) -> std::string
   return capture.str();
 }
 }  // namespace starpu_server
+
+struct StarpuRuntimeGuard {
+  StarpuRuntimeGuard()
+  {
+    if (starpu_init(nullptr) != 0) {
+      throw std::runtime_error("StarPU initialization failed");
+    }
+  }
+  ~StarpuRuntimeGuard()
+  {
+    starpu_shutdown();
+#ifndef NDEBUG
+    assert(starpu_is_initialized() == 0 && "StarPU shutdown failed");
+#endif
+  }
+  StarpuRuntimeGuard(const StarpuRuntimeGuard&) = delete;
+  auto operator=(const StarpuRuntimeGuard&) -> StarpuRuntimeGuard& = delete;
+  StarpuRuntimeGuard(StarpuRuntimeGuard&&) = delete;
+  auto operator=(StarpuRuntimeGuard&&) -> StarpuRuntimeGuard& = delete;
+};
 
 struct TestBuffers {
   float input_data[3];

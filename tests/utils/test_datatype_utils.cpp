@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include "utils/datatype_utils.hpp"
+#include "utils/device_type.hpp"
 
 class ScalarToDatatypeCase
     : public ::testing::TestWithParam<std::pair<at::ScalarType, std::string>> {
@@ -136,4 +137,16 @@ TEST(DatatypeUtils, ScalarToDatatypeAllEnumValues)
       (void)size;
     });
   }
+}
+
+TEST(DeviceTypeTest, ToString)
+{
+  EXPECT_STREQ(starpu_server::to_string(starpu_server::DeviceType::CPU), "CPU");
+  EXPECT_STREQ(
+      starpu_server::to_string(starpu_server::DeviceType::CUDA), "CUDA");
+  EXPECT_STREQ(
+      starpu_server::to_string(starpu_server::DeviceType::Unknown), "Unknown");
+  EXPECT_STREQ(
+      starpu_server::to_string(static_cast<starpu_server::DeviceType>(42)),
+      "InvalidDeviceType");
 }
