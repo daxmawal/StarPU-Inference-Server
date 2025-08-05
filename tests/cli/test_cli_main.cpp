@@ -86,8 +86,7 @@ throw_std_error(const RuntimeConfig&, StarPUSetup&)
 TEST(CliMain, ReturnsTwoOnInferenceEngineException)
 {
   starpu_server::RunLoopHookGuard guard(starpu_server::throw_inference_error);
-  auto argv = build_argv(
-      {"program", "--model", "model.pt", "--shape", "1x1", "--types", "float"});
+  auto argv = build_valid_cli_args();
   int result = cli_main(static_cast<int>(argv.size()), argv.data());
   EXPECT_EQ(result, 2);
 }
@@ -95,8 +94,7 @@ TEST(CliMain, ReturnsTwoOnInferenceEngineException)
 TEST(CliMain, ReturnsMinusOneOnStdException)
 {
   starpu_server::RunLoopHookGuard guard(starpu_server::throw_std_error);
-  auto argv = build_argv(
-      {"program", "--model", "model.pt", "--shape", "1x1", "--types", "float"});
+  auto argv = build_valid_cli_args();
   int result = cli_main(static_cast<int>(argv.size()), argv.data());
   EXPECT_EQ(result, -1);
 }

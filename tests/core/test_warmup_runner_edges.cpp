@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <chrono>
 #include <filesystem>
 
 #define private public
@@ -26,14 +25,8 @@ TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads)
   auto runner = fixture.make_runner();
 
   const auto threads_before = count_threads();
-  const auto start = std::chrono::steady_clock::now();
-  runner.run(100);
-  const auto end = std::chrono::steady_clock::now();
+  const auto elapsed_ms = measure_ms([&]() { runner.run(100); });
   const auto threads_after = count_threads();
-
-  const auto elapsed_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-          .count();
 
   EXPECT_EQ(threads_before, threads_after);
   EXPECT_LT(elapsed_ms, 50);

@@ -4,18 +4,12 @@
 
 #include <string>
 
+#include "../test_helpers.hpp"
 #include "core/inference_runner.hpp"
 #include "inference_validator_test_utils.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/inference_validator.hpp"
 #include "utils/logger.hpp"
-
-#define skip_if_no_cuda()                      \
-  do {                                         \
-    if (!torch::cuda::is_available()) {        \
-      GTEST_SKIP() << "CUDA is not available"; \
-    }                                          \
-  } while (0)
 
 class InferenceValidatorTest : public ::testing::Test {
  protected:
@@ -166,7 +160,7 @@ TEST_F(InferenceValidatorTest, EmptyTupleOutput)
 
 TEST_F(InferenceValidatorTest, SuccessfulValidationCuda)
 {
-  skip_if_no_cuda();
+  SKIP_IF_NO_CUDA();
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
   auto result = starpu_server::make_result(
@@ -179,7 +173,7 @@ TEST_F(InferenceValidatorTest, SuccessfulValidationCuda)
 
 TEST_F(InferenceValidatorTest, FailsOnMismatchCuda)
 {
-  skip_if_no_cuda();
+  SKIP_IF_NO_CUDA();
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
   auto result = starpu_server::make_result(
@@ -195,7 +189,7 @@ TEST_F(InferenceValidatorTest, FailsOnMismatchCuda)
 
 TEST_F(InferenceValidatorTest, CudaModelOnCpuInputsThrows)
 {
-  skip_if_no_cuda();
+  SKIP_IF_NO_CUDA();
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
   auto result = starpu_server::make_result(

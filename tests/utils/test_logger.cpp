@@ -16,7 +16,6 @@ TEST(Logger, VerbosityStyle)
     EXPECT_STREQ(got_color, color);
     EXPECT_STREQ(got_label, label);
   };
-
   check(Info, "\o{33}[1;32m", "[INFO] ");
   check(Stats, "\o{33}[1;35m", "[STATS] ");
   check(Debug, "\o{33}[1;34m", "[DEBUG] ");

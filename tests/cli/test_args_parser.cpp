@@ -9,25 +9,12 @@ TEST(ArgsParser, ParsesRequiredOptions)
   const auto opts = parse(
       {"program", "--model", "model.pt", "--shape", "1x3x224x224", "--types",
        "float"});
-
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.model_path, "model.pt");
   ASSERT_EQ(opts.input_shapes.size(), 1u);
   EXPECT_EQ(opts.input_shapes[0], std::vector<int64_t>({1, 3, 224, 224}));
   ASSERT_EQ(opts.input_types.size(), 1u);
   EXPECT_EQ(opts.input_types[0], at::kFloat);
-}
-
-TEST(ArgsParser, MissingRequiredOptions)
-{
-  expect_invalid({"program", "--model", "model.pt", "--shape", "1x3x3"});
-}
-
-TEST(ArgsParser, InvalidNumericValue)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3x3", "--types", "float",
-       "--iterations", "0"});
 }
 
 TEST(ArgsParser, ParsesAllOptions)
@@ -56,7 +43,6 @@ TEST(ArgsParser, ParsesAllOptions)
        "512",
        "--sync",
        "--no_cpu"});
-
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.scheduler, "lws");
   EXPECT_EQ(opts.model_path, "model.pt");
@@ -75,6 +61,19 @@ TEST(ArgsParser, ParsesAllOptions)
   ASSERT_EQ(opts.input_types.size(), 2u);
   EXPECT_EQ(opts.input_types[0], at::kFloat);
   EXPECT_EQ(opts.input_types[1], at::kInt);
+}
+
+
+TEST(ArgsParser, MissingRequiredOptions)
+{
+  expect_invalid({"program", "--model", "model.pt", "--shape", "1x3x3"});
+}
+
+TEST(ArgsParser, InvalidNumericValue)
+{
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3x3", "--types", "float",
+       "--iterations", "0"});
 }
 
 TEST(ArgsParser, InvalidShapeString)
@@ -210,12 +209,10 @@ TEST(ArgsParser, VerboseLevels)
           {"3", Debug},
           {"4", Trace},
       }};
-
   for (const auto& [level_str, expected] : cases) {
     const auto opts = parse(
         {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
          "--verbose", level_str});
-
     ASSERT_TRUE(opts.valid);
     EXPECT_EQ(opts.verbosity, expected);
   }

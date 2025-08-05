@@ -3,10 +3,22 @@
 #include <gtest/gtest.h>
 #include <torch/script.h>
 
+#include <chrono>
 #include <memory>
 #include <vector>
 
 #include "inference_runner_test_utils.hpp"
+
+template <class F>
+auto
+measure_ms(F&& f) -> long
+{
+  const auto start = std::chrono::steady_clock::now();
+  f();
+  const auto end = std::chrono::steady_clock::now();
+  return std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
+      .count();
+}
 
 struct WarmupRunnerTestFixture {
   starpu_server::RuntimeConfig opts;

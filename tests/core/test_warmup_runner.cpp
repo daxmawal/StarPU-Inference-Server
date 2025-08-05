@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <limits>
 #include <map>
@@ -16,17 +15,6 @@
 
 #include "inference_runner_test_utils.hpp"
 #include "warmup_runner_test_utils.hpp"
-
-template <class F>
-static auto
-measure_ms(F&& f) -> long
-{
-  const auto start = std::chrono::steady_clock::now();
-  f();
-  const auto end = std::chrono::steady_clock::now();
-  return std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
-      .count();
-}
 
 TEST_F(WarmupRunnerTest, ClientWorkerThrowsOnNegativeIterations)
 {

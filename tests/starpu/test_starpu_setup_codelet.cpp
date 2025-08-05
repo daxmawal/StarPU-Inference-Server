@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <starpu.h>
 #include <torch/script.h>
+#include <torch/torch.h>
 
 #include <chrono>
 #include <climits>
@@ -63,9 +64,11 @@ setup_timing_params(int elements)
 class StarPUSetupCodeletTest : public ::testing::Test {
  protected:
   std::unique_ptr<starpu_server::StarPUSetup> starpu;
-
   void SetUp() override
   {
+    if (!torch::cuda::is_available()) {
+      GTEST_SKIP();
+    }
     starpu_server::RuntimeConfig opts;
     opts.use_cpu = true;
     opts.use_cuda = true;
@@ -89,7 +92,6 @@ TEST(InferenceCodelet, FieldsAreInitialized)
 {
   starpu_server::InferenceCodelet codelet;
   auto* cl = codelet.get_codelet();
-
   EXPECT_EQ(cl->nbuffers, STARPU_VARIABLE_NBUFFERS);
   EXPECT_NE(cl->cpu_funcs[0], nullptr);
   EXPECT_NE(cl->cuda_funcs[0], nullptr);
@@ -102,20 +104,15 @@ TEST(InferenceCodelet, CpuInferenceFuncExecutesAndSetsMetadata)
   StarpuRuntimeGuard starpu_guard;
   auto buffers = make_test_buffers();
   auto timing = setup_timing_params(3);
-
   starpu_server::InferenceCodelet codelet;
   auto* cl = codelet.get_codelet();
-
   auto before = std::chrono::high_resolution_clock::now();
   cl->cpu_funcs[0](buffers.buffers, &timing.params);
   auto after = std::chrono::high_resolution_clock::now();
-
   EXPECT_FLOAT_EQ(buffers.output_data[0], 2.0f);
   EXPECT_FLOAT_EQ(buffers.output_data[1], 3.0f);
   EXPECT_FLOAT_EQ(buffers.output_data[2], 4.0f);
-
   EXPECT_EQ(timing.executed_on, starpu_server::DeviceType::CPU);
-
   EXPECT_TRUE(timing.start_time >= before);
   EXPECT_TRUE(timing.end_time <= after);
   EXPECT_TRUE(timing.end_time >= timing.start_time);

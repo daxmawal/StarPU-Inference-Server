@@ -1,17 +1,28 @@
 #pragma once
 
+#include <gtest/gtest.h>
 #include <starpu.h>
 #include <torch/script.h>
 
 #include <cassert>
+#include <cstring>
 #include <ostream>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include "core/inference_params.hpp"
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "utils/datatype_utils.hpp"
+
+#define SKIP_IF_NO_CUDA()                      \
+  do {                                         \
+    if (!torch::cuda::is_available()) {        \
+      GTEST_SKIP() << "CUDA is not available"; \
+    }                                          \
+  } while (0)
 
 namespace starpu_server {
 
@@ -21,9 +32,7 @@ class CaptureStream {
       : stream_{stream}, old_buf_{stream.rdbuf(buffer_.rdbuf())}
   {
   }
-
   ~CaptureStream() { stream_.rdbuf(old_buf_); }
-
   [[nodiscard]] auto str() const -> std::string { return buffer_.str(); }
 
  private:
@@ -79,10 +88,18 @@ make_valid_request()
   input->set_datatype("FP32");
   input->add_shape(2);
   input->add_shape(2);
-
   std::vector<float> data = {1.0f, 2.0f, 3.0f, 4.0f};
   req.add_raw_input_contents()->assign(
       reinterpret_cast<const char*>(data.data()), data.size() * sizeof(float));
+  return req;
+}
+
+inline inference::ModelInferRequest
+make_model_request(const std::string& name, const std::string& version)
+{
+  inference::ModelInferRequest req;
+  req.set_model_name(name);
+  req.set_model_version(version);
   return req;
 }
 
@@ -97,6 +114,37 @@ run_single_job(
         queue.wait_and_pop(job);
         job->get_on_complete()(outputs, latency);
       });
+}
+
+inline void
+verify_populate_response(
+    const inference::ModelInferRequest& req,
+    const inference::ModelInferResponse& resp,
+    const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms)
+{
+  EXPECT_EQ(resp.model_name(), req.model_name());
+  EXPECT_EQ(resp.model_version(), req.model_version());
+  EXPECT_EQ(resp.server_receive_ms(), recv_ms);
+  EXPECT_EQ(resp.server_send_ms(), send_ms);
+
+  ASSERT_EQ(resp.outputs_size(), static_cast<int>(outputs.size()));
+  ASSERT_EQ(resp.raw_output_contents_size(), static_cast<int>(outputs.size()));
+
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    const auto& out = resp.outputs(static_cast<int>(i));
+    EXPECT_EQ(out.name(), "output" + std::to_string(i));
+    EXPECT_EQ(
+        out.datatype(), scalar_type_to_datatype(outputs[i].scalar_type()));
+    ASSERT_EQ(out.shape_size(), outputs[i].dim());
+    for (int64_t j = 0; j < outputs[i].dim(); ++j) {
+      EXPECT_EQ(out.shape(j), outputs[i].size(j));
+    }
+
+    auto flat = outputs[i].view({-1});
+    const auto& raw = resp.raw_output_contents(static_cast<int>(i));
+    ASSERT_EQ(raw.size(), flat.numel() * flat.element_size());
+    EXPECT_EQ(0, std::memcmp(raw.data(), flat.data_ptr(), raw.size()));
+  }
 }
 
 }  // namespace starpu_server

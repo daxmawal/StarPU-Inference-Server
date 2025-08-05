@@ -20,6 +20,13 @@ build_argv(std::initializer_list<const char*> args)
 }
 
 inline auto
+build_valid_cli_args() -> std::vector<char*>
+{
+  return build_argv(
+      {"program", "--model", "model.pt", "--shape", "1x1", "--types", "float"});
+}
+
+inline auto
 parse(std::initializer_list<const char*> args) -> starpu_server::RuntimeConfig
 {
   auto argv = build_argv(args);

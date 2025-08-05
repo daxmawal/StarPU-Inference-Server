@@ -39,13 +39,10 @@ TEST_F(InputGeneratorTest, GeneratesShapesAndTypes)
 {
   auto tensors = generate({{2, 3}, {1, 128}}, {at::kFloat, at::kInt});
   ASSERT_EQ(tensors.size(), 2u);
-
   EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{2, 3}));
   EXPECT_EQ(tensors[0].dtype(), torch::kFloat);
-
   EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1, 128}));
   EXPECT_EQ(tensors[1].dtype(), torch::kInt);
-
   EXPECT_LT(tensors[1].max().item<int64_t>(), BERT_VOCAB_SIZE);
 }
 
@@ -53,7 +50,6 @@ TEST_F(InputGeneratorTest, DefaultsToFloatForMissingTypes)
 {
   auto tensors = generate({{1, 1}, {2, 2}, {3, 3}}, {at::kInt});
   ASSERT_EQ(tensors.size(), 3u);
-
   EXPECT_EQ(tensors[0].dtype(), at::kInt);
   EXPECT_EQ(tensors[1].dtype(), at::kFloat);
   EXPECT_EQ(tensors[2].dtype(), at::kFloat);
@@ -69,11 +65,9 @@ TEST_F(InputGeneratorTest, GeneratesBooleanTensor)
 {
   auto tensors = generate({{2, 2}}, {at::kBool});
   ASSERT_EQ(tensors.size(), 1u);
-
   const auto& tensor = tensors[0];
   EXPECT_EQ(tensor.sizes(), (torch::IntArrayRef{2, 2}));
   EXPECT_EQ(tensor.dtype(), at::kBool);
-
   auto min_val = tensor.min().item<uint8_t>();
   auto max_val = tensor.max().item<uint8_t>();
   EXPECT_GE(min_val, 0);

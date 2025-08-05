@@ -22,7 +22,6 @@ struct StarpuRuntimeGuard {
     assert(starpu_is_initialized() == 0 && "StarPU shutdown failed");
 #endif
   }
-
   StarpuRuntimeGuard(const StarpuRuntimeGuard&) = delete;
   auto operator=(const StarpuRuntimeGuard&) -> StarpuRuntimeGuard& = delete;
   StarpuRuntimeGuard(StarpuRuntimeGuard&&) = delete;
