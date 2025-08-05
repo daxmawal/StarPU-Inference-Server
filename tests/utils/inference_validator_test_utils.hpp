@@ -1,5 +1,7 @@
 #pragma once
 
+#include <torch/script.h>
+
 #include <utility>
 #include <vector>
 

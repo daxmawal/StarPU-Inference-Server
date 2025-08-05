@@ -16,6 +16,7 @@
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "utils/datatype_utils.hpp"
+#include "utils/logger.hpp"
 
 #define SKIP_IF_NO_CUDA()                      \
   do {                                         \
@@ -40,6 +41,22 @@ class CaptureStream {
   std::ostringstream buffer_;
   std::streambuf* old_buf_;
 };
+
+inline constexpr VerbosityLevel WarningLevel = static_cast<VerbosityLevel>(100);
+inline constexpr VerbosityLevel ErrorLevel = static_cast<VerbosityLevel>(101);
+
+inline auto
+expected_log_line(VerbosityLevel level, const std::string& msg) -> std::string
+{
+  if (level == WarningLevel) {
+    return std::string{"\o{33}[1;33m[WARNING] "} + msg + "\o{33}[0m\n";
+  }
+  if (level == ErrorLevel) {
+    return std::string{"\o{33}[1;31m[ERROR] "} + msg + "\o{33}[0m\n";
+  }
+  auto [color, label] = verbosity_style(level);
+  return std::string(color) + label + msg + "\o{33}[0m\n";
+}
 
 inline starpu_variable_interface
 make_variable_interface(float* ptr)
@@ -77,6 +94,37 @@ make_params_for_inputs(
     params.layout.input_types[i] = dtypes[i];
   }
   return params;
+}
+
+struct InputSpec {
+  std::vector<int64_t> shape;
+  at::ScalarType dtype;
+  std::string raw_data;
+};
+
+template <typename T>
+auto
+to_raw_data(const std::vector<T>& values) -> std::string
+{
+  return std::string(
+      reinterpret_cast<const char*>(values.data()), values.size() * sizeof(T));
+}
+
+inline inference::ModelInferRequest
+make_model_infer_request(const std::vector<InputSpec>& specs)
+{
+  inference::ModelInferRequest req;
+  for (size_t i = 0; i < specs.size(); ++i) {
+    const auto& spec = specs[i];
+    auto* input = req.add_inputs();
+    input->set_name("input" + std::to_string(i));
+    input->set_datatype(scalar_type_to_datatype(spec.dtype));
+    for (auto dim : spec.shape) {
+      input->add_shape(dim);
+    }
+    req.add_raw_input_contents()->assign(spec.raw_data);
+  }
+  return req;
 }
 
 inline inference::ModelInferRequest

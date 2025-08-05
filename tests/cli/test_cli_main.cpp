@@ -48,11 +48,7 @@ class CliMainInvalidOptionsDeath
 TEST_P(CliMainInvalidOptionsDeath, Fatal)
 {
   const auto& args = GetParam();
-  std::vector<char*> argv;
-  argv.reserve(args.size());
-  for (const char* arg : args) {
-    argv.push_back(const_cast<char*>(arg));
-  }
+  auto argv = build_argv(args);
   EXPECT_DEATH(
       { cli_main(static_cast<int>(argv.size()), argv.data()); },
       kInvalidOptionsRegex);

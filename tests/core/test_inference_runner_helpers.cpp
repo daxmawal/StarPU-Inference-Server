@@ -10,10 +10,6 @@
 #include "inference_runner_test_utils.hpp"
 #include "utils/exceptions.hpp"
 
-// -----------------------------------------------------------------------------
-// run_reference_inference tests
-// -----------------------------------------------------------------------------
-
 TEST(InferenceRunnerHelpers, RunReferenceInferenceTensor)
 {
   auto m = starpu_server::make_mul_two_model();
@@ -43,7 +39,7 @@ TEST(InferenceRunnerHelpers, RunReferenceInferenceTensorList)
   EXPECT_TRUE(torch::allclose(outputs[1], inputs[0] + 1));
 }
 
-TEST(InferenceRunnerHelpers, RunReferenceInferenceUnsupported)
+TEST(InferenceRunnerHelpers, RunReferenceInferenceUnsupportedOutput)
 {
   auto m = starpu_server::make_constant_model();
   std::vector<torch::Tensor> inputs{torch::ones({1})};
@@ -51,10 +47,6 @@ TEST(InferenceRunnerHelpers, RunReferenceInferenceUnsupported)
       starpu_server::run_reference_inference(m, inputs),
       starpu_server::UnsupportedModelOutputTypeException);
 }
-
-// -----------------------------------------------------------------------------
-// load_model_and_reference_output error path
-// -----------------------------------------------------------------------------
 
 TEST(InferenceRunnerHelpers, LoadModelAndReferenceOutputError)
 {

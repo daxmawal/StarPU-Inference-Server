@@ -1,6 +1,8 @@
 #pragma once
 
 #include <chrono>
+#include <iostream>
+#include <utility>
 
 #include "../test_helpers.hpp"
 
@@ -17,6 +19,31 @@ make_job_with_callback(
     latency = l;
   });
   return job;
+}
+
+struct CallbackProbe {
+  bool called = false;
+  std::vector<torch::Tensor> results;
+  double latency = 0.0;
+  std::shared_ptr<InferenceJob> job;
+};
+
+inline CallbackProbe
+make_callback_probe()
+{
+  CallbackProbe probe{};
+  probe.job =
+      make_job_with_callback(probe.called, probe.results, probe.latency);
+  return probe;
+}
+
+template <typename F>
+inline auto
+capture_stdout(F&& func) -> std::string
+{
+  CaptureStream capture{std::cout};
+  std::forward<F>(func)();
+  return capture.str();
 }
 }  // namespace starpu_server
 

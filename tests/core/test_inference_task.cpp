@@ -77,7 +77,7 @@ TEST_F(InferenceTaskTest, TooManyGpuModels)
       task.create_inference_params(), starpu_server::TooManyGpuModelsException);
 }
 
-TEST_F(InferenceTaskTest, InvalidFixedWorker)
+TEST_F(InferenceTaskTest, AssignFixedWorkerNegativeThrows)
 {
   auto job = make_job(2, 1);
   job->set_fixed_worker_id(-1);
@@ -121,7 +121,7 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   EXPECT_EQ(params->layout.input_types[0], at::kFloat);
 }
 
-TEST(InferenceTask, SafeRegisterTensorVectorThrows)
+TEST(InferenceTask, SafeRegisterTensorVectorUndefinedTensorThrows)
 {
   torch::Tensor undef;
   EXPECT_THROW(

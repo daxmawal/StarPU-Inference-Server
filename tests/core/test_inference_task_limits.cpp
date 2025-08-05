@@ -55,11 +55,3 @@ TEST_F(InferenceTaskLimitsTest, FillInputLayoutTooManyDims)
       task->fill_input_layout(params, 1),
       starpu_server::InferenceExecutionException);
 }
-
-TEST_F(InferenceTaskLimitsTest, AssignFixedWorkerNegativeThrows)
-{
-  job->set_fixed_worker_id(-1);
-  starpu_task task_struct{};
-  EXPECT_THROW(
-      task->assign_fixed_worker_if_needed(&task_struct), std::invalid_argument);
-}

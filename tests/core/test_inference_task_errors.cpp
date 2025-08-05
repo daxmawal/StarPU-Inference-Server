@@ -16,28 +16,6 @@ TEST(InferenceTaskErrors, SubmitNullJob)
   EXPECT_THROW(task.submit(), starpu_server::InvalidInferenceJobException);
 }
 
-TEST(InferenceTaskErrors, SafeRegisterTensorVectorUndefined)
-{
-  torch::Tensor undef;
-  EXPECT_THROW(
-      starpu_server::InferenceTask::safe_register_tensor_vector(undef, "x"),
-      starpu_server::StarPURegistrationException);
-}
-
-TEST(InferenceTaskErrors, AssignFixedWorkerInvalid)
-{
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_fixed_worker_id(-1);
-  torch::jit::script::Module model_cpu;
-  std::vector<torch::jit::script::Module> models_gpu;
-  starpu_server::RuntimeConfig opts;
-  starpu_server::InferenceTask task(
-      nullptr, job, &model_cpu, &models_gpu, &opts);
-  starpu_task task_struct{};
-  EXPECT_THROW(
-      task.assign_fixed_worker_if_needed(&task_struct), std::invalid_argument);
-}
-
 TEST(InferenceTaskErrors, RecordAndRunCompletionCallbackNoCallback)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();

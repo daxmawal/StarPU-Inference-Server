@@ -18,7 +18,6 @@ add_executable(
   core/test_inference_task_errors.cpp
   core/test_inference_task_lifecycle.cpp
   core/test_inference_task_limits.cpp
-  core/test_inference_task_registration.cpp
   core/test_inference_queue.cpp
   core/test_run_inference.cpp
   core/test_warmup_runner.cpp

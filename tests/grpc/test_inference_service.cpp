@@ -22,24 +22,12 @@ TEST(InferenceService, ValidateInputsSuccess)
 
 TEST(InferenceService, ValidateInputsMultipleDtypes)
 {
-  inference::ModelInferRequest req;
-  auto* input0 = req.add_inputs();
-  input0->set_name("input0");
-  input0->set_datatype("FP32");
-  input0->add_shape(2);
-  input0->add_shape(2);
   std::vector<float> data0 = {1.0f, 2.0f, 3.0f, 4.0f};
-  req.add_raw_input_contents()->assign(
-      reinterpret_cast<const char*>(data0.data()),
-      data0.size() * sizeof(float));
-  auto* input1 = req.add_inputs();
-  input1->set_name("input1");
-  input1->set_datatype("INT64");
-  input1->add_shape(3);
   std::vector<int64_t> data1 = {10, 20, 30};
-  req.add_raw_input_contents()->assign(
-      reinterpret_cast<const char*>(data1.data()),
-      data1.size() * sizeof(int64_t));
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
   std::vector<torch::Tensor> inputs;
   auto status =
       starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
@@ -61,12 +49,7 @@ TEST_F(InferenceServiceTest, ModelInferReturnsValidationError)
   req.MergeFrom(starpu_server::make_model_request("m", "1"));
   auto status = service->ModelInfer(&ctx, &req, &reply);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
-  EXPECT_EQ(reply.model_name(), "");
-  EXPECT_EQ(reply.model_version(), "");
-  EXPECT_EQ(reply.outputs_size(), 0);
-  EXPECT_EQ(reply.raw_output_contents_size(), 0);
-  EXPECT_EQ(reply.server_receive_ms(), 0);
-  EXPECT_EQ(reply.server_send_ms(), 0);
+  expect_empty_infer_response(reply);
 }
 
 TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
@@ -76,12 +59,7 @@ TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
   auto worker = prepare_job({torch::zeros({1})});
   auto status = service->ModelInfer(&ctx, &req, &reply);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
-  EXPECT_EQ(reply.model_name(), "");
-  EXPECT_EQ(reply.model_version(), "");
-  EXPECT_EQ(reply.outputs_size(), 0);
-  EXPECT_EQ(reply.raw_output_contents_size(), 0);
-  EXPECT_EQ(reply.server_receive_ms(), 0);
-  EXPECT_EQ(reply.server_send_ms(), 0);
+  expect_empty_infer_response(reply);
 }
 
 TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
@@ -93,21 +71,10 @@ TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
   auto worker = prepare_job({torch::zeros({2, 2})}, outs);
   auto status = service->ModelInfer(&ctx, &req, &reply);
   ASSERT_TRUE(status.ok());
-  EXPECT_EQ(reply.model_name(), "m");
-  EXPECT_EQ(reply.model_version(), "1");
   EXPECT_GT(reply.server_receive_ms(), 0);
   EXPECT_GT(reply.server_send_ms(), 0);
-  ASSERT_EQ(reply.outputs_size(), 1);
-  ASSERT_EQ(reply.raw_output_contents_size(), 1);
-  const auto& out = reply.outputs(0);
-  EXPECT_EQ(out.datatype(), "FP32");
-  ASSERT_EQ(out.shape_size(), 2);
-  EXPECT_EQ(out.shape(0), 2);
-  EXPECT_EQ(out.shape(1), 2);
-  const auto& raw = reply.raw_output_contents(0);
-  std::vector<float> expected = {10.0f, 20.0f, 30.0f, 40.0f};
-  ASSERT_EQ(raw.size(), expected.size() * sizeof(float));
-  EXPECT_EQ(0, std::memcmp(raw.data(), expected.data(), raw.size()));
+  starpu_server::verify_populate_response(
+      req, reply, outs, reply.server_receive_ms(), reply.server_send_ms());
 }
 
 TEST(GrpcServer, StartAndStop)

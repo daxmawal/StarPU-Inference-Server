@@ -25,12 +25,3 @@ TEST(InferenceRunnerErrors, LoadModelAndReferenceOutputMissingFile)
       err.find("Failed to load model or run reference inference"),
       std::string::npos);
 }
-
-TEST(InferenceRunnerErrors, RunReferenceInferenceUnsupportedOutput)
-{
-  auto m = starpu_server::make_constant_model();
-  std::vector<torch::Tensor> inputs{torch::ones({1})};
-  EXPECT_THROW(
-      starpu_server::run_reference_inference(m, inputs),
-      starpu_server::UnsupportedModelOutputTypeException);
-}

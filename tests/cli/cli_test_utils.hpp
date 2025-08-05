@@ -37,6 +37,17 @@ build_argv(std::initializer_list<const char*> args)
   return argv;
 }
 
+inline std::vector<char*>
+build_argv(const std::vector<const char*>& args)
+{
+  std::vector<char*> argv;
+  argv.reserve(args.size());
+  for (const char* arg : args) {
+    argv.push_back(const_cast<char*>(arg));
+  }
+  return argv;
+}
+
 inline auto
 build_valid_cli_args() -> std::vector<char*>
 {

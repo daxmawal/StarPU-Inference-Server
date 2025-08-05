@@ -9,6 +9,17 @@
 #include "../test_helpers.hpp"
 #include "grpc/server/inference_service.hpp"
 
+inline void
+expect_empty_infer_response(const inference::ModelInferResponse& resp)
+{
+  EXPECT_EQ(resp.model_name(), "");
+  EXPECT_EQ(resp.model_version(), "");
+  EXPECT_EQ(resp.outputs_size(), 0);
+  EXPECT_EQ(resp.raw_output_contents_size(), 0);
+  EXPECT_EQ(resp.server_receive_ms(), 0);
+  EXPECT_EQ(resp.server_send_ms(), 0);
+}
+
 class InferenceServiceTest : public ::testing::Test {
  protected:
   void SetUp() override

@@ -75,12 +75,10 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
   starpu_server::CaptureStream capture{std::cout};
   starpu_server::client_utils::log_job_enqueued(opts, job_id, iterations, now);
   auto timestamp = starpu_server::time_utils::format_timestamp(now);
-  auto [color, label] = verbosity_style(starpu_server::VerbosityLevel::Trace);
-  std::string expected =
-      std::string(color) + label +
+  std::string expected = expected_log_line(
+      starpu_server::VerbosityLevel::Trace,
       std::format(
           "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
-          job_id + 1, iterations, timestamp) +
-      "\033[0m\n";
+          job_id + 1, iterations, timestamp));
   EXPECT_EQ(capture.str(), expected);
 }

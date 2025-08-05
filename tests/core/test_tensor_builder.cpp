@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <complex>
 #include <vector>
 
@@ -19,10 +20,25 @@ int8_t char_buffer[2] = {1, 2};
 uint8_t byte_buffer[2] = {1, 2};
 bool bool_buffer[2] = {true, false};
 
+float copy_float_buffer[3];
+int32_t copy_int_buffer[3];
+double copy_double_buffer[3];
+int64_t copy_long_buffer[3];
+int16_t copy_short_buffer[3];
+int8_t copy_char_buffer[3];
+uint8_t copy_byte_buffer[3];
+bool copy_bool_buffer[3];
+
 struct FromRawPtrParam {
   at::ScalarType dtype;
   void* buffer;
   std::vector<int64_t> shape;
+};
+
+struct CopyOutputParam {
+  at::ScalarType dtype;
+  void* buffer;
+  torch::Tensor tensor;
 };
 }  // namespace
 
@@ -111,93 +127,130 @@ TEST(TensorBuilder, FromRawPtrUnsupportedComplex)
       starpu_server::InferenceExecutionException);
 }
 
-TEST(TensorBuilder, CopyOutputToBufferFloat)
+class TensorBuilderCopyOutputToBuffer
+    : public ::testing::TestWithParam<CopyOutputParam> {};
+
+TEST_P(TensorBuilderCopyOutputToBuffer, CopiesCorrectly)
 {
-  auto tensor = torch::tensor(
-      {1.0f, 2.0f, 3.0f}, torch::TensorOptions().dtype(at::kFloat));
-  float buffer[3] = {0.0f, 0.0f, 0.0f};
-  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
-  for (int i = 0; i < 3; ++i) {
-    EXPECT_FLOAT_EQ(buffer[i], tensor[i].item<float>());
+  const auto& param = GetParam();
+  const int numel = param.tensor.numel();
+  switch (param.dtype) {
+    case at::kFloat: {
+      auto* buffer = static_cast<float*>(param.buffer);
+      std::fill_n(buffer, numel, 0.0f);
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          param.tensor, buffer, numel);
+      for (int i = 0; i < numel; ++i) {
+        EXPECT_FLOAT_EQ(buffer[i], param.tensor[i].item<float>());
+      }
+      break;
+    }
+    case at::kInt: {
+      auto* buffer = static_cast<int32_t*>(param.buffer);
+      std::fill_n(buffer, numel, 0);
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          param.tensor, buffer, numel);
+      for (int i = 0; i < numel; ++i) {
+        EXPECT_EQ(buffer[i], param.tensor[i].item<int32_t>());
+      }
+      break;
+    }
+    case at::kDouble: {
+      auto* buffer = static_cast<double*>(param.buffer);
+      std::fill_n(buffer, numel, 0.0);
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          param.tensor, buffer, numel);
+      for (int i = 0; i < numel; ++i) {
+        EXPECT_DOUBLE_EQ(buffer[i], param.tensor[i].item<double>());
+      }
+      break;
+    }
+    case at::kLong: {
+      auto* buffer = static_cast<int64_t*>(param.buffer);
+      std::fill_n(buffer, numel, 0);
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          param.tensor, buffer, numel);
+      for (int i = 0; i < numel; ++i) {
+        EXPECT_EQ(buffer[i], param.tensor[i].item<int64_t>());
+      }
+      break;
+    }
+    case at::kShort: {
+      auto* buffer = static_cast<int16_t*>(param.buffer);
+      std::fill_n(buffer, numel, 0);
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          param.tensor, buffer, numel);
+      for (int i = 0; i < numel; ++i) {
+        EXPECT_EQ(buffer[i], param.tensor[i].item<int16_t>());
+      }
+      break;
+    }
+    case at::kChar: {
+      auto* buffer = static_cast<int8_t*>(param.buffer);
+      std::fill_n(buffer, numel, 0);
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          param.tensor, buffer, numel);
+      for (int i = 0; i < numel; ++i) {
+        EXPECT_EQ(buffer[i], param.tensor[i].item<int8_t>());
+      }
+      break;
+    }
+    case at::kByte: {
+      auto* buffer = static_cast<uint8_t*>(param.buffer);
+      std::fill_n(buffer, numel, 0);
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          param.tensor, buffer, numel);
+      for (int i = 0; i < numel; ++i) {
+        EXPECT_EQ(buffer[i], param.tensor[i].item<uint8_t>());
+      }
+      break;
+    }
+    case at::kBool: {
+      auto* buffer = static_cast<bool*>(param.buffer);
+      std::fill_n(buffer, numel, false);
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          param.tensor, buffer, numel);
+      for (int i = 0; i < numel; ++i) {
+        EXPECT_EQ(buffer[i], param.tensor[i].item<bool>());
+      }
+      break;
+    }
+    default:
+      FAIL() << "Unsupported dtype";
   }
 }
 
-TEST(TensorBuilder, CopyOutputToBufferInt)
-{
-  auto tensor =
-      torch::tensor({1, 2, 3, 4}, torch::TensorOptions().dtype(at::kInt));
-  int32_t buffer[4] = {0, 0, 0, 0};
-  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 4);
-  for (int i = 0; i < 4; ++i) {
-    EXPECT_EQ(buffer[i], tensor[i].item<int32_t>());
-  }
-}
-
-TEST(TensorBuilder, CopyOutputToBufferDouble)
-{
-  auto tensor =
-      torch::tensor({1.0, 2.0, 3.0}, torch::TensorOptions().dtype(at::kDouble));
-  double buffer[3] = {0.0, 0.0, 0.0};
-  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
-  for (int i = 0; i < 3; ++i) {
-    EXPECT_DOUBLE_EQ(buffer[i], tensor[i].item<double>());
-  }
-}
-
-TEST(TensorBuilder, CopyOutputToBufferLong)
-{
-  auto tensor =
-      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kLong));
-  int64_t buffer[3] = {0, 0, 0};
-  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
-  for (int i = 0; i < 3; ++i) {
-    EXPECT_EQ(buffer[i], tensor[i].item<int64_t>());
-  }
-}
-
-TEST(TensorBuilder, CopyOutputToBufferShort)
-{
-  auto tensor =
-      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kShort));
-  int16_t buffer[3] = {0, 0, 0};
-  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
-  for (int i = 0; i < 3; ++i) {
-    EXPECT_EQ(buffer[i], tensor[i].item<int16_t>());
-  }
-}
-
-TEST(TensorBuilder, CopyOutputToBufferChar)
-{
-  auto tensor =
-      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kChar));
-  int8_t buffer[3] = {0, 0, 0};
-  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
-  for (int i = 0; i < 3; ++i) {
-    EXPECT_EQ(buffer[i], tensor[i].item<int8_t>());
-  }
-}
-
-TEST(TensorBuilder, CopyOutputToBufferByte)
-{
-  auto tensor =
-      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kByte));
-  uint8_t buffer[3] = {0, 0, 0};
-  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
-  for (int i = 0; i < 3; ++i) {
-    EXPECT_EQ(buffer[i], tensor[i].item<uint8_t>());
-  }
-}
-
-TEST(TensorBuilder, CopyOutputToBufferBool)
-{
-  auto tensor = torch::tensor(
-      {true, false, true}, torch::TensorOptions().dtype(at::kBool));
-  bool buffer[3] = {false, false, false};
-  starpu_server::TensorBuilder::copy_output_to_buffer(tensor, buffer, 3);
-  for (int i = 0; i < 3; ++i) {
-    EXPECT_EQ(buffer[i], tensor[i].item<bool>());
-  }
-}
+INSTANTIATE_TEST_SUITE_P(
+    TensorBuilder, TensorBuilderCopyOutputToBuffer,
+    ::testing::Values(
+        CopyOutputParam{
+            at::kFloat, copy_float_buffer,
+            torch::tensor(
+                {1.0f, 2.0f, 3.0f}, torch::TensorOptions().dtype(at::kFloat))},
+        CopyOutputParam{
+            at::kInt, copy_int_buffer,
+            torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt))},
+        CopyOutputParam{
+            at::kDouble, copy_double_buffer,
+            torch::tensor(
+                {1.0, 2.0, 3.0}, torch::TensorOptions().dtype(at::kDouble))},
+        CopyOutputParam{
+            at::kLong, copy_long_buffer,
+            torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kLong))},
+        CopyOutputParam{
+            at::kShort, copy_short_buffer,
+            torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kShort))},
+        CopyOutputParam{
+            at::kChar, copy_char_buffer,
+            torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kChar))},
+        CopyOutputParam{
+            at::kByte, copy_byte_buffer,
+            torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kByte))},
+        CopyOutputParam{
+            at::kBool, copy_bool_buffer,
+            torch::tensor(
+                {true, false, true},
+                torch::TensorOptions().dtype(at::kBool))}));
 
 TEST(TensorBuilder, CopyOutputToBufferSizeMismatch)
 {

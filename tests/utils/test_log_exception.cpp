@@ -6,7 +6,6 @@
 #include "../test_helpers.hpp"
 #include "core/inference_task.hpp"
 #include "utils/exceptions.hpp"
-#include "utils/logger.hpp"
 
 using namespace starpu_server;
 
@@ -33,14 +32,14 @@ INSTANTIATE_TEST_SUITE_P(
             []() {
               return std::make_unique<InferenceExecutionException>("exec");
             },
-            "\033[1;31m[ERROR] InferenceExecutionException in ctx: "
-            "exec\033[0m\n"},
+            expected_log_line(
+                ErrorLevel, "InferenceExecutionException in ctx: exec")},
         ExceptionCase{
             []() {
               return std::make_unique<StarPUTaskSubmissionException>("sub");
             },
-            "\033[1;31m[ERROR] StarPU submission error in ctx: "
-            "sub\033[0m\n"},
+            expected_log_line(
+                ErrorLevel, "StarPU submission error in ctx: sub")},
         ExceptionCase{
             []() { return std::make_unique<std::runtime_error>("boom"); },
-            "\033[1;31m[ERROR] std::exception in ctx: boom\033[0m\n"}));
+            expected_log_line(ErrorLevel, "std::exception in ctx: boom")}));

@@ -36,9 +36,7 @@ TEST_P(LogVerboseLevels, LogsWhenEnabled)
   const auto& p = GetParam();
   CaptureStream capture{std::cout};
   log_verbose(p.level, p.level, p.message);
-  auto [color, label] = verbosity_style(p.level);
-  EXPECT_EQ(
-      capture.str(), std::string(color) + label + p.message + "\o{33}[0m\n");
+  EXPECT_EQ(capture.str(), expected_log_line(p.level, p.message));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -73,9 +71,7 @@ TEST_P(LogWrappers, ProducesExpectedOutput)
   CaptureStream capture{std::cout};
   p.fn(p.call_level, p.message);
   if (p.expect_output) {
-    auto [color, label] = verbosity_style(p.inherent_level);
-    EXPECT_EQ(
-        capture.str(), std::string(color) + label + p.message + "\o{33}[0m\n");
+    EXPECT_EQ(capture.str(), expected_log_line(p.inherent_level, p.message));
   } else {
     EXPECT_EQ(capture.str(), "");
   }
@@ -113,14 +109,14 @@ TEST(Logger, LogWarning)
 {
   CaptureStream capture{std::cerr};
   log_warning("msg");
-  EXPECT_EQ(capture.str(), "\o{33}[1;33m[WARNING] msg\o{33}[0m\n");
+  EXPECT_EQ(capture.str(), expected_log_line(WarningLevel, "msg"));
 }
 
 TEST(Logger, LogError)
 {
   CaptureStream capture{std::cerr};
   log_error("err");
-  EXPECT_EQ(capture.str(), "\o{33}[1;31m[ERROR] err\o{33}[0m\n");
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, "err"));
 }
 
 TEST(Logger, LogFatalDeath)
