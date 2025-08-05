@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/inference_task.hpp"
+#include "inference_runner_test_utils.hpp"
 #include "utils/exceptions.hpp"
 
 namespace {
@@ -18,17 +19,6 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
 {
   ++unregister_call_count;
   unregister_handles.push_back(handle);
-}
-
-static auto
-make_add_one_model() -> torch::jit::script::Module
-{
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
-      def forward(self, x):
-          return x + 1
-  )JIT");
-  return m;
 }
 
 class InferenceTaskTest : public ::testing::Test {
@@ -55,10 +45,10 @@ class InferenceTaskTest : public ::testing::Test {
       const std::shared_ptr<starpu_server::InferenceJob>& job,
       size_t num_gpu_models = 0) -> starpu_server::InferenceTask
   {
-    model_cpu_ = make_add_one_model();
+    model_cpu_ = starpu_server::make_add_one_model();
     models_gpu_.clear();
     for (size_t i = 0; i < num_gpu_models; ++i) {
-      models_gpu_.push_back(make_add_one_model());
+      models_gpu_.push_back(starpu_server::make_add_one_model());
     }
     opts_ = starpu_server::RuntimeConfig{};
     return starpu_server::InferenceTask(

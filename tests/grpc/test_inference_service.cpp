@@ -59,35 +59,6 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
   EXPECT_EQ(inputs[1][0].item<int64_t>(), 10);
 }
 
-TEST(InferenceService, RawInputCountMismatch)
-{
-  auto req = starpu_server::make_valid_request();
-  req.add_raw_input_contents()->assign("", 0);
-  std::vector<torch::Tensor> inputs;
-  auto status =
-      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
-          &req, inputs);
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
-}
-
-TEST(InferenceService, RawContentSizeMismatch)
-{
-  inference::ModelInferRequest req;
-  auto* input = req.add_inputs();
-  input->set_name("input0");
-  input->set_datatype("FP32");
-  input->add_shape(2);
-  input->add_shape(2);
-  std::vector<float> data = {1.0f, 2.0f, 3.0f};
-  req.add_raw_input_contents()->assign(
-      reinterpret_cast<const char*>(data.data()), data.size() * sizeof(float));
-  std::vector<torch::Tensor> inputs;
-  auto status =
-      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
-          &req, inputs);
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
-}
-
 TEST(InferenceService, PopulateResponseFillsFields)
 {
   inference::ModelInferRequest req;
@@ -130,14 +101,8 @@ TEST_F(InferenceServiceTest, SubmitJobAndWaitReturnsInternalOnEmptyOutput)
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   std::vector<torch::Tensor> outputs;
 
-  std::thread worker([&] {
-    std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
-    job->get_on_complete()({}, 0.0);
-  });
-
+  auto worker = starpu_server::run_single_job(queue);
   auto status = service->submit_job_and_wait(inputs, outputs);
-  worker.join();
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
 }
@@ -171,16 +136,11 @@ TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
   req.set_model_name("m");
   req.set_model_version("1");
 
-  std::thread worker([&] {
-    std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
-    job->get_on_complete()({}, 0.0);
-  });
+  auto worker = starpu_server::run_single_job(queue);
 
   grpc::ServerContext ctx;
   inference::ModelInferResponse reply;
   auto status = service->ModelInfer(&ctx, &req, &reply);
-  worker.join();
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
   EXPECT_EQ(reply.model_name(), "");
@@ -199,18 +159,13 @@ TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
   req.set_model_name("m");
   req.set_model_version("1");
 
-  std::thread worker([&] {
-    std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
-    std::vector<torch::Tensor> outs = {
-        torch::tensor({10.0f, 20.0f, 30.0f, 40.0f}).view({2, 2})};
-    job->get_on_complete()(outs, 0.0);
-  });
+  std::vector<torch::Tensor> outs = {
+      torch::tensor({10.0f, 20.0f, 30.0f, 40.0f}).view({2, 2})};
+  auto worker = starpu_server::run_single_job(queue, outs);
 
   grpc::ServerContext ctx;
   inference::ModelInferResponse reply;
   auto status = service->ModelInfer(&ctx, &req, &reply);
-  worker.join();
 
   ASSERT_TRUE(status.ok());
   EXPECT_EQ(reply.model_name(), "m");

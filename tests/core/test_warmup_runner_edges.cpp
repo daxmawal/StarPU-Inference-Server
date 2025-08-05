@@ -8,44 +8,21 @@
 #undef private
 
 #include "inference_runner_test_utils.hpp"
+#include "warmup_runner_test_utils.hpp"
 
 namespace {
-
 auto
 count_threads() -> int
 {
   namespace fs = std::filesystem;
   return std::distance(fs::directory_iterator("/proc/self/task"), {});
 }
-
-struct WarmupTestFixture {
-  starpu_server::RuntimeConfig opts;
-  starpu_server::StarPUSetup starpu;
-  torch::jit::script::Module model_cpu;
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref;
-
-  WarmupTestFixture()
-      : opts{}, starpu(opts), model_cpu(starpu_server::make_identity_model()),
-        models_gpu{}, outputs_ref{torch::zeros({1})}
-  {
-    opts.input_shapes = {{1}};
-    opts.input_types = {at::kFloat};
-    opts.use_cuda = false;
-  }
-
-  auto make_runner() -> starpu_server::WarmupRunner
-  {
-    return starpu_server::WarmupRunner(
-        opts, starpu, model_cpu, models_gpu, outputs_ref);
-  }
-};
-
 }  // namespace
 
 TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads)
 {
-  WarmupTestFixture fixture;
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
   auto runner = fixture.make_runner();
 
   const auto threads_before = count_threads();
@@ -64,7 +41,8 @@ TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads)
 
 TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnNegativeIterations)
 {
-  WarmupTestFixture fixture;
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
   auto runner = fixture.make_runner();
 
   std::map<int, std::vector<int32_t>> device_workers;
@@ -76,7 +54,8 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnNegativeIterations)
 
 TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnIterationOverflow)
 {
-  WarmupTestFixture fixture;
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
   auto runner = fixture.make_runner();
 
   std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
@@ -90,7 +69,8 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnIterationOverflow)
 
 TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow)
 {
-  WarmupTestFixture fixture;
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
   auto runner = fixture.make_runner();
 
   const int iterations = 1000;

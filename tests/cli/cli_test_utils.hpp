@@ -1,7 +1,12 @@
 #pragma once
 
+#include <gtest/gtest.h>
+
 #include <initializer_list>
 #include <vector>
+
+#include "cli/args_parser.hpp"
+#include "utils/runtime_config.hpp"
 
 inline std::vector<char*>
 build_argv(std::initializer_list<const char*> args)
@@ -12,4 +17,17 @@ build_argv(std::initializer_list<const char*> args)
     argv.push_back(const_cast<char*>(arg));
   }
   return argv;
+}
+
+inline auto
+parse(std::initializer_list<const char*> args) -> starpu_server::RuntimeConfig
+{
+  auto argv = build_argv(args);
+  return starpu_server::parse_arguments({argv.data(), argv.size()});
+}
+
+inline void
+expect_invalid(std::initializer_list<const char*> args)
+{
+  EXPECT_FALSE(parse(args).valid);
 }

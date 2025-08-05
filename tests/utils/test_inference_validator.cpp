@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/inference_runner.hpp"
+#include "inference_validator_test_utils.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/inference_validator.hpp"
 #include "utils/logger.hpp"
@@ -26,21 +27,6 @@ class InferenceValidatorTest : public ::testing::Test {
             return x + 1
     )JIT");
     return m;
-  }
-
-  static auto make_result(
-      std::vector<torch::Tensor> inputs, std::vector<torch::Tensor> outputs,
-      int job_id, starpu_server::DeviceType device, int device_id = 0,
-      int worker_id = 0) -> starpu_server::InferenceResult
-  {
-    starpu_server::InferenceResult result;
-    result.inputs = std::move(inputs);
-    result.results = std::move(outputs);
-    result.job_id = job_id;
-    result.executed_on = device;
-    result.device_id = device_id;
-    result.worker_id = worker_id;
-    return result;
   }
 };
 
@@ -102,7 +88,7 @@ make_shape_error_model() -> torch::jit::script::Module
 TEST_F(InferenceValidatorTest, SuccessfulValidation)
 {
   auto model = make_add_one_model();
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4})}, 42,
       starpu_server::DeviceType::CPU);
   EXPECT_TRUE(validate_inference_result(
@@ -112,7 +98,7 @@ TEST_F(InferenceValidatorTest, SuccessfulValidation)
 TEST_F(InferenceValidatorTest, FailsOnMismatch)
 {
   auto model = make_add_one_model();
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1, 2, 3})}, {torch::tensor({1, 2, 3})}, 43,
       starpu_server::DeviceType::CPU);
   testing::internal::CaptureStderr();
@@ -125,7 +111,7 @@ TEST_F(InferenceValidatorTest, FailsOnMismatch)
 TEST_F(InferenceValidatorTest, ThrowsOnUnknownDevice)
 {
   auto model = make_add_one_model();
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4})}, 44,
       starpu_server::DeviceType::Unknown);
   EXPECT_THROW(
@@ -137,7 +123,7 @@ TEST_F(InferenceValidatorTest, ThrowsOnUnknownDevice)
 TEST_F(InferenceValidatorTest, ThrowsOnInvalidDeviceValue)
 {
   auto model = make_add_one_model();
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4})}, 144,
       static_cast<starpu_server::DeviceType>(255));
   EXPECT_THROW(
@@ -149,7 +135,7 @@ TEST_F(InferenceValidatorTest, ThrowsOnInvalidDeviceValue)
 TEST_F(InferenceValidatorTest, ThrowsOnNonTensorTupleElement)
 {
   auto model = make_tuple_non_tensor_model();
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1})}, {torch::tensor({1})}, 46,
       starpu_server::DeviceType::CPU);
   EXPECT_THROW(
@@ -183,7 +169,7 @@ TEST_F(InferenceValidatorTest, SuccessfulValidationCuda)
   skip_if_no_cuda();
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1, 2, 3}).to(torch::kCUDA)},
       {torch::tensor({2, 3, 4}).to(torch::kCUDA)}, 100,
       starpu_server::DeviceType::CUDA);
@@ -196,7 +182,7 @@ TEST_F(InferenceValidatorTest, FailsOnMismatchCuda)
   skip_if_no_cuda();
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1, 2, 3}).to(torch::kCUDA)},
       {torch::tensor({1, 2, 3}).to(torch::kCUDA)}, 101,
       starpu_server::DeviceType::CUDA);
@@ -212,7 +198,7 @@ TEST_F(InferenceValidatorTest, CudaModelOnCpuInputsThrows)
   skip_if_no_cuda();
   auto model = make_add_one_model();
   model.to(torch::kCUDA);
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4}).to(torch::kCUDA)},
       102, starpu_server::DeviceType::CUDA);
   EXPECT_TRUE(validate_inference_result(
@@ -222,7 +208,7 @@ TEST_F(InferenceValidatorTest, CudaModelOnCpuInputsThrows)
 TEST_F(InferenceValidatorTest, OutputCountMismatch)
 {
   auto model = make_add_one_model();
-  auto result = make_result(
+  auto result = starpu_server::make_result(
       {torch::tensor({1, 2, 3})},
       {torch::tensor({2, 3, 4}), torch::tensor({2, 3, 4})}, 45,
       starpu_server::DeviceType::CPU);

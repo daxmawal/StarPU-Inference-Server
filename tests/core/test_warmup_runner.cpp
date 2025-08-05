@@ -15,6 +15,7 @@
 #undef private
 
 #include "inference_runner_test_utils.hpp"
+#include "warmup_runner_test_utils.hpp"
 
 template <class F>
 static auto
@@ -26,34 +27,6 @@ measure_ms(F&& f) -> long
   return std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
       .count();
 }
-
-class WarmupRunnerTest : public ::testing::Test {
- protected:
-  starpu_server::RuntimeConfig opts;
-
-  std::unique_ptr<starpu_server::StarPUSetup> starpu;
-  torch::jit::script::Module model_cpu;
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref;
-  std::unique_ptr<starpu_server::WarmupRunner> runner;
-
-  void SetUp() override { init(false); }
-
-  void init(bool use_cuda)
-  {
-    opts = starpu_server::RuntimeConfig{};
-    opts.input_shapes = {{1}};
-    opts.input_types = {at::kFloat};
-    opts.use_cuda = use_cuda;
-
-    starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
-    model_cpu = starpu_server::make_identity_model();
-    models_gpu.clear();
-    outputs_ref = {torch::zeros({1})};
-    runner = std::make_unique<starpu_server::WarmupRunner>(
-        opts, *starpu, model_cpu, models_gpu, outputs_ref);
-  }
-};
 
 TEST_F(WarmupRunnerTest, ClientWorkerThrowsOnNegativeIterations)
 {

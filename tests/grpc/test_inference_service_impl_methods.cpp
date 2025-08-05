@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 
-#include <thread>
-
+#include "../test_helpers.hpp"
 #include "inference_service_test.hpp"
 
 TEST_F(InferenceServiceTest, BasicLivenessAndReadiness)
@@ -34,14 +33,9 @@ TEST_F(InferenceServiceTest, SubmitJobAndWaitReturnsOutputs)
   std::vector<torch::Tensor> expected = {torch::tensor({42})};
 
   std::vector<torch::Tensor> outputs;
-  std::thread worker([&] {
-    std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
-    job->get_on_complete()(expected, 0.0);
-  });
+  auto worker = starpu_server::run_single_job(queue, expected);
 
   auto status = service->submit_job_and_wait(inputs, outputs);
-  worker.join();
 
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(outputs.size(), expected.size());

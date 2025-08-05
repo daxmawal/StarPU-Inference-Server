@@ -1,6 +1,7 @@
 #include <c10/util/Exception.h>
 #include <gtest/gtest.h>
 
+#include "../test_helpers.hpp"
 #include "core/inference_params.hpp"
 #include "core/tensor_builder.hpp"
 #include "utils/exceptions.hpp"
@@ -13,15 +14,8 @@ TEST(TensorBuilderFromStarPU, BuildsTensors)
   buffers_raw[0].ptr = reinterpret_cast<uintptr_t>(input0);
   buffers_raw[1].ptr = reinterpret_cast<uintptr_t>(input1);
 
-  starpu_server::InferenceParams params{};
-  params.num_inputs = 2;
-  params.layout.num_dims[0] = 1;
-  params.layout.dims[0][0] = 3;
-  params.layout.input_types[0] = at::kFloat;
-  params.layout.num_dims[1] = 2;
-  params.layout.dims[1][0] = 2;
-  params.layout.dims[1][1] = 2;
-  params.layout.input_types[1] = at::kInt;
+  auto params = starpu_server::make_params_for_inputs(
+      {{3}, {2, 2}}, {at::kFloat, at::kInt});
 
   std::array<void*, 2> buffers{&buffers_raw[0], &buffers_raw[1]};
   auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
@@ -39,8 +33,10 @@ TEST(TensorBuilderFromStarPU, BuildsTensors)
 
 TEST(TensorBuilderFromStarPU, TooManyInputsThrows)
 {
-  starpu_server::InferenceParams params{};
-  params.num_inputs = starpu_server::InferLimits::MaxInputs + 1;
+  const size_t too_many = starpu_server::InferLimits::MaxInputs + 1;
+  std::vector<std::vector<int64_t>> shapes(too_many, {1});
+  std::vector<at::ScalarType> dtypes(too_many, at::kFloat);
+  auto params = starpu_server::make_params_for_inputs(shapes, dtypes);
   std::vector<void*> dummy(params.num_inputs, nullptr);
 
   EXPECT_THROW(
@@ -55,8 +51,7 @@ TEST(TensorBuilderFromStarPU, NegativeNumDimsThrows)
   starpu_variable_interface buf;
   buf.ptr = reinterpret_cast<uintptr_t>(input0);
 
-  starpu_server::InferenceParams params{};
-  params.num_inputs = 1;
+  auto params = starpu_server::make_params_for_inputs({{1}}, {at::kFloat});
   params.layout.num_dims[0] = -1;
 
   std::array<void*, 1> buffers{&buf};

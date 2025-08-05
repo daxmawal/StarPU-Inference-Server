@@ -4,24 +4,6 @@
 #include "cli_test_utils.hpp"
 #include "utils/runtime_config.hpp"
 
-using namespace starpu_server;
-
-namespace {
-
-auto
-parse(std::initializer_list<const char*> args) -> RuntimeConfig
-{
-  auto argv = build_argv(args);
-  return parse_arguments({argv.data(), argv.size()});
-}
-
-void
-expect_invalid(std::initializer_list<const char*> args)
-{
-  EXPECT_FALSE(parse(args).valid);
-}
-}  // namespace
-
 TEST(ArgsParser, ParsesRequiredOptions)
 {
   const auto opts = parse(
@@ -80,7 +62,7 @@ TEST(ArgsParser, ParsesAllOptions)
   EXPECT_EQ(opts.model_path, "model.pt");
   EXPECT_EQ(opts.iterations, 5);
   EXPECT_EQ(opts.delay_ms, 42);
-  EXPECT_EQ(opts.verbosity, VerbosityLevel::Debug);
+  EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
   EXPECT_EQ(opts.server_address, "127.0.0.1:1234");
   EXPECT_EQ(opts.max_message_bytes, 512);
   EXPECT_TRUE(opts.synchronous);
@@ -219,14 +201,15 @@ TEST(ArgsParser, MissingIterationsValue)
 
 TEST(ArgsParser, VerboseLevels)
 {
-  using enum VerbosityLevel;
-  const std::array<std::pair<const char*, VerbosityLevel>, 5> cases = {{
-      {"0", Silent},
-      {"1", Info},
-      {"2", Stats},
-      {"3", Debug},
-      {"4", Trace},
-  }};
+  using enum starpu_server::VerbosityLevel;
+  const std::array<std::pair<const char*, starpu_server::VerbosityLevel>, 5>
+      cases = {{
+          {"0", Silent},
+          {"1", Info},
+          {"2", Stats},
+          {"3", Debug},
+          {"4", Trace},
+      }};
 
   for (const auto& [level_str, expected] : cases) {
     const auto opts = parse(

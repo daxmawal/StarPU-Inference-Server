@@ -16,15 +16,7 @@ struct ExtractTensorsParam {
 class StarPUSetupExtractTensorsTest
     : public ::testing::TestWithParam<ExtractTensorsParam> {};
 
-TEST(StarPUSetupErrorsTest, ConstructorNegativeDeviceId)
-{
-  starpu_server::RuntimeConfig cfg;
-  cfg.use_cuda = true;
-  cfg.device_ids = {-1};
-  EXPECT_THROW(starpu_server::StarPUSetup setup(cfg), std::invalid_argument);
-}
-
-TEST(StarPUSetupErrorsTest, GetCudaWorkersByDeviceNegativeId)
+TEST(StarPUSetupErrorsTest, GetCudaWorkersNegativeDeviceThrows)
 {
   EXPECT_THROW(
       starpu_server::StarPUSetup::get_cuda_workers_by_device({-1}),

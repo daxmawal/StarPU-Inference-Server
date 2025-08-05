@@ -2,10 +2,12 @@
 
 #include <torch/script.h>
 
+#include <tuple>
 #include <vector>
 
-#include "inference_runner_test_utils.hpp"
+#include "runtime_config.hpp"
 #include "utils/exceptions.hpp"
+#include "utils/input_generator.hpp"
 #include "utils/logger.hpp"
 
 namespace starpu_server {
@@ -17,6 +19,17 @@ make_identity_model() -> torch::jit::script::Module
   m.define(R"JIT(
         def forward(self, x):
             return x
+    )JIT");
+  return m;
+}
+
+inline auto
+make_add_one_model() -> torch::jit::script::Module
+{
+  torch::jit::script::Module m{"m"};
+  m.define(R"JIT(
+        def forward(self, x):
+            return x + 1
     )JIT");
   return m;
 }
@@ -48,5 +61,18 @@ run_reference_inference(
 
   return output_refs;
 }
+
+inline auto
+generate_inputs(
+    const std::vector<std::vector<int64_t>>& shapes,
+    const std::vector<at::ScalarType>& types) -> std::vector<torch::Tensor>
+{
+  return input_generator::generate_random_inputs(shapes, types);
+}
+
+auto load_model_and_reference_output(const RuntimeConfig& opts)
+    -> std::tuple<
+        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+        std::vector<torch::Tensor>>;
 
 }  // namespace starpu_server

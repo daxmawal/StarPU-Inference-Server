@@ -39,14 +39,9 @@ TEST_F(InferenceServiceTest, SubmitJobAndWaitInternalError)
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   std::vector<torch::Tensor> outputs;
 
-  std::thread worker([&] {
-    std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
-    job->get_on_complete()({}, 0.0);
-  });
+  auto worker = starpu_server::run_single_job(queue);
 
   auto status = service->submit_job_and_wait(inputs, outputs);
-  worker.join();
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
 }

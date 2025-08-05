@@ -85,13 +85,6 @@ TEST_F(StarPUSetupCodeletTest, GetCudaWorkersSingleDevice)
   EXPECT_FALSE(workers.empty());
 }
 
-TEST(StarPUSetupCodelet, GetCudaWorkersNegativeDeviceThrows)
-{
-  EXPECT_THROW(
-      starpu_server::StarPUSetup::get_cuda_workers_by_device({-1}),
-      std::invalid_argument);
-}
-
 TEST(InferenceCodelet, FieldsAreInitialized)
 {
   starpu_server::InferenceCodelet codelet;
