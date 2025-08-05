@@ -37,21 +37,21 @@ TEST(E2E, FullInference)
 
   starpu_server::InferenceQueue queue;
 
-  std::thread worker([&]() {
+  std::jthread worker([&] {
     std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
     std::vector<torch::IValue> iv(
         job->get_input_tensors().begin(), job->get_input_tensors().end());
     auto out_iv = model.forward(iv);
-    std::vector<torch::Tensor> outs;
-    outs.push_back(out_iv.toTensor());
+    std::vector<torch::Tensor> outs{out_iv.toTensor()};
     job->get_on_complete()(outs, 0.0);
   });
 
   std::string address = "127.0.0.1:50051";
   std::unique_ptr<grpc::Server> server;
-  std::thread server_thread([&]() {
-    starpu_server::RunGrpcServer(queue, reference_outputs, address, 4, server);
+  std::jthread server_thread([&] {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, address, 32 * 1024 * 1024, server);
   });
 
   while (!server) {
@@ -79,6 +79,4 @@ TEST(E2E, FullInference)
       resp.server_send_ms());
 
   starpu_server::StopServer(server);
-  server_thread.join();
-  worker.join();
 }

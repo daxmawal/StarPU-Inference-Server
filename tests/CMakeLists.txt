@@ -19,6 +19,7 @@ add_executable(
   core/test_run_inference.cpp
   core/test_warmup_runner.cpp
   grpc/test_inference_service.cpp
+  grpc/test_client.cpp
   e2e/test_full_inference.cpp
   integration/test_run_inference_loop.cpp
   integration/test_grpc_client_server.cpp
@@ -40,6 +41,7 @@ add_executable(
   ${GRPC_SERVER_DIR}/inference_service.cpp
   ${GRPC_CLIENT_DIR}/inference_client.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
+  ${GRPC_CLIENT_DIR}/client_args.cpp
   ${UTILS_DIR}/inference_validator.cpp
   ${UTILS_DIR}/client_utils.cpp
   ${UTILS_DIR}/time_utils.cpp)

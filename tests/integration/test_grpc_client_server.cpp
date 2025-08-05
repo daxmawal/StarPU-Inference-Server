@@ -12,7 +12,6 @@
 TEST(GrpcClientServer, EndToEndInference)
 {
   starpu_server::InferenceQueue queue;
-  // Minimal reference outputs to allocate server-side buffers
   std::vector<torch::Tensor> reference_outputs = {torch::zeros({2, 2})};
 
   std::unique_ptr<grpc::Server> server;
@@ -24,14 +23,12 @@ TEST(GrpcClientServer, EndToEndInference)
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
 
-  // Worker thread producing expected outputs
   std::vector<torch::Tensor> expected_outputs = {
       torch::tensor({10.0f, 20.0f, 30.0f, 40.0f}).view({2, 2})};
   auto worker = starpu_server::run_single_job(queue, expected_outputs);
 
   auto channel = grpc::CreateChannel(
       "127.0.0.1:50051", grpc::InsecureChannelCredentials());
-  // Instantiate client to connect to the server
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
 
