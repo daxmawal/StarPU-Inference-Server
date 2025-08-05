@@ -7,6 +7,9 @@
 #include "utils/exceptions.hpp"
 #include "utils/runtime_config.hpp"
 
+static const std::vector<const char*> kCommonArgs = {
+    "program", "--model", "model.pt", "--shape", "1x3", "--types", "float"};
+
 TEST(ArgsParser, ParsesRequiredOptions)
 {
   const auto opts = parse(
@@ -66,140 +69,40 @@ TEST(ArgsParser, ParsesAllOptions)
   EXPECT_EQ(opts.input_types[1], at::kInt);
 }
 
+class ArgsParserInvalidOptions
+    : public ::testing::TestWithParam<std::vector<const char*>> {};
 
-TEST(ArgsParser, MissingRequiredOptions)
+TEST_P(ArgsParserInvalidOptions, Invalid)
 {
-  expect_invalid({"program", "--model", "model.pt", "--shape", "1x3x3"});
+  auto args = kCommonArgs;
+  const auto& diff = GetParam();
+  args.insert(args.end(), diff.begin(), diff.end());
+  expect_invalid(args);
 }
 
-TEST(ArgsParser, InvalidNumericValue)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3x3", "--types", "float",
-       "--iterations", "0"});
-}
-
-TEST(ArgsParser, InvalidShapeString)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x-3x3", "--types",
-       "float"});
-}
-
-TEST(ArgsParser, InvalidTypeString)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types",
-       "unknown"});
-}
-
-TEST(ArgsParser, InvalidDeviceID)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--device-ids", "-1"});
-}
-
-TEST(ArgsParser, UnknownArgument)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--unknown"});
-}
-
-TEST(ArgsParser, MismatchedShapesAndTypes)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shapes", "1x2,2x3", "--types",
-       "float"});
-}
-
-TEST(ArgsParser, ShapeContainsNonInteger)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1xax2", "--types",
-       "float"});
-}
-
-TEST(ArgsParser, ShapeDimensionOutOfRange)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "9223372036854775808",
-       "--types", "float"});
-}
-
-TEST(ArgsParser, InvalidVerboseValue)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--verbose", "5"});
-}
-
-TEST(ArgsParser, EmptyShapeString)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "", "--types", "float"});
-}
-
-TEST(ArgsParser, EmptyShapesString)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shapes", "", "--types", "float"});
-}
-
-TEST(ArgsParser, ShapesTrailingComma)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shapes", "1x2,", "--types",
-       "float"});
-}
-
-TEST(ArgsParser, NegativeIterations)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--iterations", "-1"});
-}
-
-TEST(ArgsParser, NegativeDelay)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--delay", "-1"});
-}
-
-TEST(ArgsParser, ZeroMaxMessageSize)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--max-msg-size", "0"});
-}
-
-TEST(ArgsParser, NegativeMaxMessageSize)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--max-msg-size", "-1"});
-}
-
-TEST(ArgsParser, ShapesConsecutiveComma)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shapes", "1x2,,3", "--types",
-       "float,int"});
-}
-
-TEST(ArgsParser, MissingModelValue)
-{
-  expect_invalid({"program", "--shape", "1x3", "--types", "float", "--model"});
-}
-
-TEST(ArgsParser, MissingIterationsValue)
-{
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--iterations"});
-}
+INSTANTIATE_TEST_SUITE_P(
+    InvalidArguments, ArgsParserInvalidOptions,
+    ::testing::Values(
+        std::vector<const char*>{"--types", ""},
+        std::vector<const char*>{"--iterations", "0"},
+        std::vector<const char*>{"--shape", "1x-3x3"},
+        std::vector<const char*>{"--types", "unknown"},
+        std::vector<const char*>{"--device-ids", "-1"},
+        std::vector<const char*>{"--unknown"},
+        std::vector<const char*>{"--shapes", "1x2,2x3", "--types", "float"},
+        std::vector<const char*>{"--shape", "1xax2"},
+        std::vector<const char*>{"--shape", "9223372036854775808"},
+        std::vector<const char*>{"--verbose", "5"},
+        std::vector<const char*>{"--shape", ""},
+        std::vector<const char*>{"--shapes", ""},
+        std::vector<const char*>{"--shapes", "1x2,", "--types", "float"},
+        std::vector<const char*>{"--iterations", "-1"},
+        std::vector<const char*>{"--delay", "-1"},
+        std::vector<const char*>{"--max-msg-size", "0"},
+        std::vector<const char*>{"--max-msg-size", "-1"},
+        std::vector<const char*>{"--shapes", "1x2,,3", "--types", "float,int"},
+        std::vector<const char*>{"--model"},
+        std::vector<const char*>{"--iterations"}));
 
 TEST(ArgsParser, VerboseLevels)
 {
@@ -256,7 +159,8 @@ TEST(CliMain, ShowsHelpMessage)
   int result = cli_main(static_cast<int>(argv.size()), argv.data());
   std::string output = testing::internal::GetCapturedStdout();
   EXPECT_EQ(result, 0);
-  EXPECT_NE(output.find(kCliHelpMessage), std::string::npos);
+  const auto help_message = starpu_server::get_help_message("Inference Engine");
+  EXPECT_NE(output.find(help_message), std::string::npos);
 }
 
 class CliMainInvalidOptionsDeath

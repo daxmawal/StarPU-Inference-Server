@@ -54,13 +54,6 @@ TEST(InferenceJob, SettersAndGettersAndCallback)
   EXPECT_DOUBLE_EQ(cb_latency, 123.0);
 }
 
-static auto
-create_test_module(const std::filesystem::path& path) -> void
-{
-  auto m = starpu_server::make_mul_two_model();
-  m.save(path.string());
-}
-
 TEST(InferenceRunnerUtils, GenerateInputsShapeAndType)
 {
   std::vector<std::vector<int64_t>> shapes{{2, 3}, {1}};
@@ -77,7 +70,7 @@ TEST(InferenceRunnerUtils, GenerateInputsShapeAndType)
 TEST(InferenceRunnerUtils, LoadModelAndReferenceOutputCPU)
 {
   std::filesystem::path file{"tiny_module.pt"};
-  create_test_module(file);
+  starpu_server::save_mul_two_model(file);
   starpu_server::RuntimeConfig opts;
   opts.model_path = file.string();
   opts.input_shapes = {{4}};

@@ -8,6 +8,7 @@
 #include "../test_helpers.hpp"
 #include "core/inference_params.hpp"
 #include "core/tensor_builder.hpp"
+#include "inference_runner_test_utils.hpp"
 
 namespace starpu_server {
 void run_inference(
@@ -27,11 +28,7 @@ TEST(StarPUSetupRunInference, BuildsExecutesCopiesAndTimes)
   std::chrono::high_resolution_clock::time_point inference_start;
   params.timing.inference_start_time = &inference_start;
   std::vector<void*> buffers = {&input_iface, &output_iface};
-  torch::jit::script::Module model("m");
-  model.define(R"JIT(
-        def forward(self, x):
-            return x + 1
-    )JIT");
+  auto model = starpu_server::make_add_one_model();
   auto before = std::chrono::high_resolution_clock::now();
   starpu_server::run_inference(
       &params, buffers, torch::Device(torch::kCPU), &model,

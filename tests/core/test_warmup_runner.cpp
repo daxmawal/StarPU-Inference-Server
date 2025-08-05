@@ -35,7 +35,7 @@ TEST_F(WarmupRunnerTest, WarmupRunnerRunNoCuda)
 
 TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations)
 {
-  std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
+  auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
   runner->client_worker(device_workers, queue, 2);
   std::vector<int> job_ids;
@@ -73,7 +73,7 @@ class WarmupRunnerClientWorkerInvalidIterationsTest
 
 TEST_P(WarmupRunnerClientWorkerInvalidIterationsTest, ThrowsOnInvalidIterations)
 {
-  std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
+  auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
   auto [iterations, expect_overflow] = GetParam();
   if (expect_overflow) {
@@ -97,7 +97,7 @@ INSTANTIATE_TEST_SUITE_P(
 TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
 {
   init(true);
-  std::map<int, std::vector<int32_t>> device_workers = {{0, {1, 2}}};
+  auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
   std::atomic<int> completed_jobs{0};
   std::condition_variable cv;

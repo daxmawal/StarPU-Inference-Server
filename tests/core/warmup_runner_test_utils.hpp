@@ -4,6 +4,8 @@
 #include <torch/script.h>
 
 #include <chrono>
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -18,6 +20,12 @@ measure_ms(F&& f) -> long
   const auto end = std::chrono::steady_clock::now();
   return std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
       .count();
+}
+
+inline auto
+make_device_workers() -> std::map<int, std::vector<int32_t>>
+{
+  return {{0, {1, 2}}};
 }
 
 struct WarmupRunnerTestFixture {

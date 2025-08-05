@@ -2,6 +2,7 @@
 
 #include <torch/script.h>
 
+#include <filesystem>
 #include <tuple>
 #include <vector>
 
@@ -76,6 +77,13 @@ make_constant_model() -> torch::jit::script::Module
             return 5
     )JIT");
   return m;
+}
+
+inline auto
+save_mul_two_model(const std::filesystem::path& path) -> void
+{
+  auto m = make_mul_two_model();
+  m.save(path.string());
 }
 
 inline auto
