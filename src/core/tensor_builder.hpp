@@ -6,10 +6,10 @@
 #include "inference_params.hpp"
 
 namespace starpu_server {
+
 // =============================================================================
 // TensorBuilder: utility class for wrapping StarPU buffers as torch::Tensor
 // =============================================================================
-
 class TensorBuilder {
  public:
   TensorBuilder() = delete;

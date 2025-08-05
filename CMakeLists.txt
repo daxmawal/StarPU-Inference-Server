@@ -122,6 +122,10 @@ if(ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_link_options(starpu_server PRIVATE -fsanitize=address,undefined -g)
 endif()
 
+if(ENABLE_COVERAGE AND ENABLE_SANITIZERS)
+  message(FATAL_ERROR "ENABLE_COVERAGE and ENABLE_SANITIZERS are incompatible.")
+endif()
+
 # === Linking ===
 target_link_libraries(
   starpu_server PRIVATE Torch::Torch protobuf::libprotobuf gRPC::grpc++

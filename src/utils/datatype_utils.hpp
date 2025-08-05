@@ -1,6 +1,8 @@
 #pragma once
 #include <ATen/core/ScalarType.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -48,6 +50,11 @@ scalar_type_to_datatype(at::ScalarType type) -> std::string
 inline auto
 datatype_to_scalar_type(std::string_view dtype) -> at::ScalarType
 {
+  std::string dtype_upper(dtype);
+  std::transform(
+      dtype_upper.begin(), dtype_upper.end(), dtype_upper.begin(),
+      [](unsigned char c) { return std::toupper(c); });
+
   static const std::unordered_map<
       std::string, at::ScalarType, TransparentHash, std::equal_to<>>
       type_map = {{"FP32", at::kFloat},  {"FP64", at::kDouble},
@@ -56,13 +63,14 @@ datatype_to_scalar_type(std::string_view dtype) -> at::ScalarType
                   {"INT16", at::kShort}, {"INT8", at::kChar},
                   {"UINT8", at::kByte},  {"BOOL", at::kBool}};
 
-  const auto iter = type_map.find(dtype);
+  const auto iter = type_map.find(dtype_upper);
   if (iter == type_map.end()) {
     throw std::invalid_argument(
         "Unsupported tensor datatype: " + std::string(dtype));
   }
   return iter->second;
 }
+
 
 inline auto
 scalar_type_to_string(at::ScalarType type) -> std::string

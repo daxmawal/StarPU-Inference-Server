@@ -51,7 +51,6 @@ generate_random_tensor(
     case at::kFloat:
     case at::kDouble:
       return torch::rand(shape, options);
-
     case at::kInt:
     case at::kLong:
     case at::kShort:
@@ -59,10 +58,8 @@ generate_random_tensor(
       const int64_t high = get_integer_upper_bound(shape, index);
       return torch::randint(0, high, shape, options);
     }
-
     case at::kBool:
       return torch::randint(0, 2, shape, options);
-
     default:
       throw UnsupportedDtypeException("Unsupported input type");
   }

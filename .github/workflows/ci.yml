@@ -4,6 +4,9 @@ on: [push, pull_request]
 
 permissions:
   contents: read
+  actions: read
+  checks: write
+  pull-requests: write
 
 jobs:
   cmake-format:
@@ -43,31 +46,6 @@ jobs:
           FILES=$(find . -regex '.*\.\(cpp\|hpp\|c\|h\)' -not -path "./build/*")
           clang-format --dry-run --Werror $FILES
 
-  clang-analyzer:
-    needs: [clang-format, cmake-format]
-    runs-on: self-hosted
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run Clang Static Analyzer
-        run: |
-          cmake -S . -B build \
-            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
-            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DBUILD_TESTS=ON \
-            -DENABLE_COVERAGE=OFF \
-            -DENABLE_SANITIZERS=OFF
-          scan-build --status-bugs -o clang-analyzer cmake --build build
-        shell: bash
-
-      - name: Upload analyzer report
-        uses: actions/upload-artifact@v4
-        with:
-          name: clang-analyzer-report
-          path: clang-analyzer
-
   build:
     needs: [clang-format, cmake-format]
     runs-on: self-hosted
@@ -80,10 +58,11 @@ jobs:
         run: |
           cmake -S . -B build \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=ON \
             -DENABLE_SANITIZERS=OFF
-          cmake --build build
+          cmake --build build -- -j$(nproc)
         shell: bash
 
       - name: Save build artifacts
@@ -91,6 +70,35 @@ jobs:
         with:
           name: build-folder
           path: build/
+
+  clang-analyzer:
+    needs: build
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-folder
+          path: build/
+
+      - name: Prepare analyzer directory
+        run: mkdir -p clang-analyzer          
+
+      - name: Run Clang Static Analyzer
+        run: |
+          scan-build --status-bugs -o clang-analyzer cmake --build build
+        shell: bash
+
+      - name: Upload analyzer report
+        uses: actions/upload-artifact@v4
+        with:
+          name: clang-analyzer-report
+          path: clang-analyzer
+          if-no-files-found: ignore
 
   test-and-coverage:
     needs: build
@@ -106,26 +114,74 @@ jobs:
           name: build-folder
           path: build/
 
+      - name: Setup Python venv and install gcovr
+        run: |
+          python3 -m venv gcovr-venv
+          source gcovr-venv/bin/activate
+          pip install gcovr
+        shell: bash
+
       - name: Restore execute permission on test binaries
         working-directory: build
+        run: chmod +x unit_tests || true
+
+      - name: Run tests and generate JUnit XML
         run: |
-          chmod +x unit_tests || true
+          ctest --test-dir build --output-on-failure -T Test --no-compress-output
+          cp build/Testing/*/Test.xml build/junit.xml
 
-      - name: Run tests
-        run: ctest --test-dir build --output-on-failure
-
-      - name: Generate coverage report (HTML)
+      - name: Generate coverage report using gcovr in venv
         working-directory: build
         run: |
-          gcovr --root .. --html --html-details -o coverage.html
-          gcovr --root .. --txt > coverage.txt
-          gcovr --root .. --lcov -o coverage.lcov
+          ROOTDIR="$(cd .. && pwd)"
+          ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --filter "$ROOTDIR/src" \
+            --exclude '^build/.*' \
+            --exclude '^build/_deps/.*' \
+            --exclude '^tests/.*' \
+            --exclude '^external/.*' \
+            --exclude '^usr/.*' \
+            --exclude '^Install/.*' \
+            --html --html-details -o coverage.html
 
-      - name: Upload coverage report
+          ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --filter "$ROOTDIR/src" \
+            --exclude '^build/.*' \
+            --exclude '^build/_deps/.*' \
+            --exclude '^tests/.*' \
+            --exclude '^external/.*' \
+            --exclude '^usr/.*' \
+            --exclude '^Install/.*' \
+            --txt > coverage.txt
+
+          ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --filter "$ROOTDIR/src" \
+            --exclude '^build/.*' \
+            --exclude '^build/_deps/.*' \
+            --exclude '^tests/.*' \
+            --exclude '^external/.*' \
+            --exclude '^usr/.*' \
+            --exclude '^Install/.*' \
+            --lcov -o coverage.lcov
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: build/coverage.lcov
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unittests
+          name: codecov-coverage
+          verbose: true
+
+      - name: Upload coverage report artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: |
-            build/coverage.html
-            build/coverage.txt
-            build/coverage.lcov
+          path: build/coverage.html
+
+      - name: Upload coverage summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-summary
+          path: build/coverage.txt

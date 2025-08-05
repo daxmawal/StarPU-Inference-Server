@@ -55,7 +55,7 @@ InferenceCodelet::get_codelet() -> struct starpu_codelet*
 // Utility: extract list of tensors from torch::IValue output
 // =============================================================================
 
-static auto
+auto
 extract_tensors_from_output(const c10::IValue& result)
     -> std::vector<at::Tensor>
 {
@@ -95,8 +95,10 @@ run_inference(
       TensorBuilder::from_starpu_buffers(params, buffers, device);
   const std::vector<c10::IValue> ivalue_inputs(inputs.begin(), inputs.end());
 
-  *params->timing.inference_start_time =
-      std::chrono::high_resolution_clock::now();
+  if (params->timing.inference_start_time) {
+    *params->timing.inference_start_time =
+        std::chrono::high_resolution_clock::now();
+  }
 
   auto result = model->forward(ivalue_inputs);
   std::vector<at::Tensor> outputs = extract_tensors_from_output(result);
@@ -120,8 +122,10 @@ run_codelet_inference(
     const torch::Device device, torch::jit::script::Module* model,
     CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
-  *params->timing.codelet_start_time =
-      std::chrono::high_resolution_clock::now();
+  if (params->timing.codelet_start_time) {
+    *params->timing.codelet_start_time =
+        std::chrono::high_resolution_clock::now();
+  }
 
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
@@ -136,8 +140,12 @@ run_codelet_inference(
   if (params->device.executed_on) {
     *params->device.executed_on = executed_on_type;
   }
-  *params->device.worker_id = worker_id;
-  *params->device.device_id = device_id;
+  if (params->device.worker_id) {
+    *params->device.worker_id = worker_id;
+  }
+  if (params->device.device_id) {
+    *params->device.device_id = device_id;
+  }
 
   try {
     run_inference(params, buffers, device, model, copy_output_fn);
@@ -147,7 +155,10 @@ run_codelet_inference(
         std::format("[ERROR] Codelet failure: {}", e.what()));
   }
 
-  *params->timing.codelet_end_time = std::chrono::high_resolution_clock::now();
+  if (params->timing.codelet_end_time) {
+    *params->timing.codelet_end_time =
+        std::chrono::high_resolution_clock::now();
+  }
 }
 
 // =============================================================================

@@ -68,7 +68,14 @@ parse_shapes_string(const std::string& shapes_str)
   std::stringstream shape_stream(shapes_str);
   std::string shape_str;
 
+  if (!shapes_str.empty() && shapes_str.back() == ',') {
+    throw std::invalid_argument("Trailing comma in shapes string");
+  }
+
   while (std::getline(shape_stream, shape_str, ',')) {
+    if (shape_str.empty()) {
+      throw std::invalid_argument("Empty shape in shapes string");
+    }
     shapes.push_back(parse_shape_string(shape_str));
   }
 
@@ -345,7 +352,7 @@ struct TransparentEqual {
 static auto
 parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 {
-  static const std::unordered_map<
+  const std::unordered_map<
       std::string, std::function<bool(size_t&)>, TransparentHash,
       TransparentEqual>
       dispatch = {

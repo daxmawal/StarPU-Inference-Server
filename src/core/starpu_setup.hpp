@@ -1,6 +1,9 @@
 #pragma once
 
 #include <starpu.h>
+#include <torch/script.h>
+
+#include <vector>
 
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
@@ -27,6 +30,9 @@ class InferenceCodelet {
 
   struct starpu_codelet codelet_;
 };
+
+auto extract_tensors_from_output(const c10::IValue& result)
+    -> std::vector<at::Tensor>;
 
 // =============================================================================
 // Handles StarPU global configuration and codelet setup

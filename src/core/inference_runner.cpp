@@ -233,7 +233,7 @@ process_results(
     VerbosityLevel verbosity)
 {
   for (const auto& result : results) {
-    if (!result.results[0].defined()) {
+    if (result.results.empty() || !result.results[0].defined()) {
       log_error(std::format("[Client] Job {} failed.", result.job_id));
       continue;
     }
