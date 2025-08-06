@@ -14,7 +14,6 @@
 auto
 main(int argc, char* argv[]) -> int
 {
-  // Parse and validate command-line options
   const starpu_server::RuntimeConfig opts = starpu_server::parse_arguments(
       std::span<char*>(argv, static_cast<size_t>(argc)));
 
@@ -27,13 +26,11 @@ main(int argc, char* argv[]) -> int
     starpu_server::log_fatal("Invalid program options.\n");
   }
 
-  // Display configuration summary
   std::cout << "__cplusplus = " << __cplusplus << "\n"
             << "LibTorch version: " << TORCH_VERSION << "\n"
             << "Scheduler       : " << opts.scheduler << "\n"
             << "Iterations      : " << opts.iterations << "\n";
 
-  // Launch inference process
   try {
     auto starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
     starpu_server::run_inference_loop(opts, *starpu);

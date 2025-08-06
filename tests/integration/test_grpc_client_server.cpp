@@ -6,7 +6,6 @@
 #include <thread>
 
 #include "../test_helpers.hpp"
-#include "grpc/client/inference_client.hpp"
 #include "grpc/server/inference_service.hpp"
 
 TEST(GrpcClientServer, EndToEndInference)
@@ -29,8 +28,6 @@ TEST(GrpcClientServer, EndToEndInference)
 
   auto channel = grpc::CreateChannel(
       "127.0.0.1:50051", grpc::InsecureChannelCredentials());
-  starpu_server::InferenceClient client(
-      channel, starpu_server::VerbosityLevel::Silent);
 
   auto request = starpu_server::make_valid_request();
   request.MergeFrom(starpu_server::make_model_request("model", "1"));
