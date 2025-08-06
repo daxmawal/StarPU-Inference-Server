@@ -1,12 +1,18 @@
+#include <grpcpp/grpcpp.h>
 #include <gtest/gtest.h>
+#include <torch/torch.h>
 
 #include <array>
 #include <limits>
+#include <memory>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "grpc/client/client_args.hpp"
+#include "grpc/client/inference_client.hpp"
+#include "grpc/server/inference_service.hpp"
 
 namespace starpu_server {
 VerbosityLevel parse_verbosity_level(const std::string& val);
@@ -87,4 +93,61 @@ TEST(ClientArgs, VerboseValueOutOfRangeThrows)
 {
   const std::string big = std::to_string(std::numeric_limits<int>::max()) + "0";
   EXPECT_THROW(starpu_server::parse_verbosity_level(big), std::out_of_range);
+}
+
+TEST(InferenceClient, ShutdownClosesCompletionQueue)
+{
+  grpc::ChannelArguments ch_args;
+  auto channel = grpc::CreateCustomChannel(
+      "localhost:0", grpc::InsecureChannelCredentials(), ch_args);
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  std::thread cq_thread(
+      &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
+
+  starpu_server::ClientConfig cfg;
+  cfg.shape = {1};
+  cfg.type = at::kFloat;
+  torch::Tensor tensor =
+      torch::zeros(cfg.shape, torch::TensorOptions().dtype(cfg.type));
+
+  client.AsyncModelInfer(tensor, cfg);
+  client.Shutdown();
+  cq_thread.join();
+
+  SUCCEED();
+}
+
+TEST(InferenceClient, ServerIsLiveReturnsTrue)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+  std::thread server_thread([&]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, "127.0.0.1:50052", 1 << 20, server);
+  });
+  while (!server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:50052", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+  EXPECT_TRUE(client.ServerIsLive());
+
+  starpu_server::StopServer(server);
+  server_thread.join();
+  EXPECT_EQ(server, nullptr);
+}
+
+TEST(InferenceClient, ServerIsLiveReturnsFalseWhenUnavailable)
+{
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:59999", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+  EXPECT_FALSE(client.ServerIsLive());
 }
