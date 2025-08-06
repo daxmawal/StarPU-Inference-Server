@@ -167,17 +167,11 @@ TEST(GrpcServer, StartAndStop)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
-  std::unique_ptr<grpc::Server> server;
-  std::thread server_thread([&]() {
-    starpu_server::RunGrpcServer(
-        queue, reference_outputs, "127.0.0.1:0", 4, server);
-  });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  starpu_server::StopServer(server);
-  server_thread.join();
-  EXPECT_EQ(server, nullptr);
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, "127.0.0.1:0");
+  starpu_server::StopServer(server.server);
+  server.thread.join();
+  EXPECT_EQ(server.server, nullptr);
 }
 
 TEST(GrpcServer, StopServerNullptr)

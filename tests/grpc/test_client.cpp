@@ -104,7 +104,7 @@ TEST(InferenceClient, ShutdownClosesCompletionQueue)
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
 
-  std::thread cq_thread(
+  std::jthread cq_thread(
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
 
   starpu_server::ClientConfig cfg;
@@ -115,7 +115,6 @@ TEST(InferenceClient, ShutdownClosesCompletionQueue)
 
   client.AsyncModelInfer(tensor, cfg);
   client.Shutdown();
-  cq_thread.join();
 
   SUCCEED();
 }
@@ -124,14 +123,8 @@ TEST(InferenceClient, ServerIsLiveReturnsTrue)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
-  std::unique_ptr<grpc::Server> server;
-  std::thread server_thread([&]() {
-    starpu_server::RunGrpcServer(
-        queue, reference_outputs, "127.0.0.1:50052", 1 << 20, server);
-  });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, "127.0.0.1:50052");
 
   auto channel = grpc::CreateChannel(
       "127.0.0.1:50052", grpc::InsecureChannelCredentials());
@@ -139,9 +132,9 @@ TEST(InferenceClient, ServerIsLiveReturnsTrue)
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_TRUE(client.ServerIsLive());
 
-  starpu_server::StopServer(server);
-  server_thread.join();
-  EXPECT_EQ(server, nullptr);
+  starpu_server::StopServer(server.server);
+  server.thread.join();
+  EXPECT_EQ(server.server, nullptr);
 }
 
 TEST(InferenceClient, ServerIsLiveReturnsFalseWhenUnavailable)
@@ -157,14 +150,8 @@ TEST(InferenceClient, ServerIsReadyReturnsTrue)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
-  std::unique_ptr<grpc::Server> server;
-  std::thread server_thread([&]() {
-    starpu_server::RunGrpcServer(
-        queue, reference_outputs, "127.0.0.1:50053", 1 << 20, server);
-  });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, "127.0.0.1:50053");
 
   auto channel = grpc::CreateChannel(
       "127.0.0.1:50053", grpc::InsecureChannelCredentials());
@@ -172,9 +159,9 @@ TEST(InferenceClient, ServerIsReadyReturnsTrue)
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_TRUE(client.ServerIsReady());
 
-  starpu_server::StopServer(server);
-  server_thread.join();
-  EXPECT_EQ(server, nullptr);
+  starpu_server::StopServer(server.server);
+  server.thread.join();
+  EXPECT_EQ(server.server, nullptr);
 }
 
 TEST(InferenceClient, ServerIsReadyReturnsFalseWhenUnavailable)
@@ -190,14 +177,8 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs = {torch::zeros({1})};
-  std::unique_ptr<grpc::Server> server;
-  std::thread server_thread([&]() {
-    starpu_server::RunGrpcServer(
-        queue, reference_outputs, "127.0.0.1:50053", 1 << 20, server);
-  });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, "127.0.0.1:50053");
 
   std::vector<torch::Tensor> worker_outputs = {torch::tensor({1.0f})};
   auto worker = starpu_server::run_single_job(queue, worker_outputs);
@@ -208,7 +189,7 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
       channel, starpu_server::VerbosityLevel::Info);
 
   testing::internal::CaptureStdout();
-  std::thread cq_thread(
+  std::jthread cq_thread(
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
 
   starpu_server::ClientConfig cfg;
@@ -218,7 +199,6 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
       torch::zeros(cfg.shape, torch::TensorOptions().dtype(cfg.type));
 
   client.AsyncModelInfer(tensor, cfg);
-  worker.join();
 
   client.Shutdown();
   cq_thread.join();
@@ -226,7 +206,7 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
   EXPECT_NE(logs.find("Request ID 0"), std::string::npos);
   EXPECT_NE(logs.find("latency"), std::string::npos);
 
-  starpu_server::StopServer(server);
-  server_thread.join();
-  EXPECT_EQ(server, nullptr);
+  starpu_server::StopServer(server.server);
+  server.thread.join();
+  EXPECT_EQ(server.server, nullptr);
 }

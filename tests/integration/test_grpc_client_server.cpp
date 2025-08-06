@@ -13,14 +13,8 @@ TEST(GrpcClientServer, EndToEndInference)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs = {torch::zeros({2, 2})};
 
-  std::unique_ptr<grpc::Server> server;
-  std::thread server_thread([&]() {
-    starpu_server::RunGrpcServer(
-        queue, reference_outputs, "127.0.0.1:50051", 1 << 20, server);
-  });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, "127.0.0.1:50051");
 
   std::vector<torch::Tensor> expected_outputs = {
       torch::tensor({10.0f, 20.0f, 30.0f, 40.0f}).view({2, 2})};
@@ -44,7 +38,7 @@ TEST(GrpcClientServer, EndToEndInference)
       request, response, expected_outputs, response.server_receive_ms(),
       response.server_send_ms());
 
-  starpu_server::StopServer(server);
-  server_thread.join();
-  EXPECT_EQ(server, nullptr);
+  starpu_server::StopServer(server.server);
+  server.thread.join();
+  EXPECT_EQ(server.server, nullptr);
 }

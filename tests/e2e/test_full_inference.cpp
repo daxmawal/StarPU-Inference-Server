@@ -48,15 +48,8 @@ TEST(E2E, FullInference)
   });
 
   std::string address = "127.0.0.1:50051";
-  std::unique_ptr<grpc::Server> server;
-  std::jthread server_thread([&] {
-    starpu_server::RunGrpcServer(
-        queue, reference_outputs, address, 32 * 1024 * 1024, server);
-  });
-
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  auto server =
+      starpu_server::start_test_grpc_server(queue, reference_outputs, address);
 
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
@@ -78,5 +71,6 @@ TEST(E2E, FullInference)
       req, resp, reference_outputs, resp.server_receive_ms(),
       resp.server_send_ms());
 
-  starpu_server::StopServer(server);
+  starpu_server::StopServer(server.server);
+  server.thread.join();
 }

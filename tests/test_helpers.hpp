@@ -5,6 +5,7 @@
 #include <torch/script.h>
 
 #include <cassert>
+#include <chrono>
 #include <cstring>
 #include <ostream>
 #include <sstream>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include "core/inference_params.hpp"
+#include "grpc/server/inference_service.hpp"
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "utils/datatype_utils.hpp"
@@ -156,6 +158,28 @@ run_single_job(
         queue.wait_and_pop(job);
         job->get_on_complete()(outputs, latency);
       });
+}
+
+struct TestGrpcServer {
+  std::unique_ptr<grpc::Server> server;
+  std::jthread thread;
+};
+
+inline auto
+start_test_grpc_server(
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::string& address) -> TestGrpcServer
+{
+  TestGrpcServer handle;
+  handle.thread =
+      std::jthread([&queue, &reference_outputs, address, &handle]() {
+        RunGrpcServer(
+            queue, reference_outputs, address, 32 * 1024 * 1024, handle.server);
+      });
+  while (!handle.server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return handle;
 }
 
 inline void
