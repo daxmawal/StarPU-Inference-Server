@@ -10,6 +10,7 @@
 #include <thread>
 #include <vector>
 
+#include "../test_helpers.hpp"
 #include "grpc/client/client_args.hpp"
 #include "grpc/client/inference_client.hpp"
 #include "grpc/server/inference_service.hpp"
@@ -150,4 +151,82 @@ TEST(InferenceClient, ServerIsLiveReturnsFalseWhenUnavailable)
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_FALSE(client.ServerIsLive());
+}
+
+TEST(InferenceClient, ServerIsReadyReturnsTrue)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+  std::thread server_thread([&]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, "127.0.0.1:50053", 1 << 20, server);
+  });
+  while (!server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:50053", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+  EXPECT_TRUE(client.ServerIsReady());
+
+  starpu_server::StopServer(server);
+  server_thread.join();
+  EXPECT_EQ(server, nullptr);
+}
+
+TEST(InferenceClient, ServerIsReadyReturnsFalseWhenUnavailable)
+{
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:59998", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+  EXPECT_FALSE(client.ServerIsReady());
+}
+
+TEST(InferenceClient, AsyncCompleteRpcSuccess)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs = {torch::zeros({1})};
+  std::unique_ptr<grpc::Server> server;
+  std::thread server_thread([&]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, "127.0.0.1:50053", 1 << 20, server);
+  });
+  while (!server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  std::vector<torch::Tensor> worker_outputs = {torch::tensor({1.0f})};
+  auto worker = starpu_server::run_single_job(queue, worker_outputs);
+
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:50053", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Info);
+
+  testing::internal::CaptureStdout();
+  std::thread cq_thread(
+      &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
+
+  starpu_server::ClientConfig cfg;
+  cfg.shape = {1};
+  cfg.type = at::kFloat;
+  torch::Tensor tensor =
+      torch::zeros(cfg.shape, torch::TensorOptions().dtype(cfg.type));
+
+  client.AsyncModelInfer(tensor, cfg);
+  worker.join();
+
+  client.Shutdown();
+  cq_thread.join();
+  auto logs = testing::internal::GetCapturedStdout();
+  EXPECT_NE(logs.find("Request ID 0"), std::string::npos);
+  EXPECT_NE(logs.find("latency"), std::string::npos);
+
+  starpu_server::StopServer(server);
+  server_thread.join();
+  EXPECT_EQ(server, nullptr);
 }
