@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <string>
 
-#include "../core/inference_runner_test_utils.hpp"
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
 #include "runtime_config.hpp"

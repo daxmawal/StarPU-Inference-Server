@@ -25,17 +25,6 @@ make_identity_model() -> torch::jit::script::Module
 }
 
 inline auto
-make_add_one_model() -> torch::jit::script::Module
-{
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
-        def forward(self, x):
-            return x + 1
-    )JIT");
-  return m;
-}
-
-inline auto
 make_mul_two_model() -> torch::jit::script::Module
 {
   torch::jit::script::Module m{"m"};

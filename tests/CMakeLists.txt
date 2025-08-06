@@ -5,6 +5,7 @@ set(CLI_DIR ${SRC_DIR}/cli)
 set(TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
 set(GRPC_SERVER_DIR ${SRC_DIR}/grpc/server)
 set(GRPC_CLIENT_DIR ${SRC_DIR}/grpc/client)
+set(TESTS_DIR ${PROJECT_SOURCE_DIR}/tests)
 
 add_executable(
   unit_tests
@@ -54,7 +55,7 @@ target_compile_definitions(unit_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 target_include_directories(
   unit_tests
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+  PRIVATE ${TESTS_DIR}
           ${SRC_DIR}
           ${UTILS_DIR}
           ${CLI_DIR}

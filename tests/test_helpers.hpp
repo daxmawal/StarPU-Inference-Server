@@ -60,6 +60,17 @@ expected_log_line(VerbosityLevel level, const std::string& msg) -> std::string
   return std::string(color) + label + msg + "\o{33}[0m\n";
 }
 
+inline auto
+make_add_one_model() -> torch::jit::script::Module
+{
+  torch::jit::script::Module m{"m"};
+  m.define(R"JIT(
+        def forward(self, x):
+            return x + 1
+    )JIT");
+  return m;
+}
+
 inline starpu_variable_interface
 make_variable_interface(float* ptr)
 {
