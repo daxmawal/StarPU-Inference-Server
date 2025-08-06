@@ -5,8 +5,8 @@
 #include <memory>
 #include <utility>
 
-#include "../test_helpers.hpp"
 #include "core/inference_task.hpp"
+#include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 

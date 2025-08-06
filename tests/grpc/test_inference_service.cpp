@@ -5,8 +5,8 @@
 #include <memory>
 #include <vector>
 
-#include "../test_helpers.hpp"
 #include "grpc/server/inference_service.hpp"
+#include "test_helpers.hpp"
 
 inline void
 expect_empty_infer_response(const inference::ModelInferResponse& resp)

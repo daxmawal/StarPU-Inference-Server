@@ -10,10 +10,10 @@
 #include <thread>
 #include <vector>
 
-#include "../test_helpers.hpp"
 #include "grpc/client/client_args.hpp"
 #include "grpc/client/inference_client.hpp"
 #include "grpc/server/inference_service.hpp"
+#include "test_helpers.hpp"
 
 namespace starpu_server {
 VerbosityLevel parse_verbosity_level(const std::string& val);

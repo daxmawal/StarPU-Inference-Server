@@ -54,7 +54,8 @@ target_compile_definitions(unit_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 target_include_directories(
   unit_tests
-  PRIVATE ${SRC_DIR}
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+          ${SRC_DIR}
           ${UTILS_DIR}
           ${CLI_DIR}
           ${CORE_DIR}

@@ -1,9 +1,9 @@
 #include <c10/util/Exception.h>
 #include <gtest/gtest.h>
 
-#include "../test_helpers.hpp"
 #include "core/inference_params.hpp"
 #include "core/tensor_builder.hpp"
+#include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 
 TEST(TensorBuilderFromStarPU, BuildsTensors)

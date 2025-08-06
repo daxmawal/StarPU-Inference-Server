@@ -9,9 +9,9 @@
 #include <thread>
 #include <vector>
 
-#include "../test_helpers.hpp"
 #include "grpc/server/inference_service.hpp"
 #include "grpc_service.grpc.pb.h"
+#include "test_helpers.hpp"
 
 TEST(E2E, FullInference)
 {

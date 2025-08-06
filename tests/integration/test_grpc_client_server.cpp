@@ -5,8 +5,8 @@
 #include <memory>
 #include <thread>
 
-#include "../test_helpers.hpp"
 #include "grpc/server/inference_service.hpp"
+#include "test_helpers.hpp"
 
 TEST(GrpcClientServer, EndToEndInference)
 {

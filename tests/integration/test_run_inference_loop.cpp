@@ -5,10 +5,10 @@
 #include <string>
 
 #include "../core/inference_runner_test_utils.hpp"
-#include "../test_helpers.hpp"
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
 #include "runtime_config.hpp"
+#include "test_helpers.hpp"
 
 namespace {
 void

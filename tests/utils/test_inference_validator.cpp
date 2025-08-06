@@ -6,8 +6,8 @@
 #include <utility>
 #include <vector>
 
-#include "../test_helpers.hpp"
 #include "core/inference_runner.hpp"
+#include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/inference_validator.hpp"
 #include "utils/logger.hpp"
