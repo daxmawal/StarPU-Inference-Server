@@ -1,7 +1,6 @@
 #include "client_args.hpp"
 
 #include <format>
-#include <functional>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -232,41 +231,13 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
     -> bool
 {
   static const std::unordered_map<
-      std::string, std::function<bool(size_t&)>, TransparentHash,
-      std::equal_to<>>
+      std::string, bool (*)(ClientConfig&, size_t&, std::span<const char*>),
+      TransparentHash, std::equal_to<>>
       dispatch = {
-          {"--iterations",
-           [&cfg, &args_span](size_t& idx) {
-             return parse_iterations(cfg, idx, args_span);
-           }},
-          {"--delay",
-           [&cfg, &args_span](size_t& idx) {
-             return parse_delay(cfg, idx, args_span);
-           }},
-          {"--shape",
-           [&cfg, &args_span](size_t& idx) {
-             return parse_shape(cfg, idx, args_span);
-           }},
-          {"--type",
-           [&cfg, &args_span](size_t& idx) {
-             return parse_type(cfg, idx, args_span);
-           }},
-          {"--server",
-           [&cfg, &args_span](size_t& idx) {
-             return parse_server(cfg, idx, args_span);
-           }},
-          {"--model",
-           [&cfg, &args_span](size_t& idx) {
-             return parse_model(cfg, idx, args_span);
-           }},
-          {"--version",
-           [&cfg, &args_span](size_t& idx) {
-             return parse_version(cfg, idx, args_span);
-           }},
-          {"--verbose",
-           [&cfg, &args_span](size_t& idx) {
-             return parse_verbose(cfg, idx, args_span);
-           }},
+          {"--iterations", parse_iterations}, {"--delay", parse_delay},
+          {"--shape", parse_shape},           {"--type", parse_type},
+          {"--server", parse_server},         {"--model", parse_model},
+          {"--version", parse_version},       {"--verbose", parse_verbose},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
@@ -279,7 +250,7 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
 
 
     if (auto iter = dispatch.find(arg); iter != dispatch.end()) {
-      if (!iter->second(idx)) {
+      if (!iter->second(cfg, idx, args_span)) {
         return false;
       }
       continue;
