@@ -5,8 +5,13 @@
 #include <memory>
 #include <utility>
 
+<<<<<<< test/unit-test
 #include "core/inference_task.hpp"
 #include "test_helpers.hpp"
+=======
+#include "../test_helpers.hpp"
+#include "core/inference_task.hpp"
+>>>>>>> main
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 
