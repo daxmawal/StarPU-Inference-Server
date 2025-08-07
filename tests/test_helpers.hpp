@@ -7,6 +7,7 @@
 #include <cassert>
 #include <chrono>
 #include <cstring>
+#include <future>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -174,19 +175,34 @@ run_single_job(
 struct TestGrpcServer {
   std::unique_ptr<grpc::Server> server;
   std::jthread thread;
+  int port;
 };
 
 inline auto
 start_test_grpc_server(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
-    const std::string& address) -> TestGrpcServer
+    int port = 0) -> TestGrpcServer
 {
   TestGrpcServer handle;
-  handle.thread =
-      std::jthread([&queue, &reference_outputs, address, &handle]() {
-        RunGrpcServer(
-            queue, reference_outputs, address, 32 * 1024 * 1024, handle.server);
-      });
+  std::promise<int> port_promise;
+  auto port_future = port_promise.get_future();
+  handle.thread = std::jthread([&queue, &reference_outputs, port, &handle,
+                                p = std::move(port_promise)]() mutable {
+    InferenceServiceImpl service(&queue, &reference_outputs);
+    grpc::ServerBuilder builder;
+    std::string address = "0.0.0.0:" + std::to_string(port);
+    int selected_port = 0;
+    builder.AddListeningPort(
+        address, grpc::InsecureServerCredentials(), &selected_port);
+    builder.RegisterService(&service);
+    builder.SetMaxReceiveMessageSize(32 * 1024 * 1024);
+    builder.SetMaxSendMessageSize(32 * 1024 * 1024);
+    handle.server = builder.BuildAndStart();
+    p.set_value(selected_port);
+    handle.server->Wait();
+    handle.server.reset();
+  });
+  handle.port = port_future.get();
   while (!handle.server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }

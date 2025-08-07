@@ -13,15 +13,15 @@ TEST(GrpcClientServer, EndToEndInference)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs = {torch::zeros({2, 2})};
 
-  auto server = starpu_server::start_test_grpc_server(
-      queue, reference_outputs, "127.0.0.1:50051");
+  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
 
   std::vector<torch::Tensor> expected_outputs = {
       torch::tensor({10.0f, 20.0f, 30.0f, 40.0f}).view({2, 2})};
   auto worker = starpu_server::run_single_job(queue, expected_outputs);
 
   auto channel = grpc::CreateChannel(
-      "127.0.0.1:50051", grpc::InsecureChannelCredentials());
+      "127.0.0.1:" + std::to_string(server.port),
+      grpc::InsecureChannelCredentials());
 
   auto request = starpu_server::make_valid_request();
   request.MergeFrom(starpu_server::make_model_request("model", "1"));

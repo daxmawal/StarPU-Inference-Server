@@ -47,10 +47,8 @@ TEST(E2E, FullInference)
     job->get_on_complete()(outs, 0.0);
   });
 
-  std::string address = "127.0.0.1:50051";
-  auto server =
-      starpu_server::start_test_grpc_server(queue, reference_outputs, address);
-
+  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  std::string address = "127.0.0.1:" + std::to_string(server.port);
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
   ASSERT_TRUE(channel->WaitForConnected(

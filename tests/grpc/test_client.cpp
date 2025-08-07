@@ -123,11 +123,11 @@ TEST(InferenceClient, ServerIsLiveReturnsTrue)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
-  auto server = starpu_server::start_test_grpc_server(
-      queue, reference_outputs, "127.0.0.1:50052");
+  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
 
   auto channel = grpc::CreateChannel(
-      "127.0.0.1:50052", grpc::InsecureChannelCredentials());
+      "127.0.0.1:" + std::to_string(server.port),
+      grpc::InsecureChannelCredentials());
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_TRUE(client.ServerIsLive());
@@ -150,11 +150,11 @@ TEST(InferenceClient, ServerIsReadyReturnsTrue)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
-  auto server = starpu_server::start_test_grpc_server(
-      queue, reference_outputs, "127.0.0.1:50053");
+  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
 
   auto channel = grpc::CreateChannel(
-      "127.0.0.1:50053", grpc::InsecureChannelCredentials());
+      "127.0.0.1:" + std::to_string(server.port),
+      grpc::InsecureChannelCredentials());
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_TRUE(client.ServerIsReady());
@@ -177,14 +177,14 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs = {torch::zeros({1})};
-  auto server = starpu_server::start_test_grpc_server(
-      queue, reference_outputs, "127.0.0.1:50053");
+  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
 
   std::vector<torch::Tensor> worker_outputs = {torch::tensor({1.0f})};
   auto worker = starpu_server::run_single_job(queue, worker_outputs);
 
   auto channel = grpc::CreateChannel(
-      "127.0.0.1:50053", grpc::InsecureChannelCredentials());
+      "127.0.0.1:" + std::to_string(server.port),
+      grpc::InsecureChannelCredentials());
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Info);
 
