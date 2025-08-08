@@ -2,6 +2,7 @@
 
 #include <format>
 
+#include "utils/logger.hpp"
 #include "utils/time_utils.hpp"
 
 namespace starpu_server {
@@ -53,7 +54,7 @@ InferenceClient::ServerIsReady() -> bool
   grpc::Status status = stub_->ServerReady(&context, request, &response);
 
   if (!status.ok()) {
-    std::cerr << "RPC failed: " << status.error_message() << std::endl;
+    log_error(std::format("RPC failed: {}", status.error_message()));
     return false;
   }
 

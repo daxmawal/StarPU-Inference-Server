@@ -6,7 +6,7 @@
 #include <regex>
 #include <string>
 
-#include "../test_helpers.hpp"
+#include "test_helpers.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/logger.hpp"
 #include "utils/time_utils.hpp"

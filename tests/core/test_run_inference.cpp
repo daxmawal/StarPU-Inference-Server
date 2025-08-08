@@ -5,10 +5,9 @@
 #include <functional>
 #include <vector>
 
-#include "../test_helpers.hpp"
 #include "core/inference_params.hpp"
 #include "core/tensor_builder.hpp"
-#include "inference_runner_test_utils.hpp"
+#include "test_helpers.hpp"
 
 namespace starpu_server {
 void run_inference(

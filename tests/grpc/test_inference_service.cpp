@@ -5,8 +5,8 @@
 #include <memory>
 #include <vector>
 
-#include "../test_helpers.hpp"
 #include "grpc/server/inference_service.hpp"
+#include "test_helpers.hpp"
 
 inline void
 expect_empty_infer_response(const inference::ModelInferResponse& resp)
@@ -163,21 +163,31 @@ INSTANTIATE_TEST_SUITE_P(
         SubmitJobAndWaitCase{
             {torch::zeros({1})}, {torch::tensor({42})}, grpc::StatusCode::OK}));
 
-TEST(GrpcServer, StartAndStop)
+TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
   std::unique_ptr<grpc::Server> server;
-  std::thread server_thread([&]() {
+  std::jthread thread([&]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, "127.0.0.1:0", 4, server);
+        queue, reference_outputs, "127.0.0.1:0", 32 * 1024 * 1024, server);
   });
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   starpu_server::StopServer(server);
-  server_thread.join();
+  thread.join();
   EXPECT_EQ(server, nullptr);
+}
+
+TEST(GrpcServer, StartAndStop)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  starpu_server::StopServer(server.server);
+  server.thread.join();
+  EXPECT_EQ(server.server, nullptr);
 }
 
 TEST(GrpcServer, StopServerNullptr)

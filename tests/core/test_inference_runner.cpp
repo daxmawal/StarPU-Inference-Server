@@ -84,9 +84,73 @@ TEST(InferenceRunnerUtils, LoadModelAndReferenceOutputCPU)
   torch::manual_seed(42);
   auto inputs =
       starpu_server::generate_inputs(opts.input_shapes, opts.input_types);
-  auto expected = starpu_server::run_reference_inference(cpu_model, inputs);
-  ASSERT_EQ(refs.size(), expected.size());
   ASSERT_EQ(refs.size(), 1u);
-  EXPECT_TRUE(torch::allclose(refs[0], expected[0]));
+  EXPECT_TRUE(torch::allclose(refs[0], inputs[0] * 2));
+  std::filesystem::remove(file);
+}
+
+TEST(InferenceRunnerUtils, LoadModelAndReferenceOutputTuple)
+{
+  std::filesystem::path file{"tuple_module.pt"};
+  auto m = starpu_server::make_tuple_model();
+  m.save(file.string());
+  starpu_server::RuntimeConfig opts;
+  opts.model_path = file.string();
+  opts.input_shapes = {{2}};
+  opts.input_types = {torch::kFloat32};
+  opts.device_ids = {0};
+  opts.use_cuda = false;
+  torch::manual_seed(1);
+  auto [cpu_model, gpu_models, refs] =
+      starpu_server::load_model_and_reference_output(opts);
+  EXPECT_TRUE(gpu_models.empty());
+  torch::manual_seed(1);
+  auto inputs =
+      starpu_server::generate_inputs(opts.input_shapes, opts.input_types);
+  ASSERT_EQ(refs.size(), 2u);
+  EXPECT_TRUE(torch::allclose(refs[0], inputs[0]));
+  EXPECT_TRUE(torch::allclose(refs[1], inputs[0] + 1));
+  std::filesystem::remove(file);
+}
+
+TEST(InferenceRunnerUtils, LoadModelAndReferenceOutputTensorList)
+{
+  std::filesystem::path file{"tensor_list_module.pt"};
+  auto m = starpu_server::make_tensor_list_model();
+  m.save(file.string());
+  starpu_server::RuntimeConfig opts;
+  opts.model_path = file.string();
+  opts.input_shapes = {{2}};
+  opts.input_types = {torch::kFloat32};
+  opts.device_ids = {0};
+  opts.use_cuda = false;
+  torch::manual_seed(2);
+  auto [cpu_model, gpu_models, refs] =
+      starpu_server::load_model_and_reference_output(opts);
+  EXPECT_TRUE(gpu_models.empty());
+  torch::manual_seed(2);
+  auto inputs =
+      starpu_server::generate_inputs(opts.input_shapes, opts.input_types);
+  ASSERT_EQ(refs.size(), 2u);
+  EXPECT_TRUE(torch::allclose(refs[0], inputs[0]));
+  EXPECT_TRUE(torch::allclose(refs[1], inputs[0] + 1));
+  std::filesystem::remove(file);
+}
+
+TEST(InferenceRunnerUtils, LoadModelAndReferenceOutputUnsupported)
+{
+  std::filesystem::path file{"constant_module.pt"};
+  auto m = starpu_server::make_constant_model();
+  m.save(file.string());
+  starpu_server::RuntimeConfig opts;
+  opts.model_path = file.string();
+  opts.input_shapes = {{1}};
+  opts.input_types = {torch::kFloat32};
+  opts.device_ids = {0};
+  opts.use_cuda = false;
+  torch::manual_seed(3);
+  EXPECT_THROW(
+      starpu_server::load_model_and_reference_output(opts),
+      starpu_server::UnsupportedModelOutputTypeException);
   std::filesystem::remove(file);
 }

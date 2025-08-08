@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <utility>
 
-#include "../test_helpers.hpp"
+#include "test_helpers.hpp"
 
 namespace starpu_server {
 inline auto

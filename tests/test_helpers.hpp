@@ -5,7 +5,9 @@
 #include <torch/script.h>
 
 #include <cassert>
+#include <chrono>
 #include <cstring>
+#include <future>
 #include <ostream>
 #include <sstream>
 #include <string>
@@ -13,6 +15,7 @@
 #include <vector>
 
 #include "core/inference_params.hpp"
+#include "grpc/server/inference_service.hpp"
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "utils/datatype_utils.hpp"
@@ -56,6 +59,17 @@ expected_log_line(VerbosityLevel level, const std::string& msg) -> std::string
   }
   auto [color, label] = verbosity_style(level);
   return std::string(color) + label + msg + "\o{33}[0m\n";
+}
+
+inline auto
+make_add_one_model() -> torch::jit::script::Module
+{
+  torch::jit::script::Module m{"m"};
+  m.define(R"JIT(
+        def forward(self, x):
+            return x + 1
+    )JIT");
+  return m;
 }
 
 inline starpu_variable_interface
@@ -156,6 +170,43 @@ run_single_job(
         queue.wait_and_pop(job);
         job->get_on_complete()(outputs, latency);
       });
+}
+
+struct TestGrpcServer {
+  std::unique_ptr<grpc::Server> server;
+  std::jthread thread;
+  int port;
+};
+
+inline auto
+start_test_grpc_server(
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    int port = 0) -> TestGrpcServer
+{
+  TestGrpcServer handle;
+  std::promise<int> port_promise;
+  auto port_future = port_promise.get_future();
+  handle.thread = std::jthread([&queue, &reference_outputs, port, &handle,
+                                p = std::move(port_promise)]() mutable {
+    InferenceServiceImpl service(&queue, &reference_outputs);
+    grpc::ServerBuilder builder;
+    std::string address = "0.0.0.0:" + std::to_string(port);
+    int selected_port = 0;
+    builder.AddListeningPort(
+        address, grpc::InsecureServerCredentials(), &selected_port);
+    builder.RegisterService(&service);
+    builder.SetMaxReceiveMessageSize(32 * 1024 * 1024);
+    builder.SetMaxSendMessageSize(32 * 1024 * 1024);
+    handle.server = builder.BuildAndStart();
+    p.set_value(selected_port);
+    handle.server->Wait();
+    handle.server.reset();
+  });
+  handle.port = port_future.get();
+  while (!handle.server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return handle;
 }
 
 inline void

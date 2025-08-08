@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "core/inference_task.hpp"
-#include "inference_runner_test_utils.hpp"
+#include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 
 namespace {
