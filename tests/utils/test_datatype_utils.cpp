@@ -1,6 +1,8 @@
 #include <ATen/core/ScalarType.h>
 #include <gtest/gtest.h>
 
+#include <utility>
+
 #include "utils/datatype_utils.hpp"
 #include "utils/device_type.hpp"
 
@@ -127,9 +129,15 @@ TEST(DatatypeUtils, ScalarTypeToString)
 
 TEST(DatatypeUtils, ScalarToDatatypeAllEnumValues)
 {
-  for (int i = static_cast<int>(at::ScalarType::Undefined);
-       i < static_cast<int>(at::ScalarType::NumOptions); ++i) {
-    const auto type = static_cast<at::ScalarType>(i);
+  using Enum = at::ScalarType;
+  using U = std::underlying_type_t<Enum>;
+
+  const int first = static_cast<int>(std::to_underlying(Enum::Undefined));
+  const int last = static_cast<int>(std::to_underlying(Enum::NumOptions));
+
+  for (int i = first; i < last; ++i) {
+    const auto type =
+        static_cast<Enum>(static_cast<U>(i));  // int -> underlying -> enum
     EXPECT_NO_THROW({
       auto name = starpu_server::scalar_type_to_datatype(type);
       auto size = starpu_server::element_size(type);

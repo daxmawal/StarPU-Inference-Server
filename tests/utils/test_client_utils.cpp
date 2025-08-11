@@ -104,19 +104,29 @@ TEST(TimeUtils, FormatTimestamp_KnownTime)
   tm.tm_hour = 12;
   tm.tm_min = 34;
   tm.tm_sec = 56;
-  std::time_t t = std::mktime(&tm);
-  auto base_time = std::chrono::system_clock::from_time_t(t);
+
+  using namespace std::chrono;
+  const auto y = year{tm.tm_year + 1900};
+  const auto m = month{static_cast<unsigned>(tm.tm_mon + 1)};
+  const auto d = day{static_cast<unsigned>(tm.tm_mday)};
+
+  local_time<seconds> lt = local_days(y / m / d) + hours{tm.tm_hour} +
+                           minutes{tm.tm_min} + seconds{tm.tm_sec};
+
+  sys_time<seconds> base_time = current_zone()->to_sys(lt);
+
   auto time_point =
       time_point_cast<std::chrono::high_resolution_clock::duration>(base_time) +
       std::chrono::milliseconds(789);
+
   std::string ts = starpu_server::time_utils::format_timestamp(time_point);
   EXPECT_TRUE(ts.ends_with(".789"));
 }
 
 TEST(TimeUtils, FormatTimestamp_MillisecondBoundaries)
 {
-  std::time_t now = std::time(nullptr);
-  auto base_time = std::chrono::system_clock::from_time_t(now);
+  auto base_time = std::chrono::time_point_cast<std::chrono::seconds>(
+      std::chrono::system_clock::now());
   auto tp000 =
       time_point_cast<std::chrono::high_resolution_clock::duration>(base_time) +
       std::chrono::milliseconds(0);

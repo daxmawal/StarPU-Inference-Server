@@ -25,8 +25,8 @@ class InferenceCodelet {
   auto get_codelet() -> struct starpu_codelet*;
 
  private:
-  static inline void cpu_inference_func(void* buffers[], void* cl_arg);
-  static inline void cuda_inference_func(void* buffers[], void* cl_arg);
+  static void cpu_inference_func(void* buffers[], void* cl_arg);
+  static void cuda_inference_func(void* buffers[], void* cl_arg);
 
   struct starpu_codelet codelet_;
 };

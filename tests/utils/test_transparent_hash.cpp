@@ -9,8 +9,8 @@
 TEST(TransparentHash, TransparentLookup)
 {
   std::unordered_map<std::string, int, TransparentHash, std::equal_to<>> map;
-  map.emplace("apple", 1);
-  map.emplace(std::string{"banana"}, 2);
+  map.try_emplace("apple", 1);
+  map.try_emplace(std::string{"banana"}, 2);
   std::string str_key = "apple";
   std::string_view sv_key = "banana";
   const char* c_key = "apple";

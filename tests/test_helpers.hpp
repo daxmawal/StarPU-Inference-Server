@@ -6,9 +6,12 @@
 
 #include <cassert>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
+#include <format>
 #include <future>
 #include <ostream>
+#include <span>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -120,9 +123,11 @@ template <typename T>
 auto
 to_raw_data(const std::vector<T>& values) -> std::string
 {
+  auto byte_span = std::as_bytes(std::span(values));
   return std::string(
-      reinterpret_cast<const char*>(values.data()), values.size() * sizeof(T));
+      reinterpret_cast<const char*>(byte_span.data()), byte_span.size());
 }
+
 
 inline inference::ModelInferRequest
 make_model_infer_request(const std::vector<InputSpec>& specs)
@@ -131,7 +136,7 @@ make_model_infer_request(const std::vector<InputSpec>& specs)
   for (size_t i = 0; i < specs.size(); ++i) {
     const auto& spec = specs[i];
     auto* input = req.add_inputs();
-    input->set_name("input" + std::to_string(i));
+    input->set_name(std::format("input{}", i));
     input->set_datatype(scalar_type_to_datatype(spec.dtype));
     for (auto dim : spec.shape) {
       input->add_shape(dim);
@@ -190,7 +195,7 @@ start_test_grpc_server(
                                 p = std::move(port_promise)]() mutable {
     InferenceServiceImpl service(&queue, &reference_outputs);
     grpc::ServerBuilder builder;
-    std::string address = "0.0.0.0:" + std::to_string(port);
+    std::string address = std::format("0.0.0.0:{}", port);
     int selected_port = 0;
     builder.AddListeningPort(
         address, grpc::InsecureServerCredentials(), &selected_port);

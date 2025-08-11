@@ -51,9 +51,9 @@ inline auto
 datatype_to_scalar_type(std::string_view dtype) -> at::ScalarType
 {
   std::string dtype_upper(dtype);
-  std::transform(
-      dtype_upper.begin(), dtype_upper.end(), dtype_upper.begin(),
-      [](unsigned char c) { return std::toupper(c); });
+  std::ranges::transform(dtype_upper, dtype_upper.begin(), [](unsigned char c) {
+    return static_cast<char>(std::toupper(c));
+  });
 
   static const std::unordered_map<
       std::string, at::ScalarType, TransparentHash, std::equal_to<>>
@@ -70,7 +70,6 @@ datatype_to_scalar_type(std::string_view dtype) -> at::ScalarType
   }
   return iter->second;
 }
-
 
 inline auto
 scalar_type_to_string(at::ScalarType type) -> std::string

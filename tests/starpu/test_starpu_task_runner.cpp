@@ -72,7 +72,7 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   job->get_on_complete()(outputs, latency);
   EXPECT_TRUE(probe.called);
   auto& results = results_;
-  auto& completed_jobs = completed_jobs_;
+  const auto& completed_jobs = completed_jobs_;
   ASSERT_EQ(results.size(), 1u);
   EXPECT_EQ(completed_jobs.load(), 1);
   EXPECT_EQ(results[0].job_id, 7);
@@ -105,7 +105,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   EXPECT_TRUE(probe.results.empty());
   EXPECT_EQ(probe.latency, -1);
   auto& results = results_;
-  auto& completed_jobs = completed_jobs_;
+  const auto& completed_jobs = completed_jobs_;
   ASSERT_EQ(results.size(), 1u);
   EXPECT_TRUE(results[0].results.empty());
   EXPECT_EQ(results[0].latency_ms, -1);

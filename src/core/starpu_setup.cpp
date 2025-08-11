@@ -95,7 +95,7 @@ run_inference(
       TensorBuilder::from_starpu_buffers(params, buffers, device);
   const std::vector<c10::IValue> ivalue_inputs(inputs.begin(), inputs.end());
 
-  if (params->timing.inference_start_time) {
+  if (params->timing.inference_start_time != nullptr) {
     *params->timing.inference_start_time =
         std::chrono::high_resolution_clock::now();
   }
@@ -165,7 +165,7 @@ run_codelet_inference(
 // StarPU CPU codelet implementation
 // =============================================================================
 
-void
+inline void
 InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
@@ -186,7 +186,7 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 // StarPU CUDA codelet implementation
 // =============================================================================
 
-void
+inline void
 InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);

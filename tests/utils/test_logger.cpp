@@ -144,7 +144,7 @@ class LogExceptionTest : public ::testing::TestWithParam<ExceptionCase> {};
 
 TEST_P(LogExceptionTest, LogsExpectedMessage)
 {
-  auto param = GetParam();
+  const auto& param = GetParam();
   auto e = param.make_exception();
   CaptureStream capture{std::cerr};
   InferenceTask::log_exception("ctx", *e);

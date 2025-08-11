@@ -203,7 +203,7 @@ InferenceTask::bind_runtime_job_info(
 
 void
 InferenceTask::fill_input_layout(
-    std::shared_ptr<InferenceParams>& params, size_t num_inputs) const
+    const std::shared_ptr<InferenceParams>& params, size_t num_inputs) const
 {
   std::copy_n(
       job_->get_input_types().begin(), num_inputs,
@@ -345,13 +345,13 @@ void
 InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
 {
   if (auto fixed_id = job_->get_fixed_worker_id(); fixed_id.has_value()) {
-    int id = fixed_id.value();
+    int worker_id = fixed_id.value();
 
-    if (id < 0) {
+    if (worker_id < 0) {
       throw std::invalid_argument("Fixed worker ID must be non-negative");
     }
 
-    task->workerid = static_cast<unsigned>(id);
+    task->workerid = static_cast<unsigned>(worker_id);
     task->execute_on_a_specific_worker = 1;
   }
 }
@@ -482,16 +482,17 @@ InferenceTask::record_and_run_completion_callback(
 
 void
 InferenceTask::log_exception(
-    const std::string& context, const std::exception& e)
+    const std::string& context, const std::exception& exception)
 {
-  if (const auto* iee = dynamic_cast<const InferenceExecutionException*>(&e)) {
+  if (const auto* iee =
+          dynamic_cast<const InferenceExecutionException*>(&exception)) {
     log_error("InferenceExecutionException in " + context + ": " + iee->what());
   } else if (
       const auto* spe =
-          dynamic_cast<const StarPUTaskSubmissionException*>(&e)) {
+          dynamic_cast<const StarPUTaskSubmissionException*>(&exception)) {
     log_error("StarPU submission error in " + context + ": " + spe->what());
   } else {
-    log_error("std::exception in " + context + ": " + e.what());
+    log_error("std::exception in " + context + ": " + exception.what());
   }
 }
 

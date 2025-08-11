@@ -99,7 +99,7 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
   init(true);
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
-  std::atomic<int> completed_jobs{0};
+  std::atomic completed_jobs{0};
   std::condition_variable cv;
   std::mutex m;
   std::jthread server([&]() {

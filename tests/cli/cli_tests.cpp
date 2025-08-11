@@ -17,9 +17,9 @@ TEST(ArgsParser, ParsesRequiredOptions)
        "float"});
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.model_path, "model.pt");
-  ASSERT_EQ(opts.input_shapes.size(), 1u);
+  ASSERT_EQ(opts.input_shapes.size(), 1U);
   EXPECT_EQ(opts.input_shapes[0], std::vector<int64_t>({1, 3, 224, 224}));
-  ASSERT_EQ(opts.input_types.size(), 1u);
+  ASSERT_EQ(opts.input_types.size(), 1U);
   EXPECT_EQ(opts.input_types[0], at::kFloat);
 }
 
@@ -61,10 +61,10 @@ TEST(ArgsParser, ParsesAllOptions)
   EXPECT_FALSE(opts.use_cpu);
   EXPECT_TRUE(opts.use_cuda);
   ASSERT_EQ(opts.device_ids, (std::vector<int>{0, 1}));
-  ASSERT_EQ(opts.input_shapes.size(), 2u);
+  ASSERT_EQ(opts.input_shapes.size(), 2U);
   EXPECT_EQ(opts.input_shapes[0], std::vector<int64_t>({1, 3, 224, 224}));
   EXPECT_EQ(opts.input_shapes[1], std::vector<int64_t>({2, 1}));
-  ASSERT_EQ(opts.input_types.size(), 2u);
+  ASSERT_EQ(opts.input_types.size(), 2U);
   EXPECT_EQ(opts.input_types[0], at::kFloat);
   EXPECT_EQ(opts.input_types[1], at::kInt);
 }
@@ -187,14 +187,14 @@ INSTANTIATE_TEST_SUITE_P(
             "program", "--model", "model.pt", "--shape", "1x1"}));
 
 namespace starpu_server {
-static void
-throw_inference_error(const RuntimeConfig&, StarPUSetup&)
+[[noreturn]] static void
+throw_inference_error(const RuntimeConfig& /*config*/, StarPUSetup& /*setup*/)
 {
   throw InferenceEngineException("fail");
 }
 
-static void
-throw_std_error(const RuntimeConfig&, StarPUSetup&)
+[[noreturn]] static void
+throw_std_error(const RuntimeConfig& /*config*/, StarPUSetup& /*setup*/)
 {
   throw std::runtime_error("boom");
 }

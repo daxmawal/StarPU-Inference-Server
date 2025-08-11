@@ -8,30 +8,41 @@
 #include "cli/args_parser.hpp"
 #include "utils/runtime_config.hpp"
 
-inline std::vector<char*>
-build_argv(std::initializer_list<const char*> args)
-{
+struct OwnedArgv {
+  std::vector<std::string> storage;
   std::vector<char*> argv;
-  argv.reserve(args.size());
-  for (const char* arg : args) {
-    argv.push_back(const_cast<char*>(arg));
-  }
-  return argv;
-}
+  auto data() -> char** { return argv.data(); }
+  [[nodiscard]] auto size() const -> std::size_t { return argv.size(); }
+};
 
-inline std::vector<char*>
-build_argv(const std::vector<const char*>& args)
+inline auto
+build_argv(std::initializer_list<const char*> args) -> OwnedArgv
 {
-  std::vector<char*> argv;
-  argv.reserve(args.size());
+  OwnedArgv owned;
+  owned.storage.reserve(args.size());
+  owned.argv.reserve(args.size());
   for (const char* arg : args) {
-    argv.push_back(const_cast<char*>(arg));
+    owned.storage.emplace_back(arg);
+    owned.argv.push_back(owned.storage.back().data());
   }
-  return argv;
+  return owned;
 }
 
 inline auto
-build_valid_cli_args() -> std::vector<char*>
+build_argv(const std::vector<const char*>& args) -> OwnedArgv
+{
+  OwnedArgv owned;
+  owned.storage.reserve(args.size());
+  owned.argv.reserve(args.size());
+  for (const char* arg : args) {
+    owned.storage.emplace_back(arg);
+    owned.argv.push_back(owned.storage.back().data());
+  }
+  return owned;
+}
+
+inline auto
+build_valid_cli_args() -> OwnedArgv
 {
   return build_argv(
       {"program", "--model", "model.pt", "--shape", "1x1", "--types", "float"});
