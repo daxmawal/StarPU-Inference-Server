@@ -145,6 +145,77 @@ jobs:
           path: clang-analyzer
           if-no-files-found: ignore
 
+  clang-tidy:
+    needs: build
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-tidy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-folder
+          path: build/
+
+      - name: Compute changed C/C++ files
+        id: changed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Détermine la plage de diff pour PR vs push
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}"
+            BASE="origin/${GITHUB_BASE_REF}"
+            MERGE_BASE=$(git merge-base HEAD "$BASE")
+            RANGE="${MERGE_BASE}...HEAD"
+          else
+            if [[ "$(git rev-list --count HEAD)" -gt 1 ]]; then
+              RANGE="HEAD~1...HEAD"
+            else
+              RANGE=""
+            fi
+          fi
+
+          FILES=""
+          if [[ -n "${RANGE}" ]]; then
+            FILES=$(git diff --name-only --diff-filter=ACMR ${RANGE} \
+              | grep -E '\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$' \
+              | grep -E '^(src|tests)/' || true)
+          fi
+
+          # Déduplique et exporte (multiligne) vers l’output du step
+          FILES=$(printf "%s\n" "$FILES" | awk 'NF && !seen[$0]++')
+          if [[ -n "${FILES}" ]]; then
+            {
+              echo "files<<'EOF'"
+              printf "%s\n" "${FILES}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run clang-tidy on changed files
+        if: steps.changed.outputs.files != ''
+        shell: bash
+        run: |
+          mapfile -t FILES < <(printf "%s\n" "${{ steps.changed.outputs.files }}")
+          echo "Running clang-tidy on ${#FILES[@]} files:"
+          printf ' - %s\n' "${FILES[@]}"
+          clang-tidy -p build -checks='-*,modernize-*' --warnings-as-errors='*' "${FILES[@]}"
+
+      - name: No changed C/C++ files
+        if: steps.changed.outputs.files == ''
+        run: echo "No changed C/C++ files under src/ or tests/. Skipping clang-tidy."
+
   test-and-coverage:
     needs: build
     runs-on: self-hosted

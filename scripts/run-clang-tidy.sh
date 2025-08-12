@@ -27,7 +27,6 @@ if [ -z "$LIBTORCH_DIR" ] || [ -z "$GRPC_DIR" ]; then
   exit 1
 fi
 
-# Optionnel : fichier unique à analyser
 TARGET_FILE=""
 if [[ "$3" == "--file" ]]; then
   TARGET_FILE="$4"
@@ -50,7 +49,6 @@ CLANG_TIDY_ARGS=(
   -extra-arg=-I"$GRPC_DIR/include"
 )
 
-# Liste des fichiers à analyser
 if [ -n "$TARGET_FILE" ]; then
   FILES="$TARGET_FILE"
 else
@@ -59,7 +57,6 @@ else
     grep -v '/_deps/')
 fi
 
-# Boucle d'analyse
 for file in $FILES; do
   echo "====> Analyzing $file"
   clang-tidy "$file" "${CLANG_TIDY_ARGS[@]}"
