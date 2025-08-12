@@ -23,7 +23,7 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
 
 class InferenceTaskTest : public ::testing::Test {
  protected:
-  auto make_job(int job_id, size_t num_inputs, bool set_outputs = true)
+  static auto make_job(int job_id, size_t num_inputs, bool set_outputs = true)
       -> std::shared_ptr<starpu_server::InferenceJob>
   {
     auto job = std::make_shared<starpu_server::InferenceJob>();
@@ -94,8 +94,8 @@ TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
   auto task = make_task(job);
   starpu_task task_struct{};
   task.assign_fixed_worker_if_needed(&task_struct);
-  EXPECT_EQ(task_struct.workerid, 2u);
-  EXPECT_EQ(task_struct.execute_on_a_specific_worker, 1u);
+  EXPECT_EQ(task_struct.workerid, 2U);
+  EXPECT_EQ(task_struct.execute_on_a_specific_worker, 1U);
 }
 
 TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
@@ -106,12 +106,12 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   auto task = make_task(job);
   opts_.verbosity = starpu_server::VerbosityLevel::Debug;
   auto params = task.create_inference_params();
-  ASSERT_EQ(params->num_inputs, 1u);
-  ASSERT_EQ(params->num_outputs, 1u);
+  ASSERT_EQ(params->num_inputs, 1U);
+  ASSERT_EQ(params->num_outputs, 1U);
   EXPECT_EQ(params->job_id, 4);
   EXPECT_EQ(params->verbosity, opts_.verbosity);
   EXPECT_EQ(params->models.model_cpu, &model_cpu_);
-  EXPECT_EQ(params->models.num_models_gpu, 0u);
+  EXPECT_EQ(params->models.num_models_gpu, 0U);
   EXPECT_EQ(params->device.device_id, &job->get_device_id());
   EXPECT_EQ(params->device.worker_id, &job->get_worker_id());
   EXPECT_EQ(params->device.executed_on, &job->get_executed_on());
@@ -162,19 +162,19 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
 {
   unregister_call_count = 0;
   unregister_handles.clear();
-  const auto h1 = reinterpret_cast<starpu_data_handle_t>(0x1);
-  const auto h2 = reinterpret_cast<starpu_data_handle_t>(0x2);
-  const auto h3 = reinterpret_cast<starpu_data_handle_t>(0x3);
-  std::vector<starpu_data_handle_t> inputs{h1};
-  std::vector<starpu_data_handle_t> outputs{h2, h3};
+  auto* const handle_1 = reinterpret_cast<starpu_data_handle_t>(0x1);
+  auto* const handle_2 = reinterpret_cast<starpu_data_handle_t>(0x2);
+  auto* const handle_3 = reinterpret_cast<starpu_data_handle_t>(0x3);
+  std::vector<starpu_data_handle_t> inputs{handle_1};
+  std::vector<starpu_data_handle_t> outputs{handle_2, handle_3};
   auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
       nullptr, nullptr, nullptr, 0, inputs, outputs);
   starpu_server::InferenceTask::cleanup(ctx);
   EXPECT_EQ(unregister_call_count, 3);
-  ASSERT_EQ(unregister_handles.size(), 3u);
-  EXPECT_EQ(unregister_handles[0], h1);
-  EXPECT_EQ(unregister_handles[1], h2);
-  EXPECT_EQ(unregister_handles[2], h3);
+  ASSERT_EQ(unregister_handles.size(), 3U);
+  EXPECT_EQ(unregister_handles[0], handle_1);
+  EXPECT_EQ(unregister_handles[1], handle_2);
+  EXPECT_EQ(unregister_handles[2], handle_3);
   EXPECT_EQ(ctx->inputs_handles[0], nullptr);
   EXPECT_EQ(ctx->outputs_handles[0], nullptr);
   EXPECT_EQ(ctx->outputs_handles[1], nullptr);
@@ -187,14 +187,17 @@ TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
       std::vector<starpu_data_handle_t>{});
   starpu_task* task = starpu_task_create();
   starpu_server::InferenceTask::allocate_task_buffers(task, 3, ctx);
-  starpu_data_handle_t h1 = reinterpret_cast<starpu_data_handle_t>(0x1);
-  starpu_data_handle_t h2 = reinterpret_cast<starpu_data_handle_t>(0x2);
-  starpu_data_handle_t h3 = reinterpret_cast<starpu_data_handle_t>(0x3);
-  starpu_server::InferenceTask::fill_task_buffers(task, {h1, h2}, {h3});
-  EXPECT_EQ(task->dyn_handles[0], h1);
-  EXPECT_EQ(task->dyn_handles[1], h2);
-  EXPECT_EQ(task->dyn_handles[2], h3);
-  EXPECT_EQ(task->dyn_modes[0], STARPU_R);
-  EXPECT_EQ(task->dyn_modes[1], STARPU_R);
-  EXPECT_EQ(task->dyn_modes[2], STARPU_W);
+  auto* handle_1 = reinterpret_cast<starpu_data_handle_t>(0x1);
+  auto* handle_2 = reinterpret_cast<starpu_data_handle_t>(0x2);
+  auto* handle_3 = reinterpret_cast<starpu_data_handle_t>(0x3);
+  starpu_server::InferenceTask::fill_task_buffers(
+      task, {handle_1, handle_2}, {handle_3});
+  std::span<starpu_data_handle_t> handles(task->dyn_handles, 3);
+  std::span<starpu_data_access_mode> modes(task->dyn_modes, 3);
+  EXPECT_EQ(handles[0], handle_1);
+  EXPECT_EQ(handles[1], handle_2);
+  EXPECT_EQ(handles[2], handle_3);
+  EXPECT_EQ(modes[0], STARPU_R);
+  EXPECT_EQ(modes[1], STARPU_R);
+  EXPECT_EQ(modes[2], STARPU_W);
 }

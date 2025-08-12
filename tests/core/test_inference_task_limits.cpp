@@ -37,9 +37,9 @@ TEST_F(InferenceTaskLimitsTest, CheckLimitsTooManyInputs)
 
 TEST_F(InferenceTaskLimitsTest, CheckLimitsTooManyGpuModels)
 {
+  models_gpu.reserve(starpu_server::InferLimits::MaxModelsGPU + 1);
   for (size_t i = 0; i < starpu_server::InferLimits::MaxModelsGPU + 1; ++i) {
-    models_gpu.emplace_back(
-        torch::jit::script::Module{std::string{"m"} + std::to_string(i)});
+    models_gpu.emplace_back(std::string{"m"} + std::to_string(i));
   }
   EXPECT_THROW(task->check_limits(1), starpu_server::TooManyGpuModelsException);
 }

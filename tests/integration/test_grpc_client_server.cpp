@@ -16,7 +16,7 @@ TEST(GrpcClientServer, EndToEndInference)
   auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
 
   std::vector<torch::Tensor> expected_outputs = {
-      torch::tensor({10.0f, 20.0f, 30.0f, 40.0f}).view({2, 2})};
+      torch::tensor({10.0F, 20.0F, 30.0F, 40.0F}).view({2, 2})};
   auto worker = starpu_server::run_single_job(queue, expected_outputs);
 
   auto channel = grpc::CreateChannel(

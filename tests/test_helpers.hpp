@@ -67,24 +67,25 @@ expected_log_line(VerbosityLevel level, const std::string& msg) -> std::string
 inline auto
 make_add_one_model() -> torch::jit::script::Module
 {
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
+  torch::jit::script::Module module{"m"};
+  module.define(R"JIT(
         def forward(self, x):
             return x + 1
     )JIT");
-  return m;
+  return module;
 }
 
-inline starpu_variable_interface
-make_variable_interface(float* ptr)
+inline auto
+make_variable_interface(const float* ptr) -> starpu_variable_interface
 {
   starpu_variable_interface iface;
   iface.ptr = reinterpret_cast<uintptr_t>(ptr);
   return iface;
 }
 
-inline InferenceParams
+inline auto
 make_basic_params(int elements, at::ScalarType type = at::kFloat)
+    -> InferenceParams
 {
   InferenceParams params{};
   params.num_inputs = 1;
@@ -95,10 +96,10 @@ make_basic_params(int elements, at::ScalarType type = at::kFloat)
   return params;
 }
 
-inline InferenceParams
+inline auto
 make_params_for_inputs(
     const std::vector<std::vector<int64_t>>& shapes,
-    const std::vector<at::ScalarType>& dtypes)
+    const std::vector<at::ScalarType>& dtypes) -> InferenceParams
 {
   assert(shapes.size() == dtypes.size());
   InferenceParams params{};
@@ -129,8 +130,9 @@ to_raw_data(const std::vector<T>& values) -> std::string
 }
 
 
-inline inference::ModelInferRequest
+inline auto
 make_model_infer_request(const std::vector<InputSpec>& specs)
+    -> inference::ModelInferRequest
 {
   inference::ModelInferRequest req;
   for (size_t i = 0; i < specs.size(); ++i) {
@@ -147,16 +149,17 @@ make_model_infer_request(const std::vector<InputSpec>& specs)
 }
 
 inline const InputSpec kValidInputSpec{
-    {2, 2}, at::kFloat, to_raw_data<float>({1.0f, 2.0f, 3.0f, 4.0f})};
+    {2, 2}, at::kFloat, to_raw_data<float>({1.0F, 2.0F, 3.0F, 4.0F})};
 
-inline inference::ModelInferRequest
-make_valid_request()
+inline auto
+make_valid_request() -> inference::ModelInferRequest
 {
   return make_model_infer_request({kValidInputSpec});
 }
 
-inline inference::ModelInferRequest
+inline auto
 make_model_request(const std::string& name, const std::string& version)
+    -> inference::ModelInferRequest
 {
   inference::ModelInferRequest req;
   req.set_model_name(name);

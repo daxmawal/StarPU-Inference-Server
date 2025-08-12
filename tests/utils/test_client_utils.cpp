@@ -26,7 +26,7 @@ TEST(ClientUtils, PickRandomInputDeterministic)
     int expected_idx =
         std::uniform_int_distribution<int>(0, pool.size() - 1)(rng_b);
     ASSERT_EQ(&chosen, &pool[expected_idx]);
-    ASSERT_EQ(chosen.size(), 1u);
+    ASSERT_EQ(chosen.size(), 1U);
     EXPECT_EQ(chosen[0].item<int>(), expected_idx);
   }
 }
@@ -57,9 +57,10 @@ TEST(ClientUtils, PreGenerateInputsProducesValidTensors)
   starpu_server::RuntimeConfig opts;
   opts.input_shapes = {{2, 3}, {1}};
   opts.input_types = {at::kFloat, at::kInt};
-  const size_t N = 3;
-  auto batches = starpu_server::client_utils::pre_generate_inputs(opts, N);
-  ASSERT_EQ(batches.size(), N);
+  const size_t batch_size = 3;
+  auto batches =
+      starpu_server::client_utils::pre_generate_inputs(opts, batch_size);
+  ASSERT_EQ(batches.size(), batch_size);
   for (const auto& tensors : batches) {
     ASSERT_EQ(tensors.size(), opts.input_shapes.size());
     EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{2, 3}));
@@ -90,37 +91,38 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
 TEST(TimeUtils, FormatTimestamp_FormatRegex)
 {
   auto now = std::chrono::high_resolution_clock::now();
-  std::string ts = starpu_server::time_utils::format_timestamp(now);
-  std::regex pattern("^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$");
-  EXPECT_TRUE(std::regex_match(ts, pattern));
+  std::string time = starpu_server::time_utils::format_timestamp(now);
+  EXPECT_TRUE(std::regex_match(
+      time, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$")));
 }
 
 TEST(TimeUtils, FormatTimestamp_KnownTime)
 {
-  std::tm tm = {};
-  tm.tm_year = 123;  // 2023 - 1900
-  tm.tm_mon = 0;     // Janvier
-  tm.tm_mday = 1;
-  tm.tm_hour = 12;
-  tm.tm_min = 34;
-  tm.tm_sec = 56;
+  std::tm time = {};
+  time.tm_year = 123;  // 2023 - 1900
+  time.tm_mon = 0;     // Janvier
+  time.tm_mday = 1;
+  time.tm_hour = 12;
+  time.tm_min = 34;
+  time.tm_sec = 56;
 
   using namespace std::chrono;
-  const auto y = year{tm.tm_year + 1900};
-  const auto m = month{static_cast<unsigned>(tm.tm_mon + 1)};
-  const auto d = day{static_cast<unsigned>(tm.tm_mday)};
+  const auto y = year{time.tm_year + 1900};
+  const auto m = month{static_cast<unsigned>(time.tm_mon + 1)};
+  const auto d = day{static_cast<unsigned>(time.tm_mday)};
 
-  local_time<seconds> lt = local_days(y / m / d) + hours{tm.tm_hour} +
-                           minutes{tm.tm_min} + seconds{tm.tm_sec};
+  local_time<seconds> local_time = local_days(y / m / d) + hours{time.tm_hour} +
+                                   minutes{time.tm_min} + seconds{time.tm_sec};
 
-  sys_time<seconds> base_time = current_zone()->to_sys(lt);
+  sys_time<seconds> base_time = current_zone()->to_sys(local_time);
 
   auto time_point =
       time_point_cast<std::chrono::high_resolution_clock::duration>(base_time) +
       std::chrono::milliseconds(789);
 
-  std::string ts = starpu_server::time_utils::format_timestamp(time_point);
-  EXPECT_TRUE(ts.ends_with(".789"));
+  std::string time_stamp =
+      starpu_server::time_utils::format_timestamp(time_point);
+  EXPECT_TRUE(time_stamp.ends_with(".789"));
 }
 
 TEST(TimeUtils, FormatTimestamp_MillisecondBoundaries)

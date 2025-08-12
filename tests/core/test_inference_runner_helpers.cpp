@@ -12,39 +12,39 @@
 
 TEST(InferenceRunnerHelpers, RunReferenceInferenceTensor)
 {
-  auto m = starpu_server::make_mul_two_model();
+  auto model = starpu_server::make_mul_two_model();
   std::vector<torch::Tensor> inputs{torch::ones({2})};
-  auto outputs = starpu_server::run_reference_inference(m, inputs);
-  ASSERT_EQ(outputs.size(), 1u);
+  auto outputs = starpu_server::run_reference_inference(model, inputs);
+  ASSERT_EQ(outputs.size(), 1U);
   EXPECT_TRUE(torch::allclose(outputs[0], inputs[0] * 2));
 }
 
 TEST(InferenceRunnerHelpers, RunReferenceInferenceTuple)
 {
-  auto m = starpu_server::make_tuple_model();
+  auto model = starpu_server::make_tuple_model();
   std::vector<torch::Tensor> inputs{torch::ones({2})};
-  auto outputs = starpu_server::run_reference_inference(m, inputs);
-  ASSERT_EQ(outputs.size(), 2u);
+  auto outputs = starpu_server::run_reference_inference(model, inputs);
+  ASSERT_EQ(outputs.size(), 2U);
   EXPECT_TRUE(torch::allclose(outputs[0], inputs[0]));
   EXPECT_TRUE(torch::allclose(outputs[1], inputs[0] + 1));
 }
 
 TEST(InferenceRunnerHelpers, RunReferenceInferenceTensorList)
 {
-  auto m = starpu_server::make_tensor_list_model();
+  auto model = starpu_server::make_tensor_list_model();
   std::vector<torch::Tensor> inputs{torch::ones({2})};
-  auto outputs = starpu_server::run_reference_inference(m, inputs);
-  ASSERT_EQ(outputs.size(), 2u);
+  auto outputs = starpu_server::run_reference_inference(model, inputs);
+  ASSERT_EQ(outputs.size(), 2U);
   EXPECT_TRUE(torch::allclose(outputs[0], inputs[0]));
   EXPECT_TRUE(torch::allclose(outputs[1], inputs[0] + 1));
 }
 
 TEST(InferenceRunnerHelpers, RunReferenceInferenceUnsupportedOutput)
 {
-  auto m = starpu_server::make_constant_model();
+  auto model = starpu_server::make_constant_model();
   std::vector<torch::Tensor> inputs{torch::ones({1})};
   EXPECT_THROW(
-      starpu_server::run_reference_inference(m, inputs),
+      starpu_server::run_reference_inference(model, inputs),
       starpu_server::UnsupportedModelOutputTypeException);
 }
 

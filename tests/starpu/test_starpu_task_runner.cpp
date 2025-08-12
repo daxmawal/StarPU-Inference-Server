@@ -10,7 +10,10 @@
 #include "test_utils.hpp"
 
 struct SomeException : public std::exception {
-  const char* what() const noexcept override { return "SomeException"; }
+  [[nodiscard]] auto what() const noexcept -> const char* override
+  {
+    return "SomeException";
+  }
 };
 
 class StarPUTaskRunnerFixture : public ::testing::Test {
@@ -73,7 +76,7 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   EXPECT_TRUE(probe.called);
   auto& results = results_;
   const auto& completed_jobs = completed_jobs_;
-  ASSERT_EQ(results.size(), 1u);
+  ASSERT_EQ(results.size(), 1U);
   EXPECT_EQ(completed_jobs.load(), 1);
   EXPECT_EQ(results[0].job_id, 7);
   ASSERT_EQ(results[0].results.size(), outputs.size());
@@ -106,7 +109,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   EXPECT_EQ(probe.latency, -1);
   auto& results = results_;
   const auto& completed_jobs = completed_jobs_;
-  ASSERT_EQ(results.size(), 1u);
+  ASSERT_EQ(results.size(), 1U);
   EXPECT_TRUE(results[0].results.empty());
   EXPECT_EQ(results[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs.load(), 1);
@@ -115,19 +118,19 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
 TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 {
   opts_.verbosity = starpu_server::VerbosityLevel::Stats;
-  starpu_server::detail::TimingInfo t;
+  starpu_server::detail::TimingInfo time;
   using clock = std::chrono::high_resolution_clock;
   auto base = clock::now();
-  t.enqueued_time = base;
-  t.dequeued_time = base + std::chrono::milliseconds(10);
-  t.before_starpu_submitted_time = base + std::chrono::milliseconds(25);
-  t.codelet_start_time = base + std::chrono::milliseconds(40);
-  t.codelet_end_time = base + std::chrono::milliseconds(70);
-  t.inference_start_time = base + std::chrono::milliseconds(80);
-  t.callback_start_time = base + std::chrono::milliseconds(125);
-  t.callback_end_time = base + std::chrono::milliseconds(140);
+  time.enqueued_time = base;
+  time.dequeued_time = base + std::chrono::milliseconds(10);
+  time.before_starpu_submitted_time = base + std::chrono::milliseconds(25);
+  time.codelet_start_time = base + std::chrono::milliseconds(40);
+  time.codelet_end_time = base + std::chrono::milliseconds(70);
+  time.inference_start_time = base + std::chrono::milliseconds(80);
+  time.callback_start_time = base + std::chrono::milliseconds(125);
+  time.callback_end_time = base + std::chrono::milliseconds(140);
   std::string output = starpu_server::capture_stdout(
-      [&] { runner_->log_job_timings(42, 150.0, t); });
+      [&] { runner_->log_job_timings(42, 150.0, time); });
   EXPECT_NE(output.find("Queue = 10.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Submit = 15.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Scheduling = 15.000 ms"), std::string::npos);

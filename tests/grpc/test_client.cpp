@@ -16,7 +16,7 @@
 #include "test_helpers.hpp"
 
 namespace starpu_server {
-VerbosityLevel parse_verbosity_level(const std::string& val);
+auto parse_verbosity_level(const std::string& val) -> VerbosityLevel;
 }
 
 TEST(ClientArgs, ParsesValidArguments)

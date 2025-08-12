@@ -19,10 +19,10 @@ void run_inference(
 
 TEST(StarPUSetupRunInference, BuildsExecutesCopiesAndTimes)
 {
-  float input_data[3] = {1.0f, 2.0f, 3.0f};
-  float output_data[3] = {0.0f, 0.0f, 0.0f};
-  auto input_iface = starpu_server::make_variable_interface(input_data);
-  auto output_iface = starpu_server::make_variable_interface(output_data);
+  std::array<float, 3> input{1.0F, 2.0F, 3.0F};
+  std::array<float, 3> output{0.0F, 0.0F, 0.0F};
+  auto input_iface = starpu_server::make_variable_interface(input.data());
+  auto output_iface = starpu_server::make_variable_interface(output.data());
   auto params = starpu_server::make_basic_params(3);
   std::chrono::high_resolution_clock::time_point inference_start;
   params.timing.inference_start_time = &inference_start;
@@ -36,9 +36,9 @@ TEST(StarPUSetupRunInference, BuildsExecutesCopiesAndTimes)
             out, buffer_ptr, out.numel());
       });
   auto after = std::chrono::high_resolution_clock::now();
-  EXPECT_FLOAT_EQ(output_data[0], 2.0f);
-  EXPECT_FLOAT_EQ(output_data[1], 3.0f);
-  EXPECT_FLOAT_EQ(output_data[2], 4.0f);
+  EXPECT_FLOAT_EQ(output[0], 2.0F);
+  EXPECT_FLOAT_EQ(output[1], 3.0F);
+  EXPECT_FLOAT_EQ(output[2], 4.0F);
   EXPECT_TRUE(inference_start >= before);
   EXPECT_TRUE(inference_start <= after);
 }

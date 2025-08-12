@@ -46,7 +46,7 @@ TEST(RunInferenceLoopIntegration, CpuAddOneModel)
 TEST(RunInferenceLoopIntegration, CudaAddOneModel)
 {
   if (!torch::cuda::is_available()) {
-    GTEST_SKIP() << "CUDA is not available";
+    GTEST_SKIP();
   }
   run_add_one_integration_test(false, true, 0);
 }

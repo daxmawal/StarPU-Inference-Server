@@ -13,10 +13,10 @@
 
 template <class F>
 auto
-measure_ms(F&& f) -> long
+measure_ms(F&& function) -> long
 {
   const auto start = std::chrono::steady_clock::now();
-  f();
+  function();
   const auto end = std::chrono::steady_clock::now();
   return std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
       .count();

@@ -57,18 +57,18 @@ INSTANTIATE_TEST_SUITE_P(
           return ExtractTensorsParam{c10::IValue(tensor), {tensor}};
         }(),
         []() {
-          at::Tensor t1 = torch::ones({2, 2});
-          at::Tensor t2 = torch::zeros({1, 3});
-          auto tuple = c10::ivalue::Tuple::create({t1, t2});
-          return ExtractTensorsParam{c10::IValue(tuple), {t1, t2}};
+          at::Tensor tensor_1 = torch::ones({2, 2});
+          at::Tensor tensor_2 = torch::zeros({1, 3});
+          auto tuple = c10::ivalue::Tuple::create({tensor_1, tensor_2});
+          return ExtractTensorsParam{c10::IValue(tuple), {tensor_1, tensor_2}};
         }(),
         []() {
-          at::Tensor t1 = torch::rand({2});
-          at::Tensor t2 = torch::rand({3});
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
           c10::List<at::Tensor> list;
-          list.push_back(t1);
-          list.push_back(t2);
-          return ExtractTensorsParam{c10::IValue(list), {t1, t2}};
+          list.push_back(tensor_1);
+          list.push_back(tensor_2);
+          return ExtractTensorsParam{c10::IValue(list), {tensor_1, tensor_2}};
         }()),
     [](const ::testing::TestParamInfo<ExtractTensorsParam>& info) {
       switch (info.index) {
@@ -112,13 +112,13 @@ TEST_F(StarPUSetupCodeletTest, GetCudaWorkersSingleDevice)
 
 TEST(InferenceCodelet, FieldsAreInitialized)
 {
-  starpu_server::InferenceCodelet codelet;
-  auto* cl = codelet.get_codelet();
-  EXPECT_EQ(cl->nbuffers, STARPU_VARIABLE_NBUFFERS);
-  EXPECT_NE(cl->cpu_funcs[0], nullptr);
-  EXPECT_NE(cl->cuda_funcs[0], nullptr);
-  EXPECT_EQ(cl->cuda_flags[0], 1U);
-  EXPECT_EQ(cl->max_parallelism, INT_MAX);
+  starpu_server::InferenceCodelet inf_cl;
+  auto* codelet = inf_cl.get_codelet();
+  EXPECT_EQ(codelet->nbuffers, STARPU_VARIABLE_NBUFFERS);
+  EXPECT_NE(codelet->cpu_funcs[0], nullptr);
+  EXPECT_NE(codelet->cuda_funcs[0], nullptr);
+  EXPECT_EQ(codelet->cuda_flags[0], 1U);
+  EXPECT_EQ(codelet->max_parallelism, INT_MAX);
 }
 
 TEST(InferenceCodelet, CpuInferenceFuncExecutesAndSetsMetadata)
@@ -126,14 +126,14 @@ TEST(InferenceCodelet, CpuInferenceFuncExecutesAndSetsMetadata)
   StarpuRuntimeGuard starpu_guard;
   auto buffers = make_test_buffers();
   auto timing = setup_timing_params(3);
-  starpu_server::InferenceCodelet codelet;
-  auto* cl = codelet.get_codelet();
+  starpu_server::InferenceCodelet inf_cl;
+  auto* codelet = inf_cl.get_codelet();
   auto before = std::chrono::high_resolution_clock::now();
-  cl->cpu_funcs[0](buffers.buffers, &timing.params);
+  codelet->cpu_funcs[0](buffers.buffers.data(), &timing.params);
   auto after = std::chrono::high_resolution_clock::now();
-  EXPECT_FLOAT_EQ(buffers.output_data[0], 2.0f);
-  EXPECT_FLOAT_EQ(buffers.output_data[1], 3.0f);
-  EXPECT_FLOAT_EQ(buffers.output_data[2], 4.0f);
+  EXPECT_FLOAT_EQ(buffers.output_data[0], 2.0F);
+  EXPECT_FLOAT_EQ(buffers.output_data[1], 3.0F);
+  EXPECT_FLOAT_EQ(buffers.output_data[2], 4.0F);
   EXPECT_EQ(timing.executed_on, starpu_server::DeviceType::CPU);
   EXPECT_TRUE(timing.start_time >= before);
   EXPECT_TRUE(timing.end_time <= after);

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <memory>
@@ -23,7 +24,13 @@ auto
 count_threads() -> int
 {
   namespace fs = std::filesystem;
-  return std::distance(fs::directory_iterator("/proc/self/task"), {});
+  auto distance = std::distance(
+      fs::directory_iterator("/proc/self/task"), fs::directory_iterator{});
+
+  if (distance > std::numeric_limits<int>::max()) {
+    throw std::overflow_error("Thread count exceeds int range");
+  }
+  return static_cast<int>(distance);
 }
 }  // namespace
 
@@ -50,7 +57,7 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations)
     ASSERT_TRUE(job->get_fixed_worker_id().has_value());
     worker_ids.push_back(*job->get_fixed_worker_id());
   }
-  ASSERT_EQ(job_ids.size(), 4u);
+  ASSERT_EQ(job_ids.size(), 4U);
   EXPECT_EQ(job_ids, (std::vector<int>{0, 1, 2, 3}));
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
 }
@@ -100,8 +107,8 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
   std::atomic completed_jobs{0};
-  std::condition_variable cv;
-  std::mutex m;
+  std::condition_variable condition;
+  std::mutex mtx;
   std::jthread server([&]() {
     while (true) {
       std::shared_ptr<starpu_server::InferenceJob> job;
@@ -110,7 +117,7 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
         break;
       }
       completed_jobs.fetch_add(1);
-      cv.notify_one();
+      condition.notify_one();
     }
   });
   const int iterations_per_worker = 1;
@@ -126,8 +133,8 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers)
       static_cast<size_t>(iterations_per_worker) * total_worker_count;
 
   {
-    std::unique_lock lock(m);
-    cv.wait(lock, [&]() {
+    std::unique_lock lock(mtx);
+    condition.wait(lock, [&]() {
       return static_cast<size_t>(completed_jobs.load()) >= total_jobs;
     });
   }

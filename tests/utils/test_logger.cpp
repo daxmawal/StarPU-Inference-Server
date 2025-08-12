@@ -37,10 +37,10 @@ class LogVerboseLevels : public ::testing::TestWithParam<VerboseParam> {};
 
 TEST_P(LogVerboseLevels, LogsWhenEnabled)
 {
-  const auto& p = GetParam();
+  const auto& param = GetParam();
   CaptureStream capture{std::cout};
-  log_verbose(p.level, p.level, p.message);
-  EXPECT_EQ(capture.str(), expected_log_line(p.level, p.message));
+  log_verbose(param.level, param.level, param.message);
+  EXPECT_EQ(capture.str(), expected_log_line(param.level, param.message));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -71,11 +71,12 @@ class LogWrappers : public ::testing::TestWithParam<WrapperParam> {};
 
 TEST_P(LogWrappers, ProducesExpectedOutput)
 {
-  const auto& p = GetParam();
+  const auto& param = GetParam();
   CaptureStream capture{std::cout};
-  p.fn(p.call_level, p.message);
-  if (p.expect_output) {
-    EXPECT_EQ(capture.str(), expected_log_line(p.inherent_level, p.message));
+  param.fn(param.call_level, param.message);
+  if (param.expect_output) {
+    EXPECT_EQ(
+        capture.str(), expected_log_line(param.inherent_level, param.message));
   } else {
     EXPECT_EQ(capture.str(), "");
   }
@@ -145,9 +146,9 @@ class LogExceptionTest : public ::testing::TestWithParam<ExceptionCase> {};
 TEST_P(LogExceptionTest, LogsExpectedMessage)
 {
   const auto& param = GetParam();
-  auto e = param.make_exception();
+  auto exception = param.make_exception();
   CaptureStream capture{std::cerr};
-  InferenceTask::log_exception("ctx", *e);
+  InferenceTask::log_exception("ctx", *exception);
   EXPECT_EQ(capture.str(), param.expected);
 }
 

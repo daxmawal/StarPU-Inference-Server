@@ -18,21 +18,22 @@ TEST(E2E, FullInference)
   namespace fs = std::filesystem;
   auto model_path =
       fs::path(__FILE__).parent_path() / "resources" / "simple_model.ts";
-  std::ifstream in(model_path);
-  ASSERT_TRUE(in.is_open());
+  std::ifstream stream(model_path);
+  ASSERT_TRUE(stream.is_open());
   std::string script(
-      (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
 
   torch::jit::script::Module model("m");
   model.define(script);
 
-  torch::Tensor input = torch::tensor({1.0f, 2.0f});
+  torch::Tensor input = torch::tensor({1.0F, 2.0F});
   std::vector<torch::Tensor> reference_outputs;
   {
-    std::vector<torch::IValue> iv{input};
-    auto out_iv = model.forward(iv);
-    ASSERT_TRUE(out_iv.isTensor());
-    reference_outputs.push_back(out_iv.toTensor());
+    std::vector<torch::IValue> value{input};
+    auto out_value = model.forward(value);
+    ASSERT_TRUE(out_value.isTensor());
+    reference_outputs.push_back(out_value.toTensor());
   }
 
   starpu_server::InferenceQueue queue;
@@ -40,10 +41,10 @@ TEST(E2E, FullInference)
   std::jthread worker([&] {
     std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
-    std::vector<torch::IValue> iv(
+    std::vector<torch::IValue> value(
         job->get_input_tensors().begin(), job->get_input_tensors().end());
-    auto out_iv = model.forward(iv);
-    std::vector<torch::Tensor> outs{out_iv.toTensor()};
+    auto out_value = model.forward(value);
+    std::vector<torch::Tensor> outs{out_value.toTensor()};
     job->get_on_complete()(outs, 0.0);
   });
 
@@ -55,7 +56,7 @@ TEST(E2E, FullInference)
       std::chrono::system_clock::now() + std::chrono::seconds(1)));
   auto stub = inference::GRPCInferenceService::NewStub(channel);
 
-  std::vector<float> in_vals{1.0f, 2.0f};
+  std::vector<float> in_vals{1.0F, 2.0F};
   auto req = starpu_server::make_model_infer_request(
       {{{2}, at::kFloat, starpu_server::to_raw_data(in_vals)}});
   req.MergeFrom(starpu_server::make_model_request("m", "1"));

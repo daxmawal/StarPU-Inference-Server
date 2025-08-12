@@ -29,7 +29,7 @@ TEST(InferenceQueue, FifoAndShutdown)
     }
     queue.shutdown();
   }
-  ASSERT_EQ(popped_ids.size(), 4u);
+  ASSERT_EQ(popped_ids.size(), 4U);
   EXPECT_EQ(popped_ids[0], 0);
   EXPECT_EQ(popped_ids[1], 1);
   EXPECT_EQ(popped_ids[2], 2);

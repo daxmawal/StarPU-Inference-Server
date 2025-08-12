@@ -17,10 +17,10 @@ make_job_with_callback(
     double& latency) -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
-  job->set_on_complete([&](const std::vector<torch::Tensor>& r, double l) {
+  job->set_on_complete([&](const std::vector<torch::Tensor>& res, double lat) {
     called = true;
-    results = r;
-    latency = l;
+    results = res;
+    latency = lat;
   });
   return job;
 }
@@ -32,8 +32,8 @@ struct CallbackProbe {
   std::shared_ptr<InferenceJob> job;
 };
 
-inline CallbackProbe
-make_callback_probe()
+inline auto
+make_callback_probe() -> CallbackProbe
 {
   CallbackProbe probe{};
   probe.job =
@@ -72,26 +72,28 @@ struct StarpuRuntimeGuard {
 };
 
 struct TestBuffers {
-  float input_data[3];
-  float output_data[3];
+  std::array<float, 3> input_data;
+  std::array<float, 3> output_data;
   starpu_variable_interface input_iface;
   starpu_variable_interface output_iface;
-  void* buffers[2];
+  std::array<void*, 2> buffers;
 };
 
-inline TestBuffers
-make_test_buffers()
+inline auto
+make_test_buffers() -> TestBuffers
 {
-  TestBuffers t{};
-  t.input_data[0] = 1.0f;
-  t.input_data[1] = 2.0f;
-  t.input_data[2] = 3.0f;
-  t.output_data[0] = t.output_data[1] = t.output_data[2] = 0.0f;
-  t.input_iface = starpu_server::make_variable_interface(t.input_data);
-  t.output_iface = starpu_server::make_variable_interface(t.output_data);
-  t.buffers[0] = &t.input_iface;
-  t.buffers[1] = &t.output_iface;
-  return t;
+  TestBuffers buf{};
+  buf.input_data[0] = 1.0F;
+  buf.input_data[1] = 2.0F;
+  buf.input_data[2] = 3.0F;
+  buf.output_data[0] = buf.output_data[1] = buf.output_data[2] = 0.0F;
+  buf.input_iface =
+      starpu_server::make_variable_interface(buf.input_data.data());
+  buf.output_iface =
+      starpu_server::make_variable_interface(buf.output_data.data());
+  buf.buffers[0] = &buf.input_iface;
+  buf.buffers[1] = &buf.output_iface;
+  return buf;
 }
 
 struct TimingParams {
@@ -102,18 +104,18 @@ struct TimingParams {
   torch::jit::script::Module model;
 };
 
-inline TimingParams
-setup_timing_params(int elements)
+inline auto
+setup_timing_params(int elements) -> TimingParams
 {
-  TimingParams t{starpu_server::make_basic_params(elements)};
-  t.params.device.executed_on = &t.executed_on;
-  t.params.timing.codelet_start_time = &t.start_time;
-  t.params.timing.codelet_end_time = &t.end_time;
-  t.model = torch::jit::script::Module("m");
-  t.model.define(R"JIT(
+  TimingParams time{starpu_server::make_basic_params(elements)};
+  time.params.device.executed_on = &time.executed_on;
+  time.params.timing.codelet_start_time = &time.start_time;
+  time.params.timing.codelet_end_time = &time.end_time;
+  time.model = torch::jit::script::Module("m");
+  time.model.define(R"JIT(
         def forward(self, x):
             return x + 1
     )JIT");
-  t.params.models.model_cpu = &t.model;
-  return t;
+  time.params.models.model_cpu = &time.model;
+  return time;
 }

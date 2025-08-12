@@ -27,9 +27,9 @@ INSTANTIATE_TEST_SUITE_P(
 
 class InputGeneratorTest : public ::testing::Test {
  protected:
-  static std::vector<at::Tensor> generate(
+  static auto generate(
       const std::vector<std::vector<int64_t>>& shapes,
-      const std::vector<at::ScalarType>& types)
+      const std::vector<at::ScalarType>& types) -> std::vector<at::Tensor>
   {
     return generate_random_inputs(shapes, types);
   }
@@ -38,7 +38,7 @@ class InputGeneratorTest : public ::testing::Test {
 TEST_F(InputGeneratorTest, GeneratesShapesAndTypes)
 {
   auto tensors = generate({{2, 3}, {1, 128}}, {at::kFloat, at::kInt});
-  ASSERT_EQ(tensors.size(), 2u);
+  ASSERT_EQ(tensors.size(), 2U);
   EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{2, 3}));
   EXPECT_EQ(tensors[0].dtype(), torch::kFloat);
   EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1, 128}));
@@ -49,7 +49,7 @@ TEST_F(InputGeneratorTest, GeneratesShapesAndTypes)
 TEST_F(InputGeneratorTest, DefaultsToFloatForMissingTypes)
 {
   auto tensors = generate({{1, 1}, {2, 2}, {3, 3}}, {at::kInt});
-  ASSERT_EQ(tensors.size(), 3u);
+  ASSERT_EQ(tensors.size(), 3U);
   EXPECT_EQ(tensors[0].dtype(), at::kInt);
   EXPECT_EQ(tensors[1].dtype(), at::kFloat);
   EXPECT_EQ(tensors[2].dtype(), at::kFloat);
@@ -64,7 +64,7 @@ TEST_F(InputGeneratorTest, ThrowsOnUnsupportedType)
 TEST_F(InputGeneratorTest, GeneratesBooleanTensor)
 {
   auto tensors = generate({{2, 2}}, {at::kBool});
-  ASSERT_EQ(tensors.size(), 1u);
+  ASSERT_EQ(tensors.size(), 1U);
   const auto& tensor = tensors[0];
   EXPECT_EQ(tensor.sizes(), (torch::IntArrayRef{2, 2}));
   EXPECT_EQ(tensor.dtype(), at::kBool);

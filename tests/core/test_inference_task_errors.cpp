@@ -52,9 +52,9 @@ TEST(InferenceTaskErrors, CheckLimitsTooManyGpuModels)
   auto job = std::make_shared<starpu_server::InferenceJob>();
   torch::jit::script::Module model_cpu{"m"};
   std::vector<torch::jit::script::Module> models_gpu;
+  models_gpu.reserve(starpu_server::InferLimits::MaxModelsGPU + 1);
   for (size_t i = 0; i < starpu_server::InferLimits::MaxModelsGPU + 1; ++i) {
-    models_gpu.emplace_back(
-        torch::jit::script::Module{std::string{"m"} + std::to_string(i)});
+    models_gpu.emplace_back(std::string{"m"} + std::to_string(i));
   }
   starpu_server::RuntimeConfig opts;
   starpu_server::InferenceTask task(

@@ -16,63 +16,63 @@ namespace starpu_server {
 inline auto
 make_identity_model() -> torch::jit::script::Module
 {
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
+  torch::jit::script::Module module{"m"};
+  module.define(R"JIT(
         def forward(self, x):
             return x
     )JIT");
-  return m;
+  return module;
 }
 
 inline auto
 make_mul_two_model() -> torch::jit::script::Module
 {
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
+  torch::jit::script::Module module{"m"};
+  module.define(R"JIT(
         def forward(self, x):
             return x * 2
     )JIT");
-  return m;
+  return module;
 }
 
 inline auto
 make_tuple_model() -> torch::jit::script::Module
 {
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
+  torch::jit::script::Module module{"m"};
+  module.define(R"JIT(
         def forward(self, x):
             return (x, x + 1)
     )JIT");
-  return m;
+  return module;
 }
 
 inline auto
 make_tensor_list_model() -> torch::jit::script::Module
 {
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
+  torch::jit::script::Module module{"m"};
+  module.define(R"JIT(
         def forward(self, x):
             return [x, x + 1]
     )JIT");
-  return m;
+  return module;
 }
 
 inline auto
 make_constant_model() -> torch::jit::script::Module
 {
-  torch::jit::script::Module m{"m"};
-  m.define(R"JIT(
+  torch::jit::script::Module module{"m"};
+  module.define(R"JIT(
         def forward(self, x):
             return 5
     )JIT");
-  return m;
+  return module;
 }
 
 inline auto
 save_mul_two_model(const std::filesystem::path& path) -> void
 {
-  auto m = make_mul_two_model();
-  m.save(path.string());
+  auto module = make_mul_two_model();
+  module.save(path.string());
 }
 
 inline auto
