@@ -1,0 +1,47 @@
+#include "test_starpu_setup.hpp"
+
+class StarPUSetupCodeletTest : public ::testing::Test {
+ protected:
+  std::unique_ptr<starpu_server::StarPUSetup> starpu;
+  void SetUp() override
+  {
+    if (!torch::cuda::is_available()) {
+      GTEST_SKIP();
+    }
+    starpu_server::RuntimeConfig opts;
+    opts.use_cpu = true;
+    opts.use_cuda = true;
+    opts.device_ids = {0};
+    starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
+  }
+};
+
+TEST_F(StarPUSetupCodeletTest, GetCodeletNotNull)
+{
+  EXPECT_NE(starpu->get_codelet(), nullptr);
+}
+
+TEST_F(StarPUSetupCodeletTest, GetCudaWorkersSingleDevice)
+{
+  auto workers = starpu_server::StarPUSetup::get_cuda_workers_by_device({0});
+  EXPECT_FALSE(workers.empty());
+}
+
+TEST(InferenceCodelet, CpuInferenceFuncExecutesAndSetsMetadata)
+{
+  StarpuRuntimeGuard starpu_guard;
+  auto buffers = make_test_buffers();
+  auto timing = setup_timing_params(3);
+  starpu_server::InferenceCodelet inf_cl;
+  auto* codelet = inf_cl.get_codelet();
+  auto before = std::chrono::high_resolution_clock::now();
+  codelet->cpu_funcs[0](buffers.buffers.data(), &timing.params);
+  auto after = std::chrono::high_resolution_clock::now();
+  EXPECT_FLOAT_EQ(buffers.output_data[0], 2.0F);
+  EXPECT_FLOAT_EQ(buffers.output_data[1], 3.0F);
+  EXPECT_FLOAT_EQ(buffers.output_data[2], 4.0F);
+  EXPECT_EQ(timing.executed_on, starpu_server::DeviceType::CPU);
+  EXPECT_TRUE(timing.start_time >= before);
+  EXPECT_TRUE(timing.end_time <= after);
+  EXPECT_TRUE(timing.end_time >= timing.start_time);
+}
