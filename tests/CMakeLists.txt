@@ -9,6 +9,7 @@ set(TESTS_DIR ${PROJECT_SOURCE_DIR}/tests)
 
 add_subdirectory(unit)
 add_subdirectory(e2e)
+add_subdirectory(integration)
 
 add_executable(
   all_tests
@@ -35,6 +36,7 @@ target_compile_definitions(all_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 target_include_directories(
   all_tests
   PRIVATE ${TESTS_DIR}
+          ${TESTS_DIR}/common
           ${SRC_DIR}
           ${UTILS_DIR}
           ${CLI_DIR}
@@ -47,6 +49,7 @@ target_link_libraries(
   all_tests
   PRIVATE unit_tests
           e2e_tests
+          integration_tests
           gtest
           gtest_main
           Torch::Torch

@@ -12,8 +12,10 @@ target_sources(
             core/test_inference_queue.cpp
             core/test_run_inference.cpp
             core/test_warmup_runner.cpp
-            grpc/test_inference_service.cpp
-            grpc/test_client.cpp
+            grpc/unit_inference_service.cpp
+            grpc/unit_client.cpp
+            grpc/robustness/edgecases_client.cpp
+            grpc/robustness/edgecases_inference_service.cpp
             integration/test_run_inference_loop.cpp
             integration/test_grpc_client_server.cpp
             starpu/test_starpu_setup.cpp
