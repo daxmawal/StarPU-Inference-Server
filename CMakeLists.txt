@@ -139,5 +139,5 @@ message(STATUS "StarPU library: ${STARPU_LIBRARY}")
 add_subdirectory(${SRC_DIR}/grpc)
 
 if(BUILD_TESTS)
-  add_subdirectory(tests)
+  add_subdirectory(tests/unit)
 endif()
