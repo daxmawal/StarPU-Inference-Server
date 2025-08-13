@@ -191,7 +191,7 @@ jobs:
 
       - name: Restore execute permission on test binaries
         working-directory: build
-        run: chmod +x unit_tests || true
+        run: chmod +x all_tests || true
 
       - name: Run tests and generate JUnit XML
         run: |
