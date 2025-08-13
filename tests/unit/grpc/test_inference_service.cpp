@@ -86,6 +86,17 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
   EXPECT_EQ(inputs[1][0].item<int64_t>(), 10);
 }
 
+TEST(InferenceService, ValidateInputsSizeMismatch)
+{
+  auto req = starpu_server::make_valid_request();
+  req.mutable_raw_input_contents(0)->append("0", 1);
+  std::vector<torch::Tensor> inputs;
+  auto status =
+      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
+          &req, inputs);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
 TEST_F(InferenceServiceTest, ModelInferReturnsValidationError)
 {
   auto req = starpu_server::make_valid_request();

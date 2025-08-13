@@ -140,4 +140,5 @@ add_subdirectory(${SRC_DIR}/grpc)
 
 if(BUILD_TESTS)
   add_subdirectory(tests/unit)
+  add_subdirectory(tests/e2e)
 endif()
