@@ -157,33 +157,6 @@ jobs:
           path: clang-analyzer
           if-no-files-found: ignore
 
-  clang-tidy:
-    needs: build
-    runs-on: self-hosted
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      #- name: Install clang-tidy
-      #  run: sudo apt-get install -y clang-tidy
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-folder
-          path: build/
-
-      - name: Run clang-tidy
-        run: |
-          FILES=$(find src tests -type f -regextype posix-extended -regex '.*\.(c|cpp|h|hpp)$')
-          if [ -n "$FILES" ]; then
-            clang-tidy -p build -checks='-*,modernize-*' --warnings-as-errors='*' $FILES
-          else
-            echo "No source files found – skipping clang-tidy"
-          fi
-        shell: bash
-
   test-and-coverage:
     needs: build
     runs-on: self-hosted

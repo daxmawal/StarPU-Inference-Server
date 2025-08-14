@@ -2,7 +2,7 @@
 
 [![CI][ci-badge]][ci-url]
 [![codecov][codecov-badge]][codecov-url]
-[![SonarQube Cloud][sonar-badge]][sonar-url]
+<!--[![SonarQube Cloud][sonar-badge]][sonar-url]-->
 
 ## ⚠️ Project Status: In Development
 
@@ -45,7 +45,7 @@ Coming soon
   https://codecov.io/github/daxmawal/StarPU-Inference-Server/graph/badge.svg?token=WV7HQ2N4T6
 [codecov-url]:
   https://codecov.io/github/daxmawal/StarPU-Inference-Server
-[sonar-badge]:
+<!--[sonar-badge]:
   https://sonarcloud.io/images/project_badges/sonarcloud-dark.svg
 [sonar-url]:
-  https://sonarcloud.io/summary/new_code?id=daxmawal_StarPU-Inference-Server
+  https://sonarcloud.io/summary/new_code?id=daxmawal_StarPU-Inference-Server-->
