@@ -1,13 +1,4 @@
-#include <gtest/gtest.h>
-#include <starpu.h>
-#include <torch/script.h>
-
-#include <limits>
-#include <vector>
-
-#include "core/inference_task.hpp"
-#include "test_helpers.hpp"
-#include "utils/exceptions.hpp"
+#include "test_inference_task.hpp"
 
 namespace {
 int unregister_call_count = 0;
@@ -20,44 +11,6 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
   ++unregister_call_count;
   unregister_handles.push_back(handle);
 }
-
-class InferenceTaskTest : public ::testing::Test {
- protected:
-  static auto make_job(int job_id, size_t num_inputs, bool set_outputs = true)
-      -> std::shared_ptr<starpu_server::InferenceJob>
-  {
-    auto job = std::make_shared<starpu_server::InferenceJob>();
-    job->set_job_id(job_id);
-    std::vector<torch::Tensor> inputs(num_inputs);
-    std::vector<at::ScalarType> types(num_inputs, at::kFloat);
-    for (size_t i = 0; i < num_inputs; ++i) {
-      inputs[i] = torch::ones({1}, torch::TensorOptions().dtype(at::kFloat));
-    }
-    job->set_input_tensors(inputs);
-    job->set_input_types(types);
-    if (set_outputs) {
-      job->set_outputs_tensors({torch::zeros({1})});
-    }
-    return job;
-  }
-
-  auto make_task(
-      const std::shared_ptr<starpu_server::InferenceJob>& job,
-      size_t num_gpu_models = 0) -> starpu_server::InferenceTask
-  {
-    model_cpu_ = starpu_server::make_add_one_model();
-    models_gpu_.clear();
-    for (size_t i = 0; i < num_gpu_models; ++i) {
-      models_gpu_.push_back(starpu_server::make_add_one_model());
-    }
-    opts_ = starpu_server::RuntimeConfig{};
-    return starpu_server::InferenceTask(
-        nullptr, job, &model_cpu_, &models_gpu_, &opts_);
-  }
-  torch::jit::script::Module model_cpu_;
-  std::vector<torch::jit::script::Module> models_gpu_;
-  starpu_server::RuntimeConfig opts_;
-};
 
 TEST_F(InferenceTaskTest, TooManyInputs)
 {
@@ -75,16 +28,6 @@ TEST_F(InferenceTaskTest, TooManyGpuModels)
   auto task = make_task(job, starpu_server::InferLimits::MaxModelsGPU + 1);
   EXPECT_THROW(
       task.create_inference_params(), starpu_server::TooManyGpuModelsException);
-}
-
-TEST_F(InferenceTaskTest, AssignFixedWorkerNegativeThrows)
-{
-  auto job = make_job(2, 1);
-  job->set_fixed_worker_id(-1);
-  auto task = make_task(job);
-  starpu_task task_struct{};
-  EXPECT_THROW(
-      task.assign_fixed_worker_if_needed(&task_struct), std::invalid_argument);
 }
 
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
@@ -119,14 +62,6 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   EXPECT_EQ(params->layout.dims[0][0], 2);
   EXPECT_EQ(params->layout.dims[0][1], 3);
   EXPECT_EQ(params->layout.input_types[0], at::kFloat);
-}
-
-TEST(InferenceTask, SafeRegisterTensorVectorUndefinedTensorThrows)
-{
-  torch::Tensor undef;
-  EXPECT_THROW(
-      starpu_server::InferenceTask::safe_register_tensor_vector(undef, "x"),
-      starpu_server::StarPURegistrationException);
 }
 
 TEST(InferenceTask, RecordAndRunCompletionCallback)

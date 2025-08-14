@@ -4,15 +4,15 @@ target_sources(
   unit_tests
   INTERFACE cli/unit_cli.cpp
             cli/robustness/edgecases_cli.cpp
-            core/test_inference_runner.cpp
-            core/test_inference_runner_helpers.cpp
-            core/test_tensor_builder.cpp
-            core/test_inference_task.cpp
-            core/test_inference_task_errors.cpp
-            core/test_inference_task_limits.cpp
-            core/test_inference_queue.cpp
-            core/test_run_inference.cpp
-            core/test_warmup_runner.cpp
+            core/unit_inference_queue.cpp
+            core/unit_inference_runner_helpers.cpp
+            core/unit_inference_task_errors.cpp
+            core/unit_inference_runner.cpp
+            core/unit_inference_task_limits.cpp
+            core/unit_inference_task.cpp
+            core/unit_tensor_builder.cpp
+            core/unit_run_inference.cpp
+            core/unit_warmup_runner.cpp
             core/robustness/edgecases_inference_queue.cpp
             core/robustness/edgecases_inference_runner_helpers.cpp
             core/robustness/edgecases_inference_task_errors.cpp

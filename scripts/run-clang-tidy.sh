@@ -37,7 +37,7 @@ fi
 CLANG_TIDY_ARGS=(
   -p "$BUILD_DIR"
 
-  -checks=performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*
+  -checks=performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*,clang-diagnostic-unused-includes
 
   -extra-arg=-std=c++23
   -extra-arg=-isystem/usr/include/c++/13
