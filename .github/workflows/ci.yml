@@ -176,7 +176,7 @@ jobs:
 
       - name: Run clang-tidy
         run: |
-          FILES=$(find src tests -type f -regex '.*\\.\(c\\|cpp\\|h\\|hpp\\)')
+          FILES=$(find src tests -type f -regextype posix-extended -regex '.*\.(c|cpp|h|hpp)$')
           if [ -n "$FILES" ]; then
             clang-tidy -p build -checks='-*,modernize-*' --warnings-as-errors='*' $FILES
           else
