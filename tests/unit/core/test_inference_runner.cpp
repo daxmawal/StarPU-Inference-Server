@@ -1,3 +1,5 @@
+#include "test_inference_runner.hpp"
+
 #include <gtest/gtest.h>
 #include <torch/script.h>
 
@@ -7,7 +9,6 @@
 #include <vector>
 
 #include "core/inference_runner.hpp"
-#include "inference_runner_test_utils.hpp"
 
 namespace {
 constexpr int64_t kJobId = 7;

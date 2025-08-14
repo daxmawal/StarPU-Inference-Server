@@ -9,7 +9,7 @@
 #include <memory>
 #include <vector>
 
-#include "inference_runner_test_utils.hpp"
+#include "test_inference_runner.hpp"
 
 template <class F>
 auto

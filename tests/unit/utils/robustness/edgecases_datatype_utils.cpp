@@ -40,7 +40,6 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{at::kQInt8, sizeof(float)},
         std::pair{at::kQUInt8, sizeof(float)}));
 
-// --- Entrées invalides (strings non reconnues)
 class DatatypeString_Invalid
     : public ::testing::TestWithParam<std::string_view> {};
 TEST_P(DatatypeString_Invalid, ThrowsInvalidArgument)
@@ -55,7 +54,6 @@ INSTANTIATE_TEST_SUITE_P(
         "BADTYPE", "", "#FP32", "UNKNOWN", "notatype", " ", "!", "123",
         "FP32extra", std::string_view(), "𝔽ℙ𝟛𝟚", "fp32\n"));
 
-// --- Balayage complet des valeurs enum pour vérifier robustesse (no-throw)
 TEST(DatatypeUtils_Robustesse, ScalarToDatatype_AllEnumValues_NoThrow)
 {
   using Enum = at::ScalarType;

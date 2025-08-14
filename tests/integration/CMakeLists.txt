@@ -13,4 +13,13 @@ target_sources(
             utils/integration_input_generator.cpp
             utils/integration_logger.cpp
             utils/integration_transparent_hash.cpp
-            cli/integration_cli.cpp)
+            cli/integration_cli.cpp
+            core/integration_inference_queue.cpp
+            core/integration_inference_runner_helpers.cpp
+            core/integration_inference_task_errors.cpp
+            core/integration_run_inference.cpp
+            core/integration_warmup_runner.cpp
+            core/integration_inference_runner.cpp
+            core/integration_inference_task.cpp
+            core/integration_inference_task_limits.cpp
+            core/integration_tensor_builder.cpp)

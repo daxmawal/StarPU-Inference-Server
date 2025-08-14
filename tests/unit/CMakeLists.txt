@@ -13,6 +13,15 @@ target_sources(
             core/test_inference_queue.cpp
             core/test_run_inference.cpp
             core/test_warmup_runner.cpp
+            core/robustness/edgecases_inference_queue.cpp
+            core/robustness/edgecases_inference_runner_helpers.cpp
+            core/robustness/edgecases_inference_task_errors.cpp
+            core/robustness/edgecases_run_inference.cpp
+            core/robustness/edgecases_warmup_runner.cpp
+            core/robustness/edgecases_inference_runner.cpp
+            core/robustness/edgecases_inference_task.cpp
+            core/robustness/edgecases_inference_task_limits.cpp
+            core/robustness/edgecases_tensor_builder.cpp
             grpc/unit_inference_service.cpp
             grpc/unit_client.cpp
             grpc/robustness/edgecases_client.cpp

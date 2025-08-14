@@ -27,8 +27,11 @@ TEST(TransparentHash_Robustesse, HeterogeneousEraseAndCount)
   map.emplace("bb", 2);
   map.emplace("ccc", 3);
 
+  map.erase(std::string{"a"});
+  map.erase(std::string{"bb"});
+
   EXPECT_EQ(map.size(), 1u);
   EXPECT_EQ(map.count(std::string{"ccc"}), 1u);
-  EXPECT_EQ(map.count(std::string_view{"bb"}), 0u);
+  EXPECT_EQ(map.count(std::string{"bb"}), 0u);
   EXPECT_EQ(map.count("a"), 0u);
 }

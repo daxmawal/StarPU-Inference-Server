@@ -120,8 +120,7 @@ TEST(DatatypeUtils, ScalarToDatatypeAllEnumValues)
   const int last = static_cast<int>(std::to_underlying(Enum::NumOptions));
 
   for (int i = first; i < last; ++i) {
-    const auto type =
-        static_cast<Enum>(static_cast<U>(i));  // int -> underlying -> enum
+    const auto type = static_cast<Enum>(static_cast<U>(i));
     EXPECT_NO_THROW({
       auto name = starpu_server::scalar_type_to_datatype(type);
       auto size = starpu_server::element_size(type);

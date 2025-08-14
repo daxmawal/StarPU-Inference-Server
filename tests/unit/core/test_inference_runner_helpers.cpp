@@ -8,8 +8,8 @@
 #include <vector>
 
 #include "core/inference_runner.hpp"
-#include "inference_runner_test_utils.hpp"
 #include "test_helpers.hpp"
+#include "test_inference_runner.hpp"
 #include "utils/exceptions.hpp"
 
 TEST(InferenceRunnerHelpers, LoadModelAndReferenceOutputCorruptFile)

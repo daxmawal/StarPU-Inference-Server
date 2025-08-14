@@ -16,8 +16,8 @@
 #include "core/warmup.hpp"
 #undef private
 
-#include "inference_runner_test_utils.hpp"
-#include "warmup_runner_test_utils.hpp"
+#include "test_inference_runner.hpp"
+#include "test_warmup_runner.hpp"
 
 namespace {
 auto
