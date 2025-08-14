@@ -155,6 +155,11 @@ validate_inference_result(
         "[Validator] C10 error in job {}: {}", result.job_id, e.what()));
     throw InferenceExecutionException(e.what());
   }
+  catch (const std::exception& e) {
+    log_error(std::format(
+        "[Validator] Exception in job {}: {}", result.job_id, e.what()));
+    throw InferenceExecutionException(e.what());
+  }
 
   return false;
 }
