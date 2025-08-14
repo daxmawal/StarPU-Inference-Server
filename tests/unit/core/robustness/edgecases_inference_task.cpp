@@ -35,3 +35,13 @@ TEST(InferenceTaskTest, SafeRegisterTensorVectorUndefinedTensorThrows)
       starpu_server::InferenceTask::safe_register_tensor_vector(undef, "x"),
       starpu_server::StarPURegistrationException);
 }
+
+TEST(InferenceTaskTest, SafeRegisterTensorVectorGpuTensorThrows)
+{
+  SKIP_IF_NO_CUDA();
+  auto tensor = torch::ones(
+      {1}, torch::TensorOptions().dtype(at::kFloat).device(torch::kCUDA));
+  EXPECT_THROW(
+      starpu_server::InferenceTask::safe_register_tensor_vector(tensor, "x"),
+      starpu_server::StarPURegistrationException);
+}

@@ -75,10 +75,16 @@ InferenceTask::safe_register_tensor_vector(
     const torch::Tensor& tensor,
     const std::string& label) -> starpu_data_handle_t
 {
-  if (!tensor.defined() || tensor.data_ptr() == nullptr) {
+  if (!tensor.defined()) {
+    throw StarPURegistrationException("Tensor '" + label + "' is undefined.");
+  }
+  if (tensor.data_ptr() == nullptr) {
     throw StarPURegistrationException("Tensor '" + label + "' is invalid.");
   }
-
+  if (!tensor.device().is_cpu()) {
+    throw StarPURegistrationException(
+        "Tensor '" + label + "' must reside on CPU");
+  }
   starpu_data_handle_t handle = nullptr;
 
   starpu_vector_data_register(

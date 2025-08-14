@@ -33,6 +33,8 @@ TEST(InferenceQueue_Robustesse, MultipleConsumersDrainThenShutdownUnblocksAll)
   }
   queue.shutdown();
   queue.shutdown();
+  c1.join();
+  c2.join();
   EXPECT_EQ(consumers_done.load(), 2);
   {
     std::scoped_lock lk(m);

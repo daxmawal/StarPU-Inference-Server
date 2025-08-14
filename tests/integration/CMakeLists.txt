@@ -4,6 +4,7 @@ target_sources(
   integration_tests
   INTERFACE grpc/integration_inference_client.cpp
             grpc/integration_inference_service.cpp
+            grpc/integration_grpc_client_server.cpp
             starpu/integration_starpu_setup.cpp
             starpu/integration_starpu_task_runner.cpp
             starpu/integration_tensor_builder_from_starpu.cpp
@@ -22,4 +23,5 @@ target_sources(
             core/integration_inference_runner.cpp
             core/integration_inference_task.cpp
             core/integration_inference_task_limits.cpp
-            core/integration_tensor_builder.cpp)
+            core/integration_tensor_builder.cpp
+            core/integration_run_inference_loop.cpp)
