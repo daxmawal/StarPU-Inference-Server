@@ -17,7 +17,7 @@ TEST(E2E, FullInference)
 {
   namespace fs = std::filesystem;
   auto model_path =
-      fs::path(__FILE__).parent_path() / "resources" / "simple_model.ts";
+      fs::path(__FILE__).parent_path() / ".." / "fixtures" / "simple_model.ts";
   std::ifstream stream(model_path);
   ASSERT_TRUE(stream.is_open());
   std::string script(
