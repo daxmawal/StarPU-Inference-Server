@@ -55,12 +55,6 @@ TEST_F(InputGeneratorTest, DefaultsToFloatForMissingTypes)
   EXPECT_EQ(tensors[2].dtype(), at::kFloat);
 }
 
-TEST_F(InputGeneratorTest, ThrowsOnUnsupportedType)
-{
-  EXPECT_THROW(
-      generate({{1}}, {at::kComplexDouble}), UnsupportedDtypeException);
-}
-
 TEST_F(InputGeneratorTest, GeneratesBooleanTensor)
 {
   auto tensors = generate({{2, 2}}, {at::kBool});

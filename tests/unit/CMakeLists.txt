@@ -2,7 +2,8 @@ add_library(unit_tests INTERFACE)
 
 target_sources(
   unit_tests
-  INTERFACE cli/cli_tests.cpp
+  INTERFACE cli/unit_cli.cpp
+            cli/robustness/edgecases_cli.cpp
             core/test_inference_runner.cpp
             core/test_inference_runner_helpers.cpp
             core/test_tensor_builder.cpp
@@ -20,12 +21,19 @@ target_sources(
             integration/test_grpc_client_server.cpp
             starpu/unit_starpu_setup.cpp
             starpu/unit_starpu_task_runner.cpp
-            starpu/test_tensor_builder_from_starpu.cpp
+            starpu/unit_tensor_builder_from_starpu.cpp
             starpu/robustness/edgecases_starpu_setup.cpp
             starpu/robustness/edgecases_starpu_task_runner.cpp
-            utils/test_client_utils.cpp
-            utils/test_datatype_utils.cpp
-            utils/test_logger.cpp
-            utils/test_transparent_hash.cpp
-            utils/test_input_generator.cpp
-            utils/test_inference_validator.cpp)
+            starpu/robustness/edgecases_tensor_builder_from_starpu.cpp
+            utils/unit_client_utils.cpp
+            utils/unit_datatype_utils.cpp
+            utils/unit_inference_validator.cpp
+            utils/unit_input_generator.cpp
+            utils/unit_logger.cpp
+            utils/unit_transparent_hash.cpp
+            utils/robustness/edgecases_client_utils.cpp
+            utils/robustness/edgecases_datatype_utils.cpp
+            utils/robustness/edgecases_inference_validator.cpp
+            utils/robustness/edgecases_input_generator.cpp
+            utils/robustness/edgecases_logger.cpp
+            utils/robustness/edgecases_transparent_hash.cpp)

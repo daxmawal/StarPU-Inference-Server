@@ -103,22 +103,6 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{std::string{"bF16"}, at::kBFloat16},
         std::pair{std::string{"Bool"}, at::kBool}));
 
-class InvalidDatatypeTest : public ::testing::TestWithParam<std::string_view> {
-};
-
-TEST_P(InvalidDatatypeTest, ThrowsInvalidArgument)
-{
-  EXPECT_THROW(
-      starpu_server::datatype_to_scalar_type(GetParam()),
-      std::invalid_argument);
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    DatatypeUtils, InvalidDatatypeTest,
-    ::testing::Values(
-        "BADTYPE", "", "#FP32", "UNKNOWN", "notatype", " ", "!", "123",
-        "FP32extra", std::string_view(), "𝔽ℙ𝟛𝟚", "fp32\n"));
-
 TEST(DatatypeUtils, ScalarTypeToString)
 {
   EXPECT_EQ(starpu_server::scalar_type_to_string(at::kShort), "INT16");

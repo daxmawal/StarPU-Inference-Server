@@ -1,6 +1,6 @@
 #include "test_starpu_setup.hpp"
 
-class StarPUSetupCodeletTest : public ::testing::Test {
+class StarPUSetupCodelet_Integration : public ::testing::Test {
  protected:
   std::unique_ptr<starpu_server::StarPUSetup> starpu;
   void SetUp() override
@@ -16,18 +16,18 @@ class StarPUSetupCodeletTest : public ::testing::Test {
   }
 };
 
-TEST_F(StarPUSetupCodeletTest, GetCodeletNotNull)
+TEST_F(StarPUSetupCodelet_Integration, GetCodeletNotNull)
 {
   EXPECT_NE(starpu->get_codelet(), nullptr);
 }
 
-TEST_F(StarPUSetupCodeletTest, GetCudaWorkersSingleDevice)
+TEST_F(StarPUSetupCodelet_Integration, GetCudaWorkersSingleDevice)
 {
   auto workers = starpu_server::StarPUSetup::get_cuda_workers_by_device({0});
   EXPECT_FALSE(workers.empty());
 }
 
-TEST(InferenceCodelet, CpuInferenceFuncExecutesAndSetsMetadata)
+TEST(InferenceCodelet_Integration, CpuInferenceFuncExecutesAndSetsMetadata)
 {
   StarpuRuntimeGuard starpu_guard;
   auto buffers = make_test_buffers();

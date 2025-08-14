@@ -165,7 +165,11 @@ jobs:
       - name: Run clang-tidy
         run: |
           FILES=$(find src tests -regex '.*\\.\(c\\|cpp\\|h\\|hpp\)')
-          clang-tidy -p build -checks='-*,modernize-*' --warnings-as-errors='*' $FILES
+          if [ -n "$FILES" ]; then
+            clang-tidy -p build -checks='-*,modernize-*' --warnings-as-errors='*' $FILES
+          else
+            echo "No source files found – skipping clang-tidy"
+          fi
         shell: bash
 
   test-and-coverage:
