@@ -18,12 +18,14 @@ class InferenceTaskTest : public ::testing::Test {
     job->set_job_id(job_id);
     std::vector<torch::Tensor> inputs(num_inputs);
     std::vector<at::ScalarType> types(num_inputs, at::kFloat);
-    for (size_t i = 0; i < num_inputs; ++i)
+    for (size_t i = 0; i < num_inputs; ++i) {
       inputs[i] = torch::ones({1}, torch::TensorOptions().dtype(at::kFloat));
+    }
     job->set_input_tensors(inputs);
     job->set_input_types(types);
-    if (set_outputs)
+    if (set_outputs) {
       job->set_outputs_tensors({torch::zeros({1})});
+    }
     return job;
   }
 
@@ -33,8 +35,9 @@ class InferenceTaskTest : public ::testing::Test {
   {
     model_cpu_ = starpu_server::make_add_one_model();
     models_gpu_.clear();
-    for (size_t i = 0; i < num_gpu_models; ++i)
+    for (size_t i = 0; i < num_gpu_models; ++i) {
       models_gpu_.push_back(starpu_server::make_add_one_model());
+    }
     opts_ = starpu_server::RuntimeConfig{};
     return starpu_server::InferenceTask(
         nullptr, job, &model_cpu_, &models_gpu_, &opts_);

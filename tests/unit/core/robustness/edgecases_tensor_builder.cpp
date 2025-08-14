@@ -26,7 +26,7 @@ TEST(TensorBuilder_Robustesse, FromRawPtrUnsupportedHalf)
 
 TEST(TensorBuilder_Robustesse, FromRawPtrUnsupportedComplex)
 {
-  std::array<std::complex<float>, 1> buf{std::complex<float>(0.f, 0.f)};
+  std::array<std::complex<float>, 1> buf{std::complex<float>(0.F, 0.F)};
   EXPECT_THROW(
       starpu_server::TensorBuilder::from_raw_ptr(
           reinterpret_cast<uintptr_t>(buf.data()), at::kComplexFloat,
@@ -46,28 +46,33 @@ TEST(TensorBuilder_Robustesse, FromRawPtrUnsupportedQuantized)
 
 TEST(TensorBuilder_Robustesse, CopyOutputToBufferSizeMismatch_TooLarge)
 {
-  auto t = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
-  int32_t buf[kElems2];
+  auto tensor = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
+  std::array<int32_t, kElems2> buf{};
   EXPECT_THROW(
-      starpu_server::TensorBuilder::copy_output_to_buffer(t, buf, kElems3),
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          tensor, buf.data(), kElems3),
       starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilder_Robustesse, CopyOutputToBufferSizeMismatch_TooSmall)
 {
-  auto t = torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt));
-  int32_t buf[kElems3];
+  auto tensor =
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt));
+  std::array<int32_t, kElems2> buf{};
   EXPECT_THROW(
-      starpu_server::TensorBuilder::copy_output_to_buffer(t, buf, kElems2),
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          tensor, buf.data(), kElems2),
       starpu_server::InferenceExecutionException);
 }
 
 TEST(TensorBuilder_Robustesse, CopyOutputToBufferUnsupportedType)
 {
-  auto t = torch::zeros({2}, torch::TensorOptions().dtype(at::kComplexFloat));
-  std::array<float, 2> buf{0.f, 0.f};
+  auto tensor =
+      torch::zeros({2}, torch::TensorOptions().dtype(at::kComplexFloat));
+  std::array<float, 2> buf{0.F, 0.F};
   EXPECT_THROW(
-      starpu_server::TensorBuilder::copy_output_to_buffer(t, buf.data(), 2),
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          tensor, buf.data(), 2),
       starpu_server::InferenceExecutionException);
 }
 

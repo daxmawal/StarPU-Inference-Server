@@ -31,11 +31,11 @@ class LogException_Robustesse : public ::testing::TestWithParam<ExceptionCase> {
 
 TEST_P(LogException_Robustesse, LogsExpectedMessage)
 {
-  const auto& p = GetParam();
-  auto ex = p.make_exception();
+  const auto& param = GetParam();
+  auto excep = param.make_exception();
   CaptureStream capture{std::cerr};
-  InferenceTask::log_exception("ctx", *ex);
-  EXPECT_EQ(capture.str(), p.expected);
+  InferenceTask::log_exception("ctx", *excep);
+  EXPECT_EQ(capture.str(), param.expected);
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -16,13 +16,13 @@ const std::vector<int64_t> kShape4{4};
 const std::vector<int64_t> kShape2{2};
 const std::vector<torch::Dtype> kTypesFloat{torch::kFloat32};
 
-inline std::filesystem::path
-MakeTempModelPath(const char* base)
+inline auto
+MakeTempModelPath(const char* base) -> std::filesystem::path
 {
   const auto dir = std::filesystem::temp_directory_path();
-  const auto ts =
+  const auto time =
       std::chrono::high_resolution_clock::now().time_since_epoch().count();
-  return dir / (std::string(base) + "_" + std::to_string(ts) + ".pt");
+  return dir / (std::string(base) + "_" + std::to_string(time) + ".pt");
 }
 }  // namespace
 

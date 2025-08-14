@@ -87,7 +87,7 @@ TEST_F(InferenceValidatorTest, FailsOnMismatch)
 
 TEST_F(InferenceValidatorTest, FailsOnMismatchCuda)
 {
-  SKIP_IF_NO_CUDA();
+  skip_if_no_cuda();
   auto model = starpu_server::make_add_one_model();
   model.to(torch::kCUDA);
   auto result = starpu_server::make_result(
@@ -103,7 +103,7 @@ TEST_F(InferenceValidatorTest, FailsOnMismatchCuda)
 
 TEST_F(InferenceValidatorTest, CudaModelOnCpuInputsThrows)
 {
-  SKIP_IF_NO_CUDA();
+  skip_if_no_cuda();
   auto model = starpu_server::make_add_one_model();
   model.to(torch::kCUDA);
   auto result = starpu_server::make_result(

@@ -4,7 +4,7 @@ class InferenceValidator_Integration : public ::testing::Test {};
 
 TEST_F(InferenceValidator_Integration, SuccessfulValidationCuda)
 {
-  SKIP_IF_NO_CUDA();
+  skip_if_no_cuda();
   auto model = starpu_server::make_add_one_model();
   model.to(torch::kCUDA);
   auto result = starpu_server::make_result(
@@ -17,7 +17,7 @@ TEST_F(InferenceValidator_Integration, SuccessfulValidationCuda)
 
 TEST_F(InferenceValidator_Integration, FailsOnMismatchCuda_ReturnsFalseAndLogs)
 {
-  SKIP_IF_NO_CUDA();
+  skip_if_no_cuda();
   auto model = starpu_server::make_add_one_model();
   model.to(torch::kCUDA);
   auto res = starpu_server::make_result(
@@ -34,7 +34,7 @@ TEST_F(InferenceValidator_Integration, FailsOnMismatchCuda_ReturnsFalseAndLogs)
 
 TEST_F(InferenceValidator_Integration, CudaModelOnCpuInputs_OK)
 {
-  SKIP_IF_NO_CUDA();
+  skip_if_no_cuda();
   auto model = starpu_server::make_add_one_model();
   model.to(torch::kCUDA);
 

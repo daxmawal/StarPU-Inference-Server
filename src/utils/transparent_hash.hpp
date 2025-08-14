@@ -8,17 +8,17 @@
 struct TransparentHash {
   using is_transparent = void;
 
-  std::size_t operator()(std::string_view key) const noexcept
+  auto operator()(std::string_view key) const noexcept -> std::size_t
   {
     return std::hash<std::string_view>{}(key);
   }
 
-  std::size_t operator()(const std::string& key) const noexcept
+  auto operator()(const std::string& key) const noexcept -> std::size_t
   {
     return std::hash<std::string_view>{}(key);
   }
 
-  std::size_t operator()(const char* key) const noexcept
+  auto operator()(const char* key) const noexcept -> std::size_t
   {
     return std::hash<std::string_view>{}(key);
   }

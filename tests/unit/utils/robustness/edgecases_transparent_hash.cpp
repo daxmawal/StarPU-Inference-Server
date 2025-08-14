@@ -30,8 +30,8 @@ TEST(TransparentHash_Robustesse, HeterogeneousEraseAndCount)
   map.erase(std::string{"a"});
   map.erase(std::string{"bb"});
 
-  EXPECT_EQ(map.size(), 1u);
-  EXPECT_EQ(map.count(std::string{"ccc"}), 1u);
-  EXPECT_EQ(map.count(std::string{"bb"}), 0u);
-  EXPECT_EQ(map.count("a"), 0u);
+  EXPECT_EQ(map.size(), 1U);
+  EXPECT_EQ(map.count(std::string{"ccc"}), 1U);
+  EXPECT_EQ(map.count(std::string{"bb"}), 0U);
+  EXPECT_EQ(map.count("a"), 0U);
 }

@@ -1,7 +1,6 @@
-#include "test_inference_runner.hpp"
-
 #include <gtest/gtest.h>
 #include <torch/script.h>
+#include <torch/torch.h>
 
 #include <chrono>
 #include <filesystem>
@@ -9,6 +8,8 @@
 #include <vector>
 
 #include "core/inference_runner.hpp"
+#include "core/tensor_builder.hpp"
+#include "test_inference_runner.hpp"
 
 
 namespace {
@@ -50,9 +51,9 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
   std::vector<torch::Tensor> cb_tensors;
   double cb_latency = 0.0;
 
-  job->set_on_complete([&](std::vector<torch::Tensor> ts, double lat) {
+  job->set_on_complete([&](std::vector<torch::Tensor> tensor, double lat) {
     callback_called = true;
-    cb_tensors = std::move(ts);
+    cb_tensors = std::move(tensor);
     cb_latency = lat;
   });
 
@@ -86,4 +87,19 @@ TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
   EXPECT_EQ(tensors[0].dtype(), torch::kFloat32);
   EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{kShape1[0]}));
   EXPECT_EQ(tensors[1].dtype(), torch::kInt64);
+}
+
+TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
+{
+  auto tensor =
+      torch::tensor({1.0F, 2.0F, 3.5F, -4.0F, 0.25F}, torch::kFloat32);
+  std::vector<float> dst(5, 0.0F);
+  starpu_server::TensorBuilder::copy_output_to_buffer(
+      tensor, dst.data(), tensor.numel());
+  ASSERT_EQ(dst.size(), 5U);
+  EXPECT_FLOAT_EQ(dst[0], 1.0F);
+  EXPECT_FLOAT_EQ(dst[1], 2.0F);
+  EXPECT_FLOAT_EQ(dst[2], 3.5F);
+  EXPECT_FLOAT_EQ(dst[3], -4.0F);
+  EXPECT_FLOAT_EQ(dst[4], 0.25F);
 }

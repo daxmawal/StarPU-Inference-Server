@@ -39,6 +39,8 @@ CLANG_TIDY_ARGS=(
 
   -checks=performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*,clang-diagnostic-unused-includes
 
+  #-header-filter=.*
+
   -extra-arg=-std=c++23
   -extra-arg=-isystem/usr/include/c++/13
   -extra-arg=-isystem/usr/include/x86_64-linux-gnu/c++/13

@@ -24,8 +24,9 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations_Unit)
   for (;;) {
     std::shared_ptr<starpu_server::InferenceJob> job;
     queue.wait_and_pop(job);
-    if (job->is_shutdown())
+    if (job->is_shutdown()) {
       break;
+    }
     job_ids.push_back(job->get_job_id());
     ASSERT_TRUE(job->get_fixed_worker_id().has_value());
     worker_ids.push_back(*job->get_fixed_worker_id());

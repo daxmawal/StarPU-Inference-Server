@@ -11,12 +11,10 @@ target_sources(
             core/unit_inference_task_limits.cpp
             core/unit_inference_task.cpp
             core/unit_tensor_builder.cpp
-            core/unit_run_inference.cpp
             core/unit_warmup_runner.cpp
             core/robustness/edgecases_inference_queue.cpp
             core/robustness/edgecases_inference_runner_helpers.cpp
             core/robustness/edgecases_inference_task_errors.cpp
-            core/robustness/edgecases_run_inference.cpp
             core/robustness/edgecases_warmup_runner.cpp
             core/robustness/edgecases_inference_runner.cpp
             core/robustness/edgecases_inference_task.cpp

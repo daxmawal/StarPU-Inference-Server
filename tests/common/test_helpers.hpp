@@ -24,12 +24,13 @@
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 
-#define SKIP_IF_NO_CUDA()                      \
-  do {                                         \
-    if (!torch::cuda::is_available()) {        \
-      GTEST_SKIP() << "CUDA is not available"; \
-    }                                          \
-  } while (0)
+inline void
+skip_if_no_cuda()
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA is not available";
+  }
+}
 
 namespace starpu_server {
 

@@ -18,7 +18,6 @@ target_sources(
             core/integration_inference_queue.cpp
             core/integration_inference_runner_helpers.cpp
             core/integration_inference_task_errors.cpp
-            core/integration_run_inference.cpp
             core/integration_warmup_runner.cpp
             core/integration_inference_runner.cpp
             core/integration_inference_task.cpp

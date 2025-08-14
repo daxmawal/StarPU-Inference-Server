@@ -15,9 +15,9 @@ struct RunLoopHookGuard {
 };
 
 inline void
-fake_run_inference_loop(const RuntimeConfig& opts, StarPUSetup& sp)
+fake_run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
-  run_inference_loop_hook(opts, sp);
+  run_inference_loop_hook(opts, starpu);
 }
 }  // namespace starpu_server
 #define run_inference_loop fake_run_inference_loop
@@ -30,21 +30,21 @@ TEST(CliMain_Integration, ShowsHelpMessage)
 {
   auto argv = build_argv({"program", "--help"});
   testing::internal::CaptureStdout();
-  int rc = cli_main(static_cast<int>(argv.size()), argv.data());
+  int return_code = cli_main(static_cast<int>(argv.size()), argv.data());
   std::string out = testing::internal::GetCapturedStdout();
-  EXPECT_EQ(rc, 0);
+  EXPECT_EQ(return_code, 0);
   const auto help = starpu_server::get_help_message("Inference Engine");
   EXPECT_NE(out.find(help), std::string::npos);
 }
 
 namespace starpu_server {
 [[noreturn]] static void
-throw_inference_error(const RuntimeConfig&, StarPUSetup&)
+throw_inference_error(const RuntimeConfig& /*unused*/, StarPUSetup& /*unused*/)
 {
   throw InferenceEngineException("fail");
 }
 [[noreturn]] static void
-throw_std_error(const RuntimeConfig&, StarPUSetup&)
+throw_std_error(const RuntimeConfig& /*unused*/, StarPUSetup& /*unused*/)
 {
   throw std::runtime_error("boom");
 }
@@ -54,14 +54,14 @@ TEST(CliMain_Integration, ReturnsTwoOnInferenceEngineException)
 {
   starpu_server::RunLoopHookGuard guard(starpu_server::throw_inference_error);
   auto argv = build_valid_cli_args();
-  int rc = cli_main(static_cast<int>(argv.size()), argv.data());
-  EXPECT_EQ(rc, 2);
+  int return_code = cli_main(static_cast<int>(argv.size()), argv.data());
+  EXPECT_EQ(return_code, 2);
 }
 
 TEST(CliMain_Integration, ReturnsMinusOneOnStdException)
 {
   starpu_server::RunLoopHookGuard guard(starpu_server::throw_std_error);
   auto argv = build_valid_cli_args();
-  int rc = cli_main(static_cast<int>(argv.size()), argv.data());
-  EXPECT_EQ(rc, -1);
+  int return_code = cli_main(static_cast<int>(argv.size()), argv.data());
+  EXPECT_EQ(return_code, -1);
 }
