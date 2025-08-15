@@ -1,0 +1,44 @@
+add_library(unit_tests INTERFACE)
+
+target_sources(
+  unit_tests
+  INTERFACE cli/unit_cli.cpp
+            cli/robustness/edgecases_cli.cpp
+            core/unit_inference_queue.cpp
+            core/unit_inference_runner_helpers.cpp
+            core/unit_inference_task_errors.cpp
+            core/unit_inference_runner.cpp
+            core/unit_inference_task_limits.cpp
+            core/unit_inference_task.cpp
+            core/unit_tensor_builder.cpp
+            core/unit_warmup_runner.cpp
+            core/robustness/edgecases_inference_queue.cpp
+            core/robustness/edgecases_inference_runner_helpers.cpp
+            core/robustness/edgecases_inference_task_errors.cpp
+            core/robustness/edgecases_warmup_runner.cpp
+            core/robustness/edgecases_inference_runner.cpp
+            core/robustness/edgecases_inference_task.cpp
+            core/robustness/edgecases_inference_task_limits.cpp
+            core/robustness/edgecases_tensor_builder.cpp
+            grpc/unit_inference_service.cpp
+            grpc/unit_client.cpp
+            grpc/robustness/edgecases_client.cpp
+            grpc/robustness/edgecases_inference_service.cpp
+            starpu/unit_starpu_setup.cpp
+            starpu/unit_starpu_task_runner.cpp
+            starpu/unit_tensor_builder_from_starpu.cpp
+            starpu/robustness/edgecases_starpu_setup.cpp
+            starpu/robustness/edgecases_starpu_task_runner.cpp
+            starpu/robustness/edgecases_tensor_builder_from_starpu.cpp
+            utils/unit_client_utils.cpp
+            utils/unit_datatype_utils.cpp
+            utils/unit_inference_validator.cpp
+            utils/unit_input_generator.cpp
+            utils/unit_logger.cpp
+            utils/unit_transparent_hash.cpp
+            utils/robustness/edgecases_client_utils.cpp
+            utils/robustness/edgecases_datatype_utils.cpp
+            utils/robustness/edgecases_inference_validator.cpp
+            utils/robustness/edgecases_input_generator.cpp
+            utils/robustness/edgecases_logger.cpp
+            utils/robustness/edgecases_transparent_hash.cpp)

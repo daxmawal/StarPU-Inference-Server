@@ -7,33 +7,13 @@ set(GRPC_SERVER_DIR ${SRC_DIR}/grpc/server)
 set(GRPC_CLIENT_DIR ${SRC_DIR}/grpc/client)
 set(TESTS_DIR ${PROJECT_SOURCE_DIR}/tests)
 
+add_subdirectory(unit)
+add_subdirectory(e2e)
+add_subdirectory(integration)
+
 add_executable(
-  unit_tests
-  cli/cli_tests.cpp
-  core/test_inference_runner.cpp
-  core/test_inference_runner_helpers.cpp
-  core/test_tensor_builder.cpp
-  core/test_inference_task.cpp
-  core/test_inference_task_errors.cpp
-  core/test_inference_task_limits.cpp
-  core/test_inference_queue.cpp
-  core/test_run_inference.cpp
-  core/test_warmup_runner.cpp
-  grpc/test_inference_service.cpp
-  grpc/test_client.cpp
-  e2e/test_full_inference.cpp
-  integration/test_run_inference_loop.cpp
-  integration/test_grpc_client_server.cpp
-  starpu/test_starpu_setup.cpp
-  starpu/test_starpu_task_runner.cpp
-  starpu/test_tensor_builder_from_starpu.cpp
-  utils/test_client_utils.cpp
-  utils/test_datatype_utils.cpp
-  utils/test_logger.cpp
-  utils/test_transparent_hash.cpp
-  utils/test_input_generator.cpp
-  utils/test_inference_validator.cpp
-  ${CLI_DIR}/args_parser.cpp
+  all_tests
+  ${SRC_DIR}/cli/args_parser.cpp
   ${CORE_DIR}/inference_task.cpp
   ${CORE_DIR}/warmup.cpp
   ${CORE_DIR}/tensor_builder.cpp
@@ -47,15 +27,16 @@ add_executable(
   ${UTILS_DIR}/client_utils.cpp
   ${UTILS_DIR}/time_utils.cpp)
 
-set_target_properties(unit_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                                            ${CMAKE_BINARY_DIR})
+set_target_properties(all_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                           ${CMAKE_BINARY_DIR})
 
-target_compile_features(unit_tests PRIVATE cxx_std_23)
-target_compile_definitions(unit_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
+target_compile_features(all_tests PRIVATE cxx_std_23)
+target_compile_definitions(all_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 target_include_directories(
-  unit_tests
+  all_tests
   PRIVATE ${TESTS_DIR}
+          ${TESTS_DIR}/common
           ${SRC_DIR}
           ${UTILS_DIR}
           ${CLI_DIR}
@@ -65,8 +46,11 @@ target_include_directories(
           ${GRPC_CLIENT_DIR})
 
 target_link_libraries(
-  unit_tests
-  PRIVATE gtest
+  all_tests
+  PRIVATE unit_tests
+          e2e_tests
+          integration_tests
+          gtest
           gtest_main
           Torch::Torch
           inference_proto
@@ -77,9 +61,9 @@ target_link_libraries(
           StarPU::starpu)
 
 if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(unit_tests PRIVATE -fprofile-arcs -ftest-coverage -O0
-                                            -g)
-  target_link_options(unit_tests PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
+  target_compile_options(all_tests PRIVATE -fprofile-arcs -ftest-coverage -O0
+                                           -g)
+  target_link_options(all_tests PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
 endif()
 
-add_test(NAME unit_tests COMMAND unit_tests)
+add_test(NAME all_tests COMMAND all_tests)

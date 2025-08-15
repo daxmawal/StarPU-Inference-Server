@@ -1,0 +1,28 @@
+#include <c10/util/Exception.h>
+#include <gtest/gtest.h>
+
+#include "core/inference_params.hpp"
+#include "core/tensor_builder.hpp"
+#include "test_helpers.hpp"
+#include "utils/exceptions.hpp"
+
+TEST(TensorBuilderFromStarPU_Integration, BuildsTensors)
+{
+  std::array<float, 3> input0{1.0f, 2.0f, 3.0f};
+  std::array<int32_t, 4> input1{1, 2, 3, 4};
+  std::array<starpu_variable_interface, 2> buffers_raw;
+  buffers_raw[0].ptr = reinterpret_cast<uintptr_t>(input0.data());
+  buffers_raw[1].ptr = reinterpret_cast<uintptr_t>(input1.data());
+  auto params = starpu_server::make_params_for_inputs(
+      {{3}, {2, 2}}, {at::kFloat, at::kInt});
+  std::array<void*, 2> buffers{&buffers_raw[0], &buffers_raw[1]};
+  auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
+      &params, buffers, torch::Device(torch::kCPU));
+  ASSERT_EQ(tensors.size(), 2U);
+  EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{3}));
+  EXPECT_EQ(tensors[0].dtype(), torch::kFloat);
+  EXPECT_EQ(tensors[0].data_ptr<float>(), input0.data());
+  EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{2, 2}));
+  EXPECT_EQ(tensors[1].dtype(), torch::kInt);
+  EXPECT_EQ(tensors[1].data_ptr<int32_t>(), input1.data());
+}

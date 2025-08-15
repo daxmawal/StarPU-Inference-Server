@@ -79,7 +79,7 @@ class InferenceTask {
   void bind_runtime_job_info(
       const std::shared_ptr<InferenceParams>& params) const;
   void fill_input_layout(
-      std::shared_ptr<InferenceParams>& params, size_t num_inputs) const;
+      const std::shared_ptr<InferenceParams>& params, size_t num_inputs) const;
   void check_limits(size_t num_inputs) const;
 
   // --- Task Creation & Submission ---
