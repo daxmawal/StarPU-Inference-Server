@@ -20,6 +20,7 @@ find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(Threads REQUIRED)
+find_package(utf8_range CONFIG REQUIRED)
 
 set(ABSL_LIBS absl::log_internal_check_op absl::strings absl::base)
 

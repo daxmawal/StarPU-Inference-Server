@@ -16,5 +16,10 @@ target_include_directories(grpc_client_example
 
 target_link_libraries(
   grpc_client_example
-  PRIVATE Torch::Torch inference_proto gRPC::grpc++_reflection Threads::Threads
-          ${Protobuf_LIBRARIES} ${ABSL_LIBS})
+  PRIVATE Torch::Torch
+          inference_proto
+          gRPC::grpc++_reflection
+          Threads::Threads
+          ${Protobuf_LIBRARIES}
+          utf8_range::utf8_range
+          ${ABSL_LIBS})
