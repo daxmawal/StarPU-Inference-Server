@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.9.0-devel-ubuntu22.04 AS build-base
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS build-base
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -7,6 +7,7 @@ ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:$LD_LIBRARY_PATH"
 
 # Create working directories
 RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
@@ -127,10 +128,14 @@ COPY cmake/ /app/cmake/
 WORKDIR /app/build
 RUN cmake .. \
     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/libtorch;$INSTALL_DIR/grpc;$STARPU_DIR;$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" \
+    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
+    -DProtobuf_DIR=$INSTALL_DIR/protobuf/lib/cmake/protobuf \
+    -DProtobuf_PROTOC_EXECUTABLE=$INSTALL_DIR/protobuf/bin/protoc \
+    -DProtobuf_USE_STATIC_LIBS=ON \
     -DENABLE_COVERAGE=OFF \
     -DENABLE_SANITIZERS=OFF \
     && cmake --build .
+
 
 # Default command
 CMD ["./starpu_server"]
