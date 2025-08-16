@@ -14,7 +14,6 @@ RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
     autoconf \
     automake \
     build-essential \
-    cmake \
     git \
     libhwloc-dev \
     libltdl-dev \
@@ -28,6 +27,10 @@ RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
     unzip \
     wget \
     && rm -rf /var/lib/apt/lists/*
+
+# === Install CMake 3.28+ ===
+RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz \
+    | tar --strip-components=1 -xz -C /usr/local
 
 # === Install GCC 13 and set it as default ===
 RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
