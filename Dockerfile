@@ -118,6 +118,15 @@ RUN git clone -b v1.62.0 --recurse-submodules https://github.com/grpc/grpc.git /
     cmake --build . --parallel && cmake --install . && \
     rm -rf /tmp/grpc
 
+# === Build and install utf8_range ===
+RUN git clone -b v2.0.1 https://github.com/google/utf8_range.git /tmp/utf8_range && \
+    cd /tmp/utf8_range && mkdir build && cd build && \
+    cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range && \
+    cmake --build . && cmake --install . && \
+    rm -rf /tmp/utf8_range
+
 # Copy source code
 WORKDIR /app
 COPY CMakeLists.txt /app/
@@ -128,7 +137,7 @@ COPY cmake/ /app/cmake/
 WORKDIR /app/build
 RUN cmake .. \
     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
+    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
     -DProtobuf_DIR=$INSTALL_DIR/protobuf/lib/cmake/protobuf \
     -DProtobuf_PROTOC_EXECUTABLE=$INSTALL_DIR/protobuf/bin/protoc \
     -DProtobuf_USE_STATIC_LIBS=ON \
