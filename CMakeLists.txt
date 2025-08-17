@@ -22,7 +22,8 @@ find_package(absl CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
 
-set(ABSL_LIBS absl::log_internal_check_op absl::strings absl::base)
+set(ABSL_LIBS absl::log_internal_check_op absl::strings absl::base
+              absl::log_internal absl::raw_logging_internal absl::log_globals)
 
 include(FetchContent)
 if(BUILD_TESTS)

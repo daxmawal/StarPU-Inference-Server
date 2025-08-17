@@ -22,4 +22,5 @@ target_link_libraries(
           Threads::Threads
           ${Protobuf_LIBRARIES}
           utf8_range::utf8_range
+          utf8_range::utf8_validity
           ${ABSL_LIBS})
