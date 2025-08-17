@@ -80,6 +80,11 @@ RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tm
 
 RUN nm -C $INSTALL_DIR/protobuf/lib/libprotoc.a | grep absl || echo "Aucun symbole Abseil trouvé dans libprotoc"
 
+# === Install and compile GTest ===
+RUN apt-get update && apt-get install -y libgtest-dev \
+    && cd /usr/src/googletest && cmake . && make \
+    && mv lib/*.a /usr/lib && rm -rf /usr/src/googletest
+
 # === Build and install utf8_range ===
 RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
     cd /tmp/utf8_range && mkdir build && cd build && \
