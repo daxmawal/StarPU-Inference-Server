@@ -7,7 +7,7 @@ ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
-ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:$LD_LIBRARY_PATH"
+ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
 ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range:${CMAKE_PREFIX_PATH:-}"
 
 # Create working directories
@@ -93,24 +93,30 @@ RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range 
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range \
     -DBUILD_SHARED_LIBS=OFF \
-    -DBUILD_TESTING=OFF \
-    -DUTF8_RANGE_ENABLE_TESTING=OFF \
-    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
-    make && make install && \
+    -Dutf8_range_ENABLE_TESTS=OFF \
+    -DBUILD_TESTING=OFF && \
+    make -j"$(nproc)" && make install && \
     rm -rf /tmp/utf8_range
 
 FROM build-base AS protobuf-checkpoint
 
-# === Build and install gRPC (matching Protobuf v25.3) ===
+# === Build and install gRPC (v1.59.0) en "package" pour Protobuf/Abseil ===
 RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
     cd /tmp/grpc && git submodule update --init --recursive && \
-    mkdir build && cd build && \
-    cmake .. \
+    mkdir -p cmake/build && cd cmake/build && \
+    cmake ../.. \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/grpc \
-    -DgRPC_BUILD_TESTS=OFF && \
-    make -j$(nproc) && make install && \
-    test -f $INSTALL_DIR/grpc/lib/cmake/grpc/gRPCConfig.cmake && \
-    rm -rf /tmp/grpc
+    -DgRPC_INSTALL=ON \
+    -DgRPC_BUILD_TESTS=OFF \
+    -DgRPC_PROTOBUF_PROVIDER=package \
+    -DgRPC_ABSL_PROVIDER=package \
+    -DgRPC_CARES_PROVIDER=module \
+    -DgRPC_RE2_PROVIDER=module \
+    -DgRPC_SSL_PROVIDER=module \
+    -DgRPC_ZLIB_PROVIDER=module \
+    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" && \
+    cmake --build . --target install -j"$(nproc)"
 
 # === Build and install StarPU 1.4.8 ===
 RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-1.4.8/starpu-starpu-1.4.8.tar.gz && \
