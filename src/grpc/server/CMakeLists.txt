@@ -35,5 +35,7 @@ target_link_libraries(
           gRPC::grpc++_reflection
           Threads::Threads
           ${Protobuf_LIBRARIES}
-          ${ABSL_LIBS}
+          absl::log
+          absl::strings
+          absl::base
           StarPU::starpu)

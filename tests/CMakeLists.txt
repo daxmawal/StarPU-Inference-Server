@@ -57,7 +57,9 @@ target_link_libraries(
           gRPC::grpc++
           ${Protobuf_LIBRARIES}
           Threads::Threads
-          ${ABSL_LIBS}
+          absl::log
+          absl::strings
+          absl::base
           StarPU::starpu)
 
 if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
