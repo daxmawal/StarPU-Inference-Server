@@ -8,7 +8,7 @@ ENV STARPU_DIR=${INSTALL_DIR}/starpu
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:$LD_LIBRARY_PATH"
-ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range:$CMAKE_PREFIX_PATH"
+ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range:${CMAKE_PREFIX_PATH:-}"
 
 # Create working directories
 RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
@@ -89,6 +89,7 @@ RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range 
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range \
     -DBUILD_SHARED_LIBS=OFF \
     -DBUILD_TESTING=OFF \
+    -DUTF8_RANGE_ENABLE_TESTING=OFF \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
     make && make install && \
     rm -rf /tmp/utf8_range
