@@ -89,7 +89,7 @@ RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/grpc \
     -DgRPC_BUILD_TESTS=OFF && \
     make -j$(nproc) && make install && \
-    test -f $INSTALL_DIR/grpc/lib/cmake/gRPCConfig.cmake && \
+    test -f $INSTALL_DIR/grpc/lib/cmake/grpc/gRPCConfig.cmake && \
     rm -rf /tmp/grpc
 
 # === Build and install StarPU 1.4.8 ===
