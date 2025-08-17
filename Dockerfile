@@ -8,6 +8,7 @@ ENV STARPU_DIR=${INSTALL_DIR}/starpu
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
 ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:$LD_LIBRARY_PATH"
+ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/utf8_range:$CMAKE_PREFIX_PATH"
 
 # Create working directories
 RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
@@ -78,6 +79,17 @@ RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tm
     rm -rf /tmp/protobuf
 
 RUN nm -C $INSTALL_DIR/protobuf/lib/libprotoc.a | grep absl || echo "Aucun symbole Abseil trouvé dans libprotoc"
+
+# === Build and install utf8_range ===
+RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
+    cd /tmp/utf8_range && mkdir build && cd build && \
+    cmake .. \
+    -DCMAKE_CXX_STANDARD=17 \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range \
+    -DBUILD_SHARED_LIBS=OFF && \
+    make && make install && \
+    rm -rf /tmp/utf8_range
 
 FROM build-base AS protobuf-checkpoint
 
