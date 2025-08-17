@@ -100,33 +100,6 @@ RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/s
     && make && make install && \
     rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
-# === Build and install gRPC with Protobuf 25.3 and Abseil ===
-RUN git clone -b v1.62.0 --recurse-submodules https://github.com/grpc/grpc.git /tmp/grpc && \
-    cd /tmp/grpc && mkdir -p build && cd build && \
-    cmake .. \
-    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/grpc \
-    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" \
-    -DgRPC_INSTALL=ON \
-    -DgRPC_BUILD_TESTS=OFF \
-    -DgRPC_PROTOBUF_PROVIDER=package \
-    -DgRPC_ABSL_PROVIDER=package \
-    -DProtobuf_DIR=$INSTALL_DIR/protobuf/lib/cmake/protobuf \
-    -DProtobuf_PROTOC_EXECUTABLE=$INSTALL_DIR/protobuf/bin/protoc \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build . --parallel && cmake --install . && \
-    rm -rf /tmp/grpc
-
-# === Build and install utf8_range ===
-RUN git clone -b v2.0.1 https://github.com/google/utf8_range.git /tmp/utf8_range && \
-    cd /tmp/utf8_range && mkdir build && cd build && \
-    cmake .. \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range && \
-    cmake --build . && cmake --install . && \
-    rm -rf /tmp/utf8_range
-
 # Copy source code
 WORKDIR /app
 COPY CMakeLists.txt /app/
