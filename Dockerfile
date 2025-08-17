@@ -74,7 +74,7 @@ RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tm
     -Dprotobuf_BUILD_SHARED_LIBS=OFF \
     -Dprotobuf_BUILD_TESTS=OFF \
     -Dprotobuf_ABSL_PROVIDER=package \
-    -DCMAKE_PREFIX_PATH=$INSTALL_DIR/absl && \
+    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
     make && make install && \
     rm -rf /tmp/protobuf
 
@@ -88,7 +88,8 @@ RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range 
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range \
     -DBUILD_SHARED_LIBS=OFF \
-    -DCMAKE_PREFIX_PATH=$INSTALL_DIR/absl && \
+    -DBUILD_TESTING=OFF \
+    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
     make && make install && \
     rm -rf /tmp/utf8_range
 
