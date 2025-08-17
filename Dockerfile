@@ -81,6 +81,17 @@ RUN nm -C $INSTALL_DIR/protobuf/lib/libprotoc.a | grep absl || echo "Aucun symbo
 
 FROM build-base AS protobuf-checkpoint
 
+# === Build and install gRPC (matching Protobuf v25.3) ===
+RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
+    cd /tmp/grpc && git submodule update --init --recursive && \
+    mkdir build && cd build && \
+    cmake .. \
+    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/grpc \
+    -DgRPC_BUILD_TESTS=OFF && \
+    make -j$(nproc) && make install && \
+    test -f $INSTALL_DIR/grpc/lib/cmake/gRPCConfig.cmake && \
+    rm -rf /tmp/grpc
+
 # === Build and install StarPU 1.4.8 ===
 RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-1.4.8/starpu-starpu-1.4.8.tar.gz && \
     mkdir -p /tmp/starpu && \
