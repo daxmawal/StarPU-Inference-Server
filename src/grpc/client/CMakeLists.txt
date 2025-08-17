@@ -23,6 +23,4 @@ target_link_libraries(
           ${Protobuf_LIBRARIES}
           utf8_range::utf8_range
           utf8_range::utf8_validity
-          absl::log
-          absl::strings
-          absl::base)
+          ${ABSL_LIBS})

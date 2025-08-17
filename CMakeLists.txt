@@ -22,7 +22,7 @@ find_package(absl CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
 
-set(ABSL_LIBS absl::log absl::strings absl::base)
+set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
 
 include(FetchContent)
 if(BUILD_TESTS)
@@ -130,7 +130,7 @@ endif()
 # === Linking ===
 target_link_libraries(
   starpu_server PRIVATE Torch::Torch protobuf::libprotobuf gRPC::grpc++
-                        StarPU::starpu ${ABSL_LIBS})
+                        utf8_range::utf8_range StarPU::starpu ${ABSL_LIBS})
 
 # === Status Messages ===
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")
