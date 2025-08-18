@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS build-base
+FROM nvidia/cuda:13.0.0-devel-ubuntu22.04 AS build-base
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
