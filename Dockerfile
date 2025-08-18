@@ -58,7 +58,7 @@ RUN git clone -b 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/absl \
     -DBUILD_SHARED_LIBS=OFF && \
-    make && make install && \
+    make -j"$(nproc)" && make install && \
     rm -rf /tmp/abseil
 
 # === Build and install Protobuf 25.3 (static) ===
@@ -74,13 +74,13 @@ RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tm
     -Dprotobuf_BUILD_TESTS=OFF \
     -Dprotobuf_ABSL_PROVIDER=package \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
-    make && make install && \
+    make -j"$(nproc)" && make install && \
     rm -rf /tmp/protobuf
 
 RUN nm -C $INSTALL_DIR/protobuf/lib/libprotoc.a | grep absl || echo "Aucun symbole Abseil trouvé dans libprotoc"
 
 # === Compile GTest ===
-RUN cd /usr/src/googletest && cmake . && make \
+RUN cd /usr/src/googletest && cmake . && make -j"$(nproc)" \
     && mv lib/*.a /usr/lib && rm -rf /usr/src/googletest
 
 # === Build and install utf8_range ===
@@ -130,7 +130,7 @@ RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/s
     --enable-cuda \
     --disable-fortran \
     --disable-openmp \
-    && make && make install && \
+    && make -j"$(nproc)" && make install && \
     rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
 # Copy source code
@@ -149,7 +149,7 @@ RUN cmake .. \
     -DProtobuf_USE_STATIC_LIBS=ON \
     -DENABLE_COVERAGE=OFF \
     -DENABLE_SANITIZERS=OFF \
-    && cmake --build .
+    && cmake --build . -j"$(nproc)"
 
 
 # Default command
