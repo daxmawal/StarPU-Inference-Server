@@ -7,7 +7,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/root
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
+ENV DCMAKE_CUDA_ARCHITECTURES="8.0;8.6"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
 ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
 ARG CMAKE_PREFIX_PATH=""
@@ -61,6 +61,7 @@ RUN mkdir -p $INSTALL_DIR/libtorch && \
 RUN git clone --depth 1 --branch 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil && \
     cd /tmp/abseil && mkdir build && cd build && \
     cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/absl \
@@ -85,13 +86,14 @@ RUN git clone --depth 1 --branch v25.3 https://github.com/protocolbuffers/protob
     rm -rf /tmp/protobuf
 
 # === Compile GTest ===
-RUN cd /usr/src/googletest && cmake . && make -j"$(nproc)" \
+RUN cd /usr/src/googletest && cmake . -DCMAKE_BUILD_TYPE=Release \ && make -j"$(nproc)" \
     && mv lib/*.a /usr/lib && rm -rf /usr/src/googletest
 
 # === Build and install utf8_range ===
 RUN git clone --depth 1 --branch main https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
     cd /tmp/utf8_range && mkdir build && cd build && \
     cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range \
@@ -149,6 +151,7 @@ COPY cmake/ /app/cmake/
 # Build project
 WORKDIR /app/build
 RUN cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
     -DProtobuf_DIR=$INSTALL_DIR/protobuf/lib/cmake/protobuf \
@@ -163,16 +166,33 @@ RUN cmake .. \
 # =====================
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
 
+ARG CUDA_VERSION
+ARG UBUNTU_VERSION
+ARG CMAKE_VERSION
+ARG GCC_VERSION
+ARG LIBTORCH_VERSION
+ARG LIBTORCH_CUDA
+ARG GRPC_VERSION
+ARG STARPU_VERSION
+
+LABEL maintainer="StarPU Inference Server Team" \
+    version.cuda="${CUDA_VERSION}" \
+    version.ubuntu="${UBUNTU_VERSION}" \
+    version.cmake="${CMAKE_VERSION}" \
+    version.gcc="${GCC_VERSION}" \
+    version.libtorch="${LIBTORCH_VERSION}" \
+    version.libtorch_cuda="${LIBTORCH_CUDA}" \
+    version.grpc="${GRPC_VERSION}" \
+    version.starpu="${STARPU_VERSION}"
+
 RUN useradd -m appuser
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/appuser
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
-ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
+ENV DCMAKE_CUDA_ARCHITECTURES="8.0;8.6"
 ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
-ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range"
 
 # Runtime dependencies
 RUN apt-get update \
@@ -189,7 +209,9 @@ RUN apt-get update \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy artifacts from build stage
-COPY --from=build --chown=appuser:appuser /root/Install ${INSTALL_DIR}
+COPY --from=build --chown=appuser:appuser /root/Install/libtorch ${INSTALL_DIR}/libtorch
+COPY --from=build --chown=appuser:appuser /root/Install/grpc ${INSTALL_DIR}/grpc
+COPY --from=build --chown=appuser:appuser /root/Install/starpu ${STARPU_DIR}
 COPY --from=build --chown=appuser:appuser /app/build/grpc_server /usr/local/bin/grpc_server
 COPY --from=build --chown=appuser:appuser /app/build/grpc_client_example /usr/local/bin/grpc_client_example
 
@@ -197,3 +219,4 @@ RUN mkdir /workspace && chown appuser:appuser /workspace
 WORKDIR /workspace
 USER appuser
 ENTRYPOINT ["/usr/local/bin/grpc_server"]
+CMD ["--help"]
