@@ -28,6 +28,8 @@ RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
     software-properties-common \
     unzip \
     wget \
+    libfxt-dev \
+    libgtest-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # === Install CMake 3.28+ ===
@@ -45,11 +47,6 @@ RUN mkdir -p $INSTALL_DIR/libtorch && \
     wget https://download.pytorch.org/libtorch/cu118/libtorch-cxx11-abi-shared-with-deps-2.2.2%2Bcu118.zip -O /tmp/libtorch.zip && \
     unzip /tmp/libtorch.zip -d $INSTALL_DIR && \
     rm /tmp/libtorch.zip
-
-# === Install FXT (required for --with-fxt in StarPU) ===
-RUN apt-get update && apt-get install -y \
-    libfxt-dev \
-    && rm -rf /var/lib/apt/lists/*
 
 # === Build and install Abseil ===
 RUN git clone -b 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil && \
@@ -80,9 +77,8 @@ RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tm
 
 RUN nm -C $INSTALL_DIR/protobuf/lib/libprotoc.a | grep absl || echo "Aucun symbole Abseil trouvé dans libprotoc"
 
-# === Install and compile GTest ===
-RUN apt-get update && apt-get install -y libgtest-dev \
-    && cd /usr/src/googletest && cmake . && make \
+# === Compile GTest ===
+RUN cd /usr/src/googletest && cmake . && make \
     && mv lib/*.a /usr/lib && rm -rf /usr/src/googletest
 
 # === Build and install utf8_range ===
