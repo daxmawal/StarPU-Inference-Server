@@ -188,10 +188,11 @@ RUN apt-get update \
 
 # Copy artifacts from build stage
 COPY --from=build /root/Install ${INSTALL_DIR}
-COPY --from=build /app/build/starpu_server /usr/local/bin/starpu_server
-RUN chown -R appuser:appuser ${INSTALL_DIR} /usr/local/bin/starpu_server
+COPY --from=build /app/build/grpc_server /usr/local/bin/grpc_server
+COPY --from=build /app/build/grpc_client_example /usr/local/bin/grpc_client_example
+RUN chown -R appuser:appuser ${INSTALL_DIR} /usr/local/bin/grpc_server /usr/local/bin/grpc_client_example
 
 RUN mkdir /workspace && chown appuser:appuser /workspace
 WORKDIR /workspace
 USER appuser
-ENTRYPOINT ["/usr/local/bin/starpu_server"]
+ENTRYPOINT ["/usr/local/bin/grpc_server"]
