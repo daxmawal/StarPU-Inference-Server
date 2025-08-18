@@ -173,11 +173,17 @@ ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR
 ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range"
 
 # Runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository ppa:ubuntu-toolchain-r/test \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
     libhwloc15 \
     libltdl7 \
     libssl3 \
     libfxt2 \
+    libstdc++-13-dev \
+    && apt-get purge -y --auto-remove software-properties-common \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy artifacts from build stage
