@@ -58,7 +58,7 @@ RUN mkdir -p $INSTALL_DIR/libtorch && \
     rm /tmp/libtorch.zip
 
 # === Build and install Abseil ===
-RUN git clone -b 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil && \
+RUN git clone --depth 1 --branch 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil && \
     cd /tmp/abseil && mkdir build && cd build && \
     cmake .. \
     -DCMAKE_CXX_STANDARD=17 \
@@ -69,7 +69,7 @@ RUN git clone -b 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil
     rm -rf /tmp/abseil
 
 # === Build and install Protobuf 25.3 (static) ===
-RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf && \
+RUN git clone --depth 1 --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf && \
     cd /tmp/protobuf && \
     git submodule update --init --recursive && \
     mkdir build && cd build && \
@@ -89,7 +89,7 @@ RUN cd /usr/src/googletest && cmake . && make -j"$(nproc)" \
     && mv lib/*.a /usr/lib && rm -rf /usr/src/googletest
 
 # === Build and install utf8_range ===
-RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
+RUN git clone --depth 1 --branch main https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
     cd /tmp/utf8_range && mkdir build && cd build && \
     cmake .. \
     -DCMAKE_CXX_STANDARD=17 \
@@ -101,8 +101,9 @@ RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range 
     make -j"$(nproc)" && make install && \
     rm -rf /tmp/utf8_range
 
-# === Build and install gRPC (v1.59.0) en "package" pour Protobuf/Abseil ===
-RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
+# === Build and install gRPC ${GRPC_VERSION} in "package" mode for Protobuf/Abseil ===
+ARG GRPC_VERSION=1.59.0
+RUN git clone --depth 1 --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
     cd /tmp/grpc && git submodule update --init --recursive && \
     mkdir -p cmake/build && cd cmake/build && \
     cmake ../.. \
@@ -119,8 +120,9 @@ RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" && \
     cmake --build . --target install -j"$(nproc)" && rm -rf /tmp/grpc
 
-# === Build and install StarPU 1.4.8 ===
-RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-1.4.8/starpu-starpu-1.4.8.tar.gz && \
+# === Build and install StarPU ${STARPU_VERSION} ===
+ARG STARPU_VERSION=1.4.8
+RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-${STARPU_VERSION}/starpu-starpu-${STARPU_VERSION}.tar.gz && \
     mkdir -p /tmp/starpu && \
     tar -xzf /tmp/starpu.tar.gz -C /tmp/starpu --strip-components=1 && \
     cd /tmp/starpu && \
@@ -187,10 +189,9 @@ RUN apt-get update \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy artifacts from build stage
-COPY --from=build /root/Install ${INSTALL_DIR}
-COPY --from=build /app/build/grpc_server /usr/local/bin/grpc_server
-COPY --from=build /app/build/grpc_client_example /usr/local/bin/grpc_client_example
-RUN chown -R appuser:appuser ${INSTALL_DIR} /usr/local/bin/grpc_server /usr/local/bin/grpc_client_example
+COPY --from=build --chown=appuser:appuser /root/Install ${INSTALL_DIR}
+COPY --from=build --chown=appuser:appuser /app/build/grpc_server /usr/local/bin/grpc_server
+COPY --from=build --chown=appuser:appuser /app/build/grpc_client_example /usr/local/bin/grpc_client_example
 
 RUN mkdir /workspace && chown appuser:appuser /workspace
 WORKDIR /workspace
