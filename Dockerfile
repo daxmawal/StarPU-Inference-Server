@@ -1,6 +1,6 @@
 ARG CUDA_VERSION=11.8.0
 ARG UBUNTU_VERSION=22.04
-FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS build
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -13,7 +13,7 @@ ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR
 ARG CMAKE_PREFIX_PATH=""
 ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 
-# Create working directories
+# Create working directories and install build dependencies
 RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
     apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
@@ -156,6 +156,31 @@ RUN cmake .. \
     -DENABLE_SANITIZERS=OFF \
     && cmake --build . -j"$(nproc)"
 
+# =====================
+# Runtime stage
+# =====================
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
 
-# Default command
-CMD ["./starpu_server"]
+ENV DEBIAN_FRONTEND=noninteractive
+ENV HOME=/root
+ENV INSTALL_DIR=${HOME}/Install
+ENV STARPU_DIR=${INSTALL_DIR}/starpu
+ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
+ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
+ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
+ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range"
+
+# Runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libhwloc15 \
+    libltdl7 \
+    libssl3 \
+    libfxt2 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy artifacts from build stage
+COPY --from=build /root/Install /root/Install
+COPY --from=build /app/build/starpu_server /usr/local/bin/starpu_server
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/starpu_server"]
