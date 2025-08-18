@@ -1,4 +1,6 @@
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
+ARG CUDA_VERSION=11.8.0
+ARG UBUNTU_VERSION=22.04
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION}
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -33,21 +35,25 @@ RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
     libgtest-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# === Install CMake 3.28+ ===
-RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz \
+# === Install CMake ${CMAKE_VERSION} ===
+ARG CMAKE_VERSION=3.28.3
+RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz \
     | tar --strip-components=1 -xz -C /usr/local
 
-# === Install GCC 13 and set it as default ===
+# === Install GCC ${GCC_VERSION} and set it as default ===
+ARG GCC_VERSION=13
 RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
-    apt-get update && apt-get install -y --no-install-recommends g++-13 && \
+    apt-get update && apt-get install -y --no-install-recommends g++-${GCC_VERSION} && \
     apt-get purge -y --auto-remove software-properties-common && \
     apt-get clean && rm -rf /var/lib/apt/lists/* && \
-    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100 && \
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-13 100
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${GCC_VERSION} 100 && \
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-${GCC_VERSION} 100
 
-# === Install libtorch ===
+# === Install libtorch ${LIBTORCH_VERSION} (${LIBTORCH_CUDA}) ===
+ARG LIBTORCH_VERSION=2.2.2
+ARG LIBTORCH_CUDA=cu118
 RUN mkdir -p $INSTALL_DIR/libtorch && \
-    wget https://download.pytorch.org/libtorch/cu118/libtorch-cxx11-abi-shared-with-deps-2.2.2%2Bcu118.zip -O /tmp/libtorch.zip && \
+    wget https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip -O /tmp/libtorch.zip && \
     unzip /tmp/libtorch.zip -d $INSTALL_DIR && \
     rm /tmp/libtorch.zip
 
@@ -77,8 +83,6 @@ RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tm
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
     make -j"$(nproc)" && make install && \
     rm -rf /tmp/protobuf
-
-RUN nm -C $INSTALL_DIR/protobuf/lib/libprotoc.a | grep absl || echo "Aucun symbole Abseil trouvé dans libprotoc"
 
 # === Compile GTest ===
 RUN cd /usr/src/googletest && cmake . && make -j"$(nproc)" \
