@@ -117,7 +117,7 @@ RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
     -DgRPC_SSL_PROVIDER=module \
     -DgRPC_ZLIB_PROVIDER=module \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" && \
-    cmake --build . --target install -j"$(nproc)"
+    cmake --build . --target install -j"$(nproc)" && rm -rf /tmp/grpc
 
 # === Build and install StarPU 1.4.8 ===
 RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-1.4.8/starpu-starpu-1.4.8.tar.gz && \
@@ -161,8 +161,10 @@ RUN cmake .. \
 # =====================
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
 
+RUN useradd -m appuser
+
 ENV DEBIAN_FRONTEND=noninteractive
-ENV HOME=/root
+ENV HOME=/home/appuser
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
 ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
@@ -179,8 +181,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy artifacts from build stage
-COPY --from=build /root/Install /root/Install
+COPY --from=build /root/Install ${INSTALL_DIR}
 COPY --from=build /app/build/starpu_server /usr/local/bin/starpu_server
+RUN chown -R appuser:appuser ${INSTALL_DIR} /usr/local/bin/starpu_server
 
+RUN mkdir /workspace && chown appuser:appuser /workspace
 WORKDIR /workspace
+USER appuser
 ENTRYPOINT ["/usr/local/bin/starpu_server"]
