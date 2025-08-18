@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS build-base
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -12,7 +12,7 @@ ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range${CMAKE_PREFIX_P
 
 # Create working directories
 RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
-    apt-get update && apt-get install -y \
+    apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
     automake \
     build-essential \
@@ -30,7 +30,7 @@ RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
     wget \
     libfxt-dev \
     libgtest-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # === Install CMake 3.28+ ===
 RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz \
@@ -38,7 +38,9 @@ RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3
 
 # === Install GCC 13 and set it as default ===
 RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
-    apt-get update && apt-get install -y g++-13 && \
+    apt-get update && apt-get install -y --no-install-recommends g++-13 && \
+    apt-get purge -y --auto-remove software-properties-common && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100 && \
     update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-13 100
 
@@ -93,8 +95,6 @@ RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range 
     -DBUILD_TESTING=OFF && \
     make -j"$(nproc)" && make install && \
     rm -rf /tmp/utf8_range
-
-FROM build-base AS protobuf-checkpoint
 
 # === Build and install gRPC (v1.59.0) en "package" pour Protobuf/Abseil ===
 RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
