@@ -35,5 +35,7 @@ target_link_libraries(
           gRPC::grpc++_reflection
           Threads::Threads
           ${Protobuf_LIBRARIES}
+          utf8_range::utf8_range
+          utf8_range::utf8_validity
           ${ABSL_LIBS}
           StarPU::starpu)

@@ -21,7 +21,8 @@ protobuf_generate(
   PLUGIN
   "protoc-gen-grpc=${GRPC_CPP_PLUGIN}")
 
-target_include_directories(inference_proto PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(inference_proto PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
+                                                  ${Protobuf_INCLUDE_DIRS})
 
 target_link_libraries(inference_proto PRIVATE protobuf::libprotobuf gRPC::grpc
                                               gRPC::grpc++)
