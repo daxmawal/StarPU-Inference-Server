@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/root
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV CMAKE_CUDA_ARCHITECTURES="8.0;8.6"
+ENV CMAKE_CUDA_ARCHITECTURES="80;86"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
 ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
 ARG CMAKE_PREFIX_PATH=""
@@ -194,7 +194,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/appuser
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV CMAKE_CUDA_ARCHITECTURES="8.0;8.6"
+ENV CMAKE_CUDA_ARCHITECTURES="80;86"
 ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
 
 # Runtime dependencies
