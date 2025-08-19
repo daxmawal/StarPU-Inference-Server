@@ -45,6 +45,9 @@ set(ENABLE_PUSH
 set(ENABLE_COMPRESSION
     OFF
     CACHE BOOL "" FORCE)
+set(ENABLE_TESTING
+    OFF
+    CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(prometheus-cpp)
 
 add_subdirectory(${SRC_DIR}/proto)
