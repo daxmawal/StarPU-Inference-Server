@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "monitoring/metrics.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/datatype_utils.hpp"
 
@@ -172,6 +173,10 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
+  if (requests_total != nullptr) {
+    requests_total->Increment();
+  }
+
   auto recv_tp = std::chrono::high_resolution_clock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         recv_tp.time_since_epoch())
@@ -195,6 +200,12 @@ InferenceServiceImpl::ModelInfer(
                         .count();
 
   populate_response(request, reply, outputs, recv_ms, send_ms);
+
+  if (inference_latency != nullptr) {
+    const auto latency_ms =
+        std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
+    inference_latency->Observe(latency_ms);
+  }
   return Status::OK;
 }
 

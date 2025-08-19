@@ -327,6 +327,19 @@ parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 }
 
 static auto
+parse_metrics_port(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& metrics_port = opts.metrics_port;
+  return expect_and_parse(idx, args, [&metrics_port](const char* val) {
+    metrics_port = std::stoi(val);
+    if (metrics_port <= 0) {
+      throw std::invalid_argument("Must be > 0.");
+    }
+  });
+}
+
+static auto
 parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
@@ -395,6 +408,10 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--address",
            [&opts, &args_span](size_t& idx) {
              return parse_address(opts, idx, args_span);
+           }},
+          {"--metrics-port",
+           [&opts, &args_span](size_t& idx) {
+             return parse_metrics_port(opts, idx, args_span);
            }},
           {"--max-msg-size",
            [&opts, &args_span](size_t& idx) {

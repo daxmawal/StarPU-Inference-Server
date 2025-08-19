@@ -9,6 +9,7 @@
 #include "core/starpu_setup.hpp"
 #include "core/warmup.hpp"
 #include "inference_service.hpp"
+#include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
 #include "utils/exceptions.hpp"
@@ -131,6 +132,7 @@ main(int argc, char* argv[]) -> int
 {
   try {
     starpu_server::RuntimeConfig opts = handle_program_arguments(argc, argv);
+    starpu_server::init_metrics(opts.metrics_port);
     starpu_server::StarPUSetup starpu(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);

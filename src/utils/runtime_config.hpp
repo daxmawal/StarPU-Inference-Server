@@ -23,6 +23,7 @@ struct RuntimeConfig {
   std::string scheduler = "lws";
   std::string model_path;
   std::string server_address = "0.0.0.0:50051";
+  int metrics_port = 9090;
 
   std::vector<int> device_ids;
   std::vector<std::vector<int64_t>> input_shapes;

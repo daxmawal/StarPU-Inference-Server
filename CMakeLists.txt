@@ -32,6 +32,21 @@ if(BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 endif()
 
+FetchContent_Declare(
+  prometheus-cpp
+  GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
+  GIT_TAG v1.1.0)
+set(ENABLE_PULL
+    ON
+    CACHE BOOL "" FORCE)
+set(ENABLE_PUSH
+    OFF
+    CACHE BOOL "" FORCE)
+set(ENABLE_COMPRESSION
+    OFF
+    CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(prometheus-cpp)
+
 add_subdirectory(${SRC_DIR}/proto)
 
 # === yaml-cpp via FetchContent ===
@@ -63,6 +78,7 @@ target_sources(
           ${SRC_DIR}/utils/client_utils.cpp
           ${SRC_DIR}/utils/inference_validator.cpp
           ${SRC_DIR}/utils/time_utils.cpp
+          ${SRC_DIR}/monitoring/metrics.cpp
           ${SRC_DIR}/starpu_task_worker/starpu_task_worker.cpp)
 
 target_compile_features(starpu_server PRIVATE cxx_std_23)
@@ -150,6 +166,7 @@ target_link_libraries(
           utf8_range::utf8_range
           StarPU::starpu
           yaml-cpp::yaml-cpp
+          prometheus-cpp::pull
           ${ABSL_LIBS})
 
 # === Status Messages ===

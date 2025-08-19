@@ -3,6 +3,7 @@ set(CLI_DIR ${SRC_DIR}/cli)
 set(CORE_DIR ${SRC_DIR}/core)
 set(UTILS_DIR ${SRC_DIR}/utils)
 set(STARPU_TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
+set(MONITORING_DIR ${SRC_DIR}/monitoring)
 
 add_executable(grpc_server)
 target_sources(
@@ -18,7 +19,8 @@ target_sources(
           ${UTILS_DIR}/time_utils.cpp
           ${STARPU_TASK_WORKER_DIR}/starpu_task_worker.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/inference_service.cpp
-          ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp)
+          ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp
+          ${MONITORING_DIR}/metrics.cpp)
 
 set_target_properties(grpc_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                              ${CMAKE_BINARY_DIR})
@@ -26,7 +28,7 @@ target_compile_features(grpc_server PRIVATE cxx_std_23)
 target_compile_definitions(grpc_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 target_include_directories(
   grpc_server PRIVATE ${SRC_DIR} ${CLI_DIR} ${CORE_DIR} ${UTILS_DIR}
-                      ${STARPU_TASK_WORKER_DIR})
+                      ${STARPU_TASK_WORKER_DIR} ${MONITORING_DIR})
 
 target_link_libraries(
   grpc_server
@@ -38,4 +40,5 @@ target_link_libraries(
           utf8_range::utf8_range
           utf8_range::utf8_validity
           ${ABSL_LIBS}
-          StarPU::starpu)
+          StarPU::starpu
+          prometheus-cpp::pull)
