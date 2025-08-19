@@ -26,7 +26,8 @@ add_executable(
   ${GRPC_CLIENT_DIR}/client_args.cpp
   ${UTILS_DIR}/inference_validator.cpp
   ${UTILS_DIR}/client_utils.cpp
-  ${UTILS_DIR}/time_utils.cpp)
+  ${UTILS_DIR}/time_utils.cpp
+  ${UTILS_DIR}/config_loader.cpp)
 
 set_target_properties(all_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                            ${CMAKE_BINARY_DIR})
