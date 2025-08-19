@@ -219,6 +219,17 @@ parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 static auto
+parse_config(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  if (idx + 1 >= args.size()) {
+    return false;
+  }
+  ++idx;
+  opts.config_path = args[idx];
+  return true;
+}
+
+static auto
 parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
@@ -369,6 +380,14 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
       std::string, std::function<bool(size_t&)>, TransparentHash,
       TransparentEqual>
       dispatch = {
+          {"--config",
+           [&opts, &args_span](size_t& idx) {
+             return parse_config(opts, idx, args_span);
+           }},
+          {"-c",
+           [&opts, &args_span](size_t& idx) {
+             return parse_config(opts, idx, args_span);
+           }},
           {"--model",
            [&opts, &args_span](size_t& idx) {
              return parse_model(opts, idx, args_span);
@@ -473,10 +492,8 @@ validate_config(RuntimeConfig& opts) -> void
 // =============================================================================
 
 auto
-parse_arguments(std::span<char*> args_span) -> RuntimeConfig
+parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
 {
-  RuntimeConfig opts;
-
   if (!parse_argument_values(args_span, opts)) {
     opts.valid = false;
     return opts;

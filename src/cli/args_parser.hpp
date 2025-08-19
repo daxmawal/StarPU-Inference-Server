@@ -19,6 +19,7 @@ get_help_message(const char* prog_name) -> std::string
       " [OPTIONS]\n"
       "\nOptions:\n"
       "  --scheduler [name]      Scheduler type (default: lws)\n"
+      "  --config [file]         YAML configuration file\n"
       "  --model [path]          Path to TorchScript model file (.pt)\n"
       "  --iterations [num]      Number of iterations (default: 1)\n"
       "  --shape 1x3x224x224     Shape of a single input tensor\n"
@@ -42,5 +43,6 @@ display_help(const char* prog_name)
   std::cout << get_help_message(prog_name);
 }
 
-auto parse_arguments(std::span<char*> args_span) -> RuntimeConfig;
+auto parse_arguments(std::span<char*> args_span, RuntimeConfig opts = {})
+    -> RuntimeConfig;
 }  // namespace starpu_server

@@ -22,6 +22,7 @@ namespace starpu_server {
 struct RuntimeConfig {
   std::string scheduler = "lws";
   std::string model_path;
+  std::string config_path;
   std::string server_address = "0.0.0.0:50051";
   int metrics_port = 9090;
 
