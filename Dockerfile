@@ -207,7 +207,7 @@ RUN apt-get update \
     libltdl7 \
     libssl3 \
     libfxt2 \
-    libstdc++-13-dev \
+    libstdc++6 \
     && apt-get purge -y --auto-remove software-properties-common \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -218,7 +218,7 @@ COPY --from=build --chown=appuser:appuser /root/Install/starpu ${STARPU_DIR}
 COPY --from=build --chown=appuser:appuser /app/build/grpc_server /usr/local/bin/grpc_server
 COPY --from=build --chown=appuser:appuser /app/build/grpc_client_example /usr/local/bin/grpc_client_example
 
-RUN mkdir /workspace && chown appuser:appuser /workspace
+RUN install -d -o appuser -g appuser /workspace
 WORKDIR /workspace
 USER appuser
 ENTRYPOINT ["/usr/local/bin/grpc_server"]

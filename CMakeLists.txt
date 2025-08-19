@@ -19,7 +19,6 @@ find_package(StarPU REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
-find_package(Threads REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
 
 set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
@@ -34,6 +33,21 @@ if(BUILD_TESTS)
 endif()
 
 add_subdirectory(${SRC_DIR}/proto)
+
+# === yaml-cpp via FetchContent ===
+include(FetchContent)
+
+set(YAML_CPP_BUILD_TESTS
+    OFF
+    CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS
+    OFF
+    CACHE BOOL "" FORCE)
+
+FetchContent_Declare(yaml-cpp
+                     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git)
+
+FetchContent_MakeAvailable(yaml-cpp)
 
 # === Executable ===
 add_executable(starpu_server)
@@ -129,8 +143,14 @@ endif()
 
 # === Linking ===
 target_link_libraries(
-  starpu_server PRIVATE Torch::Torch protobuf::libprotobuf gRPC::grpc++
-                        utf8_range::utf8_range StarPU::starpu ${ABSL_LIBS})
+  starpu_server
+  PRIVATE Torch::Torch
+          protobuf::libprotobuf
+          gRPC::grpc++
+          utf8_range::utf8_range
+          StarPU::starpu
+          yaml-cpp::yaml-cpp
+          ${ABSL_LIBS})
 
 # === Status Messages ===
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")
