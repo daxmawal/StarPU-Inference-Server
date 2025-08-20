@@ -2,6 +2,7 @@
 #include <csignal>
 #include <iostream>
 #include <memory>
+#include <string_view>
 #include <thread>
 
 #include "cli/args_parser.hpp"
@@ -12,6 +13,7 @@
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
+#include "utils/config_loader.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 #include "utils/runtime_config.hpp"
@@ -49,24 +51,35 @@ signal_handler(int /*signal*/)
 auto
 handle_program_arguments(int argc, char* argv[]) -> starpu_server::RuntimeConfig
 {
-  const starpu_server::RuntimeConfig opts = starpu_server::parse_arguments(
-      std::span<char*>(argv, static_cast<size_t>(argc)));
+  starpu_server::RuntimeConfig cfg{};
 
-  if (opts.show_help) {
+  for (int i = 1; i < argc - 1; ++i) {
+    std::string_view arg{argv[i]};
+    if ((arg == "--config" || arg == "-c") && argv[i + 1] != nullptr) {
+      cfg = starpu_server::load_config(argv[i + 1]);
+      cfg.config_path = argv[i + 1];
+      break;
+    }
+  }
+
+  cfg = starpu_server::parse_arguments(
+      std::span<char*>(argv, static_cast<size_t>(argc)), std::move(cfg));
+
+  if (cfg.show_help) {
     starpu_server::display_help("Inference Engine");
     std::exit(0);
   }
 
-  if (!opts.valid) {
+  if (!cfg.valid) {
     starpu_server::log_fatal("Invalid program options.\n");
   }
 
   std::cout << "__cplusplus = " << __cplusplus << "\n"
             << "LibTorch version: " << TORCH_VERSION << "\n"
-            << "Scheduler       : " << opts.scheduler << "\n"
-            << "Iterations      : " << opts.iterations << "\n";
+            << "Scheduler       : " << cfg.scheduler << "\n"
+            << "Iterations      : " << cfg.iterations << "\n";
 
-  return opts;
+  return cfg;
 }
 
 std::tuple<
