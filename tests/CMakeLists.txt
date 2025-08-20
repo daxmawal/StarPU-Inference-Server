@@ -61,7 +61,8 @@ target_link_libraries(
           Threads::Threads
           ${ABSL_LIBS}
           StarPU::starpu
-          prometheus-cpp::pull)
+          prometheus-cpp::pull
+          yaml-cpp::yaml-cpp)
 
 if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(all_tests PRIVATE -fprofile-arcs -ftest-coverage -O0
