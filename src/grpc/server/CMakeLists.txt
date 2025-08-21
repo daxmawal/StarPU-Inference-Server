@@ -17,6 +17,7 @@ target_sources(
           ${UTILS_DIR}/client_utils.cpp
           ${UTILS_DIR}/inference_validator.cpp
           ${UTILS_DIR}/time_utils.cpp
+          ${UTILS_DIR}/config_loader.cpp
           ${STARPU_TASK_WORKER_DIR}/starpu_task_worker.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/inference_service.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp
@@ -41,4 +42,5 @@ target_link_libraries(
           utf8_range::utf8_validity
           ${ABSL_LIBS}
           StarPU::starpu
-          prometheus-cpp::pull)
+          prometheus-cpp::pull
+          yaml-cpp::yaml-cpp)
