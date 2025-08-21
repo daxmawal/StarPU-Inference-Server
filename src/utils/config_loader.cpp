@@ -121,8 +121,11 @@ load_config(const std::string& path) -> RuntimeConfig
     if (root["metrics_port"]) {
       cfg.metrics_port = root["metrics_port"].as<int>();
     }
-    if (root["max_msg_size"]) {
-      cfg.max_message_bytes = root["max_msg_size"].as<int>();
+    if (root["max_batch_size"]) {
+      cfg.max_batch_size = root["max_batch_size"].as<int>();
+      if (cfg.max_batch_size <= 0) {
+        throw std::invalid_argument("max_batch_size must be > 0");
+      }
     }
     if (root["sync"]) {
       cfg.synchronous = root["sync"].as<bool>();
@@ -133,6 +136,8 @@ load_config(const std::string& path) -> RuntimeConfig
     if (root["use_cuda"]) {
       cfg.use_cuda = root["use_cuda"].as<bool>();
     }
+    cfg.max_message_bytes = compute_max_message_bytes(
+        cfg.max_batch_size, cfg.input_shapes, cfg.input_types);
   }
   catch (const std::exception& e) {
     log_error(std::string("Failed to load config: ") + e.what());

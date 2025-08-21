@@ -41,8 +41,8 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
        "lws",
        "--address",
        "127.0.0.1:1234",
-       "--max-msg-size",
-       "512",
+       "--max-batch-size",
+       "2",
        "--sync",
        "--no_cpu"});
   ASSERT_TRUE(opts.valid);
@@ -52,7 +52,9 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.delay_ms, 42);
   EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
   EXPECT_EQ(opts.server_address, "127.0.0.1:1234");
-  EXPECT_EQ(opts.max_message_bytes, 512);
+  EXPECT_EQ(opts.max_batch_size, 2);
+  constexpr int expected_bytes = 2 * ((1 * 3 * 224 * 224 * 4) + (2 * 1 * 4));
+  EXPECT_EQ(opts.max_message_bytes, expected_bytes);
   EXPECT_TRUE(opts.synchronous);
   EXPECT_FALSE(opts.use_cpu);
   EXPECT_TRUE(opts.use_cuda);

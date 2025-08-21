@@ -38,8 +38,8 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--shapes", "1x2,", "--types", "float"},
         std::vector<const char*>{"--iterations", "-1"},
         std::vector<const char*>{"--delay", "-1"},
-        std::vector<const char*>{"--max-msg-size", "0"},
-        std::vector<const char*>{"--max-msg-size", "-1"},
+        std::vector<const char*>{"--max-batch-size", "0"},
+        std::vector<const char*>{"--max-batch-size", "-1"},
         std::vector<const char*>{"--shapes", "1x2,,3", "--types", "float,int"},
         std::vector<const char*>{"--model"},
         std::vector<const char*>{"--iterations"}));

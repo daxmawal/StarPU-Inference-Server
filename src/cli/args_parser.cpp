@@ -324,16 +324,16 @@ parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 static auto
-parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+parse_max_batch_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& max_message_bytes = opts.max_message_bytes;
-  return expect_and_parse(idx, args, [&max_message_bytes](const char* val) {
+  auto& max_batch_size = opts.max_batch_size;
+  return expect_and_parse(idx, args, [&max_batch_size](const char* val) {
     const int tmp = std::stoi(val);
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
     }
-    max_message_bytes = tmp;
+    max_batch_size = tmp;
   });
 }
 
@@ -432,9 +432,9 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
            [&opts, &args_span](size_t& idx) {
              return parse_metrics_port(opts, idx, args_span);
            }},
-          {"--max-msg-size",
+          {"--max-batch-size",
            [&opts, &args_span](size_t& idx) {
-             return parse_max_msg_size(opts, idx, args_span);
+             return parse_max_batch_size(opts, idx, args_span);
            }},
       };
 
@@ -500,7 +500,10 @@ parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
   }
 
   if (!opts.show_help) {
-    validate_config(opts);
+    if (opts.valid) {
+      opts.max_message_bytes = compute_max_message_bytes(
+          opts.max_batch_size, opts.input_shapes, opts.input_types);
+    }
   }
 
   return opts;

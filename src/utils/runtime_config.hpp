@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "datatype_utils.hpp"
 #include "logger.hpp"
 
 namespace starpu_server {
@@ -33,6 +34,7 @@ struct RuntimeConfig {
   VerbosityLevel verbosity = VerbosityLevel::Info;
   int iterations = 1;
   int delay_ms = 0;
+  int max_batch_size = 1;
   int max_message_bytes = 32 * 1024 * 1024;
 
   bool synchronous = false;
@@ -41,4 +43,22 @@ struct RuntimeConfig {
   bool use_cpu = true;
   bool use_cuda = false;
 };
+
+inline auto
+compute_max_message_bytes(
+    int max_batch_size, const std::vector<std::vector<int64_t>>& shapes,
+    const std::vector<at::ScalarType>& types) -> int
+{
+  size_t per_sample_bytes = 0;
+  const size_t n = std::min(shapes.size(), types.size());
+  for (size_t i = 0; i < n; ++i) {
+    size_t numel = 1;
+    for (int64_t dim : shapes[i]) {
+      numel *= static_cast<size_t>(dim);
+    }
+    per_sample_bytes += numel * element_size(types[i]);
+  }
+  return static_cast<int>(
+      per_sample_bytes * static_cast<size_t>(max_batch_size));
+}
 }  // namespace starpu_server
