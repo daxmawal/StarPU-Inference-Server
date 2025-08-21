@@ -11,6 +11,7 @@ target_sources(
           ${CORE_DIR}/starpu_setup.cpp
           ${CORE_DIR}/tensor_builder.cpp
           ${CORE_DIR}/warmup.cpp
+          ${CORE_DIR}/inference_runner.cpp
           ${UTILS_DIR}/client_utils.cpp
           ${UTILS_DIR}/inference_validator.cpp
           ${UTILS_DIR}/time_utils.cpp
