@@ -5,7 +5,6 @@
 #include <string_view>
 #include <thread>
 
-#include "cli/args_parser.hpp"
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
 #include "core/warmup.hpp"
@@ -51,27 +50,25 @@ signal_handler(int /*signal*/)
 auto
 handle_program_arguments(int argc, char* argv[]) -> starpu_server::RuntimeConfig
 {
-  starpu_server::RuntimeConfig cfg{};
+  const char* config_path = nullptr;
 
   for (int i = 1; i < argc - 1; ++i) {
     std::string_view arg{argv[i]};
     if ((arg == "--config" || arg == "-c") && argv[i + 1] != nullptr) {
-      cfg = starpu_server::load_config(argv[i + 1]);
-      cfg.config_path = argv[i + 1];
+      config_path = argv[i + 1];
       break;
     }
   }
 
-  cfg = starpu_server::parse_arguments(
-      std::span<char*>(argv, static_cast<size_t>(argc)), std::move(cfg));
-
-  if (cfg.show_help) {
-    starpu_server::display_help("Inference Engine");
-    std::exit(0);
+  if (config_path == nullptr) {
+    starpu_server::log_fatal("Missing required --config argument.\n");
   }
 
+  starpu_server::RuntimeConfig cfg = starpu_server::load_config(config_path);
+  cfg.config_path = config_path;
+
   if (!cfg.valid) {
-    starpu_server::log_fatal("Invalid program options.\n");
+    starpu_server::log_fatal("Invalid configuration file.\n");
   }
 
   std::cout << "__cplusplus = " << __cplusplus << "\n"
