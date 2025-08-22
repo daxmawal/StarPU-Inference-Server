@@ -209,6 +209,10 @@ run_warmup(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref)
 {
+  if (!opts.use_cuda) {
+    return;
+  }
+
   log_info(
       opts.verbosity,
       std::format(

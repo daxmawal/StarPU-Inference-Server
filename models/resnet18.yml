@@ -12,4 +12,4 @@ metrics_port: 9100
 max_batch_size: 32
 sync: false
 use_cpu: true
-use_cuda: false
+use_cuda: true
