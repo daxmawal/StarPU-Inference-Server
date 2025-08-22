@@ -134,11 +134,10 @@ clone_model_to_gpus(
 // =============================================================================
 
 static auto
-generate_inputs(
-    const std::vector<std::vector<int64_t>>& dims,
-    const std::vector<torch::Dtype>& types) -> std::vector<torch::Tensor>
+generate_inputs(const std::vector<TensorConfig>& tensors)
+    -> std::vector<torch::Tensor>
 {
-  return input_generator::generate_random_inputs(dims, types);
+  return input_generator::generate_random_inputs(tensors);
 }
 
 static auto
@@ -185,7 +184,7 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     auto models_gpu = opts.use_cuda
                           ? clone_model_to_gpus(model_cpu, opts.device_ids)
                           : std::vector<torch::jit::script::Module>{};
-    auto inputs = generate_inputs(opts.input_dims, opts.input_types);
+    auto inputs = generate_inputs(opts.inputs);
     auto output_refs = run_reference_inference(model_cpu, inputs);
 
     return {model_cpu, models_gpu, output_refs};

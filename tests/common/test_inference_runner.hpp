@@ -102,11 +102,10 @@ run_reference_inference(
 }
 
 inline auto
-generate_inputs(
-    const std::vector<std::vector<int64_t>>& dims,
-    const std::vector<at::ScalarType>& types) -> std::vector<torch::Tensor>
+generate_inputs(const std::vector<TensorConfig>& tensors)
+    -> std::vector<torch::Tensor>
 {
-  return input_generator::generate_random_inputs(dims, types);
+  return input_generator::generate_random_inputs(tensors);
 }
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)

@@ -36,8 +36,7 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
 
   starpu_server::RuntimeConfig opts;
   opts.model_path = file.string();
-  opts.input_dims = {kShape1};
-  opts.input_types = kTypesFloat;
+  opts.inputs = {{"input0", kShape1, at::kFloat}};
   opts.device_ids = {0};
   opts.use_cuda = false;
 
