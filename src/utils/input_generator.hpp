@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "exceptions.hpp"
+#include "runtime_config.hpp"
 
 namespace starpu_server::input_generator {
 
@@ -70,17 +71,15 @@ generate_random_tensor(
 // - dims and types must match model input signature
 // -----------------------------------------------------------------------------
 inline auto
-generate_random_inputs(
-    const std::vector<std::vector<int64_t>>& dims,
-    const std::vector<at::ScalarType>& types) -> std::vector<torch::Tensor>
+generate_random_inputs(const std::vector<TensorConfig>& tensors)
+    -> std::vector<torch::Tensor>
 {
   std::vector<torch::Tensor> inputs;
-  inputs.reserve(dims.size());
+  inputs.reserve(tensors.size());
 
-  for (size_t i = 0; i < dims.size(); ++i) {
-    const auto& dim = dims[i];
-    const at::ScalarType type = (i < types.size()) ? types[i] : at::kFloat;
-    inputs.push_back(generate_random_tensor(dim, type, i));
+  for (size_t i = 0; i < tensors.size(); ++i) {
+    const auto& t = tensors[i];
+    inputs.push_back(generate_random_tensor(t.dims, t.type, i));
   }
 
   return inputs;

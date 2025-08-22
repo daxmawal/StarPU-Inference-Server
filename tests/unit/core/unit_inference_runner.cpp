@@ -79,8 +79,14 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
 TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
 {
   const std::vector<std::vector<int64_t>> shapes{kShape2x3, kShape1};
+  std::vector<starpu_server::TensorConfig> cfgs;
+  cfgs.reserve(shapes.size());
+  for (size_t i = 0; i < shapes.size(); ++i) {
+    cfgs.push_back({
+        std::string("input") + std::to_string(i), shapes[i], kTypesFloatInt[i]});
+  }
   torch::manual_seed(0);
-  auto tensors = starpu_server::generate_inputs(shapes, kTypesFloatInt);
+  auto tensors = starpu_server::generate_inputs(cfgs);
   ASSERT_EQ(tensors.size(), 2U);
   EXPECT_EQ(
       tensors[0].sizes(), (torch::IntArrayRef{kShape2x3[0], kShape2x3[1]}));

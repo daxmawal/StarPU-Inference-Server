@@ -10,6 +10,17 @@
 
 namespace starpu_server {
 // =============================================================================
+// TensorConfig
+// -----------------------------------------------------------------------------
+// Configuration for a single tensor.
+// =============================================================================
+struct TensorConfig {
+  std::string name;
+  std::vector<int64_t> dims;
+  at::ScalarType type = at::ScalarType::Undefined;
+};
+
+// =============================================================================
 // RuntimeConfig
 // -----------------------------------------------------------------------------
 // Global configuration structure for inference runtime.
@@ -18,7 +29,7 @@ namespace starpu_server {
 //   - General settings (model, scheduler, etc.)
 //   - Device configuration (CPU, CUDA, GPU IDs)
 //   - Logging level
-//   - Model input layout (dims and types)
+//   - Model input/output layout
 // =============================================================================
 struct RuntimeConfig {
   std::string scheduler = "lws";
@@ -28,8 +39,8 @@ struct RuntimeConfig {
   int metrics_port = 9090;
 
   std::vector<int> device_ids;
-  std::vector<std::vector<int64_t>> input_dims;
-  std::vector<at::ScalarType> input_types;
+  std::vector<TensorConfig> inputs;
+  std::vector<TensorConfig> outputs;
 
   VerbosityLevel verbosity = VerbosityLevel::Info;
   int iterations = 1;
@@ -46,17 +57,15 @@ struct RuntimeConfig {
 
 inline auto
 compute_max_message_bytes(
-    int max_batch_size, const std::vector<std::vector<int64_t>>& dims,
-    const std::vector<at::ScalarType>& types) -> int
+    int max_batch_size, const std::vector<TensorConfig>& tensors) -> int
 {
   size_t per_sample_bytes = 0;
-  const size_t n = std::min(dims.size(), types.size());
-  for (size_t i = 0; i < n; ++i) {
+  for (const auto& t : tensors) {
     size_t numel = 1;
-    for (int64_t dim : dims[i]) {
-      numel *= static_cast<size_t>(dim);
+    for (int64_t d : t.dims) {
+      numel *= static_cast<size_t>(d);
     }
-    per_sample_bytes += numel * element_size(types[i]);
+    per_sample_bytes += numel * element_size(t.type);
   }
   return static_cast<int>(
       per_sample_bytes * static_cast<size_t>(max_batch_size));

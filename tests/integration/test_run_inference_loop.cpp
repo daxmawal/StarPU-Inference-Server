@@ -20,8 +20,7 @@ run_add_one_integration_test(
   model.save(model_path.string());
   starpu_server::RuntimeConfig opts;
   opts.model_path = model_path.string();
-  opts.input_dims = {{1}};
-  opts.input_types = {at::kFloat};
+  opts.inputs = {{"input0", {1}, at::kFloat}};
   opts.iterations = 1;
   opts.use_cpu = use_cpu;
   opts.use_cuda = use_cuda;
