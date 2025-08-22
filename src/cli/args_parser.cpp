@@ -124,12 +124,27 @@ parse_type_string(const std::string& type_str) -> at::ScalarType
 static auto
 parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 {
+  if (types_str.empty()) {
+    throw std::invalid_argument("No types provided.");
+  }
+
   std::vector<at::ScalarType> types;
-  std::stringstream shape_stream(types_str);
+  std::stringstream type_stream(types_str);
   std::string type_str;
 
-  while (std::getline(shape_stream, type_str, ',')) {
+  if (types_str.back() == ',') {
+    throw std::invalid_argument("Trailing comma in types string");
+  }
+
+  while (std::getline(type_stream, type_str, ',')) {
+    if (type_str.empty()) {
+      throw std::invalid_argument("Empty type in types string");
+    }
     types.push_back(parse_type_string(type_str));
+  }
+
+  if (types.empty()) {
+    throw std::invalid_argument("No types provided.");
   }
 
   return types;
