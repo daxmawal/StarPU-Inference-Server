@@ -33,7 +33,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputCPU)
 
   starpu_server::RuntimeConfig opts;
   opts.model_path = file.string();
-  opts.input_shapes = {kShape4};
+  opts.input_dims = {kShape4};
   opts.input_types = kTypesFloat;
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
@@ -45,7 +45,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputCPU)
 
   torch::manual_seed(42);
   auto inputs =
-      starpu_server::generate_inputs(opts.input_shapes, opts.input_types);
+      starpu_server::generate_inputs(opts.input_dims, opts.input_types);
   ASSERT_EQ(refs.size(), 1U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0] * 2));
 
@@ -60,7 +60,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTuple)
 
   starpu_server::RuntimeConfig opts;
   opts.model_path = file.string();
-  opts.input_shapes = {kShape2};
+  opts.input_dims = {kShape2};
   opts.input_types = kTypesFloat;
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
@@ -72,7 +72,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTuple)
 
   torch::manual_seed(1);
   auto inputs =
-      starpu_server::generate_inputs(opts.input_shapes, opts.input_types);
+      starpu_server::generate_inputs(opts.input_dims, opts.input_types);
   ASSERT_EQ(refs.size(), 2U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0]));
   EXPECT_TRUE(torch::allclose(refs[1], inputs[0] + 1));
@@ -88,7 +88,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTensorList)
 
   starpu_server::RuntimeConfig opts;
   opts.model_path = file.string();
-  opts.input_shapes = {kShape2};
+  opts.input_dims = {kShape2};
   opts.input_types = kTypesFloat;
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
@@ -100,7 +100,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTensorList)
 
   torch::manual_seed(2);
   auto inputs =
-      starpu_server::generate_inputs(opts.input_shapes, opts.input_types);
+      starpu_server::generate_inputs(opts.input_dims, opts.input_types);
   ASSERT_EQ(refs.size(), 2U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0]));
   EXPECT_TRUE(torch::allclose(refs[1], inputs[0] + 1));

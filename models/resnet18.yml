@@ -2,7 +2,7 @@ scheduler: lws
 model: ../models/resnet18.pt
 iterations: 10
 device_ids: [0]
-shapes:
+dims:
   - [1, 3, 224, 224]
 types:
   - float32

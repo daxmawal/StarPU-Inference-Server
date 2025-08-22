@@ -18,7 +18,7 @@ namespace starpu_server {
 //   - General settings (model, scheduler, etc.)
 //   - Device configuration (CPU, CUDA, GPU IDs)
 //   - Logging level
-//   - Model input layout (shapes and types)
+//   - Model input layout (dims and types)
 // =============================================================================
 struct RuntimeConfig {
   std::string scheduler = "lws";
@@ -28,7 +28,7 @@ struct RuntimeConfig {
   int metrics_port = 9090;
 
   std::vector<int> device_ids;
-  std::vector<std::vector<int64_t>> input_shapes;
+  std::vector<std::vector<int64_t>> input_dims;
   std::vector<at::ScalarType> input_types;
 
   VerbosityLevel verbosity = VerbosityLevel::Info;
@@ -46,14 +46,14 @@ struct RuntimeConfig {
 
 inline auto
 compute_max_message_bytes(
-    int max_batch_size, const std::vector<std::vector<int64_t>>& shapes,
+    int max_batch_size, const std::vector<std::vector<int64_t>>& dims,
     const std::vector<at::ScalarType>& types) -> int
 {
   size_t per_sample_bytes = 0;
-  const size_t n = std::min(shapes.size(), types.size());
+  const size_t n = std::min(dims.size(), types.size());
   for (size_t i = 0; i < n; ++i) {
     size_t numel = 1;
-    for (int64_t dim : shapes[i]) {
+    for (int64_t dim : dims[i]) {
       numel *= static_cast<size_t>(dim);
     }
     per_sample_bytes += numel * element_size(types[i]);

@@ -246,18 +246,18 @@ parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 static auto
 parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& input_shapes = opts.input_shapes;
-  return expect_and_parse(idx, args, [&input_shapes](const char* val) {
-    input_shapes = {parse_shape_string(val)};
+  auto& input_dims = opts.input_dims;
+  return expect_and_parse(idx, args, [&input_dims](const char* val) {
+    input_dims = {parse_shape_string(val)};
   });
 }
 
 static auto
 parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& input_shapes = opts.input_shapes;
-  return expect_and_parse(idx, args, [&input_shapes](const char* val) {
-    input_shapes = parse_shapes_string(val);
+  auto& input_dims = opts.input_dims;
+  return expect_and_parse(idx, args, [&input_dims](const char* val) {
+    input_dims = parse_shapes_string(val);
   });
 }
 
@@ -376,70 +376,28 @@ struct TransparentEqual {
 static auto
 parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 {
-  const std::unordered_map<
-      std::string, std::function<bool(size_t&)>, TransparentHash,
-      TransparentEqual>
+  using Parser = bool (*)(RuntimeConfig&, size_t&, std::span<char*>);
+  const static std::unordered_map<
+      std::string_view, Parser, TransparentHash, TransparentEqual>
       dispatch = {
-          {"--config",
-           [&opts, &args_span](size_t& idx) {
-             return parse_config(opts, idx, args_span);
-           }},
-          {"-c",
-           [&opts, &args_span](size_t& idx) {
-             return parse_config(opts, idx, args_span);
-           }},
-          {"--model",
-           [&opts, &args_span](size_t& idx) {
-             return parse_model(opts, idx, args_span);
-           }},
-          {"--iterations",
-           [&opts, &args_span](size_t& idx) {
-             return parse_iterations(opts, idx, args_span);
-           }},
-          {"--shape",
-           [&opts, &args_span](size_t& idx) {
-             return parse_shape(opts, idx, args_span);
-           }},
-          {"--shapes",
-           [&opts, &args_span](size_t& idx) {
-             return parse_shapes(opts, idx, args_span);
-           }},
-          {"--types",
-           [&opts, &args_span](size_t& idx) {
-             return parse_types(opts, idx, args_span);
-           }},
-          {"--verbose",
-           [&opts, &args_span](size_t& idx) {
-             return parse_verbose(opts, idx, args_span);
-           }},
-          {"--delay",
-           [&opts, &args_span](size_t& idx) {
-             return parse_delay(opts, idx, args_span);
-           }},
-          {"--device-ids",
-           [&opts, &args_span](size_t& idx) {
-             return parse_device_ids(opts, idx, args_span);
-           }},
-          {"--scheduler",
-           [&opts, &args_span](size_t& idx) {
-             return parse_scheduler(opts, idx, args_span);
-           }},
-          {"--address",
-           [&opts, &args_span](size_t& idx) {
-             return parse_address(opts, idx, args_span);
-           }},
-          {"--metrics-port",
-           [&opts, &args_span](size_t& idx) {
-             return parse_metrics_port(opts, idx, args_span);
-           }},
-          {"--max-batch-size",
-           [&opts, &args_span](size_t& idx) {
-             return parse_max_batch_size(opts, idx, args_span);
-           }},
+          {"--config", parse_config},
+          {"-c", parse_config},
+          {"--model", parse_model},
+          {"--iterations", parse_iterations},
+          {"--shape", parse_shape},
+          {"--shapes", parse_shapes},
+          {"--types", parse_types},
+          {"--verbose", parse_verbose},
+          {"--delay", parse_delay},
+          {"--device-ids", parse_device_ids},
+          {"--scheduler", parse_scheduler},
+          {"--address", parse_address},
+          {"--metrics-port", parse_metrics_port},
+          {"--max-batch-size", parse_max_batch_size},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
-    const std::string arg = args_span[idx];
+    const std::string_view arg = args_span[idx];
 
     if (arg == "--sync") {
       opts.synchronous = true;
@@ -449,7 +407,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
       opts.show_help = true;
       return true;
     } else if (auto iter = dispatch.find(arg); iter != dispatch.end()) {
-      if (!iter->second(idx)) {
+      if (!iter->second(opts, idx, args_span)) {
         return false;
       }
     } else {
@@ -471,10 +429,10 @@ validate_config(RuntimeConfig& opts) -> void
 {
   std::vector<std::string> missing;
   check_required(!opts.model_path.empty(), "--model", missing);
-  check_required(!opts.input_shapes.empty(), "--shape or --shapes", missing);
+  check_required(!opts.input_dims.empty(), "--shape or --shapes", missing);
   check_required(!opts.input_types.empty(), "--types", missing);
 
-  if (opts.input_shapes.size() != opts.input_types.size()) {
+  if (opts.input_dims.size() != opts.input_types.size()) {
     log_error("Number of --types must match number of input shapes.");
     opts.valid = false;
   }
@@ -500,9 +458,10 @@ parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
   }
 
   if (!opts.show_help) {
+    validate_config(opts);
     if (opts.valid) {
       opts.max_message_bytes = compute_max_message_bytes(
-          opts.max_batch_size, opts.input_shapes, opts.input_types);
+          opts.max_batch_size, opts.input_dims, opts.input_types);
     }
   }
 

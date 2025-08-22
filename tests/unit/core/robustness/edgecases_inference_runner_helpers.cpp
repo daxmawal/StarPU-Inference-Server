@@ -23,7 +23,7 @@ TEST(InferenceRunnerHelpers_Robustesse, LoadModelAndReferenceOutputCorruptFile)
 
   starpu_server::RuntimeConfig opts;
   opts.model_path = tmp_path.string();
-  opts.input_shapes = {{1}};
+  opts.input_dims = {{1}};
   opts.input_types = {torch::kFloat32};
 
   starpu_server::CaptureStream capture{std::cerr};
@@ -56,7 +56,7 @@ TEST_P(LoadModelAndReferenceOutputError_Robustesse, MissingFile)
 {
   starpu_server::RuntimeConfig opts;
   opts.model_path = "nonexistent_model.pt";
-  opts.input_shapes = {{1}};
+  opts.input_dims = {{1}};
   opts.input_types = {GetParam()};
   starpu_server::CaptureStream capture{std::cerr};
   auto [cpu_model, gpu_models, refs] =

@@ -13,8 +13,8 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
        "float"});
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.model_path, "model.pt");
-  ASSERT_EQ(opts.input_shapes.size(), 1U);
-  EXPECT_EQ(opts.input_shapes[0], (std::vector<int64_t>{1, 3, 224, 224}));
+  ASSERT_EQ(opts.input_dims.size(), 1U);
+  EXPECT_EQ(opts.input_dims[0], (std::vector<int64_t>{1, 3, 224, 224}));
   ASSERT_EQ(opts.input_types.size(), 1U);
   EXPECT_EQ(opts.input_types[0], at::kFloat);
 }
@@ -59,9 +59,9 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_FALSE(opts.use_cpu);
   EXPECT_TRUE(opts.use_cuda);
   ASSERT_EQ(opts.device_ids, (std::vector<int>{0, 1}));
-  ASSERT_EQ(opts.input_shapes.size(), 2U);
-  EXPECT_EQ(opts.input_shapes[0], (std::vector<int64_t>{1, 3, 224, 224}));
-  EXPECT_EQ(opts.input_shapes[1], (std::vector<int64_t>{2, 1}));
+  ASSERT_EQ(opts.input_dims.size(), 2U);
+  EXPECT_EQ(opts.input_dims[0], (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(opts.input_dims[1], (std::vector<int64_t>{2, 1}));
   ASSERT_EQ(opts.input_types.size(), 2U);
   EXPECT_EQ(opts.input_types[0], at::kFloat);
   EXPECT_EQ(opts.input_types[1], at::kInt);

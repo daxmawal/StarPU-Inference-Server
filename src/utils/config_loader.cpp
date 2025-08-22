@@ -95,9 +95,9 @@ load_config(const std::string& path) -> RuntimeConfig
         cfg.use_cuda = true;
       }
     }
-    if (root["shapes"]) {
-      for (const auto& shape_node : root["shapes"]) {
-        cfg.input_shapes.push_back(shape_node.as<std::vector<int64_t>>());
+    if (root["dims"]) {
+      for (const auto& dim_node : root["dims"]) {
+        cfg.input_dims.push_back(dim_node.as<std::vector<int64_t>>());
       }
     }
     if (root["types"]) {
@@ -137,7 +137,7 @@ load_config(const std::string& path) -> RuntimeConfig
       cfg.use_cuda = root["use_cuda"].as<bool>();
     }
     cfg.max_message_bytes = compute_max_message_bytes(
-        cfg.max_batch_size, cfg.input_shapes, cfg.input_types);
+        cfg.max_batch_size, cfg.input_dims, cfg.input_types);
   }
   catch (const std::exception& e) {
     log_error(std::string("Failed to load config: ") + e.what());
