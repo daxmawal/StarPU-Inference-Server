@@ -4,6 +4,7 @@
 
 #include "utils/input_generator.hpp"
 
+using starpu_server::TensorConfig;
 using starpu_server::UnsupportedDtypeException;
 using starpu_server::input_generator::BERT_VOCAB_SIZE;
 using starpu_server::input_generator::DEFAULT_INT_HIGH;
@@ -31,7 +32,15 @@ class InputGeneratorTest : public ::testing::Test {
       const std::vector<std::vector<int64_t>>& shapes,
       const std::vector<at::ScalarType>& types) -> std::vector<at::Tensor>
   {
-    return generate_random_inputs(shapes, types);
+    std::vector<TensorConfig> tensors;
+    tensors.reserve(shapes.size());
+    for (size_t i = 0; i < shapes.size(); ++i) {
+      TensorConfig cfg{};
+      cfg.dims = shapes[i];
+      cfg.type = i < types.size() ? types[i] : at::kFloat;
+      tensors.push_back(std::move(cfg));
+    }
+    return generate_random_inputs(tensors);
   }
 };
 
