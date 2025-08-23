@@ -49,8 +49,9 @@ main(int argc, char* argv[]) -> int
             << "Scheduler       : " << opts.scheduler << "\n"
             << "Iterations      : " << opts.iterations << "\n";
 
+  std::unique_ptr<starpu_server::StarPUSetup> starpu;
   try {
-    auto starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
+    starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
     starpu_server::run_inference_loop(opts, *starpu);
   }
   catch (const starpu_server::InferenceEngineException& e) {
