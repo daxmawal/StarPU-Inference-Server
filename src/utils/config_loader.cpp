@@ -153,6 +153,9 @@ load_config(const std::string& path) -> RuntimeConfig
     if (root["metrics_port"]) {
       cfg.metrics_port = root["metrics_port"].as<int>();
     }
+    if (root["max_message_bytes"]) {
+      cfg.max_message_bytes = root["max_message_bytes"].as<int>();
+    }
     if (root["max_batch_size"]) {
       cfg.max_batch_size = root["max_batch_size"].as<int>();
       if (cfg.max_batch_size <= 0) {
@@ -168,8 +171,8 @@ load_config(const std::string& path) -> RuntimeConfig
     if (root["use_cuda"]) {
       cfg.use_cuda = root["use_cuda"].as<bool>();
     }
-    cfg.max_message_bytes =
-        compute_max_message_bytes(cfg.max_batch_size, cfg.inputs);
+    cfg.max_message_bytes = compute_max_message_bytes(
+        cfg.max_batch_size, cfg.inputs, cfg.outputs, cfg.max_message_bytes);
   }
   catch (const std::exception& e) {
     log_error(std::string("Failed to load config: ") + e.what());
