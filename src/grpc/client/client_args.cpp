@@ -93,6 +93,7 @@ display_client_help(const char* prog_name)
       << "  --delay MS        Delay between requests in ms (default: 0)\n"
       << "  --shape WxHxC     Input tensor shape (e.g., 1x3x224x224)\n"
       << "  --type TYPE       Input tensor type (e.g., float32)\n"
+      << "  --input NAME:SHAPE:TYPE  Specify an input (may be repeated)\n"
       << "  --server ADDR     gRPC server address (default: localhost:50051)\n"
       << "  --model NAME      Model name (default: example)\n"
       << "  --version VER     Model version (default: 1)\n"
@@ -178,6 +179,11 @@ parse_shape(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&cfg](const char* val) {
     cfg.shape = parse_shape_string(val);
+    if (cfg.inputs.empty()) {
+      cfg.inputs.push_back({"input", cfg.shape, cfg.type});
+    } else {
+      cfg.inputs[0].shape = cfg.shape;
+    }
   });
 }
 
@@ -187,6 +193,36 @@ parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&cfg](const char* val) {
     cfg.type = parse_type_string(val);
+    if (cfg.inputs.empty()) {
+      cfg.inputs.push_back({"input", cfg.shape, cfg.type});
+    } else {
+      cfg.inputs[0].type = cfg.type;
+    }
+  });
+}
+
+auto
+parse_input(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
+{
+  return expect_and_parse(idx, args, [&cfg](const char* val) {
+    std::string token(val);
+    std::stringstream ss(token);
+    std::string name;
+    std::string shape_str;
+    std::string type_str;
+    if (!std::getline(ss, name, ':') || !std::getline(ss, shape_str, ':') ||
+        !std::getline(ss, type_str)) {
+      throw std::invalid_argument("Input must be NAME:SHAPE:TYPE");
+    }
+    InputConfig input{};
+    input.name = name;
+    input.shape = parse_shape_string(shape_str);
+    input.type = parse_type_string(type_str);
+    cfg.inputs.push_back(std::move(input));
+    if (cfg.inputs.size() == 1) {
+      cfg.shape = cfg.inputs[0].shape;
+      cfg.type = cfg.inputs[0].type;
+    }
   });
 }
 
@@ -236,8 +272,9 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       dispatch = {
           {"--iterations", parse_iterations}, {"--delay", parse_delay},
           {"--shape", parse_shape},           {"--type", parse_type},
-          {"--server", parse_server},         {"--model", parse_model},
-          {"--version", parse_version},       {"--verbose", parse_verbose},
+          {"--input", parse_input},           {"--server", parse_server},
+          {"--model", parse_model},           {"--version", parse_version},
+          {"--verbose", parse_verbose},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
@@ -272,7 +309,7 @@ auto
 validate_config(ClientConfig& cfg) -> void
 {
   std::vector<std::string> missing;
-  check_required(!cfg.shape.empty(), "--shape", missing);
+  check_required(!cfg.inputs.empty(), "--input", missing);
   if (!missing.empty()) {
     for (const auto& opt : missing) {
       log_error(std::format("{} option is required.", opt));

@@ -89,7 +89,7 @@ InferenceClient::ModelIsReady(
 
 void
 InferenceClient::AsyncModelInfer(
-    const torch::Tensor& tensor, const ClientConfig& cfg)
+    const std::vector<torch::Tensor>& tensors, const ClientConfig& cfg)
 {
   const int current_id = next_request_id_++;
 
@@ -107,17 +107,20 @@ InferenceClient::AsyncModelInfer(
           call->start_time.time_since_epoch())
           .count());
 
-  auto* input = request.add_inputs();
-  input->set_name("input");
-  input->set_datatype(scalar_type_to_string(cfg.type));
-  for (auto dim : cfg.shape) {
-    input->add_shape(dim);
+  for (size_t i = 0; i < cfg.inputs.size(); ++i) {
+    const auto& in_cfg = cfg.inputs[i];
+    const auto& tensor = tensors.at(i);
+    auto* input = request.add_inputs();
+    input->set_name(in_cfg.name);
+    input->set_datatype(scalar_type_to_string(in_cfg.type));
+    for (auto dim : in_cfg.shape) {
+      input->add_shape(dim);
+    }
+    auto flat = tensor.view({-1});
+    request.add_raw_input_contents()->assign(
+        reinterpret_cast<const char*>(flat.data_ptr()),
+        flat.numel() * flat.element_size());
   }
-
-  auto flat = tensor.view({-1});
-  request.add_raw_input_contents()->assign(
-      reinterpret_cast<const char*>(flat.data_ptr()),
-      flat.numel() * flat.element_size());
 
   call->response_reader = stub_->AsyncModelInfer(&call->context, request, &cq_);
   call->response_reader->Finish(&call->reply, &call->status, call.get());

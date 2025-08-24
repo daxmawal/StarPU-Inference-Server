@@ -53,11 +53,16 @@ main(int argc, char* argv[]) -> int
   }
 
   constexpr int NUM_TENSORS = 5;
-  std::vector<torch::Tensor> tensor_pool;
+  std::vector<std::vector<torch::Tensor>> tensor_pool;
   tensor_pool.reserve(NUM_TENSORS);
   for (int i = 0; i < NUM_TENSORS; ++i) {
-    tensor_pool.push_back(
-        torch::rand(config.shape, torch::TensorOptions().dtype(config.type)));
+    std::vector<torch::Tensor> tensors;
+    tensors.reserve(config.inputs.size());
+    for (const auto& in_cfg : config.inputs) {
+      tensors.push_back(
+          torch::rand(in_cfg.shape, torch::TensorOptions().dtype(in_cfg.type)));
+    }
+    tensor_pool.push_back(std::move(tensors));
   }
 
   // RNG for synthetic test data only; not used for security.  // NOSONAR

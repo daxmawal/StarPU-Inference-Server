@@ -7,10 +7,8 @@ TEST(ClientArgs, ParsesValidArguments)
 {
   const char* argv[] = {
       "prog",
-      "--shape",
-      "1x3x224x224",
-      "--type",
-      "float32",
+      "--input",
+      "input:1x3x224x224:float32",
       "--server",
       "localhost:1234",
       "--model",
@@ -25,8 +23,9 @@ TEST(ClientArgs, ParsesValidArguments)
       "2"};
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.shape, (std::vector<int64_t>{1, 3, 224, 224}));
-  EXPECT_EQ(cfg.type, at::kFloat);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].shape, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(cfg.inputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.server_address, "localhost:1234");
   EXPECT_EQ(cfg.model_name, "my_model");
   EXPECT_EQ(cfg.model_version, "2");
