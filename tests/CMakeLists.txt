@@ -20,12 +20,14 @@ add_executable(
   ${CORE_DIR}/starpu_setup.cpp
   ${CORE_DIR}/inference_runner.cpp
   ${GRPC_SERVER_DIR}/inference_service.cpp
+  ${SRC_DIR}/monitoring/metrics.cpp
   ${GRPC_CLIENT_DIR}/inference_client.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
   ${GRPC_CLIENT_DIR}/client_args.cpp
   ${UTILS_DIR}/inference_validator.cpp
   ${UTILS_DIR}/client_utils.cpp
-  ${UTILS_DIR}/time_utils.cpp)
+  ${UTILS_DIR}/time_utils.cpp
+  ${UTILS_DIR}/config_loader.cpp)
 
 set_target_properties(all_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                            ${CMAKE_BINARY_DIR})
@@ -58,7 +60,9 @@ target_link_libraries(
           ${Protobuf_LIBRARIES}
           Threads::Threads
           ${ABSL_LIBS}
-          StarPU::starpu)
+          StarPU::starpu
+          prometheus-cpp::pull
+          yaml-cpp::yaml-cpp)
 
 if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(all_tests PRIVATE -fprofile-arcs -ftest-coverage -O0

@@ -55,14 +55,16 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
 TEST(ClientUtils, PreGenerateInputsProducesValidTensors)
 {
   starpu_server::RuntimeConfig opts;
-  opts.input_shapes = {{2, 3}, {1}};
-  opts.input_types = {at::kFloat, at::kInt};
+  opts.inputs = {
+      {"input0", {2, 3}, at::kFloat},
+      {"input1", {1}, at::kInt},
+  };
   const size_t batch_size = 3;
   auto batches =
       starpu_server::client_utils::pre_generate_inputs(opts, batch_size);
   ASSERT_EQ(batches.size(), batch_size);
   for (const auto& tensors : batches) {
-    ASSERT_EQ(tensors.size(), opts.input_shapes.size());
+    ASSERT_EQ(tensors.size(), opts.inputs.size());
     EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{2, 3}));
     EXPECT_EQ(tensors[0].dtype(), at::kFloat);
     EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1}));

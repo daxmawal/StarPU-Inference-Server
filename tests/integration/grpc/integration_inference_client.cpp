@@ -18,12 +18,11 @@ TEST(InferenceClient, ShutdownClosesCompletionQueue)
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
 
   starpu_server::ClientConfig cfg;
-  cfg.shape = {1};
-  cfg.type = at::kFloat;
-  torch::Tensor tensor =
-      torch::zeros(cfg.shape, torch::TensorOptions().dtype(cfg.type));
+  cfg.inputs = {{"input", {1}, at::kFloat}};
+  torch::Tensor tensor = torch::zeros(
+      cfg.inputs[0].shape, torch::TensorOptions().dtype(cfg.inputs[0].type));
 
-  client.AsyncModelInfer(tensor, cfg);
+  client.AsyncModelInfer({tensor}, cfg);
   client.Shutdown();
 
   SUCCEED();
@@ -85,12 +84,11 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
 
   starpu_server::ClientConfig cfg;
-  cfg.shape = {1};
-  cfg.type = at::kFloat;
-  torch::Tensor tensor =
-      torch::zeros(cfg.shape, torch::TensorOptions().dtype(cfg.type));
+  cfg.inputs = {{"input", {1}, at::kFloat}};
+  torch::Tensor tensor = torch::zeros(
+      cfg.inputs[0].shape, torch::TensorOptions().dtype(cfg.inputs[0].type));
 
-  client.AsyncModelInfer(tensor, cfg);
+  client.AsyncModelInfer({tensor}, cfg);
 
   client.Shutdown();
   cq_thread.join();

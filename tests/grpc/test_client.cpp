@@ -23,10 +23,8 @@ TEST(ClientArgs, ParsesValidArguments)
 {
   const char* argv[] = {
       "prog",
-      "--shape",
-      "1x3x224x224",
-      "--type",
-      "float32",
+      "--input",
+      "input:1x3x224x224:float32",
       "--server",
       "localhost:1234",
       "--model",
@@ -41,8 +39,10 @@ TEST(ClientArgs, ParsesValidArguments)
       "2"};
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.shape, (std::vector<int64_t>{1, 3, 224, 224}));
-  EXPECT_EQ(cfg.type, at::kFloat);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].name, "input");
+  EXPECT_EQ(cfg.inputs[0].shape, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(cfg.inputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.server_address, "localhost:1234");
   EXPECT_EQ(cfg.model_name, "my_model");
   EXPECT_EQ(cfg.model_version, "2");
@@ -53,9 +53,29 @@ TEST(ClientArgs, ParsesValidArguments)
 
 TEST(ClientArgs, InvalidTypeIsDetected)
 {
-  const char* argv[] = {"prog", "--shape", "1", "--type", "unknown"};
+  const char* argv[] = {"prog", "--input", "foo:1:unknown"};
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ClientArgs, ParsesMultipleInputs)
+{
+  const char* argv[] = {
+      "prog",
+      "--input",
+      "input_ids:1x8:int64",
+      "--input",
+      "attention_mask:1x8:int64",
+      "--input",
+      "token_type_ids:1x8:int64"};
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.inputs.size(), 3U);
+  EXPECT_EQ(cfg.inputs[0].name, "input_ids");
+  EXPECT_EQ(cfg.inputs[1].name, "attention_mask");
+  EXPECT_EQ(cfg.inputs[2].name, "token_type_ids");
+  EXPECT_EQ(cfg.inputs[0].shape, (std::vector<int64_t>{1, 8}));
+  EXPECT_EQ(cfg.inputs[0].type, at::kLong);
 }
 
 TEST(ClientArgs, NegativeIterationsMarkedInvalid)
@@ -108,12 +128,11 @@ TEST(InferenceClient, ShutdownClosesCompletionQueue)
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
 
   starpu_server::ClientConfig cfg;
-  cfg.shape = {1};
-  cfg.type = at::kFloat;
-  torch::Tensor tensor =
-      torch::zeros(cfg.shape, torch::TensorOptions().dtype(cfg.type));
+  cfg.inputs = {{"input", {1}, at::kFloat}};
+  torch::Tensor tensor = torch::zeros(
+      cfg.inputs[0].shape, torch::TensorOptions().dtype(cfg.inputs[0].type));
 
-  client.AsyncModelInfer(tensor, cfg);
+  client.AsyncModelInfer({tensor}, cfg);
   client.Shutdown();
 
   SUCCEED();
@@ -193,18 +212,49 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
 
   starpu_server::ClientConfig cfg;
-  cfg.shape = {1};
-  cfg.type = at::kFloat;
-  torch::Tensor tensor =
-      torch::zeros(cfg.shape, torch::TensorOptions().dtype(cfg.type));
+  cfg.inputs = {{"input", {1}, at::kFloat}};
+  torch::Tensor tensor = torch::zeros(
+      cfg.inputs[0].shape, torch::TensorOptions().dtype(cfg.inputs[0].type));
 
-  client.AsyncModelInfer(tensor, cfg);
+  client.AsyncModelInfer({tensor}, cfg);
 
   client.Shutdown();
   cq_thread.join();
   auto logs = testing::internal::GetCapturedStdout();
   EXPECT_NE(logs.find("Request ID 0"), std::string::npos);
   EXPECT_NE(logs.find("latency"), std::string::npos);
+
+  starpu_server::StopServer(server.server);
+  server.thread.join();
+  EXPECT_EQ(server.server, nullptr);
+}
+
+TEST(InferenceClient, AsyncModelInferHandlesBertInputs)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs = {torch::zeros({1})};
+  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:" + std::to_string(server.port),
+      grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  std::jthread cq_thread(
+      &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
+
+  starpu_server::ClientConfig cfg;
+  cfg.inputs = {
+      {"input_ids", {1, 8}, at::kLong}, {"attention_mask", {1, 8}, at::kLong}};
+  std::vector<torch::Tensor> tensors = {
+      torch::zeros({1, 8}, torch::TensorOptions().dtype(at::kLong)),
+      torch::zeros({1, 8}, torch::TensorOptions().dtype(at::kLong))};
+
+  client.AsyncModelInfer(tensors, cfg);
+
+  client.Shutdown();
+  cq_thread.join();
 
   starpu_server::StopServer(server.server);
   server.thread.join();

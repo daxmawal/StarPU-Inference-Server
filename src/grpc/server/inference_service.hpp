@@ -14,7 +14,8 @@ class InferenceServiceImpl final
  public:
   InferenceServiceImpl(
       InferenceQueue* queue,
-      const std::vector<torch::Tensor>* reference_outputs);
+      const std::vector<torch::Tensor>* reference_outputs,
+      std::vector<at::ScalarType> expected_input_types);
 
   auto ServerLive(
       grpc::ServerContext* context, const inference::ServerLiveRequest* request,
@@ -43,18 +44,20 @@ class InferenceServiceImpl final
       const std::vector<torch::Tensor>& inputs,
       std::vector<torch::Tensor>& outputs) -> grpc::Status;
 
-  static auto validate_and_convert_inputs(
+  auto validate_and_convert_inputs(
       const inference::ModelInferRequest* request,
       std::vector<torch::Tensor>& inputs) -> grpc::Status;
 
  private:
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
+  std::vector<at::ScalarType> expected_input_types_;
   std::atomic<int> next_job_id_{0};
 };
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<at::ScalarType>& expected_input_types,
     const std::string& address, int max_message_bytes,
     std::unique_ptr<grpc::Server>& server);
 

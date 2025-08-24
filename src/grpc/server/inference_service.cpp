@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "monitoring/metrics.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/datatype_utils.hpp"
 
@@ -31,13 +32,12 @@ namespace {
 // Convert gRPC input to torch::Tensor
 auto
 convert_input_to_tensor(
-    const ModelInferRequest::InferInputTensor& input, const std::string& raw)
+    const ModelInferRequest::InferInputTensor& input, const std::string& raw,
+    at::ScalarType dtype)
 {
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
-  const auto dtype = datatype_to_scalar_type(input.datatype());
   auto tensor = torch::empty(shape, torch::TensorOptions().dtype(dtype));
   std::memcpy(tensor.data_ptr(), raw.data(), raw.size());
-
   return tensor;
 }
 
@@ -65,8 +65,10 @@ fill_output_tensor(
 
 // Implementation
 InferenceServiceImpl::InferenceServiceImpl(
-    InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs)
-    : queue_(queue), reference_outputs_(reference_outputs)
+    InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
+    std::vector<at::ScalarType> expected_input_types)
+    : queue_(queue), reference_outputs_(reference_outputs),
+      expected_input_types_(std::move(expected_input_types))
 {
 }
 
@@ -113,7 +115,20 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const auto& input = request->inputs(i);
     const auto& raw = request->raw_input_contents(i);
 
-    const auto dtype = datatype_to_scalar_type(input.datatype());
+    at::ScalarType dtype;
+    try {
+      dtype = datatype_to_scalar_type(input.datatype());
+    }
+    catch (const std::invalid_argument& e) {
+      return Status(grpc::StatusCode::INVALID_ARGUMENT, e.what());
+    }
+
+    if (i >= static_cast<int>(expected_input_types_.size()) ||
+        dtype != expected_input_types_[i]) {
+      return Status(
+          grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch");
+    }
+
     size_t expected = element_size(dtype);
     for (const auto dim : input.shape()) {
       expected *= static_cast<size_t>(dim);
@@ -124,7 +139,7 @@ InferenceServiceImpl::validate_and_convert_inputs(
           "Input tensor shape does not match raw content size");
     }
 
-    inputs.push_back(convert_input_to_tensor(input, raw));
+    inputs.push_back(convert_input_to_tensor(input, raw, dtype));
   }
 
   return Status::OK;
@@ -172,6 +187,10 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
+  if (requests_total != nullptr) {
+    requests_total->Increment();
+  }
+
   auto recv_tp = std::chrono::high_resolution_clock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         recv_tp.time_since_epoch())
@@ -195,16 +214,24 @@ InferenceServiceImpl::ModelInfer(
                         .count();
 
   populate_response(request, reply, outputs, recv_ms, send_ms);
+
+  if (inference_latency != nullptr) {
+    const auto latency_ms =
+        std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
+    inference_latency->Observe(latency_ms);
+  }
   return Status::OK;
 }
 
 void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<at::ScalarType>& expected_input_types,
     const std::string& address, int max_message_bytes,
     std::unique_ptr<Server>& server)
 {
-  InferenceServiceImpl service(&queue, &reference_outputs);
+  InferenceServiceImpl service(
+      &queue, &reference_outputs, expected_input_types);
 
   ServerBuilder builder;
   builder.AddListeningPort(address, grpc::InsecureServerCredentials());

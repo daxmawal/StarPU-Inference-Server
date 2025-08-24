@@ -13,6 +13,7 @@
 #include "client_args.hpp"
 #include "grpc_service.grpc.pb.h"
 #include "inference_client.hpp"
+#include "utils/input_generator.hpp"
 #include "utils/logger.hpp"
 
 auto
@@ -53,11 +54,17 @@ main(int argc, char* argv[]) -> int
   }
 
   constexpr int NUM_TENSORS = 5;
-  std::vector<torch::Tensor> tensor_pool;
+  std::vector<std::vector<torch::Tensor>> tensor_pool;
   tensor_pool.reserve(NUM_TENSORS);
   for (int i = 0; i < NUM_TENSORS; ++i) {
-    tensor_pool.push_back(
-        torch::rand(config.shape, torch::TensorOptions().dtype(config.type)));
+    std::vector<torch::Tensor> tensors;
+    tensors.reserve(config.inputs.size());
+    for (size_t j = 0; j < config.inputs.size(); ++j) {
+      const auto& in_cfg = config.inputs[j];
+      tensors.push_back(starpu_server::input_generator::generate_random_tensor(
+          in_cfg.shape, in_cfg.type, j));
+    }
+    tensor_pool.push_back(std::move(tensors));
   }
 
   // RNG for synthetic test data only; not used for security.  // NOSONAR

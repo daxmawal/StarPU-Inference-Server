@@ -6,6 +6,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "client_args.hpp"
 #include "grpc_service.grpc.pb.h"
@@ -24,7 +25,8 @@ class InferenceClient {
   auto ServerIsReady() -> bool;
   auto ModelIsReady(const std::string& name, const std::string& version)
       -> bool;
-  void AsyncModelInfer(const torch::Tensor& tensor, const ClientConfig& cfg);
+  void AsyncModelInfer(
+      const std::vector<torch::Tensor>& tensors, const ClientConfig& cfg);
   void AsyncCompleteRpc();
   void Shutdown();
 

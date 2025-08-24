@@ -2,15 +2,17 @@
 #include <csignal>
 #include <iostream>
 #include <memory>
+#include <string_view>
 #include <thread>
 
-#include "cli/args_parser.hpp"
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
 #include "core/warmup.hpp"
 #include "inference_service.hpp"
+#include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
+#include "utils/config_loader.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 #include "utils/runtime_config.hpp"
@@ -48,24 +50,33 @@ signal_handler(int /*signal*/)
 auto
 handle_program_arguments(int argc, char* argv[]) -> starpu_server::RuntimeConfig
 {
-  const starpu_server::RuntimeConfig opts = starpu_server::parse_arguments(
-      std::span<char*>(argv, static_cast<size_t>(argc)));
+  const char* config_path = nullptr;
 
-  if (opts.show_help) {
-    starpu_server::display_help("Inference Engine");
-    std::exit(0);
+  for (int i = 1; i < argc - 1; ++i) {
+    std::string_view arg{argv[i]};
+    if ((arg == "--config" || arg == "-c") && argv[i + 1] != nullptr) {
+      config_path = argv[i + 1];
+      break;
+    }
   }
 
-  if (!opts.valid) {
-    starpu_server::log_fatal("Invalid program options.\n");
+  if (config_path == nullptr) {
+    starpu_server::log_fatal("Missing required --config argument.\n");
+  }
+
+  starpu_server::RuntimeConfig cfg = starpu_server::load_config(config_path);
+  cfg.config_path = config_path;
+
+  if (!cfg.valid) {
+    starpu_server::log_fatal("Invalid configuration file.\n");
   }
 
   std::cout << "__cplusplus = " << __cplusplus << "\n"
             << "LibTorch version: " << TORCH_VERSION << "\n"
-            << "Scheduler       : " << opts.scheduler << "\n"
-            << "Iterations      : " << opts.iterations << "\n";
+            << "Scheduler       : " << cfg.scheduler << "\n"
+            << "Iterations      : " << cfg.iterations << "\n";
 
-  return opts;
+  return cfg;
 }
 
 std::tuple<
@@ -111,10 +122,15 @@ launch_threads(
   starpu_server::StarPUTaskRunner worker(config);
 
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
-  std::jthread grpc_thread([&]() {
+  std::vector<at::ScalarType> expected_input_types;
+  expected_input_types.reserve(opts.inputs.size());
+  for (const auto& t : opts.inputs) {
+    expected_input_types.push_back(t.type);
+  }
+  std::jthread grpc_thread([&, expected_input_types]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, opts.server_address, opts.max_message_bytes,
-        ctx.server);
+        queue, reference_outputs, expected_input_types, opts.server_address,
+        opts.max_message_bytes, ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);
@@ -131,6 +147,7 @@ main(int argc, char* argv[]) -> int
 {
   try {
     starpu_server::RuntimeConfig opts = handle_program_arguments(argc, argv);
+    starpu_server::init_metrics(opts.metrics_port);
     starpu_server::StarPUSetup starpu(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);

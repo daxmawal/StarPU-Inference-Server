@@ -124,12 +124,27 @@ parse_type_string(const std::string& type_str) -> at::ScalarType
 static auto
 parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 {
+  if (types_str.empty()) {
+    throw std::invalid_argument("No types provided.");
+  }
+
   std::vector<at::ScalarType> types;
-  std::stringstream shape_stream(types_str);
+  std::stringstream type_stream(types_str);
   std::string type_str;
 
-  while (std::getline(shape_stream, type_str, ',')) {
+  if (types_str.back() == ',') {
+    throw std::invalid_argument("Trailing comma in types string");
+  }
+
+  while (std::getline(type_stream, type_str, ',')) {
+    if (type_str.empty()) {
+      throw std::invalid_argument("Empty type in types string");
+    }
     types.push_back(parse_type_string(type_str));
+  }
+
+  if (types.empty()) {
+    throw std::invalid_argument("No types provided.");
   }
 
   return types;
@@ -219,6 +234,17 @@ parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 static auto
+parse_config(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  if (idx + 1 >= args.size()) {
+    return false;
+  }
+  ++idx;
+  opts.config_path = args[idx];
+  return true;
+}
+
+static auto
 parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
@@ -235,27 +261,46 @@ parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 static auto
 parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& input_shapes = opts.input_shapes;
-  return expect_and_parse(idx, args, [&input_shapes](const char* val) {
-    input_shapes = {parse_shape_string(val)};
+  auto& inputs = opts.inputs;
+  return expect_and_parse(idx, args, [&inputs](const char* val) {
+    auto dims = parse_shape_string(val);
+    inputs.resize(1);
+    inputs[0].name = inputs[0].name.empty() ? "input0" : inputs[0].name;
+    inputs[0].dims = std::move(dims);
   });
 }
 
 static auto
 parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& input_shapes = opts.input_shapes;
-  return expect_and_parse(idx, args, [&input_shapes](const char* val) {
-    input_shapes = parse_shapes_string(val);
+  auto& inputs = opts.inputs;
+  return expect_and_parse(idx, args, [&inputs](const char* val) {
+    auto dims_list = parse_shapes_string(val);
+    inputs.resize(dims_list.size());
+    for (size_t i = 0; i < dims_list.size(); ++i) {
+      inputs[i].name = inputs[i].name.empty()
+                           ? std::string("input") + std::to_string(i)
+                           : inputs[i].name;
+      inputs[i].dims = std::move(dims_list[i]);
+    }
   });
 }
 
 static auto
 parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& input_types = opts.input_types;
-  return expect_and_parse(idx, args, [&input_types](const char* val) {
-    input_types = parse_types_string(val);
+  auto& inputs = opts.inputs;
+  return expect_and_parse(idx, args, [&inputs](const char* val) {
+    auto types = parse_types_string(val);
+    if (inputs.size() < types.size()) {
+      inputs.resize(types.size());
+    }
+    for (size_t i = 0; i < types.size(); ++i) {
+      inputs[i].name = inputs[i].name.empty()
+                           ? std::string("input") + std::to_string(i)
+                           : inputs[i].name;
+      inputs[i].type = types[i];
+    }
   });
 }
 
@@ -313,16 +358,29 @@ parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 static auto
-parse_max_msg_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+parse_max_batch_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& max_message_bytes = opts.max_message_bytes;
-  return expect_and_parse(idx, args, [&max_message_bytes](const char* val) {
+  auto& max_batch_size = opts.max_batch_size;
+  return expect_and_parse(idx, args, [&max_batch_size](const char* val) {
     const int tmp = std::stoi(val);
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
     }
-    max_message_bytes = tmp;
+    max_batch_size = tmp;
+  });
+}
+
+static auto
+parse_metrics_port(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& metrics_port = opts.metrics_port;
+  return expect_and_parse(idx, args, [&metrics_port](const char* val) {
+    metrics_port = std::stoi(val);
+    if (metrics_port <= 0) {
+      throw std::invalid_argument("Must be > 0.");
+    }
   });
 }
 
@@ -352,58 +410,28 @@ struct TransparentEqual {
 static auto
 parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
 {
-  const std::unordered_map<
-      std::string, std::function<bool(size_t&)>, TransparentHash,
-      TransparentEqual>
+  using Parser = bool (*)(RuntimeConfig&, size_t&, std::span<char*>);
+  const static std::unordered_map<
+      std::string_view, Parser, TransparentHash, TransparentEqual>
       dispatch = {
-          {"--model",
-           [&opts, &args_span](size_t& idx) {
-             return parse_model(opts, idx, args_span);
-           }},
-          {"--iterations",
-           [&opts, &args_span](size_t& idx) {
-             return parse_iterations(opts, idx, args_span);
-           }},
-          {"--shape",
-           [&opts, &args_span](size_t& idx) {
-             return parse_shape(opts, idx, args_span);
-           }},
-          {"--shapes",
-           [&opts, &args_span](size_t& idx) {
-             return parse_shapes(opts, idx, args_span);
-           }},
-          {"--types",
-           [&opts, &args_span](size_t& idx) {
-             return parse_types(opts, idx, args_span);
-           }},
-          {"--verbose",
-           [&opts, &args_span](size_t& idx) {
-             return parse_verbose(opts, idx, args_span);
-           }},
-          {"--delay",
-           [&opts, &args_span](size_t& idx) {
-             return parse_delay(opts, idx, args_span);
-           }},
-          {"--device-ids",
-           [&opts, &args_span](size_t& idx) {
-             return parse_device_ids(opts, idx, args_span);
-           }},
-          {"--scheduler",
-           [&opts, &args_span](size_t& idx) {
-             return parse_scheduler(opts, idx, args_span);
-           }},
-          {"--address",
-           [&opts, &args_span](size_t& idx) {
-             return parse_address(opts, idx, args_span);
-           }},
-          {"--max-msg-size",
-           [&opts, &args_span](size_t& idx) {
-             return parse_max_msg_size(opts, idx, args_span);
-           }},
+          {"--config", parse_config},
+          {"-c", parse_config},
+          {"--model", parse_model},
+          {"--iterations", parse_iterations},
+          {"--shape", parse_shape},
+          {"--shapes", parse_shapes},
+          {"--types", parse_types},
+          {"--verbose", parse_verbose},
+          {"--delay", parse_delay},
+          {"--device-ids", parse_device_ids},
+          {"--scheduler", parse_scheduler},
+          {"--address", parse_address},
+          {"--metrics-port", parse_metrics_port},
+          {"--max-batch-size", parse_max_batch_size},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
-    const std::string arg = args_span[idx];
+    const std::string_view arg = args_span[idx];
 
     if (arg == "--sync") {
       opts.synchronous = true;
@@ -413,7 +441,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
       opts.show_help = true;
       return true;
     } else if (auto iter = dispatch.find(arg); iter != dispatch.end()) {
-      if (!iter->second(idx)) {
+      if (!iter->second(opts, idx, args_span)) {
         return false;
       }
     } else {
@@ -435,12 +463,23 @@ validate_config(RuntimeConfig& opts) -> void
 {
   std::vector<std::string> missing;
   check_required(!opts.model_path.empty(), "--model", missing);
-  check_required(!opts.input_shapes.empty(), "--shape or --shapes", missing);
-  check_required(!opts.input_types.empty(), "--types", missing);
+  const bool have_shapes = std::any_of(
+      opts.inputs.begin(), opts.inputs.end(),
+      [](const auto& t) { return !t.dims.empty(); });
+  const bool have_types = std::all_of(
+      opts.inputs.begin(), opts.inputs.end(),
+      [](const auto& t) { return t.type != at::ScalarType::Undefined; });
+  check_required(have_shapes, "--shape or --shapes", missing);
+  check_required(have_types, "--types", missing);
 
-  if (opts.input_shapes.size() != opts.input_types.size()) {
-    log_error("Number of --types must match number of input shapes.");
-    opts.valid = false;
+  if (have_shapes && have_types) {
+    for (const auto& t : opts.inputs) {
+      if (t.dims.empty() || t.type == at::ScalarType::Undefined) {
+        log_error("Number of --types must match number of input shapes.");
+        opts.valid = false;
+        break;
+      }
+    }
   }
 
   if (!missing.empty()) {
@@ -456,10 +495,8 @@ validate_config(RuntimeConfig& opts) -> void
 // =============================================================================
 
 auto
-parse_arguments(std::span<char*> args_span) -> RuntimeConfig
+parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
 {
-  RuntimeConfig opts;
-
   if (!parse_argument_values(args_span, opts)) {
     opts.valid = false;
     return opts;
@@ -467,6 +504,11 @@ parse_arguments(std::span<char*> args_span) -> RuntimeConfig
 
   if (!opts.show_help) {
     validate_config(opts);
+    if (opts.valid) {
+      opts.max_message_bytes = compute_max_message_bytes(
+          opts.max_batch_size, opts.inputs, opts.outputs,
+          opts.max_message_bytes);
+    }
   }
 
   return opts;

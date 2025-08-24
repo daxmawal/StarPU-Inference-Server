@@ -19,7 +19,6 @@ find_package(StarPU REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
-find_package(Threads REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
 
 set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
@@ -33,7 +32,40 @@ if(BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 endif()
 
+FetchContent_Declare(
+  prometheus-cpp
+  GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
+  GIT_TAG v1.1.0)
+set(ENABLE_PULL
+    ON
+    CACHE BOOL "" FORCE)
+set(ENABLE_PUSH
+    OFF
+    CACHE BOOL "" FORCE)
+set(ENABLE_COMPRESSION
+    OFF
+    CACHE BOOL "" FORCE)
+set(ENABLE_TESTING
+    OFF
+    CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(prometheus-cpp)
+
 add_subdirectory(${SRC_DIR}/proto)
+
+# === yaml-cpp via FetchContent ===
+include(FetchContent)
+
+set(YAML_CPP_BUILD_TESTS
+    OFF
+    CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS
+    OFF
+    CACHE BOOL "" FORCE)
+
+FetchContent_Declare(yaml-cpp
+                     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git)
+
+FetchContent_MakeAvailable(yaml-cpp)
 
 # === Executable ===
 add_executable(starpu_server)
@@ -47,8 +79,10 @@ target_sources(
           ${SRC_DIR}/core/tensor_builder.cpp
           ${SRC_DIR}/core/warmup.cpp
           ${SRC_DIR}/utils/client_utils.cpp
+          ${SRC_DIR}/utils/config_loader.cpp
           ${SRC_DIR}/utils/inference_validator.cpp
           ${SRC_DIR}/utils/time_utils.cpp
+          ${SRC_DIR}/monitoring/metrics.cpp
           ${SRC_DIR}/starpu_task_worker/starpu_task_worker.cpp)
 
 target_compile_features(starpu_server PRIVATE cxx_std_23)
@@ -129,8 +163,15 @@ endif()
 
 # === Linking ===
 target_link_libraries(
-  starpu_server PRIVATE Torch::Torch protobuf::libprotobuf gRPC::grpc++
-                        utf8_range::utf8_range StarPU::starpu ${ABSL_LIBS})
+  starpu_server
+  PRIVATE Torch::Torch
+          protobuf::libprotobuf
+          gRPC::grpc++
+          utf8_range::utf8_range
+          StarPU::starpu
+          yaml-cpp::yaml-cpp
+          prometheus-cpp::pull
+          ${ABSL_LIBS})
 
 # === Status Messages ===
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")

@@ -51,8 +51,7 @@ pre_generate_inputs(const RuntimeConfig& opts, size_t num_inputs)
   std::vector<std::vector<torch::Tensor>> inputs;
   inputs.reserve(num_inputs);
   std::generate_n(std::back_inserter(inputs), num_inputs, [&]() {
-    return input_generator::generate_random_inputs(
-        opts.input_shapes, opts.input_types);
+    return input_generator::generate_random_inputs(opts.inputs);
   });
   return inputs;
 }

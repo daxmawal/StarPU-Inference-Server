@@ -19,6 +19,7 @@ get_help_message(const char* prog_name) -> std::string
       " [OPTIONS]\n"
       "\nOptions:\n"
       "  --scheduler [name]      Scheduler type (default: lws)\n"
+      "  --config [file]         YAML configuration file\n"
       "  --model [path]          Path to TorchScript model file (.pt)\n"
       "  --iterations [num]      Number of iterations (default: 1)\n"
       "  --shape 1x3x224x224     Shape of a single input tensor\n"
@@ -29,7 +30,8 @@ get_help_message(const char* prog_name) -> std::string
       "  --no_cpu                Disable CPU usage\n"
       "  --device-ids 0,1        GPU device IDs for inference\n"
       "  --address ADDR          gRPC server listen address\n"
-      "  --max-msg-size BYTES    Max gRPC message size in bytes\n"
+      "  --metrics-port [port]   Port for metrics exposition (default: 9090)\n"
+      "  --max-batch-size N      Maximum inference batch size\n"
       "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
       "  --help                  Show this help message\n";
   return msg;
@@ -41,5 +43,6 @@ display_help(const char* prog_name)
   std::cout << get_help_message(prog_name);
 }
 
-auto parse_arguments(std::span<char*> args_span) -> RuntimeConfig;
+auto parse_arguments(std::span<char*> args_span, RuntimeConfig opts = {})
+    -> RuntimeConfig;
 }  // namespace starpu_server

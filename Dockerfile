@@ -1,18 +1,22 @@
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04 AS build-base
+ARG CUDA_VERSION=11.8.0
+ARG UBUNTU_VERSION=22.04
+FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu${UBUNTU_VERSION} AS build
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/root
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV TORCH_CUDA_ARCH_LIST="8.0;8.6"
+ENV CMAKE_CUDA_ARCHITECTURES="80;86"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
 ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
+ARG CMAKE_PREFIX_PATH=""
 ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 
-# Create working directories
+# Create working directories and install build dependencies
 RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
-    apt-get update && apt-get install -y \
+    apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
     automake \
     build-essential \
@@ -28,42 +32,46 @@ RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
     software-properties-common \
     unzip \
     wget \
-    && rm -rf /var/lib/apt/lists/*
+    libfxt-dev \
+    libgtest-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# === Install CMake 3.28+ ===
-RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-x86_64.tar.gz \
+# === Install CMake ${CMAKE_VERSION} ===
+ARG CMAKE_VERSION=3.28.3
+RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz \
     | tar --strip-components=1 -xz -C /usr/local
 
-# === Install GCC 13 and set it as default ===
+# === Install GCC ${GCC_VERSION} and set it as default ===
+ARG GCC_VERSION=13
 RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
-    apt-get update && apt-get install -y g++-13 && \
-    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100 && \
-    update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-13 100
+    apt-get update && apt-get install -y --no-install-recommends g++-${GCC_VERSION} && \
+    apt-get purge -y --auto-remove software-properties-common && \
+    apt-get clean && rm -rf /var/lib/apt/lists/* && \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${GCC_VERSION} 100 && \
+    update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-${GCC_VERSION} 100
 
-# === Install libtorch ===
+# === Install libtorch ${LIBTORCH_VERSION} (${LIBTORCH_CUDA}) ===
+ARG LIBTORCH_VERSION=2.2.2
+ARG LIBTORCH_CUDA=cu118
 RUN mkdir -p $INSTALL_DIR/libtorch && \
-    wget https://download.pytorch.org/libtorch/cu118/libtorch-cxx11-abi-shared-with-deps-2.2.2%2Bcu118.zip -O /tmp/libtorch.zip && \
+    wget https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip -O /tmp/libtorch.zip && \
     unzip /tmp/libtorch.zip -d $INSTALL_DIR && \
     rm /tmp/libtorch.zip
 
-# === Install FXT (required for --with-fxt in StarPU) ===
-RUN apt-get update && apt-get install -y \
-    libfxt-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 # === Build and install Abseil ===
-RUN git clone -b 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil && \
+RUN git clone --depth 1 --branch 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil && \
     cd /tmp/abseil && mkdir build && cd build && \
     cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/absl \
     -DBUILD_SHARED_LIBS=OFF && \
-    make && make install && \
+    make -j"$(nproc)" && make install && \
     rm -rf /tmp/abseil
 
 # === Build and install Protobuf 25.3 (static) ===
-RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf && \
+RUN git clone --depth 1 --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf && \
     cd /tmp/protobuf && \
     git submodule update --init --recursive && \
     mkdir build && cd build && \
@@ -75,20 +83,18 @@ RUN git clone --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tm
     -Dprotobuf_BUILD_TESTS=OFF \
     -Dprotobuf_ABSL_PROVIDER=package \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
-    make && make install && \
+    make -j"$(nproc)" && make install && \
     rm -rf /tmp/protobuf
 
-RUN nm -C $INSTALL_DIR/protobuf/lib/libprotoc.a | grep absl || echo "Aucun symbole Abseil trouvé dans libprotoc"
-
-# === Install and compile GTest ===
-RUN apt-get update && apt-get install -y libgtest-dev \
-    && cd /usr/src/googletest && cmake . && make \
+# === Compile GTest ===
+RUN cd /usr/src/googletest && cmake . -DCMAKE_BUILD_TYPE=Release \ && make -j"$(nproc)" \
     && mv lib/*.a /usr/lib && rm -rf /usr/src/googletest
 
 # === Build and install utf8_range ===
-RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
+RUN git clone --depth 1 --branch main https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
     cd /tmp/utf8_range && mkdir build && cd build && \
     cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
     -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range \
@@ -98,10 +104,9 @@ RUN git clone https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range 
     make -j"$(nproc)" && make install && \
     rm -rf /tmp/utf8_range
 
-FROM build-base AS protobuf-checkpoint
-
-# === Build and install gRPC (v1.59.0) en "package" pour Protobuf/Abseil ===
-RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
+# === Build and install gRPC ${GRPC_VERSION} in "package" mode for Protobuf/Abseil ===
+ARG GRPC_VERSION=1.59.0
+RUN git clone --depth 1 --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
     cd /tmp/grpc && git submodule update --init --recursive && \
     mkdir -p cmake/build && cd cmake/build && \
     cmake ../.. \
@@ -116,10 +121,11 @@ RUN git clone --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
     -DgRPC_SSL_PROVIDER=module \
     -DgRPC_ZLIB_PROVIDER=module \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" && \
-    cmake --build . --target install -j"$(nproc)"
+    cmake --build . --target install -j"$(nproc)" && rm -rf /tmp/grpc
 
-# === Build and install StarPU 1.4.8 ===
-RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-1.4.8/starpu-starpu-1.4.8.tar.gz && \
+# === Build and install StarPU ${STARPU_VERSION} ===
+ARG STARPU_VERSION=1.4.8
+RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-${STARPU_VERSION}/starpu-starpu-${STARPU_VERSION}.tar.gz && \
     mkdir -p /tmp/starpu && \
     tar -xzf /tmp/starpu.tar.gz -C /tmp/starpu --strip-components=1 && \
     cd /tmp/starpu && \
@@ -134,7 +140,7 @@ RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/s
     --enable-cuda \
     --disable-fortran \
     --disable-openmp \
-    && make && make install && \
+    && make -j"$(nproc)" && make install && \
     rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
 # Copy source code
@@ -146,15 +152,74 @@ COPY cmake/ /app/cmake/
 # Build project
 WORKDIR /app/build
 RUN cmake .. \
+    -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+    -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
     -DProtobuf_DIR=$INSTALL_DIR/protobuf/lib/cmake/protobuf \
     -DProtobuf_PROTOC_EXECUTABLE=$INSTALL_DIR/protobuf/bin/protoc \
     -DProtobuf_USE_STATIC_LIBS=ON \
     -DENABLE_COVERAGE=OFF \
     -DENABLE_SANITIZERS=OFF \
-    && cmake --build .
+    && cmake --build . -j"$(nproc)"
 
+# =====================
+# Runtime stage
+# =====================
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu${UBUNTU_VERSION}
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Default command
-CMD ["./starpu_server"]
+ARG CUDA_VERSION
+ARG UBUNTU_VERSION
+ARG CMAKE_VERSION
+ARG GCC_VERSION
+ARG LIBTORCH_VERSION
+ARG LIBTORCH_CUDA
+ARG GRPC_VERSION
+ARG STARPU_VERSION
+
+LABEL maintainer="StarPU Inference Server Team" \
+    version.cuda="${CUDA_VERSION}" \
+    version.ubuntu="${UBUNTU_VERSION}" \
+    version.cmake="${CMAKE_VERSION}" \
+    version.gcc="${GCC_VERSION}" \
+    version.libtorch="${LIBTORCH_VERSION}" \
+    version.libtorch_cuda="${LIBTORCH_CUDA}" \
+    version.grpc="${GRPC_VERSION}" \
+    version.starpu="${STARPU_VERSION}"
+
+RUN useradd -m appuser
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV HOME=/home/appuser
+ENV INSTALL_DIR=${HOME}/Install
+ENV STARPU_DIR=${INSTALL_DIR}/starpu
+ENV CMAKE_CUDA_ARCHITECTURES="80;86"
+ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
+
+# Runtime dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends software-properties-common \
+    && add-apt-repository ppa:ubuntu-toolchain-r/test \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    libhwloc15 \
+    libltdl7 \
+    libssl3 \
+    libfxt2 \
+    libstdc++6 \
+    && apt-get purge -y --auto-remove software-properties-common \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy artifacts from build stage
+COPY --from=build --chown=appuser:appuser /root/Install/libtorch ${INSTALL_DIR}/libtorch
+COPY --from=build --chown=appuser:appuser /root/Install/grpc ${INSTALL_DIR}/grpc
+COPY --from=build --chown=appuser:appuser /root/Install/starpu ${STARPU_DIR}
+COPY --from=build --chown=appuser:appuser /app/build/grpc_server /usr/local/bin/grpc_server
+COPY --from=build --chown=appuser:appuser /app/build/grpc_client_example /usr/local/bin/grpc_client_example
+
+RUN install -d -o appuser -g appuser /workspace
+WORKDIR /workspace
+USER appuser
+ENTRYPOINT ["/usr/local/bin/grpc_server"]
+CMD ["--help"]

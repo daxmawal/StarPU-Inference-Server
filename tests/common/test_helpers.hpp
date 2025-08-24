@@ -190,14 +190,17 @@ struct TestGrpcServer {
 inline auto
 start_test_grpc_server(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    std::vector<at::ScalarType> expected_input_types = {kValidInputSpec.dtype},
     int port = 0) -> TestGrpcServer
 {
   TestGrpcServer handle;
   std::promise<int> port_promise;
   auto port_future = port_promise.get_future();
   handle.thread = std::jthread([&queue, &reference_outputs, port, &handle,
+                                expected_input_types,
                                 p = std::move(port_promise)]() mutable {
-    InferenceServiceImpl service(&queue, &reference_outputs);
+    InferenceServiceImpl service(
+        &queue, &reference_outputs, expected_input_types);
     grpc::ServerBuilder builder;
     std::string address = std::format("0.0.0.0:{}", port);
     int selected_port = 0;
