@@ -122,10 +122,15 @@ launch_threads(
   starpu_server::StarPUTaskRunner worker(config);
 
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
-  std::jthread grpc_thread([&]() {
+  std::vector<at::ScalarType> expected_input_types;
+  expected_input_types.reserve(opts.inputs.size());
+  for (const auto& t : opts.inputs) {
+    expected_input_types.push_back(t.type);
+  }
+  std::jthread grpc_thread([&, expected_input_types]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, opts.server_address, opts.max_message_bytes,
-        ctx.server);
+        queue, reference_outputs, expected_input_types, opts.server_address,
+        opts.max_message_bytes, ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);

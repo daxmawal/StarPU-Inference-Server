@@ -3,10 +3,13 @@
 TEST(InferenceService, ValidateInputsSuccess)
 {
   auto req = starpu_server::make_valid_request();
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status =
-      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
-          &req, inputs);
+  auto status = service.validate_and_convert_inputs(&req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
@@ -22,10 +25,13 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
       {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
       {{3}, at::kLong, starpu_server::to_raw_data(data1)},
   });
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat, at::kLong};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status =
-      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
-          &req, inputs);
+  auto status = service.validate_and_convert_inputs(&req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 2U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));

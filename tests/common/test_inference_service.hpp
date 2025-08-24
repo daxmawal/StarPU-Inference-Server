@@ -25,8 +25,9 @@ class InferenceServiceTest : public ::testing::Test {
  protected:
   void SetUp() override
   {
+    std::vector<at::ScalarType> expected_input_types = {at::kFloat};
     service = std::make_unique<starpu_server::InferenceServiceImpl>(
-        &queue, &ref_outputs);
+        &queue, &ref_outputs, expected_input_types);
   }
   auto prepare_job(
       std::vector<torch::Tensor> ref_outs,

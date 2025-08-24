@@ -4,10 +4,13 @@ TEST(InferenceService, ValidateInputsSizeMismatch)
 {
   auto req = starpu_server::make_valid_request();
   req.mutable_raw_input_contents(0)->append("0", 1);
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status =
-      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
-          &req, inputs);
+  auto status = service.validate_and_convert_inputs(&req, inputs);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
@@ -19,6 +22,22 @@ TEST_F(InferenceServiceTest, ModelInferReturnsValidationError)
   auto status = service->ModelInfer(&ctx, &req, &reply);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   expect_empty_infer_response(reply);
+}
+
+TEST_F(InferenceServiceTest, InvalidDatatypeDoesNotShutdownServer)
+{
+  auto req = starpu_server::make_valid_request();
+  req.mutable_inputs(0)->set_datatype("INT32");
+  req.MergeFrom(starpu_server::make_model_request("m", "1"));
+  auto status = service->ModelInfer(&ctx, &req, &reply);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  expect_empty_infer_response(reply);
+
+  auto valid_req = starpu_server::make_valid_request();
+  valid_req.MergeFrom(starpu_server::make_model_request("m", "1"));
+  auto worker = prepare_job({torch::zeros({2, 2})}, {torch::zeros({2, 2})});
+  status = service->ModelInfer(&ctx, &valid_req, &reply);
+  EXPECT_TRUE(status.ok());
 }
 
 TEST(GrpcServer, StopServerNullptr)
@@ -39,10 +58,13 @@ class InferenceServiceValidation
 TEST_P(InferenceServiceValidation, InvalidRequests)
 {
   auto req = GetParam().request;
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status =
-      starpu_server::InferenceServiceImpl::validate_and_convert_inputs(
-          &req, inputs);
+  auto status = service.validate_and_convert_inputs(&req, inputs);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
