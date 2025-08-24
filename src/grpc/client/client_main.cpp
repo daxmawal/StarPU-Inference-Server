@@ -13,6 +13,7 @@
 #include "client_args.hpp"
 #include "grpc_service.grpc.pb.h"
 #include "inference_client.hpp"
+#include "utils/input_generator.hpp"
 #include "utils/logger.hpp"
 
 auto
@@ -58,9 +59,10 @@ main(int argc, char* argv[]) -> int
   for (int i = 0; i < NUM_TENSORS; ++i) {
     std::vector<torch::Tensor> tensors;
     tensors.reserve(config.inputs.size());
-    for (const auto& in_cfg : config.inputs) {
-      tensors.push_back(
-          torch::rand(in_cfg.shape, torch::TensorOptions().dtype(in_cfg.type)));
+    for (size_t j = 0; j < config.inputs.size(); ++j) {
+      const auto& in_cfg = config.inputs[j];
+      tensors.push_back(starpu_server::input_generator::generate_random_tensor(
+          in_cfg.shape, in_cfg.type, j));
     }
     tensor_pool.push_back(std::move(tensors));
   }
