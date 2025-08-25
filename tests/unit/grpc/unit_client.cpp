@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <utility>
+
+#include "grpc/client/client_args.hpp"
 #include "grpc/client/inference_client.hpp"
+#include "grpc/server/inference_service.hpp"
 #include "test_helpers.hpp"
 
 TEST(ClientArgs, ParsesValidArguments)
@@ -46,3 +50,67 @@ TEST(ClientArgs, VerboseLevels)
     EXPECT_EQ(cfg.verbosity, expected);
   }
 }
+
+TEST(ClientArgsHelp, ContainsKeyOptions)
+{
+  testing::internal::CaptureStdout();
+  starpu_server::display_client_help("prog");
+  const std::string out = testing::internal::GetCapturedStdout();
+  EXPECT_NE(out.find("--iterations"), std::string::npos);
+  EXPECT_NE(out.find("--delay"), std::string::npos);
+  EXPECT_NE(out.find("--shape"), std::string::npos);
+  EXPECT_NE(out.find("--type"), std::string::npos);
+  EXPECT_NE(out.find("--input"), std::string::npos);
+  EXPECT_NE(out.find("--server"), std::string::npos);
+  EXPECT_NE(out.find("--model"), std::string::npos);
+  EXPECT_NE(out.find("--version"), std::string::npos);
+  EXPECT_NE(out.find("--verbose"), std::string::npos);
+  EXPECT_NE(out.find("--help"), std::string::npos);
+}
+
+
+TEST(InferenceClient, ModelIsReadyReturnsTrue)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:" + std::to_string(server.port),
+      grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+  EXPECT_TRUE(client.ModelIsReady("example", "1"));
+
+  starpu_server::StopServer(server.server);
+  server.thread.join();
+  EXPECT_EQ(server.server, nullptr);
+}
+
+TEST(InferenceClient, ModelIsReadyReturnsFalseWhenUnavailable)
+{
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:59997", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+  EXPECT_FALSE(client.ModelIsReady("example", "1"));
+}
+
+class ParseVerbosityLevelValid
+    : public ::testing::TestWithParam<
+          std::pair<const char*, starpu_server::VerbosityLevel>> {};
+
+TEST_P(ParseVerbosityLevelValid, ReturnsExpectedEnum)
+{
+  const auto& [input, expected] = GetParam();
+  EXPECT_EQ(starpu_server::parse_verbosity_level(input), expected);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ParseVerbosityLevel, ParseVerbosityLevelValid,
+    ::testing::Values(
+        std::pair{"0", starpu_server::VerbosityLevel::Silent},
+        std::pair{"1", starpu_server::VerbosityLevel::Info},
+        std::pair{"2", starpu_server::VerbosityLevel::Stats},
+        std::pair{"3", starpu_server::VerbosityLevel::Debug},
+        std::pair{"4", starpu_server::VerbosityLevel::Trace}));

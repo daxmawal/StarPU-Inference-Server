@@ -30,11 +30,13 @@ target_sources(
             starpu/robustness/edgecases_starpu_setup.cpp
             starpu/robustness/edgecases_starpu_task_runner.cpp
             starpu/robustness/edgecases_tensor_builder_from_starpu.cpp
+            monitoring/unit_metrics.cpp
             utils/unit_client_utils.cpp
             utils/unit_datatype_utils.cpp
             utils/unit_inference_validator.cpp
             utils/unit_input_generator.cpp
             utils/unit_logger.cpp
+            utils/unit_config_loader.cpp
             utils/unit_transparent_hash.cpp
             utils/robustness/edgecases_client_utils.cpp
             utils/robustness/edgecases_datatype_utils.cpp

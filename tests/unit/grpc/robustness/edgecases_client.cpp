@@ -56,3 +56,16 @@ TEST(InferenceClient, ServerIsReadyReturnsFalseWhenUnavailable)
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_FALSE(client.ServerIsReady());
 }
+
+class ParseVerbosityLevelInvalid
+    : public ::testing::TestWithParam<const char*> {};
+
+TEST_P(ParseVerbosityLevelInvalid, ThrowsInvalidArgument)
+{
+  EXPECT_THROW(
+      starpu_server::parse_verbosity_level(GetParam()), std::invalid_argument);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ParseVerbosityLevel, ParseVerbosityLevelInvalid,
+    ::testing::Values("-1", "5", "foo"));
