@@ -33,12 +33,17 @@ namespace {
 auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input, const std::string& raw,
-    at::ScalarType dtype)
+    at::ScalarType dtype, torch::Tensor& tensor) -> Status
 {
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
-  auto tensor = torch::empty(shape, torch::TensorOptions().dtype(dtype));
+  tensor = torch::empty(shape, torch::TensorOptions().dtype(dtype));
+  if (raw.size() != static_cast<size_t>(tensor.nbytes())) {
+    return Status(
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Raw input size does not match tensor size");
+  }
   std::memcpy(tensor.data_ptr(), raw.data(), raw.size());
-  return tensor;
+  return Status::OK;
 }
 
 // Fill gRPC output from torch::Tensor
@@ -139,7 +144,12 @@ InferenceServiceImpl::validate_and_convert_inputs(
           "Input tensor shape does not match raw content size");
     }
 
-    inputs.push_back(convert_input_to_tensor(input, raw, dtype));
+    torch::Tensor tensor;
+    Status st = convert_input_to_tensor(input, raw, dtype, tensor);
+    if (!st.ok()) {
+      return st;
+    }
+    inputs.push_back(std::move(tensor));
   }
 
   return Status::OK;

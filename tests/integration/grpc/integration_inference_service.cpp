@@ -25,6 +25,16 @@ TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
       req, reply, outs, reply.server_receive_ms(), reply.server_send_ms());
 }
 
+TEST_F(InferenceServiceTest, ModelInferDetectsInputSizeMismatch)
+{
+  auto req = starpu_server::make_valid_request();
+  req.MergeFrom(starpu_server::make_model_request("m", "1"));
+  req.mutable_raw_input_contents(0)->append("0", 1);
+  auto status = service->ModelInfer(&ctx, &req, &reply);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  expect_empty_infer_response(reply);
+}
+
 TEST_F(InferenceServiceTest, BasicLivenessAndReadiness)
 {
   inference::ServerLiveRequest live_req;
