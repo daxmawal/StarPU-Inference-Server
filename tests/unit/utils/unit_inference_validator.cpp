@@ -60,6 +60,12 @@ INSTANTIATE_TEST_SUITE_P(
             starpu_server::DeviceType::CPU,
             ValidationExpectation::InferenceExecutionException},
         ValidationCase{
+            make_tensor_list_model,
+            {torch::tensor({1, 2, 3})},
+            {torch::tensor({1, 2, 3}), torch::tensor({2, 3, 4})},
+            starpu_server::DeviceType::CPU,
+            ValidationExpectation::Success},
+        ValidationCase{
             make_string_model,
             {torch::tensor({1})},
             {},

@@ -67,6 +67,16 @@ make_tuple_non_tensor_model() -> torch::jit::script::Module
   return module;
 }
 
+static auto
+make_tensor_list_model() -> torch::jit::script::Module
+{
+  torch::jit::script::Module module{"m"};
+  module.define(R"JIT(
+      def forward(self, x):
+          return [x, x + 1]
+  )JIT");
+  return module;
+}
 
 static auto
 make_string_model() -> torch::jit::script::Module

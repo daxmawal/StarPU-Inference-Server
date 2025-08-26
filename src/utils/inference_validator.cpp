@@ -72,6 +72,10 @@ extract_reference_outputs(
       }
       tensors.push_back(val.toTensor());
     }
+  } else if (output.isTensorList()) {
+    for (const auto& t : output.toTensorList()) {
+      tensors.push_back(t);
+    }
   } else {
     log_error(std::format(
         "[Validator] Unsupported output type for job {}", result.job_id));
