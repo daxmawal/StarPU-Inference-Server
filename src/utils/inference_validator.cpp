@@ -160,7 +160,5 @@ validate_inference_result(
         "[Validator] Exception in job {}: {}", result.job_id, e.what()));
     throw InferenceExecutionException(e.what());
   }
-
-  return false;
 }
 }  // namespace starpu_server
