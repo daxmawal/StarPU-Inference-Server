@@ -42,6 +42,10 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
        "127.0.0.1:1234",
        "--max-batch-size",
        "2",
+       "--pregen-inputs",
+       "7",
+       "--warmup-iterations",
+       "3",
        "--sync",
        "--no_cpu"});
   ASSERT_TRUE(opts.valid);
@@ -52,6 +56,8 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
   EXPECT_EQ(opts.server_address, "127.0.0.1:1234");
   EXPECT_EQ(opts.max_batch_size, 2);
+  EXPECT_EQ(opts.pregen_inputs, 7U);
+  EXPECT_EQ(opts.warmup_iterations, 3);
   constexpr int expected_bytes = 32 * 1024 * 1024;
   EXPECT_EQ(opts.max_message_bytes, expected_bytes);
   EXPECT_TRUE(opts.synchronous);

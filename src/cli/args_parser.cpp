@@ -395,6 +395,34 @@ parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   return true;
 }
 
+static auto
+parse_pregen_inputs(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& pregen = opts.pregen_inputs;
+  return expect_and_parse(idx, args, [&pregen](const char* val) {
+    const auto tmp = std::stoi(val);
+    if (tmp <= 0) {
+      throw std::invalid_argument("Must be > 0.");
+    }
+    pregen = static_cast<size_t>(tmp);
+  });
+}
+
+static auto
+parse_warmup_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& warmup = opts.warmup_iterations;
+  return expect_and_parse(idx, args, [&warmup](const char* val) {
+    const auto tmp = std::stoi(val);
+    if (tmp < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+    warmup = tmp;
+  });
+}
+
 // =============================================================================
 // Dispatch Argument Parser (Main parser loop)
 // =============================================================================
@@ -428,6 +456,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--address", parse_address},
           {"--metrics-port", parse_metrics_port},
           {"--max-batch-size", parse_max_batch_size},
+          {"--pregen-inputs", parse_pregen_inputs},
+          {"--warmup-iterations", parse_warmup_iterations},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {

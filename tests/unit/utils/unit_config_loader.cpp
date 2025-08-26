@@ -24,6 +24,8 @@ output:
     data_type: float32
 verbosity: 3
 max_batch_size: 4
+pregen_inputs: 8
+warmup_iterations: 3
 )";
 
   const auto tmp =
@@ -46,6 +48,8 @@ max_batch_size: 4
   EXPECT_EQ(cfg.outputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
   EXPECT_EQ(cfg.max_batch_size, 4);
+  EXPECT_EQ(cfg.pregen_inputs, 8U);
+  EXPECT_EQ(cfg.warmup_iterations, 3);
   EXPECT_TRUE(cfg.use_cuda);
 }
 

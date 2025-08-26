@@ -39,8 +39,6 @@
 #include "warmup.hpp"
 
 namespace starpu_server {
-constexpr size_t NUM_PREGENERATED_INPUTS = 10;
-constexpr int NUM_WARMUP_ITERATIONS = 2;
 
 // =============================================================================
 // InferenceJob: Encapsulates a single inference task, including input data,
@@ -76,7 +74,7 @@ client_worker(
 {
   auto pregen_inputs =
       std::make_unique<std::vector<std::vector<torch::Tensor>>>(
-          client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS));
+          client_utils::pre_generate_inputs(opts, opts.pregen_inputs));
   // RNG for synthetic test data only; not used for security.  // NOSONAR
   thread_local std::mt19937 rng(std::random_device{}());
 
@@ -209,7 +207,7 @@ run_warmup(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref)
 {
-  if (!opts.use_cuda) {
+  if (!opts.use_cuda || opts.warmup_iterations <= 0) {
     return;
   }
 
@@ -217,10 +215,10 @@ run_warmup(
       opts.verbosity,
       std::format(
           "Starting warmup with {} iterations per CUDA device...",
-          NUM_WARMUP_ITERATIONS));
+          opts.warmup_iterations));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-  warmup_runner.run(NUM_WARMUP_ITERATIONS);
+  warmup_runner.run(opts.warmup_iterations);
 
   log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 }

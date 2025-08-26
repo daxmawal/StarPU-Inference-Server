@@ -48,6 +48,8 @@ struct RuntimeConfig {
   int delay_ms = 0;
   int max_batch_size = 1;
   int max_message_bytes = 32 * 1024 * 1024;
+  size_t pregen_inputs = 10;
+  int warmup_iterations = 2;
 
   bool synchronous = false;
   bool show_help = false;

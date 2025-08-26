@@ -162,6 +162,20 @@ load_config(const std::string& path) -> RuntimeConfig
         throw std::invalid_argument("max_batch_size must be > 0");
       }
     }
+    if (root["pregen_inputs"]) {
+      const int tmp = root["pregen_inputs"].as<int>();
+      if (tmp <= 0) {
+        throw std::invalid_argument("pregen_inputs must be > 0");
+      }
+      cfg.pregen_inputs = static_cast<size_t>(tmp);
+    }
+    if (root["warmup_iterations"]) {
+      const int tmp = root["warmup_iterations"].as<int>();
+      if (tmp < 0) {
+        throw std::invalid_argument("warmup_iterations must be >= 0");
+      }
+      cfg.warmup_iterations = tmp;
+    }
     if (root["sync"]) {
       cfg.synchronous = root["sync"].as<bool>();
     }
