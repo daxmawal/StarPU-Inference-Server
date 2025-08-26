@@ -56,13 +56,13 @@ inline auto
 expected_log_line(VerbosityLevel level, const std::string& msg) -> std::string
 {
   if (level == WarningLevel) {
-    return std::string{"\o{33}[1;33m[WARNING] "} + msg + "\o{33}[0m\n";
+    return std::string{"\x1b[1;33m[WARNING] "} + msg + "\x1b[0m\n";
   }
   if (level == ErrorLevel) {
-    return std::string{"\o{33}[1;31m[ERROR] "} + msg + "\o{33}[0m\n";
+    return std::string{"\x1b[1;31m[ERROR] "} + msg + "\x1b[0m\n";
   }
   auto [color, label] = verbosity_style(level);
-  return std::string(color) + label + msg + "\o{33}[0m\n";
+  return std::string(color) + label + msg + "\x1b[0m\n";
 }
 
 inline auto
