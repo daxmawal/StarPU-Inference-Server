@@ -64,6 +64,17 @@ TEST(ConfigLoader, InvalidConfigSetsValidFalse)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, NegativeDelaySetsValidFalse)
+{
+  const std::string yaml = R"(delay: -10)";
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_neg_delay.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
 #define load_config load_config_unused
 #include "utils/config_loader.cpp"
 #undef load_config

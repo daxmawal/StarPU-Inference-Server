@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -146,6 +147,10 @@ load_config(const std::string& path) -> RuntimeConfig
     }
     if (root["delay"]) {
       cfg.delay_ms = root["delay"].as<int>();
+      if (cfg.delay_ms < 0) {
+        cfg.valid = false;
+        throw std::invalid_argument("delay must be >= 0");
+      }
     }
     if (root["address"]) {
       cfg.server_address = root["address"].as<std::string>();
