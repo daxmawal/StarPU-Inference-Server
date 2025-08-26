@@ -359,6 +359,11 @@ InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
       throw std::invalid_argument("Fixed worker ID must be non-negative");
     }
 
+    int total_workers = starpu_worker_get_count();
+    if (worker_id >= total_workers) {
+      throw std::out_of_range("Fixed worker ID exceeds available workers");
+    }
+
     task->workerid = static_cast<unsigned>(worker_id);
     task->execute_on_a_specific_worker = 1;
   }

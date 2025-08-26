@@ -33,11 +33,17 @@ TEST_F(InferenceTaskTest, TooManyGpuModels)
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
 {
   auto job = make_job(3, 1);
-  job->set_fixed_worker_id(2);
+  int total_workers = starpu_worker_get_count();
+  if (total_workers == 0) {
+    GTEST_SKIP() << "No StarPU workers available";
+  }
+
+  int worker_id = total_workers > 2 ? 2 : total_workers - 1;
+  job->set_fixed_worker_id(worker_id);
   auto task = make_task(job);
   starpu_task task_struct{};
   task.assign_fixed_worker_if_needed(&task_struct);
-  EXPECT_EQ(task_struct.workerid, 2U);
+  EXPECT_EQ(task_struct.workerid, static_cast<unsigned>(worker_id));
   EXPECT_EQ(task_struct.execute_on_a_specific_worker, 1U);
 }
 
