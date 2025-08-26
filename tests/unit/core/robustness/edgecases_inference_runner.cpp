@@ -86,3 +86,31 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
   EXPECT_TRUE(inference_start >= before);
   EXPECT_TRUE(inference_start <= after);
 }
+
+namespace {
+template <typename T, template <typename...> class Template>
+struct is_specialization : std::false_type {};
+
+template <template <typename...> class Template, typename... Args>
+struct is_specialization<Template<Args...>, Template> : std::true_type {};
+}  // namespace
+
+TEST(InferenceRunner_Robustesse, LoadModelMissingFile)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.model_path = "nonexistent_model.pt";
+  opts.inputs = {{"input0", {1}, at::kFloat}};
+
+  try {
+    auto result = starpu_server::load_model_and_reference_output(opts);
+    if constexpr (is_specialization<decltype(result), std::optional>::value) {
+      EXPECT_EQ(result, std::nullopt);
+    } else {
+      EXPECT_TRUE(std::get<1>(result).empty());
+      EXPECT_TRUE(std::get<2>(result).empty());
+    }
+  }
+  catch (const std::exception&) {
+    SUCCEED();
+  }
+}
