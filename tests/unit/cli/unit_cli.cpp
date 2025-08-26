@@ -46,6 +46,8 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
        "7",
        "--warmup-iterations",
        "3",
+       "--seed",
+       "123",
        "--sync",
        "--no_cpu"});
   ASSERT_TRUE(opts.valid);
@@ -58,6 +60,8 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.max_batch_size, 2);
   EXPECT_EQ(opts.pregen_inputs, 7U);
   EXPECT_EQ(opts.warmup_iterations, 3);
+  ASSERT_TRUE(opts.seed.has_value());
+  EXPECT_EQ(opts.seed.value(), 123U);
   constexpr int expected_bytes = 32 * 1024 * 1024;
   EXPECT_EQ(opts.max_message_bytes, expected_bytes);
   EXPECT_TRUE(opts.synchronous);

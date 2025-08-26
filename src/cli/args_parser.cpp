@@ -423,6 +423,19 @@ parse_warmup_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   });
 }
 
+static auto
+parse_seed(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  auto& seed = opts.seed;
+  return expect_and_parse(idx, args, [&seed](const char* val) {
+    const auto tmp = std::stoll(val);
+    if (tmp < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+    seed = static_cast<uint64_t>(tmp);
+  });
+}
+
 // =============================================================================
 // Dispatch Argument Parser (Main parser loop)
 // =============================================================================
@@ -458,6 +471,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--max-batch-size", parse_max_batch_size},
           {"--pregen-inputs", parse_pregen_inputs},
           {"--warmup-iterations", parse_warmup_iterations},
+          {"--seed", parse_seed},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {

@@ -5,6 +5,7 @@
 #include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
 #include <cuda_runtime_api.h>
+#include <torch/torch.h>
 
 #include <algorithm>
 #include <atomic>
@@ -72,11 +73,17 @@ client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, const int iterations)
 {
+  thread_local std::mt19937 rng;
+  if (opts.seed) {
+    rng.seed(static_cast<std::mt19937::result_type>(*opts.seed));
+    torch::manual_seed(static_cast<uint64_t>(*opts.seed));
+  } else {
+    rng.seed(std::random_device{}());
+  }
+
   auto pregen_inputs =
       std::make_unique<std::vector<std::vector<torch::Tensor>>>(
           client_utils::pre_generate_inputs(opts, opts.pregen_inputs));
-  // RNG for synthetic test data only; not used for security.  // NOSONAR
-  thread_local std::mt19937 rng(std::random_device{}());
 
   auto next_time = std::chrono::steady_clock::now();
   const auto delay = std::chrono::milliseconds(opts.delay_ms);

@@ -1,5 +1,7 @@
 #include "warmup.hpp"
 
+#include <torch/torch.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -52,12 +54,17 @@ WarmupRunner::client_worker(
     const std::map<int, std::vector<int32_t>>& device_workers,
     InferenceQueue& queue, int iterations_per_worker) const
 {
-  // Pre-generates a small set of random inputs for reuse
+  thread_local std::mt19937 rng;
+  if (opts_.seed) {
+    rng.seed(static_cast<std::mt19937::result_type>(*opts_.seed));
+    torch::manual_seed(static_cast<uint64_t>(*opts_.seed));
+  } else {
+    rng.seed(std::random_device{}());
+  }
+
   auto pregen_inputs =
       std::make_unique<std::vector<std::vector<torch::Tensor>>>(
           client_utils::pre_generate_inputs(opts_, NUM_PREGENERATED_INPUTS));
-  // RNG for synthetic test data only; not used for security.  // NOSONAR
-  thread_local std::mt19937 rng(std::random_device{}());
 
   if (iterations_per_worker < 0) {
     throw std::invalid_argument("iterations_per_worker must be non-negative");

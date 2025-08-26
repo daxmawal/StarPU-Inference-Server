@@ -181,6 +181,13 @@ load_config(const std::string& path) -> RuntimeConfig
       }
       cfg.warmup_iterations = tmp;
     }
+    if (root["seed"]) {
+      const auto tmp = root["seed"].as<long long>();
+      if (tmp < 0) {
+        throw std::invalid_argument("seed must be >= 0");
+      }
+      cfg.seed = static_cast<uint64_t>(tmp);
+    }
     if (root["sync"]) {
       cfg.synchronous = root["sync"].as<bool>();
     }

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,8 @@ struct RuntimeConfig {
   int max_message_bytes = 32 * 1024 * 1024;
   size_t pregen_inputs = 10;
   int warmup_iterations = 2;
+
+  std::optional<uint64_t> seed{};
 
   bool synchronous = false;
   bool show_help = false;
