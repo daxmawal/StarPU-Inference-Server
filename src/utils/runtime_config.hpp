@@ -82,7 +82,18 @@ compute_max_message_bytes(
         }
         numel *= d_size;
       }
-      per_sample_bytes += numel * element_size(t.type);
+      const size_t type_size = element_size(t.type);
+      if (numel > std::numeric_limits<size_t>::max() / type_size) {
+        throw MessageSizeOverflowException(
+            "numel * element size would overflow size_t");
+      }
+      const size_t tensor_bytes = numel * type_size;
+      if (per_sample_bytes >
+          std::numeric_limits<size_t>::max() - tensor_bytes) {
+        throw MessageSizeOverflowException(
+            "per_sample_bytes + tensor_bytes would overflow size_t");
+      }
+      per_sample_bytes += tensor_bytes;
     }
   };
 
