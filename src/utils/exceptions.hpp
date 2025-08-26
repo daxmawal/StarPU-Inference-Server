@@ -88,4 +88,10 @@ class StarPUWorkerQueryException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when computing the message size would overflow
+class MessageSizeOverflowException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
 }  // namespace starpu_server

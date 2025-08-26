@@ -3,11 +3,13 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "datatype_utils.hpp"
+#include "exceptions.hpp"
 #include "logger.hpp"
 
 namespace starpu_server {
@@ -80,6 +82,12 @@ compute_max_message_bytes(
 
   accumulate_bytes(inputs);
   accumulate_bytes(outputs);
+
+  if (per_sample_bytes > std::numeric_limits<size_t>::max() /
+                             static_cast<size_t>(max_batch_size)) {
+    throw MessageSizeOverflowException(
+        "per_sample_bytes * max_batch_size overflows size_t");
+  }
 
   const size_t total = per_sample_bytes * static_cast<size_t>(max_batch_size);
   return static_cast<int>(
