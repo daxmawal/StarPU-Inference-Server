@@ -3,6 +3,7 @@
 #include <starpu.h>
 #include <torch/script.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
