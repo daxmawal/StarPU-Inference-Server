@@ -399,7 +399,7 @@ void
 InferenceTask::acquire_output_handle(
     starpu_data_handle_t handle, InferenceCallbackContext* ctx)
 {
-  starpu_data_acquire_cb(
+  const int ret = starpu_data_acquire_cb(
       handle, STARPU_R,
       [](void* cb_arg) {
         auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);
@@ -413,6 +413,12 @@ InferenceTask::acquire_output_handle(
         }
       },
       ctx);
+
+  if (ret < 0) {
+    log_error(std::format("starpu_data_acquire_cb failed with code {}", ret));
+    throw StarPURegistrationException(
+        "Failed to acquire output data handle from StarPU.");
+  }
 }
 
 void
