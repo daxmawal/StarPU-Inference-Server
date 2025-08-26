@@ -1,3 +1,4 @@
+#include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
 #include <torch/script.h>
 #include <torch/torch.h>
@@ -9,8 +10,23 @@
 
 #include "core/inference_runner.hpp"
 #include "core/tensor_builder.hpp"
+#include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 
+
+static cudaError_t g_cuda_sync_result = cudaSuccess;
+
+extern "C" cudaError_t
+cudaDeviceSynchronize()
+{
+  return g_cuda_sync_result;
+}
+
+extern "C" const char*
+cudaGetErrorString(cudaError_t)
+{
+  return "mock cuda error";
+}
 
 namespace {
 constexpr int64_t kJobId = 7;
@@ -109,4 +125,16 @@ TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
   EXPECT_FLOAT_EQ(dst[2], 3.5F);
   EXPECT_FLOAT_EQ(dst[3], -4.0F);
   EXPECT_FLOAT_EQ(dst[4], 0.25F);
+}
+
+TEST(InferenceRunner_Unit, LogsCudaSyncError)
+{
+  g_cuda_sync_result = cudaErrorUnknown;
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::synchronize_cuda_device();
+  EXPECT_EQ(
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel,
+                         "cudaDeviceSynchronize failed: mock cuda error"));
+  g_cuda_sync_result = cudaSuccess;
 }

@@ -261,6 +261,16 @@ process_results(
   }
 }
 
+void
+synchronize_cuda_device()
+{
+  if (auto err = cudaDeviceSynchronize(); err != cudaSuccess) {
+    log_error(
+        std::string("cudaDeviceSynchronize failed: ") +
+        cudaGetErrorString(err));
+  }
+}
+
 // =============================================================================
 // Main Inference Loop: Initializes models, runs warmup, starts client/server,
 // waits for all jobs to complete, processes results
@@ -315,7 +325,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   }
 
   if (opts.use_cuda) {
-    cudaDeviceSynchronize();
+    synchronize_cuda_device();
   }
 
   process_results(results, model_cpu, models_gpu, opts.verbosity);
