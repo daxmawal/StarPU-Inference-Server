@@ -29,8 +29,9 @@ TEST(Metrics, InitializesPointersAndRegistry)
   EXPECT_TRUE(has_latency);
   EXPECT_TRUE(has_queue);
 
-  metrics_registry.reset();
-  requests_total = nullptr;
-  inference_latency = nullptr;
-  queue_size_gauge = nullptr;
+  shutdown_metrics();
+  EXPECT_EQ(metrics_registry, nullptr);
+  EXPECT_EQ(requests_total, nullptr);
+  EXPECT_EQ(inference_latency, nullptr);
+  EXPECT_EQ(queue_size_gauge, nullptr);
 }

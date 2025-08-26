@@ -49,4 +49,18 @@ init_metrics(int port)
   queue_size_gauge = &gauge_family.Add({});
 }
 
+void
+shutdown_metrics()
+{
+  if (exposer && metrics_registry) {
+    exposer->RemoveCollectable(metrics_registry);
+  }
+  exposer.reset();
+
+  metrics_registry.reset();
+  requests_total = nullptr;
+  inference_latency = nullptr;
+  queue_size_gauge = nullptr;
+}
+
 }  // namespace starpu_server

@@ -15,5 +15,6 @@ extern prometheus::Histogram* inference_latency;
 extern prometheus::Gauge* queue_size_gauge;
 
 void init_metrics(int port);
+void shutdown_metrics();
 
 }  // namespace starpu_server

@@ -152,6 +152,7 @@ main(int argc, char* argv[]) -> int
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
+    starpu_server::shutdown_metrics();
   }
   catch (const starpu_server::InferenceEngineException& e) {
     std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";
