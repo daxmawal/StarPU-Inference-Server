@@ -4,6 +4,7 @@
 #include <ATen/core/TensorBody.h>
 #include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
+#include <cuda_runtime_api.h>
 
 #include <algorithm>
 #include <atomic>

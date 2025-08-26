@@ -10,6 +10,7 @@
 #include <starpu_cuda.h>
 #include <torch/types.h>
 
+#include <array>
 #include <bit>
 #include <chrono>
 #include <climits>
@@ -224,7 +225,8 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
 {
   starpu_conf_init(&conf_);
-  conf_.sched_policy_name = opts.scheduler.c_str();
+  scheduler_name_ = opts.scheduler;
+  conf_.sched_policy_name = scheduler_name_.c_str();
 
   if (!opts.use_cpu) {
     conf_.ncpus = 0;

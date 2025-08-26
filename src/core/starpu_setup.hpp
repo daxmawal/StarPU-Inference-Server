@@ -3,6 +3,7 @@
 #include <starpu.h>
 #include <torch/script.h>
 
+#include <string>
 #include <vector>
 
 #include "runtime_config.hpp"
@@ -55,6 +56,7 @@ class StarPUSetup {
   auto operator=(StarPUSetup&&) -> StarPUSetup& = delete;
 
  private:
+  std::string scheduler_name_;
   struct starpu_conf conf_;
   InferenceCodelet codelet_;
 };
