@@ -2,6 +2,7 @@
 
 #include <ATen/core/ScalarType.h>
 
+#include <algorithm>
 #include <bit>
 #include <chrono>
 #include <cstddef>
@@ -297,7 +298,8 @@ InferenceTask::create_task(
   task->synchronous = opts_->synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
   task->cl_arg_size = sizeof(InferenceParams);
-  task->priority = STARPU_MAX_PRIO - ctx->job->get_job_id();
+  task->priority =
+      std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_job_id());
 
   InferenceTask::allocate_task_buffers(task, num_buffers, ctx);
   InferenceTask::fill_task_buffers(task, inputs_handles, outputs_handles);
