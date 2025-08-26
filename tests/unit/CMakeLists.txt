@@ -36,6 +36,7 @@ target_sources(
             utils/unit_inference_validator.cpp
             utils/unit_input_generator.cpp
             utils/unit_logger.cpp
+            utils/unit_runtime_config.cpp
             utils/unit_config_loader.cpp
             utils/unit_transparent_hash.cpp
             utils/robustness/edgecases_client_utils.cpp

@@ -74,7 +74,13 @@ compute_max_message_bytes(
     for (const auto& t : tensors) {
       size_t numel = 1;
       for (int64_t d : t.dims) {
-        numel *= static_cast<size_t>(d);
+        const auto d_size = static_cast<size_t>(d);
+        if (d_size != 0 &&
+            numel > std::numeric_limits<size_t>::max() / d_size) {
+          throw MessageSizeOverflowException(
+              "numel * dimension size would overflow size_t");
+        }
+        numel *= d_size;
       }
       per_sample_bytes += numel * element_size(t.type);
     }
