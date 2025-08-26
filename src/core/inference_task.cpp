@@ -479,7 +479,15 @@ InferenceTask::record_and_run_completion_callback(
 
   if (ctx->job->has_on_complete()) {
     const auto& callback = ctx->job->get_on_complete();
-    callback(ctx->job->get_output_tensors(), latency_ms);
+    try {
+      callback(ctx->job->get_output_tensors(), latency_ms);
+    }
+    catch (const std::exception& e) {
+      log_error("Exception in completion callback: " + std::string(e.what()));
+    }
+    catch (...) {
+      log_error("Unknown exception in completion callback");
+    }
   }
 }
 
