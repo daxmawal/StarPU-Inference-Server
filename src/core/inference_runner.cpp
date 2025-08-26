@@ -108,7 +108,9 @@ static auto
 load_model(const std::string& model_path) -> torch::jit::script::Module
 {
   try {
-    return torch::jit::load(model_path);
+    auto model = torch::jit::load(model_path);
+    model.eval();
+    return model;
   }
   catch (const c10::Error& e) {
     log_error("Failed to load model: " + std::string(e.what()));
