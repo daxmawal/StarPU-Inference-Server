@@ -93,3 +93,14 @@ TEST(ArgsParser_Unit, VerboseLevels)
     EXPECT_EQ(opts.verbosity, expected);
   }
 }
+
+TEST(ArgsParser_Unit, ParsesMixedCaseTypes)
+{
+  const auto opts = parse(
+      {"program", "--model", "model.pt", "--shapes", "1x1,1x1", "--types",
+       "FlOat,InT"});
+  ASSERT_TRUE(opts.valid);
+  ASSERT_EQ(opts.inputs.size(), 2U);
+  EXPECT_EQ(opts.inputs[0].type, at::kFloat);
+  EXPECT_EQ(opts.inputs[1].type, at::kInt);
+}

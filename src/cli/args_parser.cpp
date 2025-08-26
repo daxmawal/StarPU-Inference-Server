@@ -2,6 +2,8 @@
 
 #include <c10/core/ScalarType.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -114,7 +116,12 @@ parse_type_string(const std::string& type_str) -> at::ScalarType
           {"complex128", at::kComplexDouble},
       };
 
-  auto iterator = type_map.find(std::string_view(type_str));
+  std::string type_lower = type_str;
+  std::transform(
+      type_lower.begin(), type_lower.end(), type_lower.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+  auto iterator = type_map.find(type_lower);
   if (iterator == type_map.end()) {
     throw std::invalid_argument("Unsupported type: " + type_str);
   }
