@@ -51,6 +51,8 @@ generate_random_tensor(
   switch (type) {
     case at::kFloat:
     case at::kDouble:
+    case at::kHalf:
+    case at::kBFloat16:
       return torch::rand(dim, options);
     case at::kInt:
     case at::kLong:

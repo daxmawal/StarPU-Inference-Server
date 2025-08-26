@@ -76,3 +76,11 @@ TEST_F(InputGeneratorTest, GeneratesBooleanTensor)
   EXPECT_GE(min_val, 0);
   EXPECT_LE(max_val, 1);
 }
+
+TEST_F(InputGeneratorTest, SupportsHalfAndBFloat16)
+{
+  auto tensors = generate({{2, 2}, {2, 2}}, {at::kHalf, at::kBFloat16});
+  ASSERT_EQ(tensors.size(), 2U);
+  EXPECT_EQ(tensors[0].dtype(), at::kHalf);
+  EXPECT_EQ(tensors[1].dtype(), at::kBFloat16);
+}
