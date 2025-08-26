@@ -1,5 +1,6 @@
 #include <atomic>
 #include <csignal>
+#include <format>
 #include <iostream>
 #include <memory>
 #include <string_view>
@@ -71,10 +72,10 @@ handle_program_arguments(int argc, char* argv[]) -> starpu_server::RuntimeConfig
     starpu_server::log_fatal("Invalid configuration file.\n");
   }
 
-  std::cout << "__cplusplus = " << __cplusplus << "\n"
-            << "LibTorch version: " << TORCH_VERSION << "\n"
-            << "Scheduler       : " << cfg.scheduler << "\n"
-            << "Iterations      : " << cfg.iterations << "\n";
+  log_info(cfg.verbosity, std::format("__cplusplus = {}", __cplusplus));
+  log_info(cfg.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
+  log_info(cfg.verbosity, std::format("Scheduler       : {}", cfg.scheduler));
+  log_info(cfg.verbosity, std::format("Iterations      : {}", cfg.iterations));
 
   return cfg;
 }
@@ -130,7 +131,7 @@ launch_threads(
   std::jthread grpc_thread([&, expected_input_types]() {
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, opts.server_address,
-        opts.max_message_bytes, ctx.server);
+        opts.max_message_bytes, opts.verbosity, ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);

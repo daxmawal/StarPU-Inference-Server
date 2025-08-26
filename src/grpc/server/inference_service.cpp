@@ -3,14 +3,15 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <future>
-#include <iostream>
 #include <string>
 #include <unordered_map>
 
 #include "monitoring/metrics.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/datatype_utils.hpp"
+#include "utils/logger.hpp"
 
 namespace starpu_server {
 using grpc::Server;
@@ -237,7 +238,7 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, int max_message_bytes,
+    const std::string& address, int max_message_bytes, VerbosityLevel verbosity,
     std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
@@ -250,7 +251,11 @@ RunGrpcServer(
   builder.SetMaxSendMessageSize(max_message_bytes);
 
   server = builder.BuildAndStart();
-  std::cout << "Server listening on " << address << std::endl;
+  if (!server) {
+    log_error(std::format("Failed to start gRPC server on {}", address));
+    return;
+  }
+  log_info(verbosity, std::format("Server listening on {}", address));
   server->Wait();
   server.reset();
 }

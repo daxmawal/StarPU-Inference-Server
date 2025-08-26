@@ -7,6 +7,7 @@
 
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "utils/logger.hpp"
 
 namespace starpu_server {
 class InferenceServiceImpl final
@@ -58,7 +59,7 @@ class InferenceServiceImpl final
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, int max_message_bytes,
+    const std::string& address, int max_message_bytes, VerbosityLevel verbosity,
     std::unique_ptr<grpc::Server>& server);
 
 void StopServer(std::unique_ptr<grpc::Server>& server);
