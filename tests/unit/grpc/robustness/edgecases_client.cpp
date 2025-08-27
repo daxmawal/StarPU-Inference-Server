@@ -3,10 +3,6 @@
 #include "grpc/client/inference_client.hpp"
 #include "test_helpers.hpp"
 
-namespace starpu_server {
-auto parse_verbosity_level(const std::string& val) -> VerbosityLevel;
-}
-
 TEST(ClientArgs, InvalidTypeIsDetected)
 {
   const char* argv[] = {"prog", "--shape", "1", "--type", "unknown"};

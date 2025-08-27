@@ -16,56 +16,6 @@
 #include "logger.hpp"
 
 namespace starpu_server {
-namespace {
-
-static auto
-parse_verbosity_level(const std::string& val) -> VerbosityLevel
-{
-  using enum VerbosityLevel;
-  if (std::all_of(val.begin(), val.end(), [](unsigned char c) {
-        return std::isdigit(c) != 0;
-      })) {
-    const int level = std::stoi(val);
-    switch (level) {
-      case 0:
-        return Silent;
-      case 1:
-        return Info;
-      case 2:
-        return Stats;
-      case 3:
-        return Debug;
-      case 4:
-        return Trace;
-      default:
-        throw std::invalid_argument("Invalid verbosity level: " + val);
-    }
-  }
-
-  std::string lower;
-  lower.reserve(val.size());
-  std::transform(
-      val.begin(), val.end(), std::back_inserter(lower),
-      [](unsigned char c) { return std::tolower(c); });
-  if (lower == "silent") {
-    return Silent;
-  }
-  if (lower == "info") {
-    return Info;
-  }
-  if (lower == "stats") {
-    return Stats;
-  }
-  if (lower == "debug") {
-    return Debug;
-  }
-  if (lower == "trace") {
-    return Trace;
-  }
-  throw std::invalid_argument("Invalid verbosity level: " + val);
-}
-
-}  // namespace
 
 auto
 load_config(const std::string& path) -> RuntimeConfig

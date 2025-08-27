@@ -1,9 +1,12 @@
 #pragma once
 
+#include <algorithm>
+#include <cctype>
 #include <concepts>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -25,6 +28,56 @@ enum class VerbosityLevel : std::uint8_t {
   Debug = 3,
   Trace = 4
 };
+
+// =============================================================================
+// Utility: parse verbosity level from string or number
+// =============================================================================
+
+inline auto
+parse_verbosity_level(const std::string& val) -> VerbosityLevel
+{
+  using enum VerbosityLevel;
+  if (std::all_of(val.begin(), val.end(), [](unsigned char c) {
+        return std::isdigit(c) != 0;
+      })) {
+    const int level = std::stoi(val);
+    switch (level) {
+      case 0:
+        return Silent;
+      case 1:
+        return Info;
+      case 2:
+        return Stats;
+      case 3:
+        return Debug;
+      case 4:
+        return Trace;
+      default:
+        throw std::invalid_argument("Invalid verbosity level: " + val);
+    }
+  }
+
+  std::string lower(val.size(), '\0');
+  std::transform(val.begin(), val.end(), lower.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  if (lower == "silent") {
+    return Silent;
+  }
+  if (lower == "info") {
+    return Info;
+  }
+  if (lower == "stats") {
+    return Stats;
+  }
+  if (lower == "debug") {
+    return Debug;
+  }
+  if (lower == "trace") {
+    return Trace;
+  }
+  throw std::invalid_argument("Invalid verbosity level: " + val);
+}
 
 // =============================================================================
 // Utility: color and label mapping for verbosity levels

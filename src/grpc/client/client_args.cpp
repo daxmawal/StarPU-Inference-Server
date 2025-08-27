@@ -63,27 +63,6 @@ parse_type_string(const std::string& type_str) -> at::ScalarType
 
 }  // namespace
 
-auto
-parse_verbosity_level(const std::string& val) -> VerbosityLevel
-{
-  using enum VerbosityLevel;
-  const int level = std::stoi(val);
-  switch (level) {
-    case 0:
-      return Silent;
-    case 1:
-      return Info;
-    case 2:
-      return Stats;
-    case 3:
-      return Debug;
-    case 4:
-      return Trace;
-    default:
-      throw std::invalid_argument("Invalid verbosity level: " + val);
-  }
-}
-
 void
 display_client_help(const char* prog_name)
 {

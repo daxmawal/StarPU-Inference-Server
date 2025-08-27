@@ -118,31 +118,6 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 }
 
 // =============================================================================
-// Verbosity Parsing
-// =============================================================================
-
-static auto
-parse_verbosity_level(const std::string& val) -> VerbosityLevel
-{
-  using enum VerbosityLevel;
-  const int level = std::stoi(val);
-  switch (level) {
-    case 0:
-      return Silent;
-    case 1:
-      return Info;
-    case 2:
-      return Stats;
-    case 3:
-      return Debug;
-    case 4:
-      return Trace;
-    default:
-      throw std::invalid_argument("Invalid verbosity level: " + val);
-  }
-}
-
-// =============================================================================
 // Argument Parsing Utilities: Helpers for optional and positional argument
 // parsing
 // =============================================================================

@@ -32,5 +32,4 @@ struct ClientConfig {
 
 void display_client_help(const char* prog_name);
 auto parse_client_args(const std::span<const char*> args) -> ClientConfig;
-auto parse_verbosity_level(const std::string& val) -> VerbosityLevel;
 }  // namespace starpu_server
