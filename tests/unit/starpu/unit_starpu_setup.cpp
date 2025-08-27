@@ -30,6 +30,18 @@ INSTANTIATE_TEST_SUITE_P(
           list.push_back(tensor_1);
           list.push_back(tensor_2);
           return ExtractTensorsParam{c10::IValue(list), {tensor_1, tensor_2}};
+        }(),
+        []() {
+          at::Tensor t1 = torch::rand({2});
+          at::Tensor t2 = torch::rand({3});
+          at::Tensor t3 = torch::rand({4});
+          c10::impl::GenericList inner(c10::AnyType::get());
+          inner.push_back(t2);
+          inner.push_back(t3);
+          c10::impl::GenericList outer(c10::AnyType::get());
+          outer.push_back(t1);
+          outer.push_back(c10::IValue(inner));
+          return ExtractTensorsParam{c10::IValue(outer), {t1, t2, t3}};
         }()),
     [](const ::testing::TestParamInfo<ExtractTensorsParam>& info) {
       switch (info.index) {
@@ -39,6 +51,8 @@ INSTANTIATE_TEST_SUITE_P(
           return std::string{"TupleOfTensors"};
         case 2:
           return std::string{"TensorList"};
+        case 3:
+          return std::string{"NestedList"};
         default:
           return std::string{"Unknown"};
       }

@@ -62,21 +62,28 @@ extract_tensors_from_output(const c10::IValue& result)
 {
   std::vector<at::Tensor> outputs;
 
-  if (result.isTensor()) {
-    outputs.emplace_back(result.toTensor());
-  } else if (result.isTuple()) {
-    for (const auto& val : result.toTuple()->elements()) {
-      TORCH_CHECK(val.isTensor(), "Expected tensor in tuple output");
-      outputs.emplace_back(val.toTensor());
+  std::function<void(const c10::IValue&)> extract;
+  extract = [&](const c10::IValue& value) {
+    if (value.isTensor()) {
+      outputs.emplace_back(value.toTensor());
+    } else if (value.isTuple()) {
+      for (const auto& val : value.toTuple()->elements()) {
+        extract(val);
+      }
+    } else if (value.isTensorList()) {
+      outputs.insert(
+          outputs.end(), value.toTensorList().begin(),
+          value.toTensorList().end());
+    } else if (value.isList()) {
+      for (const auto& val : value.toList()) {
+        extract(val);
+      }
+    } else {
+      throw UnsupportedModelOutputTypeException(
+          "Unsupported model output type");
     }
-  } else if (result.isTensorList()) {
-    outputs.insert(
-        outputs.end(), result.toTensorList().begin(),
-        result.toTensorList().end());
-
-  } else {
-    throw UnsupportedModelOutputTypeException("Unsupported model output type");
-  }
+  };
+  extract(result);
 
   return outputs;
 }
