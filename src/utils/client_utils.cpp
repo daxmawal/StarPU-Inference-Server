@@ -61,7 +61,7 @@ pick_random_input(
     const std::vector<std::vector<torch::Tensor>>& pool,
     std::mt19937& rng) -> const std::vector<torch::Tensor>&
 {
-  std::uniform_int_distribution dist(0, static_cast<int>(pool.size()) - 1);
+  std::uniform_int_distribution<std::size_t> dist(0, pool.size() - 1);
   const auto idx = static_cast<size_t>(dist(rng));
   TORCH_CHECK(idx < pool.size(), "Random index out of bounds.");
   return pool[idx];
