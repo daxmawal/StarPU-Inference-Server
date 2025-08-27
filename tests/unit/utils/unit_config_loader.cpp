@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "utils/config_loader.hpp"
+#include "utils/datatype_utils.hpp"
 
 using namespace starpu_server;
 
@@ -78,17 +79,13 @@ TEST(ConfigLoader, NegativeDelaySetsValidFalse)
   EXPECT_FALSE(cfg.valid);
 }
 
-#define load_config load_config_unused
-#include "utils/config_loader.cpp"
-#undef load_config
-
 using AliasCase =
     ::testing::TestWithParam<std::pair<const char*, at::ScalarType>>;
 
 TEST_P(AliasCase, ParsesAliasesToExpectedScalarType)
 {
   const auto& [alias, expected] = GetParam();
-  EXPECT_EQ(starpu_server::parse_type_string(alias), expected);
+  EXPECT_EQ(starpu_server::string_to_scalar_type(alias), expected);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -98,8 +95,9 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{"TYPE_FP16", at::kHalf}, std::pair{"bf16", at::kBFloat16},
         std::pair{"INT64", at::kLong}, std::pair{"bool", at::kBool}));
 
-TEST(ParseTypeString, UnknownTypeThrows)
+TEST(StringToScalarType, UnknownTypeThrows)
 {
   EXPECT_THROW(
-      starpu_server::parse_type_string("unknown_type"), std::invalid_argument);
+      starpu_server::string_to_scalar_type("unknown_type"),
+      std::invalid_argument);
 }

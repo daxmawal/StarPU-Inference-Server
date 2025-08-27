@@ -2,8 +2,6 @@
 
 #include <c10/core/ScalarType.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -18,6 +16,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "datatype_utils.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "transparent_hash.hpp"
@@ -90,46 +89,6 @@ parse_shapes_string(const std::string& shapes_str)
 }
 
 static auto
-parse_type_string(const std::string& type_str) -> at::ScalarType
-{
-  static const std::unordered_map<
-      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
-      type_map = {
-          {"float", at::kFloat},
-          {"float32", at::kFloat},
-          {"double", at::kDouble},
-          {"float64", at::kDouble},
-          {"half", at::kHalf},
-          {"float16", at::kHalf},
-          {"bfloat16", at::kBFloat16},
-          {"int", at::kInt},
-          {"int32", at::kInt},
-          {"long", at::kLong},
-          {"int64", at::kLong},
-          {"short", at::kShort},
-          {"int16", at::kShort},
-          {"char", at::kChar},
-          {"int8", at::kChar},
-          {"byte", at::kByte},
-          {"uint8", at::kByte},
-          {"bool", at::kBool},
-          {"complex64", at::kComplexFloat},
-          {"complex128", at::kComplexDouble},
-      };
-
-  std::string type_lower = type_str;
-  std::transform(
-      type_lower.begin(), type_lower.end(), type_lower.begin(),
-      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-  auto iterator = type_map.find(type_lower);
-  if (iterator == type_map.end()) {
-    throw std::invalid_argument("Unsupported type: " + type_str);
-  }
-  return iterator->second;
-}
-
-static auto
 parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 {
   if (types_str.empty()) {
@@ -148,7 +107,7 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
     if (type_str.empty()) {
       throw std::invalid_argument("Empty type in types string");
     }
-    types.push_back(parse_type_string(type_str));
+    types.push_back(string_to_scalar_type(type_str));
   }
 
   if (types.empty()) {

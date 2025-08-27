@@ -2,69 +2,19 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <fstream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
+#include "datatype_utils.hpp"
 #include "logger.hpp"
-#include "transparent_hash.hpp"
 
 namespace starpu_server {
 namespace {
-
-static auto
-parse_type_string(const std::string& type_str) -> at::ScalarType
-{
-  std::string key = type_str;
-  if (key.rfind("TYPE_", 0) == 0) {
-    key = key.substr(5);
-  }
-  std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-
-  static const std::unordered_map<
-      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
-      type_map = {
-          {"float", at::kFloat},
-          {"float32", at::kFloat},
-          {"fp32", at::kFloat},
-          {"double", at::kDouble},
-          {"float64", at::kDouble},
-          {"fp64", at::kDouble},
-          {"half", at::kHalf},
-          {"float16", at::kHalf},
-          {"fp16", at::kHalf},
-          {"bfloat16", at::kBFloat16},
-          {"bf16", at::kBFloat16},
-          {"int", at::kInt},
-          {"int32", at::kInt},
-          {"int64", at::kLong},
-          {"long", at::kLong},
-          {"int16", at::kShort},
-          {"short", at::kShort},
-          {"int8", at::kChar},
-          {"char", at::kChar},
-          {"uint8", at::kByte},
-          {"byte", at::kByte},
-          {"bool", at::kBool},
-          {"complex64", at::kComplexFloat},
-          {"complex128", at::kComplexDouble},
-      };
-
-  auto iter = type_map.find(key);
-  if (iter == type_map.end()) {
-    throw std::invalid_argument("Unsupported type: " + type_str);
-  }
-  return iter->second;
-}
 
 static auto
 parse_verbosity_level(const std::string& val) -> VerbosityLevel
@@ -121,7 +71,7 @@ load_config(const std::string& path) -> RuntimeConfig
           t.dims = node["dims"].as<std::vector<int64_t>>();
         }
         if (node["data_type"]) {
-          t.type = parse_type_string(node["data_type"].as<std::string>());
+          t.type = string_to_scalar_type(node["data_type"].as<std::string>());
         }
         cfg.inputs.push_back(std::move(t));
       }
@@ -136,7 +86,7 @@ load_config(const std::string& path) -> RuntimeConfig
           t.dims = node["dims"].as<std::vector<int64_t>>();
         }
         if (node["data_type"]) {
-          t.type = parse_type_string(node["data_type"].as<std::string>());
+          t.type = string_to_scalar_type(node["data_type"].as<std::string>());
         }
         cfg.outputs.push_back(std::move(t));
       }
