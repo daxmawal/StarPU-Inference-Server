@@ -79,6 +79,32 @@ TEST(ConfigLoader, NegativeDelaySetsValidFalse)
   EXPECT_FALSE(cfg.valid);
 }
 
+using VerbosityCase =
+    ::testing::TestWithParam<std::pair<const char*, VerbosityLevel>>;
+
+TEST_P(VerbosityCase, ParsesVerbosityStrings)
+{
+  const auto& [value, expected] = GetParam();
+  const std::string yaml = std::string("verbosity: ") + value;
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   (std::string("config_loader_verbosity_") + value + ".yaml");
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_EQ(cfg.verbosity, expected);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    VerbosityLevels, VerbosityCase,
+    ::testing::Values(
+        std::pair{"silent", VerbosityLevel::Silent},
+        std::pair{"info", VerbosityLevel::Info},
+        std::pair{"stats", VerbosityLevel::Stats},
+        std::pair{"debug", VerbosityLevel::Debug},
+        std::pair{"trace", VerbosityLevel::Trace},
+        std::pair{"TrAcE", VerbosityLevel::Trace}));
+
 using AliasCase =
     ::testing::TestWithParam<std::pair<const char*, at::ScalarType>>;
 
