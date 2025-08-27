@@ -21,6 +21,9 @@ TEST(TensorBuilder_Integration, StarPUStyleRoundTrip)
   params.layout.input_types = {at::kFloat};
   params.layout.num_dims = {2};
   params.layout.dims = {{2, 2}};
+  params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
+  params.limits.max_dims = starpu_server::InferLimits::MaxDims;
+  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
 
   auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
       &params, buffers, torch::kCPU);

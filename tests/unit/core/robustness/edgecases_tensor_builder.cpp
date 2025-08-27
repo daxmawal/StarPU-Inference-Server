@@ -80,6 +80,7 @@ TEST(TensorBuilder_Robustesse, FromStarpuBuffersTooManyInputs)
 {
   starpu_server::InferenceParams params;
   params.num_inputs = starpu_server::InferLimits::MaxInputs + 1;
+  params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
   std::vector<void*> buffers(params.num_inputs, nullptr);
   EXPECT_THROW(
       starpu_server::TensorBuilder::from_starpu_buffers(

@@ -27,7 +27,10 @@ TensorBuilder::from_starpu_buffers(
     const InferenceParams* params, std::span<void* const> buffers,
     torch::Device device) -> std::vector<torch::Tensor>
 {
-  if (params->num_inputs > InferLimits::MaxInputs) {
+  if (params->num_inputs > params->limits.max_inputs ||
+      params->num_inputs > params->layout.dims.size() ||
+      params->num_inputs > params->layout.num_dims.size() ||
+      params->num_inputs > params->layout.input_types.size()) {
     throw InferenceExecutionException("[ERROR] Too many input tensors");
   }
 
@@ -45,11 +48,14 @@ TensorBuilder::from_starpu_buffers(
     TORCH_CHECK(
         raw_ndim >= 0, "Invalid number of dimensions (must be non-negative)");
     const auto ndim = static_cast<size_t>(raw_ndim);
-    const std::vector<int64_t> shape(dims.begin(), dims.begin() + ndim);
+    if (dims.size() != ndim) {
+      throw InferenceExecutionException("[ERROR] Tensor layout mismatch");
+    }
+
 
     // Extract tensor type and wrap raw buffer into a torch::Tensor
     const at::ScalarType dtype = params->layout.input_types.at(idx);
-    inputs.emplace_back(from_raw_ptr(input_data, dtype, shape, device));
+    inputs.emplace_back(from_raw_ptr(input_data, dtype, dims, device));
   }
 
   return inputs;

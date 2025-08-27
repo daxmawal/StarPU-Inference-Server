@@ -152,12 +152,12 @@ InferenceTask::create_context(
 void
 InferenceTask::check_limits(size_t num_inputs) const
 {
-  if (num_inputs > InferLimits::MaxInputs) {
-    throw InferenceExecutionException(std::format(
-        "Too many input tensors: max is {}", InferLimits::MaxInputs));
+  if (num_inputs > opts_->max_inputs) {
+    throw InferenceExecutionException(
+        std::format("Too many input tensors: max is {}", opts_->max_inputs));
   }
 
-  if (models_gpu_->size() > InferLimits::MaxModelsGPU) {
+  if (models_gpu_->size() > opts_->max_models_gpu) {
     throw TooManyGpuModelsException(
         "Too many GPU models for the current configuration.");
   }
@@ -170,6 +170,10 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
   check_limits(num_inputs);
 
   auto params = std::make_shared<InferenceParams>();
+
+  params->limits.max_inputs = opts_->max_inputs;
+  params->limits.max_dims = opts_->max_dims;
+  params->limits.max_models_gpu = opts_->max_models_gpu;
 
   fill_model_pointers(params);
   bind_runtime_job_info(params);
@@ -188,9 +192,10 @@ InferenceTask::fill_model_pointers(
 {
   params->models.model_cpu = model_cpu_;
   params->models.num_models_gpu = models_gpu_->size();
+  params->models.models_gpu.resize(models_gpu_->size());
 
   for (size_t i = 0; i < models_gpu_->size(); ++i) {
-    params->models.models_gpu.at(i) = &(models_gpu_->at(i));
+    params->models.models_gpu[i] = &(models_gpu_->at(i));
   }
 }
 
@@ -212,20 +217,24 @@ void
 InferenceTask::fill_input_layout(
     const std::shared_ptr<InferenceParams>& params, size_t num_inputs) const
 {
+  params->layout.input_types.resize(num_inputs);
   std::copy_n(
       job_->get_input_types().begin(), num_inputs,
       params->layout.input_types.begin());
 
+  params->layout.num_dims.resize(num_inputs);
+  params->layout.dims.resize(num_inputs);
+
   for (size_t i = 0; i < num_inputs; ++i) {
     const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
-    if (dim > static_cast<int64_t>(InferLimits::MaxDims)) {
+    if (dim > static_cast<int64_t>(opts_->max_dims)) {
       throw InferenceExecutionException(std::format(
-          "Input tensor has too many dimensions: max is {}",
-          InferLimits::MaxDims));
+          "Input tensor has too many dimensions: max is {}", opts_->max_dims));
     }
-    params->layout.num_dims.at(i) = dim;
-    std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
+    params->layout.num_dims[i] = dim;
+    params->layout.dims[i].assign(
+        tensor.sizes().data(), tensor.sizes().data() + dim);
   }
 }
 

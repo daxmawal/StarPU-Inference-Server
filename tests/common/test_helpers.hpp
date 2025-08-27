@@ -91,8 +91,14 @@ make_basic_params(int elements, at::ScalarType type = at::kFloat)
   InferenceParams params{};
   params.num_inputs = 1;
   params.num_outputs = 1;
+  params.limits.max_inputs = InferLimits::MaxInputs;
+  params.limits.max_dims = InferLimits::MaxDims;
+  params.limits.max_models_gpu = InferLimits::MaxModelsGPU;
+  params.layout.num_dims.resize(1);
   params.layout.num_dims[0] = 1;
-  params.layout.dims[0][0] = elements;
+  params.layout.dims.resize(1);
+  params.layout.dims[0] = {elements};
+  params.layout.input_types.resize(1);
   params.layout.input_types[0] = type;
   return params;
 }
@@ -105,11 +111,15 @@ make_params_for_inputs(
   assert(shapes.size() == dtypes.size());
   InferenceParams params{};
   params.num_inputs = shapes.size();
+  params.limits.max_inputs = InferLimits::MaxInputs;
+  params.limits.max_dims = InferLimits::MaxDims;
+  params.limits.max_models_gpu = InferLimits::MaxModelsGPU;
+  params.layout.num_dims.resize(shapes.size());
+  params.layout.dims.resize(shapes.size());
+  params.layout.input_types.resize(shapes.size());
   for (size_t i = 0; i < shapes.size(); ++i) {
     params.layout.num_dims[i] = static_cast<int64_t>(shapes[i].size());
-    for (size_t j = 0; j < shapes[i].size(); ++j) {
-      params.layout.dims[i][j] = shapes[i][j];
-    }
+    params.layout.dims[i] = shapes[i];
     params.layout.input_types[i] = dtypes[i];
   }
   return params;
