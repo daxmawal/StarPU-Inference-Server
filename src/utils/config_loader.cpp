@@ -40,7 +40,6 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
       default:
         throw std::invalid_argument("Invalid verbosity level: " + val);
     }
-    throw std::invalid_argument("Invalid verbosity level: " + val);
   }
 
   std::string lower;
@@ -63,6 +62,7 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
   if (lower == "trace") {
     return Trace;
   }
+  throw std::invalid_argument("Invalid verbosity level: " + val);
 }
 
 }  // namespace

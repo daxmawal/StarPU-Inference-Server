@@ -79,6 +79,17 @@ TEST(ConfigLoader, NegativeDelaySetsValidFalse)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, InvalidVerbositySetsValidFalse)
+{
+  const std::string yaml = R"(verbosity: unknown)";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_invalid_verbosity.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
 using VerbosityCase =
     ::testing::TestWithParam<std::pair<const char*, VerbosityLevel>>;
 
