@@ -154,6 +154,10 @@ class InferenceJob {
 // Entry point: launches warmup and execution loop
 // =============================================================================
 
+class StarPUTaskRunner;
+using WorkerThreadLauncher = std::jthread (*)(StarPUTaskRunner&);
+extern WorkerThreadLauncher worker_thread_launcher;
+
 auto load_model_and_reference_output(const RuntimeConfig& opts)
     -> std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,

@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -113,4 +114,36 @@ TEST(InferenceRunner_Robustesse, LoadModelMissingFile)
   catch (const std::exception&) {
     SUCCEED();
   }
+}
+
+TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
+{
+  using namespace starpu_server;
+
+  auto model = make_identity_model();
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "worker_fail.pt";
+  model.save(model_path.string());
+
+  RuntimeConfig opts;
+  opts.model_path = model_path.string();
+  opts.inputs = {{"input0", {1}, at::kFloat}};
+  opts.iterations = 1;
+  opts.use_cuda = false;
+
+  StarPUSetup starpu(opts);
+
+  auto original_launcher = worker_thread_launcher;
+  worker_thread_launcher = [](StarPUTaskRunner&) -> std::jthread {
+    throw std::runtime_error("boom");
+  };
+
+  CaptureStream capture{std::cerr};
+  EXPECT_THROW(run_inference_loop(opts, starpu), std::runtime_error);
+  EXPECT_NE(
+      capture.str().find("Failed to start worker thread: boom"),
+      std::string::npos);
+
+  worker_thread_launcher = original_launcher;
+  std::filesystem::remove(model_path);
 }

@@ -41,6 +41,14 @@
 
 namespace starpu_server {
 
+static auto
+default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
+{
+  return std::jthread(&StarPUTaskRunner::run, &worker);
+}
+
+WorkerThreadLauncher worker_thread_launcher = default_worker_thread_launcher;
+
 // =============================================================================
 // InferenceJob: Encapsulates a single inference task, including input data,
 // types, ID, and completion callback
@@ -312,16 +320,38 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   config.all_done_cv = &all_done_cv;
   StarPUTaskRunner worker(config);
 
-  const std::jthread server(&StarPUTaskRunner::run, &worker);
-  const std::jthread client([&queue, &opts, &outputs_ref]() {
-    client_worker(queue, opts, outputs_ref, opts.iterations);
-  });
+  std::jthread server;
+  std::jthread client;
+  try {
+    server = worker_thread_launcher(worker);
+    client = std::jthread([&queue, &opts, &outputs_ref]() {
+      client_worker(queue, opts, outputs_ref, opts.iterations);
+    });
+  }
+  catch (const std::exception& e) {
+    log_error(std::format("Failed to start worker thread: {}", e.what()));
+    queue.shutdown();
+    if (client.joinable()) {
+      client.join();
+    }
+    if (server.joinable()) {
+      server.join();
+    }
+    throw;
+  }
 
   {
     std::unique_lock lock(all_done_mutex);
     all_done_cv.wait(lock, [&completed_jobs, &opts]() {
       return completed_jobs.load() >= opts.iterations;
     });
+  }
+
+  if (client.joinable()) {
+    client.join();
+  }
+  if (server.joinable()) {
+    server.join();
   }
 
   if (opts.use_cuda) {
