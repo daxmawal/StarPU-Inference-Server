@@ -1,3 +1,5 @@
+#include <cstddef>
+
 #include "test_inference_service.hpp"
 
 TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
@@ -84,7 +86,8 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
   std::unique_ptr<grpc::Server> server;
   std::jthread thread([&]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, "127.0.0.1:0", 32 * 1024 * 1024,
+        queue, reference_outputs, {at::kFloat}, "127.0.0.1:0",
+        static_cast<std::size_t>(32) * 1024 * 1024,
         starpu_server::VerbosityLevel::Info, server);
   });
   while (!server) {

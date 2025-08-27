@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstddef>
 #include <vector>
 
 #include "test_cli.hpp"
@@ -62,7 +63,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.warmup_iterations, 3);
   ASSERT_TRUE(opts.seed.has_value());
   EXPECT_EQ(opts.seed.value(), 123U);
-  constexpr int expected_bytes = 32 * 1024 * 1024;
+  constexpr std::size_t expected_bytes = 32 * 1024 * 1024;
   EXPECT_EQ(opts.max_message_bytes, expected_bytes);
   EXPECT_TRUE(opts.synchronous);
   EXPECT_FALSE(opts.use_cpu);

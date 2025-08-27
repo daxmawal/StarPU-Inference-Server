@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstdint>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -160,7 +161,13 @@ load_config(const std::string& path) -> RuntimeConfig
       cfg.metrics_port = root["metrics_port"].as<int>();
     }
     if (root["max_message_bytes"]) {
-      cfg.max_message_bytes = root["max_message_bytes"].as<int>();
+      const auto tmp = root["max_message_bytes"].as<long long>();
+      if (tmp < 0 || static_cast<unsigned long long>(tmp) >
+                         std::numeric_limits<std::size_t>::max()) {
+        throw std::invalid_argument(
+            "max_message_bytes must be >= 0 and fit in size_t");
+      }
+      cfg.max_message_bytes = static_cast<std::size_t>(tmp);
     }
     if (root["max_batch_size"]) {
       cfg.max_batch_size = root["max_batch_size"].as<int>();

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <format>
 #include <future>
+#include <limits>
 #include <string>
 #include <unordered_map>
 
@@ -238,8 +239,8 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, int max_message_bytes, VerbosityLevel verbosity,
-    std::unique_ptr<Server>& server)
+    const std::string& address, std::size_t max_message_bytes,
+    VerbosityLevel verbosity, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs, expected_input_types);
@@ -247,8 +248,13 @@ RunGrpcServer(
   ServerBuilder builder;
   builder.AddListeningPort(address, grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
-  builder.SetMaxReceiveMessageSize(max_message_bytes);
-  builder.SetMaxSendMessageSize(max_message_bytes);
+  const int grpc_max_message_bytes =
+      max_message_bytes >
+              static_cast<std::size_t>(std::numeric_limits<int>::max())
+          ? std::numeric_limits<int>::max()
+          : static_cast<int>(max_message_bytes);
+  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
+  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
 
   server = builder.BuildAndStart();
   if (!server) {

@@ -3,6 +3,7 @@
 #include <grpcpp/grpcpp.h>
 #include <torch/torch.h>
 
+#include <cstddef>
 #include <memory>
 
 #include "grpc_service.grpc.pb.h"
@@ -59,8 +60,8 @@ class InferenceServiceImpl final
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, int max_message_bytes, VerbosityLevel verbosity,
-    std::unique_ptr<grpc::Server>& server);
+    const std::string& address, std::size_t max_message_bytes,
+    VerbosityLevel verbosity, std::unique_ptr<grpc::Server>& server);
 
 void StopServer(std::unique_ptr<grpc::Server>& server);
 }  // namespace starpu_server

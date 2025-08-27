@@ -2,6 +2,7 @@
 #include <ATen/core/ScalarType.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -50,7 +51,7 @@ struct RuntimeConfig {
   int iterations = 1;
   int delay_ms = 0;
   int max_batch_size = 1;
-  int max_message_bytes = 32 * 1024 * 1024;
+  std::size_t max_message_bytes = 32 * 1024 * 1024;
   size_t pregen_inputs = 10;
   int warmup_iterations = 2;
 
@@ -67,7 +68,7 @@ inline auto
 compute_max_message_bytes(
     int max_batch_size, const std::vector<TensorConfig>& inputs,
     const std::vector<TensorConfig>& outputs,
-    int min_message_bytes = 32 * 1024 * 1024) -> int
+    std::size_t min_message_bytes = 32 * 1024 * 1024) -> std::size_t
 {
   size_t per_sample_bytes = 0;
   const auto accumulate_bytes = [&](const std::vector<TensorConfig>& tensors) {
@@ -107,7 +108,6 @@ compute_max_message_bytes(
   }
 
   const size_t total = per_sample_bytes * static_cast<size_t>(max_batch_size);
-  return static_cast<int>(
-      std::max(total, static_cast<size_t>(min_message_bytes)));
+  return std::max(total, min_message_bytes);
 }
 }  // namespace starpu_server
