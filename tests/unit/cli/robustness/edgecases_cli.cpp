@@ -28,6 +28,7 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--shape", "1x-3x3"},
         std::vector<const char*>{"--types", "unknown"},
         std::vector<const char*>{"--device-ids", "-1"},
+        std::vector<const char*>{"--device-ids", "0,0"},
         std::vector<const char*>{"--unknown"},
         std::vector<const char*>{"--shapes", "1x2,2x3", "--types", "float"},
         std::vector<const char*>{"--shape", "1xax2"},

@@ -1,6 +1,7 @@
 #pragma once
 #include <ATen/core/ScalarType.h>
 
+#include <iostream>
 #include <span>
 #include <string>
 #include <vector>

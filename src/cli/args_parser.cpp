@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "logger.hpp"
@@ -336,7 +337,7 @@ static auto
 parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  return expect_and_parse(idx, args, [&opts](const char* val) {
+  const bool parsed = expect_and_parse(idx, args, [&opts](const char* val) {
     opts.use_cuda = true;
     std::stringstream shape_stream(val);
     std::string id_str;
@@ -351,6 +352,19 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
       throw std::invalid_argument("No device IDs provided.");
     }
   });
+
+  if (!parsed) {
+    return false;
+  }
+
+  std::unordered_set<int> unique_ids(
+      opts.device_ids.begin(), opts.device_ids.end());
+  if (unique_ids.size() != opts.device_ids.size()) {
+    log_error("Duplicate device IDs provided.");
+    return false;
+  }
+
+  return true;
 }
 
 static auto
