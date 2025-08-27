@@ -20,3 +20,13 @@ TEST(StarPUSetupErrorsTest, ExtractTensorsFromOutputUnsupportedType)
       starpu_server::extract_tensors_from_output(non_tensor),
       starpu_server::UnsupportedModelOutputTypeException);
 }
+
+TEST(StarPUSetupErrorsTest, ExtractTensorsFromOutputDictWithNonTensor)
+{
+  c10::impl::GenericDict gd(c10::StringType::get(), c10::AnyType::get());
+  gd.insert(c10::IValue("answer"), c10::IValue(42));
+
+  EXPECT_THROW(
+      starpu_server::extract_tensors_from_output(c10::IValue(gd)),
+      starpu_server::UnsupportedModelOutputTypeException);
+}

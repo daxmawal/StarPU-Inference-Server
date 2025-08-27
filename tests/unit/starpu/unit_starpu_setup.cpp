@@ -42,6 +42,28 @@ INSTANTIATE_TEST_SUITE_P(
           outer.push_back(t1);
           outer.push_back(c10::IValue(inner));
           return ExtractTensorsParam{c10::IValue(outer), {t1, t2, t3}};
+        }(),
+        []() {
+          at::Tensor t1 = torch::rand({2});
+          at::Tensor t2 = torch::rand({3});
+          c10::Dict<std::string, at::Tensor> dict;
+          dict.insert("first", t1);
+          dict.insert("second", t2);
+          return ExtractTensorsParam{c10::IValue(dict), {t1, t2}};
+        }(),
+        []() {
+          at::Tensor t1 = torch::rand({2});
+          at::Tensor t2 = torch::rand({3});
+          at::Tensor t3 = torch::rand({4});
+          c10::impl::GenericDict inner(
+              c10::StringType::get(), c10::AnyType::get());
+          inner.insert(c10::IValue("second"), c10::IValue(t2));
+          inner.insert(c10::IValue("third"), c10::IValue(t3));
+          c10::impl::GenericDict outer(
+              c10::StringType::get(), c10::AnyType::get());
+          outer.insert(c10::IValue("first"), c10::IValue(t1));
+          outer.insert(c10::IValue("nested"), c10::IValue(inner));
+          return ExtractTensorsParam{c10::IValue(outer), {t1, t2, t3}};
         }()),
     [](const ::testing::TestParamInfo<ExtractTensorsParam>& info) {
       switch (info.index) {
@@ -53,6 +75,10 @@ INSTANTIATE_TEST_SUITE_P(
           return std::string{"TensorList"};
         case 3:
           return std::string{"NestedList"};
+        case 4:
+          return std::string{"Dict"};
+        case 5:
+          return std::string{"NestedDict"};
         default:
           return std::string{"Unknown"};
       }

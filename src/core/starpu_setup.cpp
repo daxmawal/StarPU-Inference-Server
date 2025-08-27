@@ -78,6 +78,10 @@ extract_tensors_from_output(const c10::IValue& result)
       for (const auto& val : value.toList()) {
         extract(val);
       }
+    } else if (value.isGenericDict()) {
+      for (const auto& item : value.toGenericDict()) {
+        extract(item.value());
+      }
     } else {
       throw UnsupportedModelOutputTypeException(
           "Unsupported model output type");
