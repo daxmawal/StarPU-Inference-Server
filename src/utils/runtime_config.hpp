@@ -68,6 +68,7 @@ struct RuntimeConfig {
   int max_batch_size = 1;
   std::size_t max_message_bytes = 32 * 1024 * 1024;
   size_t pregen_inputs = 10;
+  size_t warmup_pregen_inputs = 2;
   int warmup_iterations = 2;
 
   size_t max_inputs = STARPU_SERVER_MAX_INPUTS;

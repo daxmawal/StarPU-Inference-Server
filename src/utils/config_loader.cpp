@@ -135,6 +135,13 @@ load_config(const std::string& path) -> RuntimeConfig
       }
       cfg.pregen_inputs = static_cast<size_t>(tmp);
     }
+    if (root["warmup_pregen_inputs"]) {
+      const int tmp = root["warmup_pregen_inputs"].as<int>();
+      if (tmp <= 0) {
+        throw std::invalid_argument("warmup_pregen_inputs must be > 0");
+      }
+      cfg.warmup_pregen_inputs = static_cast<size_t>(tmp);
+    }
     if (root["warmup_iterations"]) {
       const int tmp = root["warmup_iterations"].as<int>();
       if (tmp < 0) {

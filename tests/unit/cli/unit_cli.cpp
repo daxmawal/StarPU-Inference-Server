@@ -49,6 +49,8 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
       "2",
       "--pregen-inputs",
       "7",
+      "--warmup-pregen-inputs",
+      "5",
       "--warmup-iterations",
       "3",
       "--seed",
@@ -65,6 +67,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.server_address, "127.0.0.1:1234");
   EXPECT_EQ(opts.max_batch_size, 2);
   EXPECT_EQ(opts.pregen_inputs, 7U);
+  EXPECT_EQ(opts.warmup_pregen_inputs, 5U);
   EXPECT_EQ(opts.warmup_iterations, 3);
   ASSERT_TRUE(opts.seed.has_value());
   EXPECT_EQ(opts.seed.value(), 123U);

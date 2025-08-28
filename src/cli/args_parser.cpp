@@ -393,6 +393,20 @@ parse_pregen_inputs(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 }
 
 static auto
+parse_warmup_pregen_inputs(
+    RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  auto& pregen = opts.warmup_pregen_inputs;
+  return expect_and_parse(idx, args, [&pregen](const char* val) {
+    const auto tmp = std::stoi(val);
+    if (tmp <= 0) {
+      throw std::invalid_argument("Must be > 0.");
+    }
+    pregen = static_cast<size_t>(tmp);
+  });
+}
+
+static auto
 parse_warmup_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
@@ -453,6 +467,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--metrics-port", parse_metrics_port},
           {"--max-batch-size", parse_max_batch_size},
           {"--pregen-inputs", parse_pregen_inputs},
+          {"--warmup-pregen-inputs", parse_warmup_pregen_inputs},
           {"--warmup-iterations", parse_warmup_iterations},
           {"--seed", parse_seed},
       };

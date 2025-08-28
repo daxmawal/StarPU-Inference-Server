@@ -29,8 +29,6 @@
 #include "starpu_task_worker.hpp"
 
 namespace starpu_server {
-constexpr size_t NUM_PREGENERATED_INPUTS = 2;
-
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -64,7 +62,8 @@ WarmupRunner::client_worker(
 
   auto pregen_inputs =
       std::make_unique<std::vector<std::vector<torch::Tensor>>>(
-          client_utils::pre_generate_inputs(opts_, NUM_PREGENERATED_INPUTS));
+          client_utils::pre_generate_inputs(
+              opts_, opts_.warmup_pregen_inputs));
 
   if (iterations_per_worker < 0) {
     throw std::invalid_argument("iterations_per_worker must be non-negative");

@@ -26,6 +26,7 @@ output:
 verbosity: 3
 max_batch_size: 4
 pregen_inputs: 8
+warmup_pregen_inputs: 5
 warmup_iterations: 3
 seed: 123
 )";
@@ -51,6 +52,7 @@ seed: 123
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
   EXPECT_EQ(cfg.max_batch_size, 4);
   EXPECT_EQ(cfg.pregen_inputs, 8U);
+  EXPECT_EQ(cfg.warmup_pregen_inputs, 5U);
   EXPECT_EQ(cfg.warmup_iterations, 3);
   ASSERT_TRUE(cfg.seed.has_value());
   EXPECT_EQ(cfg.seed.value(), 123U);
