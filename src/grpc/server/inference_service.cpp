@@ -6,6 +6,7 @@
 #include <format>
 #include <future>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -30,6 +31,15 @@ using inference::ServerReadyResponse;
 
 
 namespace {
+
+auto
+checked_mul(size_t a, size_t b) -> std::optional<size_t>
+{
+  if (a != 0 && b > std::numeric_limits<size_t>::max() / a) {
+    return std::nullopt;
+  }
+  return a * b;
+}
 
 // Convert gRPC input to torch::Tensor
 auto
@@ -143,7 +153,7 @@ InferenceServiceImpl::validate_and_convert_inputs(
           grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch");
     }
 
-    size_t expected = element_size(dtype);
+    std::optional<size_t> expected = element_size(dtype);
     for (const auto dim : input.shape()) {
       if (dim <= 0) {
         return Status(
@@ -151,16 +161,14 @@ InferenceServiceImpl::validate_and_convert_inputs(
             "Input tensor shape contains non-positive dimension");
       }
 
-      const auto dim_size = static_cast<size_t>(dim);
-      if (expected > std::numeric_limits<size_t>::max() / dim_size) {
+      expected = checked_mul(*expected, static_cast<size_t>(dim));
+      if (!expected) {
         return Status(
             grpc::StatusCode::INVALID_ARGUMENT,
             "Input tensor shape is too large");
       }
-
-      expected *= dim_size;
     }
-    if (expected != raw.size()) {
+    if (*expected != raw.size()) {
       return Status(
           grpc::StatusCode::INVALID_ARGUMENT,
           "Input tensor shape does not match raw content size");
