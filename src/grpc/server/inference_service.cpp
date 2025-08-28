@@ -111,6 +111,14 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const ModelInferRequest* request, std::vector<torch::Tensor>& inputs)
     -> Status
 {
+  if (request->inputs_size() !=
+      static_cast<int>(expected_input_types_.size())) {
+    return Status(
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format(
+            "Expected {} input tensors but received {}",
+            expected_input_types_.size(), request->inputs_size()));
+  }
   if (request->raw_input_contents_size() != request->inputs_size()) {
     return Status(
         grpc::StatusCode::INVALID_ARGUMENT,
@@ -130,8 +138,7 @@ InferenceServiceImpl::validate_and_convert_inputs(
       return Status(grpc::StatusCode::INVALID_ARGUMENT, e.what());
     }
 
-    if (i >= static_cast<int>(expected_input_types_.size()) ||
-        dtype != expected_input_types_[i]) {
+    if (dtype != expected_input_types_[i]) {
       return Status(
           grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch");
     }
@@ -166,15 +173,6 @@ InferenceServiceImpl::validate_and_convert_inputs(
     }
     inputs.push_back(std::move(tensor));
   }
-  if (request->inputs_size() !=
-      static_cast<int>(expected_input_types_.size())) {
-    return Status(
-        grpc::StatusCode::INVALID_ARGUMENT,
-        std::format(
-            "Expected {} input tensors but received {}",
-            expected_input_types_.size(), request->inputs_size()));
-  }
-
   return Status::OK;
 }
 

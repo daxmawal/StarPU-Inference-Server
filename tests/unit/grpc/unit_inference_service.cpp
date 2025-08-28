@@ -42,6 +42,25 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
   EXPECT_EQ(inputs[1][0].item<int64_t>(), 10);
 }
 
+TEST(InferenceService, ValidateInputsMismatchedCount)
+{
+  std::vector<float> data0 = {1.0F, 2.0F, 3.0F, 4.0F};
+  std::vector<int64_t> data1 = {10, 20, 30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
 TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
 {
   auto req = starpu_server::make_model_request("model", "1");
