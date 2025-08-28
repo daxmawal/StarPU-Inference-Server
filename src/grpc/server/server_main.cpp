@@ -4,6 +4,7 @@
 #include <format>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string_view>
 #include <thread>
 
@@ -82,8 +83,11 @@ prepare_models_and_warmup(
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu)
 {
-  auto [model_cpu, models_gpu, reference_outputs] =
-      starpu_server::load_model_and_reference_output(opts);
+  auto models = starpu_server::load_model_and_reference_output(opts);
+  if (!models) {
+    throw std::runtime_error("Failed to load model or reference outputs");
+  }
+  auto [model_cpu, models_gpu, reference_outputs] = std::move(*models);
   starpu_server::run_warmup(
       opts, starpu, model_cpu, models_gpu, reference_outputs);
   return {model_cpu, models_gpu, reference_outputs};
@@ -153,7 +157,8 @@ main(int argc, char* argv[]) -> int
     starpu_server::RuntimeConfig opts = handle_program_arguments(argc, argv);
     const bool metrics_ok = starpu_server::init_metrics(opts.metrics_port);
     if (!metrics_ok) {
-      starpu_server::log_warning("Metrics server failed to start; continuing without metrics.");
+      starpu_server::log_warning(
+          "Metrics server failed to start; continuing without metrics.");
     }
     starpu_server::StarPUSetup starpu(opts);
     auto [model_cpu, models_gpu, reference_outputs] =

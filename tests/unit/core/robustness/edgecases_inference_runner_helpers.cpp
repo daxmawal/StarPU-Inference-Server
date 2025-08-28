@@ -5,6 +5,7 @@
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <vector>
 
 #include "core/inference_runner.hpp"
@@ -26,12 +27,10 @@ TEST(InferenceRunnerHelpers_Robustesse, LoadModelAndReferenceOutputCorruptFile)
   opts.inputs = {{"input0", {1}, at::kFloat}};
 
   starpu_server::CaptureStream capture{std::cerr};
-  auto [cpu_model, gpu_models, refs] =
-      starpu_server::load_model_and_reference_output(opts);
+  auto result = starpu_server::load_model_and_reference_output(opts);
   auto err = capture.str();
 
-  EXPECT_TRUE(gpu_models.empty());
-  EXPECT_TRUE(refs.empty());
+  EXPECT_EQ(result, std::nullopt);
   EXPECT_NE(
       err.find("Failed to load model or run reference inference"),
       std::string::npos);
@@ -57,11 +56,9 @@ TEST_P(LoadModelAndReferenceOutputError_Robustesse, MissingFile)
   opts.model_path = "nonexistent_model.pt";
   opts.inputs = {{"input0", {1}, GetParam()}};
   starpu_server::CaptureStream capture{std::cerr};
-  auto [cpu_model, gpu_models, refs] =
-      starpu_server::load_model_and_reference_output(opts);
+  auto result = starpu_server::load_model_and_reference_output(opts);
   auto err = capture.str();
-  EXPECT_TRUE(gpu_models.empty());
-  EXPECT_TRUE(refs.empty());
+  EXPECT_EQ(result, std::nullopt);
   EXPECT_NE(
       err.find("Failed to load model or run reference inference"),
       std::string::npos);

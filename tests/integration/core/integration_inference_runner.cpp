@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,8 +39,9 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputCPU)
   opts.use_cuda = false;
 
   torch::manual_seed(42);
-  auto [cpu_model, gpu_models, refs] =
-      starpu_server::load_model_and_reference_output(opts);
+  auto result = starpu_server::load_model_and_reference_output(opts);
+  ASSERT_TRUE(result.has_value());
+  auto& [cpu_model, gpu_models, refs] = *result;
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(42);
@@ -63,8 +65,9 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTuple)
   opts.use_cuda = false;
 
   torch::manual_seed(1);
-  auto [cpu_model, gpu_models, refs] =
-      starpu_server::load_model_and_reference_output(opts);
+  auto result = starpu_server::load_model_and_reference_output(opts);
+  ASSERT_TRUE(result.has_value());
+  auto& [cpu_model, gpu_models, refs] = *result;
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(1);
@@ -89,8 +92,9 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTensorList)
   opts.use_cuda = false;
 
   torch::manual_seed(2);
-  auto [cpu_model, gpu_models, refs] =
-      starpu_server::load_model_and_reference_output(opts);
+  auto result = starpu_server::load_model_and_reference_output(opts);
+  ASSERT_TRUE(result.has_value());
+  auto& [cpu_model, gpu_models, refs] = *result;
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(2);

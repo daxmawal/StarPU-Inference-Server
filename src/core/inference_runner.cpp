@@ -159,8 +159,8 @@ generate_inputs(const std::vector<TensorConfig>& tensors)
 
 static auto
 run_reference_inference(
-    torch::jit::script::Module& model,
-    const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
+    torch::jit::script::Module& model, const std::vector<torch::Tensor>& inputs)
+    -> std::vector<torch::Tensor>
 {
   c10::InferenceMode guard;
   std::vector<torch::Tensor> output_refs;
@@ -193,9 +193,9 @@ run_reference_inference(
 
 auto
 load_model_and_reference_output(const RuntimeConfig& opts)
-    -> std::tuple<
+    -> std::optional<std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-        std::vector<torch::Tensor>>
+        std::vector<torch::Tensor>>>
 {
   try {
     auto model_cpu = load_model(opts.model_path);
@@ -205,13 +205,13 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     auto inputs = generate_inputs(opts.inputs);
     auto output_refs = run_reference_inference(model_cpu, inputs);
 
-    return {model_cpu, models_gpu, output_refs};
+    return std::tuple{model_cpu, models_gpu, output_refs};
   }
   catch (const c10::Error& e) {
     log_error(
         "Failed to load model or run reference inference: " +
         std::string(e.what()));
-    return {};
+    return std::nullopt;
   }
 }
 
@@ -293,8 +293,19 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;
 
-  std::tie(model_cpu, models_gpu, outputs_ref) =
-      load_model_and_reference_output(opts);
+  try {
+    auto result = load_model_and_reference_output(opts);
+    if (!result) {
+      log_error("Failed to load model or reference outputs");
+      return;
+    }
+    std::tie(model_cpu, models_gpu, outputs_ref) = std::move(*result);
+  }
+  catch (const std::exception& e) {
+    log_error(
+        std::format("Failed to load model or reference outputs: {}", e.what()));
+    return;
+  }
 
   run_warmup(opts, starpu, model_cpu, models_gpu, outputs_ref);
 

@@ -3,6 +3,7 @@
 #include <torch/script.h>
 
 #include <filesystem>
+#include <optional>
 #include <tuple>
 #include <vector>
 
@@ -77,8 +78,8 @@ save_mul_two_model(const std::filesystem::path& path) -> void
 
 inline auto
 run_reference_inference(
-    torch::jit::script::Module& model,
-    const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
+    torch::jit::script::Module& model, const std::vector<torch::Tensor>& inputs)
+    -> std::vector<torch::Tensor>
 {
   std::vector<torch::Tensor> output_refs;
   const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
@@ -109,9 +110,9 @@ generate_inputs(const std::vector<TensorConfig>& tensors)
 }
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)
-    -> std::tuple<
+    -> std::optional<std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-        std::vector<torch::Tensor>>;
+        std::vector<torch::Tensor>>>;
 
 void synchronize_cuda_device();
 }  // namespace starpu_server
