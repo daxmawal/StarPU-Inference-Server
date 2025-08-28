@@ -120,7 +120,7 @@ TEST(ArgsParser_Unit, MetricsPortBoundaryValues)
   for (const int port : {1, 65535}) {
     std::string port_str = std::to_string(port);
     std::vector<const char*> args = {
-        "program", "--model", "model.pt",       "--shape",       "1x1",
+        "program", "--model", test_model_path().c_str(), "--shape",       "1x1",
         "--types", "float",   "--metrics-port", port_str.c_str()};
     const auto opts = parse(args);
     ASSERT_TRUE(opts.valid);
