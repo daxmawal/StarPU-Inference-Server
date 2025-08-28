@@ -17,17 +17,9 @@ namespace starpu_server {
 // =============================================================================
 // Compile-time defaults for inference limits
 // =============================================================================
-#ifndef STARPU_SERVER_MAX_INPUTS
-#define STARPU_SERVER_MAX_INPUTS 16
-#endif
-
-#ifndef STARPU_SERVER_MAX_DIMS
-#define STARPU_SERVER_MAX_DIMS 8
-#endif
-
-#ifndef STARPU_SERVER_MAX_MODELS_GPU
-#define STARPU_SERVER_MAX_MODELS_GPU 32
-#endif
+inline constexpr std::size_t kMaxInputs = 16;
+inline constexpr std::size_t kMaxDims = 8;
+inline constexpr std::size_t kMaxModelsGpu = 32;
 
 // =============================================================================
 // TensorConfig
@@ -71,9 +63,9 @@ struct RuntimeConfig {
   size_t warmup_pregen_inputs = 2;
   int warmup_iterations = 2;
 
-  size_t max_inputs = STARPU_SERVER_MAX_INPUTS;
-  size_t max_dims = STARPU_SERVER_MAX_DIMS;
-  size_t max_models_gpu = STARPU_SERVER_MAX_MODELS_GPU;
+  size_t max_inputs = kMaxInputs;
+  size_t max_dims = kMaxDims;
+  size_t max_models_gpu = kMaxModelsGpu;
 
   std::optional<uint64_t> seed{};
 
