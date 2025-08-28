@@ -1,4 +1,5 @@
 #include "test_inference_service.hpp"
+#include <limits>
 
 TEST(InferenceService, ValidateInputsSizeMismatch)
 {
@@ -19,6 +20,39 @@ TEST(InferenceService, ValidateInputsNegativeDimension)
   std::vector<float> data = {1.0F};
   auto req = starpu_server::make_model_infer_request({
       {{-1}, at::kFloat, starpu_server::to_raw_data(data)},
+  });
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(InferenceService, ValidateInputsZeroDimension)
+{
+  std::vector<float> data = {};
+  auto req = starpu_server::make_model_infer_request({
+      {{0}, at::kFloat, starpu_server::to_raw_data(data)},
+  });
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(InferenceService, ValidateInputsDimensionOverflow)
+{
+  const auto large_dim = std::numeric_limits<int64_t>::max();
+  std::vector<float> data = {};
+  auto req = starpu_server::make_model_infer_request({
+      {{large_dim}, at::kFloat, starpu_server::to_raw_data(data)},
   });
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs;
