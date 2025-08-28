@@ -8,15 +8,16 @@ TEST(Metrics, InitializesPointersAndRegistry)
 {
   init_metrics(0);
 
-  ASSERT_NE(metrics_registry, nullptr);
-  ASSERT_NE(requests_total, nullptr);
-  ASSERT_NE(inference_latency, nullptr);
-  ASSERT_NE(queue_size_gauge, nullptr);
+  ASSERT_NE(metrics, nullptr);
+  ASSERT_NE(metrics->registry, nullptr);
+  ASSERT_NE(metrics->requests_total, nullptr);
+  ASSERT_NE(metrics->inference_latency, nullptr);
+  ASSERT_NE(metrics->queue_size_gauge, nullptr);
 
   bool has_requests = false;
   bool has_latency = false;
   bool has_queue = false;
-  for (const auto& family : metrics_registry->Collect()) {
+  for (const auto& family : metrics->registry->Collect()) {
     if (family.name == "requests_total") {
       has_requests = true;
     } else if (family.name == "inference_latency_ms") {
@@ -30,8 +31,5 @@ TEST(Metrics, InitializesPointersAndRegistry)
   EXPECT_TRUE(has_queue);
 
   shutdown_metrics();
-  EXPECT_EQ(metrics_registry, nullptr);
-  EXPECT_EQ(requests_total, nullptr);
-  EXPECT_EQ(inference_latency, nullptr);
-  EXPECT_EQ(queue_size_gauge, nullptr);
+  EXPECT_EQ(metrics, nullptr);
 }

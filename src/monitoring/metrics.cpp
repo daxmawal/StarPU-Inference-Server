@@ -1,43 +1,33 @@
 #include "monitoring/metrics.hpp"
 
-#include <prometheus/counter.h>
 #include <prometheus/exposer.h>
-#include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
-#include <prometheus/registry.h>
 
 #include <memory>
 #include <string>
 
 namespace starpu_server {
 
-std::shared_ptr<prometheus::Registry> metrics_registry;
-prometheus::Counter* requests_total = nullptr;
-prometheus::Histogram* inference_latency = nullptr;
-prometheus::Gauge* queue_size_gauge = nullptr;
-
-namespace {
-std::unique_ptr<prometheus::Exposer> exposer;
-}
-
-void
-init_metrics(int port)
+MetricsRegistry::MetricsRegistry(int port)
+    : registry(std::make_shared<prometheus::Registry>()),
+      requests_total(nullptr),
+      inference_latency(nullptr),
+      queue_size_gauge(nullptr),
+      exposer_(std::make_unique<prometheus::Exposer>(
+          "0.0.0.0:" + std::to_string(port)))
 {
-  metrics_registry = std::make_shared<prometheus::Registry>();
-  exposer =
-      std::make_unique<prometheus::Exposer>("0.0.0.0:" + std::to_string(port));
-  exposer->RegisterCollectable(metrics_registry);
+  exposer_->RegisterCollectable(registry);
 
   auto& counter_family = prometheus::BuildCounter()
                              .Name("requests_total")
                              .Help("Total requests received")
-                             .Register(*metrics_registry);
+                             .Register(*registry);
   requests_total = &counter_family.Add({});
 
   auto& histogram_family = prometheus::BuildHistogram()
                                .Name("inference_latency_ms")
                                .Help("Inference latency in milliseconds")
-                               .Register(*metrics_registry);
+                               .Register(*registry);
   inference_latency = &histogram_family.Add(
       {}, prometheus::Histogram::BucketBoundaries{
               1, 5, 10, 25, 50, 100, 250, 500, 1000});
@@ -45,22 +35,27 @@ init_metrics(int port)
   auto& gauge_family = prometheus::BuildGauge()
                            .Name("inference_queue_size")
                            .Help("Number of jobs in the inference queue")
-                           .Register(*metrics_registry);
+                           .Register(*registry);
   queue_size_gauge = &gauge_family.Add({});
 }
 
-void
-shutdown_metrics()
+MetricsRegistry::~MetricsRegistry()
 {
-  if (exposer && metrics_registry) {
-    exposer->RemoveCollectable(metrics_registry);
+  if (exposer_ && registry) {
+    exposer_->RemoveCollectable(registry);
   }
-  exposer.reset();
+}
 
-  metrics_registry.reset();
-  requests_total = nullptr;
-  inference_latency = nullptr;
-  queue_size_gauge = nullptr;
+std::unique_ptr<MetricsRegistry> metrics;
+
+void init_metrics(int port)
+{
+  metrics = std::make_unique<MetricsRegistry>(port);
+}
+
+void shutdown_metrics()
+{
+  metrics.reset();
 }
 
 }  // namespace starpu_server

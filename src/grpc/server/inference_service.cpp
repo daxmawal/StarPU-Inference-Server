@@ -199,8 +199,8 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
-  if (requests_total != nullptr) {
-    requests_total->Increment();
+  if (metrics && metrics->requests_total != nullptr) {
+    metrics->requests_total->Increment();
   }
 
   auto recv_tp = std::chrono::high_resolution_clock::now();
@@ -227,10 +227,10 @@ InferenceServiceImpl::ModelInfer(
 
   populate_response(request, reply, outputs, recv_ms, send_ms);
 
-  if (inference_latency != nullptr) {
+  if (metrics && metrics->inference_latency != nullptr) {
     const auto latency_ms =
         std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
-    inference_latency->Observe(latency_ms);
+    metrics->inference_latency->Observe(latency_ms);
   }
   return Status::OK;
 }

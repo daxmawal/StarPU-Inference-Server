@@ -1,18 +1,33 @@
 #pragma once
 
+#include <memory>
+
 #include <prometheus/counter.h>
 #include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
 #include <prometheus/registry.h>
 
-#include <memory>
+namespace prometheus {
+class Exposer;
+}  // namespace prometheus
 
 namespace starpu_server {
 
-extern std::shared_ptr<prometheus::Registry> metrics_registry;
-extern prometheus::Counter* requests_total;
-extern prometheus::Histogram* inference_latency;
-extern prometheus::Gauge* queue_size_gauge;
+class MetricsRegistry {
+ public:
+  explicit MetricsRegistry(int port);
+  ~MetricsRegistry();
+
+  std::shared_ptr<prometheus::Registry> registry;
+  prometheus::Counter* requests_total;
+  prometheus::Histogram* inference_latency;
+  prometheus::Gauge* queue_size_gauge;
+
+ private:
+  std::unique_ptr<prometheus::Exposer> exposer_;
+};
+
+extern std::unique_ptr<MetricsRegistry> metrics;
 
 void init_metrics(int port);
 void shutdown_metrics();
