@@ -142,7 +142,15 @@ StarPUTaskRunner::handle_job_exception(
   log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
 
   if (job->has_on_complete()) {
-    job->get_on_complete()({}, -1);
+    try {
+      job->get_on_complete()({}, -1);
+    }
+    catch (const std::exception& e) {
+      log_error("Exception in completion callback: " + std::string(e.what()));
+    }
+    catch (...) {
+      log_error("Unknown exception in completion callback");
+    }
   }
 }
 
