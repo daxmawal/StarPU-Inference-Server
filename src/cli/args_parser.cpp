@@ -533,9 +533,19 @@ parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
   if (!opts.show_help) {
     validate_config(opts);
     if (opts.valid) {
-      opts.max_message_bytes = compute_max_message_bytes(
-          opts.max_batch_size, opts.inputs, opts.outputs,
-          opts.max_message_bytes);
+      try {
+        opts.max_message_bytes = compute_max_message_bytes(
+            opts.max_batch_size, opts.inputs, opts.outputs,
+            opts.max_message_bytes);
+      }
+      catch (const InvalidDimensionException& e) {
+        log_error(e.what());
+        opts.valid = false;
+      }
+      catch (const MessageSizeOverflowException& e) {
+        log_error(e.what());
+        opts.valid = false;
+      }
     }
   }
 

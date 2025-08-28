@@ -158,12 +158,25 @@ load_config(const std::string& path) -> RuntimeConfig
     if (root["use_cuda"]) {
       cfg.use_cuda = root["use_cuda"].as<bool>();
     }
-    cfg.max_message_bytes = compute_max_message_bytes(
-        cfg.max_batch_size, cfg.inputs, cfg.outputs, cfg.max_message_bytes);
   }
   catch (const std::exception& e) {
     log_error(std::string("Failed to load config: ") + e.what());
     cfg.valid = false;
+  }
+
+  if (cfg.valid) {
+    try {
+      cfg.max_message_bytes = compute_max_message_bytes(
+          cfg.max_batch_size, cfg.inputs, cfg.outputs, cfg.max_message_bytes);
+    }
+    catch (const InvalidDimensionException& e) {
+      log_error(std::string("Failed to load config: ") + e.what());
+      cfg.valid = false;
+    }
+    catch (const MessageSizeOverflowException& e) {
+      log_error(std::string("Failed to load config: ") + e.what());
+      cfg.valid = false;
+    }
   }
   return cfg;
 }

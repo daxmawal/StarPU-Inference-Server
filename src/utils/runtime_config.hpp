@@ -89,6 +89,9 @@ compute_max_message_bytes(
     const std::vector<TensorConfig>& outputs,
     std::size_t min_message_bytes = 32 * 1024 * 1024) -> std::size_t
 {
+  if (max_batch_size <= 0) {
+    throw InvalidDimensionException("max_batch_size must be > 0");
+  }
   size_t per_sample_bytes = 0;
   const auto accumulate_bytes = [&](const std::vector<TensorConfig>& tensors) {
     for (const auto& t : tensors) {
