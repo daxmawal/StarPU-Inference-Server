@@ -15,7 +15,7 @@ enum class DeviceType : uint8_t {
 
 // Utility for converting DeviceType to string (for logs/debug)
 inline auto
-to_string(const DeviceType& type) -> const char*
+to_string(DeviceType type) -> const char*
 {
   using enum DeviceType;
   switch (type) {
