@@ -51,7 +51,7 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
 {
   auto job = make_job(4, 1);
   job->set_input_tensors({torch::ones({2, 3})});
-  job->set_outputs_tensors({torch::zeros({2, 3})});
+  job->set_output_tensors({torch::zeros({2, 3})});
   auto task = make_task(job);
   opts_.verbosity = starpu_server::VerbosityLevel::Debug;
   auto params = task.create_inference_params();
@@ -74,7 +74,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
   std::vector<torch::Tensor> outputs{torch::tensor({1})};
-  job->set_outputs_tensors(outputs);
+  job->set_output_tensors(outputs);
   bool called = false;
   std::vector<torch::Tensor> results_arg;
   double latency_ms = -1.0;

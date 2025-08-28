@@ -75,7 +75,7 @@ class InferenceJob {
   {
     input_types_ = types;
   }
-  void set_outputs_tensors(const std::vector<torch::Tensor>& outputs)
+  void set_output_tensors(const std::vector<torch::Tensor>& outputs)
   {
     output_tensors_ = outputs;
   }

@@ -57,7 +57,7 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
   job->set_job_id(kJobId);
   job->set_input_tensors(inputs);
   job->set_input_types(types);
-  job->set_outputs_tensors(outputs);
+  job->set_output_tensors(outputs);
   job->set_fixed_worker_id(kWorkerId);
 
   const auto start = std::chrono::high_resolution_clock::now();

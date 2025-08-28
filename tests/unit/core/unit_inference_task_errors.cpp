@@ -9,7 +9,7 @@ TEST(InferenceTask_Unit, RecordAndRunCompletionCallbackNoCallback)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
   std::vector<torch::Tensor> outputs = {torch::tensor({1})};
-  job->set_outputs_tensors(outputs);
+  job->set_output_tensors(outputs);
 
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::milliseconds(5);

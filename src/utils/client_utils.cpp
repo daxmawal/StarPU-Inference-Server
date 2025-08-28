@@ -112,7 +112,7 @@ create_job(
   std::ranges::transform(
       outputs_ref, std::back_inserter(outputs),
       [](const auto& ref) { return torch::empty_like(ref); });
-  job->set_outputs_tensors(outputs);
+  job->set_output_tensors(outputs);
 
   job->set_job_id(job_id);
 
