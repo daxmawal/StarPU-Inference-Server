@@ -2,6 +2,7 @@
 
 #include <ATen/core/ScalarType.h>
 #include <ATen/core/TensorBody.h>
+#include <c10/core/InferenceMode.h>
 #include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
 #include <cuda_runtime_api.h>
@@ -161,6 +162,7 @@ run_reference_inference(
     torch::jit::script::Module& model,
     const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
 {
+  c10::InferenceMode guard;
   std::vector<torch::Tensor> output_refs;
   const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
 
