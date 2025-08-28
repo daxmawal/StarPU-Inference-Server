@@ -160,14 +160,14 @@ inline void
 log_warning(const std::string& message)
 {
   const std::scoped_lock lock(log_mutex);
-  std::cerr << "\x1b[1;33m[WARNING] " << message << "\x1b[0m\n";
+  std::cerr << "\x1b[1;33m[WARNING] " << message << "\x1b[0m\n" << std::flush;
 }
 
 inline void
 log_error(const std::string& message)
 {
   const std::scoped_lock lock(log_mutex);
-  std::cerr << "\x1b[1;31m[ERROR] " << message << "\x1b[0m\n";
+  std::cerr << "\x1b[1;31m[ERROR] " << message << "\x1b[0m\n" << std::flush;
 }
 
 [[noreturn]] inline void
