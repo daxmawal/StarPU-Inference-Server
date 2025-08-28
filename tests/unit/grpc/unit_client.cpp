@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <stdexcept>
 #include <utility>
 
 #include "grpc/client/client_args.hpp"
@@ -105,6 +106,23 @@ TEST(InferenceClient, ModelIsReadyReturnsFalseWhenUnavailable)
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_FALSE(client.ModelIsReady("example", "1"));
+}
+
+TEST(InferenceClient, RejectsMismatchedTensorCount)
+{
+  auto channel =
+      grpc::CreateChannel("localhost:0", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  starpu_server::ClientConfig cfg;
+  cfg.model_name = "example";
+  cfg.model_version = "1";
+  cfg.inputs.push_back({"input0", {1}, at::kFloat});
+
+  std::vector<torch::Tensor> tensors = {torch::zeros({1}), torch::zeros({1})};
+
+  EXPECT_THROW(client.AsyncModelInfer(tensors, cfg), std::invalid_argument);
 }
 
 class ParseVerbosityLevelValid

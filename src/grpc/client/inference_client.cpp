@@ -108,6 +108,14 @@ InferenceClient::AsyncModelInfer(
           call->start_time.time_since_epoch())
           .count());
 
+  if (tensors.size() != cfg.inputs.size()) {
+    auto msg = std::format(
+        "Mismatched number of input tensors: expected {}, got {}",
+        cfg.inputs.size(), tensors.size());
+    log_error(msg);
+    throw std::invalid_argument(msg);
+  }
+
   for (size_t i = 0; i < cfg.inputs.size(); ++i) {
     const auto& in_cfg = cfg.inputs[i];
     torch::Tensor tensor = tensors.at(i);
@@ -184,9 +192,10 @@ InferenceClient::AsyncCompleteRpc()
                           call->request_id, sent_time_str, recv_time_str,
                           latency, request_tx, response_tx));
     } else {
-      log_error(std::format(
-          "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
-          call->status.error_message()));
+      log_error(
+          std::format(
+              "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
+              call->status.error_message()));
     }
   }
 }
