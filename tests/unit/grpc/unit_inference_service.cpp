@@ -17,6 +17,29 @@ TEST(InferenceService, ValidateInputsSuccess)
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), 1.0F);
 }
 
+TEST(InferenceService, ValidateInputsNonContiguous)
+{
+  auto base = torch::tensor({{1.0F, 2.0F}, {3.0F, 4.0F}});
+  auto noncontig = base.transpose(0, 1);
+  auto contig = noncontig.contiguous();
+  std::vector<float> data(
+      contig.data_ptr<float>(), contig.data_ptr<float>() + contig.numel());
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data)},
+  });
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 1U);
+  EXPECT_TRUE(inputs[0].is_contiguous());
+  EXPECT_TRUE(torch::allclose(inputs[0], contig));
+}
+
 TEST(InferenceService, ValidateInputsMultipleDtypes)
 {
   std::vector<float> data0 = {1.0F, 2.0F, 3.0F, 4.0F};

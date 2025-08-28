@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <cstdint>
-#include <cstring>
 #include <format>
 #include <future>
 #include <limits>
@@ -48,13 +47,15 @@ convert_input_to_tensor(
     at::ScalarType dtype, torch::Tensor& tensor) -> Status
 {
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
-  tensor = torch::empty(shape, torch::TensorOptions().dtype(dtype));
-  if (raw.size() != static_cast<size_t>(tensor.nbytes())) {
+  auto options = torch::TensorOptions().dtype(dtype);
+  auto tmp = torch::from_blob(
+      const_cast<void*>(static_cast<const void*>(raw.data())), shape, options);
+  if (raw.size() != static_cast<size_t>(tmp.nbytes())) {
     return Status(
         grpc::StatusCode::INVALID_ARGUMENT,
         "Raw input size does not match tensor size");
   }
-  std::memcpy(tensor.data_ptr(), raw.data(), raw.size());
+  tensor = tmp.contiguous().clone();
   return Status::OK;
 }
 
@@ -118,8 +119,8 @@ InferenceServiceImpl::ModelReady(
 
 auto
 InferenceServiceImpl::validate_and_convert_inputs(
-    const ModelInferRequest* request, std::vector<torch::Tensor>& inputs)
-    -> Status
+    const ModelInferRequest* request,
+    std::vector<torch::Tensor>& inputs) -> Status
 {
   if (request->inputs_size() !=
       static_cast<int>(expected_input_types_.size())) {
