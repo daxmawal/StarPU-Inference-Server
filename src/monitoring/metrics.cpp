@@ -10,11 +10,10 @@ namespace starpu_server {
 
 MetricsRegistry::MetricsRegistry(int port)
     : registry(std::make_shared<prometheus::Registry>()),
-      requests_total(nullptr),
-      inference_latency(nullptr),
-      queue_size_gauge(nullptr),
-      exposer_(std::make_unique<prometheus::Exposer>(
-          "0.0.0.0:" + std::to_string(port)))
+      requests_total(nullptr), inference_latency(nullptr),
+      queue_size_gauge(nullptr), exposer_(
+                                     std::make_unique<prometheus::Exposer>(
+                                         "0.0.0.0:" + std::to_string(port)))
 {
   exposer_->RegisterCollectable(registry);
 
@@ -46,16 +45,19 @@ MetricsRegistry::~MetricsRegistry()
   }
 }
 
-std::unique_ptr<MetricsRegistry> metrics;
+std::atomic<std::shared_ptr<MetricsRegistry>> metrics{nullptr};
 
-void init_metrics(int port)
+void
+init_metrics(int port)
 {
-  metrics = std::make_unique<MetricsRegistry>(port);
+  auto new_metrics = std::make_shared<MetricsRegistry>(port);
+  metrics.store(std::move(new_metrics), std::memory_order_release);
 }
 
-void shutdown_metrics()
+void
+shutdown_metrics()
 {
-  metrics.reset();
+  metrics.store(nullptr, std::memory_order_release);
 }
 
 }  // namespace starpu_server

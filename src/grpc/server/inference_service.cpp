@@ -108,8 +108,8 @@ InferenceServiceImpl::ModelReady(
 
 auto
 InferenceServiceImpl::validate_and_convert_inputs(
-    const ModelInferRequest* request,
-    std::vector<torch::Tensor>& inputs) -> Status
+    const ModelInferRequest* request, std::vector<torch::Tensor>& inputs)
+    -> Status
 {
   if (request->raw_input_contents_size() != request->inputs_size()) {
     return Status(
@@ -204,8 +204,9 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
-  if (metrics && metrics->requests_total != nullptr) {
-    metrics->requests_total->Increment();
+  auto m = metrics.load(std::memory_order_acquire);
+  if (m && m->requests_total != nullptr) {
+    m->requests_total->Increment();
   }
 
   auto recv_tp = std::chrono::high_resolution_clock::now();
@@ -232,10 +233,10 @@ InferenceServiceImpl::ModelInfer(
 
   populate_response(request, reply, outputs, recv_ms, send_ms);
 
-  if (metrics && metrics->inference_latency != nullptr) {
+  if (m && m->inference_latency != nullptr) {
     const auto latency_ms =
         std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
-    metrics->inference_latency->Observe(latency_ms);
+    m->inference_latency->Observe(latency_ms);
   }
   return Status::OK;
 }

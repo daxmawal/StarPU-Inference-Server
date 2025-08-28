@@ -1,11 +1,12 @@
 #pragma once
 
-#include <memory>
-
 #include <prometheus/counter.h>
 #include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
 #include <prometheus/registry.h>
+
+#include <atomic>
+#include <memory>
 
 namespace prometheus {
 class Exposer;
@@ -27,7 +28,7 @@ class MetricsRegistry {
   std::unique_ptr<prometheus::Exposer> exposer_;
 };
 
-extern std::unique_ptr<MetricsRegistry> metrics;
+extern std::atomic<std::shared_ptr<MetricsRegistry>> metrics;
 
 void init_metrics(int port);
 void shutdown_metrics();

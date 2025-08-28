@@ -20,8 +20,9 @@ class InferenceQueue {
   {
     const std::scoped_lock lock(mutex_);
     queue_.push(job);
-    if (metrics && metrics->queue_size_gauge != nullptr) {
-      metrics->queue_size_gauge->Increment();
+    auto m = metrics.load(std::memory_order_acquire);
+    if (m && m->queue_size_gauge != nullptr) {
+      m->queue_size_gauge->Increment();
     }
     cv_.notify_one();
   }
@@ -33,8 +34,9 @@ class InferenceQueue {
     cv_.wait(lock, [this] { return !queue_.empty(); });
     job = queue_.front();
     queue_.pop();
-    if (metrics && metrics->queue_size_gauge != nullptr) {
-      metrics->queue_size_gauge->Decrement();
+    auto m = metrics.load(std::memory_order_acquire);
+    if (m && m->queue_size_gauge != nullptr) {
+      m->queue_size_gauge->Decrement();
     }
   }
 
