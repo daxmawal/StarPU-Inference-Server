@@ -166,6 +166,14 @@ InferenceServiceImpl::validate_and_convert_inputs(
     }
     inputs.push_back(std::move(tensor));
   }
+  if (request->inputs_size() !=
+      static_cast<int>(expected_input_types_.size())) {
+    return Status(
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format(
+            "Expected {} input tensors but received {}",
+            expected_input_types_.size(), request->inputs_size()));
+  }
 
   return Status::OK;
 }

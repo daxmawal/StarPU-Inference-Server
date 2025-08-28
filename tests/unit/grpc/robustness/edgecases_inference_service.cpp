@@ -1,5 +1,19 @@
-#include "test_inference_service.hpp"
 #include <limits>
+
+#include "test_inference_service.hpp"
+
+TEST(InferenceService, ValidateInputsCountMismatch)
+{
+  auto req = starpu_server::make_valid_request();
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat, at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
 
 TEST(InferenceService, ValidateInputsSizeMismatch)
 {
