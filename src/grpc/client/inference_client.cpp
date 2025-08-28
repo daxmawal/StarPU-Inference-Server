@@ -1,6 +1,7 @@
 #include "inference_client.hpp"
 
 #include <format>
+#include <stdexcept>
 
 #include "utils/logger.hpp"
 #include "utils/time_utils.hpp"
@@ -109,7 +110,25 @@ InferenceClient::AsyncModelInfer(
 
   for (size_t i = 0; i < cfg.inputs.size(); ++i) {
     const auto& in_cfg = cfg.inputs[i];
-    const auto& tensor = tensors.at(i);
+    torch::Tensor tensor = tensors.at(i);
+
+    if (tensor.scalar_type() != in_cfg.type) {
+      auto msg = std::format(
+          "Unsupported tensor type for input {}: expected {}, got {}",
+          in_cfg.name, scalar_type_to_string(in_cfg.type),
+          scalar_type_to_string(tensor.scalar_type()));
+      log_error(msg);
+      throw std::invalid_argument(msg);
+    }
+
+    if (!tensor.device().is_cpu() || !tensor.is_contiguous()) {
+      log_info(
+          verbosity_,
+          std::format(
+              "Input tensor {} not on CPU or non-contiguous, converting",
+              in_cfg.name));
+      tensor = tensor.cpu().contiguous();
+    }
     auto* input = request.add_inputs();
     input->set_name(in_cfg.name);
     input->set_datatype(scalar_type_to_string(in_cfg.type));
