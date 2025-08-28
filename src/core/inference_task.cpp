@@ -335,10 +335,20 @@ InferenceTask::allocate_task_buffers(
 {
   task->dyn_handles = static_cast<starpu_data_handle_t*>(
       malloc(num_buffers * sizeof(starpu_data_handle_t)));
+  if (task->dyn_handles == nullptr) {
+    task->dyn_handles = nullptr;
+    task->dyn_modes = nullptr;
+    starpu_task_destroy(task);
+    cleanup(ctx);
+    throw MemoryAllocationException("Failed to allocate task buffers.");
+  }
+
   task->dyn_modes = static_cast<starpu_data_access_mode*>(
       malloc(num_buffers * sizeof(starpu_data_access_mode)));
-
-  if (task->dyn_handles == nullptr || task->dyn_modes == nullptr) {
+  if (task->dyn_modes == nullptr) {
+    free(task->dyn_handles);
+    task->dyn_handles = nullptr;
+    task->dyn_modes = nullptr;
     starpu_task_destroy(task);
     cleanup(ctx);
     throw MemoryAllocationException("Failed to allocate task buffers.");
