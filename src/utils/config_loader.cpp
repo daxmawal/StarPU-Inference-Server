@@ -33,6 +33,20 @@ parse_tensor_nodes(const YAML::Node& nodes) -> std::vector<TensorConfig>
     }
     if (node["dims"]) {
       t.dims = node["dims"].as<std::vector<int64_t>>();
+      for (size_t i = 0; i < t.dims.size(); ++i) {
+        const auto d = t.dims[i];
+        if (d <= 0) {
+          std::ostringstream oss;
+          oss << "dims[" << i << "] must be positive";
+          throw std::invalid_argument(oss.str());
+        }
+        if (d > std::numeric_limits<int>::max()) {
+          std::ostringstream oss;
+          oss << "dims[" << i
+              << "] must be <= " << std::numeric_limits<int>::max();
+          throw std::invalid_argument(oss.str());
+        }
+      }
     }
     if (node["data_type"]) {
       t.type = string_to_scalar_type(node["data_type"].as<std::string>());

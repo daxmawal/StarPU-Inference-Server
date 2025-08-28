@@ -69,7 +69,11 @@ class InferenceJob {
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
-    input_tensors_ = inputs;
+    input_tensors_.clear();
+    input_tensors_.reserve(inputs.size());
+    for (const auto& t : inputs) {
+      input_tensors_.push_back(t.contiguous());
+    }
   }
   void set_input_types(const std::vector<at::ScalarType>& types)
   {
@@ -77,7 +81,11 @@ class InferenceJob {
   }
   void set_output_tensors(const std::vector<torch::Tensor>& outputs)
   {
-    output_tensors_ = outputs;
+    output_tensors_.clear();
+    output_tensors_.reserve(outputs.size());
+    for (const auto& t : outputs) {
+      output_tensors_.push_back(t.contiguous());
+    }
   }
   void set_start_time(std::chrono::high_resolution_clock::time_point time)
   {
@@ -158,10 +166,9 @@ class StarPUTaskRunner;
 using WorkerThreadLauncher = std::jthread (*)(StarPUTaskRunner&);
 extern WorkerThreadLauncher worker_thread_launcher;
 
-auto load_model_and_reference_output(const RuntimeConfig& opts)
-    -> std::tuple<
-        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-        std::vector<torch::Tensor>>;
+auto load_model_and_reference_output(const RuntimeConfig& opts) -> std::tuple<
+    torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+    std::vector<torch::Tensor>>;
 
 void run_warmup(
     const RuntimeConfig& opts, StarPUSetup& starpu,

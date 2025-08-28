@@ -79,6 +79,50 @@ TEST(ConfigLoader, NegativeDelaySetsValidFalse)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, NegativeDimensionSetsValidFalse)
+{
+  const std::string yaml = R"(
+model: model.pt
+input:
+  - name: in
+    dims: [-1, 3]
+    data_type: float32
+output:
+  - name: out
+    dims: [1]
+    data_type: float32
+)";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_neg_dim.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, ZeroDimensionSetsValidFalse)
+{
+  const std::string yaml = R"(
+model: model.pt
+input:
+  - name: in
+    dims: [0, 3]
+    data_type: float32
+output:
+  - name: out
+    dims: [1]
+    data_type: float32
+)";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_zero_dim.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, InvalidVerbositySetsValidFalse)
 {
   const std::string yaml = R"(verbosity: unknown)";
