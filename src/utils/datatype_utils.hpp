@@ -43,7 +43,7 @@ scalar_type_to_datatype(at::ScalarType type) -> std::string
     case at::kBool:
       return "BOOL";
     default:
-      return "FP32";
+      throw std::invalid_argument("Unsupported at::ScalarType");
   }
 }
 
@@ -149,7 +149,7 @@ element_size(at::ScalarType type) -> size_t
     case at::kBool:
       return sizeof(bool);
     default:
-      return sizeof(float);
+      throw std::invalid_argument("Unsupported at::ScalarType");
   }
 }
 }  // namespace starpu_server

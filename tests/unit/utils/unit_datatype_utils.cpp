@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <utility>
+#include <unordered_set>
 
 #include "utils/datatype_utils.hpp"
 #include "utils/device_type.hpp"
@@ -30,14 +31,21 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{at::kByte, std::string{"UINT8"}},
         std::pair{at::kBool, std::string{"BOOL"}}));
 
+class ScalarToDatatypeUnsupported
+    : public ::testing::TestWithParam<at::ScalarType> {};
+
+TEST_P(ScalarToDatatypeUnsupported, ThrowsInvalidArgument)
+{
+  EXPECT_THROW(
+      starpu_server::scalar_type_to_datatype(GetParam()),
+      std::invalid_argument);
+}
+
 INSTANTIATE_TEST_SUITE_P(
-    FallbackTypes, ScalarToDatatypeCase,
+    UnsupportedTypes, ScalarToDatatypeUnsupported,
     ::testing::Values(
-        std::pair{static_cast<at::ScalarType>(-1), std::string{"FP32"}},
-        std::pair{at::kComplexFloat, std::string{"FP32"}},
-        std::pair{at::kComplexDouble, std::string{"FP32"}},
-        std::pair{at::kQInt8, std::string{"FP32"}},
-        std::pair{at::kQUInt8, std::string{"FP32"}}));
+        static_cast<at::ScalarType>(-1), at::kComplexFloat,
+        at::kComplexDouble, at::kQInt8, at::kQUInt8));
 
 class ElementSizeCase
     : public ::testing::TestWithParam<std::pair<at::ScalarType, size_t>> {};
@@ -61,14 +69,20 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{at::kByte, sizeof(uint8_t)},
         std::pair{at::kBool, sizeof(bool)}));
 
+class ElementSizeUnsupported
+    : public ::testing::TestWithParam<at::ScalarType> {};
+
+TEST_P(ElementSizeUnsupported, ThrowsInvalidArgument)
+{
+  EXPECT_THROW(
+      starpu_server::element_size(GetParam()), std::invalid_argument);
+}
+
 INSTANTIATE_TEST_SUITE_P(
-    FallbackTypes, ElementSizeCase,
+    UnsupportedTypes, ElementSizeUnsupported,
     ::testing::Values(
-        std::pair{static_cast<at::ScalarType>(-1), sizeof(float)},
-        std::pair{at::kComplexFloat, sizeof(float)},
-        std::pair{at::kComplexDouble, sizeof(float)},
-        std::pair{at::kQInt8, sizeof(float)},
-        std::pair{at::kQUInt8, sizeof(float)}));
+        static_cast<at::ScalarType>(-1), at::kComplexFloat,
+        at::kComplexDouble, at::kQInt8, at::kQUInt8));
 
 class DatatypeToScalarCase
     : public ::testing::TestWithParam<std::pair<std::string, at::ScalarType>> {
@@ -106,9 +120,10 @@ INSTANTIATE_TEST_SUITE_P(
 TEST(DatatypeUtils, ScalarTypeToString)
 {
   EXPECT_EQ(starpu_server::scalar_type_to_string(at::kShort), "INT16");
-  EXPECT_EQ(
-      starpu_server::scalar_type_to_string(static_cast<at::ScalarType>(-1)),
-      "FP32");
+  EXPECT_THROW(
+      starpu_server::scalar_type_to_string(
+          static_cast<at::ScalarType>(-1)),
+      std::invalid_argument);
 }
 
 TEST(DatatypeUtils, ScalarToDatatypeAllEnumValues)
@@ -116,17 +131,29 @@ TEST(DatatypeUtils, ScalarToDatatypeAllEnumValues)
   using Enum = at::ScalarType;
   using U = std::underlying_type_t<Enum>;
 
+  const std::unordered_set<Enum> supported = {
+      at::kFloat,    at::kDouble, at::kHalf,    at::kBFloat16, at::kInt,
+      at::kLong,     at::kShort,  at::kChar,    at::kByte,     at::kBool};
+
   const int first = static_cast<int>(std::to_underlying(Enum::Undefined));
   const int last = static_cast<int>(std::to_underlying(Enum::NumOptions));
 
   for (int i = first; i < last; ++i) {
     const auto type = static_cast<Enum>(static_cast<U>(i));
-    EXPECT_NO_THROW({
-      auto name = starpu_server::scalar_type_to_datatype(type);
-      auto size = starpu_server::element_size(type);
-      (void)name;
-      (void)size;
-    });
+    if (supported.count(type)) {
+      EXPECT_NO_THROW({
+        auto name = starpu_server::scalar_type_to_datatype(type);
+        auto size = starpu_server::element_size(type);
+        (void)name;
+        (void)size;
+      });
+    } else {
+      EXPECT_THROW(
+          starpu_server::scalar_type_to_datatype(type),
+          std::invalid_argument);
+      EXPECT_THROW(
+          starpu_server::element_size(type), std::invalid_argument);
+    }
   }
 }
 

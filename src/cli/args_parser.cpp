@@ -113,7 +113,13 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
     if (type_str.empty()) {
       throw std::invalid_argument("Empty type in types string");
     }
-    types.push_back(string_to_scalar_type(type_str));
+    try {
+      types.push_back(string_to_scalar_type(type_str));
+    }
+    catch (const std::invalid_argument& e) {
+      throw std::invalid_argument(
+          std::string{"Unsupported type: "} + type_str);
+    }
   }
 
   if (types.empty()) {
@@ -587,6 +593,10 @@ parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
         opts.valid = false;
       }
       catch (const MessageSizeOverflowException& e) {
+        log_error(e.what());
+        opts.valid = false;
+      }
+      catch (const UnsupportedDtypeException& e) {
         log_error(e.what());
         opts.valid = false;
       }

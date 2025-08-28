@@ -102,7 +102,13 @@ compute_max_message_bytes(
         }
         numel *= d_size;
       }
-      const size_t type_size = element_size(t.type);
+      size_t type_size = 0;
+      try {
+        type_size = element_size(t.type);
+      }
+      catch (const std::invalid_argument& e) {
+        throw UnsupportedDtypeException(e.what());
+      }
       if (numel > std::numeric_limits<size_t>::max() / type_size) {
         throw MessageSizeOverflowException(
             "numel * element size would overflow size_t");

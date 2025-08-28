@@ -35,6 +35,7 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--iterations", "0"},
         std::vector<const char*>{"--shape", "1x-3x3"},
         std::vector<const char*>{"--types", "unknown"},
+        std::vector<const char*>{"--types", "complex64"},
         std::vector<const char*>{"--scheduler", "unknown"},
         std::vector<const char*>{"--device-ids", "-1"},
         std::vector<const char*>{"--device-ids", "0,0"},

@@ -188,6 +188,10 @@ load_config(const std::string& path) -> RuntimeConfig
       log_error(std::string("Failed to load config: ") + e.what());
       cfg.valid = false;
     }
+    catch (const UnsupportedDtypeException& e) {
+      log_error(std::string("Failed to load config: ") + e.what());
+      cfg.valid = false;
+    }
   }
   return cfg;
 }

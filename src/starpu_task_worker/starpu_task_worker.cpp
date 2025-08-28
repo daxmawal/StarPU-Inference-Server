@@ -31,9 +31,8 @@ validate_not_null(const void* ptr, std::string_view field_name)
   if (ptr != nullptr) {
     return;
   }
-  throw std::invalid_argument(
-      std::format(
-          "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
+  throw std::invalid_argument(std::format(
+      "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
 }
 }  // namespace
 // =============================================================================
@@ -47,7 +46,7 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       results_mutex_(config.results_mutex),
       completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv)
 {
-  for (const auto [ptr, name] :
+  for (const auto& [ptr, name] :
        std::initializer_list<std::pair<const void*, std::string_view>>{
            {queue_, "queue"},
            {model_cpu_, "model_cpu"},
