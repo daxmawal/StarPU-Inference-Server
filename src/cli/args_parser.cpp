@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <iostream>
@@ -175,6 +176,10 @@ parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   }
   ++idx;
   opts.model_path = args[idx];
+  if (!std::filesystem::exists(opts.model_path)) {
+    log_error(std::format("Model file not found: {}", opts.model_path));
+    return false;
+  }
   return true;
 }
 
@@ -186,6 +191,10 @@ parse_config(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   }
   ++idx;
   opts.config_path = args[idx];
+  if (!std::filesystem::exists(opts.config_path)) {
+    log_error(std::format("Config file not found: {}", opts.config_path));
+    return false;
+  }
   return true;
 }
 

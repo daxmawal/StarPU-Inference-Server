@@ -6,15 +6,17 @@
 #include "test_cli.hpp"
 #include "utils/exceptions.hpp"
 
-static const std::vector<const char*> kCommonArgs = {
-    "program", "--model", "model.pt", "--shape", "1x3", "--types", "float"};
+static auto build_common_args() -> std::vector<const char*> {
+  return {"program", "--model", test_model_path().c_str(), "--shape", "1x3",
+          "--types", "float"};
+}
 
 class ArgsParserInvalidOptions_Robustesse
     : public ::testing::TestWithParam<std::vector<const char*>> {};
 
 TEST_P(ArgsParserInvalidOptions_Robustesse, Invalid)
 {
-  auto args = kCommonArgs;
+  auto args = build_common_args();
   const auto& diff = GetParam();
   args.insert(args.end(), diff.begin(), diff.end());
   expect_invalid(args);
@@ -50,4 +52,8 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--seed", "-1"},
         std::vector<const char*>{"--shapes", "1x2,,3", "--types", "float,int"},
         std::vector<const char*>{"--model"},
-        std::vector<const char*>{"--iterations"}));
+        std::vector<const char*>{"--iterations"},
+        std::vector<const char*>{"--model",
+                                 "/nonexistent/path/to/model.pt"},
+        std::vector<const char*>{"--config",
+                                 "/nonexistent/path/to/config.yaml"}));

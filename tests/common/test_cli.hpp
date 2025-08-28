@@ -4,6 +4,8 @@
 
 #include <initializer_list>
 #include <vector>
+#include <filesystem>
+#include <fstream>
 
 #include "cli/args_parser.hpp"
 #include "utils/runtime_config.hpp"
@@ -41,11 +43,33 @@ build_argv(const std::vector<const char*>& args) -> OwnedArgv
   return owned;
 }
 
+inline auto create_empty_file(const std::string& name) -> std::string {
+  const auto path = std::filesystem::temp_directory_path() / name;
+  std::ofstream(path).close();
+  return path.string();
+}
+
+inline auto test_model_path() -> const std::string& {
+  static const std::string path = create_empty_file("model.pt");
+  return path;
+}
+
+inline auto test_config_path() -> const std::string& {
+  static const std::string path = create_empty_file("config.yaml");
+  return path;
+}
+
 inline auto
 build_valid_cli_args() -> OwnedArgv
 {
-  return build_argv(
-      {"program", "--model", "model.pt", "--shape", "1x1", "--types", "float"});
+  return build_argv({
+      "program",
+      "--model",
+      test_model_path().c_str(),
+      "--shape",
+      "1x1",
+      "--types",
+      "float"});
 }
 
 inline auto

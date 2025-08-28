@@ -10,11 +10,13 @@
 
 TEST(ArgsParser_Unit, ParsesRequiredOptions)
 {
-  const auto opts = parse(
-      {"program", "--model", "model.pt", "--shape", "1x3x224x224", "--types",
-       "float"});
+  const auto& model = test_model_path();
+  std::vector<const char*> args{
+      "program", "--model", model.c_str(), "--shape", "1x3x224x224", "--types",
+      "float"};
+  const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  EXPECT_EQ(opts.model_path, "model.pt");
+  EXPECT_EQ(opts.model_path, model);
   ASSERT_EQ(opts.inputs.size(), 1U);
   EXPECT_EQ(opts.inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
   EXPECT_EQ(opts.inputs[0].type, at::kFloat);
@@ -22,39 +24,41 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
 
 TEST(ArgsParser_Unit, ParsesAllOptions)
 {
-  const auto opts = parse(
-      {"program",
-       "--model",
-       "model.pt",
-       "--shapes",
-       "1x3x224x224,2x1",
-       "--types",
-       "float,int",
-       "--iterations",
-       "5",
-       "--device-ids",
-       "0,1",
-       "--verbose",
-       "3",
-       "--delay",
-       "42",
-       "--scheduler",
-       "lws",
-       "--address",
-       "127.0.0.1:1234",
-       "--max-batch-size",
-       "2",
-       "--pregen-inputs",
-       "7",
-       "--warmup-iterations",
-       "3",
-       "--seed",
-       "123",
-       "--sync",
-       "--no_cpu"});
+  const auto& model = test_model_path();
+  std::vector<const char*> args{
+      "program",
+      "--model",
+      model.c_str(),
+      "--shapes",
+      "1x3x224x224,2x1",
+      "--types",
+      "float,int",
+      "--iterations",
+      "5",
+      "--device-ids",
+      "0,1",
+      "--verbose",
+      "3",
+      "--delay",
+      "42",
+      "--scheduler",
+      "lws",
+      "--address",
+      "127.0.0.1:1234",
+      "--max-batch-size",
+      "2",
+      "--pregen-inputs",
+      "7",
+      "--warmup-iterations",
+      "3",
+      "--seed",
+      "123",
+      "--sync",
+      "--no_cpu"};
+  const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.scheduler, "lws");
-  EXPECT_EQ(opts.model_path, "model.pt");
+  EXPECT_EQ(opts.model_path, model);
   EXPECT_EQ(opts.iterations, 5);
   EXPECT_EQ(opts.delay_ms, 42);
   EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
@@ -87,10 +91,12 @@ TEST(ArgsParser_Unit, VerboseLevels)
            {"2", Stats},
            {"3", Debug},
            {"4", Trace}}};
+  const auto& model = test_model_path();
   for (const auto& [lvl, expected] : cases) {
-    const auto opts = parse(
-        {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-         "--verbose", lvl});
+    std::vector<const char*> args{
+        "program", "--model", model.c_str(), "--shape", "1x3", "--types", "float",
+        "--verbose", lvl};
+    const auto opts = parse(args);
     ASSERT_TRUE(opts.valid);
     EXPECT_EQ(opts.verbosity, expected);
   }
@@ -98,9 +104,11 @@ TEST(ArgsParser_Unit, VerboseLevels)
 
 TEST(ArgsParser_Unit, ParsesMixedCaseTypes)
 {
-  const auto opts = parse(
-      {"program", "--model", "model.pt", "--shapes", "1x1,1x1", "--types",
-       "FlOat,InT"});
+  const auto& model = test_model_path();
+  std::vector<const char*> args{
+      "program", "--model", model.c_str(), "--shapes", "1x1,1x1", "--types",
+      "FlOat,InT"};
+  const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
   ASSERT_EQ(opts.inputs.size(), 2U);
   EXPECT_EQ(opts.inputs[0].type, at::kFloat);
