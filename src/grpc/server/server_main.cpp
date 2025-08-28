@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <format>
 #include <iostream>
@@ -39,13 +40,7 @@ server_context() -> ServerContext&
 void
 signal_handler(int /*signal*/)
 {
-  auto& ctx = server_context();
-  ctx.stop_requested.store(true);
-  starpu_server::StopServer(ctx.server);
-  if (ctx.queue_ptr != nullptr) {
-    ctx.queue_ptr->shutdown();
-  }
-  ctx.stop_cv.notify_one();
+  server_context().stop_requested.store(true);
 }
 
 auto
@@ -136,10 +131,18 @@ launch_threads(
 
   std::signal(SIGINT, signal_handler);
 
-  {
+  while (true) {
     std::unique_lock lock(ctx.stop_mutex);
-    ctx.stop_cv.wait(
-        lock, [] { return server_context().stop_requested.load(); });
+    ctx.stop_cv.wait_for(lock, std::chrono::milliseconds(100));
+    if (ctx.stop_requested.load()) {
+      lock.unlock();
+      starpu_server::StopServer(ctx.server);
+      if (ctx.queue_ptr != nullptr) {
+        ctx.queue_ptr->shutdown();
+      }
+      ctx.stop_cv.notify_one();
+      break;
+    }
   }
 }
 
