@@ -3,6 +3,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <string_view>
 
 #include "args_parser.hpp"

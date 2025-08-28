@@ -90,6 +90,60 @@ TEST(ConfigLoader, InvalidVerbositySetsValidFalse)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, MissingModelSetsValidFalse)
+{
+  const std::string yaml = R"(
+input:
+  - name: in
+    dims: [1]
+    data_type: float32
+output:
+  - name: out
+    dims: [1]
+    data_type: float32
+)";
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_no_model.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, MissingInputSetsValidFalse)
+{
+  const std::string yaml = R"(
+model: model.pt
+output:
+  - name: out
+    dims: [1]
+    data_type: float32
+)";
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_no_input.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, MissingOutputSetsValidFalse)
+{
+  const std::string yaml = R"(
+model: model.pt
+input:
+  - name: in
+    dims: [1]
+    data_type: float32
+)";
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_no_output.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
 using VerbosityCase =
     ::testing::TestWithParam<std::pair<const char*, VerbosityLevel>>;
 

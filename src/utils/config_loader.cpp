@@ -24,6 +24,14 @@ load_config(const std::string& path) -> RuntimeConfig
   try {
     YAML::Node root = YAML::LoadFile(path);
 
+    const std::vector<std::string> required_keys{"model", "input", "output"};
+    for (const auto& key : required_keys) {
+      if (!root[key]) {
+        log_error(std::string("Missing required key: ") + key);
+        cfg.valid = false;
+      }
+    }
+
     if (root["scheduler"]) {
       cfg.scheduler = root["scheduler"].as<std::string>();
     }
