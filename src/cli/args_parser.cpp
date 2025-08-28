@@ -1,6 +1,7 @@
 #include "args_parser.hpp"
 
 #include <c10/core/ScalarType.h>
+#include <torch/torch.h>
 
 #include <cstdint>
 #include <cstdlib>
@@ -321,6 +322,16 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   if (unique_ids.size() != opts.device_ids.size()) {
     log_error("Duplicate device IDs provided.");
     return false;
+  }
+
+  const int device_count = torch::cuda::device_count();
+  for (const int id : opts.device_ids) {
+    if (id >= device_count) {
+      log_error(std::format(
+          "GPU ID {} out of range. Only {} device(s) available.", id,
+          device_count));
+      return false;
+    }
   }
 
   return true;

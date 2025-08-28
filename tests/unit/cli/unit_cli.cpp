@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <torch/torch.h>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -25,6 +26,11 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
 TEST(ArgsParser_Unit, ParsesAllOptions)
 {
   const auto& model = test_model_path();
+
+  // Choose device-ids based on available GPUs so the test passes on
+  // CPU-only machines and those with 1 or more GPUs.
+  const int device_count = torch::cuda::device_count();
+
   std::vector<const char*> args{
       "program",
       "--model",
@@ -35,8 +41,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
       "float,int",
       "--iterations",
       "5",
-      "--device-ids",
-      "0,1",
+      // device-ids appended conditionally below
       "--verbose",
       "3",
       "--delay",
@@ -57,6 +62,15 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
       "123",
       "--sync",
       "--no_cpu"};
+
+  if (device_count >= 2) {
+    args.push_back("--device-ids");
+    args.push_back("0,1");
+  } else if (device_count == 1) {
+    args.push_back("--device-ids");
+    args.push_back("0");
+  }
+
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.scheduler, "lws");
@@ -75,8 +89,18 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.max_message_bytes, expected_bytes);
   EXPECT_TRUE(opts.synchronous);
   EXPECT_FALSE(opts.use_cpu);
-  EXPECT_TRUE(opts.use_cuda);
-  ASSERT_EQ(opts.device_ids, (std::vector<int>{0, 1}));
+
+  if (device_count >= 2) {
+    EXPECT_TRUE(opts.use_cuda);
+    ASSERT_EQ(opts.device_ids, (std::vector<int>{0, 1}));
+  } else if (device_count == 1) {
+    EXPECT_TRUE(opts.use_cuda);
+    ASSERT_EQ(opts.device_ids, (std::vector<int>{0}));
+  } else {
+    EXPECT_FALSE(opts.use_cuda);
+    ASSERT_TRUE(opts.device_ids.empty());
+  }
+
   ASSERT_EQ(opts.inputs.size(), 2U);
   EXPECT_EQ(opts.inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
   EXPECT_EQ(opts.inputs[1].dims, (std::vector<int64_t>{2, 1}));

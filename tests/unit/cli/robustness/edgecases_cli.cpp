@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <format>
+#include <torch/torch.h>
 #include <string>
 #include <vector>
 
@@ -63,6 +65,24 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--model", "/nonexistent/path/to/model.pt"},
         std::vector<const char*>{
             "--config", "/nonexistent/path/to/config.yaml"}));
+
+TEST(ArgsParserInvalidOptions_Robustesse, DeviceIdOutOfRange)
+{
+  const int device_count = torch::cuda::device_count();
+  std::string id_str = std::to_string(device_count);
+  auto args = build_common_args();
+  args.emplace_back("--device-ids");
+  args.push_back(id_str.c_str());
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto opts = parse(args);
+  EXPECT_FALSE(opts.valid);
+  const std::string expected_msg = std::format(
+      "GPU ID {} out of range. Only {} device(s) available.", device_count,
+      device_count);
+  EXPECT_EQ(
+      capture.str(),
+      starpu_server::expected_log_line(starpu_server::ErrorLevel, expected_msg));
+}
 
 struct MissingValueParam {
   std::vector<const char*> args;
