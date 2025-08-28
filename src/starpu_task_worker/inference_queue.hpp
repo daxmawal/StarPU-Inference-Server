@@ -18,11 +18,13 @@ class InferenceQueue {
   // Enqueue a new inference job
   void push(const std::shared_ptr<InferenceJob>& job)
   {
-    const std::scoped_lock lock(mutex_);
-    queue_.push(job);
-    auto m = metrics.load(std::memory_order_acquire);
-    if (m && m->queue_size_gauge != nullptr) {
-      m->queue_size_gauge->Increment();
+    {
+      const std::scoped_lock lock(mutex_);
+      queue_.push(job);
+      auto m = metrics.load(std::memory_order_acquire);
+      if (m && m->queue_size_gauge != nullptr) {
+        m->queue_size_gauge->Increment();
+      }
     }
     cv_.notify_one();
   }
