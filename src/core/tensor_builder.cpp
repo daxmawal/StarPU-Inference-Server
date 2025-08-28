@@ -80,53 +80,12 @@ TensorBuilder::copy_output_to_buffer(
     throw InferenceExecutionException("[ERROR] Output size mismatch");
   }
 
-  const auto type = output.scalar_type();
-
-  switch (type) {
-    case at::kFloat:
-      std::memcpy(
-          buffer_ptr, output.data_ptr<float>(),
-          static_cast<size_t>(output.numel()) * sizeof(float));
-      break;
-    case at::kDouble:
-      std::memcpy(
-          buffer_ptr, output.data_ptr<double>(),
-          static_cast<size_t>(output.numel()) * sizeof(double));
-      break;
-    case at::kInt:
-      std::memcpy(
-          buffer_ptr, output.data_ptr<int32_t>(),
-          static_cast<size_t>(output.numel()) * sizeof(int32_t));
-      break;
-    case at::kLong:
-      std::memcpy(
-          buffer_ptr, output.data_ptr<int64_t>(),
-          static_cast<size_t>(output.numel()) * sizeof(int64_t));
-      break;
-    case at::kShort:
-      std::memcpy(
-          buffer_ptr, output.data_ptr<int16_t>(),
-          static_cast<size_t>(output.numel()) * sizeof(int16_t));
-      break;
-    case at::kChar:
-      std::memcpy(
-          buffer_ptr, output.data_ptr<int8_t>(),
-          static_cast<size_t>(output.numel()) * sizeof(int8_t));
-      break;
-    case at::kByte:
-      std::memcpy(
-          buffer_ptr, output.data_ptr<uint8_t>(),
-          static_cast<size_t>(output.numel()) * sizeof(uint8_t));
-      break;
-    case at::kBool:
-      std::memcpy(
-          buffer_ptr, output.data_ptr<bool>(),
-          static_cast<size_t>(output.numel()) * sizeof(bool));
-      break;
-    default:
-      throw InferenceExecutionException(
-          "[ERROR] Unsupported output tensor type");
+  if (!output.is_contiguous()) {
+    throw InferenceExecutionException(
+        "[ERROR] Output tensor must be contiguous");
   }
+
+  std::memcpy(buffer_ptr, output.data_ptr(), output.nbytes());
 }
 
 // =============================================================================

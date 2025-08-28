@@ -65,14 +65,16 @@ TEST(TensorBuilder_Robustesse, CopyOutputToBufferSizeMismatch_TooSmall)
       starpu_server::InferenceExecutionException);
 }
 
-TEST(TensorBuilder_Robustesse, CopyOutputToBufferUnsupportedType)
+TEST(TensorBuilder_Robustesse, CopyOutputToBufferNonContiguous)
 {
-  auto tensor =
-      torch::zeros({2}, torch::TensorOptions().dtype(at::kComplexFloat));
-  std::array<float, 2> buf{0.F, 0.F};
+  auto tensor = torch::tensor(
+      {{1.F, 2.F}, {3.F, 4.F}}, torch::TensorOptions().dtype(at::kFloat));
+  auto transposed = tensor.transpose(0, 1);
+  EXPECT_FALSE(transposed.is_contiguous());
+  std::array<float, 4> buf{};
   EXPECT_THROW(
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, buf.data(), 2),
+          transposed, buf.data(), transposed.numel()),
       starpu_server::InferenceExecutionException);
 }
 
