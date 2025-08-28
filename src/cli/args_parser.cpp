@@ -336,8 +336,8 @@ parse_metrics_port(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   auto& metrics_port = opts.metrics_port;
   return expect_and_parse(idx, args, [&metrics_port](const char* val) {
     metrics_port = std::stoi(val);
-    if (metrics_port <= 0) {
-      throw std::invalid_argument("Must be > 0.");
+    if (metrics_port < 1 || metrics_port > 65535) {
+      throw std::out_of_range("Metrics port must be between 1 and 65535.");
     }
   });
 }

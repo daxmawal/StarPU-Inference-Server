@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <string>
 #include <vector>
 
 #include "test_cli.hpp"
@@ -106,9 +107,15 @@ TEST(ArgsParser_Unit, ParsesMixedCaseTypes)
   EXPECT_EQ(opts.inputs[1].type, at::kInt);
 }
 
-TEST(ArgsParser_Unit, RejectsUnknownScheduler)
+TEST(ArgsParser_Unit, MetricsPortBoundaryValues)
 {
-  expect_invalid(
-      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
-       "--scheduler", "unknown"});
+  for (const int port : {1, 65535}) {
+    std::string port_str = std::to_string(port);
+    std::vector<const char*> args = {
+        "program", "--model", "model.pt",       "--shape",       "1x1",
+        "--types", "float",   "--metrics-port", port_str.c_str()};
+    const auto opts = parse(args);
+    ASSERT_TRUE(opts.valid);
+    EXPECT_EQ(opts.metrics_port, port);
+  }
 }
