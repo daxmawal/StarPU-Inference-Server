@@ -125,3 +125,18 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{"2", starpu_server::VerbosityLevel::Stats},
         std::pair{"3", starpu_server::VerbosityLevel::Debug},
         std::pair{"4", starpu_server::VerbosityLevel::Trace}));
+
+TEST(InferenceClient, AsyncCompleteRpcExitsAfterShutdown)
+{
+  auto channel = grpc::CreateChannel(
+      "127.0.0.1:59996", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  std::thread cq_thread(
+      &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  client.Shutdown();
+  cq_thread.join();
+  SUCCEED();
+}
