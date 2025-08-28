@@ -37,10 +37,16 @@ inline auto
 parse_verbosity_level(const std::string& val) -> VerbosityLevel
 {
   using enum VerbosityLevel;
-  if (std::all_of(val.begin(), val.end(), [](unsigned char c) {
+
+  const auto first = val.find_first_not_of(" \t\n\r\f\v");
+  const auto last = val.find_last_not_of(" \t\n\r\f\v");
+  const std::string trimmed =
+      first == std::string::npos ? std::string{} : val.substr(first, last - first + 1);
+
+  if (std::all_of(trimmed.begin(), trimmed.end(), [](unsigned char c) {
         return std::isdigit(c) != 0;
       })) {
-    const int level = std::stoi(val);
+    const int level = std::stoi(trimmed);
     switch (level) {
       case 0:
         return Silent;
@@ -53,12 +59,12 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
       case 4:
         return Trace;
       default:
-        throw std::invalid_argument("Invalid verbosity level: " + val);
+        throw std::invalid_argument("Invalid verbosity level: " + trimmed);
     }
   }
 
-  std::string lower(val.size(), '\0');
-  std::transform(val.begin(), val.end(), lower.begin(), [](unsigned char c) {
+  std::string lower(trimmed.size(), '\0');
+  std::transform(trimmed.begin(), trimmed.end(), lower.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
   });
   if (lower == "silent") {
@@ -76,7 +82,7 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
   if (lower == "trace") {
     return Trace;
   }
-  throw std::invalid_argument("Invalid verbosity level: " + val);
+  throw std::invalid_argument("Invalid verbosity level: " + trimmed);
 }
 
 // =============================================================================

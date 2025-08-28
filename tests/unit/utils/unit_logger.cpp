@@ -123,3 +123,22 @@ TEST(Logger, LogError)
   log_error("err");
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, "err"));
 }
+
+class ParseVerbosityLevelWhitespace
+    : public ::testing::TestWithParam<
+          std::pair<const char*, VerbosityLevel>> {};
+
+TEST_P(ParseVerbosityLevelWhitespace, TrimsInput)
+{
+  const auto& [input, expected] = GetParam();
+  EXPECT_EQ(parse_verbosity_level(input), expected);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Logger, ParseVerbosityLevelWhitespace,
+    ::testing::Values(
+        std::pair{" 0", VerbosityLevel::Silent},
+        std::pair{"1 ", VerbosityLevel::Info},
+        std::pair{"\t2\n", VerbosityLevel::Stats},
+        std::pair{" debug", VerbosityLevel::Debug},
+        std::pair{"trace ", VerbosityLevel::Trace}));
