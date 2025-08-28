@@ -17,6 +17,33 @@
 
 namespace starpu_server {
 
+namespace {
+
+auto
+parse_tensor_nodes(const YAML::Node& nodes) -> std::vector<TensorConfig>
+{
+  std::vector<TensorConfig> tensors;
+  if (!nodes || !nodes.IsSequence()) {
+    return tensors;
+  }
+  for (const auto& node : nodes) {
+    TensorConfig t{};
+    if (node["name"]) {
+      t.name = node["name"].as<std::string>();
+    }
+    if (node["dims"]) {
+      t.dims = node["dims"].as<std::vector<int64_t>>();
+    }
+    if (node["data_type"]) {
+      t.type = string_to_scalar_type(node["data_type"].as<std::string>());
+    }
+    tensors.push_back(std::move(t));
+  }
+  return tensors;
+}
+
+}  // namespace
+
 auto
 load_config(const std::string& path) -> RuntimeConfig
 {
@@ -48,34 +75,10 @@ load_config(const std::string& path) -> RuntimeConfig
       }
     }
     if (root["input"]) {
-      for (const auto& node : root["input"]) {
-        TensorConfig t{};
-        if (node["name"]) {
-          t.name = node["name"].as<std::string>();
-        }
-        if (node["dims"]) {
-          t.dims = node["dims"].as<std::vector<int64_t>>();
-        }
-        if (node["data_type"]) {
-          t.type = string_to_scalar_type(node["data_type"].as<std::string>());
-        }
-        cfg.inputs.push_back(std::move(t));
-      }
+      cfg.inputs = parse_tensor_nodes(root["input"]);
     }
     if (root["output"]) {
-      for (const auto& node : root["output"]) {
-        TensorConfig t{};
-        if (node["name"]) {
-          t.name = node["name"].as<std::string>();
-        }
-        if (node["dims"]) {
-          t.dims = node["dims"].as<std::vector<int64_t>>();
-        }
-        if (node["data_type"]) {
-          t.type = string_to_scalar_type(node["data_type"].as<std::string>());
-        }
-        cfg.outputs.push_back(std::move(t));
-      }
+      cfg.outputs = parse_tensor_nodes(root["output"]);
     }
     if (root["verbose"]) {
       cfg.verbosity = parse_verbosity_level(root["verbose"].as<std::string>());
