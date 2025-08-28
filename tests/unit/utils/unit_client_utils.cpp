@@ -4,6 +4,7 @@
 #include <ctime>
 #include <format>
 #include <regex>
+#include <stdexcept>
 #include <string>
 
 #include "test_helpers.hpp"
@@ -29,6 +30,15 @@ TEST(ClientUtils, PickRandomInputDeterministic)
     ASSERT_EQ(chosen.size(), 1U);
     EXPECT_EQ(chosen[0].item<int>(), expected_idx);
   }
+}
+
+TEST(ClientUtils, PickRandomInputEmptyPoolThrows)
+{
+  std::vector<std::vector<torch::Tensor>> pool;
+  std::mt19937 rng(42);
+  EXPECT_THROW(
+      starpu_server::client_utils::pick_random_input(pool, rng),
+      std::invalid_argument);
 }
 
 TEST(ClientUtils, CreateJobProducesExpectedFields)
