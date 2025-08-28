@@ -156,6 +156,28 @@ output:
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, MissingModelSkipsParsingOtherKeys)
+{
+  const std::string yaml = R"(
+input:
+  - name: in
+    dims: [1]
+    data_type: float32
+output:
+  - name: out
+    dims: [1]
+    data_type: float32
+max_batch_size: 0
+)";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_no_model_skip.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(cfg.max_batch_size, 1);
+}
+
 TEST(ConfigLoader, MissingInputSetsValidFalse)
 {
   const std::string yaml = R"(
@@ -173,6 +195,25 @@ output:
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, MissingInputSkipsParsingOtherKeys)
+{
+  const std::string yaml = R"(
+model: model.pt
+output:
+  - name: out
+    dims: [1]
+    data_type: float32
+delay: -10
+)";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_no_input_skip.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(cfg.delay_ms, 0);
+}
+
 TEST(ConfigLoader, MissingOutputSetsValidFalse)
 {
   const std::string yaml = R"(
@@ -188,6 +229,25 @@ input:
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)
+{
+  const std::string yaml = R"(
+model: model.pt
+input:
+  - name: in
+    dims: [1]
+    data_type: float32
+max_batch_size: 0
+)";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_no_output_skip.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(cfg.max_batch_size, 1);
 }
 
 using VerbosityCase =

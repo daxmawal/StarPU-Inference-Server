@@ -65,6 +65,13 @@ load_config(const std::string& path) -> RuntimeConfig
   try {
     YAML::Node root = YAML::LoadFile(path);
 
+    if (root["verbose"]) {
+      cfg.verbosity = parse_verbosity_level(root["verbose"].as<std::string>());
+    } else if (root["verbosity"]) {
+      cfg.verbosity =
+          parse_verbosity_level(root["verbosity"].as<std::string>());
+    }
+
     const std::vector<std::string> required_keys{"model", "input", "output"};
     for (const auto& key : required_keys) {
       if (!root[key]) {
@@ -73,6 +80,9 @@ load_config(const std::string& path) -> RuntimeConfig
       }
     }
 
+    if (!cfg.valid) {
+      return cfg;
+    }
     if (root["scheduler"]) {
       cfg.scheduler = root["scheduler"].as<std::string>();
     }
@@ -93,12 +103,6 @@ load_config(const std::string& path) -> RuntimeConfig
     }
     if (root["output"]) {
       cfg.outputs = parse_tensor_nodes(root["output"]);
-    }
-    if (root["verbose"]) {
-      cfg.verbosity = parse_verbosity_level(root["verbose"].as<std::string>());
-    } else if (root["verbosity"]) {
-      cfg.verbosity =
-          parse_verbosity_level(root["verbosity"].as<std::string>());
     }
     if (root["delay"]) {
       cfg.delay_ms = root["delay"].as<int>();
