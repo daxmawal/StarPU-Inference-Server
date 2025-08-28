@@ -51,6 +51,17 @@ TEST(ClientArgs, VerboseLevels)
   }
 }
 
+TEST(ClientArgs, RejectsNonPositiveShapeDims)
+{
+  const char* argv_neg[] = {"prog", "--shape", "1x-3x224"};
+  auto cfg_neg = starpu_server::parse_client_args(std::span{argv_neg});
+  EXPECT_FALSE(cfg_neg.valid);
+
+  const char* argv_zero[] = {"prog", "--shape", "1x0x224"};
+  auto cfg_zero = starpu_server::parse_client_args(std::span{argv_zero});
+  EXPECT_FALSE(cfg_zero.valid);
+}
+
 TEST(ClientArgsHelp, ContainsKeyOptions)
 {
   testing::internal::CaptureStdout();

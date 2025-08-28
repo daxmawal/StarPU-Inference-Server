@@ -22,8 +22,9 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
   std::stringstream string_stream(shape_str);
   std::string item;
   while (std::getline(string_stream, item, 'x')) {
+    int64_t dim{};
     try {
-      shape.push_back(std::stoll(item));
+      dim = std::stoll(item);
     }
     catch (const std::invalid_argument& e) {
       throw std::invalid_argument(
@@ -33,6 +34,11 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
       throw std::out_of_range(
           "Shape value out of range: " + std::string(e.what()));
     }
+    if (dim <= 0) {
+      throw std::invalid_argument(
+          "Shape contains non-positive dimension: " + item);
+    }
+    shape.push_back(dim);
   }
   if (shape.empty()) {
     throw std::invalid_argument("Shape string is empty or invalid.");
