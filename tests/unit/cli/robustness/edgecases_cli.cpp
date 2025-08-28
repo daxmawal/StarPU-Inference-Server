@@ -1,12 +1,16 @@
 #include <gtest/gtest.h>
 
+#include <string>
 #include <vector>
 
 #include "cli/args_parser.hpp"
 #include "test_cli.hpp"
+#include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 
-static auto build_common_args() -> std::vector<const char*> {
+static auto
+build_common_args() -> std::vector<const char*>
+{
   return {"program", "--model", test_model_path().c_str(), "--shape", "1x3",
           "--types", "float"};
 }
@@ -53,7 +57,38 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--shapes", "1x2,,3", "--types", "float,int"},
         std::vector<const char*>{"--model"},
         std::vector<const char*>{"--iterations"},
-        std::vector<const char*>{"--model",
-                                 "/nonexistent/path/to/model.pt"},
-        std::vector<const char*>{"--config",
-                                 "/nonexistent/path/to/config.yaml"}));
+        std::vector<const char*>{"--config"},
+        std::vector<const char*>{"--scheduler"},
+        std::vector<const char*>{"--address"},
+        std::vector<const char*>{"--model", "/nonexistent/path/to/model.pt"},
+        std::vector<const char*>{
+            "--config", "/nonexistent/path/to/config.yaml"}));
+
+struct MissingValueParam {
+  std::vector<const char*> args;
+  const char* option;
+};
+
+class ArgsParserMissingValues_Robustesse
+    : public ::testing::TestWithParam<MissingValueParam> {};
+
+TEST_P(ArgsParserMissingValues_Robustesse, ReportsError)
+{
+  const auto& param = GetParam();
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto opts = parse(param.args);
+  EXPECT_FALSE(opts.valid);
+  const std::string expected_msg =
+      std::string(param.option) + " option requires a value.";
+  EXPECT_EQ(
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel, expected_msg));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MissingValue, ArgsParserMissingValues_Robustesse,
+    ::testing::Values(
+        MissingValueParam{{"program", "--model"}, "--model"},
+        MissingValueParam{{"program", "--config"}, "--config"},
+        MissingValueParam{{"program", "--scheduler"}, "--scheduler"},
+        MissingValueParam{{"program", "--address"}, "--address"}));

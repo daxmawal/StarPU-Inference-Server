@@ -13,6 +13,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -136,6 +137,13 @@ check_required(
   }
 }
 
+static auto
+missing_value_error(std::string_view option_name) -> bool
+{
+  log_error(std::format("{} option requires a value.", option_name));
+  return false;
+}
+
 template <typename Func>
 auto
 try_parse(const char* val, Func&& parser) -> bool
@@ -155,10 +163,12 @@ try_parse(const char* val, Func&& parser) -> bool
 
 template <typename Func>
 auto
-expect_and_parse(size_t& idx, std::span<char*> args, Func&& parser) -> bool
+expect_and_parse(
+    std::string_view option_name, size_t& idx, std::span<char*> args,
+    Func&& parser) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error(option_name);
   }
   ++idx;
   return try_parse(args[idx], std::forward<Func>(parser));
@@ -172,7 +182,7 @@ static auto
 parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error("--model");
   }
   ++idx;
   opts.model_path = args[idx];
@@ -187,7 +197,7 @@ static auto
 parse_config(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error("--config");
   }
   ++idx;
   opts.config_path = args[idx];
@@ -203,20 +213,21 @@ parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   auto& iterations = opts.iterations;
-  return expect_and_parse(idx, args, [&iterations](const char* val) {
-    const auto tmp = std::stoi(val);
-    if (tmp <= 0) {
-      throw std::invalid_argument("Must be > 0.");
-    }
-    iterations = tmp;
-  });
+  return expect_and_parse(
+      "--iterations", idx, args, [&iterations](const char* val) {
+        const auto tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        iterations = tmp;
+      });
 }
 
 static auto
 parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& inputs = opts.inputs;
-  return expect_and_parse(idx, args, [&inputs](const char* val) {
+  return expect_and_parse("--shape", idx, args, [&inputs](const char* val) {
     auto dims = parse_shape_string(val);
     inputs.resize(1);
     inputs[0].name = inputs[0].name.empty() ? "input0" : inputs[0].name;
@@ -228,7 +239,7 @@ static auto
 parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& inputs = opts.inputs;
-  return expect_and_parse(idx, args, [&inputs](const char* val) {
+  return expect_and_parse("--shapes", idx, args, [&inputs](const char* val) {
     auto dims_list = parse_shapes_string(val);
     inputs.resize(dims_list.size());
     for (size_t i = 0; i < dims_list.size(); ++i) {
@@ -244,7 +255,7 @@ static auto
 parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& inputs = opts.inputs;
-  return expect_and_parse(idx, args, [&inputs](const char* val) {
+  return expect_and_parse("--types", idx, args, [&inputs](const char* val) {
     auto types = parse_types_string(val);
     if (inputs.size() < types.size()) {
       inputs.resize(types.size());
@@ -262,16 +273,17 @@ static auto
 parse_verbose(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& verbosity = opts.verbosity;
-  return expect_and_parse(idx, args, [&verbosity](const char* val) {
-    verbosity = parse_verbosity_level(val);
-  });
+  return expect_and_parse(
+      "--verbose", idx, args, [&verbosity](const char* val) {
+        verbosity = parse_verbosity_level(val);
+      });
 }
 
 static auto
 parse_delay(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& delay_ms = opts.delay_ms;
-  return expect_and_parse(idx, args, [&delay_ms](const char* val) {
+  return expect_and_parse("--delay", idx, args, [&delay_ms](const char* val) {
     delay_ms = std::stoi(val);
     if (delay_ms < 0) {
       throw std::invalid_argument("Must be >= 0.");
@@ -283,21 +295,22 @@ static auto
 parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  const bool parsed = expect_and_parse(idx, args, [&opts](const char* val) {
-    opts.use_cuda = true;
-    std::stringstream shape_stream(val);
-    std::string id_str;
-    while (std::getline(shape_stream, id_str, ',')) {
-      const int device_id = std::stoi(id_str);
-      if (device_id < 0) {
-        throw std::invalid_argument("Must be >= 0.");
-      }
-      opts.device_ids.push_back(device_id);
-    }
-    if (opts.device_ids.empty()) {
-      throw std::invalid_argument("No device IDs provided.");
-    }
-  });
+  const bool parsed =
+      expect_and_parse("--device-ids", idx, args, [&opts](const char* val) {
+        opts.use_cuda = true;
+        std::stringstream shape_stream(val);
+        std::string id_str;
+        while (std::getline(shape_stream, id_str, ',')) {
+          const int device_id = std::stoi(id_str);
+          if (device_id < 0) {
+            throw std::invalid_argument("Must be >= 0.");
+          }
+          opts.device_ids.push_back(device_id);
+        }
+        if (opts.device_ids.empty()) {
+          throw std::invalid_argument("No device IDs provided.");
+        }
+      });
 
   if (!parsed) {
     return false;
@@ -317,7 +330,7 @@ static auto
 parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error("--address");
   }
   ++idx;
   opts.server_address = args[idx];
@@ -329,13 +342,14 @@ parse_max_batch_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   auto& max_batch_size = opts.max_batch_size;
-  return expect_and_parse(idx, args, [&max_batch_size](const char* val) {
-    const int tmp = std::stoi(val);
-    if (tmp <= 0) {
-      throw std::invalid_argument("Must be > 0.");
-    }
-    max_batch_size = tmp;
-  });
+  return expect_and_parse(
+      "--max-batch-size", idx, args, [&max_batch_size](const char* val) {
+        const int tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        max_batch_size = tmp;
+      });
 }
 
 static auto
@@ -343,19 +357,20 @@ parse_metrics_port(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   auto& metrics_port = opts.metrics_port;
-  return expect_and_parse(idx, args, [&metrics_port](const char* val) {
-    metrics_port = std::stoi(val);
-    if (metrics_port < 1 || metrics_port > 65535) {
-      throw std::out_of_range("Metrics port must be between 1 and 65535.");
-    }
-  });
+  return expect_and_parse(
+      "--metrics-port", idx, args, [&metrics_port](const char* val) {
+        metrics_port = std::stoi(val);
+        if (metrics_port < 1 || metrics_port > 65535) {
+          throw std::out_of_range("Metrics port must be between 1 and 65535.");
+        }
+      });
 }
 
 static auto
 parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error("--scheduler");
   }
   ++idx;
   const std::string scheduler = args[idx];
@@ -383,13 +398,14 @@ parse_pregen_inputs(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   auto& pregen = opts.pregen_inputs;
-  return expect_and_parse(idx, args, [&pregen](const char* val) {
-    const auto tmp = std::stoi(val);
-    if (tmp <= 0) {
-      throw std::invalid_argument("Must be > 0.");
-    }
-    pregen = static_cast<size_t>(tmp);
-  });
+  return expect_and_parse(
+      "--pregen-inputs", idx, args, [&pregen](const char* val) {
+        const auto tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        pregen = static_cast<size_t>(tmp);
+      });
 }
 
 static auto
@@ -397,13 +413,14 @@ parse_warmup_pregen_inputs(
     RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& pregen = opts.warmup_pregen_inputs;
-  return expect_and_parse(idx, args, [&pregen](const char* val) {
-    const auto tmp = std::stoi(val);
-    if (tmp <= 0) {
-      throw std::invalid_argument("Must be > 0.");
-    }
-    pregen = static_cast<size_t>(tmp);
-  });
+  return expect_and_parse(
+      "--warmup-pregen-inputs", idx, args, [&pregen](const char* val) {
+        const auto tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        pregen = static_cast<size_t>(tmp);
+      });
 }
 
 static auto
@@ -411,20 +428,21 @@ parse_warmup_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   auto& warmup = opts.warmup_iterations;
-  return expect_and_parse(idx, args, [&warmup](const char* val) {
-    const auto tmp = std::stoi(val);
-    if (tmp < 0) {
-      throw std::invalid_argument("Must be >= 0.");
-    }
-    warmup = tmp;
-  });
+  return expect_and_parse(
+      "--warmup-iterations", idx, args, [&warmup](const char* val) {
+        const auto tmp = std::stoi(val);
+        if (tmp < 0) {
+          throw std::invalid_argument("Must be >= 0.");
+        }
+        warmup = tmp;
+      });
 }
 
 static auto
 parse_seed(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& seed = opts.seed;
-  return expect_and_parse(idx, args, [&seed](const char* val) {
+  return expect_and_parse("--seed", idx, args, [&seed](const char* val) {
     const auto tmp = std::stoll(val);
     if (tmp < 0) {
       throw std::invalid_argument("Must be >= 0.");
