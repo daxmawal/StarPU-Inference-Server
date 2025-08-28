@@ -105,3 +105,10 @@ TEST(ArgsParser_Unit, ParsesMixedCaseTypes)
   EXPECT_EQ(opts.inputs[0].type, at::kFloat);
   EXPECT_EQ(opts.inputs[1].type, at::kInt);
 }
+
+TEST(ArgsParser_Unit, RejectsUnknownScheduler)
+{
+  expect_invalid(
+      {"program", "--model", "model.pt", "--shape", "1x3", "--types", "float",
+       "--scheduler", "unknown"});
+}

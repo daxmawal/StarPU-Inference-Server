@@ -23,6 +23,9 @@
 
 namespace starpu_server {
 
+static const std::unordered_set<std::string> kAllowedSchedulers = {
+    "lws", "dmda", "ws", "eager", "random", "prio", "peager", "heft", "fcfs"};
+
 // =============================================================================
 // Shape and Type Parsing: Handle --shape, --shapes, and --types arguments
 // =============================================================================
@@ -346,7 +349,23 @@ parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
     return false;
   }
   ++idx;
-  opts.scheduler = args[idx];
+  const std::string scheduler = args[idx];
+  if (!kAllowedSchedulers.contains(scheduler)) {
+    std::ostringstream oss;
+    for (auto it = kAllowedSchedulers.begin(); it != kAllowedSchedulers.end();
+         ++it) {
+      if (it != kAllowedSchedulers.begin()) {
+        oss << ", ";
+      }
+      oss << *it;
+    }
+    log_error(
+        std::format(
+            "Unknown scheduler: '{}'. Allowed schedulers: {}", scheduler,
+            oss.str()));
+    return false;
+  }
+  opts.scheduler = scheduler;
   return true;
 }
 
@@ -444,8 +463,9 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
         return false;
       }
     } else {
-      log_error(std::format(
-          "Unknown argument: {}. Use --help to see valid options.", arg));
+      log_error(
+          std::format(
+              "Unknown argument: {}. Use --help to see valid options.", arg));
       return false;
     }
   }
