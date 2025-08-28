@@ -34,3 +34,16 @@ TEST(Metrics, InitializesPointersAndRegistry)
   shutdown_metrics();
   EXPECT_EQ(metrics.load(std::memory_order_acquire), nullptr);
 }
+
+TEST(Metrics, RepeatedInitDoesNotAllocateRegistry)
+{
+  ASSERT_TRUE(init_metrics(0));
+  auto first = metrics.load(std::memory_order_acquire);
+
+  EXPECT_FALSE(init_metrics(0));
+  auto second = metrics.load(std::memory_order_acquire);
+  EXPECT_EQ(first, second);
+
+  shutdown_metrics();
+  EXPECT_EQ(metrics.load(std::memory_order_acquire), nullptr);
+}

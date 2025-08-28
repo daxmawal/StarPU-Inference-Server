@@ -16,8 +16,8 @@ MetricsRegistry::MetricsRegistry(int port)
       queue_size_gauge(nullptr), exposer_(nullptr)
 {
   try {
-    exposer_ =
-        std::make_unique<prometheus::Exposer>("0.0.0.0:" + std::to_string(port));
+    exposer_ = std::make_unique<prometheus::Exposer>(
+        "0.0.0.0:" + std::to_string(port));
     exposer_->RegisterCollectable(registry);
   }
   catch (const std::exception& e) {
@@ -58,6 +58,10 @@ std::atomic<std::shared_ptr<MetricsRegistry>> metrics{nullptr};
 auto
 init_metrics(int port) -> bool
 {
+  if (metrics.load(std::memory_order_acquire)) {
+    return false;
+  }
+
   try {
     auto new_metrics = std::make_shared<MetricsRegistry>(port);
     metrics.store(std::move(new_metrics), std::memory_order_release);
