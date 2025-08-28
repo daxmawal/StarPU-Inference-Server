@@ -6,6 +6,7 @@
 #include <prometheus/registry.h>
 
 #include <atomic>
+#include <cstddef>
 #include <memory>
 
 namespace prometheus {
@@ -32,5 +33,6 @@ extern std::atomic<std::shared_ptr<MetricsRegistry>> metrics;
 
 bool init_metrics(int port);
 void shutdown_metrics();
+void set_queue_size(std::size_t size);
 
 }  // namespace starpu_server

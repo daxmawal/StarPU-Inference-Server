@@ -24,10 +24,7 @@ class InferenceQueue {
         return;
       }
       queue_.push(job);
-      auto m = metrics.load(std::memory_order_acquire);
-      if (m && m->queue_size_gauge != nullptr) {
-        m->queue_size_gauge->Increment();
-      }
+      set_queue_size(queue_.size());
     }
     cv_.notify_one();
   }
@@ -43,10 +40,7 @@ class InferenceQueue {
     }
     job = queue_.front();
     queue_.pop();
-    auto m = metrics.load(std::memory_order_acquire);
-    if (m && m->queue_size_gauge != nullptr) {
-      m->queue_size_gauge->Decrement();
-    }
+    set_queue_size(queue_.size());
     return true;
   }
 

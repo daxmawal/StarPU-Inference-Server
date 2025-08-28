@@ -65,6 +65,7 @@ init_metrics(int port) -> bool
   try {
     auto new_metrics = std::make_shared<MetricsRegistry>(port);
     metrics.store(std::move(new_metrics), std::memory_order_release);
+    set_queue_size(0);
     return true;
   }
   catch (const std::exception& e) {
@@ -78,6 +79,15 @@ void
 shutdown_metrics()
 {
   metrics.store(nullptr, std::memory_order_release);
+}
+
+void
+set_queue_size(std::size_t size)
+{
+  auto m = metrics.load(std::memory_order_acquire);
+  if (m && m->queue_size_gauge != nullptr) {
+    m->queue_size_gauge->Set(static_cast<double>(size));
+  }
 }
 
 }  // namespace starpu_server
