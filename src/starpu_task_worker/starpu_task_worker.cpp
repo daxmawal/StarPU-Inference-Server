@@ -189,6 +189,11 @@ StarPUTaskRunner::run()
     catch (const InferenceEngineException& exception) {
       StarPUTaskRunner::handle_job_exception(job, exception);
     }
+    catch (const std::exception& e) {
+      log_error(
+          std::format("Unexpected exception for job {}: {}", job_id, e.what()));
+      StarPUTaskRunner::handle_job_exception(job, e);
+    }
   }
 
   log_info(opts_->verbosity, "StarPUTaskRunner stopped.");
