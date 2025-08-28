@@ -34,6 +34,10 @@ TensorBuilder::from_starpu_buffers(
     throw InferenceExecutionException("[ERROR] Too many input tensors");
   }
 
+  if (buffers.size() < params->num_inputs) {
+    throw InferenceExecutionException("[ERROR] Too few input buffers");
+  }
+
   std::vector<torch::Tensor> inputs;
   inputs.reserve(params->num_inputs);
 
@@ -69,6 +73,9 @@ void
 TensorBuilder::copy_output_to_buffer(
     const at::Tensor& output, void* buffer_ptr, int64_t expected_numel)
 {
+  if (buffer_ptr == nullptr) {
+    throw InferenceExecutionException("[ERROR] Output buffer pointer is null");
+  }
   if (output.numel() != expected_numel) {
     throw InferenceExecutionException("[ERROR] Output size mismatch");
   }

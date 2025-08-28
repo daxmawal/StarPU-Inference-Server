@@ -76,6 +76,16 @@ TEST(TensorBuilder_Robustesse, CopyOutputToBufferUnsupportedType)
       starpu_server::InferenceExecutionException);
 }
 
+TEST(TensorBuilder_Robustesse, CopyOutputToBufferNullPointer)
+{
+  auto tensor = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
+  int32_t* null_ptr = nullptr;
+  EXPECT_THROW(
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          tensor, null_ptr, tensor.numel()),
+      starpu_server::InferenceExecutionException);
+}
+
 TEST(TensorBuilder_Robustesse, FromStarpuBuffersTooManyInputs)
 {
   starpu_server::InferenceParams params;
