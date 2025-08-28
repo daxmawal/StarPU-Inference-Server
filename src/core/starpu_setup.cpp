@@ -145,7 +145,7 @@ run_codelet_inference(
   log_trace(
       params->verbosity,
       std::format(
-          "{}, device id, worker id, job id : {} {} {}",
+          "{} device id {}, worker id {}, job id {}",
           (executed_on_type == DeviceType::CPU ? "CPU" : "GPU"), device_id,
           worker_id, params->job_id));
 
