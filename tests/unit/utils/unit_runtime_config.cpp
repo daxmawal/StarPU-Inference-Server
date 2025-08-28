@@ -32,3 +32,27 @@ TEST(RuntimeConfig, ComputeMaxMessageBytesThrowsOnPerSampleBytesOverflow)
           std::vector<starpu_server::TensorConfig>{t2}),
       starpu_server::MessageSizeOverflowException);
 }
+
+TEST(RuntimeConfig, ComputeMaxMessageBytesThrowsOnNegativeInputDimension)
+{
+  starpu_server::TensorConfig t;
+  t.dims = {-1, 2};
+  t.type = at::kFloat;
+
+  EXPECT_THROW(
+      starpu_server::compute_max_message_bytes(
+          1, std::vector<starpu_server::TensorConfig>{t}, {}),
+      starpu_server::InvalidDimensionException);
+}
+
+TEST(RuntimeConfig, ComputeMaxMessageBytesThrowsOnNegativeOutputDimension)
+{
+  starpu_server::TensorConfig t;
+  t.dims = {2, -1};
+  t.type = at::kFloat;
+
+  EXPECT_THROW(
+      starpu_server::compute_max_message_bytes(
+          1, {}, std::vector<starpu_server::TensorConfig>{t}),
+      starpu_server::InvalidDimensionException);
+}

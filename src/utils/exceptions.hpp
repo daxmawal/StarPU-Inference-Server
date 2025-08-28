@@ -94,4 +94,10 @@ class MessageSizeOverflowException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when a tensor dimension is negative
+class InvalidDimensionException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
 }  // namespace starpu_server

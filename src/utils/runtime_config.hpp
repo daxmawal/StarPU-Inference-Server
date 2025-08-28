@@ -94,6 +94,10 @@ compute_max_message_bytes(
     for (const auto& t : tensors) {
       size_t numel = 1;
       for (int64_t d : t.dims) {
+        if (d < 0) {
+          throw InvalidDimensionException(
+              "dimension size must be non-negative");
+        }
         const auto d_size = static_cast<size_t>(d);
         if (d_size != 0 &&
             numel > std::numeric_limits<size_t>::max() / d_size) {
