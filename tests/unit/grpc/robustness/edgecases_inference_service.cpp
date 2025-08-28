@@ -14,6 +14,22 @@ TEST(InferenceService, ValidateInputsSizeMismatch)
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
+TEST(InferenceService, ValidateInputsNegativeDimension)
+{
+  std::vector<float> data = {1.0F};
+  auto req = starpu_server::make_model_infer_request({
+      {{-1}, at::kFloat, starpu_server::to_raw_data(data)},
+  });
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
 TEST_F(InferenceServiceTest, ModelInferReturnsValidationError)
 {
   auto req = starpu_server::make_valid_request();

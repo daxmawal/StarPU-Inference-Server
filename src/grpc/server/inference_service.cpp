@@ -138,6 +138,11 @@ InferenceServiceImpl::validate_and_convert_inputs(
 
     size_t expected = element_size(dtype);
     for (const auto dim : input.shape()) {
+      if (dim < 0) {
+        return Status(
+            grpc::StatusCode::INVALID_ARGUMENT,
+            "Input tensor shape contains negative dimension");
+      }
       expected *= static_cast<size_t>(dim);
     }
     if (expected != raw.size()) {
