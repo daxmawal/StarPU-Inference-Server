@@ -151,7 +151,10 @@ main(int argc, char* argv[]) -> int
 {
   try {
     starpu_server::RuntimeConfig opts = handle_program_arguments(argc, argv);
-    starpu_server::init_metrics(opts.metrics_port);
+    const bool metrics_ok = starpu_server::init_metrics(opts.metrics_port);
+    if (!metrics_ok) {
+      starpu_server::log_warning("Metrics server failed to start; continuing without metrics.");
+    }
     starpu_server::StarPUSetup starpu(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);

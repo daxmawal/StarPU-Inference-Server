@@ -24,7 +24,7 @@ TEST(Metrics, ConcurrentInit)
 
 TEST(Metrics, ConcurrentShutdown)
 {
-  init_metrics(0);
+  ASSERT_TRUE(init_metrics(0));
   EXPECT_NE(metrics.load(std::memory_order_acquire), nullptr);
 
   const int thread_count = 8;

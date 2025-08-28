@@ -30,7 +30,7 @@ class MetricsRegistry {
 
 extern std::atomic<std::shared_ptr<MetricsRegistry>> metrics;
 
-void init_metrics(int port);
+bool init_metrics(int port);
 void shutdown_metrics();
 
 }  // namespace starpu_server

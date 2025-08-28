@@ -6,7 +6,7 @@ using namespace starpu_server;
 
 TEST(Metrics, InitializesPointersAndRegistry)
 {
-  init_metrics(0);
+  ASSERT_TRUE(init_metrics(0));
 
   auto m = metrics.load(std::memory_order_acquire);
   ASSERT_NE(m, nullptr);

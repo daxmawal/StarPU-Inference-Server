@@ -6,16 +6,24 @@
 #include <memory>
 #include <string>
 
+#include "utils/logger.hpp"
+
 namespace starpu_server {
 
 MetricsRegistry::MetricsRegistry(int port)
     : registry(std::make_shared<prometheus::Registry>()),
       requests_total(nullptr), inference_latency(nullptr),
-      queue_size_gauge(nullptr), exposer_(
-                                     std::make_unique<prometheus::Exposer>(
-                                         "0.0.0.0:" + std::to_string(port)))
+      queue_size_gauge(nullptr), exposer_(nullptr)
 {
-  exposer_->RegisterCollectable(registry);
+  try {
+    exposer_ =
+        std::make_unique<prometheus::Exposer>("0.0.0.0:" + std::to_string(port));
+    exposer_->RegisterCollectable(registry);
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("Failed to initialize metrics exposer: ") + e.what());
+    throw;
+  }
 
   auto& counter_family = prometheus::BuildCounter()
                              .Name("requests_total")
@@ -47,11 +55,19 @@ MetricsRegistry::~MetricsRegistry()
 
 std::atomic<std::shared_ptr<MetricsRegistry>> metrics{nullptr};
 
-void
-init_metrics(int port)
+auto
+init_metrics(int port) -> bool
 {
-  auto new_metrics = std::make_shared<MetricsRegistry>(port);
-  metrics.store(std::move(new_metrics), std::memory_order_release);
+  try {
+    auto new_metrics = std::make_shared<MetricsRegistry>(port);
+    metrics.store(std::move(new_metrics), std::memory_order_release);
+    return true;
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("Metrics initialization failed: ") + e.what());
+    metrics.store(nullptr, std::memory_order_release);
+    return false;
+  }
 }
 
 void
