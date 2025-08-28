@@ -9,8 +9,8 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
-#include <string>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "exceptions.hpp"
@@ -22,6 +22,20 @@
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+namespace {
+// Validates that the given pointer is not null. Throws std::invalid_argument
+// with a standardized error message if validation fails.
+inline void
+validate_not_null(const void* ptr, std::string_view field_name)
+{
+  if (ptr != nullptr) {
+    return;
+  }
+  throw std::invalid_argument(
+      std::format(
+          "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
+}
+}  // namespace
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -33,41 +47,19 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       results_mutex_(config.results_mutex),
       completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv)
 {
-  if (!queue_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::queue must not be null");
-  }
-  if (!model_cpu_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::model_cpu must not be null");
-  }
-  if (!models_gpu_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::models_gpu must not be null");
-  }
-  if (!starpu_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::starpu must not be null");
-  }
-  if (!opts_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::opts must not be null");
-  }
-  if (!results_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::results must not be null");
-  }
-  if (!results_mutex_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::results_mutex must not be null");
-  }
-  if (!completed_jobs_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::completed_jobs must not be null");
-  }
-  if (!all_done_cv_) {
-    throw std::invalid_argument(
-        "[ERROR] StarPUTaskRunnerConfig::all_done_cv must not be null");
+  for (const auto [ptr, name] :
+       std::initializer_list<std::pair<const void*, std::string_view>>{
+           {queue_, "queue"},
+           {model_cpu_, "model_cpu"},
+           {models_gpu_, "models_gpu"},
+           {starpu_, "starpu"},
+           {opts_, "opts"},
+           {results_, "results"},
+           {results_mutex_, "results_mutex"},
+           {completed_jobs_, "completed_jobs"},
+           {all_done_cv_, "all_done_cv"},
+       }) {
+    validate_not_null(ptr, name);
   }
 }
 
