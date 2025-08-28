@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -88,6 +89,10 @@ load_config(const std::string& path) -> RuntimeConfig
     }
     if (root["model"]) {
       cfg.model_path = root["model"].as<std::string>();
+      if (!std::filesystem::exists(cfg.model_path)) {
+        log_error(std::string("Model path does not exist: ") + cfg.model_path);
+        cfg.valid = false;
+      }
     }
     if (root["iterations"]) {
       cfg.iterations = root["iterations"].as<int>();

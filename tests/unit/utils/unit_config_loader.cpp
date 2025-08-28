@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <vector>
 
 #include "utils/config_loader.hpp"
@@ -11,35 +12,38 @@ using namespace starpu_server;
 
 TEST(ConfigLoader, LoadsValidConfig)
 {
-  const std::string yaml = R"(
-scheduler: fcfs
-model: model.pt
-device_ids: [0, 1]
-input:
-  - name: in
-    dims: [1, 3, 224, 224]
-    data_type: float32
-output:
-  - name: out
-    dims: [1, 1000]
-    data_type: float32
-verbosity: 3
-max_batch_size: 4
-pregen_inputs: 8
-warmup_pregen_inputs: 5
-warmup_iterations: 3
-seed: 123
-)";
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "config_loader_valid_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "scheduler: fcfs\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "device_ids: [0, 1]\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1, 3, 224, 224]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1, 1000]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "verbosity: 3\n";
+  yaml << "max_batch_size: 4\n";
+  yaml << "pregen_inputs: 8\n";
+  yaml << "warmup_pregen_inputs: 5\n";
+  yaml << "warmup_iterations: 3\n";
+  yaml << "seed: 123\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_valid.yaml";
-  std::ofstream(tmp) << yaml;
+  std::ofstream(tmp) << yaml.str();
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.scheduler, "fcfs");
-  EXPECT_EQ(cfg.model_path, "model.pt");
+  EXPECT_EQ(cfg.model_path, model_path.string());
   EXPECT_EQ(cfg.device_ids, (std::vector<int>{0, 1}));
   ASSERT_EQ(cfg.inputs.size(), 1U);
   EXPECT_EQ(cfg.inputs[0].name, "in");
@@ -151,6 +155,28 @@ output:
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_no_model.yaml";
   std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, NonexistentModelFileSetsValidFalse)
+{
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "nonexistent_model.pt";
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_missing_model_file.yaml";
+  std::ofstream(tmp) << yaml.str();
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
