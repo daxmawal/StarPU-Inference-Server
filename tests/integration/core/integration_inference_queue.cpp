@@ -14,8 +14,7 @@ TEST(InferenceQueue_Integration, FifoAndShutdown)
     std::jthread consumer([&]() {
       for (;;) {
         std::shared_ptr<starpu_server::InferenceJob> job;
-        queue.wait_and_pop(job);
-        if (job->is_shutdown()) {
+        if (!queue.wait_and_pop(job)) {
           popped_ids.push_back(-1);
           break;
         }

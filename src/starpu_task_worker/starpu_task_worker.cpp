@@ -31,8 +31,9 @@ validate_not_null(const void* ptr, std::string_view field_name)
   if (ptr != nullptr) {
     return;
   }
-  throw std::invalid_argument(std::format(
-      "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
+  throw std::invalid_argument(
+      std::format(
+          "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
 }
 }  // namespace
 // =============================================================================
@@ -71,7 +72,9 @@ auto
 StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
 {
   std::shared_ptr<InferenceJob> job;
-  queue_->wait_and_pop(job);
+  if (!queue_->wait_and_pop(job)) {
+    return nullptr;
+  }
   return job;
 }
 
@@ -205,7 +208,7 @@ StarPUTaskRunner::run()
 
   while (true) {
     auto job = wait_for_next_job();
-    if (should_shutdown(job)) {
+    if (!job || should_shutdown(job)) {
       break;
     }
 

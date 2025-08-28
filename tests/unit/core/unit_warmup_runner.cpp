@@ -2,8 +2,8 @@
 
 #include <limits>
 #include <map>
-#include <vector>
 #include <unordered_set>
+#include <vector>
 
 #define private public
 #include "core/warmup.hpp"
@@ -24,8 +24,7 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations_Unit)
   std::vector<int> worker_ids;
   for (;;) {
     std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
-    if (job->is_shutdown()) {
+    if (!queue.wait_and_pop(job)) {
       break;
     }
     job_ids.push_back(job->get_job_id());
@@ -51,8 +50,7 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   std::unordered_set<const void*> unique_single;
   for (;;) {
     std::shared_ptr<starpu_server::InferenceJob> job;
-    queue_single.wait_and_pop(job);
-    if (job->is_shutdown()) {
+    if (!queue_single.wait_and_pop(job)) {
       break;
     }
     unique_single.insert(job->get_input_tensors()[0].data_ptr());
@@ -68,8 +66,7 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   std::unordered_set<const void*> unique_double;
   for (;;) {
     std::shared_ptr<starpu_server::InferenceJob> job;
-    queue_double.wait_and_pop(job);
-    if (job->is_shutdown()) {
+    if (!queue_double.wait_and_pop(job)) {
       break;
     }
     unique_double.insert(job->get_input_tensors()[0].data_ptr());

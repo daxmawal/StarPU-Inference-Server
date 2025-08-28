@@ -16,8 +16,7 @@ TEST(InferenceQueue_Robustesse, MultipleConsumersDrainThenShutdownUnblocksAll)
   auto consume = [&] {
     for (;;) {
       std::shared_ptr<starpu_server::InferenceJob> job;
-      queue.wait_and_pop(job);
-      if (job->is_shutdown()) {
+      if (!queue.wait_and_pop(job)) {
         consumers_done.fetch_add(1);
         break;
       }

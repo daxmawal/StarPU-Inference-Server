@@ -186,8 +186,9 @@ run_single_job(
   return std::jthread(
       [&queue, outputs = std::move(outputs), latency]() mutable {
         std::shared_ptr<InferenceJob> job;
-        queue.wait_and_pop(job);
-        job->get_on_complete()(outputs, latency);
+        if (queue.wait_and_pop(job)) {
+          job->get_on_complete()(outputs, latency);
+        }
       });
 }
 

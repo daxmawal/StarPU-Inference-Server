@@ -20,6 +20,9 @@ class InferenceQueue {
   {
     {
       const std::scoped_lock lock(mutex_);
+      if (shutdown_) {
+        return;
+      }
       queue_.push(job);
       auto m = metrics.load(std::memory_order_acquire);
       if (m && m->queue_size_gauge != nullptr) {
@@ -30,23 +33,36 @@ class InferenceQueue {
   }
 
   // Wait until a job is available, then dequeue it
-  void wait_and_pop(std::shared_ptr<InferenceJob>& job)
+  // Returns false if the queue is shutting down and no job was retrieved
+  bool wait_and_pop(std::shared_ptr<InferenceJob>& job)
   {
     std::unique_lock lock(mutex_);
-    cv_.wait(lock, [this] { return !queue_.empty(); });
+    cv_.wait(lock, [this] { return !queue_.empty() || shutdown_; });
+    if (queue_.empty()) {
+      return false;
+    }
     job = queue_.front();
     queue_.pop();
     auto m = metrics.load(std::memory_order_acquire);
     if (m && m->queue_size_gauge != nullptr) {
       m->queue_size_gauge->Decrement();
     }
+    return true;
   }
 
-  // Gracefully shutdown by pushing a special "shutdown" job
-  void shutdown() { push(InferenceJob::make_shutdown_job()); }
+  // Gracefully shutdown by setting a flag and notifying all waiters
+  void shutdown()
+  {
+    {
+      const std::scoped_lock lock(mutex_);
+      shutdown_ = true;
+    }
+    cv_.notify_all();
+  }
 
  private:
   std::queue<std::shared_ptr<InferenceJob>> queue_;
+  bool shutdown_ = false;
   std::mutex mutex_;
   std::condition_variable cv_;
 };

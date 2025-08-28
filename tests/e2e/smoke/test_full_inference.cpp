@@ -40,7 +40,9 @@ TEST(E2E, FullInference)
 
   std::jthread worker([&] {
     std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
+    if (!queue.wait_and_pop(job)) {
+      return;
+    }
     std::vector<torch::IValue> value(
         job->get_input_tensors().begin(), job->get_input_tensors().end());
     auto out_value = model.forward(value);
