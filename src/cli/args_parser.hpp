@@ -1,7 +1,6 @@
 #pragma once
 #include <ATen/core/ScalarType.h>
 
-#include <iostream>
 #include <span>
 #include <string>
 #include <vector>
@@ -44,7 +43,7 @@ get_help_message(const char* prog_name) -> std::string
 inline void
 display_help(const char* prog_name)
 {
-  std::cout << get_help_message(prog_name);
+  log_info(VerbosityLevel::Info, get_help_message(prog_name));
 }
 
 auto parse_arguments(std::span<char*> args_span, RuntimeConfig opts = {})

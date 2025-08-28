@@ -1,7 +1,7 @@
 #include <torch/version.h>
 
 #include <exception>
-#include <iostream>
+#include <format>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -45,10 +45,14 @@ main(int argc, char* argv[]) -> int
     starpu_server::log_fatal("Invalid program options.\n");
   }
 
-  std::cout << "__cplusplus = " << __cplusplus << "\n"
-            << "LibTorch version: " << TORCH_VERSION << "\n"
-            << "Scheduler       : " << opts.scheduler << "\n"
-            << "Iterations      : " << opts.iterations << "\n";
+  starpu_server::log_info(
+      opts.verbosity, std::format("__cplusplus = {}", __cplusplus));
+  starpu_server::log_info(
+      opts.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
+  starpu_server::log_info(
+      opts.verbosity, std::format("Scheduler       : {}", opts.scheduler));
+  starpu_server::log_info(
+      opts.verbosity, std::format("Iterations      : {}", opts.iterations));
 
   std::unique_ptr<starpu_server::StarPUSetup> starpu;
   try {
@@ -56,11 +60,11 @@ main(int argc, char* argv[]) -> int
     starpu_server::run_inference_loop(opts, *starpu);
   }
   catch (const starpu_server::InferenceEngineException& e) {
-    std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";
+    starpu_server::log_error(std::format("Inference Error: {}", e.what()));
     return 2;
   }
   catch (const std::exception& e) {
-    std::cerr << "\o{33}[1;31m[General Error] " << e.what() << "\o{33}[0m\n";
+    starpu_server::log_error(std::format("General Error: {}", e.what()));
     return -1;
   }
 
