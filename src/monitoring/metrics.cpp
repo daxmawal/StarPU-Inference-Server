@@ -66,6 +66,7 @@ init_metrics(int port) -> bool
     if (!metrics.compare_exchange_strong(
             expected, new_metrics, std::memory_order_acq_rel,
             std::memory_order_acquire)) {
+      log_warning("Metrics were previously initialized");
       return false;
     }
 
