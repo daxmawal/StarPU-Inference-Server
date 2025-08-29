@@ -36,11 +36,11 @@ class InferenceServiceImpl final
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply) -> grpc::Status override;
 
-  static void populate_response(
+  static auto populate_response(
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
-      int64_t send_ms);
+      int64_t send_ms) -> grpc::Status;
 
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,

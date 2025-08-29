@@ -60,9 +60,10 @@ convert_input_to_tensor(
 }
 
 // Fill gRPC output from torch::Tensor
-void
+auto
 fill_output_tensor(
     ModelInferResponse* reply, const std::vector<torch::Tensor>& outputs)
+    -> Status
 {
   for (size_t idx = 0; idx < outputs.size(); ++idx) {
     const auto& out = outputs[idx].to(torch::kCPU);
@@ -74,10 +75,16 @@ fill_output_tensor(
     }
 
     auto flat = out.contiguous().view({-1});
+    const auto total_bytes =
+        checked_mul(static_cast<size_t>(flat.numel()), flat.element_size());
+    if (!total_bytes) {
+      return Status(
+          grpc::StatusCode::INVALID_ARGUMENT, "Output tensor size overflow");
+    }
     reply->add_raw_output_contents()->assign(
-        reinterpret_cast<const char*>(flat.data_ptr()),
-        flat.numel() * flat.element_size());
+        reinterpret_cast<const char*>(flat.data_ptr()), *total_bytes);
   }
+  return Status::OK;
 }
 }  // namespace
 
@@ -119,8 +126,8 @@ InferenceServiceImpl::ModelReady(
 
 auto
 InferenceServiceImpl::validate_and_convert_inputs(
-    const ModelInferRequest* request,
-    std::vector<torch::Tensor>& inputs) -> Status
+    const ModelInferRequest* request, std::vector<torch::Tensor>& inputs)
+    -> Status
 {
   if (request->inputs_size() !=
       static_cast<int>(expected_input_types_.size())) {
@@ -221,16 +228,17 @@ InferenceServiceImpl::submit_job_and_wait(
   return Status::OK;
 }
 
-void
+auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms)
+    -> Status
 {
   reply->set_model_name(request->model_name());
   reply->set_model_version(request->model_version());
   reply->set_server_receive_ms(recv_ms);
   reply->set_server_send_ms(send_ms);
-  fill_output_tensor(reply, outputs);
+  return fill_output_tensor(reply, outputs);
 }
 
 auto
@@ -265,7 +273,10 @@ InferenceServiceImpl::ModelInfer(
                         send_tp.time_since_epoch())
                         .count();
 
-  populate_response(request, reply, outputs, recv_ms, send_ms);
+  status = populate_response(request, reply, outputs, recv_ms, send_ms);
+  if (!status.ok()) {
+    return status;
+  }
 
   if (m && m->inference_latency != nullptr) {
     const auto latency_ms =

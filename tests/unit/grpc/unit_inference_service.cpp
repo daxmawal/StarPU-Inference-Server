@@ -1,3 +1,5 @@
+#include <limits>
+
 #include "test_inference_service.hpp"
 
 TEST(InferenceService, ValidateInputsSuccess)
@@ -92,8 +94,9 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   inference::ModelInferResponse reply;
   int64_t recv_ms = 10;
   int64_t send_ms = 20;
-  starpu_server::InferenceServiceImpl::populate_response(
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
       &req, &reply, outputs, recv_ms, send_ms);
+  ASSERT_TRUE(status.ok());
   starpu_server::verify_populate_response(
       req, reply, outputs, recv_ms, send_ms);
 }
@@ -108,9 +111,27 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
   inference::ModelInferResponse reply;
   int64_t recv_ms = 10;
   int64_t send_ms = 20;
-  starpu_server::InferenceServiceImpl::populate_response(
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
       &req, &reply, outputs, recv_ms, send_ms);
+  ASSERT_TRUE(status.ok());
   auto contig = noncontig.contiguous();
   starpu_server::verify_populate_response(
       req, reply, {contig}, recv_ms, send_ms);
+}
+
+TEST(InferenceServiceImpl, PopulateResponseDetectsOverflow)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  static float dummy;
+  const size_t huge_elems =
+      std::numeric_limits<size_t>::max() / sizeof(float) + 1;
+  auto huge_tensor = torch::from_blob(
+      &dummy, {static_cast<int64_t>(huge_elems)},
+      torch::TensorOptions().dtype(at::kFloat));
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  int64_t send_ms = 0;
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, {huge_tensor}, recv_ms, send_ms);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
