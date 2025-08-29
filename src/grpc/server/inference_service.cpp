@@ -246,7 +246,7 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
-  auto m = metrics.load(std::memory_order_acquire);
+  auto m = get_metrics();
   if (m && m->requests_total != nullptr) {
     m->requests_total->Increment();
   }

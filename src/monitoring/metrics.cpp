@@ -10,6 +10,11 @@
 
 namespace starpu_server {
 
+namespace {
+const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
+    1, 5, 10, 25, 50, 100, 250, 500, 1000};
+}  // namespace
+
 MetricsRegistry::MetricsRegistry(int port)
     : registry(std::make_shared<prometheus::Registry>()),
       requests_total(nullptr), inference_latency(nullptr),
@@ -35,9 +40,7 @@ MetricsRegistry::MetricsRegistry(int port)
                                .Name("inference_latency_ms")
                                .Help("Inference latency in milliseconds")
                                .Register(*registry);
-  inference_latency = &histogram_family.Add(
-      {}, prometheus::Histogram::BucketBoundaries{
-              1, 5, 10, 25, 50, 100, 250, 500, 1000});
+  inference_latency = &histogram_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& gauge_family = prometheus::BuildGauge()
                            .Name("inference_queue_size")
@@ -60,7 +63,14 @@ MetricsRegistry::~MetricsRegistry() noexcept
   }
 }
 
-std::atomic<std::shared_ptr<MetricsRegistry>> metrics{nullptr};
+namespace {
+auto
+metrics_atomic() -> std::atomic<std::shared_ptr<MetricsRegistry>>&
+{
+  static std::atomic<std::shared_ptr<MetricsRegistry>> instance{nullptr};
+  return instance;
+}
+}  // namespace
 
 auto
 init_metrics(int port) -> bool
@@ -70,7 +80,7 @@ init_metrics(int port) -> bool
   try {
     auto new_metrics = std::make_shared<MetricsRegistry>(port);
 
-    if (!metrics.compare_exchange_strong(
+    if (!metrics_atomic().compare_exchange_strong(
             expected, new_metrics, std::memory_order_acq_rel,
             std::memory_order_acquire)) {
       log_warning("Metrics were previously initialized");
@@ -89,15 +99,21 @@ init_metrics(int port) -> bool
 void
 shutdown_metrics()
 {
-  metrics.store(nullptr, std::memory_order_release);
+  metrics_atomic().store(nullptr, std::memory_order_release);
+}
+
+auto
+get_metrics() -> std::shared_ptr<MetricsRegistry>
+{
+  return metrics_atomic().load(std::memory_order_acquire);
 }
 
 void
 set_queue_size(std::size_t size)
 {
-  auto m = metrics.load(std::memory_order_acquire);
-  if (m && m->queue_size_gauge != nullptr) {
-    m->queue_size_gauge->Set(static_cast<double>(size));
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->queue_size_gauge != nullptr) {
+    metrics_ptr->queue_size_gauge->Set(static_cast<double>(size));
   }
 }
 

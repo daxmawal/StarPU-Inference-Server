@@ -18,14 +18,14 @@ TEST(Metrics, ConcurrentInit)
   for (auto& t : threads) {
     t.join();
   }
-  EXPECT_NE(metrics.load(std::memory_order_acquire), nullptr);
+  EXPECT_NE(get_metrics(), nullptr);
   shutdown_metrics();
 }
 
 TEST(Metrics, ConcurrentShutdown)
 {
   ASSERT_TRUE(init_metrics(0));
-  EXPECT_NE(metrics.load(std::memory_order_acquire), nullptr);
+  EXPECT_NE(get_metrics(), nullptr);
 
   const int thread_count = 8;
   std::vector<std::thread> threads;
@@ -37,5 +37,5 @@ TEST(Metrics, ConcurrentShutdown)
     t.join();
   }
 
-  EXPECT_EQ(metrics.load(std::memory_order_acquire), nullptr);
+  EXPECT_EQ(get_metrics(), nullptr);
 }
