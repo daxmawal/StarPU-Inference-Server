@@ -6,6 +6,7 @@
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "test_helpers.hpp"
 #include "utils/client_utils.hpp"
@@ -29,6 +30,28 @@ TEST(ClientUtils, PickRandomInputDeterministic)
     ASSERT_EQ(&chosen, &pool[expected_idx]);
     ASSERT_EQ(chosen.size(), 1U);
     EXPECT_EQ(chosen[0].item<int>(), expected_idx);
+  }
+}
+
+TEST(ClientUtils, PickRandomInputWithinBounds)
+{
+  std::vector<std::vector<torch::Tensor>> pool;
+  for (int i = 0; i < 4; ++i) {
+    pool.push_back(
+        {torch::tensor({i}, torch::TensorOptions().dtype(torch::kInt))});
+  }
+  std::mt19937 rng(123);
+  for (int i = 0; i < 100; ++i) {
+    const auto& chosen =
+        starpu_server::client_utils::pick_random_input(pool, rng);
+    bool found = false;
+    for (const auto& item : pool) {
+      if (&item == &chosen) {
+        found = true;
+        break;
+      }
+    }
+    EXPECT_TRUE(found);
   }
 }
 
@@ -104,8 +127,9 @@ TEST(TimeUtils, FormatTimestamp_FormatRegex)
 {
   auto now = std::chrono::high_resolution_clock::now();
   std::string time = starpu_server::time_utils::format_timestamp(now);
-  EXPECT_TRUE(std::regex_match(
-      time, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$")));
+  EXPECT_TRUE(
+      std::regex_match(
+          time, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$")));
 }
 
 TEST(TimeUtils, FormatTimestamp_KnownTime)
