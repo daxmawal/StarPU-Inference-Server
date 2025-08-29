@@ -1,8 +1,8 @@
 #include <ATen/core/ScalarType.h>
 #include <gtest/gtest.h>
 
-#include <utility>
 #include <unordered_set>
+#include <utility>
 
 #include "utils/datatype_utils.hpp"
 #include "utils/device_type.hpp"
@@ -44,8 +44,8 @@ TEST_P(ScalarToDatatypeUnsupported, ThrowsInvalidArgument)
 INSTANTIATE_TEST_SUITE_P(
     UnsupportedTypes, ScalarToDatatypeUnsupported,
     ::testing::Values(
-        static_cast<at::ScalarType>(-1), at::kComplexFloat,
-        at::kComplexDouble, at::kQInt8, at::kQUInt8));
+        static_cast<at::ScalarType>(-1), at::kComplexFloat, at::kComplexDouble,
+        at::kQInt8, at::kQUInt8));
 
 class ElementSizeCase
     : public ::testing::TestWithParam<std::pair<at::ScalarType, size_t>> {};
@@ -69,20 +69,19 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{at::kByte, sizeof(uint8_t)},
         std::pair{at::kBool, sizeof(bool)}));
 
-class ElementSizeUnsupported
-    : public ::testing::TestWithParam<at::ScalarType> {};
+class ElementSizeUnsupported : public ::testing::TestWithParam<at::ScalarType> {
+};
 
 TEST_P(ElementSizeUnsupported, ThrowsInvalidArgument)
 {
-  EXPECT_THROW(
-      starpu_server::element_size(GetParam()), std::invalid_argument);
+  EXPECT_THROW(starpu_server::element_size(GetParam()), std::invalid_argument);
 }
 
 INSTANTIATE_TEST_SUITE_P(
     UnsupportedTypes, ElementSizeUnsupported,
     ::testing::Values(
-        static_cast<at::ScalarType>(-1), at::kComplexFloat,
-        at::kComplexDouble, at::kQInt8, at::kQUInt8));
+        static_cast<at::ScalarType>(-1), at::kComplexFloat, at::kComplexDouble,
+        at::kQInt8, at::kQUInt8));
 
 class DatatypeToScalarCase
     : public ::testing::TestWithParam<std::pair<std::string, at::ScalarType>> {
@@ -121,8 +120,7 @@ TEST(DatatypeUtils, ScalarTypeToString)
 {
   EXPECT_EQ(starpu_server::scalar_type_to_string(at::kShort), "INT16");
   EXPECT_THROW(
-      starpu_server::scalar_type_to_string(
-          static_cast<at::ScalarType>(-1)),
+      starpu_server::scalar_type_to_string(static_cast<at::ScalarType>(-1)),
       std::invalid_argument);
 }
 
@@ -132,8 +130,8 @@ TEST(DatatypeUtils, ScalarToDatatypeAllEnumValues)
   using U = std::underlying_type_t<Enum>;
 
   const std::unordered_set<Enum> supported = {
-      at::kFloat,    at::kDouble, at::kHalf,    at::kBFloat16, at::kInt,
-      at::kLong,     at::kShort,  at::kChar,    at::kByte,     at::kBool};
+      at::kFloat, at::kDouble, at::kHalf, at::kBFloat16, at::kInt,
+      at::kLong,  at::kShort,  at::kChar, at::kByte,     at::kBool};
 
   const int first = static_cast<int>(std::to_underlying(Enum::Undefined));
   const int last = static_cast<int>(std::to_underlying(Enum::NumOptions));
@@ -149,10 +147,8 @@ TEST(DatatypeUtils, ScalarToDatatypeAllEnumValues)
       });
     } else {
       EXPECT_THROW(
-          starpu_server::scalar_type_to_datatype(type),
-          std::invalid_argument);
-      EXPECT_THROW(
-          starpu_server::element_size(type), std::invalid_argument);
+          starpu_server::scalar_type_to_datatype(type), std::invalid_argument);
+      EXPECT_THROW(starpu_server::element_size(type), std::invalid_argument);
     }
   }
 }

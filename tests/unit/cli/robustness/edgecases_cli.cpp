@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
+#include <torch/torch.h>
 
 #include <format>
-#include <torch/torch.h>
 #include <string>
 #include <vector>
 
@@ -81,8 +81,8 @@ TEST(ArgsParserInvalidOptions_Robustesse, DeviceIdOutOfRange)
       "GPU ID {} out of range. Only {} device(s) available.", device_count,
       device_count);
   EXPECT_EQ(
-      capture.str(),
-      starpu_server::expected_log_line(starpu_server::ErrorLevel, expected_msg));
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel, expected_msg));
 }
 
 struct MissingValueParam {

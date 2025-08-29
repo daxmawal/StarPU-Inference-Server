@@ -192,10 +192,9 @@ InferenceClient::AsyncCompleteRpc()
                           call->request_id, sent_time_str, recv_time_str,
                           latency, request_tx, response_tx));
     } else {
-      log_error(
-          std::format(
-              "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
-              call->status.error_message()));
+      log_error(std::format(
+          "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
+          call->status.error_message()));
     }
   }
 }

@@ -249,10 +249,9 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
     conf_.ncuda = 0;
   } else {
     if (opts.device_ids.size() > STARPU_NMAXWORKERS) {
-      throw std::invalid_argument(
-          std::format(
-              "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
-              STARPU_NMAXWORKERS));
+      throw std::invalid_argument(std::format(
+          "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
+          STARPU_NMAXWORKERS));
     }
     std::unordered_set<int> unique_ids;
 

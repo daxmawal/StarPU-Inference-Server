@@ -9,6 +9,6 @@ namespace starpu_server {
 // =============================================================================
 auto validate_inference_result(
     const InferenceResult& result, torch::jit::script::Module& jit_model,
-    const VerbosityLevel& verbosity, double rtol = 1e-3, double atol = 1e-5)
-    -> bool;
+    const VerbosityLevel& verbosity, double rtol = 1e-3,
+    double atol = 1e-5) -> bool;
 }  // namespace starpu_server

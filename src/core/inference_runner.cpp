@@ -103,10 +103,8 @@ client_worker(
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
     if (!queue.push(job)) {
-      log_warning(
-          std::format(
-              "[Client] Failed to enqueue job {}: queue shutting down",
-              job_id));
+      log_warning(std::format(
+          "[Client] Failed to enqueue job {}: queue shutting down", job_id));
       break;
     }
   }
@@ -141,10 +139,9 @@ clone_model_to_gpus(
   const int device_count = torch::cuda::device_count();
   for (const int id : device_ids) {
     if (id < 0 || id >= device_count) {
-      log_error(
-          std::format(
-              "GPU ID {} out of range. Only {} device(s) available.", id,
-              device_count));
+      log_error(std::format(
+          "GPU ID {} out of range. Only {} device(s) available.", id,
+          device_count));
       throw std::runtime_error("Invalid GPU device ID");
     }
   }
@@ -175,8 +172,8 @@ generate_inputs(const std::vector<TensorConfig>& tensors)
 
 static auto
 run_reference_inference(
-    torch::jit::script::Module& model, const std::vector<torch::Tensor>& inputs)
-    -> std::vector<torch::Tensor>
+    torch::jit::script::Module& model,
+    const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
 {
   c10::InferenceMode guard;
   const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());

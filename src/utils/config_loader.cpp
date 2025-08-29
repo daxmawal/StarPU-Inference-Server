@@ -22,8 +22,8 @@ namespace {
 
 auto
 parse_tensor_nodes(
-    const YAML::Node& nodes, std::size_t max_inputs, std::size_t max_dims)
-    -> std::vector<TensorConfig>
+    const YAML::Node& nodes, std::size_t max_inputs,
+    std::size_t max_dims) -> std::vector<TensorConfig>
 {
   std::vector<TensorConfig> tensors;
   if (!nodes || !nodes.IsSequence()) {

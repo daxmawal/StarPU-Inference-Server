@@ -34,9 +34,8 @@ namespace starpu_server::client_utils {
 // =============================================================================
 
 static auto
-current_time_formatted(
-    const std::chrono::high_resolution_clock::time_point& time_point)
-    -> std::string
+current_time_formatted(const std::chrono::high_resolution_clock::time_point&
+                           time_point) -> std::string
 {
   return time_utils::format_timestamp(time_point);
 }
@@ -59,8 +58,8 @@ pre_generate_inputs(const RuntimeConfig& opts, size_t num_inputs)
 
 auto
 pick_random_input(
-    const std::vector<std::vector<torch::Tensor>>& pool, std::mt19937& rng)
-    -> const std::vector<torch::Tensor>&
+    const std::vector<std::vector<torch::Tensor>>& pool,
+    std::mt19937& rng) -> const std::vector<torch::Tensor>&
 {
   if (pool.empty()) {
     throw std::invalid_argument(
@@ -69,10 +68,9 @@ pick_random_input(
   std::uniform_int_distribution<std::size_t> dist(0, pool.size() - 1);
   const auto idx = static_cast<size_t>(dist(rng));
   if (idx >= pool.size()) {
-    throw std::out_of_range(
-        std::format(
-            "Random input index {} out of range for pool size {}", idx,
-            pool.size()));
+    throw std::out_of_range(std::format(
+        "Random input index {} out of range for pool size {}", idx,
+        pool.size()));
   }
   return pool[idx];
 }
@@ -100,8 +98,8 @@ log_job_enqueued(
 auto
 create_job(
     const std::vector<torch::Tensor>& inputs,
-    const std::vector<torch::Tensor>& outputs_ref, int job_id)
-    -> std::shared_ptr<InferenceJob>
+    const std::vector<torch::Tensor>& outputs_ref,
+    int job_id) -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
   job->set_input_tensors(inputs);

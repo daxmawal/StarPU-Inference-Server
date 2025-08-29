@@ -79,8 +79,8 @@ save_mul_two_model(const std::filesystem::path& path) -> void
 
 inline auto
 run_reference_inference(
-    torch::jit::script::Module& model, const std::vector<torch::Tensor>& inputs)
-    -> std::vector<torch::Tensor>
+    torch::jit::script::Module& model,
+    const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
 {
   std::vector<torch::Tensor> output_refs;
   const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());

@@ -74,8 +74,8 @@ InferenceTask::prepare_output_handles() const
 
 auto
 InferenceTask::safe_register_tensor_vector(
-    const torch::Tensor& tensor, const std::string& label)
-    -> starpu_data_handle_t
+    const torch::Tensor& tensor,
+    const std::string& label) -> starpu_data_handle_t
 {
   if (!tensor.defined()) {
     throw StarPURegistrationException("Tensor '" + label + "' is undefined.");
@@ -247,10 +247,8 @@ InferenceTask::fill_input_layout(
     const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
     if (dim > static_cast<int64_t>(opts_->max_dims)) {
-      throw InferenceExecutionException(
-          std::format(
-              "Input tensor has too many dimensions: max is {}",
-              opts_->max_dims));
+      throw InferenceExecutionException(std::format(
+          "Input tensor has too many dimensions: max is {}", opts_->max_dims));
     }
     params->layout.num_dims[i] = dim;
     params->layout.dims[i].assign(

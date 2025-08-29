@@ -127,9 +127,8 @@ TEST(TimeUtils, FormatTimestamp_FormatRegex)
 {
   auto now = std::chrono::high_resolution_clock::now();
   std::string time = starpu_server::time_utils::format_timestamp(now);
-  EXPECT_TRUE(
-      std::regex_match(
-          time, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$")));
+  EXPECT_TRUE(std::regex_match(
+      time, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$")));
 }
 
 TEST(TimeUtils, FormatTimestamp_KnownTime)

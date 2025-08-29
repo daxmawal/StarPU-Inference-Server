@@ -62,8 +62,8 @@ convert_input_to_tensor(
 // Fill gRPC output from torch::Tensor
 auto
 fill_output_tensor(
-    ModelInferResponse* reply, const std::vector<torch::Tensor>& outputs)
-    -> Status
+    ModelInferResponse* reply,
+    const std::vector<torch::Tensor>& outputs) -> Status
 {
   for (size_t idx = 0; idx < outputs.size(); ++idx) {
     const auto& out = outputs[idx].to(torch::kCPU);
@@ -126,8 +126,8 @@ InferenceServiceImpl::ModelReady(
 
 auto
 InferenceServiceImpl::validate_and_convert_inputs(
-    const ModelInferRequest* request, std::vector<torch::Tensor>& inputs)
-    -> Status
+    const ModelInferRequest* request,
+    std::vector<torch::Tensor>& inputs) -> Status
 {
   if (request->inputs_size() !=
       static_cast<int>(expected_input_types_.size())) {
@@ -231,8 +231,8 @@ InferenceServiceImpl::submit_job_and_wait(
 auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
-    const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms)
-    -> Status
+    const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
+    int64_t send_ms) -> Status
 {
   reply->set_model_name(request->model_name());
   reply->set_model_version(request->model_version());

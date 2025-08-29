@@ -125,8 +125,8 @@ TEST(Logger, LogError)
 }
 
 class ParseVerbosityLevelWhitespace
-    : public ::testing::TestWithParam<
-          std::pair<const char*, VerbosityLevel>> {};
+    : public ::testing::TestWithParam<std::pair<const char*, VerbosityLevel>> {
+};
 
 TEST_P(ParseVerbosityLevelWhitespace, TrimsInput)
 {

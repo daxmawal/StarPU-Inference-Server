@@ -115,8 +115,8 @@ TEST(ConfigLoader, NegativeIterationsSetsValidFalse)
 
 TEST(ConfigLoader, MetricsPortOutOfRangeSetsValidFalse)
 {
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "config_loader_bad_metrics_port_model.pt";
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_bad_metrics_port_model.pt";
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
@@ -131,8 +131,8 @@ TEST(ConfigLoader, MetricsPortOutOfRangeSetsValidFalse)
   yaml << "    data_type: float32\n";
   yaml << "metrics_port: 70000\n";
 
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_bad_metrics_port.yaml";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_bad_metrics_port.yaml";
   std::ofstream(tmp) << yaml.str();
 
   const RuntimeConfig cfg = load_config(tmp.string());
@@ -450,8 +450,8 @@ TEST(ConfigLoader, TooManyDimsSetsValidFalse)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
 
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_too_many_dims.yaml";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_too_many_dims.yaml";
   std::ofstream(tmp) << yaml.str();
 
   const RuntimeConfig cfg = load_config(tmp.string());

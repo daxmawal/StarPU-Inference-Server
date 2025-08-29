@@ -257,9 +257,8 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       continue;
     }
 
-    log_error(
-        std::format(
-            "Unknown argument: {}. Use --help to see valid options.", arg));
+    log_error(std::format(
+        "Unknown argument: {}. Use --help to see valid options.", arg));
     return false;
   }
 

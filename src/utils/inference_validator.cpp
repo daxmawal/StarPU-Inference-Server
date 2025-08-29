@@ -42,8 +42,8 @@ get_inference_device(const InferenceResult& result) -> torch::Device
 // Converts input tensors to the appropriate device and wraps them in IValues
 static auto
 prepare_inputs(
-    const std::vector<torch::Tensor>& inputs, const torch::Device& device)
-    -> std::vector<torch::IValue>
+    const std::vector<torch::Tensor>& inputs,
+    const torch::Device& device) -> std::vector<torch::IValue>
 {
   std::vector<torch::IValue> input_ivalues;
   std::ranges::transform(
@@ -59,8 +59,8 @@ prepare_inputs(
 // Converts model output (Tensor or Tuple) to a list of tensors
 static auto
 extract_reference_outputs(
-    const torch::IValue& output, const InferenceResult& result)
-    -> std::vector<torch::Tensor>
+    const torch::IValue& output,
+    const InferenceResult& result) -> std::vector<torch::Tensor>
 {
   std::vector<torch::Tensor> tensors;
 
@@ -69,10 +69,9 @@ extract_reference_outputs(
   } else if (output.isTuple()) {
     for (const auto& val : output.toTuple()->elements()) {
       if (!val.isTensor()) {
-        log_error(
-            std::format(
-                "[Validator] Non-tensor output in tuple for job {}",
-                result.job_id));
+        log_error(std::format(
+            "[Validator] Non-tensor output in tuple for job {}",
+            result.job_id));
         throw InferenceExecutionException("Non-tensor tuple element");
       }
       tensors.push_back(val.toTensor());
@@ -82,9 +81,8 @@ extract_reference_outputs(
       tensors.push_back(t);
     }
   } else {
-    log_error(
-        std::format(
-            "[Validator] Unsupported output type for job {}", result.job_id));
+    log_error(std::format(
+        "[Validator] Unsupported output type for job {}", result.job_id));
     throw InferenceExecutionException("Unsupported output type");
   }
 
@@ -99,9 +97,8 @@ compare_outputs(
     const torch::Device& device, double rtol, double atol) -> bool
 {
   if (reference.size() != actual.size()) {
-    log_error(
-        std::format(
-            "[Validator] Output count mismatch for job {}", result.job_id));
+    log_error(std::format(
+        "[Validator] Output count mismatch for job {}", result.job_id));
     return false;
   }
 
@@ -119,22 +116,17 @@ compare_outputs(
     all_valid &= is_valid;
 
     if (!is_valid) {
-      log_error(
-          std::format(
-              "[Validator] Mismatch on output #{} for job {}", i,
-              result.job_id));
-      log_error(
-          std::format(
-              "  Absolute diff max: {}",
-              (ref_cmp - res_cmp).abs().max().item<float>()));
-      log_error(
-          std::format(
-              "  Reference: {}",
-              ref_cmp.flatten().slice(0, 0, kPreviewLimit).toString()));
-      log_error(
-          std::format(
-              "  Obtained : {}",
-              res_cmp.flatten().slice(0, 0, kPreviewLimit).toString()));
+      log_error(std::format(
+          "[Validator] Mismatch on output #{} for job {}", i, result.job_id));
+      log_error(std::format(
+          "  Absolute diff max: {}",
+          (ref_cmp - res_cmp).abs().max().item<float>()));
+      log_error(std::format(
+          "  Reference: {}",
+          ref_cmp.flatten().slice(0, 0, kPreviewLimit).toString()));
+      log_error(std::format(
+          "  Obtained : {}",
+          res_cmp.flatten().slice(0, 0, kPreviewLimit).toString()));
     }
   }
 
@@ -178,15 +170,13 @@ validate_inference_result(
     return all_valid;
   }
   catch (const c10::Error& e) {
-    log_error(
-        std::format(
-            "[Validator] C10 error in job {}: {}", result.job_id, e.what()));
+    log_error(std::format(
+        "[Validator] C10 error in job {}: {}", result.job_id, e.what()));
     throw InferenceExecutionException(e.what());
   }
   catch (const std::exception& e) {
-    log_error(
-        std::format(
-            "[Validator] Exception in job {}: {}", result.job_id, e.what()));
+    log_error(std::format(
+        "[Validator] Exception in job {}: {}", result.job_id, e.what()));
     throw InferenceExecutionException(e.what());
   }
 }

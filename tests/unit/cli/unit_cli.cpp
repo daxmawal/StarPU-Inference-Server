@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
+#include <torch/torch.h>
 
 #include <array>
-#include <torch/torch.h>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -12,9 +12,9 @@
 TEST(ArgsParser_Unit, ParsesRequiredOptions)
 {
   const auto& model = test_model_path();
-  std::vector<const char*> args{
-      "program", "--model", model.c_str(), "--shape", "1x3x224x224", "--types",
-      "float"};
+  std::vector<const char*> args{"program", "--model",     model.c_str(),
+                                "--shape", "1x3x224x224", "--types",
+                                "float"};
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.model_path, model);
@@ -32,36 +32,13 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   const int device_count = torch::cuda::device_count();
 
   std::vector<const char*> args{
-      "program",
-      "--model",
-      model.c_str(),
-      "--shapes",
-      "1x3x224x224,2x1",
-      "--types",
-      "float,int",
-      "--iterations",
-      "5",
+      "program", "--model", model.c_str(), "--shapes", "1x3x224x224,2x1",
+      "--types", "float,int", "--iterations", "5",
       // device-ids appended conditionally below
-      "--verbose",
-      "3",
-      "--delay",
-      "42",
-      "--scheduler",
-      "lws",
-      "--address",
-      "127.0.0.1:1234",
-      "--max-batch-size",
-      "2",
-      "--pregen-inputs",
-      "7",
-      "--warmup-pregen-inputs",
-      "5",
-      "--warmup-iterations",
-      "3",
-      "--seed",
-      "123",
-      "--sync",
-      "--no_cpu"};
+      "--verbose", "3", "--delay", "42", "--scheduler", "lws", "--address",
+      "127.0.0.1:1234", "--max-batch-size", "2", "--pregen-inputs", "7",
+      "--warmup-pregen-inputs", "5", "--warmup-iterations", "3", "--seed",
+      "123", "--sync", "--no_cpu"};
 
   if (device_count >= 2) {
     args.push_back("--device-ids");
@@ -120,9 +97,9 @@ TEST(ArgsParser_Unit, VerboseLevels)
            {"4", Trace}}};
   const auto& model = test_model_path();
   for (const auto& [lvl, expected] : cases) {
-    std::vector<const char*> args{
-        "program", "--model", model.c_str(), "--shape", "1x3", "--types", "float",
-        "--verbose", lvl};
+    std::vector<const char*> args{"program", "--model",   model.c_str(),
+                                  "--shape", "1x3",       "--types",
+                                  "float",   "--verbose", lvl};
     const auto opts = parse(args);
     ASSERT_TRUE(opts.valid);
     EXPECT_EQ(opts.verbosity, expected);
@@ -132,9 +109,8 @@ TEST(ArgsParser_Unit, VerboseLevels)
 TEST(ArgsParser_Unit, ParsesMixedCaseTypes)
 {
   const auto& model = test_model_path();
-  std::vector<const char*> args{
-      "program", "--model", model.c_str(), "--shapes", "1x1,1x1", "--types",
-      "FlOat,InT"};
+  std::vector<const char*> args{"program", "--model", model.c_str(), "--shapes",
+                                "1x1,1x1", "--types", "FlOat,InT"};
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
   ASSERT_EQ(opts.inputs.size(), 2U);
@@ -148,7 +124,7 @@ TEST(ArgsParser_Unit, MetricsPortBoundaryValues)
     std::string port_str = std::to_string(port);
     std::vector<const char*> args = {
         "program", "--model", test_model_path().c_str(), "--shape",       "1x1",
-        "--types", "float",   "--metrics-port", port_str.c_str()};
+        "--types", "float",   "--metrics-port",          port_str.c_str()};
     const auto opts = parse(args);
     ASSERT_TRUE(opts.valid);
     EXPECT_EQ(opts.metrics_port, port);

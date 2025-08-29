@@ -85,10 +85,8 @@ TEST_P(StarPUTaskRunnerConfigInvalidTest, NullPointerThrows)
         }
         catch (const std::invalid_argument& e) {
           EXPECT_NE(
-              std::string{e.what()}.find(
-                  std::format(
-                      "StarPUTaskRunnerConfig::{} must not be null",
-                      param.field)),
+              std::string{e.what()}.find(std::format(
+                  "StarPUTaskRunnerConfig::{} must not be null", param.field)),
               std::string::npos);
           throw;
         }
