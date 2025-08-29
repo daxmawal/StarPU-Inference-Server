@@ -4,6 +4,7 @@
 #include <starpu.h>
 #include <torch/script.h>
 
+#include <bit>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
@@ -79,8 +80,17 @@ make_add_one_model() -> torch::jit::script::Module
 inline auto
 make_variable_interface(const float* ptr) -> starpu_variable_interface
 {
-  starpu_variable_interface iface;
-  iface.ptr = reinterpret_cast<uintptr_t>(ptr);
+  starpu_variable_interface iface{};
+  iface.ptr = std::bit_cast<uintptr_t>(ptr);
+  return iface;
+}
+
+template <typename T>
+inline auto
+make_variable_interface(const T* ptr) -> starpu_variable_interface
+{
+  starpu_variable_interface iface{};
+  iface.ptr = std::bit_cast<uintptr_t>(ptr);
   return iface;
 }
 
