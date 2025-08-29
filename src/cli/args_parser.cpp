@@ -16,18 +16,13 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "datatype_utils.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "transparent_hash.hpp"
 
 namespace starpu_server {
-
-static const std::unordered_set<std::string> kAllowedSchedulers = {
-    "lws", "dmda", "ws", "eager", "random", "prio", "peager", "heft", "fcfs"};
 
 // =============================================================================
 // Shape and Type Parsing: Handle --shape, --shapes, and --types arguments

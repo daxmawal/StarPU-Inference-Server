@@ -86,6 +86,10 @@ load_config(const std::string& path) -> RuntimeConfig
     }
     if (root["scheduler"]) {
       cfg.scheduler = root["scheduler"].as<std::string>();
+      if (!kAllowedSchedulers.contains(cfg.scheduler)) {
+        log_error(std::string("Unknown scheduler: ") + cfg.scheduler);
+        cfg.valid = false;
+      }
     }
     if (root["model"]) {
       cfg.model_path = root["model"].as<std::string>();

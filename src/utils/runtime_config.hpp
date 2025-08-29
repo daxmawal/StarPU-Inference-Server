@@ -7,11 +7,13 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "datatype_utils.hpp"
 #include "exceptions.hpp"
 #include "logger.hpp"
+#include "transparent_hash.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -20,6 +22,11 @@ namespace starpu_server {
 inline constexpr std::size_t kMaxInputs = 16;
 inline constexpr std::size_t kMaxDims = 8;
 inline constexpr std::size_t kMaxModelsGpu = 32;
+
+inline const std::unordered_set<std::string, TransparentHash, std::equal_to<>>
+    kAllowedSchedulers = {
+        "lws", "dmda", "ws", "eager", "random", "prio", "peager",
+        "heft", "fcfs"};
 
 // =============================================================================
 // TensorConfig
