@@ -33,6 +33,11 @@
 #include "tensor_builder.hpp"
 
 namespace starpu_server {
+void run_inference(
+    InferenceParams* params, const std::vector<void*>& buffers,
+    torch::Device device, torch::jit::script::Module* model,
+    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+        copy_output_fn);
 // =============================================================================
 // InferenceCodelet: constructor and access to codelet
 // =============================================================================
@@ -100,8 +105,8 @@ extract_tensors_from_output(const c10::IValue& result)
 
 inline void
 run_inference(
-    InferenceParams* params, const std::vector<void*>& buffers,
-    const torch::Device device, torch::jit::script::Module* model,
+    InferenceParams* params, std::span<void* const> buffers,
+    torch::Device device, torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, void* buffer_ptr)>&
         copy_output_fn)
 {
@@ -124,15 +129,27 @@ run_inference(
   for (size_t i = 0; i < params->num_outputs; ++i) {
     auto* var_iface = static_cast<starpu_variable_interface*>(
         buffers[params->num_inputs + i]);
-    auto* buffer = reinterpret_cast<void*>(var_iface->ptr);
+    auto* buffer = std::bit_cast<void*>(var_iface->ptr);
     copy_output_fn(outputs[i], buffer);
   }
+}
+
+void
+run_inference(
+    InferenceParams* params, const std::vector<void*>& buffers,
+    torch::Device device, torch::jit::script::Module* model,
+    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+        copy_output_fn)
+{
+  run_inference(
+      params, std::span<void* const>(buffers.data(), buffers.size()), device,
+      model, copy_output_fn);
 }
 
 template <typename CopyOutputFn>
 void
 run_codelet_inference(
-    InferenceParams* params, const std::vector<void*>& buffers,
+    InferenceParams* params, std::span<void* const> buffers,
     const torch::Device device, torch::jit::script::Module* model,
     CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
@@ -180,16 +197,16 @@ run_codelet_inference(
 // =============================================================================
 
 inline void
-InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
+InferenceCodelet::cpu_inference_func(void** buffers, void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
-  const std::vector<void*> buffers_vec(
-      buffers, buffers + params->num_inputs + params->num_outputs);
+  const std::span<void* const> buffers_span(
+      buffers, params->num_inputs + params->num_outputs);
 
   const c10::InferenceMode no_autograd;
 
   run_codelet_inference(
-      params, buffers_vec, torch::kCPU, params->models.model_cpu,
+      params, buffers_span, torch::kCPU, params->models.model_cpu,
       [](const at::Tensor& out, void* buffer_ptr) {
         TensorBuilder::copy_output_to_buffer(
             out, buffer_ptr, out.numel(), out.scalar_type());
@@ -202,11 +219,11 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 // =============================================================================
 
 inline void
-InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
+InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
-  const std::vector<void*> buffers_vec(
-      buffers, buffers + params->num_inputs + params->num_outputs);
+  const std::span<void* const> buffers_span(
+      buffers, params->num_inputs + params->num_outputs);
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
 
@@ -218,7 +235,7 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
   const at::cuda::CUDAStreamGuard guard(torch_stream);
 
   run_codelet_inference(
-      params, buffers_vec,
+      params, buffers_span,
       torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)),
       params->models.models_gpu.at(static_cast<size_t>(device_id)),
       [device_id](const at::Tensor& out, void* buffer_ptr) {
