@@ -104,6 +104,14 @@ launch_threads(
   auto& ctx = server_context();
   ctx.queue_ptr = &queue;
 
+  std::jthread notifier_thread([]() {
+    auto& ctx = server_context();
+    while (!ctx.stop_requested.load(std::memory_order_relaxed)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ctx.stop_cv.notify_one();
+  });
+
   std::vector<starpu_server::InferenceResult> results;
   std::mutex results_mutex;
   std::atomic completed_jobs{0};
@@ -135,19 +143,16 @@ launch_threads(
 
   std::signal(SIGINT, signal_handler);
 
-  while (true) {
+  {
     std::unique_lock lock(ctx.stop_mutex);
-    ctx.stop_cv.wait_for(lock, std::chrono::milliseconds(100));
-    if (ctx.stop_requested.load()) {
-      lock.unlock();
-      starpu_server::StopServer(ctx.server);
-      if (ctx.queue_ptr != nullptr) {
-        ctx.queue_ptr->shutdown();
-      }
-      ctx.stop_cv.notify_one();
-      break;
-    }
+    ctx.stop_cv.wait(
+        lock, [] { return server_context().stop_requested.load(); });
   }
+  starpu_server::StopServer(ctx.server);
+  if (ctx.queue_ptr != nullptr) {
+    ctx.queue_ptr->shutdown();
+  }
+  ctx.stop_cv.notify_one();
 }
 
 auto
