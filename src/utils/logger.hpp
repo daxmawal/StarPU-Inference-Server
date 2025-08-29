@@ -40,13 +40,23 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
 
   const auto first = val.find_first_not_of(" \t\n\r\f\v");
   const auto last = val.find_last_not_of(" \t\n\r\f\v");
-  const std::string trimmed =
-      first == std::string::npos ? std::string{} : val.substr(first, last - first + 1);
+  const std::string trimmed = first == std::string::npos
+                                  ? std::string{}
+                                  : val.substr(first, last - first + 1);
 
   if (std::all_of(trimmed.begin(), trimmed.end(), [](unsigned char c) {
         return std::isdigit(c) != 0;
       })) {
-    const int level = std::stoi(trimmed);
+    int level{};
+    try {
+      level = std::stoi(trimmed);
+    }
+    catch (const std::invalid_argument&) {
+      throw std::invalid_argument("Invalid verbosity level: " + trimmed);
+    }
+    catch (const std::out_of_range&) {
+      throw std::invalid_argument("Verbosity level out of range: " + trimmed);
+    }
     switch (level) {
       case 0:
         return Silent;
@@ -64,9 +74,9 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
   }
 
   std::string lower(trimmed.size(), '\0');
-  std::transform(trimmed.begin(), trimmed.end(), lower.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::transform(
+      trimmed.begin(), trimmed.end(), lower.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   if (lower == "silent") {
     return Silent;
   }

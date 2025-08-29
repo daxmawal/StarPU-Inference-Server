@@ -29,10 +29,11 @@ TEST(ClientArgs, InvalidVerboseValuesMarkedInvalid)
   EXPECT_FALSE(starpu_server::parse_client_args(std::span{str}).valid);
 }
 
-TEST(ClientArgs, VerboseValueOutOfRangeThrows)
+TEST(ClientArgs, VerboseValueOutOfRangeThrowsInvalidArgument)
 {
   const std::string big = std::to_string(std::numeric_limits<int>::max()) + "0";
-  EXPECT_THROW(starpu_server::parse_verbosity_level(big), std::out_of_range);
+  EXPECT_THROW(
+      starpu_server::parse_verbosity_level(big), std::invalid_argument);
 }
 
 TEST(InferenceClient, ServerIsLiveReturnsFalseWhenUnavailable)
