@@ -3,6 +3,7 @@
 #include <c10/core/ScalarType.h>
 #include <torch/torch.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -10,6 +11,7 @@
 #include <format>
 #include <functional>
 #include <iostream>
+#include <ranges>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -24,6 +26,10 @@
 #include "runtime_config.hpp"
 
 namespace starpu_server {
+
+// Named constants to avoid magic numbers
+constexpr int kPortMin = 1;
+constexpr int kPortMax = 65535;
 
 // =============================================================================
 // Shape and Type Parsing: Handle --shape, --shapes, and --types arguments
@@ -325,14 +331,19 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     return false;
   }
 
-  const int device_count = torch::cuda::device_count();
-  for (const int id : opts.device_ids) {
-    if (id >= device_count) {
-      log_error(std::format(
-          "GPU ID {} out of range. Only {} device(s) available.", id,
-          device_count));
-      return false;
-    }
+  // torch::cuda::device_count returns a small integral type; cast safely
+  const int device_count =
+      static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
+
+  const auto invalid_it = std::ranges::find_if(
+      opts.device_ids, [device_count](const int device_id) noexcept {
+        return device_id >= device_count;
+      });
+  if (invalid_it != opts.device_ids.end()) {
+    log_error(std::format(
+        "GPU ID {} out of range. Only {} device(s) available.", *invalid_it,
+        device_count));
+    return false;
   }
 
   return true;
@@ -372,7 +383,7 @@ parse_metrics_port(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   return expect_and_parse(
       "--metrics-port", idx, args, [&metrics_port](const char* val) {
         metrics_port = std::stoi(val);
-        if (metrics_port < 1 || metrics_port > 65535) {
+        if (metrics_port < kPortMin || metrics_port > kPortMax) {
           throw std::out_of_range("Metrics port must be between 1 and 65535.");
         }
       });
@@ -564,16 +575,17 @@ validate_config(RuntimeConfig& opts) -> void
   check_required(!opts.model_path.empty(), "--model", missing);
   const bool have_shapes = std::any_of(
       opts.inputs.begin(), opts.inputs.end(),
-      [](const auto& t) { return !t.dims.empty(); });
+      [](const auto& tensor) { return !tensor.dims.empty(); });
   const bool have_types = std::all_of(
-      opts.inputs.begin(), opts.inputs.end(),
-      [](const auto& t) { return t.type != at::ScalarType::Undefined; });
+      opts.inputs.begin(), opts.inputs.end(), [](const auto& tensor) {
+        return tensor.type != at::ScalarType::Undefined;
+      });
   check_required(have_shapes, "--shape or --shapes", missing);
   check_required(have_types, "--types", missing);
 
   if (have_shapes && have_types) {
-    for (const auto& t : opts.inputs) {
-      if (t.dims.empty() || t.type == at::ScalarType::Undefined) {
+    for (const auto& input : opts.inputs) {
+      if (input.dims.empty() || input.type == at::ScalarType::Undefined) {
         log_error("Number of --types must match number of input shapes.");
         opts.valid = false;
         break;
