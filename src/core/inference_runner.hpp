@@ -165,7 +165,8 @@ class InferenceJob {
 
 class StarPUTaskRunner;
 using WorkerThreadLauncher = std::jthread (*)(StarPUTaskRunner&);
-extern WorkerThreadLauncher worker_thread_launcher;
+auto get_worker_thread_launcher() -> WorkerThreadLauncher;
+void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)
     -> std::optional<std::tuple<

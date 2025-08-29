@@ -138,10 +138,11 @@ TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
 
   StarPUSetup starpu(opts);
 
-  auto original_launcher = worker_thread_launcher;
-  worker_thread_launcher = [](StarPUTaskRunner&) -> std::jthread {
-    throw std::runtime_error("boom");
-  };
+  auto original_launcher = starpu_server::get_worker_thread_launcher();
+  starpu_server::set_worker_thread_launcher(
+      [](StarPUTaskRunner&) -> std::jthread {
+        throw std::runtime_error("boom");
+      });
 
   CaptureStream capture{std::cerr};
   EXPECT_THROW(run_inference_loop(opts, starpu), std::runtime_error);
@@ -149,6 +150,6 @@ TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
       capture.str().find("Failed to start worker thread: boom"),
       std::string::npos);
 
-  worker_thread_launcher = original_launcher;
+  starpu_server::set_worker_thread_launcher(original_launcher);
   std::filesystem::remove(model_path);
 }

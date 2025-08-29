@@ -254,7 +254,8 @@ InferenceTask::fill_input_layout(
     }
     params->layout.num_dims[i] = dim;
     const auto sizes = tensor.sizes();
-    const auto first_dims = std::views::take(sizes, static_cast<size_t>(dim));
+    using diff_t = std::ranges::range_difference_t<decltype(sizes)>;
+    const auto first_dims = std::views::take(sizes, static_cast<diff_t>(dim));
     params->layout.dims[i].assign(first_dims.begin(), first_dims.end());
   }
 }

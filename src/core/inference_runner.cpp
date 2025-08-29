@@ -48,7 +48,26 @@ default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
   return std::jthread(&StarPUTaskRunner::run, &worker);
 }
 
-WorkerThreadLauncher worker_thread_launcher = default_worker_thread_launcher;
+namespace {
+inline auto
+launcher_storage() -> WorkerThreadLauncher&
+{
+  static WorkerThreadLauncher launcher = default_worker_thread_launcher;
+  return launcher;
+}
+}  // namespace
+
+auto
+get_worker_thread_launcher() -> WorkerThreadLauncher
+{
+  return launcher_storage();
+}
+
+void
+set_worker_thread_launcher(WorkerThreadLauncher launcher)
+{
+  launcher_storage() = launcher;
+}
 
 // =============================================================================
 // InferenceJob: Encapsulates a single inference task, including input data,
@@ -340,7 +359,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   std::jthread server;
   std::jthread client;
   try {
-    server = worker_thread_launcher(worker);
+    server = get_worker_thread_launcher()(worker);
     client = std::jthread([&queue, &opts, &outputs_ref]() {
       client_worker(queue, opts, outputs_ref, opts.iterations);
     });

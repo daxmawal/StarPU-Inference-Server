@@ -259,8 +259,8 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
     conf_.use_explicit_workers_cuda_gpuid = 1U;
     conf_.ncuda = static_cast<int>(opts.device_ids.size());
 
-    std::span<unsigned int> workers_cuda_gpuid(
-        conf_.workers_cuda_gpuid, STARPU_NMAXWORKERS);
+    std::span<unsigned int, STARPU_NMAXWORKERS> workers_cuda_gpuid(
+        conf_.workers_cuda_gpuid);
     for (size_t idx = 0; idx < opts.device_ids.size(); ++idx) {
       const int device_id = opts.device_ids[idx];
       if (device_id < 0) {
