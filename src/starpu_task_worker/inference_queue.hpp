@@ -17,8 +17,11 @@ class InferenceQueue {
  public:
   // Enqueue a new inference job
   // Returns false if the queue is shutting down and the job was not enqueued
-  bool push(const std::shared_ptr<InferenceJob>& job)
+  [[nodiscard]] bool push(const std::shared_ptr<InferenceJob>& job)
   {
+    if (job == nullptr) {
+      return false;
+    }
     {
       const std::scoped_lock lock(mutex_);
       if (shutdown_) {
@@ -33,7 +36,7 @@ class InferenceQueue {
 
   // Wait until a job is available, then dequeue it
   // Returns false if the queue is shutting down and no job was retrieved
-  bool wait_and_pop(std::shared_ptr<InferenceJob>& job)
+  [[nodiscard]] bool wait_and_pop(std::shared_ptr<InferenceJob>& job)
   {
     std::unique_lock lock(mutex_);
     cv_.wait(lock, [this] { return !queue_.empty() || shutdown_; });

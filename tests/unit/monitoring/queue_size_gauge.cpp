@@ -13,7 +13,7 @@ TEST(Metrics, QueueGaugeTracksQueueSize)
   EXPECT_DOUBLE_EQ(
       metrics.load(std::memory_order_acquire)->queue_size_gauge->Value(), 0);
 
-  std::shared_ptr<InferenceJob> job;
+  auto job = std::make_shared<InferenceJob>();
   EXPECT_TRUE(queue.push(job));
   EXPECT_DOUBLE_EQ(
       metrics.load(std::memory_order_acquire)->queue_size_gauge->Value(), 1);
