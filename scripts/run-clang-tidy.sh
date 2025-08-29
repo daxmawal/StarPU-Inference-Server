@@ -76,10 +76,15 @@ CLANG_TIDY_ARGS=(
 
   #-header-filter=.*
 
+  # Ensure clang uses the correct host target and SIMD features
+  -extra-arg-before=--target=x86_64-pc-linux-gnu
+  -extra-arg-before=--gcc-toolchain=/usr
+  -extra-arg=-stdlib=libstdc++
+  -extra-arg-before=-msse
+
   -extra-arg=-std=c++23
   -extra-arg=-isystem/usr/include/c++/13
   -extra-arg=-isystem/usr/include/x86_64-linux-gnu/c++/13
-  -extra-arg=-isystem/usr/lib/gcc/x86_64-linux-gnu/13/include
 
   -extra-arg=-I"$LIBTORCH_DIR/include"
   -extra-arg=-I"$LIBTORCH_DIR/include/torch/csrc/api/include"

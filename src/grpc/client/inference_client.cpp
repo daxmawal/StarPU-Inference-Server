@@ -144,13 +144,13 @@ InferenceClient::AsyncModelInfer(
     }
     auto flat = tensor.view({-1});
     request.add_raw_input_contents()->assign(
-        reinterpret_cast<const char*>(flat.data_ptr()),
+        static_cast<const char*>(flat.data_ptr()),
         flat.numel() * flat.element_size());
   }
 
   call->response_reader = stub_->AsyncModelInfer(&call->context, request, &cq_);
   call->response_reader->Finish(&call->reply, &call->status, call.get());
-  call.release();
+  [[maybe_unused]] auto* released_call = call.release();
 }
 
 void
