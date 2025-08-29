@@ -23,13 +23,15 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
   EXPECT_EQ(opts.inputs[0].type, at::kFloat);
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(ArgsParser_Unit, ParsesAllOptions)
 {
   const auto& model = test_model_path();
 
   // Choose device-ids based on available GPUs so the test passes on
   // CPU-only machines and those with 1 or more GPUs.
-  const int device_count = torch::cuda::device_count();
+  const int device_count =
+      static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
 
   std::vector<const char*> args{
       "program", "--model", model.c_str(), "--shapes", "1x3x224x224,2x1",
@@ -61,8 +63,8 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.warmup_pregen_inputs, 5U);
   EXPECT_EQ(opts.warmup_iterations, 3);
   ASSERT_TRUE(opts.seed.has_value());
-  EXPECT_EQ(opts.seed.value(), 123U);
-  constexpr std::size_t expected_bytes = 32 * 1024 * 1024;
+  EXPECT_EQ(opts.seed, 123U);
+  constexpr std::size_t expected_bytes = 32ULL * 1024ULL * 1024ULL;
   EXPECT_EQ(opts.max_message_bytes, expected_bytes);
   EXPECT_TRUE(opts.synchronous);
   EXPECT_FALSE(opts.use_cpu);

@@ -71,7 +71,8 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(ArgsParserInvalidOptions_Robustesse, DeviceIdOutOfRange)
 {
-  const int device_count = torch::cuda::device_count();
+  const int device_count =
+      static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
   std::string id_str = std::to_string(device_count);
   auto args = build_common_args();
   args.emplace_back("--device-ids");
