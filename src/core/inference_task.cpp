@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <format>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -92,10 +93,23 @@ InferenceTask::safe_register_tensor_vector(
   }
   starpu_data_handle_t handle = nullptr;
 
+  const uint64_t numel = static_cast<uint64_t>(tensor.numel());
+  const uint64_t elem_size = static_cast<uint64_t>(tensor.element_size());
+  const uint64_t max_size =
+      static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+
+  if (numel > max_size) {
+    throw StarPURegistrationException(std::format(
+        "Tensor '{}' has too many elements to fit in size_t", label));
+  }
+  if (elem_size > max_size) {
+    throw StarPURegistrationException(std::format(
+        "Tensor '{}' has an element size too large for size_t", label));
+  }
+
   starpu_vector_data_register(
       &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(tensor.data_ptr()),
-      static_cast<size_t>(static_cast<uint64_t>(tensor.numel())),
-      static_cast<size_t>(static_cast<uint64_t>(tensor.element_size())));
+      static_cast<size_t>(numel), static_cast<size_t>(elem_size));
 
   if (handle == nullptr) {
     throw StarPURegistrationException(
