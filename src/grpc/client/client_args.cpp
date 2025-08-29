@@ -46,27 +46,6 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
   return shape;
 }
 
-auto
-parse_type_string(const std::string& type_str) -> at::ScalarType
-{
-  static const std::unordered_map<
-      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
-      type_map = {{"float", at::kFloat},       {"float32", at::kFloat},
-                  {"double", at::kDouble},     {"float64", at::kDouble},
-                  {"half", at::kHalf},         {"float16", at::kHalf},
-                  {"bfloat16", at::kBFloat16}, {"int", at::kInt},
-                  {"int32", at::kInt},         {"long", at::kLong},
-                  {"int64", at::kLong},        {"short", at::kShort},
-                  {"int16", at::kShort},       {"char", at::kChar},
-                  {"int8", at::kChar},         {"byte", at::kByte},
-                  {"uint8", at::kByte},        {"bool", at::kBool}};
-  auto iterator = type_map.find(type_str);
-  if (iterator == type_map.end()) {
-    throw std::invalid_argument("Unsupported type: " + type_str);
-  }
-  return iterator->second;
-}
-
 }  // namespace
 
 void
@@ -177,7 +156,7 @@ auto
 parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&cfg](const char* val) {
-    cfg.type = parse_type_string(val);
+    cfg.type = string_to_scalar_type(val);
     if (cfg.inputs.empty()) {
       cfg.inputs.push_back({"input", cfg.shape, cfg.type});
     } else {
@@ -202,7 +181,7 @@ parse_input(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
     InputConfig input{};
     input.name = name;
     input.shape = parse_shape_string(shape_str);
-    input.type = parse_type_string(type_str);
+    input.type = string_to_scalar_type(type_str);
     cfg.inputs.push_back(std::move(input));
     if (cfg.inputs.size() == 1) {
       cfg.shape = cfg.inputs[0].shape;
@@ -278,8 +257,9 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       continue;
     }
 
-    log_error(std::format(
-        "Unknown argument: {}. Use --help to see valid options.", arg));
+    log_error(
+        std::format(
+            "Unknown argument: {}. Use --help to see valid options.", arg));
     return false;
   }
 

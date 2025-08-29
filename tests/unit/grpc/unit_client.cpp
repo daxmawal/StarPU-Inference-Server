@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "grpc/client/client_args.hpp"
@@ -79,6 +80,32 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
   EXPECT_NE(out.find("--verbose"), std::string::npos);
   EXPECT_NE(out.find("--help"), std::string::npos);
 }
+
+class ParseInputTypeCase
+    : public ::testing::TestWithParam<std::pair<const char*, at::ScalarType>> {
+};
+
+TEST_P(ParseInputTypeCase, ParsesExpectedType)
+{
+  const auto& [type_str, expected] = GetParam();
+  const std::string arg = std::string{"input:1:"} + type_str;
+  const char* argv[] = {"prog", "--input", arg.c_str()};
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].type, expected);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    SupportedTypes, ParseInputTypeCase,
+    ::testing::Values(
+        std::pair{"float32", at::kFloat}, std::pair{"float64", at::kDouble},
+        std::pair{"float16", at::kHalf}, std::pair{"bfloat16", at::kBFloat16},
+        std::pair{"int32", at::kInt}, std::pair{"int64", at::kLong},
+        std::pair{"int16", at::kShort}, std::pair{"int8", at::kChar},
+        std::pair{"uint8", at::kByte}, std::pair{"bool", at::kBool},
+        std::pair{"complex64", at::kComplexFloat},
+        std::pair{"complex128", at::kComplexDouble}));
 
 
 TEST(InferenceClient, ModelIsReadyReturnsTrue)
