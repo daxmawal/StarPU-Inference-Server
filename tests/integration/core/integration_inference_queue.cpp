@@ -6,6 +6,7 @@
 #include "core/inference_runner.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 TEST(InferenceQueue_Integration, FifoAndShutdown)
 {
   starpu_server::InferenceQueue queue;
@@ -38,3 +39,4 @@ TEST(InferenceQueue_Integration, FifoAndShutdown)
   auto job = std::make_shared<starpu_server::InferenceJob>();
   EXPECT_FALSE(queue.push(job));
 }
+// NOLINTEND(readability-function-cognitive-complexity)
