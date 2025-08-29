@@ -77,8 +77,8 @@ extract_reference_outputs(
       tensors.push_back(val.toTensor());
     }
   } else if (output.isTensorList()) {
-    for (const auto& t : output.toTensorList()) {
-      tensors.push_back(t);
+    for (const auto& tensor : output.toTensorList()) {
+      tensors.push_back(tensor);
     }
   } else {
     log_error(std::format(
