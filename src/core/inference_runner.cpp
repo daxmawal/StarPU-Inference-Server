@@ -159,8 +159,8 @@ generate_inputs(const std::vector<TensorConfig>& tensors)
 
 static auto
 run_reference_inference(
-    torch::jit::script::Module& model, const std::vector<torch::Tensor>& inputs)
-    -> std::vector<torch::Tensor>
+    torch::jit::script::Module& model,
+    const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
 {
   c10::InferenceMode guard;
   std::vector<torch::Tensor> output_refs;
@@ -356,7 +356,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   {
     std::unique_lock lock(all_done_mutex);
     all_done_cv.wait(lock, [&completed_jobs, &opts]() {
-      return completed_jobs.load() >= opts.iterations;
+      return completed_jobs.load(std::memory_order_acquire) >= opts.iterations;
     });
   }
 

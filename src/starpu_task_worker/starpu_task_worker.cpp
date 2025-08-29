@@ -31,9 +31,8 @@ validate_not_null(const void* ptr, std::string_view field_name)
   if (ptr != nullptr) {
     return;
   }
-  throw std::invalid_argument(
-      std::format(
-          "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
+  throw std::invalid_argument(std::format(
+      "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
 }
 }  // namespace
 // =============================================================================
@@ -156,7 +155,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
           prev_callback(results, latency_ms);
         }
 
-        completed_jobs_->fetch_add(1);
+        completed_jobs_->fetch_add(1, std::memory_order_release);
         all_done_cv_->notify_one();
       });
 }
