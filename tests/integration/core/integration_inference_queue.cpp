@@ -25,7 +25,7 @@ TEST(InferenceQueue_Integration, FifoAndShutdown)
     for (int i = 0; i < 3; ++i) {
       auto job = std::make_shared<starpu_server::InferenceJob>();
       job->set_job_id(i);
-      queue.push(job);
+      ASSERT_TRUE(queue.push(job));
     }
     queue.shutdown();
   }
@@ -34,4 +34,7 @@ TEST(InferenceQueue_Integration, FifoAndShutdown)
   EXPECT_EQ(popped_ids[1], 1);
   EXPECT_EQ(popped_ids[2], 2);
   EXPECT_EQ(popped_ids[3], -1);
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  EXPECT_FALSE(queue.push(job));
 }

@@ -102,7 +102,11 @@ client_worker(
     auto job = client_utils::create_job(inputs, outputs_ref, job_id);
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
-    queue.push(job);
+    if (!queue.push(job)) {
+      log_warning(std::format(
+          "[Client] Failed to enqueue job {}: queue shutting down", job_id));
+      break;
+    }
   }
 
   queue.shutdown();

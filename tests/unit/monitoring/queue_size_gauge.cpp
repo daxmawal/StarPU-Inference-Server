@@ -14,7 +14,7 @@ TEST(Metrics, QueueGaugeTracksQueueSize)
       metrics.load(std::memory_order_acquire)->queue_size_gauge->Value(), 0);
 
   std::shared_ptr<InferenceJob> job;
-  queue.push(job);
+  EXPECT_TRUE(queue.push(job));
   EXPECT_DOUBLE_EQ(
       metrics.load(std::memory_order_acquire)->queue_size_gauge->Value(), 1);
 
@@ -22,6 +22,9 @@ TEST(Metrics, QueueGaugeTracksQueueSize)
   EXPECT_TRUE(queue.wait_and_pop(popped));
   EXPECT_DOUBLE_EQ(
       metrics.load(std::memory_order_acquire)->queue_size_gauge->Value(), 0);
+
+  queue.shutdown();
+  EXPECT_FALSE(queue.push(job));
 
   shutdown_metrics();
 }

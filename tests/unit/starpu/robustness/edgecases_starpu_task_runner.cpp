@@ -29,8 +29,8 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   auto job = probe.job;
   job->set_job_id(1);
   job->set_input_tensors({torch::tensor({1})});
-  queue_.push(job);
-  queue_.push(starpu_server::InferenceJob::make_shutdown_job());
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
   runner_->run();
   EXPECT_TRUE(probe.called);
   EXPECT_TRUE(probe.results.empty());

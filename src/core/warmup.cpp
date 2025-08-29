@@ -13,6 +13,7 @@
 #include <mutex>
 #include <numeric>
 #include <random>
+#include <format>
 #include <string>
 #include <thread>
 #include <utility>
@@ -94,7 +95,13 @@ WarmupRunner::client_worker(
         client_utils::log_job_enqueued(
             opts_, job_id, total, job->timing_info().enqueued_time);
 
-        queue.push(job);
+        if (!queue.push(job)) {
+          log_warning(std::format(
+              "[Warmup] Failed to enqueue job {}: queue shutting down",
+              job_id));
+          queue.shutdown();
+          return;
+        }
         job_id++;
       }
     }

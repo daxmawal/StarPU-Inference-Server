@@ -29,12 +29,13 @@ TEST(InferenceQueue_Robustesse, MultipleConsumersDrainThenShutdownUnblocksAll)
   for (int job_id = 0; job_id < 6; ++job_id) {
     auto job = std::make_shared<starpu_server::InferenceJob>();
     job->set_job_id(job_id);
-    queue.push(job);
+    ASSERT_TRUE(queue.push(job));
   }
   queue.shutdown();
   queue.shutdown();
   consume_1.join();
   consume_2.join();
+  EXPECT_FALSE(queue.push(std::make_shared<starpu_server::InferenceJob>()));
   EXPECT_EQ(consumers_done.load(), 2);
   {
     std::scoped_lock lock(mutex);

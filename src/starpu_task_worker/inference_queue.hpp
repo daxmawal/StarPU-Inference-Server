@@ -16,17 +16,19 @@ namespace starpu_server {
 class InferenceQueue {
  public:
   // Enqueue a new inference job
-  void push(const std::shared_ptr<InferenceJob>& job)
+  // Returns false if the queue is shutting down and the job was not enqueued
+  bool push(const std::shared_ptr<InferenceJob>& job)
   {
     {
       const std::scoped_lock lock(mutex_);
       if (shutdown_) {
-        return;
+        return false;
       }
       queue_.push(job);
       set_queue_size(queue_.size());
     }
     cv_.notify_one();
+    return true;
   }
 
   // Wait until a job is available, then dequeue it
