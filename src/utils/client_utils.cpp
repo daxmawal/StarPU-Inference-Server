@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cassert>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -14,6 +13,7 @@
 #include <mutex>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -68,7 +68,12 @@ pick_random_input(
   }
   std::uniform_int_distribution<std::size_t> dist(0, pool.size() - 1);
   const auto idx = static_cast<size_t>(dist(rng));
-  assert(idx < pool.size());
+  if (idx >= pool.size()) {
+    throw std::out_of_range(
+        std::format(
+            "Random input index {} out of range for pool size {}", idx,
+            pool.size()));
+  }
   return pool[idx];
 }
 
