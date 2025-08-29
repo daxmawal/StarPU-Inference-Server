@@ -103,8 +103,10 @@ client_worker(
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
     if (!queue.push(job)) {
-      log_warning(std::format(
-          "[Client] Failed to enqueue job {}: queue shutting down", job_id));
+      log_warning(
+          std::format(
+              "[Client] Failed to enqueue job {}: queue shutting down",
+              job_id));
       break;
     }
   }
@@ -172,8 +174,8 @@ generate_inputs(const std::vector<TensorConfig>& tensors)
 
 static auto
 run_reference_inference(
-    torch::jit::script::Module& model,
-    const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
+    torch::jit::script::Module& model, const std::vector<torch::Tensor>& inputs)
+    -> std::vector<torch::Tensor>
 {
   c10::InferenceMode guard;
   const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
@@ -272,14 +274,16 @@ process_results(
   }
 }
 
-void
-synchronize_cuda_device()
+auto
+synchronize_cuda_device() -> cudaError_t
 {
-  if (auto err = cudaDeviceSynchronize(); err != cudaSuccess) {
+  const auto err = cudaDeviceSynchronize();
+  if (err != cudaSuccess) {
     log_error(
         std::string("cudaDeviceSynchronize failed: ") +
         cudaGetErrorString(err));
   }
+  return err;
 }
 
 // =============================================================================
@@ -369,7 +373,9 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   }
 
   if (opts.use_cuda) {
-    synchronize_cuda_device();
+    if (auto err = synchronize_cuda_device(); err != cudaSuccess) {
+      return;  // abort if synchronization failed
+    }
   }
 
   process_results(results, model_cpu, models_gpu, opts.verbosity);

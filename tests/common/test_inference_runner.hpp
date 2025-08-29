@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cuda_runtime_api.h>
 #include <torch/script.h>
 
 #include <filesystem>
@@ -114,5 +115,5 @@ auto load_model_and_reference_output(const RuntimeConfig& opts)
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>>;
 
-void synchronize_cuda_device();
+auto synchronize_cuda_device() -> cudaError_t;
 }  // namespace starpu_server

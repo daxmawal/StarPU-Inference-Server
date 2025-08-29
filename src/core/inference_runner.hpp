@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cuda_runtime_api.h>
 #include <torch/script.h>
 
 #include <chrono>
@@ -179,5 +180,5 @@ void run_warmup(
 
 void run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu);
 
-void synchronize_cuda_device();
+auto synchronize_cuda_device() -> cudaError_t;
 }  // namespace starpu_server
