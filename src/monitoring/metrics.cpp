@@ -58,19 +58,22 @@ std::atomic<std::shared_ptr<MetricsRegistry>> metrics{nullptr};
 auto
 init_metrics(int port) -> bool
 {
-  if (metrics.load(std::memory_order_acquire)) {
-    return false;
-  }
+  std::shared_ptr<MetricsRegistry> expected{nullptr};
 
   try {
     auto new_metrics = std::make_shared<MetricsRegistry>(port);
-    metrics.store(std::move(new_metrics), std::memory_order_release);
+
+    if (!metrics.compare_exchange_strong(
+            expected, new_metrics, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+      return false;
+    }
+
     set_queue_size(0);
     return true;
   }
   catch (const std::exception& e) {
     log_error(std::string("Metrics initialization failed: ") + e.what());
-    metrics.store(nullptr, std::memory_order_release);
     return false;
   }
 }
