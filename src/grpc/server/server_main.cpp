@@ -4,6 +4,7 @@
 #include <format>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -24,7 +25,7 @@ namespace {
 // Encapsulates state shared between the worker threads and the signal handler
 struct ServerContext {
   starpu_server::InferenceQueue* queue_ptr = nullptr;
-  std::unique_ptr<grpc::Server> server{};
+  std::unique_ptr<grpc::Server> server;
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
   std::atomic<bool> stop_requested{false};
@@ -45,14 +46,15 @@ signal_handler(int /*signal*/)
 }
 
 auto
-handle_program_arguments(int argc, char* argv[]) -> starpu_server::RuntimeConfig
+handle_program_arguments(std::span<char const* const> args)
+    -> starpu_server::RuntimeConfig
 {
   const char* config_path = nullptr;
 
-  for (int i = 1; i < argc - 1; ++i) {
-    std::string_view arg{argv[i]};
-    if ((arg == "--config" || arg == "-c") && argv[i + 1] != nullptr) {
-      config_path = argv[i + 1];
+  for (size_t i = 1; i + 1 < args.size(); ++i) {
+    std::string_view arg{args[i]};
+    if ((arg == "--config" || arg == "-c") && args[i + 1] != nullptr) {
+      config_path = args[i + 1];
       break;
     }
   }
@@ -76,12 +78,13 @@ handle_program_arguments(int argc, char* argv[]) -> starpu_server::RuntimeConfig
   return cfg;
 }
 
-std::tuple<
-    torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-    std::vector<torch::Tensor>>
+auto
 prepare_models_and_warmup(
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu)
+    -> std::tuple<
+        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+        std::vector<torch::Tensor>>
 {
   auto models = starpu_server::load_model_and_reference_output(opts);
   if (!models) {
@@ -106,8 +109,9 @@ launch_threads(
 
   std::jthread notifier_thread([]() {
     auto& ctx = server_context();
+    constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
     while (!ctx.stop_requested.load(std::memory_order_relaxed)) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      std::this_thread::sleep_for(kNotifierSleep);
     }
     ctx.stop_cv.notify_one();
   });
@@ -132,8 +136,8 @@ launch_threads(
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
   std::vector<at::ScalarType> expected_input_types;
   expected_input_types.reserve(opts.inputs.size());
-  for (const auto& t : opts.inputs) {
-    expected_input_types.push_back(t.type);
+  for (const auto& input : opts.inputs) {
+    expected_input_types.push_back(input.type);
   }
   std::jthread grpc_thread([&, expected_input_types]() {
     starpu_server::RunGrpcServer(
@@ -160,7 +164,8 @@ auto
 main(int argc, char* argv[]) -> int
 {
   try {
-    starpu_server::RuntimeConfig opts = handle_program_arguments(argc, argv);
+    starpu_server::RuntimeConfig opts =
+        handle_program_arguments({argv, static_cast<size_t>(argc)});
     const bool metrics_ok = starpu_server::init_metrics(opts.metrics_port);
     if (!metrics_ok) {
       starpu_server::log_warning(

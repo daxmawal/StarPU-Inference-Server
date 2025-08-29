@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <future>
 #include <limits>
@@ -32,12 +33,12 @@ using inference::ServerReadyResponse;
 namespace {
 
 auto
-checked_mul(size_t a, size_t b) -> std::optional<size_t>
+checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
 {
-  if (a != 0 && b > std::numeric_limits<size_t>::max() / a) {
+  if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs) {
     return std::nullopt;
   }
-  return a * b;
+  return lhs * rhs;
 }
 
 // Convert gRPC input to torch::Tensor
@@ -48,14 +49,29 @@ convert_input_to_tensor(
 {
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
   auto options = torch::TensorOptions().dtype(dtype);
-  auto tmp = torch::from_blob(
-      const_cast<void*>(static_cast<const void*>(raw.data())), shape, options);
-  if (raw.size() != static_cast<size_t>(tmp.nbytes())) {
-    return Status(
-        grpc::StatusCode::INVALID_ARGUMENT,
-        "Raw input size does not match tensor size");
+
+  std::optional<size_t> expected = element_size(dtype);
+  for (const auto dim : input.shape()) {
+    if (dim <= 0) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Input tensor shape contains non-positive dimension"};
+    }
+    expected = checked_mul(*expected, static_cast<size_t>(dim));
+    if (!expected) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Input tensor shape is too large"};
+    }
   }
-  tensor = tmp.contiguous().clone();
+  if (*expected != raw.size()) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Raw input size does not match tensor size"};
+  }
+
+  tensor = torch::empty(shape, options);
+  std::memcpy(tensor.data_ptr(), raw.data(), raw.size());
   return Status::OK;
 }
 
@@ -78,11 +94,11 @@ fill_output_tensor(
     const auto total_bytes =
         checked_mul(static_cast<size_t>(flat.numel()), flat.element_size());
     if (!total_bytes) {
-      return Status(
-          grpc::StatusCode::INVALID_ARGUMENT, "Output tensor size overflow");
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT, "Output tensor size overflow"};
     }
     reply->add_raw_output_contents()->assign(
-        reinterpret_cast<const char*>(flat.data_ptr()), *total_bytes);
+        static_cast<const char*>(flat.data_ptr()), *total_bytes);
   }
   return Status::OK;
 }
@@ -131,16 +147,16 @@ InferenceServiceImpl::validate_and_convert_inputs(
 {
   if (request->inputs_size() !=
       static_cast<int>(expected_input_types_.size())) {
-    return Status(
+    return {
         grpc::StatusCode::INVALID_ARGUMENT,
         std::format(
             "Expected {} input tensors but received {}",
-            expected_input_types_.size(), request->inputs_size()));
+            expected_input_types_.size(), request->inputs_size())};
   }
   if (request->raw_input_contents_size() != request->inputs_size()) {
-    return Status(
+    return {
         grpc::StatusCode::INVALID_ARGUMENT,
-        "Number of raw inputs does not match number of input tensors");
+        "Number of raw inputs does not match number of input tensors"};
   }
 
   inputs.reserve(request->inputs_size());
@@ -148,44 +164,44 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const auto& input = request->inputs(i);
     const auto& raw = request->raw_input_contents(i);
 
-    at::ScalarType dtype;
+    at::ScalarType dtype = at::kFloat;
     try {
       dtype = datatype_to_scalar_type(input.datatype());
     }
     catch (const std::invalid_argument& e) {
-      return Status(grpc::StatusCode::INVALID_ARGUMENT, e.what());
+      return {grpc::StatusCode::INVALID_ARGUMENT, e.what()};
     }
 
     if (dtype != expected_input_types_[i]) {
-      return Status(
-          grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch");
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch"};
     }
 
     std::optional<size_t> expected = element_size(dtype);
     for (const auto dim : input.shape()) {
       if (dim <= 0) {
-        return Status(
+        return {
             grpc::StatusCode::INVALID_ARGUMENT,
-            "Input tensor shape contains non-positive dimension");
+            "Input tensor shape contains non-positive dimension"};
       }
 
       expected = checked_mul(*expected, static_cast<size_t>(dim));
       if (!expected) {
-        return Status(
+        return {
             grpc::StatusCode::INVALID_ARGUMENT,
-            "Input tensor shape is too large");
+            "Input tensor shape is too large"};
       }
     }
     if (*expected != raw.size()) {
-      return Status(
+      return {
           grpc::StatusCode::INVALID_ARGUMENT,
-          "Input tensor shape does not match raw content size");
+          "Input tensor shape does not match raw content size"};
     }
 
     torch::Tensor tensor;
-    Status st = convert_input_to_tensor(input, raw, dtype, tensor);
-    if (!st.ok()) {
-      return st;
+    Status status = convert_input_to_tensor(input, raw, dtype, tensor);
+    if (!status.ok()) {
+      return status;
     }
     inputs.push_back(std::move(tensor));
   }
@@ -209,20 +225,19 @@ InferenceServiceImpl::submit_job_and_wait(
 
   const bool pushed = queue_->push(job);
   if (!pushed) {
-    return Status(
-        grpc::StatusCode::UNAVAILABLE, "Inference queue shutting down");
+    return {grpc::StatusCode::UNAVAILABLE, "Inference queue shutting down"};
   }
 
   const auto timeout = std::chrono::seconds(30);
   if (result_future.wait_for(timeout) != std::future_status::ready) {
-    return Status(
+    return {
         grpc::StatusCode::DEADLINE_EXCEEDED,
-        "Inference result not available in time");
+        "Inference result not available in time"};
   }
   outputs = result_future.get();
 
   if (outputs.empty()) {
-    return Status(grpc::StatusCode::INTERNAL, "Inference failed");
+    return {grpc::StatusCode::INTERNAL, "Inference failed"};
   }
 
   return Status::OK;
@@ -246,9 +261,9 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
-  auto m = get_metrics();
-  if (m && m->requests_total != nullptr) {
-    m->requests_total->Increment();
+  auto metrics = get_metrics();
+  if (metrics && metrics->requests_total != nullptr) {
+    metrics->requests_total->Increment();
   }
 
   auto recv_tp = std::chrono::high_resolution_clock::now();
@@ -278,10 +293,10 @@ InferenceServiceImpl::ModelInfer(
     return status;
   }
 
-  if (m && m->inference_latency != nullptr) {
+  if (metrics && metrics->inference_latency != nullptr) {
     const auto latency_ms =
         std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
-    m->inference_latency->Observe(latency_ms);
+    metrics->inference_latency->Observe(latency_ms);
   }
   return Status::OK;
 }
