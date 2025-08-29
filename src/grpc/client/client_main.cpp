@@ -49,7 +49,7 @@ main(int argc, char* argv[]) -> int
     return 1;
   }
 
-  if (!client.ModelIsReady(config.model_name, config.model_version)) {
+  if (!client.ModelIsReady({config.model_name, config.model_version})) {
     return 1;
   }
 

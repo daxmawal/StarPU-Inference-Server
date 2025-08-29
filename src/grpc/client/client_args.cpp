@@ -170,12 +170,13 @@ parse_input(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&cfg](const char* val) {
     std::string token(val);
-    std::stringstream ss(token);
+    std::stringstream token_stream(token);
     std::string name;
     std::string shape_str;
     std::string type_str;
-    if (!std::getline(ss, name, ':') || !std::getline(ss, shape_str, ':') ||
-        !std::getline(ss, type_str)) {
+    if (!std::getline(token_stream, name, ':') ||
+        !std::getline(token_stream, shape_str, ':') ||
+        !std::getline(token_stream, type_str)) {
       throw std::invalid_argument("Input must be NAME:SHAPE:TYPE");
     }
     InputConfig input{};

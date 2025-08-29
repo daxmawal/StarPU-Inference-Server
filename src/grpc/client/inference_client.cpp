@@ -66,12 +66,11 @@ InferenceClient::ServerIsReady() -> bool
 }
 
 auto
-InferenceClient::ModelIsReady(
-    const std::string& name, const std::string& version) -> bool
+InferenceClient::ModelIsReady(const ModelId& model) -> bool
 {
   inference::ModelReadyRequest request;
-  request.set_name(name);
-  request.set_version(version);
+  request.set_name(model.name);
+  request.set_version(model.version);
   inference::ModelReadyResponse response;
   grpc::ClientContext context;
 

@@ -119,7 +119,7 @@ TEST(InferenceClient, ModelIsReadyReturnsTrue)
       grpc::InsecureChannelCredentials());
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
-  EXPECT_TRUE(client.ModelIsReady("example", "1"));
+  EXPECT_TRUE(client.ModelIsReady({"example", "1"}));
 
   starpu_server::StopServer(server.server);
   server.thread.join();
@@ -132,7 +132,7 @@ TEST(InferenceClient, ModelIsReadyReturnsFalseWhenUnavailable)
       "127.0.0.1:59997", grpc::InsecureChannelCredentials());
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
-  EXPECT_FALSE(client.ModelIsReady("example", "1"));
+  EXPECT_FALSE(client.ModelIsReady({"example", "1"}));
 }
 
 TEST(InferenceClient, RejectsMismatchedTensorCount)
