@@ -148,6 +148,10 @@ load_config(const std::string& path) -> RuntimeConfig
     }
     if (root["metrics_port"]) {
       cfg.metrics_port = root["metrics_port"].as<int>();
+      if (cfg.metrics_port < 1 || cfg.metrics_port > 65535) {
+        log_error("metrics_port must be between 1 and 65535");
+        cfg.valid = false;
+      }
     }
     if (root["max_message_bytes"]) {
       const auto tmp = root["max_message_bytes"].as<long long>();
