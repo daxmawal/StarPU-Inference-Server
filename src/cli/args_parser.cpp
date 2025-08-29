@@ -112,8 +112,7 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
       types.push_back(string_to_scalar_type(type_str));
     }
     catch (const std::invalid_argument& e) {
-      throw std::invalid_argument(
-          std::string{"Unsupported type: "} + type_str);
+      throw std::invalid_argument(std::string{"Unsupported type: "} + type_str);
     }
   }
 
@@ -395,10 +394,9 @@ parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
       }
       oss << *it;
     }
-    log_error(
-        std::format(
-            "Unknown scheduler: '{}'. Allowed schedulers: {}", scheduler,
-            oss.str()));
+    log_error(std::format(
+        "Unknown scheduler: '{}'. Allowed schedulers: {}", scheduler,
+        oss.str()));
     return false;
   }
   opts.scheduler = scheduler;
@@ -463,6 +461,32 @@ parse_seed(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
   });
 }
 
+static auto
+parse_rtol(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  auto& rtol = opts.rtol;
+  return expect_and_parse("--rtol", idx, args, [&rtol](const char* val) {
+    const auto tmp = std::stod(val);
+    if (tmp < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+    rtol = tmp;
+  });
+}
+
+static auto
+parse_atol(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  auto& atol = opts.atol;
+  return expect_and_parse("--atol", idx, args, [&atol](const char* val) {
+    const auto tmp = std::stod(val);
+    if (tmp < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+    atol = tmp;
+  });
+}
+
 // =============================================================================
 // Dispatch Argument Parser (Main parser loop)
 // =============================================================================
@@ -500,6 +524,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--warmup-pregen-inputs", parse_warmup_pregen_inputs},
           {"--warmup-iterations", parse_warmup_iterations},
           {"--seed", parse_seed},
+          {"--rtol", parse_rtol},
+          {"--atol", parse_atol},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
@@ -517,9 +543,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
         return false;
       }
     } else {
-      log_error(
-          std::format(
-              "Unknown argument: {}. Use --help to see valid options.", arg));
+      log_error(std::format(
+          "Unknown argument: {}. Use --help to see valid options.", arg));
       return false;
     }
   }

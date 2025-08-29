@@ -24,9 +24,8 @@ inline constexpr std::size_t kMaxDims = 8;
 inline constexpr std::size_t kMaxModelsGpu = 32;
 
 inline const std::unordered_set<std::string, TransparentHash, std::equal_to<>>
-    kAllowedSchedulers = {
-        "lws", "dmda", "ws", "eager", "random", "prio", "peager",
-        "heft", "fcfs"};
+    kAllowedSchedulers = {"lws",  "dmda",   "ws",   "eager", "random",
+                          "prio", "peager", "heft", "fcfs"};
 
 // =============================================================================
 // TensorConfig
@@ -69,6 +68,8 @@ struct RuntimeConfig {
   size_t pregen_inputs = 10;
   size_t warmup_pregen_inputs = 2;
   int warmup_iterations = 2;
+  double rtol = 1e-3;
+  double atol = 1e-5;
 
   size_t max_inputs = kMaxInputs;
   size_t max_dims = kMaxDims;

@@ -141,9 +141,10 @@ clone_model_to_gpus(
   const int device_count = torch::cuda::device_count();
   for (const int id : device_ids) {
     if (id < 0 || id >= device_count) {
-      log_error(std::format(
-          "GPU ID {} out of range. Only {} device(s) available.", id,
-          device_count));
+      log_error(
+          std::format(
+              "GPU ID {} out of range. Only {} device(s) available.", id,
+              device_count));
       throw std::runtime_error("Invalid GPU device ID");
     }
   }
@@ -254,7 +255,7 @@ process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    VerbosityLevel verbosity)
+    VerbosityLevel verbosity, double rtol, double atol)
 {
   for (const auto& result : results) {
     if (result.results.empty() || !result.results[0].defined()) {
@@ -270,7 +271,7 @@ process_results(
       }
     }
 
-    validate_inference_result(result, *cpu_model, verbosity);
+    validate_inference_result(result, *cpu_model, verbosity, rtol, atol);
   }
 }
 
@@ -378,6 +379,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
     }
   }
 
-  process_results(results, model_cpu, models_gpu, opts.verbosity);
+  process_results(
+      results, model_cpu, models_gpu, opts.verbosity, opts.rtol, opts.atol);
 }
 }  // namespace starpu_server

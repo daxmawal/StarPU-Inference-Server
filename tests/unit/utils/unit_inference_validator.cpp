@@ -91,6 +91,16 @@ TEST_F(InferenceValidatorTest, FailsOnMismatch)
   EXPECT_NE(logs.find("Mismatch on output"), std::string::npos);
 }
 
+TEST_F(InferenceValidatorTest, CustomTolerancePasses)
+{
+  auto model = starpu_server::make_add_one_model();
+  auto result = starpu_server::make_result(
+      {torch::tensor({1, 2, 3})}, {torch::tensor({2.01F, 3.01F, 4.01F})}, 150,
+      starpu_server::DeviceType::CPU);
+  EXPECT_TRUE(validate_inference_result(
+      result, model, starpu_server::VerbosityLevel::Silent, 1e-1, 1e-1));
+}
+
 TEST_F(InferenceValidatorTest, FailsOnMismatchCuda)
 {
   skip_if_no_cuda();

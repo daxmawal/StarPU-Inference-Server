@@ -35,6 +35,10 @@ get_help_message(const char* prog_name) -> std::string
       "  --pregen-inputs N       Number of pregenerated inputs (default: 10)\n"
       "  --warmup-iterations N   Warmup iterations per CUDA device "
       "(default:2)\n"
+      "  --rtol [value]          Relative tolerance for validation (default: "
+      "1e-3)\n"
+      "  --atol [value]          Absolute tolerance for validation (default: "
+      "1e-5)\n"
       "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
       "  --help                  Show this help message\n";
   return msg;

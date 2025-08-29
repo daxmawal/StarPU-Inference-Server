@@ -175,6 +175,18 @@ load_config(const std::string& path) -> RuntimeConfig
       }
       cfg.seed = static_cast<uint64_t>(tmp);
     }
+    if (root["rtol"]) {
+      cfg.rtol = root["rtol"].as<double>();
+      if (cfg.rtol < 0) {
+        throw std::invalid_argument("rtol must be >= 0");
+      }
+    }
+    if (root["atol"]) {
+      cfg.atol = root["atol"].as<double>();
+      if (cfg.atol < 0) {
+        throw std::invalid_argument("atol must be >= 0");
+      }
+    }
     if (root["sync"]) {
       cfg.synchronous = root["sync"].as<bool>();
     }
