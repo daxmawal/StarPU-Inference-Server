@@ -28,7 +28,7 @@ get_inference_device(const InferenceResult& result) -> torch::Device
   switch (result.executed_on) {
     case DeviceType::CUDA: {
       const int idx = (result.device_id >= 0) ? result.device_id : 0;
-      return {torch::kCUDA, idx};
+      return {torch::kCUDA, static_cast<c10::DeviceIndex>(idx)};
     }
     case DeviceType::CPU:
       return {torch::kCPU};
