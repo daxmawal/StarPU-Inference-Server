@@ -21,6 +21,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "device_type.hpp"
@@ -253,6 +254,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
               "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
               STARPU_NMAXWORKERS));
     }
+    std::unordered_set<int> unique_ids;
 
     conf_.use_explicit_workers_cuda_gpuid = 1U;
     conf_.ncuda = static_cast<int>(opts.device_ids.size());
@@ -262,6 +264,10 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
       if (device_id < 0) {
         throw std::invalid_argument(
             "[ERROR] Invalid CUDA device ID: must be >= 0");
+      }
+      if (!unique_ids.insert(device_id).second) {
+        throw std::invalid_argument(
+            std::format("[ERROR] Duplicate CUDA device ID: {}", device_id));
       }
       conf_.workers_cuda_gpuid[idx] = static_cast<unsigned int>(device_id);
     }

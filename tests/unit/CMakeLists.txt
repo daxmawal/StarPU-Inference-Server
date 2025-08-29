@@ -12,6 +12,7 @@ target_sources(
             core/unit_inference_task.cpp
             core/unit_tensor_builder.cpp
             core/unit_warmup_runner.cpp
+            core/unit_starpu_setup.cpp
             core/robustness/edgecases_inference_queue.cpp
             core/robustness/edgecases_inference_runner_helpers.cpp
             core/robustness/edgecases_inference_task_errors.cpp
