@@ -97,3 +97,20 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   starpu_server::verify_populate_response(
       req, reply, outputs, recv_ms, send_ms);
 }
+
+TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  auto base = torch::tensor({{1, 2}, {3, 4}});
+  auto noncontig = base.transpose(0, 1);
+  ASSERT_FALSE(noncontig.is_contiguous());
+  std::vector<torch::Tensor> outputs = {noncontig};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 10;
+  int64_t send_ms = 20;
+  starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, send_ms);
+  auto contig = noncontig.contiguous();
+  starpu_server::verify_populate_response(
+      req, reply, {contig}, recv_ms, send_ms);
+}

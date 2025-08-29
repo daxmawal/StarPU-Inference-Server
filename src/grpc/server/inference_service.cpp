@@ -73,7 +73,7 @@ fill_output_tensor(
       out_tensor->add_shape(dim);
     }
 
-    auto flat = out.view({-1});
+    auto flat = out.contiguous().view({-1});
     reply->add_raw_output_contents()->assign(
         reinterpret_cast<const char*>(flat.data_ptr()),
         flat.numel() * flat.element_size());
