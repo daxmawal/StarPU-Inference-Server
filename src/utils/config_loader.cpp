@@ -21,13 +21,21 @@ namespace starpu_server {
 namespace {
 
 auto
-parse_tensor_nodes(const YAML::Node& nodes) -> std::vector<TensorConfig>
+parse_tensor_nodes(
+    const YAML::Node& nodes, std::size_t max_inputs, std::size_t max_dims)
+    -> std::vector<TensorConfig>
 {
   std::vector<TensorConfig> tensors;
   if (!nodes || !nodes.IsSequence()) {
     return tensors;
   }
   for (const auto& node : nodes) {
+    if (tensors.size() >= max_inputs) {
+      std::ostringstream oss;
+      oss << "number of tensors must be <= " << max_inputs;
+      throw std::invalid_argument(oss.str());
+    }
+
     TensorConfig t{};
     if (node["name"]) {
       t.name = node["name"].as<std::string>();
@@ -38,7 +46,14 @@ parse_tensor_nodes(const YAML::Node& nodes) -> std::vector<TensorConfig>
     if (!node["data_type"]) {
       throw std::invalid_argument("tensor node missing data_type");
     }
+
     t.dims = node["dims"].as<std::vector<int64_t>>();
+    if (t.dims.size() > max_dims) {
+      std::ostringstream oss;
+      oss << "tensor dims must be <= " << max_dims;
+      throw std::invalid_argument(oss.str());
+    }
+
     for (size_t i = 0; i < t.dims.size(); ++i) {
       const auto d = t.dims[i];
       if (d <= 0) {
@@ -114,10 +129,12 @@ load_config(const std::string& path) -> RuntimeConfig
       }
     }
     if (root["input"]) {
-      cfg.inputs = parse_tensor_nodes(root["input"]);
+      cfg.inputs =
+          parse_tensor_nodes(root["input"], cfg.max_inputs, cfg.max_dims);
     }
     if (root["output"]) {
-      cfg.outputs = parse_tensor_nodes(root["output"]);
+      cfg.outputs =
+          parse_tensor_nodes(root["output"], cfg.max_inputs, cfg.max_dims);
     }
     if (root["delay"]) {
       cfg.delay_ms = root["delay"].as<int>();

@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -369,6 +370,65 @@ max_batch_size: 0
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
   EXPECT_EQ(cfg.max_batch_size, 1);
+}
+
+TEST(ConfigLoader, TooManyInputsSetsValidFalse)
+{
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "config_loader_many_inputs.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  for (std::size_t i = 0; i <= kMaxInputs; ++i) {
+    yaml << "  - name: in" << i << "\n";
+    yaml << "    dims: [1]\n";
+    yaml << "    data_type: float32\n";
+  }
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_too_many_inputs.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, TooManyDimsSetsValidFalse)
+{
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "config_loader_many_dims.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [";
+  for (std::size_t i = 0; i <= kMaxDims; ++i) {
+    if (i) {
+      yaml << ", ";
+    }
+    yaml << 1;
+  }
+  yaml << "]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_too_many_dims.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
 }
 
 using VerbosityCase =
