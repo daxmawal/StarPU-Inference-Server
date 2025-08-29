@@ -92,8 +92,8 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   std::vector<torch::Tensor> outputs = {
       torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt))};
   inference::ModelInferResponse reply;
-  int64_t recv_ms = 10;
-  int64_t send_ms = 20;
+  uint64_t recv_ms = 10;
+  uint64_t send_ms = 20;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
       &req, &reply, outputs, recv_ms, send_ms);
   ASSERT_TRUE(status.ok());
@@ -109,8 +109,8 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
   ASSERT_FALSE(noncontig.is_contiguous());
   std::vector<torch::Tensor> outputs = {noncontig};
   inference::ModelInferResponse reply;
-  int64_t recv_ms = 10;
-  int64_t send_ms = 20;
+  uint64_t recv_ms = 10;
+  uint64_t send_ms = 20;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
       &req, &reply, outputs, recv_ms, send_ms);
   ASSERT_TRUE(status.ok());

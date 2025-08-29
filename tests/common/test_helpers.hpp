@@ -236,7 +236,8 @@ inline void
 verify_populate_response(
     const inference::ModelInferRequest& req,
     const inference::ModelInferResponse& resp,
-    const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms)
+    const std::vector<torch::Tensor>& outputs, uint64_t recv_ms,
+    uint64_t send_ms)
 {
   EXPECT_EQ(resp.model_name(), req.model_name());
   EXPECT_EQ(resp.model_version(), req.model_version());
