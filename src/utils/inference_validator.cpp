@@ -1,5 +1,7 @@
 #include "inference_validator.hpp"
 
+#include <c10/cuda/CUDAGuard.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <format>
@@ -24,8 +26,10 @@ static auto
 get_inference_device(const InferenceResult& result) -> torch::Device
 {
   switch (result.executed_on) {
-    case DeviceType::CUDA:
-      return {torch::kCUDA};
+    case DeviceType::CUDA: {
+      const int idx = (result.device_id >= 0) ? result.device_id : 0;
+      return {torch::kCUDA, idx};
+    }
     case DeviceType::CPU:
       return {torch::kCPU};
     default:
@@ -134,6 +138,11 @@ validate_inference_result(
 {
   try {
     const torch::Device device = get_inference_device(result);
+
+    c10::cuda::OptionalCUDAGuard device_guard;
+    if (device.is_cuda()) {
+      device_guard.reset_device(device);
+    }
 
     auto input_ivalues = prepare_inputs(result.inputs, device);
 
