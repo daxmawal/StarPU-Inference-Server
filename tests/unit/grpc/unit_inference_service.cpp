@@ -135,3 +135,50 @@ TEST(InferenceServiceImpl, PopulateResponseDetectsOverflow)
       &req, &reply, {huge_tensor}, recv_ms, send_ms);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
+
+TEST(InferenceService, ValidateInputsMismatchedRawContents)
+{
+  auto req = starpu_server::make_valid_request();
+  req.add_raw_input_contents("extra");
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(InferenceService, ValidateInputsDatatypeMismatch)
+{
+  auto req = starpu_server::make_valid_request();
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kLong};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(InferenceService, ValidateInputsShapeOverflow)
+{
+  starpu_server::InputSpec spec{
+      {std::numeric_limits<int64_t>::max()},
+      at::kFloat,
+      starpu_server::to_raw_data<float>({1.0F})};
+  auto req = starpu_server::make_model_infer_request({spec});
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
