@@ -85,6 +85,33 @@ TEST(ConfigLoader, NegativeDelaySetsValidFalse)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, NegativeIterationsSetsValidFalse)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_neg_iter_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "iterations: -1\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_neg_iter.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, InvalidSchedulerSetsValidFalse)
 {
   const auto model_path = std::filesystem::temp_directory_path() /
@@ -103,9 +130,8 @@ TEST(ConfigLoader, InvalidSchedulerSetsValidFalse)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
 
-  const auto tmp =
-      std::filesystem::temp_directory_path() /
-      "config_loader_invalid_sched.yaml";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_invalid_sched.yaml";
   std::ofstream(tmp) << yaml.str();
 
   const RuntimeConfig cfg = load_config(tmp.string());
@@ -169,8 +195,8 @@ output:
     data_type: float32
 )";
 
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_missing_dims.yaml";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_missing_dims.yaml";
   std::ofstream(tmp) << yaml;
 
   const RuntimeConfig cfg = load_config(tmp.string());
@@ -190,9 +216,8 @@ output:
     data_type: float32
 )";
 
-  const auto tmp =
-      std::filesystem::temp_directory_path() /
-      "config_loader_missing_dtype.yaml";
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_missing_dtype.yaml";
   std::ofstream(tmp) << yaml;
 
   const RuntimeConfig cfg = load_config(tmp.string());

@@ -142,6 +142,7 @@ launch_threads(
   });
 
   std::signal(SIGINT, signal_handler);
+  std::signal(SIGTERM, signal_handler);
 
   {
     std::unique_lock lock(ctx.stop_mutex);

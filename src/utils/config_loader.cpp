@@ -102,6 +102,10 @@ load_config(const std::string& path) -> RuntimeConfig
     }
     if (root["iterations"]) {
       cfg.iterations = root["iterations"].as<int>();
+      if (cfg.iterations < 0) {
+        log_error("iterations must be >= 0");
+        cfg.valid = false;
+      }
     }
     if (root["device_ids"]) {
       cfg.device_ids = root["device_ids"].as<std::vector<int>>();
