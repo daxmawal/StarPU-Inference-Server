@@ -31,7 +31,7 @@ TEST(TensorBuilder_Integration, StarPUStyleRoundTrip)
   auto t = tensors[0];
 
   starpu_server::TensorBuilder::copy_output_to_buffer(
-      t, output.data(), t.numel());
+      t, output.data(), t.numel(), t.scalar_type());
 
   for (int i = 0; i < 4; ++i) EXPECT_FLOAT_EQ(output[i], input[i]);
 }

@@ -118,7 +118,7 @@ TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
       torch::tensor({1.0F, 2.0F, 3.5F, -4.0F, 0.25F}, torch::kFloat32);
   std::vector<float> dst(5, 0.0F);
   starpu_server::TensorBuilder::copy_output_to_buffer(
-      tensor, dst.data(), tensor.numel());
+      tensor, dst.data(), tensor.numel(), tensor.scalar_type());
   ASSERT_EQ(dst.size(), 5U);
   EXPECT_FLOAT_EQ(dst[0], 1.0F);
   EXPECT_FLOAT_EQ(dst[1], 2.0F);

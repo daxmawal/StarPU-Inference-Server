@@ -19,7 +19,8 @@ class TensorBuilder {
       torch::Device device) -> std::vector<torch::Tensor>;
 
   static void copy_output_to_buffer(
-      const at::Tensor& output, void* buffer_ptr, int64_t expected_numel);
+      const at::Tensor& output, void* buffer_ptr, int64_t expected_numel,
+      at::ScalarType expected_type);
 
  private:
   static auto from_raw_ptr(

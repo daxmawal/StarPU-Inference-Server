@@ -109,7 +109,7 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
       auto* buff = static_cast<float*>(param.buffer);
       std::fill_n(buff, numel, 0.F);
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
+          param.tensor, buff, numel, param.dtype);
       for (size_t i = 0; i < numel; ++i) {
         EXPECT_FLOAT_EQ(buff[i], param.tensor[i].item<float>());
       }
@@ -119,7 +119,7 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
       auto* buff = static_cast<int32_t*>(param.buffer);
       std::fill_n(buff, numel, 0);
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
+          param.tensor, buff, numel, param.dtype);
       for (size_t i = 0; i < numel; ++i) {
         EXPECT_EQ(buff[i], param.tensor[i].item<int32_t>());
       }
@@ -129,7 +129,7 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
       auto* buff = static_cast<double*>(param.buffer);
       std::fill_n(buff, numel, 0.0);
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
+          param.tensor, buff, numel, param.dtype);
       for (size_t i = 0; i < numel; ++i) {
         EXPECT_DOUBLE_EQ(buff[i], param.tensor[i].item<double>());
       }
@@ -139,7 +139,7 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
       auto* buff = static_cast<int64_t*>(param.buffer);
       std::fill_n(buff, numel, 0);
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
+          param.tensor, buff, numel, param.dtype);
       for (size_t i = 0; i < numel; ++i) {
         EXPECT_EQ(buff[i], param.tensor[i].item<int64_t>());
       }
@@ -149,7 +149,7 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
       auto* buff = static_cast<int16_t*>(param.buffer);
       std::fill_n(buff, numel, 0);
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
+          param.tensor, buff, numel, param.dtype);
       for (size_t i = 0; i < numel; ++i) {
         EXPECT_EQ(buff[i], param.tensor[i].item<int16_t>());
       }
@@ -159,7 +159,7 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
       auto* buff = static_cast<int8_t*>(param.buffer);
       std::fill_n(buff, numel, 0);
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
+          param.tensor, buff, numel, param.dtype);
       for (size_t i = 0; i < numel; ++i) {
         EXPECT_EQ(buff[i], param.tensor[i].item<int8_t>());
       }
@@ -169,7 +169,7 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
       auto* buff = static_cast<uint8_t*>(param.buffer);
       std::fill_n(buff, numel, 0);
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
+          param.tensor, buff, numel, param.dtype);
       for (size_t i = 0; i < numel; ++i) {
         EXPECT_EQ(buff[i], param.tensor[i].item<uint8_t>());
       }
@@ -179,7 +179,7 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
       auto* buff = static_cast<bool*>(param.buffer);
       std::fill_n(buff, numel, false);
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
+          param.tensor, buff, numel, param.dtype);
       for (size_t i = 0; i < numel; ++i) {
         EXPECT_EQ(buff[i], param.tensor[i].item<bool>());
       }

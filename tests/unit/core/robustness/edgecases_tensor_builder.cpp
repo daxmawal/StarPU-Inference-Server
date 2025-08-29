@@ -50,7 +50,7 @@ TEST(TensorBuilder_Robustesse, CopyOutputToBufferSizeMismatch_TooLarge)
   std::array<int32_t, kElems2> buf{};
   EXPECT_THROW(
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, buf.data(), kElems3),
+          tensor, buf.data(), kElems3, tensor.scalar_type()),
       starpu_server::InferenceExecutionException);
 }
 
@@ -61,7 +61,7 @@ TEST(TensorBuilder_Robustesse, CopyOutputToBufferSizeMismatch_TooSmall)
   std::array<int32_t, kElems2> buf{};
   EXPECT_THROW(
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, buf.data(), kElems2),
+          tensor, buf.data(), kElems2, tensor.scalar_type()),
       starpu_server::InferenceExecutionException);
 }
 
@@ -74,7 +74,7 @@ TEST(TensorBuilder_Robustesse, CopyOutputToBufferNonContiguous)
   std::array<float, 4> buf{};
   EXPECT_THROW(
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          transposed, buf.data(), transposed.numel()),
+          transposed, buf.data(), transposed.numel(), transposed.scalar_type()),
       starpu_server::InferenceExecutionException);
 }
 
@@ -84,7 +84,28 @@ TEST(TensorBuilder_Robustesse, CopyOutputToBufferNullPointer)
   int32_t* null_ptr = nullptr;
   EXPECT_THROW(
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, null_ptr, tensor.numel()),
+          tensor, null_ptr, tensor.numel(), tensor.scalar_type()),
+      starpu_server::InferenceExecutionException);
+}
+
+TEST(TensorBuilder_Robustesse, CopyOutputToBufferTypeMismatch_FloatVsInt)
+{
+  auto tensor =
+      torch::tensor({1.F, 2.F}, torch::TensorOptions().dtype(at::kFloat));
+  std::array<float, kElems2> buf{};
+  EXPECT_THROW(
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          tensor, buf.data(), tensor.numel(), at::kInt),
+      starpu_server::InferenceExecutionException);
+}
+
+TEST(TensorBuilder_Robustesse, CopyOutputToBufferTypeMismatch_IntVsFloat)
+{
+  auto tensor = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
+  std::array<int32_t, kElems2> buf{};
+  EXPECT_THROW(
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          tensor, buf.data(), tensor.numel(), at::kFloat),
       starpu_server::InferenceExecutionException);
 }
 

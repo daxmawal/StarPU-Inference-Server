@@ -189,7 +189,8 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
   run_codelet_inference(
       params, buffers_vec, torch::kCPU, params->models.model_cpu,
       [](const at::Tensor& out, void* buffer_ptr) {
-        TensorBuilder::copy_output_to_buffer(out, buffer_ptr, out.numel());
+        TensorBuilder::copy_output_to_buffer(
+            out, buffer_ptr, out.numel(), out.scalar_type());
       },
       DeviceType::CPU);
 }

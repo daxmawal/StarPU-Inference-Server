@@ -78,7 +78,7 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
       &params, buffers, torch::Device(torch::kCPU), &model,
       [](const at::Tensor& out, void* buffer_ptr) {
         starpu_server::TensorBuilder::copy_output_to_buffer(
-            out, buffer_ptr, out.numel());
+            out, buffer_ptr, out.numel(), out.scalar_type());
       });
   auto after = std::chrono::high_resolution_clock::now();
 

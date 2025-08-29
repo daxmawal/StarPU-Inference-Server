@@ -71,13 +71,18 @@ TensorBuilder::from_starpu_buffers(
 
 void
 TensorBuilder::copy_output_to_buffer(
-    const at::Tensor& output, void* buffer_ptr, int64_t expected_numel)
+    const at::Tensor& output, void* buffer_ptr, int64_t expected_numel,
+    at::ScalarType expected_type)
 {
   if (buffer_ptr == nullptr) {
     throw InferenceExecutionException("[ERROR] Output buffer pointer is null");
   }
   if (output.numel() != expected_numel) {
     throw InferenceExecutionException("[ERROR] Output size mismatch");
+  }
+
+  if (output.scalar_type() != expected_type) {
+    throw InferenceExecutionException("[ERROR] Output type mismatch");
   }
 
   if (!output.is_contiguous()) {
