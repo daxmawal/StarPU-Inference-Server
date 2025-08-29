@@ -163,27 +163,15 @@ run_reference_inference(
     const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
 {
   c10::InferenceMode guard;
-  std::vector<torch::Tensor> output_refs;
   const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
-
-  if (const auto output = model.forward(input_ivalues); output.isTensor()) {
-    output_refs.push_back(output.toTensor());
-  } else if (output.isTuple()) {
-    for (const auto& val : output.toTuple()->elements()) {
-      if (val.isTensor()) {
-        output_refs.push_back(val.toTensor());
-      }
-    }
-  } else if (output.isTensorList()) {
-    output_refs.insert(
-        output_refs.end(), output.toTensorList().begin(),
-        output.toTensorList().end());
-  } else {
-    log_error("Unsupported output type from model.");
-    throw UnsupportedModelOutputTypeException("Unsupported model output type");
+  const c10::IValue output = model.forward(input_ivalues);
+  try {
+    return extract_tensors_from_output(output);
   }
-
-  return output_refs;
+  catch (const UnsupportedModelOutputTypeException&) {
+    log_error("Unsupported output type from model.");
+    throw;
+  }
 }
 
 // =============================================================================
