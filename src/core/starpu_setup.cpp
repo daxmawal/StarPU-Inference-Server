@@ -19,6 +19,7 @@
 #include <format>
 #include <functional>
 #include <map>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -235,10 +236,10 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 // StarPUSetup: constructor and destructor (handles StarPU global state)
 // =============================================================================
 
-StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
+StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
+    : scheduler_name_(opts.scheduler), conf_{}
 {
   starpu_conf_init(&conf_);
-  scheduler_name_ = opts.scheduler;
   conf_.sched_policy_name = scheduler_name_.c_str();
 
   if (!opts.use_cpu) {
@@ -258,8 +259,10 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
     conf_.use_explicit_workers_cuda_gpuid = 1U;
     conf_.ncuda = static_cast<int>(opts.device_ids.size());
 
+    std::span<unsigned int> workers_cuda_gpuid(
+        conf_.workers_cuda_gpuid, STARPU_NMAXWORKERS);
     for (size_t idx = 0; idx < opts.device_ids.size(); ++idx) {
-      int device_id = opts.device_ids[idx];
+      const int device_id = opts.device_ids[idx];
       if (device_id < 0) {
         throw std::invalid_argument(
             "[ERROR] Invalid CUDA device ID: must be >= 0");
@@ -268,7 +271,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
         throw std::invalid_argument(
             std::format("[ERROR] Duplicate CUDA device ID: {}", device_id));
       }
-      conf_.workers_cuda_gpuid[idx] = static_cast<unsigned int>(device_id);
+      workers_cuda_gpuid[idx] = static_cast<unsigned int>(device_id);
     }
   }
 

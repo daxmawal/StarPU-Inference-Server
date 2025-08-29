@@ -136,11 +136,12 @@ clone_model_to_gpus(
     const std::vector<int>& device_ids)
     -> std::vector<torch::jit::script::Module>
 {
-  const int device_count = torch::cuda::device_count();
-  for (const int id : device_ids) {
-    if (id < 0 || id >= device_count) {
+  const int device_count =
+      static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
+  for (const int device_id : device_ids) {
+    if (device_id < 0 || device_id >= device_count) {
       log_error(std::format(
-          "GPU ID {} out of range. Only {} device(s) available.", id,
+          "GPU ID {} out of range. Only {} device(s) available.", device_id,
           device_count));
       throw std::runtime_error("Invalid GPU device ID");
     }

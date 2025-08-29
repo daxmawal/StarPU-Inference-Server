@@ -130,3 +130,15 @@ TEST(ArgsParser_Unit, MetricsPortBoundaryValues)
     EXPECT_EQ(opts.metrics_port, port);
   }
 }
+
+TEST(ArgsParser_Unit, ParsesToleranceOptions)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{"program", "--model", model.c_str(), "--shape",
+                                "1x1",     "--types", "float",       "--rtol",
+                                "1e-2",    "--atol",  "1e-4"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_DOUBLE_EQ(opts.rtol, 1e-2);
+  EXPECT_DOUBLE_EQ(opts.atol, 1e-4);
+}

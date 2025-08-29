@@ -10,6 +10,8 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -93,9 +95,9 @@ InferenceTask::safe_register_tensor_vector(
   }
   starpu_data_handle_t handle = nullptr;
 
-  const uint64_t numel = static_cast<uint64_t>(tensor.numel());
-  const uint64_t elem_size = static_cast<uint64_t>(tensor.element_size());
-  const uint64_t max_size =
+  const auto numel = static_cast<uint64_t>(tensor.numel());
+  const auto elem_size = static_cast<uint64_t>(tensor.element_size());
+  const auto max_size =
       static_cast<uint64_t>(std::numeric_limits<size_t>::max());
 
   if (numel > max_size) {
@@ -251,8 +253,9 @@ InferenceTask::fill_input_layout(
           "Input tensor has too many dimensions: max is {}", opts_->max_dims));
     }
     params->layout.num_dims[i] = dim;
-    params->layout.dims[i].assign(
-        tensor.sizes().data(), tensor.sizes().data() + dim);
+    const auto sizes = tensor.sizes();
+    const auto first_dims = std::views::take(sizes, static_cast<size_t>(dim));
+    params->layout.dims[i].assign(first_dims.begin(), first_dims.end());
   }
 }
 
@@ -375,14 +378,17 @@ InferenceTask::fill_task_buffers(
   const size_t num_inputs = inputs.size();
   const size_t num_buffers = num_inputs + outputs.size();
 
+  std::span<starpu_data_handle_t> handles(task->dyn_handles, num_buffers);
+  std::span<starpu_data_access_mode> modes(task->dyn_modes, num_buffers);
+
   for (size_t idx = 0; idx < num_inputs; ++idx) {
-    task->dyn_handles[idx] = inputs[idx];
-    task->dyn_modes[idx] = STARPU_R;
+    handles[idx] = inputs[idx];
+    modes[idx] = STARPU_R;
   }
 
-  for (size_t idx = num_inputs; idx < num_buffers; ++idx) {
-    task->dyn_handles[idx] = outputs[idx - num_inputs];
-    task->dyn_modes[idx] = STARPU_W;
+  for (size_t idx = 0; idx < outputs.size(); ++idx) {
+    handles[num_inputs + idx] = outputs[idx];
+    modes[num_inputs + idx] = STARPU_W;
   }
 }
 
@@ -396,7 +402,7 @@ InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
       throw std::invalid_argument("Fixed worker ID must be non-negative");
     }
 
-    int total_workers = starpu_worker_get_count();
+    const int total_workers = static_cast<int>(starpu_worker_get_count());
     if (worker_id >= total_workers) {
       throw std::out_of_range("Fixed worker ID exceeds available workers");
     }

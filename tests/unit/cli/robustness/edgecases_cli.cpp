@@ -57,6 +57,8 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--pregen-inputs", "-1"},
         std::vector<const char*>{"--warmup-iterations", "-1"},
         std::vector<const char*>{"--seed", "-1"},
+        std::vector<const char*>{"--rtol", "-1"},
+        std::vector<const char*>{"--atol", "-1"},
         std::vector<const char*>{"--shapes", "1x2,,3", "--types", "float,int"},
         std::vector<const char*>{"--model"},
         std::vector<const char*>{"--iterations"},
@@ -112,4 +114,6 @@ INSTANTIATE_TEST_SUITE_P(
         MissingValueParam{{"program", "--model"}, "--model"},
         MissingValueParam{{"program", "--config"}, "--config"},
         MissingValueParam{{"program", "--scheduler"}, "--scheduler"},
-        MissingValueParam{{"program", "--address"}, "--address"}));
+        MissingValueParam{{"program", "--address"}, "--address"},
+        MissingValueParam{{"program", "--rtol"}, "--rtol"},
+        MissingValueParam{{"program", "--atol"}, "--atol"}));
