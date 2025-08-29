@@ -156,6 +156,49 @@ output:
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, MissingDimsSetsValidFalse)
+{
+  const std::string yaml = R"(
+model: model.pt
+input:
+  - name: in
+    data_type: float32
+output:
+  - name: out
+    dims: [1]
+    data_type: float32
+)";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_missing_dims.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, MissingDataTypeSetsValidFalse)
+{
+  const std::string yaml = R"(
+model: model.pt
+input:
+  - name: in
+    dims: [1]
+output:
+  - name: out
+    dims: [1]
+    data_type: float32
+)";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() /
+      "config_loader_missing_dtype.yaml";
+  std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, InvalidVerbositySetsValidFalse)
 {
   const std::string yaml = R"(verbosity: unknown)";
