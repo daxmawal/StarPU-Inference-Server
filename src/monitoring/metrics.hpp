@@ -18,7 +18,7 @@ namespace starpu_server {
 class MetricsRegistry {
  public:
   explicit MetricsRegistry(int port);
-  ~MetricsRegistry();
+  ~MetricsRegistry() noexcept;
 
   std::shared_ptr<prometheus::Registry> registry;
   prometheus::Counter* requests_total;

@@ -46,10 +46,17 @@ MetricsRegistry::MetricsRegistry(int port)
   queue_size_gauge = &gauge_family.Add({});
 }
 
-MetricsRegistry::~MetricsRegistry()
+MetricsRegistry::~MetricsRegistry() noexcept
 {
   if (exposer_ && registry) {
-    exposer_->RemoveCollectable(registry);
+    try {
+      exposer_->RemoveCollectable(registry);
+    }
+    catch (const std::exception& e) {
+      log_error(
+          std::string("Failed to remove metrics registry collectable: ") +
+          e.what());
+    }
   }
 }
 
