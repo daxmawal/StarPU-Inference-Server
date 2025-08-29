@@ -2,6 +2,8 @@
 
 # Run clang-tidy using the project's compile_commands database.
 #
+# Requires jq for parsing compile_commands.json.
+#
 # Required environment variables (or positional arguments):
 #   LIBTORCH_DIR - path to the LibTorch installation
 #   GRPC_DIR     - path to the gRPC installation
@@ -9,6 +11,12 @@
 # Optionally, LIBTORCH_DIR and GRPC_DIR can be provided as the first and
 # second positional arguments of this script. BUILD_DIR may be overridden via
 # the BUILD_DIR environment variable (defaults to '../build').
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "Error: jq is not installed or not in PATH." >&2
+  echo "Install it with: apt-get install jq" >&2
+  exit 1
+fi
 
 BUILD_DIR=${BUILD_DIR:-../build}
 
