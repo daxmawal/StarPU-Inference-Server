@@ -41,7 +41,6 @@ checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
   return lhs * rhs;
 }
 
-// Convert gRPC input to torch::Tensor
 auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input, const std::string& raw,
@@ -75,7 +74,6 @@ convert_input_to_tensor(
   return Status::OK;
 }
 
-// Fill gRPC output from torch::Tensor
 auto
 fill_output_tensor(
     ModelInferResponse* reply,
@@ -104,7 +102,6 @@ fill_output_tensor(
 }
 }  // namespace
 
-// Implementation
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types)

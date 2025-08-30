@@ -350,7 +350,6 @@ InferenceTask::allocate_task_buffers(
     starpu_task* task, size_t num_buffers,
     const std::shared_ptr<InferenceCallbackContext>& ctx)
 {
-  // Use RAII wrappers for allocations and transfer ownership to StarPU
   auto handles_owner = std::unique_ptr<void, void (*)(void*)>(
       std::malloc(num_buffers * sizeof(starpu_data_handle_t)), std::free);
   if (!handles_owner) {
@@ -364,7 +363,6 @@ InferenceTask::allocate_task_buffers(
   auto modes_owner = std::unique_ptr<void, void (*)(void*)>(
       std::malloc(num_buffers * sizeof(starpu_data_access_mode)), std::free);
   if (!modes_owner) {
-    // handles_owner will be freed automatically
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;
     starpu_task_destroy(task);
@@ -372,7 +370,6 @@ InferenceTask::allocate_task_buffers(
     throw MemoryAllocationException("Failed to allocate task buffers.");
   }
 
-  // Hand over ownership to StarPU task (StarPU will free these)
   task->dyn_handles =
       static_cast<starpu_data_handle_t*>(handles_owner.release());
   task->dyn_modes =

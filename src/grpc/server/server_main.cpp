@@ -22,7 +22,6 @@
 #include "utils/runtime_config.hpp"
 
 namespace {
-// Encapsulates state shared between the worker threads and the signal handler
 struct ServerContext {
   starpu_server::InferenceQueue* queue_ptr = nullptr;
   std::unique_ptr<grpc::Server> server;

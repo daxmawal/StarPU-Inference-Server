@@ -26,12 +26,9 @@ namespace starpu_server {
 #endif
 
 namespace InferLimits {
-constexpr size_t MaxInputs =
-    STARPU_SERVER_MAX_INPUTS;  // Max number of input tensors
-constexpr size_t MaxDims =
-    STARPU_SERVER_MAX_DIMS;  // Max number of dimensions per tensor
-constexpr size_t MaxModelsGPU =
-    STARPU_SERVER_MAX_MODELS_GPU;  // Max number of GPU models
+constexpr size_t MaxInputs = STARPU_SERVER_MAX_INPUTS;
+constexpr size_t MaxDims = STARPU_SERVER_MAX_DIMS;
+constexpr size_t MaxModelsGPU = STARPU_SERVER_MAX_MODELS_GPU;
 }  // namespace InferLimits
 
 namespace detail {
@@ -51,9 +48,8 @@ struct Timing {
 // =============================================================================
 
 struct DeviceInfo {
-  int* device_id =
-      nullptr;  // Where the task was executed (CPU/GPU, which device)
-  int* worker_id = nullptr;  // Where the task was executed, which StarPU worker
+  int* device_id = nullptr;
+  int* worker_id = nullptr;
   DeviceType* executed_on = nullptr;
 };
 

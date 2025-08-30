@@ -23,24 +23,43 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
   EXPECT_EQ(opts.inputs[0].type, at::kFloat);
 }
 
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 TEST(ArgsParser_Unit, ParsesAllOptions)
 {
   const auto& model = test_model_path();
 
-  // Choose device-ids based on available GPUs so the test passes on
-  // CPU-only machines and those with 1 or more GPUs.
   const int device_count =
       static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
 
   std::vector<const char*> args{
-      "program", "--model", model.c_str(), "--shapes", "1x3x224x224,2x1",
-      "--types", "float,int", "--iterations", "5",
-      // device-ids appended conditionally below
-      "--verbose", "3", "--delay", "42", "--scheduler", "lws", "--address",
-      "127.0.0.1:1234", "--max-batch-size", "2", "--pregen-inputs", "7",
-      "--warmup-pregen-inputs", "5", "--warmup-iterations", "3", "--seed",
-      "123", "--sync", "--no_cpu"};
+      "program",
+      "--model",
+      model.c_str(),
+      "--shapes",
+      "1x3x224x224,2x1",
+      "--types",
+      "float,int",
+      "--iterations",
+      "5",
+      "--verbose",
+      "3",
+      "--delay",
+      "42",
+      "--scheduler",
+      "lws",
+      "--address",
+      "127.0.0.1:1234",
+      "--max-batch-size",
+      "2",
+      "--pregen-inputs",
+      "7",
+      "--warmup-pregen-inputs",
+      "5",
+      "--warmup-iterations",
+      "3",
+      "--seed",
+      "123",
+      "--sync",
+      "--no_cpu"};
 
   if (device_count >= 2) {
     args.push_back("--device-ids");

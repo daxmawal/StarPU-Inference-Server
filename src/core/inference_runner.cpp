@@ -392,7 +392,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 
   if (opts.use_cuda) {
     if (auto err = synchronize_cuda_device(); err != cudaSuccess) {
-      return;  // abort if synchronization failed
+      return;
     }
   }
 

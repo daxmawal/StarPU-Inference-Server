@@ -21,7 +21,6 @@ constexpr int kPreviewLimit = 10;
 // Device and Input Preparation Utilities
 // =============================================================================
 
-// Returns the device on which the inference ran (CPU or CUDA)
 static auto
 get_inference_device(const InferenceResult& result) -> torch::Device
 {
@@ -39,7 +38,6 @@ get_inference_device(const InferenceResult& result) -> torch::Device
   }
 }
 
-// Converts input tensors to the appropriate device and wraps them in IValues
 static auto
 prepare_inputs(
     const std::vector<torch::Tensor>& inputs,
@@ -56,7 +54,6 @@ prepare_inputs(
 // Output Extraction and Comparison
 // =============================================================================
 
-// Converts model output (Tensor or Tuple) to a list of tensors
 static auto
 extract_reference_outputs(
     const torch::IValue& output,
@@ -89,7 +86,6 @@ extract_reference_outputs(
   return tensors;
 }
 
-// Compares two lists of tensors (reference vs actual), with logging on mismatch
 static auto
 compare_outputs(
     const std::vector<torch::Tensor>& reference,
@@ -104,11 +100,9 @@ compare_outputs(
 
   bool all_valid = true;
   for (size_t i = 0; i < reference.size(); ++i) {
-    // Ensure tensors are on the same device
     const auto ref_dev = reference[i].to(device);
     const auto res_dev = actual[i].to(device);
 
-    // allclose requires floating/complex dtypes. Cast both to float
     const auto ref_cmp = ref_dev.to(torch::kFloat);
     const auto res_cmp = res_dev.to(torch::kFloat);
 

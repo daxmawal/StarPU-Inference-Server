@@ -23,8 +23,7 @@
 
 namespace starpu_server {
 namespace {
-// Validates that the given pointer is not null. Throws std::invalid_argument
-// with a standardized error message if validation fails.
+
 inline void
 validate_not_null(const void* ptr, std::string_view field_name)
 {

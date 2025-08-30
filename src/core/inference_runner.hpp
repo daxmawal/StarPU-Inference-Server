@@ -51,7 +51,6 @@ struct InferenceResult {
 
 class InferenceJob {
  public:
-  // Constructors
   InferenceJob() = default;
 
   InferenceJob(
@@ -62,10 +61,8 @@ class InferenceJob {
 
   static auto make_shutdown_job() -> std::shared_ptr<InferenceJob>;
 
-  // Check shutdown
   [[nodiscard]] auto is_shutdown() const -> bool { return is_shutdown_signal_; }
 
-  // Setters
   void set_job_id(int job_id) { job_id_ = job_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
@@ -98,7 +95,6 @@ class InferenceJob {
     on_complete_ = std::move(call_back);
   }
 
-  // Getters
   [[nodiscard]] auto get_job_id() const -> int { return job_id_; }
   [[nodiscard]] auto get_input_tensors() const
       -> const std::vector<torch::Tensor>&

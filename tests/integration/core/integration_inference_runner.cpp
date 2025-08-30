@@ -44,8 +44,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputCPU)
   torch::manual_seed(kSeed42);
   auto result = starpu_server::load_model_and_reference_output(opts);
   ASSERT_TRUE(result.has_value());
-  const auto& [cpu_model, gpu_models, refs] =
-      result.value();  // NOLINT(bugprone-unchecked-optional-access)
+  const auto& [cpu_model, gpu_models, refs] = result.value();
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(kSeed42);
@@ -71,8 +70,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTuple)
   torch::manual_seed(kSeed1);
   auto result = starpu_server::load_model_and_reference_output(opts);
   ASSERT_TRUE(result.has_value());
-  const auto& [cpu_model, gpu_models, refs] =
-      result.value();  // NOLINT(bugprone-unchecked-optional-access)
+  const auto& [cpu_model, gpu_models, refs] = result.value();
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(kSeed1);
@@ -99,8 +97,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTensorList)
   torch::manual_seed(kSeed2);
   auto result = starpu_server::load_model_and_reference_output(opts);
   ASSERT_TRUE(result.has_value());
-  const auto& [cpu_model, gpu_models, refs] =
-      result.value();  // NOLINT(bugprone-unchecked-optional-access)
+  const auto& [cpu_model, gpu_models, refs] = result.value();
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(kSeed2);

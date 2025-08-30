@@ -83,7 +83,6 @@ WarmupRunner::client_worker(
   const auto total = static_cast<int>(total_size_t);
   int job_id = 0;
 
-  // Sends jobs to the queue, fixing the targeted workers
   for (const auto& [device_id, worker_ids] : device_workers) {
     for (const int worker_id : worker_ids) {
       for (auto iteration = 0; iteration < iterations_per_worker; ++iteration) {
@@ -107,7 +106,7 @@ WarmupRunner::client_worker(
     }
   }
 
-  queue.shutdown();  // Tells the server that there are no more jobs
+  queue.shutdown();
 }
 
 // =============================================================================
@@ -132,7 +131,6 @@ WarmupRunner::run(int iterations_per_worker)
   std::condition_variable dummy_cv;
   std::vector<InferenceResult> dummy_results;
 
-  // Start the server (consumes jobs in the queue)
   StarPUTaskRunnerConfig config{};
   config.queue = &queue;
   config.model_cpu = &model_cpu_;
@@ -150,11 +148,9 @@ WarmupRunner::run(int iterations_per_worker)
   const auto device_workers =
       StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);
 
-  // Launch the client (generates the jobs to be run)
   const std::jthread client(
       [&]() { client_worker(device_workers, queue, iterations_per_worker); });
 
-  // Calculation of the total number of jobs to expect
   size_t total_worker_count = 0;
   for (const auto& [device_id, worker_list] : device_workers) {
     total_worker_count += worker_list.size();

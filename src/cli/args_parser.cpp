@@ -331,7 +331,6 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     return false;
   }
 
-  // torch::cuda::device_count returns a small integral type; cast safely
   const int device_count =
       static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
 

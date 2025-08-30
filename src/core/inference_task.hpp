@@ -47,7 +47,6 @@ class InferenceTask {
       std::vector<torch::jit::script::Module>* models_gpu,
       const RuntimeConfig* opts) noexcept;
 
-  // --- Tensor Registration with StarPU ---
   static auto safe_register_tensor_vector(
       const torch::Tensor& tensor,
       const std::string& label) -> starpu_data_handle_t;
@@ -66,7 +65,6 @@ class InferenceTask {
   [[nodiscard]] auto prepare_output_handles() const
       -> std::vector<starpu_data_handle_t>;
 
-  // --- Inference Parameters & Context ---
   auto create_inference_params() -> std::shared_ptr<InferenceParams>;
 
   auto create_context(
@@ -82,7 +80,6 @@ class InferenceTask {
       const std::shared_ptr<InferenceParams>& params, size_t num_inputs) const;
   void check_limits(size_t num_inputs) const;
 
-  // --- Task Creation & Submission ---
   auto create_task(
       const std::vector<starpu_data_handle_t>& inputs_handles,
       const std::vector<starpu_data_handle_t>& outputs_handles,
@@ -91,7 +88,6 @@ class InferenceTask {
   void submit();
   void assign_fixed_worker_if_needed(starpu_task* task) const;
 
-  // --- StarPU Buffer Management ---
   static void allocate_task_buffers(
       starpu_task* task, size_t num_buffers,
       const std::shared_ptr<InferenceCallbackContext>& ctx);
@@ -100,7 +96,6 @@ class InferenceTask {
       starpu_task* task, const std::vector<starpu_data_handle_t>& inputs,
       const std::vector<starpu_data_handle_t>& outputs);
 
-  // --- Output & Callback Handling ---
   static void starpu_output_callback(void* arg);
   static void acquire_output_handle(
       starpu_data_handle_t handle, InferenceCallbackContext* ctx);
@@ -119,7 +114,6 @@ class InferenceTask {
 
   static void finalize_inference_task(void* arg);
 
-  // --- Utilities ---
   static void log_exception(
       const std::string& context, const std::exception& e);
 

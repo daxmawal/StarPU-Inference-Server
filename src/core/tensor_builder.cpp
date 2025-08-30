@@ -42,11 +42,9 @@ TensorBuilder::from_starpu_buffers(
   inputs.reserve(params->num_inputs);
 
   for (size_t idx = 0; idx < params->num_inputs; ++idx) {
-    // Cast StarPU buffer to custom interface and extract raw pointer
     auto* var_iface = static_cast<starpu_variable_interface*>(buffers[idx]);
     auto input_data = var_iface->ptr;
 
-    // Extract shape from layout metadata
     const auto& dims = params->layout.dims.at(idx);
     const auto raw_ndim = params->layout.num_dims.at(idx);
     TORCH_CHECK(
@@ -56,8 +54,6 @@ TensorBuilder::from_starpu_buffers(
       throw InferenceExecutionException("[ERROR] Tensor layout mismatch");
     }
 
-
-    // Extract tensor type and wrap raw buffer into a torch::Tensor
     const at::ScalarType dtype = params->layout.input_types.at(idx);
     inputs.emplace_back(from_raw_ptr(input_data, dtype, dims, device));
   }

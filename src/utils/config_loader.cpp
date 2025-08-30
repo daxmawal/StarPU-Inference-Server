@@ -20,30 +20,25 @@ namespace starpu_server {
 
 namespace {
 
-// Constants for validation
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
 
-// Forward declarations
 auto parse_tensor_nodes(
     const YAML::Node& nodes, std::size_t max_inputs,
     std::size_t max_dims) -> std::vector<TensorConfig>;
 
-// -----------------------------------------------------------------------------
-// Helper parsers to reduce load_config complexity
-// -----------------------------------------------------------------------------
-void parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["verbose"]) {
     cfg.verbosity = parse_verbosity_level(root["verbose"].as<std::string>());
   } else if (root["verbosity"]) {
-    cfg.verbosity =
-        parse_verbosity_level(root["verbosity"].as<std::string>());
+    cfg.verbosity = parse_verbosity_level(root["verbosity"].as<std::string>());
   }
 }
 
-auto validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg)
-    -> bool
+auto
+validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 {
   const std::vector<std::string> required_keys{"model", "input", "output"};
   for (const auto& key : required_keys) {
@@ -55,7 +50,8 @@ auto validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg)
   return cfg.valid;
 }
 
-void parse_scheduler_node(const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_scheduler_node(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["scheduler"]) {
     cfg.scheduler = root["scheduler"].as<std::string>();
@@ -66,7 +62,8 @@ void parse_scheduler_node(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-void parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["model"]) {
     cfg.model_path = root["model"].as<std::string>();
@@ -77,7 +74,8 @@ void parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-void parse_iteration_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_iteration_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["iterations"]) {
     cfg.iterations = root["iterations"].as<int>();
@@ -94,7 +92,8 @@ void parse_iteration_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-void parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["input"]) {
     cfg.inputs =
@@ -106,7 +105,8 @@ void parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-void parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["delay"]) {
     cfg.delay_ms = root["delay"].as<int>();
@@ -127,7 +127,8 @@ void parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-void parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["max_message_bytes"]) {
     const auto tmp = root["max_message_bytes"].as<long long>();
@@ -146,7 +147,8 @@ void parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-void parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["pregen_inputs"]) {
     const int tmp = root["pregen_inputs"].as<int>();
@@ -171,8 +173,8 @@ void parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-void parse_seed_tolerances_and_flags(
-    const YAML::Node& root, RuntimeConfig& cfg)
+void
+parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["seed"]) {
     const auto tmp = root["seed"].as<long long>();
@@ -268,7 +270,6 @@ load_config(const std::string& path) -> RuntimeConfig
   try {
     YAML::Node root = YAML::LoadFile(path);
 
-    // Break down parsing into helpers to lower complexity
     parse_verbosity(root, cfg);
     if (!validate_required_keys(root, cfg)) {
       return cfg;

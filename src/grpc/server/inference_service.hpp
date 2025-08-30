@@ -39,10 +39,8 @@ class InferenceServiceImpl final
   static auto populate_response(
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
-      const std::vector<torch::Tensor>& outputs,
-      int64_t recv_ms,  // NOLINT(bugprone-easily-swappable-parameters)
-      int64_t send_ms)
-      -> grpc::Status;  // NOLINT(bugprone-easily-swappable-parameters)
+      const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
+      int64_t send_ms) -> grpc::Status;
 
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,

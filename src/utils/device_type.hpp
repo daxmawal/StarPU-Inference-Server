@@ -7,13 +7,8 @@ namespace starpu_server {
 // DeviceType enum defines where an inference task is executed.
 // =============================================================================
 
-enum class DeviceType : uint8_t {
-  CPU,     // Inference runs on CPU
-  CUDA,    // Inference runs on CUDA-capable GPU
-  Unknown  // Fallback or undefined execution context
-};
+enum class DeviceType : uint8_t { CPU, CUDA, Unknown };
 
-// Utility for converting DeviceType to string (for logs/debug)
 inline auto
 to_string(DeviceType type) -> const char*
 {

@@ -7,8 +7,7 @@ namespace starpu_server {
 struct RuntimeConfig;
 class StarPUSetup;
 using RunLoopPtr = void (*)(const RuntimeConfig&, StarPUSetup&);
-static RunLoopPtr run_inference_loop_hook =
-    nullptr;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+static RunLoopPtr run_inference_loop_hook = nullptr;
 
 struct RunLoopHookGuard {
   explicit RunLoopHookGuard(RunLoopPtr hook) { run_inference_loop_hook = hook; }
@@ -27,7 +26,7 @@ fake_run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 }  // namespace starpu_server
 #define run_inference_loop fake_run_inference_loop
 #define main cli_main
-#include "cli/main.cpp"  // NOLINT(bugprone-suspicious-include)
+#include "cli/main.cpp"
 #undef main
 #undef run_inference_loop
 
