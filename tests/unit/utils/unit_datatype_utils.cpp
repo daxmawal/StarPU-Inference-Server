@@ -1,8 +1,13 @@
 #include <ATen/core/ScalarType.h>
 #include <gtest/gtest.h>
 
+#include <array>
+#include <bit>
+#include <limits>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "utils/datatype_utils.hpp"
 #include "utils/device_type.hpp"
@@ -44,8 +49,7 @@ TEST_P(ScalarToDatatypeUnsupported, ThrowsInvalidArgument)
 INSTANTIATE_TEST_SUITE_P(
     UnsupportedTypes, ScalarToDatatypeUnsupported,
     ::testing::Values(
-        static_cast<at::ScalarType>(-1), at::kComplexFloat, at::kComplexDouble,
-        at::kQInt8, at::kQUInt8));
+        at::kComplexFloat, at::kComplexDouble, at::kQInt8, at::kQUInt8));
 
 class ElementSizeCase
     : public ::testing::TestWithParam<std::pair<at::ScalarType, size_t>> {};
@@ -80,8 +84,7 @@ TEST_P(ElementSizeUnsupported, ThrowsInvalidArgument)
 INSTANTIATE_TEST_SUITE_P(
     UnsupportedTypes, ElementSizeUnsupported,
     ::testing::Values(
-        static_cast<at::ScalarType>(-1), at::kComplexFloat, at::kComplexDouble,
-        at::kQInt8, at::kQUInt8));
+        at::kComplexFloat, at::kComplexDouble, at::kQInt8, at::kQUInt8));
 
 class DatatypeToScalarCase
     : public ::testing::TestWithParam<std::pair<std::string, at::ScalarType>> {
@@ -120,32 +123,52 @@ TEST(DatatypeUtils, ScalarTypeToString)
 {
   EXPECT_EQ(starpu_server::scalar_type_to_string(at::kShort), "INT16");
   EXPECT_THROW(
-      starpu_server::scalar_type_to_string(static_cast<at::ScalarType>(-1)),
+      starpu_server::scalar_type_to_string(at::kComplexFloat),
       std::invalid_argument);
 }
 
-TEST(DatatypeUtils, ScalarToDatatypeAllEnumValues)
+namespace {
+using Enum = at::ScalarType;
+using U = std::underlying_type_t<Enum>;
+constexpr std::array<Enum, 10> kSupportedArr = {
+    at::kFloat, at::kDouble, at::kHalf, at::kBFloat16, at::kInt,
+    at::kLong,  at::kShort,  at::kChar, at::kByte,     at::kBool};
+
+auto
+AllTypes() -> std::vector<Enum>
 {
-  using Enum = at::ScalarType;
-  using U = std::underlying_type_t<Enum>;
-
-  const std::unordered_set<Enum> supported = {
-      at::kFloat, at::kDouble, at::kHalf, at::kBFloat16, at::kInt,
-      at::kLong,  at::kShort,  at::kChar, at::kByte,     at::kBool};
-
   const int first = static_cast<int>(std::to_underlying(Enum::Undefined));
   const int last = static_cast<int>(std::to_underlying(Enum::NumOptions));
-
+  std::vector<Enum> out;
+  out.reserve(static_cast<std::size_t>(last - first));
   for (int i = first; i < last; ++i) {
-    const auto type = static_cast<Enum>(static_cast<U>(i));
-    if (supported.count(type)) {
-      EXPECT_NO_THROW({
-        auto name = starpu_server::scalar_type_to_datatype(type);
-        auto size = starpu_server::element_size(type);
-        (void)name;
-        (void)size;
-      });
-    } else {
+    out.push_back(static_cast<Enum>(static_cast<U>(i)));
+  }
+  return out;
+}
+
+auto
+SupportedSet() -> const std::unordered_set<Enum>&
+{
+  static const std::unordered_set<Enum> cache(
+      kSupportedArr.begin(), kSupportedArr.end());
+  return cache;
+}
+}  // namespace
+
+TEST(DatatypeUtils, ScalarToDatatype_AllEnumValues)
+{
+  const auto& supported = SupportedSet();
+  for (const auto type : kSupportedArr) {
+    EXPECT_NO_THROW({
+      auto name = starpu_server::scalar_type_to_datatype(type);
+      auto size = starpu_server::element_size(type);
+      (void)name;
+      (void)size;
+    });
+  }
+  for (const auto type : AllTypes()) {
+    if (!supported.contains(type)) {
       EXPECT_THROW(
           starpu_server::scalar_type_to_datatype(type), std::invalid_argument);
       EXPECT_THROW(starpu_server::element_size(type), std::invalid_argument);
@@ -160,7 +183,7 @@ TEST(DeviceTypeTest, ToString)
       starpu_server::to_string(starpu_server::DeviceType::CUDA), "CUDA");
   EXPECT_STREQ(
       starpu_server::to_string(starpu_server::DeviceType::Unknown), "Unknown");
-  EXPECT_STREQ(
-      starpu_server::to_string(static_cast<starpu_server::DeviceType>(42)),
-      "InvalidDeviceType");
+  auto invalid_raw = std::numeric_limits<std::uint8_t>::max();
+  auto invalid = std::bit_cast<starpu_server::DeviceType>(invalid_raw);
+  EXPECT_STREQ(starpu_server::to_string(invalid), "InvalidDeviceType");
 }

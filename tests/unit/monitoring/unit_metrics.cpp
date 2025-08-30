@@ -1,35 +1,47 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <string_view>
+#include <vector>
+
 #include "monitoring/metrics.hpp"
 
 using namespace starpu_server;
+
+namespace {
+void
+AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
+{
+  ASSERT_NE(metrics, nullptr);
+  ASSERT_NE(metrics->registry, nullptr);
+  ASSERT_NE(metrics->requests_total, nullptr);
+  ASSERT_NE(metrics->inference_latency, nullptr);
+  ASSERT_NE(metrics->queue_size_gauge, nullptr);
+}
+
+auto
+HasMetric(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view name) -> bool
+{
+  return std::ranges::any_of(
+      families, [name](const prometheus::MetricFamily& family) {
+        return family.name == name;
+      });
+}
+}  // namespace
 
 TEST(Metrics, InitializesPointersAndRegistry)
 {
   ASSERT_TRUE(init_metrics(0));
 
-  auto m = get_metrics();
-  ASSERT_NE(m, nullptr);
-  ASSERT_NE(m->registry, nullptr);
-  ASSERT_NE(m->requests_total, nullptr);
-  ASSERT_NE(m->inference_latency, nullptr);
-  ASSERT_NE(m->queue_size_gauge, nullptr);
+  auto metrics = get_metrics();
+  AssertMetricsInitialized(metrics);
 
-  bool has_requests = false;
-  bool has_latency = false;
-  bool has_queue = false;
-  for (const auto& family : m->registry->Collect()) {
-    if (family.name == "requests_total") {
-      has_requests = true;
-    } else if (family.name == "inference_latency_ms") {
-      has_latency = true;
-    } else if (family.name == "inference_queue_size") {
-      has_queue = true;
-    }
-  }
-  EXPECT_TRUE(has_requests);
-  EXPECT_TRUE(has_latency);
-  EXPECT_TRUE(has_queue);
+  const auto families = metrics->registry->Collect();
+  EXPECT_TRUE(HasMetric(families, "requests_total"));
+  EXPECT_TRUE(HasMetric(families, "inference_latency_ms"));
+  EXPECT_TRUE(HasMetric(families, "inference_queue_size"));
 
   shutdown_metrics();
   EXPECT_EQ(get_metrics(), nullptr);

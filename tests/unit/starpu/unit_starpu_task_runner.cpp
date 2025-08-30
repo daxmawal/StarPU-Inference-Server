@@ -12,7 +12,8 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
 {
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;
-  job->set_job_id(7);
+  constexpr int kJobId = 7;
+  job->set_job_id(kJobId);
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   job->set_input_tensors(inputs);
   runner_->prepare_job_completion_callback(job);
@@ -24,7 +25,7 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   const auto& completed_jobs = completed_jobs_;
   ASSERT_EQ(results.size(), 1U);
   EXPECT_EQ(completed_jobs.load(), 1);
-  EXPECT_EQ(results[0].job_id, 7);
+  EXPECT_EQ(results[0].job_id, kJobId);
   ASSERT_EQ(results[0].results.size(), outputs.size());
   EXPECT_TRUE(torch::equal(results[0].results[0], outputs[0]));
   ASSERT_EQ(probe.results.size(), outputs.size());
@@ -39,15 +40,32 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   using clock = std::chrono::high_resolution_clock;
   auto base = clock::now();
   time.enqueued_time = base;
-  time.dequeued_time = base + std::chrono::milliseconds(10);
-  time.before_starpu_submitted_time = base + std::chrono::milliseconds(25);
-  time.codelet_start_time = base + std::chrono::milliseconds(40);
-  time.codelet_end_time = base + std::chrono::milliseconds(70);
-  time.inference_start_time = base + std::chrono::milliseconds(80);
-  time.callback_start_time = base + std::chrono::milliseconds(125);
-  time.callback_end_time = base + std::chrono::milliseconds(140);
+  constexpr int kQueueMs = 10;
+  constexpr int kSubmitDeltaMs = 15;                             // 25 - 10
+  constexpr int kScheduleDeltaMs = 15;                           // 40 - 25
+  constexpr int kCodeletMs = 30;                                 // 70 - 40
+  constexpr int kInferenceMs = 45;                               // 125 - 80
+  constexpr int kCallbackMs = 15;                                // 140 - 125
+  constexpr int kDequeuedMs = kQueueMs;                          // 10
+  constexpr int kBeforeSubmitMs = kDequeuedMs + kSubmitDeltaMs;  // 25
+  constexpr int kCodeletStartMs = kBeforeSubmitMs + kScheduleDeltaMs;  // 40
+  constexpr int kCodeletEndMs = kCodeletStartMs + kCodeletMs;          // 70
+  constexpr int kInferenceStartMs = 80;
+  constexpr int kCallbackStartMs = 125;
+  constexpr int kCallbackEndMs = 140;
+  time.dequeued_time = base + std::chrono::milliseconds(kDequeuedMs);
+  time.before_starpu_submitted_time =
+      base + std::chrono::milliseconds(kBeforeSubmitMs);
+  time.codelet_start_time = base + std::chrono::milliseconds(kCodeletStartMs);
+  time.codelet_end_time = base + std::chrono::milliseconds(kCodeletEndMs);
+  time.inference_start_time =
+      base + std::chrono::milliseconds(kInferenceStartMs);
+  time.callback_start_time = base + std::chrono::milliseconds(kCallbackStartMs);
+  time.callback_end_time = base + std::chrono::milliseconds(kCallbackEndMs);
+  constexpr int kLogJobId = 42;
+  constexpr double kTotalLatencyMs = 150.0;
   std::string output = starpu_server::capture_stdout(
-      [&] { runner_->log_job_timings(42, 150.0, time); });
+      [&] { runner_->log_job_timings(kLogJobId, kTotalLatencyMs, time); });
   EXPECT_NE(output.find("Queue = 10.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Submit = 15.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Scheduling = 15.000 ms"), std::string::npos);

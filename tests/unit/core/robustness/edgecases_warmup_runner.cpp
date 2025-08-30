@@ -21,6 +21,26 @@ class WarmupRunnerClientWorkerInvalidIterations_Robustesse
     : public WarmupRunnerTest,
       public ::testing::WithParamInterface<std::pair<int, bool>> {};
 
+namespace {
+void
+ExpectClientWorkerThrows(
+    starpu_server::WarmupRunner& runner,
+    const std::map<int, std::vector<int32_t>>& device_workers,
+    starpu_server::InferenceQueue& queue, int iterations, bool expect_overflow)
+{
+  try {
+    runner.client_worker(device_workers, queue, iterations);
+    ADD_FAILURE() << "Expected exception not thrown";
+  }
+  catch (const std::overflow_error&) {
+    EXPECT_TRUE(expect_overflow);
+  }
+  catch (const std::invalid_argument&) {
+    EXPECT_FALSE(expect_overflow);
+  }
+}
+}  // namespace
+
 TEST_P(
     WarmupRunnerClientWorkerInvalidIterations_Robustesse,
     ThrowsOnInvalidIterations)
@@ -28,15 +48,8 @@ TEST_P(
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
   auto [iterations, expect_overflow] = GetParam();
-  if (expect_overflow) {
-    EXPECT_THROW(
-        runner->client_worker(device_workers, queue, iterations),
-        std::overflow_error);
-  } else {
-    EXPECT_THROW(
-        runner->client_worker(device_workers, queue, iterations),
-        std::invalid_argument);
-  }
+  ExpectClientWorkerThrows(
+      *runner, device_workers, queue, iterations, expect_overflow);
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -31,8 +31,8 @@ TEST_F(InferenceTaskTest, AssignFixedWorkerNegativeThrows)
 TEST_F(InferenceTaskTest, AssignFixedWorkerOutOfRangeThrows)
 {
   auto job = make_job(3, 1);
-  int total_workers = starpu_worker_get_count();
-  job->set_fixed_worker_id(total_workers);
+  const unsigned int total_workers = starpu_worker_get_count();
+  job->set_fixed_worker_id(static_cast<int>(total_workers));
   auto task = make_task(job);
   starpu_task task_struct{};
   EXPECT_THROW(

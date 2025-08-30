@@ -1,6 +1,18 @@
+#include <cstdint>
 #include <limits>
+#include <span>
 
 #include "test_inference_service.hpp"
+
+namespace {
+constexpr float kF1 = 1.0F;
+constexpr float kF2 = 2.0F;
+constexpr float kF3 = 3.0F;
+constexpr float kF4 = 4.0F;
+constexpr int64_t kI10 = 10;
+constexpr int64_t kI20 = 20;
+constexpr int64_t kI30 = 30;
+}  // namespace
 
 TEST(InferenceService, ValidateInputsSuccess)
 {
@@ -16,16 +28,17 @@ TEST(InferenceService, ValidateInputsSuccess)
   ASSERT_EQ(inputs.size(), 1U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
   EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
-  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), 1.0F);
+  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
 }
 
 TEST(InferenceService, ValidateInputsNonContiguous)
 {
-  auto base = torch::tensor({{1.0F, 2.0F}, {3.0F, 4.0F}});
+  auto base = torch::tensor({{kF1, kF2}, {kF3, kF4}});
   auto noncontig = base.transpose(0, 1);
   auto contig = noncontig.contiguous();
-  std::vector<float> data(
-      contig.data_ptr<float>(), contig.data_ptr<float>() + contig.numel());
+  std::span<const float> span{
+      contig.data_ptr<float>(), static_cast<size_t>(contig.numel())};
+  std::vector<float> data(span.begin(), span.end());
   auto req = starpu_server::make_model_infer_request({
       {{2, 2}, at::kFloat, starpu_server::to_raw_data(data)},
   });
@@ -44,8 +57,8 @@ TEST(InferenceService, ValidateInputsNonContiguous)
 
 TEST(InferenceService, ValidateInputsMultipleDtypes)
 {
-  std::vector<float> data0 = {1.0F, 2.0F, 3.0F, 4.0F};
-  std::vector<int64_t> data1 = {10, 20, 30};
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
   auto req = starpu_server::make_model_infer_request({
       {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
       {{3}, at::kLong, starpu_server::to_raw_data(data1)},
@@ -61,16 +74,16 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
   ASSERT_EQ(inputs.size(), 2U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
   EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
-  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), 1.0F);
+  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
   EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
   EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
-  EXPECT_EQ(inputs[1][0].item<int64_t>(), 10);
+  EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
 }
 
 TEST(InferenceService, ValidateInputsMismatchedCount)
 {
-  std::vector<float> data0 = {1.0F, 2.0F, 3.0F, 4.0F};
-  std::vector<int64_t> data1 = {10, 20, 30};
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
   auto req = starpu_server::make_model_infer_request({
       {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
       {{3}, at::kLong, starpu_server::to_raw_data(data1)},
@@ -92,8 +105,8 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   std::vector<torch::Tensor> outputs = {
       torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt))};
   inference::ModelInferResponse reply;
-  uint64_t recv_ms = 10;
-  uint64_t send_ms = 20;
+  int64_t recv_ms = kI10;
+  int64_t send_ms = kI20;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
       &req, &reply, outputs, recv_ms, send_ms);
   ASSERT_TRUE(status.ok());
@@ -109,8 +122,8 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
   ASSERT_FALSE(noncontig.is_contiguous());
   std::vector<torch::Tensor> outputs = {noncontig};
   inference::ModelInferResponse reply;
-  uint64_t recv_ms = 10;
-  uint64_t send_ms = 20;
+  int64_t recv_ms = kI10;
+  int64_t send_ms = kI20;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
       &req, &reply, outputs, recv_ms, send_ms);
   ASSERT_TRUE(status.ok());

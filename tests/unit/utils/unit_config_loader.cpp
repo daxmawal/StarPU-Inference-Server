@@ -438,7 +438,7 @@ TEST(ConfigLoader, TooManyDimsSetsValidFalse)
   yaml << "  - name: in\n";
   yaml << "    dims: [";
   for (std::size_t i = 0; i <= kMaxDims; ++i) {
-    if (i) {
+    if (i != 0U) {
       yaml << ", ";
     }
     yaml << 1;

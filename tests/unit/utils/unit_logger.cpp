@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <bit>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -25,7 +28,8 @@ TEST(Logger, VerbosityStyle)
   check(Debug, "\x1b[1;34m", "[DEBUG] ");
   check(Trace, "\x1b[1;90m", "[TRACE] ");
   check(Silent, "", "");
-  check(static_cast<VerbosityLevel>(255), "", "");
+  auto raw = std::numeric_limits<std::uint8_t>::max();
+  check(std::bit_cast<VerbosityLevel>(raw), "", "");
 }
 
 struct VerboseParam {

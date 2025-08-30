@@ -61,7 +61,7 @@ TEST_P(StarPUTaskRunnerConfigInvalidTest, NullPointerThrows)
   std::vector<starpu_server::InferenceResult> results;
   std::mutex results_mutex;
   std::atomic<int> completed_jobs{0};
-  std::condition_variable cv;
+  std::condition_variable completion_cv;
   starpu_server::StarPUSetup starpu(opts);
 
   starpu_server::StarPUTaskRunnerConfig config{};
@@ -73,49 +73,53 @@ TEST_P(StarPUTaskRunnerConfigInvalidTest, NullPointerThrows)
   config.results = &results;
   config.results_mutex = &results_mutex;
   config.completed_jobs = &completed_jobs;
-  config.all_done_cv = &cv;
+  config.all_done_cv = &completion_cv;
 
   auto param = GetParam();
   param.nullify(config);
 
-  EXPECT_THROW(
-      {
-        try {
-          starpu_server::StarPUTaskRunner runner(config);
-        }
-        catch (const std::invalid_argument& e) {
-          EXPECT_NE(
-              std::string{e.what()}.find(std::format(
-                  "StarPUTaskRunnerConfig::{} must not be null", param.field)),
-              std::string::npos);
-          throw;
-        }
-      },
-      std::invalid_argument);
+  auto assert_throws_with_field = [](auto&& ctor, const std::string& field) {
+    try {
+      ctor();
+      ADD_FAILURE() << "Expected std::invalid_argument to be thrown";
+    }
+    catch (const std::invalid_argument& e) {
+      EXPECT_NE(
+          std::string{e.what()}.find(std::format(
+              "StarPUTaskRunnerConfig::{} must not be null", field)),
+          std::string::npos);
+    }
+  };
+
+  assert_throws_with_field(
+      [&] { starpu_server::StarPUTaskRunner runner(config); }, param.field);
 }
 
 INSTANTIATE_TEST_SUITE_P(
     InvalidConfig, StarPUTaskRunnerConfigInvalidTest,
     ::testing::Values(
         InvalidConfigParam{
-            "Queue", [](auto& c) { c.queue = nullptr; }, "queue"},
+            "Queue", [](auto& cfg) { cfg.queue = nullptr; }, "queue"},
         InvalidConfigParam{
-            "ModelCpu", [](auto& c) { c.model_cpu = nullptr; }, "model_cpu"},
+            "ModelCpu", [](auto& cfg) { cfg.model_cpu = nullptr; },
+            "model_cpu"},
         InvalidConfigParam{
-            "ModelsGpu", [](auto& c) { c.models_gpu = nullptr; }, "models_gpu"},
+            "ModelsGpu", [](auto& cfg) { cfg.models_gpu = nullptr; },
+            "models_gpu"},
         InvalidConfigParam{
-            "Starpu", [](auto& c) { c.starpu = nullptr; }, "starpu"},
-        InvalidConfigParam{"Opts", [](auto& c) { c.opts = nullptr; }, "opts"},
+            "Starpu", [](auto& cfg) { cfg.starpu = nullptr; }, "starpu"},
         InvalidConfigParam{
-            "Results", [](auto& c) { c.results = nullptr; }, "results"},
+            "Opts", [](auto& cfg) { cfg.opts = nullptr; }, "opts"},
         InvalidConfigParam{
-            "ResultsMutex", [](auto& c) { c.results_mutex = nullptr; },
+            "Results", [](auto& cfg) { cfg.results = nullptr; }, "results"},
+        InvalidConfigParam{
+            "ResultsMutex", [](auto& cfg) { cfg.results_mutex = nullptr; },
             "results_mutex"},
         InvalidConfigParam{
-            "CompletedJobs", [](auto& c) { c.completed_jobs = nullptr; },
+            "CompletedJobs", [](auto& cfg) { cfg.completed_jobs = nullptr; },
             "completed_jobs"},
         InvalidConfigParam{
-            "AllDoneCv", [](auto& c) { c.all_done_cv = nullptr; },
+            "AllDoneCv", [](auto& cfg) { cfg.all_done_cv = nullptr; },
             "all_done_cv"}),
     [](const ::testing::TestParamInfo<InvalidConfigParam>& info) {
       return info.param.name;

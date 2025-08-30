@@ -2,6 +2,13 @@
 
 #include "test_inference_service.hpp"
 
+namespace {
+constexpr float kF1 = 1.0F;
+constexpr float kF2 = 2.0F;
+constexpr float kF3 = 3.0F;
+constexpr float kF4 = 4.0F;
+}  // namespace
+
 TEST(InferenceService, ValidateInputsCountMismatch)
 {
   auto req = starpu_server::make_valid_request();
@@ -31,7 +38,7 @@ TEST(InferenceService, ValidateInputsSizeMismatch)
 
 TEST(InferenceService, ValidateInputsNegativeDimension)
 {
-  std::vector<float> data = {1.0F};
+  std::vector<float> data = {kF1};
   auto req = starpu_server::make_model_infer_request({
       {{-1}, at::kFloat, starpu_server::to_raw_data(data)},
   });
@@ -138,7 +145,7 @@ INSTANTIATE_TEST_SUITE_P(
         InvalidRequestCase{
             "RawInputCountMismatch",
             [] {
-              std::vector<float> data = {1.0F, 2.0F, 3.0F, 4.0F};
+              std::vector<float> data = {kF1, kF2, kF3, kF4};
               auto req = starpu_server::make_model_infer_request(
                   {{{2, 2}, at::kFloat, starpu_server::to_raw_data(data)}});
               req.add_raw_input_contents()->assign("", 0);
@@ -147,7 +154,7 @@ INSTANTIATE_TEST_SUITE_P(
         InvalidRequestCase{
             "RawContentSizeMismatch",
             [] {
-              std::vector<float> data = {1.0F, 2.0F, 3.0F};
+              std::vector<float> data = {kF1, kF2, kF3};
               return starpu_server::make_model_infer_request(
                   {{{2, 2}, at::kFloat, starpu_server::to_raw_data(data)}});
             }()}),

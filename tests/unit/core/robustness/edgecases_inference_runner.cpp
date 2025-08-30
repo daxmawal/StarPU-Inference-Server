@@ -53,14 +53,17 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
 namespace starpu_server {
 void run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
-    const torch::Device device, torch::jit::script::Module* model,
+    torch::Device device, torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, void* buffer_ptr)>&
         copy_output_fn);
 }
 
 TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
 {
-  std::array<float, 3> input{1.0F, 2.0F, 3.0F};
+  constexpr float kF1 = 1.0F;
+  constexpr float kF2 = 2.0F;
+  constexpr float kF3 = 3.0F;
+  std::array<float, 3> input{kF1, kF2, kF3};
   std::array<float, 3> output{0.0F, 0.0F, 0.0F};
 
   auto input_iface = starpu_server::make_variable_interface(input.data());
@@ -125,31 +128,37 @@ TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
 {
   using namespace starpu_server;
 
-  auto model = make_identity_model();
   const auto model_path =
       std::filesystem::temp_directory_path() / "worker_fail.pt";
-  model.save(model_path.string());
+  make_identity_model().save(model_path.string());
 
-  RuntimeConfig opts;
-  opts.model_path = model_path.string();
-  opts.inputs = {{"input0", {1}, at::kFloat}};
-  opts.iterations = 1;
-  opts.use_cuda = false;
+  // Helper kept outside the main flow to reduce nesting complexity.
+  struct Runner {
+    static void RunAndExpectFailure(const std::filesystem::path& path)
+    {
+      RuntimeConfig opts;
+      opts.model_path = path.string();
+      opts.inputs = {{"input0", {1}, at::kFloat}};
+      opts.iterations = 1;
+      opts.use_cuda = false;
 
-  StarPUSetup starpu(opts);
+      StarPUSetup starpu(opts);
 
-  auto original_launcher = starpu_server::get_worker_thread_launcher();
-  starpu_server::set_worker_thread_launcher(
-      [](StarPUTaskRunner&) -> std::jthread {
-        throw std::runtime_error("boom");
-      });
+      auto original_launcher = starpu_server::get_worker_thread_launcher();
+      starpu_server::set_worker_thread_launcher(
+          [](StarPUTaskRunner&) -> std::jthread {
+            throw std::runtime_error("boom");
+          });
 
-  CaptureStream capture{std::cerr};
-  EXPECT_THROW(run_inference_loop(opts, starpu), std::runtime_error);
-  EXPECT_NE(
-      capture.str().find("Failed to start worker thread: boom"),
-      std::string::npos);
+      CaptureStream capture{std::cerr};
+      EXPECT_THROW(run_inference_loop(opts, starpu), std::runtime_error);
+      EXPECT_NE(
+          capture.str().find("Failed to start worker thread: boom"),
+          std::string::npos);
+      starpu_server::set_worker_thread_launcher(original_launcher);
+    }
+  };
 
-  starpu_server::set_worker_thread_launcher(original_launcher);
+  Runner::RunAndExpectFailure(model_path);
   std::filesystem::remove(model_path);
 }

@@ -32,38 +32,40 @@ INSTANTIATE_TEST_SUITE_P(
           return ExtractTensorsParam{c10::IValue(list), {tensor_1, tensor_2}};
         }(),
         []() {
-          at::Tensor t1 = torch::rand({2});
-          at::Tensor t2 = torch::rand({3});
-          at::Tensor t3 = torch::rand({4});
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          at::Tensor tensor_3 = torch::rand({4});
           c10::impl::GenericList inner(c10::AnyType::get());
-          inner.push_back(t2);
-          inner.push_back(t3);
+          inner.push_back(tensor_2);
+          inner.push_back(tensor_3);
           c10::impl::GenericList outer(c10::AnyType::get());
-          outer.push_back(t1);
+          outer.push_back(tensor_1);
           outer.push_back(c10::IValue(inner));
-          return ExtractTensorsParam{c10::IValue(outer), {t1, t2, t3}};
+          return ExtractTensorsParam{
+              c10::IValue(outer), {tensor_1, tensor_2, tensor_3}};
         }(),
         []() {
-          at::Tensor t1 = torch::rand({2});
-          at::Tensor t2 = torch::rand({3});
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
           c10::Dict<std::string, at::Tensor> dict;
-          dict.insert("first", t1);
-          dict.insert("second", t2);
-          return ExtractTensorsParam{c10::IValue(dict), {t1, t2}};
+          dict.insert("first", tensor_1);
+          dict.insert("second", tensor_2);
+          return ExtractTensorsParam{c10::IValue(dict), {tensor_1, tensor_2}};
         }(),
         []() {
-          at::Tensor t1 = torch::rand({2});
-          at::Tensor t2 = torch::rand({3});
-          at::Tensor t3 = torch::rand({4});
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          at::Tensor tensor_3 = torch::rand({4});
           c10::impl::GenericDict inner(
               c10::StringType::get(), c10::AnyType::get());
-          inner.insert(c10::IValue("second"), c10::IValue(t2));
-          inner.insert(c10::IValue("third"), c10::IValue(t3));
+          inner.insert(c10::IValue("second"), c10::IValue(tensor_2));
+          inner.insert(c10::IValue("third"), c10::IValue(tensor_3));
           c10::impl::GenericDict outer(
               c10::StringType::get(), c10::AnyType::get());
-          outer.insert(c10::IValue("first"), c10::IValue(t1));
+          outer.insert(c10::IValue("first"), c10::IValue(tensor_1));
           outer.insert(c10::IValue("nested"), c10::IValue(inner));
-          return ExtractTensorsParam{c10::IValue(outer), {t1, t2, t3}};
+          return ExtractTensorsParam{
+              c10::IValue(outer), {tensor_1, tensor_2, tensor_3}};
         }()),
     [](const ::testing::TestParamInfo<ExtractTensorsParam>& info) {
       switch (info.index) {

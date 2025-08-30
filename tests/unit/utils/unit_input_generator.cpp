@@ -46,11 +46,12 @@ class InputGeneratorTest : public ::testing::Test {
 
 TEST_F(InputGeneratorTest, GeneratesShapesAndTypes)
 {
-  auto tensors = generate({{2, 3}, {1, 128}}, {at::kFloat, at::kInt});
+  constexpr int64_t kSeqLen = 128;
+  auto tensors = generate({{2, 3}, {1, kSeqLen}}, {at::kFloat, at::kInt});
   ASSERT_EQ(tensors.size(), 2U);
   EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{2, 3}));
   EXPECT_EQ(tensors[0].dtype(), torch::kFloat);
-  EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1, 128}));
+  EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1, kSeqLen}));
   EXPECT_EQ(tensors[1].dtype(), torch::kInt);
   EXPECT_LT(tensors[1].max().item<int64_t>(), BERT_VOCAB_SIZE);
 }

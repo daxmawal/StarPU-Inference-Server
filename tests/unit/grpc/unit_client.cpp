@@ -1,7 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <array>
+#include <chrono>
+#include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "grpc/client/client_args.hpp"
@@ -11,22 +15,10 @@
 
 TEST(ClientArgs, ParsesValidArguments)
 {
-  const char* argv[] = {
-      "prog",
-      "--input",
-      "input:1x3x224x224:float32",
-      "--server",
-      "localhost:1234",
-      "--model",
-      "my_model",
-      "--version",
-      "2",
-      "--iterations",
-      "5",
-      "--delay",
-      "10",
-      "--verbose",
-      "2"};
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1x3x224x224:float32", "--server",
+       "localhost:1234", "--model", "my_model", "--version", "2",
+       "--iterations", "5", "--delay", "10", "--verbose", "2"});
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_TRUE(cfg.valid);
   ASSERT_EQ(cfg.inputs.size(), 1U);
@@ -43,10 +35,12 @@ TEST(ClientArgs, ParsesValidArguments)
 TEST(ClientArgs, VerboseLevels)
 {
   using enum starpu_server::VerbosityLevel;
-  const std::array<std::pair<const char*, starpu_server::VerbosityLevel>, 4>
-      cases = {{{"0", Silent}, {"1", Info}, {"3", Debug}, {"4", Trace}}};
+  const auto cases =
+      std::to_array<std::pair<const char*, starpu_server::VerbosityLevel>>(
+          {{"0", Silent}, {"1", Info}, {"3", Debug}, {"4", Trace}});
   for (const auto& [level_str, expected] : cases) {
-    const char* argv[] = {"prog", "--shape", "1", "--verbose", level_str};
+    auto argv = std::to_array<const char*>(
+        {"prog", "--shape", "1", "--verbose", level_str});
     auto cfg = starpu_server::parse_client_args(std::span{argv});
     ASSERT_TRUE(cfg.valid);
     EXPECT_EQ(cfg.verbosity, expected);
@@ -55,11 +49,11 @@ TEST(ClientArgs, VerboseLevels)
 
 TEST(ClientArgs, RejectsNonPositiveShapeDims)
 {
-  const char* argv_neg[] = {"prog", "--shape", "1x-3x224"};
+  auto argv_neg = std::to_array<const char*>({"prog", "--shape", "1x-3x224"});
   auto cfg_neg = starpu_server::parse_client_args(std::span{argv_neg});
   EXPECT_FALSE(cfg_neg.valid);
 
-  const char* argv_zero[] = {"prog", "--shape", "1x0x224"};
+  auto argv_zero = std::to_array<const char*>({"prog", "--shape", "1x0x224"});
   auto cfg_zero = starpu_server::parse_client_args(std::span{argv_zero});
   EXPECT_FALSE(cfg_zero.valid);
 }
@@ -89,7 +83,7 @@ TEST_P(ParseInputTypeCase, ParsesExpectedType)
 {
   const auto& [type_str, expected] = GetParam();
   const std::string arg = std::string{"input:1:"} + type_str;
-  const char* argv[] = {"prog", "--input", arg.c_str()};
+  auto argv = std::to_array<const char*>({"prog", "--input", arg.c_str()});
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   ASSERT_TRUE(cfg.valid);
   ASSERT_EQ(cfg.inputs.size(), 1U);
@@ -180,7 +174,8 @@ TEST(InferenceClient, AsyncCompleteRpcExitsAfterShutdown)
 
   std::thread cq_thread(
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
-  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  constexpr int kSleepMs = 50;
+  std::this_thread::sleep_for(std::chrono::milliseconds(kSleepMs));
   client.Shutdown();
   cq_thread.join();
   SUCCEED();
