@@ -67,6 +67,14 @@ FetchContent_Declare(yaml-cpp
 
 FetchContent_MakeAvailable(yaml-cpp)
 
+# Suppress noisy Clang warning from yaml-cpp's dragonbox header Seen as:
+# [-Wconstexpr-not-const] while yaml-cpp builds with older C++ modes
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  if(TARGET yaml-cpp)
+    target_compile_options(yaml-cpp PRIVATE -Wno-constexpr-not-const)
+  endif()
+endif()
+
 # === Executable ===
 add_executable(starpu_server)
 target_sources(
@@ -98,7 +106,8 @@ set(DEBUG_MIN_FRAME_SIZE
     1024
     CACHE STRING "Minimum stack frame size for warning")
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+# Fine-grained warnings by compiler to avoid unknown-warning-option noise
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   target_compile_options(
     starpu_server
     PRIVATE -Wall
@@ -119,7 +128,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             -Wformat=2
             -Wframe-larger-than=${DEBUG_MIN_FRAME_SIZE}
             -Wlogical-op
-            -Wmismatched-tags
             -Wmissing-braces
             -Wmultichar
             -Wnoexcept
@@ -134,6 +142,37 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             -Wsuggest-attribute=malloc
             -Wvla
             -Wvolatile
+            -Wwrite-strings
+            -Wmissing-declarations
+            -Wmissing-include-dirs
+            -Winline
+            -Wundef
+            -Wnull-dereference
+            -Wold-style-cast)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(
+    starpu_server
+    PRIVATE -Wall
+            -Wextra
+            -Wpedantic
+            -Walloca
+            -Wcast-align
+            -Wcast-qual
+            -Wdouble-promotion
+            -Wenum-conversion
+            -Wextra-semi
+            -Wfloat-equal
+            -Wformat=2
+            -Wframe-larger-than=${DEBUG_MIN_FRAME_SIZE}
+            -Wmismatched-tags
+            -Wmissing-braces
+            -Wmultichar
+            -Wnon-virtual-dtor
+            -Woverloaded-virtual
+            -Wpointer-arith
+            -Wrange-loop-construct
+            -Wshadow
+            -Wvla
             -Wwrite-strings
             -Wmissing-declarations
             -Wmissing-include-dirs
