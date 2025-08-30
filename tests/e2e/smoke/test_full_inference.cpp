@@ -17,9 +17,10 @@ namespace {
 constexpr float kVal1 = 1.0F;
 constexpr float kVal2 = 2.0F;
 
-auto start_worker(
-    starpu_server::InferenceQueue& queue, torch::jit::script::Module& model)
-    -> std::jthread
+auto
+start_worker(
+    starpu_server::InferenceQueue& queue,
+    torch::jit::script::Module& model) -> std::jthread
 {
   return std::jthread([&] {
     std::shared_ptr<starpu_server::InferenceJob> job;
@@ -34,7 +35,8 @@ auto start_worker(
   });
 }
 
-void expect_connected(const std::shared_ptr<grpc::Channel>& channel)
+void
+expect_connected(const std::shared_ptr<grpc::Channel>& channel)
 {
   ASSERT_TRUE(channel->WaitForConnected(
       std::chrono::system_clock::now() + std::chrono::seconds(1)));
