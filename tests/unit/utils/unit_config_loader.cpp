@@ -59,8 +59,10 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(cfg.pregen_inputs, 8U);
   EXPECT_EQ(cfg.warmup_pregen_inputs, 5U);
   EXPECT_EQ(cfg.warmup_iterations, 3);
-  ASSERT_TRUE(cfg.seed.has_value());
-  EXPECT_EQ(cfg.seed.value(), 123U);
+  const bool has_seed = cfg.seed.has_value();
+  ASSERT_TRUE(has_seed);
+  const auto seed_value = cfg.seed.value_or(0U);
+  EXPECT_EQ(seed_value, 123U);
   EXPECT_TRUE(cfg.use_cuda);
 }
 

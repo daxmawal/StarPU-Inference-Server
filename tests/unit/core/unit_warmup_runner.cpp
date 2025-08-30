@@ -28,8 +28,9 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations_Unit)
       break;
     }
     job_ids.push_back(job->get_job_id());
-    ASSERT_TRUE(job->get_fixed_worker_id().has_value());
-    worker_ids.push_back(*job->get_fixed_worker_id());
+    const int worker = job->get_fixed_worker_id().value_or(-1);
+    ASSERT_NE(worker, -1);
+    worker_ids.push_back(worker);
   }
 
   ASSERT_EQ(job_ids.size(), 4U);
@@ -41,7 +42,6 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
 {
   auto device_workers = make_device_workers();
 
-  // Case 1: only one pre-generated input
   opts.seed = 0;
   opts.warmup_pregen_inputs = 1;
   starpu_server::InferenceQueue queue_single;
@@ -57,11 +57,11 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   }
   EXPECT_EQ(unique_single.size(), 1U);
 
-  // Case 2: two pre-generated inputs
   opts.seed = 0;
   opts.warmup_pregen_inputs = 2;
   starpu_server::InferenceQueue queue_double;
-  runner->client_worker(device_workers, queue_double, 5);
+  constexpr int kDoubleIterations = 5;
+  runner->client_worker(device_workers, queue_double, kDoubleIterations);
 
   std::unordered_set<const void*> unique_double;
   for (;;) {

@@ -1,15 +1,38 @@
+#include <array>
+
 #include "test_inference_task.hpp"
 
 namespace {
-int unregister_call_count = 0;
-std::vector<starpu_data_handle_t> unregister_handles;
+inline auto
+unregister_call_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+inline auto
+unregister_handles_ref() -> std::vector<starpu_data_handle_t>&
+{
+  static std::vector<starpu_data_handle_t> handles;
+  return handles;
+}
+
+inline auto
+MakeHandle(int index) -> starpu_data_handle_t
+{
+  constexpr std::size_t kDummyStorageSize = 8;
+  static std::array<int, kDummyStorageSize> dummy_storage{};
+  void* ptr =
+      &dummy_storage.at(static_cast<std::size_t>(index) % kDummyStorageSize);
+  return static_cast<starpu_data_handle_t>(ptr);
+}
 }  // namespace
 
 extern "C" void
 starpu_data_unregister_submit(starpu_data_handle_t handle)
 {
-  ++unregister_call_count;
-  unregister_handles.push_back(handle);
+  ++unregister_call_count_ref();
+  unregister_handles_ref().push_back(handle);
 }
 
 TEST_F(InferenceTaskTest, TooManyInputs)
@@ -33,12 +56,13 @@ TEST_F(InferenceTaskTest, TooManyGpuModels)
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
 {
   auto job = make_job(3, 1);
-  int total_workers = starpu_worker_get_count();
+  const unsigned total_workers = starpu_worker_get_count();
   if (total_workers == 0) {
     GTEST_SKIP() << "No StarPU workers available";
   }
 
-  int worker_id = total_workers > 2 ? 2 : total_workers - 1;
+  const int worker_id =
+      total_workers > 2U ? 2 : static_cast<int>(total_workers) - 1;
   job->set_fixed_worker_id(worker_id);
   auto task = make_task(job);
   starpu_task task_struct{};
@@ -101,21 +125,21 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
 
 TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
 {
-  unregister_call_count = 0;
-  unregister_handles.clear();
-  auto* const handle_1 = reinterpret_cast<starpu_data_handle_t>(0x1);
-  auto* const handle_2 = reinterpret_cast<starpu_data_handle_t>(0x2);
-  auto* const handle_3 = reinterpret_cast<starpu_data_handle_t>(0x3);
+  unregister_call_count_ref() = 0;
+  unregister_handles_ref().clear();
+  auto* const handle_1 = MakeHandle(1);
+  auto* const handle_2 = MakeHandle(2);
+  auto* const handle_3 = MakeHandle(3);
   std::vector<starpu_data_handle_t> inputs{handle_1};
   std::vector<starpu_data_handle_t> outputs{handle_2, handle_3};
   auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
       nullptr, nullptr, nullptr, 0, inputs, outputs);
   starpu_server::InferenceTask::cleanup(ctx);
-  EXPECT_EQ(unregister_call_count, 3);
-  ASSERT_EQ(unregister_handles.size(), 3U);
-  EXPECT_EQ(unregister_handles[0], handle_1);
-  EXPECT_EQ(unregister_handles[1], handle_2);
-  EXPECT_EQ(unregister_handles[2], handle_3);
+  EXPECT_EQ(unregister_call_count_ref(), 3);
+  ASSERT_EQ(unregister_handles_ref().size(), 3U);
+  EXPECT_EQ(unregister_handles_ref()[0], handle_1);
+  EXPECT_EQ(unregister_handles_ref()[1], handle_2);
+  EXPECT_EQ(unregister_handles_ref()[2], handle_3);
   EXPECT_EQ(ctx->inputs_handles[0], nullptr);
   EXPECT_EQ(ctx->outputs_handles[0], nullptr);
   EXPECT_EQ(ctx->outputs_handles[1], nullptr);
@@ -128,9 +152,9 @@ TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
       std::vector<starpu_data_handle_t>{});
   starpu_task* task = starpu_task_create();
   starpu_server::InferenceTask::allocate_task_buffers(task, 3, ctx);
-  auto* handle_1 = reinterpret_cast<starpu_data_handle_t>(0x1);
-  auto* handle_2 = reinterpret_cast<starpu_data_handle_t>(0x2);
-  auto* handle_3 = reinterpret_cast<starpu_data_handle_t>(0x3);
+  auto* handle_1 = MakeHandle(1);
+  auto* handle_2 = MakeHandle(2);
+  auto* handle_3 = MakeHandle(3);
   starpu_server::InferenceTask::fill_task_buffers(
       task, {handle_1, handle_2}, {handle_3});
   std::span<starpu_data_handle_t> handles(task->dyn_handles, 3);

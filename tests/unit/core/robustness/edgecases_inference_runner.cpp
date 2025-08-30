@@ -28,6 +28,43 @@ MakeTempModelPath(const char* base) -> std::filesystem::path
       std::chrono::high_resolution_clock::now().time_since_epoch().count();
   return dir / (std::string(base) + "_" + std::to_string(time) + ".pt");
 }
+
+struct WorkerFailOutcome {
+  bool threw_runtime_error;
+  std::string log;
+};
+
+inline auto
+RunWorkerThreadFailureCase(const std::filesystem::path& path)
+    -> WorkerFailOutcome
+{
+  using namespace starpu_server;
+
+  RuntimeConfig opts;
+  opts.model_path = path.string();
+  opts.inputs = {{"input0", {1}, at::kFloat}};
+  opts.iterations = 1;
+  opts.use_cuda = false;
+
+  StarPUSetup starpu(opts);
+
+  auto original_launcher = get_worker_thread_launcher();
+  set_worker_thread_launcher([](StarPUTaskRunner&) -> std::jthread {
+    throw std::runtime_error("boom");
+  });
+
+  CaptureStream capture{std::cerr};
+  bool threw = false;
+  try {
+    run_inference_loop(opts, starpu);
+  }
+  catch (const std::runtime_error&) {
+    threw = true;
+  }
+  auto log = capture.str();
+  set_worker_thread_launcher(original_launcher);
+  return WorkerFailOutcome{threw, std::move(log)};
+}
 }  // namespace
 
 TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
@@ -132,33 +169,10 @@ TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
       std::filesystem::temp_directory_path() / "worker_fail.pt";
   make_identity_model().save(model_path.string());
 
-  // Helper kept outside the main flow to reduce nesting complexity.
-  struct Runner {
-    static void RunAndExpectFailure(const std::filesystem::path& path)
-    {
-      RuntimeConfig opts;
-      opts.model_path = path.string();
-      opts.inputs = {{"input0", {1}, at::kFloat}};
-      opts.iterations = 1;
-      opts.use_cuda = false;
-
-      StarPUSetup starpu(opts);
-
-      auto original_launcher = starpu_server::get_worker_thread_launcher();
-      starpu_server::set_worker_thread_launcher(
-          [](StarPUTaskRunner&) -> std::jthread {
-            throw std::runtime_error("boom");
-          });
-
-      CaptureStream capture{std::cerr};
-      EXPECT_THROW(run_inference_loop(opts, starpu), std::runtime_error);
-      EXPECT_NE(
-          capture.str().find("Failed to start worker thread: boom"),
-          std::string::npos);
-      starpu_server::set_worker_thread_launcher(original_launcher);
-    }
-  };
-
-  Runner::RunAndExpectFailure(model_path);
+  const auto outcome = RunWorkerThreadFailureCase(model_path);
+  EXPECT_TRUE(outcome.threw_runtime_error);
+  EXPECT_NE(
+      outcome.log.find("Failed to start worker thread: boom"),
+      std::string::npos);
   std::filesystem::remove(model_path);
 }

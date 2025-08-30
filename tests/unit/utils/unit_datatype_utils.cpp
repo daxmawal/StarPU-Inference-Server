@@ -154,26 +154,59 @@ SupportedSet() -> const std::unordered_set<Enum>&
       kSupportedArr.begin(), kSupportedArr.end());
   return cache;
 }
+
+inline auto
+CheckSupportedTypes() -> ::testing::AssertionResult
+{
+  for (const auto type : kSupportedArr) {
+    try {
+      (void)starpu_server::scalar_type_to_datatype(type);
+      (void)starpu_server::element_size(type);
+    }
+    catch (const std::exception& e) {
+      return ::testing::AssertionFailure()
+             << "Unexpected exception for supported type: "
+             << static_cast<int>(std::to_underlying(type)) << ": " << e.what();
+    }
+  }
+  return ::testing::AssertionSuccess();
+}
+
+inline auto
+CheckUnsupportedTypes() -> ::testing::AssertionResult
+{
+  const auto& supported = SupportedSet();
+  for (const auto type : AllTypes()) {
+    if (!supported.contains(type)) {
+      bool ok1 = false;
+      bool ok2 = false;
+      try {
+        (void)starpu_server::scalar_type_to_datatype(type);
+      }
+      catch (const std::invalid_argument&) {
+        ok1 = true;
+      }
+      try {
+        (void)starpu_server::element_size(type);
+      }
+      catch (const std::invalid_argument&) {
+        ok2 = true;
+      }
+      if (!(ok1 && ok2)) {
+        return ::testing::AssertionFailure()
+               << "Unsupported type checks failed for type: "
+               << static_cast<int>(std::to_underlying(type));
+      }
+    }
+  }
+  return ::testing::AssertionSuccess();
+}
 }  // namespace
 
 TEST(DatatypeUtils, ScalarToDatatype_AllEnumValues)
 {
-  const auto& supported = SupportedSet();
-  for (const auto type : kSupportedArr) {
-    EXPECT_NO_THROW({
-      auto name = starpu_server::scalar_type_to_datatype(type);
-      auto size = starpu_server::element_size(type);
-      (void)name;
-      (void)size;
-    });
-  }
-  for (const auto type : AllTypes()) {
-    if (!supported.contains(type)) {
-      EXPECT_THROW(
-          starpu_server::scalar_type_to_datatype(type), std::invalid_argument);
-      EXPECT_THROW(starpu_server::element_size(type), std::invalid_argument);
-    }
-  }
+  EXPECT_TRUE(CheckSupportedTypes());
+  EXPECT_TRUE(CheckUnsupportedTypes());
 }
 
 TEST(DeviceTypeTest, ToString)

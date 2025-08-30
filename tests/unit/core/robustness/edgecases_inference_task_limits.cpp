@@ -21,11 +21,17 @@ class InferenceTaskLimitsTest_Robustesse : public ::testing::Test {
         nullptr, job_, &model_cpu_, &models_gpu_, &opts_);
   }
 
-  auto& ModelsGpu() { return models_gpu_; }
-  auto& Task() { return task_; }
-  auto& Job() { return job_; }
-  auto& ModelCpu() { return model_cpu_; }
-  auto& Opts() { return opts_; }
+  auto ModelsGpu() -> std::vector<torch::jit::script::Module>&
+  {
+    return models_gpu_;
+  }
+  auto Task() -> std::unique_ptr<starpu_server::InferenceTask>&
+  {
+    return task_;
+  }
+  auto Job() -> std::shared_ptr<starpu_server::InferenceJob>& { return job_; }
+  auto ModelCpu() -> torch::jit::script::Module& { return model_cpu_; }
+  auto Opts() -> starpu_server::RuntimeConfig& { return opts_; }
 
  private:
   std::shared_ptr<starpu_server::InferenceJob> job_;
