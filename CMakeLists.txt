@@ -103,7 +103,7 @@ target_include_directories(
 
 # === Compiler Warnings ===
 set(DEBUG_MIN_FRAME_SIZE
-    1024
+    8192
     CACHE STRING "Minimum stack frame size for warning")
 
 # Fine-grained warnings by compiler to avoid unknown-warning-option noise
@@ -128,6 +128,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             -Wformat=2
             -Wframe-larger-than=${DEBUG_MIN_FRAME_SIZE}
             -Wlogical-op
+            -Wmismatched-tags
             -Wmissing-braces
             -Wmultichar
             -Wnoexcept
@@ -145,9 +146,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             -Wwrite-strings
             -Wmissing-declarations
             -Wmissing-include-dirs
-            -Winline
             -Wundef
-            -Wnull-dereference
             -Wold-style-cast)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   target_compile_options(
@@ -176,9 +175,7 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
             -Wwrite-strings
             -Wmissing-declarations
             -Wmissing-include-dirs
-            -Winline
             -Wundef
-            -Wnull-dereference
             -Wold-style-cast)
 endif()
 

@@ -121,7 +121,8 @@ TEST(TensorBuilder_Robustesse, FromStarpuBuffersTooManyInputs)
   params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
   std::vector<void*> buffers(params.num_inputs, nullptr);
   EXPECT_THROW(
-      starpu_server::TensorBuilder::from_starpu_buffers(
-          &params, buffers, torch::kCPU),
+      [[maybe_unused]] auto _ =
+          starpu_server::TensorBuilder::from_starpu_buffers(
+              &params, buffers, torch::kCPU),
       starpu_server::InferenceExecutionException);
 }

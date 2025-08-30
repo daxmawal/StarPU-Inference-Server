@@ -16,8 +16,9 @@ TEST(TensorBuilderFromStarPU, TooManyInputsThrows)
   auto params = starpu_server::make_params_for_inputs(shapes, dtypes);
   std::vector<void*> dummy(params.num_inputs, nullptr);
   EXPECT_THROW(
-      starpu_server::TensorBuilder::from_starpu_buffers(
-          &params, dummy, torch::Device(torch::kCPU)),
+      [[maybe_unused]] auto _ =
+          starpu_server::TensorBuilder::from_starpu_buffers(
+              &params, dummy, torch::Device(torch::kCPU)),
       starpu_server::InferenceExecutionException);
 }
 
@@ -30,7 +31,8 @@ TEST(TensorBuilderFromStarPU, NegativeNumDimsThrows)
   params.layout.num_dims[0] = -1;
   std::array<void*, 1> buffers{&buf};
   EXPECT_THROW(
-      starpu_server::TensorBuilder::from_starpu_buffers(
-          &params, buffers, torch::Device(torch::kCPU)),
+      [[maybe_unused]] auto _ =
+          starpu_server::TensorBuilder::from_starpu_buffers(
+              &params, buffers, torch::Device(torch::kCPU)),
       c10::Error);
 }
