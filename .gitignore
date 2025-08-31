@@ -56,3 +56,5 @@ cmake-build-*/
 # Files generated automatically by protoc
 *.pb.cc
 *.pb.h
+
+ops/prometheus/data
