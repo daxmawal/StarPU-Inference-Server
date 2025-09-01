@@ -193,9 +193,10 @@ parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
     return missing_value_error("--model");
   }
   ++idx;
-  opts.model_path = args[idx];
-  if (!std::filesystem::exists(opts.model_path)) {
-    log_error(std::format("Model file not found: {}", opts.model_path));
+  opts.models.resize(1);
+  opts.models[0].path = args[idx];
+  if (!std::filesystem::exists(opts.models[0].path)) {
+    log_error(std::format("Model file not found: {}", opts.models[0].path));
     return false;
   }
   return true;
@@ -234,7 +235,8 @@ parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 static auto
 parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& inputs = opts.inputs;
+  opts.models.resize(1);
+  auto& inputs = opts.models[0].inputs;
   return expect_and_parse("--shape", idx, args, [&inputs](const char* val) {
     auto dims = parse_shape_string(val);
     inputs.resize(1);
@@ -246,7 +248,8 @@ parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 static auto
 parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& inputs = opts.inputs;
+  opts.models.resize(1);
+  auto& inputs = opts.models[0].inputs;
   return expect_and_parse("--shapes", idx, args, [&inputs](const char* val) {
     auto dims_list = parse_shapes_string(val);
     inputs.resize(dims_list.size());
@@ -262,7 +265,8 @@ parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 static auto
 parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& inputs = opts.inputs;
+  opts.models.resize(1);
+  auto& inputs = opts.models[0].inputs;
   return expect_and_parse("--types", idx, args, [&inputs](const char* val) {
     auto types = parse_types_string(val);
     if (inputs.size() < types.size()) {
@@ -571,19 +575,23 @@ static auto
 validate_config(RuntimeConfig& opts) -> void
 {
   std::vector<std::string> missing;
-  check_required(!opts.model_path.empty(), "--model", missing);
-  const bool have_shapes = std::any_of(
-      opts.inputs.begin(), opts.inputs.end(),
-      [](const auto& tensor) { return !tensor.dims.empty(); });
-  const bool have_types = std::all_of(
-      opts.inputs.begin(), opts.inputs.end(), [](const auto& tensor) {
-        return tensor.type != at::ScalarType::Undefined;
-      });
+  check_required(
+      !opts.models.empty() && !opts.models[0].path.empty(), "--model", missing);
+  const bool have_shapes = !opts.models.empty() &&
+      std::any_of(
+          opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
+          [](const auto& tensor) { return !tensor.dims.empty(); });
+  const bool have_types = !opts.models.empty() &&
+      std::all_of(
+          opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
+          [](const auto& tensor) {
+            return tensor.type != at::ScalarType::Undefined;
+          });
   check_required(have_shapes, "--shape or --shapes", missing);
   check_required(have_types, "--types", missing);
 
   if (have_shapes && have_types) {
-    for (const auto& input : opts.inputs) {
+    for (const auto& input : opts.models[0].inputs) {
       if (input.dims.empty() || input.type == at::ScalarType::Undefined) {
         log_error("Number of --types must match number of input shapes.");
         opts.valid = false;
@@ -617,8 +625,7 @@ parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
     if (opts.valid) {
       try {
         opts.max_message_bytes = compute_max_message_bytes(
-            opts.max_batch_size, opts.inputs, opts.outputs,
-            opts.max_message_bytes);
+            opts.max_batch_size, opts.models, opts.max_message_bytes);
       }
       catch (const InvalidDimensionException& e) {
         log_error(e.what());

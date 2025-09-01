@@ -41,8 +41,9 @@ RunWorkerThreadFailureCase(const std::filesystem::path& path)
   using namespace starpu_server;
 
   RuntimeConfig opts;
-  opts.model_path = path.string();
-  opts.inputs = {{"input0", {1}, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = path.string();
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
   opts.iterations = 1;
   opts.use_cuda = false;
 
@@ -74,8 +75,9 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
   model.save(file.string());
 
   starpu_server::RuntimeConfig opts;
-  opts.model_path = file.string();
-  opts.inputs = {{"input0", kShape1, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape1, at::kFloat}};
   opts.device_ids = {0};
   opts.use_cuda = false;
 
@@ -132,8 +134,9 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
 TEST(InferenceRunner_Robustesse, LoadModelMissingFile)
 {
   starpu_server::RuntimeConfig opts;
-  opts.model_path = "nonexistent_model.pt";
-  opts.inputs = {{"input0", {1}, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = "nonexistent_model.pt";
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
 
   try {
     auto result = starpu_server::load_model_and_reference_output(opts);
@@ -149,8 +152,9 @@ TEST(RunInferenceLoop_Robustesse, LoadModelFailureHandledGracefully)
   using namespace starpu_server;
 
   RuntimeConfig opts;
-  opts.model_path = "nonexistent_model.pt";
-  opts.inputs = {{"input0", {1}, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = "nonexistent_model.pt";
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
   opts.iterations = 1;
   opts.use_cuda = false;
 

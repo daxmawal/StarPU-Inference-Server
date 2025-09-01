@@ -36,8 +36,9 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputCPU)
   starpu_server::save_mul_two_model(file);
 
   starpu_server::RuntimeConfig opts;
-  opts.model_path = file.string();
-  opts.inputs = {{"input0", kShape4, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape4, at::kFloat}};
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
 
@@ -48,7 +49,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputCPU)
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(kSeed42);
-  auto inputs = starpu_server::generate_inputs(opts.inputs);
+  auto inputs = starpu_server::generate_inputs(opts.models[0].inputs);
   ASSERT_EQ(refs.size(), 1U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0] * 2));
 
@@ -62,8 +63,9 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTuple)
   model.save(file.string());
 
   starpu_server::RuntimeConfig opts;
-  opts.model_path = file.string();
-  opts.inputs = {{"input0", kShape2, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape2, at::kFloat}};
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
 
@@ -74,7 +76,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTuple)
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(kSeed1);
-  auto inputs = starpu_server::generate_inputs(opts.inputs);
+  auto inputs = starpu_server::generate_inputs(opts.models[0].inputs);
   ASSERT_EQ(refs.size(), 2U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0]));
   EXPECT_TRUE(torch::allclose(refs[1], inputs[0] + 1));
@@ -89,8 +91,9 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTensorList)
   model.save(file.string());
 
   starpu_server::RuntimeConfig opts;
-  opts.model_path = file.string();
-  opts.inputs = {{"input0", kShape2, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape2, at::kFloat}};
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
 
@@ -101,7 +104,7 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTensorList)
   EXPECT_TRUE(gpu_models.empty());
 
   torch::manual_seed(kSeed2);
-  auto inputs = starpu_server::generate_inputs(opts.inputs);
+  auto inputs = starpu_server::generate_inputs(opts.models[0].inputs);
   ASSERT_EQ(refs.size(), 2U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0]));
   EXPECT_TRUE(torch::allclose(refs[1], inputs[0] + 1));

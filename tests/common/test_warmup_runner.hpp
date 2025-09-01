@@ -37,7 +37,8 @@ struct WarmupRunnerTestFixture {
   void init(bool use_cuda = false)
   {
     opts = starpu_server::RuntimeConfig{};
-    opts.inputs = {{"input0", {1}, at::kFloat}};
+    opts.models.resize(1);
+    opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
     opts.use_cuda = use_cuda;
 
     starpu = std::make_unique<starpu_server::StarPUSetup>(opts);

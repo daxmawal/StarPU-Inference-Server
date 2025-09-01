@@ -44,16 +44,16 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.scheduler, "fcfs");
-  EXPECT_EQ(cfg.model_path, model_path.string());
+  EXPECT_EQ(cfg.models[0].path, model_path.string());
   EXPECT_EQ(cfg.device_ids, (std::vector<int>{0, 1}));
-  ASSERT_EQ(cfg.inputs.size(), 1U);
-  EXPECT_EQ(cfg.inputs[0].name, "in");
-  EXPECT_EQ(cfg.inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
-  EXPECT_EQ(cfg.inputs[0].type, at::kFloat);
-  ASSERT_EQ(cfg.outputs.size(), 1U);
-  EXPECT_EQ(cfg.outputs[0].name, "out");
-  EXPECT_EQ(cfg.outputs[0].dims, (std::vector<int64_t>{1, 1000}));
-  EXPECT_EQ(cfg.outputs[0].type, at::kFloat);
+  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
+  EXPECT_EQ(cfg.models[0].inputs[0].name, "in");
+  EXPECT_EQ(cfg.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(cfg.models[0].inputs[0].type, at::kFloat);
+  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
+  EXPECT_EQ(cfg.models[0].outputs[0].name, "out");
+  EXPECT_EQ(cfg.models[0].outputs[0].dims, (std::vector<int64_t>{1, 1000}));
+  EXPECT_EQ(cfg.models[0].outputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
   EXPECT_EQ(cfg.max_batch_size, 4);
   EXPECT_EQ(cfg.pregen_inputs, 8U);

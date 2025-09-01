@@ -17,10 +17,10 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
                                 "float"};
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  EXPECT_EQ(opts.model_path, model);
-  ASSERT_EQ(opts.inputs.size(), 1U);
-  EXPECT_EQ(opts.inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
-  EXPECT_EQ(opts.inputs[0].type, at::kFloat);
+  EXPECT_EQ(opts.models[0].path, model);
+  ASSERT_EQ(opts.models[0].inputs.size(), 1U);
+  EXPECT_EQ(opts.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(opts.models[0].inputs[0].type, at::kFloat);
 }
 
 TEST(ArgsParser_Unit, ParsesAllOptions)
@@ -72,7 +72,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.scheduler, "lws");
-  EXPECT_EQ(opts.model_path, model);
+  EXPECT_EQ(opts.models[0].path, model);
   EXPECT_EQ(opts.iterations, 5);
   EXPECT_EQ(opts.delay_ms, 42);
   EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
@@ -99,11 +99,11 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
     ASSERT_TRUE(opts.device_ids.empty());
   }
 
-  ASSERT_EQ(opts.inputs.size(), 2U);
-  EXPECT_EQ(opts.inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
-  EXPECT_EQ(opts.inputs[1].dims, (std::vector<int64_t>{2, 1}));
-  EXPECT_EQ(opts.inputs[0].type, at::kFloat);
-  EXPECT_EQ(opts.inputs[1].type, at::kInt);
+  ASSERT_EQ(opts.models[0].inputs.size(), 2U);
+  EXPECT_EQ(opts.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(opts.models[0].inputs[1].dims, (std::vector<int64_t>{2, 1}));
+  EXPECT_EQ(opts.models[0].inputs[0].type, at::kFloat);
+  EXPECT_EQ(opts.models[0].inputs[1].type, at::kInt);
 }
 
 TEST(ArgsParser_Unit, VerboseLevels)
@@ -134,9 +134,9 @@ TEST(ArgsParser_Unit, ParsesMixedCaseTypes)
                                 "1x1,1x1", "--types", "FlOat,InT"};
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  ASSERT_EQ(opts.inputs.size(), 2U);
-  EXPECT_EQ(opts.inputs[0].type, at::kFloat);
-  EXPECT_EQ(opts.inputs[1].type, at::kInt);
+  ASSERT_EQ(opts.models[0].inputs.size(), 2U);
+  EXPECT_EQ(opts.models[0].inputs[0].type, at::kFloat);
+  EXPECT_EQ(opts.models[0].inputs[1].type, at::kInt);
 }
 
 TEST(ArgsParser_Unit, MetricsPortBoundaryValues)

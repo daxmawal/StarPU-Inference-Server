@@ -66,9 +66,10 @@ void
 parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["model"]) {
-    cfg.model_path = root["model"].as<std::string>();
-    if (!std::filesystem::exists(cfg.model_path)) {
-      log_error(std::string("Model path does not exist: ") + cfg.model_path);
+    cfg.models.resize(1);
+    cfg.models[0].path = root["model"].as<std::string>();
+    if (!std::filesystem::exists(cfg.models[0].path)) {
+      log_error(std::string("Model path does not exist: ") + cfg.models[0].path);
       cfg.valid = false;
     }
   }
@@ -96,11 +97,13 @@ void
 parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["input"]) {
-    cfg.inputs =
+    cfg.models.resize(1);
+    cfg.models[0].inputs =
         parse_tensor_nodes(root["input"], cfg.max_inputs, cfg.max_dims);
   }
   if (root["output"]) {
-    cfg.outputs =
+    cfg.models.resize(1);
+    cfg.models[0].outputs =
         parse_tensor_nodes(root["output"], cfg.max_inputs, cfg.max_dims);
   }
 }
@@ -291,7 +294,7 @@ load_config(const std::string& path) -> RuntimeConfig
   if (cfg.valid) {
     try {
       cfg.max_message_bytes = compute_max_message_bytes(
-          cfg.max_batch_size, cfg.inputs, cfg.outputs, cfg.max_message_bytes);
+          cfg.max_batch_size, cfg.models, cfg.max_message_bytes);
     }
     catch (const InvalidDimensionException& e) {
       log_error(std::string("Failed to load config: ") + e.what());

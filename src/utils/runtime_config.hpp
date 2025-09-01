@@ -39,6 +39,18 @@ struct TensorConfig {
 };
 
 // =============================================================================
+// ModelConfig
+// -----------------------------------------------------------------------------
+// Configuration for a single model, including its path and I/O tensors.
+// =============================================================================
+struct ModelConfig {
+  std::string name;
+  std::string path;
+  std::vector<TensorConfig> inputs;
+  std::vector<TensorConfig> outputs;
+};
+
+// =============================================================================
 // RuntimeConfig
 // -----------------------------------------------------------------------------
 // Global configuration structure for inference runtime.
@@ -51,14 +63,12 @@ struct TensorConfig {
 // =============================================================================
 struct RuntimeConfig {
   std::string scheduler = "lws";
-  std::string model_path;
   std::string config_path;
   std::string server_address = "0.0.0.0:50051";
   int metrics_port = 9090;
 
   std::vector<int> device_ids;
-  std::vector<TensorConfig> inputs;
-  std::vector<TensorConfig> outputs;
+  std::vector<ModelConfig> models;
 
   VerbosityLevel verbosity = VerbosityLevel::Info;
   int iterations = 1;
@@ -85,7 +95,7 @@ struct RuntimeConfig {
 };
 
 inline auto
-compute_max_message_bytes(
+compute_model_message_bytes(
     int max_batch_size, const std::vector<TensorConfig>& inputs,
     const std::vector<TensorConfig>& outputs,
     std::size_t min_message_bytes = 32 * 1024 * 1024) -> std::size_t
@@ -142,5 +152,18 @@ compute_max_message_bytes(
 
   const size_t total = per_sample_bytes * static_cast<size_t>(max_batch_size);
   return std::max(total, min_message_bytes);
+}
+
+inline auto compute_max_message_bytes(
+    int max_batch_size, const std::vector<ModelConfig>& models,
+    std::size_t min_message_bytes = 32 * 1024 * 1024) -> std::size_t
+{
+  size_t max_bytes = min_message_bytes;
+  for (const auto& model : models) {
+    const auto bytes = compute_model_message_bytes(
+        max_batch_size, model.inputs, model.outputs, min_message_bytes);
+    max_bytes = std::max(max_bytes, bytes);
+  }
+  return max_bytes;
 }
 }  // namespace starpu_server

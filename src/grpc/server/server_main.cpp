@@ -134,9 +134,11 @@ launch_threads(
 
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
   std::vector<at::ScalarType> expected_input_types;
-  expected_input_types.reserve(opts.inputs.size());
-  for (const auto& input : opts.inputs) {
-    expected_input_types.push_back(input.type);
+  if (!opts.models.empty()) {
+    expected_input_types.reserve(opts.models[0].inputs.size());
+    for (const auto& input : opts.models[0].inputs) {
+      expected_input_types.push_back(input.type);
+    }
   }
   std::jthread grpc_thread([&, expected_input_types]() {
     starpu_server::RunGrpcServer(
