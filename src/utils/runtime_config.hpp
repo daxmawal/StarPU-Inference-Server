@@ -24,8 +24,8 @@ inline constexpr std::size_t kMaxDims = 8;
 inline constexpr std::size_t kMaxModelsGpu = 32;
 
 inline const std::unordered_set<std::string, TransparentHash, std::equal_to<>>
-    kAllowedSchedulers = {"lws",  "dmda",   "ws",   "eager", "random",
-                          "prio", "peager", "heft", "fcfs"};
+    kAllowedSchedulers = {"lws",  "dmda",   "dmdas", "ws",   "eager", "random",
+                          "prio", "peager", "pheft", "heft", "fcfs"};
 
 // =============================================================================
 // TensorConfig
@@ -154,7 +154,8 @@ compute_model_message_bytes(
   return std::max(total, min_message_bytes);
 }
 
-inline auto compute_max_message_bytes(
+inline auto
+compute_max_message_bytes(
     int max_batch_size, const std::vector<ModelConfig>& models,
     std::size_t min_message_bytes = 32 * 1024 * 1024) -> std::size_t
 {
