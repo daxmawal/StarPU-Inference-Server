@@ -7,9 +7,13 @@
 
 #include <cstddef>
 #include <memory>
+#include <thread>
+#include <unordered_map>
 
 namespace prometheus {
 class Exposer;
+template <typename T>
+class Family;
 }  // namespace prometheus
 
 namespace starpu_server {
@@ -24,8 +28,19 @@ class MetricsRegistry {
   prometheus::Histogram* inference_latency;
   prometheus::Gauge* queue_size_gauge;
 
+  prometheus::Gauge* system_cpu_usage_percent{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_utilization_family{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family{nullptr};
+
  private:
   std::unique_ptr<prometheus::Exposer> exposer_;
+  std::jthread sampler_thread_;
+  std::unordered_map<int, prometheus::Gauge*> gpu_utilization_gauges_;
+  std::unordered_map<int, prometheus::Gauge*> gpu_memory_used_gauges_;
+  std::unordered_map<int, prometheus::Gauge*> gpu_memory_total_gauges_;
+
+  void sampling_loop(std::stop_token stop);
 };
 
 bool init_metrics(int port);
