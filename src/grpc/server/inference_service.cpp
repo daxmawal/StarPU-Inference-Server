@@ -104,6 +104,17 @@ fill_output_tensor(
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
+    std::vector<at::ScalarType> expected_input_types,
+    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size)
+    : queue_(queue), reference_outputs_(reference_outputs),
+      expected_input_types_(std::move(expected_input_types)),
+      expected_input_dims_(std::move(expected_input_dims)),
+      max_batch_size_(max_batch_size)
+{
+}
+
+InferenceServiceImpl::InferenceServiceImpl(
+    InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types))
@@ -193,6 +204,52 @@ InferenceServiceImpl::validate_and_convert_inputs(
       return {
           grpc::StatusCode::INVALID_ARGUMENT,
           "Input tensor shape does not match raw content size"};
+    }
+
+    if (static_cast<size_t>(i) < expected_input_dims_.size()) {
+      const std::vector<int64_t>& exp =
+          expected_input_dims_[static_cast<size_t>(i)];
+      std::vector<int64_t> shp(input.shape().begin(), input.shape().end());
+
+      const auto rank = static_cast<int64_t>(shp.size());
+      const auto exp_rank = static_cast<int64_t>(exp.size());
+      const bool batching_allowed = (max_batch_size_ > 0);
+
+      auto check_tail_eq = [&](int64_t offset_in, int64_t offset_exp) -> bool {
+        if (rank - offset_in != exp_rank - offset_exp)
+          return false;
+        for (int64_t k = 0; k < rank - offset_in; ++k) {
+          if (shp[static_cast<size_t>(offset_in + k)] !=
+              exp[static_cast<size_t>(offset_exp + k)]) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+      bool shape_ok = false;
+      if (!batching_allowed) {
+        shape_ok = (rank == exp_rank) && check_tail_eq(0, 0);
+      } else {
+        if (rank == exp_rank) {
+          if (rank >= 1 && check_tail_eq(1, 1)) {
+            const int64_t b = shp[0];
+            shape_ok = (b >= 1 && b <= max_batch_size_);
+          }
+        } else if (rank == exp_rank + 1) {
+          if (check_tail_eq(1, 0)) {
+            const int64_t b = shp[0];
+            shape_ok = (b >= 1 && b <= max_batch_size_);
+          }
+        }
+      }
+
+      if (!shape_ok) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            "Input tensor shape does not match configured dimensions or batch "
+            "limits"};
+      }
     }
 
     torch::Tensor tensor;
@@ -302,11 +359,47 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
+    const std::vector<std::vector<int64_t>>& expected_input_dims,
+    int max_batch_size, const std::string& address,
+    std::size_t max_message_bytes, VerbosityLevel verbosity,
+    std::unique_ptr<Server>& server)
+{
+  InferenceServiceImpl service(
+      &queue, &reference_outputs, expected_input_types, expected_input_dims,
+      max_batch_size);
+
+  ServerBuilder builder;
+  builder.AddListeningPort(address, grpc::InsecureServerCredentials());
+  builder.RegisterService(&service);
+  const int grpc_max_message_bytes =
+      max_message_bytes >
+              static_cast<std::size_t>(std::numeric_limits<int>::max())
+          ? std::numeric_limits<int>::max()
+          : static_cast<int>(max_message_bytes);
+  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
+  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
+
+  server = builder.BuildAndStart();
+  if (!server) {
+    log_error(std::format("Failed to start gRPC server on {}", address));
+    return;
+  }
+  log_info(verbosity, std::format("Server listening on {}", address));
+  server->Wait();
+  server.reset();
+}
+
+void
+RunGrpcServer(
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<at::ScalarType>& expected_input_types,
     const std::string& address, std::size_t max_message_bytes,
     VerbosityLevel verbosity, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
-      &queue, &reference_outputs, expected_input_types);
+      &queue, &reference_outputs,
+      std::vector<at::ScalarType>(
+          expected_input_types.begin(), expected_input_types.end()));
 
   ServerBuilder builder;
   builder.AddListeningPort(address, grpc::InsecureServerCredentials());

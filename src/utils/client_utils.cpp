@@ -113,11 +113,23 @@ create_job(
       [](const auto& tensor) { return tensor.scalar_type(); });
   job->set_input_types(types);
 
+  int64_t requested_batch = 1;
+  if (!inputs.empty() && inputs[0].dim() >= 1) {
+    requested_batch = inputs[0].size(0);
+  }
+
   std::vector<torch::Tensor> outputs;
   outputs.reserve(outputs_ref.size());
-  std::ranges::transform(
-      outputs_ref, std::back_inserter(outputs),
-      [](const auto& ref) { return torch::empty_like(ref); });
+  for (const auto& ref : outputs_ref) {
+    const auto dtype = ref.scalar_type();
+    const auto options = torch::TensorOptions().dtype(dtype);
+
+    std::vector<int64_t> shape(ref.sizes().begin(), ref.sizes().end());
+    if (!shape.empty() && requested_batch > 0) {
+      shape[0] = requested_batch;
+    }
+    outputs.emplace_back(torch::empty(shape, options));
+  }
   job->set_output_tensors(outputs);
 
   job->set_job_id(job_id);

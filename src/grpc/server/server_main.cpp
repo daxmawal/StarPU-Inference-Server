@@ -140,10 +140,19 @@ launch_threads(
       expected_input_types.push_back(input.type);
     }
   }
-  std::jthread grpc_thread([&, expected_input_types]() {
+  std::vector<std::vector<int64_t>> expected_input_dims;
+  if (!opts.models.empty()) {
+    expected_input_dims.reserve(opts.models[0].inputs.size());
+    for (const auto& input : opts.models[0].inputs) {
+      expected_input_dims.push_back(input.dims);
+    }
+  }
+
+  std::jthread grpc_thread([&, expected_input_types, expected_input_dims]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, expected_input_types, opts.server_address,
-        opts.max_message_bytes, opts.verbosity, ctx.server);
+        queue, reference_outputs, expected_input_types, expected_input_dims,
+        opts.max_batch_size, opts.server_address, opts.max_message_bytes,
+        opts.verbosity, ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);

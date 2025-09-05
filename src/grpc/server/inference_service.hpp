@@ -17,6 +17,13 @@ class InferenceServiceImpl final
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
+      std::vector<at::ScalarType> expected_input_types,
+      std::vector<std::vector<int64_t>> expected_input_dims,
+      int max_batch_size);
+
+  InferenceServiceImpl(
+      InferenceQueue* queue,
+      const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types);
 
   auto ServerLive(
@@ -54,8 +61,18 @@ class InferenceServiceImpl final
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
   std::vector<at::ScalarType> expected_input_types_;
+  std::vector<std::vector<int64_t>> expected_input_dims_;
+  int max_batch_size_ = 0;
   std::atomic<int> next_job_id_{0};
 };
+
+void RunGrpcServer(
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<at::ScalarType>& expected_input_types,
+    const std::vector<std::vector<int64_t>>& expected_input_dims,
+    int max_batch_size, const std::string& address,
+    std::size_t max_message_bytes, VerbosityLevel verbosity,
+    std::unique_ptr<grpc::Server>& server);
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
