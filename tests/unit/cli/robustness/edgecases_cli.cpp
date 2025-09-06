@@ -1,20 +1,28 @@
 #include <gtest/gtest.h>
+#include <torch/torch.h>
 
+#include <format>
+#include <string>
 #include <vector>
 
 #include "cli/args_parser.hpp"
 #include "test_cli.hpp"
+#include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 
-static const std::vector<const char*> kCommonArgs = {
-    "program", "--model", "model.pt", "--shape", "1x3", "--types", "float"};
+static auto
+build_common_args() -> std::vector<const char*>
+{
+  return {"program", "--model", test_model_path().c_str(), "--shape", "1x3",
+          "--types", "float"};
+}
 
 class ArgsParserInvalidOptions_Robustesse
     : public ::testing::TestWithParam<std::vector<const char*>> {};
 
 TEST_P(ArgsParserInvalidOptions_Robustesse, Invalid)
 {
-  auto args = kCommonArgs;
+  auto args = build_common_args();
   const auto& diff = GetParam();
   args.insert(args.end(), diff.begin(), diff.end());
   expect_invalid(args);
@@ -27,7 +35,10 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--iterations", "0"},
         std::vector<const char*>{"--shape", "1x-3x3"},
         std::vector<const char*>{"--types", "unknown"},
+        std::vector<const char*>{"--types", "complex64"},
+        std::vector<const char*>{"--scheduler", "unknown"},
         std::vector<const char*>{"--device-ids", "-1"},
+        std::vector<const char*>{"--device-ids", "0,0"},
         std::vector<const char*>{"--unknown"},
         std::vector<const char*>{"--shapes", "1x2,2x3", "--types", "float"},
         std::vector<const char*>{"--shape", "1xax2"},
@@ -40,6 +51,70 @@ INSTANTIATE_TEST_SUITE_P(
         std::vector<const char*>{"--delay", "-1"},
         std::vector<const char*>{"--max-batch-size", "0"},
         std::vector<const char*>{"--max-batch-size", "-1"},
+        std::vector<const char*>{"--metrics-port", "0"},
+        std::vector<const char*>{"--metrics-port", "65536"},
+        std::vector<const char*>{"--pregen-inputs", "0"},
+        std::vector<const char*>{"--pregen-inputs", "-1"},
+        std::vector<const char*>{"--warmup-iterations", "-1"},
+        std::vector<const char*>{"--seed", "-1"},
+        std::vector<const char*>{"--rtol", "-1"},
+        std::vector<const char*>{"--atol", "-1"},
         std::vector<const char*>{"--shapes", "1x2,,3", "--types", "float,int"},
         std::vector<const char*>{"--model"},
-        std::vector<const char*>{"--iterations"}));
+        std::vector<const char*>{"--iterations"},
+        std::vector<const char*>{"--config"},
+        std::vector<const char*>{"--scheduler"},
+        std::vector<const char*>{"--address"},
+        std::vector<const char*>{"--model", "/nonexistent/path/to/model.pt"},
+        std::vector<const char*>{
+            "--config", "/nonexistent/path/to/config.yaml"}));
+
+TEST(ArgsParserInvalidOptions_Robustesse, DeviceIdOutOfRange)
+{
+  const int device_count =
+      static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
+  std::string id_str = std::to_string(device_count);
+  auto args = build_common_args();
+  args.emplace_back("--device-ids");
+  args.push_back(id_str.c_str());
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto opts = parse(args);
+  EXPECT_FALSE(opts.valid);
+  const std::string expected_msg = std::format(
+      "GPU ID {} out of range. Only {} device(s) available.", device_count,
+      device_count);
+  EXPECT_EQ(
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel, expected_msg));
+}
+
+struct MissingValueParam {
+  std::vector<const char*> args;
+  const char* option;
+};
+
+class ArgsParserMissingValues_Robustesse
+    : public ::testing::TestWithParam<MissingValueParam> {};
+
+TEST_P(ArgsParserMissingValues_Robustesse, ReportsError)
+{
+  const auto& param = GetParam();
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto opts = parse(param.args);
+  EXPECT_FALSE(opts.valid);
+  const std::string expected_msg =
+      std::string(param.option) + " option requires a value.";
+  EXPECT_EQ(
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel, expected_msg));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MissingValue, ArgsParserMissingValues_Robustesse,
+    ::testing::Values(
+        MissingValueParam{{"program", "--model"}, "--model"},
+        MissingValueParam{{"program", "--config"}, "--config"},
+        MissingValueParam{{"program", "--scheduler"}, "--scheduler"},
+        MissingValueParam{{"program", "--address"}, "--address"},
+        MissingValueParam{{"program", "--rtol"}, "--rtol"},
+        MissingValueParam{{"program", "--atol"}, "--atol"}));

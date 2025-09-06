@@ -27,21 +27,24 @@ count_threads() -> int
   namespace fs = std::filesystem;
   auto distance = std::distance(
       fs::directory_iterator("/proc/self/task"), fs::directory_iterator{});
-  if (distance > std::numeric_limits<int>::max())
+  if (distance > std::numeric_limits<int>::max()) {
     throw std::overflow_error("Thread count exceeds int range");
+  }
   return static_cast<int>(distance);
 }
 }  // namespace
 
 TEST_F(WarmupRunnerTest, WarmupRunnerRunNoCuda_Integration)
 {
-  auto elapsed_ms = measure_ms([&]() { runner->run(42); });
+  constexpr int kWarmupQuick = 42;
+  auto elapsed_ms = measure_ms([&]() { runner->run(kWarmupQuick); });
   EXPECT_LT(elapsed_ms, 1000);
 }
 
 TEST_F(WarmupRunnerTest, RunReturnsImmediatelyWhenCudaDisabled_Integration)
 {
-  auto elapsed_ms = measure_ms([&]() { runner->run(100); });
+  constexpr int kWarmupShort = 100;
+  auto elapsed_ms = measure_ms([&]() { runner->run(kWarmupShort); });
   EXPECT_LT(elapsed_ms, 100);
 }
 
@@ -52,17 +55,17 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers_Integration)
   starpu_server::InferenceQueue queue;
 
   std::atomic<size_t> completed{0};
-  std::condition_variable cv;
-  std::mutex m;
+  std::condition_variable cond_var;
+  std::mutex mutex;
 
   std::jthread server([&] {
     for (;;) {
       std::shared_ptr<starpu_server::InferenceJob> job;
-      queue.wait_and_pop(job);
-      if (job->is_shutdown())
+      if (!queue.wait_and_pop(job)) {
         break;
+      }
       completed.fetch_add(1);
-      cv.notify_one();
+      cond_var.notify_one();
     }
   });
 
@@ -71,12 +74,15 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers_Integration)
       [&] { runner->client_worker(device_workers, queue, iters); });
 
   size_t total_workers = 0;
-  for (auto& [dev, ws] : device_workers) (void)dev, total_workers += ws.size();
+  for (auto& [dev, ws] : device_workers) {
+    (void)dev;
+    total_workers += ws.size();
+  }
   const size_t total_jobs = total_workers * static_cast<size_t>(iters);
 
   {
-    std::unique_lock lk(m);
-    cv.wait(lk, [&] { return completed.load() >= total_jobs; });
+    std::unique_lock lock(mutex);
+    cond_var.wait(lock, [&] { return completed.load() >= total_jobs; });
   }
   EXPECT_EQ(completed.load(), total_jobs);
 }
@@ -97,7 +103,8 @@ TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads_Integration)
   fixture.init();
   auto runner = fixture.make_runner();
   const auto before = count_threads();
-  const auto elapsed_ms = measure_ms([&]() { runner.run(100); });
+  constexpr int kWarmupShort = 100;
+  const auto elapsed_ms = measure_ms([&]() { runner.run(kWarmupShort); });
   const auto after = count_threads();
   EXPECT_EQ(before, after);
   EXPECT_LT(elapsed_ms, 50);

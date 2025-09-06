@@ -2,7 +2,12 @@
 
 class StarPUSetupCodelet_Integration : public ::testing::Test {
  protected:
-  std::unique_ptr<starpu_server::StarPUSetup> starpu;
+  auto starpu_setup() -> starpu_server::StarPUSetup& { return *starpu_; }
+  [[nodiscard]] auto starpu_setup() const -> const starpu_server::StarPUSetup&
+  {
+    return *starpu_;
+  }
+
   void SetUp() override
   {
     if (!torch::cuda::is_available()) {
@@ -12,13 +17,16 @@ class StarPUSetupCodelet_Integration : public ::testing::Test {
     opts.use_cpu = true;
     opts.use_cuda = true;
     opts.device_ids = {0};
-    starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
+    starpu_ = std::make_unique<starpu_server::StarPUSetup>(opts);
   }
+
+ private:
+  std::unique_ptr<starpu_server::StarPUSetup> starpu_;
 };
 
 TEST_F(StarPUSetupCodelet_Integration, GetCodeletNotNull)
 {
-  EXPECT_NE(starpu->get_codelet(), nullptr);
+  EXPECT_NE(starpu_setup().get_codelet(), nullptr);
 }
 
 TEST_F(StarPUSetupCodelet_Integration, GetCudaWorkersSingleDevice)

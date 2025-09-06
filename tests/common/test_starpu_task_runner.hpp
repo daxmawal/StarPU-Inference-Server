@@ -4,7 +4,9 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
+#include <vector>
 
 #include "core/inference_params.hpp"
 #include "core/inference_runner.hpp"
@@ -21,15 +23,17 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
   std::mutex results_mutex_;
   std::atomic<int> completed_jobs_;
   std::condition_variable cv_;
+  std::unique_ptr<starpu_server::StarPUSetup> starpu_setup_;
   starpu_server::StarPUTaskRunnerConfig config_{};
   std::unique_ptr<starpu_server::StarPUTaskRunner> runner_;
   void SetUp() override
   {
     completed_jobs_ = 0;
+    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
     config_.queue = &queue_;
     config_.model_cpu = &model_cpu_;
     config_.models_gpu = &models_gpu_;
-    config_.starpu = nullptr;
+    config_.starpu = starpu_setup_.get();
     config_.opts = &opts_;
     config_.results = &results_;
     config_.results_mutex = &results_mutex_;

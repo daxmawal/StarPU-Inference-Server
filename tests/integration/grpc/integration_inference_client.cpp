@@ -70,7 +70,7 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
   std::vector<torch::Tensor> reference_outputs = {torch::zeros({1})};
   auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
 
-  std::vector<torch::Tensor> worker_outputs = {torch::tensor({1.0f})};
+  std::vector<torch::Tensor> worker_outputs = {torch::tensor({1.0F})};
   auto worker = starpu_server::run_single_job(queue, worker_outputs);
 
   auto channel = grpc::CreateChannel(

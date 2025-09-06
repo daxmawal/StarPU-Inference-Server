@@ -24,7 +24,7 @@ class InferenceTaskTest : public ::testing::Test {
     job->set_input_tensors(inputs);
     job->set_input_types(types);
     if (set_outputs) {
-      job->set_outputs_tensors({torch::zeros({1})});
+      job->set_output_tensors({torch::zeros({1})});
     }
     return job;
   }

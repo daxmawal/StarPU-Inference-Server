@@ -3,14 +3,17 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <format>
 #include <future>
-#include <iostream>
+#include <limits>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
 #include "monitoring/metrics.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/datatype_utils.hpp"
+#include "utils/logger.hpp"
 
 namespace starpu_server {
 using grpc::Server;
@@ -29,22 +32,52 @@ using inference::ServerReadyResponse;
 
 namespace {
 
-// Convert gRPC input to torch::Tensor
+auto
+checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
+{
+  if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs) {
+    return std::nullopt;
+  }
+  return lhs * rhs;
+}
+
 auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input, const std::string& raw,
-    at::ScalarType dtype)
+    at::ScalarType dtype, torch::Tensor& tensor) -> Status
 {
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
-  auto tensor = torch::empty(shape, torch::TensorOptions().dtype(dtype));
+  auto options = torch::TensorOptions().dtype(dtype);
+
+  std::optional<size_t> expected = element_size(dtype);
+  for (const auto dim : input.shape()) {
+    if (dim <= 0) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Input tensor shape contains non-positive dimension"};
+    }
+    expected = checked_mul(*expected, static_cast<size_t>(dim));
+    if (!expected) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Input tensor shape is too large"};
+    }
+  }
+  if (*expected != raw.size()) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Raw input size does not match tensor size"};
+  }
+
+  tensor = torch::empty(shape, options);
   std::memcpy(tensor.data_ptr(), raw.data(), raw.size());
-  return tensor;
+  return Status::OK;
 }
 
-// Fill gRPC output from torch::Tensor
-void
+auto
 fill_output_tensor(
-    ModelInferResponse* reply, const std::vector<torch::Tensor>& outputs)
+    ModelInferResponse* reply,
+    const std::vector<torch::Tensor>& outputs) -> Status
 {
   for (size_t idx = 0; idx < outputs.size(); ++idx) {
     const auto& out = outputs[idx].to(torch::kCPU);
@@ -55,15 +88,31 @@ fill_output_tensor(
       out_tensor->add_shape(dim);
     }
 
-    auto flat = out.view({-1});
+    auto flat = out.contiguous().view({-1});
+    const auto total_bytes =
+        checked_mul(static_cast<size_t>(flat.numel()), flat.element_size());
+    if (!total_bytes) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT, "Output tensor size overflow"};
+    }
     reply->add_raw_output_contents()->assign(
-        reinterpret_cast<const char*>(flat.data_ptr()),
-        flat.numel() * flat.element_size());
+        static_cast<const char*>(flat.data_ptr()), *total_bytes);
   }
+  return Status::OK;
 }
 }  // namespace
 
-// Implementation
+InferenceServiceImpl::InferenceServiceImpl(
+    InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
+    std::vector<at::ScalarType> expected_input_types,
+    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size)
+    : queue_(queue), reference_outputs_(reference_outputs),
+      expected_input_types_(std::move(expected_input_types)),
+      expected_input_dims_(std::move(expected_input_dims)),
+      max_batch_size_(max_batch_size)
+{
+}
+
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types)
@@ -104,10 +153,18 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const ModelInferRequest* request,
     std::vector<torch::Tensor>& inputs) -> Status
 {
-  if (request->raw_input_contents_size() != request->inputs_size()) {
-    return Status(
+  if (request->inputs_size() !=
+      static_cast<int>(expected_input_types_.size())) {
+    return {
         grpc::StatusCode::INVALID_ARGUMENT,
-        "Number of raw inputs does not match number of input tensors");
+        std::format(
+            "Expected {} input tensors but received {}",
+            expected_input_types_.size(), request->inputs_size())};
+  }
+  if (request->raw_input_contents_size() != request->inputs_size()) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Number of raw inputs does not match number of input tensors"};
   }
 
   inputs.reserve(request->inputs_size());
@@ -115,33 +172,93 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const auto& input = request->inputs(i);
     const auto& raw = request->raw_input_contents(i);
 
-    at::ScalarType dtype;
+    at::ScalarType dtype = at::kFloat;
     try {
       dtype = datatype_to_scalar_type(input.datatype());
     }
     catch (const std::invalid_argument& e) {
-      return Status(grpc::StatusCode::INVALID_ARGUMENT, e.what());
+      return {grpc::StatusCode::INVALID_ARGUMENT, e.what()};
     }
 
-    if (i >= static_cast<int>(expected_input_types_.size()) ||
-        dtype != expected_input_types_[i]) {
-      return Status(
-          grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch");
+    if (dtype != expected_input_types_[i]) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch"};
     }
 
-    size_t expected = element_size(dtype);
+    std::optional<size_t> expected = element_size(dtype);
     for (const auto dim : input.shape()) {
-      expected *= static_cast<size_t>(dim);
+      if (dim <= 0) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            "Input tensor shape contains non-positive dimension"};
+      }
+
+      expected = checked_mul(*expected, static_cast<size_t>(dim));
+      if (!expected) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            "Input tensor shape is too large"};
+      }
     }
-    if (expected != raw.size()) {
-      return Status(
+    if (*expected != raw.size()) {
+      return {
           grpc::StatusCode::INVALID_ARGUMENT,
-          "Input tensor shape does not match raw content size");
+          "Input tensor shape does not match raw content size"};
     }
 
-    inputs.push_back(convert_input_to_tensor(input, raw, dtype));
-  }
+    if (static_cast<size_t>(i) < expected_input_dims_.size()) {
+      const std::vector<int64_t>& exp =
+          expected_input_dims_[static_cast<size_t>(i)];
+      std::vector<int64_t> shp(input.shape().begin(), input.shape().end());
 
+      const auto rank = static_cast<int64_t>(shp.size());
+      const auto exp_rank = static_cast<int64_t>(exp.size());
+      const bool batching_allowed = (max_batch_size_ > 0);
+
+      auto check_tail_eq = [&](int64_t offset_in, int64_t offset_exp) -> bool {
+        if (rank - offset_in != exp_rank - offset_exp)
+          return false;
+        for (int64_t k = 0; k < rank - offset_in; ++k) {
+          if (shp[static_cast<size_t>(offset_in + k)] !=
+              exp[static_cast<size_t>(offset_exp + k)]) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+      bool shape_ok = false;
+      if (!batching_allowed) {
+        shape_ok = (rank == exp_rank) && check_tail_eq(0, 0);
+      } else {
+        if (rank == exp_rank) {
+          if (rank >= 1 && check_tail_eq(1, 1)) {
+            const int64_t b = shp[0];
+            shape_ok = (b >= 1 && b <= max_batch_size_);
+          }
+        } else if (rank == exp_rank + 1) {
+          if (check_tail_eq(1, 0)) {
+            const int64_t b = shp[0];
+            shape_ok = (b >= 1 && b <= max_batch_size_);
+          }
+        }
+      }
+
+      if (!shape_ok) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            "Input tensor shape does not match configured dimensions or batch "
+            "limits"};
+      }
+    }
+
+    torch::Tensor tensor;
+    Status status = convert_input_to_tensor(input, raw, dtype, tensor);
+    if (!status.ok()) {
+      return status;
+    }
+    inputs.push_back(std::move(tensor));
+  }
   return Status::OK;
 }
 
@@ -160,26 +277,37 @@ InferenceServiceImpl::submit_job_and_wait(
         result_promise.set_value(outs);
       });
 
-  queue_->push(job);
+  const bool pushed = queue_->push(job);
+  if (!pushed) {
+    return {grpc::StatusCode::UNAVAILABLE, "Inference queue shutting down"};
+  }
+
+  const auto timeout = std::chrono::seconds(30);
+  if (result_future.wait_for(timeout) != std::future_status::ready) {
+    return {
+        grpc::StatusCode::DEADLINE_EXCEEDED,
+        "Inference result not available in time"};
+  }
   outputs = result_future.get();
 
   if (outputs.empty()) {
-    return Status(grpc::StatusCode::INTERNAL, "Inference failed");
+    return {grpc::StatusCode::INTERNAL, "Inference failed"};
   }
 
   return Status::OK;
 }
 
-void
+auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
-    const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms)
+    const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
+    int64_t send_ms) -> Status
 {
   reply->set_model_name(request->model_name());
   reply->set_model_version(request->model_version());
   reply->set_server_receive_ms(recv_ms);
   reply->set_server_send_ms(send_ms);
-  fill_output_tensor(reply, outputs);
+  return fill_output_tensor(reply, outputs);
 }
 
 auto
@@ -187,8 +315,9 @@ InferenceServiceImpl::ModelInfer(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply) -> Status
 {
-  if (requests_total != nullptr) {
-    requests_total->Increment();
+  auto metrics = get_metrics();
+  if (metrics && metrics->requests_total != nullptr) {
+    metrics->requests_total->Increment();
   }
 
   auto recv_tp = std::chrono::high_resolution_clock::now();
@@ -213,12 +342,15 @@ InferenceServiceImpl::ModelInfer(
                         send_tp.time_since_epoch())
                         .count();
 
-  populate_response(request, reply, outputs, recv_ms, send_ms);
+  status = populate_response(request, reply, outputs, recv_ms, send_ms);
+  if (!status.ok()) {
+    return status;
+  }
 
-  if (inference_latency != nullptr) {
+  if (metrics && metrics->inference_latency != nullptr) {
     const auto latency_ms =
         std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
-    inference_latency->Observe(latency_ms);
+    metrics->inference_latency->Observe(latency_ms);
   }
   return Status::OK;
 }
@@ -227,20 +359,65 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, int max_message_bytes,
+    const std::vector<std::vector<int64_t>>& expected_input_dims,
+    int max_batch_size, const std::string& address,
+    std::size_t max_message_bytes, VerbosityLevel verbosity,
     std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
-      &queue, &reference_outputs, expected_input_types);
+      &queue, &reference_outputs, expected_input_types, expected_input_dims,
+      max_batch_size);
 
   ServerBuilder builder;
   builder.AddListeningPort(address, grpc::InsecureServerCredentials());
   builder.RegisterService(&service);
-  builder.SetMaxReceiveMessageSize(max_message_bytes);
-  builder.SetMaxSendMessageSize(max_message_bytes);
+  const int grpc_max_message_bytes =
+      max_message_bytes >
+              static_cast<std::size_t>(std::numeric_limits<int>::max())
+          ? std::numeric_limits<int>::max()
+          : static_cast<int>(max_message_bytes);
+  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
+  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
 
   server = builder.BuildAndStart();
-  std::cout << "Server listening on " << address << std::endl;
+  if (!server) {
+    log_error(std::format("Failed to start gRPC server on {}", address));
+    return;
+  }
+  log_info(verbosity, std::format("Server listening on {}", address));
+  server->Wait();
+  server.reset();
+}
+
+void
+RunGrpcServer(
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<at::ScalarType>& expected_input_types,
+    const std::string& address, std::size_t max_message_bytes,
+    VerbosityLevel verbosity, std::unique_ptr<Server>& server)
+{
+  InferenceServiceImpl service(
+      &queue, &reference_outputs,
+      std::vector<at::ScalarType>(
+          expected_input_types.begin(), expected_input_types.end()));
+
+  ServerBuilder builder;
+  builder.AddListeningPort(address, grpc::InsecureServerCredentials());
+  builder.RegisterService(&service);
+  const int grpc_max_message_bytes =
+      max_message_bytes >
+              static_cast<std::size_t>(std::numeric_limits<int>::max())
+          ? std::numeric_limits<int>::max()
+          : static_cast<int>(max_message_bytes);
+  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
+  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
+
+  server = builder.BuildAndStart();
+  if (!server) {
+    log_error(std::format("Failed to start gRPC server on {}", address));
+    return;
+  }
+  log_info(verbosity, std::format("Server listening on {}", address));
   server->Wait();
   server.reset();
 }

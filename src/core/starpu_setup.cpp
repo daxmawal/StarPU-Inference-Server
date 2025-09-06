@@ -10,6 +10,7 @@
 #include <starpu_cuda.h>
 #include <torch/types.h>
 
+#include <array>
 #include <bit>
 #include <chrono>
 #include <climits>
@@ -18,8 +19,10 @@
 #include <format>
 #include <functional>
 #include <map>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "device_type.hpp"
@@ -30,6 +33,11 @@
 #include "tensor_builder.hpp"
 
 namespace starpu_server {
+void run_inference(
+    InferenceParams* params, const std::vector<void*>& buffers,
+    torch::Device device, torch::jit::script::Module* model,
+    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+        copy_output_fn);
 // =============================================================================
 // InferenceCodelet: constructor and access to codelet
 // =============================================================================
@@ -61,21 +69,32 @@ extract_tensors_from_output(const c10::IValue& result)
 {
   std::vector<at::Tensor> outputs;
 
-  if (result.isTensor()) {
-    outputs.emplace_back(result.toTensor());
-  } else if (result.isTuple()) {
-    for (const auto& val : result.toTuple()->elements()) {
-      TORCH_CHECK(val.isTensor(), "Expected tensor in tuple output");
-      outputs.emplace_back(val.toTensor());
+  std::function<void(const c10::IValue&)> extract;
+  extract = [&](const c10::IValue& value) {
+    if (value.isTensor()) {
+      outputs.emplace_back(value.toTensor());
+    } else if (value.isTuple()) {
+      for (const auto& val : value.toTuple()->elements()) {
+        extract(val);
+      }
+    } else if (value.isTensorList()) {
+      outputs.insert(
+          outputs.end(), value.toTensorList().begin(),
+          value.toTensorList().end());
+    } else if (value.isList()) {
+      for (const auto& val : value.toList()) {
+        extract(val);
+      }
+    } else if (value.isGenericDict()) {
+      for (const auto& item : value.toGenericDict()) {
+        extract(item.value());
+      }
+    } else {
+      throw UnsupportedModelOutputTypeException(
+          "Unsupported model output type");
     }
-  } else if (result.isTensorList()) {
-    outputs.insert(
-        outputs.end(), result.toTensorList().begin(),
-        result.toTensorList().end());
-
-  } else {
-    throw UnsupportedModelOutputTypeException("Unsupported model output type");
-  }
+  };
+  extract(result);
 
   return outputs;
 }
@@ -86,8 +105,8 @@ extract_tensors_from_output(const c10::IValue& result)
 
 inline void
 run_inference(
-    InferenceParams* params, const std::vector<void*>& buffers,
-    const torch::Device device, torch::jit::script::Module* model,
+    InferenceParams* params, std::span<void* const> buffers,
+    torch::Device device, torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, void* buffer_ptr)>&
         copy_output_fn)
 {
@@ -110,15 +129,27 @@ run_inference(
   for (size_t i = 0; i < params->num_outputs; ++i) {
     auto* var_iface = static_cast<starpu_variable_interface*>(
         buffers[params->num_inputs + i]);
-    auto* buffer = reinterpret_cast<void*>(var_iface->ptr);
+    auto* buffer = std::bit_cast<void*>(var_iface->ptr);
     copy_output_fn(outputs[i], buffer);
   }
+}
+
+void
+run_inference(
+    InferenceParams* params, const std::vector<void*>& buffers,
+    torch::Device device, torch::jit::script::Module* model,
+    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+        copy_output_fn)
+{
+  run_inference(
+      params, std::span<void* const>(buffers.data(), buffers.size()), device,
+      model, copy_output_fn);
 }
 
 template <typename CopyOutputFn>
 void
 run_codelet_inference(
-    InferenceParams* params, const std::vector<void*>& buffers,
+    InferenceParams* params, std::span<void* const> buffers,
     const torch::Device device, torch::jit::script::Module* model,
     CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
@@ -133,7 +164,7 @@ run_codelet_inference(
   log_trace(
       params->verbosity,
       std::format(
-          "{}, device id, worker id, job id : {} {} {}",
+          "{} device id {}, worker id {}, job id {}",
           (executed_on_type == DeviceType::CPU ? "CPU" : "GPU"), device_id,
           worker_id, params->job_id));
 
@@ -166,18 +197,19 @@ run_codelet_inference(
 // =============================================================================
 
 inline void
-InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
+InferenceCodelet::cpu_inference_func(void** buffers, void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
-  const std::vector<void*> buffers_vec(
-      buffers, buffers + params->num_inputs + params->num_outputs);
+  const std::span<void* const> buffers_span(
+      buffers, params->num_inputs + params->num_outputs);
 
   const c10::InferenceMode no_autograd;
 
   run_codelet_inference(
-      params, buffers_vec, torch::kCPU, params->models.model_cpu,
+      params, buffers_span, torch::kCPU, params->models.model_cpu,
       [](const at::Tensor& out, void* buffer_ptr) {
-        TensorBuilder::copy_output_to_buffer(out, buffer_ptr, out.numel());
+        TensorBuilder::copy_output_to_buffer(
+            out, buffer_ptr, out.numel(), out.scalar_type());
       },
       DeviceType::CPU);
 }
@@ -187,11 +219,11 @@ InferenceCodelet::cpu_inference_func(void* buffers[], void* cl_arg)
 // =============================================================================
 
 inline void
-InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
+InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
-  const std::vector<void*> buffers_vec(
-      buffers, buffers + params->num_inputs + params->num_outputs);
+  const std::span<void* const> buffers_span(
+      buffers, params->num_inputs + params->num_outputs);
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
 
@@ -203,7 +235,7 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
   const at::cuda::CUDAStreamGuard guard(torch_stream);
 
   run_codelet_inference(
-      params, buffers_vec,
+      params, buffers_span,
       torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)),
       params->models.models_gpu.at(static_cast<size_t>(device_id)),
       [device_id](const at::Tensor& out, void* buffer_ptr) {
@@ -221,10 +253,11 @@ InferenceCodelet::cuda_inference_func(void* buffers[], void* cl_arg)
 // StarPUSetup: constructor and destructor (handles StarPU global state)
 // =============================================================================
 
-StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
+StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
+    : scheduler_name_(opts.scheduler), conf_{}
 {
   starpu_conf_init(&conf_);
-  conf_.sched_policy_name = opts.scheduler.c_str();
+  conf_.sched_policy_name = scheduler_name_.c_str();
 
   if (!opts.use_cpu) {
     conf_.ncpus = 0;
@@ -233,15 +266,29 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
   if (!opts.use_cuda) {
     conf_.ncuda = 0;
   } else {
+    if (opts.device_ids.size() > STARPU_NMAXWORKERS) {
+      throw std::invalid_argument(std::format(
+          "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
+          STARPU_NMAXWORKERS));
+    }
+    std::unordered_set<int> unique_ids;
+
     conf_.use_explicit_workers_cuda_gpuid = 1U;
     conf_.ncuda = static_cast<int>(opts.device_ids.size());
+
+    std::span<unsigned int, STARPU_NMAXWORKERS> workers_cuda_gpuid(
+        conf_.workers_cuda_gpuid);
     for (size_t idx = 0; idx < opts.device_ids.size(); ++idx) {
-      int device_id = opts.device_ids[idx];
+      const int device_id = opts.device_ids[idx];
       if (device_id < 0) {
         throw std::invalid_argument(
             "[ERROR] Invalid CUDA device ID: must be >= 0");
       }
-      conf_.workers_cuda_gpuid[idx] = static_cast<unsigned int>(device_id);
+      if (!unique_ids.insert(device_id).second) {
+        throw std::invalid_argument(
+            std::format("[ERROR] Duplicate CUDA device ID: {}", device_id));
+      }
+      workers_cuda_gpuid[idx] = static_cast<unsigned int>(device_id);
     }
   }
 

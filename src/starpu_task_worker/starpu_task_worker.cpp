@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,18 @@
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+namespace {
+
+inline void
+validate_not_null(const void* ptr, std::string_view field_name)
+{
+  if (ptr != nullptr) {
+    return;
+  }
+  throw std::invalid_argument(std::format(
+      "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
+}
+}  // namespace
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -32,6 +45,20 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       results_mutex_(config.results_mutex),
       completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv)
 {
+  for (const auto& [ptr, name] :
+       std::initializer_list<std::pair<const void*, std::string_view>>{
+           {queue_, "queue"},
+           {model_cpu_, "model_cpu"},
+           {models_gpu_, "models_gpu"},
+           {starpu_, "starpu"},
+           {opts_, "opts"},
+           {results_, "results"},
+           {results_mutex_, "results_mutex"},
+           {completed_jobs_, "completed_jobs"},
+           {all_done_cv_, "all_done_cv"},
+       }) {
+    validate_not_null(ptr, name);
+  }
 }
 
 
@@ -43,7 +70,9 @@ auto
 StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
 {
   std::shared_ptr<InferenceJob> job;
-  queue_->wait_and_pop(job);
+  if (!queue_->wait_and_pop(job)) {
+    return nullptr;
+  }
   return job;
 }
 
@@ -105,32 +134,27 @@ void
 StarPUTaskRunner::prepare_job_completion_callback(
     const std::shared_ptr<InferenceJob>& job)
 {
-  const auto job_id = job->get_job_id();
-  const auto inputs = job->get_input_tensors();
-  const auto& executed_on = job->get_executed_on();
-  const auto& timing_info = job->timing_info();
-  const auto& device_id = job->get_device_id();
-  const auto& worker_id = job->get_worker_id();
-
   auto prev_callback = job->get_on_complete();
   job->set_on_complete(
-      [this, job_id, inputs, &executed_on, &timing_info, &device_id, &worker_id,
-       prev_callback](
+      [this, job_sptr = job, prev_callback](
           const std::vector<torch::Tensor>& results, double latency_ms) {
         {
           const std::scoped_lock lock(*results_mutex_);
           results_->emplace_back(
-              inputs, results, latency_ms, timing_info, job_id, device_id,
-              worker_id, executed_on);
+              job_sptr->get_input_tensors(), results, latency_ms,
+              job_sptr->timing_info(), job_sptr->get_job_id(),
+              job_sptr->get_device_id(), job_sptr->get_worker_id(),
+              job_sptr->get_executed_on());
         }
 
-        log_job_timings(job_id, latency_ms, timing_info);
+        log_job_timings(
+            job_sptr->get_job_id(), latency_ms, job_sptr->timing_info());
 
         if (prev_callback) {
           prev_callback(results, latency_ms);
         }
 
-        completed_jobs_->fetch_add(1);
+        completed_jobs_->fetch_add(1, std::memory_order_release);
         all_done_cv_->notify_one();
       });
 }
@@ -147,7 +171,15 @@ StarPUTaskRunner::handle_job_exception(
   log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
 
   if (job->has_on_complete()) {
-    job->get_on_complete()({}, -1);
+    try {
+      job->get_on_complete()({}, -1);
+    }
+    catch (const std::exception& e) {
+      log_error("Exception in completion callback: " + std::string(e.what()));
+    }
+    catch (...) {
+      log_error("Unknown exception in completion callback");
+    }
   }
 }
 
@@ -174,12 +206,15 @@ StarPUTaskRunner::run()
 
   while (true) {
     auto job = wait_for_next_job();
-    if (should_shutdown(job)) {
+    if (!job || should_shutdown(job)) {
       break;
     }
 
     const auto job_id = job->get_job_id();
-    log_trace(opts_->verbosity, std::format("Dequeued job ID: {}", job_id));
+    log_trace(
+        opts_->verbosity,
+        std::format(
+            "Dequeued job ID: {}, queue size : {}", job_id, queue_->size()));
 
     prepare_job_completion_callback(job);
 
@@ -193,6 +228,11 @@ StarPUTaskRunner::run()
     }
     catch (const InferenceEngineException& exception) {
       StarPUTaskRunner::handle_job_exception(job, exception);
+    }
+    catch (const std::exception& e) {
+      log_error(
+          std::format("Unexpected exception for job {}: {}", job_id, e.what()));
+      StarPUTaskRunner::handle_job_exception(job, e);
     }
   }
 

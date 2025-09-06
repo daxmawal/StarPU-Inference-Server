@@ -4,6 +4,7 @@
 #include <starpu.h>
 #include <torch/script.h>
 
+#include <bit>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
@@ -56,13 +57,13 @@ inline auto
 expected_log_line(VerbosityLevel level, const std::string& msg) -> std::string
 {
   if (level == WarningLevel) {
-    return std::string{"\o{33}[1;33m[WARNING] "} + msg + "\o{33}[0m\n";
+    return std::string{"\x1b[1;33m[WARNING] "} + msg + "\x1b[0m\n";
   }
   if (level == ErrorLevel) {
-    return std::string{"\o{33}[1;31m[ERROR] "} + msg + "\o{33}[0m\n";
+    return std::string{"\x1b[1;31m[ERROR] "} + msg + "\x1b[0m\n";
   }
   auto [color, label] = verbosity_style(level);
-  return std::string(color) + label + msg + "\o{33}[0m\n";
+  return std::string(color) + label + msg + "\x1b[0m\n";
 }
 
 inline auto
@@ -79,8 +80,17 @@ make_add_one_model() -> torch::jit::script::Module
 inline auto
 make_variable_interface(const float* ptr) -> starpu_variable_interface
 {
-  starpu_variable_interface iface;
-  iface.ptr = reinterpret_cast<uintptr_t>(ptr);
+  starpu_variable_interface iface{};
+  iface.ptr = std::bit_cast<uintptr_t>(ptr);
+  return iface;
+}
+
+template <typename T>
+inline auto
+make_variable_interface(const T* ptr) -> starpu_variable_interface
+{
+  starpu_variable_interface iface{};
+  iface.ptr = std::bit_cast<uintptr_t>(ptr);
   return iface;
 }
 
@@ -91,8 +101,14 @@ make_basic_params(int elements, at::ScalarType type = at::kFloat)
   InferenceParams params{};
   params.num_inputs = 1;
   params.num_outputs = 1;
+  params.limits.max_inputs = InferLimits::MaxInputs;
+  params.limits.max_dims = InferLimits::MaxDims;
+  params.limits.max_models_gpu = InferLimits::MaxModelsGPU;
+  params.layout.num_dims.resize(1);
   params.layout.num_dims[0] = 1;
-  params.layout.dims[0][0] = elements;
+  params.layout.dims.resize(1);
+  params.layout.dims[0] = {elements};
+  params.layout.input_types.resize(1);
   params.layout.input_types[0] = type;
   return params;
 }
@@ -105,11 +121,15 @@ make_params_for_inputs(
   assert(shapes.size() == dtypes.size());
   InferenceParams params{};
   params.num_inputs = shapes.size();
+  params.limits.max_inputs = InferLimits::MaxInputs;
+  params.limits.max_dims = InferLimits::MaxDims;
+  params.limits.max_models_gpu = InferLimits::MaxModelsGPU;
+  params.layout.num_dims.resize(shapes.size());
+  params.layout.dims.resize(shapes.size());
+  params.layout.input_types.resize(shapes.size());
   for (size_t i = 0; i < shapes.size(); ++i) {
     params.layout.num_dims[i] = static_cast<int64_t>(shapes[i].size());
-    for (size_t j = 0; j < shapes[i].size(); ++j) {
-      params.layout.dims[i][j] = shapes[i][j];
-    }
+    params.layout.dims[i] = shapes[i];
     params.layout.input_types[i] = dtypes[i];
   }
   return params;
@@ -176,8 +196,9 @@ run_single_job(
   return std::jthread(
       [&queue, outputs = std::move(outputs), latency]() mutable {
         std::shared_ptr<InferenceJob> job;
-        queue.wait_and_pop(job);
-        job->get_on_complete()(outputs, latency);
+        if (queue.wait_and_pop(job)) {
+          job->get_on_complete()(outputs, latency);
+        }
       });
 }
 
@@ -225,7 +246,8 @@ inline void
 verify_populate_response(
     const inference::ModelInferRequest& req,
     const inference::ModelInferResponse& resp,
-    const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms)
+    const std::vector<torch::Tensor>& outputs, uint64_t recv_ms,
+    uint64_t send_ms)
 {
   EXPECT_EQ(resp.model_name(), req.model_name());
   EXPECT_EQ(resp.model_version(), req.model_version());

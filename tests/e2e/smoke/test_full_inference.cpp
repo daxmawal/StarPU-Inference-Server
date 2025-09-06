@@ -13,6 +13,36 @@
 #include "grpc_service.grpc.pb.h"
 #include "test_helpers.hpp"
 
+namespace {
+constexpr float kVal1 = 1.0F;
+constexpr float kVal2 = 2.0F;
+
+auto
+start_worker(
+    starpu_server::InferenceQueue& queue,
+    torch::jit::script::Module& model) -> std::jthread
+{
+  return std::jthread([&] {
+    std::shared_ptr<starpu_server::InferenceJob> job;
+    if (!queue.wait_and_pop(job)) {
+      return;
+    }
+    std::vector<torch::IValue> value(
+        job->get_input_tensors().begin(), job->get_input_tensors().end());
+    auto out_value = model.forward(value);
+    std::vector<torch::Tensor> outs{out_value.toTensor()};
+    job->get_on_complete()(outs, 0.0);
+  });
+}
+
+void
+expect_connected(const std::shared_ptr<grpc::Channel>& channel)
+{
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(1)));
+}
+}  // namespace
+
 TEST(E2E, FullInference)
 {
   namespace fs = std::filesystem;
@@ -27,7 +57,7 @@ TEST(E2E, FullInference)
   torch::jit::script::Module model("m");
   model.define(script);
 
-  torch::Tensor input = torch::tensor({1.0F, 2.0F});
+  torch::Tensor input = torch::tensor({kVal1, kVal2});
   std::vector<torch::Tensor> reference_outputs;
   {
     std::vector<torch::IValue> value{input};
@@ -38,25 +68,16 @@ TEST(E2E, FullInference)
 
   starpu_server::InferenceQueue queue;
 
-  std::jthread worker([&] {
-    std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
-    std::vector<torch::IValue> value(
-        job->get_input_tensors().begin(), job->get_input_tensors().end());
-    auto out_value = model.forward(value);
-    std::vector<torch::Tensor> outs{out_value.toTensor()};
-    job->get_on_complete()(outs, 0.0);
-  });
+  auto worker = start_worker(queue, model);
 
   auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
   std::string address = "127.0.0.1:" + std::to_string(server.port);
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
-  ASSERT_TRUE(channel->WaitForConnected(
-      std::chrono::system_clock::now() + std::chrono::seconds(1)));
+  expect_connected(channel);
   auto stub = inference::GRPCInferenceService::NewStub(channel);
 
-  std::vector<float> in_vals{1.0F, 2.0F};
+  std::vector<float> in_vals{kVal1, kVal2};
   auto req = starpu_server::make_model_infer_request(
       {{{2}, at::kFloat, starpu_server::to_raw_data(in_vals)}});
   req.MergeFrom(starpu_server::make_model_request("m", "1"));

@@ -3,6 +3,8 @@
 #include <starpu.h>
 #include <torch/script.h>
 
+#include <map>
+#include <string>
 #include <vector>
 
 #include "runtime_config.hpp"
@@ -25,8 +27,8 @@ class InferenceCodelet {
   auto get_codelet() -> struct starpu_codelet*;
 
  private:
-  static void cpu_inference_func(void* buffers[], void* cl_arg);
-  static void cuda_inference_func(void* buffers[], void* cl_arg);
+  static void cpu_inference_func(void** buffers, void* cl_arg);
+  static void cuda_inference_func(void** buffers, void* cl_arg);
 
   struct starpu_codelet codelet_;
 };
@@ -55,6 +57,7 @@ class StarPUSetup {
   auto operator=(StarPUSetup&&) -> StarPUSetup& = delete;
 
  private:
+  std::string scheduler_name_;
   struct starpu_conf conf_;
   InferenceCodelet codelet_;
 };

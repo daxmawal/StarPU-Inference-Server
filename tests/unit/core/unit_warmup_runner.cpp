@@ -2,6 +2,7 @@
 
 #include <limits>
 #include <map>
+#include <unordered_set>
 #include <vector>
 
 #define private public
@@ -23,16 +24,52 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations_Unit)
   std::vector<int> worker_ids;
   for (;;) {
     std::shared_ptr<starpu_server::InferenceJob> job;
-    queue.wait_and_pop(job);
-    if (job->is_shutdown()) {
+    if (!queue.wait_and_pop(job)) {
       break;
     }
     job_ids.push_back(job->get_job_id());
-    ASSERT_TRUE(job->get_fixed_worker_id().has_value());
-    worker_ids.push_back(*job->get_fixed_worker_id());
+    const int worker = job->get_fixed_worker_id().value_or(-1);
+    ASSERT_NE(worker, -1);
+    worker_ids.push_back(worker);
   }
 
   ASSERT_EQ(job_ids.size(), 4U);
   EXPECT_EQ(job_ids, (std::vector<int>{0, 1, 2, 3}));
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
+}
+
+TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
+{
+  auto device_workers = make_device_workers();
+
+  opts.seed = 0;
+  opts.warmup_pregen_inputs = 1;
+  starpu_server::InferenceQueue queue_single;
+  runner->client_worker(device_workers, queue_single, 1);
+
+  std::unordered_set<const void*> unique_single;
+  for (;;) {
+    std::shared_ptr<starpu_server::InferenceJob> job;
+    if (!queue_single.wait_and_pop(job)) {
+      break;
+    }
+    unique_single.insert(job->get_input_tensors()[0].data_ptr());
+  }
+  EXPECT_EQ(unique_single.size(), 1U);
+
+  opts.seed = 0;
+  opts.warmup_pregen_inputs = 2;
+  starpu_server::InferenceQueue queue_double;
+  constexpr int kDoubleIterations = 5;
+  runner->client_worker(device_workers, queue_double, kDoubleIterations);
+
+  std::unordered_set<const void*> unique_double;
+  for (;;) {
+    std::shared_ptr<starpu_server::InferenceJob> job;
+    if (!queue_double.wait_and_pop(job)) {
+      break;
+    }
+    unique_double.insert(job->get_input_tensors()[0].data_ptr());
+  }
+  EXPECT_EQ(unique_double.size(), 2U);
 }

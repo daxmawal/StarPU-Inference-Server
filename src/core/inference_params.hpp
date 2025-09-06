@@ -13,10 +13,22 @@ namespace starpu_server {
 // Constants for inference limitations
 // =============================================================================
 
+#ifndef STARPU_SERVER_MAX_INPUTS
+#define STARPU_SERVER_MAX_INPUTS 16
+#endif
+
+#ifndef STARPU_SERVER_MAX_DIMS
+#define STARPU_SERVER_MAX_DIMS 8
+#endif
+
+#ifndef STARPU_SERVER_MAX_MODELS_GPU
+#define STARPU_SERVER_MAX_MODELS_GPU 32
+#endif
+
 namespace InferLimits {
-constexpr size_t MaxInputs = 16;     // Max number of input tensors
-constexpr size_t MaxDims = 8;        // Max number of dimensions per tensor
-constexpr size_t MaxModelsGPU = 32;  // Max number of GPU
+constexpr size_t MaxInputs = STARPU_SERVER_MAX_INPUTS;
+constexpr size_t MaxDims = STARPU_SERVER_MAX_DIMS;
+constexpr size_t MaxModelsGPU = STARPU_SERVER_MAX_MODELS_GPU;
 }  // namespace InferLimits
 
 namespace detail {
@@ -36,9 +48,8 @@ struct Timing {
 // =============================================================================
 
 struct DeviceInfo {
-  int* device_id =
-      nullptr;  // Where the task was executed (CPU/GPU, which device)
-  int* worker_id = nullptr;  // Where the task was executed, which StarPU worker
+  int* device_id = nullptr;
+  int* worker_id = nullptr;
   DeviceType* executed_on = nullptr;
 };
 
@@ -48,8 +59,7 @@ struct DeviceInfo {
 
 struct ModelPointers {
   torch::jit::script::Module* model_cpu = nullptr;
-  std::array<torch::jit::script::Module*, InferLimits::MaxModelsGPU>
-      models_gpu{};
+  std::vector<torch::jit::script::Module*> models_gpu{};
   size_t num_models_gpu = 0;
 };
 
@@ -58,10 +68,19 @@ struct ModelPointers {
 // =============================================================================
 
 struct TensorLayout {
-  std::array<std::array<int64_t, InferLimits::MaxDims>, InferLimits::MaxInputs>
-      dims{};
-  std::array<int64_t, InferLimits::MaxInputs> num_dims{};
-  std::array<at::ScalarType, InferLimits::MaxInputs> input_types{};
+  std::vector<std::vector<int64_t>> dims;
+  std::vector<int64_t> num_dims;
+  std::vector<at::ScalarType> input_types;
+};
+
+// =============================================================================
+// Limit values carried with inference parameters
+// =============================================================================
+
+struct Limits {
+  size_t max_inputs = 0;
+  size_t max_dims = 0;
+  size_t max_models_gpu = 0;
 };
 
 }  // namespace detail
@@ -75,6 +94,7 @@ struct InferenceParams {
   detail::TensorLayout layout;
   detail::DeviceInfo device;
   detail::Timing timing;
+  detail::Limits limits{};
   size_t num_inputs = 0;
   size_t num_outputs = 0;
   int job_id = 0;

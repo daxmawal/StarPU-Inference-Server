@@ -1,0 +1,20 @@
+groups:
+  - name: starpu-queue-alerts
+    rules:
+      - alert: InferenceQueueHigh
+        expr: inference_queue_size > 100
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Inference queue size high"
+          description: "inference_queue_size > 100 for 2m (current value: {{ $value }})"
+
+      - alert: InferenceQueueCritical
+        expr: inference_queue_size > 500
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Inference queue size critical"
+          description: "inference_queue_size > 500 for 1m (current value: {{ $value }})"

@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <bit>
+#include <span>
 #include <vector>
 
 #define private public
@@ -13,18 +15,84 @@ namespace {
 constexpr std::array<int64_t, 2> kShape2x2{{2, 2}};
 constexpr std::array<int64_t, 1> kShape1{{1}};
 
-std::array<float, 4> float_buffer{1.F, 2.F, 3.F, 4.F};
-std::array<int32_t, 3> int_buffer{1, 2, 3};
-std::array<double, 2> double_buffer{1.0, 2.0};
-std::array<int64_t, 2> long_buffer{1, 2};
-std::array<int16_t, 2> short_buffer{1, 2};
-std::array<int8_t, 2> char_buffer{1, 2};
-std::array<uint8_t, 2> byte_buffer{1, 2};
-std::array<bool, 2> bool_buffer{true, false};
+constexpr float kF1 = 1.0F;
+constexpr float kF2 = 2.0F;
+constexpr float kF3 = 3.0F;
+constexpr float kF4 = 4.0F;
+constexpr double kD1 = 1.0;
+constexpr double kD2 = 2.0;
+constexpr double kD3 = 3.0;
+
+const std::array<float, 4> float_buffer{kF1, kF2, kF3, kF4};
+const std::array<int32_t, 3> int_buffer{1, 2, 3};
+const std::array<double, 2> double_buffer{kD1, kD2};
+const std::array<int64_t, 2> long_buffer{1, 2};
+const std::array<int16_t, 2> short_buffer{1, 2};
+const std::array<int8_t, 2> char_buffer{1, 2};
+const std::array<uint8_t, 2> byte_buffer{1, 2};
+const std::array<bool, 2> bool_buffer{true, false};
+struct CopyOutputParam;
+
+inline void
+expect_data_ptr_eq(torch::Tensor& tensor, const void* expected)
+{
+  EXPECT_EQ(static_cast<const void*>(tensor.data_ptr()), expected);
+}
+
+template <typename T>
+inline void
+expect_equal_value(T lhs, T rhs)
+{
+  EXPECT_EQ(lhs, rhs);
+}
+
+template <>
+inline void
+expect_equal_value<float>(float lhs, float rhs)
+{
+  EXPECT_FLOAT_EQ(lhs, rhs);
+}
+
+template <>
+inline void
+expect_equal_value<double>(double lhs, double rhs)
+{
+  EXPECT_DOUBLE_EQ(lhs, rhs);
+}
+
+template <typename T>
+inline auto
+zero_value() -> T
+{
+  return T{};
+}
+
+template <>
+inline auto
+zero_value<bool>() -> bool
+{
+  return false;
+}
+
+template <typename T>
+inline void
+verify_copy_typed(
+    void* buffer, const torch::Tensor& tensor, at::ScalarType dtype)
+{
+  const auto numel = static_cast<size_t>(tensor.numel());
+  auto* buff = static_cast<T*>(buffer);
+  std::fill_n(buff, numel, zero_value<T>());
+  starpu_server::TensorBuilder::copy_output_to_buffer(
+      tensor, buff, static_cast<int64_t>(numel), dtype);
+  std::span<T> sbuff{buff, numel};
+  for (size_t i = 0; i < sbuff.size(); ++i) {
+    expect_equal_value<T>(sbuff[i], tensor[static_cast<int64_t>(i)].item<T>());
+  }
+}
 
 struct FromRawPtrParam {
   at::ScalarType dtype;
-  void* buffer;
+  const void* buffer;
   std::vector<int64_t> shape;
 };
 struct CopyOutputParam {
@@ -34,17 +102,52 @@ struct CopyOutputParam {
 };
 }  // namespace
 
+inline void
+verify_copy_by_dtype(const CopyOutputParam& param)
+{
+  switch (param.dtype) {
+    case at::kFloat:
+      verify_copy_typed<float>(param.buffer, param.tensor, param.dtype);
+      break;
+    case at::kInt:
+      verify_copy_typed<int32_t>(param.buffer, param.tensor, param.dtype);
+      break;
+    case at::kDouble:
+      verify_copy_typed<double>(param.buffer, param.tensor, param.dtype);
+      break;
+    case at::kLong:
+      verify_copy_typed<int64_t>(param.buffer, param.tensor, param.dtype);
+      break;
+    case at::kShort:
+      verify_copy_typed<int16_t>(param.buffer, param.tensor, param.dtype);
+      break;
+    case at::kChar:
+      verify_copy_typed<int8_t>(param.buffer, param.tensor, param.dtype);
+      break;
+    case at::kByte:
+      verify_copy_typed<uint8_t>(param.buffer, param.tensor, param.dtype);
+      break;
+    case at::kBool:
+      verify_copy_typed<bool>(param.buffer, param.tensor, param.dtype);
+      break;
+    default:
+      FAIL() << "Unsupported dtype";
+  }
+}
+
 class TensorBuilderFromRawPtr_Unit
     : public ::testing::TestWithParam<FromRawPtrParam> {
  protected:
-  torch::Device device{torch::kCPU};
   [[nodiscard]] auto build() const -> torch::Tensor
   {
     const auto& param = GetParam();
     return starpu_server::TensorBuilder::from_raw_ptr(
-        reinterpret_cast<uintptr_t>(param.buffer), param.dtype, param.shape,
-        device);
+        std::bit_cast<uintptr_t>(param.buffer), param.dtype, param.shape,
+        device_);
   }
+
+ private:
+  torch::Device device_{torch::kCPU};
 };
 
 TEST_P(TensorBuilderFromRawPtr_Unit, ConstructsTensorWithCorrectViewAndPtr)
@@ -54,48 +157,30 @@ TEST_P(TensorBuilderFromRawPtr_Unit, ConstructsTensorWithCorrectViewAndPtr)
   EXPECT_EQ(tensor.sizes(), torch::IntArrayRef(param.shape));
   EXPECT_EQ(tensor.dtype(), param.dtype);
   EXPECT_EQ(tensor.device(), torch::Device(torch::kCPU));
-  switch (param.dtype) {
-    case at::kFloat:
-      EXPECT_EQ(tensor.data_ptr<float>(), param.buffer);
-      break;
-    case at::kInt:
-      EXPECT_EQ(tensor.data_ptr<int32_t>(), param.buffer);
-      break;
-    case at::kDouble:
-      EXPECT_EQ(tensor.data_ptr<double>(), param.buffer);
-      break;
-    case at::kLong:
-      EXPECT_EQ(tensor.data_ptr<int64_t>(), param.buffer);
-      break;
-    case at::kShort:
-      EXPECT_EQ(tensor.data_ptr<int16_t>(), param.buffer);
-      break;
-    case at::kChar:
-      EXPECT_EQ(tensor.data_ptr<int8_t>(), param.buffer);
-      break;
-    case at::kByte:
-      EXPECT_EQ(tensor.data_ptr<uint8_t>(), param.buffer);
-      break;
-    case at::kBool:
-      EXPECT_EQ(tensor.data_ptr<bool>(), param.buffer);
-      break;
-    default:
-      FAIL() << "Unsupported dtype";
-  }
+  expect_data_ptr_eq(tensor, param.buffer);
 }
 
 INSTANTIATE_TEST_SUITE_P(
     TensorBuilder, TensorBuilderFromRawPtr_Unit,
     ::testing::Values(
         FromRawPtrParam{
-            at::kFloat, float_buffer.data(), {kShape2x2[0], kShape2x2[1]}},
-        FromRawPtrParam{at::kInt, int_buffer.data(), {3}},
-        FromRawPtrParam{at::kDouble, double_buffer.data(), {2}},
-        FromRawPtrParam{at::kLong, long_buffer.data(), {2}},
-        FromRawPtrParam{at::kShort, short_buffer.data(), {2}},
-        FromRawPtrParam{at::kChar, char_buffer.data(), {2}},
-        FromRawPtrParam{at::kByte, byte_buffer.data(), {2}},
-        FromRawPtrParam{at::kBool, bool_buffer.data(), {2}}));
+            at::kFloat,
+            static_cast<const void*>(float_buffer.data()),
+            {kShape2x2[0], kShape2x2[1]}},
+        FromRawPtrParam{
+            at::kInt, static_cast<const void*>(int_buffer.data()), {3}},
+        FromRawPtrParam{
+            at::kDouble, static_cast<const void*>(double_buffer.data()), {2}},
+        FromRawPtrParam{
+            at::kLong, static_cast<const void*>(long_buffer.data()), {2}},
+        FromRawPtrParam{
+            at::kShort, static_cast<const void*>(short_buffer.data()), {2}},
+        FromRawPtrParam{
+            at::kChar, static_cast<const void*>(char_buffer.data()), {2}},
+        FromRawPtrParam{
+            at::kByte, static_cast<const void*>(byte_buffer.data()), {2}},
+        FromRawPtrParam{
+            at::kBool, static_cast<const void*>(bool_buffer.data()), {2}}));
 
 class TensorBuilderCopyBuffer_Unit
     : public ::testing::TestWithParam<CopyOutputParam> {};
@@ -103,141 +188,97 @@ class TensorBuilderCopyBuffer_Unit
 TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
 {
   const auto& param = GetParam();
-  const auto numel = static_cast<size_t>(param.tensor.numel());
-  switch (param.dtype) {
-    case at::kFloat: {
-      auto* buff = static_cast<float*>(param.buffer);
-      std::fill_n(buff, numel, 0.F);
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
-      for (size_t i = 0; i < numel; ++i) {
-        EXPECT_FLOAT_EQ(buff[i], param.tensor[i].item<float>());
-      }
-      break;
-    }
-    case at::kInt: {
-      auto* buff = static_cast<int32_t*>(param.buffer);
-      std::fill_n(buff, numel, 0);
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
-      for (size_t i = 0; i < numel; ++i) {
-        EXPECT_EQ(buff[i], param.tensor[i].item<int32_t>());
-      }
-      break;
-    }
-    case at::kDouble: {
-      auto* buff = static_cast<double*>(param.buffer);
-      std::fill_n(buff, numel, 0.0);
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
-      for (size_t i = 0; i < numel; ++i) {
-        EXPECT_DOUBLE_EQ(buff[i], param.tensor[i].item<double>());
-      }
-      break;
-    }
-    case at::kLong: {
-      auto* buff = static_cast<int64_t*>(param.buffer);
-      std::fill_n(buff, numel, 0);
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
-      for (size_t i = 0; i < numel; ++i) {
-        EXPECT_EQ(buff[i], param.tensor[i].item<int64_t>());
-      }
-      break;
-    }
-    case at::kShort: {
-      auto* buff = static_cast<int16_t*>(param.buffer);
-      std::fill_n(buff, numel, 0);
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
-      for (size_t i = 0; i < numel; ++i) {
-        EXPECT_EQ(buff[i], param.tensor[i].item<int16_t>());
-      }
-      break;
-    }
-    case at::kChar: {
-      auto* buff = static_cast<int8_t*>(param.buffer);
-      std::fill_n(buff, numel, 0);
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
-      for (size_t i = 0; i < numel; ++i) {
-        EXPECT_EQ(buff[i], param.tensor[i].item<int8_t>());
-      }
-      break;
-    }
-    case at::kByte: {
-      auto* buff = static_cast<uint8_t*>(param.buffer);
-      std::fill_n(buff, numel, 0);
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
-      for (size_t i = 0; i < numel; ++i) {
-        EXPECT_EQ(buff[i], param.tensor[i].item<uint8_t>());
-      }
-      break;
-    }
-    case at::kBool: {
-      auto* buff = static_cast<bool*>(param.buffer);
-      std::fill_n(buff, numel, false);
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          param.tensor, buff, numel);
-      for (size_t i = 0; i < numel; ++i) {
-        EXPECT_EQ(buff[i], param.tensor[i].item<bool>());
-      }
-      break;
-    }
-    default:
-      FAIL() << "Unsupported dtype";
-  }
+  verify_copy_by_dtype(param);
 }
 
 namespace {
-std::array<float, 3> copy_float_buffer{};
-std::array<int32_t, 3> copy_int_buffer{};
-std::array<double, 3> copy_double_buffer{};
-std::array<int64_t, 3> copy_long_buffer{};
-std::array<int16_t, 3> copy_short_buffer{};
-std::array<int8_t, 3> copy_char_buffer{};
-std::array<uint8_t, 3> copy_byte_buffer{};
-std::array<bool, 3> copy_bool_buffer{};
+inline auto
+copy_float_buffer_ref() -> std::array<float, 3>&
+{
+  static std::array<float, 3> buf{};
+  return buf;
+}
+inline auto
+copy_int_buffer_ref() -> std::array<int32_t, 3>&
+{
+  static std::array<int32_t, 3> buf{};
+  return buf;
+}
+inline auto
+copy_double_buffer_ref() -> std::array<double, 3>&
+{
+  static std::array<double, 3> buf{};
+  return buf;
+}
+inline auto
+copy_long_buffer_ref() -> std::array<int64_t, 3>&
+{
+  static std::array<int64_t, 3> buf{};
+  return buf;
+}
+inline auto
+copy_short_buffer_ref() -> std::array<int16_t, 3>&
+{
+  static std::array<int16_t, 3> buf{};
+  return buf;
+}
+inline auto
+copy_char_buffer_ref() -> std::array<int8_t, 3>&
+{
+  static std::array<int8_t, 3> buf{};
+  return buf;
+}
+inline auto
+copy_byte_buffer_ref() -> std::array<uint8_t, 3>&
+{
+  static std::array<uint8_t, 3> buf{};
+  return buf;
+}
+inline auto
+copy_bool_buffer_ref() -> std::array<bool, 3>&
+{
+  static std::array<bool, 3> buf{};
+  return buf;
+}
 }  // namespace
 
 INSTANTIATE_TEST_SUITE_P(
     TensorBuilder, TensorBuilderCopyBuffer_Unit,
     ::testing::Values(
         CopyOutputParam{
-            at::kFloat, copy_float_buffer.data(),
+            at::kFloat, copy_float_buffer_ref().data(),
             torch::tensor(
-                {1.F, 2.F, 3.F}, torch::TensorOptions().dtype(at::kFloat))},
+                {kF1, kF2, kF3}, torch::TensorOptions().dtype(at::kFloat))},
         CopyOutputParam{
-            at::kInt, copy_int_buffer.data(),
+            at::kInt, copy_int_buffer_ref().data(),
             torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt))},
         CopyOutputParam{
-            at::kDouble, copy_double_buffer.data(),
+            at::kDouble, copy_double_buffer_ref().data(),
             torch::tensor(
-                {1., 2., 3.}, torch::TensorOptions().dtype(at::kDouble))},
+                {kD1, kD2, kD3}, torch::TensorOptions().dtype(at::kDouble))},
         CopyOutputParam{
-            at::kLong, copy_long_buffer.data(),
+            at::kLong, copy_long_buffer_ref().data(),
             torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kLong))},
         CopyOutputParam{
-            at::kShort, copy_short_buffer.data(),
+            at::kShort, copy_short_buffer_ref().data(),
             torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kShort))},
         CopyOutputParam{
-            at::kChar, copy_char_buffer.data(),
+            at::kChar, copy_char_buffer_ref().data(),
             torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kChar))},
         CopyOutputParam{
-            at::kByte, copy_byte_buffer.data(),
+            at::kByte, copy_byte_buffer_ref().data(),
             torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kByte))},
         CopyOutputParam{
-            at::kBool, copy_bool_buffer.data(),
+            at::kBool, copy_bool_buffer_ref().data(),
             torch::tensor(
                 {true, false, true},
                 torch::TensorOptions().dtype(at::kBool))}));
 
 TEST(TensorBuilder_Unit, FromStarpuBuffersSuccess)
 {
-  std::array<float, 4> data{1.F, 2.F, 3.F, 4.F};
-  starpu_variable_interface var;
-  var.ptr = reinterpret_cast<uintptr_t>(data.data());
+  std::array<float, 4> data{kF1, kF2, kF3, kF4};
+  starpu_variable_interface var{};
+  var.ptr = std::bit_cast<uintptr_t>(data.data());
   std::vector<void*> buffers = {&var};
 
   starpu_server::InferenceParams params;
@@ -245,6 +286,9 @@ TEST(TensorBuilder_Unit, FromStarpuBuffersSuccess)
   params.layout.input_types = {at::kFloat};
   params.layout.num_dims = {2};
   params.layout.dims = {{2, 2}};
+  params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
+  params.limits.max_dims = starpu_server::InferLimits::MaxDims;
+  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
 
   const auto device = torch::Device(torch::kCPU);
   auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(

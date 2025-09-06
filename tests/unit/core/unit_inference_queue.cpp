@@ -8,9 +8,13 @@ TEST(InferenceJob_Unit, ShutdownJobHasFlagAndNoId)
   EXPECT_TRUE(shutdown->is_shutdown());
 }
 
+namespace {
+constexpr int kJobId = 42;
+}
+
 TEST(InferenceJob_Unit, SetAndGetJobId)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_job_id(42);
-  EXPECT_EQ(job->get_job_id(), 42);
+  job->set_job_id(kJobId);
+  EXPECT_EQ(job->get_job_id(), kJobId);
 }

@@ -1,3 +1,4 @@
+#include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
 #include <torch/script.h>
 #include <torch/torch.h>
@@ -9,8 +10,34 @@
 
 #include "core/inference_runner.hpp"
 #include "core/tensor_builder.hpp"
+#include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 
+namespace {
+inline auto
+cuda_sync_result_ref() -> cudaError_t&
+{
+  static cudaError_t value = cudaSuccess;
+  return value;
+}
+inline void
+SetCudaSyncResult(cudaError_t status)
+{
+  cuda_sync_result_ref() = status;
+}
+}  // namespace
+
+extern "C" auto
+cudaDeviceSynchronize() -> cudaError_t
+{
+  return cuda_sync_result_ref();
+}
+
+extern "C" auto
+cudaGetErrorString([[maybe_unused]] cudaError_t error) -> const char*
+{
+  return "mock cuda error";
+}
 
 namespace {
 constexpr int64_t kJobId = 7;
@@ -22,6 +49,78 @@ const std::vector<int64_t> kShape2x3{2, 3};
 const std::vector<int64_t> kShape1{1};
 
 const std::vector<torch::Dtype> kTypesFloatInt{torch::kFloat32, torch::kInt64};
+
+struct ExpectedJobInfo {
+  int64_t job_id;
+  int worker_id;
+};
+
+inline auto
+JobStateMatches(
+    const std::shared_ptr<starpu_server::InferenceJob>& job,
+    const std::vector<torch::Tensor>& inputs,
+    const std::vector<at::ScalarType>& types,
+    const std::vector<torch::Tensor>& outputs,
+    std::chrono::high_resolution_clock::time_point start,
+    const ExpectedJobInfo& expected) -> ::testing::AssertionResult
+{
+  if (job->get_job_id() != expected.job_id) {
+    return ::testing::AssertionFailure() << "job_id mismatch";
+  }
+  if (job->get_input_tensors().size() != inputs.size()) {
+    return ::testing::AssertionFailure() << "input count mismatch";
+  }
+  if (!job->get_input_tensors()[0].equal(inputs[0])) {
+    return ::testing::AssertionFailure() << "input[0] tensor mismatch";
+  }
+  if (job->get_input_types().size() != types.size()) {
+    return ::testing::AssertionFailure() << "input type count mismatch";
+  }
+  if (job->get_input_types()[0] != types[0]) {
+    return ::testing::AssertionFailure() << "input type[0] mismatch";
+  }
+  if (job->get_output_tensors().size() != outputs.size()) {
+    return ::testing::AssertionFailure() << "output count mismatch";
+  }
+  if (!job->get_output_tensors()[0].equal(outputs[0])) {
+    return ::testing::AssertionFailure() << "output[0] tensor mismatch";
+  }
+  if (job->get_start_time() != start) {
+    return ::testing::AssertionFailure() << "start time mismatch";
+  }
+  const auto fixed = job->get_fixed_worker_id();
+  if (!fixed.has_value()) {
+    return ::testing::AssertionFailure() << "fixed worker not set";
+  }
+  if (fixed.value() != expected.worker_id) {
+    return ::testing::AssertionFailure() << "fixed worker mismatch";
+  }
+  if (!job->has_on_complete()) {
+    return ::testing::AssertionFailure() << "on_complete not set";
+  }
+  return ::testing::AssertionSuccess();
+}
+
+inline auto
+CallbackResultsMatch(
+    bool called, const std::vector<torch::Tensor>& tensors, double latency,
+    const std::vector<torch::Tensor>& outputs,
+    double expected_latency) -> ::testing::AssertionResult
+{
+  if (!called) {
+    return ::testing::AssertionFailure() << "callback not called";
+  }
+  if (tensors.size() != outputs.size()) {
+    return ::testing::AssertionFailure() << "callback tensors size mismatch";
+  }
+  if (!tensors[0].equal(outputs[0])) {
+    return ::testing::AssertionFailure() << "callback tensor[0] mismatch";
+  }
+  if (latency != expected_latency) {
+    return ::testing::AssertionFailure() << "latency mismatch";
+  }
+  return ::testing::AssertionSuccess();
+}
 }  // namespace
 
 TEST(InferenceRunner_Unit, MakeShutdownJob)
@@ -41,7 +140,7 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
   job->set_job_id(kJobId);
   job->set_input_tensors(inputs);
   job->set_input_types(types);
-  job->set_outputs_tensors(outputs);
+  job->set_output_tensors(outputs);
   job->set_fixed_worker_id(kWorkerId);
 
   const auto start = std::chrono::high_resolution_clock::now();
@@ -57,23 +156,14 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
     cb_latency = lat;
   });
 
-  EXPECT_EQ(job->get_job_id(), kJobId);
-  ASSERT_EQ(job->get_input_tensors().size(), 1U);
-  EXPECT_TRUE(job->get_input_tensors()[0].equal(inputs[0]));
-  ASSERT_EQ(job->get_input_types().size(), 1U);
-  EXPECT_EQ(job->get_input_types()[0], at::kFloat);
-  ASSERT_EQ(job->get_output_tensors().size(), 1U);
-  EXPECT_TRUE(job->get_output_tensors()[0].equal(outputs[0]));
-  EXPECT_EQ(job->get_start_time(), start);
-  ASSERT_TRUE(job->get_fixed_worker_id().has_value());
-  EXPECT_EQ(job->get_fixed_worker_id().value(), kWorkerId);
-  ASSERT_TRUE(job->has_on_complete());
+  EXPECT_TRUE(JobStateMatches(
+      job, inputs, types, outputs, start,
+      ExpectedJobInfo{
+          .job_id = kJobId, .worker_id = static_cast<int>(kWorkerId)}));
 
   job->get_on_complete()(job->get_output_tensors(), kLatencyMs);
-  EXPECT_TRUE(callback_called);
-  ASSERT_EQ(cb_tensors.size(), 1U);
-  EXPECT_TRUE(cb_tensors[0].equal(outputs[0]));
-  EXPECT_DOUBLE_EQ(cb_latency, kLatencyMs);
+  EXPECT_TRUE(CallbackResultsMatch(
+      callback_called, cb_tensors, cb_latency, outputs, kLatencyMs));
 }
 
 TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
@@ -98,15 +188,33 @@ TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
 
 TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
 {
-  auto tensor =
-      torch::tensor({1.0F, 2.0F, 3.5F, -4.0F, 0.25F}, torch::kFloat32);
-  std::vector<float> dst(5, 0.0F);
+  constexpr float kF1 = 1.0F;
+  constexpr float kF2 = 2.0F;
+  constexpr float kF35 = 3.5F;
+  constexpr float kFNeg4 = -4.0F;
+  constexpr float kF025 = 0.25F;
+  constexpr size_t kCount5 = 5;
+  auto tensor = torch::tensor({kF1, kF2, kF35, kFNeg4, kF025}, torch::kFloat32);
+  std::vector<float> dst(kCount5, 0.0F);
   starpu_server::TensorBuilder::copy_output_to_buffer(
-      tensor, dst.data(), tensor.numel());
-  ASSERT_EQ(dst.size(), 5U);
-  EXPECT_FLOAT_EQ(dst[0], 1.0F);
-  EXPECT_FLOAT_EQ(dst[1], 2.0F);
-  EXPECT_FLOAT_EQ(dst[2], 3.5F);
-  EXPECT_FLOAT_EQ(dst[3], -4.0F);
-  EXPECT_FLOAT_EQ(dst[4], 0.25F);
+      tensor, dst.data(), tensor.numel(), tensor.scalar_type());
+  ASSERT_EQ(dst.size(), kCount5);
+  EXPECT_FLOAT_EQ(dst[0], kF1);
+  EXPECT_FLOAT_EQ(dst[1], kF2);
+  EXPECT_FLOAT_EQ(dst[2], kF35);
+  EXPECT_FLOAT_EQ(dst[3], kFNeg4);
+  EXPECT_FLOAT_EQ(dst[4], kF025);
+}
+
+TEST(InferenceRunner_Unit, LogsCudaSyncError)
+{
+  SetCudaSyncResult(cudaErrorUnknown);
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto err = starpu_server::synchronize_cuda_device();
+  EXPECT_EQ(err, cudaErrorUnknown);
+  EXPECT_EQ(
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel,
+                         "cudaDeviceSynchronize failed: mock cuda error"));
+  SetCudaSyncResult(cudaSuccess);
 }

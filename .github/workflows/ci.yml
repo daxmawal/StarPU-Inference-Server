@@ -128,6 +128,35 @@ jobs:
           name: build-folder
           path: build/
 
+  build-clang:
+    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure and Build (Clang)
+        run: |
+          cmake -S . -B build-clang \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_SANITIZERS=OFF
+          cmake --build build-clang -- -j$(nproc)
+        shell: bash
+
+      - name: Save clang build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-folder-clang
+          path: build-clang/
+
   clang-analyzer:
     needs: build
     runs-on: self-hosted

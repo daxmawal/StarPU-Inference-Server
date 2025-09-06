@@ -32,6 +32,13 @@ get_help_message(const char* prog_name) -> std::string
       "  --address ADDR          gRPC server listen address\n"
       "  --metrics-port [port]   Port for metrics exposition (default: 9090)\n"
       "  --max-batch-size N      Maximum inference batch size\n"
+      "  --pregen-inputs N       Number of pregenerated inputs (default: 10)\n"
+      "  --warmup-iterations N   Warmup iterations per CUDA device "
+      "(default:2)\n"
+      "  --rtol [value]          Relative tolerance for validation (default: "
+      "1e-3)\n"
+      "  --atol [value]          Absolute tolerance for validation (default: "
+      "1e-5)\n"
       "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
       "  --help                  Show this help message\n";
   return msg;
@@ -40,7 +47,7 @@ get_help_message(const char* prog_name) -> std::string
 inline void
 display_help(const char* prog_name)
 {
-  std::cout << get_help_message(prog_name);
+  log_info(VerbosityLevel::Info, get_help_message(prog_name));
 }
 
 auto parse_arguments(std::span<char*> args_span, RuntimeConfig opts = {})

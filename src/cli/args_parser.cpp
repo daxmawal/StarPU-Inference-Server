@@ -1,25 +1,35 @@
 #include "args_parser.hpp"
 
 #include <c10/core/ScalarType.h>
+#include <torch/torch.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <iostream>
+#include <ranges>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
+#include "datatype_utils.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "transparent_hash.hpp"
 
 namespace starpu_server {
+
+// Named constants to avoid magic numbers
+constexpr int kPortMin = 1;
+constexpr int kPortMax = 65535;
 
 // =============================================================================
 // Shape and Type Parsing: Handle --shape, --shapes, and --types arguments
@@ -87,41 +97,6 @@ parse_shapes_string(const std::string& shapes_str)
 }
 
 static auto
-parse_type_string(const std::string& type_str) -> at::ScalarType
-{
-  static const std::unordered_map<
-      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
-      type_map = {
-          {"float", at::kFloat},
-          {"float32", at::kFloat},
-          {"double", at::kDouble},
-          {"float64", at::kDouble},
-          {"half", at::kHalf},
-          {"float16", at::kHalf},
-          {"bfloat16", at::kBFloat16},
-          {"int", at::kInt},
-          {"int32", at::kInt},
-          {"long", at::kLong},
-          {"int64", at::kLong},
-          {"short", at::kShort},
-          {"int16", at::kShort},
-          {"char", at::kChar},
-          {"int8", at::kChar},
-          {"byte", at::kByte},
-          {"uint8", at::kByte},
-          {"bool", at::kBool},
-          {"complex64", at::kComplexFloat},
-          {"complex128", at::kComplexDouble},
-      };
-
-  auto iterator = type_map.find(std::string_view(type_str));
-  if (iterator == type_map.end()) {
-    throw std::invalid_argument("Unsupported type: " + type_str);
-  }
-  return iterator->second;
-}
-
-static auto
 parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 {
   if (types_str.empty()) {
@@ -140,7 +115,12 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
     if (type_str.empty()) {
       throw std::invalid_argument("Empty type in types string");
     }
-    types.push_back(parse_type_string(type_str));
+    try {
+      types.push_back(string_to_scalar_type(type_str));
+    }
+    catch (const std::invalid_argument& e) {
+      throw std::invalid_argument(std::string{"Unsupported type: "} + type_str);
+    }
   }
 
   if (types.empty()) {
@@ -148,31 +128,6 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
   }
 
   return types;
-}
-
-// =============================================================================
-// Verbosity Parsing
-// =============================================================================
-
-static auto
-parse_verbosity_level(const std::string& val) -> VerbosityLevel
-{
-  using enum VerbosityLevel;
-  const int level = std::stoi(val);
-  switch (level) {
-    case 0:
-      return Silent;
-    case 1:
-      return Info;
-    case 2:
-      return Stats;
-    case 3:
-      return Debug;
-    case 4:
-      return Trace;
-    default:
-      throw std::invalid_argument("Invalid verbosity level: " + val);
-  }
 }
 
 // =============================================================================
@@ -188,6 +143,13 @@ check_required(
   if (!condition) {
     missing.push_back(option_name);
   }
+}
+
+static auto
+missing_value_error(std::string_view option_name) -> bool
+{
+  log_error(std::format("{} option requires a value.", option_name));
+  return false;
 }
 
 template <typename Func>
@@ -209,10 +171,12 @@ try_parse(const char* val, Func&& parser) -> bool
 
 template <typename Func>
 auto
-expect_and_parse(size_t& idx, std::span<char*> args, Func&& parser) -> bool
+expect_and_parse(
+    std::string_view option_name, size_t& idx, std::span<char*> args,
+    Func&& parser) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error(option_name);
   }
   ++idx;
   return try_parse(args[idx], std::forward<Func>(parser));
@@ -226,10 +190,15 @@ static auto
 parse_model(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error("--model");
   }
   ++idx;
-  opts.model_path = args[idx];
+  opts.models.resize(1);
+  opts.models[0].path = args[idx];
+  if (!std::filesystem::exists(opts.models[0].path)) {
+    log_error(std::format("Model file not found: {}", opts.models[0].path));
+    return false;
+  }
   return true;
 }
 
@@ -237,10 +206,14 @@ static auto
 parse_config(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error("--config");
   }
   ++idx;
   opts.config_path = args[idx];
+  if (!std::filesystem::exists(opts.config_path)) {
+    log_error(std::format("Config file not found: {}", opts.config_path));
+    return false;
+  }
   return true;
 }
 
@@ -249,20 +222,22 @@ parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   auto& iterations = opts.iterations;
-  return expect_and_parse(idx, args, [&iterations](const char* val) {
-    const auto tmp = std::stoi(val);
-    if (tmp <= 0) {
-      throw std::invalid_argument("Must be > 0.");
-    }
-    iterations = tmp;
-  });
+  return expect_and_parse(
+      "--iterations", idx, args, [&iterations](const char* val) {
+        const auto tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        iterations = tmp;
+      });
 }
 
 static auto
 parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& inputs = opts.inputs;
-  return expect_and_parse(idx, args, [&inputs](const char* val) {
+  opts.models.resize(1);
+  auto& inputs = opts.models[0].inputs;
+  return expect_and_parse("--shape", idx, args, [&inputs](const char* val) {
     auto dims = parse_shape_string(val);
     inputs.resize(1);
     inputs[0].name = inputs[0].name.empty() ? "input0" : inputs[0].name;
@@ -273,8 +248,9 @@ parse_shape(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 static auto
 parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& inputs = opts.inputs;
-  return expect_and_parse(idx, args, [&inputs](const char* val) {
+  opts.models.resize(1);
+  auto& inputs = opts.models[0].inputs;
+  return expect_and_parse("--shapes", idx, args, [&inputs](const char* val) {
     auto dims_list = parse_shapes_string(val);
     inputs.resize(dims_list.size());
     for (size_t i = 0; i < dims_list.size(); ++i) {
@@ -289,8 +265,9 @@ parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 static auto
 parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& inputs = opts.inputs;
-  return expect_and_parse(idx, args, [&inputs](const char* val) {
+  opts.models.resize(1);
+  auto& inputs = opts.models[0].inputs;
+  return expect_and_parse("--types", idx, args, [&inputs](const char* val) {
     auto types = parse_types_string(val);
     if (inputs.size() < types.size()) {
       inputs.resize(types.size());
@@ -308,16 +285,17 @@ static auto
 parse_verbose(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& verbosity = opts.verbosity;
-  return expect_and_parse(idx, args, [&verbosity](const char* val) {
-    verbosity = parse_verbosity_level(val);
-  });
+  return expect_and_parse(
+      "--verbose", idx, args, [&verbosity](const char* val) {
+        verbosity = parse_verbosity_level(val);
+      });
 }
 
 static auto
 parse_delay(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   auto& delay_ms = opts.delay_ms;
-  return expect_and_parse(idx, args, [&delay_ms](const char* val) {
+  return expect_and_parse("--delay", idx, args, [&delay_ms](const char* val) {
     delay_ms = std::stoi(val);
     if (delay_ms < 0) {
       throw std::invalid_argument("Must be >= 0.");
@@ -329,28 +307,56 @@ static auto
 parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  return expect_and_parse(idx, args, [&opts](const char* val) {
-    opts.use_cuda = true;
-    std::stringstream shape_stream(val);
-    std::string id_str;
-    while (std::getline(shape_stream, id_str, ',')) {
-      const int device_id = std::stoi(id_str);
-      if (device_id < 0) {
-        throw std::invalid_argument("Must be >= 0.");
-      }
-      opts.device_ids.push_back(device_id);
-    }
-    if (opts.device_ids.empty()) {
-      throw std::invalid_argument("No device IDs provided.");
-    }
-  });
+  const bool parsed =
+      expect_and_parse("--device-ids", idx, args, [&opts](const char* val) {
+        opts.use_cuda = true;
+        std::stringstream shape_stream(val);
+        std::string id_str;
+        while (std::getline(shape_stream, id_str, ',')) {
+          const int device_id = std::stoi(id_str);
+          if (device_id < 0) {
+            throw std::invalid_argument("Must be >= 0.");
+          }
+          opts.device_ids.push_back(device_id);
+        }
+        if (opts.device_ids.empty()) {
+          throw std::invalid_argument("No device IDs provided.");
+        }
+      });
+
+  if (!parsed) {
+    return false;
+  }
+
+  std::unordered_set<int> unique_ids(
+      opts.device_ids.begin(), opts.device_ids.end());
+  if (unique_ids.size() != opts.device_ids.size()) {
+    log_error("Duplicate device IDs provided.");
+    return false;
+  }
+
+  const int device_count =
+      static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
+
+  const auto invalid_it = std::ranges::find_if(
+      opts.device_ids, [device_count](const int device_id) noexcept {
+        return device_id >= device_count;
+      });
+  if (invalid_it != opts.device_ids.end()) {
+    log_error(std::format(
+        "GPU ID {} out of range. Only {} device(s) available.", *invalid_it,
+        device_count));
+    return false;
+  }
+
+  return true;
 }
 
 static auto
 parse_address(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error("--address");
   }
   ++idx;
   opts.server_address = args[idx];
@@ -362,13 +368,14 @@ parse_max_batch_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   auto& max_batch_size = opts.max_batch_size;
-  return expect_and_parse(idx, args, [&max_batch_size](const char* val) {
-    const int tmp = std::stoi(val);
-    if (tmp <= 0) {
-      throw std::invalid_argument("Must be > 0.");
-    }
-    max_batch_size = tmp;
-  });
+  return expect_and_parse(
+      "--max-batch-size", idx, args, [&max_batch_size](const char* val) {
+        const int tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        max_batch_size = tmp;
+      });
 }
 
 static auto
@@ -376,23 +383,123 @@ parse_metrics_port(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
   auto& metrics_port = opts.metrics_port;
-  return expect_and_parse(idx, args, [&metrics_port](const char* val) {
-    metrics_port = std::stoi(val);
-    if (metrics_port <= 0) {
-      throw std::invalid_argument("Must be > 0.");
-    }
-  });
+  return expect_and_parse(
+      "--metrics-port", idx, args, [&metrics_port](const char* val) {
+        metrics_port = std::stoi(val);
+        if (metrics_port < kPortMin || metrics_port > kPortMax) {
+          throw std::out_of_range("Metrics port must be between 1 and 65535.");
+        }
+      });
 }
 
 static auto
 parse_scheduler(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
   if (idx + 1 >= args.size()) {
-    return false;
+    return missing_value_error("--scheduler");
   }
   ++idx;
-  opts.scheduler = args[idx];
+  const std::string scheduler = args[idx];
+  if (!kAllowedSchedulers.contains(scheduler)) {
+    std::ostringstream oss;
+    for (auto it = kAllowedSchedulers.begin(); it != kAllowedSchedulers.end();
+         ++it) {
+      if (it != kAllowedSchedulers.begin()) {
+        oss << ", ";
+      }
+      oss << *it;
+    }
+    log_error(std::format(
+        "Unknown scheduler: '{}'. Allowed schedulers: {}", scheduler,
+        oss.str()));
+    return false;
+  }
+  opts.scheduler = scheduler;
   return true;
+}
+
+static auto
+parse_pregen_inputs(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& pregen = opts.pregen_inputs;
+  return expect_and_parse(
+      "--pregen-inputs", idx, args, [&pregen](const char* val) {
+        const auto tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        pregen = static_cast<size_t>(tmp);
+      });
+}
+
+static auto
+parse_warmup_pregen_inputs(
+    RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  auto& pregen = opts.warmup_pregen_inputs;
+  return expect_and_parse(
+      "--warmup-pregen-inputs", idx, args, [&pregen](const char* val) {
+        const auto tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        pregen = static_cast<size_t>(tmp);
+      });
+}
+
+static auto
+parse_warmup_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& warmup = opts.warmup_iterations;
+  return expect_and_parse(
+      "--warmup-iterations", idx, args, [&warmup](const char* val) {
+        const auto tmp = std::stoi(val);
+        if (tmp < 0) {
+          throw std::invalid_argument("Must be >= 0.");
+        }
+        warmup = tmp;
+      });
+}
+
+static auto
+parse_seed(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  auto& seed = opts.seed;
+  return expect_and_parse("--seed", idx, args, [&seed](const char* val) {
+    const auto tmp = std::stoll(val);
+    if (tmp < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+    seed = static_cast<uint64_t>(tmp);
+  });
+}
+
+static auto
+parse_rtol(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  auto& rtol = opts.rtol;
+  return expect_and_parse("--rtol", idx, args, [&rtol](const char* val) {
+    const auto tmp = std::stod(val);
+    if (tmp < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+    rtol = tmp;
+  });
+}
+
+static auto
+parse_atol(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
+{
+  auto& atol = opts.atol;
+  return expect_and_parse("--atol", idx, args, [&atol](const char* val) {
+    const auto tmp = std::stod(val);
+    if (tmp < 0) {
+      throw std::invalid_argument("Must be >= 0.");
+    }
+    atol = tmp;
+  });
 }
 
 // =============================================================================
@@ -428,6 +535,12 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--address", parse_address},
           {"--metrics-port", parse_metrics_port},
           {"--max-batch-size", parse_max_batch_size},
+          {"--pregen-inputs", parse_pregen_inputs},
+          {"--warmup-pregen-inputs", parse_warmup_pregen_inputs},
+          {"--warmup-iterations", parse_warmup_iterations},
+          {"--seed", parse_seed},
+          {"--rtol", parse_rtol},
+          {"--atol", parse_atol},
       };
 
   for (size_t idx = 1; idx < args_span.size(); ++idx) {
@@ -462,19 +575,26 @@ static auto
 validate_config(RuntimeConfig& opts) -> void
 {
   std::vector<std::string> missing;
-  check_required(!opts.model_path.empty(), "--model", missing);
-  const bool have_shapes = std::any_of(
-      opts.inputs.begin(), opts.inputs.end(),
-      [](const auto& t) { return !t.dims.empty(); });
-  const bool have_types = std::all_of(
-      opts.inputs.begin(), opts.inputs.end(),
-      [](const auto& t) { return t.type != at::ScalarType::Undefined; });
+  check_required(
+      !opts.models.empty() && !opts.models[0].path.empty(), "--model", missing);
+  const bool have_shapes =
+      !opts.models.empty() &&
+      std::any_of(
+          opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
+          [](const auto& tensor) { return !tensor.dims.empty(); });
+  const bool have_types =
+      !opts.models.empty() &&
+      std::all_of(
+          opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
+          [](const auto& tensor) {
+            return tensor.type != at::ScalarType::Undefined;
+          });
   check_required(have_shapes, "--shape or --shapes", missing);
   check_required(have_types, "--types", missing);
 
   if (have_shapes && have_types) {
-    for (const auto& t : opts.inputs) {
-      if (t.dims.empty() || t.type == at::ScalarType::Undefined) {
+    for (const auto& input : opts.models[0].inputs) {
+      if (input.dims.empty() || input.type == at::ScalarType::Undefined) {
         log_error("Number of --types must match number of input shapes.");
         opts.valid = false;
         break;
@@ -505,9 +625,22 @@ parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
   if (!opts.show_help) {
     validate_config(opts);
     if (opts.valid) {
-      opts.max_message_bytes = compute_max_message_bytes(
-          opts.max_batch_size, opts.inputs, opts.outputs,
-          opts.max_message_bytes);
+      try {
+        opts.max_message_bytes = compute_max_message_bytes(
+            opts.max_batch_size, opts.models, opts.max_message_bytes);
+      }
+      catch (const InvalidDimensionException& e) {
+        log_error(e.what());
+        opts.valid = false;
+      }
+      catch (const MessageSizeOverflowException& e) {
+        log_error(e.what());
+        opts.valid = false;
+      }
+      catch (const UnsupportedDtypeException& e) {
+        log_error(e.what());
+        opts.valid = false;
+      }
     }
   }
 

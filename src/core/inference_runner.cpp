@@ -2,8 +2,11 @@
 
 #include <ATen/core/ScalarType.h>
 #include <ATen/core/TensorBody.h>
+#include <c10/core/InferenceMode.h>
 #include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
+#include <cuda_runtime_api.h>
+#include <torch/torch.h>
 
 #include <algorithm>
 #include <atomic>
@@ -38,8 +41,33 @@
 #include "warmup.hpp"
 
 namespace starpu_server {
-constexpr size_t NUM_PREGENERATED_INPUTS = 10;
-constexpr int NUM_WARMUP_ITERATIONS = 2;
+
+static auto
+default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
+{
+  return std::jthread(&StarPUTaskRunner::run, &worker);
+}
+
+namespace {
+inline auto
+launcher_storage() -> WorkerThreadLauncher&
+{
+  static WorkerThreadLauncher launcher = default_worker_thread_launcher;
+  return launcher;
+}
+}  // namespace
+
+auto
+get_worker_thread_launcher() -> WorkerThreadLauncher
+{
+  return launcher_storage();
+}
+
+void
+set_worker_thread_launcher(WorkerThreadLauncher launcher)
+{
+  launcher_storage() = launcher;
+}
 
 // =============================================================================
 // InferenceJob: Encapsulates a single inference task, including input data,
@@ -73,22 +101,31 @@ client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, const int iterations)
 {
+  thread_local std::mt19937 rng;
+  if (opts.seed) {
+    rng.seed(static_cast<std::mt19937::result_type>(*opts.seed));
+    torch::manual_seed(static_cast<uint64_t>(*opts.seed));
+  } else {
+    rng.seed(std::random_device{}());
+  }
+
   auto pregen_inputs =
-      std::make_unique<std::vector<std::vector<torch::Tensor>>>(
-          client_utils::pre_generate_inputs(opts, NUM_PREGENERATED_INPUTS));
-  // RNG for synthetic test data only; not used for security.  // NOSONAR
-  thread_local std::mt19937 rng(std::random_device{}());
+      client_utils::pre_generate_inputs(opts, opts.pregen_inputs);
 
   auto next_time = std::chrono::steady_clock::now();
   const auto delay = std::chrono::milliseconds(opts.delay_ms);
   for (auto job_id = 0; job_id < iterations; ++job_id) {
     std::this_thread::sleep_until(next_time);
     next_time += delay;
-    const auto& inputs = client_utils::pick_random_input(*pregen_inputs, rng);
+    const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
     auto job = client_utils::create_job(inputs, outputs_ref, job_id);
     client_utils::log_job_enqueued(
         opts, job_id, iterations, job->timing_info().enqueued_time);
-    queue.push(job);
+    if (!queue.push(job)) {
+      log_warning(std::format(
+          "[Client] Failed to enqueue job {}: queue shutting down", job_id));
+      break;
+    }
   }
 
   queue.shutdown();
@@ -102,7 +139,9 @@ static auto
 load_model(const std::string& model_path) -> torch::jit::script::Module
 {
   try {
-    return torch::jit::load(model_path);
+    auto model = torch::jit::load(model_path);
+    model.eval();
+    return model;
   }
   catch (const c10::Error& e) {
     log_error("Failed to load model: " + std::string(e.what()));
@@ -116,6 +155,17 @@ clone_model_to_gpus(
     const std::vector<int>& device_ids)
     -> std::vector<torch::jit::script::Module>
 {
+  const int device_count =
+      static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
+  for (const int device_id : device_ids) {
+    if (device_id < 0 || device_id >= device_count) {
+      log_error(std::format(
+          "GPU ID {} out of range. Only {} device(s) available.", device_id,
+          device_count));
+      throw std::runtime_error("Invalid GPU device ID");
+    }
+  }
+
   std::vector<torch::jit::script::Module> models_gpu;
   models_gpu.reserve(device_ids.size());
 
@@ -145,27 +195,16 @@ run_reference_inference(
     torch::jit::script::Module& model,
     const std::vector<torch::Tensor>& inputs) -> std::vector<torch::Tensor>
 {
-  std::vector<torch::Tensor> output_refs;
+  c10::InferenceMode guard;
   const std::vector<torch::IValue> input_ivalues(inputs.begin(), inputs.end());
-
-  if (const auto output = model.forward(input_ivalues); output.isTensor()) {
-    output_refs.push_back(output.toTensor());
-  } else if (output.isTuple()) {
-    for (const auto& val : output.toTuple()->elements()) {
-      if (val.isTensor()) {
-        output_refs.push_back(val.toTensor());
-      }
-    }
-  } else if (output.isTensorList()) {
-    output_refs.insert(
-        output_refs.end(), output.toTensorList().begin(),
-        output.toTensorList().end());
-  } else {
-    log_error("Unsupported output type from model.");
-    throw UnsupportedModelOutputTypeException("Unsupported model output type");
+  const c10::IValue output = model.forward(input_ivalues);
+  try {
+    return extract_tensors_from_output(output);
   }
-
-  return output_refs;
+  catch (const UnsupportedModelOutputTypeException&) {
+    log_error("Unsupported output type from model.");
+    throw;
+  }
 }
 
 // =============================================================================
@@ -175,25 +214,28 @@ run_reference_inference(
 
 auto
 load_model_and_reference_output(const RuntimeConfig& opts)
-    -> std::tuple<
+    -> std::optional<std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-        std::vector<torch::Tensor>>
+        std::vector<torch::Tensor>>>
 {
   try {
-    auto model_cpu = load_model(opts.model_path);
+    auto model_cpu =
+        load_model(opts.models.empty() ? std::string{} : opts.models[0].path);
     auto models_gpu = opts.use_cuda
                           ? clone_model_to_gpus(model_cpu, opts.device_ids)
                           : std::vector<torch::jit::script::Module>{};
-    auto inputs = generate_inputs(opts.inputs);
+    auto inputs = generate_inputs(
+        opts.models.empty() ? std::vector<TensorConfig>{}
+                            : opts.models[0].inputs);
     auto output_refs = run_reference_inference(model_cpu, inputs);
 
-    return {model_cpu, models_gpu, output_refs};
+    return std::tuple{model_cpu, models_gpu, output_refs};
   }
   catch (const c10::Error& e) {
     log_error(
         "Failed to load model or run reference inference: " +
         std::string(e.what()));
-    return {};
+    return std::nullopt;
   }
 }
 
@@ -208,7 +250,7 @@ run_warmup(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref)
 {
-  if (!opts.use_cuda) {
+  if (!opts.use_cuda || opts.warmup_iterations <= 0) {
     return;
   }
 
@@ -216,10 +258,10 @@ run_warmup(
       opts.verbosity,
       std::format(
           "Starting warmup with {} iterations per CUDA device...",
-          NUM_WARMUP_ITERATIONS));
+          opts.warmup_iterations));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-  warmup_runner.run(NUM_WARMUP_ITERATIONS);
+  warmup_runner.run(opts.warmup_iterations);
 
   log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 }
@@ -233,7 +275,7 @@ process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    VerbosityLevel verbosity)
+    VerbosityLevel verbosity, double rtol, double atol)
 {
   for (const auto& result : results) {
     if (result.results.empty() || !result.results[0].defined()) {
@@ -249,8 +291,20 @@ process_results(
       }
     }
 
-    validate_inference_result(result, *cpu_model, verbosity);
+    validate_inference_result(result, *cpu_model, verbosity, rtol, atol);
   }
+}
+
+auto
+synchronize_cuda_device() -> cudaError_t
+{
+  const auto err = cudaDeviceSynchronize();
+  if (err != cudaSuccess) {
+    log_error(
+        std::string("cudaDeviceSynchronize failed: ") +
+        cudaGetErrorString(err));
+  }
+  return err;
 }
 
 // =============================================================================
@@ -265,8 +319,19 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;
 
-  std::tie(model_cpu, models_gpu, outputs_ref) =
-      load_model_and_reference_output(opts);
+  try {
+    auto result = load_model_and_reference_output(opts);
+    if (!result) {
+      log_error("Failed to load model or reference outputs");
+      return;
+    }
+    std::tie(model_cpu, models_gpu, outputs_ref) = std::move(*result);
+  }
+  catch (const std::exception& e) {
+    log_error(
+        std::format("Failed to load model or reference outputs: {}", e.what()));
+    return;
+  }
 
   run_warmup(opts, starpu, model_cpu, models_gpu, outputs_ref);
 
@@ -294,22 +359,47 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   config.all_done_cv = &all_done_cv;
   StarPUTaskRunner worker(config);
 
-  const std::jthread server(&StarPUTaskRunner::run, &worker);
-  const std::jthread client([&queue, &opts, &outputs_ref]() {
-    client_worker(queue, opts, outputs_ref, opts.iterations);
-  });
+  std::jthread server;
+  std::jthread client;
+  try {
+    server = get_worker_thread_launcher()(worker);
+    client = std::jthread([&queue, &opts, &outputs_ref]() {
+      client_worker(queue, opts, outputs_ref, opts.iterations);
+    });
+  }
+  catch (const std::exception& e) {
+    log_error(std::format("Failed to start worker thread: {}", e.what()));
+    queue.shutdown();
+    if (client.joinable()) {
+      client.join();
+    }
+    if (server.joinable()) {
+      server.join();
+    }
+    throw;
+  }
 
   {
     std::unique_lock lock(all_done_mutex);
     all_done_cv.wait(lock, [&completed_jobs, &opts]() {
-      return completed_jobs.load() >= opts.iterations;
+      return completed_jobs.load(std::memory_order_acquire) >= opts.iterations;
     });
   }
 
-  if (opts.use_cuda) {
-    cudaDeviceSynchronize();
+  if (client.joinable()) {
+    client.join();
+  }
+  if (server.joinable()) {
+    server.join();
   }
 
-  process_results(results, model_cpu, models_gpu, opts.verbosity);
+  if (opts.use_cuda) {
+    if (auto err = synchronize_cuda_device(); err != cudaSuccess) {
+      return;
+    }
+  }
+
+  process_results(
+      results, model_cpu, models_gpu, opts.verbosity, opts.rtol, opts.atol);
 }
 }  // namespace starpu_server

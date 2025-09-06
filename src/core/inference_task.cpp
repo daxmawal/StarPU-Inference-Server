@@ -2,12 +2,17 @@
 
 #include <ATen/core/ScalarType.h>
 
+#include <algorithm>
 #include <bit>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <format>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -85,12 +90,29 @@ InferenceTask::safe_register_tensor_vector(
     throw StarPURegistrationException(
         "Tensor '" + label + "' must reside on CPU");
   }
+  if (!tensor.is_contiguous()) {
+    throw StarPURegistrationException(
+        "Tensor '" + label + "' must be contiguous.");
+  }
   starpu_data_handle_t handle = nullptr;
+
+  const auto numel = static_cast<uint64_t>(tensor.numel());
+  const auto elem_size = static_cast<uint64_t>(tensor.element_size());
+  const auto max_size =
+      static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+
+  if (numel > max_size) {
+    throw StarPURegistrationException(std::format(
+        "Tensor '{}' has too many elements to fit in size_t", label));
+  }
+  if (elem_size > max_size) {
+    throw StarPURegistrationException(std::format(
+        "Tensor '{}' has an element size too large for size_t", label));
+  }
 
   starpu_vector_data_register(
       &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(tensor.data_ptr()),
-      static_cast<size_t>(static_cast<uint64_t>(tensor.numel())),
-      static_cast<size_t>(static_cast<uint64_t>(tensor.element_size())));
+      static_cast<size_t>(numel), static_cast<size_t>(elem_size));
 
   if (handle == nullptr) {
     throw StarPURegistrationException(
@@ -151,12 +173,12 @@ InferenceTask::create_context(
 void
 InferenceTask::check_limits(size_t num_inputs) const
 {
-  if (num_inputs > InferLimits::MaxInputs) {
-    throw InferenceExecutionException(std::format(
-        "Too many input tensors: max is {}", InferLimits::MaxInputs));
+  if (num_inputs > opts_->max_inputs) {
+    throw InferenceExecutionException(
+        std::format("Too many input tensors: max is {}", opts_->max_inputs));
   }
 
-  if (models_gpu_->size() > InferLimits::MaxModelsGPU) {
+  if (models_gpu_->size() > opts_->max_models_gpu) {
     throw TooManyGpuModelsException(
         "Too many GPU models for the current configuration.");
   }
@@ -169,6 +191,10 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
   check_limits(num_inputs);
 
   auto params = std::make_shared<InferenceParams>();
+
+  params->limits.max_inputs = opts_->max_inputs;
+  params->limits.max_dims = opts_->max_dims;
+  params->limits.max_models_gpu = opts_->max_models_gpu;
 
   fill_model_pointers(params);
   bind_runtime_job_info(params);
@@ -187,9 +213,10 @@ InferenceTask::fill_model_pointers(
 {
   params->models.model_cpu = model_cpu_;
   params->models.num_models_gpu = models_gpu_->size();
+  params->models.models_gpu.resize(models_gpu_->size());
 
   for (size_t i = 0; i < models_gpu_->size(); ++i) {
-    params->models.models_gpu.at(i) = &(models_gpu_->at(i));
+    params->models.models_gpu[i] = &(models_gpu_->at(i));
   }
 }
 
@@ -211,20 +238,26 @@ void
 InferenceTask::fill_input_layout(
     const std::shared_ptr<InferenceParams>& params, size_t num_inputs) const
 {
+  params->layout.input_types.resize(num_inputs);
   std::copy_n(
       job_->get_input_types().begin(), num_inputs,
       params->layout.input_types.begin());
 
+  params->layout.num_dims.resize(num_inputs);
+  params->layout.dims.resize(num_inputs);
+
   for (size_t i = 0; i < num_inputs; ++i) {
     const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
-    if (dim > static_cast<int64_t>(InferLimits::MaxDims)) {
+    if (dim > static_cast<int64_t>(opts_->max_dims)) {
       throw InferenceExecutionException(std::format(
-          "Input tensor has too many dimensions: max is {}",
-          InferLimits::MaxDims));
+          "Input tensor has too many dimensions: max is {}", opts_->max_dims));
     }
-    params->layout.num_dims.at(i) = dim;
-    std::copy_n(tensor.sizes().data(), dim, params->layout.dims.at(i).begin());
+    params->layout.num_dims[i] = dim;
+    const auto sizes = tensor.sizes();
+    using diff_t = std::ranges::range_difference_t<decltype(sizes)>;
+    const auto first_dims = std::views::take(sizes, static_cast<diff_t>(dim));
+    params->layout.dims[i].assign(first_dims.begin(), first_dims.end());
   }
 }
 
@@ -297,7 +330,8 @@ InferenceTask::create_task(
   task->synchronous = opts_->synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
   task->cl_arg_size = sizeof(InferenceParams);
-  task->priority = STARPU_MAX_PRIO - ctx->job->get_job_id();
+  task->priority =
+      std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_job_id());
 
   InferenceTask::allocate_task_buffers(task, num_buffers, ctx);
   InferenceTask::fill_task_buffers(task, inputs_handles, outputs_handles);
@@ -316,16 +350,30 @@ InferenceTask::allocate_task_buffers(
     starpu_task* task, size_t num_buffers,
     const std::shared_ptr<InferenceCallbackContext>& ctx)
 {
-  task->dyn_handles = static_cast<starpu_data_handle_t*>(
-      malloc(num_buffers * sizeof(starpu_data_handle_t)));
-  task->dyn_modes = static_cast<starpu_data_access_mode*>(
-      malloc(num_buffers * sizeof(starpu_data_access_mode)));
-
-  if (task->dyn_handles == nullptr || task->dyn_modes == nullptr) {
+  auto handles_owner = std::unique_ptr<void, void (*)(void*)>(
+      std::malloc(num_buffers * sizeof(starpu_data_handle_t)), std::free);
+  if (!handles_owner) {
+    task->dyn_handles = nullptr;
+    task->dyn_modes = nullptr;
     starpu_task_destroy(task);
     cleanup(ctx);
     throw MemoryAllocationException("Failed to allocate task buffers.");
   }
+
+  auto modes_owner = std::unique_ptr<void, void (*)(void*)>(
+      std::malloc(num_buffers * sizeof(starpu_data_access_mode)), std::free);
+  if (!modes_owner) {
+    task->dyn_handles = nullptr;
+    task->dyn_modes = nullptr;
+    starpu_task_destroy(task);
+    cleanup(ctx);
+    throw MemoryAllocationException("Failed to allocate task buffers.");
+  }
+
+  task->dyn_handles =
+      static_cast<starpu_data_handle_t*>(handles_owner.release());
+  task->dyn_modes =
+      static_cast<starpu_data_access_mode*>(modes_owner.release());
 }
 
 void
@@ -336,14 +384,17 @@ InferenceTask::fill_task_buffers(
   const size_t num_inputs = inputs.size();
   const size_t num_buffers = num_inputs + outputs.size();
 
+  std::span<starpu_data_handle_t> handles(task->dyn_handles, num_buffers);
+  std::span<starpu_data_access_mode> modes(task->dyn_modes, num_buffers);
+
   for (size_t idx = 0; idx < num_inputs; ++idx) {
-    task->dyn_handles[idx] = inputs[idx];
-    task->dyn_modes[idx] = STARPU_R;
+    handles[idx] = inputs[idx];
+    modes[idx] = STARPU_R;
   }
 
-  for (size_t idx = num_inputs; idx < num_buffers; ++idx) {
-    task->dyn_handles[idx] = outputs[idx - num_inputs];
-    task->dyn_modes[idx] = STARPU_W;
+  for (size_t idx = 0; idx < outputs.size(); ++idx) {
+    handles[num_inputs + idx] = outputs[idx];
+    modes[num_inputs + idx] = STARPU_W;
   }
 }
 
@@ -355,6 +406,11 @@ InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
 
     if (worker_id < 0) {
       throw std::invalid_argument("Fixed worker ID must be non-negative");
+    }
+
+    const int total_workers = static_cast<int>(starpu_worker_get_count());
+    if (worker_id >= total_workers) {
+      throw std::out_of_range("Fixed worker ID exceeds available workers");
     }
 
     task->workerid = static_cast<unsigned>(worker_id);
@@ -392,7 +448,7 @@ void
 InferenceTask::acquire_output_handle(
     starpu_data_handle_t handle, InferenceCallbackContext* ctx)
 {
-  starpu_data_acquire_cb(
+  const int ret = starpu_data_acquire_cb(
       handle, STARPU_R,
       [](void* cb_arg) {
         auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);
@@ -406,6 +462,12 @@ InferenceTask::acquire_output_handle(
         }
       },
       ctx);
+
+  if (ret < 0) {
+    log_error(std::format("starpu_data_acquire_cb failed with code {}", ret));
+    throw StarPURegistrationException(
+        "Failed to acquire output data handle from StarPU.");
+  }
 }
 
 void
@@ -477,7 +539,15 @@ InferenceTask::record_and_run_completion_callback(
 
   if (ctx->job->has_on_complete()) {
     const auto& callback = ctx->job->get_on_complete();
-    callback(ctx->job->get_output_tensors(), latency_ms);
+    try {
+      callback(ctx->job->get_output_tensors(), latency_ms);
+    }
+    catch (const std::exception& e) {
+      log_error("Exception in completion callback: " + std::string(e.what()));
+    }
+    catch (...) {
+      log_error("Unknown exception in completion callback");
+    }
   }
 }
 

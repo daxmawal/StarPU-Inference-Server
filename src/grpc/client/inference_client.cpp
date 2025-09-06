@@ -1,6 +1,7 @@
 #include "inference_client.hpp"
 
 #include <format>
+#include <stdexcept>
 
 #include "utils/logger.hpp"
 #include "utils/time_utils.hpp"
@@ -65,12 +66,11 @@ InferenceClient::ServerIsReady() -> bool
 }
 
 auto
-InferenceClient::ModelIsReady(
-    const std::string& name, const std::string& version) -> bool
+InferenceClient::ModelIsReady(const ModelId& model) -> bool
 {
   inference::ModelReadyRequest request;
-  request.set_name(name);
-  request.set_version(version);
+  request.set_name(model.name);
+  request.set_version(model.version);
   inference::ModelReadyResponse response;
   grpc::ClientContext context;
 
@@ -107,9 +107,35 @@ InferenceClient::AsyncModelInfer(
           call->start_time.time_since_epoch())
           .count());
 
+  if (tensors.size() != cfg.inputs.size()) {
+    auto msg = std::format(
+        "Mismatched number of input tensors: expected {}, got {}",
+        cfg.inputs.size(), tensors.size());
+    log_error(msg);
+    throw std::invalid_argument(msg);
+  }
+
   for (size_t i = 0; i < cfg.inputs.size(); ++i) {
     const auto& in_cfg = cfg.inputs[i];
-    const auto& tensor = tensors.at(i);
+    torch::Tensor tensor = tensors.at(i);
+
+    if (tensor.scalar_type() != in_cfg.type) {
+      auto msg = std::format(
+          "Unsupported tensor type for input {}: expected {}, got {}",
+          in_cfg.name, scalar_type_to_string(in_cfg.type),
+          scalar_type_to_string(tensor.scalar_type()));
+      log_error(msg);
+      throw std::invalid_argument(msg);
+    }
+
+    if (!tensor.device().is_cpu() || !tensor.is_contiguous()) {
+      log_info(
+          verbosity_,
+          std::format(
+              "Input tensor {} not on CPU or non-contiguous, converting",
+              in_cfg.name));
+      tensor = tensor.cpu().contiguous();
+    }
     auto* input = request.add_inputs();
     input->set_name(in_cfg.name);
     input->set_datatype(scalar_type_to_string(in_cfg.type));
@@ -118,13 +144,13 @@ InferenceClient::AsyncModelInfer(
     }
     auto flat = tensor.view({-1});
     request.add_raw_input_contents()->assign(
-        reinterpret_cast<const char*>(flat.data_ptr()),
+        static_cast<const char*>(flat.data_ptr()),
         flat.numel() * flat.element_size());
   }
 
   call->response_reader = stub_->AsyncModelInfer(&call->context, request, &cq_);
   call->response_reader->Finish(&call->reply, &call->status, call.get());
-  call.release();
+  [[maybe_unused]] auto* released_call = call.release();
 }
 
 void

@@ -15,34 +15,53 @@ namespace starpu_server {
 
 class InferenceQueue {
  public:
-  // Enqueue a new inference job
-  void push(const std::shared_ptr<InferenceJob>& job)
+  [[nodiscard]] bool push(const std::shared_ptr<InferenceJob>& job)
   {
-    const std::scoped_lock lock(mutex_);
-    queue_.push(job);
-    if (queue_size_gauge != nullptr) {
-      queue_size_gauge->Increment();
+    if (job == nullptr) {
+      return false;
+    }
+    {
+      const std::scoped_lock lock(mutex_);
+      if (shutdown_) {
+        return false;
+      }
+      queue_.push(job);
+      set_queue_size(queue_.size());
     }
     cv_.notify_one();
+    return true;
   }
-
-  // Wait until a job is available, then dequeue it
-  void wait_and_pop(std::shared_ptr<InferenceJob>& job)
+  [[nodiscard]] bool wait_and_pop(std::shared_ptr<InferenceJob>& job)
   {
     std::unique_lock lock(mutex_);
-    cv_.wait(lock, [this] { return !queue_.empty(); });
+    cv_.wait(lock, [this] { return !queue_.empty() || shutdown_; });
+    if (queue_.empty()) {
+      return false;
+    }
     job = queue_.front();
     queue_.pop();
-    if (queue_size_gauge != nullptr) {
-      queue_size_gauge->Decrement();
-    }
+    set_queue_size(queue_.size());
+    return true;
   }
 
-  // Gracefully shutdown by pushing a special "shutdown" job
-  void shutdown() { push(InferenceJob::make_shutdown_job()); }
+  void shutdown()
+  {
+    {
+      const std::scoped_lock lock(mutex_);
+      shutdown_ = true;
+    }
+    cv_.notify_all();
+  }
+
+  size_t size()
+  {
+    const std::scoped_lock lock(mutex_);
+    return queue_.size();
+  }
 
  private:
   std::queue<std::shared_ptr<InferenceJob>> queue_;
+  bool shutdown_ = false;
   std::mutex mutex_;
   std::condition_variable cv_;
 };

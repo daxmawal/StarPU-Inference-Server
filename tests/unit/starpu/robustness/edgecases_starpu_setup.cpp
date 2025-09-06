@@ -15,8 +15,20 @@ TEST(StarPUSetupErrorsTest, GetCudaWorkersNegativeDeviceThrows)
 
 TEST(StarPUSetupErrorsTest, ExtractTensorsFromOutputUnsupportedType)
 {
-  c10::IValue non_tensor{42};
+  constexpr int kAnswer = 42;
+  c10::IValue non_tensor{kAnswer};
   EXPECT_THROW(
       starpu_server::extract_tensors_from_output(non_tensor),
+      starpu_server::UnsupportedModelOutputTypeException);
+}
+
+TEST(StarPUSetupErrorsTest, ExtractTensorsFromOutputDictWithNonTensor)
+{
+  constexpr int kAnswer = 42;
+  c10::impl::GenericDict dict(c10::StringType::get(), c10::AnyType::get());
+  dict.insert(c10::IValue("answer"), c10::IValue(kAnswer));
+
+  EXPECT_THROW(
+      starpu_server::extract_tensors_from_output(c10::IValue(dict)),
       starpu_server::UnsupportedModelOutputTypeException);
 }

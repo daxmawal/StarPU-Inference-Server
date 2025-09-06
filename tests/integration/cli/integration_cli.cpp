@@ -12,6 +12,10 @@ static RunLoopPtr run_inference_loop_hook = nullptr;
 struct RunLoopHookGuard {
   explicit RunLoopHookGuard(RunLoopPtr hook) { run_inference_loop_hook = hook; }
   ~RunLoopHookGuard() { run_inference_loop_hook = nullptr; }
+  RunLoopHookGuard(const RunLoopHookGuard&) = delete;
+  auto operator=(const RunLoopHookGuard&) -> RunLoopHookGuard& = delete;
+  RunLoopHookGuard(RunLoopHookGuard&&) = delete;
+  auto operator=(RunLoopHookGuard&&) -> RunLoopHookGuard& = delete;
 };
 
 inline void

@@ -1,5 +1,7 @@
 #include "inference_validator.hpp"
 
+#include <c10/cuda/CUDAGuard.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <format>
@@ -19,13 +21,14 @@ constexpr int kPreviewLimit = 10;
 // Device and Input Preparation Utilities
 // =============================================================================
 
-// Returns the device on which the inference ran (CPU or CUDA)
 static auto
 get_inference_device(const InferenceResult& result) -> torch::Device
 {
   switch (result.executed_on) {
-    case DeviceType::CUDA:
-      return {torch::kCUDA};
+    case DeviceType::CUDA: {
+      const int idx = (result.device_id >= 0) ? result.device_id : 0;
+      return {torch::kCUDA, static_cast<c10::DeviceIndex>(idx)};
+    }
     case DeviceType::CPU:
       return {torch::kCPU};
     default:
@@ -35,7 +38,6 @@ get_inference_device(const InferenceResult& result) -> torch::Device
   }
 }
 
-// Converts input tensors to the appropriate device and wraps them in IValues
 static auto
 prepare_inputs(
     const std::vector<torch::Tensor>& inputs,
@@ -52,7 +54,6 @@ prepare_inputs(
 // Output Extraction and Comparison
 // =============================================================================
 
-// Converts model output (Tensor or Tuple) to a list of tensors
 static auto
 extract_reference_outputs(
     const torch::IValue& output,
@@ -72,6 +73,10 @@ extract_reference_outputs(
       }
       tensors.push_back(val.toTensor());
     }
+  } else if (output.isTensorList()) {
+    for (const auto& tensor : output.toTensorList()) {
+      tensors.push_back(tensor);
+    }
   } else {
     log_error(std::format(
         "[Validator] Unsupported output type for job {}", result.job_id));
@@ -81,12 +86,11 @@ extract_reference_outputs(
   return tensors;
 }
 
-// Compares two lists of tensors (reference vs actual), with logging on mismatch
 static auto
 compare_outputs(
     const std::vector<torch::Tensor>& reference,
     const std::vector<torch::Tensor>& actual, const InferenceResult& result,
-    const torch::Device& device) -> bool
+    const torch::Device& device, double rtol, double atol) -> bool
 {
   if (reference.size() != actual.size()) {
     log_error(std::format(
@@ -96,23 +100,27 @@ compare_outputs(
 
   bool all_valid = true;
   for (size_t i = 0; i < reference.size(); ++i) {
-    const torch::Tensor& ref = reference[i].to(device);
-    const torch::Tensor& res = actual[i].to(device);
+    const auto ref_dev = reference[i].to(device);
+    const auto res_dev = actual[i].to(device);
 
-    const bool is_valid = torch::allclose(ref, res, 1e-3, 1e-5);
+    const auto ref_cmp = ref_dev.to(torch::kFloat);
+    const auto res_cmp = res_dev.to(torch::kFloat);
+
+    const bool is_valid = torch::allclose(ref_cmp, res_cmp, rtol, atol);
     all_valid &= is_valid;
 
     if (!is_valid) {
       log_error(std::format(
           "[Validator] Mismatch on output #{} for job {}", i, result.job_id));
       log_error(std::format(
-          "  Absolute diff max: {}", (ref - res).abs().max().item<float>()));
+          "  Absolute diff max: {}",
+          (ref_cmp - res_cmp).abs().max().item<float>()));
       log_error(std::format(
           "  Reference: {}",
-          ref.flatten().slice(0, 0, kPreviewLimit).toString()));
+          ref_cmp.flatten().slice(0, 0, kPreviewLimit).toString()));
       log_error(std::format(
           "  Obtained : {}",
-          res.flatten().slice(0, 0, kPreviewLimit).toString()));
+          res_cmp.flatten().slice(0, 0, kPreviewLimit).toString()));
     }
   }
 
@@ -126,18 +134,23 @@ compare_outputs(
 auto
 validate_inference_result(
     const InferenceResult& result, torch::jit::script::Module& jit_model,
-    const VerbosityLevel& verbosity) -> bool
+    const VerbosityLevel& verbosity, double rtol, double atol) -> bool
 {
   try {
     const torch::Device device = get_inference_device(result);
+
+    c10::cuda::OptionalCUDAGuard device_guard;
+    if (device.is_cuda()) {
+      device_guard.reset_device(device);
+    }
 
     auto input_ivalues = prepare_inputs(result.inputs, device);
 
     const torch::IValue output = jit_model.forward(input_ivalues);
     auto reference_outputs = extract_reference_outputs(output, result);
 
-    const bool all_valid =
-        compare_outputs(reference_outputs, result.results, result, device);
+    const bool all_valid = compare_outputs(
+        reference_outputs, result.results, result, device, rtol, atol);
 
     if (all_valid) {
       log_info(
@@ -160,7 +173,5 @@ validate_inference_result(
         "[Validator] Exception in job {}: {}", result.job_id, e.what()));
     throw InferenceExecutionException(e.what());
   }
-
-  return false;
 }
 }  // namespace starpu_server

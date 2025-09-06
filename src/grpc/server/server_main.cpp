@@ -1,7 +1,11 @@
 #include <atomic>
+#include <chrono>
 #include <csignal>
+#include <format>
 #include <iostream>
 #include <memory>
+#include <span>
+#include <stdexcept>
 #include <string_view>
 #include <thread>
 
@@ -18,10 +22,9 @@
 #include "utils/runtime_config.hpp"
 
 namespace {
-// Encapsulates state shared between the worker threads and the signal handler
 struct ServerContext {
   starpu_server::InferenceQueue* queue_ptr = nullptr;
-  std::unique_ptr<grpc::Server> server{};
+  std::unique_ptr<grpc::Server> server;
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
   std::atomic<bool> stop_requested{false};
@@ -38,24 +41,19 @@ server_context() -> ServerContext&
 void
 signal_handler(int /*signal*/)
 {
-  auto& ctx = server_context();
-  ctx.stop_requested.store(true);
-  starpu_server::StopServer(ctx.server);
-  if (ctx.queue_ptr != nullptr) {
-    ctx.queue_ptr->shutdown();
-  }
-  ctx.stop_cv.notify_one();
+  server_context().stop_requested.store(true);
 }
 
 auto
-handle_program_arguments(int argc, char* argv[]) -> starpu_server::RuntimeConfig
+handle_program_arguments(std::span<char const* const> args)
+    -> starpu_server::RuntimeConfig
 {
   const char* config_path = nullptr;
 
-  for (int i = 1; i < argc - 1; ++i) {
-    std::string_view arg{argv[i]};
-    if ((arg == "--config" || arg == "-c") && argv[i + 1] != nullptr) {
-      config_path = argv[i + 1];
+  for (size_t i = 1; i + 1 < args.size(); ++i) {
+    std::string_view arg{args[i]};
+    if ((arg == "--config" || arg == "-c") && args[i + 1] != nullptr) {
+      config_path = args[i + 1];
       break;
     }
   }
@@ -71,23 +69,27 @@ handle_program_arguments(int argc, char* argv[]) -> starpu_server::RuntimeConfig
     starpu_server::log_fatal("Invalid configuration file.\n");
   }
 
-  std::cout << "__cplusplus = " << __cplusplus << "\n"
-            << "LibTorch version: " << TORCH_VERSION << "\n"
-            << "Scheduler       : " << cfg.scheduler << "\n"
-            << "Iterations      : " << cfg.iterations << "\n";
+  log_info(cfg.verbosity, std::format("__cplusplus = {}", __cplusplus));
+  log_info(cfg.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
+  log_info(cfg.verbosity, std::format("Scheduler       : {}", cfg.scheduler));
+  log_info(cfg.verbosity, std::format("Iterations      : {}", cfg.iterations));
 
   return cfg;
 }
 
-std::tuple<
-    torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-    std::vector<torch::Tensor>>
+auto
 prepare_models_and_warmup(
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu)
+    -> std::tuple<
+        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+        std::vector<torch::Tensor>>
 {
-  auto [model_cpu, models_gpu, reference_outputs] =
-      starpu_server::load_model_and_reference_output(opts);
+  auto models = starpu_server::load_model_and_reference_output(opts);
+  if (!models) {
+    throw std::runtime_error("Failed to load model or reference outputs");
+  }
+  auto [model_cpu, models_gpu, reference_outputs] = std::move(*models);
   starpu_server::run_warmup(
       opts, starpu, model_cpu, models_gpu, reference_outputs);
   return {model_cpu, models_gpu, reference_outputs};
@@ -103,6 +105,15 @@ launch_threads(
   static starpu_server::InferenceQueue queue;
   auto& ctx = server_context();
   ctx.queue_ptr = &queue;
+
+  std::jthread notifier_thread([]() {
+    auto& ctx = server_context();
+    constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
+    while (!ctx.stop_requested.load(std::memory_order_relaxed)) {
+      std::this_thread::sleep_for(kNotifierSleep);
+    }
+    ctx.stop_cv.notify_one();
+  });
 
   std::vector<starpu_server::InferenceResult> results;
   std::mutex results_mutex;
@@ -123,35 +134,58 @@ launch_threads(
 
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
   std::vector<at::ScalarType> expected_input_types;
-  expected_input_types.reserve(opts.inputs.size());
-  for (const auto& t : opts.inputs) {
-    expected_input_types.push_back(t.type);
+  if (!opts.models.empty()) {
+    expected_input_types.reserve(opts.models[0].inputs.size());
+    for (const auto& input : opts.models[0].inputs) {
+      expected_input_types.push_back(input.type);
+    }
   }
-  std::jthread grpc_thread([&, expected_input_types]() {
+  std::vector<std::vector<int64_t>> expected_input_dims;
+  if (!opts.models.empty()) {
+    expected_input_dims.reserve(opts.models[0].inputs.size());
+    for (const auto& input : opts.models[0].inputs) {
+      expected_input_dims.push_back(input.dims);
+    }
+  }
+
+  std::jthread grpc_thread([&, expected_input_types, expected_input_dims]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, expected_input_types, opts.server_address,
-        opts.max_message_bytes, ctx.server);
+        queue, reference_outputs, expected_input_types, expected_input_dims,
+        opts.max_batch_size, opts.server_address, opts.max_message_bytes,
+        opts.verbosity, ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);
+  std::signal(SIGTERM, signal_handler);
 
   {
     std::unique_lock lock(ctx.stop_mutex);
     ctx.stop_cv.wait(
         lock, [] { return server_context().stop_requested.load(); });
   }
+  starpu_server::StopServer(ctx.server);
+  if (ctx.queue_ptr != nullptr) {
+    ctx.queue_ptr->shutdown();
+  }
+  ctx.stop_cv.notify_one();
 }
 
 auto
 main(int argc, char* argv[]) -> int
 {
   try {
-    starpu_server::RuntimeConfig opts = handle_program_arguments(argc, argv);
-    starpu_server::init_metrics(opts.metrics_port);
+    starpu_server::RuntimeConfig opts =
+        handle_program_arguments({argv, static_cast<size_t>(argc)});
+    const bool metrics_ok = starpu_server::init_metrics(opts.metrics_port);
+    if (!metrics_ok) {
+      starpu_server::log_warning(
+          "Metrics server failed to start; continuing without metrics.");
+    }
     starpu_server::StarPUSetup starpu(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
+    starpu_server::shutdown_metrics();
   }
   catch (const starpu_server::InferenceEngineException& e) {
     std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";

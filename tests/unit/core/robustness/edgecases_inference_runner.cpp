@@ -4,6 +4,8 @@
 #include <array>
 #include <chrono>
 #include <filesystem>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,44 @@ MakeTempModelPath(const char* base) -> std::filesystem::path
       std::chrono::high_resolution_clock::now().time_since_epoch().count();
   return dir / (std::string(base) + "_" + std::to_string(time) + ".pt");
 }
+
+struct WorkerFailOutcome {
+  bool threw_runtime_error;
+  std::string log;
+};
+
+inline auto
+RunWorkerThreadFailureCase(const std::filesystem::path& path)
+    -> WorkerFailOutcome
+{
+  using namespace starpu_server;
+
+  RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].path = path.string();
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.iterations = 1;
+  opts.use_cuda = false;
+
+  StarPUSetup starpu(opts);
+
+  auto original_launcher = get_worker_thread_launcher();
+  set_worker_thread_launcher([](StarPUTaskRunner&) -> std::jthread {
+    throw std::runtime_error("boom");
+  });
+
+  CaptureStream capture{std::cerr};
+  bool threw = false;
+  try {
+    run_inference_loop(opts, starpu);
+  }
+  catch (const std::runtime_error&) {
+    threw = true;
+  }
+  auto log = capture.str();
+  set_worker_thread_launcher(original_launcher);
+  return WorkerFailOutcome{threw, std::move(log)};
+}
 }  // namespace
 
 TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
@@ -35,8 +75,9 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
   model.save(file.string());
 
   starpu_server::RuntimeConfig opts;
-  opts.model_path = file.string();
-  opts.inputs = {{"input0", kShape1, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape1, at::kFloat}};
   opts.device_ids = {0};
   opts.use_cuda = false;
 
@@ -51,14 +92,17 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
 namespace starpu_server {
 void run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
-    const torch::Device device, torch::jit::script::Module* model,
+    torch::Device device, torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, void* buffer_ptr)>&
         copy_output_fn);
 }
 
 TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
 {
-  std::array<float, 3> input{1.0F, 2.0F, 3.0F};
+  constexpr float kF1 = 1.0F;
+  constexpr float kF2 = 2.0F;
+  constexpr float kF3 = 3.0F;
+  std::array<float, 3> input{kF1, kF2, kF3};
   std::array<float, 3> output{0.0F, 0.0F, 0.0F};
 
   auto input_iface = starpu_server::make_variable_interface(input.data());
@@ -76,7 +120,7 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
       &params, buffers, torch::Device(torch::kCPU), &model,
       [](const at::Tensor& out, void* buffer_ptr) {
         starpu_server::TensorBuilder::copy_output_to_buffer(
-            out, buffer_ptr, out.numel());
+            out, buffer_ptr, out.numel(), out.scalar_type());
       });
   auto after = std::chrono::high_resolution_clock::now();
 
@@ -85,4 +129,54 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
   EXPECT_FLOAT_EQ(output[2], 4.0F);
   EXPECT_TRUE(inference_start >= before);
   EXPECT_TRUE(inference_start <= after);
+}
+
+TEST(InferenceRunner_Robustesse, LoadModelMissingFile)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].path = "nonexistent_model.pt";
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+
+  try {
+    auto result = starpu_server::load_model_and_reference_output(opts);
+    EXPECT_EQ(result, std::nullopt);
+  }
+  catch (const std::exception&) {
+    SUCCEED();
+  }
+}
+
+TEST(RunInferenceLoop_Robustesse, LoadModelFailureHandledGracefully)
+{
+  using namespace starpu_server;
+
+  RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].path = "nonexistent_model.pt";
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.iterations = 1;
+  opts.use_cuda = false;
+
+  StarPUSetup starpu(opts);
+
+  CaptureStream capture{std::cerr};
+  run_inference_loop(opts, starpu);
+  EXPECT_NE(capture.str().find("Failed to load model"), std::string::npos);
+}
+
+TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
+{
+  using namespace starpu_server;
+
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "worker_fail.pt";
+  make_identity_model().save(model_path.string());
+
+  const auto outcome = RunWorkerThreadFailureCase(model_path);
+  EXPECT_TRUE(outcome.threw_runtime_error);
+  EXPECT_NE(
+      outcome.log.find("Failed to start worker thread: boom"),
+      std::string::npos);
+  std::filesystem::remove(model_path);
 }

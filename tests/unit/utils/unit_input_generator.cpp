@@ -46,11 +46,12 @@ class InputGeneratorTest : public ::testing::Test {
 
 TEST_F(InputGeneratorTest, GeneratesShapesAndTypes)
 {
-  auto tensors = generate({{2, 3}, {1, 128}}, {at::kFloat, at::kInt});
+  constexpr int64_t kSeqLen = 128;
+  auto tensors = generate({{2, 3}, {1, kSeqLen}}, {at::kFloat, at::kInt});
   ASSERT_EQ(tensors.size(), 2U);
   EXPECT_EQ(tensors[0].sizes(), (torch::IntArrayRef{2, 3}));
   EXPECT_EQ(tensors[0].dtype(), torch::kFloat);
-  EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1, 128}));
+  EXPECT_EQ(tensors[1].sizes(), (torch::IntArrayRef{1, kSeqLen}));
   EXPECT_EQ(tensors[1].dtype(), torch::kInt);
   EXPECT_LT(tensors[1].max().item<int64_t>(), BERT_VOCAB_SIZE);
 }
@@ -75,4 +76,12 @@ TEST_F(InputGeneratorTest, GeneratesBooleanTensor)
   auto max_val = tensor.max().item<uint8_t>();
   EXPECT_GE(min_val, 0);
   EXPECT_LE(max_val, 1);
+}
+
+TEST_F(InputGeneratorTest, SupportsHalfAndBFloat16)
+{
+  auto tensors = generate({{2, 2}, {2, 2}}, {at::kHalf, at::kBFloat16});
+  ASSERT_EQ(tensors.size(), 2U);
+  EXPECT_EQ(tensors[0].dtype(), at::kHalf);
+  EXPECT_EQ(tensors[1].dtype(), at::kBFloat16);
 }

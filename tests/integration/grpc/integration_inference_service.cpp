@@ -1,3 +1,5 @@
+#include <cstddef>
+
 #include "test_inference_service.hpp"
 
 TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
@@ -14,8 +16,12 @@ TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
 {
   auto req = starpu_server::make_valid_request();
   req.MergeFrom(starpu_server::make_model_request("m", "1"));
+  constexpr float kVal1 = 10.0F;
+  constexpr float kVal2 = 20.0F;
+  constexpr float kVal3 = 30.0F;
+  constexpr float kVal4 = 40.0F;
   std::vector<torch::Tensor> outs = {
-      torch::tensor({10.0f, 20.0f, 30.0f, 40.0f}).view({2, 2})};
+      torch::tensor({kVal1, kVal2, kVal3, kVal4}).view({2, 2})};
   auto worker = prepare_job({torch::zeros({2, 2})}, outs);
   auto status = service->ModelInfer(&ctx, &req, &reply);
   ASSERT_TRUE(status.ok());
@@ -23,6 +29,16 @@ TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
   EXPECT_GT(reply.server_send_ms(), 0);
   starpu_server::verify_populate_response(
       req, reply, outs, reply.server_receive_ms(), reply.server_send_ms());
+}
+
+TEST_F(InferenceServiceTest, ModelInferDetectsInputSizeMismatch)
+{
+  auto req = starpu_server::make_valid_request();
+  req.MergeFrom(starpu_server::make_model_request("m", "1"));
+  req.mutable_raw_input_contents(0)->append("0", 1);
+  auto status = service->ModelInfer(&ctx, &req, &reply);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  expect_empty_infer_response(reply);
 }
 
 TEST_F(InferenceServiceTest, BasicLivenessAndReadiness)
@@ -72,10 +88,13 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
   std::unique_ptr<grpc::Server> server;
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
   std::jthread thread([&]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, "127.0.0.1:0", 32 * 1024 * 1024,
-        server);
+        queue, reference_outputs, {at::kFloat}, "127.0.0.1:0",
+        kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info, server);
   });
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));

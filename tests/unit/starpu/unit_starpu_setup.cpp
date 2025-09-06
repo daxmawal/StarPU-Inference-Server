@@ -30,6 +30,42 @@ INSTANTIATE_TEST_SUITE_P(
           list.push_back(tensor_1);
           list.push_back(tensor_2);
           return ExtractTensorsParam{c10::IValue(list), {tensor_1, tensor_2}};
+        }(),
+        []() {
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          at::Tensor tensor_3 = torch::rand({4});
+          c10::impl::GenericList inner(c10::AnyType::get());
+          inner.push_back(tensor_2);
+          inner.push_back(tensor_3);
+          c10::impl::GenericList outer(c10::AnyType::get());
+          outer.push_back(tensor_1);
+          outer.push_back(c10::IValue(inner));
+          return ExtractTensorsParam{
+              c10::IValue(outer), {tensor_1, tensor_2, tensor_3}};
+        }(),
+        []() {
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          c10::Dict<std::string, at::Tensor> dict;
+          dict.insert("first", tensor_1);
+          dict.insert("second", tensor_2);
+          return ExtractTensorsParam{c10::IValue(dict), {tensor_1, tensor_2}};
+        }(),
+        []() {
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          at::Tensor tensor_3 = torch::rand({4});
+          c10::impl::GenericDict inner(
+              c10::StringType::get(), c10::AnyType::get());
+          inner.insert(c10::IValue("second"), c10::IValue(tensor_2));
+          inner.insert(c10::IValue("third"), c10::IValue(tensor_3));
+          c10::impl::GenericDict outer(
+              c10::StringType::get(), c10::AnyType::get());
+          outer.insert(c10::IValue("first"), c10::IValue(tensor_1));
+          outer.insert(c10::IValue("nested"), c10::IValue(inner));
+          return ExtractTensorsParam{
+              c10::IValue(outer), {tensor_1, tensor_2, tensor_3}};
         }()),
     [](const ::testing::TestParamInfo<ExtractTensorsParam>& info) {
       switch (info.index) {
@@ -39,6 +75,12 @@ INSTANTIATE_TEST_SUITE_P(
           return std::string{"TupleOfTensors"};
         case 2:
           return std::string{"TensorList"};
+        case 3:
+          return std::string{"NestedList"};
+        case 4:
+          return std::string{"Dict"};
+        case 5:
+          return std::string{"NestedDict"};
         default:
           return std::string{"Unknown"};
       }

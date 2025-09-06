@@ -49,7 +49,7 @@ main(int argc, char* argv[]) -> int
     return 1;
   }
 
-  if (!client.ModelIsReady(config.model_name, config.model_version)) {
+  if (!client.ModelIsReady({config.model_name, config.model_version})) {
     return 1;
   }
 
@@ -67,7 +67,6 @@ main(int argc, char* argv[]) -> int
     tensor_pool.push_back(std::move(tensors));
   }
 
-  // RNG for synthetic test data only; not used for security.  // NOSONAR
   thread_local std::mt19937 rng(std::random_device{}());
   std::uniform_int_distribution dist(0, NUM_TENSORS - 1);
 

@@ -16,6 +16,11 @@
 namespace starpu_server {
 struct AsyncClientCall;
 
+struct ModelId {
+  std::string name;
+  std::string version;
+};
+
 class InferenceClient {
  public:
   explicit InferenceClient(
@@ -23,8 +28,7 @@ class InferenceClient {
 
   auto ServerIsLive() -> bool;
   auto ServerIsReady() -> bool;
-  auto ModelIsReady(const std::string& name, const std::string& version)
-      -> bool;
+  auto ModelIsReady(const ModelId& model) -> bool;
   void AsyncModelInfer(
       const std::vector<torch::Tensor>& tensors, const ClientConfig& cfg);
   void AsyncCompleteRpc();

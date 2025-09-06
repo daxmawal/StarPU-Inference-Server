@@ -43,7 +43,7 @@ scalar_type_to_datatype(at::ScalarType type) -> std::string
     case at::kBool:
       return "BOOL";
     default:
-      return "FP32";
+      throw std::invalid_argument("Unsupported at::ScalarType");
   }
 }
 
@@ -68,6 +68,53 @@ datatype_to_scalar_type(std::string_view dtype) -> at::ScalarType
   if (iter == type_map.end()) {
     throw std::invalid_argument(
         "Unsupported tensor datatype: " + std::string(dtype));
+  }
+  return iter->second;
+}
+
+
+inline auto
+string_to_scalar_type(std::string_view type_str) -> at::ScalarType
+{
+  std::string key(type_str);
+  if (key.rfind("TYPE_", 0) == 0) {
+    key = key.substr(5);
+  }
+  std::ranges::transform(key, key.begin(), [](unsigned char c) noexcept {
+    return static_cast<char>(std::tolower(c));
+  });
+
+  static const std::unordered_map<
+      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
+      type_map = {
+          {"float", at::kFloat},
+          {"float32", at::kFloat},
+          {"fp32", at::kFloat},
+          {"double", at::kDouble},
+          {"float64", at::kDouble},
+          {"fp64", at::kDouble},
+          {"half", at::kHalf},
+          {"float16", at::kHalf},
+          {"fp16", at::kHalf},
+          {"bfloat16", at::kBFloat16},
+          {"bf16", at::kBFloat16},
+          {"int", at::kInt},
+          {"int32", at::kInt},
+          {"long", at::kLong},
+          {"int64", at::kLong},
+          {"short", at::kShort},
+          {"int16", at::kShort},
+          {"char", at::kChar},
+          {"int8", at::kChar},
+          {"byte", at::kByte},
+          {"uint8", at::kByte},
+          {"bool", at::kBool},
+          {"complex64", at::kComplexFloat},
+          {"complex128", at::kComplexDouble}};
+
+  const auto iter = type_map.find(key);
+  if (iter == type_map.end()) {
+    throw std::invalid_argument("Unsupported type: " + std::string(type_str));
   }
   return iter->second;
 }
@@ -102,7 +149,7 @@ element_size(at::ScalarType type) -> size_t
     case at::kBool:
       return sizeof(bool);
     default:
-      return sizeof(float);
+      throw std::invalid_argument("Unsupported at::ScalarType");
   }
 }
 }  // namespace starpu_server

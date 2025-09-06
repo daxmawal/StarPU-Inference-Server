@@ -31,12 +31,10 @@ class WarmupRunner {
   // *****************************************************************************
   // Configuration and model references (owned externally)
   // *****************************************************************************
-  const RuntimeConfig& opts_;              // Runtime options
-  StarPUSetup& starpu_;                    // StarPU configuration and codelet
-  torch::jit::script::Module& model_cpu_;  // CPU model (TorchScript)
-  std::vector<torch::jit::script::Module>&
-      models_gpu_;  // GPU models (TorchScript)
-  const std::vector<torch::Tensor>&
-      outputs_ref_;  // Reference outputs to validate warmup jobs
+  const RuntimeConfig& opts_;
+  StarPUSetup& starpu_;
+  torch::jit::script::Module& model_cpu_;
+  std::vector<torch::jit::script::Module>& models_gpu_;
+  const std::vector<torch::Tensor>& outputs_ref_;
 };
 }  // namespace starpu_server

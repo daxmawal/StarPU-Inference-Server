@@ -13,8 +13,8 @@
 #include <mutex>
 #include <random>
 #include <sstream>
+#include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -50,8 +50,10 @@ pre_generate_inputs(const RuntimeConfig& opts, size_t num_inputs)
 {
   std::vector<std::vector<torch::Tensor>> inputs;
   inputs.reserve(num_inputs);
+  const auto& tensors =
+      opts.models.empty() ? std::vector<TensorConfig>{} : opts.models[0].inputs;
   std::generate_n(std::back_inserter(inputs), num_inputs, [&]() {
-    return input_generator::generate_random_inputs(opts.inputs);
+    return input_generator::generate_random_inputs(tensors);
   });
   return inputs;
 }
@@ -61,9 +63,17 @@ pick_random_input(
     const std::vector<std::vector<torch::Tensor>>& pool,
     std::mt19937& rng) -> const std::vector<torch::Tensor>&
 {
-  std::uniform_int_distribution dist(0, static_cast<int>(pool.size()) - 1);
+  if (pool.empty()) {
+    throw std::invalid_argument(
+        "Input pool is empty. Cannot pick random input.");
+  }
+  std::uniform_int_distribution<std::size_t> dist(0, pool.size() - 1);
   const auto idx = static_cast<size_t>(dist(rng));
-  TORCH_CHECK(idx < pool.size(), "Random index out of bounds.");
+  if (idx >= pool.size()) {
+    throw std::out_of_range(std::format(
+        "Random input index {} out of range for pool size {}", idx,
+        pool.size()));
+  }
   return pool[idx];
 }
 
@@ -103,12 +113,24 @@ create_job(
       [](const auto& tensor) { return tensor.scalar_type(); });
   job->set_input_types(types);
 
+  int64_t requested_batch = 1;
+  if (!inputs.empty() && inputs[0].dim() >= 1) {
+    requested_batch = inputs[0].size(0);
+  }
+
   std::vector<torch::Tensor> outputs;
   outputs.reserve(outputs_ref.size());
-  std::ranges::transform(
-      outputs_ref, std::back_inserter(outputs),
-      [](const auto& ref) { return torch::empty_like(ref); });
-  job->set_outputs_tensors(outputs);
+  for (const auto& ref : outputs_ref) {
+    const auto dtype = ref.scalar_type();
+    const auto options = torch::TensorOptions().dtype(dtype);
+
+    std::vector<int64_t> shape(ref.sizes().begin(), ref.sizes().end());
+    if (!shape.empty() && requested_batch > 0) {
+      shape[0] = requested_batch;
+    }
+    outputs.emplace_back(torch::empty(shape, options));
+  }
+  job->set_output_tensors(outputs);
 
   job->set_job_id(job_id);
 

@@ -3,15 +3,24 @@
 #include <grpcpp/grpcpp.h>
 #include <torch/torch.h>
 
+#include <cstddef>
 #include <memory>
 
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "utils/logger.hpp"
 
 namespace starpu_server {
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
  public:
+  InferenceServiceImpl(
+      InferenceQueue* queue,
+      const std::vector<torch::Tensor>* reference_outputs,
+      std::vector<at::ScalarType> expected_input_types,
+      std::vector<std::vector<int64_t>> expected_input_dims,
+      int max_batch_size);
+
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
@@ -34,11 +43,11 @@ class InferenceServiceImpl final
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply) -> grpc::Status override;
 
-  static void populate_response(
+  static auto populate_response(
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
-      int64_t send_ms);
+      int64_t send_ms) -> grpc::Status;
 
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
@@ -52,14 +61,24 @@ class InferenceServiceImpl final
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
   std::vector<at::ScalarType> expected_input_types_;
+  std::vector<std::vector<int64_t>> expected_input_dims_;
+  int max_batch_size_ = 0;
   std::atomic<int> next_job_id_{0};
 };
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, int max_message_bytes,
+    const std::vector<std::vector<int64_t>>& expected_input_dims,
+    int max_batch_size, const std::string& address,
+    std::size_t max_message_bytes, VerbosityLevel verbosity,
     std::unique_ptr<grpc::Server>& server);
+
+void RunGrpcServer(
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<at::ScalarType>& expected_input_types,
+    const std::string& address, std::size_t max_message_bytes,
+    VerbosityLevel verbosity, std::unique_ptr<grpc::Server>& server);
 
 void StopServer(std::unique_ptr<grpc::Server>& server);
 }  // namespace starpu_server

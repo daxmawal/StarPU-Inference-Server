@@ -1,7 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <bit>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -20,12 +23,13 @@ TEST(Logger, VerbosityStyle)
     EXPECT_STREQ(got_color, color);
     EXPECT_STREQ(got_label, label);
   };
-  check(Info, "\o{33}[1;32m", "[INFO] ");
-  check(Stats, "\o{33}[1;35m", "[STATS] ");
-  check(Debug, "\o{33}[1;34m", "[DEBUG] ");
-  check(Trace, "\o{33}[1;90m", "[TRACE] ");
+  check(Info, "\x1b[1;32m", "[INFO] ");
+  check(Stats, "\x1b[1;35m", "[STATS] ");
+  check(Debug, "\x1b[1;34m", "[DEBUG] ");
+  check(Trace, "\x1b[1;90m", "[TRACE] ");
   check(Silent, "", "");
-  check(static_cast<VerbosityLevel>(255), "", "");
+  auto raw = std::numeric_limits<std::uint8_t>::max();
+  check(std::bit_cast<VerbosityLevel>(raw), "", "");
 }
 
 struct VerboseParam {
@@ -123,3 +127,22 @@ TEST(Logger, LogError)
   log_error("err");
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, "err"));
 }
+
+class ParseVerbosityLevelWhitespace
+    : public ::testing::TestWithParam<std::pair<const char*, VerbosityLevel>> {
+};
+
+TEST_P(ParseVerbosityLevelWhitespace, TrimsInput)
+{
+  const auto& [input, expected] = GetParam();
+  EXPECT_EQ(parse_verbosity_level(input), expected);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Logger, ParseVerbosityLevelWhitespace,
+    ::testing::Values(
+        std::pair{" 0", VerbosityLevel::Silent},
+        std::pair{"1 ", VerbosityLevel::Info},
+        std::pair{"\t2\n", VerbosityLevel::Stats},
+        std::pair{" debug", VerbosityLevel::Debug},
+        std::pair{"trace ", VerbosityLevel::Trace}));

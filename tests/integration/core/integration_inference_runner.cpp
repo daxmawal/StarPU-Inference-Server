@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,9 @@ constexpr int kDeviceId0 = 0;
 const std::vector<int64_t> kShape4{4};
 const std::vector<int64_t> kShape2{2};
 const std::vector<torch::Dtype> kTypesFloat{torch::kFloat32};
+constexpr int64_t kSeed42 = 42;
+constexpr int64_t kSeed1 = 1;
+constexpr int64_t kSeed2 = 2;
 
 inline auto
 MakeTempModelPath(const char* base) -> std::filesystem::path
@@ -32,18 +36,20 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputCPU)
   starpu_server::save_mul_two_model(file);
 
   starpu_server::RuntimeConfig opts;
-  opts.model_path = file.string();
-  opts.inputs = {{"input0", kShape4, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape4, at::kFloat}};
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
 
-  torch::manual_seed(42);
-  auto [cpu_model, gpu_models, refs] =
-      starpu_server::load_model_and_reference_output(opts);
+  torch::manual_seed(kSeed42);
+  auto result = starpu_server::load_model_and_reference_output(opts);
+  ASSERT_TRUE(result.has_value());
+  const auto& [cpu_model, gpu_models, refs] = result.value();
   EXPECT_TRUE(gpu_models.empty());
 
-  torch::manual_seed(42);
-  auto inputs = starpu_server::generate_inputs(opts.inputs);
+  torch::manual_seed(kSeed42);
+  auto inputs = starpu_server::generate_inputs(opts.models[0].inputs);
   ASSERT_EQ(refs.size(), 1U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0] * 2));
 
@@ -57,18 +63,20 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTuple)
   model.save(file.string());
 
   starpu_server::RuntimeConfig opts;
-  opts.model_path = file.string();
-  opts.inputs = {{"input0", kShape2, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape2, at::kFloat}};
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
 
-  torch::manual_seed(1);
-  auto [cpu_model, gpu_models, refs] =
-      starpu_server::load_model_and_reference_output(opts);
+  torch::manual_seed(kSeed1);
+  auto result = starpu_server::load_model_and_reference_output(opts);
+  ASSERT_TRUE(result.has_value());
+  const auto& [cpu_model, gpu_models, refs] = result.value();
   EXPECT_TRUE(gpu_models.empty());
 
-  torch::manual_seed(1);
-  auto inputs = starpu_server::generate_inputs(opts.inputs);
+  torch::manual_seed(kSeed1);
+  auto inputs = starpu_server::generate_inputs(opts.models[0].inputs);
   ASSERT_EQ(refs.size(), 2U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0]));
   EXPECT_TRUE(torch::allclose(refs[1], inputs[0] + 1));
@@ -83,18 +91,20 @@ TEST(InferenceRunner_Integration, LoadModelAndReferenceOutputTensorList)
   model.save(file.string());
 
   starpu_server::RuntimeConfig opts;
-  opts.model_path = file.string();
-  opts.inputs = {{"input0", kShape2, at::kFloat}};
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape2, at::kFloat}};
   opts.device_ids = {kDeviceId0};
   opts.use_cuda = false;
 
-  torch::manual_seed(2);
-  auto [cpu_model, gpu_models, refs] =
-      starpu_server::load_model_and_reference_output(opts);
+  torch::manual_seed(kSeed2);
+  auto result = starpu_server::load_model_and_reference_output(opts);
+  ASSERT_TRUE(result.has_value());
+  const auto& [cpu_model, gpu_models, refs] = result.value();
   EXPECT_TRUE(gpu_models.empty());
 
-  torch::manual_seed(2);
-  auto inputs = starpu_server::generate_inputs(opts.inputs);
+  torch::manual_seed(kSeed2);
+  auto inputs = starpu_server::generate_inputs(opts.models[0].inputs);
   ASSERT_EQ(refs.size(), 2U);
   EXPECT_TRUE(torch::allclose(refs[0], inputs[0]));
   EXPECT_TRUE(torch::allclose(refs[1], inputs[0] + 1));

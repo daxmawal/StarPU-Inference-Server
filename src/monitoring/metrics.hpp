@@ -5,15 +5,47 @@
 #include <prometheus/histogram.h>
 #include <prometheus/registry.h>
 
+#include <cstddef>
 #include <memory>
+#include <thread>
+#include <unordered_map>
+
+namespace prometheus {
+class Exposer;
+template <typename T>
+class Family;
+}  // namespace prometheus
 
 namespace starpu_server {
 
-extern std::shared_ptr<prometheus::Registry> metrics_registry;
-extern prometheus::Counter* requests_total;
-extern prometheus::Histogram* inference_latency;
-extern prometheus::Gauge* queue_size_gauge;
+class MetricsRegistry {
+ public:
+  explicit MetricsRegistry(int port);
+  ~MetricsRegistry() noexcept;
 
-void init_metrics(int port);
+  std::shared_ptr<prometheus::Registry> registry;
+  prometheus::Counter* requests_total;
+  prometheus::Histogram* inference_latency;
+  prometheus::Gauge* queue_size_gauge;
+
+  prometheus::Gauge* system_cpu_usage_percent{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_utilization_family{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family{nullptr};
+
+ private:
+  std::unique_ptr<prometheus::Exposer> exposer_;
+  std::jthread sampler_thread_;
+  std::unordered_map<int, prometheus::Gauge*> gpu_utilization_gauges_;
+  std::unordered_map<int, prometheus::Gauge*> gpu_memory_used_gauges_;
+  std::unordered_map<int, prometheus::Gauge*> gpu_memory_total_gauges_;
+
+  void sampling_loop(std::stop_token stop);
+};
+
+bool init_metrics(int port);
+void shutdown_metrics();
+void set_queue_size(std::size_t size);
+auto get_metrics() -> std::shared_ptr<MetricsRegistry>;
 
 }  // namespace starpu_server

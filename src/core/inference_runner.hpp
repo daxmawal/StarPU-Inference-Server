@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cuda_runtime_api.h>
 #include <torch/script.h>
 
 #include <chrono>
@@ -50,7 +51,6 @@ struct InferenceResult {
 
 class InferenceJob {
  public:
-  // Constructors
   InferenceJob() = default;
 
   InferenceJob(
@@ -61,23 +61,29 @@ class InferenceJob {
 
   static auto make_shutdown_job() -> std::shared_ptr<InferenceJob>;
 
-  // Check shutdown
   [[nodiscard]] auto is_shutdown() const -> bool { return is_shutdown_signal_; }
 
-  // Setters
   void set_job_id(int job_id) { job_id_ = job_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
-    input_tensors_ = inputs;
+    input_tensors_.clear();
+    input_tensors_.reserve(inputs.size());
+    for (const auto& t : inputs) {
+      input_tensors_.push_back(t.contiguous());
+    }
   }
   void set_input_types(const std::vector<at::ScalarType>& types)
   {
     input_types_ = types;
   }
-  void set_outputs_tensors(const std::vector<torch::Tensor>& outputs)
+  void set_output_tensors(const std::vector<torch::Tensor>& outputs)
   {
-    output_tensors_ = outputs;
+    output_tensors_.clear();
+    output_tensors_.reserve(outputs.size());
+    for (const auto& t : outputs) {
+      output_tensors_.push_back(t.contiguous());
+    }
   }
   void set_start_time(std::chrono::high_resolution_clock::time_point time)
   {
@@ -89,7 +95,6 @@ class InferenceJob {
     on_complete_ = std::move(call_back);
   }
 
-  // Getters
   [[nodiscard]] auto get_job_id() const -> int { return job_id_; }
   [[nodiscard]] auto get_input_tensors() const
       -> const std::vector<torch::Tensor>&
@@ -154,10 +159,15 @@ class InferenceJob {
 // Entry point: launches warmup and execution loop
 // =============================================================================
 
+class StarPUTaskRunner;
+using WorkerThreadLauncher = std::jthread (*)(StarPUTaskRunner&);
+auto get_worker_thread_launcher() -> WorkerThreadLauncher;
+void set_worker_thread_launcher(WorkerThreadLauncher launcher);
+
 auto load_model_and_reference_output(const RuntimeConfig& opts)
-    -> std::tuple<
+    -> std::optional<std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-        std::vector<torch::Tensor>>;
+        std::vector<torch::Tensor>>>;
 
 void run_warmup(
     const RuntimeConfig& opts, StarPUSetup& starpu,
@@ -166,4 +176,6 @@ void run_warmup(
     const std::vector<torch::Tensor>& outputs_ref);
 
 void run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu);
+
+auto synchronize_cuda_device() -> cudaError_t;
 }  // namespace starpu_server

@@ -32,10 +32,24 @@ if(BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 endif()
 
+set(_PC_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
+set(_PC_SRC_DIR "${_PC_BASE_DIR}/prometheus-cpp-src")
+set(_PC_SUBBUILD "${_PC_BASE_DIR}/prometheus-cpp-subbuild")
+set(_PC_BUILD "${_PC_BASE_DIR}/prometheus-cpp-build")
+if(EXISTS "${_PC_SRC_DIR}" AND NOT EXISTS "${_PC_SRC_DIR}/.git")
+  message(
+    WARNING
+      "prometheus-cpp src exists without .git; purging cached _deps to force fresh Git clone."
+  )
+  file(REMOVE_RECURSE "${_PC_SRC_DIR}" "${_PC_SUBBUILD}" "${_PC_BUILD}")
+endif()
+
 FetchContent_Declare(
   prometheus-cpp
   GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
-  GIT_TAG v1.1.0)
+  GIT_TAG v1.1.0
+  GIT_SHALLOW TRUE
+  GIT_SUBMODULES_RECURSE TRUE)
 set(ENABLE_PULL
     ON
     CACHE BOOL "" FORCE)
@@ -67,6 +81,14 @@ FetchContent_Declare(yaml-cpp
 
 FetchContent_MakeAvailable(yaml-cpp)
 
+# Suppress noisy Clang warning from yaml-cpp's dragonbox header Seen as:
+# [-Wconstexpr-not-const] while yaml-cpp builds with older C++ modes
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  if(TARGET yaml-cpp)
+    target_compile_options(yaml-cpp PRIVATE -Wno-constexpr-not-const)
+  endif()
+endif()
+
 # === Executable ===
 add_executable(starpu_server)
 target_sources(
@@ -95,10 +117,11 @@ target_include_directories(
 
 # === Compiler Warnings ===
 set(DEBUG_MIN_FRAME_SIZE
-    1024
+    8192
     CACHE STRING "Minimum stack frame size for warning")
 
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+# Fine-grained warnings by compiler to avoid unknown-warning-option noise
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   target_compile_options(
     starpu_server
     PRIVATE -Wall
@@ -137,9 +160,36 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             -Wwrite-strings
             -Wmissing-declarations
             -Wmissing-include-dirs
-            -Winline
             -Wundef
-            -Wnull-dereference
+            -Wold-style-cast)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_compile_options(
+    starpu_server
+    PRIVATE -Wall
+            -Wextra
+            -Wpedantic
+            -Walloca
+            -Wcast-align
+            -Wcast-qual
+            -Wdouble-promotion
+            -Wenum-conversion
+            -Wextra-semi
+            -Wfloat-equal
+            -Wformat=2
+            -Wframe-larger-than=${DEBUG_MIN_FRAME_SIZE}
+            -Wmismatched-tags
+            -Wmissing-braces
+            -Wmultichar
+            -Wnon-virtual-dtor
+            -Woverloaded-virtual
+            -Wpointer-arith
+            -Wrange-loop-construct
+            -Wshadow
+            -Wvla
+            -Wwrite-strings
+            -Wmissing-declarations
+            -Wmissing-include-dirs
+            -Wundef
             -Wold-style-cast)
 endif()
 
