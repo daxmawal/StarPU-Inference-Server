@@ -211,7 +211,10 @@ StarPUTaskRunner::run()
     }
 
     const auto job_id = job->get_job_id();
-    log_trace(opts_->verbosity, std::format("Dequeued job ID: {}", job_id));
+    log_trace(
+        opts_->verbosity,
+        std::format(
+            "Dequeued job ID: {}, queue size : {}", job_id, queue_->size()));
 
     prepare_job_completion_callback(job);
 

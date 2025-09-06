@@ -53,6 +53,12 @@ class InferenceQueue {
     cv_.notify_all();
   }
 
+  size_t size()
+  {
+    const std::scoped_lock lock(mutex_);
+    return queue_.size();
+  }
+
  private:
   std::queue<std::shared_ptr<InferenceJob>> queue_;
   bool shutdown_ = false;
