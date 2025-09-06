@@ -47,7 +47,11 @@ __pycache__/
 venv/
 
 # VSCode
-.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
 
 # CLion / JetBrains
 .idea/

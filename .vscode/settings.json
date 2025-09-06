@@ -1,0 +1,62 @@
+{
+  // --- CMake ---
+  "cmake.configureOnOpen": true,
+  "cmake.sourceDirectory": "${workspaceFolder}",
+  "cmake.buildDirectory": "${workspaceFolder}/build",
+  "cmake.buildType": "Debug",
+  "cmake.buildArgs": ["--parallel"],
+  "cmake.configureSettings": {
+    "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+    "BUILD_TESTS": "ON"
+  },
+  "cmake.ctestArgs": ["--output-on-failure"],
+  // --- cpptools : indexation + clang-tidy ---
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+  "C_Cpp.codeAnalysis.clangTidy.enabled": true,
+  "C_Cpp.codeAnalysis.clangTidy.useBuildPath": true,
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "C_Cpp.formatting": "disabled",
+  // --- Clang-Format (Xaver) C/C++ ---
+  "editor.formatOnSave": true,
+  "clang-format.style": "file",
+  // "clang-format.executable": "/usr/bin/clang-format-17"
+  "[cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+  "[c]": {
+    "editor.defaultFormatter": "xaver.clang-format"
+  },
+  // --- Markdown / Markdownlint ---
+  "markdownlint.config": {
+    "default": true,
+    "MD013": false,
+    "MD033": false
+  },
+  "[markdown]": {
+    "editor.defaultFormatter": "DavidAnson.vscode-markdownlint",
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": {
+      "other": false,
+      "comments": false,
+      "strings": false
+    }
+  },
+  // --- Exclusions build ---
+  "files.exclude": {
+    "build/": true
+  },
+  "files.watcherExclude": {
+    "**/build/**": true
+  },
+  "search.exclude": {
+    "build/**": true
+  },
+  // --- Assocs Proto ---
+  "files.associations": {
+    "*.proto": "proto3"
+  },
+  "[proto3]": {
+    "editor.insertSpaces": true,
+    "editor.tabSize": 2
+  }
+}
