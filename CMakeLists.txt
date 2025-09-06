@@ -35,7 +35,9 @@ endif()
 FetchContent_Declare(
   prometheus-cpp
   GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
-  GIT_TAG v1.1.0)
+  GIT_TAG v1.1.0
+  GIT_SHALLOW TRUE
+  GIT_SUBMODULES_RECURSE TRUE)
 set(ENABLE_PULL
     ON
     CACHE BOOL "" FORCE)
