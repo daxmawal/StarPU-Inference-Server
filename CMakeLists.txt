@@ -32,6 +32,18 @@ if(BUILD_TESTS)
   FetchContent_MakeAvailable(googletest)
 endif()
 
+set(_PC_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
+set(_PC_SRC_DIR "${_PC_BASE_DIR}/prometheus-cpp-src")
+set(_PC_SUBBUILD "${_PC_BASE_DIR}/prometheus-cpp-subbuild")
+set(_PC_BUILD "${_PC_BASE_DIR}/prometheus-cpp-build")
+if(EXISTS "${_PC_SRC_DIR}" AND NOT EXISTS "${_PC_SRC_DIR}/.git")
+  message(
+    WARNING
+      "prometheus-cpp src exists without .git; purging cached _deps to force fresh Git clone."
+  )
+  file(REMOVE_RECURSE "${_PC_SRC_DIR}" "${_PC_SUBBUILD}" "${_PC_BUILD}")
+endif()
+
 FetchContent_Declare(
   prometheus-cpp
   GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
