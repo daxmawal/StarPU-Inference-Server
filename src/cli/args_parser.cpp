@@ -577,11 +577,13 @@ validate_config(RuntimeConfig& opts) -> void
   std::vector<std::string> missing;
   check_required(
       !opts.models.empty() && !opts.models[0].path.empty(), "--model", missing);
-  const bool have_shapes = !opts.models.empty() &&
+  const bool have_shapes =
+      !opts.models.empty() &&
       std::any_of(
           opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
           [](const auto& tensor) { return !tensor.dims.empty(); });
-  const bool have_types = !opts.models.empty() &&
+  const bool have_types =
+      !opts.models.empty() &&
       std::all_of(
           opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
           [](const auto& tensor) {

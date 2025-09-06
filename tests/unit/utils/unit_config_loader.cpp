@@ -48,7 +48,8 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(cfg.device_ids, (std::vector<int>{0, 1}));
   ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
   EXPECT_EQ(cfg.models[0].inputs[0].name, "in");
-  EXPECT_EQ(cfg.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(
+      cfg.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
   EXPECT_EQ(cfg.models[0].inputs[0].type, at::kFloat);
   ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
   EXPECT_EQ(cfg.models[0].outputs[0].name, "out");

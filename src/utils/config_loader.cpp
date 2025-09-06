@@ -69,7 +69,8 @@ parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.models.resize(1);
     cfg.models[0].path = root["model"].as<std::string>();
     if (!std::filesystem::exists(cfg.models[0].path)) {
-      log_error(std::string("Model path does not exist: ") + cfg.models[0].path);
+      log_error(
+          std::string("Model path does not exist: ") + cfg.models[0].path);
       cfg.valid = false;
     }
   }

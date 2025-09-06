@@ -19,7 +19,8 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.models[0].path, model);
   ASSERT_EQ(opts.models[0].inputs.size(), 1U);
-  EXPECT_EQ(opts.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(
+      opts.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
   EXPECT_EQ(opts.models[0].inputs[0].type, at::kFloat);
 }
 
@@ -100,7 +101,8 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   }
 
   ASSERT_EQ(opts.models[0].inputs.size(), 2U);
-  EXPECT_EQ(opts.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(
+      opts.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
   EXPECT_EQ(opts.models[0].inputs[1].dims, (std::vector<int64_t>{2, 1}));
   EXPECT_EQ(opts.models[0].inputs[0].type, at::kFloat);
   EXPECT_EQ(opts.models[0].inputs[1].type, at::kInt);

@@ -18,4 +18,3 @@ groups:
         annotations:
           summary: "Inference queue size critical"
           description: "inference_queue_size > 500 for 1m (current value: {{ $value }})"
-

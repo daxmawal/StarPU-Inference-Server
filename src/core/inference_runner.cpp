@@ -219,8 +219,8 @@ load_model_and_reference_output(const RuntimeConfig& opts)
         std::vector<torch::Tensor>>>
 {
   try {
-    auto model_cpu = load_model(opts.models.empty() ? std::string{}
-                                                   : opts.models[0].path);
+    auto model_cpu =
+        load_model(opts.models.empty() ? std::string{} : opts.models[0].path);
     auto models_gpu = opts.use_cuda
                           ? clone_model_to_gpus(model_cpu, opts.device_ids)
                           : std::vector<torch::jit::script::Module>{};
