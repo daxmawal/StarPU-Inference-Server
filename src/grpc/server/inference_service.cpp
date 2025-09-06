@@ -278,16 +278,6 @@ InferenceServiceImpl::submit_job_and_wait(
       });
 
   const bool pushed = queue_->push(job);
-  if (!pushed) {
-    return {grpc::StatusCode::UNAVAILABLE, "Inference queue shutting down"};
-  }
-
-  const auto timeout = std::chrono::seconds(30);
-  if (result_future.wait_for(timeout) != std::future_status::ready) {
-    return {
-        grpc::StatusCode::DEADLINE_EXCEEDED,
-        "Inference result not available in time"};
-  }
   outputs = result_future.get();
 
   if (outputs.empty()) {
