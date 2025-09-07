@@ -23,7 +23,7 @@
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],
-      "externalConsole": false,
+      "externalConsole": true,
       "MIMode": "gdb",
       "preLaunchTask": "Build: grpc_client_example"
     },
@@ -42,4 +42,3 @@
     }
   ]
 }
-
