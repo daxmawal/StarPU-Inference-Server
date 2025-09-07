@@ -1,7 +1,7 @@
 *~
 .git
 .github
-build/
+build/*
 .vscode
 .venv
 venv

@@ -1,8 +1,8 @@
 *~
 
 # Build directory
-/build/
-/build-clang/
+/build/*
+/build-clang/*
 
 # Generated CMake files
 CMakeFiles/
