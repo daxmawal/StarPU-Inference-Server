@@ -4,12 +4,16 @@
   "cmake.sourceDirectory": "${workspaceFolder}",
   "cmake.buildDirectory": "${workspaceFolder}/build",
   "cmake.buildType": "Debug",
-  "cmake.buildArgs": ["--parallel"],
+  "cmake.buildArgs": [
+    "--parallel"
+  ],
   "cmake.configureSettings": {
     "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
     "BUILD_TESTS": "ON"
   },
-  "cmake.ctestArgs": ["--output-on-failure"],
+  "cmake.ctestArgs": [
+    "--output-on-failure"
+  ],
   // --- cpptools : indexation + clang-tidy ---
   "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
   "C_Cpp.codeAnalysis.clangTidy.enabled": true,
@@ -58,5 +62,7 @@
   "[proto3]": {
     "editor.insertSpaces": true,
     "editor.tabSize": 2
-  }
+  },
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true
 }
