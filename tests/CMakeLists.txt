@@ -15,6 +15,7 @@ add_executable(
   all_tests
   ${SRC_DIR}/cli/args_parser.cpp
   ${CORE_DIR}/inference_task.cpp
+  ${CORE_DIR}/input_slot_pool.cpp
   ${CORE_DIR}/warmup.cpp
   ${CORE_DIR}/tensor_builder.cpp
   ${CORE_DIR}/starpu_setup.cpp

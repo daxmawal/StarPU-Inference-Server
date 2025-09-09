@@ -8,6 +8,7 @@ add_executable(grpc_server)
 target_sources(
   grpc_server
   PRIVATE ${CORE_DIR}/inference_task.cpp
+          ${CORE_DIR}/input_slot_pool.cpp
           ${CORE_DIR}/starpu_setup.cpp
           ${CORE_DIR}/tensor_builder.cpp
           ${CORE_DIR}/warmup.cpp

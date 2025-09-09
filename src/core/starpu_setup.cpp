@@ -295,10 +295,24 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
   if (starpu_init(&conf_) != 0) {
     throw StarPUInitializationException("[ERROR] StarPU initialization error");
   }
+
+  // Create the reusable input slot pool after StarPU init so that
+  // registrations are valid for the whole server lifetime.
+  try {
+    // Use configured input_slots when provided (>0), else auto (worker count)
+    input_pool_ = std::make_unique<InputSlotPool>(opts, opts.input_slots);
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("Failed to initialize InputSlotPool: ") + e.what());
+    throw;
+  }
 }
 
 StarPUSetup::~StarPUSetup()
 {
+  // Ensure the input pool (and thus the StarPU handles) are destroyed before
+  // shutting StarPU down to allow proper unregister.
+  input_pool_.reset();
   starpu_shutdown();
 }
 

@@ -149,6 +149,12 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("max_batch_size must be > 0");
     }
   }
+  if (root["input_slots"]) {
+    cfg.input_slots = root["input_slots"].as<int>();
+    if (cfg.input_slots <= 0) {
+      throw std::invalid_argument("input_slots must be > 0");
+    }
+  }
 }
 
 void

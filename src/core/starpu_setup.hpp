@@ -9,6 +9,7 @@
 
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
+#include "input_slot_pool.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -48,6 +49,9 @@ class StarPUSetup {
 
   auto get_codelet() -> struct starpu_codelet*;
 
+  // Access the reusable input slot pool
+  auto input_pool() -> InputSlotPool& { return *input_pool_; }
+
   static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
       -> std::map<int, std::vector<int>>;
 
@@ -60,5 +64,6 @@ class StarPUSetup {
   std::string scheduler_name_;
   struct starpu_conf conf_;
   InferenceCodelet codelet_;
+  std::unique_ptr<InputSlotPool> input_pool_;
 };
 }  // namespace starpu_server

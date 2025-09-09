@@ -1,7 +1,6 @@
 scheduler: lws
 model: ../models/bert_libtorch.pt
 device_ids: [0]
-iterations: 100
 input:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
   - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }
@@ -14,3 +13,4 @@ max_batch_size: 32
 sync: false
 use_cpu: true
 use_cuda: true
+input_slots: 12

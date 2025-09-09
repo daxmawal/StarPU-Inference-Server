@@ -273,10 +273,12 @@ InferenceTask::cleanup(const std::shared_ptr<InferenceCallbackContext>& ctx)
     return;
   }
 
-  for (auto& handle : ctx->inputs_handles) {
-    if (handle != nullptr) {
-      starpu_data_unregister_submit(handle);
-      handle = nullptr;
+  if (!ctx->keep_input_handles) {
+    for (auto& handle : ctx->inputs_handles) {
+      if (handle != nullptr) {
+        starpu_data_unregister_submit(handle);
+        handle = nullptr;
+      }
     }
   }
 
@@ -492,6 +494,15 @@ InferenceTask::finalize_inference_task(void* arg)
 
   auto ctx_sptr =
       std::static_pointer_cast<InferenceCallbackContext>(ctx->self_keep_alive);
+
+  // Notify (release pooled slot etc.) before we clean up
+  if (ctx->on_finished) {
+    try {
+      ctx->on_finished();
+    } catch (const std::exception& e) {
+      log_error(std::string("Exception in on_finished: ") + e.what());
+    }
+  }
 
   InferenceTask::finalize_context(ctx_sptr);
 

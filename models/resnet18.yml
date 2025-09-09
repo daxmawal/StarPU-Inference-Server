@@ -10,5 +10,6 @@ address: "0.0.0.0:50051"
 metrics_port: 9100
 max_batch_size: 32
 sync: false
-use_cpu: true
+use_cpu: false
 use_cuda: true
+input_slots: 12
