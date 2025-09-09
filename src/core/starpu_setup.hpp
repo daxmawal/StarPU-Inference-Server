@@ -10,6 +10,7 @@
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
 #include "input_slot_pool.hpp"
+#include "output_slot_pool.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -52,6 +53,9 @@ class StarPUSetup {
   // Access the reusable input slot pool
   auto input_pool() -> InputSlotPool& { return *input_pool_; }
   [[nodiscard]] bool has_input_pool() const { return static_cast<bool>(input_pool_); }
+  // Access the reusable output slot pool
+  auto output_pool() -> OutputSlotPool& { return *output_pool_; }
+  [[nodiscard]] bool has_output_pool() const { return static_cast<bool>(output_pool_); }
 
   static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
       -> std::map<int, std::vector<int>>;
@@ -66,5 +70,6 @@ class StarPUSetup {
   struct starpu_conf conf_;
   InferenceCodelet codelet_;
   std::unique_ptr<InputSlotPool> input_pool_;
+  std::unique_ptr<OutputSlotPool> output_pool_;
 };
 }  // namespace starpu_server

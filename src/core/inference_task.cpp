@@ -23,6 +23,7 @@
 #include "inference_runner.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
+#include "output_slot_pool.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -282,10 +283,12 @@ InferenceTask::cleanup(const std::shared_ptr<InferenceCallbackContext>& ctx)
     }
   }
 
-  for (auto& handle : ctx->outputs_handles) {
-    if (handle != nullptr) {
-      starpu_data_unregister_submit(handle);
-      handle = nullptr;
+  if (!ctx->keep_output_handles) {
+    for (auto& handle : ctx->outputs_handles) {
+      if (handle != nullptr) {
+        starpu_data_unregister_submit(handle);
+        handle = nullptr;
+      }
     }
   }
 }
@@ -489,6 +492,25 @@ void
 InferenceTask::finalize_inference_task(void* arg)
 {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
+
+  // If outputs were pooled, copy from pooled buffers back into job tensors
+  // before releasing StarPU read locks on output handles.
+  if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 && ctx->job) {
+    try {
+      const auto& base_ptrs = ctx->output_pool->base_ptrs(ctx->output_slot_id);
+      const auto& job_outs = ctx->job->get_output_tensors();
+      const size_t n = std::min(base_ptrs.size(), job_outs.size());
+      for (size_t i = 0; i < n; ++i) {
+        const auto& t = job_outs[i];
+        if (!t.defined() || !t.is_cpu() || !t.is_contiguous()) {
+          throw std::runtime_error("Job output tensor must be defined, CPU and contiguous");
+        }
+        std::memcpy(t.data_ptr(), base_ptrs[i], static_cast<size_t>(t.nbytes()));
+      }
+    } catch (const std::exception& e) {
+      log_error(std::string("Output copy from pool failed: ") + e.what());
+    }
+  }
 
   InferenceTask::release_output_data(ctx->outputs_handles);
 

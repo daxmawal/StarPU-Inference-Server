@@ -98,6 +98,7 @@ target_sources(
           ${SRC_DIR}/core/inference_runner.cpp
           ${SRC_DIR}/core/inference_task.cpp
           ${SRC_DIR}/core/input_slot_pool.cpp
+          ${SRC_DIR}/core/output_slot_pool.cpp
           ${SRC_DIR}/core/starpu_setup.cpp
           ${SRC_DIR}/core/tensor_builder.cpp
           ${SRC_DIR}/core/warmup.cpp

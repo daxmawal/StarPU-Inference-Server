@@ -194,15 +194,19 @@ StarPUTaskRunner::submit_inference_task(
 {
   // If a pool is available, use pooled handles, otherwise fallback to per-job
   // registration (original behavior) to keep unit tests predictable.
-  if (starpu_->has_input_pool()) {
-    auto& pool = starpu_->input_pool();
-    const int slot_id = pool.acquire();
+  if (starpu_->has_input_pool() || starpu_->has_output_pool()) {
+    auto* in_pool_ptr = starpu_->has_input_pool() ? &starpu_->input_pool() : nullptr;
+    auto* out_pool_ptr = starpu_->has_output_pool() ? &starpu_->output_pool() : nullptr;
+    const int in_slot_id = in_pool_ptr ? in_pool_ptr->acquire() : -1;
+    const int out_slot_id = out_pool_ptr ? out_pool_ptr->acquire() : -1;
     bool copied_ok = false;
     try {
-      const auto& base_ptrs = pool.base_ptrs(slot_id);
       const auto& inputs = job->get_input_tensors();
-      if (inputs.size() != base_ptrs.size()) {
-        throw std::runtime_error("Input count mismatch between job and slot");
+      if (in_pool_ptr) {
+        const auto& base_ptrs = in_pool_ptr->base_ptrs(in_slot_id);
+        if (inputs.size() != base_ptrs.size()) {
+          throw std::runtime_error("Input count mismatch between job and slot");
+        }
       }
 
       // Determine batch size b from first input vs configured per-sample rank
@@ -216,55 +220,72 @@ StarPUTaskRunner::submit_inference_task(
           b = 1;
         }
       }
-      if (b < 1 || b > pool.max_batch_size()) {
-        throw std::runtime_error("Batch size exceeds pool capacity");
+      if (in_pool_ptr) {
+        if (b < 1 || b > in_pool_ptr->max_batch_size()) {
+          throw std::runtime_error("Batch size exceeds input pool capacity");
+        }
       }
 
       // Mark handles as being written on host, copy data, then release to bump
       // coherence/version so StarPU transfers fresh data to device workers.
-      const auto& h_in = pool.handles(slot_id);
-      for (size_t i = 0; i < inputs.size(); ++i) {
-        const auto& tin = inputs[i];
-        if (!tin.defined() || !tin.is_cpu() || !tin.is_contiguous()) {
-          throw std::runtime_error("Input tensor must be defined, CPU and contiguous");
+      if (in_pool_ptr) {
+        const auto& base_ptrs = in_pool_ptr->base_ptrs(in_slot_id);
+        const auto& h_in = in_pool_ptr->handles(in_slot_id);
+        for (size_t i = 0; i < inputs.size(); ++i) {
+          const auto& tin = inputs[i];
+          if (!tin.defined() || !tin.is_cpu() || !tin.is_contiguous()) {
+            throw std::runtime_error("Input tensor must be defined, CPU and contiguous");
+          }
+          const int rc = starpu_data_acquire(h_in[i], STARPU_W);
+          if (rc != 0) {
+            throw std::runtime_error("starpu_data_acquire(W) failed");
+          }
+          const size_t nbytes = static_cast<size_t>(tin.nbytes());
+          std::memcpy(base_ptrs[i], tin.data_ptr(), nbytes);
+          starpu_data_release(h_in[i]);
         }
-        const int rc = starpu_data_acquire(h_in[i], STARPU_W);
-        if (rc != 0) {
-          throw std::runtime_error("starpu_data_acquire(W) failed");
-        }
-        const size_t nbytes = static_cast<size_t>(tin.nbytes());
-        std::memcpy(base_ptrs[i], tin.data_ptr(), nbytes);
-        starpu_data_release(h_in[i]);
       }
       copied_ok = true;
 
       // Build and submit the task using pooled input handles
       InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
-      const auto& input_handles = pool.handles(slot_id);
-      auto outputs_handles = task.prepare_output_handles();
-      auto ctx = task.create_context(input_handles, outputs_handles);
-      ctx->keep_input_handles = true;
-      ctx->on_finished = [&, slot_id]() { pool.release(slot_id); };
+      const auto input_handles = in_pool_ptr ? in_pool_ptr->handles(in_slot_id)
+                                             : task.prepare_input_handles();
+      const auto output_handles = out_pool_ptr ? out_pool_ptr->handles(out_slot_id)
+                                               : task.prepare_output_handles();
+      auto ctx = task.create_context(input_handles, output_handles);
+      ctx->keep_input_handles = (in_pool_ptr != nullptr);
+      ctx->keep_output_handles = (out_pool_ptr != nullptr);
+      if (out_pool_ptr) {
+        ctx->output_pool = out_pool_ptr;
+        ctx->output_slot_id = out_slot_id;
+      }
+      ctx->on_finished = [&, in_pool_ptr, in_slot_id, out_pool_ptr, out_slot_id]() {
+        if (in_pool_ptr) in_pool_ptr->release(in_slot_id);
+        if (out_pool_ptr) out_pool_ptr->release(out_slot_id);
+      };
       if (ctx->inference_params) {
         ctx->inference_params->batch_size = b;
       }
-      starpu_task* task_ptr = task.create_task(input_handles, outputs_handles, ctx);
+      starpu_task* task_ptr = task.create_task(input_handles, output_handles, ctx);
 
       job->timing_info().before_starpu_submitted_time =
           std::chrono::high_resolution_clock::now();
 
       const int ret = starpu_task_submit(task_ptr);
       if (ret != 0) {
-        // on error, cleanup and release slot immediately
+        // on error, cleanup and release slots immediately
         InferenceTask::cleanup(ctx);
-        pool.release(slot_id);
+        if (in_pool_ptr) in_pool_ptr->release(in_slot_id);
+        if (out_pool_ptr) out_pool_ptr->release(out_slot_id);
         throw StarPUTaskSubmissionException(
             std::format("[ERROR] StarPU task submission failed (code {})", ret));
       }
     }
     catch (...) {
       if (!copied_ok) {
-        pool.release(slot_id);
+        if (in_pool_ptr) in_pool_ptr->release(in_slot_id);
+        if (out_pool_ptr) out_pool_ptr->release(out_slot_id);
       }
       throw;
     }

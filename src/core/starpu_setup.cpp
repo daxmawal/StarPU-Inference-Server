@@ -309,6 +309,19 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
       throw;
     }
   }
+
+  // Create the reusable output slot pool if output layout is known.
+  if (!opts.models.empty() && !opts.models[0].outputs.empty()) {
+    try {
+      // Use same slot count as inputs for now (keeps config minimal)
+      output_pool_ = std::make_unique<OutputSlotPool>(opts, opts.input_slots);
+    }
+    catch (const std::exception& e) {
+      log_error(
+          std::string("Failed to initialize OutputSlotPool: ") + e.what());
+      throw;
+    }
+  }
 }
 
 StarPUSetup::~StarPUSetup()
@@ -316,6 +329,7 @@ StarPUSetup::~StarPUSetup()
   // Ensure the input pool (and thus the StarPU handles) are destroyed before
   // shutting StarPU down to allow proper unregister.
   input_pool_.reset();
+  output_pool_.reset();
   starpu_shutdown();
 }
 
