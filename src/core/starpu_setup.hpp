@@ -51,6 +51,7 @@ class StarPUSetup {
 
   // Access the reusable input slot pool
   auto input_pool() -> InputSlotPool& { return *input_pool_; }
+  [[nodiscard]] bool has_input_pool() const { return static_cast<bool>(input_pool_); }
 
   static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
       -> std::map<int, std::vector<int>>;

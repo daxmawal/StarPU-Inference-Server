@@ -12,4 +12,4 @@ max_batch_size: 32
 sync: false
 use_cpu: false
 use_cuda: true
-input_slots: 12
+input_slots: 6
