@@ -13,7 +13,8 @@
 
 namespace starpu_server {
 
-static void* alloc_host_buffer(size_t bytes, bool use_pinned, bool& pinned_out)
+static void*
+alloc_host_buffer(size_t bytes, bool use_pinned, bool& pinned_out)
 {
   void* ptr = nullptr;
   pinned_out = false;
@@ -33,9 +34,11 @@ static void* alloc_host_buffer(size_t bytes, bool use_pinned, bool& pinned_out)
   return ptr;
 }
 
-static void free_host_buffer(void* ptr, bool pinned)
+static void
+free_host_buffer(void* ptr, bool pinned)
 {
-  if (!ptr) return;
+  if (!ptr)
+    return;
   if (pinned) {
     cudaFreeHost(ptr);
   } else {
@@ -88,7 +91,8 @@ InputSlotPool::~InputSlotPool()
   }
 }
 
-void InputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
+void
+InputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
 {
   int k = slots;
   if (k <= 0) {
@@ -105,7 +109,8 @@ void InputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
   }
 }
 
-void InputSlotPool::allocate_slot_buffers_and_register(
+void
+InputSlotPool::allocate_slot_buffers_and_register(
     int slot_id, const RuntimeConfig& opts)
 {
   const size_t n_in = per_input_numel_single_.size();
@@ -117,14 +122,16 @@ void InputSlotPool::allocate_slot_buffers_and_register(
   const bool want_pinned = opts.use_cuda;  // pin only when CUDA is used
 
   for (size_t i = 0; i < n_in; ++i) {
-    const size_t bytes = per_input_bytes_single_[i] * static_cast<size_t>(bmax_);
+    const size_t bytes =
+        per_input_bytes_single_[i] * static_cast<size_t>(bmax_);
     bool pinned = false;
     void* ptr = alloc_host_buffer(bytes, want_pinned, pinned);
     slot.base_ptrs[i] = ptr;
     pinned_flags_[static_cast<size_t>(slot_id)][i] = pinned;
 
     // Register once with StarPU; use vector interface
-    const size_t total_numel = per_input_numel_single_[i] * static_cast<size_t>(bmax_);
+    const size_t total_numel =
+        per_input_numel_single_[i] * static_cast<size_t>(bmax_);
     starpu_data_handle_t h = nullptr;
     starpu_vector_data_register(
         &h, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(ptr), total_numel,
@@ -137,7 +144,9 @@ void InputSlotPool::allocate_slot_buffers_and_register(
           slot.handles[j] = nullptr;
         }
         if (slot.base_ptrs[j]) {
-          free_host_buffer(slot.base_ptrs[j], pinned_flags_[static_cast<size_t>(slot_id)][j]);
+          free_host_buffer(
+              slot.base_ptrs[j],
+              pinned_flags_[static_cast<size_t>(slot_id)][j]);
           slot.base_ptrs[j] = nullptr;
         }
       }
@@ -147,7 +156,8 @@ void InputSlotPool::allocate_slot_buffers_and_register(
   }
 }
 
-auto InputSlotPool::acquire() -> int
+auto
+InputSlotPool::acquire() -> int
 {
   std::unique_lock lk(mtx_);
   cv_.wait(lk, [&] { return !free_ids_.empty(); });
@@ -156,7 +166,20 @@ auto InputSlotPool::acquire() -> int
   return id;
 }
 
-void InputSlotPool::release(int slot_id)
+auto
+InputSlotPool::try_acquire() -> std::optional<int>
+{
+  std::scoped_lock lk(mtx_);
+  if (free_ids_.empty()) {
+    return std::nullopt;
+  }
+  const int id = free_ids_.back();
+  free_ids_.pop_back();
+  return id;
+}
+
+void
+InputSlotPool::release(int slot_id)
 {
   {
     const std::scoped_lock lk(mtx_);
@@ -165,23 +188,27 @@ void InputSlotPool::release(int slot_id)
   cv_.notify_one();
 }
 
-auto InputSlotPool::slot_info(int slot_id) const -> const SlotInfo&
+auto
+InputSlotPool::slot_info(int slot_id) const -> const SlotInfo&
 {
   return slots_.at(static_cast<size_t>(slot_id));
 }
 
-auto InputSlotPool::handles(int slot_id) const
+auto
+InputSlotPool::handles(int slot_id) const
     -> const std::vector<starpu_data_handle_t>&
 {
   return slots_.at(static_cast<size_t>(slot_id)).handles;
 }
 
-auto InputSlotPool::base_ptrs(int slot_id) const -> const std::vector<void*>&
+auto
+InputSlotPool::base_ptrs(int slot_id) const -> const std::vector<void*>&
 {
   return slots_.at(static_cast<size_t>(slot_id)).base_ptrs;
 }
 
-size_t InputSlotPool::product_dims(const std::vector<int64_t>& dims)
+size_t
+InputSlotPool::product_dims(const std::vector<int64_t>& dims)
 {
   size_t prod = 1;
   for (auto d : dims) {
@@ -198,4 +225,3 @@ size_t InputSlotPool::product_dims(const std::vector<int64_t>& dims)
 }
 
 }  // namespace starpu_server
-

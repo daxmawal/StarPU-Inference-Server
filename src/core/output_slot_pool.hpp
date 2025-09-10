@@ -46,18 +46,25 @@ class OutputSlotPool {
 
   // Acquire a free slot (blocking). Returns the slot id.
   auto acquire() -> int;
+  // Try to acquire a free slot without blocking. Returns empty if none.
+  [[nodiscard]] auto try_acquire() -> std::optional<int>;
   void release(int slot_id);
 
   // Accessors
   [[nodiscard]] auto slot_info(int slot_id) const -> const SlotInfo&;
-  [[nodiscard]] auto handles(int slot_id) const -> const std::vector<starpu_data_handle_t>&;
+  [[nodiscard]] auto handles(int slot_id) const
+      -> const std::vector<starpu_data_handle_t>&;
   [[nodiscard]] auto base_ptrs(int slot_id) const -> const std::vector<void*>&;
   [[nodiscard]] int max_batch_size() const { return bmax_; }
-  [[nodiscard]] size_t num_outputs() const { return per_output_numel_single_.size(); }
+  [[nodiscard]] size_t num_outputs() const
+  {
+    return per_output_numel_single_.size();
+  }
 
  private:
   void allocate_pool(const RuntimeConfig& opts, int slots);
-  void allocate_slot_buffers_and_register(int slot_id, const RuntimeConfig& opts);
+  void allocate_slot_buffers_and_register(
+      int slot_id, const RuntimeConfig& opts);
   static size_t product_dims(const std::vector<int64_t>& dims);
 
   // Per-output metadata
@@ -79,4 +86,3 @@ class OutputSlotPool {
 };
 
 }  // namespace starpu_server
-
