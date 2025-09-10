@@ -32,6 +32,8 @@ get_help_message(const char* prog_name) -> std::string
       "  --address ADDR          gRPC server listen address\n"
       "  --metrics-port [port]   Port for metrics exposition (default: 9090)\n"
       "  --max-batch-size N      Maximum inference batch size\n"
+      "  --input-slots N         Number of reusable input slots\n"
+      "  --slots N               Alias for --input-slots\n"
       "  --pregen-inputs N       Number of pregenerated inputs (default: 10)\n"
       "  --warmup-iterations N   Warmup iterations per CUDA device "
       "(default:2)\n"

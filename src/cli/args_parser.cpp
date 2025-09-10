@@ -379,6 +379,36 @@ parse_max_batch_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 }
 
 static auto
+parse_input_slots(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& input_slots = opts.input_slots;
+  return expect_and_parse(
+      "--input-slots", idx, args, [&input_slots](const char* val) {
+        const int tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        input_slots = tmp;
+      });
+}
+
+static auto
+parse_slots_alias(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& input_slots = opts.input_slots;
+  return expect_and_parse(
+      "--slots", idx, args, [&input_slots](const char* val) {
+        const int tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        input_slots = tmp;
+      });
+}
+
+static auto
 parse_metrics_port(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
@@ -535,6 +565,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--address", parse_address},
           {"--metrics-port", parse_metrics_port},
           {"--max-batch-size", parse_max_batch_size},
+          {"--input-slots", parse_input_slots},
+          {"--slots", parse_slots_alias},
           {"--pregen-inputs", parse_pregen_inputs},
           {"--warmup-pregen-inputs", parse_warmup_pregen_inputs},
           {"--warmup-iterations", parse_warmup_iterations},
