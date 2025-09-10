@@ -304,8 +304,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
       input_pool_ = std::make_unique<InputSlotPool>(opts, opts.input_slots);
     }
     catch (const std::exception& e) {
-      log_error(
-          std::string("Failed to initialize InputSlotPool: ") + e.what());
+      log_error(std::string("Failed to initialize InputSlotPool: ") + e.what());
       throw;
     }
   }
