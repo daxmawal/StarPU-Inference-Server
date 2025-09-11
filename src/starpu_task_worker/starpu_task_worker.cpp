@@ -193,21 +193,29 @@ void
 StarPUTaskRunner::submit_inference_task(
     const std::shared_ptr<InferenceJob>& job)
 {
-  // If a pool is available, use pooled handles, otherwise fallback to per-job
-  // registration (original behavior) to keep unit tests predictable.
+  // If pools are available, wait for a free slot (blocking) instead of
+  // opportunistic try-acquire. This ensures we reuse pooled handles and only
+  // copy inputs once a slot is actually free.
   if (starpu_->has_input_pool() || starpu_->has_output_pool()) {
     auto* in_pool_ptr =
         starpu_->has_input_pool() ? &starpu_->input_pool() : nullptr;
     auto* out_pool_ptr =
         starpu_->has_output_pool() ? &starpu_->output_pool() : nullptr;
-    const std::optional<int> in_slot_opt =
-        in_pool_ptr ? in_pool_ptr->try_acquire() : std::nullopt;
-    const std::optional<int> out_slot_opt =
-        out_pool_ptr ? out_pool_ptr->try_acquire() : std::nullopt;
-    const bool use_in_pool = in_pool_ptr && in_slot_opt.has_value();
-    const bool use_out_pool = out_pool_ptr && out_slot_opt.has_value();
-    const int in_slot_id = use_in_pool ? *in_slot_opt : -1;
-    const int out_slot_id = use_out_pool ? *out_slot_opt : -1;
+
+    const bool use_in_pool = (in_pool_ptr != nullptr);
+    const bool use_out_pool = (out_pool_ptr != nullptr);
+
+    int in_slot_id = -1;
+    int out_slot_id = -1;
+
+    // Block until a slot is available for each enabled pool
+    if (use_in_pool) {
+      in_slot_id = in_pool_ptr->acquire();
+    }
+    if (use_out_pool) {
+      out_slot_id = out_pool_ptr->acquire();
+    }
+
     bool copied_ok = false;
     try {
       const auto& inputs = job->get_input_tensors();
@@ -258,7 +266,7 @@ StarPUTaskRunner::submit_inference_task(
       }
       copied_ok = true;
 
-      // Build and submit the task using pooled input handles
+      // Build and submit the task using pooled handles when available
       InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
       const auto input_handles = use_in_pool ? in_pool_ptr->handles(in_slot_id)
                                              : task.prepare_input_handles();
@@ -301,15 +309,17 @@ StarPUTaskRunner::submit_inference_task(
       }
     }
     catch (...) {
+      // If copy failed, release acquired slots before rethrowing
       if (!copied_ok) {
-        if (use_in_pool)
+        if (use_in_pool && in_slot_id >= 0)
           in_pool_ptr->release(in_slot_id);
-        if (use_out_pool)
+        if (use_out_pool && out_slot_id >= 0)
           out_pool_ptr->release(out_slot_id);
       }
       throw;
     }
   } else {
+    // No pools configured; fallback to per-job registration
     InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
     task.submit();
   }
