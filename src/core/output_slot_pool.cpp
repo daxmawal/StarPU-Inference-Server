@@ -5,6 +5,7 @@
 #include <starpu.h>
 
 #include <algorithm>
+#include <bit>
 #include <cassert>
 #include <cstring>
 #include <stdexcept>
@@ -102,6 +103,9 @@ OutputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
     int workers = static_cast<int>(starpu_worker_get_count());
     k = std::max(2, workers);
   }
+  slots_.reserve(static_cast<size_t>(k));
+  pinned_flags_.reserve(static_cast<size_t>(k));
+  free_ids_.reserve(static_cast<size_t>(k));
   slots_.resize(static_cast<size_t>(k));
   pinned_flags_.resize(static_cast<size_t>(k));
   for (int i = 0; i < k; ++i) {
@@ -136,7 +140,7 @@ OutputSlotPool::allocate_slot_buffers_and_register(
         per_output_numel_single_[i] * static_cast<size_t>(bmax_);
     starpu_data_handle_t h = nullptr;
     starpu_vector_data_register(
-        &h, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(ptr), total_numel,
+        &h, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr), total_numel,
         element_size(output_types_[i]));
     if (!h) {
       // cleanup and throw

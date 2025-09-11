@@ -76,8 +76,8 @@ class InputSlotPool {
   std::vector<SlotInfo> slots_;
   int bmax_ = 1;
 
-  // Memory management flags for each slot/input (whether pinned was used)
-  std::vector<std::vector<bool>> pinned_flags_;
+  // Memory management flags for each slot/input (whether pinned was used).
+  std::vector<std::vector<uint8_t>> pinned_flags_;
 
   // Free-list management
   std::vector<int> free_ids_;
