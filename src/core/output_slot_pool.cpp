@@ -1,4 +1,3 @@
-// Reusable StarPU output slot pool (implementation)
 #include "output_slot_pool.hpp"
 
 #include <cuda_runtime_api.h>
@@ -8,6 +7,7 @@
 #include <bit>
 #include <cassert>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 #include "utils/logger.hpp"
@@ -15,8 +15,8 @@
 namespace starpu_server {
 
 namespace {
-static void*
-alloc_host_buffer(size_t bytes, bool use_pinned, bool& pinned_out)
+static auto
+alloc_host_buffer(size_t bytes, bool use_pinned, bool& pinned_out) -> void*
 {
   void* ptr = nullptr;
   pinned_out = false;
@@ -27,7 +27,6 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& pinned_out)
       return ptr;
     }
   }
-  // Fallback to aligned malloc
   constexpr size_t kAlign = 64;
   int rc = posix_memalign(&ptr, kAlign, bytes);
   if (rc != 0 || ptr == nullptr) {
@@ -53,7 +52,6 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
   bmax_ = std::max(1, opts.max_batch_size);
 
-  // Record per-output metadata from config
   if (opts.models.empty()) {
     throw std::invalid_argument("No model config provided for OutputSlotPool");
   }
@@ -64,6 +62,17 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 
   for (const auto& t : outputs) {
     output_types_.push_back(t.type);
+    if (t.dims.size() >= 2) {
+      const int64_t batch_dim = t.dims[0];
+      if (batch_dim <= 0) {
+        throw std::invalid_argument("dims[0] (batch) must be positive");
+      }
+      if (batch_dim > std::numeric_limits<int>::max()) {
+        throw std::invalid_argument("dims[0] (batch) exceeds int max");
+      }
+      bmax_ = std::max(bmax_, static_cast<int>(batch_dim));
+    }
+
     const size_t numel = product_dims(t.dims);
     per_output_numel_single_.push_back(numel);
     const size_t elsize = element_size(t.type);
@@ -75,18 +84,14 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 
 OutputSlotPool::~OutputSlotPool()
 {
-  // Unregister and free buffers
   for (size_t s = 0; s < slots_.size(); ++s) {
     auto& slot = slots_[s];
-    // Unregister handles
     for (auto& h : slot.handles) {
       if (h) {
-        // Safe to unregister here since StarPU is still up when pool is reset
         starpu_data_unregister(h);
         h = nullptr;
       }
     }
-    // Free memory
     for (size_t i = 0; i < slot.base_ptrs.size(); ++i) {
       free_host_buffer(slot.base_ptrs[i], pinned_flags_[s][i]);
       slot.base_ptrs[i] = nullptr;
@@ -99,7 +104,6 @@ OutputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
 {
   int k = slots;
   if (k <= 0) {
-    // Default to number of StarPU workers if available, else 2
     int workers = static_cast<int>(starpu_worker_get_count());
     k = std::max(2, workers);
   }
@@ -125,7 +129,7 @@ OutputSlotPool::allocate_slot_buffers_and_register(
   slot.handles.resize(n_out);
   pinned_flags_[static_cast<size_t>(slot_id)].resize(n_out);
 
-  const bool want_pinned = opts.use_cuda;  // pin only when CUDA is used
+  const bool want_pinned = opts.use_cuda;
 
   for (size_t i = 0; i < n_out; ++i) {
     const size_t bytes =
@@ -135,7 +139,6 @@ OutputSlotPool::allocate_slot_buffers_and_register(
     slot.base_ptrs[i] = ptr;
     pinned_flags_[static_cast<size_t>(slot_id)][i] = pinned;
 
-    // Register once with StarPU; use vector interface
     const size_t total_numel =
         per_output_numel_single_[i] * static_cast<size_t>(bmax_);
     starpu_data_handle_t h = nullptr;
@@ -143,7 +146,6 @@ OutputSlotPool::allocate_slot_buffers_and_register(
         &h, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr), total_numel,
         element_size(output_types_[i]));
     if (!h) {
-      // cleanup and throw
       for (size_t j = 0; j <= i; ++j) {
         if (slot.handles[j]) {
           starpu_data_unregister(slot.handles[j]);
@@ -218,7 +220,9 @@ size_t
 OutputSlotPool::product_dims(const std::vector<int64_t>& dims)
 {
   size_t prod = 1;
-  for (auto d : dims) {
+  const size_t start = dims.size() >= 2 ? 1 : 0;
+  for (size_t i = start; i < dims.size(); ++i) {
+    const auto d = dims[i];
     if (d <= 0) {
       throw std::invalid_argument("dims must be positive");
     }
