@@ -131,6 +131,82 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 }
 
 // =============================================================================
+// Combined --input parser: "name:D1xD2x...:dtype" or "D1xD2x...:dtype"
+// =============================================================================
+
+static auto missing_value_error(std::string_view option_name) -> bool;
+
+static bool g_seen_combined_input = false;
+
+static auto
+parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  if (idx + 1 >= args.size()) {
+    return missing_value_error("--input");
+  }
+  ++idx;
+
+  std::string spec = args[idx];
+
+  std::vector<std::string> parts;
+  {
+    std::stringstream ss(spec);
+    std::string part;
+    while (std::getline(ss, part, ':')) {
+      parts.push_back(part);
+    }
+  }
+
+  if (parts.size() != 2 && parts.size() != 3) {
+    log_error(std::format(
+        "Invalid --input format: {}. Expected name:DIMS:TYPE or DIMS:TYPE",
+        spec));
+    return false;
+  }
+
+  std::string name;
+  std::string dims_str;
+  std::string type_str;
+
+  if (parts.size() == 3) {
+    name = parts[0];
+    dims_str = parts[1];
+    type_str = parts[2];
+  } else {
+    dims_str = parts[0];
+    type_str = parts[1];
+  }
+
+  std::vector<int64_t> dims;
+  at::ScalarType dtype;
+  try {
+    dims = parse_shape_string(dims_str);
+    dtype = string_to_scalar_type(type_str);
+  }
+  catch (const std::exception& e) {
+    log_error(std::format("Invalid --input '{}': {}", spec, e.what()));
+    return false;
+  }
+
+  opts.models.resize(1);
+  if (!g_seen_combined_input) {
+    opts.models[0].inputs.clear();
+    g_seen_combined_input = true;
+  }
+
+  TensorConfig tc{};
+  tc.name = name.empty() ? (std::string("input") +
+                            std::to_string(opts.models[0].inputs.size()))
+                         : name;
+  tc.dims = std::move(dims);
+  tc.type = dtype;
+  opts.models[0].inputs.push_back(std::move(tc));
+
+  return true;
+}
+
+// =============================================================================
 // Argument Parsing Utilities: Helpers for optional and positional argument
 // parsing
 // =============================================================================
@@ -551,6 +627,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
   const static std::unordered_map<
       std::string_view, Parser, TransparentHash, TransparentEqual>
       dispatch = {
+          {"--input", parse_input_combined},
           {"--config", parse_config},
           {"-c", parse_config},
           {"--model", parse_model},

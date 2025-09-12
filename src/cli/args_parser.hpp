@@ -25,6 +25,8 @@ get_help_message(const char* prog_name) -> std::string
       "  --shape 1x3x224x224     Shape of a single input tensor\n"
       "  --shapes shape1,shape2  Shapes for multiple input tensors\n"
       "  --types float,int       Input tensor types (default: float)\n"
+      "  --input name:DIMS:TYPE  Combined input spec (repeatable);\n"
+      "                          e.g., input0:32x3x224x224:float32\n"
       "  --sync                  Run tasks in synchronous mode\n"
       "  --delay [ms]            Delay between jobs (default: 0)\n"
       "  --no_cpu                Disable CPU usage\n"
