@@ -22,6 +22,7 @@
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
+#include "utils/nvtx.hpp"
 
 namespace starpu_server {
 namespace {
@@ -193,6 +194,8 @@ void
 StarPUTaskRunner::submit_inference_task(
     const std::shared_ptr<InferenceJob>& job)
 {
+  NvtxRange nvtx_job_scope(
+      std::string("submit job ") + std::to_string(job->get_job_id()));
   // If pools are available, wait for a free slot (blocking) instead of
   // opportunistic try-acquire. This ensures we reuse pooled handles and only
   // copy inputs once a slot is actually free.
@@ -247,6 +250,7 @@ StarPUTaskRunner::submit_inference_task(
       // Mark handles as being written on host, copy data, then release to bump
       // coherence/version so StarPU transfers fresh data to device workers.
       if (use_in_pool) {
+        NvtxRange nvtx_copy_scope("HtoD-staged host copy (pooled inputs)");
         const auto& base_ptrs = in_pool_ptr->base_ptrs(in_slot_id);
         const auto& h_in = in_pool_ptr->handles(in_slot_id);
         for (size_t i = 0; i < inputs.size(); ++i) {

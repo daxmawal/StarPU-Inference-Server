@@ -38,6 +38,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
+#include "utils/nvtx.hpp"
 #include "warmup.hpp"
 
 namespace starpu_server {
@@ -250,6 +251,7 @@ run_warmup(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref)
 {
+  NvtxRange nvtx_scope("warmup");
   if (!opts.use_cuda || opts.warmup_iterations <= 0) {
     return;
   }
@@ -295,18 +297,6 @@ process_results(
   }
 }
 
-auto
-synchronize_cuda_device() -> cudaError_t
-{
-  const auto err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    log_error(
-        std::string("cudaDeviceSynchronize failed: ") +
-        cudaGetErrorString(err));
-  }
-  return err;
-}
-
 // =============================================================================
 // Main Inference Loop: Initializes models, runs warmup, starts client/server,
 // waits for all jobs to complete, processes results
@@ -315,6 +305,7 @@ synchronize_cuda_device() -> cudaError_t
 void
 run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
+  NvtxRange nvtx_scope("inference_loop");
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;
@@ -391,12 +382,6 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   }
   if (server.joinable()) {
     server.join();
-  }
-
-  if (opts.use_cuda) {
-    if (auto err = synchronize_cuda_device(); err != cudaSuccess) {
-      return;
-    }
   }
 
   process_results(

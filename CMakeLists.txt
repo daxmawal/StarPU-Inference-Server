@@ -21,6 +21,28 @@ find_package(gRPC CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
 
+# Optional: NVTX instrumentation (nsys --trace=nvtx)
+set(HAVE_NVTX OFF)
+find_package(CUDAToolkit QUIET)
+if(CUDAToolkit_FOUND AND TARGET CUDA::nvToolsExt)
+  set(HAVE_NVTX ON)
+endif()
+if(NOT HAVE_NVTX)
+  find_library(
+    NVTOOLSEXT_LIB
+    NAMES nvToolsExt
+    PATHS "$ENV{CUDA_HOME}/lib64"
+          "$ENV{CUDA_HOME}/lib"
+          "/usr/local/cuda/lib64"
+          "/usr/local/cuda/lib"
+          "/opt/cuda/lib64"
+          "/opt/cuda/lib"
+          "/usr/lib/x86_64-linux-gnu")
+  if(NVTOOLSEXT_LIB)
+    set(HAVE_NVTX ON)
+  endif()
+endif()
+
 set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
 
 include(FetchContent)
@@ -224,6 +246,16 @@ target_link_libraries(
           yaml-cpp::yaml-cpp
           prometheus-cpp::pull
           ${ABSL_LIBS})
+
+if(HAVE_NVTX)
+  message(STATUS "NVTX found: enabling NVTX instrumentation")
+  target_compile_definitions(starpu_server PRIVATE HAVE_NVTX=1)
+  if(CUDAToolkit_FOUND AND TARGET CUDA::nvToolsExt)
+    target_link_libraries(starpu_server PRIVATE CUDA::nvToolsExt)
+  elseif(NVTOOLSEXT_LIB)
+    target_link_libraries(starpu_server PRIVATE ${NVTOOLSEXT_LIB})
+  endif()
+endif()
 
 # === Status Messages ===
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")

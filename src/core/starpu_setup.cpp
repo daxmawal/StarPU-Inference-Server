@@ -31,6 +31,7 @@
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
+#include "utils/nvtx.hpp"
 
 namespace starpu_server {
 void run_inference(
@@ -226,6 +227,10 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
       buffers, params->num_inputs + params->num_outputs);
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
+
+  NvtxRange nvtx_scope(
+      std::string("codelet.cuda job ") + std::to_string(params->job_id) +
+      " dev " + std::to_string(device_id));
 
   cudaStream_t stream = starpu_cuda_get_local_stream();
   const at::cuda::CUDAStream torch_stream = at::cuda::getStreamFromExternal(

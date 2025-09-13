@@ -176,6 +176,4 @@ void run_warmup(
     const std::vector<torch::Tensor>& outputs_ref);
 
 void run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu);
-
-auto synchronize_cuda_device() -> cudaError_t;
 }  // namespace starpu_server

@@ -210,8 +210,6 @@ TEST(InferenceRunner_Unit, LogsCudaSyncError)
 {
   SetCudaSyncResult(cudaErrorUnknown);
   starpu_server::CaptureStream capture{std::cerr};
-  const auto err = starpu_server::synchronize_cuda_device();
-  EXPECT_EQ(err, cudaErrorUnknown);
   EXPECT_EQ(
       capture.str(), starpu_server::expected_log_line(
                          starpu_server::ErrorLevel,

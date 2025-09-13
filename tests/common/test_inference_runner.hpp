@@ -114,6 +114,4 @@ auto load_model_and_reference_output(const RuntimeConfig& opts)
     -> std::optional<std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>>;
-
-auto synchronize_cuda_device() -> cudaError_t;
 }  // namespace starpu_server
