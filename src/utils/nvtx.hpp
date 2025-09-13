@@ -3,7 +3,7 @@
 #include <string>
 
 #ifdef HAVE_NVTX
-#include <nvToolsExt.h>
+#include <nvtx3/nvToolsExt.h>
 #endif
 
 namespace starpu_server {
