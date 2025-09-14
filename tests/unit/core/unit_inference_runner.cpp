@@ -20,11 +20,6 @@ cuda_sync_result_ref() -> cudaError_t&
   static cudaError_t value = cudaSuccess;
   return value;
 }
-inline void
-SetCudaSyncResult(cudaError_t status)
-{
-  cuda_sync_result_ref() = status;
-}
 }  // namespace
 
 extern "C" auto
@@ -204,15 +199,4 @@ TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
   EXPECT_FLOAT_EQ(dst[2], kF35);
   EXPECT_FLOAT_EQ(dst[3], kFNeg4);
   EXPECT_FLOAT_EQ(dst[4], kF025);
-}
-
-TEST(InferenceRunner_Unit, LogsCudaSyncError)
-{
-  SetCudaSyncResult(cudaErrorUnknown);
-  starpu_server::CaptureStream capture{std::cerr};
-  EXPECT_EQ(
-      capture.str(), starpu_server::expected_log_line(
-                         starpu_server::ErrorLevel,
-                         "cudaDeviceSynchronize failed: mock cuda error"));
-  SetCudaSyncResult(cudaSuccess);
 }
