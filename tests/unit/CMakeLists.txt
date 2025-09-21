@@ -8,6 +8,7 @@ target_sources(
             core/unit_inference_runner_helpers.cpp
             core/unit_inference_task_errors.cpp
             core/unit_inference_runner.cpp
+            core/unit_latency_statistics.cpp
             core/unit_inference_task_limits.cpp
             core/unit_inference_task.cpp
             core/unit_tensor_builder.cpp

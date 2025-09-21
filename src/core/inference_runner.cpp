@@ -34,6 +34,7 @@
 #include "inference_queue.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
+#include "latency_statistics.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
@@ -387,6 +388,23 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   }
   if (server.joinable()) {
     server.join();
+  }
+
+  {
+    std::vector<double> latencies;
+    latencies.reserve(results.size());
+    for (const auto& result : results) {
+      latencies.push_back(result.latency_ms);
+    }
+
+    if (auto stats = compute_latency_statistics(std::move(latencies))) {
+      log_stats(
+          opts.verbosity,
+          std::format(
+              "Latency stats (ms): p50={:.3f}, p85={:.3f}, p95={:.3f}, "
+              "p100={:.3f}, mean={:.3f}",
+              stats->p50, stats->p85, stats->p95, stats->p100, stats->mean));
+    }
   }
 
   process_results(
