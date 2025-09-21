@@ -43,6 +43,7 @@ get_help_message(const char* prog_name) -> std::string
       "1e-3)\n"
       "  --atol [value]          Absolute tolerance for validation (default: "
       "1e-5)\n"
+      "  --no-validate           Disable inference result validation\n"
       "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
       "  --help                  Show this help message\n";
   return msg;

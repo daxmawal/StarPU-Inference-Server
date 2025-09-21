@@ -205,6 +205,9 @@ parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("atol must be >= 0");
     }
   }
+  if (root["validate_results"]) {
+    cfg.validate_results = root["validate_results"].as<bool>();
+  }
   if (root["sync"]) {
     cfg.synchronous = root["sync"].as<bool>();
   }

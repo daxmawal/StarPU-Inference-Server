@@ -2,6 +2,7 @@
 #include <torch/script.h>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
 #include "core/inference_runner.hpp"
@@ -10,9 +11,10 @@
 #include "test_helpers.hpp"
 
 namespace {
-void
+auto
 run_add_one_integration_test(
-    bool use_cpu, bool use_cuda, std::optional<int> device_id = std::nullopt)
+    bool use_cpu, bool use_cuda, std::optional<int> device_id = std::nullopt,
+    bool validate_results = true) -> std::string
 {
   auto model = starpu_server::make_add_one_model();
   const std::filesystem::path model_path =
@@ -25,6 +27,7 @@ run_add_one_integration_test(
   opts.iterations = 1;
   opts.use_cpu = use_cpu;
   opts.use_cuda = use_cuda;
+  opts.validate_results = validate_results;
   if (device_id) {
     opts.device_ids = {*device_id};
   }
@@ -34,13 +37,14 @@ run_add_one_integration_test(
   starpu_server::run_inference_loop(opts, starpu);
   const std::string output = capture.str();
   std::filesystem::remove(model_path);
-  EXPECT_NE(output.find("Job 0 passed"), std::string::npos);
+  return output;
 }
 }  // namespace
 
 TEST(RunInferenceLoopIntegration, CpuAddOneModel)
 {
-  run_add_one_integration_test(true, false);
+  const auto output = run_add_one_integration_test(true, false);
+  EXPECT_NE(output.find("Job 0 passed"), std::string::npos);
 }
 
 TEST(RunInferenceLoopIntegration, CudaAddOneModel)
@@ -48,5 +52,14 @@ TEST(RunInferenceLoopIntegration, CudaAddOneModel)
   if (!torch::cuda::is_available()) {
     GTEST_SKIP() << "CUDA is not available";
   }
-  run_add_one_integration_test(false, true, 0);
+  const auto output = run_add_one_integration_test(false, true, 0);
+  EXPECT_NE(output.find("Job 0 passed"), std::string::npos);
+}
+
+TEST(RunInferenceLoopIntegration, DisableValidationSkipsChecks)
+{
+  const auto output =
+      run_add_one_integration_test(true, false, std::nullopt, false);
+  EXPECT_EQ(output.find("Job 0 passed"), std::string::npos);
+  EXPECT_NE(output.find("Result validation disabled"), std::string::npos);
 }

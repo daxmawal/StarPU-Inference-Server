@@ -35,6 +35,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "warmup_pregen_inputs: 5\n";
   yaml << "warmup_iterations: 3\n";
   yaml << "seed: 123\n";
+  yaml << "validate_results: false\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_valid.yaml";
@@ -64,6 +65,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   ASSERT_TRUE(has_seed);
   const auto seed_value = cfg.seed.value_or(0U);
   EXPECT_EQ(seed_value, 123U);
+  EXPECT_FALSE(cfg.validate_results);
   EXPECT_TRUE(cfg.use_cuda);
 }
 

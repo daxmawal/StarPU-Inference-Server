@@ -659,6 +659,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
       opts.synchronous = true;
     } else if (arg == "--no_cpu") {
       opts.use_cpu = false;
+    } else if (arg == "--no-validate") {
+      opts.validate_results = false;
     } else if (arg == "--help" || arg == "-h") {
       opts.show_help = true;
       return true;

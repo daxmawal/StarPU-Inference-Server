@@ -84,6 +84,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.warmup_iterations, 3);
   ASSERT_TRUE(opts.seed.has_value());
   EXPECT_EQ(opts.seed, 123U);
+  EXPECT_TRUE(opts.validate_results);
   constexpr std::size_t expected_bytes = 32ULL * 1024ULL * 1024ULL;
   EXPECT_EQ(opts.max_message_bytes, expected_bytes);
   EXPECT_TRUE(opts.synchronous);
@@ -164,4 +165,15 @@ TEST(ArgsParser_Unit, ParsesToleranceOptions)
   ASSERT_TRUE(opts.valid);
   EXPECT_DOUBLE_EQ(opts.rtol, 1e-2);
   EXPECT_DOUBLE_EQ(opts.atol, 1e-4);
+}
+
+TEST(ArgsParser_Unit, DisableValidationFlag)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{"program", "--model",      model.c_str(),
+                                "--shape", "1x1",          "--types",
+                                "float",   "--no-validate"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_FALSE(opts.validate_results);
 }

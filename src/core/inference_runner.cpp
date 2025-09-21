@@ -276,9 +276,12 @@ static void
 process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
-    std::vector<torch::jit::script::Module>& models_gpu,
+    std::vector<torch::jit::script::Module>& models_gpu, bool validate_results,
     VerbosityLevel verbosity, double rtol, double atol)
 {
+  if (!validate_results) {
+    log_info(verbosity, "Result validation disabled; skipping checks.");
+  }
   for (const auto& result : results) {
     if (result.results.empty() || !result.results[0].defined()) {
       log_error(std::format("[Client] Job {} failed.", result.job_id));
@@ -293,7 +296,9 @@ process_results(
       }
     }
 
-    validate_inference_result(result, *cpu_model, verbosity, rtol, atol);
+    if (validate_results) {
+      validate_inference_result(result, *cpu_model, verbosity, rtol, atol);
+    }
   }
 }
 
@@ -385,6 +390,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   }
 
   process_results(
-      results, model_cpu, models_gpu, opts.verbosity, opts.rtol, opts.atol);
+      results, model_cpu, models_gpu, opts.validate_results, opts.verbosity,
+      opts.rtol, opts.atol);
 }
 }  // namespace starpu_server

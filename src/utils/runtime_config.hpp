@@ -74,7 +74,6 @@ struct RuntimeConfig {
   int iterations = 1;
   int delay_ms = 0;
   int max_batch_size = 1;
-  // Number of reusable input slots (K). If <= 0, auto (defaults to workers).
   int input_slots = 0;
   std::size_t max_message_bytes = 32 * 1024 * 1024;
   size_t pregen_inputs = 10;
@@ -82,6 +81,7 @@ struct RuntimeConfig {
   int warmup_iterations = 2;
   double rtol = 1e-3;
   double atol = 1e-5;
+  bool validate_results = true;
 
   size_t max_inputs = kMaxInputs;
   size_t max_dims = kMaxDims;
