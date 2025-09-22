@@ -1,5 +1,6 @@
 #include "inference_runner.hpp"
 
+#include <ATen/Context.h>
 #include <ATen/core/ScalarType.h>
 #include <ATen/core/TensorBody.h>
 #include <c10/core/InferenceMode.h>
@@ -43,6 +44,36 @@
 #include "warmup.hpp"
 
 namespace starpu_server {
+
+namespace {
+
+class CuDnnBenchmarkGuard {
+ public:
+  explicit CuDnnBenchmarkGuard(bool enable)
+      : active_(enable && torch::cuda::is_available())
+  {
+    if (active_) {
+      previous_ = at::globalContext().benchmarkCuDNN();
+      at::globalContext().setBenchmarkCuDNN(true);
+    }
+  }
+
+  CuDnnBenchmarkGuard(const CuDnnBenchmarkGuard&) = delete;
+  CuDnnBenchmarkGuard& operator=(const CuDnnBenchmarkGuard&) = delete;
+
+  ~CuDnnBenchmarkGuard()
+  {
+    if (active_) {
+      at::globalContext().setBenchmarkCuDNN(previous_);
+    }
+  }
+
+ private:
+  bool previous_ = false;
+  bool active_ = false;
+};
+
+}  // namespace
 
 static auto
 default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
@@ -357,6 +388,8 @@ void
 run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
   NvtxRange nvtx_scope("inference_loop");
+  const c10::InferenceMode inference_guard;
+  CuDnnBenchmarkGuard cudnn_benchmark_guard(opts.use_cuda);
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;
