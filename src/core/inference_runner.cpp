@@ -277,12 +277,38 @@ static void
 process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
-    std::vector<torch::jit::script::Module>& models_gpu, bool validate_results,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<int>& device_ids, bool validate_results,
     VerbosityLevel verbosity, double rtol, double atol)
 {
   if (!validate_results) {
     log_info(verbosity, "Result validation disabled; skipping checks.");
   }
+
+  const auto build_gpu_lookup = [&models_gpu, &device_ids]() {
+    std::vector<torch::jit::script::Module*> lookup;
+    if (models_gpu.empty() || device_ids.empty()) {
+      return lookup;
+    }
+
+    const auto max_it = std::max_element(device_ids.begin(), device_ids.end());
+    if (max_it == device_ids.end() || *max_it < 0) {
+      return lookup;
+    }
+
+    lookup.resize(static_cast<size_t>(*max_it) + 1, nullptr);
+    const size_t replicas = std::min(models_gpu.size(), device_ids.size());
+    for (size_t idx = 0; idx < replicas; ++idx) {
+      const int device_id = device_ids[idx];
+      if (device_id < 0) {
+        continue;
+      }
+      lookup[static_cast<size_t>(device_id)] = &models_gpu[idx];
+    }
+    return lookup;
+  };
+
+  auto gpu_model_lookup = build_gpu_lookup();
   for (const auto& result : results) {
     if (result.results.empty() || !result.results[0].defined()) {
       log_error(std::format("[Client] Job {} failed.", result.job_id));
@@ -290,14 +316,33 @@ process_results(
     }
 
     torch::jit::script::Module* cpu_model = &model_cpu;
+    bool skip_validation = false;
     if (result.executed_on == DeviceType::CUDA) {
-      const auto device_id = static_cast<size_t>(result.device_id);
-      if (device_id < models_gpu.size()) {
-        cpu_model = &models_gpu[device_id];
+      if (result.device_id >= 0) {
+        const auto device_id = static_cast<size_t>(result.device_id);
+        if (device_id < gpu_model_lookup.size() &&
+            gpu_model_lookup[device_id] != nullptr) {
+          cpu_model = gpu_model_lookup[device_id];
+        } else {
+          if (validate_results) {
+            log_warning(std::format(
+                "[Client] Skipping validation for job {}: no GPU replica for "
+                "device {}",
+                result.job_id, result.device_id));
+          }
+          skip_validation = true;
+        }
+      } else {
+        if (validate_results) {
+          log_warning(std::format(
+              "[Client] Skipping validation for job {}: invalid device id {}",
+              result.job_id, result.device_id));
+        }
+        skip_validation = true;
       }
     }
 
-    if (validate_results) {
+    if (validate_results && !skip_validation) {
       validate_inference_result(result, *cpu_model, verbosity, rtol, atol);
     }
   }
@@ -408,7 +453,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   }
 
   process_results(
-      results, model_cpu, models_gpu, opts.validate_results, opts.verbosity,
-      opts.rtol, opts.atol);
+      results, model_cpu, models_gpu, opts.device_ids, opts.validate_results,
+      opts.verbosity, opts.rtol, opts.atol);
 }
 }  // namespace starpu_server

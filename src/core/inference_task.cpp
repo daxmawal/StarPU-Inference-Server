@@ -21,9 +21,9 @@
 #include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "inference_runner.hpp"
+#include "output_slot_pool.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
-#include "output_slot_pool.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -214,10 +214,30 @@ InferenceTask::fill_model_pointers(
 {
   params->models.model_cpu = model_cpu_;
   params->models.num_models_gpu = models_gpu_->size();
-  params->models.models_gpu.resize(models_gpu_->size());
+  params->models.models_gpu.clear();
 
-  for (size_t i = 0; i < models_gpu_->size(); ++i) {
-    params->models.models_gpu[i] = &(models_gpu_->at(i));
+  if (opts_ == nullptr || opts_->device_ids.empty() || models_gpu_->empty()) {
+    return;
+  }
+
+  const auto max_device_id = static_cast<int>(
+      *std::max_element(opts_->device_ids.begin(), opts_->device_ids.end()));
+  if (max_device_id < 0) {
+    return;
+  }
+
+  params->models.models_gpu.resize(
+      static_cast<size_t>(max_device_id) + 1, nullptr);
+
+  const size_t replicas =
+      std::min(models_gpu_->size(), opts_->device_ids.size());
+  for (size_t i = 0; i < replicas; ++i) {
+    const int device_id = opts_->device_ids[i];
+    if (device_id < 0) {
+      continue;
+    }
+    params->models.models_gpu[static_cast<size_t>(device_id)] =
+        &(models_gpu_->at(i));
   }
 }
 
@@ -503,11 +523,14 @@ InferenceTask::finalize_inference_task(void* arg)
       for (size_t i = 0; i < n; ++i) {
         const auto& t = job_outs[i];
         if (!t.defined() || !t.is_cpu() || !t.is_contiguous()) {
-          throw std::runtime_error("Job output tensor must be defined, CPU and contiguous");
+          throw std::runtime_error(
+              "Job output tensor must be defined, CPU and contiguous");
         }
-        std::memcpy(t.data_ptr(), base_ptrs[i], static_cast<size_t>(t.nbytes()));
+        std::memcpy(
+            t.data_ptr(), base_ptrs[i], static_cast<size_t>(t.nbytes()));
       }
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
       log_error(std::string("Output copy from pool failed: ") + e.what());
     }
   }
@@ -521,7 +544,8 @@ InferenceTask::finalize_inference_task(void* arg)
   if (ctx->on_finished) {
     try {
       ctx->on_finished();
-    } catch (const std::exception& e) {
+    }
+    catch (const std::exception& e) {
       log_error(std::string("Exception in on_finished: ") + e.what());
     }
   }
