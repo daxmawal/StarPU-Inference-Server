@@ -35,6 +35,13 @@ class InputSlotPool {
     std::vector<starpu_data_handle_t> handles;   // per-input StarPU handles
   };
 
+  struct HostBufferInfo {
+    bool cuda_pinned = false;
+    bool starpu_pinned = false;
+    int starpu_pin_rc = 0;
+    size_t bytes = 0;
+  };
+
   // Construct the pool. If slots<=0, an auto default is used.
   InputSlotPool(const RuntimeConfig& opts, int slots);
   ~InputSlotPool();
@@ -76,8 +83,8 @@ class InputSlotPool {
   std::vector<SlotInfo> slots_;
   int bmax_ = 1;
 
-  // Memory management flags for each slot/input (whether pinned was used).
-  std::vector<std::vector<uint8_t>> pinned_flags_;
+  // Memory management metadata for each slot/input host buffer.
+  std::vector<std::vector<HostBufferInfo>> host_buffer_infos_;
 
   // Free-list management
   std::vector<int> free_ids_;

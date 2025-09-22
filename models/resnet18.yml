@@ -1,4 +1,4 @@
-scheduler: dmdas
+scheduler: eager
 model: ../models/resnet18.pt
 device_ids: [0]
 input:
