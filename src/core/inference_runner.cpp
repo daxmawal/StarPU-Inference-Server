@@ -389,7 +389,8 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
   NvtxRange nvtx_scope("inference_loop");
   const c10::InferenceMode inference_guard;
-  CuDnnBenchmarkGuard cudnn_benchmark_guard(opts.use_cuda);
+  CuDnnBenchmarkGuard cudnn_benchmark_guard(
+      opts.use_cuda && !opts.dynamic_batching);
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;

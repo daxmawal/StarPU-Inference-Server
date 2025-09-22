@@ -31,6 +31,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "    data_type: float32\n";
   yaml << "verbosity: 3\n";
   yaml << "max_batch_size: 4\n";
+  yaml << "dynamic_batching: true\n";
   yaml << "pregen_inputs: 8\n";
   yaml << "warmup_pregen_inputs: 5\n";
   yaml << "warmup_iterations: 3\n";
@@ -58,6 +59,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(cfg.models[0].outputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
   EXPECT_EQ(cfg.max_batch_size, 4);
+  EXPECT_TRUE(cfg.dynamic_batching);
   EXPECT_EQ(cfg.pregen_inputs, 8U);
   EXPECT_EQ(cfg.warmup_pregen_inputs, 5U);
   EXPECT_EQ(cfg.warmup_iterations, 3);

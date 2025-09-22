@@ -10,6 +10,7 @@ verbosity: "4"
 address: "0.0.0.0:50051"
 metrics_port: 9100
 max_batch_size: 32
+dynamic_batching: false
 sync: false
 use_cpu: true
 use_cuda: true
