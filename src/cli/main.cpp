@@ -1,5 +1,6 @@
 #include <torch/version.h>
 
+#include <chrono>
 #include <exception>
 #include <format>
 #include <memory>
@@ -56,8 +57,44 @@ main(int argc, char* argv[]) -> int
 
   std::unique_ptr<starpu_server::StarPUSetup> starpu;
   try {
+    const auto batch_size_from_config =
+        [](const starpu_server::RuntimeConfig& cfg) -> std::size_t {
+      if (cfg.models.empty() || cfg.models[0].inputs.empty()) {
+        return 1;
+      }
+
+      const auto& dims = cfg.models[0].inputs[0].dims;
+      if (dims.empty()) {
+        return 1;
+      }
+
+      const auto dim0 = dims.front();
+      return dim0 > 0 ? static_cast<std::size_t>(dim0) : std::size_t{1};
+    };
+
     starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
+
+    const auto start_time = std::chrono::steady_clock::now();
     starpu_server::run_inference_loop(opts, *starpu);
+    const auto end_time = std::chrono::steady_clock::now();
+
+    const int iterations = opts.iterations;
+    const std::size_t batch_size = batch_size_from_config(opts);
+    if (iterations > 0 && batch_size > 0) {
+      const std::size_t total_inferences =
+          static_cast<std::size_t>(iterations) * batch_size;
+      const double duration_s =
+          std::chrono::duration<double>(end_time - start_time).count();
+      if (duration_s > 0.0) {
+        const double throughput =
+            static_cast<double>(total_inferences) / duration_s;
+        starpu_server::log_stats(
+            opts.verbosity,
+            std::format(
+                "Throughput: {:.3f} inf/s ({} inferences over {:.3f} s)",
+                throughput, total_inferences, duration_s));
+      }
+    }
   }
   catch (const starpu_server::InferenceEngineException& e) {
     starpu_server::log_error(std::format("Inference Error: {}", e.what()));
