@@ -195,3 +195,23 @@ TEST(InferenceService, ValidateInputsShapeOverflow)
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
+
+TEST(InferenceService, SubmitJobAndWaitReturnsUnavailableWhenQueueShutdown)
+{
+  starpu_server::InferenceQueue queue;
+  queue.shutdown();
+  std::vector<torch::Tensor> ref_outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+
+  auto status = service.submit_job_and_wait(inputs, outputs);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
+  EXPECT_TRUE(outputs.empty());
+}

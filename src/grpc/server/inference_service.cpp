@@ -278,6 +278,10 @@ InferenceServiceImpl::submit_job_and_wait(
       });
 
   const bool pushed = queue_->push(job);
+  if (!pushed) {
+    outputs.clear();
+    return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
+  }
   outputs = result_future.get();
 
   if (outputs.empty()) {
