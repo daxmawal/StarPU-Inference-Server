@@ -119,6 +119,7 @@ target_sources(
           ${SRC_DIR}/utils/client_utils.cpp
           ${SRC_DIR}/utils/config_loader.cpp
           ${SRC_DIR}/utils/inference_validator.cpp
+          ${SRC_DIR}/utils/perf_observer.cpp
           ${SRC_DIR}/utils/time_utils.cpp
           ${SRC_DIR}/monitoring/metrics.cpp
           ${SRC_DIR}/starpu_task_worker/starpu_task_worker.cpp)

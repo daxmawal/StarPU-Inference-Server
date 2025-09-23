@@ -23,6 +23,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "utils/nvtx.hpp"
+#include "utils/perf_observer.hpp"
 
 namespace starpu_server {
 namespace {
@@ -35,6 +36,22 @@ validate_not_null(const void* ptr, std::string_view field_name)
   }
   throw std::invalid_argument(std::format(
       "[ERROR] StarPUTaskRunnerConfig::{} must not be null", field_name));
+}
+
+inline auto
+batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
+{
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  const auto& first = inputs.front();
+  if (first.dim() <= 0) {
+    return 1;
+  }
+
+  const auto dim0 = first.size(0);
+  return dim0 > 0 ? static_cast<std::size_t>(dim0) : std::size_t{1};
 }
 }  // namespace
 // =============================================================================
@@ -149,6 +166,12 @@ StarPUTaskRunner::prepare_job_completion_callback(
               job_sptr->get_device_id(), job_sptr->get_worker_id(),
               job_sptr->get_executed_on());
         }
+
+        perf_observer::record_job(
+            job_sptr->timing_info().enqueued_time,
+            job_sptr->timing_info().callback_end_time,
+            batch_size_from_inputs(job_sptr->get_input_tensors()),
+            job_sptr->get_fixed_worker_id().has_value());
 
         log_job_timings(
             job_sptr->get_job_id(), latency_ms, job_sptr->timing_info());
