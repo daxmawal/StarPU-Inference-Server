@@ -35,13 +35,16 @@ TEST(GrpcClientServer, EndToEndInference)
   EXPECT_GT(response.server_receive_ms(), 0);
   EXPECT_GT(response.server_send_ms(), 0);
   starpu_server::InferenceServiceImpl::LatencyBreakdown response_breakdown;
+  response_breakdown.preprocess_ms = response.server_preprocess_ms();
   response_breakdown.queue_ms = response.server_queue_ms();
   response_breakdown.submit_ms = response.server_submit_ms();
   response_breakdown.scheduling_ms = response.server_scheduling_ms();
   response_breakdown.codelet_ms = response.server_codelet_ms();
   response_breakdown.inference_ms = response.server_inference_ms();
   response_breakdown.callback_ms = response.server_callback_ms();
+  response_breakdown.postprocess_ms = response.server_postprocess_ms();
   response_breakdown.total_ms = response.server_total_ms();
+  response_breakdown.overall_ms = response.server_overall_ms();
   starpu_server::verify_populate_response(
       request, response, expected_outputs, response.server_receive_ms(),
       response.server_send_ms(), response_breakdown);

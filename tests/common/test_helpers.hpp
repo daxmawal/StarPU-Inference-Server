@@ -254,13 +254,16 @@ verify_populate_response(
   EXPECT_EQ(resp.model_version(), req.model_version());
   EXPECT_EQ(resp.server_receive_ms(), recv_ms);
   EXPECT_EQ(resp.server_send_ms(), send_ms);
+  EXPECT_DOUBLE_EQ(resp.server_preprocess_ms(), breakdown.preprocess_ms);
   EXPECT_DOUBLE_EQ(resp.server_queue_ms(), breakdown.queue_ms);
   EXPECT_DOUBLE_EQ(resp.server_submit_ms(), breakdown.submit_ms);
   EXPECT_DOUBLE_EQ(resp.server_scheduling_ms(), breakdown.scheduling_ms);
   EXPECT_DOUBLE_EQ(resp.server_codelet_ms(), breakdown.codelet_ms);
   EXPECT_DOUBLE_EQ(resp.server_inference_ms(), breakdown.inference_ms);
   EXPECT_DOUBLE_EQ(resp.server_callback_ms(), breakdown.callback_ms);
+  EXPECT_DOUBLE_EQ(resp.server_postprocess_ms(), breakdown.postprocess_ms);
   EXPECT_DOUBLE_EQ(resp.server_total_ms(), breakdown.total_ms);
+  EXPECT_DOUBLE_EQ(resp.server_overall_ms(), breakdown.overall_ms);
 
   ASSERT_EQ(resp.outputs_size(), static_cast<int>(outputs.size()));
   ASSERT_EQ(resp.raw_output_contents_size(), static_cast<int>(outputs.size()));

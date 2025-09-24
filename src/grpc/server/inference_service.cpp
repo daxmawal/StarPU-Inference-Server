@@ -1,5 +1,6 @@
 #include "inference_service.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -265,13 +266,15 @@ InferenceServiceImpl::validate_and_convert_inputs(
 auto
 InferenceServiceImpl::submit_job_and_wait(
     const std::vector<torch::Tensor>& inputs,
-    std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown) -> Status
+    std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
+    detail::TimingInfo& timing_capture) -> Status
 {
   auto job =
       client_utils::create_job(inputs, *reference_outputs_, next_job_id_++);
   struct JobResult {
     std::vector<torch::Tensor> outputs;
     LatencyBreakdown breakdown;
+    detail::TimingInfo timing_info;
   };
 
   std::promise<JobResult> result_promise;
@@ -300,7 +303,7 @@ InferenceServiceImpl::submit_job_and_wait(
         duration_f(info.callback_end_time - info.callback_start_time).count();
     timing.total_ms = latency_ms;
 
-    result_promise.set_value(JobResult{outs, timing});
+    result_promise.set_value(JobResult{outs, timing, info});
   });
 
   const bool pushed = queue_->push(job);
@@ -311,6 +314,7 @@ InferenceServiceImpl::submit_job_and_wait(
   auto result = result_future.get();
   outputs = std::move(result.outputs);
   breakdown = result.breakdown;
+  timing_capture = result.timing_info;
 
   if (outputs.empty()) {
     return {grpc::StatusCode::INTERNAL, "Inference failed"};
@@ -322,19 +326,21 @@ InferenceServiceImpl::submit_job_and_wait(
 auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
-    const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms,
+    const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
     const LatencyBreakdown& breakdown) -> Status
 {
   reply->set_model_name(request->model_name());
   reply->set_model_version(request->model_version());
   reply->set_server_receive_ms(recv_ms);
-  reply->set_server_send_ms(send_ms);
   reply->set_server_queue_ms(breakdown.queue_ms);
   reply->set_server_submit_ms(breakdown.submit_ms);
   reply->set_server_scheduling_ms(breakdown.scheduling_ms);
   reply->set_server_codelet_ms(breakdown.codelet_ms);
   reply->set_server_inference_ms(breakdown.inference_ms);
   reply->set_server_callback_ms(breakdown.callback_ms);
+  reply->set_server_preprocess_ms(breakdown.preprocess_ms);
+  reply->set_server_postprocess_ms(breakdown.postprocess_ms);
+  reply->set_server_overall_ms(breakdown.overall_ms);
   reply->set_server_total_ms(breakdown.total_ms);
   return fill_output_tensor(reply, outputs);
 }
@@ -362,7 +368,22 @@ InferenceServiceImpl::ModelInfer(
 
   std::vector<torch::Tensor> outputs;
   LatencyBreakdown breakdown;
-  status = submit_job_and_wait(inputs, outputs, breakdown);
+  detail::TimingInfo timing_info{};
+  status = submit_job_and_wait(inputs, outputs, breakdown, timing_info);
+  if (!status.ok()) {
+    return status;
+  }
+
+  const auto zero_tp = std::chrono::high_resolution_clock::time_point{};
+  if (timing_info.enqueued_time > zero_tp) {
+    const auto preprocess_duration = std::chrono::duration<double, std::milli>(
+        timing_info.enqueued_time - recv_tp);
+    breakdown.preprocess_ms = std::max(0.0, preprocess_duration.count());
+  } else {
+    breakdown.preprocess_ms = 0.0;
+  }
+
+  status = populate_response(request, reply, outputs, recv_ms, breakdown);
   if (!status.ok()) {
     return status;
   }
@@ -372,11 +393,22 @@ InferenceServiceImpl::ModelInfer(
                         send_tp.time_since_epoch())
                         .count();
 
-  status =
-      populate_response(request, reply, outputs, recv_ms, send_ms, breakdown);
-  if (!status.ok()) {
-    return status;
+  reply->set_server_send_ms(send_ms);
+
+  if (timing_info.callback_end_time > zero_tp) {
+    const auto postprocess_duration = std::chrono::duration<double, std::milli>(
+        send_tp - timing_info.callback_end_time);
+    breakdown.postprocess_ms = std::max(0.0, postprocess_duration.count());
+  } else {
+    breakdown.postprocess_ms = 0.0;
   }
+  breakdown.overall_ms = std::max(
+      0.0,
+      std::chrono::duration<double, std::milli>(send_tp - recv_tp).count());
+
+  reply->set_server_preprocess_ms(breakdown.preprocess_ms);
+  reply->set_server_postprocess_ms(breakdown.postprocess_ms);
+  reply->set_server_overall_ms(breakdown.overall_ms);
 
   if (metrics && metrics->inference_latency != nullptr) {
     const auto latency_ms =

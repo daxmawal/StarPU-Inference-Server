@@ -11,6 +11,10 @@
 #include "utils/logger.hpp"
 
 namespace starpu_server {
+namespace detail {
+struct TimingInfo;
+}
+
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
  public:
@@ -44,25 +48,28 @@ class InferenceServiceImpl final
       inference::ModelInferResponse* reply) -> grpc::Status override;
 
   struct LatencyBreakdown {
+    double preprocess_ms = 0.0;
     double queue_ms = 0.0;
     double submit_ms = 0.0;
     double scheduling_ms = 0.0;
     double codelet_ms = 0.0;
     double inference_ms = 0.0;
     double callback_ms = 0.0;
+    double postprocess_ms = 0.0;
     double total_ms = 0.0;
+    double overall_ms = 0.0;
   };
 
   static auto populate_response(
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
-      int64_t send_ms, const LatencyBreakdown& breakdown) -> grpc::Status;
+      const LatencyBreakdown& breakdown) -> grpc::Status;
 
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
-      std::vector<torch::Tensor>& outputs,
-      LatencyBreakdown& breakdown) -> grpc::Status;
+      std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
+      detail::TimingInfo& timing_info) -> grpc::Status;
 
   auto validate_and_convert_inputs(
       const inference::ModelInferRequest* request,

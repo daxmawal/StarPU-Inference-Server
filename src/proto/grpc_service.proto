@@ -879,6 +879,27 @@ message ModelInferResponse
   //@@     Total server-side latency observed for the request.
   //@@
   double server_total_ms = 15;
+
+  //@@  .. cpp:var:: double server_preprocess_ms
+  //@@
+  //@@     Time spent on the server between receiving the request and
+  //@@     enqueueing the job for execution.
+  //@@
+  double server_preprocess_ms = 16;
+
+  //@@  .. cpp:var:: double server_postprocess_ms
+  //@@
+  //@@     Time spent preparing the response after the job has finished,
+  //@@     including tensor copies into the reply message.
+  //@@
+  double server_postprocess_ms = 17;
+
+  //@@  .. cpp:var:: double server_overall_ms
+  //@@
+  //@@     Total time spent on the server handling the request, from
+  //@@     reception to the response being ready to send.
+  //@@
+  double server_overall_ms = 18;
 }
 
 //@@

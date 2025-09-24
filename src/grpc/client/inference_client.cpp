@@ -203,19 +203,33 @@ InferenceClient::AsyncCompleteRpc()
       const auto codelet_ms = call->reply.server_codelet_ms();
       const auto inference_ms = call->reply.server_inference_ms();
       const auto callback_ms = call->reply.server_callback_ms();
+      const auto preprocess_ms = call->reply.server_preprocess_ms();
+      const auto postprocess_ms = call->reply.server_postprocess_ms();
+      const auto overall_ms = call->reply.server_overall_ms();
+
+      const double accounted_roundtrip_ms =
+          request_latency_ms + overall_ms + response_latency_ms;
+      double client_overhead_ms =
+          static_cast<double>(latency) - accounted_roundtrip_ms;
+      if (client_overhead_ms < 0.0) {
+        client_overhead_ms = 0.0;
+      }
 
       log_info(
           verbosity_,
           std::format(
               "Request ID {} sent at {} received at {} latency: {} "
-              "ms (server total: {:.3f} ms | queue: {:.3f} ms, submit: "
-              "{:.3f} ms, scheduling: {:.3f} ms, codelet: {:.3f} ms, "
-              "inference: {:.3f} ms, callback: {:.3f} ms), "
-              "request_latency: {} ms, response_latency: {} ms",
+              "ms (server overall: {:.3f} ms | preprocess: {:.3f} ms, queue: "
+              "{:.3f} ms, submit: {:.3f} ms, scheduling: {:.3f} ms, codelet: "
+              "{:.3f} ms, inference: {:.3f} ms, callback: {:.3f} ms, "
+              "postprocess: {:.3f} ms, job_total: {:.3f} ms), "
+              "request_latency: {} ms, response_latency: {} ms, "
+              "client_overhead: {:.3f} ms",
               call->request_id, sent_time_str, recv_time_str, latency,
-              server_total_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
-              inference_ms, callback_ms, request_latency_ms,
-              response_latency_ms));
+              overall_ms, preprocess_ms, queue_ms, submit_ms, scheduling_ms,
+              codelet_ms, inference_ms, callback_ms, postprocess_ms,
+              server_total_ms, request_latency_ms, response_latency_ms,
+              client_overhead_ms));
     } else {
       log_error(std::format(
           "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
