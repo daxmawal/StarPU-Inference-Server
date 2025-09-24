@@ -1,5 +1,6 @@
 #include "inference_client.hpp"
 
+#include <cstdint>
 #include <format>
 #include <stdexcept>
 
@@ -170,19 +171,31 @@ InferenceClient::AsyncCompleteRpc()
     auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                        end - call->start_time)
                        .count();
+    const auto end_ms = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            end.time_since_epoch())
+            .count());
 
     auto sent_time_str = time_utils::format_timestamp(call->start_time);
     auto recv_time_str = time_utils::format_timestamp(end);
 
     if (call->status.ok()) {
-      auto start_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                          call->start_time.time_since_epoch())
-                          .count();
-      auto request_tx = call->reply.server_receive_ms() - start_ms;
-      auto response_tx = std::chrono::duration_cast<std::chrono::milliseconds>(
-                             end.time_since_epoch())
-                             .count() -
-                         call->reply.server_send_ms();
+      const auto start_ms = static_cast<int64_t>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              call->start_time.time_since_epoch())
+              .count());
+      const auto server_receive_ms =
+          static_cast<int64_t>(call->reply.server_receive_ms());
+      const auto server_send_ms =
+          static_cast<int64_t>(call->reply.server_send_ms());
+      int64_t request_latency_ms = server_receive_ms - start_ms;
+      int64_t response_latency_ms = end_ms - server_send_ms;
+      if (request_latency_ms < 0) {
+        request_latency_ms = 0;
+      }
+      if (response_latency_ms < 0) {
+        response_latency_ms = 0;
+      }
       const auto server_total_ms = call->reply.server_total_ms();
       const auto queue_ms = call->reply.server_queue_ms();
       const auto submit_ms = call->reply.server_submit_ms();
@@ -197,11 +210,12 @@ InferenceClient::AsyncCompleteRpc()
               "Request ID {} sent at {} received at {} latency: {} "
               "ms (server total: {:.3f} ms | queue: {:.3f} ms, submit: "
               "{:.3f} ms, scheduling: {:.3f} ms, codelet: {:.3f} ms, "
-              "inference: {:.3f} ms, callback: {:.3f} ms), req_tx: {} "
-              "ms, resp_tx: {} ms",
+              "inference: {:.3f} ms, callback: {:.3f} ms), "
+              "request_latency: {} ms, response_latency: {} ms",
               call->request_id, sent_time_str, recv_time_str, latency,
               server_total_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
-              inference_ms, callback_ms, request_tx, response_tx));
+              inference_ms, callback_ms, request_latency_ms,
+              response_latency_ms));
     } else {
       log_error(std::format(
           "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
