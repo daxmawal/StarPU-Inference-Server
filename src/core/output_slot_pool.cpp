@@ -141,9 +141,18 @@ OutputSlotPool::allocate_slot_buffers_and_register(
 
   const bool want_pinned = opts.use_cuda;
 
+  const size_t batch_size = static_cast<size_t>(bmax_);
+  constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
+
   for (size_t i = 0; i < n_out; ++i) {
-    const size_t bytes =
-        per_output_bytes_single_[i] * static_cast<size_t>(bmax_);
+    const size_t per_sample_bytes = per_output_bytes_single_[i];
+    if (per_sample_bytes != 0 && batch_size > kMaxSizeT / per_sample_bytes) {
+      throw std::overflow_error(
+          "OutputSlotPool: per-sample bytes (" +
+          std::to_string(per_sample_bytes) + ") times batch size (" +
+          std::to_string(batch_size) + ") exceeds size_t range");
+    }
+    const size_t bytes = per_sample_bytes * batch_size;
     bool cuda_pinned = false;
     void* ptr = alloc_host_buffer(bytes, want_pinned, cuda_pinned);
     slot.base_ptrs[i] = ptr;
@@ -166,8 +175,14 @@ OutputSlotPool::allocate_slot_buffers_and_register(
       }
     }
 
-    const size_t total_numel =
-        per_output_numel_single_[i] * static_cast<size_t>(bmax_);
+    const size_t per_sample_numel = per_output_numel_single_[i];
+    if (per_sample_numel != 0 && batch_size > kMaxSizeT / per_sample_numel) {
+      throw std::overflow_error(
+          "OutputSlotPool: per-sample numel (" +
+          std::to_string(per_sample_numel) + ") times batch size (" +
+          std::to_string(batch_size) + ") exceeds size_t range");
+    }
+    const size_t total_numel = per_sample_numel * batch_size;
     starpu_data_handle_t h = nullptr;
     starpu_vector_data_register(
         &h, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr), total_numel,
