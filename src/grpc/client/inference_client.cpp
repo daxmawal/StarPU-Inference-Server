@@ -3,7 +3,9 @@
 #include <cstdint>
 #include <format>
 #include <stdexcept>
+#include <string>
 
+#include "core/latency_statistics.hpp"
 #include "utils/logger.hpp"
 #include "utils/time_utils.hpp"
 
@@ -24,6 +26,75 @@ InferenceClient::InferenceClient(
     : stub_(inference::GRPCInferenceService::NewStub(channel)),
       verbosity_(verbosity)
 {
+}
+
+void
+InferenceClient::record_latency(
+    double roundtrip_ms, double server_overall_ms, double preprocess_ms,
+    double queue_ms, double submit_ms, double scheduling_ms, double codelet_ms,
+    double inference_ms, double callback_ms, double postprocess_ms,
+    double job_total_ms, double request_latency_ms, double response_latency_ms,
+    double client_overhead_ms)
+{
+  latency_records_.roundtrip_ms.push_back(roundtrip_ms);
+  latency_records_.server_overall_ms.push_back(server_overall_ms);
+  latency_records_.server_preprocess_ms.push_back(preprocess_ms);
+  latency_records_.server_queue_ms.push_back(queue_ms);
+  latency_records_.server_submit_ms.push_back(submit_ms);
+  latency_records_.server_scheduling_ms.push_back(scheduling_ms);
+  latency_records_.server_codelet_ms.push_back(codelet_ms);
+  latency_records_.server_inference_ms.push_back(inference_ms);
+  latency_records_.server_callback_ms.push_back(callback_ms);
+  latency_records_.server_postprocess_ms.push_back(postprocess_ms);
+  latency_records_.server_job_total_ms.push_back(job_total_ms);
+  latency_records_.request_latency_ms.push_back(request_latency_ms);
+  latency_records_.response_latency_ms.push_back(response_latency_ms);
+  latency_records_.client_overhead_ms.push_back(client_overhead_ms);
+}
+
+void
+InferenceClient::log_latency_summary() const
+{
+  if (latency_records_.empty()) {
+    return;
+  }
+
+  const auto sample_count = latency_records_.roundtrip_ms.size();
+  std::string stats_msg = std::format(
+      "Processed {} inference responses. Latency statistics (ms):",
+      sample_count);
+
+  const auto append_stats =
+      [&stats_msg](const char* label, const std::vector<double>& latencies) {
+        if (latencies.empty()) {
+          return;
+        }
+
+        if (const auto stats = compute_latency_statistics(latencies)) {
+          stats_msg += std::format(
+              "\n  - {}: mean={:.3f}, p50={:.3f}, p85={:.3f}, p95={:.3f}, "
+              "p100={:.3f}",
+              label, stats->mean, stats->p50, stats->p85, stats->p95,
+              stats->p100);
+        }
+      };
+
+  append_stats("latency", latency_records_.roundtrip_ms);
+  append_stats("server overall", latency_records_.server_overall_ms);
+  append_stats("preprocess", latency_records_.server_preprocess_ms);
+  append_stats("queue", latency_records_.server_queue_ms);
+  append_stats("submit", latency_records_.server_submit_ms);
+  append_stats("scheduling", latency_records_.server_scheduling_ms);
+  append_stats("codelet", latency_records_.server_codelet_ms);
+  append_stats("inference", latency_records_.server_inference_ms);
+  append_stats("callback", latency_records_.server_callback_ms);
+  append_stats("postprocess", latency_records_.server_postprocess_ms);
+  append_stats("job_total", latency_records_.server_job_total_ms);
+  append_stats("request_latency", latency_records_.request_latency_ms);
+  append_stats("response_latency", latency_records_.response_latency_ms);
+  append_stats("client_overhead", latency_records_.client_overhead_ms);
+
+  log_info(verbosity_, stats_msg);
 }
 
 auto
@@ -215,6 +286,16 @@ InferenceClient::AsyncCompleteRpc()
         client_overhead_ms = 0.0;
       }
 
+      record_latency(
+          static_cast<double>(latency), static_cast<double>(overall_ms),
+          static_cast<double>(preprocess_ms), static_cast<double>(queue_ms),
+          static_cast<double>(submit_ms), static_cast<double>(scheduling_ms),
+          static_cast<double>(codelet_ms), static_cast<double>(inference_ms),
+          static_cast<double>(callback_ms), static_cast<double>(postprocess_ms),
+          static_cast<double>(server_total_ms),
+          static_cast<double>(request_latency_ms),
+          static_cast<double>(response_latency_ms), client_overhead_ms);
+
       log_info(
           verbosity_,
           std::format(
@@ -236,6 +317,8 @@ InferenceClient::AsyncCompleteRpc()
           call->status.error_message()));
     }
   }
+
+  log_latency_summary();
 }
 
 void

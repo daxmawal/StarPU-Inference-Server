@@ -35,9 +35,37 @@ class InferenceClient {
   void Shutdown();
 
  private:
+  struct LatencyRecords {
+    std::vector<double> roundtrip_ms;
+    std::vector<double> server_overall_ms;
+    std::vector<double> server_preprocess_ms;
+    std::vector<double> server_queue_ms;
+    std::vector<double> server_submit_ms;
+    std::vector<double> server_scheduling_ms;
+    std::vector<double> server_codelet_ms;
+    std::vector<double> server_inference_ms;
+    std::vector<double> server_callback_ms;
+    std::vector<double> server_postprocess_ms;
+    std::vector<double> server_job_total_ms;
+    std::vector<double> request_latency_ms;
+    std::vector<double> response_latency_ms;
+    std::vector<double> client_overhead_ms;
+
+    [[nodiscard]] auto empty() const -> bool { return roundtrip_ms.empty(); }
+  };
+
   std::unique_ptr<inference::GRPCInferenceService::Stub> stub_;
   grpc::CompletionQueue cq_;
   std::atomic<int> next_request_id_{0};
   VerbosityLevel verbosity_;
+  LatencyRecords latency_records_;
+
+  void record_latency(
+      double roundtrip_ms, double server_overall_ms, double preprocess_ms,
+      double queue_ms, double submit_ms, double scheduling_ms,
+      double codelet_ms, double inference_ms, double callback_ms,
+      double postprocess_ms, double job_total_ms, double request_latency_ms,
+      double response_latency_ms, double client_overhead_ms);
+  void log_latency_summary() const;
 };
 }  // namespace starpu_server
