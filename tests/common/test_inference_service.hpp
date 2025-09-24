@@ -19,6 +19,13 @@ expect_empty_infer_response(const inference::ModelInferResponse& resp)
   EXPECT_EQ(resp.raw_output_contents_size(), 0);
   EXPECT_EQ(resp.server_receive_ms(), 0);
   EXPECT_EQ(resp.server_send_ms(), 0);
+  EXPECT_DOUBLE_EQ(resp.server_queue_ms(), 0.0);
+  EXPECT_DOUBLE_EQ(resp.server_submit_ms(), 0.0);
+  EXPECT_DOUBLE_EQ(resp.server_scheduling_ms(), 0.0);
+  EXPECT_DOUBLE_EQ(resp.server_codelet_ms(), 0.0);
+  EXPECT_DOUBLE_EQ(resp.server_inference_ms(), 0.0);
+  EXPECT_DOUBLE_EQ(resp.server_callback_ms(), 0.0);
+  EXPECT_DOUBLE_EQ(resp.server_total_ms(), 0.0);
 }
 
 class InferenceServiceTest : public ::testing::Test {

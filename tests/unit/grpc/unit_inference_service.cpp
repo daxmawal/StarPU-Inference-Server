@@ -107,11 +107,19 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   inference::ModelInferResponse reply;
   int64_t recv_ms = kI10;
   int64_t send_ms = kI20;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  breakdown.queue_ms = 1.0;
+  breakdown.submit_ms = 2.0;
+  breakdown.scheduling_ms = 3.0;
+  breakdown.codelet_ms = 4.0;
+  breakdown.inference_ms = 5.0;
+  breakdown.callback_ms = 6.0;
+  breakdown.total_ms = 7.0;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, send_ms);
+      &req, &reply, outputs, recv_ms, send_ms, breakdown);
   ASSERT_TRUE(status.ok());
   starpu_server::verify_populate_response(
-      req, reply, outputs, recv_ms, send_ms);
+      req, reply, outputs, recv_ms, send_ms, breakdown);
 }
 
 TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
@@ -124,12 +132,20 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
   inference::ModelInferResponse reply;
   int64_t recv_ms = kI10;
   int64_t send_ms = kI20;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  breakdown.queue_ms = 0.5;
+  breakdown.submit_ms = 1.5;
+  breakdown.scheduling_ms = 2.5;
+  breakdown.codelet_ms = 3.5;
+  breakdown.inference_ms = 4.5;
+  breakdown.callback_ms = 5.5;
+  breakdown.total_ms = 6.5;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, send_ms);
+      &req, &reply, outputs, recv_ms, send_ms, breakdown);
   ASSERT_TRUE(status.ok());
   auto contig = noncontig.contiguous();
   starpu_server::verify_populate_response(
-      req, reply, {contig}, recv_ms, send_ms);
+      req, reply, {contig}, recv_ms, send_ms, breakdown);
 }
 
 TEST(InferenceServiceImpl, PopulateResponseDetectsOverflow)
@@ -144,8 +160,9 @@ TEST(InferenceServiceImpl, PopulateResponseDetectsOverflow)
   inference::ModelInferResponse reply;
   int64_t recv_ms = 0;
   int64_t send_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, {huge_tensor}, recv_ms, send_ms);
+      &req, &reply, {huge_tensor}, recv_ms, send_ms, breakdown);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
@@ -210,7 +227,8 @@ TEST(InferenceService, SubmitJobAndWaitReturnsUnavailableWhenQueueShutdown)
   std::vector<torch::Tensor> outputs = {
       torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
 
-  auto status = service.submit_job_and_wait(inputs, outputs);
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  auto status = service.submit_job_and_wait(inputs, outputs, breakdown);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
   EXPECT_TRUE(outputs.empty());

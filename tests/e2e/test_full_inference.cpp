@@ -67,9 +67,18 @@ TEST(E2E, FullInference)
   ASSERT_TRUE(status.ok());
   EXPECT_GT(resp.server_receive_ms(), 0);
   EXPECT_GT(resp.server_send_ms(), 0);
+  starpu_server::InferenceServiceImpl::LatencyBreakdown response_breakdown;
+  response_breakdown.queue_ms = resp.server_queue_ms();
+  response_breakdown.submit_ms = resp.server_submit_ms();
+  response_breakdown.scheduling_ms = resp.server_scheduling_ms();
+  response_breakdown.codelet_ms = resp.server_codelet_ms();
+  response_breakdown.inference_ms = resp.server_inference_ms();
+  response_breakdown.callback_ms = resp.server_callback_ms();
+  response_breakdown.total_ms = resp.server_total_ms();
   starpu_server::verify_populate_response(
       req, resp, reference_outputs, resp.server_receive_ms(),
-      resp.server_send_ms());
+      resp.server_send_ms(), response_breakdown);
+  EXPECT_GE(resp.server_total_ms(), 0.0);
 
   starpu_server::StopServer(server.server);
   server.thread.join();

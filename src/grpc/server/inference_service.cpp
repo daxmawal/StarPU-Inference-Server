@@ -265,24 +265,52 @@ InferenceServiceImpl::validate_and_convert_inputs(
 auto
 InferenceServiceImpl::submit_job_and_wait(
     const std::vector<torch::Tensor>& inputs,
-    std::vector<torch::Tensor>& outputs) -> Status
+    std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown) -> Status
 {
   auto job =
       client_utils::create_job(inputs, *reference_outputs_, next_job_id_++);
-  std::promise<std::vector<torch::Tensor>> result_promise;
+  struct JobResult {
+    std::vector<torch::Tensor> outputs;
+    LatencyBreakdown breakdown;
+  };
+
+  std::promise<JobResult> result_promise;
   auto result_future = result_promise.get_future();
 
-  job->set_on_complete(
-      [&result_promise](const std::vector<torch::Tensor>& outs, double) {
-        result_promise.set_value(outs);
-      });
+  job->set_on_complete([&result_promise, job](
+                           const std::vector<torch::Tensor>& outs,
+                           double latency_ms) {
+    using duration_f = std::chrono::duration<double, std::milli>;
+    LatencyBreakdown timing{};
+    const auto& info = job->timing_info();
+    timing.queue_ms =
+        duration_f(info.dequeued_time - info.enqueued_time).count();
+    timing.submit_ms =
+        duration_f(info.before_starpu_submitted_time - info.dequeued_time)
+            .count();
+    timing.scheduling_ms =
+        duration_f(info.codelet_start_time - info.before_starpu_submitted_time)
+            .count();
+    timing.codelet_ms =
+        duration_f(info.codelet_end_time - info.codelet_start_time).count();
+    timing.inference_ms =
+        duration_f(info.callback_start_time - info.inference_start_time)
+            .count();
+    timing.callback_ms =
+        duration_f(info.callback_end_time - info.callback_start_time).count();
+    timing.total_ms = latency_ms;
+
+    result_promise.set_value(JobResult{outs, timing});
+  });
 
   const bool pushed = queue_->push(job);
   if (!pushed) {
     outputs.clear();
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
-  outputs = result_future.get();
+  auto result = result_future.get();
+  outputs = std::move(result.outputs);
+  breakdown = result.breakdown;
 
   if (outputs.empty()) {
     return {grpc::StatusCode::INTERNAL, "Inference failed"};
@@ -294,13 +322,20 @@ InferenceServiceImpl::submit_job_and_wait(
 auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
-    const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
-    int64_t send_ms) -> Status
+    const std::vector<torch::Tensor>& outputs, int64_t recv_ms, int64_t send_ms,
+    const LatencyBreakdown& breakdown) -> Status
 {
   reply->set_model_name(request->model_name());
   reply->set_model_version(request->model_version());
   reply->set_server_receive_ms(recv_ms);
   reply->set_server_send_ms(send_ms);
+  reply->set_server_queue_ms(breakdown.queue_ms);
+  reply->set_server_submit_ms(breakdown.submit_ms);
+  reply->set_server_scheduling_ms(breakdown.scheduling_ms);
+  reply->set_server_codelet_ms(breakdown.codelet_ms);
+  reply->set_server_inference_ms(breakdown.inference_ms);
+  reply->set_server_callback_ms(breakdown.callback_ms);
+  reply->set_server_total_ms(breakdown.total_ms);
   return fill_output_tensor(reply, outputs);
 }
 
@@ -326,7 +361,8 @@ InferenceServiceImpl::ModelInfer(
   }
 
   std::vector<torch::Tensor> outputs;
-  status = submit_job_and_wait(inputs, outputs);
+  LatencyBreakdown breakdown;
+  status = submit_job_and_wait(inputs, outputs, breakdown);
   if (!status.ok()) {
     return status;
   }
@@ -336,7 +372,8 @@ InferenceServiceImpl::ModelInfer(
                         send_tp.time_since_epoch())
                         .count();
 
-  status = populate_response(request, reply, outputs, recv_ms, send_ms);
+  status =
+      populate_response(request, reply, outputs, recv_ms, send_ms, breakdown);
   if (!status.ok()) {
     return status;
   }

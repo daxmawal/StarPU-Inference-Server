@@ -183,13 +183,25 @@ InferenceClient::AsyncCompleteRpc()
                              end.time_since_epoch())
                              .count() -
                          call->reply.server_send_ms();
+      const auto server_total_ms = call->reply.server_total_ms();
+      const auto queue_ms = call->reply.server_queue_ms();
+      const auto submit_ms = call->reply.server_submit_ms();
+      const auto scheduling_ms = call->reply.server_scheduling_ms();
+      const auto codelet_ms = call->reply.server_codelet_ms();
+      const auto inference_ms = call->reply.server_inference_ms();
+      const auto callback_ms = call->reply.server_callback_ms();
 
       log_info(
-          verbosity_, std::format(
-                          "Request ID {} sent at {} received at {} latency: {} "
-                          "ms, req_tx: {} ms, resp_tx: {} ms",
-                          call->request_id, sent_time_str, recv_time_str,
-                          latency, request_tx, response_tx));
+          verbosity_,
+          std::format(
+              "Request ID {} sent at {} received at {} latency: {} "
+              "ms (server total: {:.3f} ms | queue: {:.3f} ms, submit: "
+              "{:.3f} ms, scheduling: {:.3f} ms, codelet: {:.3f} ms, "
+              "inference: {:.3f} ms, callback: {:.3f} ms), req_tx: {} "
+              "ms, resp_tx: {} ms",
+              call->request_id, sent_time_str, recv_time_str, latency,
+              server_total_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
+              inference_ms, callback_ms, request_tx, response_tx));
     } else {
       log_error(std::format(
           "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
