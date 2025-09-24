@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -19,6 +20,7 @@ struct AsyncClientCall {
       response_reader = nullptr;
   std::chrono::high_resolution_clock::time_point start_time;
   int request_id = 0;
+  std::size_t inference_count = 1;
 };
 
 InferenceClient::InferenceClient(
@@ -94,7 +96,68 @@ InferenceClient::log_latency_summary() const
   append_stats("response_latency", latency_records_.response_latency_ms);
   append_stats("client_overhead", latency_records_.client_overhead_ms);
 
+  if (first_request_time_.has_value() && last_response_time_.has_value() &&
+      total_inference_count_ > 0) {
+    const auto elapsed_seconds =
+        std::chrono::duration<double>(
+            *last_response_time_ - *first_request_time_)
+            .count();
+    if (elapsed_seconds > 0.0) {
+      const double throughput =
+          static_cast<double>(total_inference_count_) / elapsed_seconds;
+      const auto batch_size =
+          last_batch_size_.has_value() ? *last_batch_size_ : std::size_t{1};
+      stats_msg += std::format(
+          "\n  - throughput: {:.3f} inferences/s ({} inferences over {:.3f} s, "
+          "batch_size={})",
+          throughput, total_inference_count_, elapsed_seconds, batch_size);
+    } else {
+      stats_msg += std::format(
+          "\n  - throughput: {} inferences (elapsed time too small to compute "
+          "rate)",
+          total_inference_count_);
+    }
+  }
+
   log_info(verbosity_, stats_msg);
+}
+
+auto
+InferenceClient::determine_inference_count(const ClientConfig& cfg)
+    -> std::size_t
+{
+  if (cfg.inputs.empty()) {
+    return 1;
+  }
+
+  std::optional<int64_t> batch_dim;
+  for (const auto& input : cfg.inputs) {
+    if (input.shape.empty()) {
+      continue;
+    }
+
+    const int64_t current_dim = input.shape.front();
+    if (current_dim <= 0) {
+      continue;
+    }
+
+    if (!batch_dim.has_value()) {
+      batch_dim = current_dim;
+      continue;
+    }
+
+    if (*batch_dim != current_dim) {
+      log_warning(std::format(
+          "Inconsistent batch dimension across inputs ({} vs {}). Using {}.",
+          *batch_dim, current_dim, *batch_dim));
+    }
+  }
+
+  if (!batch_dim.has_value()) {
+    return 1;
+  }
+
+  return static_cast<std::size_t>(*batch_dim);
 }
 
 auto
@@ -168,6 +231,12 @@ InferenceClient::AsyncModelInfer(
   auto call = std::make_unique<AsyncClientCall>();
   call->request_id = current_id;
   call->start_time = std::chrono::high_resolution_clock::now();
+  call->inference_count = determine_inference_count(cfg);
+  last_batch_size_ = call->inference_count;
+
+  if (!first_request_time_) {
+    first_request_time_ = call->start_time;
+  }
 
   log_info(verbosity_, std::format("Sending request ID: {}", current_id));
 
@@ -311,6 +380,9 @@ InferenceClient::AsyncCompleteRpc()
               codelet_ms, inference_ms, callback_ms, postprocess_ms,
               server_total_ms, request_latency_ms, response_latency_ms,
               client_overhead_ms));
+
+      total_inference_count_ += call->inference_count;
+      last_response_time_ = end;
     } else {
       log_error(std::format(
           "Request ID {} failed at {}: {}", call->request_id, recv_time_str,

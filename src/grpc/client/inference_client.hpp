@@ -4,7 +4,9 @@
 #include <torch/script.h>
 
 #include <atomic>
+#include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -59,6 +61,12 @@ class InferenceClient {
   std::atomic<int> next_request_id_{0};
   VerbosityLevel verbosity_;
   LatencyRecords latency_records_;
+  std::optional<std::chrono::high_resolution_clock::time_point>
+      first_request_time_;
+  std::optional<std::chrono::high_resolution_clock::time_point>
+      last_response_time_;
+  std::optional<std::size_t> last_batch_size_;
+  std::size_t total_inference_count_ = 0;
 
   void record_latency(
       double roundtrip_ms, double server_overall_ms, double preprocess_ms,
@@ -67,5 +75,6 @@ class InferenceClient {
       double postprocess_ms, double job_total_ms, double request_latency_ms,
       double response_latency_ms, double client_overhead_ms);
   void log_latency_summary() const;
+  static auto determine_inference_count(const ClientConfig& cfg) -> std::size_t;
 };
 }  // namespace starpu_server
