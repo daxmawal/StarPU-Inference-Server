@@ -4,6 +4,7 @@
 #include <torch/torch.h>
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 
 #include "grpc_service.grpc.pb.h"
@@ -66,10 +67,23 @@ class InferenceServiceImpl final
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
       const LatencyBreakdown& breakdown) -> grpc::Status;
 
+  using AsyncJobCallback = std::function<void(
+      grpc::Status, std::vector<torch::Tensor>, LatencyBreakdown,
+      detail::TimingInfo)>;
+
+  auto submit_job_async(
+      const std::vector<torch::Tensor>& inputs,
+      AsyncJobCallback on_complete) -> grpc::Status;
+
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
       std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
       detail::TimingInfo& timing_info) -> grpc::Status;
+
+  void HandleModelInferAsync(
+      grpc::ServerContext* context, const inference::ModelInferRequest* request,
+      inference::ModelInferResponse* reply,
+      std::function<void(grpc::Status)> on_done);
 
   auto validate_and_convert_inputs(
       const inference::ModelInferRequest* request,
