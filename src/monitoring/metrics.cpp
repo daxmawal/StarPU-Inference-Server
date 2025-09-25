@@ -5,13 +5,16 @@
 #include <unistd.h>
 
 #include <chrono>
-#include <cstdio>
-#include <cstdlib>
 #include <fstream>
 #include <memory>
-#include <sstream>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
+
+#ifdef STARPU_HAVE_NVML
+#include <nvml.h>
+#endif
 
 #include "utils/logger.hpp"
 
@@ -73,62 +76,130 @@ struct GpuStat {
   double mem_total_bytes{0.0};
 };
 
-static std::vector<GpuStat>
-query_gpu_stats_nvidia_smi()
+#ifdef STARPU_HAVE_NVML
+
+class NvmlWrapper {
+ public:
+  static auto instance() -> NvmlWrapper&;
+
+  auto query_stats() -> std::vector<GpuStat>;
+
+ private:
+  NvmlWrapper();
+  ~NvmlWrapper();
+
+  NvmlWrapper(const NvmlWrapper&) = delete;
+  NvmlWrapper& operator=(const NvmlWrapper&) = delete;
+
+  static auto error_string(nvmlReturn_t rc) -> const char*;
+
+  bool initialized_{false};
+  std::mutex mutex_{};
+};
+
+auto
+NvmlWrapper::instance() -> NvmlWrapper&
 {
-  std::vector<GpuStat> stats;
-  FILE* pipe = popen(
-      "nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total "
-      "--format=csv,noheader,nounits 2>/dev/null",
-      "r");
-  if (!pipe) {
-    return stats;
+  static NvmlWrapper wrapper;
+  return wrapper;
+}
+
+NvmlWrapper::NvmlWrapper()
+{
+  const nvmlReturn_t rc = nvmlInit();
+  if (rc != NVML_SUCCESS) {
+    log_warning(std::string("Failed to initialize NVML: ") + error_string(rc));
+    return;
   }
-  char buffer[512];
-  while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-    std::string line(buffer);
-    // Trim trailing newline
-    if (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
-      line.pop_back();
-    std::istringstream iss(line);
-    std::string idx_s, util_s, used_s, total_s;
-    if (!std::getline(iss, idx_s, ','))
-      continue;
-    if (!std::getline(iss, util_s, ','))
-      continue;
-    if (!std::getline(iss, used_s, ','))
-      continue;
-    if (!std::getline(iss, total_s, ','))
-      continue;
+  initialized_ = true;
+}
 
-    auto to_int = [](std::string s) {
-      size_t start = s.find_first_not_of(" \t");
-      size_t end = s.find_last_not_of(" \t");
-      if (start == std::string::npos)
-        return 0;
-      s = s.substr(start, end - start + 1);
-      try {
-        return std::stoi(s);
-      }
-      catch (...) {
-        return 0;
-      }
-    };
+NvmlWrapper::~NvmlWrapper()
+{
+  if (initialized_) {
+    nvmlShutdown();
+  }
+}
 
-    const int idx = to_int(idx_s);
-    const int util = to_int(util_s);
-    const int used_mib = to_int(used_s);
-    const int total_mib = to_int(total_s);
+auto
+NvmlWrapper::error_string(nvmlReturn_t rc) -> const char*
+{
+  const char* err = nvmlErrorString(rc);
+  return err != nullptr ? err : "unknown error";
+}
+
+auto
+NvmlWrapper::query_stats() -> std::vector<GpuStat>
+{
+  std::lock_guard<std::mutex> guard(mutex_);
+  if (!initialized_) {
+    return {};
+  }
+
+  unsigned int device_count = 0;
+  nvmlReturn_t rc = nvmlDeviceGetCount(&device_count);
+  if (rc != NVML_SUCCESS) {
+    log_warning(std::string("nvmlDeviceGetCount failed: ") + error_string(rc));
+    return {};
+  }
+
+  std::vector<GpuStat> stats;
+  stats.reserve(device_count);
+
+  for (unsigned int idx = 0; idx < device_count; ++idx) {
+    nvmlDevice_t device{};
+    rc = nvmlDeviceGetHandleByIndex(idx, &device);
+    if (rc != NVML_SUCCESS) {
+      log_warning(
+          std::string("nvmlDeviceGetHandleByIndex failed for GPU ") +
+          std::to_string(idx) + ": " + error_string(rc));
+      continue;
+    }
+
+    nvmlUtilization_t utilization{};
+    rc = nvmlDeviceGetUtilizationRates(device, &utilization);
+    if (rc != NVML_SUCCESS) {
+      log_warning(
+          std::string("nvmlDeviceGetUtilizationRates failed for GPU ") +
+          std::to_string(idx) + ": " + error_string(rc));
+      continue;
+    }
+
+    nvmlMemory_t memory_info{};
+    rc = nvmlDeviceGetMemoryInfo(device, &memory_info);
+    if (rc != NVML_SUCCESS) {
+      log_warning(
+          std::string("nvmlDeviceGetMemoryInfo failed for GPU ") +
+          std::to_string(idx) + ": " + error_string(rc));
+      continue;
+    }
+
     GpuStat st;
-    st.index = idx;
-    st.util_percent = static_cast<double>(util);
-    st.mem_used_bytes = static_cast<double>(used_mib) * 1024.0 * 1024.0;
-    st.mem_total_bytes = static_cast<double>(total_mib) * 1024.0 * 1024.0;
+    st.index = static_cast<int>(idx);
+    st.util_percent = static_cast<double>(utilization.gpu);
+    st.mem_used_bytes = static_cast<double>(memory_info.used);
+    st.mem_total_bytes = static_cast<double>(memory_info.total);
     stats.push_back(st);
   }
-  pclose(pipe);
+
   return stats;
 }
+
+static std::vector<GpuStat>
+query_gpu_stats_nvml()
+{
+  return NvmlWrapper::instance().query_stats();
+}
+
+#else
+
+static std::vector<GpuStat>
+query_gpu_stats_nvml()
+{
+  return {};
+}
+
+#endif  // STARPU_HAVE_NVML
 }  // namespace
 
 MetricsRegistry::MetricsRegistry(int port)
@@ -280,7 +351,7 @@ MetricsRegistry::sampling_loop(std::stop_token stop)
     have_prev_cpu = true;
 
     try {
-      auto gstats = query_gpu_stats_nvidia_smi();
+      auto gstats = query_gpu_stats_nvml();
       for (const auto& st : gstats) {
         const std::string label = std::to_string(st.index);
         if (gpu_utilization_gauges_.find(st.index) ==

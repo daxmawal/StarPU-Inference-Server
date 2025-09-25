@@ -132,6 +132,18 @@ target_include_directories(
   starpu_server PRIVATE ${SRC_DIR} ${SRC_DIR}/core ${SRC_DIR}/utils
                         ${SRC_DIR}/cli ${SRC_DIR}/starpu_task_worker)
 
+find_path(NVML_INCLUDE_DIR NAMES nvml.h)
+find_library(NVML_LIBRARY NAMES nvidia-ml nvml)
+
+if(NVML_INCLUDE_DIR AND NVML_LIBRARY)
+  message(STATUS "NVML found: ${NVML_LIBRARY}")
+  target_compile_definitions(starpu_server PRIVATE STARPU_HAVE_NVML=1)
+  target_include_directories(starpu_server PRIVATE ${NVML_INCLUDE_DIR})
+  target_link_libraries(starpu_server PRIVATE ${NVML_LIBRARY})
+else()
+  message(STATUS "NVML not found: GPU metrics will be disabled")
+endif()
+
 # === Compiler Warnings ===
 set(DEBUG_MIN_FRAME_SIZE
     8192
