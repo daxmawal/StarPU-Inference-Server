@@ -24,6 +24,10 @@ namespace {
 const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
     1, 5, 10, 25, 50, 100, 250, 500, 1000};
 
+#ifndef STARPU_HAVE_NVML
+std::once_flag nvml_warning_once;
+#endif
+
 struct CpuTotals {
   unsigned long long user{0}, nice{0}, system{0}, idle{0}, iowait{0}, irq{0},
       softirq{0}, steal{0};
@@ -293,6 +297,14 @@ init_metrics(int port) -> bool
 
   try {
     auto new_metrics = std::make_shared<MetricsRegistry>(port);
+
+#ifndef STARPU_HAVE_NVML
+    std::call_once(nvml_warning_once, [] {
+      log_warning_critical(
+          "NVML support is not available; GPU metrics collection is "
+          "disabled.");
+    });
+#endif
 
     if (!metrics_atomic().compare_exchange_strong(
             expected, new_metrics, std::memory_order_acq_rel,
