@@ -84,7 +84,11 @@ fill_output_tensor(
     const std::vector<torch::Tensor>& outputs) -> Status
 {
   for (size_t idx = 0; idx < outputs.size(); ++idx) {
-    const auto& out = outputs[idx].to(torch::kCPU);
+    const auto& original = outputs[idx];
+    torch::Tensor out = original;
+    if (!original.device().is_cpu()) {
+      out = original.to(torch::kCPU);
+    }
     auto* out_tensor = reply->add_outputs();
     out_tensor->set_name(std::format("output{}", idx));
     out_tensor->set_datatype(scalar_type_to_datatype(out.scalar_type()));
