@@ -40,7 +40,7 @@ class MetricsRegistry {
   std::unordered_map<int, prometheus::Gauge*> gpu_memory_used_gauges_;
   std::unordered_map<int, prometheus::Gauge*> gpu_memory_total_gauges_;
 
-  void sampling_loop(std::stop_token stop);
+  void sampling_loop(const std::stop_token& stop);
 };
 
 bool init_metrics(int port);

@@ -33,23 +33,25 @@ struct CpuTotals {
       softirq{0}, steal{0};
 };
 
-static bool
-read_total_cpu_times(CpuTotals& out)
+auto
+read_total_cpu_times(CpuTotals& out) -> bool
 {
-  std::ifstream f{"/proc/stat"};
-  if (!f.is_open())
+  std::ifstream function{"/proc/stat"};
+  if (!function.is_open()) {
     return false;
+  }
   std::string cpu;
-  f >> cpu;
-  if (cpu.rfind("cpu", 0) != 0)
+  function >> cpu;
+  if (cpu.rfind("cpu", 0) != 0) {
     return false;
-  f >> out.user >> out.nice >> out.system >> out.idle >> out.iowait >>
+  }
+  function >> out.user >> out.nice >> out.system >> out.idle >> out.iowait >>
       out.irq >> out.softirq >> out.steal;
   return true;
 }
 
-static double
-cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr)
+auto
+cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr) -> double
 {
   const unsigned long long prev_idle = prev.idle + prev.iowait;
   const unsigned long long curr_idle = curr.idle + curr.iowait;
@@ -61,15 +63,18 @@ cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr)
   const unsigned long long prev_total = prev_idle + prev_non_idle;
   const unsigned long long curr_total = curr_idle + curr_non_idle;
 
-  const double totald = static_cast<double>(curr_total - prev_total);
-  const double idled = static_cast<double>(curr_idle - prev_idle);
-  if (totald <= 0.0)
+  const auto totald = static_cast<double>(curr_total - prev_total);
+  const auto idled = static_cast<double>(curr_idle - prev_idle);
+  if (totald <= 0.0) {
     return 0.0;
+  }
   const double usage = (totald - idled) / totald * 100.0;
-  if (usage < 0.0)
+  if (usage < 0.0) {
     return 0.0;
-  if (usage > 100.0)
+  }
+  if (usage > 100.0) {
     return 100.0;
+  }
   return usage;
 }
 
@@ -110,9 +115,10 @@ NvmlWrapper::instance() -> NvmlWrapper&
 
 NvmlWrapper::NvmlWrapper()
 {
-  const nvmlReturn_t rc = nvmlInit();
-  if (rc != NVML_SUCCESS) {
-    log_warning(std::string("Failed to initialize NVML: ") + error_string(rc));
+  const nvmlReturn_t status = nvmlInit();
+  if (status != NVML_SUCCESS) {
+    log_warning(
+        std::string("Failed to initialize NVML: ") + error_string(status));
     return;
   }
   initialized_ = true;
@@ -126,9 +132,9 @@ NvmlWrapper::~NvmlWrapper()
 }
 
 auto
-NvmlWrapper::error_string(nvmlReturn_t rc) -> const char*
+NvmlWrapper::error_string(nvmlReturn_t status) -> const char*
 {
-  const char* err = nvmlErrorString(rc);
+  const char* err = nvmlErrorString(status);
   return err != nullptr ? err : "unknown error";
 }
 
@@ -141,9 +147,10 @@ NvmlWrapper::query_stats() -> std::vector<GpuStat>
   }
 
   unsigned int device_count = 0;
-  nvmlReturn_t rc = nvmlDeviceGetCount(&device_count);
-  if (rc != NVML_SUCCESS) {
-    log_warning(std::string("nvmlDeviceGetCount failed: ") + error_string(rc));
+  nvmlReturn_t status = nvmlDeviceGetCount(&device_count);
+  if (status != NVML_SUCCESS) {
+    log_warning(
+        std::string("nvmlDeviceGetCount failed: ") + error_string(status));
     return {};
   }
 
@@ -152,53 +159,53 @@ NvmlWrapper::query_stats() -> std::vector<GpuStat>
 
   for (unsigned int idx = 0; idx < device_count; ++idx) {
     nvmlDevice_t device{};
-    rc = nvmlDeviceGetHandleByIndex(idx, &device);
-    if (rc != NVML_SUCCESS) {
+    status = nvmlDeviceGetHandleByIndex(idx, &device);
+    if (status != NVML_SUCCESS) {
       log_warning(
           std::string("nvmlDeviceGetHandleByIndex failed for GPU ") +
-          std::to_string(idx) + ": " + error_string(rc));
+          std::to_string(idx) + ": " + error_string(status));
       continue;
     }
 
     nvmlUtilization_t utilization{};
-    rc = nvmlDeviceGetUtilizationRates(device, &utilization);
-    if (rc != NVML_SUCCESS) {
+    status = nvmlDeviceGetUtilizationRates(device, &utilization);
+    if (status != NVML_SUCCESS) {
       log_warning(
           std::string("nvmlDeviceGetUtilizationRates failed for GPU ") +
-          std::to_string(idx) + ": " + error_string(rc));
+          std::to_string(idx) + ": " + error_string(status));
       continue;
     }
 
     nvmlMemory_t memory_info{};
-    rc = nvmlDeviceGetMemoryInfo(device, &memory_info);
-    if (rc != NVML_SUCCESS) {
+    status = nvmlDeviceGetMemoryInfo(device, &memory_info);
+    if (status != NVML_SUCCESS) {
       log_warning(
           std::string("nvmlDeviceGetMemoryInfo failed for GPU ") +
-          std::to_string(idx) + ": " + error_string(rc));
+          std::to_string(idx) + ": " + error_string(status));
       continue;
     }
 
-    GpuStat st;
-    st.index = static_cast<int>(idx);
-    st.util_percent = static_cast<double>(utilization.gpu);
-    st.mem_used_bytes = static_cast<double>(memory_info.used);
-    st.mem_total_bytes = static_cast<double>(memory_info.total);
-    stats.push_back(st);
+    GpuStat stat;
+    stat.index = static_cast<int>(idx);
+    stat.util_percent = static_cast<double>(utilization.gpu);
+    stat.mem_used_bytes = static_cast<double>(memory_info.used);
+    stat.mem_total_bytes = static_cast<double>(memory_info.total);
+    stats.push_back(stat);
   }
 
   return stats;
 }
 
-static std::vector<GpuStat>
-query_gpu_stats_nvml()
+auto
+query_gpu_stats_nvml() -> std::vector<GpuStat>
 {
   return NvmlWrapper::instance().query_stats();
 }
 
 #else
 
-static std::vector<GpuStat>
-query_gpu_stats_nvml()
+auto
+query_gpu_stats_nvml() -> std::vector<GpuStat>
 {
   return {};
 }
@@ -260,8 +267,8 @@ MetricsRegistry::MetricsRegistry(int port)
            .Help("Total GPU memory in bytes per GPU")
            .Register(*registry);
 
-  sampler_thread_ =
-      std::jthread([this](std::stop_token st) { this->sampling_loop(st); });
+  sampler_thread_ = std::jthread(
+      [this](const std::stop_token& stop) { this->sampling_loop(stop); });
 }
 
 MetricsRegistry::~MetricsRegistry() noexcept
@@ -344,7 +351,7 @@ set_queue_size(std::size_t size)
 }
 
 void
-MetricsRegistry::sampling_loop(std::stop_token stop)
+MetricsRegistry::sampling_loop(const std::stop_token& stop)
 {
   using namespace std::chrono_literals;
 
@@ -364,26 +371,26 @@ MetricsRegistry::sampling_loop(std::stop_token stop)
 
     try {
       auto gstats = query_gpu_stats_nvml();
-      for (const auto& st : gstats) {
-        const std::string label = std::to_string(st.index);
-        if (gpu_utilization_gauges_.find(st.index) ==
+      for (const auto& stats : gstats) {
+        const std::string label = std::to_string(stats.index);
+        if (gpu_utilization_gauges_.find(stats.index) ==
             gpu_utilization_gauges_.end()) {
-          gpu_utilization_gauges_[st.index] =
+          gpu_utilization_gauges_[stats.index] =
               &gpu_utilization_family->Add({{"gpu", label}});
         }
-        if (gpu_memory_used_gauges_.find(st.index) ==
+        if (gpu_memory_used_gauges_.find(stats.index) ==
             gpu_memory_used_gauges_.end()) {
-          gpu_memory_used_gauges_[st.index] =
+          gpu_memory_used_gauges_[stats.index] =
               &gpu_memory_used_bytes_family->Add({{"gpu", label}});
         }
-        if (gpu_memory_total_gauges_.find(st.index) ==
+        if (gpu_memory_total_gauges_.find(stats.index) ==
             gpu_memory_total_gauges_.end()) {
-          gpu_memory_total_gauges_[st.index] =
+          gpu_memory_total_gauges_[stats.index] =
               &gpu_memory_total_bytes_family->Add({{"gpu", label}});
         }
-        gpu_utilization_gauges_[st.index]->Set(st.util_percent);
-        gpu_memory_used_gauges_[st.index]->Set(st.mem_used_bytes);
-        gpu_memory_total_gauges_[st.index]->Set(st.mem_total_bytes);
+        gpu_utilization_gauges_[stats.index]->Set(stats.util_percent);
+        gpu_memory_used_gauges_[stats.index]->Set(stats.mem_used_bytes);
+        gpu_memory_total_gauges_[stats.index]->Set(stats.mem_total_bytes);
       }
     }
     catch (...) {
