@@ -29,8 +29,8 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
     }
   }
   constexpr size_t kAlign = 64;
-  int rc = posix_memalign(&ptr, kAlign, bytes);
-  if (rc != 0 || ptr == nullptr) {
+  int alloc_rc = posix_memalign(&ptr, kAlign, bytes);
+  if (alloc_rc != 0 || ptr == nullptr) {
     throw std::bad_alloc();
   }
   return ptr;
@@ -43,11 +43,11 @@ free_host_buffer(void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
     return;
   }
   if (buffer_info.starpu_pinned) {
-    const int rc = starpu_memory_unpin(ptr, buffer_info.bytes);
-    if (rc != 0) {
+    const int unpin_rc = starpu_memory_unpin(ptr, buffer_info.bytes);
+    if (unpin_rc != 0) {
       log_warning(
           "starpu_memory_unpin failed for output buffer: rc=" +
-          std::to_string(rc));
+          std::to_string(unpin_rc));
     }
   }
   if (buffer_info.cuda_pinned) {
@@ -70,10 +70,10 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
   per_output_numel_single_.reserve(outputs.size());
   per_output_bytes_single_.reserve(outputs.size());
 
-  for (const auto& t : outputs) {
-    output_types_.push_back(t.type);
-    if (t.dims.size() >= 2) {
-      const int64_t batch_dim = t.dims[0];
+  for (const auto& output_desc : outputs) {
+    output_types_.push_back(output_desc.type);
+    if (output_desc.dims.size() >= 2) {
+      const int64_t batch_dim = output_desc.dims[0];
       if (batch_dim <= 0) {
         throw std::invalid_argument("dims[0] (batch) must be positive");
       }
@@ -83,9 +83,9 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
       bmax_ = std::max(bmax_, static_cast<int>(batch_dim));
     }
 
-    const size_t numel = product_dims(t.dims);
+    const size_t numel = product_dims(output_desc.dims);
     per_output_numel_single_.push_back(numel);
-    const size_t elsize = element_size(t.type);
+    const size_t elsize = element_size(output_desc.type);
     per_output_bytes_single_.push_back(numel * elsize);
   }
 
@@ -94,16 +94,16 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 
 OutputSlotPool::~OutputSlotPool()
 {
-  for (size_t s = 0; s < slots_.size(); ++s) {
-    auto& slot = slots_[s];
-    for (auto& h : slot.handles) {
-      if (h != nullptr) {
-        starpu_data_unregister(h);
-        h = nullptr;
+  for (size_t slot_index = 0; slot_index < slots_.size(); ++slot_index) {
+    auto& slot = slots_[slot_index];
+    for (auto& handle : slot.handles) {
+      if (handle != nullptr) {
+        starpu_data_unregister(handle);
+        handle = nullptr;
       }
     }
     for (size_t i = 0; i < slot.base_ptrs.size(); ++i) {
-      free_host_buffer(slot.base_ptrs[i], host_buffer_infos_[s][i]);
+      free_host_buffer(slot.base_ptrs[i], host_buffer_infos_[slot_index][i]);
       slot.base_ptrs[i] = nullptr;
     }
   }
@@ -112,17 +112,17 @@ OutputSlotPool::~OutputSlotPool()
 void
 OutputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
 {
-  int k = slots;
-  if (k <= 0) {
+  int requested_slots = slots;
+  if (requested_slots <= 0) {
     int workers = static_cast<int>(starpu_worker_get_count());
-    k = std::max(2, workers);
+    requested_slots = std::max(2, workers);
   }
-  slots_.reserve(static_cast<size_t>(k));
-  host_buffer_infos_.reserve(static_cast<size_t>(k));
-  free_ids_.reserve(static_cast<size_t>(k));
-  slots_.resize(static_cast<size_t>(k));
-  host_buffer_infos_.resize(static_cast<size_t>(k));
-  for (int i = 0; i < k; ++i) {
+  slots_.reserve(static_cast<size_t>(requested_slots));
+  host_buffer_infos_.reserve(static_cast<size_t>(requested_slots));
+  free_ids_.reserve(static_cast<size_t>(requested_slots));
+  slots_.resize(static_cast<size_t>(requested_slots));
+  host_buffer_infos_.resize(static_cast<size_t>(requested_slots));
+  for (int i = 0; i < requested_slots; ++i) {
     slots_[static_cast<size_t>(i)].id = i;
     allocate_slot_buffers_and_register(i, opts);
     free_ids_.push_back(i);
@@ -133,19 +133,19 @@ void
 OutputSlotPool::allocate_slot_buffers_and_register(
     int slot_id, const RuntimeConfig& opts)
 {
-  const size_t n_out = per_output_numel_single_.size();
+  const size_t num_outputs = per_output_numel_single_.size();
   auto& slot = slots_.at(static_cast<size_t>(slot_id));
-  slot.base_ptrs.resize(n_out);
-  slot.handles.resize(n_out);
+  slot.base_ptrs.resize(num_outputs);
+  slot.handles.resize(num_outputs);
   auto& buffer_infos = host_buffer_infos_[static_cast<size_t>(slot_id)];
-  buffer_infos.resize(n_out);
+  buffer_infos.resize(num_outputs);
 
   const bool want_pinned = opts.use_cuda;
 
   const auto batch_size = static_cast<size_t>(bmax_);
   constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
 
-  for (size_t i = 0; i < n_out; ++i) {
+  for (size_t i = 0; i < num_outputs; ++i) {
     const size_t per_sample_bytes = per_output_bytes_single_[i];
     if (per_sample_bytes != 0 && batch_size > kMaxSizeT / per_sample_bytes) {
       throw std::overflow_error(
@@ -164,15 +164,15 @@ OutputSlotPool::allocate_slot_buffers_and_register(
     info.starpu_pin_rc = 0;
     const bool should_starpu_pin = want_pinned && !cuda_pinned;
     if (should_starpu_pin) {
-      const int rc = starpu_memory_pin(ptr, bytes);
-      info.starpu_pin_rc = rc;
-      if (rc == 0) {
+      const int starpu_pin_rc = starpu_memory_pin(ptr, bytes);
+      info.starpu_pin_rc = starpu_pin_rc;
+      if (starpu_pin_rc == 0) {
         info.starpu_pinned = true;
       } else {
         log_warning(
             "starpu_memory_pin failed for output slot " +
             std::to_string(slot_id) + ", index " + std::to_string(i) +
-            ": rc=" + std::to_string(rc));
+            ": rc=" + std::to_string(starpu_pin_rc));
       }
     }
 
@@ -184,11 +184,11 @@ OutputSlotPool::allocate_slot_buffers_and_register(
           std::to_string(batch_size) + ") exceeds size_t range");
     }
     const size_t total_numel = per_sample_numel * batch_size;
-    starpu_data_handle_t h = nullptr;
+    starpu_data_handle_t handle = nullptr;
     starpu_vector_data_register(
-        &h, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr), total_numel,
+        &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr), total_numel,
         element_size(output_types_[i]));
-    if (h != nullptr) {
+    if (handle != nullptr) {
       for (size_t j = 0; j <= i; ++j) {
         if (slot.handles[j] != nullptr) {
           starpu_data_unregister(slot.handles[j]);
@@ -202,37 +202,37 @@ OutputSlotPool::allocate_slot_buffers_and_register(
       throw std::runtime_error(
           "Failed to register StarPU vector handle for output");
     }
-    slot.handles[i] = h;
+    slot.handles[i] = handle;
   }
 }
 
 auto
 OutputSlotPool::acquire() -> int
 {
-  std::unique_lock lk(mtx_);
-  cv_.wait(lk, [&] { return !free_ids_.empty(); });
-  const int id = free_ids_.back();
+  std::unique_lock<std::mutex> pool_lock(mtx_);
+  cv_.wait(pool_lock, [&] { return !free_ids_.empty(); });
+  const int slot_id_value = free_ids_.back();
   free_ids_.pop_back();
-  return id;
+  return slot_id_value;
 }
 
 auto
 OutputSlotPool::try_acquire() -> std::optional<int>
 {
-  std::scoped_lock lk(mtx_);
+  std::scoped_lock<std::mutex> pool_lock(mtx_);
   if (free_ids_.empty()) {
     return std::nullopt;
   }
-  const int id = free_ids_.back();
+  const int slot_id_value = free_ids_.back();
   free_ids_.pop_back();
-  return id;
+  return slot_id_value;
 }
 
 void
 OutputSlotPool::release(int slot_id)
 {
   {
-    const std::scoped_lock lk(mtx_);
+    const std::scoped_lock<std::mutex> pool_lock(mtx_);
     free_ids_.push_back(slot_id);
   }
   cv_.notify_one();
@@ -260,20 +260,20 @@ OutputSlotPool::base_ptrs(int slot_id) const -> const std::vector<void*>&
 auto
 OutputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
 {
-  size_t prod = 1;
-  const size_t start = dims.size() >= 2 ? 1 : 0;
-  for (size_t i = start; i < dims.size(); ++i) {
+  size_t product = 1;
+  const size_t start_dim_index = dims.size() >= 2 ? 1 : 0;
+  for (size_t i = start_dim_index; i < dims.size(); ++i) {
     const auto dimension = dims[i];
     if (dimension <= 0) {
       throw std::invalid_argument("dimensions must be positive");
     }
     const auto dimension_unsigned = static_cast<size_t>(dimension);
-    if (prod > std::numeric_limits<size_t>::max() / dimension_unsigned) {
+    if (product > std::numeric_limits<size_t>::max() / dimension_unsigned) {
       throw std::overflow_error("dimension product overflow");
     }
-    prod *= dimension_unsigned;
+    product *= dimension_unsigned;
   }
-  return prod;
+  return product;
 }
 
 }  // namespace starpu_server
