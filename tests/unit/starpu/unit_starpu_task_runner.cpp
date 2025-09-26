@@ -73,3 +73,59 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   EXPECT_NE(output.find("Inference = 45.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Callback = 15.000 ms"), std::string::npos);
 }
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    SubmitInferenceTaskWithoutPoolsPropagatesExceptions)
+{
+  opts_.max_models_gpu = 0;
+  models_gpu_.resize(1);
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_job_id(42);
+  job->set_input_tensors({torch::ones({1})});
+  job->set_input_types({at::kFloat});
+  job->set_output_tensors({torch::zeros({1})});
+
+  EXPECT_THROW(
+      runner_->submit_inference_task(job),
+      starpu_server::TooManyGpuModelsException);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, SubmitInferenceTaskWithPoolsReleasesSlotsOnFailure)
+{
+  runner_.reset();
+  starpu_setup_.reset();
+
+  starpu_server::ModelConfig model_config{};
+  model_config.name = "test";
+  starpu_server::TensorConfig input0{};
+  input0.name = "input0";
+  input0.dims = {3};
+  input0.type = at::kFloat;
+  starpu_server::TensorConfig input1{};
+  input1.name = "input1";
+  input1.dims = {3};
+  input1.type = at::kFloat;
+  model_config.inputs = {input0, input1};
+
+  opts_.models = {model_config};
+  opts_.input_slots = 1;
+
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_job_id(7);
+  job->set_input_tensors({torch::ones({3})});
+  job->set_input_types({at::kFloat});
+
+  EXPECT_THROW(runner_->submit_inference_task(job), std::runtime_error);
+
+  auto maybe_slot = starpu_setup_->input_pool().try_acquire();
+  ASSERT_TRUE(maybe_slot.has_value());
+  starpu_setup_->input_pool().release(*maybe_slot);
+}

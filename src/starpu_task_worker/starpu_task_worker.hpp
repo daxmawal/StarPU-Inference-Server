@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <mutex>
 #include <vector>
 
@@ -13,6 +14,8 @@
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+class InferenceTask;
+struct InferenceCallbackContext;
 // ============================================================================
 // StarPUTaskRunner
 // ----------------------------------------------------------------------------
@@ -52,6 +55,30 @@ class StarPUTaskRunner {
       const detail::TimingInfo& timing_info) const;
 
  private:
+  struct PoolResources {
+    InputSlotPool* input_pool = nullptr;
+    OutputSlotPool* output_pool = nullptr;
+    int input_slot = -1;
+    int output_slot = -1;
+
+    [[nodiscard]] bool has_input() const { return input_pool != nullptr; }
+    [[nodiscard]] bool has_output() const { return output_pool != nullptr; }
+  };
+
+  [[nodiscard]] auto acquire_pools() -> PoolResources;
+  auto validate_batch_and_copy_inputs(
+      const std::shared_ptr<InferenceJob>& job,
+      const PoolResources& pools) -> int64_t;
+  auto configure_task_context(
+      InferenceTask& task, const PoolResources& pools,
+      const std::vector<starpu_data_handle_t>& input_handles,
+      const std::vector<starpu_data_handle_t>& output_handles,
+      int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>;
+  [[noreturn]] void handle_submission_failure(
+      const PoolResources& pools,
+      const std::shared_ptr<InferenceCallbackContext>& ctx,
+      int submit_code) const;
+
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
