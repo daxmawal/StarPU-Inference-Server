@@ -60,9 +60,9 @@ class CuDnnBenchmarkGuard {
   }
 
   CuDnnBenchmarkGuard(const CuDnnBenchmarkGuard&) = delete;
-  CuDnnBenchmarkGuard& operator=(const CuDnnBenchmarkGuard&) = delete;
   CuDnnBenchmarkGuard(CuDnnBenchmarkGuard&&) = default;
-  CuDnnBenchmarkGuard& operator=(CuDnnBenchmarkGuard&&) = default;
+  auto operator=(const CuDnnBenchmarkGuard&) -> CuDnnBenchmarkGuard& = delete;
+  auto operator=(CuDnnBenchmarkGuard&&) -> CuDnnBenchmarkGuard& = default;
 
   ~CuDnnBenchmarkGuard()
   {
