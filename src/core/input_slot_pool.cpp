@@ -38,8 +38,9 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
 static void
 free_host_buffer(void* ptr, const InputSlotPool::HostBufferInfo& buffer_info)
 {
-  if (!ptr)
+  if (ptr == nullptr) {
     return;
+  }
   if (buffer_info.starpu_pinned) {
     const int result_code = starpu_memory_unpin(ptr, buffer_info.bytes);
     if (result_code != 0) {
@@ -94,7 +95,7 @@ InputSlotPool::~InputSlotPool()
   for (size_t slot_index = 0; slot_index < slots_.size(); ++slot_index) {
     auto& slot = slots_[slot_index];
     for (auto& handle : slot.handles) {
-      if (handle) {
+      if (handle != nullptr) {
         starpu_data_unregister(handle);
         handle = nullptr;
       }
@@ -139,7 +140,7 @@ InputSlotPool::allocate_slot_buffers_and_register(
 
   const bool want_pinned = opts.use_cuda;
 
-  const size_t batch_size = static_cast<size_t>(bmax_);
+  const auto batch_size = static_cast<size_t>(bmax_);
   constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
 
   for (size_t i = 0; i < n_in; ++i) {
@@ -185,13 +186,13 @@ InputSlotPool::allocate_slot_buffers_and_register(
     starpu_vector_data_register(
         &starpu_handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr),
         total_numel, element_size(input_types_[i]));
-    if (!starpu_handle) {
+    if (starpu_handle == nullptr) {
       for (size_t j = 0; j <= i; ++j) {
-        if (slot.handles[j]) {
+        if (slot.handles[j] != nullptr) {
           starpu_data_unregister(slot.handles[j]);
           slot.handles[j] = nullptr;
         }
-        if (slot.base_ptrs[j]) {
+        if (slot.base_ptrs[j] != nullptr) {
           free_host_buffer(slot.base_ptrs[j], buffer_infos[j]);
           slot.base_ptrs[j] = nullptr;
         }

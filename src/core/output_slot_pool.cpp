@@ -16,7 +16,7 @@
 namespace starpu_server {
 
 namespace {
-static auto
+auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
 {
   void* ptr = nullptr;
@@ -36,11 +36,12 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
   return ptr;
 }
 
-static void
+void
 free_host_buffer(void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
 {
-  if (!ptr)
+  if (ptr != nullptr) {
     return;
+  }
   if (buffer_info.starpu_pinned) {
     const int rc = starpu_memory_unpin(ptr, buffer_info.bytes);
     if (rc != 0) {
@@ -96,7 +97,7 @@ OutputSlotPool::~OutputSlotPool()
   for (size_t s = 0; s < slots_.size(); ++s) {
     auto& slot = slots_[s];
     for (auto& h : slot.handles) {
-      if (h) {
+      if (h != nullptr) {
         starpu_data_unregister(h);
         h = nullptr;
       }
@@ -141,7 +142,7 @@ OutputSlotPool::allocate_slot_buffers_and_register(
 
   const bool want_pinned = opts.use_cuda;
 
-  const size_t batch_size = static_cast<size_t>(bmax_);
+  const auto batch_size = static_cast<size_t>(bmax_);
   constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
 
   for (size_t i = 0; i < n_out; ++i) {
@@ -187,13 +188,13 @@ OutputSlotPool::allocate_slot_buffers_and_register(
     starpu_vector_data_register(
         &h, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr), total_numel,
         element_size(output_types_[i]));
-    if (!h) {
+    if (h != nullptr) {
       for (size_t j = 0; j <= i; ++j) {
-        if (slot.handles[j]) {
+        if (slot.handles[j] != nullptr) {
           starpu_data_unregister(slot.handles[j]);
           slot.handles[j] = nullptr;
         }
-        if (slot.base_ptrs[j]) {
+        if (slot.base_ptrs[j] != nullptr) {
           free_host_buffer(slot.base_ptrs[j], buffer_infos[j]);
           slot.base_ptrs[j] = nullptr;
         }
