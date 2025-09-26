@@ -136,8 +136,6 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
 
 static auto missing_value_error(std::string_view option_name) -> bool;
 
-static bool g_seen_combined_input = false;
-
 static auto
 parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
@@ -151,9 +149,9 @@ parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 
   std::vector<std::string> parts;
   {
-    std::stringstream ss(spec);
+    std::stringstream spec_stream(spec);
     std::string part;
-    while (std::getline(ss, part, ':')) {
+    while (std::getline(spec_stream, part, ':')) {
       parts.push_back(part);
     }
   }
@@ -179,7 +177,7 @@ parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   }
 
   std::vector<int64_t> dims;
-  at::ScalarType dtype;
+  at::ScalarType dtype = at::ScalarType::Undefined;
   try {
     dims = parse_shape_string(dims_str);
     dtype = string_to_scalar_type(type_str);
@@ -190,18 +188,19 @@ parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   }
 
   opts.models.resize(1);
-  if (!g_seen_combined_input) {
+  if (!opts.seen_combined_input) {
     opts.models[0].inputs.clear();
-    g_seen_combined_input = true;
+    opts.seen_combined_input = true;
   }
 
-  TensorConfig tc{};
-  tc.name = name.empty() ? (std::string("input") +
-                            std::to_string(opts.models[0].inputs.size()))
-                         : name;
-  tc.dims = std::move(dims);
-  tc.type = dtype;
-  opts.models[0].inputs.push_back(std::move(tc));
+  TensorConfig tensor_config{};
+  tensor_config.name = name.empty()
+                           ? (std::string("input") +
+                              std::to_string(opts.models[0].inputs.size()))
+                           : name;
+  tensor_config.dims = std::move(dims);
+  tensor_config.type = dtype;
+  opts.models[0].inputs.push_back(std::move(tensor_config));
 
   return true;
 }

@@ -95,6 +95,7 @@ struct RuntimeConfig {
   bool use_cpu = true;
   bool use_cuda = false;
   bool dynamic_batching = false;
+  bool seen_combined_input = false;
 };
 
 inline auto

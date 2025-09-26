@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <format>
+#include <iterator>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -21,10 +22,15 @@ main(int argc, char* argv[]) -> int
   std::span<char*> args_span(argv, static_cast<size_t>(argc));
 
   std::string config_path;
-  for (int i = 1; i < argc - 1; ++i) {
-    std::string_view arg = argv[i];
+  auto args_without_program = args_span.subspan(1);
+  for (auto it = args_without_program.begin(); it != args_without_program.end();
+       ++it) {
+    std::string_view arg(*it);
     if (arg == "--config" || arg == "-c") {
-      config_path = argv[i + 1];
+      if (auto value_it = std::next(it);
+          value_it != args_without_program.end()) {
+        config_path = *value_it;
+      }
       break;
     }
   }
