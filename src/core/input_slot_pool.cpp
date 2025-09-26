@@ -28,8 +28,8 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
     }
   }
   constexpr size_t kAlign = 64;
-  int rc = posix_memalign(&ptr, kAlign, bytes);
-  if (rc != 0 || ptr == nullptr) {
+  int result_code = posix_memalign(&ptr, kAlign, bytes);
+  if (result_code != 0 || ptr == nullptr) {
     throw std::bad_alloc();
   }
   return ptr;
@@ -41,11 +41,11 @@ free_host_buffer(void* ptr, const InputSlotPool::HostBufferInfo& buffer_info)
   if (!ptr)
     return;
   if (buffer_info.starpu_pinned) {
-    const int rc = starpu_memory_unpin(ptr, buffer_info.bytes);
-    if (rc != 0) {
+    const int result_code = starpu_memory_unpin(ptr, buffer_info.bytes);
+    if (result_code != 0) {
       log_warning(
           "starpu_memory_unpin failed for input buffer: rc=" +
-          std::to_string(rc));
+          std::to_string(result_code));
     }
   }
   if (buffer_info.cuda_pinned) {
@@ -67,10 +67,10 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
   per_input_numel_single_.reserve(inputs.size());
   per_input_bytes_single_.reserve(inputs.size());
 
-  for (const auto& t : inputs) {
-    input_types_.push_back(t.type);
-    if (t.dims.size() >= 2) {
-      const int64_t batch_dim = t.dims[0];
+  for (const auto& input_spec : inputs) {
+    input_types_.push_back(input_spec.type);
+    if (input_spec.dims.size() >= 2) {
+      const int64_t batch_dim = input_spec.dims[0];
       if (batch_dim <= 0) {
         throw std::invalid_argument("dims[0] (batch) must be positive");
       }
@@ -80,9 +80,9 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
       bmax_ = std::max(bmax_, static_cast<int>(batch_dim));
     }
 
-    const size_t numel = product_dims(t.dims);
+    const size_t numel = product_dims(input_spec.dims);
     per_input_numel_single_.push_back(numel);
-    const size_t elsize = element_size(t.type);
+    const size_t elsize = element_size(input_spec.type);
     per_input_bytes_single_.push_back(numel * elsize);
   }
 
@@ -91,16 +91,16 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
 
 InputSlotPool::~InputSlotPool()
 {
-  for (size_t s = 0; s < slots_.size(); ++s) {
-    auto& slot = slots_[s];
-    for (auto& h : slot.handles) {
-      if (h) {
-        starpu_data_unregister(h);
-        h = nullptr;
+  for (size_t slot_index = 0; slot_index < slots_.size(); ++slot_index) {
+    auto& slot = slots_[slot_index];
+    for (auto& handle : slot.handles) {
+      if (handle) {
+        starpu_data_unregister(handle);
+        handle = nullptr;
       }
     }
     for (size_t i = 0; i < slot.base_ptrs.size(); ++i) {
-      free_host_buffer(slot.base_ptrs[i], host_buffer_infos_[s][i]);
+      free_host_buffer(slot.base_ptrs[i], host_buffer_infos_[slot_index][i]);
       slot.base_ptrs[i] = nullptr;
     }
   }
@@ -109,17 +109,17 @@ InputSlotPool::~InputSlotPool()
 void
 InputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
 {
-  int k = slots;
-  if (k <= 0) {
+  int slot_count = slots;
+  if (slot_count <= 0) {
     int workers = static_cast<int>(starpu_worker_get_count());
-    k = std::max(2, workers);
+    slot_count = std::max(2, workers);
   }
-  slots_.reserve(static_cast<size_t>(k));
-  host_buffer_infos_.reserve(static_cast<size_t>(k));
-  free_ids_.reserve(static_cast<size_t>(k));
-  slots_.resize(static_cast<size_t>(k));
-  host_buffer_infos_.resize(static_cast<size_t>(k));
-  for (int i = 0; i < k; ++i) {
+  slots_.reserve(static_cast<size_t>(slot_count));
+  host_buffer_infos_.reserve(static_cast<size_t>(slot_count));
+  free_ids_.reserve(static_cast<size_t>(slot_count));
+  slots_.resize(static_cast<size_t>(slot_count));
+  host_buffer_infos_.resize(static_cast<size_t>(slot_count));
+  for (int i = 0; i < slot_count; ++i) {
     slots_[static_cast<size_t>(i)].id = i;
     allocate_slot_buffers_and_register(i, opts);
     free_ids_.push_back(i);
@@ -161,15 +161,15 @@ InputSlotPool::allocate_slot_buffers_and_register(
     info.starpu_pin_rc = 0;
     const bool should_starpu_pin = want_pinned && !cuda_pinned;
     if (should_starpu_pin) {
-      const int rc = starpu_memory_pin(ptr, bytes);
-      info.starpu_pin_rc = rc;
-      if (rc == 0) {
+      const int pin_result = starpu_memory_pin(ptr, bytes);
+      info.starpu_pin_rc = pin_result;
+      if (pin_result == 0) {
         info.starpu_pinned = true;
       } else {
         log_warning(
             "starpu_memory_pin failed for input slot " +
             std::to_string(slot_id) + ", index " + std::to_string(i) +
-            ": rc=" + std::to_string(rc));
+            ": rc=" + std::to_string(pin_result));
       }
     }
 
@@ -181,11 +181,11 @@ InputSlotPool::allocate_slot_buffers_and_register(
           std::to_string(batch_size) + ") exceeds size_t range");
     }
     const size_t total_numel = per_sample_numel * batch_size;
-    starpu_data_handle_t h = nullptr;
+    starpu_data_handle_t starpu_handle = nullptr;
     starpu_vector_data_register(
-        &h, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr), total_numel,
-        element_size(input_types_[i]));
-    if (!h) {
+        &starpu_handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr),
+        total_numel, element_size(input_types_[i]));
+    if (!starpu_handle) {
       for (size_t j = 0; j <= i; ++j) {
         if (slot.handles[j]) {
           starpu_data_unregister(slot.handles[j]);
@@ -198,37 +198,37 @@ InputSlotPool::allocate_slot_buffers_and_register(
       }
       throw std::runtime_error("Failed to register StarPU vector handle");
     }
-    slot.handles[i] = h;
+    slot.handles[i] = starpu_handle;
   }
 }
 
 auto
 InputSlotPool::acquire() -> int
 {
-  std::unique_lock lk(mtx_);
-  cv_.wait(lk, [&] { return !free_ids_.empty(); });
-  const int id = free_ids_.back();
+  std::unique_lock lock(mtx_);
+  cv_.wait(lock, [&] { return !free_ids_.empty(); });
+  const int slot_id = free_ids_.back();
   free_ids_.pop_back();
-  return id;
+  return slot_id;
 }
 
 auto
 InputSlotPool::try_acquire() -> std::optional<int>
 {
-  std::scoped_lock lk(mtx_);
+  std::scoped_lock lock(mtx_);
   if (free_ids_.empty()) {
     return std::nullopt;
   }
-  const int id = free_ids_.back();
+  const int slot_id = free_ids_.back();
   free_ids_.pop_back();
-  return id;
+  return slot_id;
 }
 
 void
 InputSlotPool::release(int slot_id)
 {
   {
-    const std::scoped_lock lk(mtx_);
+    const std::scoped_lock lock(mtx_);
     free_ids_.push_back(slot_id);
   }
   cv_.notify_one();
@@ -259,15 +259,15 @@ InputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
   size_t prod = 1;
   const size_t start = dims.size() >= 2 ? 1 : 0;
   for (size_t i = start; i < dims.size(); ++i) {
-    const auto d = dims[i];
-    if (d <= 0) {
+    const auto dimension = dims[i];
+    if (dimension <= 0) {
       throw std::invalid_argument("dims must be positive");
     }
-    const auto du = static_cast<size_t>(d);
-    if (prod > std::numeric_limits<size_t>::max() / du) {
+    const auto dimension_size = static_cast<size_t>(dimension);
+    if (prod > std::numeric_limits<size_t>::max() / dimension_size) {
       throw std::overflow_error("dimension product overflow");
     }
-    prod *= du;
+    prod *= dimension_size;
   }
   return prod;
 }

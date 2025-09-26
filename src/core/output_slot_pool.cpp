@@ -256,21 +256,21 @@ OutputSlotPool::base_ptrs(int slot_id) const -> const std::vector<void*>&
   return slots_.at(static_cast<size_t>(slot_id)).base_ptrs;
 }
 
-size_t
-OutputSlotPool::product_dims(const std::vector<int64_t>& dims)
+auto
+OutputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
 {
   size_t prod = 1;
   const size_t start = dims.size() >= 2 ? 1 : 0;
   for (size_t i = start; i < dims.size(); ++i) {
-    const auto d = dims[i];
-    if (d <= 0) {
-      throw std::invalid_argument("dims must be positive");
+    const auto dimension = dims[i];
+    if (dimension <= 0) {
+      throw std::invalid_argument("dimensions must be positive");
     }
-    const auto du = static_cast<size_t>(d);
-    if (prod > std::numeric_limits<size_t>::max() / du) {
+    const auto dimension_unsigned = static_cast<size_t>(dimension);
+    if (prod > std::numeric_limits<size_t>::max() / dimension_unsigned) {
       throw std::overflow_error("dimension product overflow");
     }
-    prod *= du;
+    prod *= dimension_unsigned;
   }
   return prod;
 }
