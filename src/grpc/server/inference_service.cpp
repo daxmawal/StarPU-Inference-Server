@@ -48,7 +48,9 @@ checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
 auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input, const std::string& raw,
-    at::ScalarType dtype, torch::Tensor& tensor) -> Status
+    at::ScalarType dtype,
+    const std::shared_ptr<const ModelInferRequest>& request_guard,
+    torch::Tensor& tensor, std::shared_ptr<const void>* keep_alive) -> Status
 {
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
   auto options = torch::TensorOptions().dtype(dtype);
@@ -73,8 +75,17 @@ convert_input_to_tensor(
         "Raw input size does not match tensor size"};
   }
 
-  tensor = torch::empty(shape, options);
-  std::memcpy(tensor.data_ptr(), raw.data(), raw.size());
+  auto alias = std::shared_ptr<const void>(request_guard, raw.data());
+  auto deleter = [alias](void* /*unused*/) mutable {
+    auto holder = alias;
+    holder.reset();
+  };
+
+  tensor =
+      torch::from_blob(const_cast<char*>(raw.data()), shape, deleter, options);
+  if (keep_alive != nullptr) {
+    *keep_alive = alias;
+  }
   return Status::OK;
 }
 
@@ -158,8 +169,8 @@ InferenceServiceImpl::ModelReady(
 
 auto
 InferenceServiceImpl::validate_and_convert_inputs(
-    const ModelInferRequest* request,
-    std::vector<torch::Tensor>& inputs) -> Status
+    const ModelInferRequest* request, std::vector<torch::Tensor>& inputs,
+    std::vector<std::shared_ptr<const void>>* input_lifetimes) -> Status
 {
   if (request->inputs_size() !=
       static_cast<int>(expected_input_types_.size())) {
@@ -175,7 +186,14 @@ InferenceServiceImpl::validate_and_convert_inputs(
         "Number of raw inputs does not match number of input tensors"};
   }
 
+  auto request_guard = std::shared_ptr<const ModelInferRequest>(
+      request, [](const ModelInferRequest*) {});
+
   inputs.reserve(request->inputs_size());
+  if (input_lifetimes != nullptr) {
+    input_lifetimes->clear();
+    input_lifetimes->reserve(request->inputs_size());
+  }
   for (int i = 0; i < request->inputs_size(); ++i) {
     const auto& input = request->inputs(i);
     const auto& raw = request->raw_input_contents(i);
@@ -261,22 +279,28 @@ InferenceServiceImpl::validate_and_convert_inputs(
     }
 
     torch::Tensor tensor;
-    Status status = convert_input_to_tensor(input, raw, dtype, tensor);
+    std::shared_ptr<const void> tensor_guard;
+    Status status = convert_input_to_tensor(
+        input, raw, dtype, request_guard, tensor,
+        input_lifetimes != nullptr ? &tensor_guard : nullptr);
     if (!status.ok()) {
       return status;
     }
     inputs.push_back(std::move(tensor));
+    if (input_lifetimes != nullptr) {
+      input_lifetimes->push_back(std::move(tensor_guard));
+    }
   }
   return Status::OK;
 }
 
 auto
 InferenceServiceImpl::submit_job_async(
-    const std::vector<torch::Tensor>& inputs,
-    AsyncJobCallback on_complete) -> Status
+    const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
+    std::vector<std::shared_ptr<const void>> input_lifetimes) -> Status
 {
-  auto job =
-      client_utils::create_job(inputs, *reference_outputs_, next_job_id_++);
+  auto job = client_utils::create_job(
+      inputs, *reference_outputs_, next_job_id_++, std::move(input_lifetimes));
 
   job->set_on_complete([job, on_complete = std::move(on_complete)](
                            const std::vector<torch::Tensor>& outs,
@@ -324,7 +348,8 @@ auto
 InferenceServiceImpl::submit_job_and_wait(
     const std::vector<torch::Tensor>& inputs,
     std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
-    detail::TimingInfo& timing_capture) -> Status
+    detail::TimingInfo& timing_capture,
+    std::vector<std::shared_ptr<const void>> input_lifetimes) -> Status
 {
   struct JobResult {
     Status status = Status::OK;
@@ -337,12 +362,14 @@ InferenceServiceImpl::submit_job_and_wait(
   auto result_future = result_promise->get_future();
 
   Status submit_status = submit_job_async(
-      inputs, [result_promise](
-                  Status status, std::vector<torch::Tensor> outs,
-                  LatencyBreakdown timing, detail::TimingInfo timing_info) {
+      inputs,
+      [result_promise](
+          Status status, std::vector<torch::Tensor> outs,
+          LatencyBreakdown timing, detail::TimingInfo timing_info) {
         result_promise->set_value(
             JobResult{std::move(status), std::move(outs), timing, timing_info});
-      });
+      },
+      std::move(input_lifetimes));
 
   if (!submit_status.ok()) {
     outputs.clear();
@@ -377,7 +404,9 @@ InferenceServiceImpl::HandleModelInferAsync(
                         .count();
 
   std::vector<torch::Tensor> inputs;
-  Status status = validate_and_convert_inputs(request, inputs);
+  std::vector<std::shared_ptr<const void>> input_lifetimes;
+  Status status =
+      validate_and_convert_inputs(request, inputs, &input_lifetimes);
   if (!status.ok()) {
     on_done(status);
     return;
@@ -443,7 +472,8 @@ InferenceServiceImpl::HandleModelInferAsync(
         }
 
         on_done(Status::OK);
-      });
+      },
+      std::move(input_lifetimes));
 
   if (!status.ok()) {
     on_done(status);

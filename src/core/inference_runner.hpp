@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -70,7 +71,11 @@ class InferenceJob {
     input_tensors_.clear();
     input_tensors_.reserve(inputs.size());
     for (const auto& t : inputs) {
-      input_tensors_.push_back(t.contiguous());
+      if (t.is_contiguous()) {
+        input_tensors_.push_back(t);
+      } else {
+        input_tensors_.push_back(t.contiguous());
+      }
     }
   }
   void set_input_types(const std::vector<at::ScalarType>& types)
@@ -93,6 +98,18 @@ class InferenceJob {
       std::function<void(std::vector<torch::Tensor>, double)> call_back)
   {
     on_complete_ = std::move(call_back);
+  }
+
+  void set_input_memory_holders(
+      std::vector<std::shared_ptr<const void>> holders)
+  {
+    input_memory_holders_ = std::move(holders);
+  }
+
+  [[nodiscard]] auto get_input_memory_holders() const
+      -> const std::vector<std::shared_ptr<const void>>&
+  {
+    return input_memory_holders_;
   }
 
   [[nodiscard]] auto get_job_id() const -> int { return job_id_; }
@@ -140,6 +157,7 @@ class InferenceJob {
   std::vector<torch::Tensor> input_tensors_;
   std::vector<at::ScalarType> input_types_;
   std::vector<torch::Tensor> output_tensors_;
+  std::vector<std::shared_ptr<const void>> input_memory_holders_;
 
   int job_id_ = 0;
   std::optional<int> fixed_worker_id_;

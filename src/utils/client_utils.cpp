@@ -100,11 +100,13 @@ log_job_enqueued(
 auto
 create_job(
     const std::vector<torch::Tensor>& inputs,
-    const std::vector<torch::Tensor>& outputs_ref,
-    int job_id) -> std::shared_ptr<InferenceJob>
+    const std::vector<torch::Tensor>& outputs_ref, int job_id,
+    std::vector<std::shared_ptr<const void>> input_lifetimes)
+    -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
   job->set_input_tensors(inputs);
+  job->set_input_memory_holders(std::move(input_lifetimes));
 
   std::vector<at::ScalarType> types;
   types.reserve(inputs.size());

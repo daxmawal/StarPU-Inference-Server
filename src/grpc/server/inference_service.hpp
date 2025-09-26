@@ -72,13 +72,16 @@ class InferenceServiceImpl final
       detail::TimingInfo)>;
 
   auto submit_job_async(
-      const std::vector<torch::Tensor>& inputs,
-      AsyncJobCallback on_complete) -> grpc::Status;
+      const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
+      std::vector<std::shared_ptr<const void>> input_lifetimes = {})
+      -> grpc::Status;
 
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
       std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
-      detail::TimingInfo& timing_info) -> grpc::Status;
+      detail::TimingInfo& timing_info,
+      std::vector<std::shared_ptr<const void>> input_lifetimes = {})
+      -> grpc::Status;
 
   void HandleModelInferAsync(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
@@ -87,7 +90,9 @@ class InferenceServiceImpl final
 
   auto validate_and_convert_inputs(
       const inference::ModelInferRequest* request,
-      std::vector<torch::Tensor>& inputs) -> grpc::Status;
+      std::vector<torch::Tensor>& inputs,
+      std::vector<std::shared_ptr<const void>>* input_lifetimes = nullptr)
+      -> grpc::Status;
 
  private:
   InferenceQueue* queue_;

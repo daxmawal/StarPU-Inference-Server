@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <span>
 
 #include "test_inference_service.hpp"
@@ -29,6 +30,37 @@ TEST(InferenceService, ValidateInputsSuccess)
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
   EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
+}
+
+TEST(InferenceService, ValidateInputsZeroCopyUsesRequestBuffer)
+{
+  constexpr size_t kElements = 1U << 10;
+  std::vector<float> data(kElements, kF1);
+  auto req = starpu_server::make_model_infer_request({
+      {{static_cast<int64_t>(kElements)},
+       at::kFloat,
+       starpu_server::to_raw_data(data)},
+  });
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+
+  std::vector<torch::Tensor> inputs;
+  std::vector<std::shared_ptr<const void>> keep_alive;
+  auto status = service.validate_and_convert_inputs(&req, inputs, &keep_alive);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 1U);
+  ASSERT_EQ(keep_alive.size(), 1U);
+  EXPECT_EQ(
+      inputs[0].data_ptr(), const_cast<void*>(static_cast<const void*>(
+                                req.raw_input_contents(0).data())));
+  EXPECT_EQ(
+      inputs[0].nbytes(),
+      static_cast<int64_t>(req.raw_input_contents(0).size()));
 }
 
 TEST(InferenceService, ValidateInputsNonContiguous)
