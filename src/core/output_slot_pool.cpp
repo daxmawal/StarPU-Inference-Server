@@ -56,8 +56,13 @@ free_host_buffer(void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
     }
   }
   if (buffer_info.cuda_pinned) {
-    managed_ptr.release();
-    cudaFreeHost(ptr);
+    void* raw_ptr = managed_ptr.release();
+    cudaError_t cuda_rc = cudaFreeHost(raw_ptr);
+    if (cuda_rc != cudaSuccess) {
+      log_warning(
+          "cudaFreeHost failed for output buffer: rc=" +
+          std::to_string(static_cast<int>(cuda_rc)));
+    }
   }
 }
 
