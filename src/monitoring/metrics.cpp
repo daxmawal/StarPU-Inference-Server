@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <exception>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -25,7 +26,12 @@ const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
     1, 5, 10, 25, 50, 100, 250, 500, 1000};
 
 #ifndef STARPU_HAVE_NVML
-std::once_flag nvml_warning_once;
+auto
+nvml_warning_flag() -> std::once_flag&
+{
+  static std::once_flag flag;
+  return flag;
+}
 #endif
 
 struct CpuTotals {
@@ -42,7 +48,7 @@ read_total_cpu_times(CpuTotals& out) -> bool
   }
   std::string cpu;
   function >> cpu;
-  if (cpu.rfind("cpu", 0) != 0) {
+  if (!cpu.starts_with("cpu")) {
     return false;
   }
   function >> out.user >> out.nice >> out.system >> out.idle >> out.iowait >>
@@ -306,7 +312,7 @@ init_metrics(int port) -> bool
     auto new_metrics = std::make_shared<MetricsRegistry>(port);
 
 #ifndef STARPU_HAVE_NVML
-    std::call_once(nvml_warning_once, [] {
+    std::call_once(nvml_warning_flag(), [] {
       log_warning_critical(
           "NVML support is not available; GPU metrics collection is "
           "disabled.");
@@ -393,7 +399,12 @@ MetricsRegistry::sampling_loop(const std::stop_token& stop)
         gpu_memory_total_gauges_[stats.index]->Set(stats.mem_total_bytes);
       }
     }
+    catch (const std::exception& e) {
+      log_error(
+          std::string("GPU metrics sampling failed: ") + e.what());
+    }
     catch (...) {
+      log_error("GPU metrics sampling failed due to an unknown error");
     }
 
     for (auto slept = 0ms; slept < next_sleep && !stop.stop_requested();
