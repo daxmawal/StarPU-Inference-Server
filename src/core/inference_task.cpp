@@ -513,21 +513,21 @@ InferenceTask::finalize_inference_task(void* arg)
 {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
 
-  // If outputs were pooled, copy from pooled buffers back into job tensors
-  // before releasing StarPU read locks on output handles.
   if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 && ctx->job) {
     try {
       const auto& base_ptrs = ctx->output_pool->base_ptrs(ctx->output_slot_id);
       const auto& job_outs = ctx->job->get_output_tensors();
-      const size_t n = std::min(base_ptrs.size(), job_outs.size());
-      for (size_t i = 0; i < n; ++i) {
-        const auto& t = job_outs[i];
-        if (!t.defined() || !t.is_cpu() || !t.is_contiguous()) {
+      const size_t tensor_count = std::min(base_ptrs.size(), job_outs.size());
+      for (size_t i = 0; i < tensor_count; ++i) {
+        const auto& job_output_tensor = job_outs[i];
+        if (!job_output_tensor.defined() || !job_output_tensor.is_cpu() ||
+            !job_output_tensor.is_contiguous()) {
           throw std::runtime_error(
               "Job output tensor must be defined, CPU and contiguous");
         }
         std::memcpy(
-            t.data_ptr(), base_ptrs[i], static_cast<size_t>(t.nbytes()));
+            job_output_tensor.data_ptr(), base_ptrs[i],
+            static_cast<size_t>(job_output_tensor.nbytes()));
       }
     }
     catch (const std::exception& e) {
