@@ -80,8 +80,8 @@ TEST_P(SubmitJobAndWaitTest, ReturnsExpectedStatus)
   auto worker = prepare_job(GetParam().ref_outputs, GetParam().worker_outputs);
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   starpu_server::detail::TimingInfo timing_info{};
-  auto status = service->submit_job_and_wait(
-      inputs, outputs, breakdown, timing_info);
+  auto status =
+      service->submit_job_and_wait(inputs, outputs, breakdown, timing_info);
   EXPECT_EQ(status.error_code(), GetParam().expected_status);
   if (status.ok()) {
     ASSERT_EQ(outputs.size(), GetParam().worker_outputs.size());

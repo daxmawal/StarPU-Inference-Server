@@ -7,10 +7,10 @@
 #include <string>
 #include <vector>
 
-#include "runtime_config.hpp"
-#include "tensor_builder.hpp"
 #include "input_slot_pool.hpp"
 #include "output_slot_pool.hpp"
+#include "runtime_config.hpp"
+#include "tensor_builder.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -52,10 +52,16 @@ class StarPUSetup {
 
   // Access the reusable input slot pool
   auto input_pool() -> InputSlotPool& { return *input_pool_; }
-  [[nodiscard]] bool has_input_pool() const { return static_cast<bool>(input_pool_); }
+  [[nodiscard]] bool has_input_pool() const
+  {
+    return static_cast<bool>(input_pool_);
+  }
   // Access the reusable output slot pool
   auto output_pool() -> OutputSlotPool& { return *output_pool_; }
-  [[nodiscard]] bool has_output_pool() const { return static_cast<bool>(output_pool_); }
+  [[nodiscard]] bool has_output_pool() const
+  {
+    return static_cast<bool>(output_pool_);
+  }
 
   static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
       -> std::map<int, std::vector<int>>;

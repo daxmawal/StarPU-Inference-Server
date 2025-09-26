@@ -8,7 +8,7 @@ std::mutex g_mutex;
 std::optional<std::chrono::high_resolution_clock::time_point> g_first_enqueue;
 std::optional<std::chrono::high_resolution_clock::time_point> g_last_completion;
 std::size_t g_total_inferences = 0;
-}
+}  // namespace
 
 void
 reset()
@@ -23,8 +23,7 @@ void
 record_job(
     const std::chrono::high_resolution_clock::time_point enqueue_time,
     const std::chrono::high_resolution_clock::time_point completion_time,
-    const std::size_t batch_size,
-    const bool is_warmup_job)
+    const std::size_t batch_size, const bool is_warmup_job)
 {
   if (is_warmup_job) {
     return;
@@ -56,9 +55,9 @@ snapshot() -> std::optional<Snapshot>
     return std::nullopt;
   }
 
-  const double duration_seconds = std::chrono::duration<double>(
-                                     *g_last_completion - *g_first_enqueue)
-                                     .count();
+  const double duration_seconds =
+      std::chrono::duration<double>(*g_last_completion - *g_first_enqueue)
+          .count();
   if (duration_seconds <= 0.0) {
     return std::nullopt;
   }
@@ -69,4 +68,3 @@ snapshot() -> std::optional<Snapshot>
 }
 
 }  // namespace starpu_server::perf_observer
-
