@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -41,9 +43,10 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
 void
 free_host_buffer(void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
 {
-  if (ptr != nullptr) {
+  if (ptr == nullptr) {
     return;
   }
+  std::unique_ptr<void, decltype(&std::free)> managed_ptr(ptr, &std::free);
   if (buffer_info.starpu_pinned) {
     const int unpin_rc = starpu_memory_unpin(ptr, buffer_info.bytes);
     if (unpin_rc != 0) {
@@ -53,9 +56,8 @@ free_host_buffer(void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
     }
   }
   if (buffer_info.cuda_pinned) {
+    managed_ptr.release();
     cudaFreeHost(ptr);
-  } else {
-    free(ptr);
   }
 }
 

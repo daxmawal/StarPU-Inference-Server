@@ -6,8 +6,10 @@
 #include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -64,7 +66,8 @@ free_host_buffer(void* ptr, const InputSlotPool::HostBufferInfo& buffer_info)
   if (buffer_info.cuda_pinned) {
     cudaFreeHost(ptr);
   } else {
-    free(ptr);
+    [[maybe_unused]] const auto free_on_exit =
+        std::unique_ptr<void, decltype(&std::free)>(ptr, &std::free);
   }
 }
 
