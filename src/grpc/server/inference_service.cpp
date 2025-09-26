@@ -36,6 +36,10 @@ using inference::ServerReadyResponse;
 
 namespace {
 
+constexpr std::size_t kDefaultGrpcThreads = 4;
+constexpr std::size_t kMinGrpcThreads = 2;
+constexpr std::size_t kMaxGrpcThreads = 8;
+
 auto
 checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
 {
@@ -76,13 +80,13 @@ convert_input_to_tensor(
   }
 
   auto alias = std::shared_ptr<const void>(request_guard, raw.data());
-  auto deleter = [alias](void* /*unused*/) mutable {
-    auto holder = alias;
-    holder.reset();
+  auto holder = std::shared_ptr<void>(alias, const_cast<char*>(raw.data()));
+  auto deleter = [holder](void* /*unused*/) mutable {
+    auto keep = holder;
+    keep.reset();
   };
 
-  tensor =
-      torch::from_blob(const_cast<char*>(raw.data()), shape, deleter, options);
+  tensor = torch::from_blob(holder.get(), shape, deleter, options);
   if (keep_alive != nullptr) {
     *keep_alive = alias;
   }
@@ -242,8 +246,9 @@ InferenceServiceImpl::validate_and_convert_inputs(
       const bool batching_allowed = (max_batch_size_ > 0);
 
       auto check_tail_eq = [&](int64_t offset_in, int64_t offset_exp) -> bool {
-        if (rank - offset_in != exp_rank - offset_exp)
+        if (rank - offset_in != exp_rank - offset_exp) {
           return false;
+        }
         for (int64_t k = 0; k < rank - offset_in; ++k) {
           if (shp[static_cast<size_t>(offset_in + k)] !=
               exp[static_cast<size_t>(offset_exp + k)]) {
@@ -348,7 +353,7 @@ auto
 InferenceServiceImpl::submit_job_and_wait(
     const std::vector<torch::Tensor>& inputs,
     std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
-    detail::TimingInfo& timing_capture,
+    detail::TimingInfo& timing_info,
     std::vector<std::shared_ptr<const void>> input_lifetimes) -> Status
 {
   struct JobResult {
@@ -384,7 +389,7 @@ InferenceServiceImpl::submit_job_and_wait(
 
   outputs = std::move(result.outputs);
   breakdown = result.breakdown;
-  timing_capture = result.timing_info;
+  timing_info = result.timing_info;
   return Status::OK;
 }
 
@@ -416,7 +421,7 @@ InferenceServiceImpl::HandleModelInferAsync(
       inputs,
       [this, request, reply, recv_tp, recv_ms, metrics,
        on_done = std::move(on_done)](
-          Status job_status, std::vector<torch::Tensor> outs,
+          Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
         if (!job_status.ok()) {
           on_done(job_status);
@@ -520,6 +525,11 @@ namespace {
 
 class AsyncCallDataBase {
  public:
+  explicit AsyncCallDataBase() = default;
+  AsyncCallDataBase(const AsyncCallDataBase&) = delete;
+  auto operator=(const AsyncCallDataBase&) -> AsyncCallDataBase& = delete;
+  AsyncCallDataBase(AsyncCallDataBase&&) = default;
+  auto operator=(AsyncCallDataBase&&) -> AsyncCallDataBase& = default;
   virtual ~AsyncCallDataBase() = default;
   virtual void Proceed(bool ok) = 0;
 };
@@ -568,7 +578,7 @@ class UnaryCallData final : public AsyncCallDataBase {
   }
 
  private:
-  enum class CallStatus { Create, Process, Finish };
+  enum class CallStatus : std::uint8_t { Create, Process, Finish };
 
   void HandleRequest()
   {
@@ -615,7 +625,7 @@ class ModelInferCallData final : public AsyncCallDataBase {
         }
         new ModelInferCallData(service_, cq_, impl_);
         impl_->HandleModelInferAsync(
-            &ctx_, &request_, &response_, [this](Status status) {
+            &ctx_, &request_, &response_, [this](const Status& status) {
               status_ = CallStatus::Finish;
               responder_.Finish(response_, status, this);
             });
@@ -627,7 +637,7 @@ class ModelInferCallData final : public AsyncCallDataBase {
   }
 
  private:
-  enum class CallStatus { Create, Process, Finish };
+  enum class CallStatus : std::uint8_t { Create, Process, Finish };
 
   inference::GRPCInferenceService::AsyncService* service_;
   grpc::ServerCompletionQueue* cq_;
@@ -644,9 +654,9 @@ compute_thread_count() -> std::size_t
 {
   const unsigned concurrency = std::thread::hardware_concurrency();
   if (concurrency == 0U) {
-    return 4U;
+    return kDefaultGrpcThreads;
   }
-  return std::clamp<std::size_t>(concurrency, 2U, 8U);
+  return std::clamp<std::size_t>(concurrency, kMinGrpcThreads, kMaxGrpcThreads);
 }
 
 class AsyncServerContext {
