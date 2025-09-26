@@ -348,7 +348,9 @@ InferenceClient::AsyncCompleteRpc()
       const auto overall_ms = call->reply.server_overall_ms();
 
       const double accounted_roundtrip_ms =
-          request_latency_ms + overall_ms + response_latency_ms;
+          static_cast<double>(request_latency_ms) +
+          static_cast<double>(overall_ms) +
+          static_cast<double>(response_latency_ms);
       double client_overhead_ms =
           static_cast<double>(latency) - accounted_roundtrip_ms;
       if (client_overhead_ms < 0.0) {
