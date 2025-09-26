@@ -69,15 +69,14 @@ class StarPUTaskRunner {
   auto validate_batch_and_copy_inputs(
       const std::shared_ptr<InferenceJob>& job,
       const PoolResources& pools) -> int64_t;
-  auto configure_task_context(
+  static auto configure_task_context(
       InferenceTask& task, const PoolResources& pools,
       const std::vector<starpu_data_handle_t>& input_handles,
       const std::vector<starpu_data_handle_t>& output_handles,
       int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>;
-  [[noreturn]] void handle_submission_failure(
+  [[noreturn]] static void handle_submission_failure(
       const PoolResources& pools,
-      const std::shared_ptr<InferenceCallbackContext>& ctx,
-      int submit_code) const;
+      const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
 
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;

@@ -311,7 +311,7 @@ StarPUTaskRunner::configure_task_context(
 void
 StarPUTaskRunner::handle_submission_failure(
     const PoolResources& pools,
-    const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code) const
+    const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code)
 {
   InferenceTask::cleanup(ctx);
   if (pools.has_input() && pools.input_slot >= 0) {
