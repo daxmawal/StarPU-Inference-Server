@@ -219,9 +219,6 @@ StarPUTaskRunner::submit_inference_task(
 {
   NvtxRange nvtx_job_scope(
       std::string("submit job ") + std::to_string(job->get_job_id()));
-  // If pools are available, wait for a free slot (blocking) instead of
-  // opportunistic try-acquire. This ensures we reuse pooled handles and only
-  // copy inputs once a slot is actually free.
   if (starpu_->has_input_pool() || starpu_->has_output_pool()) {
     auto* in_pool_ptr =
         starpu_->has_input_pool() ? &starpu_->input_pool() : nullptr;
@@ -234,7 +231,6 @@ StarPUTaskRunner::submit_inference_task(
     int in_slot_id = -1;
     int out_slot_id = -1;
 
-    // Block until a slot is available for each enabled pool
     if (use_in_pool) {
       in_slot_id = in_pool_ptr->acquire();
     }
@@ -252,26 +248,23 @@ StarPUTaskRunner::submit_inference_task(
         }
       }
 
-      // Determine batch size b from first input vs configured per-sample rank
-      int64_t b = 1;
+      int64_t batch = 1;
       if (!opts_->models.empty() && !opts_->models[0].inputs.empty()) {
         const auto per_sample_rank =
             static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
         const auto rank0 = inputs[0].dim();
         if (rank0 == per_sample_rank + 1) {
-          b = inputs[0].size(0);
+          batch = inputs[0].size(0);
         } else {
-          b = 1;
+          batch = 1;
         }
       }
       if (use_in_pool) {
-        if (b < 1 || b > in_pool_ptr->max_batch_size()) {
+        if (batch < 1 || batch > in_pool_ptr->max_batch_size()) {
           throw std::runtime_error("Batch size exceeds input pool capacity");
         }
       }
 
-      // Mark handles as being written on host, copy data, then release to bump
-      // coherence/version so StarPU transfers fresh data to device workers.
       if (use_in_pool) {
         NvtxRange nvtx_copy_scope("HtoD-staged host copy (pooled inputs)");
         const auto& base_ptrs = in_pool_ptr->base_ptrs(in_slot_id);
@@ -282,18 +275,17 @@ StarPUTaskRunner::submit_inference_task(
             throw std::runtime_error(
                 "Input tensor must be defined, CPU and contiguous");
           }
-          const int rc = starpu_data_acquire(h_in[i], STARPU_W);
-          if (rc != 0) {
+          const int status = starpu_data_acquire(h_in[i], STARPU_W);
+          if (status != 0) {
             throw std::runtime_error("starpu_data_acquire(W) failed");
           }
-          const size_t nbytes = static_cast<size_t>(tin.nbytes());
+          const auto nbytes = static_cast<size_t>(tin.nbytes());
           std::memcpy(base_ptrs[i], tin.data_ptr(), nbytes);
           starpu_data_release(h_in[i]);
         }
       }
       copied_ok = true;
 
-      // Build and submit the task using pooled handles when available
       InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
       const auto input_handles = use_in_pool ? in_pool_ptr->handles(in_slot_id)
                                              : task.prepare_input_handles();
@@ -309,13 +301,15 @@ StarPUTaskRunner::submit_inference_task(
       }
       ctx->on_finished = [&, in_pool_ptr, in_slot_id, use_in_pool, out_pool_ptr,
                           out_slot_id, use_out_pool]() {
-        if (use_in_pool)
+        if (use_in_pool) {
           in_pool_ptr->release(in_slot_id);
-        if (use_out_pool)
+        }
+        if (use_out_pool) {
           out_pool_ptr->release(out_slot_id);
+        }
       };
       if (ctx->inference_params) {
-        ctx->inference_params->batch_size = b;
+        ctx->inference_params->batch_size = batch;
       }
       starpu_task* task_ptr =
           task.create_task(input_handles, output_handles, ctx);
@@ -325,28 +319,29 @@ StarPUTaskRunner::submit_inference_task(
 
       const int ret = starpu_task_submit(task_ptr);
       if (ret != 0) {
-        // on error, cleanup and release slots immediately
         InferenceTask::cleanup(ctx);
-        if (use_in_pool)
+        if (use_in_pool) {
           in_pool_ptr->release(in_slot_id);
-        if (use_out_pool)
+        }
+        if (use_out_pool) {
           out_pool_ptr->release(out_slot_id);
+        }
         throw StarPUTaskSubmissionException(std::format(
             "[ERROR] StarPU task submission failed (code {})", ret));
       }
     }
     catch (...) {
-      // If copy failed, release acquired slots before rethrowing
       if (!copied_ok) {
-        if (use_in_pool && in_slot_id >= 0)
+        if (use_in_pool && in_slot_id >= 0) {
           in_pool_ptr->release(in_slot_id);
-        if (use_out_pool && out_slot_id >= 0)
+        }
+        if (use_out_pool && out_slot_id >= 0) {
           out_pool_ptr->release(out_slot_id);
+        }
       }
       throw;
     }
   } else {
-    // No pools configured; fallback to per-job registration
     InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
     task.submit();
   }
