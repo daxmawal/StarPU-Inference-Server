@@ -21,6 +21,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -306,6 +307,72 @@ run_warmup(
 // Result Processing: Print latency breakdowns and validate results
 // =============================================================================
 
+namespace {
+
+auto
+build_gpu_model_lookup(
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<int>& device_ids)
+    -> std::vector<torch::jit::script::Module*>
+{
+  std::vector<torch::jit::script::Module*> lookup;
+  if (models_gpu.empty() || device_ids.empty()) {
+    return lookup;
+  }
+
+  const auto max_it = std::max_element(device_ids.begin(), device_ids.end());
+  if (max_it == device_ids.end() || *max_it < 0) {
+    return lookup;
+  }
+
+  lookup.resize(static_cast<size_t>(*max_it) + 1, nullptr);
+  const size_t replicas = std::min(models_gpu.size(), device_ids.size());
+  for (size_t idx = 0; idx < replicas; ++idx) {
+    const int device_id = device_ids[idx];
+    if (device_id < 0) {
+      continue;
+    }
+    lookup[static_cast<size_t>(device_id)] = &models_gpu[idx];
+  }
+
+  return lookup;
+}
+
+auto
+resolve_validation_model(
+    const InferenceResult& result, torch::jit::script::Module& cpu_model,
+    const std::vector<torch::jit::script::Module*>& gpu_lookup,
+    bool validate_results) -> std::optional<torch::jit::script::Module*>
+{
+  if (result.executed_on != DeviceType::CUDA) {
+    return &cpu_model;
+  }
+
+  if (result.device_id < 0) {
+    if (validate_results) {
+      log_warning(std::format(
+          "[Client] Skipping validation for job {}: invalid device id {}",
+          result.job_id, result.device_id));
+    }
+    return std::nullopt;
+  }
+
+  const auto device_id = static_cast<size_t>(result.device_id);
+  if (device_id >= gpu_lookup.size() || gpu_lookup[device_id] == nullptr) {
+    if (validate_results) {
+      log_warning(std::format(
+          "[Client] Skipping validation for job {}: no GPU replica for device "
+          "{}",
+          result.job_id, result.device_id));
+    }
+    return std::nullopt;
+  }
+
+  return gpu_lookup[device_id];
+}
+
+}  // namespace
+
 static void
 process_results(
     const std::vector<InferenceResult>& results,
@@ -318,65 +385,22 @@ process_results(
     log_info(verbosity, "Result validation disabled; skipping checks.");
   }
 
-  const auto build_gpu_lookup = [&models_gpu, &device_ids]() {
-    std::vector<torch::jit::script::Module*> lookup;
-    if (models_gpu.empty() || device_ids.empty()) {
-      return lookup;
-    }
-
-    const auto max_it = std::max_element(device_ids.begin(), device_ids.end());
-    if (max_it == device_ids.end() || *max_it < 0) {
-      return lookup;
-    }
-
-    lookup.resize(static_cast<size_t>(*max_it) + 1, nullptr);
-    const size_t replicas = std::min(models_gpu.size(), device_ids.size());
-    for (size_t idx = 0; idx < replicas; ++idx) {
-      const int device_id = device_ids[idx];
-      if (device_id < 0) {
-        continue;
-      }
-      lookup[static_cast<size_t>(device_id)] = &models_gpu[idx];
-    }
-    return lookup;
-  };
-
-  auto gpu_model_lookup = build_gpu_lookup();
+  auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, device_ids);
   for (const auto& result : results) {
     if (result.results.empty() || !result.results[0].defined()) {
       log_error(std::format("[Client] Job {} failed.", result.job_id));
       continue;
     }
 
-    torch::jit::script::Module* cpu_model = &model_cpu;
-    bool skip_validation = false;
-    if (result.executed_on == DeviceType::CUDA) {
-      if (result.device_id >= 0) {
-        const auto device_id = static_cast<size_t>(result.device_id);
-        if (device_id < gpu_model_lookup.size() &&
-            gpu_model_lookup[device_id] != nullptr) {
-          cpu_model = gpu_model_lookup[device_id];
-        } else {
-          if (validate_results) {
-            log_warning(std::format(
-                "[Client] Skipping validation for job {}: no GPU replica for "
-                "device {}",
-                result.job_id, result.device_id));
-          }
-          skip_validation = true;
-        }
-      } else {
-        if (validate_results) {
-          log_warning(std::format(
-              "[Client] Skipping validation for job {}: invalid device id {}",
-              result.job_id, result.device_id));
-        }
-        skip_validation = true;
-      }
+    const auto validation_model = resolve_validation_model(
+        result, model_cpu, gpu_model_lookup, validate_results);
+    if (!validation_model.has_value()) {
+      continue;
     }
 
-    if (validate_results && !skip_validation) {
-      validate_inference_result(result, *cpu_model, verbosity, rtol, atol);
+    if (validate_results) {
+      validate_inference_result(
+          result, **validation_model, verbosity, rtol, atol);
     }
   }
 }
