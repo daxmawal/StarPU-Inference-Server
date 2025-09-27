@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <cstdlib>
 #include <limits>
+#include <vector>
 
 #include "core/input_slot_pool.hpp"
 #include "core/output_slot_pool.hpp"
@@ -140,4 +143,37 @@ TEST(OutputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
   EXPECT_THROW(static_cast<void>(pool.handles(slot_id + 1)), std::out_of_range);
 
   pool.release(slot_id);
+}
+
+TEST(OutputSlotPool_Unit, CleanupSlotBuffersReleasesResources)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::OutputSlotPool::SlotInfo slot;
+  slot.handles.resize(1);
+  slot.base_ptrs.resize(1);
+
+  auto* raw_ptr = std::malloc(sizeof(int));
+  ASSERT_NE(raw_ptr, nullptr);
+  slot.base_ptrs[0] = raw_ptr;
+
+  std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
+  buffer_infos[0].bytes = sizeof(int);
+
+  starpu_data_handle_t handle = nullptr;
+  starpu_variable_data_register(
+      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(raw_ptr),
+      sizeof(int));
+  ASSERT_NE(handle, nullptr);
+  slot.handles[0] = handle;
+
+  starpu_server::OutputSlotPoolTestHook::cleanup_slot_buffers(
+      slot, buffer_infos, buffer_infos.size());
+
+  EXPECT_EQ(slot.handles[0], nullptr);
+  EXPECT_EQ(slot.base_ptrs[0], nullptr);
+  EXPECT_FALSE(buffer_infos[0].cuda_pinned);
+  EXPECT_FALSE(buffer_infos[0].starpu_pinned);
+  EXPECT_EQ(buffer_infos[0].starpu_pin_rc, 0);
+  EXPECT_EQ(buffer_infos[0].bytes, 0U);
 }

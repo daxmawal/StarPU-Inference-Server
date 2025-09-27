@@ -122,7 +122,7 @@ prepare_host_buffer(
 }
 
 void
-cleanup_slot_buffers(
+cleanup_slot_buffers_impl(
     OutputSlotPool::SlotInfo& slot,
     std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
 {
@@ -139,6 +139,14 @@ cleanup_slot_buffers(
   }
 }
 }  // namespace
+
+void
+OutputSlotPoolTestHook::cleanup_slot_buffers(
+    OutputSlotPool::SlotInfo& slot,
+    std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
+{
+  cleanup_slot_buffers_impl(slot, buffer_infos, count);
+}
 
 OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
@@ -239,7 +247,7 @@ OutputSlotPool::allocate_slot_buffers_and_register(
         &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(prepared_buffer.ptr),
         total_numel, element_size(output_types_[i]));
     if (handle == nullptr) {
-      cleanup_slot_buffers(slot, buffer_infos, i + 1);
+      cleanup_slot_buffers_impl(slot, buffer_infos, i + 1);
       throw std::runtime_error(
           "Failed to register StarPU vector handle for output");
     }

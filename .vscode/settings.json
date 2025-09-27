@@ -131,7 +131,10 @@
     "__verbose_abort": "cpp",
     "locale": "cpp",
     "ranges": "cpp",
-    "fstream": "cpp"
+    "fstream": "cpp",
+    "bitset": "cpp",
+    "print": "cpp",
+    "ios": "cpp"
   },
   "[proto3]": {
     "editor.insertSpaces": true,

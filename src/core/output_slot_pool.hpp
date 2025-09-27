@@ -78,4 +78,10 @@ class OutputSlotPool {
   std::condition_variable cv_;
 };
 
+struct OutputSlotPoolTestHook {
+  static void cleanup_slot_buffers(
+      OutputSlotPool::SlotInfo& slot,
+      std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count);
+};
+
 }  // namespace starpu_server
