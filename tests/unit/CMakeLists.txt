@@ -39,6 +39,7 @@ target_sources(
             utils/unit_inference_validator.cpp
             utils/unit_input_generator.cpp
             utils/unit_logger.cpp
+            utils/unit_perf_observer.cpp
             utils/unit_time_utils.cpp
             utils/unit_runtime_config.cpp
             utils/unit_config_loader.cpp
