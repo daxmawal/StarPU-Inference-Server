@@ -266,13 +266,13 @@ InferenceServiceImpl::validate_and_convert_inputs(
       } else {
         if (rank == exp_rank) {
           if (rank >= 1 && check_tail_eq(1, 1)) {
-            const int64_t b = shp[0];
-            shape_ok = (b >= 1 && b <= max_batch_size_);
+            const int64_t batch_size = shp[0];
+            shape_ok = (batch_size >= 1 && batch_size <= max_batch_size_);
           }
         } else if (rank == exp_rank + 1) {
           if (check_tail_eq(1, 0)) {
-            const int64_t b = shp[0];
-            shape_ok = (b >= 1 && b <= max_batch_size_);
+            const int64_t batch_size = shp[0];
+            shape_ok = (batch_size >= 1 && batch_size <= max_batch_size_);
           }
         }
       }
@@ -402,22 +402,22 @@ InferenceServiceImpl::HandleModelInferAsync(
 {
   class CallbackHandle {
    public:
-    explicit CallbackHandle(std::function<void(Status)> cb)
-        : callback_(std::move(cb))
+    explicit CallbackHandle(std::function<void(Status)> callback)
+        : callback_(std::move(callback))
     {
     }
 
     void Invoke(Status status)
     {
-      std::function<void(Status)> cb;
+      std::function<void(Status)> callback;
       {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!callback_) {
           return;
         }
-        cb = std::move(callback_);
+        callback = std::move(callback_);
       }
-      cb(std::move(status));
+      callback(std::move(status));
     }
 
    private:
@@ -559,7 +559,7 @@ class AsyncCallDataBase {
   AsyncCallDataBase(AsyncCallDataBase&&) = default;
   auto operator=(AsyncCallDataBase&&) -> AsyncCallDataBase& = default;
   virtual ~AsyncCallDataBase() = default;
-  virtual void Proceed(bool ok) = 0;
+  virtual void Proceed(bool is_ok) = 0;
 };
 
 template <typename Request, typename Response>
@@ -574,15 +574,15 @@ class UnaryCallData final : public AsyncCallDataBase {
 
   UnaryCallData(
       inference::GRPCInferenceService::AsyncService* service,
-      grpc::ServerCompletionQueue* cq, InferenceServiceImpl* impl,
+      grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl,
       RequestMethod request_method, HandlerMethod handler)
-      : service_(service), cq_(cq), responder_(&ctx_), impl_(impl),
-        request_method_(request_method), handler_(handler)
+      : service_(service), cq_(completion_queue), responder_(&ctx_),
+        impl_(impl), request_method_(request_method), handler_(handler)
   {
     Proceed(true);
   }
 
-  void Proceed(bool ok) override
+  void Proceed(bool is_ok) override
   {
     switch (status_) {
       case CallStatus::Create:
@@ -591,7 +591,7 @@ class UnaryCallData final : public AsyncCallDataBase {
             &ctx_, &request_, &responder_, cq_, cq_, this);
         break;
       case CallStatus::Process:
-        if (!ok) {
+        if (!is_ok) {
           status_ = CallStatus::Finish;
           delete this;
           return;
@@ -631,13 +631,13 @@ class ModelInferCallData final : public AsyncCallDataBase {
  public:
   ModelInferCallData(
       inference::GRPCInferenceService::AsyncService* service,
-      grpc::ServerCompletionQueue* cq, InferenceServiceImpl* impl)
-      : service_(service), cq_(cq), responder_(&ctx_), impl_(impl)
+      grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl)
+      : service_(service), cq_(completion_queue), responder_(&ctx_), impl_(impl)
   {
     Proceed(true);
   }
 
-  void Proceed(bool ok) override
+  void Proceed(bool is_ok) override
   {
     switch (status_) {
       case CallStatus::Create:
@@ -646,7 +646,7 @@ class ModelInferCallData final : public AsyncCallDataBase {
             &ctx_, &request_, &responder_, cq_, cq_, this);
         break;
       case CallStatus::Process:
-        if (!ok) {
+        if (!is_ok) {
           status_ = CallStatus::Finish;
           delete this;
           return;
@@ -692,13 +692,13 @@ class AsyncServerContext {
   AsyncServerContext(
       inference::GRPCInferenceService::AsyncService& async_service,
       InferenceServiceImpl& impl)
-      : async_service_(async_service), impl_(impl)
+      : async_service_(&async_service), impl_(&impl)
   {
   }
 
   void configure(grpc::ServerBuilder& builder)
   {
-    builder.RegisterService(&async_service_);
+    builder.RegisterService(async_service_);
     completion_queue_ = builder.AddCompletionQueue();
   }
 
@@ -716,20 +716,20 @@ class AsyncServerContext {
 
     new UnaryCallData<
         inference::ServerLiveRequest, inference::ServerLiveResponse>(
-        &async_service_, completion_queue_.get(), &impl_,
+        async_service_, completion_queue_.get(), impl_,
         &inference::GRPCInferenceService::AsyncService::RequestServerLive,
         &InferenceServiceImpl::ServerLive);
     new UnaryCallData<
         inference::ServerReadyRequest, inference::ServerReadyResponse>(
-        &async_service_, completion_queue_.get(), &impl_,
+        async_service_, completion_queue_.get(), impl_,
         &inference::GRPCInferenceService::AsyncService::RequestServerReady,
         &InferenceServiceImpl::ServerReady);
     new UnaryCallData<
         inference::ModelReadyRequest, inference::ModelReadyResponse>(
-        &async_service_, completion_queue_.get(), &impl_,
+        async_service_, completion_queue_.get(), impl_,
         &inference::GRPCInferenceService::AsyncService::RequestModelReady,
         &InferenceServiceImpl::ModelReady);
-    new ModelInferCallData(&async_service_, completion_queue_.get(), &impl_);
+    new ModelInferCallData(async_service_, completion_queue_.get(), impl_);
   }
 
   void shutdown()
@@ -749,14 +749,14 @@ class AsyncServerContext {
   void poll_events()
   {
     void* tag = nullptr;
-    bool ok = false;
-    while (completion_queue_ && completion_queue_->Next(&tag, &ok)) {
-      static_cast<AsyncCallDataBase*>(tag)->Proceed(ok);
+    bool event_ok = false;
+    while (completion_queue_ && completion_queue_->Next(&tag, &event_ok)) {
+      static_cast<AsyncCallDataBase*>(tag)->Proceed(event_ok);
     }
   }
 
-  inference::GRPCInferenceService::AsyncService& async_service_;
-  InferenceServiceImpl& impl_;
+  inference::GRPCInferenceService::AsyncService* async_service_;
+  InferenceServiceImpl* impl_;
   std::unique_ptr<grpc::ServerCompletionQueue> completion_queue_;
   std::vector<std::jthread> threads_;
   bool started_ = false;
