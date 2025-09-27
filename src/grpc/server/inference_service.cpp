@@ -43,6 +43,97 @@ constexpr std::size_t kMinGrpcThreads = 2;
 constexpr std::size_t kMaxGrpcThreads = 8;
 
 auto
+parse_input_dtype(
+    const inference::ModelInferRequest::InferInputTensor& input,
+    at::ScalarType expected, at::ScalarType& out) -> Status
+{
+  try {
+    out = datatype_to_scalar_type(input.datatype());
+  }
+  catch (const std::invalid_argument& e) {
+    return {grpc::StatusCode::INVALID_ARGUMENT, e.what()};
+  }
+
+  if (out != expected) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch"};
+  }
+
+  return Status::OK;
+}
+
+auto
+validate_configured_shape(
+    const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
+    bool batching_allowed, int max_batch_size) -> Status
+{
+  const auto rank = static_cast<int64_t>(shape.size());
+  const auto expected_rank = static_cast<int64_t>(expected.size());
+
+  auto tails_match = [&](int64_t shape_offset, int64_t expected_offset) {
+    if (rank - shape_offset != expected_rank - expected_offset) {
+      return false;
+    }
+    for (int64_t idx = 0; idx < rank - shape_offset; ++idx) {
+      if (shape[static_cast<size_t>(shape_offset + idx)] !=
+          expected[static_cast<size_t>(expected_offset + idx)]) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  if (!batching_allowed) {
+    if (rank == expected_rank && tails_match(0, 0)) {
+      return Status::OK;
+    }
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor shape does not match configured dimensions or batch "
+        "limits"};
+  }
+
+  if (rank == expected_rank) {
+    if (rank < 1 || !tails_match(1, 1)) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Input tensor shape does not match configured dimensions or batch "
+          "limits"};
+    }
+    const int64_t batch_size = shape.front();
+    if (batch_size >= 1 && batch_size <= max_batch_size) {
+      return Status::OK;
+    }
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor shape does not match configured dimensions or batch "
+        "limits"};
+  }
+
+  if (rank == expected_rank + 1) {
+    if (!tails_match(1, 0)) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Input tensor shape does not match configured dimensions or batch "
+          "limits"};
+    }
+    const int64_t batch_size = shape.front();
+    if (batch_size >= 1 && batch_size <= max_batch_size) {
+      return Status::OK;
+    }
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor shape does not match configured dimensions or batch "
+        "limits"};
+  }
+
+  return {
+      grpc::StatusCode::INVALID_ARGUMENT,
+      "Input tensor shape does not match configured dimensions or batch "
+      "limits"};
+}
+
+auto
 checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
 {
   if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs) {
@@ -205,94 +296,31 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const auto& raw = request->raw_input_contents(i);
 
     at::ScalarType dtype = at::kFloat;
-    try {
-      dtype = datatype_to_scalar_type(input.datatype());
-    }
-    catch (const std::invalid_argument& e) {
-      return {grpc::StatusCode::INVALID_ARGUMENT, e.what()};
-    }
-
-    if (dtype != expected_input_types_[i]) {
-      return {
-          grpc::StatusCode::INVALID_ARGUMENT, "Input tensor datatype mismatch"};
-    }
-
-    std::optional<size_t> expected = element_size(dtype);
-    for (const auto dim : input.shape()) {
-      if (dim <= 0) {
-        return {
-            grpc::StatusCode::INVALID_ARGUMENT,
-            "Input tensor shape contains non-positive dimension"};
-      }
-
-      expected = checked_mul(*expected, static_cast<size_t>(dim));
-      if (!expected) {
-        return {
-            grpc::StatusCode::INVALID_ARGUMENT,
-            "Input tensor shape is too large"};
-      }
-    }
-    if (*expected != raw.size()) {
-      return {
-          grpc::StatusCode::INVALID_ARGUMENT,
-          "Input tensor shape does not match raw content size"};
-    }
-
-    if (static_cast<size_t>(i) < expected_input_dims_.size()) {
-      const std::vector<int64_t>& exp =
-          expected_input_dims_[static_cast<size_t>(i)];
-      std::vector<int64_t> shp(input.shape().begin(), input.shape().end());
-
-      const auto rank = static_cast<int64_t>(shp.size());
-      const auto exp_rank = static_cast<int64_t>(exp.size());
-      const bool batching_allowed = (max_batch_size_ > 0);
-
-      auto check_tail_eq = [&](int64_t offset_in, int64_t offset_exp) -> bool {
-        if (rank - offset_in != exp_rank - offset_exp) {
-          return false;
-        }
-        for (int64_t k = 0; k < rank - offset_in; ++k) {
-          if (shp[static_cast<size_t>(offset_in + k)] !=
-              exp[static_cast<size_t>(offset_exp + k)]) {
-            return false;
-          }
-        }
-        return true;
-      };
-
-      bool shape_ok = false;
-      if (!batching_allowed) {
-        shape_ok = (rank == exp_rank) && check_tail_eq(0, 0);
-      } else {
-        if (rank == exp_rank) {
-          if (rank >= 1 && check_tail_eq(1, 1)) {
-            const int64_t batch_size = shp[0];
-            shape_ok = (batch_size >= 1 && batch_size <= max_batch_size_);
-          }
-        } else if (rank == exp_rank + 1) {
-          if (check_tail_eq(1, 0)) {
-            const int64_t batch_size = shp[0];
-            shape_ok = (batch_size >= 1 && batch_size <= max_batch_size_);
-          }
-        }
-      }
-
-      if (!shape_ok) {
-        return {
-            grpc::StatusCode::INVALID_ARGUMENT,
-            "Input tensor shape does not match configured dimensions or batch "
-            "limits"};
-      }
+    Status status = parse_input_dtype(input, expected_input_types_[i], dtype);
+    if (!status.ok()) {
+      return status;
     }
 
     torch::Tensor tensor;
     std::shared_ptr<const void> tensor_guard;
-    Status status = convert_input_to_tensor(
+    status = convert_input_to_tensor(
         input, raw, dtype, request_guard, tensor,
         input_lifetimes != nullptr ? &tensor_guard : nullptr);
     if (!status.ok()) {
       return status;
     }
+
+    if (static_cast<size_t>(i) < expected_input_dims_.size()) {
+      const auto& expected_dims = expected_input_dims_[static_cast<size_t>(i)];
+      std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
+      const bool batching_allowed = (max_batch_size_ > 0);
+      status = validate_configured_shape(
+          shape, expected_dims, batching_allowed, max_batch_size_);
+      if (!status.ok()) {
+        return status;
+      }
+    }
+
     inputs.push_back(std::move(tensor));
     if (input_lifetimes != nullptr) {
       input_lifetimes->push_back(std::move(tensor_guard));
