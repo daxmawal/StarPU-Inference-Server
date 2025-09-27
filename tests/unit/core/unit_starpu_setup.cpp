@@ -93,3 +93,49 @@ TEST(OutputSlotPool_Unit, ReleaseReturnsSlotToPool)
 
   pool.release(*maybe_slot);
 }
+
+TEST(OutputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "minimal_output";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "minimal_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  starpu_server::OutputSlotPool pool(opts, 1);
+
+  const int slot_id = pool.acquire();
+  const auto& info = pool.slot_info(slot_id);
+
+  EXPECT_EQ(info.id, slot_id);
+  ASSERT_EQ(info.base_ptrs.size(), model.outputs.size());
+  ASSERT_EQ(info.handles.size(), model.outputs.size());
+
+  const auto& base_ptrs_ref = pool.base_ptrs(slot_id);
+  const auto& handles_ref = pool.handles(slot_id);
+
+  EXPECT_EQ(base_ptrs_ref.size(), info.base_ptrs.size());
+  EXPECT_EQ(handles_ref.size(), info.handles.size());
+
+  EXPECT_EQ(
+      static_cast<const void*>(&base_ptrs_ref),
+      static_cast<const void*>(&info.base_ptrs));
+  EXPECT_EQ(
+      static_cast<const void*>(&handles_ref),
+      static_cast<const void*>(&info.handles));
+
+  EXPECT_THROW(pool.slot_info(slot_id + 1), std::out_of_range);
+  EXPECT_THROW(pool.base_ptrs(slot_id + 1), std::out_of_range);
+  EXPECT_THROW(pool.handles(slot_id + 1), std::out_of_range);
+
+  pool.release(slot_id);
+}
