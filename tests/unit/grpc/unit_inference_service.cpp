@@ -275,3 +275,25 @@ TEST(InferenceService, SubmitJobAndWaitReturnsUnavailableWhenQueueShutdown)
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
   EXPECT_TRUE(outputs.empty());
 }
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncInvokesCallbackWhenSubmitJobAsyncFails)
+{
+  auto request = starpu_server::make_valid_request();
+  queue.shutdown();
+
+  bool callback_called = false;
+  grpc::Status callback_status;
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply, [&](grpc::Status status) {
+        callback_called = true;
+        callback_status = std::move(status);
+      });
+
+  EXPECT_TRUE(callback_called);
+  EXPECT_FALSE(callback_status.ok());
+  EXPECT_EQ(callback_status.error_code(), grpc::StatusCode::UNAVAILABLE);
+  expect_empty_infer_response(reply);
+}

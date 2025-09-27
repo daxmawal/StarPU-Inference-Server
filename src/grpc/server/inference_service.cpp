@@ -7,6 +7,8 @@
 #include <format>
 #include <future>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -398,6 +400,33 @@ InferenceServiceImpl::HandleModelInferAsync(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply, std::function<void(Status)> on_done)
 {
+  class CallbackHandle {
+   public:
+    explicit CallbackHandle(std::function<void(Status)> cb)
+        : callback_(std::move(cb))
+    {
+    }
+
+    void Invoke(Status status)
+    {
+      std::function<void(Status)> cb;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!callback_) {
+          return;
+        }
+        cb = std::move(callback_);
+      }
+      cb(std::move(status));
+    }
+
+   private:
+    std::mutex mutex_;
+    std::function<void(Status)> callback_;
+  };
+
+  auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
+
   auto metrics = get_metrics();
   if (metrics && metrics->requests_total != nullptr) {
     metrics->requests_total->Increment();
@@ -413,18 +442,17 @@ InferenceServiceImpl::HandleModelInferAsync(
   Status status =
       validate_and_convert_inputs(request, inputs, &input_lifetimes);
   if (!status.ok()) {
-    on_done(status);
+    callback_handle->Invoke(status);
     return;
   }
 
   status = submit_job_async(
       inputs,
-      [this, request, reply, recv_tp, recv_ms, metrics,
-       on_done = std::move(on_done)](
+      [this, request, reply, recv_tp, recv_ms, metrics, callback_handle](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
         if (!job_status.ok()) {
-          on_done(job_status);
+          callback_handle->Invoke(job_status);
           return;
         }
 
@@ -441,7 +469,7 @@ InferenceServiceImpl::HandleModelInferAsync(
         Status populate_status =
             populate_response(request, reply, outs, recv_ms, breakdown);
         if (!populate_status.ok()) {
-          on_done(populate_status);
+          callback_handle->Invoke(populate_status);
           return;
         }
 
@@ -476,12 +504,12 @@ InferenceServiceImpl::HandleModelInferAsync(
           metrics->inference_latency->Observe(latency_ms);
         }
 
-        on_done(Status::OK);
+        callback_handle->Invoke(Status::OK);
       },
       std::move(input_lifetimes));
 
   if (!status.ok()) {
-    on_done(status);
+    callback_handle->Invoke(status);
   }
 }
 
