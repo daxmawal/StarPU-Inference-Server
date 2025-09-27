@@ -180,6 +180,71 @@ TEST(ArgsParser_Unit, ParsesMixedCaseTypes)
   EXPECT_EQ(opts.models[0].inputs[1].type, at::kInt);
 }
 
+TEST(ArgsParser_Unit, ParsesCombinedInputWithName)
+{
+  std::vector<const char*> args{
+      "program", "--model", test_model_path().c_str(), "--input",
+      "custom:1x3:int"};
+
+  const auto opts = parse(args);
+
+  ASSERT_TRUE(opts.valid);
+  ASSERT_EQ(opts.models[0].inputs.size(), 1U);
+  const auto& input = opts.models[0].inputs[0];
+  EXPECT_EQ(input.name, "custom");
+  EXPECT_EQ(input.dims, (std::vector<int64_t>{1, 3}));
+  EXPECT_EQ(input.type, at::kInt);
+}
+
+TEST(ArgsParser_Unit, ParsesMultipleCombinedInputs)
+{
+  std::vector<const char*> args{
+      "program", "--model", test_model_path().c_str(), "--input", "3x4:float",
+      "--input", "5x6:int"};
+
+  const auto opts = parse(args);
+
+  ASSERT_TRUE(opts.valid);
+  ASSERT_EQ(opts.models[0].inputs.size(), 2U);
+
+  const auto& first = opts.models[0].inputs[0];
+  EXPECT_EQ(first.name, "input0");
+  EXPECT_EQ(first.dims, (std::vector<int64_t>{3, 4}));
+  EXPECT_EQ(first.type, at::kFloat);
+
+  const auto& second = opts.models[0].inputs[1];
+  EXPECT_EQ(second.name, "input1");
+  EXPECT_EQ(second.dims, (std::vector<int64_t>{5, 6}));
+  EXPECT_EQ(second.type, at::kInt);
+}
+
+TEST(ArgsParser_Unit, RejectsInvalidCombinedInputs)
+{
+  const auto& model = test_model_path();
+  expect_invalid({"program", "--model", model.c_str(), "--input"});
+  expect_invalid({"program", "--model", model.c_str(), "--input", "1x3"});
+  expect_invalid(
+      {"program", "--model", model.c_str(), "--input", "1x3:unknown"});
+  expect_invalid({"program", "--model", model.c_str(), "--input", "0x3:int"});
+  expect_invalid({"program", "--model", model.c_str(), "--input", "ax3:int"});
+}
+
+TEST(ArgsParser_Unit, CombinedInputOverridesShapeAndType)
+{
+  std::vector<const char*> args{"program", "--model", test_model_path().c_str(),
+                                "--shape", "1x3",     "--types",
+                                "float",   "--input", "2x4:int"};
+
+  const auto opts = parse(args);
+
+  ASSERT_TRUE(opts.valid);
+  ASSERT_EQ(opts.models[0].inputs.size(), 1U);
+  const auto& input = opts.models[0].inputs[0];
+  EXPECT_EQ(input.name, "input0");
+  EXPECT_EQ(input.dims, (std::vector<int64_t>{2, 4}));
+  EXPECT_EQ(input.type, at::kInt);
+}
+
 TEST(ArgsParser_Unit, MetricsPortBoundaryValues)
 {
   for (const int port : {1, 65535}) {
