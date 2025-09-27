@@ -24,6 +24,44 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
   EXPECT_EQ(opts.models[0].inputs[0].type, at::kFloat);
 }
 
+TEST(ArgsParser_Unit, ParsesSlotsAlias)
+{
+  const auto& model = test_model_path();
+  constexpr int kSlots = 4;
+  constexpr const char* kSlotsArg = "4";
+  std::vector<const char*> args{"program", "--model", model.c_str(),
+                                "--shape", "1x1",     "--types",
+                                "float",   "--slots", kSlotsArg};
+
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_EQ(opts.input_slots, kSlots);
+}
+
+TEST(ArgsParser_Unit, RejectsNonPositiveSlotsAlias)
+{
+  const auto& model = test_model_path();
+  for (const char* value : {"0", "-1"}) {
+    std::vector<const char*> args{"program", "--model", model.c_str(),
+                                  "--shape", "1x1",     "--types",
+                                  "float",   "--slots", value};
+
+    const auto opts = parse(args);
+    EXPECT_FALSE(opts.valid);
+  }
+}
+
+TEST(ArgsParser_Unit, ParsesInputSlots)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{"program", "--model",       model.c_str(),
+                                "--shape", "1x1",           "--types",
+                                "float",   "--input-slots", "4"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_EQ(opts.input_slots, 4);
+}
+
 TEST(ArgsParser_Unit, ParsesAllOptions)
 {
   const auto& model = test_model_path();
@@ -176,4 +214,15 @@ TEST(ArgsParser_Unit, DisableValidationFlag)
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
   EXPECT_FALSE(opts.validate_results);
+}
+
+TEST(ArgsParser_Unit, RejectsInvalidInputSlots)
+{
+  const auto& model = test_model_path();
+  expect_invalid(
+      {"program", "--model", model.c_str(), "--shape", "1x1", "--types",
+       "float", "--input-slots", "0"});
+  expect_invalid(
+      {"program", "--model", model.c_str(), "--shape", "1x1", "--types",
+       "float", "--input-slots", "-1"});
 }
