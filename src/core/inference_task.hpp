@@ -27,12 +27,7 @@ struct InferenceCallbackContext {
   int id = 0;
   std::atomic<int> remaining_outputs_to_acquire{0};
   std::mutex mutex;
-  // When using pooled input handles, skip unregister on cleanup and call
-  // on_finished to release the slot back to the pool.
   bool keep_input_handles = false;
-  // When using pooled output handles, skip unregister on cleanup and call
-  // on_finished to release the slot back to the pool. Also carry pool context
-  // to copy results back to job-owned output tensors.
   bool keep_output_handles = false;
   OutputSlotPool* output_pool = nullptr;  // fwd-declared pointer
   int output_slot_id = -1;

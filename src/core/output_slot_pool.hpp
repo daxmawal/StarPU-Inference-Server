@@ -21,18 +21,14 @@
 
 namespace starpu_server {
 
-// OutputSlotPool manages K reusable output slots.
-// Each slot holds, for every model output, a contiguous host buffer capable of
-// storing up to Bmax samples (max batch size) and a persistent
-// starpu_data_handle_t registered once for the lifetime of the server.
 class OutputSlotPool {
  public:
   struct SlotInfo {
     int id = -1;
-    std::vector<void*> base_ptrs;                 // per-output base pointers
-    std::vector<size_t> per_output_numel_single;  // per-sample numel per output
-    std::vector<size_t> per_output_bytes_single;  // per-sample bytes per output
-    std::vector<starpu_data_handle_t> handles;    // per-output StarPU handles
+    std::vector<void*> base_ptrs;
+    std::vector<size_t> per_output_numel_single;
+    std::vector<size_t> per_output_bytes_single;
+    std::vector<starpu_data_handle_t> handles;
   };
 
   struct HostBufferInfo {
@@ -42,7 +38,6 @@ class OutputSlotPool {
     size_t bytes = 0;
   };
 
-  // Construct the pool. If slots<=0, an auto default is used.
   OutputSlotPool(const RuntimeConfig& opts, int slots);
   ~OutputSlotPool();
 
@@ -51,9 +46,7 @@ class OutputSlotPool {
   OutputSlotPool(OutputSlotPool&&) = delete;
   auto operator=(OutputSlotPool&&) -> OutputSlotPool& = delete;
 
-  // Acquire a free slot (blocking). Returns the slot id.
   auto acquire() -> int;
-  // Try to acquire a free slot without blocking. Returns empty if none.
   [[nodiscard]] auto try_acquire() -> std::optional<int>;
   void release(int slot_id);
 
@@ -74,19 +67,12 @@ class OutputSlotPool {
       int slot_id, const RuntimeConfig& opts);
   static size_t product_dims(const std::vector<int64_t>& dims);
 
-  // Per-output metadata
   std::vector<size_t> per_output_numel_single_;
   std::vector<size_t> per_output_bytes_single_;
   std::vector<at::ScalarType> output_types_;
-
-  // Slots
   std::vector<SlotInfo> slots_;
   int bmax_ = 1;
-
-  // Memory management metadata for each slot/output host buffer.
   std::vector<std::vector<HostBufferInfo>> host_buffer_infos_;
-
-  // Free-list management
   std::vector<int> free_ids_;
   std::mutex mtx_;
   std::condition_variable cv_;

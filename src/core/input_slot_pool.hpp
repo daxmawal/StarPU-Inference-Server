@@ -21,18 +21,14 @@
 
 namespace starpu_server {
 
-// InputSlotPool manages K reusable input slots.
-// Each slot holds, for every model input, a contiguous host buffer capable of
-// storing up to Bmax samples (max batch size) and a persistent
-// starpu_data_handle_t registered once for the lifetime of the server.
 class InputSlotPool {
  public:
   struct SlotInfo {
     int id = -1;
-    std::vector<void*> base_ptrs;                // per-input base pointers
-    std::vector<size_t> per_input_numel_single;  // per-sample numel per input
-    std::vector<size_t> per_input_bytes_single;  // per-sample bytes per input
-    std::vector<starpu_data_handle_t> handles;   // per-input StarPU handles
+    std::vector<void*> base_ptrs;
+    std::vector<size_t> per_input_numel_single;
+    std::vector<size_t> per_input_bytes_single;
+    std::vector<starpu_data_handle_t> handles;
   };
 
   struct HostBufferInfo {
@@ -42,7 +38,6 @@ class InputSlotPool {
     size_t bytes = 0;
   };
 
-  // Construct the pool. If slots<=0, an auto default is used.
   InputSlotPool(const RuntimeConfig& opts, int slots);
   ~InputSlotPool();
 
@@ -51,13 +46,10 @@ class InputSlotPool {
   InputSlotPool(InputSlotPool&&) = delete;
   auto operator=(InputSlotPool&&) -> InputSlotPool& = delete;
 
-  // Acquire a free slot (blocking). Returns the slot id.
   auto acquire() -> int;
-  // Try to acquire a free slot without blocking. Returns empty if none.
   [[nodiscard]] auto try_acquire() -> std::optional<int>;
   void release(int slot_id);
 
-  // Accessors
   [[nodiscard]] auto slot_info(int slot_id) const -> const SlotInfo&;
   [[nodiscard]] auto handles(int slot_id) const
       -> const std::vector<starpu_data_handle_t>&;
@@ -74,19 +66,15 @@ class InputSlotPool {
       int slot_id, const RuntimeConfig& opts);
   static size_t product_dims(const std::vector<int64_t>& dims);
 
-  // Per-input metadata
   std::vector<size_t> per_input_numel_single_;
   std::vector<size_t> per_input_bytes_single_;
   std::vector<at::ScalarType> input_types_;
 
-  // Slots
   std::vector<SlotInfo> slots_;
   int bmax_ = 1;
 
-  // Memory management metadata for each slot/input host buffer.
   std::vector<std::vector<HostBufferInfo>> host_buffer_infos_;
 
-  // Free-list management
   std::vector<int> free_ids_;
   std::mutex mtx_;
   std::condition_variable cv_;

@@ -97,7 +97,6 @@ struct InferenceParams {
   detail::Limits limits{};
   size_t num_inputs = 0;
   size_t num_outputs = 0;
-  // Current batch size (number of samples actually present in the input slot)
   int64_t batch_size = 1;
   int job_id = 0;
   VerbosityLevel verbosity = VerbosityLevel::Silent;

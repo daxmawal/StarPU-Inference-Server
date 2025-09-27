@@ -26,8 +26,6 @@
 #include "runtime_config.hpp"
 
 namespace starpu_server {
-
-// Named constants to avoid magic numbers
 constexpr int kPortMin = 1;
 constexpr int kPortMax = 65535;
 
