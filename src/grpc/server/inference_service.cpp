@@ -82,7 +82,7 @@ convert_input_to_tensor(
   }
 
   auto alias = std::shared_ptr<const void>(request_guard, raw.data());
-  auto holder = std::shared_ptr<void>(alias, const_cast<char*>(raw.data()));
+  auto holder = std::const_pointer_cast<void>(alias);
   auto deleter = [holder](void* /*unused*/) mutable {
     auto keep = holder;
     keep.reset();

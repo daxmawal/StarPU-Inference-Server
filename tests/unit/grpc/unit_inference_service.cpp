@@ -63,6 +63,34 @@ TEST(InferenceService, ValidateInputsZeroCopyUsesRequestBuffer)
       static_cast<int64_t>(req.raw_input_contents(0).size()));
 }
 
+TEST(InferenceService, ValidateInputsKeepAliveSharesAlias)
+{
+  std::vector<float> data = {kF1, kF2, kF3, kF4};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data)},
+  });
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+
+  std::vector<torch::Tensor> inputs;
+  std::vector<std::shared_ptr<const void>> keep_alive;
+  auto status = service.validate_and_convert_inputs(&req, inputs, &keep_alive);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 1U);
+  ASSERT_EQ(keep_alive.size(), 1U);
+  EXPECT_EQ(
+      inputs[0].data_ptr(),
+      const_cast<void*>(keep_alive[0].get()));
+  EXPECT_EQ(
+      keep_alive[0].get(),
+      static_cast<const void*>(req.raw_input_contents(0).data()));
+}
+
 TEST(InferenceService, ValidateInputsNonContiguous)
 {
   auto base = torch::tensor({{kF1, kF2}, {kF3, kF4}});
