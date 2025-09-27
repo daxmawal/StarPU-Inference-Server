@@ -124,7 +124,7 @@ create_job(
   outputs.reserve(outputs_ref.size());
   for (const auto& ref : outputs_ref) {
     const auto dtype = ref.scalar_type();
-    const auto options = torch::TensorOptions().dtype(dtype);
+    const auto options = ref.options().dtype(dtype);
 
     std::vector<int64_t> shape(ref.sizes().begin(), ref.sizes().end());
     if (!shape.empty() && requested_batch > 0) {
