@@ -133,9 +133,11 @@ TEST(OutputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
       static_cast<const void*>(&handles_ref),
       static_cast<const void*>(&info.handles));
 
-  EXPECT_THROW(pool.slot_info(slot_id + 1), std::out_of_range);
-  EXPECT_THROW(pool.base_ptrs(slot_id + 1), std::out_of_range);
-  EXPECT_THROW(pool.handles(slot_id + 1), std::out_of_range);
+  EXPECT_THROW(
+      static_cast<void>(pool.slot_info(slot_id + 1)), std::out_of_range);
+  EXPECT_THROW(
+      static_cast<void>(pool.base_ptrs(slot_id + 1)), std::out_of_range);
+  EXPECT_THROW(static_cast<void>(pool.handles(slot_id + 1)), std::out_of_range);
 
   pool.release(slot_id);
 }
