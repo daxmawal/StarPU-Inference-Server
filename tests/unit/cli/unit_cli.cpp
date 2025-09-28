@@ -24,6 +24,18 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
   EXPECT_EQ(opts.models[0].inputs[0].type, at::kFloat);
 }
 
+TEST(ArgsParser_Unit, ParsesConfigOption)
+{
+  const auto& model = test_model_path();
+  const auto& config = test_config_path();
+  std::vector<const char*> args{"program", "--model",  model.c_str(),
+                                "--shape", "1x1",      "--types",
+                                "float",   "--config", config.c_str()};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_EQ(opts.config_path, config);
+}
+
 TEST(ArgsParser_Unit, ParsesSlotsAlias)
 {
   const auto& model = test_model_path();
