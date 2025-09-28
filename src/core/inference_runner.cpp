@@ -132,7 +132,8 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 // Client Logic: Generates and enqueues inference jobs into the shared queue
 // =============================================================================
 
-static void
+namespace detail {
+void
 client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, const int iterations)
@@ -166,6 +167,7 @@ client_worker(
 
   queue.shutdown();
 }
+}  // namespace detail
 
 // =============================================================================
 // Model Loading and Cloning to GPU
@@ -466,7 +468,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   try {
     server = get_worker_thread_launcher()(worker);
     client = std::jthread([&queue, &opts, &outputs_ref]() {
-      client_worker(queue, opts, outputs_ref, opts.iterations);
+      detail::client_worker(queue, opts, outputs_ref, opts.iterations);
     });
   }
   catch (const std::exception& e) {

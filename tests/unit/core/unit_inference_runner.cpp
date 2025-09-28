@@ -10,6 +10,7 @@
 
 #include "core/inference_runner.hpp"
 #include "core/tensor_builder.hpp"
+#include "starpu_task_worker/inference_queue.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 
@@ -197,6 +198,36 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
   job->get_on_complete()(job->get_output_tensors(), kLatencyMs);
   EXPECT_TRUE(CallbackResultsMatch(
       callback_called, cb_tensors, cb_latency, outputs, kLatencyMs));
+}
+
+TEST(InferenceRunner_Unit, ClientWorkerSeedsRngWhenSeedProvided)
+{
+  starpu_server::RuntimeConfig opts{};
+  opts.delay_ms = 0;
+  opts.pregen_inputs = 1;
+  opts.seed = 123;
+  starpu_server::TensorConfig tensor_cfg{
+      .name = "input",
+      .dims = {1, 3},
+      .type = at::ScalarType::Float,
+  };
+  starpu_server::ModelConfig model_cfg{};
+  model_cfg.inputs = {tensor_cfg};
+  opts.models = {model_cfg};
+
+  starpu_server::InferenceQueue queue;
+  const std::vector<torch::Tensor> outputs_ref{torch::zeros({1, 3})};
+
+  ASSERT_TRUE(opts.seed.has_value());
+  torch::manual_seed(*opts.seed);
+  torch::rand({1, 3});
+  const auto expected = torch::rand({2, 4});
+
+  torch::manual_seed(0);
+  starpu_server::detail::client_worker(queue, opts, outputs_ref, 0);
+
+  const auto actual = torch::rand({2, 4});
+  ASSERT_TRUE(torch::allclose(actual, expected));
 }
 
 TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)

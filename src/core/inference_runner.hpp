@@ -50,6 +50,8 @@ struct InferenceResult {
 // InferenceJob: a job submitted to the inference engine
 // =============================================================================
 
+class InferenceQueue;
+
 class InferenceJob {
  public:
   InferenceJob() = default;
@@ -181,6 +183,12 @@ class StarPUTaskRunner;
 using WorkerThreadLauncher = std::jthread (*)(StarPUTaskRunner&);
 auto get_worker_thread_launcher() -> WorkerThreadLauncher;
 void set_worker_thread_launcher(WorkerThreadLauncher launcher);
+
+namespace detail {
+void client_worker(
+    InferenceQueue& queue, const RuntimeConfig& opts,
+    const std::vector<torch::Tensor>& outputs_ref, int iterations);
+}  // namespace detail
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)
     -> std::optional<std::tuple<
