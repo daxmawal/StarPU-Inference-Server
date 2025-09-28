@@ -289,24 +289,32 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
           "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
           STARPU_NMAXWORKERS));
     }
+
     std::unordered_set<int> unique_ids;
+    std::vector<int> valid_device_ids;
+    valid_device_ids.reserve(opts.device_ids.size());
 
-    conf_.use_explicit_workers_cuda_gpuid = 1U;
-    conf_.ncuda = static_cast<int>(opts.device_ids.size());
-
-    std::span<unsigned int, STARPU_NMAXWORKERS> workers_cuda_gpuid(
-        conf_.workers_cuda_gpuid);
-    for (size_t idx = 0; idx < opts.device_ids.size(); ++idx) {
-      const int device_id = opts.device_ids[idx];
+    for (const int device_id : opts.device_ids) {
       if (device_id < 0) {
-        throw std::invalid_argument(
-            "[ERROR] Invalid CUDA device ID: must be >= 0");
+        log_error(std::format(
+            "Invalid CUDA device ID {}: must be non-negative", device_id));
+        continue;
       }
       if (!unique_ids.insert(device_id).second) {
         throw std::invalid_argument(
             std::format("[ERROR] Duplicate CUDA device ID: {}", device_id));
       }
-      workers_cuda_gpuid[idx] = static_cast<unsigned int>(device_id);
+      valid_device_ids.push_back(device_id);
+    }
+
+    conf_.use_explicit_workers_cuda_gpuid = valid_device_ids.empty() ? 0U : 1U;
+    conf_.ncuda = static_cast<int>(valid_device_ids.size());
+
+    std::span<unsigned int, STARPU_NMAXWORKERS> workers_cuda_gpuid(
+        conf_.workers_cuda_gpuid);
+    for (size_t idx = 0; idx < valid_device_ids.size(); ++idx) {
+      workers_cuda_gpuid[idx] =
+          static_cast<unsigned int>(valid_device_ids[idx]);
     }
   }
 

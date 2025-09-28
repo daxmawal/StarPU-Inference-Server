@@ -200,3 +200,32 @@ TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
       std::string::npos);
   std::filesystem::remove(model_path);
 }
+
+TEST(RunInferenceLoop_Robustesse, InvalidCudaDeviceLogsError)
+{
+  using namespace starpu_server;
+
+  const auto file = MakeTempModelPath("invalid_cuda_device");
+  auto model = make_constant_model();
+  model.save(file.string());
+
+  RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape1, at::kFloat}};
+  opts.iterations = 1;
+  opts.use_cuda = true;
+  opts.device_ids = {-1};
+  opts.warmup_iterations = 0;
+
+  StarPUSetup starpu(opts);
+
+  CaptureStream capture{std::cerr};
+  EXPECT_NO_THROW(run_inference_loop(opts, starpu));
+  const auto log = capture.str();
+  EXPECT_NE(
+      log.find("Failed to load model or reference outputs:"),
+      std::string::npos);
+
+  std::filesystem::remove(file);
+}
