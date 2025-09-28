@@ -125,6 +125,44 @@ TEST(InferenceRunner_Unit, MakeShutdownJob)
   EXPECT_TRUE(job->is_shutdown());
 }
 
+TEST(InferenceJob_Unit, ConstructorInitializesState)
+{
+  const std::vector<torch::Tensor> inputs{torch::ones(kShape2x2)};
+  const std::vector<torch::Tensor> outputs{torch::zeros(kShape2x2)};
+  const std::vector<at::ScalarType> types{at::kFloat};
+
+  bool callback_called = false;
+  std::vector<torch::Tensor> callback_tensors;
+  double callback_latency = 0.0;
+
+  const auto before = std::chrono::high_resolution_clock::now();
+  auto job = std::make_shared<starpu_server::InferenceJob>(
+      inputs, types, kJobId,
+      [&](std::vector<torch::Tensor> tensors, double latency) {
+        callback_called = true;
+        callback_tensors = std::move(tensors);
+        callback_latency = latency;
+      });
+  const auto after = std::chrono::high_resolution_clock::now();
+
+  ASSERT_NE(job, nullptr);
+  EXPECT_EQ(job->get_job_id(), kJobId);
+  ASSERT_EQ(job->get_input_tensors().size(), inputs.size());
+  EXPECT_TRUE(job->get_input_tensors()[0].equal(inputs[0]));
+  ASSERT_EQ(job->get_input_types().size(), types.size());
+  EXPECT_EQ(job->get_input_types()[0], types[0]);
+  EXPECT_TRUE(job->has_on_complete());
+  EXPECT_LE(before, job->get_start_time());
+  EXPECT_GE(after, job->get_start_time());
+
+  job->get_on_complete()(outputs, kLatencyMs);
+
+  EXPECT_TRUE(callback_called);
+  ASSERT_EQ(callback_tensors.size(), outputs.size());
+  EXPECT_TRUE(callback_tensors[0].equal(outputs[0]));
+  EXPECT_DOUBLE_EQ(callback_latency, kLatencyMs);
+}
+
 TEST(InferenceJob_Unit, SettersGettersAndCallback)
 {
   const std::vector<torch::Tensor> inputs{torch::ones(kShape2x2)};
