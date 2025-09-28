@@ -89,6 +89,26 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
   std::filesystem::remove(file);
 }
 
+TEST(InferenceRunner_Robustesse, CloneModelToGpus_InvalidDeviceIdThrows)
+{
+  const auto file = MakeTempModelPath("clone_model_invalid_device");
+  auto model = starpu_server::make_constant_model();
+  model.save(file.string());
+
+  starpu_server::RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].path = file.string();
+  opts.models[0].inputs = {{"input0", kShape1, at::kFloat}};
+  opts.use_cuda = true;
+  opts.device_ids = {-1};
+
+  EXPECT_THROW(
+      (void)starpu_server::load_model_and_reference_output(opts),
+      std::runtime_error);
+
+  std::filesystem::remove(file);
+}
+
 namespace starpu_server {
 void run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
