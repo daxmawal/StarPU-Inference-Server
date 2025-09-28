@@ -334,3 +334,81 @@ TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
   EXPECT_FLOAT_EQ(dst[3], kFNeg4);
   EXPECT_FLOAT_EQ(dst[4], kF025);
 }
+
+TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
+{
+  auto cpu_model = starpu_server::make_identity_model();
+  std::vector<torch::jit::script::Module> gpu_models;
+  const std::vector<int> device_ids;
+
+  starpu_server::InferenceResult result{};
+  result.job_id = 1;
+  result.executed_on = starpu_server::DeviceType::CPU;
+  result.results = {torch::ones({1})};
+
+  const std::vector<starpu_server::InferenceResult> results{result};
+
+  testing::internal::CaptureStdout();
+  starpu_server::detail::process_results(
+      results, cpu_model, gpu_models, device_ids,
+      /*validate_results=*/false, starpu_server::VerbosityLevel::Info,
+      /*rtol=*/1e-5, /*atol=*/1e-8);
+  const auto captured = testing::internal::GetCapturedStdout();
+
+  EXPECT_NE(
+      captured.find("Result validation disabled; skipping checks."),
+      std::string::npos);
+}
+
+TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
+{
+  auto cpu_model = starpu_server::make_identity_model();
+  std::vector<torch::jit::script::Module> gpu_models;
+  const std::vector<int> device_ids;
+
+  starpu_server::InferenceResult result{};
+  result.job_id = 99;
+  result.executed_on = starpu_server::DeviceType::CPU;
+
+  const std::vector<starpu_server::InferenceResult> results{result};
+
+  testing::internal::CaptureStderr();
+  starpu_server::detail::process_results(
+      results, cpu_model, gpu_models, device_ids,
+      /*validate_results=*/true, starpu_server::VerbosityLevel::Info,
+      /*rtol=*/1e-5, /*atol=*/1e-8);
+  const auto captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(captured.find("[Client] Job"), std::string::npos);
+}
+
+TEST(
+    InferenceRunner_ProcessResults,
+    ProcessResults_SkipsWhenValidationModelUnavailable)
+{
+  auto cpu_model = starpu_server::make_identity_model();
+  std::vector<torch::jit::script::Module> gpu_models;
+  gpu_models.push_back(starpu_server::make_identity_model());
+  const std::vector<int> device_ids{0};
+
+  starpu_server::InferenceResult result{};
+  result.job_id = 7;
+  result.worker_id = 5;
+  result.executed_on = starpu_server::DeviceType::CUDA;
+  result.device_id = 1;
+  result.inputs = {torch::zeros({2, 2})};
+  result.results = {torch::ones({2, 2})};
+
+  const std::vector<starpu_server::InferenceResult> results{result};
+
+  testing::internal::CaptureStderr();
+  starpu_server::detail::process_results(
+      results, cpu_model, gpu_models, device_ids,
+      /*validate_results=*/true, starpu_server::VerbosityLevel::Info,
+      /*rtol=*/1e-5, /*atol=*/1e-8);
+  const auto captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(
+      captured.find("[Client] Skipping validation for job"), std::string::npos);
+  EXPECT_EQ(captured.find("[Validator]"), std::string::npos);
+}

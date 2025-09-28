@@ -373,9 +373,7 @@ resolve_validation_model(
   return gpu_lookup[device_id];
 }
 
-}  // namespace detail
-
-static void
+void
 process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
@@ -387,15 +385,14 @@ process_results(
     log_info(verbosity, "Result validation disabled; skipping checks.");
   }
 
-  auto gpu_model_lookup =
-      detail::build_gpu_model_lookup(models_gpu, device_ids);
+  auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, device_ids);
   for (const auto& result : results) {
     if (result.results.empty() || !result.results[0].defined()) {
       log_error(std::format("[Client] Job {} failed.", result.job_id));
       continue;
     }
 
-    const auto validation_model = detail::resolve_validation_model(
+    const auto validation_model = resolve_validation_model(
         result, model_cpu, gpu_model_lookup, validate_results);
     if (!validation_model.has_value()) {
       continue;
@@ -407,6 +404,8 @@ process_results(
     }
   }
 }
+
+}  // namespace detail
 
 // =============================================================================
 // Main Inference Loop: Initializes models, runs warmup, starts client/server,
@@ -515,7 +514,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
     }
   }
 
-  process_results(
+  detail::process_results(
       results, model_cpu, models_gpu, opts.device_ids, opts.validate_results,
       opts.verbosity, opts.rtol, opts.atol);
 }

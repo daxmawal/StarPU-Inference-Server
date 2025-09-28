@@ -12,6 +12,7 @@
 #include "device_type.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
+#include "utils/logger.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -198,6 +199,13 @@ auto resolve_validation_model(
     const InferenceResult& result, torch::jit::script::Module& cpu_model,
     const std::vector<torch::jit::script::Module*>& gpu_lookup,
     bool validate_results) -> std::optional<torch::jit::script::Module*>;
+
+void process_results(
+    const std::vector<InferenceResult>& results,
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<int>& device_ids, bool validate_results,
+    VerbosityLevel verbosity, double rtol, double atol);
 }  // namespace detail
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)
