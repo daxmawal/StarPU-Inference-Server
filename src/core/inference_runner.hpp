@@ -188,6 +188,16 @@ namespace detail {
 void client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, int iterations);
+
+auto build_gpu_model_lookup(
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<int>& device_ids)
+    -> std::vector<torch::jit::script::Module*>;
+
+auto resolve_validation_model(
+    const InferenceResult& result, torch::jit::script::Module& cpu_model,
+    const std::vector<torch::jit::script::Module*>& gpu_lookup,
+    bool validate_results) -> std::optional<torch::jit::script::Module*>;
 }  // namespace detail
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)

@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -198,6 +199,40 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
   job->get_on_complete()(job->get_output_tensors(), kLatencyMs);
   EXPECT_TRUE(CallbackResultsMatch(
       callback_called, cb_tensors, cb_latency, outputs, kLatencyMs));
+}
+
+TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
+{
+  starpu_server::InferenceResult result{};
+  result.executed_on = starpu_server::DeviceType::CUDA;
+  result.device_id = -1;
+  result.job_id = 42;
+
+  torch::jit::script::Module cpu_model("cpu_module");
+  const std::vector<torch::jit::script::Module*> empty_lookup;
+
+  const auto resolved = starpu_server::detail::resolve_validation_model(
+      result, cpu_model, empty_lookup, /*validate_results=*/true);
+
+  EXPECT_FALSE(resolved.has_value());
+}
+
+TEST(
+    InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForMissingReplica)
+{
+  starpu_server::InferenceResult result{};
+  result.executed_on = starpu_server::DeviceType::CUDA;
+  result.device_id = 3;
+  result.job_id = 7;
+
+  torch::jit::script::Module cpu_model("cpu_module");
+  torch::jit::script::Module gpu_module("gpu_module");
+  std::vector<torch::jit::script::Module*> lookup{&gpu_module};
+
+  const auto resolved = starpu_server::detail::resolve_validation_model(
+      result, cpu_model, lookup, /*validate_results=*/true);
+
+  EXPECT_FALSE(resolved.has_value());
 }
 
 TEST(InferenceRunner_Unit, ClientWorkerSeedsRngWhenSeedProvided)
