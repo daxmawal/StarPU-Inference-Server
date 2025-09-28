@@ -230,6 +230,36 @@ TEST(InferenceRunner_Unit, ClientWorkerSeedsRngWhenSeedProvided)
   ASSERT_TRUE(torch::allclose(actual, expected));
 }
 
+TEST(InferenceRunner_Unit, ClientWorkerStopsWhenQueuePushFails)
+{
+  starpu_server::RuntimeConfig opts{};
+  opts.delay_ms = 0;
+  opts.iterations = 1;
+  opts.pregen_inputs = 1;
+  starpu_server::TensorConfig tensor_cfg{
+      .name = "input",
+      .dims = {1, 3},
+      .type = at::ScalarType::Float,
+  };
+  starpu_server::ModelConfig model_cfg{};
+  model_cfg.inputs = {tensor_cfg};
+  opts.models = {model_cfg};
+
+  starpu_server::InferenceQueue queue;
+  const std::vector<torch::Tensor> outputs_ref{torch::zeros({1, 3})};
+
+  testing::internal::CaptureStderr();
+  queue.shutdown();
+  starpu_server::detail::client_worker(
+      queue, opts, outputs_ref, opts.iterations);
+  const auto captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.wait_and_pop(job));
+}
+
 TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
 {
   const std::vector<std::vector<int64_t>> shapes{kShape2x3, kShape1};
