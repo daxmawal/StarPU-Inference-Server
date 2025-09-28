@@ -2,6 +2,7 @@
 #include <torch/torch.h>
 
 #include <format>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -118,3 +119,65 @@ INSTANTIATE_TEST_SUITE_P(
         MissingValueParam{{"program", "--address"}, "--address"},
         MissingValueParam{{"program", "--rtol"}, "--rtol"},
         MissingValueParam{{"program", "--atol"}, "--atol"}));
+
+TEST(ArgsParserComputeMaxMessageBytes_Robustesse,
+     ReportsInvalidDimensionException)
+{
+  auto argv = build_argv({"program"});
+  starpu_server::RuntimeConfig opts;
+  opts.models.resize(1);
+  auto& model = opts.models.front();
+  model.path = test_model_path();
+  model.inputs.emplace_back();
+  auto& input = model.inputs.back();
+  input.name = "input";
+  input.dims = {1, -1};
+  input.type = at::kFloat;
+  model.outputs.emplace_back();
+  auto& output = model.outputs.back();
+  output.name = "output";
+  output.dims = {1};
+  output.type = at::kFloat;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto result = starpu_server::parse_arguments(
+      {argv.data(), argv.size()}, opts);
+
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(
+      capture.str(),
+      starpu_server::expected_log_line(
+          starpu_server::ErrorLevel,
+          "dimension size must be non-negative"));
+}
+
+TEST(ArgsParserComputeMaxMessageBytes_Robustesse,
+     ReportsMessageSizeOverflowException)
+{
+  auto argv = build_argv({"program"});
+  starpu_server::RuntimeConfig opts;
+  opts.models.resize(1);
+  auto& model = opts.models.front();
+  model.path = test_model_path();
+  model.inputs.emplace_back();
+  auto& input = model.inputs.back();
+  input.name = "input";
+  input.dims = {std::numeric_limits<int64_t>::max()};
+  input.type = at::kFloat;
+  model.outputs.emplace_back();
+  auto& output = model.outputs.back();
+  output.name = "output";
+  output.dims = {1};
+  output.type = at::kFloat;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto result = starpu_server::parse_arguments(
+      {argv.data(), argv.size()}, opts);
+
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(
+      capture.str(),
+      starpu_server::expected_log_line(
+          starpu_server::ErrorLevel,
+          "numel * element size would overflow size_t"));
+}
