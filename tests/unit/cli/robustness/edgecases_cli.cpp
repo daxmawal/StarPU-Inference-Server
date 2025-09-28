@@ -89,6 +89,24 @@ TEST(ArgsParserInvalidOptions_Robustesse, DeviceIdOutOfRange)
                          starpu_server::ErrorLevel, expected_msg));
 }
 
+TEST(ArgsParserInvalidOptions_Robustesse, TypesCountMustMatchShapes)
+{
+  const std::vector<const char*> args = {
+      "program", "--model",   test_model_path().c_str(), "--shape", "1x3",
+      "--types", "float,int",
+  };
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto opts = parse(args);
+
+  EXPECT_FALSE(opts.valid);
+  EXPECT_EQ(
+      capture.str(),
+      starpu_server::expected_log_line(
+          starpu_server::ErrorLevel,
+          "Number of --types must match number of input shapes."));
+}
+
 struct MissingValueParam {
   std::vector<const char*> args;
   const char* option;
@@ -120,8 +138,9 @@ INSTANTIATE_TEST_SUITE_P(
         MissingValueParam{{"program", "--rtol"}, "--rtol"},
         MissingValueParam{{"program", "--atol"}, "--atol"}));
 
-TEST(ArgsParserComputeMaxMessageBytes_Robustesse,
-     ReportsInvalidDimensionException)
+TEST(
+    ArgsParserComputeMaxMessageBytes_Robustesse,
+    ReportsInvalidDimensionException)
 {
   auto argv = build_argv({"program"});
   starpu_server::RuntimeConfig opts;
@@ -140,19 +159,19 @@ TEST(ArgsParserComputeMaxMessageBytes_Robustesse,
   output.type = at::kFloat;
 
   starpu_server::CaptureStream capture{std::cerr};
-  const auto result = starpu_server::parse_arguments(
-      {argv.data(), argv.size()}, opts);
+  const auto result =
+      starpu_server::parse_arguments({argv.data(), argv.size()}, opts);
 
   EXPECT_FALSE(result.valid);
   EXPECT_EQ(
       capture.str(),
       starpu_server::expected_log_line(
-          starpu_server::ErrorLevel,
-          "dimension size must be non-negative"));
+          starpu_server::ErrorLevel, "dimension size must be non-negative"));
 }
 
-TEST(ArgsParserComputeMaxMessageBytes_Robustesse,
-     ReportsMessageSizeOverflowException)
+TEST(
+    ArgsParserComputeMaxMessageBytes_Robustesse,
+    ReportsMessageSizeOverflowException)
 {
   auto argv = build_argv({"program"});
   starpu_server::RuntimeConfig opts;
@@ -171,13 +190,12 @@ TEST(ArgsParserComputeMaxMessageBytes_Robustesse,
   output.type = at::kFloat;
 
   starpu_server::CaptureStream capture{std::cerr};
-  const auto result = starpu_server::parse_arguments(
-      {argv.data(), argv.size()}, opts);
+  const auto result =
+      starpu_server::parse_arguments({argv.data(), argv.size()}, opts);
 
   EXPECT_FALSE(result.valid);
   EXPECT_EQ(
-      capture.str(),
-      starpu_server::expected_log_line(
-          starpu_server::ErrorLevel,
-          "numel * element size would overflow size_t"));
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel,
+                         "numel * element size would overflow size_t"));
 }
