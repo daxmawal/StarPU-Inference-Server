@@ -29,6 +29,38 @@ TEST_P(ArgsParserInvalidOptions_Robustesse, Invalid)
   expect_invalid(args);
 }
 
+struct TypesParseErrorParam {
+  const char* types_value;
+  const char* expected_message;
+};
+
+class ArgsParserTypesParseErrors_Robustesse
+    : public ::testing::TestWithParam<TypesParseErrorParam> {};
+
+TEST_P(ArgsParserTypesParseErrors_Robustesse, ReportsError)
+{
+  const auto& param = GetParam();
+  std::vector<const char*> args = {
+      "program", "--model", test_model_path().c_str(), "--shape",
+      "1x3",     "--types", param.types_value};
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto result = parse(args);
+
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel, param.expected_message));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    TypesParseErrors, ArgsParserTypesParseErrors_Robustesse,
+    ::testing::Values(
+        TypesParseErrorParam{"float,", "Trailing comma in types string"},
+        TypesParseErrorParam{"float,,int", "Empty type in types string"},
+        TypesParseErrorParam{",float", "Empty type in types string"},
+        TypesParseErrorParam{",", "No types provided."}));
+
 INSTANTIATE_TEST_SUITE_P(
     InvalidArguments, ArgsParserInvalidOptions_Robustesse,
     ::testing::Values(

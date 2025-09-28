@@ -101,6 +101,10 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
     throw std::invalid_argument("No types provided.");
   }
 
+  if (types_str.find_first_not_of(',') == std::string::npos) {
+    throw std::invalid_argument("No types provided.");
+  }
+
   std::vector<at::ScalarType> types;
   std::stringstream type_stream(types_str);
   std::string type_str;
@@ -234,10 +238,10 @@ try_parse(const char* val, Func&& parser) -> bool
     return true;
   }
   catch (const std::invalid_argument& e) {
-    log_error(std::format("Invalid argument: {}", e.what()));
+    log_error(e.what());
   }
   catch (const std::out_of_range& e) {
-    log_error(std::format("Out of range: {}", e.what()));
+    log_error(e.what());
   }
   return false;
 }
