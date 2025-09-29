@@ -1,5 +1,7 @@
 #include <format>
 #include <functional>
+#include <memory>
+#include <stdexcept>
 #include <string>
 
 #include "test_starpu_task_runner.hpp"
@@ -19,6 +21,44 @@ TEST_F(StarPUTaskRunnerFixture, HandleJobExceptionCallback)
   EXPECT_TRUE(probe.called);
   EXPECT_TRUE(probe.results.empty());
   EXPECT_EQ(probe.latency, -1);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, HandleJobExceptionCallbackLogsStdExceptionMessage)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_job_id(7);
+  job->set_on_complete([](const auto&, double) {
+    throw std::runtime_error("callback failure");
+  });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  EXPECT_NO_THROW(starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error{"job failure"}));
+
+  const auto log = capture.str();
+  const auto expected = starpu_server::expected_log_line(
+      starpu_server::ErrorLevel,
+      "Exception in completion callback: callback failure");
+  EXPECT_NE(log.find(expected), std::string::npos);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    HandleJobExceptionCallbackLogsUnknownNonStdExceptionMessage)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_job_id(8);
+  job->set_on_complete([](const auto&, double) -> void { throw 42; });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  EXPECT_NO_THROW(starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error{"job failure"}));
+
+  const auto log = capture.str();
+  const auto expected = starpu_server::expected_log_line(
+      starpu_server::ErrorLevel, "Unknown exception in completion callback");
+  EXPECT_NE(log.find(expected), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
