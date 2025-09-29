@@ -46,6 +46,17 @@ TEST(ClientArgs, HelpFlagSetsShowHelp)
   }
 }
 
+TEST(ClientArgs, MissingInputMarksConfigInvalid)
+{
+  auto argv = std::to_array<const char*>({"prog"});
+  testing::internal::CaptureStderr();
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_TRUE(cfg.inputs.empty());
+  EXPECT_NE(err.find("--input option is required."), std::string::npos);
+}
+
 TEST(ClientArgs, VerboseLevels)
 {
   using enum starpu_server::VerbosityLevel;
