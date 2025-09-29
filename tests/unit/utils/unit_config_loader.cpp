@@ -74,6 +74,42 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_TRUE(cfg.use_cuda);
 }
 
+TEST(ConfigLoader, ParsesRuntimeFlags)
+{
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "config_loader_flags_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "rtol: 1.0e-4\n";
+  yaml << "atol: 2.0e-5\n";
+  yaml << "sync: true\n";
+  yaml << "use_cpu: false\n";
+  yaml << "use_cuda: true\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_flags.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_DOUBLE_EQ(cfg.rtol, 1.0e-4);
+  EXPECT_DOUBLE_EQ(cfg.atol, 2.0e-5);
+  EXPECT_TRUE(cfg.synchronous);
+  EXPECT_FALSE(cfg.use_cpu);
+  EXPECT_TRUE(cfg.use_cuda);
+}
+
 TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 {
   const auto model_path =
@@ -147,6 +183,54 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
 
   EXPECT_FALSE(cfg.valid);
 }
+
+struct NegativeValueCase {
+  const char* key;
+  const char* value;
+  const char* error;
+};
+
+class NegativeRuntimeValueCase
+    : public ::testing::TestWithParam<NegativeValueCase> {};
+
+TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
+{
+  const auto [key, value, error] = GetParam();
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_negative_value.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << key << ": " << value << "\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_negative_value.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      std::string{"Failed to load config: "} + error;
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    NegativeRuntimeValues, NegativeRuntimeValueCase,
+    ::testing::Values(
+        NegativeValueCase{"seed", "-1", "seed must be >= 0"},
+        NegativeValueCase{"rtol", "-1.0", "rtol must be >= 0"},
+        NegativeValueCase{"atol", "-1.0", "atol must be >= 0"}));
 
 TEST(ConfigLoader, InputSlotsRejectsNonPositive)
 {
