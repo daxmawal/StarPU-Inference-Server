@@ -32,6 +32,17 @@ TEST(ClientArgs, ParsesValidArguments)
   EXPECT_EQ(cfg.verbosity, starpu_server::VerbosityLevel::Stats);
 }
 
+TEST(ClientArgs, ShapeOverridesExistingInput)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--shape", "2"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].shape, (std::vector<int64_t>{2}));
+  EXPECT_EQ(cfg.shape, (std::vector<int64_t>{2}));
+}
+
 TEST(ClientArgs, HelpFlagSetsShowHelp)
 {
   const auto help_flags = std::to_array<const char*>({"--help", "-h"});
