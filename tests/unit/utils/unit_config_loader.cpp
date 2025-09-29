@@ -74,6 +74,37 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_TRUE(cfg.use_cuda);
 }
 
+TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
+{
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "config_loader_slots_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "scheduler: fcfs\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_message_bytes: 4096\n";
+  yaml << "input_slots: 3\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_slots.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.max_message_bytes, 4096U);
+  EXPECT_EQ(cfg.input_slots, 3);
+}
+
 TEST(ConfigLoader, InvalidConfigSetsValidFalse)
 {
   const std::string yaml = R"(max_batch_size: 0)";
@@ -82,6 +113,70 @@ TEST(ConfigLoader, InvalidConfigSetsValidFalse)
   std::ofstream(tmp) << yaml;
 
   const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_negative_bytes_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_message_bytes: -1\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_negative_bytes.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: max_message_bytes must be >= 0 and fit in size_t";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, InputSlotsRejectsNonPositive)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_zero_slots_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "input_slots: 0\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_zero_slots.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: input_slots must be > 0";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
   EXPECT_FALSE(cfg.valid);
 }
 
