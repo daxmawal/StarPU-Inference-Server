@@ -1,4 +1,5 @@
 #include "test_starpu_task_runner.hpp"
+#include "utils/perf_observer.hpp"
 
 TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
 {
@@ -31,6 +32,50 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   ASSERT_EQ(probe.results.size(), outputs.size());
   EXPECT_TRUE(torch::equal(probe.results[0], outputs[0]));
   EXPECT_EQ(probe.latency, latency);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackRecordsInferenceWithoutInputs)
+{
+  starpu_server::perf_observer::reset();
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors({});
+
+  runner_->prepare_job_completion_callback(job);
+
+  const double latency = 3.0;
+  job->get_on_complete()(std::vector<torch::Tensor>{}, latency);
+
+  const auto stats = starpu_server::perf_observer::snapshot();
+  ASSERT_TRUE(stats.has_value());
+  EXPECT_EQ(stats->total_inferences, 1U);
+
+  starpu_server::perf_observer::reset();
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackRecordsInferenceWithScalarInput)
+{
+  starpu_server::perf_observer::reset();
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors({torch::tensor(1)});
+
+  runner_->prepare_job_completion_callback(job);
+
+  const double latency = 4.0;
+  job->get_on_complete()(std::vector<torch::Tensor>{}, latency);
+
+  const auto stats = starpu_server::perf_observer::snapshot();
+  ASSERT_TRUE(stats.has_value());
+  EXPECT_EQ(stats->total_inferences, 1U);
+
+  starpu_server::perf_observer::reset();
 }
 
 TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)

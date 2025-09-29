@@ -168,6 +168,26 @@ StarPUTaskRunner::prepare_job_completion_callback(
               job_sptr->get_executed_on());
         }
 
+        auto& timing = job_sptr->timing_info();
+        using clock = std::chrono::high_resolution_clock;
+        const auto zero_tp = clock::time_point{};
+        const auto now = clock::now();
+
+        if (timing.callback_start_time == zero_tp) {
+          timing.callback_start_time = now;
+        }
+        if (timing.callback_end_time == zero_tp) {
+          timing.callback_end_time = now;
+        }
+        if (timing.callback_end_time <= timing.callback_start_time) {
+          timing.callback_end_time =
+              timing.callback_start_time + clock::duration{1};
+        }
+        if (timing.enqueued_time == zero_tp ||
+            timing.enqueued_time >= timing.callback_end_time) {
+          timing.enqueued_time = timing.callback_start_time;
+        }
+
         perf_observer::record_job(
             job_sptr->timing_info().enqueued_time,
             job_sptr->timing_info().callback_end_time,
