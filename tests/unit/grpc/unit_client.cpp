@@ -32,6 +32,20 @@ TEST(ClientArgs, ParsesValidArguments)
   EXPECT_EQ(cfg.verbosity, starpu_server::VerbosityLevel::Stats);
 }
 
+TEST(ClientArgs, HelpFlagSetsShowHelp)
+{
+  const auto help_flags = std::to_array<const char*>({"--help", "-h"});
+  for (const auto* flag : help_flags) {
+    SCOPED_TRACE(flag);
+    auto argv = std::to_array<const char*>({"prog", flag});
+    auto cfg = starpu_server::parse_client_args(std::span{argv});
+    EXPECT_TRUE(cfg.show_help);
+    EXPECT_TRUE(cfg.valid);
+    EXPECT_TRUE(cfg.inputs.empty());
+    EXPECT_TRUE(cfg.shape.empty());
+  }
+}
+
 TEST(ClientArgs, VerboseLevels)
 {
   using enum starpu_server::VerbosityLevel;
