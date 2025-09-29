@@ -25,6 +25,13 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
+namespace {
+using AllocationFn = starpu_server::InferenceTask::AllocationFn;
+
+AllocationFn dyn_handles_allocator = std::malloc;
+AllocationFn dyn_modes_allocator = std::malloc;
+}  // namespace
+
 namespace starpu_server {
 // =============================================================================
 // Constructor
@@ -370,13 +377,32 @@ InferenceTask::create_task(
   return task;
 }
 
+auto
+InferenceTask::set_dyn_handles_allocator_for_testing(AllocationFn allocator)
+    -> AllocationFn
+{
+  auto previous = dyn_handles_allocator;
+  dyn_handles_allocator = allocator != nullptr ? allocator : std::malloc;
+  return previous;
+}
+
+auto
+InferenceTask::set_dyn_modes_allocator_for_testing(AllocationFn allocator)
+    -> AllocationFn
+{
+  auto previous = dyn_modes_allocator;
+  dyn_modes_allocator = allocator != nullptr ? allocator : std::malloc;
+  return previous;
+}
+
 void
 InferenceTask::allocate_task_buffers(
     starpu_task* task, size_t num_buffers,
     const std::shared_ptr<InferenceCallbackContext>& ctx)
 {
   auto handles_owner = std::unique_ptr<void, void (*)(void*)>(
-      std::malloc(num_buffers * sizeof(starpu_data_handle_t)), std::free);
+      dyn_handles_allocator(num_buffers * sizeof(starpu_data_handle_t)),
+      std::free);
   if (!handles_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;
@@ -386,7 +412,8 @@ InferenceTask::allocate_task_buffers(
   }
 
   auto modes_owner = std::unique_ptr<void, void (*)(void*)>(
-      std::malloc(num_buffers * sizeof(starpu_data_access_mode)), std::free);
+      dyn_modes_allocator(num_buffers * sizeof(starpu_data_access_mode)),
+      std::free);
   if (!modes_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;

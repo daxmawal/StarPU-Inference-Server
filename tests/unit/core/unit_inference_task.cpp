@@ -52,6 +52,57 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
   unregister_handles_ref().push_back(handle);
 }
 
+extern "C" void
+starpu_task_destroy(struct starpu_task* /*task*/)
+{
+}
+
+namespace {
+inline void*
+AlwaysNullAllocator(size_t)
+{
+  return nullptr;
+}
+
+class InferenceTaskHandlesAllocationFailureTest : public InferenceTaskTest {
+ protected:
+  void SetUp() override
+  {
+    previous_allocator_ =
+        starpu_server::InferenceTask::set_dyn_handles_allocator_for_testing(
+            &AlwaysNullAllocator);
+  }
+
+  void TearDown() override
+  {
+    starpu_server::InferenceTask::set_dyn_handles_allocator_for_testing(
+        previous_allocator_);
+  }
+
+ private:
+  starpu_server::InferenceTask::AllocationFn previous_allocator_ = nullptr;
+};
+
+class InferenceTaskModesAllocationFailureTest : public InferenceTaskTest {
+ protected:
+  void SetUp() override
+  {
+    previous_allocator_ =
+        starpu_server::InferenceTask::set_dyn_modes_allocator_for_testing(
+            &AlwaysNullAllocator);
+  }
+
+  void TearDown() override
+  {
+    starpu_server::InferenceTask::set_dyn_modes_allocator_for_testing(
+        previous_allocator_);
+  }
+
+ private:
+  starpu_server::InferenceTask::AllocationFn previous_allocator_ = nullptr;
+};
+}  // namespace
+
 TEST_F(InferenceTaskTest, TooManyInputs)
 {
   const size_t num_inputs = starpu_server::InferLimits::MaxInputs + 1;
@@ -301,4 +352,34 @@ TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
   EXPECT_EQ(modes[0], STARPU_R);
   EXPECT_EQ(modes[1], STARPU_R);
   EXPECT_EQ(modes[2], STARPU_W);
+}
+
+TEST_F(
+    InferenceTaskHandlesAllocationFailureTest,
+    AllocateTaskBuffersThrowsWhenHandleAllocationFails)
+{
+  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
+      nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
+      std::vector<starpu_data_handle_t>{});
+  starpu_task task{};
+  EXPECT_THROW(
+      starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),
+      starpu_server::MemoryAllocationException);
+  EXPECT_EQ(task.dyn_handles, nullptr);
+  EXPECT_EQ(task.dyn_modes, nullptr);
+}
+
+TEST_F(
+    InferenceTaskModesAllocationFailureTest,
+    AllocateTaskBuffersThrowsWhenModeAllocationFails)
+{
+  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
+      nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
+      std::vector<starpu_data_handle_t>{});
+  starpu_task task{};
+  EXPECT_THROW(
+      starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),
+      starpu_server::MemoryAllocationException);
+  EXPECT_EQ(task.dyn_handles, nullptr);
+  EXPECT_EQ(task.dyn_modes, nullptr);
 }
