@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <vector>
 
@@ -212,6 +213,32 @@ output:
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_zero_dim.yaml";
   std::ofstream(tmp) << yaml;
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, DimensionExceedsIntMaxSetsValidFalse)
+{
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "config_loader_large_dim_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1, "
+       << static_cast<long long>(std::numeric_limits<int>::max()) + 1 << "]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_large_dim.yaml";
+  std::ofstream(tmp) << yaml.str();
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
