@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <vector>
 
+#include "test_helpers.hpp"
 #include "utils/config_loader.hpp"
 #include "utils/datatype_utils.hpp"
 
@@ -220,8 +222,8 @@ output:
 
 TEST(ConfigLoader, DimensionExceedsIntMaxSetsValidFalse)
 {
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "config_loader_large_dim_model.pt";
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_large_dim_model.pt";
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
@@ -236,8 +238,8 @@ TEST(ConfigLoader, DimensionExceedsIntMaxSetsValidFalse)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
 
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_large_dim.yaml";
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_large_dim.yaml";
   std::ofstream(tmp) << yaml.str();
 
   const RuntimeConfig cfg = load_config(tmp.string());
@@ -490,6 +492,88 @@ TEST(ConfigLoader, TooManyDimsSetsValidFalse)
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
+}
+
+TEST(
+    ConfigLoader,
+    MessageSizeOverflowDuringMaxMessageComputationMarksConfigInvalid)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_overflow_dims_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: huge\n";
+  yaml << "    dims: [2147483647, 2147483647, 2147483647]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_overflow_dims.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: numel * dimension size would overflow size_t";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+  ASSERT_EQ(cfg.models.size(), 1U);
+  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
+  EXPECT_EQ(
+      cfg.models[0].inputs[0].dims,
+      (std::vector<int64_t>{2147483647, 2147483647, 2147483647}));
+  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
+
+  // InvalidDimensionException cannot be triggered here because
+  // parse_tensor_nodes already rejects non-positive dimensions when reading the
+  // YAML. Covering the overflow path protects compute_max_message_bytes against
+  // future changes.
+}
+
+TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_complex_dtype_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: complex_input\n";
+  yaml << "    dims: [1, 1]\n";
+  yaml << "    data_type: complex64\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_complex_dtype.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Unsupported at::ScalarType";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+  ASSERT_EQ(cfg.models.size(), 1U);
+  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
+  EXPECT_EQ(
+      cfg.models[0].inputs[0].type,
+      starpu_server::string_to_scalar_type("complex64"));
+  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
+  EXPECT_FALSE(cfg.models[0].outputs.empty());
 }
 
 using VerbosityCase =
