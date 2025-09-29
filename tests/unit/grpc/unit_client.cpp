@@ -1,3 +1,4 @@
+#include <ATen/core/ScalarType.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -103,6 +104,27 @@ TEST(ClientArgs, RejectsMalformedShapeTokens)
     auto cfg = starpu_server::parse_client_args(std::span{argv});
     EXPECT_FALSE(cfg.valid);
   }
+}
+
+TEST(ClientArgs, TypeFlagCreatesDefaultInput)
+{
+  auto argv = std::to_array<const char*>({"prog", "--type", "float32"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].name, "input");
+  EXPECT_EQ(cfg.inputs[0].type, at::kFloat);
+}
+
+TEST(ClientArgs, TypeFlagOverridesExistingInput)
+{
+  auto argv =
+      std::to_array<const char*>({"prog", "--shape", "1", "--type", "int32"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].name, "input");
+  EXPECT_EQ(cfg.inputs[0].type, at::kInt);
 }
 
 TEST(ClientArgsHelp, ContainsKeyOptions)
