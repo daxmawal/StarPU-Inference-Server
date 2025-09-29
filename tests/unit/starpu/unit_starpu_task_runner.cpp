@@ -129,3 +129,52 @@ TEST_F(
   ASSERT_TRUE(maybe_slot.has_value());
   starpu_setup_->input_pool().release(*maybe_slot);
 }
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    HandleSubmissionFailureReleasesSlotsThroughTestHook)
+{
+  runner_.reset();
+  starpu_setup_.reset();
+
+  starpu_server::ModelConfig model_config{};
+  model_config.name = "test";
+
+  starpu_server::TensorConfig input_config{};
+  input_config.name = "input0";
+  input_config.dims = {3};
+  input_config.type = at::kFloat;
+  model_config.inputs = {input_config};
+
+  starpu_server::TensorConfig output_config{};
+  output_config.name = "output0";
+  output_config.dims = {3};
+  output_config.type = at::kFloat;
+  model_config.outputs = {output_config};
+
+  opts_.models = {model_config};
+  opts_.input_slots = 1;
+
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+
+  auto& input_pool = starpu_setup_->input_pool();
+  auto& output_pool = starpu_setup_->output_pool();
+
+  const int input_slot = input_pool.acquire();
+  const int output_slot = output_pool.acquire();
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunner::TestHook::handle_submission_failure(
+          &input_pool, input_slot, &output_pool, output_slot, nullptr, -1),
+      starpu_server::StarPUTaskSubmissionException);
+
+  auto reacquired_input = input_pool.try_acquire();
+  ASSERT_TRUE(reacquired_input.has_value());
+  EXPECT_EQ(*reacquired_input, input_slot);
+  input_pool.release(*reacquired_input);
+
+  auto reacquired_output = output_pool.try_acquire();
+  ASSERT_TRUE(reacquired_output.has_value());
+  EXPECT_EQ(*reacquired_output, output_slot);
+  output_pool.release(*reacquired_output);
+}
