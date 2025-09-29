@@ -155,6 +155,12 @@ TEST_F(
   input1.type = at::kFloat;
   model_config.inputs = {input0, input1};
 
+  starpu_server::TensorConfig output0{};
+  output0.name = "output0";
+  output0.dims = {3};
+  output0.type = at::kFloat;
+  model_config.outputs = {output0};
+
   opts_.models = {model_config};
   opts_.input_slots = 1;
 
@@ -170,9 +176,17 @@ TEST_F(
 
   EXPECT_THROW(runner_->submit_inference_task(job), std::runtime_error);
 
-  auto maybe_slot = starpu_setup_->input_pool().try_acquire();
-  ASSERT_TRUE(maybe_slot.has_value());
-  starpu_setup_->input_pool().release(*maybe_slot);
+  constexpr int kExpectedSlotId = 0;
+
+  auto maybe_input_slot = starpu_setup_->input_pool().try_acquire();
+  ASSERT_TRUE(maybe_input_slot.has_value());
+  EXPECT_EQ(*maybe_input_slot, kExpectedSlotId);
+  starpu_setup_->input_pool().release(*maybe_input_slot);
+
+  auto maybe_output_slot = starpu_setup_->output_pool().try_acquire();
+  ASSERT_TRUE(maybe_output_slot.has_value());
+  EXPECT_EQ(*maybe_output_slot, kExpectedSlotId);
+  starpu_setup_->output_pool().release(*maybe_output_slot);
 }
 
 TEST_F(
