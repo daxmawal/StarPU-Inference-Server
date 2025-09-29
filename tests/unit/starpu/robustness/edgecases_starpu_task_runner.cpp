@@ -83,6 +83,54 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   EXPECT_EQ(completed_jobs.load(), 1);
 }
 
+TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
+{
+  runner_.reset();
+  starpu_setup_.reset();
+
+  starpu_server::ModelConfig model_config{};
+  model_config.name = "test";
+  starpu_server::TensorConfig input0{};
+  input0.name = "input0";
+  input0.dims = {3};
+  input0.type = at::kFloat;
+  model_config.inputs = {input0};
+
+  starpu_server::TensorConfig output0{};
+  output0.name = "output0";
+  output0.dims = {3};
+  output0.type = at::kFloat;
+  model_config.outputs = {output0};
+
+  opts_.models = {model_config};
+  opts_.input_slots = 1;
+
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_job_id(9);
+  job->set_input_tensors({torch::ones({3}), torch::ones({3})});
+  job->set_input_types({at::kFloat, at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  runner_->run();
+
+  EXPECT_TRUE(probe.called);
+  EXPECT_TRUE(probe.results.empty());
+  EXPECT_EQ(probe.latency, -1);
+
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_TRUE(results_[0].results.empty());
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+}
+
 struct InvalidConfigParam {
   std::string name;
   std::function<void(starpu_server::StarPUTaskRunnerConfig&)> nullify;
