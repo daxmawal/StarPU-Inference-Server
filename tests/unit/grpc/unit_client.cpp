@@ -58,6 +58,17 @@ TEST(ClientArgs, RejectsNonPositiveShapeDims)
   EXPECT_FALSE(cfg_zero.valid);
 }
 
+TEST(ClientArgs, RejectsMalformedShapeTokens)
+{
+  const auto cases =
+      std::to_array<const char*>({"1xax2", "9223372036854775808", ""});
+  for (const auto* shape : cases) {
+    auto argv = std::to_array<const char*>({"prog", "--shape", shape});
+    auto cfg = starpu_server::parse_client_args(std::span{argv});
+    EXPECT_FALSE(cfg.valid);
+  }
+}
+
 TEST(ClientArgsHelp, ContainsKeyOptions)
 {
   testing::internal::CaptureStdout();
