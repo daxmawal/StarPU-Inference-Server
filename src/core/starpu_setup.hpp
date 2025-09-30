@@ -61,6 +61,12 @@ class StarPUSetup {
     return static_cast<bool>(output_pool_);
   }
 
+  using WorkerStreamQueryFn =
+      int (*)(unsigned int, int*, enum starpu_worker_archtype);
+
+  static void set_worker_stream_query_fn(WorkerStreamQueryFn fn);
+  static void reset_worker_stream_query_fn();
+
   static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
       -> std::map<int, std::vector<int>>;
 

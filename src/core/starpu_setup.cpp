@@ -34,6 +34,11 @@
 #include "utils/nvtx.hpp"
 
 namespace starpu_server {
+namespace {
+StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn =
+    &starpu_worker_get_stream_workerids;
+}  // namespace
+
 void run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
     torch::Device device, torch::jit::script::Module* model,
@@ -351,6 +356,19 @@ StarPUSetup::~StarPUSetup()
   starpu_shutdown();
 }
 
+void
+StarPUSetup::set_worker_stream_query_fn(WorkerStreamQueryFn fn)
+{
+  worker_stream_query_fn =
+      fn != nullptr ? fn : &starpu_worker_get_stream_workerids;
+}
+
+void
+StarPUSetup::reset_worker_stream_query_fn()
+{
+  worker_stream_query_fn = &starpu_worker_get_stream_workerids;
+}
+
 // =============================================================================
 // StarPUSetup: access to codelet and CUDA worker mapping
 // =============================================================================
@@ -373,7 +391,7 @@ StarPUSetup::get_cuda_workers_by_device(const std::vector<int>& device_ids)
     }
 
     std::array<int, STARPU_NMAXWORKERS> workerids{};
-    const int nworkers = starpu_worker_get_stream_workerids(
+    const int nworkers = worker_stream_query_fn(
         static_cast<unsigned int>(device_id), workerids.data(),
         STARPU_CUDA_WORKER);
 
