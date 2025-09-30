@@ -1,3 +1,4 @@
+#include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -215,6 +216,87 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersReleasesResources)
   ASSERT_NE(handle, nullptr);
   slot.handles[0] = handle;
 
+  starpu_server::OutputSlotPoolTestHook::cleanup_slot_buffers(
+      slot, buffer_infos, buffer_infos.size());
+
+  EXPECT_EQ(slot.handles[0], nullptr);
+  EXPECT_EQ(slot.base_ptrs[0], nullptr);
+  EXPECT_FALSE(buffer_infos[0].cuda_pinned);
+  EXPECT_FALSE(buffer_infos[0].starpu_pinned);
+  EXPECT_EQ(buffer_infos[0].starpu_pin_rc, 0);
+  EXPECT_EQ(buffer_infos[0].bytes, 0U);
+}
+
+TEST(OutputSlotPool_Unit, CleanupSlotBuffersUnpinsStarpuMemory)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::OutputSlotPool::SlotInfo slot;
+  slot.handles.resize(1);
+  slot.base_ptrs.resize(1);
+
+  auto* raw_ptr = std::malloc(sizeof(int));
+  ASSERT_NE(raw_ptr, nullptr);
+  slot.base_ptrs[0] = raw_ptr;
+
+  ASSERT_EQ(starpu_memory_pin(raw_ptr, sizeof(int)), 0);
+
+  std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
+  buffer_infos[0].bytes = sizeof(int);
+  buffer_infos[0].starpu_pinned = true;
+  buffer_infos[0].starpu_pin_rc = 0;
+
+  starpu_data_handle_t handle = nullptr;
+  starpu_variable_data_register(
+      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(raw_ptr),
+      sizeof(int));
+  ASSERT_NE(handle, nullptr);
+  slot.handles[0] = handle;
+
+  // Failures in starpu_memory_unpin are reported via warnings; this test
+  // exercises the successful cleanup path.
+  starpu_server::OutputSlotPoolTestHook::cleanup_slot_buffers(
+      slot, buffer_infos, buffer_infos.size());
+
+  EXPECT_EQ(slot.handles[0], nullptr);
+  EXPECT_EQ(slot.base_ptrs[0], nullptr);
+  EXPECT_FALSE(buffer_infos[0].cuda_pinned);
+  EXPECT_FALSE(buffer_infos[0].starpu_pinned);
+  EXPECT_EQ(buffer_infos[0].starpu_pin_rc, 0);
+  EXPECT_EQ(buffer_infos[0].bytes, 0U);
+}
+
+TEST(OutputSlotPool_Unit, CleanupSlotBuffersFreesCudaPinnedMemory)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::OutputSlotPool::SlotInfo slot;
+  slot.handles.resize(1);
+  slot.base_ptrs.resize(1);
+
+  void* raw_ptr = nullptr;
+  cudaError_t alloc_rc =
+      cudaHostAlloc(&raw_ptr, sizeof(int), cudaHostAllocPortable);
+  if (alloc_rc != cudaSuccess) {
+    GTEST_SKIP() << "cudaHostAlloc not supported: rc="
+                 << static_cast<int>(alloc_rc);
+  }
+  ASSERT_NE(raw_ptr, nullptr);
+  slot.base_ptrs[0] = raw_ptr;
+
+  std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
+  buffer_infos[0].bytes = sizeof(int);
+  buffer_infos[0].cuda_pinned = true;
+
+  starpu_data_handle_t handle = nullptr;
+  starpu_variable_data_register(
+      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(raw_ptr),
+      sizeof(int));
+  ASSERT_NE(handle, nullptr);
+  slot.handles[0] = handle;
+
+  // Failures in cudaFreeHost are reported via warnings; this test exercises the
+  // successful cleanup path.
   starpu_server::OutputSlotPoolTestHook::cleanup_slot_buffers(
       slot, buffer_infos, buffer_infos.size());
 
