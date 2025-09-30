@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <format>
 #include <limits>
 #include <optional>
 #include <string>
@@ -63,6 +64,34 @@ TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
   opts.device_ids = {0, 0};
   EXPECT_THROW(
       { starpu_server::StarPUSetup setup(opts); }, std::invalid_argument);
+}
+
+TEST(StarPUSetup_Unit, TooManyDeviceIdsThrows)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.use_cuda = true;
+
+  opts.device_ids.reserve(STARPU_NMAXWORKERS + 1);
+  for (int idx = 0; idx < STARPU_NMAXWORKERS + 1; ++idx) {
+    opts.device_ids.push_back(idx);
+  }
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::StarPUSetup setup(opts);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ(
+              std::format(
+                  "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
+                  STARPU_NMAXWORKERS)
+                  .c_str(),
+              ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
 }
 
 TEST(InputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
