@@ -120,6 +120,32 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
   EXPECT_EQ(server, nullptr);
 }
 
+TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+  constexpr int kMaxBatchSize = 4;
+  const std::vector<at::ScalarType> expected_input_types = {at::kFloat};
+  const std::vector<std::vector<int64_t>> expected_input_dims = {
+      {kMaxBatchSize, 3, 224, 224}};
+  std::jthread thread([&]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, expected_input_types, expected_input_dims,
+        kMaxBatchSize, "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info, server);
+  });
+  while (!server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  starpu_server::StopServer(server);
+  thread.join();
+  EXPECT_EQ(server, nullptr);
+}
+
 TEST(GrpcServer, StartAndStop)
 {
   starpu_server::InferenceQueue queue;
