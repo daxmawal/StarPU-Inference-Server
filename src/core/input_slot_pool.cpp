@@ -312,6 +312,13 @@ InputSlotPool::base_ptrs(int slot_id) const -> const std::vector<void*>&
 }
 
 auto
+InputSlotPool::host_buffer_infos(int slot_id) const
+    -> const std::vector<HostBufferInfo>&
+{
+  return host_buffer_infos_.at(static_cast<size_t>(slot_id));
+}
+
+auto
 InputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
 {
   size_t prod = 1;

@@ -54,6 +54,8 @@ class InputSlotPool {
   [[nodiscard]] auto handles(int slot_id) const
       -> const std::vector<starpu_data_handle_t>&;
   [[nodiscard]] auto base_ptrs(int slot_id) const -> const std::vector<void*>&;
+  [[nodiscard]] auto host_buffer_infos(int slot_id) const
+      -> const std::vector<HostBufferInfo>&;
   [[nodiscard]] int max_batch_size() const { return bmax_; }
   [[nodiscard]] size_t num_inputs() const
   {
