@@ -46,6 +46,28 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
 }
 
+TEST(InputSlotPool_Unit, AllocateSlotBuffersNumelOverflowThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 5;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "numel_overflow_input";
+  tensor.dims = {1, 4611686018427387905};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "numel_overflow_model";
+  model.inputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
+}
+
 TEST(InputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
 {
   StarpuRuntimeGuard starpu_guard;
