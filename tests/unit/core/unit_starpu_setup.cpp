@@ -8,14 +8,54 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <unordered_set>
 #include <vector>
 
 #include "core/input_slot_pool.hpp"
 #include "core/output_slot_pool.hpp"
 #include "core/starpu_setup.hpp"
+#include "test_input_slot_pool.hpp"
 #include "test_utils.hpp"
 #include "utils/runtime_config.hpp"
+
+namespace {
+
+std::vector<void*> g_observed_base_ptrs;
+std::vector<starpu_data_handle_t> g_observed_handles;
+bool g_failure_observer_called = false;
+
+void
+capture_slot_state(const starpu_server::InputSlotPool::SlotInfo& slot)
+{
+  g_failure_observer_called = true;
+  g_observed_base_ptrs.assign(slot.base_ptrs.begin(), slot.base_ptrs.end());
+  g_observed_handles.assign(slot.handles.begin(), slot.handles.end());
+}
+
+template <typename Fn>
+struct FunctionArguments;
+
+template <typename R, typename... Args>
+struct FunctionArguments<R (*)(Args...)> {
+  using Tuple = std::tuple<Args...>;
+};
+
+using StarpuRegisterArgs =
+    FunctionArguments<starpu_server::testing::StarpuVectorRegisterFn>::Tuple;
+
+void
+failing_starpu_vector_register(
+    std::tuple_element_t<0, StarpuRegisterArgs> handle,
+    std::tuple_element_t<1, StarpuRegisterArgs> /*home_node*/,
+    std::tuple_element_t<2, StarpuRegisterArgs> /*ptr*/,
+    std::tuple_element_t<3, StarpuRegisterArgs> /*numel*/,
+    std::tuple_element_t<4, StarpuRegisterArgs> /*element_size*/)
+{
+  *handle = nullptr;
+}
+
+}  // namespace
 
 TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
 {
@@ -322,6 +362,69 @@ TEST(InputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   }
 
   pool.release(slot_id);
+}
+
+TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "failing_input";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "failing_model";
+  model.inputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  g_observed_base_ptrs.clear();
+  g_observed_handles.clear();
+  g_failure_observer_called = false;
+
+  const auto previous_hook =
+      starpu_server::testing::set_starpu_vector_register_hook_for_tests(
+          &failing_starpu_vector_register);
+  const auto previous_observer =
+      starpu_server::testing::set_starpu_register_failure_observer_for_tests(
+          &capture_slot_state);
+
+  auto restore_hooks = [&]() {
+    starpu_server::testing::set_starpu_register_failure_observer_for_tests(
+        previous_observer);
+    starpu_server::testing::set_starpu_vector_register_hook_for_tests(
+        previous_hook);
+  };
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::InputSlotPool pool(opts, 1);
+          restore_hooks();
+          FAIL() << "Expected StarPU handle registration failure";
+        }
+        catch (...) {
+          restore_hooks();
+          throw;
+        }
+      },
+      std::runtime_error);
+
+  ASSERT_TRUE(g_failure_observer_called);
+  ASSERT_EQ(g_observed_base_ptrs.size(), model.inputs.size());
+  ASSERT_EQ(g_observed_handles.size(), model.inputs.size());
+
+  for (void* base_ptr : g_observed_base_ptrs) {
+    EXPECT_EQ(base_ptr, nullptr);
+  }
+
+  for (auto handle : g_observed_handles) {
+    EXPECT_EQ(handle, nullptr);
+  }
 }
 
 TEST(OutputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)

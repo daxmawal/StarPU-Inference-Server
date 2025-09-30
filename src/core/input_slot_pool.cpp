@@ -124,6 +124,13 @@ allocate_and_pin_buffer(
   return allocation;
 }
 
+using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
+using RegisterFailureObserverFn = void (*)(const InputSlotPool::SlotInfo& slot);
+
+StarpuVectorRegisterFn g_starpu_vector_register_hook =
+    &starpu_vector_data_register;
+RegisterFailureObserverFn g_starpu_register_failure_observer = nullptr;
+
 void
 cleanup_slot_allocations(
     InputSlotPool::SlotInfo& slot,
@@ -149,11 +156,14 @@ register_starpu_handle_or_throw(
     -> starpu_data_handle_t
 {
   starpu_data_handle_t starpu_handle = nullptr;
-  starpu_vector_data_register(
+  g_starpu_vector_register_hook(
       &starpu_handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr),
       sizes.total_numel, element_size(dtype));
   if (starpu_handle == nullptr) {
     cleanup_slot_allocations(slot, buffer_infos, input_index + 1);
+    if (g_starpu_register_failure_observer != nullptr) {
+      g_starpu_register_failure_observer(slot);
+    }
     throw std::runtime_error("Failed to register StarPU vector handle");
   }
   return starpu_handle;
@@ -338,3 +348,26 @@ InputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
 }
 
 }  // namespace starpu_server
+
+namespace starpu_server::testing {
+
+auto
+set_starpu_vector_register_hook_for_tests(StarpuVectorRegisterFn fn)
+    -> StarpuVectorRegisterFn
+{
+  const auto previous = g_starpu_vector_register_hook;
+  g_starpu_vector_register_hook =
+      fn != nullptr ? fn : &starpu_vector_data_register;
+  return previous;
+}
+
+auto
+set_starpu_register_failure_observer_for_tests(
+    RegisterFailureObserverFn observer) -> RegisterFailureObserverFn
+{
+  const auto previous = g_starpu_register_failure_observer;
+  g_starpu_register_failure_observer = observer;
+  return previous;
+}
+
+}  // namespace starpu_server::testing
