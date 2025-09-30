@@ -64,9 +64,12 @@ class StarPUSetup {
     return static_cast<bool>(output_pool_);
   }
 
+  using StarpuInitFn = int (*)(struct starpu_conf*);
   using WorkerStreamQueryFn =
       int (*)(unsigned int, int*, enum starpu_worker_archtype);
 
+  static void set_starpu_init_fn(StarpuInitFn fn);
+  static void reset_starpu_init_fn();
   static void set_worker_stream_query_fn(WorkerStreamQueryFn fn);
   static void reset_worker_stream_query_fn();
 

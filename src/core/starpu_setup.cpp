@@ -35,6 +35,7 @@
 
 namespace starpu_server {
 namespace {
+StarPUSetup::StarpuInitFn starpu_init_fn = &starpu_init;
 StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn =
     &starpu_worker_get_stream_workerids;
 }  // namespace
@@ -329,7 +330,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
     }
   }
 
-  if (starpu_init(&conf_) != 0) {
+  if (starpu_init_fn(&conf_) != 0) {
     throw StarPUInitializationException("[ERROR] StarPU initialization error");
   }
 
@@ -360,6 +361,18 @@ StarPUSetup::~StarPUSetup()
   input_pool_.reset();
   output_pool_.reset();
   starpu_shutdown();
+}
+
+void
+StarPUSetup::set_starpu_init_fn(StarpuInitFn fn)
+{
+  starpu_init_fn = fn != nullptr ? fn : &starpu_init;
+}
+
+void
+StarPUSetup::reset_starpu_init_fn()
+{
+  starpu_init_fn = &starpu_init;
 }
 
 void

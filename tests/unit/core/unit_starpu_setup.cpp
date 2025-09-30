@@ -55,7 +55,42 @@ failing_starpu_vector_register(
   *handle = nullptr;
 }
 
+int
+failing_starpu_init(struct starpu_conf*)
+{
+  return -1;
+}
+
+class StarPUSetupInitOverrideTest : public ::testing::Test {
+ protected:
+  void TearDown() override
+  {
+    starpu_server::StarPUSetup::reset_starpu_init_fn();
+  }
+};
+
 }  // namespace
+
+TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
+{
+  starpu_server::RuntimeConfig opts;
+
+  starpu_server::StarPUSetup::set_starpu_init_fn(&failing_starpu_init);
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::StarPUSetup setup(opts);
+        }
+        catch (const starpu_server::StarPUInitializationException& ex) {
+          EXPECT_STREQ(
+              "[ERROR] StarPU initialization error",
+              ex.what());
+          throw;
+        }
+      },
+      starpu_server::StarPUInitializationException);
+}
 
 TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
 {
