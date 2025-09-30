@@ -307,6 +307,52 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
       req, reply, {contig}, recv_ms, send_ms, breakdown);
 }
 
+TEST(InferenceServiceImpl, PopulateResponseHandlesCudaOutputs)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP();
+  }
+
+  auto req = starpu_server::make_model_request("model", "1");
+  auto options =
+      torch::TensorOptions().dtype(at::kFloat).device(torch::kCUDA, 0);
+  auto gpu_tensor = torch::arange(0, 6, options).view({2, 3});
+  auto cpu_tensor = gpu_tensor.to(torch::kCPU);
+  std::vector<torch::Tensor> outputs = {gpu_tensor};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = kI10;
+  int64_t send_ms = kI20;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  breakdown.preprocess_ms = 0.75;
+  breakdown.queue_ms = 1.25;
+  breakdown.submit_ms = 2.25;
+  breakdown.scheduling_ms = 3.25;
+  breakdown.codelet_ms = 4.25;
+  breakdown.inference_ms = 5.25;
+  breakdown.callback_ms = 6.25;
+  breakdown.postprocess_ms = 0.75;
+  breakdown.total_ms = 7.25;
+  breakdown.overall_ms = 8.25;
+
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(reply.outputs_size(), 1);
+  ASSERT_EQ(reply.raw_output_contents_size(), 1);
+  const auto& out_meta = reply.outputs(0);
+  EXPECT_EQ(out_meta.shape_size(), cpu_tensor.dim());
+  for (int64_t idx = 0; idx < cpu_tensor.dim(); ++idx) {
+    EXPECT_EQ(out_meta.shape(idx), cpu_tensor.size(idx));
+  }
+  EXPECT_EQ(out_meta.datatype(),
+            starpu_server::scalar_type_to_datatype(cpu_tensor.scalar_type()));
+
+  reply.set_server_send_ms(send_ms);
+  starpu_server::verify_populate_response(
+      req, reply, {cpu_tensor}, recv_ms, send_ms, breakdown);
+}
+
 TEST(InferenceServiceImpl, PopulateResponseDetectsOverflow)
 {
   auto req = starpu_server::make_model_request("model", "1");
