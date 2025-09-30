@@ -1,4 +1,5 @@
 #include <array>
+#include <stdexcept>
 
 #include "core/output_slot_pool.hpp"
 #include "test_inference_task.hpp"
@@ -189,6 +190,50 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
   const double expected_latency =
       std::chrono::duration<double, std::milli>(end - start).count();
   EXPECT_DOUBLE_EQ(latency_ms, expected_latency);
+}
+
+TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_output_tensors({torch::tensor({1})});
+  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
+    throw std::runtime_error("callback failure");
+  });
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::milliseconds(5);
+  job->set_start_time(start);
+  starpu_server::RuntimeConfig opts;
+  starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::record_and_run_completion_callback(
+          &ctx, end));
+  const auto log = capture.str();
+  EXPECT_NE(
+      log.find("Exception in completion callback: callback failure"),
+      std::string::npos);
+}
+
+TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_output_tensors({torch::tensor({1})});
+  job->set_on_complete(
+      [](const std::vector<torch::Tensor>&, double) { throw 42; });
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::milliseconds(5);
+  job->set_start_time(start);
+  starpu_server::RuntimeConfig opts;
+  starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::record_and_run_completion_callback(
+          &ctx, end));
+  const auto log = capture.str();
+  EXPECT_NE(
+      log.find("Unknown exception in completion callback"), std::string::npos);
 }
 
 TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
