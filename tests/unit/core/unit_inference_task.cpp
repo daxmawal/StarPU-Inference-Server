@@ -122,6 +122,31 @@ TEST_F(InferenceTaskTest, TooManyGpuModels)
       task.create_inference_params(), starpu_server::TooManyGpuModelsException);
 }
 
+TEST_F(InferenceTaskTest, FillModelPointersAllNegativeDeviceIds)
+{
+  auto job = make_job(1, 1);
+  auto task = make_task(job, 1);
+  opts_.device_ids = {-1, -2};
+
+  auto params = task.create_inference_params();
+
+  EXPECT_TRUE(params->models.models_gpu.empty());
+  EXPECT_EQ(params->models.num_models_gpu, models_gpu_.size());
+}
+
+TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
+{
+  auto job = make_job(2, 1);
+  auto task = make_task(job, 2);
+  opts_.device_ids = {0, -1};
+
+  auto params = task.create_inference_params();
+
+  ASSERT_EQ(params->models.models_gpu.size(), 1U);
+  EXPECT_EQ(params->models.models_gpu.at(0), &models_gpu_.at(0));
+  EXPECT_EQ(params->models.num_models_gpu, models_gpu_.size());
+}
+
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
 {
   auto job = make_job(3, 1);
