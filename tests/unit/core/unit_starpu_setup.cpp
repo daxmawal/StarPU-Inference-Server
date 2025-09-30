@@ -70,6 +70,76 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersNumelOverflowThrows)
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
 }
 
+TEST(InputSlotPool_Unit, ConstructionWithoutModelsThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+
+  EXPECT_THROW(
+      { starpu_server::InputSlotPool pool(opts, 1); }, std::invalid_argument);
+}
+
+TEST(InputSlotPool_Unit, NonPositiveBatchDimensionThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "invalid_batch_input";
+  tensor.dims = {0, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "invalid_batch_model";
+  model.inputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::InputSlotPool pool(opts, 1);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ("dims[0] (batch) must be positive", ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
+TEST(InputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "exceeds_int_max_input";
+  tensor.dims = {static_cast<int64_t>(std::numeric_limits<int>::max()) + 1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "exceeds_int_max_model";
+  model.inputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::InputSlotPool pool(opts, 1);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ("dims[0] (batch) exceeds int max", ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
 TEST(InputSlotPool_Unit, NonPositiveDimensionThrows)
 {
   StarpuRuntimeGuard starpu_guard;
