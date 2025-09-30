@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -61,6 +62,61 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersNumelOverflowThrows)
 
   starpu_server::ModelConfig model;
   model.name = "numel_overflow_model";
+  model.inputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
+}
+
+TEST(InputSlotPool_Unit, NonPositiveDimensionThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 5;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "non_positive_dims";
+  tensor.dims = {1, 0, 8};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "non_positive_model";
+  model.inputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::InputSlotPool pool(opts, 1);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_NE(
+              std::string(ex.what()).find("dims must be positive"),
+              std::string::npos);
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
+TEST(InputSlotPool_Unit, DimensionProductOverflowThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 5;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "product_overflow_input";
+  tensor.dims = {1, std::numeric_limits<int64_t>::max(), 3};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "product_overflow_model";
   model.inputs.push_back(tensor);
   opts.models.push_back(model);
 
