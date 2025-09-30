@@ -23,6 +23,29 @@
 
 namespace starpu_server {
 
+class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
+ public:
+  explicit PrometheusExposerHandle(std::unique_ptr<prometheus::Exposer> exposer)
+      : exposer_(std::move(exposer))
+  {
+  }
+
+  void RegisterCollectable(
+      const std::shared_ptr<prometheus::Collectable>& collectable) override
+  {
+    exposer_->RegisterCollectable(collectable);
+  }
+
+  void RemoveCollectable(
+      const std::shared_ptr<prometheus::Collectable>& collectable) override
+  {
+    exposer_->RemoveCollectable(collectable);
+  }
+
+ private:
+  std::unique_ptr<prometheus::Exposer> exposer_;
+};
+
 auto make_default_cpu_usage_provider() -> MetricsRegistry::CpuUsageProvider;
 
 namespace {
@@ -248,7 +271,7 @@ MetricsRegistry::MetricsRegistry(int port)
 
 MetricsRegistry::MetricsRegistry(
     int port, GpuStatsProvider gpu_provider, CpuUsageProvider cpu_provider,
-    bool start_sampler_thread)
+    bool start_sampler_thread, std::unique_ptr<ExposerHandle> exposer_handle)
     : registry(std::make_shared<prometheus::Registry>()),
       requests_total(nullptr), inference_latency(nullptr),
       queue_size_gauge(nullptr), exposer_(nullptr),
@@ -261,16 +284,23 @@ MetricsRegistry::MetricsRegistry(
   if (!cpu_usage_provider_) {
     cpu_usage_provider_ = make_default_cpu_usage_provider();
   }
-  initialize(port, start_sampler_thread);
+  initialize(port, start_sampler_thread, std::move(exposer_handle));
 }
 
 void
-MetricsRegistry::initialize(int port, bool start_sampler_thread)
+MetricsRegistry::initialize(
+    int port, bool start_sampler_thread,
+    std::unique_ptr<ExposerHandle> exposer_handle)
 {
   try {
-    exposer_ = std::make_unique<prometheus::Exposer>(
-        "0.0.0.0:" + std::to_string(port));
-    exposer_->RegisterCollectable(registry);
+    if (!exposer_handle) {
+      auto exposer = std::make_unique<prometheus::Exposer>(
+          "0.0.0.0:" + std::to_string(port));
+      exposer_handle =
+          std::make_unique<PrometheusExposerHandle>(std::move(exposer));
+    }
+    exposer_handle->RegisterCollectable(registry);
+    exposer_ = std::move(exposer_handle);
   }
   catch (const std::exception& e) {
     log_error(std::string("Failed to initialize metrics exposer: ") + e.what());

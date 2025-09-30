@@ -15,6 +15,7 @@
 
 namespace prometheus {
 class Exposer;
+class Collectable;
 template <typename T>
 class Family;
 }  // namespace prometheus
@@ -23,6 +24,14 @@ namespace starpu_server {
 
 class MetricsRegistry {
  public:
+  struct ExposerHandle {
+    virtual ~ExposerHandle() = default;
+    virtual void RegisterCollectable(
+        const std::shared_ptr<prometheus::Collectable>& collectable) = 0;
+    virtual void RemoveCollectable(
+        const std::shared_ptr<prometheus::Collectable>& collectable) = 0;
+  };
+
   struct GpuSample {
     int index{0};
     double util_percent{0.0};
@@ -36,7 +45,8 @@ class MetricsRegistry {
   explicit MetricsRegistry(int port);
   MetricsRegistry(
       int port, GpuStatsProvider gpu_provider, CpuUsageProvider cpu_provider,
-      bool start_sampler_thread = true);
+      bool start_sampler_thread = true,
+      std::unique_ptr<ExposerHandle> exposer_handle = nullptr);
   ~MetricsRegistry() noexcept;
 
   std::shared_ptr<prometheus::Registry> registry;
@@ -56,11 +66,13 @@ class MetricsRegistry {
   auto has_cpu_usage_provider() const -> bool;
 
  private:
-  void initialize(int port, bool start_sampler_thread);
+  void initialize(
+      int port, bool start_sampler_thread,
+      std::unique_ptr<ExposerHandle> exposer_handle);
   void perform_sampling_iteration();
   void sampling_loop(const std::stop_token& stop);
 
-  std::unique_ptr<prometheus::Exposer> exposer_;
+  std::unique_ptr<ExposerHandle> exposer_;
   std::jthread sampler_thread_;
   GpuStatsProvider gpu_stats_provider_;
   CpuUsageProvider cpu_usage_provider_;

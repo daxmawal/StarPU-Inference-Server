@@ -5,6 +5,9 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -97,4 +100,33 @@ TEST(Metrics, InitFailsWhenMetricsRegistryThrows)
 
   shutdown_metrics();
   EXPECT_EQ(get_metrics(), nullptr);
+}
+
+TEST(Metrics, MetricsDestructionLogsRemovalFailure)
+{
+  class ThrowingRemoveHandle : public MetricsRegistry::ExposerHandle {
+   public:
+    void RegisterCollectable(
+        const std::shared_ptr<prometheus::Collectable>&) override
+    {
+    }
+
+    void RemoveCollectable(
+        const std::shared_ptr<prometheus::Collectable>&) override
+    {
+      throw std::runtime_error("remove failed");
+    }
+  };
+
+  testing::internal::CaptureStderr();
+  {
+    auto handle = std::make_unique<ThrowingRemoveHandle>();
+    MetricsRegistry registry(
+        0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+        [] { return std::optional<double>{}; }, false, std::move(handle));
+  }
+  const std::string log = testing::internal::GetCapturedStderr();
+  EXPECT_NE(
+      log.find("Failed to remove metrics registry collectable"),
+      std::string::npos);
 }
