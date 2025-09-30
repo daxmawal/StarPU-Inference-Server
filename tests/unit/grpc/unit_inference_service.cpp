@@ -15,6 +15,23 @@ constexpr int64_t kI20 = 20;
 constexpr int64_t kI30 = 30;
 }  // namespace
 
+TEST(ComputeThreadCount, ZeroConcurrencyDefaults)
+{
+  EXPECT_EQ(
+      starpu_server::compute_thread_count_from(0U),
+      starpu_server::kDefaultGrpcThreads);
+}
+
+TEST(ComputeThreadCount, ClampsToConfiguredBounds)
+{
+  EXPECT_EQ(
+      starpu_server::compute_thread_count_from(1U),
+      starpu_server::kMinGrpcThreads);
+  EXPECT_EQ(
+      starpu_server::compute_thread_count_from(100U),
+      starpu_server::kMaxGrpcThreads);
+}
+
 TEST(InferenceService, ValidateInputsSuccess)
 {
   auto req = starpu_server::make_valid_request();

@@ -103,6 +103,12 @@ class InferenceServiceImpl final
   std::atomic<int> next_job_id_{0};
 };
 
+inline constexpr std::size_t kDefaultGrpcThreads = 4;
+inline constexpr std::size_t kMinGrpcThreads = 2;
+inline constexpr std::size_t kMaxGrpcThreads = 8;
+
+auto compute_thread_count_from(unsigned concurrency) -> std::size_t;
+
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,

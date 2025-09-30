@@ -36,11 +36,16 @@ using inference::ServerReadyRequest;
 using inference::ServerReadyResponse;
 
 
-namespace {
+auto
+compute_thread_count_from(unsigned concurrency) -> std::size_t
+{
+  if (concurrency == 0U) {
+    return kDefaultGrpcThreads;
+  }
+  return std::clamp<std::size_t>(concurrency, kMinGrpcThreads, kMaxGrpcThreads);
+}
 
-constexpr std::size_t kDefaultGrpcThreads = 4;
-constexpr std::size_t kMinGrpcThreads = 2;
-constexpr std::size_t kMaxGrpcThreads = 8;
+namespace {
 
 auto
 parse_input_dtype(
@@ -708,11 +713,7 @@ class ModelInferCallData final : public AsyncCallDataBase {
 auto
 compute_thread_count() -> std::size_t
 {
-  const unsigned concurrency = std::thread::hardware_concurrency();
-  if (concurrency == 0U) {
-    return kDefaultGrpcThreads;
-  }
-  return std::clamp<std::size_t>(concurrency, kMinGrpcThreads, kMaxGrpcThreads);
+  return compute_thread_count_from(std::thread::hardware_concurrency());
 }
 
 class AsyncServerContext {
