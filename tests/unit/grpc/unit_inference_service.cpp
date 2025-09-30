@@ -211,6 +211,12 @@ TEST(InferenceService, ValidateInputsConfiguredShapeWithBatching)
   ASSERT_EQ(inputs.size(), 1U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
 
+  auto batch_only_req = make_request({2});
+  inputs.clear();
+  status = service.validate_and_convert_inputs(&batch_only_req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+
   auto explicit_batch_req = make_request({3, 2, 2});
   inputs.clear();
   status = service.validate_and_convert_inputs(&explicit_batch_req, inputs);
@@ -224,9 +230,45 @@ TEST(InferenceService, ValidateInputsConfiguredShapeWithBatching)
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 
+  auto mismatched_dims_req = make_request({2, 3});
+  inputs.clear();
+  status = service.validate_and_convert_inputs(&mismatched_dims_req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+
   auto mismatched_tail_req = make_request({3, 2, 3});
   inputs.clear();
   status = service.validate_and_convert_inputs(&mismatched_tail_req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(InferenceService, ValidateInputsConfiguredShapeRejectsZeroRankBatch)
+{
+  auto make_request = [](const std::vector<int64_t>& shape) {
+    size_t total = 1;
+    for (const auto dim : shape) {
+      total *= static_cast<size_t>(dim);
+    }
+    std::vector<float> values(total, kF1);
+    starpu_server::InputSpec spec;
+    spec.shape = shape;
+    spec.dtype = at::kFloat;
+    spec.raw_data = starpu_server::to_raw_data(values);
+    return starpu_server::make_model_infer_request({spec});
+  };
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  std::vector<std::vector<int64_t>> expected_dims = {{}};
+  constexpr int kMaxBatchSize = 4;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types, expected_dims, kMaxBatchSize);
+
+  auto zero_rank_req = make_request({});
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&zero_rank_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
@@ -345,8 +387,9 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesCudaOutputs)
   for (int64_t idx = 0; idx < cpu_tensor.dim(); ++idx) {
     EXPECT_EQ(out_meta.shape(idx), cpu_tensor.size(idx));
   }
-  EXPECT_EQ(out_meta.datatype(),
-            starpu_server::scalar_type_to_datatype(cpu_tensor.scalar_type()));
+  EXPECT_EQ(
+      out_meta.datatype(),
+      starpu_server::scalar_type_to_datatype(cpu_tensor.scalar_type()));
 
   reply.set_server_send_ms(send_ms);
   starpu_server::verify_populate_response(
