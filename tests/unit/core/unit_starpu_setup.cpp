@@ -15,7 +15,6 @@
 #include "core/input_slot_pool.hpp"
 #include "core/output_slot_pool.hpp"
 #include "core/starpu_setup.hpp"
-#include "test_input_slot_pool.hpp"
 #include "test_utils.hpp"
 #include "utils/runtime_config.hpp"
 
