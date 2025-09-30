@@ -1,4 +1,5 @@
 #include <array>
+#include <memory>
 #include <string_view>
 
 #include "test_starpu_setup.hpp"
@@ -127,4 +128,38 @@ TEST(InferenceCodelet, RunInferenceExceptionsAreWrapped)
     const std::string_view message(ex.what());
     EXPECT_NE(message.find("[ERROR] Codelet failure"), std::string::npos);
   }
+}
+
+TEST(InferenceCodelet, SelectGpuModuleThrowsWhenReplicaMissing)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP();
+  }
+
+  auto params = starpu_server::make_basic_params(1);
+  const int device_id = 0;
+
+  EXPECT_THROW(
+      starpu_server::select_gpu_module(params, device_id),
+      starpu_server::StarPUCodeletException);
+}
+
+TEST(InferenceCodelet, SelectGpuModuleReturnsMatchingReplica)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP();
+  }
+
+  auto params = starpu_server::make_basic_params(1);
+  const int device_id = 0;
+
+  auto module = std::make_unique<torch::jit::script::Module>("dummy");
+  params.models.models_gpu.resize(1);
+  params.models.models_gpu[0] = module.get();
+  params.models.num_models_gpu = params.models.models_gpu.size();
+
+  torch::jit::script::Module* selected =
+      starpu_server::select_gpu_module(params, device_id);
+
+  EXPECT_EQ(selected, module.get());
 }

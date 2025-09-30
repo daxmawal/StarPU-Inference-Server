@@ -198,6 +198,23 @@ run_codelet_inference(
   }
 }
 
+auto
+select_gpu_module(const InferenceParams& params, const int device_id)
+    -> torch::jit::script::Module*
+{
+  if (device_id >= 0) {
+    const auto module_index = static_cast<size_t>(device_id);
+    if (module_index < params.models.models_gpu.size()) {
+      if (auto* module = params.models.models_gpu[module_index]) {
+        return module;
+      }
+    }
+  }
+
+  throw StarPUCodeletException(std::format(
+      "[ERROR] No GPU model replica available for device {}", device_id));
+}
+
 // =============================================================================
 // StarPU CPU codelet implementation
 // =============================================================================
@@ -244,18 +261,7 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
   const c10::InferenceMode no_autograd;
   const at::cuda::CUDAStreamGuard guard(torch_stream);
 
-  torch::jit::script::Module* module = nullptr;
-  if (device_id >= 0) {
-    const auto module_index = static_cast<size_t>(device_id);
-    if (module_index < params->models.models_gpu.size()) {
-      module = params->models.models_gpu[module_index];
-    }
-  }
-
-  if (module == nullptr) {
-    throw StarPUCodeletException(std::format(
-        "[ERROR] No GPU model replica available for device {}", device_id));
-  }
+  torch::jit::script::Module* module = select_gpu_module(*params, device_id);
 
   run_codelet_inference(
       params, buffers_span,
