@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -170,6 +171,37 @@ TEST(InputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
   EXPECT_THROW(static_cast<void>(pool.handles(slot_id + 1)), std::out_of_range);
 
   pool.release(slot_id);
+}
+
+TEST(InputSlotPool_Unit, TryAcquireEmptyPoolReturnsNullopt)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "minimal_input";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "minimal_model";
+  model.inputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  starpu_server::InputSlotPool pool(opts, 1);
+
+  const int slot_id = pool.acquire();
+  EXPECT_EQ(pool.try_acquire(), std::nullopt);
+
+  pool.release(slot_id);
+
+  const auto reacquired = pool.try_acquire();
+  ASSERT_TRUE(reacquired.has_value());
+  EXPECT_EQ(*reacquired, slot_id);
+  pool.release(*reacquired);
 }
 
 TEST(InputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
