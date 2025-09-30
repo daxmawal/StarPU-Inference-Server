@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstring>
 #include <format>
+#include <functional>
 #include <future>
 #include <ostream>
 #include <span>
@@ -191,15 +192,19 @@ make_model_request(const std::string& name, const std::string& version)
 inline auto
 run_single_job(
     InferenceQueue& queue, std::vector<torch::Tensor> outputs = {},
-    double latency = 0.0) -> std::jthread
+    double latency = 0.0,
+    std::function<void(InferenceJob&)> job_mutator = {}) -> std::jthread
 {
-  return std::jthread(
-      [&queue, outputs = std::move(outputs), latency]() mutable {
-        std::shared_ptr<InferenceJob> job;
-        if (queue.wait_and_pop(job)) {
-          job->get_on_complete()(outputs, latency);
-        }
-      });
+  return std::jthread([&queue, outputs = std::move(outputs), latency,
+                       job_mutator = std::move(job_mutator)]() mutable {
+    std::shared_ptr<InferenceJob> job;
+    if (queue.wait_and_pop(job)) {
+      if (job_mutator) {
+        job_mutator(*job);
+      }
+      job->get_on_complete()(outputs, latency);
+    }
+  });
 }
 
 struct TestGrpcServer {

@@ -4,6 +4,7 @@
 #include <torch/torch.h>
 
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -42,10 +43,13 @@ class InferenceServiceTest : public ::testing::Test {
   }
   auto prepare_job(
       std::vector<torch::Tensor> ref_outs,
-      std::vector<torch::Tensor> worker_outs = {}) -> std::jthread
+      std::vector<torch::Tensor> worker_outs = {},
+      std::function<void(starpu_server::InferenceJob&)> job_mutator = {})
+      -> std::jthread
   {
     ref_outputs = std::move(ref_outs);
-    return starpu_server::run_single_job(queue, std::move(worker_outs));
+    return starpu_server::run_single_job(
+        queue, std::move(worker_outs), 0.0, std::move(job_mutator));
   }
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs;

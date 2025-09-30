@@ -1,8 +1,13 @@
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <future>
 #include <limits>
 #include <memory>
 #include <span>
 
+#include "monitoring/metrics.hpp"
 #include "test_inference_service.hpp"
 
 namespace {
@@ -14,6 +19,22 @@ constexpr int64_t kI10 = 10;
 constexpr int64_t kI20 = 20;
 constexpr int64_t kI30 = 30;
 }  // namespace
+
+class MetricsInferenceServiceTest : public InferenceServiceTest {
+ protected:
+  void SetUp() override
+  {
+    starpu_server::shutdown_metrics();
+    ASSERT_TRUE(starpu_server::init_metrics(0));
+    InferenceServiceTest::SetUp();
+  }
+
+  void TearDown() override
+  {
+    starpu_server::shutdown_metrics();
+    InferenceServiceTest::TearDown();
+  }
+};
 
 TEST(ComputeThreadCount, ZeroConcurrencyDefaults)
 {
@@ -521,4 +542,91 @@ TEST_F(
   EXPECT_FALSE(callback_status.ok());
   EXPECT_EQ(callback_status.error_code(), grpc::StatusCode::UNAVAILABLE);
   expect_empty_infer_response(reply);
+}
+
+TEST_F(
+    MetricsInferenceServiceTest,
+    HandleModelInferAsyncUpdatesMetricsAndLatencyBreakdown)
+{
+  auto request = starpu_server::make_valid_request();
+  auto expected_outputs = std::vector<torch::Tensor>{
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+  auto worker_outputs = expected_outputs;
+  auto worker = prepare_job(
+      expected_outputs, worker_outputs, [](starpu_server::InferenceJob& job) {
+        job.timing_info().enqueued_time =
+            std::chrono::high_resolution_clock::time_point{};
+        job.timing_info().callback_end_time =
+            std::chrono::high_resolution_clock::now() -
+            std::chrono::milliseconds(1);
+      });
+
+  auto metrics = starpu_server::get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  EXPECT_DOUBLE_EQ(metrics->requests_total->Value(), 0.0);
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply, [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      });
+
+  auto status = status_future.get();
+  worker.join();
+
+  EXPECT_TRUE(status.ok());
+  EXPECT_DOUBLE_EQ(metrics->requests_total->Value(), 1.0);
+  EXPECT_DOUBLE_EQ(reply.server_preprocess_ms(), 0.0);
+  EXPECT_GT(reply.server_postprocess_ms(), 0.0);
+  EXPECT_GE(reply.server_overall_ms(), 0.0);
+
+  auto families = metrics->registry->Collect();
+  auto histogram_it = std::find_if(
+      families.begin(), families.end(),
+      [](const auto& family) { return family.name == "inference_latency_ms"; });
+  ASSERT_NE(histogram_it, families.end());
+  ASSERT_FALSE(histogram_it->metric.empty());
+  const auto& histogram = histogram_it->metric.front().histogram;
+  EXPECT_EQ(histogram.sample_count, 1);
+  EXPECT_GT(histogram.sample_sum, 0.0);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncPropagatesPopulateResponseFailureOnce)
+{
+  auto request = starpu_server::make_valid_request();
+  static float dummy = 0.0F;
+  const size_t huge_elems =
+      std::numeric_limits<size_t>::max() / sizeof(float) + 1;
+  auto huge_tensor = torch::from_blob(
+      &dummy, {static_cast<int64_t>(huge_elems)},
+      torch::TensorOptions().dtype(at::kFloat));
+  auto worker = prepare_job(
+      {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))},
+      {huge_tensor});
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+  std::atomic<int> callback_count{0};
+  std::atomic<bool> double_callback{false};
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply, [&](grpc::Status status) {
+        int previous = callback_count.fetch_add(1);
+        if (previous == 0) {
+          status_promise.set_value(std::move(status));
+        } else {
+          double_callback.store(true);
+        }
+      });
+
+  grpc::Status status = status_future.get();
+  worker.join();
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(callback_count.load(), 1);
+  EXPECT_FALSE(double_callback.load());
 }
