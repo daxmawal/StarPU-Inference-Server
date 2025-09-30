@@ -377,6 +377,24 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesOnFinishedException)
   pool.release(*reacquired);
 }
 
+TEST(InferenceTask, ProcessOutputHandleNullHandleFinalizes)
+{
+  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
+      nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
+      std::vector<starpu_data_handle_t>{});
+  ctx->remaining_outputs_to_acquire = 1;
+  ctx->self_keep_alive = ctx;
+
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  starpu_server::InferenceTask::process_output_handle(nullptr, ctx.get());
+
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+}
+
 TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
 {
   auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
