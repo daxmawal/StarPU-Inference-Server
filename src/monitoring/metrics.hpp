@@ -52,6 +52,9 @@ class MetricsRegistry {
   void run_sampling_iteration();
   void request_stop();
 
+  auto has_gpu_stats_provider() const -> bool;
+  auto has_cpu_usage_provider() const -> bool;
+
  private:
   void initialize(int port, bool start_sampler_thread);
   void perform_sampling_iteration();

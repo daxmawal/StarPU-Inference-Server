@@ -130,6 +130,21 @@ TEST(MetricsSampling, UpdatesGpuAndCpuGaugesOnSuccess)
   metrics.request_stop();
 }
 
+TEST(MetricsSampling, UsesDefaultProvidersWhenMissing)
+{
+  MetricsRegistry metrics(
+      0, MetricsRegistry::GpuStatsProvider{},
+      MetricsRegistry::CpuUsageProvider{},
+      /*start_sampler_thread=*/false);
+
+  EXPECT_TRUE(metrics.has_gpu_stats_provider());
+  EXPECT_TRUE(metrics.has_cpu_usage_provider());
+
+  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+
+  metrics.request_stop();
+}
+
 TEST(MetricsSampling, LogsStdExceptionsFromGpuProvider)
 {
   auto gpu_provider = []() -> std::vector<MetricsRegistry::GpuSample> {

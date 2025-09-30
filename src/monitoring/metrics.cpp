@@ -407,6 +407,18 @@ MetricsRegistry::request_stop()
   }
 }
 
+auto
+MetricsRegistry::has_gpu_stats_provider() const -> bool
+{
+  return static_cast<bool>(gpu_stats_provider_);
+}
+
+auto
+MetricsRegistry::has_cpu_usage_provider() const -> bool
+{
+  return static_cast<bool>(cpu_usage_provider_);
+}
+
 void
 MetricsRegistry::run_sampling_iteration()
 {
