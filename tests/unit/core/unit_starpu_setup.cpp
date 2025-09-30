@@ -113,6 +113,76 @@ TEST(OutputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
       { starpu_server::OutputSlotPool pool(opts, 1); }, std::overflow_error);
 }
 
+TEST(OutputSlotPool_Unit, ConstructionWithoutModelsThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+
+  EXPECT_THROW(
+      { starpu_server::OutputSlotPool pool(opts, 1); }, std::invalid_argument);
+}
+
+TEST(OutputSlotPool_Unit, NonPositiveBatchDimensionThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "invalid_batch_output";
+  tensor.dims = {0, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "invalid_batch_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::OutputSlotPool pool(opts, 1);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ("dims[0] (batch) must be positive", ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
+TEST(OutputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "exceeds_int_max_output";
+  tensor.dims = {static_cast<int64_t>(std::numeric_limits<int>::max()) + 1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "exceeds_int_max_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::OutputSlotPool pool(opts, 1);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ("dims[0] (batch) exceeds int max", ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
 TEST(OutputSlotPool_Unit, ReleaseReturnsSlotToPool)
 {
   StarpuRuntimeGuard starpu_guard;
