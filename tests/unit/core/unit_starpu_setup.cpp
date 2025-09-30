@@ -1,9 +1,12 @@
 #include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
+#include <starpu.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <unordered_set>
 #include <vector>
 
 #include "core/input_slot_pool.hpp"
@@ -295,6 +298,49 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersReleasesResources)
   EXPECT_FALSE(buffer_infos[0].starpu_pinned);
   EXPECT_EQ(buffer_infos[0].starpu_pin_rc, 0);
   EXPECT_EQ(buffer_infos[0].bytes, 0U);
+}
+
+TEST(OutputSlotPool_Unit, DefaultSlotCountUsesWorkerCount)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "single_output";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "single_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  const int expected_slots =
+      std::max(2, static_cast<int>(starpu_worker_get_count()));
+
+  starpu_server::OutputSlotPool pool(opts, 0);
+
+  std::vector<int> acquired_ids;
+  acquired_ids.reserve(static_cast<size_t>(expected_slots));
+
+  for (int i = 0; i < expected_slots; ++i) {
+    auto maybe_slot = pool.try_acquire();
+    ASSERT_TRUE(maybe_slot.has_value())
+        << "Expected to acquire slot " << i << " of " << expected_slots;
+    acquired_ids.push_back(*maybe_slot);
+  }
+
+  EXPECT_FALSE(pool.try_acquire().has_value());
+
+  std::unordered_set<int> unique_ids(acquired_ids.begin(), acquired_ids.end());
+  EXPECT_EQ(unique_ids.size(), acquired_ids.size());
+  EXPECT_EQ(acquired_ids.size(), static_cast<size_t>(expected_slots));
+
+  for (int slot_id : acquired_ids) {
+    pool.release(slot_id);
+  }
 }
 
 TEST(OutputSlotPool_Unit, CleanupSlotBuffersUnpinsStarpuMemory)
