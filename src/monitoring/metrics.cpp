@@ -23,6 +23,8 @@
 
 namespace starpu_server {
 
+auto make_default_cpu_usage_provider() -> MetricsRegistry::CpuUsageProvider;
+
 namespace {
 const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
     1, 5, 10, 25, 50, 100, 250, 500, 1000};
