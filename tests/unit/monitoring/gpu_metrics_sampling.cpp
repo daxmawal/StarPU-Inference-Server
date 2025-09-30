@@ -185,3 +185,48 @@ TEST(MetricsSampling, LogsUnknownExceptionsFromGpuProvider)
       output.find("GPU metrics sampling failed due to an unknown error"),
       std::string::npos);
 }
+
+TEST(MetricsSampling, LogsStdExceptionsFromCpuProvider)
+{
+  auto gpu_provider = []() -> std::vector<MetricsRegistry::GpuSample> {
+    return {};
+  };
+  auto cpu_provider = []() -> std::optional<double> {
+    throw std::runtime_error("boom");
+  };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  CerrCapture capture;
+  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+  metrics.request_stop();
+
+  const std::string output = capture.str();
+  EXPECT_NE(
+      output.find("CPU metrics sampling failed: boom"), std::string::npos);
+}
+
+TEST(MetricsSampling, LogsUnknownExceptionsFromCpuProvider)
+{
+  auto gpu_provider = []() -> std::vector<MetricsRegistry::GpuSample> {
+    return {};
+  };
+  auto cpu_provider = []() -> std::optional<double> {
+    throw 42;
+  };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  CerrCapture capture;
+  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+  metrics.request_stop();
+
+  const std::string output = capture.str();
+  EXPECT_NE(
+      output.find("CPU metrics sampling failed due to an unknown error"),
+      std::string::npos);
+}
