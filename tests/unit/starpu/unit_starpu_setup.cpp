@@ -1,3 +1,6 @@
+#include <array>
+#include <string_view>
+
 #include "test_starpu_setup.hpp"
 
 TEST_P(StarPUSetupExtractTensorsTest, Extract)
@@ -95,4 +98,33 @@ TEST(InferenceCodelet, FieldsAreInitialized)
   EXPECT_NE(codelet->cuda_funcs[0], nullptr);
   EXPECT_EQ(codelet->cuda_flags[0], 1U);
   EXPECT_EQ(codelet->max_parallelism, INT_MAX);
+}
+
+TEST(InferenceCodelet, RunInferenceExceptionsAreWrapped)
+{
+  const StarpuRuntimeGuard guard;
+
+  auto params = starpu_server::make_basic_params(1);
+  params.limits.max_inputs = 0;
+  params.num_inputs = 1;
+
+  float dummy_input = 0.0F;
+  float dummy_output = 0.0F;
+  std::array<starpu_variable_interface, 2> raw_buffers{};
+  raw_buffers[0] = starpu_server::make_variable_interface(&dummy_input);
+  raw_buffers[1] = starpu_server::make_variable_interface(&dummy_output);
+  std::array<void*, 2> buffers{&raw_buffers[0], &raw_buffers[1]};
+
+  starpu_server::InferenceCodelet inf_cl;
+  auto* cpu_func = inf_cl.get_codelet()->cpu_funcs[0];
+  ASSERT_NE(cpu_func, nullptr);
+
+  try {
+    cpu_func(buffers.data(), &params);
+    FAIL() << "Expected cpu_func to throw";
+  }
+  catch (const starpu_server::StarPUCodeletException& ex) {
+    const std::string_view message(ex.what());
+    EXPECT_NE(message.find("[ERROR] Codelet failure"), std::string::npos);
+  }
 }
