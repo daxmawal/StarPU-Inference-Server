@@ -4,11 +4,13 @@
 #include <prometheus/histogram.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <chrono>
 #include <exception>
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -84,12 +86,9 @@ cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr) -> double
   return usage;
 }
 
-struct GpuStat {
-  int index{0};
-  double util_percent{0.0};
-  double mem_used_bytes{0.0};
-  double mem_total_bytes{0.0};
-};
+using GpuSample = MetricsRegistry::GpuSample;
+using GpuStatsProvider = MetricsRegistry::GpuStatsProvider;
+using CpuUsageProvider = MetricsRegistry::CpuUsageProvider;
 
 #ifdef STARPU_HAVE_NVML
 
@@ -97,7 +96,7 @@ class NvmlWrapper {
  public:
   static auto instance() -> NvmlWrapper&;
 
-  auto query_stats() -> std::vector<GpuStat>;
+  auto query_stats() -> std::vector<GpuSample>;
 
  private:
   NvmlWrapper();
@@ -145,7 +144,7 @@ NvmlWrapper::error_string(nvmlReturn_t status) -> const char*
 }
 
 auto
-NvmlWrapper::query_stats() -> std::vector<GpuStat>
+NvmlWrapper::query_stats() -> std::vector<GpuSample>
 {
   std::lock_guard<std::mutex> guard(mutex_);
   if (!initialized_) {
@@ -160,7 +159,7 @@ NvmlWrapper::query_stats() -> std::vector<GpuStat>
     return {};
   }
 
-  std::vector<GpuStat> stats;
+  std::vector<GpuSample> stats;
   stats.reserve(device_count);
 
   for (unsigned int idx = 0; idx < device_count; ++idx) {
@@ -191,7 +190,7 @@ NvmlWrapper::query_stats() -> std::vector<GpuStat>
       continue;
     }
 
-    GpuStat stat;
+    GpuSample stat;
     stat.index = static_cast<int>(idx);
     stat.util_percent = static_cast<double>(utilization.gpu);
     stat.mem_used_bytes = static_cast<double>(memory_info.used);
@@ -203,7 +202,7 @@ NvmlWrapper::query_stats() -> std::vector<GpuStat>
 }
 
 auto
-query_gpu_stats_nvml() -> std::vector<GpuStat>
+query_gpu_stats_nvml() -> std::vector<GpuSample>
 {
   return NvmlWrapper::instance().query_stats();
 }
@@ -211,7 +210,7 @@ query_gpu_stats_nvml() -> std::vector<GpuStat>
 #else
 
 auto
-query_gpu_stats_nvml() -> std::vector<GpuStat>
+query_gpu_stats_nvml() -> std::vector<GpuSample>
 {
   return {};
 }
@@ -219,10 +218,52 @@ query_gpu_stats_nvml() -> std::vector<GpuStat>
 #endif  // STARPU_HAVE_NVML
 }  // namespace
 
+auto
+make_default_cpu_usage_provider() -> CpuUsageProvider
+{
+  CpuTotals prev_cpu{};
+  bool have_prev_cpu = read_total_cpu_times(prev_cpu);
+  return [prev_cpu, have_prev_cpu]() mutable -> std::optional<double> {
+    CpuTotals cur_cpu{};
+    if (!read_total_cpu_times(cur_cpu)) {
+      return std::nullopt;
+    }
+    std::optional<double> usage{};
+    if (have_prev_cpu) {
+      usage = cpu_usage_percent(prev_cpu, cur_cpu);
+    }
+    prev_cpu = cur_cpu;
+    have_prev_cpu = true;
+    return usage;
+  };
+}
+
 MetricsRegistry::MetricsRegistry(int port)
+    : MetricsRegistry(
+          port, query_gpu_stats_nvml, make_default_cpu_usage_provider())
+{
+}
+
+MetricsRegistry::MetricsRegistry(
+    int port, GpuStatsProvider gpu_provider, CpuUsageProvider cpu_provider,
+    bool start_sampler_thread)
     : registry(std::make_shared<prometheus::Registry>()),
       requests_total(nullptr), inference_latency(nullptr),
-      queue_size_gauge(nullptr), exposer_(nullptr)
+      queue_size_gauge(nullptr), exposer_(nullptr),
+      gpu_stats_provider_(std::move(gpu_provider)),
+      cpu_usage_provider_(std::move(cpu_provider))
+{
+  if (!gpu_stats_provider_) {
+    gpu_stats_provider_ = query_gpu_stats_nvml;
+  }
+  if (!cpu_usage_provider_) {
+    cpu_usage_provider_ = make_default_cpu_usage_provider();
+  }
+  initialize(port, start_sampler_thread);
+}
+
+void
+MetricsRegistry::initialize(int port, bool start_sampler_thread)
 {
   try {
     exposer_ = std::make_unique<prometheus::Exposer>(
@@ -273,15 +314,15 @@ MetricsRegistry::MetricsRegistry(int port)
            .Help("Total GPU memory in bytes per GPU")
            .Register(*registry);
 
-  sampler_thread_ = std::jthread(
-      [this](const std::stop_token& stop) { this->sampling_loop(stop); });
+  if (start_sampler_thread) {
+    sampler_thread_ = std::jthread(
+        [this](const std::stop_token& stop) { this->sampling_loop(stop); });
+  }
 }
 
 MetricsRegistry::~MetricsRegistry() noexcept
 {
-  if (sampler_thread_.joinable()) {
-    sampler_thread_.request_stop();
-  }
+  request_stop();
   if (exposer_ && registry) {
     try {
       exposer_->RemoveCollectable(registry);
@@ -357,56 +398,80 @@ set_queue_size(std::size_t size)
 }
 
 void
-MetricsRegistry::sampling_loop(const std::stop_token& stop)
+MetricsRegistry::request_stop()
 {
-  using namespace std::chrono_literals;
+  if (sampler_thread_.joinable()) {
+    sampler_thread_.request_stop();
+  }
+}
 
-  CpuTotals prev_cpu{};
-  bool have_prev_cpu = read_total_cpu_times(prev_cpu);
+void
+MetricsRegistry::run_sampling_iteration()
+{
+  perform_sampling_iteration();
+}
 
-  auto next_sleep = 1000ms;
-  while (!stop.stop_requested()) {
-    CpuTotals cur_cpu{};
-    if (read_total_cpu_times(cur_cpu) && have_prev_cpu &&
-        system_cpu_usage_percent != nullptr) {
-      const double usage = cpu_usage_percent(prev_cpu, cur_cpu);
-      system_cpu_usage_percent->Set(usage);
-    }
-    prev_cpu = cur_cpu;
-    have_prev_cpu = true;
-
+void
+MetricsRegistry::perform_sampling_iteration()
+{
+  if (system_cpu_usage_percent != nullptr && cpu_usage_provider_) {
     try {
-      auto gstats = query_gpu_stats_nvml();
-      for (const auto& stats : gstats) {
-        const std::string label = std::to_string(stats.index);
-        if (gpu_utilization_gauges_.find(stats.index) ==
-            gpu_utilization_gauges_.end()) {
-          gpu_utilization_gauges_[stats.index] =
-              &gpu_utilization_family->Add({{"gpu", label}});
-        }
-        if (gpu_memory_used_gauges_.find(stats.index) ==
-            gpu_memory_used_gauges_.end()) {
-          gpu_memory_used_gauges_[stats.index] =
-              &gpu_memory_used_bytes_family->Add({{"gpu", label}});
-        }
-        if (gpu_memory_total_gauges_.find(stats.index) ==
-            gpu_memory_total_gauges_.end()) {
-          gpu_memory_total_gauges_[stats.index] =
-              &gpu_memory_total_bytes_family->Add({{"gpu", label}});
-        }
-        gpu_utilization_gauges_[stats.index]->Set(stats.util_percent);
-        gpu_memory_used_gauges_[stats.index]->Set(stats.mem_used_bytes);
-        gpu_memory_total_gauges_[stats.index]->Set(stats.mem_total_bytes);
+      auto usage = cpu_usage_provider_();
+      if (usage.has_value()) {
+        system_cpu_usage_percent->Set(*usage);
       }
     }
     catch (const std::exception& e) {
-      log_error(
-          std::string("GPU metrics sampling failed: ") + e.what());
+      log_error(std::string("CPU metrics sampling failed: ") + e.what());
     }
     catch (...) {
-      log_error("GPU metrics sampling failed due to an unknown error");
+      log_error("CPU metrics sampling failed due to an unknown error");
     }
+  }
 
+  if (!gpu_stats_provider_) {
+    return;
+  }
+
+  try {
+    auto gstats = gpu_stats_provider_();
+    for (const auto& stats : gstats) {
+      const std::string label = std::to_string(stats.index);
+      if (gpu_utilization_gauges_.find(stats.index) ==
+          gpu_utilization_gauges_.end()) {
+        gpu_utilization_gauges_[stats.index] =
+            &gpu_utilization_family->Add({{"gpu", label}});
+      }
+      if (gpu_memory_used_gauges_.find(stats.index) ==
+          gpu_memory_used_gauges_.end()) {
+        gpu_memory_used_gauges_[stats.index] =
+            &gpu_memory_used_bytes_family->Add({{"gpu", label}});
+      }
+      if (gpu_memory_total_gauges_.find(stats.index) ==
+          gpu_memory_total_gauges_.end()) {
+        gpu_memory_total_gauges_[stats.index] =
+            &gpu_memory_total_bytes_family->Add({{"gpu", label}});
+      }
+      gpu_utilization_gauges_[stats.index]->Set(stats.util_percent);
+      gpu_memory_used_gauges_[stats.index]->Set(stats.mem_used_bytes);
+      gpu_memory_total_gauges_[stats.index]->Set(stats.mem_total_bytes);
+    }
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("GPU metrics sampling failed: ") + e.what());
+  }
+  catch (...) {
+    log_error("GPU metrics sampling failed due to an unknown error");
+  }
+}
+
+void
+MetricsRegistry::sampling_loop(const std::stop_token& stop)
+{
+  using namespace std::chrono_literals;
+  auto next_sleep = 1000ms;
+  while (!stop.stop_requested()) {
+    perform_sampling_iteration();
     for (auto slept = 0ms; slept < next_sleep && !stop.stop_requested();
          slept += 50ms) {
       std::this_thread::sleep_for(50ms);
