@@ -1,4 +1,15 @@
+#include <arpa/inet.h>
 #include <cstddef>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <chrono>
+#include <string>
+#include <thread>
+
+#include <grpcpp/create_channel.h>
+#include <grpcpp/security/credentials.h>
 
 #include "test_inference_service.hpp"
 
@@ -154,4 +165,79 @@ TEST(GrpcServer, StartAndStop)
   starpu_server::StopServer(server.server);
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
+}
+
+namespace {
+
+auto pick_unused_port() -> int
+{
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return -1;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+
+  if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    ::close(fd);
+    return -1;
+  }
+
+  socklen_t addr_len = sizeof(addr);
+  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &addr_len) != 0) {
+    ::close(fd);
+    return -1;
+  }
+
+  const int port = ntohs(addr.sin_port);
+  ::close(fd);
+  return port;
+}
+
+}  // namespace
+
+TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
+{
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+
+  std::jthread thread([&]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, {at::kFloat}, address,
+        kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info, server);
+  });
+
+  while (!server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+
+  auto stub = inference::GRPCInferenceService::NewStub(channel);
+
+  grpc::ClientContext context;
+  inference::ServerLiveRequest request;
+  inference::ServerLiveResponse response;
+  const auto status = stub->ServerLive(&context, request, &response);
+  ASSERT_TRUE(status.ok());
+  EXPECT_TRUE(response.live());
+
+  starpu_server::StopServer(server);
+  thread.join();
+  EXPECT_EQ(server, nullptr);
 }
