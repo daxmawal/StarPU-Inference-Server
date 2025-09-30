@@ -24,3 +24,17 @@ TEST(InferenceTask_Unit, RecordAndRunCompletionCallbackNoCallback)
   EXPECT_EQ(job->timing_info().callback_end_time, end);
   EXPECT_FALSE(job->has_on_complete());
 }
+
+TEST(InferenceTask_Unit, RecordAndRunCompletionCallbackNullJob)
+{
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  starpu_server::RuntimeConfig opts;
+  starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
+
+  const auto end = std::chrono::high_resolution_clock::now();
+
+  ASSERT_NO_THROW(
+      starpu_server::InferenceTask::record_and_run_completion_callback(
+          &ctx, end));
+  EXPECT_EQ(ctx.job, nullptr);
+}
