@@ -34,6 +34,17 @@ TEST(RuntimeConfig, ComputeMaxMessageBytesThrowsOnPerSampleBytesOverflow)
       starpu_server::MessageSizeOverflowException);
 }
 
+TEST(RuntimeConfig, ComputeModelMessageBytesThrowsOnBatchSizeOverflow)
+{
+  starpu_server::TensorConfig tensor;
+  tensor.dims = {static_cast<int64_t>(std::numeric_limits<size_t>::max() / 4)};
+  tensor.type = at::kFloat;
+
+  EXPECT_THROW(
+      starpu_server::compute_model_message_bytes(2, {tensor}, {}),
+      starpu_server::MessageSizeOverflowException);
+}
+
 TEST(RuntimeConfig, ComputeMaxMessageBytesThrowsOnNegativeInputDimension)
 {
   starpu_server::TensorConfig tensor_conf;
