@@ -25,12 +25,32 @@ std::vector<void*> g_observed_base_ptrs;
 std::vector<starpu_data_handle_t> g_observed_handles;
 bool g_failure_observer_called = false;
 
+std::vector<void*> g_output_observed_base_ptrs;
+std::vector<starpu_data_handle_t> g_output_observed_handles;
+std::vector<starpu_server::OutputSlotPool::HostBufferInfo>
+    g_output_observed_host_buffer_infos;
+bool g_output_failure_observer_called = false;
+
 void
 capture_slot_state(const starpu_server::InputSlotPool::SlotInfo& slot)
 {
   g_failure_observer_called = true;
   g_observed_base_ptrs.assign(slot.base_ptrs.begin(), slot.base_ptrs.end());
   g_observed_handles.assign(slot.handles.begin(), slot.handles.end());
+}
+
+void
+capture_output_slot_state(
+    const starpu_server::OutputSlotPool::SlotInfo& slot,
+    const std::vector<starpu_server::OutputSlotPool::HostBufferInfo>&
+        buffer_infos)
+{
+  g_output_failure_observer_called = true;
+  g_output_observed_base_ptrs.assign(
+      slot.base_ptrs.begin(), slot.base_ptrs.end());
+  g_output_observed_handles.assign(slot.handles.begin(), slot.handles.end());
+  g_output_observed_host_buffer_infos.assign(
+      buffer_infos.begin(), buffer_infos.end());
 }
 
 template <typename Fn>
@@ -571,6 +591,78 @@ TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
 
   for (auto handle : g_observed_handles) {
     EXPECT_EQ(handle, nullptr);
+  }
+}
+
+TEST(OutputSlotPool_Unit, RegisterFailureResetsSlotState)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "failing_output";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "failing_output_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  g_output_observed_base_ptrs.clear();
+  g_output_observed_handles.clear();
+  g_output_observed_host_buffer_infos.clear();
+  g_output_failure_observer_called = false;
+
+  const auto previous_hook =
+      starpu_server::testing::set_output_starpu_vector_register_hook_for_tests(
+          &failing_starpu_vector_register);
+  const auto previous_observer =
+      starpu_server::testing::set_output_register_failure_observer_for_tests(
+          &capture_output_slot_state);
+
+  auto restore_hooks = [&]() {
+    starpu_server::testing::set_output_register_failure_observer_for_tests(
+        previous_observer);
+    starpu_server::testing::set_output_starpu_vector_register_hook_for_tests(
+        previous_hook);
+  };
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::OutputSlotPool pool(opts, 1);
+          restore_hooks();
+          FAIL() << "Expected StarPU handle registration failure";
+        }
+        catch (...) {
+          restore_hooks();
+          throw;
+        }
+      },
+      std::runtime_error);
+
+  ASSERT_TRUE(g_output_failure_observer_called);
+  ASSERT_EQ(g_output_observed_base_ptrs.size(), model.outputs.size());
+  ASSERT_EQ(g_output_observed_handles.size(), model.outputs.size());
+  ASSERT_EQ(g_output_observed_host_buffer_infos.size(), model.outputs.size());
+
+  for (void* base_ptr : g_output_observed_base_ptrs) {
+    EXPECT_EQ(base_ptr, nullptr);
+  }
+
+  for (auto handle : g_output_observed_handles) {
+    EXPECT_EQ(handle, nullptr);
+  }
+
+  for (const auto& info : g_output_observed_host_buffer_infos) {
+    EXPECT_FALSE(info.cuda_pinned);
+    EXPECT_FALSE(info.starpu_pinned);
+    EXPECT_EQ(info.starpu_pin_rc, 0);
+    EXPECT_EQ(info.bytes, 0U);
   }
 }
 

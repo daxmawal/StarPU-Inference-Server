@@ -20,6 +20,11 @@ namespace starpu_server {
 namespace {
 constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
 
+testing::OutputStarpuVectorRegisterFn g_starpu_vector_register_hook =
+    &starpu_vector_data_register;
+testing::OutputRegisterFailureObserverFn g_starpu_register_failure_observer =
+    nullptr;
+
 auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
 {
@@ -148,6 +153,29 @@ OutputSlotPoolTestHook::cleanup_slot_buffers(
   cleanup_slot_buffers_impl(slot, buffer_infos, count);
 }
 
+namespace testing {
+
+auto
+set_output_starpu_vector_register_hook_for_tests(
+    OutputStarpuVectorRegisterFn fn) -> OutputStarpuVectorRegisterFn
+{
+  const auto previous = g_starpu_vector_register_hook;
+  g_starpu_vector_register_hook =
+      fn != nullptr ? fn : &starpu_vector_data_register;
+  return previous;
+}
+
+auto
+set_output_register_failure_observer_for_tests(
+    OutputRegisterFailureObserverFn observer) -> OutputRegisterFailureObserverFn
+{
+  const auto previous = g_starpu_register_failure_observer;
+  g_starpu_register_failure_observer = observer;
+  return previous;
+}
+
+}  // namespace testing
+
 OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
   bmax_ = std::max(1, opts.max_batch_size);
@@ -243,11 +271,14 @@ OutputSlotPool::allocate_slot_buffers_and_register(
     const size_t total_numel =
         checked_total_numel(per_output_numel_single_[i], batch_size);
     starpu_data_handle_t handle = nullptr;
-    starpu_vector_data_register(
+    g_starpu_vector_register_hook(
         &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(prepared_buffer.ptr),
         total_numel, element_size(output_types_[i]));
     if (handle == nullptr) {
       cleanup_slot_buffers_impl(slot, buffer_infos, i + 1);
+      if (g_starpu_register_failure_observer != nullptr) {
+        g_starpu_register_failure_observer(slot, buffer_infos);
+      }
       throw std::runtime_error(
           "Failed to register StarPU vector handle for output");
     }

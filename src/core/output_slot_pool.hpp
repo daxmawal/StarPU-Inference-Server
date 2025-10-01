@@ -84,4 +84,20 @@ struct OutputSlotPoolTestHook {
       std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count);
 };
 
+namespace testing {
+
+using OutputStarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
+using OutputRegisterFailureObserverFn = void (*)(
+    const OutputSlotPool::SlotInfo& slot,
+    const std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos);
+
+auto set_output_starpu_vector_register_hook_for_tests(
+    OutputStarpuVectorRegisterFn fn) -> OutputStarpuVectorRegisterFn;
+
+auto set_output_register_failure_observer_for_tests(
+    OutputRegisterFailureObserverFn observer)
+    -> OutputRegisterFailureObserverFn;
+
+}  // namespace testing
+
 }  // namespace starpu_server
