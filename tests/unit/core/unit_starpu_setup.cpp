@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <format>
 #include <limits>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -74,6 +75,15 @@ failing_starpu_vector_register(
     std::tuple_element_t<4, StarpuRegisterArgs> /*element_size*/)
 {
   *handle = nullptr;
+}
+
+int
+failing_host_allocator(void** ptr, size_t /*alignment*/, size_t /*size*/)
+{
+  if (ptr != nullptr) {
+    *ptr = nullptr;
+  }
+  return 1;
 }
 
 int
@@ -594,6 +604,47 @@ TEST(OutputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   }
 
   pool.release(slot_id);
+}
+
+TEST(OutputSlotPool_Unit, HostAllocatorFailureThrowsBadAlloc)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "host_allocator_failure";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "host_allocator_failure_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  const auto previous_allocator =
+      starpu_server::testing::set_output_host_allocator_for_tests(
+          &failing_host_allocator);
+
+  auto restore_allocator = [&]() {
+    starpu_server::testing::set_output_host_allocator_for_tests(
+        previous_allocator);
+  };
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::OutputSlotPool pool(opts, 1);
+          restore_allocator();
+          FAIL() << "Expected host allocator failure";
+        }
+        catch (...) {
+          restore_allocator();
+          throw;
+        }
+      },
+      std::bad_alloc);
 }
 
 TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)

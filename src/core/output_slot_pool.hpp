@@ -95,6 +95,7 @@ using OutputStarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
 using OutputRegisterFailureObserverFn = void (*)(
     const OutputSlotPool::SlotInfo& slot,
     const std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos);
+using OutputHostAllocatorFn = int (*)(void**, size_t alignment, size_t size);
 
 auto set_output_starpu_vector_register_hook_for_tests(
     OutputStarpuVectorRegisterFn fn) -> OutputStarpuVectorRegisterFn;
@@ -102,6 +103,9 @@ auto set_output_starpu_vector_register_hook_for_tests(
 auto set_output_register_failure_observer_for_tests(
     OutputRegisterFailureObserverFn observer)
     -> OutputRegisterFailureObserverFn;
+
+auto set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
+    -> OutputHostAllocatorFn;
 
 }  // namespace testing
 

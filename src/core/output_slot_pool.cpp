@@ -24,6 +24,7 @@ testing::OutputStarpuVectorRegisterFn g_starpu_vector_register_hook =
     &starpu_vector_data_register;
 testing::OutputRegisterFailureObserverFn g_starpu_register_failure_observer =
     nullptr;
+testing::OutputHostAllocatorFn g_output_host_allocator_hook = &posix_memalign;
 
 auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
@@ -38,7 +39,7 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
     }
   }
   constexpr size_t kAlign = 64;
-  int alloc_rc = posix_memalign(&ptr, kAlign, bytes);
+  int alloc_rc = g_output_host_allocator_hook(&ptr, kAlign, bytes);
   if (alloc_rc != 0 || ptr == nullptr) {
     throw std::bad_alloc();
   }
@@ -192,6 +193,16 @@ set_output_register_failure_observer_for_tests(
 {
   const auto previous = g_starpu_register_failure_observer;
   g_starpu_register_failure_observer = observer;
+  return previous;
+}
+
+auto
+set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
+    -> OutputHostAllocatorFn
+{
+  const auto previous = g_output_host_allocator_hook;
+  g_output_host_allocator_hook =
+      allocator != nullptr ? allocator : &posix_memalign;
   return previous;
 }
 
