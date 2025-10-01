@@ -74,6 +74,38 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_TRUE(cfg.use_cuda);
 }
 
+TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_non_sequence_input_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  name: bogus\n";
+  yaml << "  dims: [1]\n";
+  yaml << "  data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_non_sequence_input.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.models.size(), 1U);
+  EXPECT_TRUE(cfg.models[0].inputs.empty());
+  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
+  EXPECT_EQ(cfg.models[0].outputs[0].name, "out");
+  EXPECT_EQ(cfg.models[0].outputs[0].dims, (std::vector<int64_t>{1}));
+  EXPECT_EQ(cfg.models[0].outputs[0].type, at::kFloat);
+}
+
 TEST(ConfigLoader, ParsesRuntimeFlags)
 {
   const auto model_path =
