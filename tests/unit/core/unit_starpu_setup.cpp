@@ -8,6 +8,7 @@
 #include <format>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <unordered_set>
@@ -136,6 +137,19 @@ TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
   opts.device_ids = {0, 0};
   EXPECT_THROW(
       { starpu_server::StarPUSetup setup(opts); }, std::invalid_argument);
+}
+
+TEST(OutputSlotPool_Unit, CheckedTotalNumelGuard)
+{
+  EXPECT_NO_THROW(
+      starpu_server::OutputSlotPoolTestHook::checked_total_numel(16, 8));
+
+  EXPECT_THROW(
+      {
+        starpu_server::OutputSlotPoolTestHook::checked_total_numel(
+            std::numeric_limits<size_t>::max(), 2);
+      },
+      std::overflow_error);
 }
 
 TEST(StarPUSetup_Unit, TooManyDeviceIdsThrows)

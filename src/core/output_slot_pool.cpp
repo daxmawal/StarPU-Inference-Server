@@ -143,6 +143,12 @@ cleanup_slot_buffers_impl(
     }
   }
 }
+
+size_t
+call_checked_total_numel(size_t per_sample_numel, size_t batch_size)
+{
+  return checked_total_numel(per_sample_numel, batch_size);
+}
 }  // namespace
 
 void
@@ -151,6 +157,13 @@ OutputSlotPoolTestHook::cleanup_slot_buffers(
     std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
 {
   cleanup_slot_buffers_impl(slot, buffer_infos, count);
+}
+
+auto
+OutputSlotPoolTestHook::checked_total_numel(
+    size_t per_sample_numel, size_t batch_size) -> size_t
+{
+  return call_checked_total_numel(per_sample_numel, batch_size);
 }
 
 namespace testing {

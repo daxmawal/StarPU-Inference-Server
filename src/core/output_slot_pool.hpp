@@ -82,6 +82,7 @@ struct OutputSlotPoolTestHook {
   static void cleanup_slot_buffers(
       OutputSlotPool::SlotInfo& slot,
       std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count);
+  static size_t checked_total_numel(size_t per_sample_numel, size_t batch_size);
 };
 
 namespace testing {
