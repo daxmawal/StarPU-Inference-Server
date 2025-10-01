@@ -241,3 +241,76 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
   thread.join();
   EXPECT_EQ(server, nullptr);
 }
+
+TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
+{
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs = {torch::zeros({2, 2})};
+  std::unique_ptr<grpc::Server> server;
+
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+
+  constexpr float kVal1 = 10.0F;
+  constexpr float kVal2 = 20.0F;
+  constexpr float kVal3 = 30.0F;
+  constexpr float kVal4 = 40.0F;
+  std::vector<torch::Tensor> expected_outputs = {
+      torch::tensor({kVal1, kVal2, kVal3, kVal4}).view({2, 2})};
+
+  auto worker = starpu_server::run_single_job(queue, expected_outputs);
+
+  std::jthread thread([&]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, {at::kFloat}, address,
+        kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info, server);
+  });
+
+  while (!server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+
+  auto stub = inference::GRPCInferenceService::NewStub(channel);
+
+  auto request = starpu_server::make_valid_request();
+  request.MergeFrom(starpu_server::make_model_request("model", "1"));
+
+  inference::ModelInferResponse response;
+  grpc::ClientContext context;
+  const auto status = stub->ModelInfer(&context, request, &response);
+  ASSERT_TRUE(status.ok());
+
+  EXPECT_GT(response.server_receive_ms(), 0);
+  EXPECT_GT(response.server_send_ms(), 0);
+  starpu_server::InferenceServiceImpl::LatencyBreakdown response_breakdown;
+  response_breakdown.preprocess_ms = response.server_preprocess_ms();
+  response_breakdown.queue_ms = response.server_queue_ms();
+  response_breakdown.submit_ms = response.server_submit_ms();
+  response_breakdown.scheduling_ms = response.server_scheduling_ms();
+  response_breakdown.codelet_ms = response.server_codelet_ms();
+  response_breakdown.inference_ms = response.server_inference_ms();
+  response_breakdown.callback_ms = response.server_callback_ms();
+  response_breakdown.postprocess_ms = response.server_postprocess_ms();
+  response_breakdown.total_ms = response.server_total_ms();
+  response_breakdown.overall_ms = response.server_overall_ms();
+  starpu_server::verify_populate_response(
+      request, response, expected_outputs, response.server_receive_ms(),
+      response.server_send_ms(), response_breakdown);
+  EXPECT_GE(response.server_total_ms(), 0.0);
+
+  worker.join();
+
+  starpu_server::StopServer(server);
+  thread.join();
+  EXPECT_EQ(server, nullptr);
+}
