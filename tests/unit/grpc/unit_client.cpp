@@ -10,7 +10,9 @@
 #include <utility>
 
 #include "grpc/client/client_args.hpp"
+#define private public
 #include "grpc/client/inference_client.hpp"
+#undef private
 #include "grpc/server/inference_service.hpp"
 #include "test_helpers.hpp"
 
@@ -196,6 +198,26 @@ TEST(InferenceClient, ModelIsReadyReturnsFalseWhenUnavailable)
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_FALSE(client.ModelIsReady({"example", "1"}));
+}
+
+TEST(InferenceClientLatencySummary, SkipsEmptyMetric)
+{
+  auto channel = grpc::CreateChannel(
+      "localhost:59998", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  client.verbosity_ = starpu_server::VerbosityLevel::Info;
+  client.latency_records_.roundtrip_ms.push_back(1.23);
+  client.latency_records_.server_queue_ms.push_back(0.45);
+
+  testing::internal::CaptureStdout();
+  client.log_latency_summary();
+  const std::string output = testing::internal::GetCapturedStdout();
+
+  EXPECT_NE(output.find("latency"), std::string::npos);
+  EXPECT_NE(output.find("queue"), std::string::npos);
+  EXPECT_EQ(output.find("client_overhead"), std::string::npos);
 }
 
 TEST(InferenceClient, RejectsMismatchedTensorCount)
