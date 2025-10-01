@@ -206,6 +206,50 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
   ::close(fd);
 }
 
+TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+  constexpr int kMaxBatchSize = 4;
+  const std::vector<at::ScalarType> expected_input_types = {at::kFloat};
+  const std::vector<std::vector<int64_t>> expected_input_dims = {
+      {kMaxBatchSize, 3, 224, 224}};
+
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(fd, 0);
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+
+  ASSERT_EQ(::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+
+  socklen_t addr_len = sizeof(addr);
+  ASSERT_EQ(
+      ::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &addr_len), 0);
+  const int port = ntohs(addr.sin_port);
+
+  const auto endpoint = "127.0.0.1:" + std::to_string(port);
+  auto future = std::async(std::launch::async, [&]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, expected_input_types, expected_input_dims,
+        kMaxBatchSize, endpoint, kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info, server);
+  });
+
+  EXPECT_EQ(
+      future.wait_for(std::chrono::seconds(1)), std::future_status::ready);
+  future.get();
+  EXPECT_EQ(server, nullptr);
+
+  ::close(fd);
+}
+
 namespace {
 
 auto
