@@ -61,8 +61,27 @@ failing_starpu_init(struct starpu_conf*)
   return -1;
 }
 
+int
+stub_starpu_init(struct starpu_conf*)
+{
+  return 0;
+}
+
 class StarPUSetupInitOverrideTest : public ::testing::Test {
  protected:
+  void TearDown() override
+  {
+    starpu_server::StarPUSetup::reset_starpu_init_fn();
+  }
+};
+
+class StarPUSetupInitStubTest : public ::testing::Test {
+ protected:
+  void SetUp() override
+  {
+    starpu_server::StarPUSetup::set_starpu_init_fn(&stub_starpu_init);
+  }
+
   void TearDown() override
   {
     starpu_server::StarPUSetup::reset_starpu_init_fn();
@@ -127,6 +146,76 @@ TEST(StarPUSetup_Unit, TooManyDeviceIdsThrows)
         }
       },
       std::invalid_argument);
+}
+
+TEST_F(
+    StarPUSetupInitStubTest,
+    StarPUSetup_InputPoolInitFailureLogsAndPropagates)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig invalid_input;
+  invalid_input.name = "invalid_input";
+  invalid_input.dims = {0, 1};
+  invalid_input.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "invalid_input_model";
+  model.inputs.push_back(invalid_input);
+  opts.models.push_back(model);
+
+  testing::internal::CaptureStderr();
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::StarPUSetup setup(opts);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ("dims[0] (batch) must be positive", ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+  const std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_NE(
+      log_output.find("Failed to initialize InputSlotPool"),
+      std::string::npos);
+}
+
+TEST_F(
+    StarPUSetupInitStubTest,
+    StarPUSetup_OutputPoolInitFailureLogsAndPropagates)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig invalid_output;
+  invalid_output.name = "invalid_output";
+  invalid_output.dims = {0, 1};
+  invalid_output.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "invalid_output_model";
+  model.outputs.push_back(invalid_output);
+  opts.models.push_back(model);
+
+  testing::internal::CaptureStderr();
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::StarPUSetup setup(opts);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ("dims[0] (batch) must be positive", ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+  const std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_NE(
+      log_output.find("Failed to initialize OutputSlotPool"),
+      std::string::npos);
 }
 
 TEST(InputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
