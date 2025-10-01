@@ -97,10 +97,12 @@ class InferenceTask {
   void assign_fixed_worker_if_needed(starpu_task* task) const;
 
   using AllocationFn = void* (*)(size_t);
+  using TaskCreateFn = starpu_task* (*)();
   static auto set_dyn_handles_allocator_for_testing(AllocationFn allocator)
       -> AllocationFn;
   static auto set_dyn_modes_allocator_for_testing(AllocationFn allocator)
       -> AllocationFn;
+  static auto set_task_create_fn_for_testing(TaskCreateFn fn) -> TaskCreateFn;
 
   static void allocate_task_buffers(
       starpu_task* task, size_t num_buffers,

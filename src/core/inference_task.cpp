@@ -27,9 +27,11 @@
 
 namespace {
 using AllocationFn = starpu_server::InferenceTask::AllocationFn;
+using TaskCreateFn = starpu_server::InferenceTask::TaskCreateFn;
 
 AllocationFn dyn_handles_allocator = std::malloc;
 AllocationFn dyn_modes_allocator = std::malloc;
+TaskCreateFn task_create_fn = starpu_task_create;
 }  // namespace
 
 namespace starpu_server {
@@ -352,7 +354,7 @@ InferenceTask::create_task(
   const size_t num_inputs = inputs_handles.size();
   const size_t num_buffers = num_inputs + outputs_handles.size();
 
-  auto* task = starpu_task_create();
+  auto* task = task_create_fn != nullptr ? task_create_fn() : nullptr;
   if (task == nullptr) {
     throw StarPUTaskCreationException("Failed to create StarPU task.");
   }
@@ -392,6 +394,14 @@ InferenceTask::set_dyn_modes_allocator_for_testing(AllocationFn allocator)
 {
   auto previous = dyn_modes_allocator;
   dyn_modes_allocator = allocator != nullptr ? allocator : std::malloc;
+  return previous;
+}
+
+auto
+InferenceTask::set_task_create_fn_for_testing(TaskCreateFn fn) -> TaskCreateFn
+{
+  auto previous = task_create_fn;
+  task_create_fn = fn != nullptr ? fn : starpu_task_create;
   return previous;
 }
 

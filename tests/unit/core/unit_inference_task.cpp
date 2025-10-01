@@ -102,6 +102,26 @@ class InferenceTaskModesAllocationFailureTest : public InferenceTaskTest {
  private:
   starpu_server::InferenceTask::AllocationFn previous_allocator_ = nullptr;
 };
+
+class TaskCreateFnOverride {
+ public:
+  explicit TaskCreateFnOverride(starpu_server::InferenceTask::TaskCreateFn fn)
+      : previous_(
+            starpu_server::InferenceTask::set_task_create_fn_for_testing(fn))
+  {
+  }
+
+  TaskCreateFnOverride(const TaskCreateFnOverride&) = delete;
+  TaskCreateFnOverride& operator=(const TaskCreateFnOverride&) = delete;
+
+  ~TaskCreateFnOverride()
+  {
+    starpu_server::InferenceTask::set_task_create_fn_for_testing(previous_);
+  }
+
+ private:
+  starpu_server::InferenceTask::TaskCreateFn previous_ = nullptr;
+};
 }  // namespace
 
 TEST_F(InferenceTaskTest, TooManyInputs)
@@ -163,6 +183,22 @@ TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
   task.assign_fixed_worker_if_needed(&task_struct);
   EXPECT_EQ(task_struct.workerid, static_cast<unsigned>(worker_id));
   EXPECT_EQ(task_struct.execute_on_a_specific_worker, 1U);
+}
+
+TEST_F(InferenceTaskTest, CreateTaskThrowsWhenStarpuTaskCreateFails)
+{
+  TaskCreateFnOverride override([]() -> starpu_task* { return nullptr; });
+
+  auto job = make_job(5, 0);
+  auto task = make_task(job);
+
+  const std::vector<starpu_data_handle_t> inputs;
+  const std::vector<starpu_data_handle_t> outputs;
+  auto ctx = task.create_context(inputs, outputs);
+
+  EXPECT_THROW(
+      task.create_task(inputs, outputs, ctx),
+      starpu_server::StarPUTaskCreationException);
 }
 
 TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
