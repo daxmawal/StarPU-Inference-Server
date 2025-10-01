@@ -320,6 +320,11 @@ TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
 INSTANTIATE_TEST_SUITE_P(
     NegativeRuntimeValues, NegativeRuntimeValueCase,
     ::testing::Values(
+        NegativeValueCase{"pregen_inputs", "0", "pregen_inputs must be > 0"},
+        NegativeValueCase{
+            "warmup_pregen_inputs", "0", "warmup_pregen_inputs must be > 0"},
+        NegativeValueCase{
+            "warmup_iterations", "-1", "warmup_iterations must be >= 0"},
         NegativeValueCase{"seed", "-1", "seed must be >= 0"},
         NegativeValueCase{"rtol", "-1.0", "rtol must be >= 0"},
         NegativeValueCase{"atol", "-1.0", "atol must be >= 0"}));
