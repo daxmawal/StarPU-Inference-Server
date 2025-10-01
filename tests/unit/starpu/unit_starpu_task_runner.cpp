@@ -1,3 +1,4 @@
+#include "core/inference_task.hpp"
 #include "test_starpu_task_runner.hpp"
 #include "utils/perf_observer.hpp"
 
@@ -220,14 +221,68 @@ TEST_F(
   job->set_input_tensors({torch::ones({2, 2})});
   job->set_input_types({at::kFloat});
 
-  auto& stored_inputs = const_cast<std::vector<torch::Tensor>&>(
-      job->get_input_tensors());
+  auto& stored_inputs =
+      const_cast<std::vector<torch::Tensor>&>(job->get_input_tensors());
   stored_inputs[0] = stored_inputs[0].transpose(0, 1);
   ASSERT_FALSE(stored_inputs[0].is_contiguous());
 
   EXPECT_THROW(
       runner_->submit_inference_task(job),
       starpu_server::StarPURegistrationException);
+
+  constexpr int kExpectedSlotId = 0;
+  auto maybe_output_slot = starpu_setup_->output_pool().try_acquire();
+  ASSERT_TRUE(maybe_output_slot.has_value());
+  EXPECT_EQ(*maybe_output_slot, kExpectedSlotId);
+  starpu_setup_->output_pool().release(*maybe_output_slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    SubmitInferenceTaskWithOutputPoolReleasesSlotOnTaskCreationFailure)
+{
+  runner_.reset();
+  starpu_setup_.reset();
+
+  starpu_server::ModelConfig model_config{};
+  model_config.name = "output_only";
+
+  starpu_server::TensorConfig output_config{};
+  output_config.name = "output0";
+  output_config.dims = {3};
+  output_config.type = at::kFloat;
+  model_config.outputs = {output_config};
+
+  opts_.models = {model_config};
+  opts_.input_slots = 1;
+
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  ASSERT_FALSE(starpu_setup_->has_input_pool());
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_job_id(17);
+  job->set_input_tensors({});
+
+  struct TaskCreateFnGuard {
+    explicit TaskCreateFnGuard(starpu_server::InferenceTask::TaskCreateFn fn)
+        : previous(
+              starpu_server::InferenceTask::set_task_create_fn_for_testing(fn))
+    {
+    }
+    ~TaskCreateFnGuard()
+    {
+      starpu_server::InferenceTask::set_task_create_fn_for_testing(previous);
+    }
+    starpu_server::InferenceTask::TaskCreateFn previous;
+  } guard([]() -> starpu_task* { return nullptr; });
+
+  EXPECT_THROW(
+      runner_->submit_inference_task(job),
+      starpu_server::StarPUTaskCreationException);
 
   constexpr int kExpectedSlotId = 0;
   auto maybe_output_slot = starpu_setup_->output_pool().try_acquire();

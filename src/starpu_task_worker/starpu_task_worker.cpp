@@ -372,10 +372,14 @@ StarPUTaskRunner::submit_inference_task(
 
   auto pools = acquire_pools();
   bool copied_ok = !pools.has_input();
+  const bool should_release_output_slot =
+      pools.has_output() && pools.output_slot >= 0;
+  bool release_output_slot_on_exception = false;
 
   try {
     const auto batch = validate_batch_and_copy_inputs(job, pools);
     copied_ok = true;
+    release_output_slot_on_exception = should_release_output_slot;
 
     InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
 
@@ -408,8 +412,10 @@ StarPUTaskRunner::submit_inference_task(
 
     const int ret = starpu_task_submit(task_ptr);
     if (ret != 0) {
+      release_output_slot_on_exception = false;
       handle_submission_failure(pools, ctx, ret);
     }
+    release_output_slot_on_exception = false;
   }
   catch (...) {
     if (!copied_ok) {
@@ -419,6 +425,8 @@ StarPUTaskRunner::submit_inference_task(
       if (pools.has_output() && pools.output_slot >= 0) {
         pools.output_pool->release(pools.output_slot);
       }
+    } else if (release_output_slot_on_exception) {
+      pools.output_pool->release(pools.output_slot);
     }
     throw;
   }
