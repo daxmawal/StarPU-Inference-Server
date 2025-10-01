@@ -329,6 +329,65 @@ TEST(InferenceClient, RejectsMismatchedTensorCount)
   EXPECT_THROW(client.AsyncModelInfer(tensors, cfg), std::invalid_argument);
 }
 
+TEST(InferenceClient, RejectsUnsupportedTensorType)
+{
+  auto channel =
+      grpc::CreateChannel("localhost:0", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  starpu_server::ClientConfig cfg;
+  cfg.model_name = "example";
+  cfg.model_version = "1";
+  cfg.inputs.push_back({"input0", {1}, at::kFloat});
+
+  std::vector<torch::Tensor> tensors = {
+      torch::zeros({1}, torch::dtype(at::kDouble))};
+
+  EXPECT_THROW(
+      {
+        try {
+          client.AsyncModelInfer(tensors, cfg);
+          client.Shutdown();
+        }
+        catch (...) {
+          client.Shutdown();
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
+TEST(InferenceClient, ConvertsNonContiguousCpuTensor)
+{
+  auto channel =
+      grpc::CreateChannel("localhost:0", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Info);
+
+  starpu_server::ClientConfig cfg;
+  cfg.model_name = "example";
+  cfg.model_version = "1";
+  cfg.inputs.push_back({"input0", {2, 2}, at::kFloat});
+
+  auto tensor = torch::arange(4, torch::kFloat).view({2, 2}).transpose(0, 1);
+
+  testing::internal::CaptureStdout();
+  try {
+    client.AsyncModelInfer({tensor}, cfg);
+    client.Shutdown();
+  }
+  catch (...) {
+    client.Shutdown();
+    testing::internal::GetCapturedStdout();
+    throw;
+  }
+  const std::string output = testing::internal::GetCapturedStdout();
+  EXPECT_NE(
+      output.find("not on CPU or non-contiguous, converting"),
+      std::string::npos);
+}
+
 class ParseVerbosityLevelValid
     : public ::testing::TestWithParam<
           std::pair<const char*, starpu_server::VerbosityLevel>> {};
