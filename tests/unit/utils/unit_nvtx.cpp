@@ -45,6 +45,23 @@ TEST(NvtxRange, TracksPushPopWithCString)
   EXPECT_EQ(testing_nvtx::PopCount(), 1);
 }
 
+TEST(NvtxRange, DefaultHooksUseNvtxFunctions)
+{
+  NvtxRange::ResetHooks();
+  testing_nvtx::Reset();
+
+  {
+    NvtxRange range{"default label"};
+    EXPECT_EQ(testing_nvtx::PushCount(), 1);
+    EXPECT_EQ(testing_nvtx::PopCount(), 0);
+  }
+
+  EXPECT_EQ(testing_nvtx::PushCount(), 1);
+  EXPECT_EQ(testing_nvtx::PopCount(), 1);
+
+  NvtxRange::ResetHooks();
+}
+
 TEST(NvtxRange, TracksPushPopWithString)
 {
   NvtxHookGuard guard{};
