@@ -13,7 +13,11 @@
 #include <utility>
 #include <vector>
 
+#define private public
+#define protected public
 #include "monitoring/metrics.hpp"
+#undef protected
+#undef private
 
 using namespace starpu_server;
 
@@ -141,6 +145,26 @@ TEST(MetricsSampling, UsesDefaultProvidersWhenMissing)
   EXPECT_TRUE(metrics.has_cpu_usage_provider());
 
   EXPECT_NO_THROW(metrics.run_sampling_iteration());
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, SkipsGpuMetricsWhenProviderMissing)
+{
+  MetricsRegistry metrics(
+      0, MetricsRegistry::GpuStatsProvider{},
+      MetricsRegistry::CpuUsageProvider{},
+      /*start_sampler_thread=*/false);
+
+  metrics.gpu_stats_provider_ = {};
+
+  ASSERT_FALSE(metrics.has_gpu_stats_provider());
+
+  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+
+  EXPECT_TRUE(metrics.gpu_utilization_gauges_.empty());
+  EXPECT_TRUE(metrics.gpu_memory_used_gauges_.empty());
+  EXPECT_TRUE(metrics.gpu_memory_total_gauges_.empty());
 
   metrics.request_stop();
 }
