@@ -281,6 +281,39 @@ TEST(InferenceService, ValidateInputsConfiguredShapeWithBatching)
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
+TEST(
+    InferenceService,
+    ValidateInputsConfiguredShapeRejectsTailLengthMismatch)
+{
+  auto make_request = [](const std::vector<int64_t>& shape) {
+    size_t total = 1;
+    for (const auto dim : shape) {
+      total *= static_cast<size_t>(dim);
+    }
+    std::vector<float> values(total, kF1);
+    starpu_server::InputSpec spec;
+    spec.shape = shape;
+    spec.dtype = at::kFloat;
+    spec.raw_data = starpu_server::to_raw_data(values);
+    return starpu_server::make_model_infer_request({spec});
+  };
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  std::vector<std::vector<int64_t>> expected_dims = {{2, 2}};
+  constexpr int kMaxBatchSize = 4;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types, expected_dims, kMaxBatchSize);
+
+  auto mismatched_tail_length_req = make_request({3, 2, 2, 2});
+  std::vector<torch::Tensor> inputs;
+  auto status =
+      service.validate_and_convert_inputs(&mismatched_tail_length_req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
 TEST(InferenceService, ValidateInputsConfiguredShapeRejectsZeroRankBatch)
 {
   auto make_request = [](const std::vector<int64_t>& shape) {

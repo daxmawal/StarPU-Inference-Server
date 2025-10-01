@@ -89,7 +89,7 @@ validate_configured_shape(
   };
 
   if (!batching_allowed) {
-    if (rank == expected_rank && tails_match(0, 0)) {
+    if (tails_match(0, 0)) {
       return Status::OK;
     }
     return {
@@ -98,13 +98,7 @@ validate_configured_shape(
         "limits"};
   }
 
-  if (rank == expected_rank) {
-    if (rank < 1 || !tails_match(1, 1)) {
-      return {
-          grpc::StatusCode::INVALID_ARGUMENT,
-          "Input tensor shape does not match configured dimensions or batch "
-          "limits"};
-    }
+  if (rank >= 1 && tails_match(1, 1)) {
     const int64_t batch_size = shape.front();
     if (batch_size >= 1 && batch_size <= max_batch_size) {
       return Status::OK;
@@ -115,13 +109,7 @@ validate_configured_shape(
         "limits"};
   }
 
-  if (rank == expected_rank + 1) {
-    if (!tails_match(1, 0)) {
-      return {
-          grpc::StatusCode::INVALID_ARGUMENT,
-          "Input tensor shape does not match configured dimensions or batch "
-          "limits"};
-    }
+  if (rank >= 1 && tails_match(1, 0)) {
     const int64_t batch_size = shape.front();
     if (batch_size >= 1 && batch_size <= max_batch_size) {
       return Status::OK;
