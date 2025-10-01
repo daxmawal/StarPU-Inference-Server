@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -218,6 +219,30 @@ TEST(InferenceClientLatencySummary, SkipsEmptyMetric)
   EXPECT_NE(output.find("latency"), std::string::npos);
   EXPECT_NE(output.find("queue"), std::string::npos);
   EXPECT_EQ(output.find("client_overhead"), std::string::npos);
+}
+
+TEST(InferenceClientLatencySummary, HandlesZeroElapsedTime)
+{
+  auto channel = grpc::CreateChannel(
+      "localhost:59995", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Stats);
+
+  const auto now = std::chrono::high_resolution_clock::now();
+  client.first_request_time_ = now;
+  client.last_response_time_ = now;
+  client.total_inference_count_ = 3;
+  client.record_latency(
+      1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.04, 0.03, 0.02);
+
+  starpu_server::CaptureStream capture{std::cout};
+  client.log_latency_summary();
+  const std::string output = capture.str();
+
+  EXPECT_NE(
+      output.find(
+          "throughput: 3 inferences (elapsed time too small to compute rate)"),
+      std::string::npos);
 }
 
 TEST(InferenceClient, RejectsMismatchedTensorCount)
