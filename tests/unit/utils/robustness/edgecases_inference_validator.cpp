@@ -88,6 +88,22 @@ TEST_F(InferenceValidator_Robustesse, ShapeErrorModel_Throws)
       starpu_server::InferenceExecutionException);
 }
 
+TEST_F(InferenceValidator_Robustesse, ShapeErrorModel_LogsC10Error)
+{
+  auto model = make_shape_error_model();
+  auto res = starpu_server::make_result(
+      {torch::rand({2, 2})}, /*outputs*/ {}, kLatencyShape,
+      starpu_server::DeviceType::CPU);
+
+  testing::internal::CaptureStderr();
+  EXPECT_THROW(
+      validate_inference_result(
+          res, model, starpu_server::VerbosityLevel::Silent),
+      starpu_server::InferenceExecutionException);
+  auto logs = testing::internal::GetCapturedStderr();
+  EXPECT_NE(logs.find("[Validator] C10 error"), std::string::npos);
+}
+
 TEST_F(InferenceValidator_Robustesse, OutputMismatch_ReturnsFalseAndLogs)
 {
   auto model = starpu_server::make_add_one_model();
