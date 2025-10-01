@@ -59,3 +59,17 @@ TEST_F(PerfObserverTest, SnapshotWithNonIncreasingDurationReturnsNullopt)
   const auto result = snapshot();
   EXPECT_FALSE(result.has_value());
 }
+
+TEST_F(PerfObserverTest, SnapshotIgnoresZeroBatchJob)
+{
+  using namespace std::chrono_literals;
+  const auto base = std::chrono::high_resolution_clock::time_point{};
+  const auto enqueue_time = base + 1ms;
+  const auto completion_time = base + 2ms;
+
+  record_job(
+      enqueue_time, completion_time, /*batch_size=*/0, /*is_warmup_job=*/false);
+
+  const auto result = snapshot();
+  EXPECT_FALSE(result.has_value());
+}
