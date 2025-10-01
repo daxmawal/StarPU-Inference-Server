@@ -110,6 +110,34 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   EXPECT_TRUE(cfg.use_cuda);
 }
 
+TEST(ConfigLoader, ParsesVerboseAlias)
+{
+  const auto model_path =
+      std::filesystem::temp_directory_path() / "config_loader_verbose_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "verbose: trace\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_verbose.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.verbosity, VerbosityLevel::Trace);
+}
+
 TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 {
   const auto model_path =
