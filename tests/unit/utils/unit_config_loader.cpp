@@ -212,6 +212,38 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_zero_batch_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "input:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "output:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_batch_size: 0\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_zero_batch.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: max_batch_size must be > 0";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
 struct NegativeValueCase {
   const char* key;
   const char* value;
