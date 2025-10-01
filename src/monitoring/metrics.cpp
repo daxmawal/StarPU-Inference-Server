@@ -9,6 +9,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -80,6 +81,9 @@ class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
 };
 
 auto make_default_cpu_usage_provider() -> MetricsRegistry::CpuUsageProvider;
+auto make_default_cpu_usage_provider(
+    std::function<bool(monitoring::detail::CpuTotals&)> reader)
+    -> MetricsRegistry::CpuUsageProvider;
 
 namespace {
 using monitoring::detail::CpuTotals;
@@ -290,9 +294,17 @@ make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
 }  // namespace monitoring::detail
 
 auto
+make_default_cpu_usage_provider(
+    std::function<bool(monitoring::detail::CpuTotals&)> reader)
+    -> CpuUsageProvider
+{
+  return monitoring::detail::make_cpu_usage_provider(std::move(reader));
+}
+
+auto
 make_default_cpu_usage_provider() -> CpuUsageProvider
 {
-  return monitoring::detail::make_cpu_usage_provider(
+  return make_default_cpu_usage_provider(
       [](monitoring::detail::CpuTotals& totals) {
         return read_total_cpu_times(totals);
       });

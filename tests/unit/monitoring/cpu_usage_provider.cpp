@@ -38,4 +38,41 @@ TEST(CpuUsageProvider, ReturnsFalseWhenFirstTokenIsNotCpu)
   EXPECT_EQ(provider(), std::nullopt);
 }
 
+TEST(CpuUsageProvider, FailureDoesNotOverwritePreviousSample)
+{
+  CpuTotals first{};
+  first.user = 100;
+  first.system = 50;
+  first.idle = 200;
+
+  CpuTotals second{};
+  second.user = 150;
+  second.system = 70;
+  second.idle = 210;
+
+  int call_count = 0;
+  auto provider = make_cpu_usage_provider([&](CpuTotals& out) {
+    ++call_count;
+    if (call_count == 1) {
+      out = first;
+      return true;
+    }
+    if (call_count == 2) {
+      return false;
+    }
+    if (call_count == 3) {
+      out = second;
+      return true;
+    }
+    return false;
+  });
+
+  EXPECT_EQ(provider(), std::nullopt);
+
+  const auto usage = provider();
+  ASSERT_TRUE(usage.has_value());
+  EXPECT_NEAR(*usage, 87.5, 1e-6);
+  EXPECT_EQ(call_count, 3);
+}
+
 }  // namespace
