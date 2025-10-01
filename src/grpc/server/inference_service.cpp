@@ -428,6 +428,16 @@ InferenceServiceImpl::HandleModelInferAsync(
     {
     }
 
+    [[nodiscard]] auto TryAcquire() -> bool
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (consumed_) {
+        return false;
+      }
+      consumed_ = true;
+      return true;
+    }
+
     void Invoke(Status status)
     {
       std::function<void(Status)> callback;
@@ -436,6 +446,7 @@ InferenceServiceImpl::HandleModelInferAsync(
         if (!callback_) {
           return;
         }
+        consumed_ = true;
         callback = std::move(callback_);
       }
       callback(std::move(status));
@@ -444,6 +455,7 @@ InferenceServiceImpl::HandleModelInferAsync(
    private:
     std::mutex mutex_;
     std::function<void(Status)> callback_;
+    bool consumed_ = false;
   };
 
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
@@ -472,6 +484,10 @@ InferenceServiceImpl::HandleModelInferAsync(
       [this, request, reply, recv_tp, recv_ms, metrics, callback_handle](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
+        if (!callback_handle->TryAcquire()) {
+          return;
+        }
+
         if (!job_status.ok()) {
           callback_handle->Invoke(job_status);
           return;

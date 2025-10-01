@@ -6,6 +6,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <string>
 
 #include "monitoring/metrics.hpp"
 #include "test_inference_service.hpp"
@@ -281,9 +282,7 @@ TEST(InferenceService, ValidateInputsConfiguredShapeWithBatching)
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(
-    InferenceService,
-    ValidateInputsConfiguredShapeRejectsTailLengthMismatch)
+TEST(InferenceService, ValidateInputsConfiguredShapeRejectsTailLengthMismatch)
 {
   auto make_request = [](const std::vector<int64_t>& shape) {
     size_t total = 1;
@@ -703,5 +702,21 @@ TEST_F(InferenceServiceTest, HandleModelInferAsyncIgnoresRepeatedCompletion)
   EXPECT_EQ(callback_count.load(), 1);
   EXPECT_FALSE(double_callback.load());
   ASSERT_EQ(reply.outputs_size(), 1);
-  EXPECT_EQ(reply.raw_output_contents_size(), 1);
+  const auto& out_tensor = reply.outputs(0);
+  const auto expected_sizes = expected_outputs[0].sizes();
+  ASSERT_EQ(out_tensor.shape_size(), expected_sizes.size());
+  for (int i = 0; i < out_tensor.shape_size(); ++i) {
+    EXPECT_EQ(out_tensor.shape(i), expected_sizes[static_cast<size_t>(i)]);
+  }
+
+  ASSERT_EQ(reply.raw_output_contents_size(), 1);
+  auto expected_flat = expected_outputs[0].contiguous();
+  ASSERT_EQ(expected_flat.scalar_type(), at::kFloat);
+  const auto* expected_ptr = expected_flat.data_ptr<float>();
+  const size_t expected_bytes =
+      static_cast<size_t>(expected_flat.numel()) * expected_flat.element_size();
+  EXPECT_EQ(reply.raw_output_contents(0).size(), expected_bytes);
+  EXPECT_EQ(
+      reply.raw_output_contents(0),
+      std::string(reinterpret_cast<const char*>(expected_ptr), expected_bytes));
 }
