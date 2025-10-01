@@ -630,3 +630,45 @@ TEST_F(
   EXPECT_EQ(callback_count.load(), 1);
   EXPECT_FALSE(double_callback.load());
 }
+
+TEST_F(InferenceServiceTest, HandleModelInferAsyncIgnoresRepeatedCompletion)
+{
+  auto request = starpu_server::make_valid_request();
+  auto expected_outputs = std::vector<torch::Tensor>{
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+  ref_outputs = expected_outputs;
+
+  std::atomic<int> callback_count{0};
+  std::atomic<bool> double_callback{false};
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  std::jthread worker([&]() {
+    std::shared_ptr<starpu_server::InferenceJob> job;
+    if (!queue.wait_and_pop(job)) {
+      return;
+    }
+    auto worker_outputs = expected_outputs;
+    job->get_on_complete()(worker_outputs, 0.0);
+    job->get_on_complete()(worker_outputs, 0.0);
+  });
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply, [&](grpc::Status status) {
+        int previous = callback_count.fetch_add(1);
+        if (previous == 0) {
+          status_promise.set_value(std::move(status));
+        } else {
+          double_callback.store(true);
+        }
+      });
+
+  grpc::Status status = status_future.get();
+  worker.join();
+
+  EXPECT_TRUE(status.ok());
+  EXPECT_EQ(callback_count.load(), 1);
+  EXPECT_FALSE(double_callback.load());
+  ASSERT_EQ(reply.outputs_size(), 1);
+  EXPECT_EQ(reply.raw_output_contents_size(), 1);
+}
