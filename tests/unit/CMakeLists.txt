@@ -32,6 +32,7 @@ target_sources(
             starpu/robustness/edgecases_starpu_setup.cpp
             starpu/robustness/edgecases_starpu_task_runner.cpp
             starpu/robustness/edgecases_tensor_builder_from_starpu.cpp
+            monitoring/cpu_usage_provider.cpp
             monitoring/gpu_metrics_sampling.cpp
             monitoring/queue_size_gauge.cpp
             monitoring/unit_metrics.cpp

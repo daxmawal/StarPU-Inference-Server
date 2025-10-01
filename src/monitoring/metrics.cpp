@@ -7,12 +7,14 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #ifdef STARPU_HAVE_NVML
@@ -22,6 +24,37 @@
 #include "utils/logger.hpp"
 
 namespace starpu_server {
+
+namespace monitoring::detail {
+
+auto
+read_total_cpu_times(std::istream& input, CpuTotals& out) -> bool
+{
+  std::string cpu{};
+  if (!(input >> cpu)) {
+    return false;
+  }
+  if (!cpu.starts_with("cpu")) {
+    return false;
+  }
+  if (!(input >> out.user >> out.nice >> out.system >> out.idle >> out.iowait >>
+        out.irq >> out.softirq >> out.steal)) {
+    return false;
+  }
+  return true;
+}
+
+auto
+read_total_cpu_times(const std::filesystem::path& path, CpuTotals& out) -> bool
+{
+  std::ifstream input{path};
+  if (!input.is_open()) {
+    return false;
+  }
+  return read_total_cpu_times(input, out);
+}
+
+}  // namespace monitoring::detail
 
 class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
  public:
@@ -49,6 +82,8 @@ class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
 auto make_default_cpu_usage_provider() -> MetricsRegistry::CpuUsageProvider;
 
 namespace {
+using monitoring::detail::CpuTotals;
+
 const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
     1, 5, 10, 25, 50, 100, 250, 500, 1000};
 
@@ -61,26 +96,11 @@ nvml_warning_flag() -> std::once_flag&
 }
 #endif
 
-struct CpuTotals {
-  unsigned long long user{0}, nice{0}, system{0}, idle{0}, iowait{0}, irq{0},
-      softirq{0}, steal{0};
-};
-
 auto
 read_total_cpu_times(CpuTotals& out) -> bool
 {
-  std::ifstream function{"/proc/stat"};
-  if (!function.is_open()) {
-    return false;
-  }
-  std::string cpu;
-  function >> cpu;
-  if (!cpu.starts_with("cpu")) {
-    return false;
-  }
-  function >> out.user >> out.nice >> out.system >> out.idle >> out.iowait >>
-      out.irq >> out.softirq >> out.steal;
-  return true;
+  static const std::filesystem::path kProcStat{"/proc/stat"};
+  return monitoring::detail::read_total_cpu_times(kProcStat, out);
 }
 
 auto
@@ -243,14 +263,18 @@ query_gpu_stats_nvml() -> std::vector<GpuSample>
 #endif  // STARPU_HAVE_NVML
 }  // namespace
 
+namespace monitoring::detail {
+
 auto
-make_default_cpu_usage_provider() -> CpuUsageProvider
+make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
+    -> MetricsRegistry::CpuUsageProvider
 {
   CpuTotals prev_cpu{};
-  bool have_prev_cpu = read_total_cpu_times(prev_cpu);
-  return [prev_cpu, have_prev_cpu]() mutable -> std::optional<double> {
+  bool have_prev_cpu = reader(prev_cpu);
+  return [reader = std::move(reader), prev_cpu,
+          have_prev_cpu]() mutable -> std::optional<double> {
     CpuTotals cur_cpu{};
-    if (!read_total_cpu_times(cur_cpu)) {
+    if (!reader(cur_cpu)) {
       return std::nullopt;
     }
     std::optional<double> usage{};
@@ -261,6 +285,17 @@ make_default_cpu_usage_provider() -> CpuUsageProvider
     have_prev_cpu = true;
     return usage;
   };
+}
+
+}  // namespace monitoring::detail
+
+auto
+make_default_cpu_usage_provider() -> CpuUsageProvider
+{
+  return monitoring::detail::make_cpu_usage_provider(
+      [](monitoring::detail::CpuTotals& totals) {
+        return read_total_cpu_times(totals);
+      });
 }
 
 MetricsRegistry::MetricsRegistry(int port)

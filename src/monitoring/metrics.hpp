@@ -6,7 +6,9 @@
 #include <prometheus/registry.h>
 
 #include <cstddef>
+#include <filesystem>
 #include <functional>
+#include <iosfwd>
 #include <memory>
 #include <optional>
 #include <thread>
@@ -87,3 +89,24 @@ void set_queue_size(std::size_t size);
 auto get_metrics() -> std::shared_ptr<MetricsRegistry>;
 
 }  // namespace starpu_server
+
+namespace starpu_server::monitoring::detail {
+
+struct CpuTotals {
+  unsigned long long user{0};
+  unsigned long long nice{0};
+  unsigned long long system{0};
+  unsigned long long idle{0};
+  unsigned long long iowait{0};
+  unsigned long long irq{0};
+  unsigned long long softirq{0};
+  unsigned long long steal{0};
+};
+
+auto read_total_cpu_times(std::istream& input, CpuTotals& out) -> bool;
+auto read_total_cpu_times(const std::filesystem::path& path, CpuTotals& out)
+    -> bool;
+auto make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
+    -> starpu_server::MetricsRegistry::CpuUsageProvider;
+
+}  // namespace starpu_server::monitoring::detail
