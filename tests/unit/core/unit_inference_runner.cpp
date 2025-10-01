@@ -201,6 +201,23 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
       callback_called, cb_tensors, cb_latency, outputs, kLatencyMs));
 }
 
+TEST(InferenceJob_Unit, SetInputTensorsCopiesNonContiguousAsContiguous)
+{
+  auto non_contiguous =
+      torch::arange(0, 6, torch::TensorOptions().dtype(torch::kFloat32))
+          .reshape({2, 3})
+          .transpose(0, 1);
+  ASSERT_FALSE(non_contiguous.is_contiguous());
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_input_tensors({non_contiguous});
+
+  ASSERT_EQ(job->get_input_tensors().size(), 1U);
+  const auto& stored = job->get_input_tensors()[0];
+  EXPECT_TRUE(stored.is_contiguous());
+  EXPECT_TRUE(stored.equal(non_contiguous));
+}
+
 TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
 {
   starpu_server::InferenceResult result{};
