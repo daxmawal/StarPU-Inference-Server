@@ -98,6 +98,9 @@ using OutputRegisterFailureObserverFn = void (*)(
     const OutputSlotPool::SlotInfo& slot,
     const std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos);
 using OutputHostAllocatorFn = int (*)(void**, size_t alignment, size_t size);
+using OutputCudaPinnedOverrideFn =
+    bool (*)(size_t bytes, bool use_pinned, bool default_cuda_pinned);
+using OutputStarpuMemoryPinFn = int (*)(void* ptr, size_t size);
 
 auto set_output_starpu_vector_register_hook_for_tests(
     OutputStarpuVectorRegisterFn fn) -> OutputStarpuVectorRegisterFn;
@@ -108,6 +111,12 @@ auto set_output_register_failure_observer_for_tests(
 
 auto set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
     -> OutputHostAllocatorFn;
+
+auto set_output_cuda_pinned_override_for_tests(OutputCudaPinnedOverrideFn fn)
+    -> OutputCudaPinnedOverrideFn;
+
+auto set_output_starpu_memory_pin_hook_for_tests(OutputStarpuMemoryPinFn fn)
+    -> OutputStarpuMemoryPinFn;
 
 }  // namespace testing
 

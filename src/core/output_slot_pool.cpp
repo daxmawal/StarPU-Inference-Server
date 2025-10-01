@@ -25,6 +25,9 @@ testing::OutputStarpuVectorRegisterFn g_starpu_vector_register_hook =
 testing::OutputRegisterFailureObserverFn g_starpu_register_failure_observer =
     nullptr;
 testing::OutputHostAllocatorFn g_output_host_allocator_hook = &posix_memalign;
+testing::OutputCudaPinnedOverrideFn g_output_cuda_pinned_override_hook =
+    nullptr;
+testing::OutputStarpuMemoryPinFn g_starpu_memory_pin_hook = &starpu_memory_pin;
 
 auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
@@ -32,10 +35,19 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
   void* ptr = nullptr;
   cuda_pinned_out = false;
   if (use_pinned) {
-    const auto err = cudaHostAlloc(&ptr, bytes, cudaHostAllocPortable);
-    if (err == cudaSuccess && ptr != nullptr) {
-      cuda_pinned_out = true;
-      return ptr;
+    void* cuda_ptr = nullptr;
+    const auto err = cudaHostAlloc(&cuda_ptr, bytes, cudaHostAllocPortable);
+    if (err == cudaSuccess && cuda_ptr != nullptr) {
+      bool keep_cuda_pinned = true;
+      if (g_output_cuda_pinned_override_hook != nullptr) {
+        keep_cuda_pinned =
+            g_output_cuda_pinned_override_hook(bytes, use_pinned, true);
+      }
+      if (keep_cuda_pinned) {
+        cuda_pinned_out = true;
+        return cuda_ptr;
+      }
+      cudaFreeHost(cuda_ptr);
     }
   }
   constexpr size_t kAlign = 64;
@@ -113,7 +125,7 @@ prepare_host_buffer(
 
   if (want_pinned && !prepared.info.cuda_pinned) {
     prepared.info.starpu_pin_rc =
-        starpu_memory_pin(prepared.ptr, prepared.info.bytes);
+        g_starpu_memory_pin_hook(prepared.ptr, prepared.info.bytes);
     if (prepared.info.starpu_pin_rc == 0) {
       prepared.info.starpu_pinned = true;
     } else {
@@ -210,6 +222,24 @@ set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
   const auto previous = g_output_host_allocator_hook;
   g_output_host_allocator_hook =
       allocator != nullptr ? allocator : &posix_memalign;
+  return previous;
+}
+
+auto
+set_output_cuda_pinned_override_for_tests(OutputCudaPinnedOverrideFn fn)
+    -> OutputCudaPinnedOverrideFn
+{
+  const auto previous = g_output_cuda_pinned_override_hook;
+  g_output_cuda_pinned_override_hook = fn;
+  return previous;
+}
+
+auto
+set_output_starpu_memory_pin_hook_for_tests(OutputStarpuMemoryPinFn fn)
+    -> OutputStarpuMemoryPinFn
+{
+  const auto previous = g_starpu_memory_pin_hook;
+  g_starpu_memory_pin_hook = fn != nullptr ? fn : &starpu_memory_pin;
   return previous;
 }
 
