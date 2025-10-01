@@ -73,6 +73,17 @@ TEST(ClientArgs, MissingInputMarksConfigInvalid)
   EXPECT_NE(err.find("--input option is required."), std::string::npos);
 }
 
+TEST(ClientArgs, RejectsNegativeDelay)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1x3:float32", "--delay", "-1"});
+  testing::internal::CaptureStderr();
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_NE(err.find("Must be >= 0."), std::string::npos);
+}
+
 TEST(ClientArgs, VerboseLevels)
 {
   using enum starpu_server::VerbosityLevel;
