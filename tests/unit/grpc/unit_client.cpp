@@ -73,6 +73,16 @@ TEST(ClientArgs, MissingInputMarksConfigInvalid)
   EXPECT_NE(err.find("--input option is required."), std::string::npos);
 }
 
+TEST(ClientArgs, RejectsMalformedInputFormat)
+{
+  auto argv = std::to_array<const char*>({"prog", "--input", "bad"});
+  testing::internal::CaptureStderr();
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_NE(err.find("Input must be NAME:SHAPE:TYPE"), std::string::npos);
+}
+
 TEST(ClientArgs, RejectsNegativeDelay)
 {
   auto argv = std::to_array<const char*>(
