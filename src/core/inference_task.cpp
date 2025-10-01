@@ -28,10 +28,12 @@
 namespace {
 using AllocationFn = starpu_server::InferenceTask::AllocationFn;
 using TaskCreateFn = starpu_server::InferenceTask::TaskCreateFn;
+using DataAcquireFn = starpu_server::InferenceTask::DataAcquireFn;
 
 AllocationFn dyn_handles_allocator = std::malloc;
 AllocationFn dyn_modes_allocator = std::malloc;
 TaskCreateFn task_create_fn = starpu_task_create;
+DataAcquireFn starpu_data_acquire_fn = starpu_data_acquire_cb;
 }  // namespace
 
 namespace starpu_server {
@@ -428,6 +430,15 @@ InferenceTask::set_task_create_fn_for_testing(TaskCreateFn fn) -> TaskCreateFn
   return previous;
 }
 
+auto
+InferenceTask::set_starpu_data_acquire_fn_for_testing(DataAcquireFn fn)
+    -> DataAcquireFn
+{
+  auto previous = starpu_data_acquire_fn;
+  starpu_data_acquire_fn = fn != nullptr ? fn : starpu_data_acquire_cb;
+  return previous;
+}
+
 void
 InferenceTask::allocate_task_buffers(
     starpu_task* task, size_t num_buffers,
@@ -534,7 +545,7 @@ void
 InferenceTask::acquire_output_handle(
     starpu_data_handle_t handle, InferenceCallbackContext* ctx)
 {
-  const int ret = starpu_data_acquire_cb(
+  const int ret = starpu_data_acquire_fn(
       handle, STARPU_R,
       [](void* cb_arg) {
         auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);

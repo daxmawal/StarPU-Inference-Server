@@ -1,4 +1,5 @@
 #include <array>
+#include <format>
 #include <stdexcept>
 
 #include "core/output_slot_pool.hpp"
@@ -123,6 +124,27 @@ class TaskCreateFnOverride {
   starpu_server::InferenceTask::TaskCreateFn previous_ = nullptr;
 };
 
+class DataAcquireFnOverride {
+ public:
+  explicit DataAcquireFnOverride(starpu_server::InferenceTask::DataAcquireFn fn)
+      : previous_(starpu_server::InferenceTask::
+                      set_starpu_data_acquire_fn_for_testing(fn))
+  {
+  }
+
+  DataAcquireFnOverride(const DataAcquireFnOverride&) = delete;
+  DataAcquireFnOverride& operator=(const DataAcquireFnOverride&) = delete;
+
+  ~DataAcquireFnOverride()
+  {
+    starpu_server::InferenceTask::set_starpu_data_acquire_fn_for_testing(
+        previous_);
+  }
+
+ private:
+  starpu_server::InferenceTask::DataAcquireFn previous_ = nullptr;
+};
+
 class StarpuOutputCallbackHookOverride {
  public:
   using Hook = starpu_server::testing::StarpuOutputCallbackHook;
@@ -150,6 +172,13 @@ void
 ThrowingStarpuOutputCallbackHook(starpu_server::InferenceCallbackContext*)
 {
   throw starpu_server::StarPURegistrationException("forced failure");
+}
+
+int
+AlwaysFailingAcquire(
+    starpu_data_handle_t, starpu_data_access_mode, void (*)(void*), void*)
+{
+  return -42;
 }
 }  // namespace
 
@@ -343,6 +372,29 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
   const auto log = capture.str();
   EXPECT_NE(
       log.find("Unknown exception in completion callback"), std::string::npos);
+}
+
+TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
+{
+  auto job = make_job(3, 0);
+  auto handle = MakeHandle(0);
+  auto outputs = std::vector<starpu_data_handle_t>{handle};
+  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
+      job, nullptr, &opts_, 0, std::vector<starpu_data_handle_t>{}, outputs);
+  ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
+
+  DataAcquireFnOverride override(&AlwaysFailingAcquire);
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()),
+      starpu_server::StarPURegistrationException);
+
+  const auto log = capture.str();
+  const auto expected = starpu_server::expected_log_line(
+      starpu_server::ErrorLevel,
+      std::format("starpu_data_acquire_cb failed with code {}", -42));
+  EXPECT_NE(log.find(expected), std::string::npos);
 }
 
 TEST(InferenceTask, CleanupUnregistersAndNullsHandles)

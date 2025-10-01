@@ -105,11 +105,15 @@ class InferenceTask {
 
   using AllocationFn = void* (*)(size_t);
   using TaskCreateFn = starpu_task* (*)();
+  using DataAcquireFn = int (*)(
+      starpu_data_handle_t, starpu_data_access_mode, void (*)(void*), void*);
   static auto set_dyn_handles_allocator_for_testing(AllocationFn allocator)
       -> AllocationFn;
   static auto set_dyn_modes_allocator_for_testing(AllocationFn allocator)
       -> AllocationFn;
   static auto set_task_create_fn_for_testing(TaskCreateFn fn) -> TaskCreateFn;
+  static auto set_starpu_data_acquire_fn_for_testing(DataAcquireFn fn)
+      -> DataAcquireFn;
 
   static void allocate_task_buffers(
       starpu_task* task, size_t num_buffers,
