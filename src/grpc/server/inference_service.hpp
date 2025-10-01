@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <thread>
+#include <vector>
 
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
@@ -101,6 +103,31 @@ class InferenceServiceImpl final
   std::vector<std::vector<int64_t>> expected_input_dims_;
   int max_batch_size_ = 0;
   std::atomic<int> next_job_id_{0};
+};
+
+class AsyncServerContext {
+ public:
+  AsyncServerContext(
+      inference::GRPCInferenceService::AsyncService& async_service,
+      InferenceServiceImpl& impl);
+
+  void configure(grpc::ServerBuilder& builder);
+  void start();
+  void shutdown();
+
+#ifdef UNIT_TEST
+  [[nodiscard]] auto started_for_test() const -> bool;
+  [[nodiscard]] auto thread_count_for_test() const -> std::size_t;
+#endif
+
+ private:
+  void poll_events();
+
+  inference::GRPCInferenceService::AsyncService* async_service_;
+  InferenceServiceImpl* impl_;
+  std::unique_ptr<grpc::ServerCompletionQueue> completion_queue_;
+  std::vector<std::jthread> threads_;
+  bool started_ = false;
 };
 
 inline constexpr std::size_t kDefaultGrpcThreads = 4;

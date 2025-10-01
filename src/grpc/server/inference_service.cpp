@@ -704,82 +704,90 @@ compute_thread_count() -> std::size_t
   return compute_thread_count_from(std::thread::hardware_concurrency());
 }
 
-class AsyncServerContext {
- public:
-  AsyncServerContext(
-      inference::GRPCInferenceService::AsyncService& async_service,
-      InferenceServiceImpl& impl)
-      : async_service_(&async_service), impl_(&impl)
-  {
-  }
-
-  void configure(grpc::ServerBuilder& builder)
-  {
-    builder.RegisterService(async_service_);
-    completion_queue_ = builder.AddCompletionQueue();
-  }
-
-  void start()
-  {
-    if (!completion_queue_ || started_) {
-      return;
-    }
-    started_ = true;
-    const std::size_t thread_count = compute_thread_count();
-    threads_.reserve(thread_count);
-    for (std::size_t i = 0; i < thread_count; ++i) {
-      threads_.emplace_back([this]() { this->poll_events(); });
-    }
-
-    new UnaryCallData<
-        inference::ServerLiveRequest, inference::ServerLiveResponse>(
-        async_service_, completion_queue_.get(), impl_,
-        &inference::GRPCInferenceService::AsyncService::RequestServerLive,
-        &InferenceServiceImpl::ServerLive);
-    new UnaryCallData<
-        inference::ServerReadyRequest, inference::ServerReadyResponse>(
-        async_service_, completion_queue_.get(), impl_,
-        &inference::GRPCInferenceService::AsyncService::RequestServerReady,
-        &InferenceServiceImpl::ServerReady);
-    new UnaryCallData<
-        inference::ModelReadyRequest, inference::ModelReadyResponse>(
-        async_service_, completion_queue_.get(), impl_,
-        &inference::GRPCInferenceService::AsyncService::RequestModelReady,
-        &InferenceServiceImpl::ModelReady);
-    new ModelInferCallData(async_service_, completion_queue_.get(), impl_);
-  }
-
-  void shutdown()
-  {
-    if (!started_) {
-      return;
-    }
-    started_ = false;
-    if (completion_queue_) {
-      completion_queue_->Shutdown();
-    }
-    threads_.clear();
-    completion_queue_.reset();
-  }
-
- private:
-  void poll_events()
-  {
-    void* tag = nullptr;
-    bool event_ok = false;
-    while (completion_queue_ && completion_queue_->Next(&tag, &event_ok)) {
-      static_cast<AsyncCallDataBase*>(tag)->Proceed(event_ok);
-    }
-  }
-
-  inference::GRPCInferenceService::AsyncService* async_service_;
-  InferenceServiceImpl* impl_;
-  std::unique_ptr<grpc::ServerCompletionQueue> completion_queue_;
-  std::vector<std::jthread> threads_;
-  bool started_ = false;
-};
-
 }  // namespace
+
+AsyncServerContext::AsyncServerContext(
+    inference::GRPCInferenceService::AsyncService& async_service,
+    InferenceServiceImpl& impl)
+    : async_service_(&async_service), impl_(&impl)
+{
+}
+
+void
+AsyncServerContext::configure(grpc::ServerBuilder& builder)
+{
+  builder.RegisterService(async_service_);
+  completion_queue_ = builder.AddCompletionQueue();
+}
+
+void
+AsyncServerContext::start()
+{
+  if (!completion_queue_ || started_) {
+    return;
+  }
+  started_ = true;
+  const std::size_t thread_count = compute_thread_count();
+  threads_.reserve(thread_count);
+  for (std::size_t i = 0; i < thread_count; ++i) {
+    threads_.emplace_back([this]() { this->poll_events(); });
+  }
+
+  new UnaryCallData<
+      inference::ServerLiveRequest, inference::ServerLiveResponse>(
+      async_service_, completion_queue_.get(), impl_,
+      &inference::GRPCInferenceService::AsyncService::RequestServerLive,
+      &InferenceServiceImpl::ServerLive);
+  new UnaryCallData<
+      inference::ServerReadyRequest, inference::ServerReadyResponse>(
+      async_service_, completion_queue_.get(), impl_,
+      &inference::GRPCInferenceService::AsyncService::RequestServerReady,
+      &InferenceServiceImpl::ServerReady);
+  new UnaryCallData<
+      inference::ModelReadyRequest, inference::ModelReadyResponse>(
+      async_service_, completion_queue_.get(), impl_,
+      &inference::GRPCInferenceService::AsyncService::RequestModelReady,
+      &InferenceServiceImpl::ModelReady);
+  new ModelInferCallData(async_service_, completion_queue_.get(), impl_);
+}
+
+void
+AsyncServerContext::shutdown()
+{
+  if (!started_) {
+    return;
+  }
+  started_ = false;
+  if (completion_queue_) {
+    completion_queue_->Shutdown();
+  }
+  threads_.clear();
+  completion_queue_.reset();
+}
+
+#ifdef UNIT_TEST
+auto
+AsyncServerContext::started_for_test() const -> bool
+{
+  return started_;
+}
+
+auto
+AsyncServerContext::thread_count_for_test() const -> std::size_t
+{
+  return threads_.size();
+}
+#endif
+
+void
+AsyncServerContext::poll_events()
+{
+  void* tag = nullptr;
+  bool event_ok = false;
+  while (completion_queue_ && completion_queue_->Next(&tag, &event_ok)) {
+    static_cast<AsyncCallDataBase*>(tag)->Proceed(event_ok);
+  }
+}
 
 void
 RunGrpcServer(
