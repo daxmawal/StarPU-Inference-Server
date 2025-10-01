@@ -73,9 +73,6 @@ snapshot() -> std::optional<Snapshot>
       std::chrono::duration<double>(
           *state_data.last_completion - *state_data.first_enqueue)
           .count();
-  if (duration_seconds <= 0.0) {
-    return std::nullopt;
-  }
 
   const double throughput =
       static_cast<double>(state_data.total_inferences) / duration_seconds;
