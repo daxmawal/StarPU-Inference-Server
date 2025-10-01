@@ -162,6 +162,63 @@ TEST(OutputSlotPool_Unit, CheckedTotalNumelGuard)
       std::overflow_error);
 }
 
+TEST(OutputSlotPool_Unit, FreeHostBufferNullPointerNoWarning)
+{
+  starpu_server::OutputSlotPool::HostBufferInfo info{};
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::OutputSlotPoolTestHook::free_host_buffer_for_tests(
+      nullptr, info);
+  EXPECT_TRUE(capture.str().empty());
+}
+
+TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
+{
+  constexpr size_t kBytes = 32;
+  void* ptr = std::malloc(kBytes);
+  ASSERT_NE(ptr, nullptr);
+
+  starpu_server::OutputSlotPool::HostBufferInfo info{};
+  info.starpu_pinned = true;
+  info.bytes = kBytes;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::OutputSlotPoolTestHook::free_host_buffer_for_tests(ptr, info);
+  const std::string log = capture.str();
+  EXPECT_NE(log.find("starpu_memory_unpin failed"), std::string::npos);
+}
+
+TEST(OutputSlotPool_Unit, FreeHostBufferCudaFreeHostFailureLogsWarning)
+{
+  int device_count = 0;
+  const cudaError_t device_rc = cudaGetDeviceCount(&device_count);
+  if (device_rc == cudaErrorInsufficientDriver ||
+      device_rc == cudaErrorNoDevice) {
+    GTEST_SKIP() << "CUDA runtime unavailable for test: rc="
+                 << static_cast<int>(device_rc);
+  }
+  if (device_rc != cudaSuccess) {
+    GTEST_SKIP() << "CUDA runtime check failed: rc="
+                 << static_cast<int>(device_rc);
+  }
+
+  constexpr size_t kBytes = 32;
+  void* ptr = std::malloc(kBytes);
+  ASSERT_NE(ptr, nullptr);
+
+  starpu_server::OutputSlotPool::HostBufferInfo info{};
+  info.cuda_pinned = true;
+  info.bytes = kBytes;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::OutputSlotPoolTestHook::free_host_buffer_for_tests(ptr, info);
+  const std::string log = capture.str();
+  EXPECT_NE(log.find("cudaFreeHost failed"), std::string::npos);
+
+  if (log.find("cudaFreeHost failed") != std::string::npos) {
+    std::free(ptr);
+  }
+}
+
 TEST(StarPUSetup_Unit, TooManyDeviceIdsThrows)
 {
   starpu_server::RuntimeConfig opts;

@@ -87,6 +87,8 @@ struct OutputSlotPoolTestHook {
   static size_t checked_total_numel(size_t per_sample_numel, size_t batch_size);
   static auto host_buffer_infos(const OutputSlotPool& pool, int slot_id)
       -> const std::vector<OutputSlotPool::HostBufferInfo>&;
+  static void free_host_buffer_for_tests(
+      void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
 };
 
 namespace testing {

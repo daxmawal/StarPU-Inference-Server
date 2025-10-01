@@ -175,6 +175,13 @@ OutputSlotPoolTestHook::host_buffer_infos(
   return pool.host_buffer_infos_.at(static_cast<size_t>(slot_id));
 }
 
+void
+OutputSlotPoolTestHook::free_host_buffer_for_tests(
+    void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
+{
+  free_host_buffer(ptr, buffer_info);
+}
+
 namespace testing {
 
 auto
