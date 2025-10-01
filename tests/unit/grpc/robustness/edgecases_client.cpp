@@ -77,4 +77,4 @@ TEST_P(ParseVerbosityLevelInvalid, ThrowsInvalidArgument)
 
 INSTANTIATE_TEST_SUITE_P(
     ParseVerbosityLevel, ParseVerbosityLevelInvalid,
-    ::testing::Values("-1", "5", "foo"));
+    ::testing::Values("-1", "5", "foo", ""));
