@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "grpc/client/client_args.hpp"
 #define private public
@@ -145,6 +146,72 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
   EXPECT_NE(out.find("--version"), std::string::npos);
   EXPECT_NE(out.find("--verbose"), std::string::npos);
   EXPECT_NE(out.find("--help"), std::string::npos);
+}
+
+TEST(InferenceClientDetermineInferenceCount, HandlesEdgeCases)
+{
+  const auto determine = [](const starpu_server::ClientConfig& cfg) {
+    return starpu_server::InferenceClient::determine_inference_count(cfg);
+  };
+
+  starpu_server::ClientConfig cfg;
+  EXPECT_EQ(determine(cfg), 1U);
+
+  cfg.inputs.clear();
+  {
+    starpu_server::InputConfig input;
+    input.name = "zero_batch";
+    input.shape = {0, 3, 224};
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "negative_batch";
+    input.shape = {-4, 3, 224};
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "valid_batch";
+    input.shape = {5, 3, 224};
+    cfg.inputs.push_back(input);
+  }
+  EXPECT_EQ(determine(cfg), 5U);
+
+  cfg.inputs.clear();
+  {
+    starpu_server::InputConfig input;
+    input.name = "first_valid";
+    input.shape = {8, 3};
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "conflicting";
+    input.shape = {3, 3};
+    cfg.inputs.push_back(input);
+  }
+  EXPECT_EQ(determine(cfg), 8U);
+
+  cfg.inputs.clear();
+  {
+    starpu_server::InputConfig input;
+    input.name = "empty_shape";
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "zero_dim";
+    input.shape = {0};
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "negative_dim";
+    input.shape = {-1, 2};
+    cfg.inputs.push_back(input);
+  }
+  EXPECT_EQ(determine(cfg), 1U);
 }
 
 class ParseInputTypeCase
