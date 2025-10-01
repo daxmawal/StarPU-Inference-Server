@@ -16,6 +16,14 @@ TEST(ClientArgs, InvalidTypeIsDetected)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ClientArgs, MissingValueMarksConfigInvalid)
+{
+  constexpr std::size_t kArgc = 2;
+  std::array<const char*, kArgc> argv = {"prog", "--shape"};
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ClientArgs, NegativeIterationsMarkedInvalid)
 {
   constexpr std::size_t kArgc = 5;
