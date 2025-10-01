@@ -27,6 +27,11 @@ std::vector<void*> g_observed_base_ptrs;
 std::vector<starpu_data_handle_t> g_observed_handles;
 bool g_failure_observer_called = false;
 
+int g_succeed_then_fail_register_call_count = 0;
+starpu_server::testing::StarpuVectorRegisterFn
+    g_succeed_then_fail_previous_hook = nullptr;
+std::vector<starpu_data_handle_t>* g_pre_cleanup_registered_handles = nullptr;
+
 std::vector<void*> g_output_observed_base_ptrs;
 std::vector<starpu_data_handle_t> g_output_observed_handles;
 std::vector<starpu_server::OutputSlotPool::HostBufferInfo>
@@ -74,6 +79,29 @@ failing_starpu_vector_register(
     std::tuple_element_t<3, StarpuRegisterArgs> /*numel*/,
     std::tuple_element_t<4, StarpuRegisterArgs> /*element_size*/)
 {
+  *handle = nullptr;
+}
+
+void
+succeed_then_fail_starpu_vector_register(
+    std::tuple_element_t<0, StarpuRegisterArgs> handle,
+    std::tuple_element_t<1, StarpuRegisterArgs> home_node,
+    std::tuple_element_t<2, StarpuRegisterArgs> ptr,
+    std::tuple_element_t<3, StarpuRegisterArgs> numel,
+    std::tuple_element_t<4, StarpuRegisterArgs> element_size)
+{
+  ++g_succeed_then_fail_register_call_count;
+  if (g_succeed_then_fail_register_call_count == 1) {
+    if (g_succeed_then_fail_previous_hook != nullptr) {
+      g_succeed_then_fail_previous_hook(
+          handle, home_node, ptr, numel, element_size);
+    }
+    if (g_pre_cleanup_registered_handles != nullptr) {
+      g_pre_cleanup_registered_handles->push_back(*handle);
+    }
+    return;
+  }
+
   *handle = nullptr;
 }
 
@@ -890,6 +918,94 @@ TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
   ASSERT_TRUE(g_failure_observer_called);
   ASSERT_EQ(g_observed_base_ptrs.size(), model.inputs.size());
   ASSERT_EQ(g_observed_handles.size(), model.inputs.size());
+
+  for (void* base_ptr : g_observed_base_ptrs) {
+    EXPECT_EQ(base_ptr, nullptr);
+  }
+
+  for (auto handle : g_observed_handles) {
+    EXPECT_EQ(handle, nullptr);
+  }
+}
+
+TEST(InputSlotPool_Unit, PartialRegisterFailureResetsSlotState)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 1;
+  opts.input_slots = 1;
+
+  starpu_server::TensorConfig first_tensor;
+  first_tensor.name = "first_input";
+  first_tensor.dims = {1, 1};
+  first_tensor.type = at::ScalarType::Float;
+
+  starpu_server::TensorConfig second_tensor;
+  second_tensor.name = "second_input";
+  second_tensor.dims = {1, 1};
+  second_tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "partial_failure_model";
+  model.inputs.push_back(first_tensor);
+  model.inputs.push_back(second_tensor);
+  opts.models.push_back(model);
+
+  g_observed_base_ptrs.clear();
+  g_observed_handles.clear();
+  g_failure_observer_called = false;
+
+  g_succeed_then_fail_register_call_count = 0;
+  std::vector<starpu_data_handle_t> registered_handles_before_cleanup;
+  g_pre_cleanup_registered_handles = &registered_handles_before_cleanup;
+
+  const auto previous_hook =
+      starpu_server::testing::set_starpu_vector_register_hook_for_tests(
+          &succeed_then_fail_starpu_vector_register);
+  g_succeed_then_fail_previous_hook = previous_hook;
+  const auto previous_observer =
+      starpu_server::testing::set_starpu_register_failure_observer_for_tests(
+          &capture_slot_state);
+
+  int call_count_at_failure = 0;
+  auto restore_hooks = [&]() {
+    call_count_at_failure = g_succeed_then_fail_register_call_count;
+    g_pre_cleanup_registered_handles = nullptr;
+    g_succeed_then_fail_previous_hook = nullptr;
+    g_succeed_then_fail_register_call_count = 0;
+    starpu_server::testing::set_starpu_register_failure_observer_for_tests(
+        previous_observer);
+    starpu_server::testing::set_starpu_vector_register_hook_for_tests(
+        previous_hook);
+  };
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::InputSlotPool pool(opts, 1);
+          restore_hooks();
+          FAIL() << "Expected StarPU handle registration failure";
+        }
+        catch (...) {
+          restore_hooks();
+          throw;
+        }
+      },
+      std::runtime_error);
+
+  ASSERT_EQ(call_count_at_failure, 2);
+  ASSERT_TRUE(g_failure_observer_called);
+  ASSERT_EQ(g_observed_base_ptrs.size(), model.inputs.size());
+  ASSERT_EQ(g_observed_handles.size(), model.inputs.size());
+
+  ASSERT_EQ(registered_handles_before_cleanup.size(), 1);
+  EXPECT_NE(registered_handles_before_cleanup.front(), nullptr);
+
+  ASSERT_FALSE(g_observed_base_ptrs.empty());
+  ASSERT_FALSE(g_observed_handles.empty());
+  EXPECT_EQ(g_observed_base_ptrs.front(), nullptr);
+  EXPECT_EQ(g_observed_handles.front(), nullptr);
 
   for (void* base_ptr : g_observed_base_ptrs) {
     EXPECT_EQ(base_ptr, nullptr);
