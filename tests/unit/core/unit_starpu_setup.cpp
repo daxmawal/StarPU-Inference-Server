@@ -102,9 +102,7 @@ TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
           starpu_server::StarPUSetup setup(opts);
         }
         catch (const starpu_server::StarPUInitializationException& ex) {
-          EXPECT_STREQ(
-              "[ERROR] StarPU initialization error",
-              ex.what());
+          EXPECT_STREQ("[ERROR] StarPU initialization error", ex.what());
           throw;
         }
       },
@@ -149,8 +147,7 @@ TEST(StarPUSetup_Unit, TooManyDeviceIdsThrows)
 }
 
 TEST_F(
-    StarPUSetupInitStubTest,
-    StarPUSetup_InputPoolInitFailureLogsAndPropagates)
+    StarPUSetupInitStubTest, StarPUSetup_InputPoolInitFailureLogsAndPropagates)
 {
   starpu_server::RuntimeConfig opts;
   opts.input_slots = 1;
@@ -179,13 +176,11 @@ TEST_F(
       std::invalid_argument);
   const std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_NE(
-      log_output.find("Failed to initialize InputSlotPool"),
-      std::string::npos);
+      log_output.find("Failed to initialize InputSlotPool"), std::string::npos);
 }
 
 TEST_F(
-    StarPUSetupInitStubTest,
-    StarPUSetup_OutputPoolInitFailureLogsAndPropagates)
+    StarPUSetupInitStubTest, StarPUSetup_OutputPoolInitFailureLogsAndPropagates)
 {
   starpu_server::RuntimeConfig opts;
   opts.input_slots = 1;
@@ -641,6 +636,36 @@ TEST(OutputSlotPool_Unit, NonPositiveBatchDimensionThrows)
       std::invalid_argument);
 }
 
+TEST(OutputSlotPool_Unit, NonBatchDimensionNonPositiveThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 5;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "non_positive_dims_output";
+  tensor.dims = {1, 1, 0};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "non_positive_dims_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::OutputSlotPool pool(opts, 1);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ("dimensions must be positive", ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
 TEST(OutputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
 {
   StarpuRuntimeGuard starpu_guard;
@@ -669,6 +694,37 @@ TEST(OutputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
         }
       },
       std::invalid_argument);
+}
+
+TEST(OutputSlotPool_Unit, NonBatchDimensionOverflowThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.max_batch_size = 5;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "dimension_product_overflow_output";
+  tensor.dims = {
+      1, static_cast<int64_t>(1ULL << 32), static_cast<int64_t>(1ULL << 32)};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "dimension_product_overflow_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::OutputSlotPool pool(opts, 1);
+        }
+        catch (const std::overflow_error& ex) {
+          EXPECT_STREQ("dimension product overflow", ex.what());
+          throw;
+        }
+      },
+      std::overflow_error);
 }
 
 TEST(OutputSlotPool_Unit, ReleaseReturnsSlotToPool)
