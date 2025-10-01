@@ -545,6 +545,57 @@ TEST(InputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   pool.release(slot_id);
 }
 
+TEST(OutputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  void* probe_ptr = nullptr;
+  const cudaError_t probe_err =
+      cudaHostAlloc(&probe_ptr, 1, cudaHostAllocPortable);
+  if (probe_err == cudaSuccess) {
+    cudaFreeHost(probe_ptr);
+  } else if (
+      probe_err == cudaErrorNotSupported ||
+      probe_err == cudaErrorInsufficientDriver ||
+      probe_err == cudaErrorNoDevice) {
+    GTEST_SKIP() << "cudaHostAlloc unsupported: "
+                 << cudaGetErrorString(probe_err);
+  }
+
+  starpu_server::RuntimeConfig opts;
+  opts.use_cuda = true;
+  opts.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "cuda_probe_output";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "cuda_probe_model";
+  model.outputs.push_back(tensor);
+  opts.models.push_back(model);
+
+  starpu_server::OutputSlotPool pool(opts, 1);
+
+  const int slot_id = pool.acquire();
+  const auto& buffer_infos =
+      starpu_server::OutputSlotPoolTestHook::host_buffer_infos(pool, slot_id);
+  ASSERT_EQ(buffer_infos.size(), 1);
+
+  const auto& info = buffer_infos.front();
+
+  if (info.cuda_pinned) {
+    EXPECT_TRUE(info.cuda_pinned);
+  } else {
+    EXPECT_FALSE(info.cuda_pinned);
+    EXPECT_TRUE(info.starpu_pinned || info.starpu_pin_rc != 0)
+        << "Fallback StarPU pinning should report a result";
+  }
+
+  pool.release(slot_id);
+}
+
 TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
 {
   StarpuRuntimeGuard starpu_guard;

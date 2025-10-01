@@ -62,6 +62,8 @@ class OutputSlotPool {
   }
 
  private:
+  friend struct OutputSlotPoolTestHook;
+
   void allocate_pool(const RuntimeConfig& opts, int slots);
   void allocate_slot_buffers_and_register(
       int slot_id, const RuntimeConfig& opts);
@@ -83,6 +85,8 @@ struct OutputSlotPoolTestHook {
       OutputSlotPool::SlotInfo& slot,
       std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count);
   static size_t checked_total_numel(size_t per_sample_numel, size_t batch_size);
+  static auto host_buffer_infos(const OutputSlotPool& pool, int slot_id)
+      -> const std::vector<OutputSlotPool::HostBufferInfo>&;
 };
 
 namespace testing {

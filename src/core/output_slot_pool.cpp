@@ -166,6 +166,14 @@ OutputSlotPoolTestHook::checked_total_numel(
   return call_checked_total_numel(per_sample_numel, batch_size);
 }
 
+auto
+OutputSlotPoolTestHook::host_buffer_infos(
+    const OutputSlotPool& pool,
+    int slot_id) -> const std::vector<OutputSlotPool::HostBufferInfo>&
+{
+  return pool.host_buffer_infos_.at(static_cast<size_t>(slot_id));
+}
+
 namespace testing {
 
 auto
