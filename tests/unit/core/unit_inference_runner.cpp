@@ -234,6 +234,38 @@ TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
   EXPECT_FALSE(resolved.has_value());
 }
 
+TEST(InferenceRunner_Unit, BuildGpuModelLookup_ReturnsEmptyForAllNegativeIds)
+{
+  std::vector<torch::jit::script::Module> models_gpu;
+  models_gpu.push_back(starpu_server::make_identity_model());
+  models_gpu.push_back(starpu_server::make_identity_model());
+
+  const std::vector<int> device_ids{-1, -2};
+
+  const auto lookup =
+      starpu_server::detail::build_gpu_model_lookup(models_gpu, device_ids);
+
+  EXPECT_TRUE(lookup.empty());
+}
+
+TEST(InferenceRunner_Unit, BuildGpuModelLookup_SkipsNegativeEntries)
+{
+  std::vector<torch::jit::script::Module> models_gpu;
+  models_gpu.push_back(starpu_server::make_identity_model());
+  models_gpu.push_back(starpu_server::make_identity_model());
+  models_gpu.push_back(starpu_server::make_identity_model());
+
+  const std::vector<int> device_ids{2, -1, 0};
+
+  const auto lookup =
+      starpu_server::detail::build_gpu_model_lookup(models_gpu, device_ids);
+
+  ASSERT_EQ(lookup.size(), 3U);
+  EXPECT_EQ(lookup[0], &models_gpu[2]);
+  EXPECT_EQ(lookup[1], nullptr);
+  EXPECT_EQ(lookup[2], &models_gpu[0]);
+}
+
 TEST(
     InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForMissingReplica)
 {
