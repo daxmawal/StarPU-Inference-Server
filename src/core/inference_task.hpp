@@ -40,6 +40,13 @@ struct InferenceCallbackContext {
       std::vector<starpu_data_handle_t> outputs_) noexcept;
 };
 
+namespace testing {
+using StarpuOutputCallbackHook = void (*)(InferenceCallbackContext*);
+auto set_starpu_output_callback_hook(StarpuOutputCallbackHook hook)
+    -> StarpuOutputCallbackHook;
+void invoke_starpu_output_callback_hook(InferenceCallbackContext* ctx);
+}  // namespace testing
+
 // =============================================================================
 // InferenceTask
 // Responsible for submitting a single inference job to StarPU,

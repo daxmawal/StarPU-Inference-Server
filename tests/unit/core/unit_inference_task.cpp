@@ -122,6 +122,35 @@ class TaskCreateFnOverride {
  private:
   starpu_server::InferenceTask::TaskCreateFn previous_ = nullptr;
 };
+
+class StarpuOutputCallbackHookOverride {
+ public:
+  using Hook = starpu_server::testing::StarpuOutputCallbackHook;
+
+  explicit StarpuOutputCallbackHookOverride(Hook hook)
+      : previous_(starpu_server::testing::set_starpu_output_callback_hook(hook))
+  {
+  }
+
+  StarpuOutputCallbackHookOverride(const StarpuOutputCallbackHookOverride&) =
+      delete;
+  StarpuOutputCallbackHookOverride& operator=(
+      const StarpuOutputCallbackHookOverride&) = delete;
+
+  ~StarpuOutputCallbackHookOverride()
+  {
+    starpu_server::testing::set_starpu_output_callback_hook(previous_);
+  }
+
+ private:
+  Hook previous_ = nullptr;
+};
+
+void
+ThrowingStarpuOutputCallbackHook(starpu_server::InferenceCallbackContext*)
+{
+  throw starpu_server::StarPURegistrationException("forced failure");
+}
 }  // namespace
 
 TEST_F(InferenceTaskTest, TooManyInputs)
@@ -251,6 +280,25 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
   const double expected_latency =
       std::chrono::duration<double, std::milli>(end - start).count();
   EXPECT_DOUBLE_EQ(latency_ms, expected_latency);
+}
+
+TEST_F(InferenceTaskTest, StarpuOutputCallbackLogsInferenceEngineException)
+{
+  auto job = make_job(7, 1);
+  starpu_server::RuntimeConfig opts;
+  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
+      job, nullptr, &opts, 0, std::vector<starpu_data_handle_t>{},
+      std::vector<starpu_data_handle_t>{MakeHandle(0)});
+
+  starpu_server::CaptureStream capture{std::cerr};
+  StarpuOutputCallbackHookOverride hook_override(
+      &ThrowingStarpuOutputCallbackHook);
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+
+  const auto log = capture.str();
+  EXPECT_NE(log.find("starpu_output_callback"), std::string::npos);
 }
 
 TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
