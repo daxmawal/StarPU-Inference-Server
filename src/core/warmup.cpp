@@ -29,6 +29,24 @@
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
 
+namespace {
+std::mutex warmup_runner_test_hook_mutex;
+starpu_server::WarmupRunner::WarmupRunnerTestHook warmup_runner_test_hook;
+
+void
+invoke_warmup_runner_test_hook(std::atomic<int>& dummy_completed_jobs)
+{
+  starpu_server::WarmupRunner::WarmupRunnerTestHook hook_copy;
+  {
+    std::scoped_lock lock(warmup_runner_test_hook_mutex);
+    hook_copy = warmup_runner_test_hook;
+  }
+  if (hook_copy) {
+    hook_copy(dummy_completed_jobs);
+  }
+}
+}  // namespace
+
 namespace starpu_server {
 // =============================================================================
 // Constructor
@@ -42,6 +60,19 @@ WarmupRunner::WarmupRunner(
     : opts_(opts), starpu_(starpu), model_cpu_(model_cpu),
       models_gpu_(models_gpu), outputs_ref_(outputs_ref)
 {
+}
+
+void
+WarmupRunner::set_test_hook(WarmupRunnerTestHook hook)
+{
+  std::scoped_lock lock(warmup_runner_test_hook_mutex);
+  warmup_runner_test_hook = std::move(hook);
+}
+
+void
+WarmupRunner::clear_test_hook()
+{
+  set_test_hook(nullptr);
 }
 
 // =============================================================================
@@ -161,6 +192,7 @@ WarmupRunner::run(int iterations_per_worker)
     const size_t total_jobs =
         static_cast<size_t>(iterations_per_worker) * total_worker_count;
     dummy_cv.wait(lock, [total_jobs, &dummy_completed_jobs]() {
+      invoke_warmup_runner_test_hook(dummy_completed_jobs);
       int count = dummy_completed_jobs.load();
       if (count < 0) {
         throw InferenceExecutionException(
