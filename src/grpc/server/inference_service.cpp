@@ -781,19 +781,17 @@ AsyncServerContext::shutdown()
   completion_queue_.reset();
 }
 
-#ifdef UNIT_TEST
 auto
-AsyncServerContext::started_for_test() const -> bool
+AsyncServerContext::started() const -> bool
 {
   return started_;
 }
 
 auto
-AsyncServerContext::thread_count_for_test() const -> std::size_t
+AsyncServerContext::thread_count() const -> std::size_t
 {
   return threads_.size();
 }
-#endif
 
 void
 AsyncServerContext::poll_events()

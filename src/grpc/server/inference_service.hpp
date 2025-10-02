@@ -115,10 +115,8 @@ class AsyncServerContext {
   void start();
   void shutdown();
 
-#ifdef UNIT_TEST
-  [[nodiscard]] auto started_for_test() const -> bool;
-  [[nodiscard]] auto thread_count_for_test() const -> std::size_t;
-#endif
+  [[nodiscard]] auto started() const -> bool;
+  [[nodiscard]] auto thread_count() const -> std::size_t;
 
  private:
   void poll_events();

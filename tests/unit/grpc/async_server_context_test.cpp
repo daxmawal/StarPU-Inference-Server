@@ -29,8 +29,8 @@ TEST_F(AsyncServerContextFixture, StartWithoutConfigureDoesNotLaunch)
 
   context.start();
 
-  EXPECT_FALSE(context.started_for_test());
-  EXPECT_EQ(context.thread_count_for_test(), 0U);
+  EXPECT_FALSE(context.started());
+  EXPECT_EQ(context.thread_count(), 0U);
 }
 
 TEST_F(AsyncServerContextFixture, StartAfterConfigureIsIdempotent)
@@ -44,13 +44,13 @@ TEST_F(AsyncServerContextFixture, StartAfterConfigureIsIdempotent)
   ASSERT_NE(server, nullptr);
 
   context.start();
-  const bool initial_started = context.started_for_test();
-  const auto initial_thread_count = context.thread_count_for_test();
+  const bool initial_started = context.started();
+  const auto initial_thread_count = context.thread_count();
 
   context.start();
 
-  EXPECT_EQ(context.started_for_test(), initial_started);
-  EXPECT_EQ(context.thread_count_for_test(), initial_thread_count);
+  EXPECT_EQ(context.started(), initial_started);
+  EXPECT_EQ(context.thread_count(), initial_thread_count);
 
   server->Shutdown();
   context.shutdown();
