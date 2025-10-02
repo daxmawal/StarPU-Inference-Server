@@ -127,6 +127,18 @@ run_add_one_inference_loop(
 }
 
 inline auto
+make_single_model_runtime_config(
+    const std::filesystem::path& model_path, std::vector<int64_t> dims,
+    at::ScalarType type) -> RuntimeConfig
+{
+  RuntimeConfig config{};
+  config.models.resize(1);
+  config.models[0].path = model_path.string();
+  config.models[0].inputs = {{"input0", std::move(dims), type}};
+  return config;
+}
+
+inline auto
 make_variable_interface(const float* ptr) -> starpu_variable_interface
 {
   starpu_variable_interface iface{};

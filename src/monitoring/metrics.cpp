@@ -2,7 +2,6 @@
 
 #include <prometheus/exposer.h>
 #include <prometheus/histogram.h>
-#include <unistd.h>
 
 #include <atomic>
 #include <chrono>

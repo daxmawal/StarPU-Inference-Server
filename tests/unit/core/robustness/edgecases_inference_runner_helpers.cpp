@@ -22,10 +22,8 @@ TEST(InferenceRunnerHelpers_Robustesse, LoadModelAndReferenceOutputCorruptFile)
     tmp_file << "invalid";
   }
 
-  starpu_server::RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = tmp_path.string();
-  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  auto opts = starpu_server::make_single_model_runtime_config(
+      tmp_path, std::vector<int64_t>{1}, at::kFloat);
 
   starpu_server::CaptureStream capture{std::cerr};
   auto result = starpu_server::load_model_and_reference_output(opts);
@@ -53,10 +51,8 @@ class LoadModelAndReferenceOutputError_Robustesse
 
 TEST_P(LoadModelAndReferenceOutputError_Robustesse, MissingFile)
 {
-  starpu_server::RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = "nonexistent_model.pt";
-  opts.models[0].inputs = {{"input0", {1}, GetParam()}};
+  auto opts = starpu_server::make_single_model_runtime_config(
+      "nonexistent_model.pt", std::vector<int64_t>{1}, GetParam());
   starpu_server::CaptureStream capture{std::cerr};
   auto result = starpu_server::load_model_and_reference_output(opts);
   auto err = capture.str();

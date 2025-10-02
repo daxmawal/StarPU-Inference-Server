@@ -31,10 +31,7 @@ RunWorkerThreadFailureCase(const std::filesystem::path& path)
 {
   using namespace starpu_server;
 
-  RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = path.string();
-  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  auto opts = make_single_model_runtime_config(path, {1}, at::kFloat);
   opts.iterations = 1;
   opts.use_cuda = false;
 
@@ -65,10 +62,8 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
   auto model = starpu_server::make_constant_model();
   model.save(file.string());
 
-  starpu_server::RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = file.string();
-  opts.models[0].inputs = {{"input0", kShape1, at::kFloat}};
+  auto opts = starpu_server::make_single_model_runtime_config(
+      file, kShape1, at::kFloat);
   opts.device_ids = {0};
   opts.use_cuda = false;
 
@@ -86,10 +81,8 @@ TEST(InferenceRunner_Robustesse, CloneModelToGpus_InvalidDeviceIdThrows)
   auto model = starpu_server::make_constant_model();
   model.save(file.string());
 
-  starpu_server::RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = file.string();
-  opts.models[0].inputs = {{"input0", kShape1, at::kFloat}};
+  auto opts = starpu_server::make_single_model_runtime_config(
+      file, kShape1, at::kFloat);
   opts.use_cuda = true;
   opts.device_ids = {-1};
 
@@ -144,10 +137,8 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
 
 TEST(InferenceRunner_Robustesse, LoadModelMissingFile)
 {
-  starpu_server::RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = "nonexistent_model.pt";
-  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  auto opts = starpu_server::make_single_model_runtime_config(
+      "nonexistent_model.pt", std::vector<int64_t>{1}, at::kFloat);
 
   try {
     auto result = starpu_server::load_model_and_reference_output(opts);
@@ -162,10 +153,8 @@ TEST(RunInferenceLoop_Robustesse, LoadModelFailureHandledGracefully)
 {
   using namespace starpu_server;
 
-  RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = "nonexistent_model.pt";
-  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  auto opts = make_single_model_runtime_config(
+      "nonexistent_model.pt", std::vector<int64_t>{1}, at::kFloat);
   opts.iterations = 1;
   opts.use_cuda = false;
 
@@ -200,10 +189,7 @@ TEST(RunInferenceLoop_Robustesse, InvalidCudaDeviceLogsError)
   auto model = make_constant_model();
   model.save(file.string());
 
-  RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = file.string();
-  opts.models[0].inputs = {{"input0", kShape1, at::kFloat}};
+  auto opts = make_single_model_runtime_config(file, kShape1, at::kFloat);
   opts.iterations = 1;
   opts.use_cuda = true;
   opts.device_ids = {-1};
