@@ -38,11 +38,18 @@ WarmupRunner::WarmupRunner(
     const RuntimeConfig& opts, StarPUSetup& starpu,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<torch::Tensor>& outputs_ref,
-    WarmupRunnerTestHook test_hook)
+    const std::vector<torch::Tensor>& outputs_ref
+#ifdef UNIT_TEST
+    ,
+    WarmupRunnerTestHook test_hook
+#endif
+    )
     : opts_(opts), starpu_(starpu), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), outputs_ref_(outputs_ref),
+      models_gpu_(models_gpu), outputs_ref_(outputs_ref)
+#ifdef UNIT_TEST
+      ,
       test_hook_(std::move(test_hook))
+#endif
 {
 }
 
@@ -163,9 +170,11 @@ WarmupRunner::run(int iterations_per_worker)
     const size_t total_jobs =
         static_cast<size_t>(iterations_per_worker) * total_worker_count;
     dummy_cv.wait(lock, [this, total_jobs, &dummy_completed_jobs]() {
+#ifdef UNIT_TEST
       if (test_hook_) {
         test_hook_(dummy_completed_jobs);
       }
+#endif
       int count = dummy_completed_jobs.load();
       if (count < 0) {
         throw InferenceExecutionException(
