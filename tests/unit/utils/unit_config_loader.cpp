@@ -5,6 +5,8 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -13,6 +15,305 @@
 #include "utils/datatype_utils.hpp"
 
 using namespace starpu_server;
+
+namespace {
+
+auto
+WriteTempFile(const std::string& name, const std::string& contents)
+    -> std::filesystem::path
+{
+  const auto path = std::filesystem::temp_directory_path() / name;
+  std::ofstream(path) << contents;
+  return path;
+}
+
+auto
+base_model_yaml() -> std::string
+{
+  return std::string{
+      "model: {{MODEL_PATH}}\n"
+      "input:\n"
+      "  - name: in\n"
+      "    dims: [1]\n"
+      "    data_type: float32\n"
+      "output:\n"
+      "  - name: out\n"
+      "    dims: [1]\n"
+      "    data_type: float32\n"};
+}
+
+struct InvalidConfigCase {
+  std::string name;
+  std::string yaml;
+  std::optional<std::string> expected_error;
+  bool needs_model_path = true;
+  bool create_model_file = true;
+};
+
+class InvalidConfigTest : public ::testing::TestWithParam<InvalidConfigCase> {};
+
+auto
+InvalidConfigCaseName(const ::testing::TestParamInfo<InvalidConfigCase>& info)
+    -> std::string
+{
+  return info.param.name;
+}
+
+const std::vector<InvalidConfigCase> kInvalidConfigCases = {
+    InvalidConfigCase{
+        "InvalidConfigSetsValidFalse", "max_batch_size: 0\n", std::nullopt,
+        false, false},
+    InvalidConfigCase{
+        "NegativeDelaySetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "delay: -10\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "NegativeIterationsSetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "iterations: -1\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "MetricsPortOutOfRangeSetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "metrics_port: 70000\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "InvalidSchedulerSetsValidFalse",
+        [] {
+          auto yaml = std::string{"scheduler: unknown\n"};
+          yaml += base_model_yaml();
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "NegativeDimensionSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "input:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [-1, 3]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "output:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "ZeroDimensionSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "input:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [0, 3]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "output:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "DimensionExceedsIntMaxSetsValidFalse",
+        [] {
+          std::ostringstream yaml;
+          yaml << "model: {{MODEL_PATH}}\n";
+          yaml << "input:\n";
+          yaml << "  - name: in\n";
+          yaml << "    dims: [1, "
+               << static_cast<long long>(std::numeric_limits<int>::max()) + 1
+               << "]\n";
+          yaml << "    data_type: float32\n";
+          yaml << "output:\n";
+          yaml << "  - name: out\n";
+          yaml << "    dims: [1]\n";
+          yaml << "    data_type: float32\n";
+          return yaml.str();
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "MissingDimsSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "input:\n";
+          yaml += "  - name: in\n";
+          yaml += "    data_type: float32\n";
+          yaml += "output:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "MissingDataTypeSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "input:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "output:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "InvalidVerbositySetsValidFalse", "verbosity: unknown\n", std::nullopt,
+        false, false},
+    InvalidConfigCase{
+        "MissingModelSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "input:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "output:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          return yaml;
+        }(),
+        std::nullopt, false, false},
+    InvalidConfigCase{
+        "NonexistentModelFileSetsValidFalse", base_model_yaml(), std::nullopt,
+        true, false},
+    InvalidConfigCase{
+        "MissingInputSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "output:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "MissingOutputSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "input:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          return yaml;
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "TooManyInputsSetsValidFalse",
+        [] {
+          std::ostringstream yaml;
+          yaml << "model: {{MODEL_PATH}}\n";
+          yaml << "input:\n";
+          for (std::size_t i = 0; i <= kMaxInputs; ++i) {
+            yaml << "  - name: in" << i << "\n";
+            yaml << "    dims: [1]\n";
+            yaml << "    data_type: float32\n";
+          }
+          yaml << "output:\n";
+          yaml << "  - name: out\n";
+          yaml << "    dims: [1]\n";
+          yaml << "    data_type: float32\n";
+          return yaml.str();
+        }(),
+        std::nullopt},
+    InvalidConfigCase{
+        "TooManyDimsSetsValidFalse",
+        [] {
+          std::ostringstream yaml;
+          yaml << "model: {{MODEL_PATH}}\n";
+          yaml << "input:\n";
+          yaml << "  - name: in\n";
+          yaml << "    dims: [";
+          for (std::size_t i = 0; i <= kMaxDims; ++i) {
+            if (i != 0U) {
+              yaml << ", ";
+            }
+            yaml << 1;
+          }
+          yaml << "]\n";
+          yaml << "    data_type: float32\n";
+          yaml << "output:\n";
+          yaml << "  - name: out\n";
+          yaml << "    dims: [1]\n";
+          yaml << "    data_type: float32\n";
+          return yaml.str();
+        }(),
+        std::nullopt},
+};
+
+}  // namespace
+
+TEST_P(InvalidConfigTest, MarksConfigInvalid)
+{
+  const auto& test_case = GetParam();
+
+  std::optional<std::filesystem::path> model_path;
+  if (test_case.needs_model_path) {
+    const auto model_name =
+        std::string{"config_loader_model_"} + test_case.name + ".pt";
+    if (test_case.create_model_file) {
+      model_path = WriteTempFile(model_name, std::string(1, '\0'));
+    } else {
+      model_path = std::filesystem::temp_directory_path() / model_name;
+      std::filesystem::remove(*model_path);
+    }
+  }
+
+  std::string yaml = test_case.yaml;
+  if (test_case.needs_model_path && model_path.has_value()) {
+    const std::string placeholder = "{{MODEL_PATH}}";
+    const std::string replacement = model_path->string();
+    std::size_t pos = 0;
+    while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+      yaml.replace(pos, placeholder.size(), replacement);
+      pos += replacement.size();
+    }
+  }
+
+  const auto config_path = WriteTempFile(
+      std::string{"config_loader_invalid_"} + test_case.name + ".yaml", yaml);
+
+  std::unique_ptr<starpu_server::CaptureStream> capture;
+  if (test_case.expected_error.has_value()) {
+    capture = std::make_unique<starpu_server::CaptureStream>(std::cerr);
+  }
+
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  if (capture) {
+    const std::string expected =
+        expected_log_line(ErrorLevel, *test_case.expected_error);
+    EXPECT_EQ(capture->str(), expected);
+  }
+
+  EXPECT_FALSE(cfg.valid);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    InvalidConfigs, InvalidConfigTest, ::testing::ValuesIn(kInvalidConfigCases),
+    InvalidConfigCaseName);
 
 TEST(ConfigLoader, LoadsValidConfig)
 {
@@ -201,17 +502,6 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   EXPECT_EQ(cfg.input_slots, 3);
 }
 
-TEST(ConfigLoader, InvalidConfigSetsValidFalse)
-{
-  const std::string yaml = R"(max_batch_size: 0)";
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_invalid.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
 {
   const auto model_path = std::filesystem::temp_directory_path() /
@@ -361,32 +651,6 @@ TEST(ConfigLoader, InputSlotsRejectsNonPositive)
   EXPECT_FALSE(cfg.valid);
 }
 
-TEST(ConfigLoader, NegativeDelaySetsValidFalse)
-{
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_neg_delay_model.pt";
-  std::ofstream(model_path).put('\0');
-
-  std::ostringstream yaml;
-  yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
-  yaml << "  - name: in\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "output:\n";
-  yaml << "  - name: out\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "delay: -10\n";
-
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_neg_delay.yaml";
-  std::ofstream(tmp) << yaml.str();
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
 TEST(ConfigLoader, ParsesDelayAndAddress)
 {
   const auto model_path = std::filesystem::temp_directory_path() /
@@ -417,251 +681,6 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   EXPECT_EQ(cfg.server_address, "127.0.0.1:50051");
 }
 
-TEST(ConfigLoader, NegativeIterationsSetsValidFalse)
-{
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_neg_iter_model.pt";
-  std::ofstream(model_path).put('\0');
-
-  std::ostringstream yaml;
-  yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
-  yaml << "  - name: in\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "output:\n";
-  yaml << "  - name: out\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "iterations: -1\n";
-
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_neg_iter.yaml";
-  std::ofstream(tmp) << yaml.str();
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, MetricsPortOutOfRangeSetsValidFalse)
-{
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_bad_metrics_port_model.pt";
-  std::ofstream(model_path).put('\0');
-
-  std::ostringstream yaml;
-  yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
-  yaml << "  - name: in\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "output:\n";
-  yaml << "  - name: out\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "metrics_port: 70000\n";
-
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_bad_metrics_port.yaml";
-  std::ofstream(tmp) << yaml.str();
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, InvalidSchedulerSetsValidFalse)
-{
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_invalid_sched_model.pt";
-  std::ofstream(model_path).put('\0');
-
-  std::ostringstream yaml;
-  yaml << "scheduler: unknown\n";
-  yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
-  yaml << "  - name: in\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "output:\n";
-  yaml << "  - name: out\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_invalid_sched.yaml";
-  std::ofstream(tmp) << yaml.str();
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, NegativeDimensionSetsValidFalse)
-{
-  const std::string yaml = R"(
-model: model.pt
-input:
-  - name: in
-    dims: [-1, 3]
-    data_type: float32
-output:
-  - name: out
-    dims: [1]
-    data_type: float32
-)";
-
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_neg_dim.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, ZeroDimensionSetsValidFalse)
-{
-  const std::string yaml = R"(
-model: model.pt
-input:
-  - name: in
-    dims: [0, 3]
-    data_type: float32
-output:
-  - name: out
-    dims: [1]
-    data_type: float32
-)";
-
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_zero_dim.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, DimensionExceedsIntMaxSetsValidFalse)
-{
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_large_dim_model.pt";
-  std::ofstream(model_path).put('\0');
-
-  std::ostringstream yaml;
-  yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
-  yaml << "  - name: in\n";
-  yaml << "    dims: [1, "
-       << static_cast<long long>(std::numeric_limits<int>::max()) + 1 << "]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "output:\n";
-  yaml << "  - name: out\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_large_dim.yaml";
-  std::ofstream(tmp) << yaml.str();
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, MissingDimsSetsValidFalse)
-{
-  const std::string yaml = R"(
-model: model.pt
-input:
-  - name: in
-    data_type: float32
-output:
-  - name: out
-    dims: [1]
-    data_type: float32
-)";
-
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_missing_dims.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, MissingDataTypeSetsValidFalse)
-{
-  const std::string yaml = R"(
-model: model.pt
-input:
-  - name: in
-    dims: [1]
-output:
-  - name: out
-    dims: [1]
-    data_type: float32
-)";
-
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_missing_dtype.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, InvalidVerbositySetsValidFalse)
-{
-  const std::string yaml = R"(verbosity: unknown)";
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_invalid_verbosity.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, MissingModelSetsValidFalse)
-{
-  const std::string yaml = R"(
-input:
-  - name: in
-    dims: [1]
-    data_type: float32
-output:
-  - name: out
-    dims: [1]
-    data_type: float32
-)";
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_no_model.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, NonexistentModelFileSetsValidFalse)
-{
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "nonexistent_model.pt";
-  std::ostringstream yaml;
-  yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
-  yaml << "  - name: in\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "output:\n";
-  yaml << "  - name: out\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_missing_model_file.yaml";
-  std::ofstream(tmp) << yaml.str();
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
 TEST(ConfigLoader, MissingModelSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
@@ -684,23 +703,6 @@ max_batch_size: 0
   EXPECT_EQ(cfg.max_batch_size, 1);
 }
 
-TEST(ConfigLoader, MissingInputSetsValidFalse)
-{
-  const std::string yaml = R"(
-model: model.pt
-output:
-  - name: out
-    dims: [1]
-    data_type: float32
-)";
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_no_input.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
 TEST(ConfigLoader, MissingInputSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
@@ -720,23 +722,6 @@ delay: -10
   EXPECT_EQ(cfg.delay_ms, 0);
 }
 
-TEST(ConfigLoader, MissingOutputSetsValidFalse)
-{
-  const std::string yaml = R"(
-model: model.pt
-input:
-  - name: in
-    dims: [1]
-    data_type: float32
-)";
-  const auto tmp =
-      std::filesystem::temp_directory_path() / "config_loader_no_output.yaml";
-  std::ofstream(tmp) << yaml;
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
 TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
@@ -754,65 +739,6 @@ max_batch_size: 0
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
   EXPECT_EQ(cfg.max_batch_size, 1);
-}
-
-TEST(ConfigLoader, TooManyInputsSetsValidFalse)
-{
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "config_loader_many_inputs.pt";
-  std::ofstream(model_path).put('\0');
-
-  std::ostringstream yaml;
-  yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
-  for (std::size_t i = 0; i <= kMaxInputs; ++i) {
-    yaml << "  - name: in" << i << "\n";
-    yaml << "    dims: [1]\n";
-    yaml << "    data_type: float32\n";
-  }
-  yaml << "output:\n";
-  yaml << "  - name: out\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_too_many_inputs.yaml";
-  std::ofstream(tmp) << yaml.str();
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
-}
-
-TEST(ConfigLoader, TooManyDimsSetsValidFalse)
-{
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "config_loader_many_dims.pt";
-  std::ofstream(model_path).put('\0');
-
-  std::ostringstream yaml;
-  yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
-  yaml << "  - name: in\n";
-  yaml << "    dims: [";
-  for (std::size_t i = 0; i <= kMaxDims; ++i) {
-    if (i != 0U) {
-      yaml << ", ";
-    }
-    yaml << 1;
-  }
-  yaml << "]\n";
-  yaml << "    data_type: float32\n";
-  yaml << "output:\n";
-  yaml << "  - name: out\n";
-  yaml << "    dims: [1]\n";
-  yaml << "    data_type: float32\n";
-
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   "config_loader_too_many_dims.yaml";
-  std::ofstream(tmp) << yaml.str();
-
-  const RuntimeConfig cfg = load_config(tmp.string());
-  EXPECT_FALSE(cfg.valid);
 }
 
 TEST(
