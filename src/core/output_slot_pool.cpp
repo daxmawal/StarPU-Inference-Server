@@ -168,8 +168,8 @@ cleanup_slot_buffers_impl(
   }
 }
 
-size_t
-call_checked_total_numel(size_t per_sample_numel, size_t batch_size)
+auto
+call_checked_total_numel(size_t per_sample_numel, size_t batch_size) -> size_t
 {
   return checked_total_numel(per_sample_numel, batch_size);
 }

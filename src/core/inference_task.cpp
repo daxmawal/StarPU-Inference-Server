@@ -521,6 +521,11 @@ InferenceTask::acquire_output_handle(
           ? dependencies->starpu_data_acquire_fn
           : kDefaultInferenceTaskDependencies.starpu_data_acquire_fn;
 
+  if (data_acquire_fn == nullptr) {
+    log_error("starpu_data_acquire_fn is null; cannot acquire output handle.");
+    throw StarPURegistrationException("StarPU data acquire callback is null.");
+  }
+
   const int ret = data_acquire_fn(
       handle, STARPU_R,
       [](void* cb_arg) {
