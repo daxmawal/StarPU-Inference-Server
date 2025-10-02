@@ -159,9 +159,6 @@ TEST_F(
 TEST_F(
     StarPUTaskRunnerFixture, SubmitInferenceTaskWithPoolsReleasesSlotsOnFailure)
 {
-  runner_.reset();
-  starpu_setup_.reset();
-
   starpu_server::ModelConfig model_config{};
   model_config.name = "test";
   starpu_server::TensorConfig input0{};
@@ -180,13 +177,7 @@ TEST_F(
   output0.type = at::kFloat;
   model_config.outputs = {output0};
 
-  opts_.models = {model_config};
-  opts_.input_slots = 1;
-
-  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
-  config_.starpu = starpu_setup_.get();
-  config_.opts = &opts_;
-  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+  reset_runner_with_model(model_config, /*input_slots=*/1);
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_job_id(7);
@@ -212,9 +203,6 @@ TEST_F(
     StarPUTaskRunnerFixture,
     SubmitInferenceTaskWithOutputPoolReleasesSlotOnInputRegistrationFailure)
 {
-  runner_.reset();
-  starpu_setup_.reset();
-
   starpu_server::ModelConfig model_config{};
   model_config.name = "output_only";
 
@@ -224,15 +212,9 @@ TEST_F(
   output_config.type = at::kFloat;
   model_config.outputs = {output_config};
 
-  opts_.models = {model_config};
-  opts_.input_slots = 1;
-
-  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  reset_runner_with_model(model_config, /*input_slots=*/1);
   ASSERT_FALSE(starpu_setup_->has_input_pool());
   ASSERT_TRUE(starpu_setup_->has_output_pool());
-  config_.starpu = starpu_setup_.get();
-  config_.opts = &opts_;
-  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_job_id(13);
@@ -259,9 +241,6 @@ TEST_F(
     StarPUTaskRunnerFixture,
     SubmitInferenceTaskWithOutputPoolReleasesSlotOnTaskCreationFailure)
 {
-  runner_.reset();
-  starpu_setup_.reset();
-
   starpu_server::ModelConfig model_config{};
   model_config.name = "output_only";
 
@@ -271,18 +250,11 @@ TEST_F(
   output_config.type = at::kFloat;
   model_config.outputs = {output_config};
 
-  opts_.models = {model_config};
-  opts_.input_slots = 1;
-
-  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  auto deps = starpu_server::kDefaultInferenceTaskDependencies;
+  deps.task_create_fn = []() -> starpu_task* { return nullptr; };
+  reset_runner_with_model(model_config, /*input_slots=*/1, deps);
   ASSERT_FALSE(starpu_setup_->has_input_pool());
   ASSERT_TRUE(starpu_setup_->has_output_pool());
-  config_.starpu = starpu_setup_.get();
-  config_.opts = &opts_;
-  dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;
-  dependencies_.task_create_fn = []() -> starpu_task* { return nullptr; };
-  config_.dependencies = &dependencies_;
-  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_job_id(17);
@@ -303,9 +275,6 @@ TEST_F(
     StarPUTaskRunnerFixture,
     HandleSubmissionFailureReleasesSlotsThroughTestHook)
 {
-  runner_.reset();
-  starpu_setup_.reset();
-
   starpu_server::ModelConfig model_config{};
   model_config.name = "test";
 
@@ -321,10 +290,7 @@ TEST_F(
   output_config.type = at::kFloat;
   model_config.outputs = {output_config};
 
-  opts_.models = {model_config};
-  opts_.input_slots = 1;
-
-  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  reset_runner_with_model(model_config, /*input_slots=*/1);
 
   auto& input_pool = starpu_setup_->input_pool();
   auto& output_pool = starpu_setup_->output_pool();

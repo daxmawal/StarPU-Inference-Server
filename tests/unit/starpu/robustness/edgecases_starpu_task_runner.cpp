@@ -77,9 +77,6 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
 
 TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
 {
-  runner_.reset();
-  starpu_setup_.reset();
-
   starpu_server::ModelConfig model_config{};
   model_config.name = "test";
   starpu_server::TensorConfig input0{};
@@ -94,13 +91,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
   output0.type = at::kFloat;
   model_config.outputs = {output0};
 
-  opts_.models = {model_config};
-  opts_.input_slots = 1;
-
-  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
-  config_.starpu = starpu_setup_.get();
-  config_.opts = &opts_;
-  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+  reset_runner_with_model(model_config, /*input_slots=*/1);
 
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;

@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 #include "core/inference_params.hpp"
@@ -54,6 +55,31 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     config_.all_done_cv = &cv_;
     dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;
     config_.dependencies = &dependencies_;
+    runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+  }
+
+  void reset_runner_with_model(
+      const starpu_server::ModelConfig& model, int input_slots,
+      std::optional<starpu_server::InferenceTaskDependencies> deps =
+          std::nullopt)
+  {
+    runner_.reset();
+    starpu_setup_.reset();
+
+    opts_.models = {model};
+    opts_.input_slots = input_slots;
+
+    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+    config_.starpu = starpu_setup_.get();
+    config_.opts = &opts_;
+
+    if (deps.has_value()) {
+      dependencies_ = *deps;
+    } else {
+      dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;
+    }
+    config_.dependencies = &dependencies_;
+
     runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
   }
 };
