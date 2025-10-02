@@ -2,9 +2,12 @@
 
 #include <gtest/gtest.h>
 
+#include <concepts>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <ranges>
+#include <span>
 #include <vector>
 
 #include "cli/args_parser.hpp"
@@ -17,12 +20,18 @@ struct OwnedArgv {
   [[nodiscard]] auto size() const -> std::size_t { return argv.size(); }
 };
 
+template <std::ranges::input_range Range>
+  requires std::convertible_to<
+               std::ranges::range_reference_t<Range>, const char*>
 inline auto
-build_argv(std::initializer_list<const char*> args) -> OwnedArgv
+build_argv(Range&& args) -> OwnedArgv
 {
   OwnedArgv owned;
-  owned.storage.reserve(args.size());
-  owned.argv.reserve(args.size());
+  if constexpr (std::ranges::sized_range<Range>) {
+    const auto size = static_cast<std::size_t>(std::ranges::size(args));
+    owned.storage.reserve(size);
+    owned.argv.reserve(size);
+  }
   for (const char* arg : args) {
     owned.storage.emplace_back(arg);
     owned.argv.push_back(owned.storage.back().data());
@@ -31,16 +40,9 @@ build_argv(std::initializer_list<const char*> args) -> OwnedArgv
 }
 
 inline auto
-build_argv(const std::vector<const char*>& args) -> OwnedArgv
+build_argv(std::initializer_list<const char*> args) -> OwnedArgv
 {
-  OwnedArgv owned;
-  owned.storage.reserve(args.size());
-  owned.argv.reserve(args.size());
-  for (const char* arg : args) {
-    owned.storage.emplace_back(arg);
-    owned.argv.push_back(owned.storage.back().data());
-  }
-  return owned;
+  return build_argv(std::span<const char* const>(args.begin(), args.size()));
 }
 
 inline auto
@@ -74,27 +76,26 @@ build_valid_cli_args() -> OwnedArgv
 }
 
 inline auto
-parse(std::initializer_list<const char*> args) -> starpu_server::RuntimeConfig
+parse(std::span<const char* const> args) -> starpu_server::RuntimeConfig
 {
   auto argv = build_argv(args);
   return starpu_server::parse_arguments({argv.data(), argv.size()});
 }
 
 inline auto
-parse(const std::vector<const char*>& args) -> starpu_server::RuntimeConfig
+parse(std::initializer_list<const char*> args) -> starpu_server::RuntimeConfig
 {
-  auto argv = build_argv(args);
-  return starpu_server::parse_arguments({argv.data(), argv.size()});
+  return parse(std::span<const char* const>(args.begin(), args.size()));
+}
+
+inline void
+expect_invalid(std::span<const char* const> args)
+{
+  EXPECT_FALSE(parse(args).valid);
 }
 
 inline void
 expect_invalid(std::initializer_list<const char*> args)
 {
-  EXPECT_FALSE(parse(args).valid);
-}
-
-inline void
-expect_invalid(const std::vector<const char*>& args)
-{
-  EXPECT_FALSE(parse(args).valid);
+  expect_invalid(std::span<const char* const>(args.begin(), args.size()));
 }
