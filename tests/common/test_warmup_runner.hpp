@@ -48,12 +48,12 @@ struct WarmupRunnerTestFixture {
     outputs_ref = {torch::zeros({1})};
   }
   auto make_runner(
-      starpu_server::WarmupRunner::WarmupRunnerTestHook test_hook = {})
+      starpu_server::WarmupRunner::CompletionObserver completion_observer = {})
       -> starpu_server::WarmupRunner
   {
     return starpu_server::WarmupRunner(
         opts, *starpu, model_cpu, models_gpu, outputs_ref,
-        std::move(test_hook));
+        std::move(completion_observer));
   }
 };
 
@@ -71,11 +71,11 @@ class WarmupRunnerTest : public ::testing::Test,
 
   void init(
       bool use_cuda,
-      starpu_server::WarmupRunner::WarmupRunnerTestHook test_hook = {})
+      starpu_server::WarmupRunner::CompletionObserver completion_observer = {})
   {
     WarmupRunnerTestFixture::init(use_cuda);
     runner = std::make_unique<starpu_server::WarmupRunner>(
         opts, *starpu, model_cpu, models_gpu, outputs_ref,
-        std::move(test_hook));
+        std::move(completion_observer));
   }
 };

@@ -13,21 +13,15 @@ namespace starpu_server {
 
 class WarmupRunner {
  public:
-#ifdef UNIT_TEST
-  using WarmupRunnerTestHook =
+  using CompletionObserver =
       std::function<void(std::atomic<int>& dummy_completed_jobs)>;
-#endif
 
   WarmupRunner(
       const RuntimeConfig& opts, StarPUSetup& starpu,
       torch::jit::script::Module& model_cpu,
       std::vector<torch::jit::script::Module>& models_gpu,
-      const std::vector<torch::Tensor>& outputs_ref
-#ifdef UNIT_TEST
-      ,
-      WarmupRunnerTestHook test_hook = {}
-#endif
-  );
+      const std::vector<torch::Tensor>& outputs_ref,
+      CompletionObserver completion_observer = {});
   ~WarmupRunner() = default;
   WarmupRunner(const WarmupRunner&) = delete;
   auto operator=(const WarmupRunner&) -> WarmupRunner& = delete;
@@ -49,8 +43,6 @@ class WarmupRunner {
   torch::jit::script::Module& model_cpu_;
   std::vector<torch::jit::script::Module>& models_gpu_;
   const std::vector<torch::Tensor>& outputs_ref_;
-#ifdef UNIT_TEST
-  WarmupRunnerTestHook test_hook_;
-#endif
+  CompletionObserver completion_observer_;
 };
 }  // namespace starpu_server
