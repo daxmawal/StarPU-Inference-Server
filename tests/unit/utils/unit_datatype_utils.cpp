@@ -1,14 +1,12 @@
 #include <ATen/core/ScalarType.h>
 #include <gtest/gtest.h>
 
-#include <array>
 #include <bit>
 #include <limits>
 #include <type_traits>
-#include <unordered_set>
 #include <utility>
-#include <vector>
 
+#include "../../common/datatype_test_utils.hpp"
 #include "utils/datatype_utils.hpp"
 #include "utils/device_type.hpp"
 
@@ -48,8 +46,7 @@ TEST_P(ScalarToDatatypeUnsupported, ThrowsInvalidArgument)
 
 INSTANTIATE_TEST_SUITE_P(
     UnsupportedTypes, ScalarToDatatypeUnsupported,
-    ::testing::Values(
-        at::kComplexFloat, at::kComplexDouble, at::kQInt8, at::kQUInt8));
+    ::testing::ValuesIn(starpu_server::test_utils::unsupported_scalar_types()));
 
 class ElementSizeCase
     : public ::testing::TestWithParam<std::pair<at::ScalarType, size_t>> {};
@@ -83,8 +80,7 @@ TEST_P(ElementSizeUnsupported, ThrowsInvalidArgument)
 
 INSTANTIATE_TEST_SUITE_P(
     UnsupportedTypes, ElementSizeUnsupported,
-    ::testing::Values(
-        at::kComplexFloat, at::kComplexDouble, at::kQInt8, at::kQUInt8));
+    ::testing::ValuesIn(starpu_server::test_utils::unsupported_scalar_types()));
 
 class DatatypeToScalarCase
     : public ::testing::TestWithParam<std::pair<std::string, at::ScalarType>> {
@@ -128,37 +124,11 @@ TEST(DatatypeUtils, ScalarTypeToString)
 }
 
 namespace {
-using Enum = at::ScalarType;
-using U = std::underlying_type_t<Enum>;
-constexpr std::array<Enum, 10> kSupportedArr = {
-    at::kFloat, at::kDouble, at::kHalf, at::kBFloat16, at::kInt,
-    at::kLong,  at::kShort,  at::kChar, at::kByte,     at::kBool};
-
-auto
-AllTypes() -> std::vector<Enum>
-{
-  const int first = static_cast<int>(std::to_underlying(Enum::Undefined));
-  const int last = static_cast<int>(std::to_underlying(Enum::NumOptions));
-  std::vector<Enum> out;
-  out.reserve(static_cast<std::size_t>(last - first));
-  for (int i = first; i < last; ++i) {
-    out.push_back(static_cast<Enum>(static_cast<U>(i)));
-  }
-  return out;
-}
-
-auto
-SupportedSet() -> const std::unordered_set<Enum>&
-{
-  static const std::unordered_set<Enum> cache(
-      kSupportedArr.begin(), kSupportedArr.end());
-  return cache;
-}
 
 inline auto
 CheckSupportedTypes() -> ::testing::AssertionResult
 {
-  for (const auto type : kSupportedArr) {
+  for (const auto type : starpu_server::test_utils::supported_scalar_types()) {
     try {
       (void)starpu_server::scalar_type_to_datatype(type);
       (void)starpu_server::element_size(type);
@@ -175,28 +145,26 @@ CheckSupportedTypes() -> ::testing::AssertionResult
 inline auto
 CheckUnsupportedTypes() -> ::testing::AssertionResult
 {
-  const auto& supported = SupportedSet();
-  for (const auto type : AllTypes()) {
-    if (!supported.contains(type)) {
-      bool ok1 = false;
-      bool ok2 = false;
-      try {
-        (void)starpu_server::scalar_type_to_datatype(type);
-      }
-      catch (const std::invalid_argument&) {
-        ok1 = true;
-      }
-      try {
-        (void)starpu_server::element_size(type);
-      }
-      catch (const std::invalid_argument&) {
-        ok2 = true;
-      }
-      if (!(ok1 && ok2)) {
-        return ::testing::AssertionFailure()
-               << "Unsupported type checks failed for type: "
-               << static_cast<int>(std::to_underlying(type));
-      }
+  for (const auto type :
+       starpu_server::test_utils::unsupported_scalar_types()) {
+    bool ok1 = false;
+    bool ok2 = false;
+    try {
+      (void)starpu_server::scalar_type_to_datatype(type);
+    }
+    catch (const std::invalid_argument&) {
+      ok1 = true;
+    }
+    try {
+      (void)starpu_server::element_size(type);
+    }
+    catch (const std::invalid_argument&) {
+      ok2 = true;
+    }
+    if (!(ok1 && ok2)) {
+      return ::testing::AssertionFailure()
+             << "Unsupported type checks failed for type: "
+             << static_cast<int>(std::to_underlying(type));
     }
   }
   return ::testing::AssertionSuccess();
