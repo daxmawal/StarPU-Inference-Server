@@ -31,6 +31,7 @@ const InferenceTaskDependencies kDefaultInferenceTaskDependencies{
     .dyn_modes_allocator = std::malloc,
     .task_create_fn = starpu_task_create,
     .starpu_data_acquire_fn = starpu_data_acquire_cb,
+    .starpu_output_callback_hook = std::nullopt,
 };
 
 // =============================================================================
