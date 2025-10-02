@@ -89,8 +89,9 @@ configure_gpu(starpu_conf& conf, const RuntimeConfig& opts)
   }
 }
 
-std::unique_ptr<InputSlotPool>
+auto
 initialize_input_pool(const RuntimeConfig& opts)
+    -> std::unique_ptr<InputSlotPool>
 {
   if (opts.models.empty() || opts.models[0].inputs.empty()) {
     return nullptr;
@@ -105,8 +106,9 @@ initialize_input_pool(const RuntimeConfig& opts)
   }
 }
 
-std::unique_ptr<OutputSlotPool>
+auto
 initialize_output_pool(const RuntimeConfig& opts)
+    -> std::unique_ptr<OutputSlotPool>
 {
   if (opts.models.empty() || opts.models[0].outputs.empty()) {
     return nullptr;
@@ -390,9 +392,9 @@ StarPUSetup::~StarPUSetup()
 }
 
 void
-StarPUSetup::set_starpu_init_fn(StarpuInitFn fn)
+StarPUSetup::set_starpu_init_fn(StarpuInitFn hook_fn)
 {
-  starpu_init_fn = fn != nullptr ? fn : &starpu_init;
+  starpu_init_fn = hook_fn != nullptr ? hook_fn : &starpu_init;
 }
 
 void
@@ -402,10 +404,10 @@ StarPUSetup::reset_starpu_init_fn()
 }
 
 void
-StarPUSetup::set_worker_stream_query_fn(WorkerStreamQueryFn fn)
+StarPUSetup::set_worker_stream_query_fn(WorkerStreamQueryFn hook_fn)
 {
   worker_stream_query_fn =
-      fn != nullptr ? fn : &starpu_worker_get_stream_workerids;
+      hook_fn != nullptr ? hook_fn : &starpu_worker_get_stream_workerids;
 }
 
 void
