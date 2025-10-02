@@ -82,6 +82,7 @@ class InputSlotPool {
   std::condition_variable cv_;
 };
 
+#ifdef UNIT_TEST
 namespace testing {
 
 using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
@@ -94,5 +95,6 @@ auto set_starpu_register_failure_observer_for_tests(
     RegisterFailureObserverFn observer) -> RegisterFailureObserverFn;
 
 }  // namespace testing
+#endif  // UNIT_TEST
 
 }  // namespace starpu_server

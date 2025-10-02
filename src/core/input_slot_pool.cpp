@@ -349,6 +349,7 @@ InputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
 
 }  // namespace starpu_server
 
+#ifdef UNIT_TEST
 namespace starpu_server::testing {
 
 auto
@@ -371,3 +372,4 @@ set_starpu_register_failure_observer_for_tests(
 }
 
 }  // namespace starpu_server::testing
+#endif  // UNIT_TEST
