@@ -4,7 +4,6 @@ target_sources(
   unit_tests
   INTERFACE cli/unit_cli.cpp
             cli/robustness/edgecases_cli.cpp
-            core/unit_inference_queue.cpp
             core/unit_inference_runner_helpers.cpp
             core/unit_inference_task_errors.cpp
             core/unit_inference_runner.cpp

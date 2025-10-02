@@ -149,14 +149,15 @@ CallbackResultsMatch(
 }
 }  // namespace
 
-TEST(InferenceRunner_Unit, MakeShutdownJob)
+TEST(InferenceJobTest, MakeShutdownJobCreatesShutdownSignal)
 {
   auto job = starpu_server::InferenceJob::make_shutdown_job();
   ASSERT_NE(job, nullptr);
   EXPECT_TRUE(job->is_shutdown());
+  EXPECT_EQ(job->get_job_id(), 0);
 }
 
-TEST(InferenceJob_Unit, ConstructorInitializesState)
+TEST(InferenceJobTest, ConstructorInitializesState)
 {
   const std::vector<torch::Tensor> inputs{torch::ones(kShape2x2)};
   const std::vector<torch::Tensor> outputs{torch::zeros(kShape2x2)};
@@ -194,7 +195,7 @@ TEST(InferenceJob_Unit, ConstructorInitializesState)
   EXPECT_DOUBLE_EQ(callback_latency, kLatencyMs);
 }
 
-TEST(InferenceJob_Unit, SettersGettersAndCallback)
+TEST(InferenceJobTest, SettersGettersAndCallback)
 {
   const std::vector<torch::Tensor> inputs{torch::ones(kShape2x2)};
   const std::vector<at::ScalarType> types{at::kFloat};
@@ -230,7 +231,7 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
       callback_called, cb_tensors, cb_latency, outputs, kLatencyMs));
 }
 
-TEST(InferenceJob_Unit, SetInputTensorsCopiesNonContiguousAsContiguous)
+TEST(InferenceJobTest, SetInputTensorsCopiesNonContiguousAsContiguous)
 {
   auto non_contiguous =
       torch::arange(0, 6, torch::TensorOptions().dtype(torch::kFloat32))
