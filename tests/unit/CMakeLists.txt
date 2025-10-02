@@ -19,7 +19,6 @@ target_sources(
             core/robustness/edgecases_inference_task_errors.cpp
             core/robustness/edgecases_warmup_runner.cpp
             core/robustness/edgecases_inference_runner.cpp
-            core/robustness/edgecases_inference_task.cpp
             core/robustness/edgecases_inference_task_limits.cpp
             core/robustness/edgecases_tensor_builder.cpp
             grpc/async_server_context_test.cpp

@@ -60,8 +60,8 @@ starpu_task_destroy(struct starpu_task* /*task*/)
 }
 
 namespace {
-inline void*
-AlwaysNullAllocator(size_t)
+inline auto
+AlwaysNullAllocator(size_t) -> void*
 {
   return nullptr;
 }
@@ -72,15 +72,16 @@ ThrowingStarpuOutputCallbackHook(starpu_server::InferenceCallbackContext*)
   throw starpu_server::StarPURegistrationException("forced failure");
 }
 
-int
+auto
 AlwaysFailingAcquire(
-    starpu_data_handle_t, starpu_data_access_mode, void (*)(void*), void*)
+    starpu_data_handle_t, starpu_data_access_mode, void (*)(void*),
+    void*) -> int
 {
   return -42;
 }
 }  // namespace
 
-TEST_F(InferenceTaskTest, TooManyInputs)
+TEST_F(InferenceTaskTest, TooManyInputsThrows)
 {
   const size_t num_inputs = starpu_server::InferLimits::MaxInputs + 1;
   auto job = make_job(0, num_inputs);
@@ -90,12 +91,33 @@ TEST_F(InferenceTaskTest, TooManyInputs)
       starpu_server::InferenceExecutionException);
 }
 
-TEST_F(InferenceTaskTest, TooManyGpuModels)
+TEST_F(InferenceTaskTest, TooManyGpuModelsThrows)
 {
   auto job = make_job(1, 1);
   auto task = make_task(job, starpu_server::InferLimits::MaxModelsGPU + 1);
   EXPECT_THROW(
       task.create_inference_params(), starpu_server::TooManyGpuModelsException);
+}
+
+TEST_F(InferenceTaskTest, AssignFixedWorkerNegativeThrows)
+{
+  auto job = make_job(2, 1);
+  job->set_fixed_worker_id(-1);
+  auto task = make_task(job);
+  starpu_task task_struct{};
+  EXPECT_THROW(
+      task.assign_fixed_worker_if_needed(&task_struct), std::invalid_argument);
+}
+
+TEST_F(InferenceTaskTest, AssignFixedWorkerOutOfRangeThrows)
+{
+  auto job = make_job(3, 1);
+  const unsigned int total_workers = starpu_worker_get_count();
+  job->set_fixed_worker_id(static_cast<int>(total_workers));
+  auto task = make_task(job);
+  starpu_task task_struct{};
+  EXPECT_THROW(
+      task.assign_fixed_worker_if_needed(&task_struct), std::out_of_range);
 }
 
 TEST_F(InferenceTaskTest, FillModelPointersAllNegativeDeviceIds)
