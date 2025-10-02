@@ -353,12 +353,12 @@ InputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
 namespace starpu_server::testing {
 
 auto
-set_starpu_vector_register_hook_for_tests(StarpuVectorRegisterFn fn)
+set_starpu_vector_register_hook_for_tests(StarpuVectorRegisterFn hook_fn)
     -> StarpuVectorRegisterFn
 {
   const auto previous = g_starpu_vector_register_hook;
   g_starpu_vector_register_hook =
-      fn != nullptr ? fn : &starpu_vector_data_register;
+      hook_fn != nullptr ? hook_fn : &starpu_vector_data_register;
   return previous;
 }
 
