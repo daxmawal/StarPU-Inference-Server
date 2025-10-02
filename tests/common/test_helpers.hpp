@@ -190,6 +190,24 @@ make_model_request(const std::string& name, const std::string& version)
 }
 
 inline auto
+make_latency_breakdown(const inference::ModelInferResponse& response)
+    -> starpu_server::InferenceServiceImpl::LatencyBreakdown
+{
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+  breakdown.preprocess_ms = response.server_preprocess_ms();
+  breakdown.queue_ms = response.server_queue_ms();
+  breakdown.submit_ms = response.server_submit_ms();
+  breakdown.scheduling_ms = response.server_scheduling_ms();
+  breakdown.codelet_ms = response.server_codelet_ms();
+  breakdown.inference_ms = response.server_inference_ms();
+  breakdown.callback_ms = response.server_callback_ms();
+  breakdown.postprocess_ms = response.server_postprocess_ms();
+  breakdown.total_ms = response.server_total_ms();
+  breakdown.overall_ms = response.server_overall_ms();
+  return breakdown;
+}
+
+inline auto
 run_single_job(
     InferenceQueue& queue, std::vector<torch::Tensor> outputs = {},
     double latency = 0.0,

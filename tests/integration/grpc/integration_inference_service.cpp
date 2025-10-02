@@ -38,17 +38,7 @@ TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
   ASSERT_TRUE(status.ok());
   EXPECT_GT(reply.server_receive_ms(), 0);
   EXPECT_GT(reply.server_send_ms(), 0);
-  starpu_server::InferenceServiceImpl::LatencyBreakdown response_breakdown;
-  response_breakdown.preprocess_ms = reply.server_preprocess_ms();
-  response_breakdown.queue_ms = reply.server_queue_ms();
-  response_breakdown.submit_ms = reply.server_submit_ms();
-  response_breakdown.scheduling_ms = reply.server_scheduling_ms();
-  response_breakdown.codelet_ms = reply.server_codelet_ms();
-  response_breakdown.inference_ms = reply.server_inference_ms();
-  response_breakdown.callback_ms = reply.server_callback_ms();
-  response_breakdown.postprocess_ms = reply.server_postprocess_ms();
-  response_breakdown.total_ms = reply.server_total_ms();
-  response_breakdown.overall_ms = reply.server_overall_ms();
+  auto response_breakdown = starpu_server::make_latency_breakdown(reply);
   starpu_server::verify_populate_response(
       req, reply, outs, reply.server_receive_ms(), reply.server_send_ms(),
       response_breakdown);
@@ -376,17 +366,7 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
 
   EXPECT_GT(response.server_receive_ms(), 0);
   EXPECT_GT(response.server_send_ms(), 0);
-  starpu_server::InferenceServiceImpl::LatencyBreakdown response_breakdown;
-  response_breakdown.preprocess_ms = response.server_preprocess_ms();
-  response_breakdown.queue_ms = response.server_queue_ms();
-  response_breakdown.submit_ms = response.server_submit_ms();
-  response_breakdown.scheduling_ms = response.server_scheduling_ms();
-  response_breakdown.codelet_ms = response.server_codelet_ms();
-  response_breakdown.inference_ms = response.server_inference_ms();
-  response_breakdown.callback_ms = response.server_callback_ms();
-  response_breakdown.postprocess_ms = response.server_postprocess_ms();
-  response_breakdown.total_ms = response.server_total_ms();
-  response_breakdown.overall_ms = response.server_overall_ms();
+  auto response_breakdown = starpu_server::make_latency_breakdown(response);
   starpu_server::verify_populate_response(
       request, response, expected_outputs, response.server_receive_ms(),
       response.server_send_ms(), response_breakdown);
