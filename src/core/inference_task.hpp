@@ -14,6 +14,7 @@ namespace starpu_server {
 // =============================================================================
 
 class OutputSlotPool;  // forward declaration
+struct InferenceTaskDependencies;
 
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
@@ -32,6 +33,7 @@ struct InferenceCallbackContext {
   OutputSlotPool* output_pool = nullptr;  // fwd-declared pointer
   int output_slot_id = -1;
   std::function<void()> on_finished;
+  const struct InferenceTaskDependencies* dependencies = nullptr;
 
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
@@ -47,6 +49,20 @@ auto set_starpu_output_callback_hook(StarpuOutputCallbackHook hook)
 void invoke_starpu_output_callback_hook(InferenceCallbackContext* ctx);
 }  // namespace testing
 
+struct InferenceTaskDependencies {
+  using AllocationFn = void* (*)(size_t);
+  using TaskCreateFn = starpu_task* (*)();
+  using DataAcquireFn = int (*)(
+      starpu_data_handle_t, starpu_data_access_mode, void (*)(void*), void*);
+
+  AllocationFn dyn_handles_allocator = nullptr;
+  AllocationFn dyn_modes_allocator = nullptr;
+  TaskCreateFn task_create_fn = nullptr;
+  DataAcquireFn starpu_data_acquire_fn = nullptr;
+};
+
+extern const InferenceTaskDependencies kDefaultInferenceTaskDependencies;
+
 // =============================================================================
 // InferenceTask
 // Responsible for submitting a single inference job to StarPU,
@@ -60,7 +76,9 @@ class InferenceTask {
       StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
       torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu,
-      const RuntimeConfig* opts) noexcept;
+      const RuntimeConfig* opts,
+      const InferenceTaskDependencies& dependencies =
+          kDefaultInferenceTaskDependencies) noexcept;
 
   static auto safe_register_tensor_vector(
       const torch::Tensor& tensor,
@@ -103,18 +121,6 @@ class InferenceTask {
   void submit();
   void assign_fixed_worker_if_needed(starpu_task* task) const;
 
-  using AllocationFn = void* (*)(size_t);
-  using TaskCreateFn = starpu_task* (*)();
-  using DataAcquireFn = int (*)(
-      starpu_data_handle_t, starpu_data_access_mode, void (*)(void*), void*);
-  static auto set_dyn_handles_allocator_for_testing(AllocationFn allocator)
-      -> AllocationFn;
-  static auto set_dyn_modes_allocator_for_testing(AllocationFn allocator)
-      -> AllocationFn;
-  static auto set_task_create_fn_for_testing(TaskCreateFn fn) -> TaskCreateFn;
-  static auto set_starpu_data_acquire_fn_for_testing(DataAcquireFn fn)
-      -> DataAcquireFn;
-
   static void allocate_task_buffers(
       starpu_task* task, size_t num_buffers,
       const std::shared_ptr<InferenceCallbackContext>& ctx);
@@ -150,5 +156,6 @@ class InferenceTask {
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
   const RuntimeConfig* opts_;
+  const InferenceTaskDependencies& dependencies_;
 };
 }  // namespace starpu_server

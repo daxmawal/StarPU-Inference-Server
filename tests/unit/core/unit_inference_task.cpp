@@ -66,85 +66,6 @@ AlwaysNullAllocator(size_t)
   return nullptr;
 }
 
-class InferenceTaskHandlesAllocationFailureTest : public InferenceTaskTest {
- protected:
-  void SetUp() override
-  {
-    previous_allocator_ =
-        starpu_server::InferenceTask::set_dyn_handles_allocator_for_testing(
-            &AlwaysNullAllocator);
-  }
-
-  void TearDown() override
-  {
-    starpu_server::InferenceTask::set_dyn_handles_allocator_for_testing(
-        previous_allocator_);
-  }
-
- private:
-  starpu_server::InferenceTask::AllocationFn previous_allocator_ = nullptr;
-};
-
-class InferenceTaskModesAllocationFailureTest : public InferenceTaskTest {
- protected:
-  void SetUp() override
-  {
-    previous_allocator_ =
-        starpu_server::InferenceTask::set_dyn_modes_allocator_for_testing(
-            &AlwaysNullAllocator);
-  }
-
-  void TearDown() override
-  {
-    starpu_server::InferenceTask::set_dyn_modes_allocator_for_testing(
-        previous_allocator_);
-  }
-
- private:
-  starpu_server::InferenceTask::AllocationFn previous_allocator_ = nullptr;
-};
-
-class TaskCreateFnOverride {
- public:
-  explicit TaskCreateFnOverride(starpu_server::InferenceTask::TaskCreateFn fn)
-      : previous_(
-            starpu_server::InferenceTask::set_task_create_fn_for_testing(fn))
-  {
-  }
-
-  TaskCreateFnOverride(const TaskCreateFnOverride&) = delete;
-  TaskCreateFnOverride& operator=(const TaskCreateFnOverride&) = delete;
-
-  ~TaskCreateFnOverride()
-  {
-    starpu_server::InferenceTask::set_task_create_fn_for_testing(previous_);
-  }
-
- private:
-  starpu_server::InferenceTask::TaskCreateFn previous_ = nullptr;
-};
-
-class DataAcquireFnOverride {
- public:
-  explicit DataAcquireFnOverride(starpu_server::InferenceTask::DataAcquireFn fn)
-      : previous_(starpu_server::InferenceTask::
-                      set_starpu_data_acquire_fn_for_testing(fn))
-  {
-  }
-
-  DataAcquireFnOverride(const DataAcquireFnOverride&) = delete;
-  DataAcquireFnOverride& operator=(const DataAcquireFnOverride&) = delete;
-
-  ~DataAcquireFnOverride()
-  {
-    starpu_server::InferenceTask::set_starpu_data_acquire_fn_for_testing(
-        previous_);
-  }
-
- private:
-  starpu_server::InferenceTask::DataAcquireFn previous_ = nullptr;
-};
-
 class StarpuOutputCallbackHookOverride {
  public:
   using Hook = starpu_server::testing::StarpuOutputCallbackHook;
@@ -245,10 +166,12 @@ TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
 
 TEST_F(InferenceTaskTest, CreateTaskThrowsWhenStarpuTaskCreateFails)
 {
-  TaskCreateFnOverride override([]() -> starpu_task* { return nullptr; });
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.task_create_fn = []() -> starpu_task* { return nullptr; };
 
   auto job = make_job(5, 0);
-  auto task = make_task(job);
+  auto task = make_task(job, 0, &dependencies);
 
   const std::vector<starpu_data_handle_t> inputs;
   const std::vector<starpu_data_handle_t> outputs;
@@ -383,7 +306,10 @@ TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
       job, nullptr, &opts_, 0, std::vector<starpu_data_handle_t>{}, outputs);
   ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
 
-  DataAcquireFnOverride override(&AlwaysFailingAcquire);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_data_acquire_fn = &AlwaysFailingAcquire;
+  ctx->dependencies = &dependencies;
   starpu_server::CaptureStream capture{std::cerr};
 
   EXPECT_THROW(
@@ -578,13 +504,15 @@ TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
   EXPECT_EQ(modes[2], STARPU_W);
 }
 
-TEST_F(
-    InferenceTaskHandlesAllocationFailureTest,
-    AllocateTaskBuffersThrowsWhenHandleAllocationFails)
+TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenHandleAllocationFails)
 {
   auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
       nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
       std::vector<starpu_data_handle_t>{});
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.dyn_handles_allocator = &AlwaysNullAllocator;
+  ctx->dependencies = &dependencies;
   starpu_task task{};
   EXPECT_THROW(
       starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),
@@ -593,13 +521,15 @@ TEST_F(
   EXPECT_EQ(task.dyn_modes, nullptr);
 }
 
-TEST_F(
-    InferenceTaskModesAllocationFailureTest,
-    AllocateTaskBuffersThrowsWhenModeAllocationFails)
+TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenModeAllocationFails)
 {
   auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
       nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
       std::vector<starpu_data_handle_t>{});
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.dyn_modes_allocator = &AlwaysNullAllocator;
+  ctx->dependencies = &dependencies;
   starpu_task task{};
   EXPECT_THROW(
       starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),

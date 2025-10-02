@@ -25,18 +25,14 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
-namespace {
-using AllocationFn = starpu_server::InferenceTask::AllocationFn;
-using TaskCreateFn = starpu_server::InferenceTask::TaskCreateFn;
-using DataAcquireFn = starpu_server::InferenceTask::DataAcquireFn;
-
-AllocationFn dyn_handles_allocator = std::malloc;
-AllocationFn dyn_modes_allocator = std::malloc;
-TaskCreateFn task_create_fn = starpu_task_create;
-DataAcquireFn starpu_data_acquire_fn = starpu_data_acquire_cb;
-}  // namespace
-
 namespace starpu_server {
+const InferenceTaskDependencies kDefaultInferenceTaskDependencies{
+    .dyn_handles_allocator = std::malloc,
+    .dyn_modes_allocator = std::malloc,
+    .task_create_fn = starpu_task_create,
+    .starpu_data_acquire_fn = starpu_data_acquire_cb,
+};
+
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -45,9 +41,10 @@ InferenceTask::InferenceTask(
     StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu,
-    const RuntimeConfig* opts) noexcept
+    const RuntimeConfig* opts,
+    const InferenceTaskDependencies& dependencies) noexcept
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), opts_(opts)
+      models_gpu_(models_gpu), opts_(opts), dependencies_(dependencies)
 {
 }
 
@@ -201,8 +198,10 @@ InferenceTask::create_context(
     -> std::shared_ptr<InferenceCallbackContext>
 {
   auto params = create_inference_params();
-  return std::make_shared<InferenceCallbackContext>(
+  auto ctx = std::make_shared<InferenceCallbackContext>(
       job_, std::move(params), opts_, job_->get_job_id(), inputs, outputs);
+  ctx->dependencies = &dependencies_;
+  return ctx;
 }
 
 void
@@ -379,7 +378,11 @@ InferenceTask::create_task(
   const size_t num_inputs = inputs_handles.size();
   const size_t num_buffers = num_inputs + outputs_handles.size();
 
-  auto* task = task_create_fn != nullptr ? task_create_fn() : nullptr;
+  const auto task_create =
+      dependencies_.task_create_fn != nullptr
+          ? dependencies_.task_create_fn
+          : kDefaultInferenceTaskDependencies.task_create_fn;
+  auto* task = task_create != nullptr ? task_create() : nullptr;
   if (task == nullptr) {
     throw StarPUTaskCreationException("Failed to create StarPU task.");
   }
@@ -391,6 +394,10 @@ InferenceTask::create_task(
   task->cl_arg_size = sizeof(InferenceParams);
   task->priority =
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_job_id());
+
+  if (ctx != nullptr && ctx->dependencies == nullptr) {
+    ctx->dependencies = &dependencies_;
+  }
 
   InferenceTask::allocate_task_buffers(task, num_buffers, ctx);
   InferenceTask::fill_task_buffers(task, inputs_handles, outputs_handles);
@@ -404,49 +411,26 @@ InferenceTask::create_task(
   return task;
 }
 
-auto
-InferenceTask::set_dyn_handles_allocator_for_testing(AllocationFn allocator)
-    -> AllocationFn
-{
-  auto previous = dyn_handles_allocator;
-  dyn_handles_allocator = allocator != nullptr ? allocator : std::malloc;
-  return previous;
-}
-
-auto
-InferenceTask::set_dyn_modes_allocator_for_testing(AllocationFn allocator)
-    -> AllocationFn
-{
-  auto previous = dyn_modes_allocator;
-  dyn_modes_allocator = allocator != nullptr ? allocator : std::malloc;
-  return previous;
-}
-
-auto
-InferenceTask::set_task_create_fn_for_testing(TaskCreateFn fn) -> TaskCreateFn
-{
-  auto previous = task_create_fn;
-  task_create_fn = fn != nullptr ? fn : starpu_task_create;
-  return previous;
-}
-
-auto
-InferenceTask::set_starpu_data_acquire_fn_for_testing(DataAcquireFn fn)
-    -> DataAcquireFn
-{
-  auto previous = starpu_data_acquire_fn;
-  starpu_data_acquire_fn = fn != nullptr ? fn : starpu_data_acquire_cb;
-  return previous;
-}
-
 void
 InferenceTask::allocate_task_buffers(
     starpu_task* task, size_t num_buffers,
     const std::shared_ptr<InferenceCallbackContext>& ctx)
 {
+  const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
+                                 ? ctx->dependencies
+                                 : &kDefaultInferenceTaskDependencies;
+
+  const auto handles_allocator =
+      dependencies->dyn_handles_allocator != nullptr
+          ? dependencies->dyn_handles_allocator
+          : kDefaultInferenceTaskDependencies.dyn_handles_allocator;
+  const auto modes_allocator =
+      dependencies->dyn_modes_allocator != nullptr
+          ? dependencies->dyn_modes_allocator
+          : kDefaultInferenceTaskDependencies.dyn_modes_allocator;
+
   auto handles_owner = std::unique_ptr<void, void (*)(void*)>(
-      dyn_handles_allocator(num_buffers * sizeof(starpu_data_handle_t)),
-      std::free);
+      handles_allocator(num_buffers * sizeof(starpu_data_handle_t)), std::free);
   if (!handles_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;
@@ -456,7 +440,7 @@ InferenceTask::allocate_task_buffers(
   }
 
   auto modes_owner = std::unique_ptr<void, void (*)(void*)>(
-      dyn_modes_allocator(num_buffers * sizeof(starpu_data_access_mode)),
+      modes_allocator(num_buffers * sizeof(starpu_data_access_mode)),
       std::free);
   if (!modes_owner) {
     task->dyn_handles = nullptr;
@@ -545,7 +529,15 @@ void
 InferenceTask::acquire_output_handle(
     starpu_data_handle_t handle, InferenceCallbackContext* ctx)
 {
-  const int ret = starpu_data_acquire_fn(
+  const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
+                                 ? ctx->dependencies
+                                 : &kDefaultInferenceTaskDependencies;
+  const auto data_acquire_fn =
+      dependencies->starpu_data_acquire_fn != nullptr
+          ? dependencies->starpu_data_acquire_fn
+          : kDefaultInferenceTaskDependencies.starpu_data_acquire_fn;
+
+  const int ret = data_acquire_fn(
       handle, STARPU_R,
       [](void* cb_arg) {
         auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);

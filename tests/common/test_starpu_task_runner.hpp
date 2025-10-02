@@ -10,6 +10,7 @@
 
 #include "core/inference_params.hpp"
 #include "core/inference_runner.hpp"
+#include "core/inference_task.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
 #include "test_utils.hpp"
 
@@ -26,6 +27,7 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
   std::unique_ptr<starpu_server::StarPUSetup> starpu_setup_;
   starpu_server::StarPUTaskRunnerConfig config_{};
   std::unique_ptr<starpu_server::StarPUTaskRunner> runner_;
+  starpu_server::InferenceTaskDependencies dependencies_;
   void SetUp() override
   {
     completed_jobs_ = 0;
@@ -39,6 +41,8 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     config_.results_mutex = &results_mutex_;
     config_.completed_jobs = &completed_jobs_;
     config_.all_done_cv = &cv_;
+    dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;
+    config_.dependencies = &dependencies_;
     runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
   }
 };

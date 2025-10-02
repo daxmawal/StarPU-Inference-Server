@@ -24,6 +24,8 @@ struct InferenceCallbackContext;
 //  - Submitting them to StarPU
 //  - Collecting and storing results
 // ============================================================================
+struct InferenceTaskDependencies;
+
 struct StarPUTaskRunnerConfig {
   InferenceQueue* queue{};
   torch::jit::script::Module* model_cpu{};
@@ -34,6 +36,7 @@ struct StarPUTaskRunnerConfig {
   std::mutex* results_mutex{};
   std::atomic<int>* completed_jobs{};
   std::condition_variable* all_done_cv{};
+  const InferenceTaskDependencies* dependencies{};
 };
 
 class StarPUTaskRunner {
@@ -95,5 +98,6 @@ class StarPUTaskRunner {
   std::mutex* results_mutex_;
   std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;
+  const InferenceTaskDependencies* dependencies_;
 };
 }  // namespace starpu_server

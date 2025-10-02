@@ -64,7 +64,10 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       models_gpu_(config.models_gpu), starpu_(config.starpu),
       opts_(config.opts), results_(config.results),
       results_mutex_(config.results_mutex),
-      completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv)
+      completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv),
+      dependencies_(
+          config.dependencies != nullptr ? config.dependencies
+                                         : &kDefaultInferenceTaskDependencies)
 {
   for (const auto& [ptr, name] :
        std::initializer_list<std::pair<const void*, std::string_view>>{
@@ -365,7 +368,8 @@ StarPUTaskRunner::submit_inference_task(
   NvtxRange nvtx_job_scope(
       std::string("submit job ") + std::to_string(job->get_job_id()));
   if (!(starpu_->has_input_pool() || starpu_->has_output_pool())) {
-    InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
+    InferenceTask task(
+        starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
     task.submit();
     return;
   }
@@ -381,7 +385,8 @@ StarPUTaskRunner::submit_inference_task(
     copied_ok = true;
     release_output_slot_on_exception = should_release_output_slot;
 
-    InferenceTask task(starpu_, job, model_cpu_, models_gpu_, opts_);
+    InferenceTask task(
+        starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
 
     std::vector<starpu_data_handle_t> input_handles_storage;
     const std::vector<starpu_data_handle_t>* input_handles = nullptr;

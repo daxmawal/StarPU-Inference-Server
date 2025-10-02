@@ -261,24 +261,14 @@ TEST_F(
   ASSERT_TRUE(starpu_setup_->has_output_pool());
   config_.starpu = starpu_setup_.get();
   config_.opts = &opts_;
+  dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies_.task_create_fn = []() -> starpu_task* { return nullptr; };
+  config_.dependencies = &dependencies_;
   runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_job_id(17);
   job->set_input_tensors({});
-
-  struct TaskCreateFnGuard {
-    explicit TaskCreateFnGuard(starpu_server::InferenceTask::TaskCreateFn fn)
-        : previous(
-              starpu_server::InferenceTask::set_task_create_fn_for_testing(fn))
-    {
-    }
-    ~TaskCreateFnGuard()
-    {
-      starpu_server::InferenceTask::set_task_create_fn_for_testing(previous);
-    }
-    starpu_server::InferenceTask::TaskCreateFn previous;
-  } guard([]() -> starpu_task* { return nullptr; });
 
   EXPECT_THROW(
       runner_->submit_inference_task(job),
