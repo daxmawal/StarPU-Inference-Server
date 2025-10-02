@@ -52,6 +52,35 @@ struct ExpectedJobInfo {
   int worker_id;
 };
 
+struct ClientWorkerTestContext {
+  starpu_server::RuntimeConfig config;
+  std::vector<torch::Tensor> outputs_reference;
+  starpu_server::InferenceQueue queue;
+};
+
+inline auto
+make_client_worker_test_context() -> ClientWorkerTestContext
+{
+  starpu_server::RuntimeConfig config{};
+  config.delay_ms = 0;
+  config.pregen_inputs = 1;
+
+  starpu_server::TensorConfig tensor_cfg{
+      .name = "input",
+      .dims = {1, 3},
+      .type = at::ScalarType::Float,
+  };
+  starpu_server::ModelConfig model_cfg{};
+  model_cfg.inputs = {tensor_cfg};
+  config.models = {model_cfg};
+
+  std::vector<torch::Tensor> outputs_ref{torch::zeros({1, 3})};
+
+  return ClientWorkerTestContext{
+      std::move(config), std::move(outputs_ref),
+      starpu_server::InferenceQueue()};
+}
+
 inline auto
 JobStateMatches(
     const std::shared_ptr<starpu_server::InferenceJob>& job,
@@ -286,21 +315,11 @@ TEST(
 
 TEST(InferenceRunner_Unit, ClientWorkerSeedsRngWhenSeedProvided)
 {
-  starpu_server::RuntimeConfig opts{};
-  opts.delay_ms = 0;
-  opts.pregen_inputs = 1;
+  auto context = make_client_worker_test_context();
+  auto& opts = context.config;
+  auto& queue = context.queue;
+  const auto& outputs_ref = context.outputs_reference;
   opts.seed = 123;
-  starpu_server::TensorConfig tensor_cfg{
-      .name = "input",
-      .dims = {1, 3},
-      .type = at::ScalarType::Float,
-  };
-  starpu_server::ModelConfig model_cfg{};
-  model_cfg.inputs = {tensor_cfg};
-  opts.models = {model_cfg};
-
-  starpu_server::InferenceQueue queue;
-  const std::vector<torch::Tensor> outputs_ref{torch::zeros({1, 3})};
 
   ASSERT_TRUE(opts.seed.has_value());
   torch::manual_seed(*opts.seed);
@@ -316,21 +335,11 @@ TEST(InferenceRunner_Unit, ClientWorkerSeedsRngWhenSeedProvided)
 
 TEST(InferenceRunner_Unit, ClientWorkerStopsWhenQueuePushFails)
 {
-  starpu_server::RuntimeConfig opts{};
-  opts.delay_ms = 0;
+  auto context = make_client_worker_test_context();
+  auto& opts = context.config;
+  auto& queue = context.queue;
+  const auto& outputs_ref = context.outputs_reference;
   opts.iterations = 1;
-  opts.pregen_inputs = 1;
-  starpu_server::TensorConfig tensor_cfg{
-      .name = "input",
-      .dims = {1, 3},
-      .type = at::ScalarType::Float,
-  };
-  starpu_server::ModelConfig model_cfg{};
-  model_cfg.inputs = {tensor_cfg};
-  opts.models = {model_cfg};
-
-  starpu_server::InferenceQueue queue;
-  const std::vector<torch::Tensor> outputs_ref{torch::zeros({1, 3})};
 
   testing::internal::CaptureStderr();
   queue.shutdown();
