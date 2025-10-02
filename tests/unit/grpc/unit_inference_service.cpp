@@ -37,6 +37,62 @@ class MetricsInferenceServiceTest : public InferenceServiceTest {
   }
 };
 
+class MultiTypeInferenceServiceTest : public InferenceServiceTest {
+ protected:
+  [[nodiscard]] auto make_service_config() const -> ServiceConfig override
+  {
+    ServiceConfig config;
+    config.expected_input_types = {at::kFloat, at::kLong};
+    return config;
+  }
+};
+
+class LongInputInferenceServiceTest : public InferenceServiceTest {
+ protected:
+  [[nodiscard]] auto make_service_config() const -> ServiceConfig override
+  {
+    ServiceConfig config;
+    config.expected_input_types = {at::kLong};
+    return config;
+  }
+};
+
+class ConfiguredShapeNoBatchingInferenceServiceTest
+    : public InferenceServiceTest {
+ protected:
+  [[nodiscard]] auto make_service_config() const -> ServiceConfig override
+  {
+    ServiceConfig config;
+    config.expected_input_dims = std::vector<std::vector<int64_t>>{{2, 2}};
+    config.max_batch_size = 0;
+    return config;
+  }
+};
+
+class ConfiguredShapeWithBatchingInferenceServiceTest
+    : public InferenceServiceTest {
+ protected:
+  [[nodiscard]] auto make_service_config() const -> ServiceConfig override
+  {
+    ServiceConfig config;
+    config.expected_input_dims = std::vector<std::vector<int64_t>>{{2, 2}};
+    config.max_batch_size = 4;
+    return config;
+  }
+};
+
+class ZeroRankConfiguredShapeWithBatchingInferenceServiceTest
+    : public InferenceServiceTest {
+ protected:
+  [[nodiscard]] auto make_service_config() const -> ServiceConfig override
+  {
+    ServiceConfig config;
+    config.expected_input_dims = std::vector<std::vector<int64_t>>{{}};
+    config.max_batch_size = 4;
+    return config;
+  }
+};
+
 TEST(ComputeThreadCount, ZeroConcurrencyDefaults)
 {
   EXPECT_EQ(
@@ -54,16 +110,11 @@ TEST(ComputeThreadCount, ClampsToConfiguredBounds)
       starpu_server::kMaxGrpcThreads);
 }
 
-TEST(InferenceService, ValidateInputsSuccess)
+TEST_F(InferenceServiceTest, ValidateInputsSuccess)
 {
   auto req = starpu_server::make_valid_request();
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&req, inputs);
+  auto status = service->validate_and_convert_inputs(&req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
@@ -71,7 +122,7 @@ TEST(InferenceService, ValidateInputsSuccess)
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
 }
 
-TEST(InferenceService, ValidateInputsZeroCopyUsesRequestBuffer)
+TEST_F(InferenceServiceTest, ValidateInputsZeroCopyUsesRequestBuffer)
 {
   constexpr size_t kElements = 1U << 10;
   std::vector<float> data(kElements, kF1);
@@ -81,15 +132,9 @@ TEST(InferenceService, ValidateInputsZeroCopyUsesRequestBuffer)
        starpu_server::to_raw_data(data)},
   });
 
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
-
   std::vector<torch::Tensor> inputs;
   std::vector<std::shared_ptr<const void>> keep_alive;
-  auto status = service.validate_and_convert_inputs(&req, inputs, &keep_alive);
+  auto status = service->validate_and_convert_inputs(&req, inputs, &keep_alive);
 
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
@@ -102,22 +147,16 @@ TEST(InferenceService, ValidateInputsZeroCopyUsesRequestBuffer)
       static_cast<int64_t>(req.raw_input_contents(0).size()));
 }
 
-TEST(InferenceService, ValidateInputsKeepAliveSharesAlias)
+TEST_F(InferenceServiceTest, ValidateInputsKeepAliveSharesAlias)
 {
   std::vector<float> data = {kF1, kF2, kF3, kF4};
   auto req = starpu_server::make_model_infer_request({
       {{2, 2}, at::kFloat, starpu_server::to_raw_data(data)},
   });
 
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
-
   std::vector<torch::Tensor> inputs;
   std::vector<std::shared_ptr<const void>> keep_alive;
-  auto status = service.validate_and_convert_inputs(&req, inputs, &keep_alive);
+  auto status = service->validate_and_convert_inputs(&req, inputs, &keep_alive);
 
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
@@ -128,7 +167,7 @@ TEST(InferenceService, ValidateInputsKeepAliveSharesAlias)
       static_cast<const void*>(req.raw_input_contents(0).data()));
 }
 
-TEST(InferenceService, ValidateInputsNonContiguous)
+TEST_F(InferenceServiceTest, ValidateInputsNonContiguous)
 {
   auto base = torch::tensor({{kF1, kF2}, {kF3, kF4}});
   auto noncontig = base.transpose(0, 1);
@@ -139,20 +178,15 @@ TEST(InferenceService, ValidateInputsNonContiguous)
   auto req = starpu_server::make_model_infer_request({
       {{2, 2}, at::kFloat, starpu_server::to_raw_data(data)},
   });
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&req, inputs);
+  auto status = service->validate_and_convert_inputs(&req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
   EXPECT_TRUE(inputs[0].is_contiguous());
   EXPECT_TRUE(torch::allclose(inputs[0], contig));
 }
 
-TEST(InferenceService, ValidateInputsMultipleDtypes)
+TEST_F(MultiTypeInferenceServiceTest, ValidateInputsMultipleDtypes)
 {
   std::vector<float> data0 = {kF1, kF2, kF3, kF4};
   std::vector<int64_t> data1 = {kI10, kI20, kI30};
@@ -160,13 +194,8 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
       {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
       {{3}, at::kLong, starpu_server::to_raw_data(data1)},
   });
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat, at::kLong};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&req, inputs);
+  auto status = service->validate_and_convert_inputs(&req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 2U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
@@ -177,122 +206,98 @@ TEST(InferenceService, ValidateInputsMultipleDtypes)
   EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
 }
 
-TEST(InferenceService, ValidateInputsConfiguredShapeNoBatching)
+TEST_F(
+    ConfiguredShapeNoBatchingInferenceServiceTest,
+    ValidateInputsConfiguredShapeNoBatching)
 {
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  std::vector<std::vector<int64_t>> expected_dims = {{2, 2}};
-  constexpr int kNoBatching = 0;
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types, expected_dims, kNoBatching);
-
   auto valid_req = starpu_server::make_shape_request({2, 2});
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&valid_req, inputs);
+  auto status = service->validate_and_convert_inputs(&valid_req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
 
   auto mismatched_dims_req = starpu_server::make_shape_request({2, 3});
   inputs.clear();
-  status = service.validate_and_convert_inputs(&mismatched_dims_req, inputs);
+  status = service->validate_and_convert_inputs(&mismatched_dims_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 
   auto unexpected_rank_req = starpu_server::make_shape_request({2, 2, 2});
   inputs.clear();
-  status = service.validate_and_convert_inputs(&unexpected_rank_req, inputs);
+  status = service->validate_and_convert_inputs(&unexpected_rank_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceService, ValidateInputsConfiguredShapeWithBatching)
+TEST_F(
+    ConfiguredShapeWithBatchingInferenceServiceTest,
+    ValidateInputsConfiguredShapeWithBatching)
 {
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  std::vector<std::vector<int64_t>> expected_dims = {{2, 2}};
-  constexpr int kMaxBatchSize = 4;
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types, expected_dims, kMaxBatchSize);
-
   auto same_rank_req = starpu_server::make_shape_request({2, 2});
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&same_rank_req, inputs);
+  auto status = service->validate_and_convert_inputs(&same_rank_req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
 
   auto batch_only_req = starpu_server::make_shape_request({2});
   inputs.clear();
-  status = service.validate_and_convert_inputs(&batch_only_req, inputs);
+  status = service->validate_and_convert_inputs(&batch_only_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 
   auto explicit_batch_req = starpu_server::make_shape_request({3, 2, 2});
   inputs.clear();
-  status = service.validate_and_convert_inputs(&explicit_batch_req, inputs);
+  status = service->validate_and_convert_inputs(&explicit_batch_req, inputs);
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{3, 2, 2}));
 
   auto exceeding_batch_req = starpu_server::make_shape_request({5, 2, 2});
   inputs.clear();
-  status = service.validate_and_convert_inputs(&exceeding_batch_req, inputs);
+  status = service->validate_and_convert_inputs(&exceeding_batch_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 
   auto mismatched_dims_req = starpu_server::make_shape_request({2, 3});
   inputs.clear();
-  status = service.validate_and_convert_inputs(&mismatched_dims_req, inputs);
+  status = service->validate_and_convert_inputs(&mismatched_dims_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 
   auto mismatched_tail_req = starpu_server::make_shape_request({3, 2, 3});
   inputs.clear();
-  status = service.validate_and_convert_inputs(&mismatched_tail_req, inputs);
+  status = service->validate_and_convert_inputs(&mismatched_tail_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceService, ValidateInputsConfiguredShapeRejectsTailLengthMismatch)
+TEST_F(
+    ConfiguredShapeWithBatchingInferenceServiceTest,
+    ValidateInputsConfiguredShapeRejectsTailLengthMismatch)
 {
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  std::vector<std::vector<int64_t>> expected_dims = {{2, 2}};
-  constexpr int kMaxBatchSize = 4;
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types, expected_dims, kMaxBatchSize);
-
   auto mismatched_tail_length_req =
       starpu_server::make_shape_request({3, 2, 2, 2});
   std::vector<torch::Tensor> inputs;
   auto status =
-      service.validate_and_convert_inputs(&mismatched_tail_length_req, inputs);
+      service->validate_and_convert_inputs(&mismatched_tail_length_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceService, ValidateInputsConfiguredShapeRejectsZeroRankBatch)
+TEST_F(
+    ZeroRankConfiguredShapeWithBatchingInferenceServiceTest,
+    ValidateInputsConfiguredShapeRejectsZeroRankBatch)
 {
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  std::vector<std::vector<int64_t>> expected_dims = {{}};
-  constexpr int kMaxBatchSize = 4;
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types, expected_dims, kMaxBatchSize);
-
   auto zero_rank_req = starpu_server::make_shape_request({});
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&zero_rank_req, inputs);
+  auto status = service->validate_and_convert_inputs(&zero_rank_req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceService, ValidateInputsMismatchedCount)
+TEST_F(InferenceServiceTest, ValidateInputsMismatchedCount)
 {
   std::vector<float> data0 = {kF1, kF2, kF3, kF4};
   std::vector<int64_t> data1 = {kI10, kI20, kI30};
@@ -300,13 +305,8 @@ TEST(InferenceService, ValidateInputsMismatchedCount)
       {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
       {{3}, at::kLong, starpu_server::to_raw_data(data1)},
   });
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&req, inputs);
+  auto status = service->validate_and_convert_inputs(&req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
@@ -433,62 +433,43 @@ TEST(InferenceServiceImpl, PopulateResponseDetectsOverflow)
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceService, ValidateInputsMismatchedRawContents)
+TEST_F(InferenceServiceTest, ValidateInputsMismatchedRawContents)
 {
   auto req = starpu_server::make_valid_request();
   req.add_raw_input_contents("extra");
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&req, inputs);
+  auto status = service->validate_and_convert_inputs(&req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceService, ValidateInputsDatatypeMismatch)
+TEST_F(LongInputInferenceServiceTest, ValidateInputsDatatypeMismatch)
 {
   auto req = starpu_server::make_valid_request();
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kLong};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&req, inputs);
+  auto status = service->validate_and_convert_inputs(&req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceService, ValidateInputsShapeOverflow)
+TEST_F(InferenceServiceTest, ValidateInputsShapeOverflow)
 {
   starpu_server::InputSpec spec{
       {std::numeric_limits<int64_t>::max()},
       at::kFloat,
       starpu_server::to_raw_data<float>({1.0F})};
   auto req = starpu_server::make_model_infer_request({spec});
-  starpu_server::InferenceQueue queue;
-  std::vector<torch::Tensor> ref_outputs;
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
   std::vector<torch::Tensor> inputs;
-  auto status = service.validate_and_convert_inputs(&req, inputs);
+  auto status = service->validate_and_convert_inputs(&req, inputs);
   ASSERT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
-TEST(InferenceService, SubmitJobAndWaitReturnsUnavailableWhenQueueShutdown)
+TEST_F(
+    InferenceServiceTest, SubmitJobAndWaitReturnsUnavailableWhenQueueShutdown)
 {
-  starpu_server::InferenceQueue queue;
   queue.shutdown();
-  std::vector<torch::Tensor> ref_outputs = {
-      torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
-  std::vector<at::ScalarType> expected_types = {at::kFloat};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, expected_types);
+  ref_outputs = {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
   std::vector<torch::Tensor> inputs = {
       torch::tensor({kF1}, torch::TensorOptions().dtype(at::kFloat))};
   std::vector<torch::Tensor> outputs = {
@@ -497,7 +478,7 @@ TEST(InferenceService, SubmitJobAndWaitReturnsUnavailableWhenQueueShutdown)
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   starpu_server::detail::TimingInfo timing_info{};
   auto status =
-      service.submit_job_and_wait(inputs, outputs, breakdown, timing_info);
+      service->submit_job_and_wait(inputs, outputs, breakdown, timing_info);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
   EXPECT_TRUE(outputs.empty());

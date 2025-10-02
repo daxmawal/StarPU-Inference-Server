@@ -6,6 +6,7 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "core/inference_runner.hpp"
@@ -57,11 +58,27 @@ make_shape_request(const std::vector<int64_t>& shape, float fill_value = kF1)
 
 class InferenceServiceTest : public ::testing::Test {
  protected:
+  struct ServiceConfig {
+    std::vector<at::ScalarType> expected_input_types = {at::kFloat};
+    std::optional<std::vector<std::vector<int64_t>>> expected_input_dims;
+    int max_batch_size = 0;
+  };
+
+  virtual auto make_service_config() const -> ServiceConfig { return {}; }
+
   void SetUp() override
   {
-    std::vector<at::ScalarType> expected_input_types = {at::kFloat};
-    service = std::make_unique<starpu_server::InferenceServiceImpl>(
-        &queue, &ref_outputs, expected_input_types);
+    auto config = make_service_config();
+    if (config.expected_input_dims.has_value()) {
+      service = std::make_unique<starpu_server::InferenceServiceImpl>(
+          &queue, &ref_outputs, std::move(config.expected_input_types),
+          *config.expected_input_dims, config.max_batch_size);
+    } else {
+      ASSERT_EQ(config.max_batch_size, 0)
+          << "max_batch_size requires expected_input_dims";
+      service = std::make_unique<starpu_server::InferenceServiceImpl>(
+          &queue, &ref_outputs, std::move(config.expected_input_types));
+    }
   }
   auto prepare_job(
       std::vector<torch::Tensor> ref_outs,
