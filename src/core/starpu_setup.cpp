@@ -36,9 +36,20 @@
 
 namespace starpu_server {
 namespace {
-StarPUSetup::StarpuInitFn starpu_init_fn = &starpu_init;
-StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn =
-    &starpu_worker_get_stream_workerids;
+auto
+starpu_init_fn_ref() -> StarPUSetup::StarpuInitFn&
+{
+  static StarPUSetup::StarpuInitFn starpu_init_fn = &starpu_init;
+  return starpu_init_fn;
+}
+
+auto
+worker_stream_query_fn_ref() -> StarPUSetup::WorkerStreamQueryFn&
+{
+  static StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn =
+      &starpu_worker_get_stream_workerids;
+  return worker_stream_query_fn;
+}
 
 void
 configure_cpu(starpu_conf& conf, bool use_cpu)
@@ -376,7 +387,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
   configure_cpu(conf_, opts.use_cpu);
   configure_gpu(conf_, opts);
 
-  if (starpu_init_fn(&conf_) != 0) {
+  if (starpu_init_fn_ref()(&conf_) != 0) {
     throw StarPUInitializationException("[ERROR] StarPU initialization error");
   }
 
@@ -394,26 +405,26 @@ StarPUSetup::~StarPUSetup()
 void
 StarPUSetup::set_starpu_init_fn(StarpuInitFn hook_fn)
 {
-  starpu_init_fn = hook_fn != nullptr ? hook_fn : &starpu_init;
+  starpu_init_fn_ref() = hook_fn != nullptr ? hook_fn : &starpu_init;
 }
 
 void
 StarPUSetup::reset_starpu_init_fn()
 {
-  starpu_init_fn = &starpu_init;
+  starpu_init_fn_ref() = &starpu_init;
 }
 
 void
 StarPUSetup::set_worker_stream_query_fn(WorkerStreamQueryFn hook_fn)
 {
-  worker_stream_query_fn =
+  worker_stream_query_fn_ref() =
       hook_fn != nullptr ? hook_fn : &starpu_worker_get_stream_workerids;
 }
 
 void
 StarPUSetup::reset_worker_stream_query_fn()
 {
-  worker_stream_query_fn = &starpu_worker_get_stream_workerids;
+  worker_stream_query_fn_ref() = &starpu_worker_get_stream_workerids;
 }
 
 // =============================================================================
@@ -438,7 +449,7 @@ StarPUSetup::get_cuda_workers_by_device(const std::vector<int>& device_ids)
     }
 
     std::array<int, STARPU_NMAXWORKERS> workerids{};
-    const int nworkers = worker_stream_query_fn(
+    const int nworkers = worker_stream_query_fn_ref()(
         static_cast<unsigned int>(device_id), workerids.data(),
         STARPU_CUDA_WORKER);
 
