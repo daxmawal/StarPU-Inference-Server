@@ -20,15 +20,6 @@ namespace {
 const std::vector<int64_t> kShape1{1};
 const std::vector<torch::Dtype> kTypesFloat{torch::kFloat32};
 
-inline auto
-MakeTempModelPath(const char* base) -> std::filesystem::path
-{
-  const auto dir = std::filesystem::temp_directory_path();
-  const auto time =
-      std::chrono::high_resolution_clock::now().time_since_epoch().count();
-  return dir / (std::string(base) + "_" + std::to_string(time) + ".pt");
-}
-
 struct WorkerFailOutcome {
   bool threw_runtime_error;
   std::string log;

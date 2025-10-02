@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <functional>
 #include <future>
@@ -32,6 +33,15 @@ skip_if_no_cuda()
   if (!torch::cuda::is_available()) {
     GTEST_SKIP() << "CUDA is not available";
   }
+}
+
+inline auto
+MakeTempModelPath(const char* base) -> std::filesystem::path
+{
+  const auto dir = std::filesystem::temp_directory_path();
+  const auto time =
+      std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  return dir / (std::string(base) + "_" + std::to_string(time) + ".pt");
 }
 
 namespace starpu_server {
