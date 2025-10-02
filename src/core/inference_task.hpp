@@ -42,23 +42,18 @@ struct InferenceCallbackContext {
       std::vector<starpu_data_handle_t> outputs_) noexcept;
 };
 
-namespace testing {
-using StarpuOutputCallbackHook = void (*)(InferenceCallbackContext*);
-auto set_starpu_output_callback_hook(StarpuOutputCallbackHook hook)
-    -> StarpuOutputCallbackHook;
-void invoke_starpu_output_callback_hook(InferenceCallbackContext* ctx);
-}  // namespace testing
-
 struct InferenceTaskDependencies {
   using AllocationFn = void* (*)(size_t);
   using TaskCreateFn = starpu_task* (*)();
   using DataAcquireFn = int (*)(
       starpu_data_handle_t, starpu_data_access_mode, void (*)(void*), void*);
+  using OutputCallbackHook = void (*)(InferenceCallbackContext*);
 
   AllocationFn dyn_handles_allocator = nullptr;
   AllocationFn dyn_modes_allocator = nullptr;
   TaskCreateFn task_create_fn = nullptr;
   DataAcquireFn starpu_data_acquire_fn = nullptr;
+  std::optional<OutputCallbackHook> starpu_output_callback_hook;
 };
 
 extern const InferenceTaskDependencies kDefaultInferenceTaskDependencies;

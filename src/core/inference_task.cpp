@@ -65,29 +65,6 @@ InferenceCallbackContext::InferenceCallbackContext(
 {
 }
 
-namespace testing {
-namespace {
-StarpuOutputCallbackHook starpu_output_callback_hook = nullptr;
-}  // namespace
-
-auto
-set_starpu_output_callback_hook(StarpuOutputCallbackHook hook)
-    -> StarpuOutputCallbackHook
-{
-  auto previous = starpu_output_callback_hook;
-  starpu_output_callback_hook = hook;
-  return previous;
-}
-
-void
-invoke_starpu_output_callback_hook(InferenceCallbackContext* ctx)
-{
-  if (starpu_output_callback_hook != nullptr) {
-    starpu_output_callback_hook(ctx);
-  }
-}
-}  // namespace testing
-
 // =============================================================================
 // Handle Registration
 // Register input/output tensors as StarPU data handles.
@@ -515,8 +492,15 @@ InferenceTask::starpu_output_callback(void* arg)
     ctx->remaining_outputs_to_acquire =
         static_cast<int>(ctx->outputs_handles.size());
 
+    const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
+                                   ? ctx->dependencies
+                                   : &kDefaultInferenceTaskDependencies;
+
     for (const auto& handle : ctx->outputs_handles) {
-      testing::invoke_starpu_output_callback_hook(ctx);
+      if (dependencies->starpu_output_callback_hook.has_value()) {
+        const auto& hook = *dependencies->starpu_output_callback_hook;
+        hook(ctx);
+      }
       InferenceTask::process_output_handle(handle, ctx);
     }
   }

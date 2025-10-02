@@ -66,29 +66,6 @@ AlwaysNullAllocator(size_t)
   return nullptr;
 }
 
-class StarpuOutputCallbackHookOverride {
- public:
-  using Hook = starpu_server::testing::StarpuOutputCallbackHook;
-
-  explicit StarpuOutputCallbackHookOverride(Hook hook)
-      : previous_(starpu_server::testing::set_starpu_output_callback_hook(hook))
-  {
-  }
-
-  StarpuOutputCallbackHookOverride(const StarpuOutputCallbackHookOverride&) =
-      delete;
-  StarpuOutputCallbackHookOverride& operator=(
-      const StarpuOutputCallbackHookOverride&) = delete;
-
-  ~StarpuOutputCallbackHookOverride()
-  {
-    starpu_server::testing::set_starpu_output_callback_hook(previous_);
-  }
-
- private:
-  Hook previous_ = nullptr;
-};
-
 void
 ThrowingStarpuOutputCallbackHook(starpu_server::InferenceCallbackContext*)
 {
@@ -241,10 +218,14 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackLogsInferenceEngineException)
   auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
       job, nullptr, &opts, 0, std::vector<starpu_data_handle_t>{},
       std::vector<starpu_data_handle_t>{MakeHandle(0)});
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_output_callback_hook =
+      starpu_server::InferenceTaskDependencies::OutputCallbackHook(
+          &ThrowingStarpuOutputCallbackHook);
+  ctx->dependencies = &dependencies;
 
   starpu_server::CaptureStream capture{std::cerr};
-  StarpuOutputCallbackHookOverride hook_override(
-      &ThrowingStarpuOutputCallbackHook);
 
   EXPECT_NO_THROW(
       starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
