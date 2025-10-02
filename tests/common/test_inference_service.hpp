@@ -33,6 +33,28 @@ expect_empty_infer_response(const inference::ModelInferResponse& resp)
   EXPECT_DOUBLE_EQ(resp.server_overall_ms(), 0.0);
 }
 
+namespace starpu_server {
+
+inline constexpr float kF1 = 1.0F;
+
+inline auto
+make_shape_request(const std::vector<int64_t>& shape, float fill_value = kF1)
+    -> inference::ModelInferRequest
+{
+  size_t total = 1;
+  for (const auto dim : shape) {
+    total *= static_cast<size_t>(dim);
+  }
+  std::vector<float> values(total, fill_value);
+  InputSpec spec;
+  spec.shape = shape;
+  spec.dtype = at::kFloat;
+  spec.raw_data = to_raw_data(values);
+  return make_model_infer_request({spec});
+}
+
+}  // namespace starpu_server
+
 class InferenceServiceTest : public ::testing::Test {
  protected:
   void SetUp() override
