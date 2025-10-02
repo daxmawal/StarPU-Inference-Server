@@ -2,50 +2,6 @@
 
 #ifdef UNIT_TEST
 #include "../../tests/support/output_slot_pool_test_hooks.hpp"
-#else
-namespace starpu_server {
-
-struct OutputSlotPoolTestHook {
-  static void cleanup_slot_buffers(
-      OutputSlotPool::SlotInfo& slot,
-      std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count);
-  static size_t checked_total_numel(size_t per_sample_numel, size_t batch_size);
-  static auto host_buffer_infos(const OutputSlotPool& pool, int slot_id)
-      -> const std::vector<OutputSlotPool::HostBufferInfo>&;
-  static void free_host_buffer_for_tests(
-      void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
-};
-
-namespace testing {
-
-using OutputStarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
-using OutputRegisterFailureObserverFn = void (*)(
-    const OutputSlotPool::SlotInfo& slot,
-    const std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos);
-using OutputHostAllocatorFn = int (*)(void**, size_t alignment, size_t size);
-using OutputCudaPinnedOverrideFn =
-    bool (*)(size_t bytes, bool use_pinned, bool default_cuda_pinned);
-using OutputStarpuMemoryPinFn = int (*)(void* ptr, size_t size);
-
-auto set_output_starpu_vector_register_hook_for_tests(
-    OutputStarpuVectorRegisterFn fn) -> OutputStarpuVectorRegisterFn;
-
-auto set_output_register_failure_observer_for_tests(
-    OutputRegisterFailureObserverFn observer)
-    -> OutputRegisterFailureObserverFn;
-
-auto set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
-    -> OutputHostAllocatorFn;
-
-auto set_output_cuda_pinned_override_for_tests(OutputCudaPinnedOverrideFn fn)
-    -> OutputCudaPinnedOverrideFn;
-
-auto set_output_starpu_memory_pin_hook_for_tests(OutputStarpuMemoryPinFn fn)
-    -> OutputStarpuMemoryPinFn;
-
-}  // namespace testing
-
-}  // namespace starpu_server
 #endif
 
 #include <cuda_runtime_api.h>
@@ -68,14 +24,21 @@ namespace starpu_server {
 namespace {
 constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
 
-testing::OutputStarpuVectorRegisterFn g_starpu_vector_register_hook =
+using OutputStarpuVectorRegisterHook = decltype(&starpu_vector_data_register);
+using OutputRegisterFailureObserverHook = void (*)(
+    const OutputSlotPool::SlotInfo&,
+    const std::vector<OutputSlotPool::HostBufferInfo>&);
+using OutputHostAllocatorHook = int (*)(void**, size_t alignment, size_t size);
+using OutputCudaPinnedOverrideHook =
+    bool (*)(size_t bytes, bool use_pinned, bool default_cuda_pinned);
+using OutputStarpuMemoryPinHook = int (*)(void* ptr, size_t size);
+
+OutputStarpuVectorRegisterHook g_starpu_vector_register_hook =
     &starpu_vector_data_register;
-testing::OutputRegisterFailureObserverFn g_starpu_register_failure_observer =
-    nullptr;
-testing::OutputHostAllocatorFn g_output_host_allocator_hook = &posix_memalign;
-testing::OutputCudaPinnedOverrideFn g_output_cuda_pinned_override_hook =
-    nullptr;
-testing::OutputStarpuMemoryPinFn g_starpu_memory_pin_hook = &starpu_memory_pin;
+OutputRegisterFailureObserverHook g_starpu_register_failure_observer = nullptr;
+OutputHostAllocatorHook g_output_host_allocator_hook = &posix_memalign;
+OutputCudaPinnedOverrideHook g_output_cuda_pinned_override_hook = nullptr;
+OutputStarpuMemoryPinHook g_starpu_memory_pin_hook = &starpu_memory_pin;
 
 auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
@@ -212,6 +175,8 @@ call_checked_total_numel(size_t per_sample_numel, size_t batch_size)
 }
 }  // namespace
 
+#ifdef UNIT_TEST
+
 void
 OutputSlotPoolTestHook::cleanup_slot_buffers(
     OutputSlotPool::SlotInfo& slot,
@@ -292,6 +257,8 @@ set_output_starpu_memory_pin_hook_for_tests(OutputStarpuMemoryPinFn fn)
 }
 
 }  // namespace testing
+
+#endif  // UNIT_TEST
 
 OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
