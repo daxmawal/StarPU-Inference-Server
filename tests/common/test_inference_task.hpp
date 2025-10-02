@@ -3,6 +3,8 @@
 #include <torch/script.h>
 
 #include <limits>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "core/inference_task.hpp"
@@ -52,3 +54,20 @@ class InferenceTaskTest : public ::testing::Test {
   std::vector<torch::jit::script::Module> models_gpu_;
   starpu_server::RuntimeConfig opts_;
 };
+
+inline auto
+make_callback_context(
+    std::shared_ptr<starpu_server::InferenceJob> job = nullptr,
+    const starpu_server::RuntimeConfig* opts = nullptr,
+    std::vector<starpu_data_handle_t> inputs = {},
+    std::vector<starpu_data_handle_t> outputs = {},
+    const starpu_server::InferenceTaskDependencies* dependencies = nullptr,
+    std::shared_ptr<starpu_server::InferenceParams> params = nullptr,
+    int id = 0) -> std::shared_ptr<starpu_server::InferenceCallbackContext>
+{
+  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
+      std::move(job), std::move(params), opts, id, std::move(inputs),
+      std::move(outputs));
+  ctx->dependencies = dependencies;
+  return ctx;
+}

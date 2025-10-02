@@ -223,8 +223,9 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
   starpu_server::RuntimeConfig opts;
-  starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
-  starpu_server::InferenceTask::record_and_run_completion_callback(&ctx, end);
+  auto ctx = make_callback_context(job, &opts);
+  starpu_server::InferenceTask::record_and_run_completion_callback(
+      ctx.get(), end);
   EXPECT_TRUE(called);
   ASSERT_EQ(results_arg.size(), outputs.size());
   EXPECT_TRUE(torch::equal(results_arg[0], outputs[0]));
@@ -236,16 +237,14 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
 TEST_F(InferenceTaskTest, StarpuOutputCallbackLogsInferenceEngineException)
 {
   auto job = make_job(7, 1);
-  starpu_server::RuntimeConfig opts;
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      job, nullptr, &opts, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{MakeHandle(0)});
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
   dependencies.starpu_output_callback_hook =
       starpu_server::InferenceTaskDependencies::OutputCallbackHook(
           &ThrowingStarpuOutputCallbackHook);
-  ctx->dependencies = &dependencies;
+  starpu_server::RuntimeConfig opts;
+  auto ctx =
+      make_callback_context(job, &opts, {}, {MakeHandle(0)}, &dependencies);
 
   starpu_server::CaptureStream capture{std::cerr};
 
@@ -267,12 +266,12 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
   starpu_server::RuntimeConfig opts;
-  starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
+  auto ctx = make_callback_context(job, &opts);
   starpu_server::CaptureStream capture{std::cerr};
 
   EXPECT_NO_THROW(
       starpu_server::InferenceTask::record_and_run_completion_callback(
-          &ctx, end));
+          ctx.get(), end));
   const auto log = capture.str();
   EXPECT_NE(
       log.find("Exception in completion callback: callback failure"),
@@ -289,12 +288,12 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
   starpu_server::RuntimeConfig opts;
-  starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
+  auto ctx = make_callback_context(job, &opts);
   starpu_server::CaptureStream capture{std::cerr};
 
   EXPECT_NO_THROW(
       starpu_server::InferenceTask::record_and_run_completion_callback(
-          &ctx, end));
+          ctx.get(), end));
   const auto log = capture.str();
   EXPECT_NE(
       log.find("Unknown exception in completion callback"), std::string::npos);
@@ -304,15 +303,12 @@ TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
 {
   auto job = make_job(3, 0);
   auto handle = MakeHandle(0);
-  auto outputs = std::vector<starpu_data_handle_t>{handle};
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      job, nullptr, &opts_, 0, std::vector<starpu_data_handle_t>{}, outputs);
-  ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
-
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
   dependencies.starpu_data_acquire_fn = &AlwaysFailingAcquire;
-  ctx->dependencies = &dependencies;
+  auto outputs = std::vector<starpu_data_handle_t>{handle};
+  auto ctx = make_callback_context(job, &opts_, {}, outputs, &dependencies);
+  ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
   starpu_server::CaptureStream capture{std::cerr};
 
   EXPECT_THROW(
@@ -335,8 +331,7 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
   auto* const handle_3 = MakeHandle(3);
   std::vector<starpu_data_handle_t> inputs{handle_1};
   std::vector<starpu_data_handle_t> outputs{handle_2, handle_3};
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      nullptr, nullptr, nullptr, 0, inputs, outputs);
+  auto ctx = make_callback_context(nullptr, nullptr, inputs, outputs);
   starpu_server::InferenceTask::cleanup(ctx);
   EXPECT_EQ(unregister_call_count_ref(), 3);
   ASSERT_EQ(unregister_handles_ref().size(), 3U);
@@ -359,9 +354,7 @@ TEST(InferenceTask, FinalizeInferenceTaskCopiesOutputs)
   job->set_output_tensors(
       {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))});
 
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      job, nullptr, &opts, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{});
+  auto ctx = make_callback_context(job, &opts);
   ctx->output_pool = &pool;
   ctx->output_slot_id = slot_id;
   ctx->self_keep_alive = ctx;
@@ -397,9 +390,7 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesCopyFailure)
   job->set_output_tensors(
       {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))});
 
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      job, nullptr, &opts, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{});
+  auto ctx = make_callback_context(job, &opts);
   ctx->output_pool = &pool;
   ctx->output_slot_id = slot_id;
   ctx->self_keep_alive = ctx;
@@ -433,9 +424,7 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesOnFinishedException)
   job->set_output_tensors(
       {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))});
 
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      job, nullptr, &opts, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{});
+  auto ctx = make_callback_context(job, &opts);
   ctx->output_pool = &pool;
   ctx->output_slot_id = slot_id;
   ctx->self_keep_alive = ctx;
@@ -469,9 +458,7 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesOnFinishedException)
 
 TEST(InferenceTask, ProcessOutputHandleNullHandleFinalizes)
 {
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{});
+  auto ctx = make_callback_context();
   ctx->remaining_outputs_to_acquire = 1;
   ctx->self_keep_alive = ctx;
 
@@ -487,9 +474,7 @@ TEST(InferenceTask, ProcessOutputHandleNullHandleFinalizes)
 
 TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
 {
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{});
+  auto ctx = make_callback_context();
   starpu_task* task = starpu_task_create();
   starpu_server::InferenceTask::allocate_task_buffers(task, 3, ctx);
   auto* handle_1 = MakeHandle(1);
@@ -509,13 +494,10 @@ TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
 
 TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenHandleAllocationFails)
 {
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{});
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
   dependencies.dyn_handles_allocator = &AlwaysNullAllocator;
-  ctx->dependencies = &dependencies;
+  auto ctx = make_callback_context(nullptr, nullptr, {}, {}, &dependencies);
   starpu_task task{};
   EXPECT_THROW(
       starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),
@@ -526,13 +508,10 @@ TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenHandleAllocationFails)
 
 TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenModeAllocationFails)
 {
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{});
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
   dependencies.dyn_modes_allocator = &AlwaysNullAllocator;
-  ctx->dependencies = &dependencies;
+  auto ctx = make_callback_context(nullptr, nullptr, {}, {}, &dependencies);
   starpu_task task{};
   EXPECT_THROW(
       starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),
