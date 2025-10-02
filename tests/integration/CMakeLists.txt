@@ -8,12 +8,8 @@ target_sources(
             starpu/integration_starpu_setup.cpp
             starpu/integration_starpu_task_runner.cpp
             starpu/integration_tensor_builder_from_starpu.cpp
-            utils/integration_client_utils.cpp
-            utils/integration_datatype_utils.cpp
+            utils/integration_skipped_modules.cpp
             utils/integration_inference_validator.cpp
-            utils/integration_input_generator.cpp
-            utils/integration_logger.cpp
-            utils/integration_transparent_hash.cpp
             cli/integration_cli.cpp
             core/integration_inference_queue.cpp
             core/integration_inference_runner_helpers.cpp
