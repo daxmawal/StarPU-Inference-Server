@@ -19,6 +19,7 @@
 #include <format>
 #include <functional>
 #include <map>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -38,6 +39,87 @@ namespace {
 StarPUSetup::StarpuInitFn starpu_init_fn = &starpu_init;
 StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn =
     &starpu_worker_get_stream_workerids;
+
+void
+configure_cpu(starpu_conf& conf, bool use_cpu)
+{
+  if (!use_cpu) {
+    conf.ncpus = 0;
+  }
+}
+
+void
+configure_gpu(starpu_conf& conf, const RuntimeConfig& opts)
+{
+  if (!opts.use_cuda) {
+    conf.ncuda = 0;
+    return;
+  }
+
+  if (opts.device_ids.size() > STARPU_NMAXWORKERS) {
+    throw std::invalid_argument(std::format(
+        "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
+        STARPU_NMAXWORKERS));
+  }
+
+  std::unordered_set<int> unique_ids;
+  std::vector<int> valid_device_ids;
+  valid_device_ids.reserve(opts.device_ids.size());
+
+  for (const int device_id : opts.device_ids) {
+    if (device_id < 0) {
+      log_error(std::format(
+          "Invalid CUDA device ID {}: must be non-negative", device_id));
+      continue;
+    }
+    if (!unique_ids.insert(device_id).second) {
+      throw std::invalid_argument(
+          std::format("[ERROR] Duplicate CUDA device ID: {}", device_id));
+    }
+    valid_device_ids.push_back(device_id);
+  }
+
+  conf.use_explicit_workers_cuda_gpuid = valid_device_ids.empty() ? 0U : 1U;
+  conf.ncuda = static_cast<int>(valid_device_ids.size());
+
+  std::span<unsigned int, STARPU_NMAXWORKERS> workers_cuda_gpuid(
+      conf.workers_cuda_gpuid);
+  for (size_t idx = 0; idx < valid_device_ids.size(); ++idx) {
+    workers_cuda_gpuid[idx] = static_cast<unsigned int>(valid_device_ids[idx]);
+  }
+}
+
+std::unique_ptr<InputSlotPool>
+initialize_input_pool(const RuntimeConfig& opts)
+{
+  if (opts.models.empty() || opts.models[0].inputs.empty()) {
+    return nullptr;
+  }
+
+  try {
+    return std::make_unique<InputSlotPool>(opts, opts.input_slots);
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("Failed to initialize InputSlotPool: ") + e.what());
+    throw;
+  }
+}
+
+std::unique_ptr<OutputSlotPool>
+initialize_output_pool(const RuntimeConfig& opts)
+{
+  if (opts.models.empty() || opts.models[0].outputs.empty()) {
+    return nullptr;
+  }
+
+  try {
+    return std::make_unique<OutputSlotPool>(opts, opts.input_slots);
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("Failed to initialize OutputSlotPool: ") + e.what());
+    throw;
+  }
+}
 }  // namespace
 
 void run_inference(
@@ -289,71 +371,15 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
   starpu_conf_init(&conf_);
   conf_.sched_policy_name = scheduler_name_.c_str();
 
-  if (!opts.use_cpu) {
-    conf_.ncpus = 0;
-  }
-
-  if (!opts.use_cuda) {
-    conf_.ncuda = 0;
-  } else {
-    if (opts.device_ids.size() > STARPU_NMAXWORKERS) {
-      throw std::invalid_argument(std::format(
-          "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
-          STARPU_NMAXWORKERS));
-    }
-
-    std::unordered_set<int> unique_ids;
-    std::vector<int> valid_device_ids;
-    valid_device_ids.reserve(opts.device_ids.size());
-
-    for (const int device_id : opts.device_ids) {
-      if (device_id < 0) {
-        log_error(std::format(
-            "Invalid CUDA device ID {}: must be non-negative", device_id));
-        continue;
-      }
-      if (!unique_ids.insert(device_id).second) {
-        throw std::invalid_argument(
-            std::format("[ERROR] Duplicate CUDA device ID: {}", device_id));
-      }
-      valid_device_ids.push_back(device_id);
-    }
-
-    conf_.use_explicit_workers_cuda_gpuid = valid_device_ids.empty() ? 0U : 1U;
-    conf_.ncuda = static_cast<int>(valid_device_ids.size());
-
-    std::span<unsigned int, STARPU_NMAXWORKERS> workers_cuda_gpuid(
-        conf_.workers_cuda_gpuid);
-    for (size_t idx = 0; idx < valid_device_ids.size(); ++idx) {
-      workers_cuda_gpuid[idx] =
-          static_cast<unsigned int>(valid_device_ids[idx]);
-    }
-  }
+  configure_cpu(conf_, opts.use_cpu);
+  configure_gpu(conf_, opts);
 
   if (starpu_init_fn(&conf_) != 0) {
     throw StarPUInitializationException("[ERROR] StarPU initialization error");
   }
 
-  if (!opts.models.empty() && !opts.models[0].inputs.empty()) {
-    try {
-      input_pool_ = std::make_unique<InputSlotPool>(opts, opts.input_slots);
-    }
-    catch (const std::exception& e) {
-      log_error(std::string("Failed to initialize InputSlotPool: ") + e.what());
-      throw;
-    }
-  }
-
-  if (!opts.models.empty() && !opts.models[0].outputs.empty()) {
-    try {
-      output_pool_ = std::make_unique<OutputSlotPool>(opts, opts.input_slots);
-    }
-    catch (const std::exception& e) {
-      log_error(
-          std::string("Failed to initialize OutputSlotPool: ") + e.what());
-      throw;
-    }
-  }
+  input_pool_ = initialize_input_pool(opts);
+  output_pool_ = initialize_output_pool(opts);
 }
 
 StarPUSetup::~StarPUSetup()
