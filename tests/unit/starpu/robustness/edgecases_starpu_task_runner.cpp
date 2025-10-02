@@ -72,15 +72,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   ASSERT_TRUE(queue_.push(job));
   ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
   runner_->run();
-  EXPECT_TRUE(probe.called);
-  EXPECT_TRUE(probe.results.empty());
-  EXPECT_EQ(probe.latency, -1);
-  auto& results = results_;
-  const auto& completed_jobs = completed_jobs_;
-  ASSERT_EQ(results.size(), 1U);
-  EXPECT_TRUE(results[0].results.empty());
-  EXPECT_EQ(results[0].latency_ms, -1);
-  EXPECT_EQ(completed_jobs.load(), 1);
+  assert_failure_result(probe);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
@@ -121,14 +113,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
 
   runner_->run();
 
-  EXPECT_TRUE(probe.called);
-  EXPECT_TRUE(probe.results.empty());
-  EXPECT_EQ(probe.latency, -1);
-
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_TRUE(results_[0].results.empty());
-  EXPECT_EQ(results_[0].latency_ms, -1);
-  EXPECT_EQ(completed_jobs_.load(), 1);
+  assert_failure_result(probe);
 }
 
 struct InvalidConfigParam {

@@ -28,6 +28,17 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
   starpu_server::StarPUTaskRunnerConfig config_{};
   std::unique_ptr<starpu_server::StarPUTaskRunner> runner_;
   starpu_server::InferenceTaskDependencies dependencies_;
+  void assert_failure_result(const starpu_server::CallbackProbe& probe)
+  {
+    EXPECT_TRUE(probe.called);
+    EXPECT_TRUE(probe.results.empty());
+    EXPECT_EQ(probe.latency, -1);
+
+    ASSERT_EQ(results_.size(), 1U);
+    EXPECT_TRUE(results_[0].results.empty());
+    EXPECT_EQ(results_[0].latency_ms, -1);
+    EXPECT_EQ(completed_jobs_.load(), 1);
+  }
   void SetUp() override
   {
     completed_jobs_ = 0;
