@@ -33,12 +33,40 @@ using OutputCudaPinnedOverrideHook =
     bool (*)(size_t bytes, bool use_pinned, bool default_cuda_pinned);
 using OutputStarpuMemoryPinHook = int (*)(void* ptr, size_t size);
 
-OutputStarpuVectorRegisterHook g_starpu_vector_register_hook =
-    &starpu_vector_data_register;
-OutputRegisterFailureObserverHook g_starpu_register_failure_observer = nullptr;
-OutputHostAllocatorHook g_output_host_allocator_hook = &posix_memalign;
-OutputCudaPinnedOverrideHook g_output_cuda_pinned_override_hook = nullptr;
-OutputStarpuMemoryPinHook g_starpu_memory_pin_hook = &starpu_memory_pin;
+auto
+starpu_vector_register_hook() -> OutputStarpuVectorRegisterHook&
+{
+  static OutputStarpuVectorRegisterHook hook = &starpu_vector_data_register;
+  return hook;
+}
+
+auto
+starpu_register_failure_observer() -> OutputRegisterFailureObserverHook&
+{
+  static OutputRegisterFailureObserverHook observer = nullptr;
+  return observer;
+}
+
+auto
+output_host_allocator_hook() -> OutputHostAllocatorHook&
+{
+  static OutputHostAllocatorHook allocator = &posix_memalign;
+  return allocator;
+}
+
+auto
+output_cuda_pinned_override_hook() -> OutputCudaPinnedOverrideHook&
+{
+  static OutputCudaPinnedOverrideHook override_hook = nullptr;
+  return override_hook;
+}
+
+auto
+starpu_memory_pin_hook() -> OutputStarpuMemoryPinHook&
+{
+  static OutputStarpuMemoryPinHook hook = &starpu_memory_pin;
+  return hook;
+}
 
 auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
@@ -50,9 +78,9 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
     const auto err = cudaHostAlloc(&cuda_ptr, bytes, cudaHostAllocPortable);
     if (err == cudaSuccess && cuda_ptr != nullptr) {
       bool keep_cuda_pinned = true;
-      if (g_output_cuda_pinned_override_hook != nullptr) {
+      if (output_cuda_pinned_override_hook() != nullptr) {
         keep_cuda_pinned =
-            g_output_cuda_pinned_override_hook(bytes, use_pinned, true);
+            output_cuda_pinned_override_hook()(bytes, use_pinned, true);
       }
       if (keep_cuda_pinned) {
         cuda_pinned_out = true;
@@ -62,7 +90,7 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> void*
     }
   }
   constexpr size_t kAlign = 64;
-  int alloc_rc = g_output_host_allocator_hook(&ptr, kAlign, bytes);
+  int alloc_rc = output_host_allocator_hook()(&ptr, kAlign, bytes);
   if (alloc_rc != 0 || ptr == nullptr) {
     throw std::bad_alloc();
   }
@@ -136,7 +164,7 @@ prepare_host_buffer(
 
   if (want_pinned && !prepared.info.cuda_pinned) {
     prepared.info.starpu_pin_rc =
-        g_starpu_memory_pin_hook(prepared.ptr, prepared.info.bytes);
+        starpu_memory_pin_hook()(prepared.ptr, prepared.info.bytes);
     if (prepared.info.starpu_pin_rc == 0) {
       prepared.info.starpu_pinned = true;
     } else {
@@ -214,10 +242,10 @@ set_output_starpu_vector_register_hook_for_tests(
     OutputStarpuVectorRegisterFn vector_register_hook)
     -> OutputStarpuVectorRegisterFn
 {
-  const auto previous = g_starpu_vector_register_hook;
-  g_starpu_vector_register_hook = vector_register_hook != nullptr
-                                      ? vector_register_hook
-                                      : &starpu_vector_data_register;
+  auto& hook = starpu_vector_register_hook();
+  const auto previous = hook;
+  hook = vector_register_hook != nullptr ? vector_register_hook
+                                         : &starpu_vector_data_register;
   return previous;
 }
 
@@ -225,8 +253,9 @@ auto
 set_output_register_failure_observer_for_tests(
     OutputRegisterFailureObserverFn observer) -> OutputRegisterFailureObserverFn
 {
-  const auto previous = g_starpu_register_failure_observer;
-  g_starpu_register_failure_observer = observer;
+  auto& observer_hook = starpu_register_failure_observer();
+  const auto previous = observer_hook;
+  observer_hook = observer;
   return previous;
 }
 
@@ -234,9 +263,9 @@ auto
 set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
     -> OutputHostAllocatorFn
 {
-  const auto previous = g_output_host_allocator_hook;
-  g_output_host_allocator_hook =
-      allocator != nullptr ? allocator : &posix_memalign;
+  auto& allocator_hook = output_host_allocator_hook();
+  const auto previous = allocator_hook;
+  allocator_hook = allocator != nullptr ? allocator : &posix_memalign;
   return previous;
 }
 
@@ -245,8 +274,9 @@ set_output_cuda_pinned_override_for_tests(
     OutputCudaPinnedOverrideFn cuda_pinned_override_hook)
     -> OutputCudaPinnedOverrideFn
 {
-  const auto previous = g_output_cuda_pinned_override_hook;
-  g_output_cuda_pinned_override_hook = cuda_pinned_override_hook;
+  auto& override_hook = output_cuda_pinned_override_hook();
+  const auto previous = override_hook;
+  override_hook = cuda_pinned_override_hook;
   return previous;
 }
 
@@ -254,9 +284,9 @@ auto
 set_output_starpu_memory_pin_hook_for_tests(
     OutputStarpuMemoryPinFn memory_pin_hook) -> OutputStarpuMemoryPinFn
 {
-  const auto previous = g_starpu_memory_pin_hook;
-  g_starpu_memory_pin_hook =
-      memory_pin_hook != nullptr ? memory_pin_hook : &starpu_memory_pin;
+  auto& hook = starpu_memory_pin_hook();
+  const auto previous = hook;
+  hook = memory_pin_hook != nullptr ? memory_pin_hook : &starpu_memory_pin;
   return previous;
 }
 
@@ -359,13 +389,13 @@ OutputSlotPool::allocate_slot_buffers_and_register(
     const size_t total_numel =
         checked_total_numel(per_output_numel_single_[i], batch_size);
     starpu_data_handle_t handle = nullptr;
-    g_starpu_vector_register_hook(
+    starpu_vector_register_hook()(
         &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(prepared_buffer.ptr),
         total_numel, element_size(output_types_[i]));
     if (handle == nullptr) {
       cleanup_slot_buffers_impl(slot, buffer_infos, i + 1);
-      if (g_starpu_register_failure_observer != nullptr) {
-        g_starpu_register_failure_observer(slot, buffer_infos);
+      if (starpu_register_failure_observer() != nullptr) {
+        starpu_register_failure_observer()(slot, buffer_infos);
       }
       throw std::runtime_error(
           "Failed to register StarPU vector handle for output");

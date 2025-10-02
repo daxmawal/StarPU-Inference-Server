@@ -27,7 +27,8 @@ using OutputCudaPinnedOverrideFn =
 using OutputStarpuMemoryPinFn = int (*)(void* ptr, size_t size);
 
 auto set_output_starpu_vector_register_hook_for_tests(
-    OutputStarpuVectorRegisterFn fn) -> OutputStarpuVectorRegisterFn;
+    OutputStarpuVectorRegisterFn vector_register_hook)
+    -> OutputStarpuVectorRegisterFn;
 
 auto set_output_register_failure_observer_for_tests(
     OutputRegisterFailureObserverFn observer)
@@ -36,11 +37,12 @@ auto set_output_register_failure_observer_for_tests(
 auto set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
     -> OutputHostAllocatorFn;
 
-auto set_output_cuda_pinned_override_for_tests(OutputCudaPinnedOverrideFn fn)
+auto set_output_cuda_pinned_override_for_tests(
+    OutputCudaPinnedOverrideFn cuda_pinned_override_hook)
     -> OutputCudaPinnedOverrideFn;
 
-auto set_output_starpu_memory_pin_hook_for_tests(OutputStarpuMemoryPinFn fn)
-    -> OutputStarpuMemoryPinFn;
+auto set_output_starpu_memory_pin_hook_for_tests(
+    OutputStarpuMemoryPinFn memory_pin_hook) -> OutputStarpuMemoryPinFn;
 
 }  // namespace testing
 
