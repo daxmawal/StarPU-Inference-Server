@@ -211,11 +211,13 @@ namespace testing {
 
 auto
 set_output_starpu_vector_register_hook_for_tests(
-    OutputStarpuVectorRegisterFn fn) -> OutputStarpuVectorRegisterFn
+    OutputStarpuVectorRegisterFn vector_register_hook)
+    -> OutputStarpuVectorRegisterFn
 {
   const auto previous = g_starpu_vector_register_hook;
-  g_starpu_vector_register_hook =
-      fn != nullptr ? fn : &starpu_vector_data_register;
+  g_starpu_vector_register_hook = vector_register_hook != nullptr
+                                      ? vector_register_hook
+                                      : &starpu_vector_data_register;
   return previous;
 }
 
@@ -239,20 +241,22 @@ set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
 }
 
 auto
-set_output_cuda_pinned_override_for_tests(OutputCudaPinnedOverrideFn fn)
+set_output_cuda_pinned_override_for_tests(
+    OutputCudaPinnedOverrideFn cuda_pinned_override_hook)
     -> OutputCudaPinnedOverrideFn
 {
   const auto previous = g_output_cuda_pinned_override_hook;
-  g_output_cuda_pinned_override_hook = fn;
+  g_output_cuda_pinned_override_hook = cuda_pinned_override_hook;
   return previous;
 }
 
 auto
-set_output_starpu_memory_pin_hook_for_tests(OutputStarpuMemoryPinFn fn)
-    -> OutputStarpuMemoryPinFn
+set_output_starpu_memory_pin_hook_for_tests(
+    OutputStarpuMemoryPinFn memory_pin_hook) -> OutputStarpuMemoryPinFn
 {
   const auto previous = g_starpu_memory_pin_hook;
-  g_starpu_memory_pin_hook = fn != nullptr ? fn : &starpu_memory_pin;
+  g_starpu_memory_pin_hook =
+      memory_pin_hook != nullptr ? memory_pin_hook : &starpu_memory_pin;
   return previous;
 }
 
