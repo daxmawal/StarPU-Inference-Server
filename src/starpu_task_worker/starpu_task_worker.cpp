@@ -348,20 +348,6 @@ StarPUTaskRunner::handle_submission_failure(
 }
 
 void
-StarPUTaskRunner::TestHook::handle_submission_failure(
-    InputSlotPool* input_pool, int input_slot, OutputSlotPool* output_pool,
-    int output_slot, const std::shared_ptr<InferenceCallbackContext>& ctx,
-    int submit_code)
-{
-  PoolResources pools{};
-  pools.input_pool = input_pool;
-  pools.input_slot = input_slot;
-  pools.output_pool = output_pool;
-  pools.output_slot = output_slot;
-  StarPUTaskRunner::handle_submission_failure(pools, ctx, submit_code);
-}
-
-void
 StarPUTaskRunner::submit_inference_task(
     const std::shared_ptr<InferenceJob>& job)
 {

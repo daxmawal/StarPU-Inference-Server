@@ -57,14 +57,9 @@ class StarPUTaskRunner {
       int job_id, double latency_ms,
       const detail::TimingInfo& timing_info) const;
 
-  struct TestHook {
-    static void handle_submission_failure(
-        InputSlotPool* input_pool, int input_slot, OutputSlotPool* output_pool,
-        int output_slot, const std::shared_ptr<InferenceCallbackContext>& ctx,
-        int submit_code);
-  };
-
  private:
+  friend class StarPUTaskRunnerTestAdapter;
+
   struct PoolResources {
     InputSlotPool* input_pool = nullptr;
     OutputSlotPool* output_pool = nullptr;

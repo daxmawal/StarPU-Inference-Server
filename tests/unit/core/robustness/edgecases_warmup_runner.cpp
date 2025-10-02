@@ -13,21 +13,6 @@
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_warmup_runner.hpp"
 
-namespace {
-class WarmupRunnerTestHookGuard {
- public:
-  WarmupRunnerTestHookGuard()
-  {
-    starpu_server::WarmupRunner::clear_test_hook();
-  }
-
-  ~WarmupRunnerTestHookGuard()
-  {
-    starpu_server::WarmupRunner::clear_test_hook();
-  }
-};
-}  // namespace
-
 TEST_F(WarmupRunnerTest, WarmupRunnerRunNegativeIterations_Robustesse)
 {
   init(true);
@@ -37,10 +22,8 @@ TEST_F(WarmupRunnerTest, WarmupRunnerRunNegativeIterations_Robustesse)
 TEST_F(
     WarmupRunnerTest, WarmupRunnerRunThrowsOnNegativeCompletedJobs_Robustesse)
 {
-  init(true);
-  WarmupRunnerTestHookGuard guard;
-  starpu_server::WarmupRunner::set_test_hook(
-      [](std::atomic<int>& completed_jobs) { completed_jobs.store(-1); });
+  init(
+      true, [](std::atomic<int>& completed_jobs) { completed_jobs.store(-1); });
 
   EXPECT_THROW(runner->run(1), starpu_server::InferenceExecutionException);
 }

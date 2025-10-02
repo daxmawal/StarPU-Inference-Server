@@ -2,6 +2,24 @@
 #include "test_starpu_task_runner.hpp"
 #include "utils/perf_observer.hpp"
 
+namespace starpu_server {
+class StarPUTaskRunnerTestAdapter {
+ public:
+  static void handle_submission_failure(
+      InputSlotPool* input_pool, int input_slot, OutputSlotPool* output_pool,
+      int output_slot, const std::shared_ptr<InferenceCallbackContext>& ctx,
+      int submit_code)
+  {
+    StarPUTaskRunner::PoolResources pools{};
+    pools.input_pool = input_pool;
+    pools.input_slot = input_slot;
+    pools.output_pool = output_pool;
+    pools.output_slot = output_slot;
+    StarPUTaskRunner::handle_submission_failure(pools, ctx, submit_code);
+  }
+};
+}  // namespace starpu_server
+
 TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
 {
   auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
@@ -315,7 +333,7 @@ TEST_F(
   const int output_slot = output_pool.acquire();
 
   EXPECT_THROW(
-      starpu_server::StarPUTaskRunner::TestHook::handle_submission_failure(
+      starpu_server::StarPUTaskRunnerTestAdapter::handle_submission_failure(
           &input_pool, input_slot, &output_pool, output_slot, nullptr, -1),
       starpu_server::StarPUTaskSubmissionException);
 
