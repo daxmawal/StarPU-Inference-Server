@@ -132,9 +132,7 @@ TEST(InferenceCodelet, RunInferenceExceptionsAreWrapped)
 
 TEST(InferenceCodelet, SelectGpuModuleThrowsWhenReplicaMissing)
 {
-  if (!torch::cuda::is_available()) {
-    GTEST_SKIP();
-  }
+  skip_if_no_cuda();
 
   auto params = starpu_server::make_basic_params(1);
   const int device_id = 0;
@@ -146,9 +144,7 @@ TEST(InferenceCodelet, SelectGpuModuleThrowsWhenReplicaMissing)
 
 TEST(InferenceCodelet, SelectGpuModuleReturnsMatchingReplica)
 {
-  if (!torch::cuda::is_available()) {
-    GTEST_SKIP();
-  }
+  skip_if_no_cuda();
 
   auto params = starpu_server::make_basic_params(1);
   const int device_id = 0;

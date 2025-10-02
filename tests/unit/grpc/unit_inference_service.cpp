@@ -370,9 +370,7 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
 
 TEST(InferenceServiceImpl, PopulateResponseHandlesCudaOutputs)
 {
-  if (!torch::cuda::is_available()) {
-    GTEST_SKIP();
-  }
+  skip_if_no_cuda();
 
   auto req = starpu_server::make_model_request("model", "1");
   auto options =

@@ -14,9 +14,7 @@ TEST(RunInferenceLoopIntegration, CpuAddOneModel)
 
 TEST(RunInferenceLoopIntegration, CudaAddOneModel)
 {
-  if (!torch::cuda::is_available()) {
-    GTEST_SKIP();
-  }
+  skip_if_no_cuda();
   const auto output = starpu_server::run_add_one_inference_loop(false, true, 0);
   EXPECT_NE(output.find("Job 0 passed"), std::string::npos);
 }

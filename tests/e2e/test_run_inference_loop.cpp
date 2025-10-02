@@ -16,18 +16,14 @@ TEST(RunInferenceLoopIntegration, CpuAddOneModel)
 
 TEST(RunInferenceLoopIntegration, CudaAddOneModel)
 {
-  if (!torch::cuda::is_available()) {
-    GTEST_SKIP() << "CUDA is not available";
-  }
+  skip_if_no_cuda();
   const auto output = starpu_server::run_add_one_inference_loop(false, true, 0);
   EXPECT_NE(output.find("Job 0 passed"), std::string::npos);
 }
 
 TEST(RunInferenceLoopIntegration, CudaAddOneModelNonContiguousDeviceIds)
 {
-  if (!torch::cuda::is_available()) {
-    GTEST_SKIP() << "CUDA is not available";
-  }
+  skip_if_no_cuda();
   const auto device_count = torch::cuda::device_count();
   if (device_count < 3) {
     GTEST_SKIP() << "Need at least 3 CUDA devices for non-contiguous IDs";
