@@ -1,8 +1,6 @@
 #include "starpu_task_worker.hpp"
 
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstring>
 #include <exception>
 #include <format>

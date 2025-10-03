@@ -2,7 +2,6 @@
 #include <torch/script.h>
 
 #include <chrono>
-#include <iostream>
 #include <memory>
 #include <random>
 #include <span>
