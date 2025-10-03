@@ -13,7 +13,6 @@
 #include "client_args.hpp"
 #include "grpc_service.grpc.pb.h"
 #include "utils/logger.hpp"
-#include "utils/time_utils.hpp"
 
 namespace starpu_server {
 struct AsyncClientCall;

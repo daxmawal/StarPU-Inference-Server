@@ -2,10 +2,7 @@
 
 #include <bit>
 #include <cstdint>
-#include <cstdlib>
-#include <functional>
 #include <limits>
-#include <memory>
 #include <utility>
 
 #include "core/inference_task.hpp"

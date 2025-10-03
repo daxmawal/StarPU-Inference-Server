@@ -6,7 +6,6 @@
 
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
-#include "logger.hpp"
 #include "runtime_config.hpp"
 
 namespace starpu_server::client_utils {

@@ -2,7 +2,6 @@
 #include <torch/script.h>
 
 #include <filesystem>
-#include <format>
 #include <fstream>
 #include <functional>
 #include <iostream>

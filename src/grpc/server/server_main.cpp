@@ -13,7 +13,6 @@
 
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
-#include "core/warmup.hpp"
 #include "inference_service.hpp"
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
