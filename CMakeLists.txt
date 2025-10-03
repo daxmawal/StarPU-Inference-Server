@@ -90,6 +90,18 @@ set(YAML_CPP_BUILD_TOOLS
     OFF
     CACHE BOOL "" FORCE)
 
+set(_YC_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
+set(_YC_SRC_DIR "${_YC_BASE_DIR}/yaml-cpp-src")
+set(_YC_SUBBUILD "${_YC_BASE_DIR}/yaml-cpp-subbuild")
+set(_YC_BUILD "${_YC_BASE_DIR}/yaml-cpp-build")
+if(EXISTS "${_YC_SRC_DIR}" AND NOT EXISTS "${_YC_SRC_DIR}/.git")
+  message(
+    WARNING
+      "yaml-cpp src exists without .git; purging cached _deps to force fresh Git clone."
+  )
+  file(REMOVE_RECURSE "${_YC_SRC_DIR}" "${_YC_SUBBUILD}" "${_YC_BUILD}")
+endif()
+
 FetchContent_Declare(yaml-cpp
                      GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git)
 
