@@ -3,6 +3,9 @@
 #include <array>
 #include <bit>
 #include <complex>
+#include <functional>
+#include <memory>
+#include <string>
 #include <vector>
 
 #define private public
@@ -49,70 +52,129 @@ TEST(TensorBuilder_Robustesse, FromRawPtrUnsupportedQuantized)
       starpu_server::InferenceExecutionException);
 }
 
-TEST(TensorBuilder_Robustesse, CopyOutputToBufferSizeMismatch_TooLarge)
+struct CopyOutputToBufferParam {
+  struct BufferInfo {
+    void* data;
+    size_t elements;
+    at::ScalarType expected_dtype;
+    std::shared_ptr<void> storage;
+  };
+
+  std::string description;
+  std::function<torch::Tensor()> tensor_factory;
+  std::function<BufferInfo(const torch::Tensor&)> buffer_factory;
+};
+
+class CopyOutputToBufferTest
+    : public ::testing::TestWithParam<CopyOutputToBufferParam> {};
+
+TEST_P(CopyOutputToBufferTest, CopyOutputToBufferThrows)
 {
-  auto tensor = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
-  std::array<int32_t, kElems2> buf{};
+  const auto& param = GetParam();
+  auto tensor = param.tensor_factory();
+  auto buffer = param.buffer_factory(tensor);
+
   EXPECT_THROW(
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, buf.data(), kElems3, tensor.scalar_type()),
+          tensor, buffer.data, buffer.elements, buffer.expected_dtype),
       starpu_server::InferenceExecutionException);
 }
 
-TEST(TensorBuilder_Robustesse, CopyOutputToBufferSizeMismatch_TooSmall)
-{
-  auto tensor =
-      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt));
-  std::array<int32_t, kElems2> buf{};
-  EXPECT_THROW(
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, buf.data(), kElems2, tensor.scalar_type()),
-      starpu_server::InferenceExecutionException);
-}
-
-TEST(TensorBuilder_Robustesse, CopyOutputToBufferNonContiguous)
-{
-  auto tensor = torch::tensor(
-      {{kF1, kF2}, {kF3, kF4}}, torch::TensorOptions().dtype(at::kFloat));
-  auto transposed = tensor.transpose(0, 1);
-  EXPECT_FALSE(transposed.is_contiguous());
-  std::array<float, 4> buf{};
-  EXPECT_THROW(
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          transposed, buf.data(), transposed.numel(), transposed.scalar_type()),
-      starpu_server::InferenceExecutionException);
-}
-
-TEST(TensorBuilder_Robustesse, CopyOutputToBufferNullPointer)
-{
-  auto tensor = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
-  int32_t* null_ptr = nullptr;
-  EXPECT_THROW(
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, null_ptr, tensor.numel(), tensor.scalar_type()),
-      starpu_server::InferenceExecutionException);
-}
-
-TEST(TensorBuilder_Robustesse, CopyOutputToBufferTypeMismatch_FloatVsInt)
-{
-  auto tensor =
-      torch::tensor({kF1, kF2}, torch::TensorOptions().dtype(at::kFloat));
-  std::array<float, kElems2> buf{};
-  EXPECT_THROW(
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, buf.data(), tensor.numel(), at::kInt),
-      starpu_server::InferenceExecutionException);
-}
-
-TEST(TensorBuilder_Robustesse, CopyOutputToBufferTypeMismatch_IntVsFloat)
-{
-  auto tensor = torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt));
-  std::array<int32_t, kElems2> buf{};
-  EXPECT_THROW(
-      starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, buf.data(), tensor.numel(), at::kFloat),
-      starpu_server::InferenceExecutionException);
-}
+INSTANTIATE_TEST_SUITE_P(
+    CopyOutputToBufferFailureCases, CopyOutputToBufferTest,
+    ::testing::Values(
+        CopyOutputToBufferParam{
+            "SizeTooLarge",
+            []() {
+              return torch::tensor(
+                  {1, 2}, torch::TensorOptions().dtype(at::kInt));
+            },
+            [](const torch::Tensor& tensor) {
+              auto buffer = std::make_shared<std::vector<int32_t>>(kElems2);
+              return CopyOutputToBufferParam::BufferInfo{
+                  static_cast<void*>(buffer->data()), kElems3,
+                  tensor.scalar_type(),
+                  std::shared_ptr<void>(
+                      buffer, static_cast<void*>(buffer->data()))};
+            }},
+        CopyOutputToBufferParam{
+            "SizeTooSmall",
+            []() {
+              return torch::tensor(
+                  {1, 2, 3}, torch::TensorOptions().dtype(at::kInt));
+            },
+            [](const torch::Tensor& tensor) {
+              auto buffer = std::make_shared<std::vector<int32_t>>(kElems2);
+              return CopyOutputToBufferParam::BufferInfo{
+                  static_cast<void*>(buffer->data()), kElems2,
+                  tensor.scalar_type(),
+                  std::shared_ptr<void>(
+                      buffer, static_cast<void*>(buffer->data()))};
+            }},
+        CopyOutputToBufferParam{
+            "NonContiguous",
+            []() {
+              auto tensor = torch::tensor(
+                  {{kF1, kF2}, {kF3, kF4}},
+                  torch::TensorOptions().dtype(at::kFloat));
+              return tensor.transpose(0, 1);
+            },
+            [](const torch::Tensor& tensor) {
+              EXPECT_FALSE(tensor.is_contiguous());
+              auto buffer =
+                  std::make_shared<std::vector<float>>(tensor.numel());
+              return CopyOutputToBufferParam::BufferInfo{
+                  static_cast<void*>(buffer->data()),
+                  static_cast<size_t>(tensor.numel()), tensor.scalar_type(),
+                  std::shared_ptr<void>(
+                      buffer, static_cast<void*>(buffer->data()))};
+            }},
+        CopyOutputToBufferParam{
+            "NullPointer",
+            []() {
+              return torch::tensor(
+                  {1, 2}, torch::TensorOptions().dtype(at::kInt));
+            },
+            [](const torch::Tensor& tensor) {
+              return CopyOutputToBufferParam::BufferInfo{
+                  nullptr,
+                  static_cast<size_t>(tensor.numel()),
+                  tensor.scalar_type(),
+                  {}};
+            }},
+        CopyOutputToBufferParam{
+            "TypeMismatchFloatVsInt",
+            []() {
+              return torch::tensor(
+                  {kF1, kF2}, torch::TensorOptions().dtype(at::kFloat));
+            },
+            [](const torch::Tensor& tensor) {
+              auto buffer =
+                  std::make_shared<std::vector<float>>(tensor.numel());
+              return CopyOutputToBufferParam::BufferInfo{
+                  static_cast<void*>(buffer->data()),
+                  static_cast<size_t>(tensor.numel()), at::kInt,
+                  std::shared_ptr<void>(
+                      buffer, static_cast<void*>(buffer->data()))};
+            }},
+        CopyOutputToBufferParam{
+            "TypeMismatchIntVsFloat",
+            []() {
+              return torch::tensor(
+                  {1, 2}, torch::TensorOptions().dtype(at::kInt));
+            },
+            [](const torch::Tensor& tensor) {
+              auto buffer =
+                  std::make_shared<std::vector<int32_t>>(tensor.numel());
+              return CopyOutputToBufferParam::BufferInfo{
+                  static_cast<void*>(buffer->data()),
+                  static_cast<size_t>(tensor.numel()), at::kFloat,
+                  std::shared_ptr<void>(
+                      buffer, static_cast<void*>(buffer->data()))};
+            }}),
+    [](const ::testing::TestParamInfo<CopyOutputToBufferParam>& info) {
+      return info.param.description;
+    });
 
 TEST(TensorBuilder_Robustesse, FromStarpuBuffersTooManyInputs)
 {
