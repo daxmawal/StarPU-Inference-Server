@@ -17,9 +17,7 @@
 
 #include "exceptions.hpp"
 #include "inference_params.hpp"
-#include "inference_runner.hpp"
 #include "output_slot_pool.hpp"
-#include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
