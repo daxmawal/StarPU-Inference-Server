@@ -9,19 +9,20 @@
 #include "core/tensor_builder.hpp"
 #undef private
 
+#include "test_constants.hpp"
 #include "utils/exceptions.hpp"
 
 namespace {
 constexpr std::array<int64_t, 2> kShape2x2{{2, 2}};
 constexpr std::array<int64_t, 1> kShape1{{1}};
 
-constexpr float kF1 = 1.0F;
-constexpr float kF2 = 2.0F;
-constexpr float kF3 = 3.0F;
-constexpr float kF4 = 4.0F;
-constexpr double kD1 = 1.0;
-constexpr double kD2 = 2.0;
-constexpr double kD3 = 3.0;
+using starpu_server::test_constants::kD1;
+using starpu_server::test_constants::kD2;
+using starpu_server::test_constants::kD3;
+using starpu_server::test_constants::kF1;
+using starpu_server::test_constants::kF2;
+using starpu_server::test_constants::kF3;
+using starpu_server::test_constants::kF4;
 
 const std::array<float, 4> float_buffer{kF1, kF2, kF3, kF4};
 const std::array<int32_t, 3> int_buffer{1, 2, 3};

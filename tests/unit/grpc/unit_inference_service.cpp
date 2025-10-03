@@ -9,16 +9,17 @@
 #include <string>
 
 #include "monitoring/metrics.hpp"
+#include "test_constants.hpp"
 #include "test_inference_service.hpp"
 
 namespace {
-constexpr float kF1 = 1.0F;
-constexpr float kF2 = 2.0F;
-constexpr float kF3 = 3.0F;
-constexpr float kF4 = 4.0F;
-constexpr int64_t kI10 = 10;
-constexpr int64_t kI20 = 20;
-constexpr int64_t kI30 = 30;
+using starpu_server::test_constants::kF1;
+using starpu_server::test_constants::kF2;
+using starpu_server::test_constants::kF3;
+using starpu_server::test_constants::kF4;
+using starpu_server::test_constants::kI10;
+using starpu_server::test_constants::kI20;
+using starpu_server::test_constants::kI30;
 }  // namespace
 
 class MetricsInferenceServiceTest : public InferenceServiceTest {

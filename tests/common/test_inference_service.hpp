@@ -11,6 +11,7 @@
 
 #include "core/inference_runner.hpp"
 #include "grpc/server/inference_service.hpp"
+#include "test_constants.hpp"
 #include "test_helpers.hpp"
 
 inline void
@@ -36,11 +37,10 @@ expect_empty_infer_response(const inference::ModelInferResponse& resp)
 
 namespace starpu_server {
 
-inline constexpr float kF1 = 1.0F;
-
 inline auto
-make_shape_request(const std::vector<int64_t>& shape, float fill_value = kF1)
-    -> inference::ModelInferRequest
+make_shape_request(
+    const std::vector<int64_t>& shape,
+    float fill_value = test_constants::kF1) -> inference::ModelInferRequest
 {
   size_t total = 1;
   for (const auto dim : shape) {

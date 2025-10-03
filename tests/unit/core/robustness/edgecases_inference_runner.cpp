@@ -13,6 +13,7 @@
 #include "core/inference_params.hpp"
 #include "core/inference_runner.hpp"
 #include "core/tensor_builder.hpp"
+#include "test_constants.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 
@@ -20,6 +21,9 @@
 namespace {
 const std::vector<int64_t> kShape1{1};
 const std::vector<torch::Dtype> kTypesFloat{torch::kFloat32};
+using starpu_server::test_constants::kF1;
+using starpu_server::test_constants::kF2;
+using starpu_server::test_constants::kF3;
 
 class ConstantModelConfigTest : public ::testing::Test {
  protected:
@@ -122,9 +126,6 @@ void run_inference(
 
 TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
 {
-  constexpr float kF1 = 1.0F;
-  constexpr float kF2 = 2.0F;
-  constexpr float kF3 = 3.0F;
   std::array<float, 3> input{kF1, kF2, kF3};
   std::array<float, 3> output{0.0F, 0.0F, 0.0F};
 

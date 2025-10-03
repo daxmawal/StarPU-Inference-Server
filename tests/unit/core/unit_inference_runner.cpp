@@ -12,6 +12,7 @@
 #include "core/inference_runner.hpp"
 #include "core/tensor_builder.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "test_constants.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 
@@ -376,8 +377,8 @@ TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
 
 TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
 {
-  constexpr float kF1 = 1.0F;
-  constexpr float kF2 = 2.0F;
+  using starpu_server::test_constants::kF1;
+  using starpu_server::test_constants::kF2;
   constexpr float kF35 = 3.5F;
   constexpr float kFNeg4 = -4.0F;
   constexpr float kF025 = 0.25F;

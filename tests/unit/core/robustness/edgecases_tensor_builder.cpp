@@ -12,14 +12,15 @@
 #include "core/tensor_builder.hpp"
 #undef private
 
+#include "test_constants.hpp"
 #include "utils/exceptions.hpp"
 
 namespace {
 constexpr size_t kElems2 = 2, kElems3 = 3;
-constexpr float kF1 = 1.0F;
-constexpr float kF2 = 2.0F;
-constexpr float kF3 = 3.0F;
-constexpr float kF4 = 4.0F;
+using starpu_server::test_constants::kF1;
+using starpu_server::test_constants::kF2;
+using starpu_server::test_constants::kF3;
+using starpu_server::test_constants::kF4;
 }  // namespace
 
 TEST(TensorBuilder_Robustesse, FromRawPtrUnsupportedHalf)
