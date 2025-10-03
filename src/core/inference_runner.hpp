@@ -59,7 +59,7 @@ class InferenceJob {
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
       int job_identifier,
-      std::function<void(std::vector<torch::Tensor>, double)> callback =
+      std::function<void(const std::vector<torch::Tensor>&, double)> callback =
           nullptr);
 
   static auto make_shutdown_job() -> std::shared_ptr<InferenceJob>;
@@ -97,7 +97,7 @@ class InferenceJob {
     start_time_ = time;
   }
   void set_on_complete(
-      std::function<void(std::vector<torch::Tensor>, double)> call_back)
+      std::function<void(const std::vector<torch::Tensor>&, double)> call_back)
   {
     on_complete_ = std::move(call_back);
   }
@@ -140,7 +140,7 @@ class InferenceJob {
     return fixed_worker_id_;
   }
   [[nodiscard]] auto get_on_complete() const
-      -> const std::function<void(std::vector<torch::Tensor>, double)>&
+      -> const std::function<void(const std::vector<torch::Tensor>&, double)>&
   {
     return on_complete_;
   }
@@ -163,7 +163,7 @@ class InferenceJob {
 
   int job_id_ = 0;
   std::optional<int> fixed_worker_id_;
-  std::function<void(std::vector<torch::Tensor>, double)> on_complete_;
+  std::function<void(const std::vector<torch::Tensor>&, double)> on_complete_;
   std::chrono::high_resolution_clock::time_point start_time_;
 
   DeviceType executed_on_ = DeviceType::Unknown;

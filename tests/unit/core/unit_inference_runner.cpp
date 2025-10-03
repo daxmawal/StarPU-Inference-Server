@@ -216,11 +216,12 @@ TEST(InferenceJobTest, SettersGettersAndCallback)
   std::vector<torch::Tensor> cb_tensors;
   double cb_latency = 0.0;
 
-  job->set_on_complete([&](std::vector<torch::Tensor> tensor, double lat) {
-    callback_called = true;
-    cb_tensors = std::move(tensor);
-    cb_latency = lat;
-  });
+  job->set_on_complete(
+      [&](const std::vector<torch::Tensor>& tensor, double lat) {
+        callback_called = true;
+        cb_tensors = tensor;
+        cb_latency = lat;
+      });
 
   EXPECT_TRUE(JobStateMatches(
       job, inputs, types, outputs, start,

@@ -106,7 +106,7 @@ set_worker_thread_launcher(WorkerThreadLauncher launcher)
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
     int job_identifier,
-    std::function<void(std::vector<torch::Tensor>, double)> callback)
+    std::function<void(const std::vector<torch::Tensor>&, double)> callback)
     : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
       job_id_(job_identifier), on_complete_(std::move(callback)),
       start_time_(std::chrono::high_resolution_clock::now())
