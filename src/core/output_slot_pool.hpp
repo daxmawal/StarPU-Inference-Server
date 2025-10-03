@@ -2,12 +2,10 @@
 #pragma once
 
 #include <starpu.h>
-#include <torch/script.h>
 
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <memory>
 #include <mutex>
 #include <optional>
 #include <vector>

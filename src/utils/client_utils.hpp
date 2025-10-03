@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <random>
-#include <string>
 #include <vector>
 
 #include "inference_runner.hpp"

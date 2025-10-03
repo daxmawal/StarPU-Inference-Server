@@ -6,7 +6,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 namespace starpu_server {
