@@ -1,9 +1,6 @@
 #pragma once
-#include <ATen/core/ScalarType.h>
-
 #include <span>
 #include <string>
-#include <vector>
 
 #include "logger.hpp"
 #include "runtime_config.hpp"
