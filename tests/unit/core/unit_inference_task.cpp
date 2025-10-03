@@ -31,20 +31,6 @@ MakeHandle(int index) -> starpu_data_handle_t
   return static_cast<starpu_data_handle_t>(ptr);
 }
 
-auto
-MakeRuntimeConfigWithSingleOutput() -> starpu_server::RuntimeConfig
-{
-  starpu_server::RuntimeConfig opts;
-  starpu_server::ModelConfig model;
-  model.name = "test_model";
-  starpu_server::TensorConfig output;
-  output.name = "output";
-  output.dims = {1};
-  output.type = at::kFloat;
-  model.outputs.push_back(output);
-  opts.models.push_back(std::move(model));
-  return opts;
-}
 }  // namespace
 
 extern "C" void
@@ -345,115 +331,70 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
 
 TEST(InferenceTask, FinalizeInferenceTaskCopiesOutputs)
 {
-  StarpuRuntimeGuard starpu_guard;
-  auto opts = MakeRuntimeConfigWithSingleOutput();
-  starpu_server::OutputSlotPool pool(opts, 1);
-  const int slot_id = pool.acquire();
-
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_output_tensors(
-      {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))});
-
-  auto ctx = make_callback_context(job, &opts);
-  ctx->output_pool = &pool;
-  ctx->output_slot_id = slot_id;
-  ctx->self_keep_alive = ctx;
-  ctx->on_finished = [&pool, slot_id]() { pool.release(slot_id); };
-
   constexpr float kSentinelValue = 42.0F;
-  const auto& base_ptrs = pool.base_ptrs(slot_id);
-  ASSERT_EQ(base_ptrs.size(), 1U);
-  *static_cast<float*>(base_ptrs[0]) = kSentinelValue;
+  OutputContextFixture fixture({.sentinel_value = kSentinelValue});
 
   ASSERT_NO_THROW(
-      starpu_server::InferenceTask::finalize_inference_task(ctx.get()));
+      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
 
-  const auto& job_outputs = job->get_output_tensors();
+  const auto& job_outputs = fixture.job->get_output_tensors();
   ASSERT_EQ(job_outputs.size(), 1U);
   ASSERT_TRUE(job_outputs[0].defined());
   EXPECT_FLOAT_EQ(job_outputs[0].item<float>(), kSentinelValue);
 
-  auto reacquired = pool.try_acquire();
+  auto reacquired = fixture.pool.try_acquire();
   ASSERT_TRUE(reacquired.has_value());
-  EXPECT_EQ(*reacquired, slot_id);
-  pool.release(*reacquired);
+  EXPECT_EQ(*reacquired, fixture.slot_id);
+  fixture.pool.release(*reacquired);
 }
 
 TEST(InferenceTask, FinalizeInferenceTaskHandlesCopyFailure)
 {
-  StarpuRuntimeGuard starpu_guard;
-  auto opts = MakeRuntimeConfigWithSingleOutput();
-  starpu_server::OutputSlotPool pool(opts, 1);
-  const int slot_id = pool.acquire();
-
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_output_tensors(
-      {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))});
-
-  auto ctx = make_callback_context(job, &opts);
-  ctx->output_pool = &pool;
-  ctx->output_slot_id = slot_id;
-  ctx->self_keep_alive = ctx;
-  ctx->on_finished = [&pool, slot_id]() { pool.release(slot_id); };
-
-  auto& outputs =
-      const_cast<std::vector<torch::Tensor>&>(job->get_output_tensors());
-  outputs[0] = torch::Tensor();
+  OutputContextFixture fixture({.mutate_job_outputs = [](auto& outputs) {
+    outputs[0] = torch::Tensor();
+  }});
 
   starpu_server::CaptureStream capture{std::cerr};
 
   EXPECT_NO_THROW(
-      starpu_server::InferenceTask::finalize_inference_task(ctx.get()));
+      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
   const auto log = capture.str();
   EXPECT_NE(log.find("Output copy from pool failed"), std::string::npos);
 
-  auto reacquired = pool.try_acquire();
+  auto reacquired = fixture.pool.try_acquire();
   ASSERT_TRUE(reacquired.has_value());
-  EXPECT_EQ(*reacquired, slot_id);
-  pool.release(*reacquired);
+  EXPECT_EQ(*reacquired, fixture.slot_id);
+  fixture.pool.release(*reacquired);
 }
 
 TEST(InferenceTask, FinalizeInferenceTaskHandlesOnFinishedException)
 {
-  StarpuRuntimeGuard starpu_guard;
-  auto opts = MakeRuntimeConfigWithSingleOutput();
-  starpu_server::OutputSlotPool pool(opts, 1);
-  const int slot_id = pool.acquire();
-
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_output_tensors(
-      {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))});
-
-  auto ctx = make_callback_context(job, &opts);
-  ctx->output_pool = &pool;
-  ctx->output_slot_id = slot_id;
-  ctx->self_keep_alive = ctx;
-  ctx->on_finished = [&pool, slot_id]() {
-    pool.release(slot_id);
-    throw std::runtime_error("boom");
-  };
-
   constexpr float kSentinelValue = 7.0F;
-  const auto& base_ptrs = pool.base_ptrs(slot_id);
-  ASSERT_EQ(base_ptrs.size(), 1U);
-  *static_cast<float*>(base_ptrs[0]) = kSentinelValue;
+  OutputContextFixture fixture({
+      .sentinel_value = kSentinelValue,
+      .on_finished =
+          [](auto& pool, int slot_id) {
+            pool.release(slot_id);
+            throw std::runtime_error("boom");
+          },
+  });
 
   starpu_server::CaptureStream capture{std::cerr};
 
   EXPECT_NO_THROW(
-      starpu_server::InferenceTask::finalize_inference_task(ctx.get()));
+      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
   const auto log = capture.str();
   EXPECT_NE(log.find("Exception in on_finished"), std::string::npos);
 
-  const auto& job_outputs = job->get_output_tensors();
+  const auto& job_outputs = fixture.job->get_output_tensors();
   ASSERT_EQ(job_outputs.size(), 1U);
   ASSERT_TRUE(job_outputs[0].defined());
   EXPECT_FLOAT_EQ(job_outputs[0].item<float>(), kSentinelValue);
 
-  auto reacquired = pool.try_acquire();
+  auto reacquired = fixture.pool.try_acquire();
   ASSERT_TRUE(reacquired.has_value());
-  EXPECT_EQ(*reacquired, slot_id);
-  pool.release(*reacquired);
+  EXPECT_EQ(*reacquired, fixture.slot_id);
+  fixture.pool.release(*reacquired);
 }
 
 TEST(InferenceTask, ProcessOutputHandleNullHandleFinalizes)
