@@ -26,8 +26,7 @@ TEST_F(StarPUTaskRunnerFixture, HandleJobExceptionCallback)
 TEST_F(
     StarPUTaskRunnerFixture, HandleJobExceptionCallbackLogsStdExceptionMessage)
 {
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_job_id(7);
+  auto job = make_job(7, {});
   job->set_on_complete([](const auto&, double) {
     throw std::runtime_error("callback failure");
   });
@@ -47,8 +46,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     HandleJobExceptionCallbackLogsUnknownNonStdExceptionMessage)
 {
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_job_id(8);
+  auto job = make_job(8, {});
   job->set_on_complete([](const auto&, double) -> void { throw 42; });
 
   starpu_server::CaptureStream capture{std::cerr};
@@ -66,9 +64,13 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   auto& models_gpu = models_gpu_;
   models_gpu.resize(starpu_server::InferLimits::MaxModelsGPU + 1);
   auto probe = starpu_server::make_callback_probe();
-  auto job = probe.job;
-  job->set_job_id(1);
-  job->set_input_tensors({torch::tensor({1})});
+  auto job = make_job(1, {torch::tensor({1})});
+  job->set_on_complete([&probe](const auto& results, double latency) {
+    probe.called = true;
+    probe.results = results;
+    probe.latency = latency;
+  });
+  probe.job = job;
   ASSERT_TRUE(queue_.push(job));
   ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
   runner_->run();
@@ -77,27 +79,21 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
 
 TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
 {
-  starpu_server::ModelConfig model_config{};
-  model_config.name = "test";
-  starpu_server::TensorConfig input0{};
-  input0.name = "input0";
-  input0.dims = {3};
-  input0.type = at::kFloat;
-  model_config.inputs = {input0};
-
-  starpu_server::TensorConfig output0{};
-  output0.name = "output0";
-  output0.dims = {3};
-  output0.type = at::kFloat;
-  model_config.outputs = {output0};
+  auto model_config = make_model_config(
+      "test", {make_tensor_config("input0", {3}, at::kFloat)},
+      {make_tensor_config("output0", {3}, at::kFloat)});
 
   reset_runner_with_model(model_config, /*input_slots=*/1);
 
   auto probe = starpu_server::make_callback_probe();
-  auto job = probe.job;
-  job->set_job_id(9);
-  job->set_input_tensors({torch::ones({3}), torch::ones({3})});
-  job->set_input_types({at::kFloat, at::kFloat});
+  auto job = make_job(
+      9, {torch::ones({3}), torch::ones({3})}, {at::kFloat, at::kFloat});
+  job->set_on_complete([&probe](const auto& results, double latency) {
+    probe.called = true;
+    probe.results = results;
+    probe.latency = latency;
+  });
+  probe.job = job;
 
   ASSERT_TRUE(queue_.push(job));
   ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));

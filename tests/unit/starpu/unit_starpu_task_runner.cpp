@@ -23,7 +23,7 @@ class StarPUTaskRunnerTestAdapter {
 TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
 {
   auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
-  auto normal_job = std::make_shared<starpu_server::InferenceJob>();
+  auto normal_job = make_job(0, {});
   EXPECT_TRUE(runner_->should_shutdown(shutdown_job));
   EXPECT_FALSE(runner_->should_shutdown(normal_job));
 }
@@ -145,10 +145,7 @@ TEST_F(
   opts_.max_models_gpu = 0;
   models_gpu_.resize(1);
 
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_job_id(42);
-  job->set_input_tensors({torch::ones({1})});
-  job->set_input_types({at::kFloat});
+  auto job = make_job(42, {torch::ones({1})}, {at::kFloat});
   job->set_output_tensors({torch::zeros({1})});
 
   EXPECT_THROW(
@@ -159,30 +156,15 @@ TEST_F(
 TEST_F(
     StarPUTaskRunnerFixture, SubmitInferenceTaskWithPoolsReleasesSlotsOnFailure)
 {
-  starpu_server::ModelConfig model_config{};
-  model_config.name = "test";
-  starpu_server::TensorConfig input0{};
-  input0.name = "input0";
-  input0.dims = {3};
-  input0.type = at::kFloat;
-  starpu_server::TensorConfig input1{};
-  input1.name = "input1";
-  input1.dims = {3};
-  input1.type = at::kFloat;
-  model_config.inputs = {input0, input1};
-
-  starpu_server::TensorConfig output0{};
-  output0.name = "output0";
-  output0.dims = {3};
-  output0.type = at::kFloat;
-  model_config.outputs = {output0};
+  auto model_config = make_model_config(
+      "test",
+      {make_tensor_config("input0", {3}, at::kFloat),
+       make_tensor_config("input1", {3}, at::kFloat)},
+      {make_tensor_config("output0", {3}, at::kFloat)});
 
   reset_runner_with_model(model_config, /*input_slots=*/1);
 
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_job_id(7);
-  job->set_input_tensors({torch::ones({3})});
-  job->set_input_types({at::kFloat});
+  auto job = make_job(7, {torch::ones({3})}, {at::kFloat});
 
   EXPECT_THROW(runner_->submit_inference_task(job), std::runtime_error);
 
@@ -203,23 +185,14 @@ TEST_F(
     StarPUTaskRunnerFixture,
     SubmitInferenceTaskWithOutputPoolReleasesSlotOnInputRegistrationFailure)
 {
-  starpu_server::ModelConfig model_config{};
-  model_config.name = "output_only";
-
-  starpu_server::TensorConfig output_config{};
-  output_config.name = "output0";
-  output_config.dims = {3};
-  output_config.type = at::kFloat;
-  model_config.outputs = {output_config};
+  auto model_config = make_model_config(
+      "output_only", {}, {make_tensor_config("output0", {3}, at::kFloat)});
 
   reset_runner_with_model(model_config, /*input_slots=*/1);
   ASSERT_FALSE(starpu_setup_->has_input_pool());
   ASSERT_TRUE(starpu_setup_->has_output_pool());
 
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_job_id(13);
-  job->set_input_tensors({torch::ones({2, 2})});
-  job->set_input_types({at::kFloat});
+  auto job = make_job(13, {torch::ones({2, 2})}, {at::kFloat});
 
   auto& stored_inputs =
       const_cast<std::vector<torch::Tensor>&>(job->get_input_tensors());
@@ -241,14 +214,8 @@ TEST_F(
     StarPUTaskRunnerFixture,
     SubmitInferenceTaskWithOutputPoolReleasesSlotOnTaskCreationFailure)
 {
-  starpu_server::ModelConfig model_config{};
-  model_config.name = "output_only";
-
-  starpu_server::TensorConfig output_config{};
-  output_config.name = "output0";
-  output_config.dims = {3};
-  output_config.type = at::kFloat;
-  model_config.outputs = {output_config};
+  auto model_config = make_model_config(
+      "output_only", {}, {make_tensor_config("output0", {3}, at::kFloat)});
 
   auto deps = starpu_server::kDefaultInferenceTaskDependencies;
   deps.task_create_fn = []() -> starpu_task* { return nullptr; };
@@ -256,9 +223,7 @@ TEST_F(
   ASSERT_FALSE(starpu_setup_->has_input_pool());
   ASSERT_TRUE(starpu_setup_->has_output_pool());
 
-  auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_job_id(17);
-  job->set_input_tensors({});
+  auto job = make_job(17, {});
 
   EXPECT_THROW(
       runner_->submit_inference_task(job),
@@ -275,20 +240,9 @@ TEST_F(
     StarPUTaskRunnerFixture,
     HandleSubmissionFailureReleasesSlotsThroughTestHook)
 {
-  starpu_server::ModelConfig model_config{};
-  model_config.name = "test";
-
-  starpu_server::TensorConfig input_config{};
-  input_config.name = "input0";
-  input_config.dims = {3};
-  input_config.type = at::kFloat;
-  model_config.inputs = {input_config};
-
-  starpu_server::TensorConfig output_config{};
-  output_config.name = "output0";
-  output_config.dims = {3};
-  output_config.type = at::kFloat;
-  model_config.outputs = {output_config};
+  auto model_config = make_model_config(
+      "test", {make_tensor_config("input0", {3}, at::kFloat)},
+      {make_tensor_config("output0", {3}, at::kFloat)});
 
   reset_runner_with_model(model_config, /*input_slots=*/1);
 

@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "core/inference_params.hpp"
@@ -17,6 +18,27 @@
 
 class StarPUTaskRunnerFixture : public ::testing::Test {
  protected:
+  static starpu_server::TensorConfig make_tensor_config(
+      std::string name, std::vector<int64_t> dims, c10::ScalarType type)
+  {
+    starpu_server::TensorConfig config{};
+    config.name = std::move(name);
+    config.dims = std::move(dims);
+    config.type = type;
+    return config;
+  }
+
+  static starpu_server::ModelConfig make_model_config(
+      std::string name, std::vector<starpu_server::TensorConfig> inputs,
+      std::vector<starpu_server::TensorConfig> outputs)
+  {
+    starpu_server::ModelConfig config{};
+    config.name = std::move(name);
+    config.inputs = std::move(inputs);
+    config.outputs = std::move(outputs);
+    return config;
+  }
+
   starpu_server::InferenceQueue queue_;
   torch::jit::script::Module model_cpu_;
   std::vector<torch::jit::script::Module> models_gpu_;
@@ -56,6 +78,17 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;
     config_.dependencies = &dependencies_;
     runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+  }
+
+  std::shared_ptr<starpu_server::InferenceJob> make_job(
+      int job_id, std::vector<torch::Tensor> inputs,
+      std::vector<c10::ScalarType> input_types = {})
+  {
+    auto job = std::make_shared<starpu_server::InferenceJob>();
+    job->set_job_id(job_id);
+    job->set_input_tensors(std::move(inputs));
+    job->set_input_types(std::move(input_types));
+    return job;
   }
 
   void reset_runner_with_model(
