@@ -7,6 +7,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/inference_params.hpp"
@@ -19,6 +20,40 @@
 namespace {
 const std::vector<int64_t> kShape1{1};
 const std::vector<torch::Dtype> kTypesFloat{torch::kFloat32};
+
+class ConstantModelConfigTest : public ::testing::Test {
+ protected:
+  void SetUp() override
+  {
+    model_file_.emplace(
+        "constant_model_fixture", starpu_server::make_constant_model());
+    base_config_ = starpu_server::make_single_model_runtime_config(
+        model_file_->path(), kShape1, at::kFloat);
+  }
+
+  [[nodiscard]] starpu_server::RuntimeConfig base_config() const
+  {
+    return base_config_;
+  }
+
+  [[nodiscard]] starpu_server::RuntimeConfig cuda_config(
+      std::vector<int> device_ids) const
+  {
+    auto config = base_config();
+    config.use_cuda = true;
+    config.device_ids = std::move(device_ids);
+    return config;
+  }
+
+  [[nodiscard]] const std::filesystem::path& model_path() const
+  {
+    return model_file_->path();
+  }
+
+ private:
+  starpu_server::RuntimeConfig base_config_{};
+  std::optional<starpu_server::TemporaryModelFile> model_file_;
+};
 
 struct WorkerFailOutcome {
   bool threw_runtime_error;
@@ -56,13 +91,9 @@ RunWorkerThreadFailureCase(const std::filesystem::path& path)
 }
 }  // namespace
 
-TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
+TEST_F(ConstantModelConfigTest, LoadModelAndReferenceOutputUnsupported)
 {
-  starpu_server::TemporaryModelFile file(
-      "constant_module", starpu_server::make_constant_model());
-
-  auto opts = starpu_server::make_single_model_runtime_config(
-      file.path(), kShape1, at::kFloat);
+  auto opts = base_config();
   opts.device_ids = {0};
   opts.use_cuda = false;
 
@@ -72,15 +103,9 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
       starpu_server::UnsupportedModelOutputTypeException);
 }
 
-TEST(InferenceRunner_Robustesse, CloneModelToGpus_InvalidDeviceIdThrows)
+TEST_F(ConstantModelConfigTest, CloneModelToGpus_InvalidDeviceIdThrows)
 {
-  starpu_server::TemporaryModelFile file(
-      "clone_model_invalid_device", starpu_server::make_constant_model());
-
-  auto opts = starpu_server::make_single_model_runtime_config(
-      file.path(), kShape1, at::kFloat);
-  opts.use_cuda = true;
-  opts.device_ids = {-1};
+  auto opts = cuda_config(std::vector<int>{-1});
 
   EXPECT_THROW(
       (void)starpu_server::load_model_and_reference_output(opts),
@@ -173,17 +198,12 @@ TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
       std::string::npos);
 }
 
-TEST(RunInferenceLoop_Robustesse, InvalidCudaDeviceLogsError)
+TEST_F(ConstantModelConfigTest, InvalidCudaDeviceLogsError)
 {
   using namespace starpu_server;
 
-  TemporaryModelFile file("invalid_cuda_device", make_constant_model());
-
-  auto opts =
-      make_single_model_runtime_config(file.path(), kShape1, at::kFloat);
+  auto opts = cuda_config(std::vector<int>{-1});
   opts.iterations = 1;
-  opts.use_cuda = true;
-  opts.device_ids = {-1};
   opts.warmup_iterations = 0;
 
   StarPUSetup starpu(opts);
