@@ -2,7 +2,6 @@
 
 #include <torch/script.h>
 
-#include <array>
 #include <chrono>
 
 #include "device_type.hpp"

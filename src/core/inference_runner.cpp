@@ -4,7 +4,6 @@
 #include <ATen/core/ScalarType.h>
 #include <ATen/core/TensorBody.h>
 #include <c10/core/InferenceMode.h>
-#include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
 #include <torch/torch.h>
 
