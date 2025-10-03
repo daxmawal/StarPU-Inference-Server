@@ -39,12 +39,12 @@ class LoadModelAndReferenceOutputTest
  protected:
   static void RunScenario(const TestParam& param)
   {
-    const auto file = MakeTempModelPath(param.name.c_str());
-    param.save_module(file);
+    starpu_server::TemporaryModelFile file(
+        param.name.c_str(), param.save_module);
 
     starpu_server::RuntimeConfig opts;
     opts.models.resize(1);
-    opts.models[0].path = file.string();
+    opts.models[0].path = file.path().string();
     opts.models[0].inputs = param.inputs;
     opts.device_ids = {kDeviceId0};
     opts.use_cuda = false;
@@ -60,8 +60,6 @@ class LoadModelAndReferenceOutputTest
     auto inputs = starpu_server::generate_inputs(opts.models[0].inputs);
     ASSERT_EQ(refs.size(), param.expected_outputs);
     param.verify(refs, inputs);
-
-    std::filesystem::remove(file);
   }
 };
 

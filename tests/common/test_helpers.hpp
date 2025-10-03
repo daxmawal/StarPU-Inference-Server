@@ -9,9 +9,11 @@
 #include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <concepts>
 #include <filesystem>
 #include <format>
 #include <functional>
+#include <utility>
 #include <future>
 #include <iostream>
 #include <optional>
@@ -49,6 +51,62 @@ MakeTempModelPath(const char* base) -> std::filesystem::path
 }
 
 namespace starpu_server {
+
+class TemporaryModelFile {
+ public:
+  TemporaryModelFile(const char* base, torch::jit::script::Module module)
+      : path_{MakeTempModelPath(base)}
+  {
+    module.save(path_.string());
+  }
+
+  template <typename SaveFunc>
+    requires std::invocable<SaveFunc, const std::filesystem::path&>
+  TemporaryModelFile(const char* base, SaveFunc&& save_func)
+      : path_{MakeTempModelPath(base)}
+  {
+    std::invoke(std::forward<SaveFunc>(save_func), path_);
+  }
+
+  TemporaryModelFile(const TemporaryModelFile&) = delete;
+  auto operator=(const TemporaryModelFile&) -> TemporaryModelFile& = delete;
+
+  TemporaryModelFile(TemporaryModelFile&& other) noexcept
+      : path_{std::move(other.path_)}
+  {
+    other.path_.clear();
+  }
+
+  auto operator=(TemporaryModelFile&& other) noexcept
+      -> TemporaryModelFile&
+  {
+    if (this != &other) {
+      cleanup();
+      path_ = std::move(other.path_);
+      other.path_.clear();
+    }
+    return *this;
+  }
+
+  ~TemporaryModelFile() { cleanup(); }
+
+  [[nodiscard]] auto path() const -> const std::filesystem::path&
+  {
+    return path_;
+  }
+
+ private:
+  void cleanup()
+  {
+    if (!path_.empty()) {
+      std::error_code ec;
+      std::filesystem::remove(path_, ec);
+      path_.clear();
+    }
+  }
+
+  std::filesystem::path path_{};
+};
 
 class CaptureStream {
  public:
@@ -99,13 +157,11 @@ run_add_one_inference_loop(
     std::optional<std::vector<int>> device_ids_override = std::nullopt)
     -> std::string
 {
-  auto model = make_add_one_model();
-  const auto model_path = MakeTempModelPath("add_one");
-  model.save(model_path.string());
+  TemporaryModelFile model_file{"add_one", make_add_one_model()};
 
   RuntimeConfig opts;
   opts.models.resize(1);
-  opts.models[0].path = model_path.string();
+  opts.models[0].path = model_file.path().string();
   opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
   opts.iterations = 1;
   opts.use_cpu = use_cpu;
@@ -122,7 +178,6 @@ run_add_one_inference_loop(
   CaptureStream capture{std::cout};
   run_inference_loop(opts, starpu);
   const std::string output = capture.str();
-  std::filesystem::remove(model_path);
   return output;
 }
 

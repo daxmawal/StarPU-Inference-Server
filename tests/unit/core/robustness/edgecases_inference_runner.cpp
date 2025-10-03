@@ -58,12 +58,11 @@ RunWorkerThreadFailureCase(const std::filesystem::path& path)
 
 TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
 {
-  const auto file = MakeTempModelPath("constant_module");
-  auto model = starpu_server::make_constant_model();
-  model.save(file.string());
+  starpu_server::TemporaryModelFile file(
+      "constant_module", starpu_server::make_constant_model());
 
   auto opts = starpu_server::make_single_model_runtime_config(
-      file, kShape1, at::kFloat);
+      file.path(), kShape1, at::kFloat);
   opts.device_ids = {0};
   opts.use_cuda = false;
 
@@ -71,26 +70,21 @@ TEST(InferenceRunner_Robustesse, LoadModelAndReferenceOutputUnsupported)
   EXPECT_THROW(
       (void)starpu_server::load_model_and_reference_output(opts),
       starpu_server::UnsupportedModelOutputTypeException);
-
-  std::filesystem::remove(file);
 }
 
 TEST(InferenceRunner_Robustesse, CloneModelToGpus_InvalidDeviceIdThrows)
 {
-  const auto file = MakeTempModelPath("clone_model_invalid_device");
-  auto model = starpu_server::make_constant_model();
-  model.save(file.string());
+  starpu_server::TemporaryModelFile file(
+      "clone_model_invalid_device", starpu_server::make_constant_model());
 
   auto opts = starpu_server::make_single_model_runtime_config(
-      file, kShape1, at::kFloat);
+      file.path(), kShape1, at::kFloat);
   opts.use_cuda = true;
   opts.device_ids = {-1};
 
   EXPECT_THROW(
       (void)starpu_server::load_model_and_reference_output(opts),
       std::runtime_error);
-
-  std::filesystem::remove(file);
 }
 
 namespace starpu_server {
@@ -169,27 +163,24 @@ TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
 {
   using namespace starpu_server;
 
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "worker_fail.pt";
-  make_identity_model().save(model_path.string());
+  starpu_server::TemporaryModelFile model_file(
+      "worker_fail", starpu_server::make_identity_model());
 
-  const auto outcome = RunWorkerThreadFailureCase(model_path);
+  const auto outcome = RunWorkerThreadFailureCase(model_file.path());
   EXPECT_TRUE(outcome.threw_runtime_error);
   EXPECT_NE(
       outcome.log.find("Failed to start worker thread: boom"),
       std::string::npos);
-  std::filesystem::remove(model_path);
 }
 
 TEST(RunInferenceLoop_Robustesse, InvalidCudaDeviceLogsError)
 {
   using namespace starpu_server;
 
-  const auto file = MakeTempModelPath("invalid_cuda_device");
-  auto model = make_constant_model();
-  model.save(file.string());
+  TemporaryModelFile file("invalid_cuda_device", make_constant_model());
 
-  auto opts = make_single_model_runtime_config(file, kShape1, at::kFloat);
+  auto opts =
+      make_single_model_runtime_config(file.path(), kShape1, at::kFloat);
   opts.iterations = 1;
   opts.use_cuda = true;
   opts.device_ids = {-1};
@@ -203,6 +194,4 @@ TEST(RunInferenceLoop_Robustesse, InvalidCudaDeviceLogsError)
   EXPECT_NE(
       log.find("Failed to load model or reference outputs:"),
       std::string::npos);
-
-  std::filesystem::remove(file);
 }
