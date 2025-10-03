@@ -26,6 +26,16 @@ enum class VerbosityLevel : std::uint8_t {
   Trace = 4
 };
 
+[[nodiscard]] constexpr auto
+should_log(VerbosityLevel required, VerbosityLevel current) -> bool
+{
+  return std::to_underlying(current) >= std::to_underlying(required);
+}
+
+static_assert(should_log(VerbosityLevel::Info, VerbosityLevel::Info));
+static_assert(should_log(VerbosityLevel::Info, VerbosityLevel::Trace));
+static_assert(!should_log(VerbosityLevel::Trace, VerbosityLevel::Info));
+
 // =============================================================================
 // Utility: parse verbosity level from string or number
 // =============================================================================

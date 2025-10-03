@@ -72,8 +72,7 @@ log_job_enqueued(
     const RuntimeConfig& opts, int job_id, int iterations,
     std::chrono::high_resolution_clock::time_point now)
 {
-  if (std::to_underlying(opts.verbosity) >=
-      std::to_underlying(VerbosityLevel::Trace)) {
+  if (should_log(VerbosityLevel::Trace, opts.verbosity)) {
     log_trace(
         opts.verbosity,
         std::format(

@@ -263,12 +263,14 @@ run_codelet_inference(
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
 
-  log_trace(
-      params->verbosity,
-      std::format(
-          "{} device id {}, worker id {}, job id {}",
-          (executed_on_type == DeviceType::CPU ? "CPU" : "GPU"), device_id,
-          worker_id, params->job_id));
+  if (should_log(VerbosityLevel::Trace, params->verbosity)) {
+    log_trace(
+        params->verbosity,
+        std::format(
+            "{} device id {}, worker id {}, job id {}",
+            (executed_on_type == DeviceType::CPU ? "CPU" : "GPU"), device_id,
+            worker_id, params->job_id));
+  }
 
   if (params->device.executed_on) {
     *params->device.executed_on = executed_on_type;

@@ -135,14 +135,17 @@ StarPUTaskRunner::log_job_timings(
           timing_info.callback_end_time - timing_info.callback_start_time)
           .count();
 
-  log_stats(
-      opts_->verbosity,
-      std::format(
-          "Job {} done. Latency = {:.3f} ms | Queue = {:.3f} ms, Submit = "
-          "{:.3f} ms, Scheduling = {:.3f} ms, Codelet = {:.3f} ms, Inference = "
-          "{:.3f} ms, Callback = {:.3f} ms",
-          job_id, latency_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
-          inference_ms, callback_ms));
+  if (should_log(VerbosityLevel::Stats, opts_->verbosity)) {
+    log_stats(
+        opts_->verbosity,
+        std::format(
+            "Job {} done. Latency = {:.3f} ms | Queue = {:.3f} ms, Submit = "
+            "{:.3f} ms, Scheduling = {:.3f} ms, Codelet = {:.3f} ms, Inference "
+            "= "
+            "{:.3f} ms, Callback = {:.3f} ms",
+            job_id, latency_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
+            inference_ms, callback_ms));
+  }
 }
 
 void
@@ -439,10 +442,12 @@ StarPUTaskRunner::run()
     }
 
     const auto job_id = job->get_job_id();
-    log_trace(
-        opts_->verbosity,
-        std::format(
-            "Dequeued job ID: {}, queue size : {}", job_id, queue_->size()));
+    if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
+      log_trace(
+          opts_->verbosity,
+          std::format(
+              "Dequeued job ID: {}, queue size : {}", job_id, queue_->size()));
+    }
 
     prepare_job_completion_callback(job);
 
@@ -450,7 +455,10 @@ StarPUTaskRunner::run()
       job->timing_info().dequeued_time =
           std::chrono::high_resolution_clock::now();
 
-      log_debug(opts_->verbosity, std::format("Submitting job ID: {}", job_id));
+      if (should_log(VerbosityLevel::Debug, opts_->verbosity)) {
+        log_debug(
+            opts_->verbosity, std::format("Submitting job ID: {}", job_id));
+      }
 
       submit_inference_task(job);
     }

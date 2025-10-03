@@ -502,12 +502,14 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
     }
 
     if (auto stats = compute_latency_statistics(std::move(latencies))) {
-      log_stats(
-          opts.verbosity,
-          std::format(
-              "Latency stats (ms): p50={:.3f}, p85={:.3f}, p95={:.3f}, "
-              "p100={:.3f}, mean={:.3f}",
-              stats->p50, stats->p85, stats->p95, stats->p100, stats->mean));
+      if (should_log(VerbosityLevel::Stats, opts.verbosity)) {
+        log_stats(
+            opts.verbosity,
+            std::format(
+                "Latency stats (ms): p50={:.3f}, p85={:.3f}, p95={:.3f}, "
+                "p100={:.3f}, mean={:.3f}",
+                stats->p50, stats->p85, stats->p95, stats->p100, stats->mean));
+      }
     }
   }
 
