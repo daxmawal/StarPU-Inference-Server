@@ -6,23 +6,18 @@
 #include <chrono>
 #include <cstddef>
 #include <format>
-#include <iomanip>
 #include <iterator>
 #include <memory>
 #include <random>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "starpu_setup.hpp"
-#include "starpu_task_worker.hpp"
 #include "time_utils.hpp"
 
 namespace starpu_server::client_utils {

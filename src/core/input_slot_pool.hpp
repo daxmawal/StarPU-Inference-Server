@@ -4,16 +4,12 @@
 #include <starpu.h>
 #include <torch/script.h>
 
-#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <span>
-#include <string>
-#include <utility>
 #include <vector>
 
 #include "utils/datatype_utils.hpp"

@@ -5,13 +5,10 @@
 #include <string>
 #include <vector>
 
-#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
-#include "starpu_setup.hpp"
-#include "starpu_task_worker.hpp"
 
 namespace starpu_server::client_utils {
 
