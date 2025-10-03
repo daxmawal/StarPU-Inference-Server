@@ -527,24 +527,22 @@ MetricsRegistry::perform_sampling_iteration()
     auto gstats = gpu_stats_provider_();
     for (const auto& stats : gstats) {
       const std::string label = std::to_string(stats.index);
-      if (gpu_utilization_gauges_.find(stats.index) ==
-          gpu_utilization_gauges_.end()) {
-        gpu_utilization_gauges_[stats.index] =
-            &gpu_utilization_family->Add({{"gpu", label}});
-      }
-      if (gpu_memory_used_gauges_.find(stats.index) ==
-          gpu_memory_used_gauges_.end()) {
-        gpu_memory_used_gauges_[stats.index] =
-            &gpu_memory_used_bytes_family->Add({{"gpu", label}});
-      }
-      if (gpu_memory_total_gauges_.find(stats.index) ==
-          gpu_memory_total_gauges_.end()) {
-        gpu_memory_total_gauges_[stats.index] =
-            &gpu_memory_total_bytes_family->Add({{"gpu", label}});
-      }
-      gpu_utilization_gauges_[stats.index]->Set(stats.util_percent);
-      gpu_memory_used_gauges_[stats.index]->Set(stats.mem_used_bytes);
-      gpu_memory_total_gauges_[stats.index]->Set(stats.mem_total_bytes);
+
+      const auto ensure_gauge = [&](auto& gauges,
+                                    auto* family) -> prometheus::Gauge* {
+        auto [it, inserted] = gauges.try_emplace(stats.index, nullptr);
+        if (inserted) {
+          it->second = &family->Add({{"gpu", label}});
+        }
+        return it->second;
+      };
+
+      ensure_gauge(gpu_utilization_gauges_, gpu_utilization_family)
+          ->Set(stats.util_percent);
+      ensure_gauge(gpu_memory_used_gauges_, gpu_memory_used_bytes_family)
+          ->Set(stats.mem_used_bytes);
+      ensure_gauge(gpu_memory_total_gauges_, gpu_memory_total_bytes_family)
+          ->Set(stats.mem_total_bytes);
     }
   }
   catch (const std::exception& e) {

@@ -37,6 +37,7 @@ struct TimingInfo {
 // =============================================================================
 
 struct InferenceResult {
+  InferenceResult() noexcept = default;
   std::vector<torch::Tensor> inputs;
   std::vector<torch::Tensor> results;
   double latency_ms = 0.0;
