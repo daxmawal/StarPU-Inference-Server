@@ -10,14 +10,9 @@
 #include <string>
 #include <vector>
 
-#include "core/input_slot_pool.hpp"
 #include "exceptions.hpp"
-#include "inference_queue.hpp"
-#include "inference_runner.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
-#include "runtime_config.hpp"
-#include "starpu_setup.hpp"
 #include "utils/nvtx.hpp"
 #include "utils/perf_observer.hpp"
 

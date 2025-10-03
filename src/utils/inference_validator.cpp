@@ -10,7 +10,6 @@
 
 #include "device_type.hpp"
 #include "exceptions.hpp"
-#include "inference_runner.hpp"
 #include "logger.hpp"
 
 namespace starpu_server {
