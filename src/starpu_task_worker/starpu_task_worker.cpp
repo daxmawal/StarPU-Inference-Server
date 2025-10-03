@@ -162,8 +162,8 @@ StarPUTaskRunner::prepare_job_completion_callback(
           auto& stored_result = results_->emplace_back();
           if (opts_->validate_results) {
             stored_result.inputs = std::move(input_tensors);
+            stored_result.results = results;
           }
-          stored_result.results = results;
           stored_result.latency_ms = latency_ms;
           stored_result.timing_info = job_sptr->timing_info();
           stored_result.job_id = job_sptr->get_job_id();

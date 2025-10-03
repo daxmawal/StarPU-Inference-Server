@@ -380,8 +380,12 @@ process_results(
 
   auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, device_ids);
   for (const auto& result : results) {
-    if (result.results.empty() || !result.results[0].defined()) {
-      log_error(std::format("[Client] Job {} failed.", result.job_id));
+    const bool has_results =
+        !result.results.empty() && result.results[0].defined();
+    if (!has_results) {
+      if (validate_results) {
+        log_error(std::format("[Client] Job {} failed.", result.job_id));
+      }
       continue;
     }
 

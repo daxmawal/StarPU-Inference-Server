@@ -436,6 +436,30 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
       std::string::npos);
 }
 
+TEST(
+    InferenceRunner_ProcessResults,
+    ProcessResults_DoesNotLogErrorWhenResultsMissingAndValidationDisabled)
+{
+  auto cpu_model = starpu_server::make_identity_model();
+  std::vector<torch::jit::script::Module> gpu_models;
+  const std::vector<int> device_ids;
+
+  starpu_server::InferenceResult result{};
+  result.job_id = 13;
+  result.executed_on = starpu_server::DeviceType::CPU;
+
+  const std::vector<starpu_server::InferenceResult> results{result};
+
+  testing::internal::CaptureStderr();
+  starpu_server::detail::process_results(
+      results, cpu_model, gpu_models, device_ids,
+      /*validate_results=*/false, starpu_server::VerbosityLevel::Info,
+      /*rtol=*/1e-5, /*atol=*/1e-8);
+  const auto captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_EQ(captured.find("[Client] Job"), std::string::npos);
+}
+
 TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
 {
   auto cpu_model = starpu_server::make_identity_model();
