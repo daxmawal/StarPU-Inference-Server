@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <format>
 #include <iterator>
-#include <string>
 #include <vector>
 
 #include "device_type.hpp"

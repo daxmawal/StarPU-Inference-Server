@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <concepts>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>

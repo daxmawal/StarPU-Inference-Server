@@ -6,7 +6,6 @@
 #include <cstddef>
 #include <cstdlib>
 #include <format>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <ranges>
