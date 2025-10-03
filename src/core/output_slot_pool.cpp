@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 
 namespace starpu_server {

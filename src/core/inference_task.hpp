@@ -6,7 +6,6 @@
 #include <vector>
 
 #include "inference_runner.hpp"
-#include "runtime_config.hpp"
 
 namespace starpu_server {
 // =============================================================================

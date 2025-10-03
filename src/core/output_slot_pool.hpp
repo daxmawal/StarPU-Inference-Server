@@ -10,7 +10,6 @@
 #include <optional>
 #include <vector>
 
-#include "utils/datatype_utils.hpp"
 #include "utils/runtime_config.hpp"
 
 namespace starpu_server {
