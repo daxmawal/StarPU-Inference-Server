@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "core/inference_runner.hpp"
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 
