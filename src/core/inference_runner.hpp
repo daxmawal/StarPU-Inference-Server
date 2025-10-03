@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "device_type.hpp"
@@ -119,6 +120,10 @@ class InferenceJob {
       -> const std::vector<torch::Tensor>&
   {
     return input_tensors_;
+  }
+  [[nodiscard]] auto release_input_tensors() -> std::vector<torch::Tensor>
+  {
+    return std::exchange(input_tensors_, {});
   }
   [[nodiscard]] auto get_input_types() const
       -> const std::vector<at::ScalarType>&

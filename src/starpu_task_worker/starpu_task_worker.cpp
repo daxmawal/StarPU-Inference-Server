@@ -8,6 +8,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "exceptions.hpp"
@@ -152,13 +153,21 @@ StarPUTaskRunner::prepare_job_completion_callback(
   job->set_on_complete(
       [this, job_sptr = job, prev_callback](
           const std::vector<torch::Tensor>& results, double latency_ms) {
+        const auto batch_size =
+            batch_size_from_inputs(job_sptr->get_input_tensors());
+        auto input_tensors = job_sptr->release_input_tensors();
+
         {
           const std::scoped_lock lock(*results_mutex_);
-          results_->emplace_back(
-              job_sptr->get_input_tensors(), results, latency_ms,
-              job_sptr->timing_info(), job_sptr->get_job_id(),
-              job_sptr->get_device_id(), job_sptr->get_worker_id(),
-              job_sptr->get_executed_on());
+          auto& stored_result = results_->emplace_back();
+          stored_result.inputs = std::move(input_tensors);
+          stored_result.results = results;
+          stored_result.latency_ms = latency_ms;
+          stored_result.timing_info = job_sptr->timing_info();
+          stored_result.job_id = job_sptr->get_job_id();
+          stored_result.device_id = job_sptr->get_device_id();
+          stored_result.worker_id = job_sptr->get_worker_id();
+          stored_result.executed_on = job_sptr->get_executed_on();
         }
 
         auto& timing = job_sptr->timing_info();
@@ -183,8 +192,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
 
         perf_observer::record_job(
             job_sptr->timing_info().enqueued_time,
-            job_sptr->timing_info().callback_end_time,
-            batch_size_from_inputs(job_sptr->get_input_tensors()),
+            job_sptr->timing_info().callback_end_time, batch_size,
             job_sptr->get_fixed_worker_id().has_value());
 
         log_job_timings(

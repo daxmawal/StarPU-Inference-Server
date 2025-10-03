@@ -250,6 +250,21 @@ TEST(InferenceJobTest, SetInputTensorsCopiesNonContiguousAsContiguous)
   EXPECT_TRUE(stored.equal(non_contiguous));
 }
 
+TEST(InferenceJobTest, ReleaseInputTensorsMovesStoredInputs)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  const auto input = torch::ones(kShape2x2);
+  job->set_input_tensors({input});
+
+  ASSERT_EQ(job->get_input_tensors().size(), 1U);
+
+  auto released = job->release_input_tensors();
+
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  ASSERT_EQ(released.size(), 1U);
+  EXPECT_TRUE(released[0].equal(input));
+}
+
 TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
 {
   starpu_server::InferenceResult result{};
