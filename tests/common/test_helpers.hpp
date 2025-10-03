@@ -7,13 +7,12 @@
 #include <bit>
 #include <cassert>
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <cstring>
-#include <concepts>
 #include <filesystem>
 #include <format>
 #include <functional>
-#include <utility>
 #include <future>
 #include <iostream>
 #include <optional>
@@ -22,6 +21,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "core/inference_params.hpp"
@@ -77,8 +77,7 @@ class TemporaryModelFile {
     other.path_.clear();
   }
 
-  auto operator=(TemporaryModelFile&& other) noexcept
-      -> TemporaryModelFile&
+  auto operator=(TemporaryModelFile&& other) noexcept -> TemporaryModelFile&
   {
     if (this != &other) {
       cleanup();

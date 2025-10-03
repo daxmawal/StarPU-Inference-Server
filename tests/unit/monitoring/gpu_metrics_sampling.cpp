@@ -237,9 +237,7 @@ TEST(MetricsSampling, LogsUnknownExceptionsFromCpuProvider)
   auto gpu_provider = []() -> std::vector<MetricsRegistry::GpuSample> {
     return {};
   };
-  auto cpu_provider = []() -> std::optional<double> {
-    throw 42;
-  };
+  auto cpu_provider = []() -> std::optional<double> { throw 42; };
 
   MetricsRegistry metrics(
       0, std::move(gpu_provider), std::move(cpu_provider),
