@@ -72,11 +72,14 @@ log_job_enqueued(
     const RuntimeConfig& opts, int job_id, int iterations,
     std::chrono::high_resolution_clock::time_point now)
 {
-  log_trace(
-      opts.verbosity,
-      std::format(
-          "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
-          job_id + 1, iterations, current_time_formatted(now)));
+  if (std::to_underlying(opts.verbosity) >=
+      std::to_underlying(VerbosityLevel::Trace)) {
+    log_trace(
+        opts.verbosity,
+        std::format(
+            "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
+            job_id + 1, iterations, current_time_formatted(now)));
+  }
 }
 
 // =============================================================================

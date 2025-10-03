@@ -155,12 +155,14 @@ StarPUTaskRunner::prepare_job_completion_callback(
           const std::vector<torch::Tensor>& results, double latency_ms) {
         const auto batch_size =
             batch_size_from_inputs(job_sptr->get_input_tensors());
-        auto input_tensors = job_sptr->release_input_tensors();
-
         {
+          auto input_tensors = job_sptr->release_input_tensors();
+
           const std::scoped_lock lock(*results_mutex_);
           auto& stored_result = results_->emplace_back();
-          stored_result.inputs = std::move(input_tensors);
+          if (opts_->validate_results) {
+            stored_result.inputs = std::move(input_tensors);
+          }
           stored_result.results = results;
           stored_result.latency_ms = latency_ms;
           stored_result.timing_info = job_sptr->timing_info();
