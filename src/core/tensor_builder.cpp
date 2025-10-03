@@ -2,7 +2,6 @@
 
 #include <ATen/core/ScalarType.h>
 #include <c10/core/Device.h>
-#include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
 
 #include <bit>
@@ -10,8 +9,6 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
-#include <stdexcept>
-#include <string>
 #include <vector>
 
 #include "exceptions.hpp"

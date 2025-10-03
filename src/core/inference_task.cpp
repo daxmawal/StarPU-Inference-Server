@@ -1,7 +1,5 @@
 #include "inference_task.hpp"
 
-#include <ATen/core/ScalarType.h>
-
 #include <algorithm>
 #include <bit>
 #include <chrono>

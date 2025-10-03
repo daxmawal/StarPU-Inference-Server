@@ -6,7 +6,6 @@
 #include <c10/core/InferenceMode.h>
 #include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
-#include <cuda_runtime_api.h>
 #include <torch/torch.h>
 
 #include <algorithm>
