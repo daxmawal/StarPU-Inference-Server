@@ -18,6 +18,7 @@
 #include "utils/client_utils.hpp"
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
+#include "utils/nvtx.hpp"
 
 namespace starpu_server {
 using grpc::Server;
@@ -328,6 +329,8 @@ InferenceServiceImpl::submit_job_async(
   auto job = client_utils::create_job(
       inputs, *reference_outputs_, next_job_id_++, std::move(input_lifetimes));
 
+  NvtxRange submit_scope("grpc_submit_starpu");
+
   job->set_on_complete([job, on_complete = std::move(on_complete)](
                            const std::vector<torch::Tensor>& outs,
                            double latency_ms) mutable {
@@ -363,7 +366,11 @@ InferenceServiceImpl::submit_job_async(
     on_complete(Status::OK, std::move(outputs_copy), timing, copied_info);
   });
 
-  const bool pushed = queue_->push(job);
+  bool pushed = false;
+  {
+    NvtxRange queue_scope("grpc_submit_starpu_queue");
+    pushed = queue_->push(job);
+  }
   if (!pushed) {
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
@@ -457,6 +464,7 @@ InferenceServiceImpl::HandleModelInferAsync(
   };
 
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
+  NvtxRange request_scope("grpc_handle_infer_request");
 
   auto metrics = get_metrics();
   if (metrics && metrics->requests_total != nullptr) {
