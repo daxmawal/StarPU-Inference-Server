@@ -112,6 +112,10 @@ void
 StarPUTaskRunner::log_job_timings(
     int job_id, double latency_ms, const detail::TimingInfo& timing_info) const
 {
+  if (!should_log(VerbosityLevel::Stats, opts_->verbosity)) {
+    return;
+  }
+
   using duration_f = std::chrono::duration<double, std::milli>;
   const auto queue_ms =
       duration_f(timing_info.dequeued_time - timing_info.enqueued_time).count();
@@ -135,17 +139,15 @@ StarPUTaskRunner::log_job_timings(
           timing_info.callback_end_time - timing_info.callback_start_time)
           .count();
 
-  if (should_log(VerbosityLevel::Stats, opts_->verbosity)) {
-    log_stats(
-        opts_->verbosity,
-        std::format(
-            "Job {} done. Latency = {:.3f} ms | Queue = {:.3f} ms, Submit = "
-            "{:.3f} ms, Scheduling = {:.3f} ms, Codelet = {:.3f} ms, Inference "
-            "= "
-            "{:.3f} ms, Callback = {:.3f} ms",
-            job_id, latency_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
-            inference_ms, callback_ms));
-  }
+  log_stats(
+      opts_->verbosity,
+      std::format(
+          "Job {} done. Latency = {:.3f} ms | Queue = {:.3f} ms, Submit = "
+          "{:.3f} ms, Scheduling = {:.3f} ms, Codelet = {:.3f} ms, Inference "
+          "= "
+          "{:.3f} ms, Callback = {:.3f} ms",
+          job_id, latency_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
+          inference_ms, callback_ms));
 }
 
 void
