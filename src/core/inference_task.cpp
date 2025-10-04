@@ -364,7 +364,7 @@ InferenceTask::create_task(
   task->cl = starpu_->get_codelet();
   task->synchronous = opts_->synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
-  task->cl_arg_size = sizeof(InferenceParams);
+  // task->cl_arg_size = sizeof(InferenceParams);
   task->priority =
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_job_id());
 
