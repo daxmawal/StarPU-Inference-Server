@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <string>
+#include <string_view>
 
 #define STARPU_SERVER_NVTX_TESTING 1
 
@@ -42,7 +43,7 @@ TrackPop()
 }
 
 inline void
-TrackPushHook(const std::string&)
+TrackPushHook(std::string_view)
 {
   TrackPush();
 }

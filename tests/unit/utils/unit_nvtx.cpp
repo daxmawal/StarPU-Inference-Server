@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <string_view>
 
 #include "nvtx3/nvToolsExt.h"
 #include "utils/nvtx.hpp"
@@ -12,7 +13,7 @@ using namespace starpu_server;
 namespace {
 
 void
-TestPushHook(const std::string&)
+TestPushHook(std::string_view)
 {
   testing_nvtx::TrackPush();
 }
