@@ -109,6 +109,7 @@ free_host_buffer(void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
       log_warning(
           "starpu_memory_unpin failed for output buffer: rc=" +
           std::to_string(unpin_rc));
+      (void)cudaGetLastError();
     }
   }
   if (buffer_info.cuda_pinned) {
@@ -183,14 +184,14 @@ cleanup_slot_buffers_impl(
     std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
 {
   for (size_t j = 0; j < count; ++j) {
-    if (slot.handles[j] != nullptr) {
-      starpu_data_unregister(slot.handles[j]);
-      slot.handles[j] = nullptr;
-    }
     if (slot.base_ptrs[j] != nullptr) {
       free_host_buffer(slot.base_ptrs[j], buffer_infos[j]);
       slot.base_ptrs[j] = nullptr;
       buffer_infos[j] = {};
+    }
+    if (slot.handles[j] != nullptr) {
+      starpu_data_unregister(slot.handles[j]);
+      slot.handles[j] = nullptr;
     }
   }
 }
