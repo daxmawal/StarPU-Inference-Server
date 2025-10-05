@@ -1,9 +1,6 @@
 #pragma once
-#include <ATen/core/ScalarType.h>
-
 #include <span>
 #include <string>
-#include <vector>
 
 #include "logger.hpp"
 #include "runtime_config.hpp"
@@ -25,6 +22,8 @@ get_help_message(const char* prog_name) -> std::string
       "  --shape 1x3x224x224     Shape of a single input tensor\n"
       "  --shapes shape1,shape2  Shapes for multiple input tensors\n"
       "  --types float,int       Input tensor types (default: float)\n"
+      "  --input name:DIMS:TYPE  Combined input spec (repeatable);\n"
+      "                          e.g., input0:32x3x224x224:float32\n"
       "  --sync                  Run tasks in synchronous mode\n"
       "  --delay [ms]            Delay between jobs (default: 0)\n"
       "  --no_cpu                Disable CPU usage\n"
@@ -32,6 +31,8 @@ get_help_message(const char* prog_name) -> std::string
       "  --address ADDR          gRPC server listen address\n"
       "  --metrics-port [port]   Port for metrics exposition (default: 9090)\n"
       "  --max-batch-size N      Maximum inference batch size\n"
+      "  --input-slots N         Number of reusable input slots\n"
+      "  --slots N               Alias for --input-slots\n"
       "  --pregen-inputs N       Number of pregenerated inputs (default: 10)\n"
       "  --warmup-iterations N   Warmup iterations per CUDA device "
       "(default:2)\n"
@@ -39,6 +40,7 @@ get_help_message(const char* prog_name) -> std::string
       "1e-3)\n"
       "  --atol [value]          Absolute tolerance for validation (default: "
       "1e-5)\n"
+      "  --no-validate           Disable inference result validation\n"
       "  --verbose [0-4]         Verbosity level: 0=silent to 4=trace\n"
       "  --help                  Show this help message\n";
   return msg;

@@ -5,10 +5,10 @@
 #include <mutex>
 #include <queue>
 
-#include "inference_runner.hpp"
 #include "monitoring/metrics.hpp"
 
 namespace starpu_server {
+class InferenceJob;
 // =============================================================================
 // Thread-safe job queue for asynchronous inference execution
 // =============================================================================

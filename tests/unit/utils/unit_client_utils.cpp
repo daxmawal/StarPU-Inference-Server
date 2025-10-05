@@ -23,9 +23,8 @@ constexpr int kPickTrials = 5;
 constexpr int kWithinBoundsTrials = 100;
 constexpr int kJobId = 7;
 
-// Time constants for known-time tests
 constexpr int kKnownYear = 2023;
-constexpr int kKnownMonth = 1;  // January
+constexpr int kKnownMonth = 1;
 constexpr int kKnownDay = 1;
 constexpr int kKnownHour = 12;
 constexpr int kKnownMinute = 34;
@@ -220,7 +219,7 @@ TEST(TimeUtils, FormatTimestamp_KnownTime)
 {
   std::tm time = {};
   time.tm_year = kKnownYear - kTmYearBase;
-  time.tm_mon = kKnownMonth - 1;  // January = 1
+  time.tm_mon = kKnownMonth - 1;
   time.tm_mday = kKnownDay;
   time.tm_hour = kKnownHour;
   time.tm_min = kKnownMinute;

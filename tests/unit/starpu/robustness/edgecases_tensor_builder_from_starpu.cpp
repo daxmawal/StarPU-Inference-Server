@@ -36,3 +36,35 @@ TEST(TensorBuilderFromStarPU, NegativeNumDimsThrows)
               &params, buffers, torch::Device(torch::kCPU)),
       c10::Error);
 }
+
+TEST(TensorBuilderFromStarPU, FewerBuffersThanInputsThrows)
+{
+  auto params = starpu_server::make_params_for_inputs(
+      {{1}, {1}}, {at::kFloat, at::kFloat});
+  std::array<float, 1> input0{0.0F};
+  std::array<float, 1> input1{1.0F};
+  std::array<starpu_variable_interface, 2> buffers_raw{
+      starpu_server::make_variable_interface(input0.data()),
+      starpu_server::make_variable_interface(input1.data())};
+  std::array<void*, 1> buffers{buffers_raw.data()};
+  EXPECT_THROW(
+      [[maybe_unused]] auto _ =
+          starpu_server::TensorBuilder::from_starpu_buffers(
+              &params, buffers, torch::Device(torch::kCPU)),
+      starpu_server::InferenceExecutionException);
+}
+
+TEST(TensorBuilderFromStarPU, DimsSizeMismatchThrows)
+{
+  std::array<float, 4> input0{0.0F, 1.0F, 2.0F, 3.0F};
+  starpu_variable_interface buf =
+      starpu_server::make_variable_interface(input0.data());
+  auto params = starpu_server::make_params_for_inputs({{2, 2}}, {at::kFloat});
+  params.layout.dims[0].push_back(1);
+  std::array<void*, 1> buffers{&buf};
+  EXPECT_THROW(
+      [[maybe_unused]] auto _ =
+          starpu_server::TensorBuilder::from_starpu_buffers(
+              &params, buffers, torch::Device(torch::kCPU)),
+      starpu_server::InferenceExecutionException);
+}

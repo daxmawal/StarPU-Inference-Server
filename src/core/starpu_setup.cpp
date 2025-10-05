@@ -19,6 +19,7 @@
 #include <format>
 #include <functional>
 #include <map>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -31,8 +32,109 @@
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
+#include "utils/nvtx.hpp"
 
 namespace starpu_server {
+namespace {
+auto
+starpu_init_fn_ref() -> StarPUSetup::StarpuInitFn&
+{
+  static StarPUSetup::StarpuInitFn starpu_init_fn = &starpu_init;
+  return starpu_init_fn;
+}
+
+auto
+worker_stream_query_fn_ref() -> StarPUSetup::WorkerStreamQueryFn&
+{
+  static StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn =
+      &starpu_worker_get_stream_workerids;
+  return worker_stream_query_fn;
+}
+
+void
+configure_cpu(starpu_conf& conf, bool use_cpu)
+{
+  if (!use_cpu) {
+    conf.ncpus = 0;
+  }
+}
+
+void
+configure_gpu(starpu_conf& conf, const RuntimeConfig& opts)
+{
+  if (!opts.use_cuda) {
+    conf.ncuda = 0;
+    return;
+  }
+
+  if (opts.device_ids.size() > STARPU_NMAXWORKERS) {
+    throw std::invalid_argument(std::format(
+        "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
+        STARPU_NMAXWORKERS));
+  }
+
+  std::unordered_set<int> unique_ids;
+  std::vector<int> valid_device_ids;
+  valid_device_ids.reserve(opts.device_ids.size());
+
+  for (const int device_id : opts.device_ids) {
+    if (device_id < 0) {
+      log_error(std::format(
+          "Invalid CUDA device ID {}: must be non-negative", device_id));
+      continue;
+    }
+    if (!unique_ids.insert(device_id).second) {
+      throw std::invalid_argument(
+          std::format("[ERROR] Duplicate CUDA device ID: {}", device_id));
+    }
+    valid_device_ids.push_back(device_id);
+  }
+
+  conf.use_explicit_workers_cuda_gpuid = valid_device_ids.empty() ? 0U : 1U;
+  conf.ncuda = static_cast<int>(valid_device_ids.size());
+
+  std::span<unsigned int, STARPU_NMAXWORKERS> workers_cuda_gpuid(
+      conf.workers_cuda_gpuid);
+  for (size_t idx = 0; idx < valid_device_ids.size(); ++idx) {
+    workers_cuda_gpuid[idx] = static_cast<unsigned int>(valid_device_ids[idx]);
+  }
+}
+
+auto
+initialize_input_pool(const RuntimeConfig& opts)
+    -> std::unique_ptr<InputSlotPool>
+{
+  if (opts.models.empty() || opts.models[0].inputs.empty()) {
+    return nullptr;
+  }
+
+  try {
+    return std::make_unique<InputSlotPool>(opts, opts.input_slots);
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("Failed to initialize InputSlotPool: ") + e.what());
+    throw;
+  }
+}
+
+auto
+initialize_output_pool(const RuntimeConfig& opts)
+    -> std::unique_ptr<OutputSlotPool>
+{
+  if (opts.models.empty() || opts.models[0].outputs.empty()) {
+    return nullptr;
+  }
+
+  try {
+    return std::make_unique<OutputSlotPool>(opts, opts.input_slots);
+  }
+  catch (const std::exception& e) {
+    log_error(std::string("Failed to initialize OutputSlotPool: ") + e.what());
+    throw;
+  }
+}
+}  // namespace
+
 void run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
     torch::Device device, torch::jit::script::Module* model,
@@ -161,12 +263,14 @@ run_codelet_inference(
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
 
-  log_trace(
-      params->verbosity,
-      std::format(
-          "{} device id {}, worker id {}, job id {}",
-          (executed_on_type == DeviceType::CPU ? "CPU" : "GPU"), device_id,
-          worker_id, params->job_id));
+  if (should_log(VerbosityLevel::Trace, params->verbosity)) {
+    log_trace(
+        params->verbosity,
+        std::format(
+            "{} device id {}, worker id {}, job id {}",
+            (executed_on_type == DeviceType::CPU ? "CPU" : "GPU"), device_id,
+            worker_id, params->job_id));
+  }
 
   if (params->device.executed_on) {
     *params->device.executed_on = executed_on_type;
@@ -190,6 +294,23 @@ run_codelet_inference(
     *params->timing.codelet_end_time =
         std::chrono::high_resolution_clock::now();
   }
+}
+
+auto
+select_gpu_module(const InferenceParams& params, const int device_id)
+    -> torch::jit::script::Module*
+{
+  if (device_id >= 0) {
+    const auto module_index = static_cast<size_t>(device_id);
+    if (module_index < params.models.models_gpu.size()) {
+      if (auto* module = params.models.models_gpu[module_index]) {
+        return module;
+      }
+    }
+  }
+
+  throw StarPUCodeletException(std::format(
+      "[ERROR] No GPU model replica available for device {}", device_id));
 }
 
 // =============================================================================
@@ -227,6 +348,10 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
 
+  NvtxRange nvtx_scope(
+      std::string("codelet.cuda job ") + std::to_string(params->job_id) +
+      " dev " + std::to_string(device_id));
+
   cudaStream_t stream = starpu_cuda_get_local_stream();
   const at::cuda::CUDAStream torch_stream = at::cuda::getStreamFromExternal(
       stream, static_cast<c10::DeviceIndex>(device_id));
@@ -234,10 +359,12 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
   const c10::InferenceMode no_autograd;
   const at::cuda::CUDAStreamGuard guard(torch_stream);
 
+  torch::jit::script::Module* module = select_gpu_module(*params, device_id);
+
   run_codelet_inference(
       params, buffers_span,
       torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)),
-      params->models.models_gpu.at(static_cast<size_t>(device_id)),
+      module,
       [device_id](const at::Tensor& out, void* buffer_ptr) {
         const at::Tensor wrapper = torch::from_blob(
             buffer_ptr, out.sizes(),
@@ -259,47 +386,47 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
   starpu_conf_init(&conf_);
   conf_.sched_policy_name = scheduler_name_.c_str();
 
-  if (!opts.use_cpu) {
-    conf_.ncpus = 0;
-  }
+  configure_cpu(conf_, opts.use_cpu);
+  configure_gpu(conf_, opts);
 
-  if (!opts.use_cuda) {
-    conf_.ncuda = 0;
-  } else {
-    if (opts.device_ids.size() > STARPU_NMAXWORKERS) {
-      throw std::invalid_argument(std::format(
-          "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
-          STARPU_NMAXWORKERS));
-    }
-    std::unordered_set<int> unique_ids;
-
-    conf_.use_explicit_workers_cuda_gpuid = 1U;
-    conf_.ncuda = static_cast<int>(opts.device_ids.size());
-
-    std::span<unsigned int, STARPU_NMAXWORKERS> workers_cuda_gpuid(
-        conf_.workers_cuda_gpuid);
-    for (size_t idx = 0; idx < opts.device_ids.size(); ++idx) {
-      const int device_id = opts.device_ids[idx];
-      if (device_id < 0) {
-        throw std::invalid_argument(
-            "[ERROR] Invalid CUDA device ID: must be >= 0");
-      }
-      if (!unique_ids.insert(device_id).second) {
-        throw std::invalid_argument(
-            std::format("[ERROR] Duplicate CUDA device ID: {}", device_id));
-      }
-      workers_cuda_gpuid[idx] = static_cast<unsigned int>(device_id);
-    }
-  }
-
-  if (starpu_init(&conf_) != 0) {
+  if (starpu_init_fn_ref()(&conf_) != 0) {
     throw StarPUInitializationException("[ERROR] StarPU initialization error");
   }
+
+  input_pool_ = initialize_input_pool(opts);
+  output_pool_ = initialize_output_pool(opts);
 }
 
 StarPUSetup::~StarPUSetup()
 {
+  input_pool_.reset();
+  output_pool_.reset();
   starpu_shutdown();
+}
+
+void
+StarPUSetup::set_starpu_init_fn(StarpuInitFn hook_fn)
+{
+  starpu_init_fn_ref() = hook_fn != nullptr ? hook_fn : &starpu_init;
+}
+
+void
+StarPUSetup::reset_starpu_init_fn()
+{
+  starpu_init_fn_ref() = &starpu_init;
+}
+
+void
+StarPUSetup::set_worker_stream_query_fn(WorkerStreamQueryFn hook_fn)
+{
+  worker_stream_query_fn_ref() =
+      hook_fn != nullptr ? hook_fn : &starpu_worker_get_stream_workerids;
+}
+
+void
+StarPUSetup::reset_worker_stream_query_fn()
+{
+  worker_stream_query_fn_ref() = &starpu_worker_get_stream_workerids;
 }
 
 // =============================================================================
@@ -324,7 +451,7 @@ StarPUSetup::get_cuda_workers_by_device(const std::vector<int>& device_ids)
     }
 
     std::array<int, STARPU_NMAXWORKERS> workerids{};
-    const int nworkers = starpu_worker_get_stream_workerids(
+    const int nworkers = worker_stream_query_fn_ref()(
         static_cast<unsigned int>(device_id), workerids.data(),
         STARPU_CUDA_WORKER);
 

@@ -834,6 +834,72 @@ message ModelInferResponse
   //@@     milliseconds since the epoch.
   //@@
   uint64 server_send_ms = 8;
+
+  //@@  .. cpp:var:: double server_queue_ms
+  //@@
+  //@@     Time spent waiting in the inference queue, expressed in
+  //@@     milliseconds. A higher value indicates contention on the
+  //@@     request queue.
+  //@@
+  double server_queue_ms = 9;
+
+  //@@  .. cpp:var:: double server_submit_ms
+  //@@
+  //@@     Time spent preparing and submitting the job to StarPU.
+  //@@
+  double server_submit_ms = 10;
+
+  //@@  .. cpp:var:: double server_scheduling_ms
+  //@@
+  //@@     Time spent waiting for StarPU to schedule the task once
+  //@@     submitted.
+  //@@
+  double server_scheduling_ms = 11;
+
+  //@@  .. cpp:var:: double server_codelet_ms
+  //@@
+  //@@     Duration of the StarPU codelet execution in milliseconds.
+  //@@
+  double server_codelet_ms = 12;
+
+  //@@  .. cpp:var:: double server_inference_ms
+  //@@
+  //@@     Time spent executing the inference workload.
+  //@@
+  double server_inference_ms = 13;
+
+  //@@  .. cpp:var:: double server_callback_ms
+  //@@
+  //@@     Time spent running completion callbacks after inference.
+  //@@
+  double server_callback_ms = 14;
+
+  //@@  .. cpp:var:: double server_total_ms
+  //@@
+  //@@     Total server-side latency observed for the request.
+  //@@
+  double server_total_ms = 15;
+
+  //@@  .. cpp:var:: double server_preprocess_ms
+  //@@
+  //@@     Time spent on the server between receiving the request and
+  //@@     enqueueing the job for execution.
+  //@@
+  double server_preprocess_ms = 16;
+
+  //@@  .. cpp:var:: double server_postprocess_ms
+  //@@
+  //@@     Time spent preparing the response after the job has finished,
+  //@@     including tensor copies into the reply message.
+  //@@
+  double server_postprocess_ms = 17;
+
+  //@@  .. cpp:var:: double server_overall_ms
+  //@@
+  //@@     Total time spent on the server handling the request, from
+  //@@     reception to the response being ready to send.
+  //@@
+  double server_overall_ms = 18;
 }
 
 //@@

@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <starpu.h>
 #include <torch/script.h>
 
 #include <stdexcept>
@@ -11,6 +12,25 @@ TEST(StarPUSetupErrorsTest, GetCudaWorkersNegativeDeviceThrows)
   EXPECT_THROW(
       starpu_server::StarPUSetup::get_cuda_workers_by_device({-1}),
       std::invalid_argument);
+}
+
+namespace {
+int
+failing_stream_query(
+    unsigned int /* device_id */, int* /* workerids */,
+    enum starpu_worker_archtype /* worker */)
+{
+  return -1;
+}
+}  // namespace
+
+TEST(StarPUSetupErrorsTest, GetCudaWorkersQueryFailureThrows)
+{
+  starpu_server::StarPUSetup::set_worker_stream_query_fn(&failing_stream_query);
+  EXPECT_THROW(
+      starpu_server::StarPUSetup::get_cuda_workers_by_device({0}),
+      starpu_server::StarPUWorkerQueryException);
+  starpu_server::StarPUSetup::reset_worker_stream_query_fn();
 }
 
 TEST(StarPUSetupErrorsTest, ExtractTensorsFromOutputUnsupportedType)

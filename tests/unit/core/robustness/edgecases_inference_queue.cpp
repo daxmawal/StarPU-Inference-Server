@@ -71,3 +71,12 @@ TEST(InferenceQueue_Robustesse, MultipleConsumersDrainThenShutdownUnblocksAll)
   EXPECT_EQ(consumers_done.load(), 2);
   VerifyPoppedIds(mutex, popped_ids, kNumJobs);
 }
+
+TEST(InferenceQueue_Robustesse, RejectsNullJob)
+{
+  starpu_server::InferenceQueue queue;
+  std::shared_ptr<starpu_server::InferenceJob> null_job;
+
+  EXPECT_FALSE(queue.push(null_job));
+  EXPECT_EQ(queue.size(), 0U);
+}

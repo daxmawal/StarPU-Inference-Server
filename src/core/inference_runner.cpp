@@ -1,11 +1,9 @@
 #include "inference_runner.hpp"
 
+#include <ATen/Context.h>
 #include <ATen/core/ScalarType.h>
-#include <ATen/core/TensorBody.h>
 #include <c10/core/InferenceMode.h>
-#include <c10/core/ScalarType.h>
 #include <c10/util/Exception.h>
-#include <cuda_runtime_api.h>
 #include <torch/torch.h>
 
 #include <algorithm>
@@ -15,13 +13,10 @@
 #include <cstddef>
 #include <format>
 #include <functional>
-#include <iomanip>
-#include <iostream>
-#include <iterator>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -34,13 +29,47 @@
 #include "inference_queue.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
+#include "latency_statistics.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
+#include "utils/nvtx.hpp"
 #include "warmup.hpp"
 
 namespace starpu_server {
+
+namespace {
+
+class CuDnnBenchmarkGuard {
+ public:
+  explicit CuDnnBenchmarkGuard(bool enable)
+      : active_(enable && torch::cuda::is_available())
+  {
+    if (active_) {
+      previous_ = at::globalContext().benchmarkCuDNN();
+      at::globalContext().setBenchmarkCuDNN(true);
+    }
+  }
+
+  CuDnnBenchmarkGuard(const CuDnnBenchmarkGuard&) = delete;
+  CuDnnBenchmarkGuard(CuDnnBenchmarkGuard&&) = default;
+  auto operator=(const CuDnnBenchmarkGuard&) -> CuDnnBenchmarkGuard& = delete;
+  auto operator=(CuDnnBenchmarkGuard&&) -> CuDnnBenchmarkGuard& = default;
+
+  ~CuDnnBenchmarkGuard()
+  {
+    if (active_) {
+      at::globalContext().setBenchmarkCuDNN(previous_);
+    }
+  }
+
+ private:
+  bool previous_ = false;
+  bool active_ = false;
+};
+
+}  // namespace
 
 static auto
 default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
@@ -77,7 +106,7 @@ set_worker_thread_launcher(WorkerThreadLauncher launcher)
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
     int job_identifier,
-    std::function<void(std::vector<torch::Tensor>, double)> callback)
+    std::function<void(const std::vector<torch::Tensor>&, double)> callback)
     : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
       job_id_(job_identifier), on_complete_(std::move(callback)),
       start_time_(std::chrono::high_resolution_clock::now())
@@ -96,7 +125,8 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 // Client Logic: Generates and enqueues inference jobs into the shared queue
 // =============================================================================
 
-static void
+namespace detail {
+void
 client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, const int iterations)
@@ -130,6 +160,7 @@ client_worker(
 
   queue.shutdown();
 }
+}  // namespace detail
 
 // =============================================================================
 // Model Loading and Cloning to GPU
@@ -250,6 +281,7 @@ run_warmup(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref)
 {
+  NvtxRange nvtx_scope("warmup");
   if (!opts.use_cuda || opts.warmup_iterations <= 0) {
     return;
   }
@@ -270,42 +302,107 @@ run_warmup(
 // Result Processing: Print latency breakdowns and validate results
 // =============================================================================
 
-static void
+namespace detail {
+
+auto
+build_gpu_model_lookup(
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<int>& device_ids)
+    -> std::vector<torch::jit::script::Module*>
+{
+  std::vector<torch::jit::script::Module*> lookup;
+  if (models_gpu.empty() || device_ids.empty()) {
+    return lookup;
+  }
+
+  const auto max_it = std::max_element(device_ids.begin(), device_ids.end());
+  if (max_it == device_ids.end() || *max_it < 0) {
+    return lookup;
+  }
+
+  lookup.resize(static_cast<size_t>(*max_it) + 1, nullptr);
+  const size_t replicas = std::min(models_gpu.size(), device_ids.size());
+  for (size_t idx = 0; idx < replicas; ++idx) {
+    const int device_id = device_ids[idx];
+    if (device_id < 0) {
+      continue;
+    }
+    lookup[static_cast<size_t>(device_id)] = &models_gpu[idx];
+  }
+
+  return lookup;
+}
+
+auto
+resolve_validation_model(
+    const InferenceResult& result, torch::jit::script::Module& cpu_model,
+    const std::vector<torch::jit::script::Module*>& gpu_lookup,
+    bool validate_results) -> std::optional<torch::jit::script::Module*>
+{
+  if (result.executed_on != DeviceType::CUDA) {
+    return &cpu_model;
+  }
+
+  if (result.device_id < 0) {
+    if (validate_results) {
+      log_warning(std::format(
+          "[Client] Skipping validation for job {}: invalid device id {}",
+          result.job_id, result.device_id));
+    }
+    return std::nullopt;
+  }
+
+  const auto device_id = static_cast<size_t>(result.device_id);
+  if (device_id >= gpu_lookup.size() || gpu_lookup[device_id] == nullptr) {
+    if (validate_results) {
+      log_warning(std::format(
+          "[Client] Skipping validation for job {}: no GPU replica for device "
+          "{}",
+          result.job_id, result.device_id));
+    }
+    return std::nullopt;
+  }
+
+  return gpu_lookup[device_id];
+}
+
+void
 process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<int>& device_ids, bool validate_results,
     VerbosityLevel verbosity, double rtol, double atol)
 {
+  if (!validate_results) {
+    log_info(verbosity, "Result validation disabled; skipping checks.");
+  }
+
+  auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, device_ids);
   for (const auto& result : results) {
-    if (result.results.empty() || !result.results[0].defined()) {
-      log_error(std::format("[Client] Job {} failed.", result.job_id));
+    const bool has_results =
+        !result.results.empty() && result.results[0].defined();
+    if (!has_results) {
+      if (validate_results) {
+        log_error(std::format("[Client] Job {} failed.", result.job_id));
+      }
       continue;
     }
 
-    torch::jit::script::Module* cpu_model = &model_cpu;
-    if (result.executed_on == DeviceType::CUDA) {
-      const auto device_id = static_cast<size_t>(result.device_id);
-      if (device_id < models_gpu.size()) {
-        cpu_model = &models_gpu[device_id];
-      }
+    const auto validation_model = resolve_validation_model(
+        result, model_cpu, gpu_model_lookup, validate_results);
+    if (!validation_model.has_value()) {
+      continue;
     }
 
-    validate_inference_result(result, *cpu_model, verbosity, rtol, atol);
+    if (validate_results) {
+      validate_inference_result(
+          result, **validation_model, verbosity, rtol, atol);
+    }
   }
 }
 
-auto
-synchronize_cuda_device() -> cudaError_t
-{
-  const auto err = cudaDeviceSynchronize();
-  if (err != cudaSuccess) {
-    log_error(
-        std::string("cudaDeviceSynchronize failed: ") +
-        cudaGetErrorString(err));
-  }
-  return err;
-}
+}  // namespace detail
 
 // =============================================================================
 // Main Inference Loop: Initializes models, runs warmup, starts client/server,
@@ -315,6 +412,10 @@ synchronize_cuda_device() -> cudaError_t
 void
 run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
+  NvtxRange nvtx_scope("inference_loop");
+  const c10::InferenceMode inference_guard;
+  CuDnnBenchmarkGuard cudnn_benchmark_guard(
+      opts.use_cuda && !opts.dynamic_batching);
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;
@@ -364,7 +465,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   try {
     server = get_worker_thread_launcher()(worker);
     client = std::jthread([&queue, &opts, &outputs_ref]() {
-      client_worker(queue, opts, outputs_ref, opts.iterations);
+      detail::client_worker(queue, opts, outputs_ref, opts.iterations);
     });
   }
   catch (const std::exception& e) {
@@ -393,13 +494,27 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
     server.join();
   }
 
-  if (opts.use_cuda) {
-    if (auto err = synchronize_cuda_device(); err != cudaSuccess) {
-      return;
+  {
+    std::vector<double> latencies;
+    latencies.reserve(results.size());
+    for (const auto& result : results) {
+      latencies.push_back(result.latency_ms);
+    }
+
+    if (auto stats = compute_latency_statistics(std::move(latencies))) {
+      if (should_log(VerbosityLevel::Stats, opts.verbosity)) {
+        log_stats(
+            opts.verbosity,
+            std::format(
+                "Latency stats (ms): p50={:.3f}, p85={:.3f}, p95={:.3f}, "
+                "p100={:.3f}, mean={:.3f}",
+                stats->p50, stats->p85, stats->p95, stats->p100, stats->mean));
+      }
     }
   }
 
-  process_results(
-      results, model_cpu, models_gpu, opts.verbosity, opts.rtol, opts.atol);
+  detail::process_results(
+      results, model_cpu, models_gpu, opts.device_ids, opts.validate_results,
+      opts.verbosity, opts.rtol, opts.atol);
 }
 }  // namespace starpu_server

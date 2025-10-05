@@ -2,11 +2,8 @@
 
 #include <yaml-cpp/yaml.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -149,6 +146,15 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("max_batch_size must be > 0");
     }
   }
+  if (root["dynamic_batching"]) {
+    cfg.dynamic_batching = root["dynamic_batching"].as<bool>();
+  }
+  if (root["input_slots"]) {
+    cfg.input_slots = root["input_slots"].as<int>();
+    if (cfg.input_slots <= 0) {
+      throw std::invalid_argument("input_slots must be > 0");
+    }
+  }
 }
 
 void
@@ -198,6 +204,9 @@ parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
     if (cfg.atol < 0) {
       throw std::invalid_argument("atol must be >= 0");
     }
+  }
+  if (root["validate_results"]) {
+    cfg.validate_results = root["validate_results"].as<bool>();
   }
   if (root["sync"]) {
     cfg.synchronous = root["sync"].as<bool>();

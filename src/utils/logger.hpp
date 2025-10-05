@@ -2,13 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
-#include <concepts>
-#include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 namespace starpu_server {
@@ -28,6 +25,16 @@ enum class VerbosityLevel : std::uint8_t {
   Debug = 3,
   Trace = 4
 };
+
+[[nodiscard]] constexpr auto
+should_log(VerbosityLevel required, VerbosityLevel current) -> bool
+{
+  return std::to_underlying(current) >= std::to_underlying(required);
+}
+
+static_assert(should_log(VerbosityLevel::Info, VerbosityLevel::Info));
+static_assert(should_log(VerbosityLevel::Info, VerbosityLevel::Trace));
+static_assert(!should_log(VerbosityLevel::Trace, VerbosityLevel::Info));
 
 // =============================================================================
 // Utility: parse verbosity level from string or number
@@ -171,6 +178,13 @@ log_warning(const std::string& message)
 {
   const std::scoped_lock lock(log_mutex);
   std::cerr << "\x1b[1;33m[WARNING] " << message << "\x1b[0m\n" << std::flush;
+}
+
+inline void
+log_warning_critical(const std::string& message)
+{
+  const std::scoped_lock lock(log_mutex);
+  std::cerr << "\x1b[1;31m[WARNING] " << message << "\x1b[0m\n" << std::flush;
 }
 
 inline void

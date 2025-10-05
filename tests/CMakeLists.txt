@@ -15,6 +15,8 @@ add_executable(
   all_tests
   ${SRC_DIR}/cli/args_parser.cpp
   ${CORE_DIR}/inference_task.cpp
+  ${CORE_DIR}/input_slot_pool.cpp
+  ${CORE_DIR}/output_slot_pool.cpp
   ${CORE_DIR}/warmup.cpp
   ${CORE_DIR}/tensor_builder.cpp
   ${CORE_DIR}/starpu_setup.cpp
@@ -26,6 +28,7 @@ add_executable(
   ${GRPC_CLIENT_DIR}/client_args.cpp
   ${UTILS_DIR}/inference_validator.cpp
   ${UTILS_DIR}/client_utils.cpp
+  ${UTILS_DIR}/perf_observer.cpp
   ${UTILS_DIR}/time_utils.cpp
   ${UTILS_DIR}/config_loader.cpp)
 
@@ -33,7 +36,8 @@ set_target_properties(all_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                            ${CMAKE_BINARY_DIR})
 
 target_compile_features(all_tests PRIVATE cxx_std_23)
-target_compile_definitions(all_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
+target_compile_definitions(all_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1
+                                             HAVE_NVTX=1 UNIT_TEST=1)
 
 target_include_directories(
   all_tests

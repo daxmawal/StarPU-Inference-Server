@@ -2,7 +2,6 @@
 #include <torch/script.h>
 
 #include <chrono>
-#include <iostream>
 #include <memory>
 #include <random>
 #include <span>
@@ -11,7 +10,6 @@
 #include <vector>
 
 #include "client_args.hpp"
-#include "grpc_service.grpc.pb.h"
 #include "inference_client.hpp"
 #include "utils/input_generator.hpp"
 #include "utils/logger.hpp"

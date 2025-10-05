@@ -7,15 +7,15 @@
 
 #include "core/inference_params.hpp"
 #include "core/tensor_builder.hpp"
+#include "test_constants.hpp"
 #include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 
 TEST(TensorBuilderFromStarPU, BuildsTensors)
 {
-  constexpr float kF1 = 1.0F;
-  constexpr float kF2 = 2.0F;
-  constexpr float kF3 = 3.0F;
-  std::array<float, 3> input0{kF1, kF2, kF3};
+  std::array<float, 3> input0{
+      starpu_server::test_constants::kF1, starpu_server::test_constants::kF2,
+      starpu_server::test_constants::kF3};
   std::array<int32_t, 4> input1{1, 2, 3, 4};
   std::array<starpu_variable_interface, 2> buffers_raw{};
   buffers_raw[0].ptr = std::bit_cast<uintptr_t>(input0.data());

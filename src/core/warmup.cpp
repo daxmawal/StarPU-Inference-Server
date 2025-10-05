@@ -2,19 +2,14 @@
 
 #include <torch/torch.h>
 
-#include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <format>
-#include <iterator>
 #include <map>
-#include <memory>
 #include <mutex>
 #include <numeric>
 #include <random>
-#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -38,9 +33,11 @@ WarmupRunner::WarmupRunner(
     const RuntimeConfig& opts, StarPUSetup& starpu,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<torch::Tensor>& outputs_ref)
+    const std::vector<torch::Tensor>& outputs_ref,
+    CompletionObserver completion_observer)
     : opts_(opts), starpu_(starpu), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), outputs_ref_(outputs_ref)
+      models_gpu_(models_gpu), outputs_ref_(outputs_ref),
+      completion_observer_(std::move(completion_observer))
 {
 }
 
@@ -160,7 +157,10 @@ WarmupRunner::run(int iterations_per_worker)
     std::unique_lock lock(dummy_mutex);
     const size_t total_jobs =
         static_cast<size_t>(iterations_per_worker) * total_worker_count;
-    dummy_cv.wait(lock, [total_jobs, &dummy_completed_jobs]() {
+    dummy_cv.wait(lock, [this, total_jobs, &dummy_completed_jobs]() {
+      if (completion_observer_) {
+        completion_observer_(dummy_completed_jobs);
+      }
       int count = dummy_completed_jobs.load();
       if (count < 0) {
         throw InferenceExecutionException(

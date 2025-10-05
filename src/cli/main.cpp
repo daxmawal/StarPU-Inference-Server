@@ -2,6 +2,7 @@
 
 #include <exception>
 #include <format>
+#include <iterator>
 #include <memory>
 #include <span>
 #include <string_view>
@@ -11,6 +12,7 @@
 #include "exceptions.hpp"
 #include "inference_runner.hpp"
 #include "logger.hpp"
+#include "perf_observer.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
@@ -20,10 +22,15 @@ main(int argc, char* argv[]) -> int
   std::span<char*> args_span(argv, static_cast<size_t>(argc));
 
   std::string config_path;
-  for (int i = 1; i < argc - 1; ++i) {
-    std::string_view arg = argv[i];
+  auto args_without_program = args_span.subspan(1);
+  for (auto it = args_without_program.begin(); it != args_without_program.end();
+       ++it) {
+    std::string_view arg(*it);
     if (arg == "--config" || arg == "-c") {
-      config_path = argv[i + 1];
+      if (auto value_it = std::next(it);
+          value_it != args_without_program.end()) {
+        config_path = *value_it;
+      }
       break;
     }
   }
@@ -56,8 +63,17 @@ main(int argc, char* argv[]) -> int
 
   std::unique_ptr<starpu_server::StarPUSetup> starpu;
   try {
+    starpu_server::perf_observer::reset();
     starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
     starpu_server::run_inference_loop(opts, *starpu);
+    if (const auto stats = starpu_server::perf_observer::snapshot()) {
+      starpu_server::log_stats(
+          opts.verbosity,
+          std::format(
+              "Throughput: {:.3f} inf/s ({} inferences over {:.3f} s)",
+              stats->throughput, stats->total_inferences,
+              stats->duration_seconds));
+    }
   }
   catch (const starpu_server::InferenceEngineException& e) {
     starpu_server::log_error(std::format("Inference Error: {}", e.what()));

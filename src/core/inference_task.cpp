@@ -1,14 +1,11 @@
 #include "inference_task.hpp"
 
-#include <ATen/core/ScalarType.h>
-
 #include <algorithm>
 #include <bit>
 #include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <format>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <ranges>
@@ -20,11 +17,18 @@
 
 #include "exceptions.hpp"
 #include "inference_params.hpp"
-#include "inference_runner.hpp"
-#include "runtime_config.hpp"
+#include "output_slot_pool.hpp"
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+const InferenceTaskDependencies kDefaultInferenceTaskDependencies{
+    .dyn_handles_allocator = std::malloc,
+    .dyn_modes_allocator = std::malloc,
+    .task_create_fn = starpu_task_create,
+    .starpu_data_acquire_fn = starpu_data_acquire_cb,
+    .starpu_output_callback_hook = std::nullopt,
+};
+
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -33,9 +37,10 @@ InferenceTask::InferenceTask(
     StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu,
-    const RuntimeConfig* opts) noexcept
+    const RuntimeConfig* opts,
+    const InferenceTaskDependencies& dependencies) noexcept
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), opts_(opts)
+      models_gpu_(models_gpu), opts_(opts), dependencies_(dependencies)
 {
 }
 
@@ -166,8 +171,10 @@ InferenceTask::create_context(
     -> std::shared_ptr<InferenceCallbackContext>
 {
   auto params = create_inference_params();
-  return std::make_shared<InferenceCallbackContext>(
+  auto ctx = std::make_shared<InferenceCallbackContext>(
       job_, std::move(params), opts_, job_->get_job_id(), inputs, outputs);
+  ctx->dependencies = &dependencies_;
+  return ctx;
 }
 
 void
@@ -213,10 +220,30 @@ InferenceTask::fill_model_pointers(
 {
   params->models.model_cpu = model_cpu_;
   params->models.num_models_gpu = models_gpu_->size();
-  params->models.models_gpu.resize(models_gpu_->size());
+  params->models.models_gpu.clear();
 
-  for (size_t i = 0; i < models_gpu_->size(); ++i) {
-    params->models.models_gpu[i] = &(models_gpu_->at(i));
+  if (opts_ == nullptr || opts_->device_ids.empty() || models_gpu_->empty()) {
+    return;
+  }
+
+  const auto max_device_id = static_cast<int>(
+      *std::max_element(opts_->device_ids.begin(), opts_->device_ids.end()));
+  if (max_device_id < 0) {
+    return;
+  }
+
+  params->models.models_gpu.resize(
+      static_cast<size_t>(max_device_id) + 1, nullptr);
+
+  const size_t replicas =
+      std::min(models_gpu_->size(), opts_->device_ids.size());
+  for (size_t i = 0; i < replicas; ++i) {
+    const int device_id = opts_->device_ids[i];
+    if (device_id < 0) {
+      continue;
+    }
+    params->models.models_gpu[static_cast<size_t>(device_id)] =
+        &(models_gpu_->at(i));
   }
 }
 
@@ -273,17 +300,21 @@ InferenceTask::cleanup(const std::shared_ptr<InferenceCallbackContext>& ctx)
     return;
   }
 
-  for (auto& handle : ctx->inputs_handles) {
-    if (handle != nullptr) {
-      starpu_data_unregister_submit(handle);
-      handle = nullptr;
+  if (!ctx->keep_input_handles) {
+    for (auto& handle : ctx->inputs_handles) {
+      if (handle != nullptr) {
+        starpu_data_unregister_submit(handle);
+        handle = nullptr;
+      }
     }
   }
 
-  for (auto& handle : ctx->outputs_handles) {
-    if (handle != nullptr) {
-      starpu_data_unregister_submit(handle);
-      handle = nullptr;
+  if (!ctx->keep_output_handles) {
+    for (auto& handle : ctx->outputs_handles) {
+      if (handle != nullptr) {
+        starpu_data_unregister_submit(handle);
+        handle = nullptr;
+      }
     }
   }
 }
@@ -320,7 +351,11 @@ InferenceTask::create_task(
   const size_t num_inputs = inputs_handles.size();
   const size_t num_buffers = num_inputs + outputs_handles.size();
 
-  auto* task = starpu_task_create();
+  const auto task_create =
+      dependencies_.task_create_fn != nullptr
+          ? dependencies_.task_create_fn
+          : kDefaultInferenceTaskDependencies.task_create_fn;
+  auto* task = task_create != nullptr ? task_create() : nullptr;
   if (task == nullptr) {
     throw StarPUTaskCreationException("Failed to create StarPU task.");
   }
@@ -329,9 +364,13 @@ InferenceTask::create_task(
   task->cl = starpu_->get_codelet();
   task->synchronous = opts_->synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
-  task->cl_arg_size = sizeof(InferenceParams);
+  // task->cl_arg_size = sizeof(InferenceParams);
   task->priority =
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_job_id());
+
+  if (ctx != nullptr && ctx->dependencies == nullptr) {
+    ctx->dependencies = &dependencies_;
+  }
 
   InferenceTask::allocate_task_buffers(task, num_buffers, ctx);
   InferenceTask::fill_task_buffers(task, inputs_handles, outputs_handles);
@@ -350,8 +389,21 @@ InferenceTask::allocate_task_buffers(
     starpu_task* task, size_t num_buffers,
     const std::shared_ptr<InferenceCallbackContext>& ctx)
 {
+  const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
+                                 ? ctx->dependencies
+                                 : &kDefaultInferenceTaskDependencies;
+
+  const auto handles_allocator =
+      dependencies->dyn_handles_allocator != nullptr
+          ? dependencies->dyn_handles_allocator
+          : kDefaultInferenceTaskDependencies.dyn_handles_allocator;
+  const auto modes_allocator =
+      dependencies->dyn_modes_allocator != nullptr
+          ? dependencies->dyn_modes_allocator
+          : kDefaultInferenceTaskDependencies.dyn_modes_allocator;
+
   auto handles_owner = std::unique_ptr<void, void (*)(void*)>(
-      std::malloc(num_buffers * sizeof(starpu_data_handle_t)), std::free);
+      handles_allocator(num_buffers * sizeof(starpu_data_handle_t)), std::free);
   if (!handles_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;
@@ -361,7 +413,8 @@ InferenceTask::allocate_task_buffers(
   }
 
   auto modes_owner = std::unique_ptr<void, void (*)(void*)>(
-      std::malloc(num_buffers * sizeof(starpu_data_access_mode)), std::free);
+      modes_allocator(num_buffers * sizeof(starpu_data_access_mode)),
+      std::free);
   if (!modes_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;
@@ -435,7 +488,15 @@ InferenceTask::starpu_output_callback(void* arg)
     ctx->remaining_outputs_to_acquire =
         static_cast<int>(ctx->outputs_handles.size());
 
+    const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
+                                   ? ctx->dependencies
+                                   : &kDefaultInferenceTaskDependencies;
+
     for (const auto& handle : ctx->outputs_handles) {
+      if (dependencies->starpu_output_callback_hook.has_value()) {
+        const auto& hook = *dependencies->starpu_output_callback_hook;
+        hook(ctx);
+      }
       InferenceTask::process_output_handle(handle, ctx);
     }
   }
@@ -448,7 +509,20 @@ void
 InferenceTask::acquire_output_handle(
     starpu_data_handle_t handle, InferenceCallbackContext* ctx)
 {
-  const int ret = starpu_data_acquire_cb(
+  const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
+                                 ? ctx->dependencies
+                                 : &kDefaultInferenceTaskDependencies;
+  const auto data_acquire_fn =
+      dependencies->starpu_data_acquire_fn != nullptr
+          ? dependencies->starpu_data_acquire_fn
+          : kDefaultInferenceTaskDependencies.starpu_data_acquire_fn;
+
+  if (data_acquire_fn == nullptr) {
+    log_error("starpu_data_acquire_fn is null; cannot acquire output handle.");
+    throw StarPURegistrationException("StarPU data acquire callback is null.");
+  }
+
+  const int ret = data_acquire_fn(
       handle, STARPU_R,
       [](void* cb_arg) {
         auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);
@@ -488,10 +562,42 @@ InferenceTask::finalize_inference_task(void* arg)
 {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
 
+  if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 && ctx->job) {
+    try {
+      const auto& base_ptrs = ctx->output_pool->base_ptrs(ctx->output_slot_id);
+      const auto& job_outs = ctx->job->get_output_tensors();
+      const size_t tensor_count = std::min(base_ptrs.size(), job_outs.size());
+      for (size_t i = 0; i < tensor_count; ++i) {
+        const auto& job_output_tensor = job_outs[i];
+        if (!job_output_tensor.defined() || !job_output_tensor.is_cpu() ||
+            !job_output_tensor.is_contiguous()) {
+          throw std::runtime_error(
+              "Job output tensor must be defined, CPU and contiguous");
+        }
+        std::memcpy(
+            job_output_tensor.data_ptr(), base_ptrs[i],
+            static_cast<size_t>(job_output_tensor.nbytes()));
+      }
+    }
+    catch (const std::exception& e) {
+      log_error(std::string("Output copy from pool failed: ") + e.what());
+    }
+  }
+
   InferenceTask::release_output_data(ctx->outputs_handles);
 
   auto ctx_sptr =
       std::static_pointer_cast<InferenceCallbackContext>(ctx->self_keep_alive);
+
+  // Notify (release pooled slot etc.) before we clean up
+  if (ctx->on_finished) {
+    try {
+      ctx->on_finished();
+    }
+    catch (const std::exception& e) {
+      log_error(std::string("Exception in on_finished: ") + e.what());
+    }
+  }
 
   InferenceTask::finalize_context(ctx_sptr);
 

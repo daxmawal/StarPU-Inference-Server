@@ -6,12 +6,10 @@
 #include <cstddef>
 #include <format>
 #include <iterator>
-#include <string>
 #include <vector>
 
 #include "device_type.hpp"
 #include "exceptions.hpp"
-#include "inference_runner.hpp"
 #include "logger.hpp"
 
 namespace starpu_server {

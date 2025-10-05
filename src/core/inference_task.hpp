@@ -1,16 +1,19 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
 
 #include "inference_runner.hpp"
-#include "runtime_config.hpp"
 
 namespace starpu_server {
 // =============================================================================
 // InferenceCallbackContext: passed to StarPU callbacks
 // =============================================================================
+
+class OutputSlotPool;  // forward declaration
+struct InferenceTaskDependencies;
 
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
@@ -24,6 +27,12 @@ struct InferenceCallbackContext {
   int id = 0;
   std::atomic<int> remaining_outputs_to_acquire{0};
   std::mutex mutex;
+  bool keep_input_handles = false;
+  bool keep_output_handles = false;
+  OutputSlotPool* output_pool = nullptr;  // fwd-declared pointer
+  int output_slot_id = -1;
+  std::function<void()> on_finished;
+  const struct InferenceTaskDependencies* dependencies = nullptr;
 
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
@@ -31,6 +40,22 @@ struct InferenceCallbackContext {
       int id_, std::vector<starpu_data_handle_t> inputs_,
       std::vector<starpu_data_handle_t> outputs_) noexcept;
 };
+
+struct InferenceTaskDependencies {
+  using AllocationFn = void* (*)(size_t);
+  using TaskCreateFn = starpu_task* (*)();
+  using DataAcquireFn = int (*)(
+      starpu_data_handle_t, starpu_data_access_mode, void (*)(void*), void*);
+  using OutputCallbackHook = void (*)(InferenceCallbackContext*);
+
+  AllocationFn dyn_handles_allocator = nullptr;
+  AllocationFn dyn_modes_allocator = nullptr;
+  TaskCreateFn task_create_fn = nullptr;
+  DataAcquireFn starpu_data_acquire_fn = nullptr;
+  std::optional<OutputCallbackHook> starpu_output_callback_hook;
+};
+
+extern const InferenceTaskDependencies kDefaultInferenceTaskDependencies;
 
 // =============================================================================
 // InferenceTask
@@ -45,7 +70,9 @@ class InferenceTask {
       StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
       torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu,
-      const RuntimeConfig* opts) noexcept;
+      const RuntimeConfig* opts,
+      const InferenceTaskDependencies& dependencies =
+          kDefaultInferenceTaskDependencies) noexcept;
 
   static auto safe_register_tensor_vector(
       const torch::Tensor& tensor,
@@ -123,5 +150,6 @@ class InferenceTask {
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
   const RuntimeConfig* opts_;
+  const InferenceTaskDependencies& dependencies_;
 };
 }  // namespace starpu_server

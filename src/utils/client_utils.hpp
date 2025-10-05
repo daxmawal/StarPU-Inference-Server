@@ -2,16 +2,11 @@
 
 #include <chrono>
 #include <random>
-#include <string>
 #include <vector>
 
-#include "inference_queue.hpp"
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
-#include "logger.hpp"
 #include "runtime_config.hpp"
-#include "starpu_setup.hpp"
-#include "starpu_task_worker.hpp"
 
 namespace starpu_server::client_utils {
 
@@ -32,7 +27,8 @@ void log_job_enqueued(
 
 auto create_job(
     const std::vector<torch::Tensor>& inputs,
-    const std::vector<torch::Tensor>& outputs_ref,
-    int job_id) -> std::shared_ptr<InferenceJob>;
+    const std::vector<torch::Tensor>& outputs_ref, int job_id,
+    std::vector<std::shared_ptr<const void>> input_lifetimes = {})
+    -> std::shared_ptr<InferenceJob>;
 
 }  // namespace starpu_server::client_utils

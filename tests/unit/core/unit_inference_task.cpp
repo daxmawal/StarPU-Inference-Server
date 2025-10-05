@@ -1,6 +1,10 @@
 #include <array>
+#include <format>
+#include <stdexcept>
 
+#include "core/output_slot_pool.hpp"
 #include "test_inference_task.hpp"
+#include "test_utils.hpp"
 
 namespace {
 inline auto
@@ -26,6 +30,7 @@ MakeHandle(int index) -> starpu_data_handle_t
       &dummy_storage.at(static_cast<std::size_t>(index) % kDummyStorageSize);
   return static_cast<starpu_data_handle_t>(ptr);
 }
+
 }  // namespace
 
 extern "C" void
@@ -35,7 +40,34 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
   unregister_handles_ref().push_back(handle);
 }
 
-TEST_F(InferenceTaskTest, TooManyInputs)
+extern "C" void
+starpu_task_destroy(struct starpu_task* /*task*/)
+{
+}
+
+namespace {
+inline auto
+AlwaysNullAllocator(size_t) -> void*
+{
+  return nullptr;
+}
+
+void
+ThrowingStarpuOutputCallbackHook(starpu_server::InferenceCallbackContext*)
+{
+  throw starpu_server::StarPURegistrationException("forced failure");
+}
+
+auto
+AlwaysFailingAcquire(
+    starpu_data_handle_t, starpu_data_access_mode, void (*)(void*),
+    void*) -> int
+{
+  return -42;
+}
+}  // namespace
+
+TEST_F(InferenceTaskTest, TooManyInputsThrows)
 {
   const size_t num_inputs = starpu_server::InferLimits::MaxInputs + 1;
   auto job = make_job(0, num_inputs);
@@ -45,12 +77,58 @@ TEST_F(InferenceTaskTest, TooManyInputs)
       starpu_server::InferenceExecutionException);
 }
 
-TEST_F(InferenceTaskTest, TooManyGpuModels)
+TEST_F(InferenceTaskTest, TooManyGpuModelsThrows)
 {
   auto job = make_job(1, 1);
   auto task = make_task(job, starpu_server::InferLimits::MaxModelsGPU + 1);
   EXPECT_THROW(
       task.create_inference_params(), starpu_server::TooManyGpuModelsException);
+}
+
+TEST_F(InferenceTaskTest, AssignFixedWorkerNegativeThrows)
+{
+  auto job = make_job(2, 1);
+  job->set_fixed_worker_id(-1);
+  auto task = make_task(job);
+  starpu_task task_struct{};
+  EXPECT_THROW(
+      task.assign_fixed_worker_if_needed(&task_struct), std::invalid_argument);
+}
+
+TEST_F(InferenceTaskTest, AssignFixedWorkerOutOfRangeThrows)
+{
+  auto job = make_job(3, 1);
+  const unsigned int total_workers = starpu_worker_get_count();
+  job->set_fixed_worker_id(static_cast<int>(total_workers));
+  auto task = make_task(job);
+  starpu_task task_struct{};
+  EXPECT_THROW(
+      task.assign_fixed_worker_if_needed(&task_struct), std::out_of_range);
+}
+
+TEST_F(InferenceTaskTest, FillModelPointersAllNegativeDeviceIds)
+{
+  auto job = make_job(1, 1);
+  auto task = make_task(job, 1);
+  opts_.device_ids = {-1, -2};
+
+  auto params = task.create_inference_params();
+
+  EXPECT_TRUE(params->models.models_gpu.empty());
+  EXPECT_EQ(params->models.num_models_gpu, models_gpu_.size());
+}
+
+TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
+{
+  auto job = make_job(2, 1);
+  auto task = make_task(job, 2);
+  opts_.device_ids = {0, -1};
+
+  auto params = task.create_inference_params();
+
+  ASSERT_EQ(params->models.models_gpu.size(), 1U);
+  EXPECT_EQ(params->models.models_gpu.at(0), &models_gpu_.at(0));
+  EXPECT_EQ(params->models.num_models_gpu, models_gpu_.size());
 }
 
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
@@ -69,6 +147,24 @@ TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
   task.assign_fixed_worker_if_needed(&task_struct);
   EXPECT_EQ(task_struct.workerid, static_cast<unsigned>(worker_id));
   EXPECT_EQ(task_struct.execute_on_a_specific_worker, 1U);
+}
+
+TEST_F(InferenceTaskTest, CreateTaskThrowsWhenStarpuTaskCreateFails)
+{
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.task_create_fn = []() -> starpu_task* { return nullptr; };
+
+  auto job = make_job(5, 0);
+  auto task = make_task(job, 0, &dependencies);
+
+  const std::vector<starpu_data_handle_t> inputs;
+  const std::vector<starpu_data_handle_t> outputs;
+  auto ctx = task.create_context(inputs, outputs);
+
+  EXPECT_THROW(
+      task.create_task(inputs, outputs, ctx),
+      starpu_server::StarPUTaskCreationException);
 }
 
 TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
@@ -113,14 +209,103 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
   starpu_server::RuntimeConfig opts;
-  starpu_server::InferenceCallbackContext ctx(job, nullptr, &opts, 0, {}, {});
-  starpu_server::InferenceTask::record_and_run_completion_callback(&ctx, end);
+  auto ctx = make_callback_context(job, &opts);
+  starpu_server::InferenceTask::record_and_run_completion_callback(
+      ctx.get(), end);
   EXPECT_TRUE(called);
   ASSERT_EQ(results_arg.size(), outputs.size());
   EXPECT_TRUE(torch::equal(results_arg[0], outputs[0]));
   const double expected_latency =
       std::chrono::duration<double, std::milli>(end - start).count();
   EXPECT_DOUBLE_EQ(latency_ms, expected_latency);
+}
+
+TEST_F(InferenceTaskTest, StarpuOutputCallbackLogsInferenceEngineException)
+{
+  auto job = make_job(7, 1);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_output_callback_hook =
+      starpu_server::InferenceTaskDependencies::OutputCallbackHook(
+          &ThrowingStarpuOutputCallbackHook);
+  starpu_server::RuntimeConfig opts;
+  auto ctx =
+      make_callback_context(job, &opts, {}, {MakeHandle(0)}, &dependencies);
+
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+
+  const auto log = capture.str();
+  EXPECT_NE(log.find("starpu_output_callback"), std::string::npos);
+}
+
+TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_output_tensors({torch::tensor({1})});
+  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
+    throw std::runtime_error("callback failure");
+  });
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::milliseconds(5);
+  job->set_start_time(start);
+  starpu_server::RuntimeConfig opts;
+  auto ctx = make_callback_context(job, &opts);
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::record_and_run_completion_callback(
+          ctx.get(), end));
+  const auto log = capture.str();
+  EXPECT_NE(
+      log.find("Exception in completion callback: callback failure"),
+      std::string::npos);
+}
+
+TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_output_tensors({torch::tensor({1})});
+  job->set_on_complete(
+      [](const std::vector<torch::Tensor>&, double) { throw 42; });
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::milliseconds(5);
+  job->set_start_time(start);
+  starpu_server::RuntimeConfig opts;
+  auto ctx = make_callback_context(job, &opts);
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::record_and_run_completion_callback(
+          ctx.get(), end));
+  const auto log = capture.str();
+  EXPECT_NE(
+      log.find("Unknown exception in completion callback"), std::string::npos);
+}
+
+TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
+{
+  auto job = make_job(3, 0);
+  auto handle = MakeHandle(0);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_data_acquire_fn = &AlwaysFailingAcquire;
+  auto outputs = std::vector<starpu_data_handle_t>{handle};
+  auto ctx = make_callback_context(job, &opts_, {}, outputs, &dependencies);
+  ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()),
+      starpu_server::StarPURegistrationException);
+
+  const auto log = capture.str();
+  const auto expected = starpu_server::expected_log_line(
+      starpu_server::ErrorLevel,
+      std::format("starpu_data_acquire_cb failed with code {}", -42));
+  EXPECT_NE(log.find(expected), std::string::npos);
 }
 
 TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
@@ -132,8 +317,7 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
   auto* const handle_3 = MakeHandle(3);
   std::vector<starpu_data_handle_t> inputs{handle_1};
   std::vector<starpu_data_handle_t> outputs{handle_2, handle_3};
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      nullptr, nullptr, nullptr, 0, inputs, outputs);
+  auto ctx = make_callback_context(nullptr, nullptr, inputs, outputs);
   starpu_server::InferenceTask::cleanup(ctx);
   EXPECT_EQ(unregister_call_count_ref(), 3);
   ASSERT_EQ(unregister_handles_ref().size(), 3U);
@@ -145,11 +329,93 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
   EXPECT_EQ(ctx->outputs_handles[1], nullptr);
 }
 
+TEST(InferenceTask, FinalizeInferenceTaskCopiesOutputs)
+{
+  constexpr float kSentinelValue = 42.0F;
+  OutputContextFixture fixture({.sentinel_value = kSentinelValue});
+
+  ASSERT_NO_THROW(
+      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
+
+  const auto& job_outputs = fixture.job->get_output_tensors();
+  ASSERT_EQ(job_outputs.size(), 1U);
+  ASSERT_TRUE(job_outputs[0].defined());
+  EXPECT_FLOAT_EQ(job_outputs[0].item<float>(), kSentinelValue);
+
+  auto reacquired = fixture.pool.try_acquire();
+  ASSERT_TRUE(reacquired.has_value());
+  EXPECT_EQ(*reacquired, fixture.slot_id);
+  fixture.pool.release(*reacquired);
+}
+
+TEST(InferenceTask, FinalizeInferenceTaskHandlesCopyFailure)
+{
+  OutputContextFixture fixture({.mutate_job_outputs = [](auto& outputs) {
+    outputs[0] = torch::Tensor();
+  }});
+
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
+  const auto log = capture.str();
+  EXPECT_NE(log.find("Output copy from pool failed"), std::string::npos);
+
+  auto reacquired = fixture.pool.try_acquire();
+  ASSERT_TRUE(reacquired.has_value());
+  EXPECT_EQ(*reacquired, fixture.slot_id);
+  fixture.pool.release(*reacquired);
+}
+
+TEST(InferenceTask, FinalizeInferenceTaskHandlesOnFinishedException)
+{
+  constexpr float kSentinelValue = 7.0F;
+  OutputContextFixture fixture({
+      .sentinel_value = kSentinelValue,
+      .on_finished =
+          [](auto& pool, int slot_id) {
+            pool.release(slot_id);
+            throw std::runtime_error("boom");
+          },
+  });
+
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
+  const auto log = capture.str();
+  EXPECT_NE(log.find("Exception in on_finished"), std::string::npos);
+
+  const auto& job_outputs = fixture.job->get_output_tensors();
+  ASSERT_EQ(job_outputs.size(), 1U);
+  ASSERT_TRUE(job_outputs[0].defined());
+  EXPECT_FLOAT_EQ(job_outputs[0].item<float>(), kSentinelValue);
+
+  auto reacquired = fixture.pool.try_acquire();
+  ASSERT_TRUE(reacquired.has_value());
+  EXPECT_EQ(*reacquired, fixture.slot_id);
+  fixture.pool.release(*reacquired);
+}
+
+TEST(InferenceTask, ProcessOutputHandleNullHandleFinalizes)
+{
+  auto ctx = make_callback_context();
+  ctx->remaining_outputs_to_acquire = 1;
+  ctx->self_keep_alive = ctx;
+
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  starpu_server::InferenceTask::process_output_handle(nullptr, ctx.get());
+
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+}
+
 TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
 {
-  auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      nullptr, nullptr, nullptr, 0, std::vector<starpu_data_handle_t>{},
-      std::vector<starpu_data_handle_t>{});
+  auto ctx = make_callback_context();
   starpu_task* task = starpu_task_create();
   starpu_server::InferenceTask::allocate_task_buffers(task, 3, ctx);
   auto* handle_1 = MakeHandle(1);
@@ -165,4 +431,32 @@ TEST(InferenceTaskBuffers, FillTaskBuffersOrdersDynHandlesAndModes)
   EXPECT_EQ(modes[0], STARPU_R);
   EXPECT_EQ(modes[1], STARPU_R);
   EXPECT_EQ(modes[2], STARPU_W);
+}
+
+TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenHandleAllocationFails)
+{
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.dyn_handles_allocator = &AlwaysNullAllocator;
+  auto ctx = make_callback_context(nullptr, nullptr, {}, {}, &dependencies);
+  starpu_task task{};
+  EXPECT_THROW(
+      starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),
+      starpu_server::MemoryAllocationException);
+  EXPECT_EQ(task.dyn_handles, nullptr);
+  EXPECT_EQ(task.dyn_modes, nullptr);
+}
+
+TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenModeAllocationFails)
+{
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.dyn_modes_allocator = &AlwaysNullAllocator;
+  auto ctx = make_callback_context(nullptr, nullptr, {}, {}, &dependencies);
+  starpu_task task{};
+  EXPECT_THROW(
+      starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),
+      starpu_server::MemoryAllocationException);
+  EXPECT_EQ(task.dyn_handles, nullptr);
+  EXPECT_EQ(task.dyn_modes, nullptr);
 }

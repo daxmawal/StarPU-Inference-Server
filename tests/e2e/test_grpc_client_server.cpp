@@ -34,9 +34,11 @@ TEST(GrpcClientServer, EndToEndInference)
 
   EXPECT_GT(response.server_receive_ms(), 0);
   EXPECT_GT(response.server_send_ms(), 0);
+  auto response_breakdown = starpu_server::make_latency_breakdown(response);
   starpu_server::verify_populate_response(
       request, response, expected_outputs, response.server_receive_ms(),
-      response.server_send_ms());
+      response.server_send_ms(), response_breakdown);
+  EXPECT_GE(response.server_total_ms(), 0.0);
 
   starpu_server::StopServer(server.server);
   server.thread.join();

@@ -2,7 +2,6 @@
 
 #include <torch/script.h>
 
-#include <array>
 #include <chrono>
 
 #include "device_type.hpp"
@@ -97,6 +96,7 @@ struct InferenceParams {
   detail::Limits limits{};
   size_t num_inputs = 0;
   size_t num_outputs = 0;
+  int64_t batch_size = 1;
   int job_id = 0;
   VerbosityLevel verbosity = VerbosityLevel::Silent;
 };

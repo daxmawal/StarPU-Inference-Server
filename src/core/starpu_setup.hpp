@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "input_slot_pool.hpp"
+#include "output_slot_pool.hpp"
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
 
@@ -36,6 +38,9 @@ class InferenceCodelet {
 auto extract_tensors_from_output(const c10::IValue& result)
     -> std::vector<at::Tensor>;
 
+auto select_gpu_module(const InferenceParams& params, int device_id)
+    -> torch::jit::script::Module*;
+
 // =============================================================================
 // Handles StarPU global configuration and codelet setup
 // =============================================================================
@@ -47,6 +52,26 @@ class StarPUSetup {
   ~StarPUSetup();
 
   auto get_codelet() -> struct starpu_codelet*;
+
+  auto input_pool() -> InputSlotPool& { return *input_pool_; }
+  [[nodiscard]] bool has_input_pool() const
+  {
+    return static_cast<bool>(input_pool_);
+  }
+  auto output_pool() -> OutputSlotPool& { return *output_pool_; }
+  [[nodiscard]] bool has_output_pool() const
+  {
+    return static_cast<bool>(output_pool_);
+  }
+
+  using StarpuInitFn = int (*)(struct starpu_conf*);
+  using WorkerStreamQueryFn =
+      int (*)(unsigned int, int*, enum starpu_worker_archtype);
+
+  static void set_starpu_init_fn(StarpuInitFn hook_fn);
+  static void reset_starpu_init_fn();
+  static void set_worker_stream_query_fn(WorkerStreamQueryFn hook_fn);
+  static void reset_worker_stream_query_fn();
 
   static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
       -> std::map<int, std::vector<int>>;
@@ -60,5 +85,7 @@ class StarPUSetup {
   std::string scheduler_name_;
   struct starpu_conf conf_;
   InferenceCodelet codelet_;
+  std::unique_ptr<InputSlotPool> input_pool_;
+  std::unique_ptr<OutputSlotPool> output_pool_;
 };
 }  // namespace starpu_server

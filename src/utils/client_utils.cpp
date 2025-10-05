@@ -1,30 +1,20 @@
 #include "client_utils.hpp"
 
+#include <starpu.h>
+
 #include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <format>
-#include <iomanip>
 #include <iterator>
-#include <map>
 #include <memory>
-#include <mutex>
 #include <random>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "inference_queue.hpp"
-#include "inference_runner.hpp"
-#include "input_generator.hpp"
 #include "logger.hpp"
-#include "runtime_config.hpp"
-#include "starpu_setup.hpp"
-#include "starpu_task_worker.hpp"
 #include "time_utils.hpp"
 
 namespace starpu_server::client_utils {
@@ -69,11 +59,7 @@ pick_random_input(
   }
   std::uniform_int_distribution<std::size_t> dist(0, pool.size() - 1);
   const auto idx = static_cast<size_t>(dist(rng));
-  if (idx >= pool.size()) {
-    throw std::out_of_range(std::format(
-        "Random input index {} out of range for pool size {}", idx,
-        pool.size()));
-  }
+  STARPU_ASSERT(idx < pool.size());
   return pool[idx];
 }
 
@@ -86,11 +72,13 @@ log_job_enqueued(
     const RuntimeConfig& opts, int job_id, int iterations,
     std::chrono::high_resolution_clock::time_point now)
 {
-  log_trace(
-      opts.verbosity,
-      std::format(
-          "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
-          job_id + 1, iterations, current_time_formatted(now)));
+  if (should_log(VerbosityLevel::Trace, opts.verbosity)) {
+    log_trace(
+        opts.verbosity,
+        std::format(
+            "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
+            job_id + 1, iterations, current_time_formatted(now)));
+  }
 }
 
 // =============================================================================
@@ -100,11 +88,13 @@ log_job_enqueued(
 auto
 create_job(
     const std::vector<torch::Tensor>& inputs,
-    const std::vector<torch::Tensor>& outputs_ref,
-    int job_id) -> std::shared_ptr<InferenceJob>
+    const std::vector<torch::Tensor>& outputs_ref, int job_id,
+    std::vector<std::shared_ptr<const void>> input_lifetimes)
+    -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
   job->set_input_tensors(inputs);
+  job->set_input_memory_holders(std::move(input_lifetimes));
 
   std::vector<at::ScalarType> types;
   types.reserve(inputs.size());
@@ -122,7 +112,7 @@ create_job(
   outputs.reserve(outputs_ref.size());
   for (const auto& ref : outputs_ref) {
     const auto dtype = ref.scalar_type();
-    const auto options = torch::TensorOptions().dtype(dtype);
+    const auto options = ref.options().dtype(dtype);
 
     std::vector<int64_t> shape(ref.sizes().begin(), ref.sizes().end());
     if (!shape.empty() && requested_batch > 0) {

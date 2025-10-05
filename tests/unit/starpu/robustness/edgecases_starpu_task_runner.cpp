@@ -1,5 +1,7 @@
 #include <format>
 #include <functional>
+#include <memory>
+#include <stdexcept>
 #include <string>
 
 #include "test_starpu_task_runner.hpp"
@@ -21,26 +23,84 @@ TEST_F(StarPUTaskRunnerFixture, HandleJobExceptionCallback)
   EXPECT_EQ(probe.latency, -1);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture, HandleJobExceptionCallbackLogsStdExceptionMessage)
+{
+  auto job = make_job(7, {});
+  job->set_on_complete([](const auto&, double) {
+    throw std::runtime_error("callback failure");
+  });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  EXPECT_NO_THROW(starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error{"job failure"}));
+
+  const auto log = capture.str();
+  const auto expected = starpu_server::expected_log_line(
+      starpu_server::ErrorLevel,
+      "Exception in completion callback: callback failure");
+  EXPECT_NE(log.find(expected), std::string::npos);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    HandleJobExceptionCallbackLogsUnknownNonStdExceptionMessage)
+{
+  auto job = make_job(8, {});
+  job->set_on_complete([](const auto&, double) -> void { throw 42; });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  EXPECT_NO_THROW(starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error{"job failure"}));
+
+  const auto log = capture.str();
+  const auto expected = starpu_server::expected_log_line(
+      starpu_server::ErrorLevel, "Unknown exception in completion callback");
+  EXPECT_NE(log.find(expected), std::string::npos);
+}
+
 TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
 {
   auto& models_gpu = models_gpu_;
   models_gpu.resize(starpu_server::InferLimits::MaxModelsGPU + 1);
   auto probe = starpu_server::make_callback_probe();
-  auto job = probe.job;
-  job->set_job_id(1);
-  job->set_input_tensors({torch::tensor({1})});
+  auto job = make_job(1, {torch::tensor({1})});
+  job->set_on_complete([&probe](const auto& results, double latency) {
+    probe.called = true;
+    probe.results = results;
+    probe.latency = latency;
+  });
+  probe.job = job;
   ASSERT_TRUE(queue_.push(job));
   ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
   runner_->run();
-  EXPECT_TRUE(probe.called);
-  EXPECT_TRUE(probe.results.empty());
-  EXPECT_EQ(probe.latency, -1);
-  auto& results = results_;
-  const auto& completed_jobs = completed_jobs_;
-  ASSERT_EQ(results.size(), 1U);
-  EXPECT_TRUE(results[0].results.empty());
-  EXPECT_EQ(results[0].latency_ms, -1);
-  EXPECT_EQ(completed_jobs.load(), 1);
+  assert_failure_result(probe);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
+{
+  auto model_config = make_model_config(
+      "test", {make_tensor_config("input0", {3}, at::kFloat)},
+      {make_tensor_config("output0", {3}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*input_slots=*/1);
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = make_job(
+      9, {torch::ones({3}), torch::ones({3})}, {at::kFloat, at::kFloat});
+  job->set_on_complete([&probe](const auto& results, double latency) {
+    probe.called = true;
+    probe.results = results;
+    probe.latency = latency;
+  });
+  probe.job = job;
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  runner_->run();
+
+  assert_failure_result(probe);
 }
 
 struct InvalidConfigParam {

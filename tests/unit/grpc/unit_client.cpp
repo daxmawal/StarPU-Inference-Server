@@ -1,15 +1,20 @@
+#include <ATen/core/ScalarType.h>
 #include <gtest/gtest.h>
 
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "grpc/client/client_args.hpp"
+#define private public
 #include "grpc/client/inference_client.hpp"
+#undef private
 #include "grpc/server/inference_service.hpp"
 #include "test_helpers.hpp"
 
@@ -30,6 +35,73 @@ TEST(ClientArgs, ParsesValidArguments)
   EXPECT_EQ(cfg.iterations, 5);
   EXPECT_EQ(cfg.delay_ms, 10);
   EXPECT_EQ(cfg.verbosity, starpu_server::VerbosityLevel::Stats);
+}
+
+TEST(ClientArgs, ShapeOverridesExistingInput)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--shape", "2"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].shape, (std::vector<int64_t>{2}));
+  EXPECT_EQ(cfg.shape, (std::vector<int64_t>{2}));
+}
+
+TEST(ClientArgs, HelpFlagSetsShowHelp)
+{
+  const auto help_flags = std::to_array<const char*>({"--help", "-h"});
+  for (const auto* flag : help_flags) {
+    SCOPED_TRACE(flag);
+    auto argv = std::to_array<const char*>({"prog", flag});
+    auto cfg = starpu_server::parse_client_args(std::span{argv});
+    EXPECT_TRUE(cfg.show_help);
+    EXPECT_TRUE(cfg.valid);
+    EXPECT_TRUE(cfg.inputs.empty());
+    EXPECT_TRUE(cfg.shape.empty());
+  }
+}
+
+TEST(ClientArgs, MissingInputMarksConfigInvalid)
+{
+  auto argv = std::to_array<const char*>({"prog"});
+  testing::internal::CaptureStderr();
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_TRUE(cfg.inputs.empty());
+  EXPECT_NE(err.find("--input option is required."), std::string::npos);
+}
+
+TEST(ClientArgs, RejectsUnknownArguments)
+{
+  auto argv = std::to_array<const char*>({"prog", "--bogus"});
+  testing::internal::CaptureStderr();
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_NE(err.find("Unknown argument"), std::string::npos);
+}
+
+TEST(ClientArgs, RejectsMalformedInputFormat)
+{
+  auto argv = std::to_array<const char*>({"prog", "--input", "bad"});
+  testing::internal::CaptureStderr();
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_NE(err.find("Input must be NAME:SHAPE:TYPE"), std::string::npos);
+}
+
+TEST(ClientArgs, RejectsNegativeDelay)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1x3:float32", "--delay", "-1"});
+  testing::internal::CaptureStderr();
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_NE(err.find("Must be >= 0."), std::string::npos);
 }
 
 TEST(ClientArgs, VerboseLevels)
@@ -58,6 +130,38 @@ TEST(ClientArgs, RejectsNonPositiveShapeDims)
   EXPECT_FALSE(cfg_zero.valid);
 }
 
+TEST(ClientArgs, RejectsMalformedShapeTokens)
+{
+  const auto cases =
+      std::to_array<const char*>({"1xax2", "9223372036854775808", ""});
+  for (const auto* shape : cases) {
+    auto argv = std::to_array<const char*>({"prog", "--shape", shape});
+    auto cfg = starpu_server::parse_client_args(std::span{argv});
+    EXPECT_FALSE(cfg.valid);
+  }
+}
+
+TEST(ClientArgs, TypeFlagCreatesDefaultInput)
+{
+  auto argv = std::to_array<const char*>({"prog", "--type", "float32"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].name, "input");
+  EXPECT_EQ(cfg.inputs[0].type, at::kFloat);
+}
+
+TEST(ClientArgs, TypeFlagOverridesExistingInput)
+{
+  auto argv =
+      std::to_array<const char*>({"prog", "--shape", "1", "--type", "int32"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  ASSERT_EQ(cfg.inputs.size(), 1U);
+  EXPECT_EQ(cfg.inputs[0].name, "input");
+  EXPECT_EQ(cfg.inputs[0].type, at::kInt);
+}
+
 TEST(ClientArgsHelp, ContainsKeyOptions)
 {
   testing::internal::CaptureStdout();
@@ -73,6 +177,72 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
   EXPECT_NE(out.find("--version"), std::string::npos);
   EXPECT_NE(out.find("--verbose"), std::string::npos);
   EXPECT_NE(out.find("--help"), std::string::npos);
+}
+
+TEST(InferenceClientDetermineInferenceCount, HandlesEdgeCases)
+{
+  const auto determine = [](const starpu_server::ClientConfig& cfg) {
+    return starpu_server::InferenceClient::determine_inference_count(cfg);
+  };
+
+  starpu_server::ClientConfig cfg;
+  EXPECT_EQ(determine(cfg), 1U);
+
+  cfg.inputs.clear();
+  {
+    starpu_server::InputConfig input;
+    input.name = "zero_batch";
+    input.shape = {0, 3, 224};
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "negative_batch";
+    input.shape = {-4, 3, 224};
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "valid_batch";
+    input.shape = {5, 3, 224};
+    cfg.inputs.push_back(input);
+  }
+  EXPECT_EQ(determine(cfg), 5U);
+
+  cfg.inputs.clear();
+  {
+    starpu_server::InputConfig input;
+    input.name = "first_valid";
+    input.shape = {8, 3};
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "conflicting";
+    input.shape = {3, 3};
+    cfg.inputs.push_back(input);
+  }
+  EXPECT_EQ(determine(cfg), 8U);
+
+  cfg.inputs.clear();
+  {
+    starpu_server::InputConfig input;
+    input.name = "empty_shape";
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "zero_dim";
+    input.shape = {0};
+    cfg.inputs.push_back(input);
+  }
+  {
+    starpu_server::InputConfig input;
+    input.name = "negative_dim";
+    input.shape = {-1, 2};
+    cfg.inputs.push_back(input);
+  }
+  EXPECT_EQ(determine(cfg), 1U);
 }
 
 class ParseInputTypeCase
@@ -129,6 +299,50 @@ TEST(InferenceClient, ModelIsReadyReturnsFalseWhenUnavailable)
   EXPECT_FALSE(client.ModelIsReady({"example", "1"}));
 }
 
+TEST(InferenceClientLatencySummary, SkipsEmptyMetric)
+{
+  auto channel = grpc::CreateChannel(
+      "localhost:59998", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  client.verbosity_ = starpu_server::VerbosityLevel::Info;
+  client.latency_records_.roundtrip_ms.push_back(1.23);
+  client.latency_records_.server_queue_ms.push_back(0.45);
+
+  testing::internal::CaptureStdout();
+  client.log_latency_summary();
+  const std::string output = testing::internal::GetCapturedStdout();
+
+  EXPECT_NE(output.find("latency"), std::string::npos);
+  EXPECT_NE(output.find("queue"), std::string::npos);
+  EXPECT_EQ(output.find("client_overhead"), std::string::npos);
+}
+
+TEST(InferenceClientLatencySummary, HandlesZeroElapsedTime)
+{
+  auto channel = grpc::CreateChannel(
+      "localhost:59995", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Stats);
+
+  const auto now = std::chrono::high_resolution_clock::now();
+  client.first_request_time_ = now;
+  client.last_response_time_ = now;
+  client.total_inference_count_ = 3;
+  client.record_latency(
+      1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.04, 0.03, 0.02);
+
+  starpu_server::CaptureStream capture{std::cout};
+  client.log_latency_summary();
+  const std::string output = capture.str();
+
+  EXPECT_NE(
+      output.find(
+          "throughput: 3 inferences (elapsed time too small to compute rate)"),
+      std::string::npos);
+}
+
 TEST(InferenceClient, RejectsMismatchedTensorCount)
 {
   auto channel =
@@ -144,6 +358,65 @@ TEST(InferenceClient, RejectsMismatchedTensorCount)
   std::vector<torch::Tensor> tensors = {torch::zeros({1}), torch::zeros({1})};
 
   EXPECT_THROW(client.AsyncModelInfer(tensors, cfg), std::invalid_argument);
+}
+
+TEST(InferenceClient, RejectsUnsupportedTensorType)
+{
+  auto channel =
+      grpc::CreateChannel("localhost:0", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  starpu_server::ClientConfig cfg;
+  cfg.model_name = "example";
+  cfg.model_version = "1";
+  cfg.inputs.push_back({"input0", {1}, at::kFloat});
+
+  std::vector<torch::Tensor> tensors = {
+      torch::zeros({1}, torch::dtype(at::kDouble))};
+
+  EXPECT_THROW(
+      {
+        try {
+          client.AsyncModelInfer(tensors, cfg);
+          client.Shutdown();
+        }
+        catch (...) {
+          client.Shutdown();
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
+TEST(InferenceClient, ConvertsNonContiguousCpuTensor)
+{
+  auto channel =
+      grpc::CreateChannel("localhost:0", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Info);
+
+  starpu_server::ClientConfig cfg;
+  cfg.model_name = "example";
+  cfg.model_version = "1";
+  cfg.inputs.push_back({"input0", {2, 2}, at::kFloat});
+
+  auto tensor = torch::arange(4, torch::kFloat).view({2, 2}).transpose(0, 1);
+
+  testing::internal::CaptureStdout();
+  try {
+    client.AsyncModelInfer({tensor}, cfg);
+    client.Shutdown();
+  }
+  catch (...) {
+    client.Shutdown();
+    testing::internal::GetCapturedStdout();
+    throw;
+  }
+  const std::string output = testing::internal::GetCapturedStdout();
+  EXPECT_NE(
+      output.find("not on CPU or non-contiguous, converting"),
+      std::string::npos);
 }
 
 class ParseVerbosityLevelValid

@@ -16,6 +16,7 @@
 #include "core/warmup.hpp"
 #undef private
 
+#include "core/inference_runner.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"

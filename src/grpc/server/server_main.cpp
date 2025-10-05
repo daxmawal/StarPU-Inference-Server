@@ -4,14 +4,15 @@
 #include <format>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <thread>
 
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
-#include "core/warmup.hpp"
 #include "inference_service.hpp"
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
@@ -49,12 +50,31 @@ handle_program_arguments(std::span<char const* const> args)
     -> starpu_server::RuntimeConfig
 {
   const char* config_path = nullptr;
+  std::optional<int> input_slots_override;
 
-  for (size_t i = 1; i + 1 < args.size(); ++i) {
+  for (size_t i = 1; i < args.size(); ++i) {
     std::string_view arg{args[i]};
-    if ((arg == "--config" || arg == "-c") && args[i + 1] != nullptr) {
+    if ((arg == "--config" || arg == "-c") && (i + 1) < args.size() &&
+        args[i + 1] != nullptr) {
       config_path = args[i + 1];
-      break;
+      ++i;
+      continue;
+    }
+    if ((arg == "--input-slots" || arg == "--slots") && (i + 1) < args.size() &&
+        args[i + 1] != nullptr) {
+      try {
+        const int parsed = std::stoi(args[i + 1]);
+        if (parsed <= 0) {
+          throw std::invalid_argument("input-slots must be > 0");
+        }
+        input_slots_override = parsed;
+      }
+      catch (const std::exception& e) {
+        starpu_server::log_fatal(
+            std::string("Invalid --input-slots value: ") + e.what() + "\n");
+      }
+      ++i;
+      continue;
     }
   }
 
@@ -73,6 +93,13 @@ handle_program_arguments(std::span<char const* const> args)
   log_info(cfg.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
   log_info(cfg.verbosity, std::format("Scheduler       : {}", cfg.scheduler));
   log_info(cfg.verbosity, std::format("Iterations      : {}", cfg.iterations));
+
+  if (input_slots_override.has_value()) {
+    cfg.input_slots = *input_slots_override;
+    starpu_server::log_info(
+        cfg.verbosity,
+        std::format("Overriding input_slots from CLI: {}", cfg.input_slots));
+  }
 
   return cfg;
 }

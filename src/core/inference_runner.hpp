@@ -1,16 +1,18 @@
 #pragma once
 
-#include <cuda_runtime_api.h>
 #include <torch/script.h>
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include "device_type.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
+#include "utils/logger.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -35,6 +37,7 @@ struct TimingInfo {
 // =============================================================================
 
 struct InferenceResult {
+  InferenceResult() noexcept = default;
   std::vector<torch::Tensor> inputs;
   std::vector<torch::Tensor> results;
   double latency_ms = 0.0;
@@ -49,6 +52,8 @@ struct InferenceResult {
 // InferenceJob: a job submitted to the inference engine
 // =============================================================================
 
+class InferenceQueue;
+
 class InferenceJob {
  public:
   InferenceJob() = default;
@@ -56,7 +61,7 @@ class InferenceJob {
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
       int job_identifier,
-      std::function<void(std::vector<torch::Tensor>, double)> callback =
+      std::function<void(const std::vector<torch::Tensor>&, double)> callback =
           nullptr);
 
   static auto make_shutdown_job() -> std::shared_ptr<InferenceJob>;
@@ -70,7 +75,11 @@ class InferenceJob {
     input_tensors_.clear();
     input_tensors_.reserve(inputs.size());
     for (const auto& t : inputs) {
-      input_tensors_.push_back(t.contiguous());
+      if (t.is_contiguous()) {
+        input_tensors_.push_back(t);
+      } else {
+        input_tensors_.push_back(t.contiguous());
+      }
     }
   }
   void set_input_types(const std::vector<at::ScalarType>& types)
@@ -90,9 +99,21 @@ class InferenceJob {
     start_time_ = time;
   }
   void set_on_complete(
-      std::function<void(std::vector<torch::Tensor>, double)> call_back)
+      std::function<void(const std::vector<torch::Tensor>&, double)> call_back)
   {
     on_complete_ = std::move(call_back);
+  }
+
+  void set_input_memory_holders(
+      std::vector<std::shared_ptr<const void>> holders)
+  {
+    input_memory_holders_ = std::move(holders);
+  }
+
+  [[nodiscard]] auto get_input_memory_holders() const
+      -> const std::vector<std::shared_ptr<const void>>&
+  {
+    return input_memory_holders_;
   }
 
   [[nodiscard]] auto get_job_id() const -> int { return job_id_; }
@@ -100,6 +121,10 @@ class InferenceJob {
       -> const std::vector<torch::Tensor>&
   {
     return input_tensors_;
+  }
+  [[nodiscard]] auto release_input_tensors() -> std::vector<torch::Tensor>
+  {
+    return std::exchange(input_tensors_, {});
   }
   [[nodiscard]] auto get_input_types() const
       -> const std::vector<at::ScalarType>&
@@ -121,7 +146,7 @@ class InferenceJob {
     return fixed_worker_id_;
   }
   [[nodiscard]] auto get_on_complete() const
-      -> const std::function<void(std::vector<torch::Tensor>, double)>&
+      -> const std::function<void(const std::vector<torch::Tensor>&, double)>&
   {
     return on_complete_;
   }
@@ -140,10 +165,11 @@ class InferenceJob {
   std::vector<torch::Tensor> input_tensors_;
   std::vector<at::ScalarType> input_types_;
   std::vector<torch::Tensor> output_tensors_;
+  std::vector<std::shared_ptr<const void>> input_memory_holders_;
 
   int job_id_ = 0;
   std::optional<int> fixed_worker_id_;
-  std::function<void(std::vector<torch::Tensor>, double)> on_complete_;
+  std::function<void(const std::vector<torch::Tensor>&, double)> on_complete_;
   std::chrono::high_resolution_clock::time_point start_time_;
 
   DeviceType executed_on_ = DeviceType::Unknown;
@@ -164,6 +190,29 @@ using WorkerThreadLauncher = std::jthread (*)(StarPUTaskRunner&);
 auto get_worker_thread_launcher() -> WorkerThreadLauncher;
 void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 
+namespace detail {
+void client_worker(
+    InferenceQueue& queue, const RuntimeConfig& opts,
+    const std::vector<torch::Tensor>& outputs_ref, int iterations);
+
+auto build_gpu_model_lookup(
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<int>& device_ids)
+    -> std::vector<torch::jit::script::Module*>;
+
+auto resolve_validation_model(
+    const InferenceResult& result, torch::jit::script::Module& cpu_model,
+    const std::vector<torch::jit::script::Module*>& gpu_lookup,
+    bool validate_results) -> std::optional<torch::jit::script::Module*>;
+
+void process_results(
+    const std::vector<InferenceResult>& results,
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<int>& device_ids, bool validate_results,
+    VerbosityLevel verbosity, double rtol, double atol);
+}  // namespace detail
+
 auto load_model_and_reference_output(const RuntimeConfig& opts)
     -> std::optional<std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
@@ -176,6 +225,4 @@ void run_warmup(
     const std::vector<torch::Tensor>& outputs_ref);
 
 void run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu);
-
-auto synchronize_cuda_device() -> cudaError_t;
 }  // namespace starpu_server

@@ -1,16 +1,12 @@
 #include "args_parser.hpp"
 
-#include <c10/core/ScalarType.h>
 #include <torch/torch.h>
 
 #include <algorithm>
 #include <cstdint>
-#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <format>
-#include <functional>
-#include <iostream>
 #include <ranges>
 #include <span>
 #include <sstream>
@@ -26,8 +22,6 @@
 #include "runtime_config.hpp"
 
 namespace starpu_server {
-
-// Named constants to avoid magic numbers
 constexpr int kPortMin = 1;
 constexpr int kPortMax = 65535;
 
@@ -103,6 +97,10 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
     throw std::invalid_argument("No types provided.");
   }
 
+  if (types_str.find_first_not_of(',') == std::string::npos) {
+    throw std::invalid_argument("No types provided.");
+  }
+
   std::vector<at::ScalarType> types;
   std::stringstream type_stream(types_str);
   std::string type_str;
@@ -128,6 +126,81 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
   }
 
   return types;
+}
+
+// =============================================================================
+// Combined --input parser: "name:D1xD2x...:dtype" or "D1xD2x...:dtype"
+// =============================================================================
+
+static auto missing_value_error(std::string_view option_name) -> bool;
+
+static auto
+parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  if (idx + 1 >= args.size()) {
+    return missing_value_error("--input");
+  }
+  ++idx;
+
+  std::string spec = args[idx];
+
+  std::vector<std::string> parts;
+  {
+    std::stringstream spec_stream(spec);
+    std::string part;
+    while (std::getline(spec_stream, part, ':')) {
+      parts.push_back(part);
+    }
+  }
+
+  if (parts.size() != 2 && parts.size() != 3) {
+    log_error(std::format(
+        "Invalid --input format: {}. Expected name:DIMS:TYPE or DIMS:TYPE",
+        spec));
+    return false;
+  }
+
+  std::string name;
+  std::string dims_str;
+  std::string type_str;
+
+  if (parts.size() == 3) {
+    name = parts[0];
+    dims_str = parts[1];
+    type_str = parts[2];
+  } else {
+    dims_str = parts[0];
+    type_str = parts[1];
+  }
+
+  std::vector<int64_t> dims;
+  at::ScalarType dtype = at::ScalarType::Undefined;
+  try {
+    dims = parse_shape_string(dims_str);
+    dtype = string_to_scalar_type(type_str);
+  }
+  catch (const std::exception& e) {
+    log_error(std::format("Invalid --input '{}': {}", spec, e.what()));
+    return false;
+  }
+
+  opts.models.resize(1);
+  if (!opts.seen_combined_input) {
+    opts.models[0].inputs.clear();
+    opts.seen_combined_input = true;
+  }
+
+  TensorConfig tensor_config{};
+  tensor_config.name = name.empty()
+                           ? (std::string("input") +
+                              std::to_string(opts.models[0].inputs.size()))
+                           : name;
+  tensor_config.dims = std::move(dims);
+  tensor_config.type = dtype;
+  opts.models[0].inputs.push_back(std::move(tensor_config));
+
+  return true;
 }
 
 // =============================================================================
@@ -161,10 +234,10 @@ try_parse(const char* val, Func&& parser) -> bool
     return true;
   }
   catch (const std::invalid_argument& e) {
-    log_error(std::format("Invalid argument: {}", e.what()));
+    log_error(e.what());
   }
   catch (const std::out_of_range& e) {
-    log_error(std::format("Out of range: {}", e.what()));
+    log_error(e.what());
   }
   return false;
 }
@@ -379,6 +452,36 @@ parse_max_batch_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
 }
 
 static auto
+parse_input_slots(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& input_slots = opts.input_slots;
+  return expect_and_parse(
+      "--input-slots", idx, args, [&input_slots](const char* val) {
+        const int tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        input_slots = tmp;
+      });
+}
+
+static auto
+parse_slots_alias(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+    -> bool
+{
+  auto& input_slots = opts.input_slots;
+  return expect_and_parse(
+      "--slots", idx, args, [&input_slots](const char* val) {
+        const int tmp = std::stoi(val);
+        if (tmp <= 0) {
+          throw std::invalid_argument("Must be > 0.");
+        }
+        input_slots = tmp;
+      });
+}
+
+static auto
 parse_metrics_port(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
@@ -521,6 +624,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
   const static std::unordered_map<
       std::string_view, Parser, TransparentHash, TransparentEqual>
       dispatch = {
+          {"--input", parse_input_combined},
           {"--config", parse_config},
           {"-c", parse_config},
           {"--model", parse_model},
@@ -535,6 +639,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--address", parse_address},
           {"--metrics-port", parse_metrics_port},
           {"--max-batch-size", parse_max_batch_size},
+          {"--input-slots", parse_input_slots},
+          {"--slots", parse_slots_alias},
           {"--pregen-inputs", parse_pregen_inputs},
           {"--warmup-pregen-inputs", parse_warmup_pregen_inputs},
           {"--warmup-iterations", parse_warmup_iterations},
@@ -550,6 +656,8 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
       opts.synchronous = true;
     } else if (arg == "--no_cpu") {
       opts.use_cpu = false;
+    } else if (arg == "--no-validate") {
+      opts.validate_results = false;
     } else if (arg == "--help" || arg == "-h") {
       opts.show_help = true;
       return true;

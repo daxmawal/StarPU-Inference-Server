@@ -10,9 +10,7 @@ class StarPUSetupCodelet_Integration : public ::testing::Test {
 
   void SetUp() override
   {
-    if (!torch::cuda::is_available()) {
-      GTEST_SKIP();
-    }
+    skip_if_no_cuda();
     starpu_server::RuntimeConfig opts;
     opts.use_cpu = true;
     opts.use_cuda = true;

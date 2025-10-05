@@ -7,18 +7,26 @@
 #include <bit>
 #include <cassert>
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
 #include <format>
+#include <functional>
 #include <future>
+#include <iostream>
+#include <optional>
 #include <ostream>
 #include <span>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "core/inference_params.hpp"
+#include "core/inference_runner.hpp"
+#include "core/starpu_setup.hpp"
 #include "grpc/server/inference_service.hpp"
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
@@ -33,7 +41,71 @@ skip_if_no_cuda()
   }
 }
 
+inline auto
+MakeTempModelPath(const char* base) -> std::filesystem::path
+{
+  const auto dir = std::filesystem::temp_directory_path();
+  const auto time =
+      std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  return dir / (std::string(base) + "_" + std::to_string(time) + ".pt");
+}
+
 namespace starpu_server {
+
+class TemporaryModelFile {
+ public:
+  TemporaryModelFile(const char* base, torch::jit::script::Module module)
+      : path_{MakeTempModelPath(base)}
+  {
+    module.save(path_.string());
+  }
+
+  template <typename SaveFunc>
+    requires std::invocable<SaveFunc, const std::filesystem::path&>
+  TemporaryModelFile(const char* base, SaveFunc&& save_func)
+      : path_{MakeTempModelPath(base)}
+  {
+    std::invoke(std::forward<SaveFunc>(save_func), path_);
+  }
+
+  TemporaryModelFile(const TemporaryModelFile&) = delete;
+  auto operator=(const TemporaryModelFile&) -> TemporaryModelFile& = delete;
+
+  TemporaryModelFile(TemporaryModelFile&& other) noexcept
+      : path_{std::move(other.path_)}
+  {
+    other.path_.clear();
+  }
+
+  auto operator=(TemporaryModelFile&& other) noexcept -> TemporaryModelFile&
+  {
+    if (this != &other) {
+      cleanup();
+      path_ = std::move(other.path_);
+      other.path_.clear();
+    }
+    return *this;
+  }
+
+  ~TemporaryModelFile() { cleanup(); }
+
+  [[nodiscard]] auto path() const -> const std::filesystem::path&
+  {
+    return path_;
+  }
+
+ private:
+  void cleanup()
+  {
+    if (!path_.empty()) {
+      std::error_code ec;
+      std::filesystem::remove(path_, ec);
+      path_.clear();
+    }
+  }
+
+  std::filesystem::path path_{};
+};
 
 class CaptureStream {
  public:
@@ -75,6 +147,49 @@ make_add_one_model() -> torch::jit::script::Module
             return x + 1
     )JIT");
   return module;
+}
+
+inline auto
+run_add_one_inference_loop(
+    bool use_cpu, bool use_cuda, std::optional<int> device_id = std::nullopt,
+    bool validate_results = true,
+    std::optional<std::vector<int>> device_ids_override = std::nullopt)
+    -> std::string
+{
+  TemporaryModelFile model_file{"add_one", make_add_one_model()};
+
+  RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].path = model_file.path().string();
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.iterations = 1;
+  opts.use_cpu = use_cpu;
+  opts.use_cuda = use_cuda;
+  opts.validate_results = validate_results;
+  if (device_ids_override && !device_ids_override->empty()) {
+    opts.device_ids = *device_ids_override;
+  } else if (device_id) {
+    opts.device_ids = {*device_id};
+  }
+  opts.verbosity = VerbosityLevel::Info;
+
+  StarPUSetup starpu(opts);
+  CaptureStream capture{std::cout};
+  run_inference_loop(opts, starpu);
+  const std::string output = capture.str();
+  return output;
+}
+
+inline auto
+make_single_model_runtime_config(
+    const std::filesystem::path& model_path, std::vector<int64_t> dims,
+    at::ScalarType type) -> RuntimeConfig
+{
+  RuntimeConfig config{};
+  config.models.resize(1);
+  config.models[0].path = model_path.string();
+  config.models[0].inputs = {{"input0", std::move(dims), type}};
+  return config;
 }
 
 inline auto
@@ -189,17 +304,39 @@ make_model_request(const std::string& name, const std::string& version)
 }
 
 inline auto
+make_latency_breakdown(const inference::ModelInferResponse& response)
+    -> starpu_server::InferenceServiceImpl::LatencyBreakdown
+{
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+  breakdown.preprocess_ms = response.server_preprocess_ms();
+  breakdown.queue_ms = response.server_queue_ms();
+  breakdown.submit_ms = response.server_submit_ms();
+  breakdown.scheduling_ms = response.server_scheduling_ms();
+  breakdown.codelet_ms = response.server_codelet_ms();
+  breakdown.inference_ms = response.server_inference_ms();
+  breakdown.callback_ms = response.server_callback_ms();
+  breakdown.postprocess_ms = response.server_postprocess_ms();
+  breakdown.total_ms = response.server_total_ms();
+  breakdown.overall_ms = response.server_overall_ms();
+  return breakdown;
+}
+
+inline auto
 run_single_job(
     InferenceQueue& queue, std::vector<torch::Tensor> outputs = {},
-    double latency = 0.0) -> std::jthread
+    double latency = 0.0,
+    std::function<void(InferenceJob&)> job_mutator = {}) -> std::jthread
 {
-  return std::jthread(
-      [&queue, outputs = std::move(outputs), latency]() mutable {
-        std::shared_ptr<InferenceJob> job;
-        if (queue.wait_and_pop(job)) {
-          job->get_on_complete()(outputs, latency);
-        }
-      });
+  return std::jthread([&queue, outputs = std::move(outputs), latency,
+                       job_mutator = std::move(job_mutator)]() mutable {
+    std::shared_ptr<InferenceJob> job;
+    if (queue.wait_and_pop(job)) {
+      if (job_mutator) {
+        job_mutator(*job);
+      }
+      job->get_on_complete()(outputs, latency);
+    }
+  });
 }
 
 struct TestGrpcServer {
@@ -247,12 +384,23 @@ verify_populate_response(
     const inference::ModelInferRequest& req,
     const inference::ModelInferResponse& resp,
     const std::vector<torch::Tensor>& outputs, uint64_t recv_ms,
-    uint64_t send_ms)
+    uint64_t send_ms,
+    const starpu_server::InferenceServiceImpl::LatencyBreakdown& breakdown)
 {
   EXPECT_EQ(resp.model_name(), req.model_name());
   EXPECT_EQ(resp.model_version(), req.model_version());
   EXPECT_EQ(resp.server_receive_ms(), recv_ms);
   EXPECT_EQ(resp.server_send_ms(), send_ms);
+  EXPECT_DOUBLE_EQ(resp.server_preprocess_ms(), breakdown.preprocess_ms);
+  EXPECT_DOUBLE_EQ(resp.server_queue_ms(), breakdown.queue_ms);
+  EXPECT_DOUBLE_EQ(resp.server_submit_ms(), breakdown.submit_ms);
+  EXPECT_DOUBLE_EQ(resp.server_scheduling_ms(), breakdown.scheduling_ms);
+  EXPECT_DOUBLE_EQ(resp.server_codelet_ms(), breakdown.codelet_ms);
+  EXPECT_DOUBLE_EQ(resp.server_inference_ms(), breakdown.inference_ms);
+  EXPECT_DOUBLE_EQ(resp.server_callback_ms(), breakdown.callback_ms);
+  EXPECT_DOUBLE_EQ(resp.server_postprocess_ms(), breakdown.postprocess_ms);
+  EXPECT_DOUBLE_EQ(resp.server_total_ms(), breakdown.total_ms);
+  EXPECT_DOUBLE_EQ(resp.server_overall_ms(), breakdown.overall_ms);
 
   ASSERT_EQ(resp.outputs_size(), static_cast<int>(outputs.size()));
   ASSERT_EQ(resp.raw_output_contents_size(), static_cast<int>(outputs.size()));

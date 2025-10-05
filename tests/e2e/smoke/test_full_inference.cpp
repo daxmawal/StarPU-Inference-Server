@@ -87,9 +87,11 @@ TEST(E2E, FullInference)
   ASSERT_TRUE(status.ok());
   EXPECT_GT(resp.server_receive_ms(), 0);
   EXPECT_GT(resp.server_send_ms(), 0);
+  auto response_breakdown = starpu_server::make_latency_breakdown(resp);
   starpu_server::verify_populate_response(
       req, resp, reference_outputs, resp.server_receive_ms(),
-      resp.server_send_ms());
+      resp.server_send_ms(), response_breakdown);
+  EXPECT_GE(resp.server_total_ms(), 0.0);
 
   starpu_server::StopServer(server.server);
   server.thread.join();

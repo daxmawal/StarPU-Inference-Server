@@ -5,11 +5,14 @@
 
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "core/inference_runner.hpp"
 #include "core/tensor_builder.hpp"
+#include "starpu_task_worker/inference_queue.hpp"
+#include "test_constants.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 
@@ -19,11 +22,6 @@ cuda_sync_result_ref() -> cudaError_t&
 {
   static cudaError_t value = cudaSuccess;
   return value;
-}
-inline void
-SetCudaSyncResult(cudaError_t status)
-{
-  cuda_sync_result_ref() = status;
 }
 }  // namespace
 
@@ -54,6 +52,35 @@ struct ExpectedJobInfo {
   int64_t job_id;
   int worker_id;
 };
+
+struct ClientWorkerTestContext {
+  starpu_server::RuntimeConfig config;
+  std::vector<torch::Tensor> outputs_reference;
+  starpu_server::InferenceQueue queue;
+};
+
+inline auto
+make_client_worker_test_context() -> ClientWorkerTestContext
+{
+  starpu_server::RuntimeConfig config{};
+  config.delay_ms = 0;
+  config.pregen_inputs = 1;
+
+  starpu_server::TensorConfig tensor_cfg{
+      .name = "input",
+      .dims = {1, 3},
+      .type = at::ScalarType::Float,
+  };
+  starpu_server::ModelConfig model_cfg{};
+  model_cfg.inputs = {tensor_cfg};
+  config.models = {model_cfg};
+
+  std::vector<torch::Tensor> outputs_ref{torch::zeros({1, 3})};
+
+  return ClientWorkerTestContext{
+      std::move(config), std::move(outputs_ref),
+      starpu_server::InferenceQueue()};
+}
 
 inline auto
 JobStateMatches(
@@ -123,14 +150,53 @@ CallbackResultsMatch(
 }
 }  // namespace
 
-TEST(InferenceRunner_Unit, MakeShutdownJob)
+TEST(InferenceJobTest, MakeShutdownJobCreatesShutdownSignal)
 {
   auto job = starpu_server::InferenceJob::make_shutdown_job();
   ASSERT_NE(job, nullptr);
   EXPECT_TRUE(job->is_shutdown());
+  EXPECT_EQ(job->get_job_id(), 0);
 }
 
-TEST(InferenceJob_Unit, SettersGettersAndCallback)
+TEST(InferenceJobTest, ConstructorInitializesState)
+{
+  const std::vector<torch::Tensor> inputs{torch::ones(kShape2x2)};
+  const std::vector<torch::Tensor> outputs{torch::zeros(kShape2x2)};
+  const std::vector<at::ScalarType> types{at::kFloat};
+
+  bool callback_called = false;
+  std::vector<torch::Tensor> callback_tensors;
+  double callback_latency = 0.0;
+
+  const auto before = std::chrono::high_resolution_clock::now();
+  auto job = std::make_shared<starpu_server::InferenceJob>(
+      inputs, types, kJobId,
+      [&](std::vector<torch::Tensor> tensors, double latency) {
+        callback_called = true;
+        callback_tensors = std::move(tensors);
+        callback_latency = latency;
+      });
+  const auto after = std::chrono::high_resolution_clock::now();
+
+  ASSERT_NE(job, nullptr);
+  EXPECT_EQ(job->get_job_id(), kJobId);
+  ASSERT_EQ(job->get_input_tensors().size(), inputs.size());
+  EXPECT_TRUE(job->get_input_tensors()[0].equal(inputs[0]));
+  ASSERT_EQ(job->get_input_types().size(), types.size());
+  EXPECT_EQ(job->get_input_types()[0], types[0]);
+  EXPECT_TRUE(job->has_on_complete());
+  EXPECT_LE(before, job->get_start_time());
+  EXPECT_GE(after, job->get_start_time());
+
+  job->get_on_complete()(outputs, kLatencyMs);
+
+  EXPECT_TRUE(callback_called);
+  ASSERT_EQ(callback_tensors.size(), outputs.size());
+  EXPECT_TRUE(callback_tensors[0].equal(outputs[0]));
+  EXPECT_DOUBLE_EQ(callback_latency, kLatencyMs);
+}
+
+TEST(InferenceJobTest, SettersGettersAndCallback)
 {
   const std::vector<torch::Tensor> inputs{torch::ones(kShape2x2)};
   const std::vector<at::ScalarType> types{at::kFloat};
@@ -150,11 +216,12 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
   std::vector<torch::Tensor> cb_tensors;
   double cb_latency = 0.0;
 
-  job->set_on_complete([&](std::vector<torch::Tensor> tensor, double lat) {
-    callback_called = true;
-    cb_tensors = std::move(tensor);
-    cb_latency = lat;
-  });
+  job->set_on_complete(
+      [&](const std::vector<torch::Tensor>& tensor, double lat) {
+        callback_called = true;
+        cb_tensors = tensor;
+        cb_latency = lat;
+      });
 
   EXPECT_TRUE(JobStateMatches(
       job, inputs, types, outputs, start,
@@ -164,6 +231,144 @@ TEST(InferenceJob_Unit, SettersGettersAndCallback)
   job->get_on_complete()(job->get_output_tensors(), kLatencyMs);
   EXPECT_TRUE(CallbackResultsMatch(
       callback_called, cb_tensors, cb_latency, outputs, kLatencyMs));
+}
+
+TEST(InferenceJobTest, SetInputTensorsCopiesNonContiguousAsContiguous)
+{
+  auto non_contiguous =
+      torch::arange(0, 6, torch::TensorOptions().dtype(torch::kFloat32))
+          .reshape({2, 3})
+          .transpose(0, 1);
+  ASSERT_FALSE(non_contiguous.is_contiguous());
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_input_tensors({non_contiguous});
+
+  ASSERT_EQ(job->get_input_tensors().size(), 1U);
+  const auto& stored = job->get_input_tensors()[0];
+  EXPECT_TRUE(stored.is_contiguous());
+  EXPECT_TRUE(stored.equal(non_contiguous));
+}
+
+TEST(InferenceJobTest, ReleaseInputTensorsMovesStoredInputs)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  const auto input = torch::ones(kShape2x2);
+  job->set_input_tensors({input});
+
+  ASSERT_EQ(job->get_input_tensors().size(), 1U);
+
+  auto released = job->release_input_tensors();
+
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  ASSERT_EQ(released.size(), 1U);
+  EXPECT_TRUE(released[0].equal(input));
+}
+
+TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
+{
+  starpu_server::InferenceResult result{};
+  result.executed_on = starpu_server::DeviceType::CUDA;
+  result.device_id = -1;
+  result.job_id = 42;
+
+  torch::jit::script::Module cpu_model("cpu_module");
+  const std::vector<torch::jit::script::Module*> empty_lookup;
+
+  const auto resolved = starpu_server::detail::resolve_validation_model(
+      result, cpu_model, empty_lookup, /*validate_results=*/true);
+
+  EXPECT_FALSE(resolved.has_value());
+}
+
+TEST(InferenceRunner_Unit, BuildGpuModelLookup_ReturnsEmptyForAllNegativeIds)
+{
+  std::vector<torch::jit::script::Module> models_gpu;
+  models_gpu.push_back(starpu_server::make_identity_model());
+  models_gpu.push_back(starpu_server::make_identity_model());
+
+  const std::vector<int> device_ids{-1, -2};
+
+  const auto lookup =
+      starpu_server::detail::build_gpu_model_lookup(models_gpu, device_ids);
+
+  EXPECT_TRUE(lookup.empty());
+}
+
+TEST(InferenceRunner_Unit, BuildGpuModelLookup_SkipsNegativeEntries)
+{
+  std::vector<torch::jit::script::Module> models_gpu;
+  models_gpu.push_back(starpu_server::make_identity_model());
+  models_gpu.push_back(starpu_server::make_identity_model());
+  models_gpu.push_back(starpu_server::make_identity_model());
+
+  const std::vector<int> device_ids{2, -1, 0};
+
+  const auto lookup =
+      starpu_server::detail::build_gpu_model_lookup(models_gpu, device_ids);
+
+  ASSERT_EQ(lookup.size(), 3U);
+  EXPECT_EQ(lookup[0], &models_gpu[2]);
+  EXPECT_EQ(lookup[1], nullptr);
+  EXPECT_EQ(lookup[2], &models_gpu[0]);
+}
+
+TEST(
+    InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForMissingReplica)
+{
+  starpu_server::InferenceResult result{};
+  result.executed_on = starpu_server::DeviceType::CUDA;
+  result.device_id = 3;
+  result.job_id = 7;
+
+  torch::jit::script::Module cpu_model("cpu_module");
+  torch::jit::script::Module gpu_module("gpu_module");
+  std::vector<torch::jit::script::Module*> lookup{&gpu_module};
+
+  const auto resolved = starpu_server::detail::resolve_validation_model(
+      result, cpu_model, lookup, /*validate_results=*/true);
+
+  EXPECT_FALSE(resolved.has_value());
+}
+
+TEST(InferenceRunner_Unit, ClientWorkerSeedsRngWhenSeedProvided)
+{
+  auto context = make_client_worker_test_context();
+  auto& opts = context.config;
+  auto& queue = context.queue;
+  const auto& outputs_ref = context.outputs_reference;
+  opts.seed = 123;
+
+  ASSERT_TRUE(opts.seed.has_value());
+  torch::manual_seed(*opts.seed);
+  torch::rand({1, 3});
+  const auto expected = torch::rand({2, 4});
+
+  torch::manual_seed(0);
+  starpu_server::detail::client_worker(queue, opts, outputs_ref, 0);
+
+  const auto actual = torch::rand({2, 4});
+  ASSERT_TRUE(torch::allclose(actual, expected));
+}
+
+TEST(InferenceRunner_Unit, ClientWorkerStopsWhenQueuePushFails)
+{
+  auto context = make_client_worker_test_context();
+  auto& opts = context.config;
+  auto& queue = context.queue;
+  const auto& outputs_ref = context.outputs_reference;
+  opts.iterations = 1;
+
+  testing::internal::CaptureStderr();
+  queue.shutdown();
+  starpu_server::detail::client_worker(
+      queue, opts, outputs_ref, opts.iterations);
+  const auto captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.wait_and_pop(job));
 }
 
 TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
@@ -188,8 +393,8 @@ TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
 
 TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
 {
-  constexpr float kF1 = 1.0F;
-  constexpr float kF2 = 2.0F;
+  using starpu_server::test_constants::kF1;
+  using starpu_server::test_constants::kF2;
   constexpr float kF35 = 3.5F;
   constexpr float kFNeg4 = -4.0F;
   constexpr float kF025 = 0.25F;
@@ -206,15 +411,104 @@ TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
   EXPECT_FLOAT_EQ(dst[4], kF025);
 }
 
-TEST(InferenceRunner_Unit, LogsCudaSyncError)
+TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
 {
-  SetCudaSyncResult(cudaErrorUnknown);
-  starpu_server::CaptureStream capture{std::cerr};
-  const auto err = starpu_server::synchronize_cuda_device();
-  EXPECT_EQ(err, cudaErrorUnknown);
-  EXPECT_EQ(
-      capture.str(), starpu_server::expected_log_line(
-                         starpu_server::ErrorLevel,
-                         "cudaDeviceSynchronize failed: mock cuda error"));
-  SetCudaSyncResult(cudaSuccess);
+  auto cpu_model = starpu_server::make_identity_model();
+  std::vector<torch::jit::script::Module> gpu_models;
+  const std::vector<int> device_ids;
+
+  starpu_server::InferenceResult result{};
+  result.job_id = 1;
+  result.executed_on = starpu_server::DeviceType::CPU;
+  result.results = {torch::ones({1})};
+
+  const std::vector<starpu_server::InferenceResult> results{result};
+
+  testing::internal::CaptureStdout();
+  starpu_server::detail::process_results(
+      results, cpu_model, gpu_models, device_ids,
+      /*validate_results=*/false, starpu_server::VerbosityLevel::Info,
+      /*rtol=*/1e-5, /*atol=*/1e-8);
+  const auto captured = testing::internal::GetCapturedStdout();
+
+  EXPECT_NE(
+      captured.find("Result validation disabled; skipping checks."),
+      std::string::npos);
+}
+
+TEST(
+    InferenceRunner_ProcessResults,
+    ProcessResults_DoesNotLogErrorWhenResultsMissingAndValidationDisabled)
+{
+  auto cpu_model = starpu_server::make_identity_model();
+  std::vector<torch::jit::script::Module> gpu_models;
+  const std::vector<int> device_ids;
+
+  starpu_server::InferenceResult result{};
+  result.job_id = 13;
+  result.executed_on = starpu_server::DeviceType::CPU;
+
+  const std::vector<starpu_server::InferenceResult> results{result};
+
+  testing::internal::CaptureStderr();
+  starpu_server::detail::process_results(
+      results, cpu_model, gpu_models, device_ids,
+      /*validate_results=*/false, starpu_server::VerbosityLevel::Info,
+      /*rtol=*/1e-5, /*atol=*/1e-8);
+  const auto captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_EQ(captured.find("[Client] Job"), std::string::npos);
+}
+
+TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
+{
+  auto cpu_model = starpu_server::make_identity_model();
+  std::vector<torch::jit::script::Module> gpu_models;
+  const std::vector<int> device_ids;
+
+  starpu_server::InferenceResult result{};
+  result.job_id = 99;
+  result.executed_on = starpu_server::DeviceType::CPU;
+
+  const std::vector<starpu_server::InferenceResult> results{result};
+
+  testing::internal::CaptureStderr();
+  starpu_server::detail::process_results(
+      results, cpu_model, gpu_models, device_ids,
+      /*validate_results=*/true, starpu_server::VerbosityLevel::Info,
+      /*rtol=*/1e-5, /*atol=*/1e-8);
+  const auto captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(captured.find("[Client] Job"), std::string::npos);
+}
+
+TEST(
+    InferenceRunner_ProcessResults,
+    ProcessResults_SkipsWhenValidationModelUnavailable)
+{
+  auto cpu_model = starpu_server::make_identity_model();
+  std::vector<torch::jit::script::Module> gpu_models;
+  gpu_models.push_back(starpu_server::make_identity_model());
+  const std::vector<int> device_ids{0};
+
+  starpu_server::InferenceResult result{};
+  result.job_id = 7;
+  result.worker_id = 5;
+  result.executed_on = starpu_server::DeviceType::CUDA;
+  result.device_id = 1;
+  result.inputs = {torch::zeros({2, 2})};
+  result.results = {torch::ones({2, 2})};
+
+  const std::vector<starpu_server::InferenceResult> results{result};
+
+  testing::internal::CaptureStderr();
+  starpu_server::detail::process_results(
+      results, cpu_model, gpu_models, device_ids,
+      /*validate_results=*/true, starpu_server::VerbosityLevel::Info,
+      /*rtol=*/1e-5, /*atol=*/1e-8);
+  const auto captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(
+      captured.find("[Client] Skipping validation for job"), std::string::npos);
+  EXPECT_EQ(captured.find("[Validator]"), std::string::npos);
 }

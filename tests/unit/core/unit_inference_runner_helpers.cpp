@@ -2,8 +2,8 @@
 #include <torch/script.h>
 
 #include <filesystem>
-#include <format>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <vector>
 
@@ -12,31 +12,66 @@
 #include "test_inference_runner.hpp"
 #include "utils/exceptions.hpp"
 
-TEST(InferenceRunnerHelpers, RunReferenceInferenceTensor)
+namespace {
+
+struct InferenceRunnerParam {
+  std::string name;
+  std::function<torch::jit::Module()> make_module;
+  std::size_t expected_outputs;
+  std::vector<std::function<void(
+      const std::vector<torch::Tensor>&, const std::vector<torch::Tensor>&)>>
+      assertions;
+};
+
+}  // namespace
+
+class InferenceRunnerHelpersTest
+    : public ::testing::TestWithParam<InferenceRunnerParam> {};
+
+TEST_P(InferenceRunnerHelpersTest, RunReferenceInference)
 {
-  auto model = starpu_server::make_mul_two_model();
+  const auto& param = GetParam();
+  auto model = param.make_module();
   std::vector<torch::Tensor> inputs{torch::ones({2})};
   auto outputs = starpu_server::run_reference_inference(model, inputs);
-  ASSERT_EQ(outputs.size(), 1U);
-  EXPECT_TRUE(torch::allclose(outputs[0], inputs[0] * 2));
+
+  ASSERT_EQ(outputs.size(), param.expected_outputs);
+
+  for (const auto& assertion : param.assertions) {
+    assertion(inputs, outputs);
+  }
 }
 
-TEST(InferenceRunnerHelpers, RunReferenceInferenceTuple)
-{
-  auto model = starpu_server::make_tuple_model();
-  std::vector<torch::Tensor> inputs{torch::ones({2})};
-  auto outputs = starpu_server::run_reference_inference(model, inputs);
-  ASSERT_EQ(outputs.size(), 2U);
-  EXPECT_TRUE(torch::allclose(outputs[0], inputs[0]));
-  EXPECT_TRUE(torch::allclose(outputs[1], inputs[0] + 1));
-}
-
-TEST(InferenceRunnerHelpers, RunReferenceInferenceTensorList)
-{
-  auto model = starpu_server::make_tensor_list_model();
-  std::vector<torch::Tensor> inputs{torch::ones({2})};
-  auto outputs = starpu_server::run_reference_inference(model, inputs);
-  ASSERT_EQ(outputs.size(), 2U);
-  EXPECT_TRUE(torch::allclose(outputs[0], inputs[0]));
-  EXPECT_TRUE(torch::allclose(outputs[1], inputs[0] + 1));
-}
+INSTANTIATE_TEST_SUITE_P(
+    RunReferenceInference, InferenceRunnerHelpersTest,
+    ::testing::Values(
+        InferenceRunnerParam{
+            "Tensor",
+            [] { return starpu_server::make_mul_two_model(); },
+            1U,
+            {[](const auto& inputs, const auto& outputs) {
+              EXPECT_TRUE(torch::allclose(outputs[0], inputs[0] * 2));
+            }}},
+        InferenceRunnerParam{
+            "Tuple",
+            [] { return starpu_server::make_tuple_model(); },
+            2U,
+            {[](const auto& inputs, const auto& outputs) {
+               EXPECT_TRUE(torch::allclose(outputs[0], inputs[0]));
+             },
+             [](const auto& inputs, const auto& outputs) {
+               EXPECT_TRUE(torch::allclose(outputs[1], inputs[0] + 1));
+             }}},
+        InferenceRunnerParam{
+            "TensorList",
+            [] { return starpu_server::make_tensor_list_model(); },
+            2U,
+            {[](const auto& inputs, const auto& outputs) {
+               EXPECT_TRUE(torch::allclose(outputs[0], inputs[0]));
+             },
+             [](const auto& inputs, const auto& outputs) {
+               EXPECT_TRUE(torch::allclose(outputs[1], inputs[0] + 1));
+             }}}),
+    [](const ::testing::TestParamInfo<InferenceRunnerParam>& info) {
+      return info.param.name;
+    });

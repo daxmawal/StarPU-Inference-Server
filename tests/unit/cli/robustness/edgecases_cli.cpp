@@ -2,6 +2,7 @@
 #include <torch/torch.h>
 
 #include <format>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,38 @@ TEST_P(ArgsParserInvalidOptions_Robustesse, Invalid)
   args.insert(args.end(), diff.begin(), diff.end());
   expect_invalid(args);
 }
+
+struct TypesParseErrorParam {
+  const char* types_value;
+  const char* expected_message;
+};
+
+class ArgsParserTypesParseErrors_Robustesse
+    : public ::testing::TestWithParam<TypesParseErrorParam> {};
+
+TEST_P(ArgsParserTypesParseErrors_Robustesse, ReportsError)
+{
+  const auto& param = GetParam();
+  std::vector<const char*> args = {
+      "program", "--model", test_model_path().c_str(), "--shape",
+      "1x3",     "--types", param.types_value};
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto result = parse(args);
+
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel, param.expected_message));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    TypesParseErrors, ArgsParserTypesParseErrors_Robustesse,
+    ::testing::Values(
+        TypesParseErrorParam{"float,", "Trailing comma in types string"},
+        TypesParseErrorParam{"float,,int", "Empty type in types string"},
+        TypesParseErrorParam{",float", "Empty type in types string"},
+        TypesParseErrorParam{",", "No types provided."}));
 
 INSTANTIATE_TEST_SUITE_P(
     InvalidArguments, ArgsParserInvalidOptions_Robustesse,
@@ -88,6 +121,24 @@ TEST(ArgsParserInvalidOptions_Robustesse, DeviceIdOutOfRange)
                          starpu_server::ErrorLevel, expected_msg));
 }
 
+TEST(ArgsParserInvalidOptions_Robustesse, TypesCountMustMatchShapes)
+{
+  const std::vector<const char*> args = {
+      "program", "--model",   test_model_path().c_str(), "--shape", "1x3",
+      "--types", "float,int",
+  };
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto opts = parse(args);
+
+  EXPECT_FALSE(opts.valid);
+  EXPECT_EQ(
+      capture.str(),
+      starpu_server::expected_log_line(
+          starpu_server::ErrorLevel,
+          "Number of --types must match number of input shapes."));
+}
+
 struct MissingValueParam {
   std::vector<const char*> args;
   const char* option;
@@ -118,3 +169,65 @@ INSTANTIATE_TEST_SUITE_P(
         MissingValueParam{{"program", "--address"}, "--address"},
         MissingValueParam{{"program", "--rtol"}, "--rtol"},
         MissingValueParam{{"program", "--atol"}, "--atol"}));
+
+TEST(
+    ArgsParserComputeMaxMessageBytes_Robustesse,
+    ReportsInvalidDimensionException)
+{
+  auto argv = build_argv({"program"});
+  starpu_server::RuntimeConfig opts;
+  opts.models.resize(1);
+  auto& model = opts.models.front();
+  model.path = test_model_path();
+  model.inputs.emplace_back();
+  auto& input = model.inputs.back();
+  input.name = "input";
+  input.dims = {1, -1};
+  input.type = at::kFloat;
+  model.outputs.emplace_back();
+  auto& output = model.outputs.back();
+  output.name = "output";
+  output.dims = {1};
+  output.type = at::kFloat;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto result =
+      starpu_server::parse_arguments({argv.data(), argv.size()}, opts);
+
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(
+      capture.str(),
+      starpu_server::expected_log_line(
+          starpu_server::ErrorLevel, "dimension size must be non-negative"));
+}
+
+TEST(
+    ArgsParserComputeMaxMessageBytes_Robustesse,
+    ReportsMessageSizeOverflowException)
+{
+  auto argv = build_argv({"program"});
+  starpu_server::RuntimeConfig opts;
+  opts.models.resize(1);
+  auto& model = opts.models.front();
+  model.path = test_model_path();
+  model.inputs.emplace_back();
+  auto& input = model.inputs.back();
+  input.name = "input";
+  input.dims = {std::numeric_limits<int64_t>::max()};
+  input.type = at::kFloat;
+  model.outputs.emplace_back();
+  auto& output = model.outputs.back();
+  output.name = "output";
+  output.dims = {1};
+  output.type = at::kFloat;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const auto result =
+      starpu_server::parse_arguments({argv.data(), argv.size()}, opts);
+
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(
+      capture.str(), starpu_server::expected_log_line(
+                         starpu_server::ErrorLevel,
+                         "numel * element size would overflow size_t"));
+}

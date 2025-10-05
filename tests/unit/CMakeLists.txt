@@ -4,10 +4,10 @@ target_sources(
   unit_tests
   INTERFACE cli/unit_cli.cpp
             cli/robustness/edgecases_cli.cpp
-            core/unit_inference_queue.cpp
             core/unit_inference_runner_helpers.cpp
             core/unit_inference_task_errors.cpp
             core/unit_inference_runner.cpp
+            core/unit_latency_statistics.cpp
             core/unit_inference_task_limits.cpp
             core/unit_inference_task.cpp
             core/unit_tensor_builder.cpp
@@ -18,9 +18,9 @@ target_sources(
             core/robustness/edgecases_inference_task_errors.cpp
             core/robustness/edgecases_warmup_runner.cpp
             core/robustness/edgecases_inference_runner.cpp
-            core/robustness/edgecases_inference_task.cpp
             core/robustness/edgecases_inference_task_limits.cpp
             core/robustness/edgecases_tensor_builder.cpp
+            grpc/async_server_context_test.cpp
             grpc/unit_inference_service.cpp
             grpc/unit_client.cpp
             grpc/robustness/edgecases_client.cpp
@@ -31,6 +31,8 @@ target_sources(
             starpu/robustness/edgecases_starpu_setup.cpp
             starpu/robustness/edgecases_starpu_task_runner.cpp
             starpu/robustness/edgecases_tensor_builder_from_starpu.cpp
+            monitoring/cpu_usage_provider.cpp
+            monitoring/gpu_metrics_sampling.cpp
             monitoring/queue_size_gauge.cpp
             monitoring/unit_metrics.cpp
             utils/unit_client_utils.cpp
@@ -38,6 +40,8 @@ target_sources(
             utils/unit_inference_validator.cpp
             utils/unit_input_generator.cpp
             utils/unit_logger.cpp
+            utils/unit_nvtx.cpp
+            utils/unit_perf_observer.cpp
             utils/unit_time_utils.cpp
             utils/unit_runtime_config.cpp
             utils/unit_config_loader.cpp

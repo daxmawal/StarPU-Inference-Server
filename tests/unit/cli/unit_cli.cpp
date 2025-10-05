@@ -24,6 +24,56 @@ TEST(ArgsParser_Unit, ParsesRequiredOptions)
   EXPECT_EQ(opts.models[0].inputs[0].type, at::kFloat);
 }
 
+TEST(ArgsParser_Unit, ParsesConfigOption)
+{
+  const auto& model = test_model_path();
+  const auto& config = test_config_path();
+  std::vector<const char*> args{"program", "--model",  model.c_str(),
+                                "--shape", "1x1",      "--types",
+                                "float",   "--config", config.c_str()};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_EQ(opts.config_path, config);
+}
+
+TEST(ArgsParser_Unit, ParsesSlotsAlias)
+{
+  const auto& model = test_model_path();
+  constexpr int kSlots = 4;
+  constexpr const char* kSlotsArg = "4";
+  std::vector<const char*> args{"program", "--model", model.c_str(),
+                                "--shape", "1x1",     "--types",
+                                "float",   "--slots", kSlotsArg};
+
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_EQ(opts.input_slots, kSlots);
+}
+
+TEST(ArgsParser_Unit, RejectsNonPositiveSlotsAlias)
+{
+  const auto& model = test_model_path();
+  for (const char* value : {"0", "-1"}) {
+    std::vector<const char*> args{"program", "--model", model.c_str(),
+                                  "--shape", "1x1",     "--types",
+                                  "float",   "--slots", value};
+
+    const auto opts = parse(args);
+    EXPECT_FALSE(opts.valid);
+  }
+}
+
+TEST(ArgsParser_Unit, ParsesInputSlots)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{"program", "--model",       model.c_str(),
+                                "--shape", "1x1",           "--types",
+                                "float",   "--input-slots", "4"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_EQ(opts.input_slots, 4);
+}
+
 TEST(ArgsParser_Unit, ParsesAllOptions)
 {
   const auto& model = test_model_path();
@@ -84,6 +134,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.warmup_iterations, 3);
   ASSERT_TRUE(opts.seed.has_value());
   EXPECT_EQ(opts.seed, 123U);
+  EXPECT_TRUE(opts.validate_results);
   constexpr std::size_t expected_bytes = 32ULL * 1024ULL * 1024ULL;
   EXPECT_EQ(opts.max_message_bytes, expected_bytes);
   EXPECT_TRUE(opts.synchronous);
@@ -141,6 +192,71 @@ TEST(ArgsParser_Unit, ParsesMixedCaseTypes)
   EXPECT_EQ(opts.models[0].inputs[1].type, at::kInt);
 }
 
+TEST(ArgsParser_Unit, ParsesCombinedInputWithName)
+{
+  std::vector<const char*> args{
+      "program", "--model", test_model_path().c_str(), "--input",
+      "custom:1x3:int"};
+
+  const auto opts = parse(args);
+
+  ASSERT_TRUE(opts.valid);
+  ASSERT_EQ(opts.models[0].inputs.size(), 1U);
+  const auto& input = opts.models[0].inputs[0];
+  EXPECT_EQ(input.name, "custom");
+  EXPECT_EQ(input.dims, (std::vector<int64_t>{1, 3}));
+  EXPECT_EQ(input.type, at::kInt);
+}
+
+TEST(ArgsParser_Unit, ParsesMultipleCombinedInputs)
+{
+  std::vector<const char*> args{
+      "program", "--model", test_model_path().c_str(), "--input", "3x4:float",
+      "--input", "5x6:int"};
+
+  const auto opts = parse(args);
+
+  ASSERT_TRUE(opts.valid);
+  ASSERT_EQ(opts.models[0].inputs.size(), 2U);
+
+  const auto& first = opts.models[0].inputs[0];
+  EXPECT_EQ(first.name, "input0");
+  EXPECT_EQ(first.dims, (std::vector<int64_t>{3, 4}));
+  EXPECT_EQ(first.type, at::kFloat);
+
+  const auto& second = opts.models[0].inputs[1];
+  EXPECT_EQ(second.name, "input1");
+  EXPECT_EQ(second.dims, (std::vector<int64_t>{5, 6}));
+  EXPECT_EQ(second.type, at::kInt);
+}
+
+TEST(ArgsParser_Unit, RejectsInvalidCombinedInputs)
+{
+  const auto& model = test_model_path();
+  expect_invalid({"program", "--model", model.c_str(), "--input"});
+  expect_invalid({"program", "--model", model.c_str(), "--input", "1x3"});
+  expect_invalid(
+      {"program", "--model", model.c_str(), "--input", "1x3:unknown"});
+  expect_invalid({"program", "--model", model.c_str(), "--input", "0x3:int"});
+  expect_invalid({"program", "--model", model.c_str(), "--input", "ax3:int"});
+}
+
+TEST(ArgsParser_Unit, CombinedInputOverridesShapeAndType)
+{
+  std::vector<const char*> args{"program", "--model", test_model_path().c_str(),
+                                "--shape", "1x3",     "--types",
+                                "float",   "--input", "2x4:int"};
+
+  const auto opts = parse(args);
+
+  ASSERT_TRUE(opts.valid);
+  ASSERT_EQ(opts.models[0].inputs.size(), 1U);
+  const auto& input = opts.models[0].inputs[0];
+  EXPECT_EQ(input.name, "input0");
+  EXPECT_EQ(input.dims, (std::vector<int64_t>{2, 4}));
+  EXPECT_EQ(input.type, at::kInt);
+}
+
 TEST(ArgsParser_Unit, MetricsPortBoundaryValues)
 {
   for (const int port : {1, 65535}) {
@@ -164,4 +280,26 @@ TEST(ArgsParser_Unit, ParsesToleranceOptions)
   ASSERT_TRUE(opts.valid);
   EXPECT_DOUBLE_EQ(opts.rtol, 1e-2);
   EXPECT_DOUBLE_EQ(opts.atol, 1e-4);
+}
+
+TEST(ArgsParser_Unit, DisableValidationFlag)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{"program", "--model",      model.c_str(),
+                                "--shape", "1x1",          "--types",
+                                "float",   "--no-validate"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_FALSE(opts.validate_results);
+}
+
+TEST(ArgsParser_Unit, RejectsInvalidInputSlots)
+{
+  const auto& model = test_model_path();
+  expect_invalid(
+      {"program", "--model", model.c_str(), "--shape", "1x1", "--types",
+       "float", "--input-slots", "0"});
+  expect_invalid(
+      {"program", "--model", model.c_str(), "--shape", "1x1", "--types",
+       "float", "--input-slots", "-1"});
 }

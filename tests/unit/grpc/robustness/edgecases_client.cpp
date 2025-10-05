@@ -16,6 +16,14 @@ TEST(ClientArgs, InvalidTypeIsDetected)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ClientArgs, MissingValueMarksConfigInvalid)
+{
+  constexpr std::size_t kArgc = 2;
+  std::array<const char*, kArgc> argv = {"prog", "--shape"};
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ClientArgs, NegativeIterationsMarkedInvalid)
 {
   constexpr std::size_t kArgc = 5;
@@ -77,4 +85,4 @@ TEST_P(ParseVerbosityLevelInvalid, ThrowsInvalidArgument)
 
 INSTANTIATE_TEST_SUITE_P(
     ParseVerbosityLevel, ParseVerbosityLevelInvalid,
-    ::testing::Values("-1", "5", "foo"));
+    ::testing::Values("-1", "5", "foo", ""));

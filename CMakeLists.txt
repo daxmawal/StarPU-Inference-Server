@@ -21,6 +21,20 @@ find_package(gRPC CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
 
+# Optional: NVTX instrumentation (nsys --trace=nvtx)
+set(HAVE_NVTX OFF)
+find_package(CUDAToolkit QUIET)
+include(CheckIncludeFileCXX)
+if(CUDAToolkit_FOUND)
+  set(CMAKE_REQUIRED_INCLUDES "${CUDAToolkit_INCLUDE_DIRS}")
+endif()
+check_include_file_cxx("nvtx3/nvToolsExt.h" HAVE_NVTX3_HEADER)
+unset(CMAKE_REQUIRED_INCLUDES)
+
+if(HAVE_NVTX3_HEADER)
+  set(HAVE_NVTX ON)
+endif()
+
 set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
 
 include(FetchContent)
@@ -76,6 +90,18 @@ set(YAML_CPP_BUILD_TOOLS
     OFF
     CACHE BOOL "" FORCE)
 
+set(_YC_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
+set(_YC_SRC_DIR "${_YC_BASE_DIR}/yaml-cpp-src")
+set(_YC_SUBBUILD "${_YC_BASE_DIR}/yaml-cpp-subbuild")
+set(_YC_BUILD "${_YC_BASE_DIR}/yaml-cpp-build")
+if(EXISTS "${_YC_SRC_DIR}" AND NOT EXISTS "${_YC_SRC_DIR}/.git")
+  message(
+    WARNING
+      "yaml-cpp src exists without .git; purging cached _deps to force fresh Git clone."
+  )
+  file(REMOVE_RECURSE "${_YC_SRC_DIR}" "${_YC_SUBBUILD}" "${_YC_BUILD}")
+endif()
+
 FetchContent_Declare(yaml-cpp
                      GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git)
 
@@ -97,12 +123,15 @@ target_sources(
           ${SRC_DIR}/cli/main.cpp
           ${SRC_DIR}/core/inference_runner.cpp
           ${SRC_DIR}/core/inference_task.cpp
+          ${SRC_DIR}/core/input_slot_pool.cpp
+          ${SRC_DIR}/core/output_slot_pool.cpp
           ${SRC_DIR}/core/starpu_setup.cpp
           ${SRC_DIR}/core/tensor_builder.cpp
           ${SRC_DIR}/core/warmup.cpp
           ${SRC_DIR}/utils/client_utils.cpp
           ${SRC_DIR}/utils/config_loader.cpp
           ${SRC_DIR}/utils/inference_validator.cpp
+          ${SRC_DIR}/utils/perf_observer.cpp
           ${SRC_DIR}/utils/time_utils.cpp
           ${SRC_DIR}/monitoring/metrics.cpp
           ${SRC_DIR}/starpu_task_worker/starpu_task_worker.cpp)
@@ -114,6 +143,18 @@ target_compile_definitions(starpu_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 target_include_directories(
   starpu_server PRIVATE ${SRC_DIR} ${SRC_DIR}/core ${SRC_DIR}/utils
                         ${SRC_DIR}/cli ${SRC_DIR}/starpu_task_worker)
+
+find_path(NVML_INCLUDE_DIR NAMES nvml.h)
+find_library(NVML_LIBRARY NAMES nvidia-ml nvml)
+
+if(NVML_INCLUDE_DIR AND NVML_LIBRARY)
+  message(STATUS "NVML found: ${NVML_LIBRARY}")
+  target_compile_definitions(starpu_server PRIVATE STARPU_HAVE_NVML=1)
+  target_include_directories(starpu_server PRIVATE ${NVML_INCLUDE_DIR})
+  target_link_libraries(starpu_server PRIVATE ${NVML_LIBRARY})
+else()
+  message(STATUS "NVML not found: GPU metrics will be disabled")
+endif()
 
 # === Compiler Warnings ===
 set(DEBUG_MIN_FRAME_SIZE
@@ -222,6 +263,15 @@ target_link_libraries(
           yaml-cpp::yaml-cpp
           prometheus-cpp::pull
           ${ABSL_LIBS})
+
+if(HAVE_NVTX)
+  message(STATUS "NVTX 3 header found: enabling NVTX instrumentation")
+  target_compile_definitions(starpu_server PRIVATE HAVE_NVTX=1)
+  if(CUDAToolkit_FOUND)
+    target_include_directories(starpu_server
+                               PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+  endif()
+endif()
 
 # === Status Messages ===
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")

@@ -95,6 +95,8 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
   auto logs = testing::internal::GetCapturedStdout();
   EXPECT_NE(logs.find("Request ID 0"), std::string::npos);
   EXPECT_NE(logs.find("latency"), std::string::npos);
+  EXPECT_NE(logs.find("request_latency"), std::string::npos);
+  EXPECT_NE(logs.find("response_latency"), std::string::npos);
 
   starpu_server::StopServer(server.server);
   server.thread.join();

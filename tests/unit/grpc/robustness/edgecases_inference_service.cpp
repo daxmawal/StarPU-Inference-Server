@@ -1,12 +1,13 @@
 #include <limits>
 
+#include "test_constants.hpp"
 #include "test_inference_service.hpp"
 
 namespace {
-constexpr float kF1 = 1.0F;
-constexpr float kF2 = 2.0F;
-constexpr float kF3 = 3.0F;
-constexpr float kF4 = 4.0F;
+using starpu_server::test_constants::kF1;
+using starpu_server::test_constants::kF2;
+using starpu_server::test_constants::kF3;
+using starpu_server::test_constants::kF4;
 }  // namespace
 
 TEST(InferenceService, ValidateInputsCountMismatch)
@@ -109,6 +110,27 @@ TEST_F(InferenceServiceTest, InvalidDatatypeDoesNotShutdownServer)
   auto worker = prepare_job({torch::zeros({2, 2})}, {torch::zeros({2, 2})});
   status = service->ModelInfer(&ctx, &valid_req, &reply);
   EXPECT_TRUE(status.ok());
+}
+
+TEST(InferenceService, InvalidDatatypeReturnsInvalidArgument)
+{
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2},
+       at::kFloat,
+       starpu_server::to_raw_data<float>({kF1, kF2, kF3, kF4})},
+  });
+  req.mutable_inputs(0)->set_datatype("NOT_A_TYPE");
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Unsupported tensor datatype: NOT_A_TYPE");
 }
 
 TEST(GrpcServer, StopServerNullptr)

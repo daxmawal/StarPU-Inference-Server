@@ -2,6 +2,7 @@
 
 #include <limits>
 #include <map>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -9,6 +10,7 @@
 #include "core/warmup.hpp"
 #undef private
 
+#include "core/inference_runner.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
@@ -72,4 +74,21 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
     unique_double.insert(job->get_input_tensors()[0].data_ptr());
   }
   EXPECT_EQ(unique_double.size(), 2U);
+}
+
+TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
+{
+  auto device_workers = make_device_workers();
+  starpu_server::InferenceQueue queue;
+  const int iterations = 1;
+
+  testing::internal::CaptureStderr();
+  queue.shutdown();
+  runner->client_worker(device_workers, queue, iterations);
+  const std::string captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.wait_and_pop(job));
 }

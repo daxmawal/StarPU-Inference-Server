@@ -1,5 +1,8 @@
 #pragma once
 
+#include <atomic>
+#include <functional>
+
 #include "inference_queue.hpp"
 #include "starpu_setup.hpp"
 
@@ -10,11 +13,15 @@ namespace starpu_server {
 
 class WarmupRunner {
  public:
+  using CompletionObserver =
+      std::function<void(std::atomic<int>& dummy_completed_jobs)>;
+
   WarmupRunner(
       const RuntimeConfig& opts, StarPUSetup& starpu,
       torch::jit::script::Module& model_cpu,
       std::vector<torch::jit::script::Module>& models_gpu,
-      const std::vector<torch::Tensor>& outputs_ref);
+      const std::vector<torch::Tensor>& outputs_ref,
+      CompletionObserver completion_observer = {});
   ~WarmupRunner() = default;
   WarmupRunner(const WarmupRunner&) = delete;
   auto operator=(const WarmupRunner&) -> WarmupRunner& = delete;
@@ -36,5 +43,6 @@ class WarmupRunner {
   torch::jit::script::Module& model_cpu_;
   std::vector<torch::jit::script::Module>& models_gpu_;
   const std::vector<torch::Tensor>& outputs_ref_;
+  CompletionObserver completion_observer_;
 };
 }  // namespace starpu_server

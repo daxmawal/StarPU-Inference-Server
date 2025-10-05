@@ -2,10 +2,7 @@
 
 #include <bit>
 #include <cstdint>
-#include <cstdlib>
-#include <functional>
 #include <limits>
-#include <memory>
 #include <utility>
 
 #include "core/inference_task.hpp"
@@ -60,6 +57,15 @@ TEST(Logger, NoOutputWhenLevelTooLow)
   CaptureStream capture{std::cout};
   log_verbose(VerbosityLevel::Stats, VerbosityLevel::Info, "hidden");
   EXPECT_EQ(capture.str(), "");
+}
+
+TEST(Logger, ShouldLogHelper)
+{
+  using enum VerbosityLevel;
+  EXPECT_TRUE(should_log(Info, Info));
+  EXPECT_TRUE(should_log(Info, Trace));
+  EXPECT_FALSE(should_log(Trace, Debug));
+  EXPECT_FALSE(should_log(Stats, Info));
 }
 
 using WrapperFn = void (*)(VerbosityLevel, const std::string&);

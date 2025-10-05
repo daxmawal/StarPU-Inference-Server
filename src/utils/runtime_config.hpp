@@ -74,12 +74,14 @@ struct RuntimeConfig {
   int iterations = 1;
   int delay_ms = 0;
   int max_batch_size = 1;
+  int input_slots = 0;
   std::size_t max_message_bytes = 32 * 1024 * 1024;
   size_t pregen_inputs = 10;
   size_t warmup_pregen_inputs = 2;
   int warmup_iterations = 2;
   double rtol = 1e-3;
   double atol = 1e-5;
+  bool validate_results = true;
 
   size_t max_inputs = kMaxInputs;
   size_t max_dims = kMaxDims;
@@ -92,6 +94,8 @@ struct RuntimeConfig {
   bool valid = true;
   bool use_cpu = true;
   bool use_cuda = false;
+  bool dynamic_batching = false;
+  bool seen_combined_input = false;
 };
 
 inline auto
