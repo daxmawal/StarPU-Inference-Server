@@ -86,7 +86,7 @@ InferenceClient::log_latency_summary() const
   append_stats("server overall", latency_records_.server_overall_ms);
   append_stats("preprocess", latency_records_.server_preprocess_ms);
   append_stats("queue", latency_records_.server_queue_ms);
-  append_stats("batch", latency_records_.server_batch_ms);
+  append_stats("batching", latency_records_.server_batch_ms);
   append_stats("submit", latency_records_.server_submit_ms);
   append_stats("scheduling", latency_records_.server_scheduling_ms);
   append_stats("codelet", latency_records_.server_codelet_ms);

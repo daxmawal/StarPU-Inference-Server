@@ -589,6 +589,14 @@ StarPUTaskRunner::maybe_build_batched_job(
     }
   }
 
+  if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
+    log_trace(
+        opts_->verbosity,
+        std::format(
+            "Formed batch for job ID {} with {} requests ({} samples)",
+            master->get_job_id(), jobs.size(), effective_batch));
+  }
+
   return master;
 }
 
