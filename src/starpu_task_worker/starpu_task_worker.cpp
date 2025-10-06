@@ -618,6 +618,68 @@ StarPUTaskRunner::maybe_build_batched_job(
 }
 
 void
+StarPUTaskRunner::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
+{
+  {
+    const std::scoped_lock lock(prepared_mutex_);
+    prepared_jobs_.push_back(job);
+  }
+  prepared_cv_.notify_one();
+}
+
+auto
+StarPUTaskRunner::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
+{
+  std::unique_lock lock(prepared_mutex_);
+  prepared_cv_.wait(
+      lock, [this] { return !prepared_jobs_.empty() || batching_done_; });
+  if (prepared_jobs_.empty()) {
+    return nullptr;
+  }
+  auto job = prepared_jobs_.front();
+  prepared_jobs_.pop_front();
+  return job;
+}
+
+void
+StarPUTaskRunner::batching_loop()
+{
+  while (true) {
+    auto job = wait_for_next_job();
+    if (!job) {
+      break;
+    }
+
+    if (job->is_shutdown()) {
+      enqueue_prepared_job(job);
+      break;
+    }
+
+    const auto dequeue_time = std::chrono::high_resolution_clock::now();
+    job->timing_info().dequeued_time = dequeue_time;
+    job->timing_info().batch_collect_start_time = dequeue_time;
+    job->timing_info().batch_collect_end_time = dequeue_time;
+
+    auto jobs = collect_batch(job);
+    job = maybe_build_batched_job(jobs);
+    if (!job) {
+      continue;
+    }
+
+    job->timing_info().batch_collect_end_time =
+        std::chrono::high_resolution_clock::now();
+
+    enqueue_prepared_job(job);
+  }
+
+  {
+    const std::scoped_lock lock(prepared_mutex_);
+    batching_done_ = true;
+  }
+  prepared_cv_.notify_all();
+}
+
+void
 StarPUTaskRunner::propagate_completion_to_sub_jobs(
     const std::shared_ptr<InferenceJob>& aggregated_job,
     const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms)
@@ -815,25 +877,19 @@ StarPUTaskRunner::run()
 {
   log_info(opts_->verbosity, "StarPUTaskRunner started.");
 
+  {
+    const std::scoped_lock lock(prepared_mutex_);
+    prepared_jobs_.clear();
+    batching_done_ = false;
+  }
+
+  batching_thread_ = std::thread(&StarPUTaskRunner::batching_loop, this);
+
   while (true) {
-    auto job = wait_for_next_job();
+    auto job = wait_for_prepared_job();
     if (!job || should_shutdown(job)) {
       break;
     }
-
-    const auto dequeue_time = std::chrono::high_resolution_clock::now();
-    job->timing_info().dequeued_time = dequeue_time;
-    job->timing_info().batch_collect_start_time = dequeue_time;
-    job->timing_info().batch_collect_end_time = dequeue_time;
-
-    auto jobs = collect_batch(job);
-    job = maybe_build_batched_job(jobs);
-    if (!job) {
-      continue;
-    }
-
-    job->timing_info().batch_collect_end_time =
-        std::chrono::high_resolution_clock::now();
 
     const auto submission_id = next_submission_id_.fetch_add(1);
     job->set_submission_id(submission_id);
@@ -868,6 +924,10 @@ StarPUTaskRunner::run()
           "Unexpected exception for job {}: {}", request_id, e.what()));
       StarPUTaskRunner::handle_job_exception(job, e);
     }
+  }
+
+  if (batching_thread_.joinable()) {
+    batching_thread_.join();
   }
 
   log_info(opts_->verbosity, "StarPUTaskRunner stopped.");

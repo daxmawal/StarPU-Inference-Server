@@ -5,7 +5,9 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include "inference_queue.hpp"
@@ -79,6 +81,9 @@ class StarPUTaskRunner {
       -> std::vector<std::shared_ptr<InferenceJob>>;
   auto maybe_build_batched_job(std::vector<std::shared_ptr<InferenceJob>>& jobs)
       -> std::shared_ptr<InferenceJob>;
+  void batching_loop();
+  void enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job);
+  auto wait_for_prepared_job() -> std::shared_ptr<InferenceJob>;
   static auto can_merge_jobs(
       const std::shared_ptr<InferenceJob>& lhs,
       const std::shared_ptr<InferenceJob>& rhs) -> bool;
@@ -113,5 +118,10 @@ class StarPUTaskRunner {
   const InferenceTaskDependencies* dependencies_;
   std::shared_ptr<InferenceJob> pending_job_;
   std::atomic<int> next_submission_id_{0};
+  std::thread batching_thread_;
+  std::mutex prepared_mutex_;
+  std::condition_variable prepared_cv_;
+  std::deque<std::shared_ptr<InferenceJob>> prepared_jobs_;
+  bool batching_done_ = false;
 };
 }  // namespace starpu_server
