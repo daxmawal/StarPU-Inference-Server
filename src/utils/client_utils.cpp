@@ -96,7 +96,8 @@ auto
 create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref, int job_id,
-    std::vector<std::shared_ptr<const void>> input_lifetimes)
+    std::vector<std::shared_ptr<const void>> input_lifetimes,
+    std::chrono::high_resolution_clock::time_point start_time_arg)
     -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
@@ -131,9 +132,13 @@ create_job(
 
   job->set_job_id(job_id);
 
-  auto now = std::chrono::high_resolution_clock::now();
-  job->set_start_time(now);
-  job->timing_info().enqueued_time = now;
+  auto start_time = start_time_arg;
+  const auto enqueued_time = std::chrono::high_resolution_clock::now();
+  if (start_time == std::chrono::high_resolution_clock::time_point{}) {
+    start_time = enqueued_time;
+  }
+  job->set_start_time(start_time);
+  job->timing_info().enqueued_time = enqueued_time;
 
   return job;
 }

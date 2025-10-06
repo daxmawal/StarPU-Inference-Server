@@ -33,15 +33,16 @@ InferenceClient::InferenceClient(
 void
 InferenceClient::record_latency(
     double roundtrip_ms, double server_overall_ms, double preprocess_ms,
-    double queue_ms, double submit_ms, double scheduling_ms, double codelet_ms,
-    double inference_ms, double callback_ms, double postprocess_ms,
-    double job_total_ms, double request_latency_ms, double response_latency_ms,
-    double client_overhead_ms)
+    double queue_ms, double batch_ms, double submit_ms, double scheduling_ms,
+    double codelet_ms, double inference_ms, double callback_ms,
+    double postprocess_ms, double job_total_ms, double request_latency_ms,
+    double response_latency_ms, double client_overhead_ms)
 {
   latency_records_.roundtrip_ms.push_back(roundtrip_ms);
   latency_records_.server_overall_ms.push_back(server_overall_ms);
   latency_records_.server_preprocess_ms.push_back(preprocess_ms);
   latency_records_.server_queue_ms.push_back(queue_ms);
+  latency_records_.server_batch_ms.push_back(batch_ms);
   latency_records_.server_submit_ms.push_back(submit_ms);
   latency_records_.server_scheduling_ms.push_back(scheduling_ms);
   latency_records_.server_codelet_ms.push_back(codelet_ms);
@@ -85,6 +86,7 @@ InferenceClient::log_latency_summary() const
   append_stats("server overall", latency_records_.server_overall_ms);
   append_stats("preprocess", latency_records_.server_preprocess_ms);
   append_stats("queue", latency_records_.server_queue_ms);
+  append_stats("batch", latency_records_.server_batch_ms);
   append_stats("submit", latency_records_.server_submit_ms);
   append_stats("scheduling", latency_records_.server_scheduling_ms);
   append_stats("codelet", latency_records_.server_codelet_ms);
@@ -338,6 +340,7 @@ InferenceClient::AsyncCompleteRpc()
       }
       const auto server_total_ms = call->reply.server_total_ms();
       const auto queue_ms = call->reply.server_queue_ms();
+      const auto batch_ms = call->reply.server_batch_ms();
       const auto submit_ms = call->reply.server_submit_ms();
       const auto scheduling_ms = call->reply.server_scheduling_ms();
       const auto codelet_ms = call->reply.server_codelet_ms();
@@ -360,9 +363,10 @@ InferenceClient::AsyncCompleteRpc()
       record_latency(
           static_cast<double>(latency), static_cast<double>(overall_ms),
           static_cast<double>(preprocess_ms), static_cast<double>(queue_ms),
-          static_cast<double>(submit_ms), static_cast<double>(scheduling_ms),
-          static_cast<double>(codelet_ms), static_cast<double>(inference_ms),
-          static_cast<double>(callback_ms), static_cast<double>(postprocess_ms),
+          static_cast<double>(batch_ms), static_cast<double>(submit_ms),
+          static_cast<double>(scheduling_ms), static_cast<double>(codelet_ms),
+          static_cast<double>(inference_ms), static_cast<double>(callback_ms),
+          static_cast<double>(postprocess_ms),
           static_cast<double>(server_total_ms),
           static_cast<double>(request_latency_ms),
           static_cast<double>(response_latency_ms), client_overhead_ms);
@@ -372,16 +376,16 @@ InferenceClient::AsyncCompleteRpc()
           std::format(
               "Request ID {} sent at {} received at {} latency: {} "
               "ms (server overall: {:.3f} ms | preprocess: {:.3f} ms, queue: "
-              "{:.3f} ms, submit: {:.3f} ms, scheduling: {:.3f} ms, codelet: "
-              "{:.3f} ms, inference: {:.3f} ms, callback: {:.3f} ms, "
-              "postprocess: {:.3f} ms, job_total: {:.3f} ms), "
+              "{:.3f} ms, batching: {:.3f} ms, submit: {:.3f} ms, scheduling: "
+              "{:.3f} ms, codelet: {:.3f} ms, inference: {:.3f} ms, callback: "
+              "{:.3f} ms, postprocess: {:.3f} ms, job_total: {:.3f} ms), "
               "request_latency: {} ms, response_latency: {} ms, "
               "client_overhead: {:.3f} ms",
               call->request_id, sent_time_str, recv_time_str, latency,
-              overall_ms, preprocess_ms, queue_ms, submit_ms, scheduling_ms,
-              codelet_ms, inference_ms, callback_ms, postprocess_ms,
-              server_total_ms, request_latency_ms, response_latency_ms,
-              client_overhead_ms));
+              overall_ms, preprocess_ms, queue_ms, batch_ms, submit_ms,
+              scheduling_ms, codelet_ms, inference_ms, callback_ms,
+              postprocess_ms, server_total_ms, request_latency_ms,
+              response_latency_ms, client_overhead_ms));
 
       total_inference_count_ += call->inference_count;
       last_response_time_ = end;

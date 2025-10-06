@@ -41,6 +41,7 @@ class InferenceClient {
     std::vector<double> server_overall_ms;
     std::vector<double> server_preprocess_ms;
     std::vector<double> server_queue_ms;
+    std::vector<double> server_batch_ms;
     std::vector<double> server_submit_ms;
     std::vector<double> server_scheduling_ms;
     std::vector<double> server_codelet_ms;
@@ -69,7 +70,7 @@ class InferenceClient {
 
   void record_latency(
       double roundtrip_ms, double server_overall_ms, double preprocess_ms,
-      double queue_ms, double submit_ms, double scheduling_ms,
+      double queue_ms, double batch_ms, double submit_ms, double scheduling_ms,
       double codelet_ms, double inference_ms, double callback_ms,
       double postprocess_ms, double job_total_ms, double request_latency_ms,
       double response_latency_ms, double client_overhead_ms);

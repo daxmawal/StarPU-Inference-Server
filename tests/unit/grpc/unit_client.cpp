@@ -331,7 +331,8 @@ TEST(InferenceClientLatencySummary, HandlesZeroElapsedTime)
   client.last_response_time_ = now;
   client.total_inference_count_ = 3;
   client.record_latency(
-      1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.04, 0.03, 0.02);
+      1.0, 0.9, 0.8, 0.7, 0.65, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.05, 0.04, 0.03,
+      0.02);
 
   starpu_server::CaptureStream capture{std::cout};
   client.log_latency_summary();

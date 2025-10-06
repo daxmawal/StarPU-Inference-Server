@@ -125,10 +125,16 @@ StarPUTaskRunner::log_job_timings(
   using duration_f = std::chrono::duration<double, std::milli>;
   const auto queue_ms =
       duration_f(timing_info.dequeued_time - timing_info.enqueued_time).count();
-  const auto submit_ms =
-      duration_f(
-          timing_info.before_starpu_submitted_time - timing_info.dequeued_time)
-          .count();
+  const auto batch_ms = std::max(
+      0.0, duration_f(
+               timing_info.batch_collect_end_time -
+               timing_info.batch_collect_start_time)
+               .count());
+  const auto submit_ms = std::max(
+      0.0, duration_f(
+               timing_info.before_starpu_submitted_time -
+               timing_info.batch_collect_end_time)
+               .count());
   const auto scheduling_ms = duration_f(
                                  timing_info.codelet_start_time -
                                  timing_info.before_starpu_submitted_time)
@@ -148,12 +154,11 @@ StarPUTaskRunner::log_job_timings(
   log_stats(
       opts_->verbosity,
       std::format(
-          "Job {} done. Latency = {:.3f} ms | Queue = {:.3f} ms, Submit = "
-          "{:.3f} ms, Scheduling = {:.3f} ms, Codelet = {:.3f} ms, Inference "
-          "= "
-          "{:.3f} ms, Callback = {:.3f} ms",
-          job_id, latency_ms, queue_ms, submit_ms, scheduling_ms, codelet_ms,
-          inference_ms, callback_ms));
+          "Job {} done. Latency = {:.3f} ms | Queue = {:.3f} ms, Batching = "
+          "{:.3f} ms, Submit = {:.3f} ms, Scheduling = {:.3f} ms, Codelet = "
+          "{:.3f} ms, Inference = {:.3f} ms, Callback = {:.3f} ms",
+          job_id, latency_ms, queue_ms, batch_ms, submit_ms, scheduling_ms,
+          codelet_ms, inference_ms, callback_ms));
 }
 
 void
@@ -490,6 +495,8 @@ StarPUTaskRunner::maybe_build_batched_job(
   using clock = std::chrono::high_resolution_clock;
   auto earliest_start = master->get_start_time();
   auto earliest_enqueued = master->timing_info().enqueued_time;
+  auto earliest_batch_collect_start =
+      master->timing_info().batch_collect_start_time;
 
   for (const auto& job : jobs) {
     const auto job_batch =
@@ -510,6 +517,22 @@ StarPUTaskRunner::maybe_build_batched_job(
 
     sub_jobs.push_back(
         {std::weak_ptr<InferenceJob>(job), job->get_on_complete(), job_batch});
+
+    const auto job_batch_start = job->timing_info().batch_collect_start_time;
+    if (job_batch_start != clock::time_point{} &&
+        (earliest_batch_collect_start == clock::time_point{} ||
+         job_batch_start < earliest_batch_collect_start)) {
+      earliest_batch_collect_start = job_batch_start;
+    }
+  }
+
+  if (earliest_start == clock::time_point{}) {
+    earliest_start = earliest_enqueued != clock::time_point{}
+                         ? earliest_enqueued
+                         : clock::now();
+  }
+  if (earliest_batch_collect_start == clock::time_point{}) {
+    earliest_batch_collect_start = master->timing_info().dequeued_time;
   }
 
   master->set_logical_job_count(logical_jobs);
@@ -545,6 +568,7 @@ StarPUTaskRunner::maybe_build_batched_job(
 
   master->set_start_time(earliest_start);
   master->timing_info().enqueued_time = earliest_enqueued;
+  master->timing_info().batch_collect_start_time = earliest_batch_collect_start;
 
   auto master_wp = std::weak_ptr<InferenceJob>(master);
   master->set_on_complete(
@@ -770,11 +794,19 @@ StarPUTaskRunner::run()
       break;
     }
 
+    const auto dequeue_time = std::chrono::high_resolution_clock::now();
+    job->timing_info().dequeued_time = dequeue_time;
+    job->timing_info().batch_collect_start_time = dequeue_time;
+    job->timing_info().batch_collect_end_time = dequeue_time;
+
     auto jobs = collect_batch(job);
     job = maybe_build_batched_job(jobs);
     if (!job) {
       continue;
     }
+
+    job->timing_info().batch_collect_end_time =
+        std::chrono::high_resolution_clock::now();
 
     const auto logical_jobs = job ? job->logical_job_count() : 0;
     const auto job_id = job->get_job_id();
@@ -789,9 +821,6 @@ StarPUTaskRunner::run()
     prepare_job_completion_callback(job);
 
     try {
-      job->timing_info().dequeued_time =
-          std::chrono::high_resolution_clock::now();
-
       if (should_log(VerbosityLevel::Debug, opts_->verbosity)) {
         log_debug(
             opts_->verbosity, std::format("Submitting job ID: {}", job_id));

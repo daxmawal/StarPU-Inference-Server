@@ -170,7 +170,7 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
   ASSERT_EQ(job->get_job_id(), kJobId);
   EXPECT_TRUE(JobHasExpectedInputs(job, inputs));
   EXPECT_TRUE(JobHasExpectedOutputs(job, outputs_ref));
-  EXPECT_EQ(job->get_start_time(), job->timing_info().enqueued_time);
+  EXPECT_LE(job->get_start_time(), job->timing_info().enqueued_time);
   EXPECT_GT(job->get_start_time().time_since_epoch().count(), 0);
 }
 

@@ -324,10 +324,12 @@ InferenceServiceImpl::validate_and_convert_inputs(
 auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
-    std::vector<std::shared_ptr<const void>> input_lifetimes) -> Status
+    std::vector<std::shared_ptr<const void>> input_lifetimes,
+    std::chrono::high_resolution_clock::time_point receive_time) -> Status
 {
   auto job = client_utils::create_job(
-      inputs, *reference_outputs_, next_job_id_++, std::move(input_lifetimes));
+      inputs, *reference_outputs_, next_job_id_++, std::move(input_lifetimes),
+      receive_time);
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
@@ -339,9 +341,15 @@ InferenceServiceImpl::submit_job_async(
     const auto& info = job->timing_info();
     timing.queue_ms =
         duration_f(info.dequeued_time - info.enqueued_time).count();
-    timing.submit_ms =
-        duration_f(info.before_starpu_submitted_time - info.dequeued_time)
-            .count();
+    timing.batch_ms = std::max(
+        0.0,
+        duration_f(info.batch_collect_end_time - info.batch_collect_start_time)
+            .count());
+    timing.submit_ms = std::max(
+        0.0,
+        duration_f(
+            info.before_starpu_submitted_time - info.batch_collect_end_time)
+            .count());
     timing.scheduling_ms =
         duration_f(info.codelet_start_time - info.before_starpu_submitted_time)
             .count();
@@ -394,6 +402,7 @@ InferenceServiceImpl::submit_job_and_wait(
   auto result_promise = std::make_shared<std::promise<JobResult>>();
   auto result_future = result_promise->get_future();
 
+  const auto receive_time = std::chrono::high_resolution_clock::now();
   Status submit_status = submit_job_async(
       inputs,
       [result_promise](
@@ -402,7 +411,7 @@ InferenceServiceImpl::submit_job_and_wait(
         result_promise->set_value(
             JobResult{std::move(status), std::move(outs), timing, timing_info});
       },
-      std::move(input_lifetimes));
+      std::move(input_lifetimes), receive_time);
 
   if (!submit_status.ok()) {
     outputs.clear();
@@ -549,7 +558,7 @@ InferenceServiceImpl::HandleModelInferAsync(
 
         callback_handle->Invoke(Status::OK);
       },
-      std::move(input_lifetimes));
+      std::move(input_lifetimes), recv_tp);
 
   if (!status.ok()) {
     callback_handle->Invoke(status);
@@ -566,6 +575,7 @@ InferenceServiceImpl::populate_response(
   reply->set_model_version(request->model_version());
   reply->set_server_receive_ms(recv_ms);
   reply->set_server_queue_ms(breakdown.queue_ms);
+  reply->set_server_batch_ms(breakdown.batch_ms);
   reply->set_server_submit_ms(breakdown.submit_ms);
   reply->set_server_scheduling_ms(breakdown.scheduling_ms);
   reply->set_server_codelet_ms(breakdown.codelet_ms);

@@ -323,6 +323,7 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   breakdown.preprocess_ms = 0.5;
   breakdown.queue_ms = 1.0;
+  breakdown.batch_ms = 0.75;
   breakdown.submit_ms = 2.0;
   breakdown.scheduling_ms = 3.0;
   breakdown.codelet_ms = 4.0;
@@ -352,6 +353,7 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   breakdown.preprocess_ms = 0.25;
   breakdown.queue_ms = 0.5;
+  breakdown.batch_ms = 0.4;
   breakdown.submit_ms = 1.5;
   breakdown.scheduling_ms = 2.5;
   breakdown.codelet_ms = 3.5;
@@ -385,6 +387,7 @@ TEST(InferenceServiceImpl, PopulateResponseHandlesCudaOutputs)
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   breakdown.preprocess_ms = 0.75;
   breakdown.queue_ms = 1.25;
+  breakdown.batch_ms = 1.0;
   breakdown.submit_ms = 2.25;
   breakdown.scheduling_ms = 3.25;
   breakdown.codelet_ms = 4.25;

@@ -105,6 +105,7 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   auto base = clock::now();
   time.enqueued_time = base;
   constexpr int kQueueMs = 10;
+  constexpr int kBatchMs = 5;
   constexpr int kSubmitDeltaMs = 15;
   constexpr int kScheduleDeltaMs = 15;
   constexpr int kCodeletMs = 30;
@@ -118,6 +119,9 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   constexpr int kCallbackStartMs = 125;
   constexpr int kCallbackEndMs = 140;
   time.dequeued_time = base + std::chrono::milliseconds(kDequeuedMs);
+  time.batch_collect_start_time = time.dequeued_time;
+  time.batch_collect_end_time =
+      time.batch_collect_start_time + std::chrono::milliseconds(kBatchMs);
   time.before_starpu_submitted_time =
       base + std::chrono::milliseconds(kBeforeSubmitMs);
   time.codelet_start_time = base + std::chrono::milliseconds(kCodeletStartMs);
@@ -131,6 +135,7 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   std::string output = starpu_server::capture_stdout(
       [&] { runner_->log_job_timings(kLogJobId, kTotalLatencyMs, time); });
   EXPECT_NE(output.find("Queue = 10.000 ms"), std::string::npos);
+  EXPECT_NE(output.find("Batch = 5.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Submit = 15.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Scheduling = 15.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Codelet = 30.000 ms"), std::string::npos);
