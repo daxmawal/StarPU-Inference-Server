@@ -56,6 +56,12 @@ class InferenceQueue;
 
 class InferenceJob {
  public:
+  struct AggregatedSubJob {
+    std::weak_ptr<InferenceJob> job;
+    std::function<void(const std::vector<torch::Tensor>&, double)> callback;
+    int64_t batch_size = 1;
+  };
+
   InferenceJob() = default;
 
   InferenceJob(
@@ -161,6 +167,28 @@ class InferenceJob {
 
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }
 
+  void set_logical_job_count(int count) { logical_job_count_ = count; }
+  [[nodiscard]] auto logical_job_count() const -> int
+  {
+    return logical_job_count_;
+  }
+
+  void set_aggregated_sub_jobs(std::vector<AggregatedSubJob> jobs)
+  {
+    aggregated_sub_jobs_ = std::move(jobs);
+  }
+
+  [[nodiscard]] auto aggregated_sub_jobs() const
+      -> const std::vector<AggregatedSubJob>&
+  {
+    return aggregated_sub_jobs_;
+  }
+
+  [[nodiscard]] auto has_aggregated_sub_jobs() const -> bool
+  {
+    return !aggregated_sub_jobs_.empty();
+  }
+
  private:
   std::vector<torch::Tensor> input_tensors_;
   std::vector<at::ScalarType> input_types_;
@@ -179,6 +207,8 @@ class InferenceJob {
   detail::TimingInfo timing_info_;
 
   bool is_shutdown_signal_ = false;
+  int logical_job_count_ = 1;
+  std::vector<AggregatedSubJob> aggregated_sub_jobs_;
 };
 
 // =============================================================================

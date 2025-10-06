@@ -43,7 +43,14 @@ pre_generate_inputs(const RuntimeConfig& opts, size_t num_inputs)
   const auto& tensors =
       opts.models.empty() ? std::vector<TensorConfig>{} : opts.models[0].inputs;
   std::generate_n(std::back_inserter(inputs), num_inputs, [&]() {
-    return input_generator::generate_random_inputs(tensors);
+    auto sample = input_generator::generate_random_inputs(tensors);
+    for (auto& tensor : sample) {
+      if (!tensor.defined() || tensor.dim() <= 0 || tensor.size(0) == 1) {
+        continue;
+      }
+      tensor = tensor.narrow(0, 0, 1).contiguous();
+    }
+    return sample;
   });
   return inputs;
 }

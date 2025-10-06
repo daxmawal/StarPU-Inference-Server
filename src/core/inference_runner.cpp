@@ -118,6 +118,8 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
   job->is_shutdown_signal_ = true;
+  job->logical_job_count_ = 0;
+  job->aggregated_sub_jobs_.clear();
   return job;
 }
 
@@ -286,14 +288,16 @@ run_warmup(
     return;
   }
 
+  const int warmup_iterations =
+      std::max(opts.warmup_iterations, opts.max_batch_size);
   log_info(
-      opts.verbosity,
-      std::format(
-          "Starting warmup with {} iterations per CUDA device...",
-          opts.warmup_iterations));
+      opts.verbosity, std::format(
+                          "Starting warmup with {} iterations per CUDA device "
+                          "(enforcing max_batch_size)...",
+                          warmup_iterations));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-  warmup_runner.run(opts.warmup_iterations);
+  warmup_runner.run(warmup_iterations);
 
   log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 }

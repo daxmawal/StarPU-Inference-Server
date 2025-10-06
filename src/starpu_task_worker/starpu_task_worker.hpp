@@ -74,6 +74,23 @@ class StarPUTaskRunner {
   auto validate_batch_and_copy_inputs(
       const std::shared_ptr<InferenceJob>& job,
       const PoolResources& pools) -> int64_t;
+  [[nodiscard]] auto collect_batch(
+      const std::shared_ptr<InferenceJob>& first_job)
+      -> std::vector<std::shared_ptr<InferenceJob>>;
+  auto maybe_build_batched_job(std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::shared_ptr<InferenceJob>;
+  static auto can_merge_jobs(
+      const std::shared_ptr<InferenceJob>& lhs,
+      const std::shared_ptr<InferenceJob>& rhs) -> bool;
+  static auto merge_input_tensors(
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::vector<torch::Tensor>;
+  static auto merge_input_memory_holders(
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::vector<std::shared_ptr<const void>>;
+  static void propagate_completion_to_sub_jobs(
+      const std::shared_ptr<InferenceJob>& aggregated_job,
+      const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
   static auto configure_task_context(
       InferenceTask& task, const PoolResources& pools,
       const std::vector<starpu_data_handle_t>& input_handles,
@@ -94,5 +111,6 @@ class StarPUTaskRunner {
   std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;
   const InferenceTaskDependencies* dependencies_;
+  std::shared_ptr<InferenceJob> pending_job_;
 };
 }  // namespace starpu_server
