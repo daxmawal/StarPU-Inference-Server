@@ -76,15 +76,16 @@ pick_random_input(
 
 void
 log_job_enqueued(
-    const RuntimeConfig& opts, int job_id, int iterations,
+    const RuntimeConfig& opts, int request_id, int iterations,
     std::chrono::high_resolution_clock::time_point now)
 {
   if (should_log(VerbosityLevel::Trace, opts.verbosity)) {
     log_trace(
         opts.verbosity,
         std::format(
-            "[Inference] Request ID {} Iteration {}/{} Enqueued at {}", job_id,
-            job_id + 1, iterations, current_time_formatted(now)));
+            "[Inference] Request ID {} Iteration {}/{} Enqueued at {}",
+            request_id, request_id + 1, iterations,
+            current_time_formatted(now)));
   }
 }
 
@@ -95,7 +96,7 @@ log_job_enqueued(
 auto
 create_job(
     const std::vector<torch::Tensor>& inputs,
-    const std::vector<torch::Tensor>& outputs_ref, int job_id,
+    const std::vector<torch::Tensor>& outputs_ref, int request_id,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
     std::chrono::high_resolution_clock::time_point start_time_arg)
     -> std::shared_ptr<InferenceJob>
@@ -130,7 +131,7 @@ create_job(
   }
   job->set_output_tensors(outputs);
 
-  job->set_job_id(job_id);
+  job->set_request_id(request_id);
 
   auto start_time = start_time_arg;
   const auto enqueued_time = std::chrono::high_resolution_clock::now();

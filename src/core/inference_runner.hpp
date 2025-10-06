@@ -45,7 +45,7 @@ struct InferenceResult {
   std::vector<torch::Tensor> results;
   double latency_ms = 0.0;
   detail::TimingInfo timing_info;
-  int job_id;
+  int request_id;
   int device_id = -1;
   int worker_id = -1;
   DeviceType executed_on = DeviceType::Unknown;
@@ -69,7 +69,7 @@ class InferenceJob {
 
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-      int job_identifier,
+      int request_identifier,
       std::function<void(const std::vector<torch::Tensor>&, double)> callback =
           nullptr);
 
@@ -77,7 +77,7 @@ class InferenceJob {
 
   [[nodiscard]] auto is_shutdown() const -> bool { return is_shutdown_signal_; }
 
-  void set_job_id(int job_id) { job_id_ = job_id; }
+  void set_request_id(int request_id) { request_id_ = request_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
@@ -129,7 +129,7 @@ class InferenceJob {
     return input_memory_holders_;
   }
 
-  [[nodiscard]] auto get_job_id() const -> int { return job_id_; }
+  [[nodiscard]] auto get_request_id() const -> int { return request_id_; }
   [[nodiscard]] auto get_input_tensors() const
       -> const std::vector<torch::Tensor>&
   {
@@ -202,7 +202,7 @@ class InferenceJob {
   std::vector<torch::Tensor> output_tensors_;
   std::vector<std::shared_ptr<const void>> input_memory_holders_;
 
-  int job_id_ = 0;
+  int request_id_ = 0;
   int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
   std::function<void(const std::vector<torch::Tensor>&, double)> on_complete_;

@@ -49,7 +49,7 @@ const std::vector<int64_t> kShape1{1};
 const std::vector<torch::Dtype> kTypesFloatInt{torch::kFloat32, torch::kInt64};
 
 struct ExpectedJobInfo {
-  int64_t job_id;
+  int64_t request_id;
   int worker_id;
 };
 
@@ -91,8 +91,8 @@ JobStateMatches(
     std::chrono::high_resolution_clock::time_point start,
     const ExpectedJobInfo& expected) -> ::testing::AssertionResult
 {
-  if (job->get_job_id() != expected.job_id) {
-    return ::testing::AssertionFailure() << "job_id mismatch";
+  if (job->get_request_id() != expected.request_id) {
+    return ::testing::AssertionFailure() << "request_id mismatch";
   }
   if (job->get_input_tensors().size() != inputs.size()) {
     return ::testing::AssertionFailure() << "input count mismatch";
@@ -155,7 +155,7 @@ TEST(InferenceJobTest, MakeShutdownJobCreatesShutdownSignal)
   auto job = starpu_server::InferenceJob::make_shutdown_job();
   ASSERT_NE(job, nullptr);
   EXPECT_TRUE(job->is_shutdown());
-  EXPECT_EQ(job->get_job_id(), 0);
+  EXPECT_EQ(job->get_request_id(), 0);
 }
 
 TEST(InferenceJobTest, ConstructorInitializesState)
@@ -179,7 +179,7 @@ TEST(InferenceJobTest, ConstructorInitializesState)
   const auto after = std::chrono::high_resolution_clock::now();
 
   ASSERT_NE(job, nullptr);
-  EXPECT_EQ(job->get_job_id(), kJobId);
+  EXPECT_EQ(job->get_request_id(), kJobId);
   ASSERT_EQ(job->get_input_tensors().size(), inputs.size());
   EXPECT_TRUE(job->get_input_tensors()[0].equal(inputs[0]));
   ASSERT_EQ(job->get_input_types().size(), types.size());
@@ -203,7 +203,7 @@ TEST(InferenceJobTest, SettersGettersAndCallback)
   const std::vector<torch::Tensor> outputs{torch::zeros(kShape2x2)};
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_job_id(kJobId);
+  job->set_request_id(kJobId);
   job->set_input_tensors(inputs);
   job->set_input_types(types);
   job->set_output_tensors(outputs);
@@ -226,7 +226,7 @@ TEST(InferenceJobTest, SettersGettersAndCallback)
   EXPECT_TRUE(JobStateMatches(
       job, inputs, types, outputs, start,
       ExpectedJobInfo{
-          .job_id = kJobId, .worker_id = static_cast<int>(kWorkerId)}));
+          .request_id = kJobId, .worker_id = static_cast<int>(kWorkerId)}));
 
   job->get_on_complete()(job->get_output_tensors(), kLatencyMs);
   EXPECT_TRUE(CallbackResultsMatch(
@@ -270,7 +270,7 @@ TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
   starpu_server::InferenceResult result{};
   result.executed_on = starpu_server::DeviceType::CUDA;
   result.device_id = -1;
-  result.job_id = 42;
+  result.request_id = 42;
 
   torch::jit::script::Module cpu_model("cpu_module");
   const std::vector<torch::jit::script::Module*> empty_lookup;
@@ -319,7 +319,7 @@ TEST(
   starpu_server::InferenceResult result{};
   result.executed_on = starpu_server::DeviceType::CUDA;
   result.device_id = 3;
-  result.job_id = 7;
+  result.request_id = 7;
 
   torch::jit::script::Module cpu_model("cpu_module");
   torch::jit::script::Module gpu_module("gpu_module");
@@ -418,7 +418,7 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
   const std::vector<int> device_ids;
 
   starpu_server::InferenceResult result{};
-  result.job_id = 1;
+  result.request_id = 1;
   result.executed_on = starpu_server::DeviceType::CPU;
   result.results = {torch::ones({1})};
 
@@ -445,7 +445,7 @@ TEST(
   const std::vector<int> device_ids;
 
   starpu_server::InferenceResult result{};
-  result.job_id = 13;
+  result.request_id = 13;
   result.executed_on = starpu_server::DeviceType::CPU;
 
   const std::vector<starpu_server::InferenceResult> results{result};
@@ -467,7 +467,7 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
   const std::vector<int> device_ids;
 
   starpu_server::InferenceResult result{};
-  result.job_id = 99;
+  result.request_id = 99;
   result.executed_on = starpu_server::DeviceType::CPU;
 
   const std::vector<starpu_server::InferenceResult> results{result};
@@ -492,7 +492,7 @@ TEST(
   const std::vector<int> device_ids{0};
 
   starpu_server::InferenceResult result{};
-  result.job_id = 7;
+  result.request_id = 7;
   result.worker_id = 5;
   result.executed_on = starpu_server::DeviceType::CUDA;
   result.device_id = 1;

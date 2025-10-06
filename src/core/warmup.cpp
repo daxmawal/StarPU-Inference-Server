@@ -78,27 +78,27 @@ WarmupRunner::client_worker(
   }
 
   const auto total = static_cast<int>(total_size_t);
-  int job_id = 0;
+  int request_id = 0;
 
   for (const auto& [device_id, worker_ids] : device_workers) {
     for (const int worker_id : worker_ids) {
       for (auto iteration = 0; iteration < iterations_per_worker; ++iteration) {
         const auto& inputs =
             client_utils::pick_random_input(pregen_inputs, rng);
-        auto job = client_utils::create_job(inputs, outputs_ref_, job_id);
+        auto job = client_utils::create_job(inputs, outputs_ref_, request_id);
         job->set_fixed_worker_id(worker_id);
 
         client_utils::log_job_enqueued(
-            opts_, job_id, total, job->timing_info().enqueued_time);
+            opts_, request_id, total, job->timing_info().enqueued_time);
 
         if (!queue.push(job)) {
           log_warning(std::format(
               "[Warmup] Failed to enqueue job {}: queue shutting down",
-              job_id));
+              request_id));
           queue.shutdown();
           return;
         }
-        job_id++;
+        request_id++;
       }
     }
   }

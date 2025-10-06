@@ -30,8 +30,8 @@ get_inference_device(const InferenceResult& result) -> torch::Device
     case DeviceType::CPU:
       return {torch::kCPU};
     default:
-      log_error(
-          std::format("[Validator] Unknown device for job {}", result.job_id));
+      log_error(std::format(
+          "[Validator] Unknown device for job {}", result.request_id));
       throw InferenceExecutionException("Unknown device");
   }
 }
@@ -66,7 +66,7 @@ extract_reference_outputs(
       if (!val.isTensor()) {
         log_error(std::format(
             "[Validator] Non-tensor output in tuple for job {}",
-            result.job_id));
+            result.request_id));
         throw InferenceExecutionException("Non-tensor tuple element");
       }
       tensors.push_back(val.toTensor());
@@ -77,7 +77,7 @@ extract_reference_outputs(
     }
   } else {
     log_error(std::format(
-        "[Validator] Unsupported output type for job {}", result.job_id));
+        "[Validator] Unsupported output type for job {}", result.request_id));
     throw InferenceExecutionException("Unsupported output type");
   }
 
@@ -92,7 +92,7 @@ compare_outputs(
 {
   if (reference.size() != actual.size()) {
     log_error(std::format(
-        "[Validator] Output count mismatch for job {}", result.job_id));
+        "[Validator] Output count mismatch for job {}", result.request_id));
     return false;
   }
 
@@ -109,7 +109,8 @@ compare_outputs(
 
     if (!is_valid) {
       log_error(std::format(
-          "[Validator] Mismatch on output #{} for job {}", i, result.job_id));
+          "[Validator] Mismatch on output #{} for job {}", i,
+          result.request_id));
       log_error(std::format(
           "  Absolute diff max: {}",
           (ref_cmp - res_cmp).abs().max().item<float>()));
@@ -155,20 +156,20 @@ validate_inference_result(
           verbosity,
           std::format(
               "[Validator] Job {} passed on {} (device id {} worker id {})",
-              result.job_id, to_string(result.executed_on), result.device_id,
-              result.worker_id));
+              result.request_id, to_string(result.executed_on),
+              result.device_id, result.worker_id));
     }
 
     return all_valid;
   }
   catch (const c10::Error& e) {
     log_error(std::format(
-        "[Validator] C10 error in job {}: {}", result.job_id, e.what()));
+        "[Validator] C10 error in job {}: {}", result.request_id, e.what()));
     throw InferenceExecutionException(e.what());
   }
   catch (const std::exception& e) {
     log_error(std::format(
-        "[Validator] Exception in job {}: {}", result.job_id, e.what()));
+        "[Validator] Exception in job {}: {}", result.request_id, e.what()));
     throw InferenceExecutionException(e.what());
   }
 }

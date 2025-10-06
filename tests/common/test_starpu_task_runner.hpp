@@ -81,11 +81,11 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
   }
 
   std::shared_ptr<starpu_server::InferenceJob> make_job(
-      int job_id, std::vector<torch::Tensor> inputs,
+      int request_id, std::vector<torch::Tensor> inputs,
       std::vector<c10::ScalarType> input_types = {})
   {
     auto job = std::make_shared<starpu_server::InferenceJob>();
-    job->set_job_id(job_id);
+    job->set_request_id(request_id);
     job->set_input_tensors(std::move(inputs));
     job->set_input_types(std::move(input_types));
     return job;

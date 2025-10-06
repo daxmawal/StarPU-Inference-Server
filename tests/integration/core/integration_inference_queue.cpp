@@ -18,13 +18,13 @@ TEST(InferenceQueue_Integration, FifoAndShutdown)
           popped_ids.push_back(-1);
           break;
         }
-        popped_ids.push_back(job->get_job_id());
+        popped_ids.push_back(job->get_request_id());
       }
     });
 
     for (int i = 0; i < 3; ++i) {
       auto job = std::make_shared<starpu_server::InferenceJob>();
-      job->set_job_id(i);
+      job->set_request_id(i);
       ASSERT_TRUE(queue.push(job));
     }
     queue.shutdown();

@@ -22,21 +22,21 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations_Unit)
 
   runner->client_worker(device_workers, queue, 2);
 
-  std::vector<int> job_ids;
+  std::vector<int> request_ids;
   std::vector<int> worker_ids;
   for (;;) {
     std::shared_ptr<starpu_server::InferenceJob> job;
     if (!queue.wait_and_pop(job)) {
       break;
     }
-    job_ids.push_back(job->get_job_id());
+    request_ids.push_back(job->get_request_id());
     const int worker = job->get_fixed_worker_id().value_or(-1);
     ASSERT_NE(worker, -1);
     worker_ids.push_back(worker);
   }
 
-  ASSERT_EQ(job_ids.size(), 4U);
-  EXPECT_EQ(job_ids, (std::vector<int>{0, 1, 2, 3}));
+  ASSERT_EQ(request_ids.size(), 4U);
+  EXPECT_EQ(request_ids, (std::vector<int>{0, 1, 2, 3}));
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
 }
 

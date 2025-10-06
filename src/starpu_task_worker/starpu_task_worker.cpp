@@ -116,7 +116,8 @@ StarPUTaskRunner::should_shutdown(
 
 void
 StarPUTaskRunner::log_job_timings(
-    int job_id, double latency_ms, const detail::TimingInfo& timing_info) const
+    int request_id, double latency_ms,
+    const detail::TimingInfo& timing_info) const
 {
   if (!should_log(VerbosityLevel::Stats, opts_->verbosity)) {
     return;
@@ -155,10 +156,10 @@ StarPUTaskRunner::log_job_timings(
   const auto header =
       submission_id >= 0
           ? std::format(
-                "Job {} (submission {}) done. Latency = {:.3f} ms | Queue = ",
-                job_id, submission_id, latency_ms)
+                "Job {} done. Latency = {:.3f} ms | Queue = ", submission_id,
+                latency_ms)
           : std::format(
-                "Job {} done. Latency = {:.3f} ms | Queue = ", job_id,
+                "Job {} done. Latency = {:.3f} ms | Queue = ", request_id,
                 latency_ms);
 
   log_stats(
@@ -192,7 +193,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
           }
           stored_result.latency_ms = latency_ms;
           stored_result.timing_info = job_sptr->timing_info();
-          stored_result.job_id = job_sptr->get_job_id();
+          stored_result.request_id = job_sptr->get_request_id();
           stored_result.device_id = job_sptr->get_device_id();
           stored_result.worker_id = job_sptr->get_worker_id();
           stored_result.executed_on = job_sptr->get_executed_on();
@@ -225,7 +226,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
 
         job_sptr->timing_info().submission_id = job_sptr->submission_id();
         log_job_timings(
-            job_sptr->get_job_id(), latency_ms, job_sptr->timing_info());
+            job_sptr->get_request_id(), latency_ms, job_sptr->timing_info());
 
         if (prev_callback) {
           prev_callback(results, latency_ms);
@@ -245,8 +246,9 @@ void
 StarPUTaskRunner::handle_job_exception(
     const std::shared_ptr<InferenceJob>& job, const std::exception& exception)
 {
-  const auto job_id = job->get_job_id();
-  log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
+  const auto request_id = job->get_request_id();
+  log_error(
+      std::format("[Exception] Job {}: {}", request_id, exception.what()));
 
   if (job->has_on_complete()) {
     try {
@@ -605,7 +607,7 @@ StarPUTaskRunner::maybe_build_batched_job(
         opts_->verbosity,
         std::format(
             "Formed batch for job ID {} with {} requests ({} samples)",
-            master->get_job_id(), jobs.size(), effective_batch));
+            master->get_request_id(), jobs.size(), effective_batch));
   }
 
   return master;
@@ -729,7 +731,7 @@ StarPUTaskRunner::submit_inference_task(
     const std::shared_ptr<InferenceJob>& job)
 {
   NvtxRange nvtx_job_scope(
-      std::string("submit job ") + std::to_string(job->get_job_id()));
+      std::string("submit job ") + std::to_string(job->get_request_id()));
   if (!(starpu_->has_input_pool() || starpu_->has_output_pool())) {
     InferenceTask task(
         starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
@@ -834,13 +836,13 @@ StarPUTaskRunner::run()
     job->timing_info().submission_id = submission_id;
 
     const auto logical_jobs = job ? job->logical_job_count() : 0;
-    const auto job_id = job->get_job_id();
+    const auto request_id = job->get_request_id();
     if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
       log_trace(
           opts_->verbosity,
           std::format(
               "Dequeued job ID: {}, queue size : {}, aggregated requests: {}",
-              job_id, queue_->size(), logical_jobs));
+              request_id, queue_->size(), logical_jobs));
     }
 
     prepare_job_completion_callback(job);
@@ -848,9 +850,8 @@ StarPUTaskRunner::run()
     try {
       if (should_log(VerbosityLevel::Debug, opts_->verbosity)) {
         log_debug(
-            opts_->verbosity, std::format(
-                                  "Submitting job ID: {} (request ID: {})",
-                                  submission_id, job_id));
+            opts_->verbosity,
+            std::format("Submitting job ID: {}", submission_id));
       }
 
       submit_inference_task(job);
@@ -859,8 +860,8 @@ StarPUTaskRunner::run()
       StarPUTaskRunner::handle_job_exception(job, exception);
     }
     catch (const std::exception& e) {
-      log_error(
-          std::format("Unexpected exception for job {}: {}", job_id, e.what()));
+      log_error(std::format(
+          "Unexpected exception for job {}: {}", request_id, e.what()));
       StarPUTaskRunner::handle_job_exception(job, e);
     }
   }

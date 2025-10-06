@@ -105,7 +105,7 @@ class InferenceServiceImpl final
   std::vector<at::ScalarType> expected_input_types_;
   std::vector<std::vector<int64_t>> expected_input_dims_;
   int max_batch_size_ = 0;
-  std::atomic<int> next_job_id_{0};
+  std::atomic<int> next_request_id_{0};
 };
 
 class AsyncServerContext {

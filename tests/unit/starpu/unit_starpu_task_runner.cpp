@@ -33,7 +33,7 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   auto probe = starpu_server::make_callback_probe();
   auto job = probe.job;
   constexpr int kJobId = 7;
-  job->set_job_id(kJobId);
+  job->set_request_id(kJobId);
   std::vector<torch::Tensor> inputs = {torch::tensor({1})};
   job->set_input_tensors(inputs);
   runner_->prepare_job_completion_callback(job);
@@ -45,7 +45,7 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   const auto& completed_jobs = completed_jobs_;
   ASSERT_EQ(results.size(), 1U);
   EXPECT_EQ(completed_jobs.load(), 1);
-  EXPECT_EQ(results[0].job_id, kJobId);
+  EXPECT_EQ(results[0].request_id, kJobId);
   ASSERT_EQ(results[0].results.size(), outputs.size());
   EXPECT_TRUE(torch::equal(results[0].results[0], outputs[0]));
   ASSERT_EQ(probe.results.size(), outputs.size());

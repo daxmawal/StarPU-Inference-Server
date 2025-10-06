@@ -17,11 +17,12 @@
 
 class InferenceTaskTest : public ::testing::Test {
  protected:
-  static auto make_job(int job_id, size_t num_inputs, bool set_outputs = true)
-      -> std::shared_ptr<starpu_server::InferenceJob>
+  static auto make_job(
+      int request_id, size_t num_inputs,
+      bool set_outputs = true) -> std::shared_ptr<starpu_server::InferenceJob>
   {
     auto job = std::make_shared<starpu_server::InferenceJob>();
-    job->set_job_id(job_id);
+    job->set_request_id(request_id);
     std::vector<torch::Tensor> inputs(num_inputs);
     std::vector<at::ScalarType> types(num_inputs, at::kFloat);
     for (size_t i = 0; i < num_inputs; ++i) {

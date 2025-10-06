@@ -54,7 +54,7 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceJob>& job,
       const std::exception& exception);
   void log_job_timings(
-      int job_id, double latency_ms,
+      int request_id, double latency_ms,
       const detail::TimingInfo& timing_info) const;
 
  private:

@@ -328,8 +328,8 @@ InferenceServiceImpl::submit_job_async(
     std::chrono::high_resolution_clock::time_point receive_time) -> Status
 {
   auto job = client_utils::create_job(
-      inputs, *reference_outputs_, next_job_id_++, std::move(input_lifetimes),
-      receive_time);
+      inputs, *reference_outputs_, next_request_id_++,
+      std::move(input_lifetimes), receive_time);
 
   NvtxRange submit_scope("grpc_submit_starpu");
 

@@ -23,16 +23,16 @@ ConsumeAll(
       break;
     }
     std::scoped_lock lock(mtx);
-    popped_ids.push_back(job->get_job_id());
+    popped_ids.push_back(job->get_request_id());
   }
 }
 
 void
 PushJobs(starpu_server::InferenceQueue& queue, int count)
 {
-  for (int job_id = 0; job_id < count; ++job_id) {
+  for (int request_id = 0; request_id < count; ++request_id) {
     auto job = std::make_shared<starpu_server::InferenceJob>();
-    job->set_job_id(job_id);
+    job->set_request_id(request_id);
     ASSERT_TRUE(queue.push(job));
   }
 }

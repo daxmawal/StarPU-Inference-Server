@@ -105,10 +105,10 @@ set_worker_thread_launcher(WorkerThreadLauncher launcher)
 
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-    int job_identifier,
+    int request_identifier,
     std::function<void(const std::vector<torch::Tensor>&, double)> callback)
     : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
-      job_id_(job_identifier), on_complete_(std::move(callback)),
+      request_id_(request_identifier), on_complete_(std::move(callback)),
       start_time_(std::chrono::high_resolution_clock::now())
 {
 }
@@ -146,16 +146,17 @@ client_worker(
 
   auto next_time = std::chrono::steady_clock::now();
   const auto delay = std::chrono::milliseconds(opts.delay_ms);
-  for (auto job_id = 0; job_id < iterations; ++job_id) {
+  for (auto request_id = 0; request_id < iterations; ++request_id) {
     std::this_thread::sleep_until(next_time);
     next_time += delay;
     const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
-    auto job = client_utils::create_job(inputs, outputs_ref, job_id);
+    auto job = client_utils::create_job(inputs, outputs_ref, request_id);
     client_utils::log_job_enqueued(
-        opts, job_id, iterations, job->timing_info().enqueued_time);
+        opts, request_id, iterations, job->timing_info().enqueued_time);
     if (!queue.push(job)) {
       log_warning(std::format(
-          "[Client] Failed to enqueue job {}: queue shutting down", job_id));
+          "[Client] Failed to enqueue job {}: queue shutting down",
+          request_id));
       break;
     }
   }
@@ -351,7 +352,7 @@ resolve_validation_model(
     if (validate_results) {
       log_warning(std::format(
           "[Client] Skipping validation for job {}: invalid device id {}",
-          result.job_id, result.device_id));
+          result.request_id, result.device_id));
     }
     return std::nullopt;
   }
@@ -362,7 +363,7 @@ resolve_validation_model(
       log_warning(std::format(
           "[Client] Skipping validation for job {}: no GPU replica for device "
           "{}",
-          result.job_id, result.device_id));
+          result.request_id, result.device_id));
     }
     return std::nullopt;
   }
@@ -388,7 +389,7 @@ process_results(
         !result.results.empty() && result.results[0].defined();
     if (!has_results) {
       if (validate_results) {
-        log_error(std::format("[Client] Job {} failed.", result.job_id));
+        log_error(std::format("[Client] Job {} failed.", result.request_id));
       }
       continue;
     }
