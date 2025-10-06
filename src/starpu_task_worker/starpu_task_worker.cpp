@@ -122,6 +122,7 @@ StarPUTaskRunner::log_job_timings(
     return;
   }
 
+  const auto submission_id = timing_info.submission_id;
   using duration_f = std::chrono::duration<double, std::milli>;
   const auto queue_ms =
       duration_f(timing_info.dequeued_time - timing_info.enqueued_time).count();
@@ -151,14 +152,23 @@ StarPUTaskRunner::log_job_timings(
           timing_info.callback_end_time - timing_info.callback_start_time)
           .count();
 
+  const auto header =
+      submission_id >= 0
+          ? std::format(
+                "Job {} (submission {}) done. Latency = {:.3f} ms | Queue = ",
+                job_id, submission_id, latency_ms)
+          : std::format(
+                "Job {} done. Latency = {:.3f} ms | Queue = ", job_id,
+                latency_ms);
+
   log_stats(
       opts_->verbosity,
       std::format(
-          "Job {} done. Latency = {:.3f} ms | Queue = {:.3f} ms, Batching = "
-          "{:.3f} ms, Submit = {:.3f} ms, Scheduling = {:.3f} ms, Codelet = "
-          "{:.3f} ms, Inference = {:.3f} ms, Callback = {:.3f} ms",
-          job_id, latency_ms, queue_ms, batch_ms, submit_ms, scheduling_ms,
-          codelet_ms, inference_ms, callback_ms));
+          "{}{:.3f} ms, Batching = {:.3f} ms, Submit = {:.3f} ms, Scheduling = "
+          "{:.3f} ms, Codelet = {:.3f} ms, Inference = {:.3f} ms, Callback = "
+          "{:.3f} ms",
+          header, queue_ms, batch_ms, submit_ms, scheduling_ms, codelet_ms,
+          inference_ms, callback_ms));
 }
 
 void
@@ -213,6 +223,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
             job_sptr->timing_info().callback_end_time, batch_size,
             job_sptr->get_fixed_worker_id().has_value());
 
+        job_sptr->timing_info().submission_id = job_sptr->submission_id();
         log_job_timings(
             job_sptr->get_job_id(), latency_ms, job_sptr->timing_info());
 
@@ -656,6 +667,8 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
     job_sp->get_device_id() = aggregated_job->get_device_id();
     job_sp->get_worker_id() = aggregated_job->get_worker_id();
     job_sp->get_executed_on() = aggregated_job->get_executed_on();
+    job_sp->set_submission_id(aggregated_job->submission_id());
+    job_sp->timing_info().submission_id = aggregated_job->submission_id();
 
     if (entry.callback) {
       entry.callback(outputs, latency_ms);
@@ -816,6 +829,10 @@ StarPUTaskRunner::run()
     job->timing_info().batch_collect_end_time =
         std::chrono::high_resolution_clock::now();
 
+    const auto submission_id = next_submission_id_.fetch_add(1);
+    job->set_submission_id(submission_id);
+    job->timing_info().submission_id = submission_id;
+
     const auto logical_jobs = job ? job->logical_job_count() : 0;
     const auto job_id = job->get_job_id();
     if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
@@ -831,7 +848,9 @@ StarPUTaskRunner::run()
     try {
       if (should_log(VerbosityLevel::Debug, opts_->verbosity)) {
         log_debug(
-            opts_->verbosity, std::format("Submitting job ID: {}", job_id));
+            opts_->verbosity, std::format(
+                                  "Submitting job ID: {} (request ID: {})",
+                                  submission_id, job_id));
       }
 
       submit_inference_task(job);

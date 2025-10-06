@@ -31,6 +31,7 @@ struct TimingInfo {
   std::chrono::high_resolution_clock::time_point inference_start_time;
   std::chrono::high_resolution_clock::time_point callback_start_time;
   std::chrono::high_resolution_clock::time_point callback_end_time;
+  int submission_id = -1;
 };
 }  // namespace detail
 
@@ -118,6 +119,10 @@ class InferenceJob {
     input_memory_holders_ = std::move(holders);
   }
 
+  void set_submission_id(int submission_id) { submission_id_ = submission_id; }
+
+  [[nodiscard]] auto submission_id() const -> int { return submission_id_; }
+
   [[nodiscard]] auto get_input_memory_holders() const
       -> const std::vector<std::shared_ptr<const void>>&
   {
@@ -198,6 +203,7 @@ class InferenceJob {
   std::vector<std::shared_ptr<const void>> input_memory_holders_;
 
   int job_id_ = 0;
+  int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
   std::function<void(const std::vector<torch::Tensor>&, double)> on_complete_;
   std::chrono::high_resolution_clock::time_point start_time_;
