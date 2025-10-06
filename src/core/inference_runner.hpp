@@ -65,7 +65,7 @@ class InferenceJob {
     int64_t batch_size = 1;
   };
 
-  InferenceJob() = default;
+  InferenceJob() noexcept = default;
 
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
