@@ -202,7 +202,7 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
   std::string expected = expected_log_line(
       starpu_server::VerbosityLevel::Trace,
       std::format(
-          "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
+          "[Inference] Request ID {} Iteration {}/{} Enqueued at {}", job_id,
           job_id + 1, iterations, timestamp));
   EXPECT_EQ(capture.str(), expected);
 }

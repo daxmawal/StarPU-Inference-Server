@@ -83,7 +83,7 @@ log_job_enqueued(
     log_trace(
         opts.verbosity,
         std::format(
-            "[Inference] Job ID {} Iteration {}/{} Enqueued at {}", job_id,
+            "[Inference] Request ID {} Iteration {}/{} Enqueued at {}", job_id,
             job_id + 1, iterations, current_time_formatted(now)));
   }
 }
