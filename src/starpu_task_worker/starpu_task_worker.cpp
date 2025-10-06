@@ -351,8 +351,9 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     return jobs;
   }
 
+  const bool enable_wait = opts_->delay_ms > 0;
   auto wait_duration = std::chrono::milliseconds(1);
-  if (opts_->delay_ms > 0) {
+  if (enable_wait) {
     wait_duration = std::chrono::milliseconds(std::min(opts_->delay_ms, 5));
   }
 
@@ -361,6 +362,9 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     std::shared_ptr<InferenceJob> next;
     bool got_job = queue_->try_pop(next);
     if (!got_job) {
+      if (!enable_wait) {
+        break;
+      }
       got_job = queue_->wait_for_and_pop(next, wait_duration);
       if (!got_job) {
         break;
