@@ -354,7 +354,8 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
   const bool enable_wait = opts_->delay_ms > 0;
   auto wait_duration = std::chrono::milliseconds(1);
   if (enable_wait) {
-    wait_duration = std::chrono::milliseconds(std::min(opts_->delay_ms, 1000));
+    wait_duration =
+        std::chrono::milliseconds(std::min(opts_->delay_ms, 100000));
   }
 
   const auto& target_worker = first_job->get_fixed_worker_id();
