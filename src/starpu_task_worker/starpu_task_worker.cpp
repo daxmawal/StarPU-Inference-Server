@@ -132,10 +132,12 @@ StarPUTaskRunner::log_job_timings(
                timing_info.batch_collect_end_time -
                timing_info.batch_collect_start_time)
                .count());
+  auto submit_start = timing_info.batch_collect_start_time;
+  if (submit_start == std::chrono::high_resolution_clock::time_point{}) {
+    submit_start = timing_info.dequeued_time;
+  }
   const auto submit_ms = std::max(
-      0.0, duration_f(
-               timing_info.before_starpu_submitted_time -
-               timing_info.batch_collect_end_time)
+      0.0, duration_f(timing_info.before_starpu_submitted_time - submit_start)
                .count());
   const auto scheduling_ms = duration_f(
                                  timing_info.codelet_start_time -
@@ -165,7 +167,7 @@ StarPUTaskRunner::log_job_timings(
   log_stats(
       opts_->verbosity,
       std::format(
-          "{}{:.3f} ms, Batching = {:.3f} ms, Submit = {:.3f} ms, Scheduling = "
+          "{}{:.3f} ms, Batch = {:.3f} ms, Submit = {:.3f} ms, Scheduling = "
           "{:.3f} ms, Codelet = {:.3f} ms, Inference = {:.3f} ms, Callback = "
           "{:.3f} ms",
           header, queue_ms, batch_ms, submit_ms, scheduling_ms, codelet_ms,
