@@ -61,6 +61,14 @@ InvalidConfigCaseName(const ::testing::TestParamInfo<InvalidConfigCase>& info)
 
 const std::vector<InvalidConfigCase> kInvalidConfigCases = {
     InvalidConfigCase{
+        "UnknownKeySetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "unknown_option: true\n";
+          return yaml;
+        }(),
+        "Unknown configuration option: unknown_option"},
+    InvalidConfigCase{
         "InvalidConfigSetsValidFalse", "max_batch_size: 0\n", std::nullopt,
         false, false},
     InvalidConfigCase{

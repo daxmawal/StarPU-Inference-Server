@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "datatype_utils.hpp"
@@ -41,6 +42,52 @@ validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
   for (const auto& key : required_keys) {
     if (!root[key]) {
       log_error(std::string("Missing required key: ") + key);
+      cfg.valid = false;
+    }
+  }
+  return cfg.valid;
+}
+
+auto
+validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
+{
+  static const std::unordered_set<std::string> kAllowedKeys{
+      "verbose",
+      "verbosity",
+      "scheduler",
+      "model",
+      "request_nb",
+      "device_ids",
+      "input",
+      "output",
+      "delay",
+      "batch_coalesce_timeout_ms",
+      "address",
+      "metrics_port",
+      "max_message_bytes",
+      "max_batch_size",
+      "dynamic_batching",
+      "input_slots",
+      "pregen_inputs",
+      "warmup_pregen_inputs",
+      "warmup_request_nb",
+      "seed",
+      "rtol",
+      "atol",
+      "validate_results",
+      "sync",
+      "use_cpu",
+      "use_cuda"};
+
+  for (const auto& kv : root) {
+    if (!kv.first.IsScalar()) {
+      log_error("Configuration keys must be scalar strings");
+      cfg.valid = false;
+      continue;
+    }
+    const auto key = kv.first.as<std::string>();
+    if (!kAllowedKeys.contains(key)) {
+      log_error(std::string("Unknown configuration option: ") + key);
       cfg.valid = false;
     }
   }
@@ -289,8 +336,16 @@ load_config(const std::string& path) -> RuntimeConfig
   RuntimeConfig cfg;
   try {
     YAML::Node root = YAML::LoadFile(path);
+    if (!root || !root.IsMap()) {
+      log_error("Config root must be a mapping");
+      cfg.valid = false;
+      return cfg;
+    }
 
     parse_verbosity(root, cfg);
+    if (!validate_allowed_keys(root, cfg)) {
+      return cfg;
+    }
     if (!validate_required_keys(root, cfg)) {
       return cfg;
     }
