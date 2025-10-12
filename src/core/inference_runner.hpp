@@ -46,6 +46,7 @@ struct InferenceResult {
   double latency_ms = 0.0;
   detail::TimingInfo timing_info;
   int request_id;
+  int submission_id = -1;
   int device_id = -1;
   int worker_id = -1;
   DeviceType executed_on = DeviceType::Unknown;

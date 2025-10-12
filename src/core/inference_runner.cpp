@@ -309,6 +309,12 @@ run_warmup(
 
 namespace detail {
 
+inline auto
+result_job_id(const InferenceResult& result) -> int
+{
+  return (result.submission_id >= 0) ? result.submission_id : result.request_id;
+}
+
 auto
 build_gpu_model_lookup(
     std::vector<torch::jit::script::Module>& models_gpu,
@@ -352,7 +358,7 @@ resolve_validation_model(
     if (validate_results) {
       log_warning(std::format(
           "[Client] Skipping validation for job {}: invalid device id {}",
-          result.request_id, result.device_id));
+          result_job_id(result), result.device_id));
     }
     return std::nullopt;
   }
@@ -363,7 +369,7 @@ resolve_validation_model(
       log_warning(std::format(
           "[Client] Skipping validation for job {}: no GPU replica for device "
           "{}",
-          result.request_id, result.device_id));
+          result_job_id(result), result.device_id));
     }
     return std::nullopt;
   }
@@ -389,7 +395,8 @@ process_results(
         !result.results.empty() && result.results[0].defined();
     if (!has_results) {
       if (validate_results) {
-        log_error(std::format("[Client] Job {} failed.", result.request_id));
+        log_error(
+            std::format("[Client] Job {} failed.", result_job_id(result)));
       }
       continue;
     }

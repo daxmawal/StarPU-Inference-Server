@@ -48,6 +48,13 @@ batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
   const auto dim0 = first.size(0);
   return dim0 > 0 ? static_cast<std::size_t>(dim0) : std::size_t{1};
 }
+
+inline auto
+job_identifier(const InferenceJob& job) -> int
+{
+  const int submission_id = job.submission_id();
+  return (submission_id >= 0) ? submission_id : job.get_request_id();
+}
 }  // namespace
 // =============================================================================
 // Constructor
@@ -155,14 +162,9 @@ StarPUTaskRunner::log_job_timings(
           timing_info.callback_end_time - timing_info.callback_start_time)
           .count();
 
-  const auto header =
-      submission_id >= 0
-          ? std::format(
-                "Job {} done. Latency = {:.3f} ms | Queue = ", submission_id,
-                latency_ms)
-          : std::format(
-                "Job {} done. Latency = {:.3f} ms | Queue = ", request_id,
-                latency_ms);
+  const int job_id = submission_id >= 0 ? submission_id : request_id;
+  const auto header = std::format(
+      "Job {} done. Latency = {:.3f} ms | Queue = ", job_id, latency_ms);
 
   log_stats(
       opts_->verbosity,
@@ -196,6 +198,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
           stored_result.latency_ms = latency_ms;
           stored_result.timing_info = job_sptr->timing_info();
           stored_result.request_id = job_sptr->get_request_id();
+          stored_result.submission_id = job_sptr->submission_id();
           stored_result.device_id = job_sptr->get_device_id();
           stored_result.worker_id = job_sptr->get_worker_id();
           stored_result.executed_on = job_sptr->get_executed_on();
@@ -228,7 +231,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
 
         job_sptr->timing_info().submission_id = job_sptr->submission_id();
         log_job_timings(
-            job_sptr->get_request_id(), latency_ms, job_sptr->timing_info());
+            job_identifier(*job_sptr), latency_ms, job_sptr->timing_info());
 
         if (prev_callback) {
           prev_callback(results, latency_ms);
@@ -248,9 +251,8 @@ void
 StarPUTaskRunner::handle_job_exception(
     const std::shared_ptr<InferenceJob>& job, const std::exception& exception)
 {
-  const auto request_id = job->get_request_id();
-  log_error(
-      std::format("[Exception] Job {}: {}", request_id, exception.what()));
+  const int job_id = job ? job_identifier(*job) : -1;
+  log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
 
   if (job->has_on_complete()) {
     try {
@@ -800,7 +802,7 @@ StarPUTaskRunner::submit_inference_task(
     const std::shared_ptr<InferenceJob>& job)
 {
   NvtxRange nvtx_job_scope(
-      std::string("submit job ") + std::to_string(job->get_request_id()));
+      std::string("submit job ") + std::to_string(job_identifier(*job)));
   if (!(starpu_->has_input_pool() || starpu_->has_output_pool())) {
     InferenceTask task(
         starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
@@ -900,12 +902,14 @@ StarPUTaskRunner::run()
 
     const auto logical_jobs = job ? job->logical_job_count() : 0;
     const auto request_id = job->get_request_id();
+    const int job_id = job_identifier(*job);
     if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
       log_trace(
           opts_->verbosity,
           std::format(
-              "Dequeued job ID: {}, queue size : {}, aggregated requests: {}",
-              request_id, queue_->size(), logical_jobs));
+              "Dequeued job submission {} (request {}), queue size : {}, "
+              "aggregated requests: {}",
+              job_id, request_id, queue_->size(), logical_jobs));
     }
 
     prepare_job_completion_callback(job);
@@ -923,8 +927,8 @@ StarPUTaskRunner::run()
       StarPUTaskRunner::handle_job_exception(job, exception);
     }
     catch (const std::exception& e) {
-      log_error(std::format(
-          "Unexpected exception for job {}: {}", request_id, e.what()));
+      log_error(
+          std::format("Unexpected exception for job {}: {}", job_id, e.what()));
       StarPUTaskRunner::handle_job_exception(job, e);
     }
   }
