@@ -8,6 +8,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "datatype_utils.hpp"
@@ -47,6 +48,52 @@ validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
   return cfg.valid;
 }
 
+auto
+validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
+{
+  static const std::unordered_set<std::string> kAllowedKeys{
+      "verbose",
+      "verbosity",
+      "scheduler",
+      "model",
+      "request_nb",
+      "device_ids",
+      "input",
+      "output",
+      "delay",
+      "batch_coalesce_timeout_ms",
+      "address",
+      "metrics_port",
+      "max_message_bytes",
+      "max_batch_size",
+      "dynamic_batching",
+      "input_slots",
+      "pregen_inputs",
+      "warmup_pregen_inputs",
+      "warmup_request_nb",
+      "seed",
+      "rtol",
+      "atol",
+      "validate_results",
+      "sync",
+      "use_cpu",
+      "use_cuda"};
+
+  for (const auto& kv : root) {
+    if (!kv.first.IsScalar()) {
+      log_error("Configuration keys must be scalar strings");
+      cfg.valid = false;
+      continue;
+    }
+    const auto key = kv.first.as<std::string>();
+    if (!kAllowedKeys.contains(key)) {
+      log_error(std::string("Unknown configuration option: ") + key);
+      cfg.valid = false;
+    }
+  }
+  return cfg.valid;
+}
+
 void
 parse_scheduler_node(const YAML::Node& root, RuntimeConfig& cfg)
 {
@@ -74,12 +121,12 @@ parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
 }
 
 void
-parse_iteration_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
+parse_request_nb_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["iterations"]) {
-    cfg.iterations = root["iterations"].as<int>();
-    if (cfg.iterations < 0) {
-      log_error("iterations must be >= 0");
+  if (root["request_nb"]) {
+    cfg.request_nb = root["request_nb"].as<int>();
+    if (cfg.request_nb < 0) {
+      log_error("request_nb must be >= 0");
       cfg.valid = false;
     }
   }
@@ -110,10 +157,17 @@ void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["delay"]) {
-    cfg.delay_ms = root["delay"].as<int>();
-    if (cfg.delay_ms < 0) {
+    cfg.delay_us = root["delay"].as<int>();
+    if (cfg.delay_us < 0) {
       cfg.valid = false;
       throw std::invalid_argument("delay must be >= 0");
+    }
+  }
+  if (root["batch_coalesce_timeout_ms"]) {
+    cfg.batch_coalesce_timeout_ms = root["batch_coalesce_timeout_ms"].as<int>();
+    if (cfg.batch_coalesce_timeout_ms < 0) {
+      cfg.valid = false;
+      throw std::invalid_argument("batch_coalesce_timeout_ms must be >= 0");
     }
   }
   if (root["address"]) {
@@ -174,12 +228,12 @@ parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
     }
     cfg.warmup_pregen_inputs = static_cast<size_t>(tmp);
   }
-  if (root["warmup_iterations"]) {
-    const int tmp = root["warmup_iterations"].as<int>();
+  if (root["warmup_request_nb"]) {
+    const int tmp = root["warmup_request_nb"].as<int>();
     if (tmp < 0) {
-      throw std::invalid_argument("warmup_iterations must be >= 0");
+      throw std::invalid_argument("warmup_request_nb must be >= 0");
     }
-    cfg.warmup_iterations = tmp;
+    cfg.warmup_request_nb = tmp;
   }
 }
 
@@ -282,14 +336,22 @@ load_config(const std::string& path) -> RuntimeConfig
   RuntimeConfig cfg;
   try {
     YAML::Node root = YAML::LoadFile(path);
+    if (!root || !root.IsMap()) {
+      log_error("Config root must be a mapping");
+      cfg.valid = false;
+      return cfg;
+    }
 
     parse_verbosity(root, cfg);
+    if (!validate_allowed_keys(root, cfg)) {
+      return cfg;
+    }
     if (!validate_required_keys(root, cfg)) {
       return cfg;
     }
     parse_scheduler_node(root, cfg);
     parse_model_node(root, cfg);
-    parse_iteration_and_devices(root, cfg);
+    parse_request_nb_and_devices(root, cfg);
     parse_io_nodes(root, cfg);
     parse_network_and_delay(root, cfg);
     parse_message_and_batching(root, cfg);

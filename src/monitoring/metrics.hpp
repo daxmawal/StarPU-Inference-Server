@@ -61,7 +61,7 @@ class MetricsRegistry {
   prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family{nullptr};
 
-  void run_sampling_iteration();
+  void run_sampling_request_nb();
   void request_stop();
 
   auto has_gpu_stats_provider() const -> bool;
@@ -71,7 +71,7 @@ class MetricsRegistry {
   void initialize(
       int port, bool start_sampler_thread,
       std::unique_ptr<ExposerHandle> exposer_handle);
-  void perform_sampling_iteration();
+  void perform_sampling_request_nb();
   void sampling_loop(const std::stop_token& stop);
 
   std::unique_ptr<ExposerHandle> exposer_;

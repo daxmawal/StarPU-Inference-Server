@@ -162,7 +162,7 @@ run_add_one_inference_loop(
   opts.models.resize(1);
   opts.models[0].path = model_file.path().string();
   opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
-  opts.iterations = 1;
+  opts.request_nb = 1;
   opts.use_cpu = use_cpu;
   opts.use_cuda = use_cuda;
   opts.validate_results = validate_results;
@@ -310,6 +310,7 @@ make_latency_breakdown(const inference::ModelInferResponse& response)
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
   breakdown.preprocess_ms = response.server_preprocess_ms();
   breakdown.queue_ms = response.server_queue_ms();
+  breakdown.batch_ms = response.server_batch_ms();
   breakdown.submit_ms = response.server_submit_ms();
   breakdown.scheduling_ms = response.server_scheduling_ms();
   breakdown.codelet_ms = response.server_codelet_ms();
@@ -393,6 +394,7 @@ verify_populate_response(
   EXPECT_EQ(resp.server_send_ms(), send_ms);
   EXPECT_DOUBLE_EQ(resp.server_preprocess_ms(), breakdown.preprocess_ms);
   EXPECT_DOUBLE_EQ(resp.server_queue_ms(), breakdown.queue_ms);
+  EXPECT_DOUBLE_EQ(resp.server_batch_ms(), breakdown.batch_ms);
   EXPECT_DOUBLE_EQ(resp.server_submit_ms(), breakdown.submit_ms);
   EXPECT_DOUBLE_EQ(resp.server_scheduling_ms(), breakdown.scheduling_ms);
   EXPECT_DOUBLE_EQ(resp.server_codelet_ms(), breakdown.codelet_ms);

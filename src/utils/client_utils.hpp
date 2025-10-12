@@ -22,13 +22,15 @@ auto pick_random_input(
     std::mt19937& rng) -> const std::vector<torch::Tensor>&;
 
 void log_job_enqueued(
-    const RuntimeConfig& opts, int job_id, int iterations,
+    const RuntimeConfig& opts, int request_id, int request_nb,
     std::chrono::high_resolution_clock::time_point now);
 
 auto create_job(
     const std::vector<torch::Tensor>& inputs,
-    const std::vector<torch::Tensor>& outputs_ref, int job_id,
-    std::vector<std::shared_ptr<const void>> input_lifetimes = {})
+    const std::vector<torch::Tensor>& outputs_ref, int request_id,
+    std::vector<std::shared_ptr<const void>> input_lifetimes = {},
+    std::chrono::high_resolution_clock::time_point start_time =
+        std::chrono::high_resolution_clock::now())
     -> std::shared_ptr<InferenceJob>;
 
 }  // namespace starpu_server::client_utils

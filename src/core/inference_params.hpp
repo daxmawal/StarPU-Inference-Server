@@ -97,7 +97,7 @@ struct InferenceParams {
   size_t num_inputs = 0;
   size_t num_outputs = 0;
   int64_t batch_size = 1;
-  int job_id = 0;
+  int request_id = 0;
   VerbosityLevel verbosity = VerbosityLevel::Silent;
 };
 

@@ -93,7 +93,7 @@ TEST(MetricsSampling, UpdatesGpuAndCpuGaugesOnSuccess)
       0, std::move(gpu_provider), std::move(cpu_provider),
       /*start_sampler_thread=*/false);
 
-  metrics.run_sampling_iteration();
+  metrics.run_sampling_request_nb();
 
   const auto families = metrics.registry->Collect();
 
@@ -144,7 +144,7 @@ TEST(MetricsSampling, UsesDefaultProvidersWhenMissing)
   EXPECT_TRUE(metrics.has_gpu_stats_provider());
   EXPECT_TRUE(metrics.has_cpu_usage_provider());
 
-  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+  EXPECT_NO_THROW(metrics.run_sampling_request_nb());
 
   metrics.request_stop();
 }
@@ -160,7 +160,7 @@ TEST(MetricsSampling, SkipsGpuMetricsWhenProviderMissing)
 
   ASSERT_FALSE(metrics.has_gpu_stats_provider());
 
-  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+  EXPECT_NO_THROW(metrics.run_sampling_request_nb());
 
   EXPECT_TRUE(metrics.gpu_utilization_gauges_.empty());
   EXPECT_TRUE(metrics.gpu_memory_used_gauges_.empty());
@@ -181,7 +181,7 @@ TEST(MetricsSampling, LogsStdExceptionsFromGpuProvider)
       /*start_sampler_thread=*/false);
 
   CerrCapture capture;
-  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+  EXPECT_NO_THROW(metrics.run_sampling_request_nb());
   metrics.request_stop();
 
   const std::string output = capture.str();
@@ -201,7 +201,7 @@ TEST(MetricsSampling, LogsUnknownExceptionsFromGpuProvider)
       /*start_sampler_thread=*/false);
 
   CerrCapture capture;
-  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+  EXPECT_NO_THROW(metrics.run_sampling_request_nb());
   metrics.request_stop();
 
   const std::string output = capture.str();
@@ -224,7 +224,7 @@ TEST(MetricsSampling, LogsStdExceptionsFromCpuProvider)
       /*start_sampler_thread=*/false);
 
   CerrCapture capture;
-  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+  EXPECT_NO_THROW(metrics.run_sampling_request_nb());
   metrics.request_stop();
 
   const std::string output = capture.str();
@@ -244,7 +244,7 @@ TEST(MetricsSampling, LogsUnknownExceptionsFromCpuProvider)
       /*start_sampler_thread=*/false);
 
   CerrCapture capture;
-  EXPECT_NO_THROW(metrics.run_sampling_iteration());
+  EXPECT_NO_THROW(metrics.run_sampling_request_nb());
   metrics.request_stop();
 
   const std::string output = capture.str();

@@ -72,8 +72,8 @@ main(int argc, char* argv[]) -> int
       &starpu_server::InferenceClient::AsyncCompleteRpc, &client);
 
   auto next_time = std::chrono::steady_clock::now();
-  const auto delay = std::chrono::milliseconds(config.delay_ms);
-  for (int i = 0; i < config.iterations; ++i) {
+  const auto delay = std::chrono::microseconds(config.delay_us);
+  for (int i = 0; i < config.request_nb; ++i) {
     std::this_thread::sleep_until(next_time);
     next_time += delay;
 

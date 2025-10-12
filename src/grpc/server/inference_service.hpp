@@ -3,6 +3,7 @@
 #include <grpcpp/grpcpp.h>
 #include <torch/torch.h>
 
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -53,6 +54,7 @@ class InferenceServiceImpl final
   struct LatencyBreakdown {
     double preprocess_ms = 0.0;
     double queue_ms = 0.0;
+    double batch_ms = 0.0;
     double submit_ms = 0.0;
     double scheduling_ms = 0.0;
     double codelet_ms = 0.0;
@@ -75,8 +77,9 @@ class InferenceServiceImpl final
 
   auto submit_job_async(
       const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
-      std::vector<std::shared_ptr<const void>> input_lifetimes = {})
-      -> grpc::Status;
+      std::vector<std::shared_ptr<const void>> input_lifetimes = {},
+      std::chrono::high_resolution_clock::time_point receive_time =
+          std::chrono::high_resolution_clock::now()) -> grpc::Status;
 
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
@@ -102,7 +105,7 @@ class InferenceServiceImpl final
   std::vector<at::ScalarType> expected_input_types_;
   std::vector<std::vector<int64_t>> expected_input_dims_;
   int max_batch_size_ = 0;
-  std::atomic<int> next_job_id_{0};
+  std::atomic<int> next_request_id_{0};
 };
 
 class AsyncServerContext {

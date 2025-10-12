@@ -71,7 +71,7 @@ RunWorkerThreadFailureCase(const std::filesystem::path& path)
   using namespace starpu_server;
 
   auto opts = make_single_model_runtime_config(path, {1}, at::kFloat);
-  opts.iterations = 1;
+  opts.request_nb = 1;
   opts.use_cuda = false;
 
   StarPUSetup starpu(opts);
@@ -175,7 +175,7 @@ TEST(RunInferenceLoop_Robustesse, LoadModelFailureHandledGracefully)
 
   auto opts = make_single_model_runtime_config(
       "nonexistent_model.pt", std::vector<int64_t>{1}, at::kFloat);
-  opts.iterations = 1;
+  opts.request_nb = 1;
   opts.use_cuda = false;
 
   StarPUSetup starpu(opts);
@@ -204,8 +204,8 @@ TEST_F(ConstantModelConfigTest, InvalidCudaDeviceLogsError)
   using namespace starpu_server;
 
   auto opts = cuda_config(std::vector<int>{-1});
-  opts.iterations = 1;
-  opts.warmup_iterations = 0;
+  opts.request_nb = 1;
+  opts.warmup_request_nb = 0;
 
   StarPUSetup starpu(opts);
 

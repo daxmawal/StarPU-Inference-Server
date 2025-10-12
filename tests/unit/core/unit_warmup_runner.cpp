@@ -15,28 +15,28 @@
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
 
-TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations_Unit)
+TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
 {
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
 
   runner->client_worker(device_workers, queue, 2);
 
-  std::vector<int> job_ids;
+  std::vector<int> request_ids;
   std::vector<int> worker_ids;
   for (;;) {
     std::shared_ptr<starpu_server::InferenceJob> job;
     if (!queue.wait_and_pop(job)) {
       break;
     }
-    job_ids.push_back(job->get_job_id());
+    request_ids.push_back(job->get_request_id());
     const int worker = job->get_fixed_worker_id().value_or(-1);
     ASSERT_NE(worker, -1);
     worker_ids.push_back(worker);
   }
 
-  ASSERT_EQ(job_ids.size(), 4U);
-  EXPECT_EQ(job_ids, (std::vector<int>{0, 1, 2, 3}));
+  ASSERT_EQ(request_ids.size(), 4U);
+  EXPECT_EQ(request_ids, (std::vector<int>{0, 1, 2, 3}));
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
 }
 
@@ -62,8 +62,8 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   opts.seed = 0;
   opts.warmup_pregen_inputs = 2;
   starpu_server::InferenceQueue queue_double;
-  constexpr int kDoubleIterations = 5;
-  runner->client_worker(device_workers, queue_double, kDoubleIterations);
+  constexpr int kDoublerequest_nb = 5;
+  runner->client_worker(device_workers, queue_double, kDoublerequest_nb);
 
   std::unordered_set<const void*> unique_double;
   for (;;) {
@@ -80,11 +80,11 @@ TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
 {
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
-  const int iterations = 1;
+  const int request_nb = 1;
 
   testing::internal::CaptureStderr();
   queue.shutdown();
-  runner->client_worker(device_workers, queue, iterations);
+  runner->client_worker(device_workers, queue, request_nb);
   const std::string captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);

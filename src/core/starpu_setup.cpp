@@ -269,7 +269,7 @@ run_codelet_inference(
         std::format(
             "{} device id {}, worker id {}, job id {}",
             (executed_on_type == DeviceType::CPU ? "CPU" : "GPU"), device_id,
-            worker_id, params->job_id));
+            worker_id, params->request_id));
   }
 
   if (params->device.executed_on) {
@@ -349,7 +349,7 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
   const int device_id = starpu_worker_get_devid(worker_id);
 
   NvtxRange nvtx_scope(
-      std::string("codelet.cuda job ") + std::to_string(params->job_id) +
+      std::string("codelet.cuda job ") + std::to_string(params->request_id) +
       " dev " + std::to_string(device_id));
 
   cudaStream_t stream = starpu_cuda_get_local_stream();

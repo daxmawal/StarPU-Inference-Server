@@ -92,7 +92,7 @@ handle_program_arguments(std::span<char const* const> args)
   log_info(cfg.verbosity, std::format("__cplusplus = {}", __cplusplus));
   log_info(cfg.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
   log_info(cfg.verbosity, std::format("Scheduler       : {}", cfg.scheduler));
-  log_info(cfg.verbosity, std::format("Iterations      : {}", cfg.iterations));
+  log_info(cfg.verbosity, std::format("Request_nb      : {}", cfg.request_nb));
 
   if (input_slots_override.has_value()) {
     cfg.input_slots = *input_slots_override;

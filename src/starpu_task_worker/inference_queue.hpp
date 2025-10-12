@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -35,6 +36,35 @@ class InferenceQueue {
   {
     std::unique_lock lock(mutex_);
     cv_.wait(lock, [this] { return !queue_.empty() || shutdown_; });
+    if (queue_.empty()) {
+      return false;
+    }
+    job = queue_.front();
+    queue_.pop();
+    set_queue_size(queue_.size());
+    return true;
+  }
+  [[nodiscard]] bool try_pop(std::shared_ptr<InferenceJob>& job)
+  {
+    const std::scoped_lock lock(mutex_);
+    if (queue_.empty()) {
+      return false;
+    }
+    job = queue_.front();
+    queue_.pop();
+    set_queue_size(queue_.size());
+    return true;
+  }
+  template <typename Rep, typename Period>
+  [[nodiscard]] bool wait_for_and_pop(
+      std::shared_ptr<InferenceJob>& job,
+      const std::chrono::duration<Rep, Period>& timeout)
+  {
+    std::unique_lock lock(mutex_);
+    if (!cv_.wait_for(
+            lock, timeout, [this] { return !queue_.empty() || shutdown_; })) {
+      return false;
+    }
     if (queue_.empty()) {
       return false;
     }

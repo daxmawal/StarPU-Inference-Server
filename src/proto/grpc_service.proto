@@ -837,11 +837,17 @@ message ModelInferResponse
 
   //@@  .. cpp:var:: double server_queue_ms
   //@@
-  //@@     Time spent waiting in the inference queue, expressed in
-  //@@     milliseconds. A higher value indicates contention on the
-  //@@     request queue.
+  //@@     Time spent in the scheduling queue before the request is
+  //@@     considered for batching, expressed in milliseconds.
   //@@
   double server_queue_ms = 9;
+
+  //@@  .. cpp:var:: double server_batch_ms
+  //@@
+  //@@     Time spent waiting for the batch to be assembled after the
+  //@@     first request is dequeued, expressed in milliseconds.
+  //@@
+  double server_batch_ms = 19;
 
   //@@  .. cpp:var:: double server_submit_ms
   //@@

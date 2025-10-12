@@ -23,12 +23,15 @@ namespace detail {
 struct TimingInfo {
   std::chrono::high_resolution_clock::time_point enqueued_time;
   std::chrono::high_resolution_clock::time_point dequeued_time;
+  std::chrono::high_resolution_clock::time_point batch_collect_start_time;
+  std::chrono::high_resolution_clock::time_point batch_collect_end_time;
   std::chrono::high_resolution_clock::time_point before_starpu_submitted_time;
   std::chrono::high_resolution_clock::time_point codelet_start_time;
   std::chrono::high_resolution_clock::time_point codelet_end_time;
   std::chrono::high_resolution_clock::time_point inference_start_time;
   std::chrono::high_resolution_clock::time_point callback_start_time;
   std::chrono::high_resolution_clock::time_point callback_end_time;
+  int submission_id = -1;
 };
 }  // namespace detail
 
@@ -42,7 +45,8 @@ struct InferenceResult {
   std::vector<torch::Tensor> results;
   double latency_ms = 0.0;
   detail::TimingInfo timing_info;
-  int job_id;
+  int request_id;
+  int submission_id = -1;
   int device_id = -1;
   int worker_id = -1;
   DeviceType executed_on = DeviceType::Unknown;
@@ -56,11 +60,17 @@ class InferenceQueue;
 
 class InferenceJob {
  public:
-  InferenceJob() = default;
+  struct AggregatedSubJob {
+    std::weak_ptr<InferenceJob> job;
+    std::function<void(const std::vector<torch::Tensor>&, double)> callback;
+    int64_t batch_size = 1;
+  };
+
+  InferenceJob() noexcept = default;
 
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-      int job_identifier,
+      int request_identifier,
       std::function<void(const std::vector<torch::Tensor>&, double)> callback =
           nullptr);
 
@@ -68,7 +78,7 @@ class InferenceJob {
 
   [[nodiscard]] auto is_shutdown() const -> bool { return is_shutdown_signal_; }
 
-  void set_job_id(int job_id) { job_id_ = job_id; }
+  void set_request_id(int request_id) { request_id_ = request_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
@@ -110,13 +120,17 @@ class InferenceJob {
     input_memory_holders_ = std::move(holders);
   }
 
+  void set_submission_id(int submission_id) { submission_id_ = submission_id; }
+
+  [[nodiscard]] auto submission_id() const -> int { return submission_id_; }
+
   [[nodiscard]] auto get_input_memory_holders() const
       -> const std::vector<std::shared_ptr<const void>>&
   {
     return input_memory_holders_;
   }
 
-  [[nodiscard]] auto get_job_id() const -> int { return job_id_; }
+  [[nodiscard]] auto get_request_id() const -> int { return request_id_; }
   [[nodiscard]] auto get_input_tensors() const
       -> const std::vector<torch::Tensor>&
   {
@@ -161,13 +175,36 @@ class InferenceJob {
 
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }
 
+  void set_logical_job_count(int count) { logical_job_count_ = count; }
+  [[nodiscard]] auto logical_job_count() const -> int
+  {
+    return logical_job_count_;
+  }
+
+  void set_aggregated_sub_jobs(std::vector<AggregatedSubJob> jobs)
+  {
+    aggregated_sub_jobs_ = std::move(jobs);
+  }
+
+  [[nodiscard]] auto aggregated_sub_jobs() const
+      -> const std::vector<AggregatedSubJob>&
+  {
+    return aggregated_sub_jobs_;
+  }
+
+  [[nodiscard]] auto has_aggregated_sub_jobs() const -> bool
+  {
+    return !aggregated_sub_jobs_.empty();
+  }
+
  private:
   std::vector<torch::Tensor> input_tensors_;
   std::vector<at::ScalarType> input_types_;
   std::vector<torch::Tensor> output_tensors_;
   std::vector<std::shared_ptr<const void>> input_memory_holders_;
 
-  int job_id_ = 0;
+  int request_id_ = 0;
+  int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
   std::function<void(const std::vector<torch::Tensor>&, double)> on_complete_;
   std::chrono::high_resolution_clock::time_point start_time_;
@@ -179,6 +216,8 @@ class InferenceJob {
   detail::TimingInfo timing_info_;
 
   bool is_shutdown_signal_ = false;
+  int logical_job_count_ = 1;
+  std::vector<AggregatedSubJob> aggregated_sub_jobs_;
 };
 
 // =============================================================================
@@ -193,7 +232,7 @@ void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 namespace detail {
 void client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
-    const std::vector<torch::Tensor>& outputs_ref, int iterations);
+    const std::vector<torch::Tensor>& outputs_ref, int request_nb);
 
 auto build_gpu_model_lookup(
     std::vector<torch::jit::script::Module>& models_gpu,

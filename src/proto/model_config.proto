@@ -1589,7 +1589,7 @@ message ModelSequenceBatching
   //@@  .. cpp:var:: bool iterative_sequence
   //@@
   //@@     Requests for iterative sequences are processed over a number
-  //@@     of iterations. An iterative sequence is initiated by a single
+  //@@     of request_nb. An iterative sequence is initiated by a single
   //@@     request and is "rescheduled" by the model until completion.
   //@@     Requests for inflight requests will be batched together
   //@@     and can complete independently. Note this feature
@@ -1764,7 +1764,7 @@ message ModelWarmup
 
   //@@  .. cpp:var:: uint32 count
   //@@
-  //@@     The number of iterations that this warmup sample will be executed.
+  //@@     The number of request_nb that this warmup sample will be executed.
   //@@     For example, if this field is set to 2, 2 model executions using this
   //@@     sample will be scheduled for warmup. Default value is 0 which
   //@@     indicates that this sample will be used only once.

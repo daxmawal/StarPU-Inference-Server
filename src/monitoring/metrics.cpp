@@ -496,13 +496,13 @@ MetricsRegistry::has_cpu_usage_provider() const -> bool
 }
 
 void
-MetricsRegistry::run_sampling_iteration()
+MetricsRegistry::run_sampling_request_nb()
 {
-  perform_sampling_iteration();
+  perform_sampling_request_nb();
 }
 
 void
-MetricsRegistry::perform_sampling_iteration()
+MetricsRegistry::perform_sampling_request_nb()
 {
   if (system_cpu_usage_percent != nullptr && cpu_usage_provider_) {
     try {
@@ -559,7 +559,7 @@ MetricsRegistry::sampling_loop(const std::stop_token& stop)
   using namespace std::chrono_literals;
   auto next_sleep = 1000ms;
   while (!stop.stop_requested()) {
-    perform_sampling_iteration();
+    perform_sampling_request_nb();
     for (auto slept = 0ms; slept < next_sleep && !stop.stop_requested();
          slept += 50ms) {
       std::this_thread::sleep_for(50ms);

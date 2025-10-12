@@ -172,7 +172,7 @@ InferenceTask::create_context(
 {
   auto params = create_inference_params();
   auto ctx = std::make_shared<InferenceCallbackContext>(
-      job_, std::move(params), opts_, job_->get_job_id(), inputs, outputs);
+      job_, std::move(params), opts_, job_->get_request_id(), inputs, outputs);
   ctx->dependencies = &dependencies_;
   return ctx;
 }
@@ -251,7 +251,7 @@ void
 InferenceTask::bind_runtime_job_info(
     const std::shared_ptr<InferenceParams>& params) const
 {
-  params->job_id = job_->get_job_id();
+  params->request_id = job_->get_request_id();
   params->device.executed_on = &job_->get_executed_on();
   params->device.device_id = &job_->get_device_id();
   params->device.worker_id = &job_->get_worker_id();
@@ -366,7 +366,7 @@ InferenceTask::create_task(
   task->cl_arg = ctx->inference_params.get();
   // task->cl_arg_size = sizeof(InferenceParams);
   task->priority =
-      std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_job_id());
+      std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());
 
   if (ctx != nullptr && ctx->dependencies == nullptr) {
     ctx->dependencies = &dependencies_;

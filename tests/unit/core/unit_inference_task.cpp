@@ -177,7 +177,7 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   auto params = task.create_inference_params();
   ASSERT_EQ(params->num_inputs, 1U);
   ASSERT_EQ(params->num_outputs, 1U);
-  EXPECT_EQ(params->job_id, 4);
+  EXPECT_EQ(params->request_id, 4);
   EXPECT_EQ(params->verbosity, opts_.verbosity);
   EXPECT_EQ(params->models.model_cpu, &model_cpu_);
   EXPECT_EQ(params->models.num_models_gpu, 0U);
