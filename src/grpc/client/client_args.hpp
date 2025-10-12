@@ -24,7 +24,7 @@ struct ClientConfig {
   std::string model_name = "example";
   std::string model_version = "1";
   int request_nb = 1;
-  int delay_ms = 0;
+  int delay_us = 0;
   VerbosityLevel verbosity = VerbosityLevel::Info;
   bool show_help = false;
   bool valid = true;

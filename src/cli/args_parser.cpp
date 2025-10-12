@@ -367,10 +367,10 @@ parse_verbose(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 static auto
 parse_delay(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& delay_ms = opts.delay_ms;
-  return expect_and_parse("--delay", idx, args, [&delay_ms](const char* val) {
-    delay_ms = std::stoi(val);
-    if (delay_ms < 0) {
+  auto& delay_us = opts.delay_us;
+  return expect_and_parse("--delay", idx, args, [&delay_us](const char* val) {
+    delay_us = std::stoi(val);
+    if (delay_us < 0) {
       throw std::invalid_argument("Must be >= 0.");
     }
   });

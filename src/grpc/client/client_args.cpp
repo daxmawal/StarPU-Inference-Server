@@ -54,7 +54,8 @@ display_client_help(const char* prog_name)
   std::cout
       << "Usage: " << prog_name << " [OPTIONS]\n"
       << "  --request-number N Number of requests to send (default: 1)\n"
-      << "  --delay MS        Delay between requests in ms (default: 0)\n"
+      << "  --delay US        Delay between requests in microseconds (default: "
+         "0)\n"
       << "  --shape WxHxC     Input tensor shape (e.g., 1x3x224x224)\n"
       << "  --type TYPE       Input tensor type (e.g., float32)\n"
       << "  --input NAME:SHAPE:TYPE  Specify an input (may be repeated)\n"
@@ -131,8 +132,8 @@ auto
 parse_delay(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&cfg](const char* val) {
-    cfg.delay_ms = std::stoi(val);
-    if (cfg.delay_ms < 0) {
+    cfg.delay_us = std::stoi(val);
+    if (cfg.delay_us < 0) {
       throw std::invalid_argument("Must be >= 0.");
     }
   });

@@ -157,8 +157,8 @@ void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["delay"]) {
-    cfg.delay_ms = root["delay"].as<int>();
-    if (cfg.delay_ms < 0) {
+    cfg.delay_us = root["delay"].as<int>();
+    if (cfg.delay_us < 0) {
       cfg.valid = false;
       throw std::invalid_argument("delay must be >= 0");
     }

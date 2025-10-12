@@ -63,7 +63,7 @@ inline auto
 make_client_worker_test_context() -> ClientWorkerTestContext
 {
   starpu_server::RuntimeConfig config{};
-  config.delay_ms = 0;
+  config.delay_us = 0;
   config.pregen_inputs = 1;
 
   starpu_server::TensorConfig tensor_cfg{

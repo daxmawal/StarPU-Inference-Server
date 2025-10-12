@@ -695,7 +695,7 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.delay_ms, 15);
+  EXPECT_EQ(cfg.delay_us, 15);
   EXPECT_EQ(cfg.server_address, "127.0.0.1:50051");
 }
 
@@ -737,7 +737,7 @@ delay: -10
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
-  EXPECT_EQ(cfg.delay_ms, 0);
+  EXPECT_EQ(cfg.delay_us, 0);
 }
 
 TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)

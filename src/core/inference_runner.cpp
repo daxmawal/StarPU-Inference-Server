@@ -145,7 +145,7 @@ client_worker(
       client_utils::pre_generate_inputs(opts, opts.pregen_inputs);
 
   auto next_time = std::chrono::steady_clock::now();
-  const auto delay = std::chrono::milliseconds(opts.delay_ms);
+  const auto delay = std::chrono::microseconds(opts.delay_us);
   for (auto request_id = 0; request_id < request_nb; ++request_id) {
     std::this_thread::sleep_until(next_time);
     next_time += delay;

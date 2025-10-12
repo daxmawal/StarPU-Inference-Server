@@ -33,7 +33,7 @@ TEST(ClientArgs, ParsesValidArguments)
   EXPECT_EQ(cfg.model_name, "my_model");
   EXPECT_EQ(cfg.model_version, "2");
   EXPECT_EQ(cfg.request_nb, 5);
-  EXPECT_EQ(cfg.delay_ms, 10);
+  EXPECT_EQ(cfg.delay_us, 10);
   EXPECT_EQ(cfg.verbosity, starpu_server::VerbosityLevel::Stats);
 }
 

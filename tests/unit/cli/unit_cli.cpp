@@ -125,7 +125,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.scheduler, "lws");
   EXPECT_EQ(opts.models[0].path, model);
   EXPECT_EQ(opts.request_nb, 5);
-  EXPECT_EQ(opts.delay_ms, 42);
+  EXPECT_EQ(opts.delay_us, 42);
   EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
   EXPECT_EQ(opts.server_address, "127.0.0.1:1234");
   EXPECT_EQ(opts.max_batch_size, 2);
