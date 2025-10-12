@@ -343,6 +343,9 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
   }
 
   jobs.push_back(first_job);
+  if (!opts_->dynamic_batching) {
+    return jobs;
+  }
   if (first_job->has_aggregated_sub_jobs() ||
       first_job->logical_job_count() > 1) {
     return jobs;
