@@ -116,6 +116,13 @@ parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("delay must be >= 0");
     }
   }
+  if (root["batch_coalesce_timeout_ms"]) {
+    cfg.batch_coalesce_timeout_ms = root["batch_coalesce_timeout_ms"].as<int>();
+    if (cfg.batch_coalesce_timeout_ms < 0) {
+      cfg.valid = false;
+      throw std::invalid_argument("batch_coalesce_timeout_ms must be >= 0");
+    }
+  }
   if (root["address"]) {
     cfg.server_address = root["address"].as<std::string>();
   }

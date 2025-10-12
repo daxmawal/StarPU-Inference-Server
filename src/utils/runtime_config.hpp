@@ -73,6 +73,7 @@ struct RuntimeConfig {
   VerbosityLevel verbosity = VerbosityLevel::Info;
   int request_nb = 1;
   int delay_ms = 0;
+  int batch_coalesce_timeout_ms = 0;
   int max_batch_size = 1;
   int input_slots = 0;
   std::size_t max_message_bytes = 32 * 1024 * 1024;
