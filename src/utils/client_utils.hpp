@@ -22,7 +22,7 @@ auto pick_random_input(
     std::mt19937& rng) -> const std::vector<torch::Tensor>&;
 
 void log_job_enqueued(
-    const RuntimeConfig& opts, int request_id, int iterations,
+    const RuntimeConfig& opts, int request_id, int request_nb,
     std::chrono::high_resolution_clock::time_point now);
 
 auto create_job(

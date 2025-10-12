@@ -194,17 +194,17 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
   starpu_server::RuntimeConfig opts;
   opts.verbosity = starpu_server::VerbosityLevel::Trace;
   const int request_id = 2;
-  const int iterations = 5;
+  const int request_nb = 5;
   auto now = std::chrono::high_resolution_clock::now();
   starpu_server::CaptureStream capture{std::cout};
   starpu_server::client_utils::log_job_enqueued(
-      opts, request_id, iterations, now);
+      opts, request_id, request_nb, now);
   auto timestamp = starpu_server::time_utils::format_timestamp(now);
   std::string expected = expected_log_line(
       starpu_server::VerbosityLevel::Trace,
       std::format(
           "[Inference] Request ID {} Iteration {}/{} Enqueued at {}",
-          request_id, request_id + 1, iterations, timestamp));
+          request_id, request_id + 1, request_nb, timestamp));
   EXPECT_EQ(capture.str(), expected);
 }
 

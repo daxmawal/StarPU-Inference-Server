@@ -13,7 +13,7 @@
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_warmup_runner.hpp"
 
-TEST_F(WarmupRunnerTest, WarmupRunnerRunNegativeIterations_Robustesse)
+TEST_F(WarmupRunnerTest, WarmupRunnerRunNegativeRequestNbRobustesse)
 {
   init(true);
   EXPECT_THROW(runner->run(-1), std::invalid_argument);
@@ -28,7 +28,7 @@ TEST_F(
   EXPECT_THROW(runner->run(1), starpu_server::InferenceExecutionException);
 }
 
-class WarmupRunnerClientWorkerInvalidIterations_Robustesse
+class WarmupRunnerClientWorkerInvalidRequestNb_Robustesse
     : public WarmupRunnerTest,
       public ::testing::WithParamInterface<std::pair<int, bool>> {};
 
@@ -37,10 +37,10 @@ void
 ExpectClientWorkerThrows(
     starpu_server::WarmupRunner& runner,
     const std::map<int, std::vector<int32_t>>& device_workers,
-    starpu_server::InferenceQueue& queue, int iterations, bool expect_overflow)
+    starpu_server::InferenceQueue& queue, int request_nb, bool expect_overflow)
 {
   try {
-    runner.client_worker(device_workers, queue, iterations);
+    runner.client_worker(device_workers, queue, request_nb);
     ADD_FAILURE() << "Expected exception not thrown";
   }
   catch (const std::overflow_error&) {
@@ -53,19 +53,19 @@ ExpectClientWorkerThrows(
 }  // namespace
 
 TEST_P(
-    WarmupRunnerClientWorkerInvalidIterations_Robustesse,
-    ThrowsOnInvalidIterations)
+    WarmupRunnerClientWorkerInvalidRequestNb_Robustesse,
+    ThrowsOnInvalidRequestNb)
 {
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
-  auto [iterations, expect_overflow] = GetParam();
+  auto [request_nb, expect_overflow] = GetParam();
   ExpectClientWorkerThrows(
-      *runner, device_workers, queue, iterations, expect_overflow);
+      *runner, device_workers, queue, request_nb, expect_overflow);
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    ClientWorkerInvalidIterationTests_Robustesse,
-    WarmupRunnerClientWorkerInvalidIterations_Robustesse,
+    ClientWorkerInvalidRequestNbTests_Robustesse,
+    WarmupRunnerClientWorkerInvalidRequestNb_Robustesse,
     ::testing::Values(
         std::make_pair(-1, false),
         std::make_pair(std::numeric_limits<int>::max(), true)));
@@ -76,10 +76,10 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow_Robustesse)
   fixture.init();
   auto runner = fixture.make_runner();
 
-  const int iterations = 1000;
+  const int request_nb = 1000;
   const size_t worker_count =
       static_cast<size_t>(std::numeric_limits<int>::max()) /
-          static_cast<size_t>(iterations) +
+          static_cast<size_t>(request_nb) +
       1;
 
   std::vector<int32_t> many_workers(worker_count, 0);
@@ -87,6 +87,6 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow_Robustesse)
   starpu_server::InferenceQueue queue;
 
   EXPECT_THROW(
-      runner.client_worker(device_workers, queue, iterations),
+      runner.client_worker(device_workers, queue, request_nb),
       std::overflow_error);
 }

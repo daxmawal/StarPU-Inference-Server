@@ -15,7 +15,7 @@
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
 
-TEST_F(WarmupRunnerTest, ClientWorkerPositiveIterations_Unit)
+TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
 {
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
@@ -62,8 +62,8 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   opts.seed = 0;
   opts.warmup_pregen_inputs = 2;
   starpu_server::InferenceQueue queue_double;
-  constexpr int kDoubleIterations = 5;
-  runner->client_worker(device_workers, queue_double, kDoubleIterations);
+  constexpr int kDoublerequest_nb = 5;
+  runner->client_worker(device_workers, queue_double, kDoublerequest_nb);
 
   std::unordered_set<const void*> unique_double;
   for (;;) {
@@ -80,11 +80,11 @@ TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
 {
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
-  const int iterations = 1;
+  const int request_nb = 1;
 
   testing::internal::CaptureStderr();
   queue.shutdown();
-  runner->client_worker(device_workers, queue, iterations);
+  runner->client_worker(device_workers, queue, request_nb);
   const std::string captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);

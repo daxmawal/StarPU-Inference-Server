@@ -53,7 +53,7 @@ display_client_help(const char* prog_name)
 {
   std::cout
       << "Usage: " << prog_name << " [OPTIONS]\n"
-      << "  --iterations N    Number of requests to send (default: 1)\n"
+      << "  --request-number N Number of requests to send (default: 1)\n"
       << "  --delay MS        Delay between requests in ms (default: 0)\n"
       << "  --shape WxHxC     Input tensor shape (e.g., 1x3x224x224)\n"
       << "  --type TYPE       Input tensor type (e.g., float32)\n"
@@ -115,7 +115,7 @@ expect_and_parse(size_t& idx, std::span<const char*> args, Func&& parser)
 // =============================================================================
 
 auto
-parse_iterations(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
+parse_request_nb(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
     -> bool
 {
   return expect_and_parse(idx, args, [&cfg](const char* val) {
@@ -123,7 +123,7 @@ parse_iterations(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
     if (tmp <= 0) {
       throw std::invalid_argument("Must be > 0.");
     }
-    cfg.iterations = tmp;
+    cfg.request_nb = tmp;
   });
 }
 
@@ -235,10 +235,14 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       std::string, bool (*)(ClientConfig&, size_t&, std::span<const char*>),
       TransparentHash, std::equal_to<>>
       dispatch = {
-          {"--iterations", parse_iterations}, {"--delay", parse_delay},
-          {"--shape", parse_shape},           {"--type", parse_type},
-          {"--input", parse_input},           {"--server", parse_server},
-          {"--model", parse_model},           {"--version", parse_version},
+          {"--request-number", parse_request_nb},
+          {"--delay", parse_delay},
+          {"--shape", parse_shape},
+          {"--type", parse_type},
+          {"--input", parse_input},
+          {"--server", parse_server},
+          {"--model", parse_model},
+          {"--version", parse_version},
           {"--verbose", parse_verbose},
       };
 

@@ -231,7 +231,7 @@ void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 namespace detail {
 void client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
-    const std::vector<torch::Tensor>& outputs_ref, int iterations);
+    const std::vector<torch::Tensor>& outputs_ref, int request_nb);
 
 auto build_gpu_model_lookup(
     std::vector<torch::jit::script::Module>& models_gpu,

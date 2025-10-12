@@ -131,7 +131,7 @@ namespace detail {
 void
 client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
-    const std::vector<torch::Tensor>& outputs_ref, const int iterations)
+    const std::vector<torch::Tensor>& outputs_ref, const int request_nb)
 {
   thread_local std::mt19937 rng;
   if (opts.seed) {
@@ -146,13 +146,13 @@ client_worker(
 
   auto next_time = std::chrono::steady_clock::now();
   const auto delay = std::chrono::milliseconds(opts.delay_ms);
-  for (auto request_id = 0; request_id < iterations; ++request_id) {
+  for (auto request_id = 0; request_id < request_nb; ++request_id) {
     std::this_thread::sleep_until(next_time);
     next_time += delay;
     const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
     auto job = client_utils::create_job(inputs, outputs_ref, request_id);
     client_utils::log_job_enqueued(
-        opts, request_id, iterations, job->timing_info().enqueued_time);
+        opts, request_id, request_nb, job->timing_info().enqueued_time);
     if (!queue.push(job)) {
       log_warning(std::format(
           "[Client] Failed to enqueue job {}: queue shutting down",
@@ -285,20 +285,20 @@ run_warmup(
     const std::vector<torch::Tensor>& outputs_ref)
 {
   NvtxRange nvtx_scope("warmup");
-  if (!opts.use_cuda || opts.warmup_iterations <= 0) {
+  if (!opts.use_cuda || opts.warmup_request_nb <= 0) {
     return;
   }
 
-  const int warmup_iterations =
-      std::max(opts.warmup_iterations, opts.max_batch_size);
+  const int warmup_request_nb =
+      std::max(opts.warmup_request_nb, opts.max_batch_size);
   log_info(
       opts.verbosity, std::format(
-                          "Starting warmup with {} iterations per CUDA device "
+                          "Starting warmup with {} request_nb per CUDA device "
                           "(enforcing max_batch_size)...",
-                          warmup_iterations));
+                          warmup_request_nb));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
-  warmup_runner.run(warmup_iterations);
+  warmup_runner.run(warmup_request_nb);
 
   log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 }
@@ -445,8 +445,8 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   std::vector<InferenceResult> results;
   std::mutex results_mutex;
 
-  if (opts.iterations > 0) {
-    results.reserve(static_cast<size_t>(opts.iterations));
+  if (opts.request_nb > 0) {
+    results.reserve(static_cast<size_t>(opts.request_nb));
   }
 
   std::atomic completed_jobs = 0;
@@ -470,7 +470,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   try {
     server = get_worker_thread_launcher()(worker);
     client = std::jthread([&queue, &opts, &outputs_ref]() {
-      detail::client_worker(queue, opts, outputs_ref, opts.iterations);
+      detail::client_worker(queue, opts, outputs_ref, opts.request_nb);
     });
   }
   catch (const std::exception& e) {
@@ -488,7 +488,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   {
     std::unique_lock lock(all_done_mutex);
     all_done_cv.wait(lock, [&completed_jobs, &opts]() {
-      return completed_jobs.load(std::memory_order_acquire) >= opts.iterations;
+      return completed_jobs.load(std::memory_order_acquire) >= opts.request_nb;
     });
   }
 

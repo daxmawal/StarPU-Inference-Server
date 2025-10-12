@@ -88,7 +88,7 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers_Integration)
   EXPECT_EQ(completed.load(), total_jobs);
 }
 
-TEST_F(WarmupRunnerTest, WarmupRunnerRunZeroIterations_Integration)
+TEST_F(WarmupRunnerTest, WarmupRunnerRunZeroRequestNb_Integration)
 {
   init(true);
   auto elapsed_ms = measure_ms([&]() { runner->run(0); });

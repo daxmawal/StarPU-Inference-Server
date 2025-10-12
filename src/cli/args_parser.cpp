@@ -291,17 +291,17 @@ parse_config(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 }
 
 static auto
-parse_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+parse_request_nb(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& iterations = opts.iterations;
+  auto& request_nb = opts.request_nb;
   return expect_and_parse(
-      "--iterations", idx, args, [&iterations](const char* val) {
+      "--request-number", idx, args, [&request_nb](const char* val) {
         const auto tmp = std::stoi(val);
         if (tmp <= 0) {
           throw std::invalid_argument("Must be > 0.");
         }
-        iterations = tmp;
+        request_nb = tmp;
       });
 }
 
@@ -552,12 +552,12 @@ parse_warmup_pregen_inputs(
 }
 
 static auto
-parse_warmup_iterations(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
+parse_warmup_request_nb(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& warmup = opts.warmup_iterations;
+  auto& warmup = opts.warmup_request_nb;
   return expect_and_parse(
-      "--warmup-iterations", idx, args, [&warmup](const char* val) {
+      "--warmup-request_nb", idx, args, [&warmup](const char* val) {
         const auto tmp = std::stoi(val);
         if (tmp < 0) {
           throw std::invalid_argument("Must be >= 0.");
@@ -628,7 +628,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--config", parse_config},
           {"-c", parse_config},
           {"--model", parse_model},
-          {"--iterations", parse_iterations},
+          {"--request-number", parse_request_nb},
           {"--shape", parse_shape},
           {"--shapes", parse_shapes},
           {"--types", parse_types},
@@ -643,7 +643,7 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
           {"--slots", parse_slots_alias},
           {"--pregen-inputs", parse_pregen_inputs},
           {"--warmup-pregen-inputs", parse_warmup_pregen_inputs},
-          {"--warmup-iterations", parse_warmup_iterations},
+          {"--warmup-request_nb", parse_warmup_request_nb},
           {"--seed", parse_seed},
           {"--rtol", parse_rtol},
           {"--atol", parse_atol},

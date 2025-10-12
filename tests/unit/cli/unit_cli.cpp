@@ -89,7 +89,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
       "1x3x224x224,2x1",
       "--types",
       "float,int",
-      "--iterations",
+      "--request-number",
       "5",
       "--verbose",
       "3",
@@ -105,7 +105,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
       "7",
       "--warmup-pregen-inputs",
       "5",
-      "--warmup-iterations",
+      "--warmup-request_nb",
       "3",
       "--seed",
       "123",
@@ -124,14 +124,14 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.scheduler, "lws");
   EXPECT_EQ(opts.models[0].path, model);
-  EXPECT_EQ(opts.iterations, 5);
+  EXPECT_EQ(opts.request_nb, 5);
   EXPECT_EQ(opts.delay_ms, 42);
   EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
   EXPECT_EQ(opts.server_address, "127.0.0.1:1234");
   EXPECT_EQ(opts.max_batch_size, 2);
   EXPECT_EQ(opts.pregen_inputs, 7U);
   EXPECT_EQ(opts.warmup_pregen_inputs, 5U);
-  EXPECT_EQ(opts.warmup_iterations, 3);
+  EXPECT_EQ(opts.warmup_request_nb, 3);
   ASSERT_TRUE(opts.seed.has_value());
   EXPECT_EQ(opts.seed, 123U);
   EXPECT_TRUE(opts.validate_results);

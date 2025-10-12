@@ -357,12 +357,12 @@ TEST(InferenceRunner_Unit, ClientWorkerStopsWhenQueuePushFails)
   auto& opts = context.config;
   auto& queue = context.queue;
   const auto& outputs_ref = context.outputs_reference;
-  opts.iterations = 1;
+  opts.request_nb = 1;
 
   testing::internal::CaptureStderr();
   queue.shutdown();
   starpu_server::detail::client_worker(
-      queue, opts, outputs_ref, opts.iterations);
+      queue, opts, outputs_ref, opts.request_nb);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);

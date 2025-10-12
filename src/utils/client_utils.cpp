@@ -76,7 +76,7 @@ pick_random_input(
 
 void
 log_job_enqueued(
-    const RuntimeConfig& opts, int request_id, int iterations,
+    const RuntimeConfig& opts, int request_id, int request_nb,
     std::chrono::high_resolution_clock::time_point now)
 {
   if (should_log(VerbosityLevel::Trace, opts.verbosity)) {
@@ -84,7 +84,7 @@ log_job_enqueued(
         opts.verbosity,
         std::format(
             "[Inference] Request ID {} Iteration {}/{} Enqueued at {}",
-            request_id, request_id + 1, iterations,
+            request_id, request_id + 1, request_nb,
             current_time_formatted(now)));
   }
 }

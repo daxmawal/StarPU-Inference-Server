@@ -23,7 +23,7 @@ TEST(ClientArgs, ParsesValidArguments)
   auto argv = std::to_array<const char*>(
       {"prog", "--input", "input:1x3x224x224:float32", "--server",
        "localhost:1234", "--model", "my_model", "--version", "2",
-       "--iterations", "5", "--delay", "10", "--verbose", "2"});
+       "--request-number", "5", "--delay", "10", "--verbose", "2"});
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_TRUE(cfg.valid);
   ASSERT_EQ(cfg.inputs.size(), 1U);
@@ -32,7 +32,7 @@ TEST(ClientArgs, ParsesValidArguments)
   EXPECT_EQ(cfg.server_address, "localhost:1234");
   EXPECT_EQ(cfg.model_name, "my_model");
   EXPECT_EQ(cfg.model_version, "2");
-  EXPECT_EQ(cfg.iterations, 5);
+  EXPECT_EQ(cfg.request_nb, 5);
   EXPECT_EQ(cfg.delay_ms, 10);
   EXPECT_EQ(cfg.verbosity, starpu_server::VerbosityLevel::Stats);
 }
@@ -167,7 +167,7 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
   testing::internal::CaptureStdout();
   starpu_server::display_client_help("prog");
   const std::string out = testing::internal::GetCapturedStdout();
-  EXPECT_NE(out.find("--iterations"), std::string::npos);
+  EXPECT_NE(out.find("--request-number"), std::string::npos);
   EXPECT_NE(out.find("--delay"), std::string::npos);
   EXPECT_NE(out.find("--shape"), std::string::npos);
   EXPECT_NE(out.find("--type"), std::string::npos);

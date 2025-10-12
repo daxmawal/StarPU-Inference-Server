@@ -48,7 +48,7 @@ WarmupRunner::WarmupRunner(
 void
 WarmupRunner::client_worker(
     const std::map<int, std::vector<int32_t>>& device_workers,
-    InferenceQueue& queue, int iterations_per_worker) const
+    InferenceQueue& queue, int request_nb_per_worker) const
 {
   thread_local std::mt19937 rng;
   if (opts_.seed) {
@@ -61,8 +61,8 @@ WarmupRunner::client_worker(
   auto pregen_inputs =
       client_utils::pre_generate_inputs(opts_, opts_.warmup_pregen_inputs);
 
-  if (iterations_per_worker < 0) {
-    throw std::invalid_argument("iterations_per_worker must be non-negative");
+  if (request_nb_per_worker < 0) {
+    throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
   const size_t total_size_t =
@@ -71,7 +71,7 @@ WarmupRunner::client_worker(
           [](std::size_t sum, const auto& pair) {
             return sum + pair.second.size();
           }) *
-      static_cast<std::size_t>(iterations_per_worker);
+      static_cast<std::size_t>(request_nb_per_worker);
 
   if (total_size_t > static_cast<size_t>(std::numeric_limits<int>::max())) {
     throw std::overflow_error("Total exceeds int capacity");
@@ -82,7 +82,8 @@ WarmupRunner::client_worker(
 
   for (const auto& [device_id, worker_ids] : device_workers) {
     for (const int worker_id : worker_ids) {
-      for (auto iteration = 0; iteration < iterations_per_worker; ++iteration) {
+      for (auto request_nb = 0; request_nb < request_nb_per_worker;
+           ++request_nb) {
         const auto& inputs =
             client_utils::pick_random_input(pregen_inputs, rng);
         auto job = client_utils::create_job(inputs, outputs_ref_, request_id);
@@ -111,10 +112,10 @@ WarmupRunner::client_worker(
 // =============================================================================
 
 void
-WarmupRunner::run(int iterations_per_worker)
+WarmupRunner::run(int request_nb_per_worker)
 {
-  if (iterations_per_worker < 0) {
-    throw std::invalid_argument("iterations_per_worker must be non-negative");
+  if (request_nb_per_worker < 0) {
+    throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
   if (!opts_.use_cuda) {
@@ -146,7 +147,7 @@ WarmupRunner::run(int iterations_per_worker)
       StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);
 
   const std::jthread client(
-      [&]() { client_worker(device_workers, queue, iterations_per_worker); });
+      [&]() { client_worker(device_workers, queue, request_nb_per_worker); });
 
   size_t total_worker_count = 0;
   for (const auto& [device_id, worker_list] : device_workers) {
@@ -156,7 +157,7 @@ WarmupRunner::run(int iterations_per_worker)
   {
     std::unique_lock lock(dummy_mutex);
     const size_t total_jobs =
-        static_cast<size_t>(iterations_per_worker) * total_worker_count;
+        static_cast<size_t>(request_nb_per_worker) * total_worker_count;
     dummy_cv.wait(lock, [this, total_jobs, &dummy_completed_jobs]() {
       if (completion_observer_) {
         completion_observer_(dummy_completed_jobs);

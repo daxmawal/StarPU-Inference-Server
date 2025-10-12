@@ -71,14 +71,14 @@ struct RuntimeConfig {
   std::vector<ModelConfig> models;
 
   VerbosityLevel verbosity = VerbosityLevel::Info;
-  int iterations = 1;
+  int request_nb = 1;
   int delay_ms = 0;
   int max_batch_size = 1;
   int input_slots = 0;
   std::size_t max_message_bytes = 32 * 1024 * 1024;
   size_t pregen_inputs = 10;
   size_t warmup_pregen_inputs = 2;
-  int warmup_iterations = 2;
+  int warmup_request_nb = 2;
   double rtol = 1e-3;
   double atol = 1e-5;
   bool validate_results = true;

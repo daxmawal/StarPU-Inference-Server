@@ -72,10 +72,10 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt},
     InvalidConfigCase{
-        "NegativeIterationsSetsValidFalse",
+        "NegativeRequestNbSetsValidFalse",
         [] {
           auto yaml = base_model_yaml();
-          yaml += "iterations: -1\n";
+          yaml += "request_nb: -1\n";
           return yaml;
         }(),
         std::nullopt},
@@ -338,7 +338,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "dynamic_batching: true\n";
   yaml << "pregen_inputs: 8\n";
   yaml << "warmup_pregen_inputs: 5\n";
-  yaml << "warmup_iterations: 3\n";
+  yaml << "warmup_request_nb: 3\n";
   yaml << "seed: 123\n";
   yaml << "validate_results: false\n";
 
@@ -366,7 +366,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_TRUE(cfg.dynamic_batching);
   EXPECT_EQ(cfg.pregen_inputs, 8U);
   EXPECT_EQ(cfg.warmup_pregen_inputs, 5U);
-  EXPECT_EQ(cfg.warmup_iterations, 3);
+  EXPECT_EQ(cfg.warmup_request_nb, 3);
   const bool has_seed = cfg.seed.has_value();
   ASSERT_TRUE(has_seed);
   const auto seed_value = cfg.seed.value_or(0U);
@@ -614,7 +614,7 @@ INSTANTIATE_TEST_SUITE_P(
         NegativeValueCase{
             "warmup_pregen_inputs", "0", "warmup_pregen_inputs must be > 0"},
         NegativeValueCase{
-            "warmup_iterations", "-1", "warmup_iterations must be >= 0"},
+            "warmup_request_nb", "-1", "warmup_request_nb must be >= 0"},
         NegativeValueCase{"seed", "-1", "seed must be >= 0"},
         NegativeValueCase{"rtol", "-1.0", "rtol must be >= 0"},
         NegativeValueCase{"atol", "-1.0", "atol must be >= 0"}));

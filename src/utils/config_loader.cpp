@@ -74,12 +74,12 @@ parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
 }
 
 void
-parse_iteration_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
+parse_request_nb_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["iterations"]) {
-    cfg.iterations = root["iterations"].as<int>();
-    if (cfg.iterations < 0) {
-      log_error("iterations must be >= 0");
+  if (root["request_nb"]) {
+    cfg.request_nb = root["request_nb"].as<int>();
+    if (cfg.request_nb < 0) {
+      log_error("request_nb must be >= 0");
       cfg.valid = false;
     }
   }
@@ -174,12 +174,12 @@ parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
     }
     cfg.warmup_pregen_inputs = static_cast<size_t>(tmp);
   }
-  if (root["warmup_iterations"]) {
-    const int tmp = root["warmup_iterations"].as<int>();
+  if (root["warmup_request_nb"]) {
+    const int tmp = root["warmup_request_nb"].as<int>();
     if (tmp < 0) {
-      throw std::invalid_argument("warmup_iterations must be >= 0");
+      throw std::invalid_argument("warmup_request_nb must be >= 0");
     }
-    cfg.warmup_iterations = tmp;
+    cfg.warmup_request_nb = tmp;
   }
 }
 
@@ -289,7 +289,7 @@ load_config(const std::string& path) -> RuntimeConfig
     }
     parse_scheduler_node(root, cfg);
     parse_model_node(root, cfg);
-    parse_iteration_and_devices(root, cfg);
+    parse_request_nb_and_devices(root, cfg);
     parse_io_nodes(root, cfg);
     parse_network_and_delay(root, cfg);
     parse_message_and_batching(root, cfg);

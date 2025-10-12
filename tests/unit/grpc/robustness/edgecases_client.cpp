@@ -24,11 +24,11 @@ TEST(ClientArgs, MissingValueMarksConfigInvalid)
   EXPECT_FALSE(cfg.valid);
 }
 
-TEST(ClientArgs, NegativeIterationsMarkedInvalid)
+TEST(ClientArgs, NegativeRequestNbMarkedInvalid)
 {
   constexpr std::size_t kArgc = 5;
   std::array<const char*, kArgc> argv = {
-      "prog", "--shape", "1", "--iterations", "-3"};
+      "prog", "--shape", "1", "--request-number", "-3"};
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_FALSE(cfg.valid);
 }

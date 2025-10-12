@@ -162,7 +162,7 @@ run_add_one_inference_loop(
   opts.models.resize(1);
   opts.models[0].path = model_file.path().string();
   opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
-  opts.iterations = 1;
+  opts.request_nb = 1;
   opts.use_cpu = use_cpu;
   opts.use_cuda = use_cuda;
   opts.validate_results = validate_results;
