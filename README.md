@@ -59,9 +59,9 @@ The project currently provides three entry points for documentation:
    `0.0.0.0:50051`) and monitor Prometheus metrics on port 9090.
 
 [ci-badge]:
-  https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg
+  https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg?branch=main
 [ci-url]:
-  https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml
+  https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml?query=branch%3Amain
 [codecov-badge]:
   https://codecov.io/github/daxmawal/StarPU-Inference-Server/graph/badge.svg?token=WV7HQ2N4T6
 [codecov-url]:
