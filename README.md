@@ -31,11 +31,32 @@ asynchronous and heterogeneous execution.
 - [ ] Multithreaded server to receive inference requests
 - [ ] Dynamic batching algorithm for improved throughput
 
-###### Example Usage
+## Documentation
 
-```bash
-Coming soon
-```
+The project currently provides three entry points for documentation:
+
+- [Installation Guide](docs/installation.md) – toolchain and dependency setup.
+- [Configuration Reference](docs/configuration.md) – YAML schema and
+  runtime options.
+- [Usage Guide](docs/usage.md) – running the server and using the CLI.
+
+## Quick Start
+
+1. Follow the [Installation Guide](docs/installation.md) to install
+   StarPU, LibTorch, gRPC, and the remaining dependencies.
+2. Create a configuration file describing your TorchScript model inputs
+   and outputs. See the [Configuration Reference](docs/configuration.md)
+   for all available options.
+3. Build and run the server:
+
+   ```bash
+   cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/libtorch
+   cmake --build build
+   ./build/starpu_server --config path/to/config.yaml
+   ```
+
+4. Point your gRPC client to the configured address (defaults to
+   `0.0.0.0:50051`) and monitor Prometheus metrics on port 9090.
 
 [ci-badge]:
   https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg
