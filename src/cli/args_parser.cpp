@@ -377,42 +377,43 @@ static auto
 parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  const bool parsed =
-      expect_and_parse("--device-ids", idx, args, [&opts](const char* val) {
-        opts.use_cuda = true;
-        std::stringstream shape_stream(val);
-        std::string id_str;
-        while (std::getline(shape_stream, id_str, ',')) {
-          const int device_id = std::stoi(id_str);
-          if (device_id < 0) {
-            throw std::invalid_argument("Must be >= 0.");
-          }
-          opts.device_ids.push_back(device_id);
-        }
-        if (opts.device_ids.empty()) {
-          throw std::invalid_argument("No device IDs provided.");
-        }
-      });
-
-  if (!parsed) {
+  if (const bool parsed = expect_and_parse(
+          "--device-ids", idx, args,
+          [&opts](const char* val) {
+            opts.use_cuda = true;
+            std::stringstream shape_stream(val);
+            std::string id_str;
+            while (std::getline(shape_stream, id_str, ',')) {
+              const int device_id = std::stoi(id_str);
+              if (device_id < 0) {
+                throw std::invalid_argument("Must be >= 0.");
+              }
+              opts.device_ids.push_back(device_id);
+            }
+            if (opts.device_ids.empty()) {
+              throw std::invalid_argument("No device IDs provided.");
+            }
+          });
+      !parsed) {
     return false;
   }
 
-  std::unordered_set<int> unique_ids(
-      opts.device_ids.begin(), opts.device_ids.end());
-  if (unique_ids.size() != opts.device_ids.size()) {
+  if (const std::unordered_set<int> unique_ids(
+          opts.device_ids.begin(), opts.device_ids.end());
+      unique_ids.size() != opts.device_ids.size()) {
     log_error("Duplicate device IDs provided.");
     return false;
   }
 
-  const int device_count =
+  const auto device_count =
       static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
 
-  const auto invalid_it = std::ranges::find_if(
-      opts.device_ids, [device_count](const int device_id) noexcept {
-        return device_id >= device_count;
-      });
-  if (invalid_it != opts.device_ids.end()) {
+  if (const auto invalid_it = std::ranges::find_if(
+          opts.device_ids,
+          [device_count](const int device_id) noexcept {
+            return device_id >= device_count;
+          });
+      invalid_it != opts.device_ids.end()) {
     log_error(std::format(
         "GPU ID {} out of range. Only {} device(s) available.", *invalid_it,
         device_count));
@@ -689,9 +690,8 @@ validate_config(RuntimeConfig& opts) -> void
           [](const auto& tensor) { return !tensor.dims.empty(); });
   const bool have_types =
       !opts.models.empty() &&
-      std::all_of(
-          opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
-          [](const auto& tensor) {
+      std::ranges::all_of(
+          opts.models[0].inputs, [](const auto& tensor) noexcept {
             return tensor.type != at::ScalarType::Undefined;
           });
   check_required(have_shapes, "--shape or --shapes", missing);
