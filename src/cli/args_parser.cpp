@@ -192,10 +192,9 @@ parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   }
 
   TensorConfig tensor_config{};
-  tensor_config.name = name.empty()
-                           ? (std::string("input") +
-                              std::to_string(opts.models[0].inputs.size()))
-                           : name;
+  tensor_config.name =
+      name.empty() ? std::format("input{}", opts.models[0].inputs.size())
+                   : name;
   tensor_config.dims = std::move(dims);
   tensor_config.type = dtype;
   opts.models[0].inputs.push_back(std::move(tensor_config));
@@ -327,9 +326,8 @@ parse_shapes(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
     auto dims_list = parse_shapes_string(val);
     inputs.resize(dims_list.size());
     for (size_t i = 0; i < dims_list.size(); ++i) {
-      inputs[i].name = inputs[i].name.empty()
-                           ? std::string("input") + std::to_string(i)
-                           : inputs[i].name;
+      inputs[i].name =
+          inputs[i].name.empty() ? std::format("input{}", i) : inputs[i].name;
       inputs[i].dims = std::move(dims_list[i]);
     }
   });
@@ -346,9 +344,8 @@ parse_types(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
       inputs.resize(types.size());
     }
     for (size_t i = 0; i < types.size(); ++i) {
-      inputs[i].name = inputs[i].name.empty()
-                           ? std::string("input") + std::to_string(i)
-                           : inputs[i].name;
+      inputs[i].name =
+          inputs[i].name.empty() ? std::format("input{}", i) : inputs[i].name;
       inputs[i].type = types[i];
     }
   });
