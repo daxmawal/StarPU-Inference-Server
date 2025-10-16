@@ -53,9 +53,27 @@ class CuDnnBenchmarkGuard {
   }
 
   CuDnnBenchmarkGuard(const CuDnnBenchmarkGuard&) = delete;
-  CuDnnBenchmarkGuard(CuDnnBenchmarkGuard&&) = default;
+  CuDnnBenchmarkGuard(CuDnnBenchmarkGuard&& other) noexcept
+      : previous_(other.previous_), active_(other.active_)
+  {
+    other.active_ = false;
+  }
   auto operator=(const CuDnnBenchmarkGuard&) -> CuDnnBenchmarkGuard& = delete;
-  auto operator=(CuDnnBenchmarkGuard&&) -> CuDnnBenchmarkGuard& = default;
+  auto operator=(CuDnnBenchmarkGuard&& other) noexcept -> CuDnnBenchmarkGuard&
+  {
+    if (this != &other) {
+      if (active_) {
+        at::globalContext().setBenchmarkCuDNN(previous_);
+      }
+      previous_ = other.previous_;
+      active_ = other.active_;
+      if (active_) {
+        at::globalContext().setBenchmarkCuDNN(true);
+      }
+      other.active_ = false;
+    }
+    return *this;
+  }
 
   ~CuDnnBenchmarkGuard()
   {
