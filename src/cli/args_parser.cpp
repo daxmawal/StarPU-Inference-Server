@@ -116,7 +116,7 @@ parse_types_string(const std::string& types_str) -> std::vector<at::ScalarType>
     try {
       types.push_back(string_to_scalar_type(type_str));
     }
-    catch (const std::invalid_argument& e) {
+    catch (const std::invalid_argument&) {
       throw std::invalid_argument(std::string{"Unsupported type: "} + type_str);
     }
   }
