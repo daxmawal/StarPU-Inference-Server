@@ -16,7 +16,12 @@ namespace starpu_server {
 // interleave. Keep the lock scope minimal for better
 // concurrency.
 
-inline std::mutex log_mutex;
+inline auto&
+log_mutex()
+{
+  static std::mutex instance;
+  return instance;
+}
 
 enum class VerbosityLevel : std::uint8_t {
   Silent = 0,
@@ -136,7 +141,7 @@ log_verbose(
 {
   if (std::to_underlying(current_level) >= std::to_underlying(level)) {
     auto [color, label] = verbosity_style(level);
-    const std::scoped_lock lock(log_mutex);
+    const std::scoped_lock lock{log_mutex()};
     std::cout << color << label << message << "\x1b[0m\n" << std::flush;
   }
 }
@@ -176,21 +181,21 @@ log_trace(const VerbosityLevel lvl, const std::string& msg)
 inline void
 log_warning(const std::string& message)
 {
-  const std::scoped_lock lock(log_mutex);
+  const std::scoped_lock lock{log_mutex()};
   std::cerr << "\x1b[1;33m[WARNING] " << message << "\x1b[0m\n" << std::flush;
 }
 
 inline void
 log_warning_critical(const std::string& message)
 {
-  const std::scoped_lock lock(log_mutex);
+  const std::scoped_lock lock{log_mutex()};
   std::cerr << "\x1b[1;31m[WARNING] " << message << "\x1b[0m\n" << std::flush;
 }
 
 inline void
 log_error(const std::string& message)
 {
-  const std::scoped_lock lock(log_mutex);
+  const std::scoped_lock lock{log_mutex()};
   std::cerr << "\x1b[1;31m[ERROR] " << message << "\x1b[0m\n" << std::flush;
 }
 
@@ -198,7 +203,7 @@ log_error(const std::string& message)
 log_fatal(const std::string& message)
 {
   {
-    const std::scoped_lock lock(log_mutex);
+    const std::scoped_lock lock{log_mutex()};
     std::cerr << "\x1b[1;41m[FATAL] " << message << "\x1b[0m\n";
   }
   std::terminate();
