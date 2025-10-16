@@ -303,8 +303,8 @@ select_gpu_module(const InferenceParams& params, const int device_id)
   if (device_id >= 0) {
     const auto module_index = static_cast<size_t>(device_id);
     if (module_index < params.models.models_gpu.size()) {
-      if (auto* module = params.models.models_gpu[module_index]) {
-        return module;
+      if (auto* model_instance = params.models.models_gpu[module_index]) {
+        return model_instance;
       }
     }
   }
@@ -359,12 +359,13 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
   const c10::InferenceMode no_autograd;
   const at::cuda::CUDAStreamGuard guard(torch_stream);
 
-  torch::jit::script::Module* module = select_gpu_module(*params, device_id);
+  torch::jit::script::Module* model_instance =
+      select_gpu_module(*params, device_id);
 
   run_codelet_inference(
       params, buffers_span,
       torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)),
-      module,
+      model_instance,
       [device_id](const at::Tensor& out, void* buffer_ptr) {
         const at::Tensor wrapper = torch::from_blob(
             buffer_ptr, out.sizes(),
