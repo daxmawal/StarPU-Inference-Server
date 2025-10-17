@@ -46,6 +46,8 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
 
 namespace {
 
+using TensorDataPtr = void*;
+
 auto
 parse_input_dtype(
     const inference::ModelInferRequest::InferInputTensor& input,
@@ -128,8 +130,7 @@ validate_configured_shape(
 
   if (rank >= 1 && tails_match(1, 1)) {
     const int64_t batch_size = shape.front();
-    auto status = validate_batch_size(batch_size);
-    if (!status.ok()) {
+    if (auto status = validate_batch_size(batch_size); !status.ok()) {
       return status;
     }
     return Status::OK;
@@ -137,8 +138,7 @@ validate_configured_shape(
 
   if (rank >= 1 && tails_match(1, 0)) {
     const int64_t batch_size = shape.front();
-    auto status = validate_batch_size(batch_size);
-    if (!status.ok()) {
+    if (auto status = validate_batch_size(batch_size); !status.ok()) {
       return status;
     }
     return Status::OK;
@@ -191,7 +191,7 @@ convert_input_to_tensor(
 
   auto alias = std::shared_ptr<const void>(request_guard, raw.data());
   auto holder = std::const_pointer_cast<void>(alias);
-  auto deleter = [holder](void* /*unused*/) mutable {
+  auto deleter = [holder](TensorDataPtr /*unused*/) mutable {
     auto keep = holder;
     keep.reset();
   };
@@ -224,7 +224,7 @@ fill_output_tensor(
     auto flat = out.contiguous().view({-1});
     const auto total_bytes =
         checked_mul(static_cast<size_t>(flat.numel()), flat.element_size());
-    if (!total_bytes) {
+    if (!total_bytes.has_value()) {
       return {
           grpc::StatusCode::INVALID_ARGUMENT, "Output tensor size overflow"};
     }
@@ -347,6 +347,34 @@ InferenceServiceImpl::validate_and_convert_inputs(
 }
 
 auto
+InferenceServiceImpl::build_latency_breakdown(
+    const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown
+{
+  using duration_f = std::chrono::duration<double, std::milli>;
+  LatencyBreakdown timing{};
+  timing.queue_ms = duration_f(info.dequeued_time - info.enqueued_time).count();
+  timing.batch_ms = std::max(
+      0.0,
+      duration_f(info.batch_collect_end_time - info.batch_collect_start_time)
+          .count());
+  timing.submit_ms = std::max(
+      0.0, duration_f(
+               info.before_starpu_submitted_time - info.batch_collect_end_time)
+               .count());
+  timing.scheduling_ms =
+      duration_f(info.codelet_start_time - info.before_starpu_submitted_time)
+          .count();
+  timing.codelet_ms =
+      duration_f(info.codelet_end_time - info.codelet_start_time).count();
+  timing.inference_ms =
+      duration_f(info.callback_start_time - info.inference_start_time).count();
+  timing.callback_ms =
+      duration_f(info.callback_end_time - info.callback_start_time).count();
+  timing.total_ms = latency_ms;
+  return timing;
+}
+
+auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
@@ -358,46 +386,22 @@ InferenceServiceImpl::submit_job_async(
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
-  job->set_on_complete([job, on_complete = std::move(on_complete)](
-                           const std::vector<torch::Tensor>& outs,
-                           double latency_ms) mutable {
-    using duration_f = std::chrono::duration<double, std::milli>;
-    LatencyBreakdown timing{};
-    const auto& info = job->timing_info();
-    timing.queue_ms =
-        duration_f(info.dequeued_time - info.enqueued_time).count();
-    timing.batch_ms = std::max(
-        0.0,
-        duration_f(info.batch_collect_end_time - info.batch_collect_start_time)
-            .count());
-    timing.submit_ms = std::max(
-        0.0,
-        duration_f(
-            info.before_starpu_submitted_time - info.batch_collect_end_time)
-            .count());
-    timing.scheduling_ms =
-        duration_f(info.codelet_start_time - info.before_starpu_submitted_time)
-            .count();
-    timing.codelet_ms =
-        duration_f(info.codelet_end_time - info.codelet_start_time).count();
-    timing.inference_ms =
-        duration_f(info.callback_start_time - info.inference_start_time)
-            .count();
-    timing.callback_ms =
-        duration_f(info.callback_end_time - info.callback_start_time).count();
-    timing.total_ms = latency_ms;
+  job->set_on_complete(
+      [job_ptr = job, on_complete = std::move(on_complete)](
+          const std::vector<torch::Tensor>& outs, double latency_ms) mutable {
+        const auto& info = job_ptr->timing_info();
+        auto timing = build_latency_breakdown(info, latency_ms);
+        detail::TimingInfo copied_info = info;
+        if (outs.empty()) {
+          on_complete(
+              {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
+              copied_info);
+          return;
+        }
 
-    detail::TimingInfo copied_info = info;
-    if (outs.empty()) {
-      on_complete(
-          {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
-          copied_info);
-      return;
-    }
-
-    auto outputs_copy = outs;
-    on_complete(Status::OK, std::move(outputs_copy), timing, copied_info);
-  });
+        auto outputs_copy = outs;
+        on_complete(Status::OK, std::move(outputs_copy), timing, copied_info);
+      });
 
   bool pushed = false;
   {

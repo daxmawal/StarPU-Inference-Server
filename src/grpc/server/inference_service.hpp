@@ -100,6 +100,9 @@ class InferenceServiceImpl final
       -> grpc::Status;
 
  private:
+  static auto build_latency_breakdown(
+      const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
+
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
   std::vector<at::ScalarType> expected_input_types_;
