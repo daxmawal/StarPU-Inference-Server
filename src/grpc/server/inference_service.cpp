@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <future>
 #include <limits>
 #include <memory>
@@ -658,15 +659,16 @@ class UnaryCallData final : public AsyncCallDataBase {
       grpc::ServerContext*, Request*,
       grpc::ServerAsyncResponseWriter<Response>*, grpc::CompletionQueue*,
       grpc::ServerCompletionQueue*, void*);
-  using HandlerMethod = grpc::Status (InferenceServiceImpl::*)(
-      grpc::ServerContext*, const Request*, Response*);
+  using Handler = std::function<grpc::Status(
+      InferenceServiceImpl*, grpc::ServerContext*, const Request*, Response*)>;
 
   UnaryCallData(
       inference::GRPCInferenceService::AsyncService* service,
       grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl,
-      RequestMethod request_method, HandlerMethod handler)
+      RequestMethod request_method, Handler handler)
       : service_(service), cq_(completion_queue), responder_(&ctx_),
-        impl_(impl), request_method_(request_method), handler_(handler)
+        impl_(impl), request_method_(request_method),
+        handler_(std::move(handler))
   {
     Proceed(true);
   }
@@ -699,7 +701,14 @@ class UnaryCallData final : public AsyncCallDataBase {
 
   void HandleRequest()
   {
-    auto status = (impl_->*handler_)(&ctx_, &request_, &response_);
+    if (!handler_) {
+      status_ = CallStatus::Finish;
+      responder_.Finish(
+          response_,
+          {grpc::StatusCode::INTERNAL, "Unary handler not configured"}, this);
+      return;
+    }
+    auto status = handler_(impl_, &ctx_, &request_, &response_);
     status_ = CallStatus::Finish;
     responder_.Finish(response_, status, this);
   }
@@ -712,7 +721,7 @@ class UnaryCallData final : public AsyncCallDataBase {
   grpc::ServerAsyncResponseWriter<Response> responder_;
   InferenceServiceImpl* impl_;
   RequestMethod request_method_;
-  HandlerMethod handler_;
+  Handler handler_;
   CallStatus status_ = CallStatus::Create;
 };
 
@@ -805,17 +814,17 @@ AsyncServerContext::start()
       inference::ServerLiveRequest, inference::ServerLiveResponse>(
       async_service_, completion_queue_.get(), impl_,
       &inference::GRPCInferenceService::AsyncService::RequestServerLive,
-      &InferenceServiceImpl::ServerLive);
+      std::mem_fn(&InferenceServiceImpl::ServerLive));
   new UnaryCallData<
       inference::ServerReadyRequest, inference::ServerReadyResponse>(
       async_service_, completion_queue_.get(), impl_,
       &inference::GRPCInferenceService::AsyncService::RequestServerReady,
-      &InferenceServiceImpl::ServerReady);
+      std::mem_fn(&InferenceServiceImpl::ServerReady));
   new UnaryCallData<
       inference::ModelReadyRequest, inference::ModelReadyResponse>(
       async_service_, completion_queue_.get(), impl_,
       &inference::GRPCInferenceService::AsyncService::RequestModelReady,
-      &InferenceServiceImpl::ModelReady);
+      std::mem_fn(&InferenceServiceImpl::ModelReady));
   new ModelInferCallData(async_service_, completion_queue_.get(), impl_);
 }
 
