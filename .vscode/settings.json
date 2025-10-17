@@ -134,7 +134,8 @@
     "fstream": "cpp",
     "bitset": "cpp",
     "print": "cpp",
-    "ios": "cpp"
+    "ios": "cpp",
+    "numeric": "cpp"
   },
   "[proto3]": {
     "editor.insertSpaces": true,

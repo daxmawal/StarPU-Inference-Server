@@ -25,7 +25,7 @@ compute_latency_statistics(std::vector<double> latencies)
     return std::nullopt;
   }
 
-  std::sort(latencies.begin(), latencies.end());
+  std::ranges::sort(latencies);
   const auto size = latencies.size();
 
   const auto percentile_value = [&latencies, size](const double percentile) {
