@@ -6,6 +6,7 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -273,10 +274,9 @@ TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
   result.request_id = 42;
 
   torch::jit::script::Module cpu_model("cpu_module");
-  const std::vector<torch::jit::script::Module*> empty_lookup;
-
   const auto resolved = starpu_server::detail::resolve_validation_model(
-      result, cpu_model, empty_lookup, /*validate_results=*/true);
+      result, cpu_model, std::span<torch::jit::script::Module*>{},
+      /*validate_results=*/true);
 
   EXPECT_FALSE(resolved.has_value());
 }
@@ -416,6 +416,12 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
   auto cpu_model = starpu_server::make_identity_model();
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
+  starpu_server::RuntimeConfig opts{};
+  opts.device_ids = device_ids;
+  opts.validate_results = false;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.rtol = 1e-5;
+  opts.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 1;
@@ -425,10 +431,7 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
   const std::vector<starpu_server::InferenceResult> results{result};
 
   testing::internal::CaptureStdout();
-  starpu_server::detail::process_results(
-      results, cpu_model, gpu_models, device_ids,
-      /*validate_results=*/false, starpu_server::VerbosityLevel::Info,
-      /*rtol=*/1e-5, /*atol=*/1e-8);
+  starpu_server::detail::process_results(results, cpu_model, gpu_models, opts);
   const auto captured = testing::internal::GetCapturedStdout();
 
   EXPECT_NE(
@@ -443,6 +446,12 @@ TEST(
   auto cpu_model = starpu_server::make_identity_model();
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
+  starpu_server::RuntimeConfig opts{};
+  opts.device_ids = device_ids;
+  opts.validate_results = false;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.rtol = 1e-5;
+  opts.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 13;
@@ -451,10 +460,7 @@ TEST(
   const std::vector<starpu_server::InferenceResult> results{result};
 
   testing::internal::CaptureStderr();
-  starpu_server::detail::process_results(
-      results, cpu_model, gpu_models, device_ids,
-      /*validate_results=*/false, starpu_server::VerbosityLevel::Info,
-      /*rtol=*/1e-5, /*atol=*/1e-8);
+  starpu_server::detail::process_results(results, cpu_model, gpu_models, opts);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_EQ(captured.find("[Client] Job"), std::string::npos);
@@ -465,6 +471,12 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
   auto cpu_model = starpu_server::make_identity_model();
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
+  starpu_server::RuntimeConfig opts{};
+  opts.device_ids = device_ids;
+  opts.validate_results = true;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.rtol = 1e-5;
+  opts.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 99;
@@ -473,10 +485,7 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
   const std::vector<starpu_server::InferenceResult> results{result};
 
   testing::internal::CaptureStderr();
-  starpu_server::detail::process_results(
-      results, cpu_model, gpu_models, device_ids,
-      /*validate_results=*/true, starpu_server::VerbosityLevel::Info,
-      /*rtol=*/1e-5, /*atol=*/1e-8);
+  starpu_server::detail::process_results(results, cpu_model, gpu_models, opts);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("[Client] Job"), std::string::npos);
@@ -490,6 +499,12 @@ TEST(
   std::vector<torch::jit::script::Module> gpu_models;
   gpu_models.push_back(starpu_server::make_identity_model());
   const std::vector<int> device_ids{0};
+  starpu_server::RuntimeConfig opts{};
+  opts.device_ids = device_ids;
+  opts.validate_results = true;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.rtol = 1e-5;
+  opts.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 7;
@@ -502,10 +517,7 @@ TEST(
   const std::vector<starpu_server::InferenceResult> results{result};
 
   testing::internal::CaptureStderr();
-  starpu_server::detail::process_results(
-      results, cpu_model, gpu_models, device_ids,
-      /*validate_results=*/true, starpu_server::VerbosityLevel::Info,
-      /*rtol=*/1e-5, /*atol=*/1e-8);
+  starpu_server::detail::process_results(results, cpu_model, gpu_models, opts);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(

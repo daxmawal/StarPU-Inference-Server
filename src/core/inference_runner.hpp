@@ -249,8 +249,7 @@ void process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<int>& device_ids, bool validate_results,
-    VerbosityLevel verbosity, double rtol, double atol);
+    const RuntimeConfig& opts);
 }  // namespace detail
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)

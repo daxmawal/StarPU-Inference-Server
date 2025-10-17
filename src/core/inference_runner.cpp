@@ -400,19 +400,18 @@ process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<int>& device_ids, bool validate_results,
-    VerbosityLevel verbosity, double rtol, double atol)
+    const RuntimeConfig& opts)
 {
-  if (!validate_results) {
-    log_info(verbosity, "Result validation disabled; skipping checks.");
+  if (!opts.validate_results) {
+    log_info(opts.verbosity, "Result validation disabled; skipping checks.");
   }
 
-  auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, device_ids);
+  auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, opts.device_ids);
   for (const auto& result : results) {
     if (const bool has_results =
             !result.results.empty() && result.results[0].defined();
         !has_results) {
-      if (validate_results) {
+      if (opts.validate_results) {
         log_error(
             std::format("[Client] Job {} failed.", result_job_id(result)));
       }
@@ -420,14 +419,14 @@ process_results(
     }
 
     const auto validation_model = resolve_validation_model(
-        result, model_cpu, gpu_model_lookup, validate_results);
+        result, model_cpu, gpu_model_lookup, opts.validate_results);
     if (!validation_model.has_value()) {
       continue;
     }
 
-    if (validate_results) {
+    if (opts.validate_results) {
       validate_inference_result(
-          result, **validation_model, verbosity, rtol, atol);
+          result, **validation_model, opts.verbosity, opts.rtol, opts.atol);
     }
   }
 }
@@ -543,8 +542,6 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
     }
   }
 
-  detail::process_results(
-      results, model_cpu, models_gpu, opts.device_ids, opts.validate_results,
-      opts.verbosity, opts.rtol, opts.atol);
+  detail::process_results(results, model_cpu, models_gpu, opts);
 }
 }  // namespace starpu_server
