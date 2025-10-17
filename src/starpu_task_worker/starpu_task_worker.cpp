@@ -84,6 +84,100 @@ run_with_logged_exceptions(
     log_error(std::string(unknown_message));
   }
 }
+
+using clock = std::chrono::high_resolution_clock;
+
+inline auto
+select_earliest_time(clock::time_point current, clock::time_point candidate)
+    -> clock::time_point
+{
+  if (candidate == clock::time_point{}) {
+    return current;
+  }
+  if (current == clock::time_point{} || candidate < current) {
+    return candidate;
+  }
+  return current;
+}
+
+struct BatchAggregationInfo {
+  std::vector<InferenceJob::AggregatedSubJob> sub_jobs{};
+  int logical_jobs{0};
+  int64_t total_samples{0};
+  clock::time_point earliest_start{};
+  clock::time_point earliest_enqueued{};
+  clock::time_point earliest_batch_collect_start{};
+};
+
+auto
+aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+    -> BatchAggregationInfo
+{
+  BatchAggregationInfo info;
+  if (jobs.empty()) {
+    return info;
+  }
+
+  info.sub_jobs.reserve(jobs.size());
+  info.earliest_start = jobs.front()->get_start_time();
+  info.earliest_enqueued = jobs.front()->timing_info().enqueued_time;
+  info.earliest_batch_collect_start =
+      jobs.front()->timing_info().batch_collect_start_time;
+
+  for (const auto& job : jobs) {
+    const auto job_batch =
+        static_cast<int64_t>(batch_size_from_inputs(job->get_input_tensors()));
+    info.total_samples += job_batch > 0 ? job_batch : 1;
+    info.logical_jobs += std::max(1, job->logical_job_count());
+    info.earliest_start =
+        select_earliest_time(info.earliest_start, job->get_start_time());
+    info.earliest_enqueued = select_earliest_time(
+        info.earliest_enqueued, job->timing_info().enqueued_time);
+    info.earliest_batch_collect_start = select_earliest_time(
+        info.earliest_batch_collect_start,
+        job->timing_info().batch_collect_start_time);
+
+    info.sub_jobs.emplace_back(
+        std::weak_ptr<InferenceJob>(job), job->get_on_complete(), job_batch);
+  }
+
+  return info;
+}
+
+auto
+resize_outputs_for_batch(
+    const std::vector<torch::Tensor>& prototype_outputs,
+    int64_t batch_size) -> std::vector<torch::Tensor>
+{
+  std::vector<torch::Tensor> resized;
+  resized.reserve(prototype_outputs.size());
+  for (const auto& out : prototype_outputs) {
+    if (!out.defined()) {
+      resized.emplace_back(out);
+      continue;
+    }
+    std::vector<int64_t> shape(out.sizes().begin(), out.sizes().end());
+    if (!shape.empty()) {
+      shape.front() = batch_size;
+    }
+    resized.emplace_back(torch::empty(shape, out.options()));
+  }
+  return resized;
+}
+
+void
+release_inputs_from_additional_jobs(
+    std::vector<std::shared_ptr<InferenceJob>>& jobs)
+{
+  for (size_t idx = 1; idx < jobs.size(); ++idx) {
+    if (!jobs[idx]) {
+      continue;
+    }
+    static_cast<void>(jobs[idx]->release_input_tensors());
+    jobs[idx]->set_input_memory_holders(
+        std::vector<std::shared_ptr<const void>>{});
+  }
+}
 }  // namespace
 // =============================================================================
 // Constructor
@@ -535,44 +629,10 @@ StarPUTaskRunner::maybe_build_batched_job(
     return master;
   }
 
-  std::vector<InferenceJob::AggregatedSubJob> sub_jobs;
-  sub_jobs.reserve(jobs.size());
-  int logical_jobs = 0;
-  int64_t total_samples = 0;
-
-  using clock = std::chrono::high_resolution_clock;
-  auto earliest_start = master->get_start_time();
-  auto earliest_enqueued = master->timing_info().enqueued_time;
-  auto earliest_batch_collect_start =
-      master->timing_info().batch_collect_start_time;
-
-  for (const auto& job : jobs) {
-    const auto job_batch =
-        static_cast<int64_t>(batch_size_from_inputs(job->get_input_tensors()));
-    total_samples += job_batch > 0 ? job_batch : 1;
-    logical_jobs += std::max(1, job->logical_job_count());
-
-    if (job->get_start_time() < earliest_start) {
-      earliest_start = job->get_start_time();
-    }
-
-    const auto job_enqueued = job->timing_info().enqueued_time;
-    if (job_enqueued != clock::time_point{} &&
-        (earliest_enqueued == clock::time_point{} ||
-         job_enqueued < earliest_enqueued)) {
-      earliest_enqueued = job_enqueued;
-    }
-
-    sub_jobs.push_back(
-        {std::weak_ptr<InferenceJob>(job), job->get_on_complete(), job_batch});
-
-    const auto job_batch_start = job->timing_info().batch_collect_start_time;
-    if (job_batch_start != clock::time_point{} &&
-        (earliest_batch_collect_start == clock::time_point{} ||
-         job_batch_start < earliest_batch_collect_start)) {
-      earliest_batch_collect_start = job_batch_start;
-    }
-  }
+  auto batch_info = aggregate_batch_metadata(jobs);
+  auto earliest_start = batch_info.earliest_start;
+  auto earliest_enqueued = batch_info.earliest_enqueued;
+  auto earliest_batch_collect_start = batch_info.earliest_batch_collect_start;
 
   if (earliest_start == clock::time_point{}) {
     earliest_start = earliest_enqueued != clock::time_point{}
@@ -583,36 +643,23 @@ StarPUTaskRunner::maybe_build_batched_job(
     earliest_batch_collect_start = master->timing_info().dequeued_time;
   }
 
-  master->set_logical_job_count(logical_jobs);
-  master->set_aggregated_sub_jobs(std::move(sub_jobs));
+  master->set_logical_job_count(batch_info.logical_jobs);
+  master->set_aggregated_sub_jobs(std::move(batch_info.sub_jobs));
 
-  auto lifetimes = merge_input_memory_holders(jobs);
-  if (!lifetimes.empty()) {
+  if (auto lifetimes = merge_input_memory_holders(jobs); !lifetimes.empty()) {
     master->set_input_memory_holders(std::move(lifetimes));
   }
 
-  auto merged_inputs = merge_input_tensors(jobs);
-  if (!merged_inputs.empty()) {
-    master->set_input_tensors(merged_inputs);
+  if (auto merged_inputs = merge_input_tensors(jobs); !merged_inputs.empty()) {
+    master->set_input_tensors(std::move(merged_inputs));
   }
 
-  auto prototype_outputs = master->get_output_tensors();
-  std::vector<torch::Tensor> resized_outputs;
-  resized_outputs.reserve(prototype_outputs.size());
-  const int64_t effective_batch =
-      total_samples > 0 ? total_samples : static_cast<int64_t>(jobs.size());
-  for (const auto& out : prototype_outputs) {
-    if (!out.defined()) {
-      resized_outputs.emplace_back(out);
-      continue;
-    }
-    std::vector<int64_t> shape(out.sizes().begin(), out.sizes().end());
-    if (!shape.empty()) {
-      shape[0] = effective_batch;
-    }
-    resized_outputs.emplace_back(torch::empty(shape, out.options()));
-  }
-  master->set_output_tensors(resized_outputs);
+  const auto prototype_outputs = master->get_output_tensors();
+  const int64_t effective_batch = batch_info.total_samples > 0
+                                      ? batch_info.total_samples
+                                      : static_cast<int64_t>(jobs.size());
+  master->set_output_tensors(
+      resize_outputs_for_batch(prototype_outputs, effective_batch));
 
   master->set_start_time(earliest_start);
   master->timing_info().enqueued_time = earliest_enqueued;
@@ -629,13 +676,7 @@ StarPUTaskRunner::maybe_build_batched_job(
         }
       });
 
-  for (size_t idx = 1; idx < jobs.size(); ++idx) {
-    if (jobs[idx]) {
-      static_cast<void>(jobs[idx]->release_input_tensors());
-      jobs[idx]->set_input_memory_holders(
-          std::vector<std::shared_ptr<const void>>{});
-    }
-  }
+  release_inputs_from_additional_jobs(jobs);
 
   if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
     log_trace(
@@ -675,15 +716,18 @@ StarPUTaskRunner::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
 void
 StarPUTaskRunner::batching_loop()
 {
-  while (true) {
+  bool should_stop = false;
+  while (!should_stop) {
     auto job = wait_for_next_job();
     if (!job) {
-      break;
+      should_stop = true;
+      continue;
     }
 
     if (job->is_shutdown()) {
       enqueue_prepared_job(job);
-      break;
+      should_stop = true;
+      continue;
     }
 
     const auto dequeue_time = std::chrono::high_resolution_clock::now();
