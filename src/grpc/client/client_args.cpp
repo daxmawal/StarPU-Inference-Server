@@ -145,7 +145,7 @@ parse_shape(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
   return expect_and_parse(idx, args, [&cfg](const char* val) {
     cfg.shape = parse_shape_string(val);
     if (cfg.inputs.empty()) {
-      cfg.inputs.push_back({"input", cfg.shape, cfg.type});
+      cfg.inputs.emplace_back(InputConfig{"input", cfg.shape, cfg.type});
     } else {
       cfg.inputs[0].shape = cfg.shape;
     }
@@ -159,37 +159,46 @@ parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
   return expect_and_parse(idx, args, [&cfg](const char* val) {
     cfg.type = string_to_scalar_type(val);
     if (cfg.inputs.empty()) {
-      cfg.inputs.push_back({"input", cfg.shape, cfg.type});
+      cfg.inputs.emplace_back(InputConfig{"input", cfg.shape, cfg.type});
     } else {
       cfg.inputs[0].type = cfg.type;
     }
   });
 }
 
+namespace {
+
+void
+append_input_config(ClientConfig& cfg, const char* val)
+{
+  std::string token(val);
+  std::stringstream token_stream(token);
+  std::string name;
+  std::string shape_str;
+  std::string type_str;
+  if (!std::getline(token_stream, name, ':') ||
+      !std::getline(token_stream, shape_str, ':') ||
+      !std::getline(token_stream, type_str)) {
+    throw std::invalid_argument("Input must be NAME:SHAPE:TYPE");
+  }
+  InputConfig input{};
+  input.name = name;
+  input.shape = parse_shape_string(shape_str);
+  input.type = string_to_scalar_type(type_str);
+  cfg.inputs.push_back(std::move(input));
+  if (cfg.inputs.size() == 1) {
+    cfg.shape = cfg.inputs[0].shape;
+    cfg.type = cfg.inputs[0].type;
+  }
+}
+
+}  // namespace
+
 auto
 parse_input(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
-  return expect_and_parse(idx, args, [&cfg](const char* val) {
-    std::string token(val);
-    std::stringstream token_stream(token);
-    std::string name;
-    std::string shape_str;
-    std::string type_str;
-    if (!std::getline(token_stream, name, ':') ||
-        !std::getline(token_stream, shape_str, ':') ||
-        !std::getline(token_stream, type_str)) {
-      throw std::invalid_argument("Input must be NAME:SHAPE:TYPE");
-    }
-    InputConfig input{};
-    input.name = name;
-    input.shape = parse_shape_string(shape_str);
-    input.type = string_to_scalar_type(type_str);
-    cfg.inputs.push_back(std::move(input));
-    if (cfg.inputs.size() == 1) {
-      cfg.shape = cfg.inputs[0].shape;
-      cfg.type = cfg.inputs[0].type;
-    }
-  });
+  return expect_and_parse(
+      idx, args, [&cfg](const char* val) { append_input_config(cfg, val); });
 }
 
 auto
