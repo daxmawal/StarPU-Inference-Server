@@ -109,7 +109,7 @@ get_worker_thread_launcher() -> WorkerThreadLauncher
 void
 set_worker_thread_launcher(WorkerThreadLauncher launcher)
 {
-  current_worker_thread_launcher = launcher;
+  current_worker_thread_launcher = std::move(launcher);
 }
 
 // =============================================================================

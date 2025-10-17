@@ -225,7 +225,7 @@ class InferenceJob {
 // =============================================================================
 
 class StarPUTaskRunner;
-using WorkerThreadLauncher = std::jthread (*)(StarPUTaskRunner&);
+using WorkerThreadLauncher = std::function<std::jthread(StarPUTaskRunner&)>;
 auto get_worker_thread_launcher() -> WorkerThreadLauncher;
 void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 
