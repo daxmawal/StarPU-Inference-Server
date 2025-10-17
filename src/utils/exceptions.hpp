@@ -70,6 +70,12 @@ class TooManyGpuModelsException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when an invalid GPU device identifier is provided
+class InvalidGpuDeviceException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
 /// Thrown when execution of a StarPU codelet fails
 class StarPUCodeletException : public InferenceEngineException {
  public:

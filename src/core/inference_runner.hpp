@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -241,7 +242,7 @@ auto build_gpu_model_lookup(
 
 auto resolve_validation_model(
     const InferenceResult& result, torch::jit::script::Module& cpu_model,
-    const std::vector<torch::jit::script::Module*>& gpu_lookup,
+    std::span<torch::jit::script::Module*> gpu_lookup,
     bool validate_results) -> std::optional<torch::jit::script::Module*>;
 
 void process_results(
