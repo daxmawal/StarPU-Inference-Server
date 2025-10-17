@@ -9,8 +9,10 @@
 #include <format>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -54,6 +56,33 @@ job_identifier(const InferenceJob& job) -> int
 {
   const int submission_id = job.submission_id();
   return (submission_id >= 0) ? submission_id : job.get_request_id();
+}
+
+template <typename Callback>
+void
+run_with_logged_exceptions(
+    Callback&& callback, std::string_view context,
+    std::string_view unknown_message)
+{
+  try {
+    std::forward<Callback>(callback)();
+  }
+  catch (const InferenceEngineException& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (const std::runtime_error& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (const std::logic_error& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (const std::bad_alloc& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (
+      ...) {  // NOSONAR: required to log non-std exceptions thrown by callbacks
+    log_error(std::string(unknown_message));
+  }
 }
 }  // namespace
 // =============================================================================
@@ -254,17 +283,15 @@ StarPUTaskRunner::handle_job_exception(
   const int job_id = job ? job_identifier(*job) : -1;
   log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
 
-  if (job->has_on_complete()) {
-    try {
-      job->get_on_complete()({}, -1);
-    }
-    catch (const std::exception& e) {
-      log_error("Exception in completion callback: " + std::string(e.what()));
-    }
-    catch (...) {
-      log_error("Unknown exception in completion callback");
-    }
+  if (job == nullptr || !job->has_on_complete()) {
+    return;
   }
+
+  const auto& completion = job->get_on_complete();
+  run_with_logged_exceptions(
+      [&completion]() { completion({}, -1); },
+      "Exception in completion callback: ",
+      "Unknown exception in completion callback");
 }
 
 // =============================================================================
@@ -308,11 +335,12 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
 
   const auto& base_ptrs = pools.input_pool->base_ptrs(pools.input_slot);
   if (inputs.size() != base_ptrs.size()) {
-    throw std::runtime_error("Input count mismatch between job and slot");
+    throw InputPoolMismatchException(
+        "Input count mismatch between job and slot");
   }
 
   if (batch < 1 || batch > pools.input_pool->max_batch_size()) {
-    throw std::runtime_error("Batch size exceeds input pool capacity");
+    throw InputPoolCapacityException("Batch size exceeds input pool capacity");
   }
 
   NvtxRange nvtx_copy_scope("HtoD-staged host copy (pooled inputs)");
@@ -320,14 +348,14 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
   for (size_t i = 0; i < inputs.size(); ++i) {
     const auto& tin = inputs[i];
     if (!tin.defined() || !tin.is_cpu() || !tin.is_contiguous()) {
-      throw std::runtime_error(
+      throw InvalidInputTensorException(
           "Input tensor must be defined, CPU and contiguous");
     }
     const int status = starpu_data_acquire(handles[i], STARPU_W);
     if (status != 0) {
-      throw std::runtime_error("starpu_data_acquire(W) failed");
+      throw StarPUDataAcquireException("starpu_data_acquire(W) failed");
     }
-    const auto nbytes = static_cast<size_t>(tin.nbytes());
+    const auto nbytes = tin.nbytes();
     std::memcpy(base_ptrs[i], tin.data_ptr(), nbytes);
     starpu_data_release(handles[i]);
   }
@@ -363,14 +391,14 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
       std::chrono::milliseconds(opts_->batching.batch_coalesce_timeout_ms);
 
   const auto& target_worker = first_job->get_fixed_worker_id();
-  while (jobs.size() < static_cast<size_t>(max_batch_size)) {
+  bool stop_collection = false;
+  while (!stop_collection &&
+         jobs.size() < static_cast<size_t>(max_batch_size)) {
     std::shared_ptr<InferenceJob> next;
-    bool got_job = queue_->try_pop(next);
-    if (!got_job) {
-      if (!enable_wait) {
-        break;
+    if (bool got_job = queue_->try_pop(next); !got_job) {
+      if (enable_wait) {
+        got_job = queue_->wait_for_and_pop(next, batch_coalesce_timeout);
       }
-      got_job = queue_->wait_for_and_pop(next, batch_coalesce_timeout);
       if (!got_job) {
         break;
       }
@@ -378,18 +406,15 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     if (!next) {
       continue;
     }
-    if (next->is_shutdown() || next->has_aggregated_sub_jobs() ||
-        next->logical_job_count() > 1) {
+    const bool should_hold_pending =
+        next->is_shutdown() || next->has_aggregated_sub_jobs() ||
+        next->logical_job_count() > 1 ||
+        target_worker != next->get_fixed_worker_id() ||
+        !can_merge_jobs(jobs.front(), next);
+    if (should_hold_pending) {
       pending_job_ = next;
-      break;
-    }
-    if (target_worker != next->get_fixed_worker_id()) {
-      pending_job_ = next;
-      break;
-    }
-    if (!can_merge_jobs(jobs.front(), next)) {
-      pending_job_ = next;
-      break;
+      stop_collection = true;
+      continue;
     }
     jobs.push_back(next);
   }
@@ -466,7 +491,8 @@ StarPUTaskRunner::merge_input_tensors(
     for (const auto& job : jobs) {
       const auto& tensors = job->get_input_tensors();
       if (tensor_idx >= tensors.size()) {
-        throw std::runtime_error("Inconsistent input tensor count");
+        throw InconsistentInputTensorCountException(
+            "Inconsistent input tensor count");
       }
       to_concat.push_back(tensors[tensor_idx]);
     }

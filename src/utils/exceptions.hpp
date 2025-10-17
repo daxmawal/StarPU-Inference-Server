@@ -112,6 +112,36 @@ class MessageSizeOverflowException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when the number of registered inputs does not match the job inputs
+class InputPoolMismatchException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when a batch does not fit within an input pool
+class InputPoolCapacityException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when a tensor provided to the inference pipeline is invalid
+class InvalidInputTensorException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when the number of tensors varies across jobs being merged
+class InconsistentInputTensorCountException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when acquiring StarPU data handles fails
+class StarPUDataAcquireException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
 /// Thrown when a tensor dimension is negative
 class InvalidDimensionException : public InferenceEngineException {
  public:
