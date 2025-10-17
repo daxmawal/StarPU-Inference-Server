@@ -51,9 +51,9 @@ WarmupRunner::client_worker(
     InferenceQueue& queue, int request_nb_per_worker) const
 {
   thread_local std::mt19937 rng;
-  if (opts_.seed) {
-    rng.seed(static_cast<std::mt19937::result_type>(*opts_.seed));
-    torch::manual_seed(static_cast<uint64_t>(*opts_.seed));
+  if (opts_.seed.has_value()) {
+    rng.seed(*opts_.seed);
+    torch::manual_seed(*opts_.seed);
   } else {
     rng.seed(std::random_device{}());
   }
