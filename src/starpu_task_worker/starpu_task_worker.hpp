@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -104,6 +105,14 @@ class StarPUTaskRunner {
   [[noreturn]] static void handle_submission_failure(
       const PoolResources& pools,
       const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
+  void store_completed_job_result(
+      const std::shared_ptr<InferenceJob>& job,
+      const std::vector<torch::Tensor>& results, double latency_ms) const;
+  static void ensure_callback_timing(detail::TimingInfo& timing);
+  void record_job_metrics(
+      const std::shared_ptr<InferenceJob>& job, double latency_ms,
+      std::size_t batch_size) const;
+  void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
 
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;

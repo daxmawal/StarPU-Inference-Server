@@ -359,61 +359,84 @@ StarPUTaskRunner::prepare_job_completion_callback(
           const std::vector<torch::Tensor>& results, double latency_ms) {
         const auto batch_size =
             batch_size_from_inputs(job_sptr->get_input_tensors());
-        {
-          auto input_tensors = job_sptr->release_input_tensors();
 
-          const std::scoped_lock lock(*results_mutex_);
-          auto& stored_result = results_->emplace_back();
-          if (opts_->validation.validate_results) {
-            stored_result.inputs = std::move(input_tensors);
-            stored_result.results = results;
-          }
-          stored_result.latency_ms = latency_ms;
-          stored_result.timing_info = job_sptr->timing_info();
-          stored_result.request_id = job_sptr->get_request_id();
-          stored_result.submission_id = job_sptr->submission_id();
-          stored_result.device_id = job_sptr->get_device_id();
-          stored_result.worker_id = job_sptr->get_worker_id();
-          stored_result.executed_on = job_sptr->get_executed_on();
-        }
-
-        auto& timing = job_sptr->timing_info();
-        using clock = std::chrono::high_resolution_clock;
-        const auto zero_tp = clock::time_point{};
-        const auto now = clock::now();
-
-        if (timing.callback_start_time == zero_tp) {
-          timing.callback_start_time = now;
-        }
-        if (timing.callback_end_time == zero_tp) {
-          timing.callback_end_time = now;
-        }
-        if (timing.callback_end_time <= timing.callback_start_time) {
-          timing.callback_end_time =
-              timing.callback_start_time + clock::duration{1};
-        }
-        if (timing.enqueued_time == zero_tp ||
-            timing.enqueued_time >= timing.callback_end_time) {
-          timing.enqueued_time = timing.callback_start_time;
-        }
-
-        perf_observer::record_job(
-            job_sptr->timing_info().enqueued_time,
-            job_sptr->timing_info().callback_end_time, batch_size,
-            job_sptr->get_fixed_worker_id().has_value());
-
-        job_sptr->timing_info().submission_id = job_sptr->submission_id();
-        log_job_timings(
-            job_identifier(*job_sptr), latency_ms, job_sptr->timing_info());
+        store_completed_job_result(job_sptr, results, latency_ms);
+        ensure_callback_timing(job_sptr->timing_info());
+        record_job_metrics(job_sptr, latency_ms, batch_size);
 
         if (prev_callback) {
           prev_callback(results, latency_ms);
         }
 
-        const int logical_jobs = std::max(1, job_sptr->logical_job_count());
-        completed_jobs_->fetch_add(logical_jobs, std::memory_order_release);
-        all_done_cv_->notify_all();
+        finalize_job_completion(job_sptr);
       });
+}
+
+void
+StarPUTaskRunner::store_completed_job_result(
+    const std::shared_ptr<InferenceJob>& job,
+    const std::vector<torch::Tensor>& results, double latency_ms) const
+{
+  auto input_tensors = job->release_input_tensors();
+
+  const std::scoped_lock lock(*results_mutex_);
+  auto& stored_result = results_->emplace_back();
+  if (opts_->validation.validate_results) {
+    stored_result.inputs = std::move(input_tensors);
+    stored_result.results = results;
+  }
+  stored_result.latency_ms = latency_ms;
+  stored_result.timing_info = job->timing_info();
+  stored_result.request_id = job->get_request_id();
+  stored_result.submission_id = job->submission_id();
+  stored_result.device_id = job->get_device_id();
+  stored_result.worker_id = job->get_worker_id();
+  stored_result.executed_on = job->get_executed_on();
+}
+
+void
+StarPUTaskRunner::ensure_callback_timing(detail::TimingInfo& timing)
+{
+  using clock = std::chrono::high_resolution_clock;
+  const auto zero_tp = clock::time_point{};
+  const auto now = clock::now();
+
+  if (timing.callback_start_time == zero_tp) {
+    timing.callback_start_time = now;
+  }
+  if (timing.callback_end_time == zero_tp) {
+    timing.callback_end_time = now;
+  }
+  if (timing.callback_end_time <= timing.callback_start_time) {
+    timing.callback_end_time = timing.callback_start_time + clock::duration{1};
+  }
+  if (timing.enqueued_time == zero_tp ||
+      timing.enqueued_time >= timing.callback_end_time) {
+    timing.enqueued_time = timing.callback_start_time;
+  }
+}
+
+void
+StarPUTaskRunner::record_job_metrics(
+    const std::shared_ptr<InferenceJob>& job, double latency_ms,
+    std::size_t batch_size) const
+{
+  auto& timing = job->timing_info();
+  perf_observer::record_job(
+      timing.enqueued_time, timing.callback_end_time, batch_size,
+      job->get_fixed_worker_id().has_value());
+
+  timing.submission_id = job->submission_id();
+  log_job_timings(job_identifier(*job), latency_ms, timing);
+}
+
+void
+StarPUTaskRunner::finalize_job_completion(
+    const std::shared_ptr<InferenceJob>& job) const
+{
+  const int logical_jobs = std::max(1, job->logical_job_count());
+  completed_jobs_->fetch_add(logical_jobs, std::memory_order_release);
+  all_done_cv_->notify_all();
 }
 
 // =============================================================================
