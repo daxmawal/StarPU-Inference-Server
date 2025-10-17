@@ -4,10 +4,12 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -20,6 +22,26 @@ namespace {
 
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
+
+struct TransparentStringHash {
+  using hash_type = std::hash<std::string_view>;
+  using is_transparent = void;
+
+  auto operator()(std::string_view value) const noexcept -> std::size_t
+  {
+    return hash_type{}(value);
+  }
+
+  auto operator()(const std::string& value) const noexcept -> std::size_t
+  {
+    return (*this)(std::string_view{value});
+  }
+
+  auto operator()(const char* value) const noexcept -> std::size_t
+  {
+    return (*this)(std::string_view{value});
+  }
+};
 
 auto parse_tensor_nodes(
     const YAML::Node& nodes, std::size_t max_inputs,
@@ -51,33 +73,35 @@ validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 auto
 validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 {
-  static const std::unordered_set<std::string> kAllowedKeys{
-      "verbose",
-      "verbosity",
-      "scheduler",
-      "model",
-      "request_nb",
-      "device_ids",
-      "input",
-      "output",
-      "delay",
-      "batch_coalesce_timeout_ms",
-      "address",
-      "metrics_port",
-      "max_message_bytes",
-      "max_batch_size",
-      "dynamic_batching",
-      "input_slots",
-      "pregen_inputs",
-      "warmup_pregen_inputs",
-      "warmup_request_nb",
-      "seed",
-      "rtol",
-      "atol",
-      "validate_results",
-      "sync",
-      "use_cpu",
-      "use_cuda"};
+  static const std::unordered_set<
+      std::string, TransparentStringHash, std::equal_to<>>
+      kAllowedKeys{
+          "verbose",
+          "verbosity",
+          "scheduler",
+          "model",
+          "request_nb",
+          "device_ids",
+          "input",
+          "output",
+          "delay",
+          "batch_coalesce_timeout_ms",
+          "address",
+          "metrics_port",
+          "max_message_bytes",
+          "max_batch_size",
+          "dynamic_batching",
+          "input_slots",
+          "pregen_inputs",
+          "warmup_pregen_inputs",
+          "warmup_request_nb",
+          "seed",
+          "rtol",
+          "atol",
+          "validate_results",
+          "sync",
+          "use_cpu",
+          "use_cuda"};
 
   for (const auto& kv : root) {
     if (!kv.first.IsScalar()) {
@@ -358,8 +382,8 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_generation_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
   }
-  catch (const std::exception& e) {
-    log_error(std::string("Failed to load config: ") + e.what());
+  catch (const std::exception& exception) {
+    log_error(std::string("Failed to load config: ") + exception.what());
     cfg.valid = false;
   }
 
@@ -368,16 +392,20 @@ load_config(const std::string& path) -> RuntimeConfig
       cfg.max_message_bytes = compute_max_message_bytes(
           cfg.max_batch_size, cfg.models, cfg.max_message_bytes);
     }
-    catch (const InvalidDimensionException& e) {
-      log_error(std::string("Failed to load config: ") + e.what());
+    catch (const InvalidDimensionException& invalid_dimension) {
+      log_error(
+          std::string("Failed to load config: ") + invalid_dimension.what());
       cfg.valid = false;
     }
-    catch (const MessageSizeOverflowException& e) {
-      log_error(std::string("Failed to load config: ") + e.what());
+    catch (const MessageSizeOverflowException& message_size_overflow) {
+      log_error(
+          std::string("Failed to load config: ") +
+          message_size_overflow.what());
       cfg.valid = false;
     }
-    catch (const UnsupportedDtypeException& e) {
-      log_error(std::string("Failed to load config: ") + e.what());
+    catch (const UnsupportedDtypeException& unsupported_dtype) {
+      log_error(
+          std::string("Failed to load config: ") + unsupported_dtype.what());
       cfg.valid = false;
     }
   }
