@@ -3,6 +3,7 @@
 #include <starpu.h>
 #include <torch/script.h>
 
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
@@ -64,9 +65,9 @@ class StarPUSetup {
     return static_cast<bool>(output_pool_);
   }
 
-  using StarpuInitFn = int (*)(struct starpu_conf*);
+  using StarpuInitFn = std::function<int(struct starpu_conf*)>;
   using WorkerStreamQueryFn =
-      int (*)(unsigned int, int*, enum starpu_worker_archtype);
+      std::function<int(unsigned int, int*, enum starpu_worker_archtype)>;
 
   static void set_starpu_init_fn(StarpuInitFn hook_fn);
   static void reset_starpu_init_fn();

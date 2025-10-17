@@ -64,10 +64,10 @@ TensorBuilder::from_starpu_buffers(
 
 void
 TensorBuilder::copy_output_to_buffer(
-    const at::Tensor& output, void* buffer_ptr, int64_t expected_numel,
-    at::ScalarType expected_type)
+    const at::Tensor& output, std::span<std::byte> buffer,
+    int64_t expected_numel, at::ScalarType expected_type)
 {
-  if (buffer_ptr == nullptr) {
+  if (buffer.data() == nullptr) {
     throw InferenceExecutionException("[ERROR] Output buffer pointer is null");
   }
   if (output.numel() != expected_numel) {
@@ -83,7 +83,13 @@ TensorBuilder::copy_output_to_buffer(
         "[ERROR] Output tensor must be contiguous");
   }
 
-  std::memcpy(buffer_ptr, output.data_ptr(), output.nbytes());
+  const auto bytes_required = static_cast<size_t>(output.nbytes());
+  if (buffer.size() != bytes_required) {
+    throw InferenceExecutionException(
+        "[ERROR] Output buffer size mismatch in bytes");
+  }
+
+  std::memcpy(buffer.data(), output.data_ptr(), bytes_required);
 }
 
 // =============================================================================

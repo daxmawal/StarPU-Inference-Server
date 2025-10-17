@@ -3,8 +3,10 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -120,7 +122,7 @@ namespace starpu_server {
 void run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
     torch::Device device, torch::jit::script::Module* model,
-    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+    const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn);
 }
 
@@ -142,9 +144,9 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
   auto before = std::chrono::high_resolution_clock::now();
   starpu_server::run_inference(
       &params, buffers, torch::Device(torch::kCPU), &model,
-      [](const at::Tensor& out, void* buffer_ptr) {
+      [](const at::Tensor& out, std::span<std::byte> buffer) {
         starpu_server::TensorBuilder::copy_output_to_buffer(
-            out, buffer_ptr, out.numel(), out.scalar_type());
+            out, buffer, out.numel(), out.scalar_type());
       });
   auto after = std::chrono::high_resolution_clock::now();
 

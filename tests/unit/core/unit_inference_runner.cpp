@@ -4,6 +4,7 @@
 #include <torch/torch.h>
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -401,8 +402,10 @@ TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
   constexpr size_t kCount5 = 5;
   auto tensor = torch::tensor({kF1, kF2, kF35, kFNeg4, kF025}, torch::kFloat32);
   std::vector<float> dst(kCount5, 0.0F);
+  auto dst_bytes =
+      std::as_writable_bytes(std::span<float>(dst.data(), dst.size()));
   starpu_server::TensorBuilder::copy_output_to_buffer(
-      tensor, dst.data(), tensor.numel(), tensor.scalar_type());
+      tensor, dst_bytes, tensor.numel(), tensor.scalar_type());
   ASSERT_EQ(dst.size(), kCount5);
   EXPECT_FLOAT_EQ(dst[0], kF1);
   EXPECT_FLOAT_EQ(dst[1], kF2);

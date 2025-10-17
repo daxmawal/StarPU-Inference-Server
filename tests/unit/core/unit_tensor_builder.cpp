@@ -2,6 +2,7 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <span>
 #include <vector>
 
@@ -83,8 +84,9 @@ verify_copy_typed(
   const auto numel = static_cast<size_t>(tensor.numel());
   auto* buff = static_cast<T*>(buffer);
   std::fill_n(buff, numel, zero_value<T>());
+  auto buffer_bytes = std::as_writable_bytes(std::span<T>(buff, numel));
   starpu_server::TensorBuilder::copy_output_to_buffer(
-      tensor, buff, static_cast<int64_t>(numel), dtype);
+      tensor, buffer_bytes, static_cast<int64_t>(numel), dtype);
   std::span<T> sbuff{buff, numel};
   for (size_t i = 0; i < sbuff.size(); ++i) {
     expect_equal_value<T>(sbuff[i], tensor[static_cast<int64_t>(i)].item<T>());

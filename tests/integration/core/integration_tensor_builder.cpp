@@ -2,7 +2,9 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #define private public
@@ -36,8 +38,10 @@ TEST(TensorBuilder_Integration, StarPUStyleRoundTrip)
   ASSERT_EQ(tensors.size(), 1U);
   auto tensor = tensors[0];
 
+  auto output_bytes =
+      std::as_writable_bytes(std::span<float>(output.data(), output.size()));
   starpu_server::TensorBuilder::copy_output_to_buffer(
-      tensor, output.data(), tensor.numel(), tensor.scalar_type());
+      tensor, output_bytes, tensor.numel(), tensor.scalar_type());
 
   for (int i = 0; i < 4; ++i) {
     EXPECT_FLOAT_EQ(output.at(i), input.at(i));

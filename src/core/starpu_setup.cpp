@@ -24,6 +24,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "device_type.hpp"
@@ -36,19 +37,22 @@
 
 namespace starpu_server {
 namespace {
+inline StarPUSetup::StarpuInitFn starpu_init_fn_instance = starpu_init;
+inline StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn_instance =
+    starpu_worker_get_stream_workerids;
+
+void append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs);
+
 auto
 starpu_init_fn_ref() -> StarPUSetup::StarpuInitFn&
 {
-  static StarPUSetup::StarpuInitFn starpu_init_fn = &starpu_init;
-  return starpu_init_fn;
+  return starpu_init_fn_instance;
 }
 
 auto
 worker_stream_query_fn_ref() -> StarPUSetup::WorkerStreamQueryFn&
 {
-  static StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn =
-      &starpu_worker_get_stream_workerids;
-  return worker_stream_query_fn;
+  return worker_stream_query_fn_instance;
 }
 
 void
@@ -134,11 +138,58 @@ initialize_output_pool(const RuntimeConfig& opts)
   }
 }
 }  // namespace
+namespace {
+void
+append_from_tuple(
+    const c10::IValue& tuple_value, std::vector<at::Tensor>& outputs)
+{
+  for (const auto& element : tuple_value.toTuple()->elements()) {
+    append_ivalue(element, outputs);
+  }
+}
+
+void
+append_from_list(
+    const c10::IValue& list_value, std::vector<at::Tensor>& outputs)
+{
+  for (const auto& element : list_value.toList()) {
+    append_ivalue(element, outputs);
+  }
+}
+
+void
+append_from_dict(
+    const c10::IValue& dict_value, std::vector<at::Tensor>& outputs)
+{
+  for (const auto& item : dict_value.toGenericDict()) {
+    append_ivalue(item.value(), outputs);
+  }
+}
+
+void
+append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs)
+{
+  if (value.isTensor()) {
+    outputs.emplace_back(value.toTensor());
+  } else if (value.isTensorList()) {
+    const auto tensors = value.toTensorList();
+    outputs.insert(outputs.end(), tensors.begin(), tensors.end());
+  } else if (value.isTuple()) {
+    append_from_tuple(value, outputs);
+  } else if (value.isList()) {
+    append_from_list(value, outputs);
+  } else if (value.isGenericDict()) {
+    append_from_dict(value, outputs);
+  } else {
+    throw UnsupportedModelOutputTypeException("Unsupported model output type");
+  }
+}
+}  // namespace
 
 void run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
     torch::Device device, torch::jit::script::Module* model,
-    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+    const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn);
 // =============================================================================
 // InferenceCodelet: constructor and access to codelet
@@ -170,33 +221,7 @@ extract_tensors_from_output(const c10::IValue& result)
     -> std::vector<at::Tensor>
 {
   std::vector<at::Tensor> outputs;
-
-  std::function<void(const c10::IValue&)> extract;
-  extract = [&](const c10::IValue& value) {
-    if (value.isTensor()) {
-      outputs.emplace_back(value.toTensor());
-    } else if (value.isTuple()) {
-      for (const auto& val : value.toTuple()->elements()) {
-        extract(val);
-      }
-    } else if (value.isTensorList()) {
-      outputs.insert(
-          outputs.end(), value.toTensorList().begin(),
-          value.toTensorList().end());
-    } else if (value.isList()) {
-      for (const auto& val : value.toList()) {
-        extract(val);
-      }
-    } else if (value.isGenericDict()) {
-      for (const auto& item : value.toGenericDict()) {
-        extract(item.value());
-      }
-    } else {
-      throw UnsupportedModelOutputTypeException(
-          "Unsupported model output type");
-    }
-  };
-  extract(result);
+  append_ivalue(result, outputs);
 
   return outputs;
 }
@@ -209,7 +234,7 @@ inline void
 run_inference(
     InferenceParams* params, std::span<void* const> buffers,
     torch::Device device, torch::jit::script::Module* model,
-    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+    const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn)
 {
   const auto inputs =
@@ -231,7 +256,9 @@ run_inference(
   for (size_t i = 0; i < params->num_outputs; ++i) {
     auto* var_iface = static_cast<starpu_variable_interface*>(
         buffers[params->num_inputs + i]);
-    auto* buffer = std::bit_cast<void*>(var_iface->ptr);
+    auto* buffer_ptr = std::bit_cast<std::byte*>(var_iface->ptr);
+    const auto byte_size = static_cast<size_t>(outputs[i].nbytes());
+    std::span<std::byte> buffer(buffer_ptr, byte_size);
     copy_output_fn(outputs[i], buffer);
   }
 }
@@ -240,7 +267,7 @@ void
 run_inference(
     InferenceParams* params, const std::vector<void*>& buffers,
     torch::Device device, torch::jit::script::Module* model,
-    const std::function<void(const at::Tensor&, void* buffer_ptr)>&
+    const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn)
 {
   run_inference(
@@ -328,9 +355,9 @@ InferenceCodelet::cpu_inference_func(void** buffers, void* cl_arg)
 
   run_codelet_inference(
       params, buffers_span, torch::kCPU, params->models.model_cpu,
-      [](const at::Tensor& out, void* buffer_ptr) {
+      [](const at::Tensor& out, std::span<std::byte> buffer) {
         TensorBuilder::copy_output_to_buffer(
-            out, buffer_ptr, out.numel(), out.scalar_type());
+            out, buffer, out.numel(), out.scalar_type());
       },
       DeviceType::CPU);
 }
@@ -349,8 +376,7 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
   const int device_id = starpu_worker_get_devid(worker_id);
 
   NvtxRange nvtx_scope(
-      std::string("codelet.cuda job ") + std::to_string(params->request_id) +
-      " dev " + std::to_string(device_id));
+      std::format("codelet.cuda job {} dev {}", params->request_id, device_id));
 
   cudaStream_t stream = starpu_cuda_get_local_stream();
   const at::cuda::CUDAStream torch_stream = at::cuda::getStreamFromExternal(
@@ -366,12 +392,15 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
       params, buffers_span,
       torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)),
       model_instance,
-      [device_id](const at::Tensor& out, void* buffer_ptr) {
+      [device_id](const at::Tensor& out, std::span<std::byte> buffer) {
         const at::Tensor wrapper = torch::from_blob(
-            buffer_ptr, out.sizes(),
+            static_cast<void*>(buffer.data()), out.sizes(),
             torch::TensorOptions()
                 .dtype(out.scalar_type())
                 .device(torch::kCUDA, device_id));
+        TORCH_CHECK(
+            buffer.size() == static_cast<size_t>(out.nbytes()),
+            "Output buffer size mismatch in bytes");
         wrapper.copy_(out, true);
       },
       DeviceType::CUDA);
@@ -408,26 +437,35 @@ StarPUSetup::~StarPUSetup()
 void
 StarPUSetup::set_starpu_init_fn(StarpuInitFn hook_fn)
 {
-  starpu_init_fn_ref() = hook_fn != nullptr ? hook_fn : &starpu_init;
+  auto& fn_ref = starpu_init_fn_ref();
+  if (hook_fn) {
+    fn_ref = std::move(hook_fn);
+  } else {
+    fn_ref = starpu_init;
+  }
 }
 
 void
 StarPUSetup::reset_starpu_init_fn()
 {
-  starpu_init_fn_ref() = &starpu_init;
+  starpu_init_fn_ref() = starpu_init;
 }
 
 void
 StarPUSetup::set_worker_stream_query_fn(WorkerStreamQueryFn hook_fn)
 {
-  worker_stream_query_fn_ref() =
-      hook_fn != nullptr ? hook_fn : &starpu_worker_get_stream_workerids;
+  auto& fn_ref = worker_stream_query_fn_ref();
+  if (hook_fn) {
+    fn_ref = std::move(hook_fn);
+  } else {
+    fn_ref = starpu_worker_get_stream_workerids;
+  }
 }
 
 void
 StarPUSetup::reset_worker_stream_query_fn()
 {
-  worker_stream_query_fn_ref() = &starpu_worker_get_stream_workerids;
+  worker_stream_query_fn_ref() = starpu_worker_get_stream_workerids;
 }
 
 // =============================================================================
