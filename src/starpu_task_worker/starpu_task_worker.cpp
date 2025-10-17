@@ -109,6 +109,56 @@ struct BatchAggregationInfo {
   clock::time_point earliest_batch_collect_start{};
 };
 
+struct SubJobSliceResult {
+  std::vector<torch::Tensor> outputs{};
+  int64_t processed_length{1};
+};
+
+inline auto
+slice_outputs_for_sub_job(
+    const std::vector<torch::Tensor>& aggregated_outputs, std::size_t offset,
+    int64_t batch_size) -> SubJobSliceResult
+{
+  SubJobSliceResult result;
+  const int64_t slice_size = std::max<int64_t>(1, batch_size);
+  result.processed_length = slice_size;
+
+  if (aggregated_outputs.empty()) {
+    return result;
+  }
+
+  result.outputs.reserve(aggregated_outputs.size());
+  bool determined_length = false;
+  const auto slice_start = static_cast<int64_t>(offset);
+
+  for (const auto& tensor : aggregated_outputs) {
+    if (!tensor.defined() || tensor.dim() == 0) {
+      result.outputs.push_back(tensor);
+      continue;
+    }
+
+    const int64_t available = tensor.size(0);
+    const int64_t slice_end =
+        std::min<int64_t>(available, slice_start + slice_size);
+    const int64_t length = std::max<int64_t>(0, slice_end - slice_start);
+
+    if (length <= 0) {
+      result.outputs.emplace_back();
+      continue;
+    }
+
+    if (!determined_length) {
+      result.processed_length = length;
+      determined_length = true;
+    }
+
+    result.outputs.push_back(
+        tensor.narrow(0, slice_start, length).contiguous());
+  }
+
+  return result;
+}
+
 auto
 aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
     -> BatchAggregationInfo
@@ -771,40 +821,16 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
   size_t offset = 0;
   for (const auto& entry : sub_jobs) {
     auto job_sp = entry.job.lock();
+    const auto slice_size =
+        static_cast<std::size_t>(std::max<int64_t>(1, entry.batch_size));
     if (!job_sp) {
-      offset += static_cast<size_t>(std::max<int64_t>(1, entry.batch_size));
+      offset += slice_size;
       continue;
     }
 
-    std::vector<torch::Tensor> outputs;
-    outputs.reserve(aggregated_outputs.size());
-    const auto slice_size = std::max<int64_t>(1, entry.batch_size);
-    int64_t processed = slice_size;
-    if (aggregated_outputs.empty()) {
-      outputs = {};
-    } else {
-      bool determined_length = false;
-      for (const auto& tensor : aggregated_outputs) {
-        if (!tensor.defined() || tensor.dim() == 0) {
-          outputs.push_back(tensor);
-          continue;
-        }
-        const int64_t available = tensor.size(0);
-        const int64_t slice_start = static_cast<int64_t>(offset);
-        const int64_t slice_end = std::min<int64_t>(
-            available, slice_start + std::max<int64_t>(1, slice_size));
-        const int64_t length = std::max<int64_t>(0, slice_end - slice_start);
-        if (length <= 0) {
-          outputs.emplace_back();
-          continue;
-        }
-        if (!determined_length) {
-          processed = length;
-          determined_length = true;
-        }
-        outputs.push_back(tensor.narrow(0, slice_start, length).contiguous());
-      }
-    }
+    auto slice_result =
+        slice_outputs_for_sub_job(aggregated_outputs, offset, entry.batch_size);
+    auto outputs = std::move(slice_result.outputs);
 
     job_sp->timing_info() = aggregated_job->timing_info();
     job_sp->get_device_id() = aggregated_job->get_device_id();
@@ -817,7 +843,8 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
       entry.callback(outputs, latency_ms);
     }
 
-    offset += static_cast<size_t>(std::max<int64_t>(1, processed));
+    offset += static_cast<std::size_t>(
+        std::max<int64_t>(1, slice_result.processed_length));
   }
 }
 
@@ -871,8 +898,8 @@ void
 StarPUTaskRunner::submit_inference_task(
     const std::shared_ptr<InferenceJob>& job)
 {
-  NvtxRange nvtx_job_scope(
-      std::string("submit job ") + std::to_string(job_identifier(*job)));
+  auto label = std::format("submit job {}", job_identifier(*job));
+  NvtxRange nvtx_job_scope(label);
   if (!(starpu_->has_input_pool() || starpu_->has_output_pool())) {
     InferenceTask task(
         starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
@@ -996,10 +1023,21 @@ StarPUTaskRunner::run()
     catch (const InferenceEngineException& exception) {
       StarPUTaskRunner::handle_job_exception(job, exception);
     }
-    catch (const std::exception& e) {
-      log_error(
-          std::format("Unexpected exception for job {}: {}", job_id, e.what()));
-      StarPUTaskRunner::handle_job_exception(job, e);
+    catch (const std::runtime_error& exception) {
+      log_error(std::format(
+          "Unexpected runtime error for job {}: {}", job_id, exception.what()));
+      StarPUTaskRunner::handle_job_exception(job, exception);
+    }
+    catch (const std::logic_error& exception) {
+      log_error(std::format(
+          "Unexpected logic error for job {}: {}", job_id, exception.what()));
+      StarPUTaskRunner::handle_job_exception(job, exception);
+    }
+    catch (const std::bad_alloc& exception) {
+      log_error(std::format(
+          "Memory allocation failure for job {}: {}", job_id,
+          exception.what()));
+      StarPUTaskRunner::handle_job_exception(job, exception);
     }
   }
 
