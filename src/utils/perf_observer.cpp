@@ -11,10 +11,11 @@ struct State {
   std::size_t total_inferences = 0;
 };
 
+inline State instance{};
+
 auto
 state() -> State&
 {
-  static State instance;
   return instance;
 }
 }  // namespace
