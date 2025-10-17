@@ -71,6 +71,12 @@ class UnsupportedModelOutputTypeException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when loading the model or its reference outputs fails
+class ModelLoadingException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
 class TooManyGpuModelsException : public InferenceEngineException {
  public:
   using InferenceEngineException::InferenceEngineException;

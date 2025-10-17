@@ -52,18 +52,34 @@ handle_program_arguments(std::span<char const* const> args)
   const char* config_path = nullptr;
   std::optional<int> input_slots_override;
 
-  for (size_t i = 1; i < args.size(); ++i) {
-    std::string_view arg{args[i]};
-    if ((arg == "--config" || arg == "-c") && (i + 1) < args.size() &&
-        args[i + 1] != nullptr) {
-      config_path = args[i + 1];
-      ++i;
+  auto remaining = args.subspan(1);
+  auto require_value = [&](std::string_view flag) -> const char* {
+    if (remaining.empty() || remaining.front() == nullptr) {
+      starpu_server::log_fatal(
+          std::format("Missing value for {} argument.\n", flag));
+    }
+    const char* value = remaining.front();
+    remaining = remaining.subspan(1);
+    return value;
+  };
+
+  while (!remaining.empty()) {
+    const char* raw_arg = remaining.front();
+    remaining = remaining.subspan(1);
+
+    if (raw_arg == nullptr) {
+      starpu_server::log_fatal("Unexpected null program argument.\n");
+    }
+
+    std::string_view arg{raw_arg};
+    if (arg == "--config" || arg == "-c") {
+      config_path = require_value(arg);
       continue;
     }
-    if ((arg == "--input-slots" || arg == "--slots") && (i + 1) < args.size() &&
-        args[i + 1] != nullptr) {
+    if (arg == "--input-slots" || arg == "--slots") {
+      const char* value = require_value(arg);
       try {
-        const int parsed = std::stoi(args[i + 1]);
+        const int parsed = std::stoi(value);
         if (parsed <= 0) {
           throw std::invalid_argument("input-slots must be > 0");
         }
@@ -73,7 +89,6 @@ handle_program_arguments(std::span<char const* const> args)
         starpu_server::log_fatal(
             std::string("Invalid --input-slots value: ") + e.what() + "\n");
       }
-      ++i;
       continue;
     }
   }
@@ -114,7 +129,8 @@ prepare_models_and_warmup(
 {
   auto models = starpu_server::load_model_and_reference_output(opts);
   if (!models) {
-    throw std::runtime_error("Failed to load model or reference outputs");
+    throw starpu_server::ModelLoadingException(
+        "Failed to load model or reference outputs");
   }
   auto [model_cpu, models_gpu, reference_outputs] = std::move(*models);
   starpu_server::run_warmup(
@@ -130,16 +146,15 @@ launch_threads(
     std::vector<torch::Tensor>& reference_outputs)
 {
   static starpu_server::InferenceQueue queue;
-  auto& ctx = server_context();
-  ctx.queue_ptr = &queue;
+  auto& server_ctx = server_context();
+  server_ctx.queue_ptr = &queue;
 
-  std::jthread notifier_thread([]() {
-    auto& ctx = server_context();
+  std::jthread notifier_thread([&server_ctx]() {
     constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
-    while (!ctx.stop_requested.load(std::memory_order_relaxed)) {
+    while (!server_ctx.stop_requested.load(std::memory_order_relaxed)) {
       std::this_thread::sleep_for(kNotifierSleep);
     }
-    ctx.stop_cv.notify_one();
+    server_ctx.stop_cv.notify_one();
   });
 
   std::vector<starpu_server::InferenceResult> results;
@@ -175,27 +190,27 @@ launch_threads(
     }
   }
 
-  std::jthread grpc_thread([&, expected_input_types, expected_input_dims]() {
+  std::jthread grpc_thread([&]() {
     const auto server_options = starpu_server::GrpcServerOptions{
         opts.server_address, opts.max_message_bytes, opts.verbosity};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
-        opts.max_batch_size, server_options, ctx.server);
+        opts.max_batch_size, server_options, server_ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
 
   {
-    std::unique_lock lock(ctx.stop_mutex);
-    ctx.stop_cv.wait(
+    std::unique_lock lock(server_ctx.stop_mutex);
+    server_ctx.stop_cv.wait(
         lock, [] { return server_context().stop_requested.load(); });
   }
-  starpu_server::StopServer(ctx.server);
-  if (ctx.queue_ptr != nullptr) {
-    ctx.queue_ptr->shutdown();
+  starpu_server::StopServer(server_ctx.server);
+  if (server_ctx.queue_ptr != nullptr) {
+    server_ctx.queue_ptr->shutdown();
   }
-  ctx.stop_cv.notify_one();
+  server_ctx.stop_cv.notify_one();
 }
 
 auto
