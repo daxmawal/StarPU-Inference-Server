@@ -60,19 +60,19 @@ class InferenceQueue {
       std::shared_ptr<InferenceJob>& job,
       const std::chrono::duration<Rep, Period>& timeout)
   {
-    std::unique_lock lock(mutex_);
-    if (!cv_.wait_for(
+    if (std::unique_lock lock(mutex_); cv_.wait_for(
             lock, timeout, [this] { return !queue_.empty() || shutdown_; })) {
-      return false;
+      if (queue_.empty()) {
+        return false;
+      }
+      job = std::move(queue_.front());
+      queue_.pop();
+      set_queue_size(queue_.size());
+      return true;
     }
-    if (queue_.empty()) {
-      return false;
-    }
-    job = queue_.front();
-    queue_.pop();
-    set_queue_size(queue_.size());
-    return true;
+    return false;
   }
+
 
   void shutdown()
   {
