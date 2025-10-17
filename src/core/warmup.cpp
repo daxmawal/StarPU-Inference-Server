@@ -65,13 +65,13 @@ WarmupRunner::client_worker(
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
+  const size_t worker_count = std::accumulate(
+      device_workers.begin(), device_workers.end(), std::size_t{0},
+      [](std::size_t sum, const auto& pair) {
+        return sum + pair.second.size();
+      });
   const size_t total_size_t =
-      std::accumulate(
-          device_workers.begin(), device_workers.end(), std::size_t{0},
-          [](std::size_t sum, const auto& pair) {
-            return sum + pair.second.size();
-          }) *
-      static_cast<std::size_t>(request_nb_per_worker);
+      worker_count * static_cast<std::size_t>(request_nb_per_worker);
 
   if (total_size_t > static_cast<size_t>(std::numeric_limits<int>::max())) {
     throw std::overflow_error("Total exceeds int capacity");
@@ -80,27 +80,31 @@ WarmupRunner::client_worker(
   const auto total = static_cast<int>(total_size_t);
   int request_id = 0;
 
-  for (const auto& [device_id, worker_ids] : device_workers) {
-    for (const int worker_id : worker_ids) {
-      for (auto request_nb = 0; request_nb < request_nb_per_worker;
-           ++request_nb) {
-        const auto& inputs =
-            client_utils::pick_random_input(pregen_inputs, rng);
-        auto job = client_utils::create_job(inputs, outputs_ref_, request_id);
-        job->set_fixed_worker_id(worker_id);
+  std::vector<int> flat_worker_ids;
+  flat_worker_ids.reserve(worker_count);
+  for ([[maybe_unused]] const auto& [device_id, worker_ids] : device_workers) {
+    flat_worker_ids.insert(
+        flat_worker_ids.end(), worker_ids.begin(), worker_ids.end());
+  }
 
-        client_utils::log_job_enqueued(
-            opts_, request_id, total, job->timing_info().enqueued_time);
+  for (const int worker_id : flat_worker_ids) {
+    for (auto request_nb = 0; request_nb < request_nb_per_worker;
+         ++request_nb) {
+      const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
+      auto job = client_utils::create_job(inputs, outputs_ref_, request_id);
+      job->set_fixed_worker_id(worker_id);
 
-        if (!queue.push(job)) {
-          log_warning(std::format(
-              "[Warmup] Failed to enqueue job {}: queue shutting down",
-              request_id));
-          queue.shutdown();
-          return;
-        }
-        request_id++;
+      client_utils::log_job_enqueued(
+          opts_, request_id, total, job->timing_info().enqueued_time);
+
+      if (!queue.push(job)) {
+        log_warning(std::format(
+            "[Warmup] Failed to enqueue job {}: queue shutting down",
+            request_id));
+        queue.shutdown();
+        return;
       }
+      request_id++;
     }
   }
 
