@@ -324,7 +324,7 @@ set_output_starpu_memory_pin_hook_for_tests(
 
 OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
-  bmax_ = std::max(1, opts.max_batch_size);
+  bmax_ = std::max(1, opts.batching.max_batch_size);
 
   if (opts.models.empty()) {
     throw std::invalid_argument("No model config provided for OutputSlotPool");
@@ -404,7 +404,7 @@ OutputSlotPool::allocate_slot_buffers_and_register(
   auto& buffer_infos = host_buffer_infos_[static_cast<size_t>(slot_id)];
   buffer_infos.assign(num_outputs, HostBufferInfo{});
 
-  const bool want_pinned = opts.use_cuda;
+  const bool want_pinned = opts.devices.use_cuda;
 
   const auto batch_size = static_cast<size_t>(bmax_);
 

@@ -47,7 +47,7 @@ TEST(ArgsParser_Unit, ParsesSlotsAlias)
 
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  EXPECT_EQ(opts.input_slots, kSlots);
+  EXPECT_EQ(opts.batching.input_slots, kSlots);
 }
 
 TEST(ArgsParser_Unit, RejectsNonPositiveSlotsAlias)
@@ -71,7 +71,7 @@ TEST(ArgsParser_Unit, ParsesInputSlots)
                                 "float",   "--input-slots", "4"};
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  EXPECT_EQ(opts.input_slots, 4);
+  EXPECT_EQ(opts.batching.input_slots, 4);
 }
 
 TEST(ArgsParser_Unit, ParsesAllOptions)
@@ -124,31 +124,31 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   ASSERT_TRUE(opts.valid);
   EXPECT_EQ(opts.scheduler, "lws");
   EXPECT_EQ(opts.models[0].path, model);
-  EXPECT_EQ(opts.request_nb, 5);
-  EXPECT_EQ(opts.delay_us, 42);
+  EXPECT_EQ(opts.batching.request_nb, 5);
+  EXPECT_EQ(opts.batching.delay_us, 42);
   EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
   EXPECT_EQ(opts.server_address, "127.0.0.1:1234");
-  EXPECT_EQ(opts.max_batch_size, 2);
-  EXPECT_EQ(opts.pregen_inputs, 7U);
-  EXPECT_EQ(opts.warmup_pregen_inputs, 5U);
-  EXPECT_EQ(opts.warmup_request_nb, 3);
+  EXPECT_EQ(opts.batching.max_batch_size, 2);
+  EXPECT_EQ(opts.batching.pregen_inputs, 7U);
+  EXPECT_EQ(opts.batching.warmup_pregen_inputs, 5U);
+  EXPECT_EQ(opts.batching.warmup_request_nb, 3);
   ASSERT_TRUE(opts.seed.has_value());
   EXPECT_EQ(opts.seed, 123U);
-  EXPECT_TRUE(opts.validate_results);
+  EXPECT_TRUE(opts.validation.validate_results);
   constexpr std::size_t expected_bytes = 32ULL * 1024ULL * 1024ULL;
-  EXPECT_EQ(opts.max_message_bytes, expected_bytes);
-  EXPECT_TRUE(opts.synchronous);
-  EXPECT_FALSE(opts.use_cpu);
+  EXPECT_EQ(opts.batching.max_message_bytes, expected_bytes);
+  EXPECT_TRUE(opts.batching.synchronous);
+  EXPECT_FALSE(opts.devices.use_cpu);
 
   if (device_count >= 2) {
-    EXPECT_TRUE(opts.use_cuda);
-    ASSERT_EQ(opts.device_ids, (std::vector<int>{0, 1}));
+    EXPECT_TRUE(opts.devices.use_cuda);
+    ASSERT_EQ(opts.devices.ids, (std::vector<int>{0, 1}));
   } else if (device_count == 1) {
-    EXPECT_TRUE(opts.use_cuda);
-    ASSERT_EQ(opts.device_ids, (std::vector<int>{0}));
+    EXPECT_TRUE(opts.devices.use_cuda);
+    ASSERT_EQ(opts.devices.ids, (std::vector<int>{0}));
   } else {
-    EXPECT_FALSE(opts.use_cuda);
-    ASSERT_TRUE(opts.device_ids.empty());
+    EXPECT_FALSE(opts.devices.use_cuda);
+    ASSERT_TRUE(opts.devices.ids.empty());
   }
 
   ASSERT_EQ(opts.models[0].inputs.size(), 2U);
@@ -278,8 +278,8 @@ TEST(ArgsParser_Unit, ParsesToleranceOptions)
                                 "1e-2",    "--atol",  "1e-4"};
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  EXPECT_DOUBLE_EQ(opts.rtol, 1e-2);
-  EXPECT_DOUBLE_EQ(opts.atol, 1e-4);
+  EXPECT_DOUBLE_EQ(opts.validation.rtol, 1e-2);
+  EXPECT_DOUBLE_EQ(opts.validation.atol, 1e-4);
 }
 
 TEST(ArgsParser_Unit, DisableValidationFlag)
@@ -290,7 +290,7 @@ TEST(ArgsParser_Unit, DisableValidationFlag)
                                 "float",   "--no-validate"};
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  EXPECT_FALSE(opts.validate_results);
+  EXPECT_FALSE(opts.validation.validate_results);
 }
 
 TEST(ArgsParser_Unit, RejectsInvalidInputSlots)

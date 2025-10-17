@@ -62,41 +62,53 @@ struct ModelConfig {
 //   - Model input/output layout
 // =============================================================================
 struct RuntimeConfig {
+  struct DeviceSettings {
+    std::vector<int> ids;
+    bool use_cpu = true;
+    bool use_cuda = false;
+  };
+
+  struct BatchingSettings {
+    int request_nb = 1;
+    int delay_us = 0;
+    int batch_coalesce_timeout_ms = 0;
+    int max_batch_size = 1;
+    int input_slots = 0;
+    std::size_t max_message_bytes = 32 * 1024 * 1024;
+    size_t pregen_inputs = 10;
+    size_t warmup_pregen_inputs = 2;
+    int warmup_request_nb = 2;
+    bool synchronous = false;
+    bool dynamic_batching = false;
+    bool seen_combined_input = false;
+  };
+
+  struct ValidationSettings {
+    double rtol = 1e-3;
+    double atol = 1e-5;
+    bool validate_results = true;
+  };
+
+  struct Limits {
+    size_t max_inputs = kMaxInputs;
+    size_t max_dims = kMaxDims;
+    size_t max_models_gpu = kMaxModelsGpu;
+  };
+
   std::string scheduler = "lws";
   std::string config_path;
   std::string server_address = "0.0.0.0:50051";
   int metrics_port = 9090;
 
-  std::vector<int> device_ids;
   std::vector<ModelConfig> models;
-
   VerbosityLevel verbosity = VerbosityLevel::Info;
-  int request_nb = 1;
-  int delay_us = 0;
-  int batch_coalesce_timeout_ms = 0;
-  int max_batch_size = 1;
-  int input_slots = 0;
-  std::size_t max_message_bytes = 32 * 1024 * 1024;
-  size_t pregen_inputs = 10;
-  size_t warmup_pregen_inputs = 2;
-  int warmup_request_nb = 2;
-  double rtol = 1e-3;
-  double atol = 1e-5;
-  bool validate_results = true;
-
-  size_t max_inputs = kMaxInputs;
-  size_t max_dims = kMaxDims;
-  size_t max_models_gpu = kMaxModelsGpu;
-
+  DeviceSettings devices{};
+  BatchingSettings batching{};
+  ValidationSettings validation{};
+  Limits limits{};
   std::optional<uint64_t> seed{};
-
-  bool synchronous = false;
   bool show_help = false;
   bool valid = true;
-  bool use_cpu = true;
-  bool use_cuda = false;
-  bool dynamic_batching = false;
-  bool seen_combined_input = false;
 };
 
 inline auto
@@ -109,40 +121,47 @@ compute_model_message_bytes(
     throw InvalidDimensionException("max_batch_size must be > 0");
   }
   size_t per_sample_bytes = 0;
+  const auto compute_numel = [](const TensorConfig& t) -> size_t {
+    size_t numel = 1;
+    for (int64_t d : t.dims) {
+      if (d < 0) {
+        throw InvalidDimensionException("dimension size must be non-negative");
+      }
+      const auto d_size = static_cast<size_t>(d);
+      if (d_size != 0 && numel > std::numeric_limits<size_t>::max() / d_size) {
+        throw MessageSizeOverflowException(
+            "numel * dimension size would overflow size_t");
+      }
+      numel *= d_size;
+    }
+    return numel;
+  };
+
+  const auto tensor_bytes = [&](const TensorConfig& t) -> size_t {
+    const size_t numel = compute_numel(t);
+    size_t type_size = 0;
+    try {
+      type_size = element_size(t.type);
+    }
+    catch (const std::invalid_argument& e) {
+      throw UnsupportedDtypeException(e.what());
+    }
+    if (numel > std::numeric_limits<size_t>::max() / type_size) {
+      throw MessageSizeOverflowException(
+          "numel * element size would overflow size_t");
+    }
+    return numel * type_size;
+  };
+
   const auto accumulate_bytes = [&](const std::vector<TensorConfig>& tensors) {
     for (const auto& t : tensors) {
-      size_t numel = 1;
-      for (int64_t d : t.dims) {
-        if (d < 0) {
-          throw InvalidDimensionException(
-              "dimension size must be non-negative");
-        }
-        const auto d_size = static_cast<size_t>(d);
-        if (d_size != 0 &&
-            numel > std::numeric_limits<size_t>::max() / d_size) {
-          throw MessageSizeOverflowException(
-              "numel * dimension size would overflow size_t");
-        }
-        numel *= d_size;
-      }
-      size_t type_size = 0;
-      try {
-        type_size = element_size(t.type);
-      }
-      catch (const std::invalid_argument& e) {
-        throw UnsupportedDtypeException(e.what());
-      }
-      if (numel > std::numeric_limits<size_t>::max() / type_size) {
-        throw MessageSizeOverflowException(
-            "numel * element size would overflow size_t");
-      }
-      const size_t tensor_bytes = numel * type_size;
+      const size_t current_tensor_bytes = tensor_bytes(t);
       if (per_sample_bytes >
-          std::numeric_limits<size_t>::max() - tensor_bytes) {
+          std::numeric_limits<size_t>::max() - current_tensor_bytes) {
         throw MessageSizeOverflowException(
             "per_sample_bytes + tensor_bytes would overflow size_t");
       }
-      per_sample_bytes += tensor_bytes;
+      per_sample_bytes += current_tensor_bytes;
     }
   };
 

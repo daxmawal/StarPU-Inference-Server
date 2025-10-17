@@ -148,16 +148,16 @@ void
 parse_request_nb_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["request_nb"]) {
-    cfg.request_nb = root["request_nb"].as<int>();
-    if (cfg.request_nb < 0) {
+    cfg.batching.request_nb = root["request_nb"].as<int>();
+    if (cfg.batching.request_nb < 0) {
       log_error("request_nb must be >= 0");
       cfg.valid = false;
     }
   }
   if (root["device_ids"]) {
-    cfg.device_ids = root["device_ids"].as<std::vector<int>>();
-    if (!cfg.device_ids.empty()) {
-      cfg.use_cuda = true;
+    cfg.devices.ids = root["device_ids"].as<std::vector<int>>();
+    if (!cfg.devices.ids.empty()) {
+      cfg.devices.use_cuda = true;
     }
   }
 }
@@ -167,13 +167,13 @@ parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["input"]) {
     cfg.models.resize(1);
-    cfg.models[0].inputs =
-        parse_tensor_nodes(root["input"], cfg.max_inputs, cfg.max_dims);
+    cfg.models[0].inputs = parse_tensor_nodes(
+        root["input"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
   if (root["output"]) {
     cfg.models.resize(1);
-    cfg.models[0].outputs =
-        parse_tensor_nodes(root["output"], cfg.max_inputs, cfg.max_dims);
+    cfg.models[0].outputs = parse_tensor_nodes(
+        root["output"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
 }
 
@@ -181,15 +181,16 @@ void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["delay"]) {
-    cfg.delay_us = root["delay"].as<int>();
-    if (cfg.delay_us < 0) {
+    cfg.batching.delay_us = root["delay"].as<int>();
+    if (cfg.batching.delay_us < 0) {
       cfg.valid = false;
       throw std::invalid_argument("delay must be >= 0");
     }
   }
   if (root["batch_coalesce_timeout_ms"]) {
-    cfg.batch_coalesce_timeout_ms = root["batch_coalesce_timeout_ms"].as<int>();
-    if (cfg.batch_coalesce_timeout_ms < 0) {
+    cfg.batching.batch_coalesce_timeout_ms =
+        root["batch_coalesce_timeout_ms"].as<int>();
+    if (cfg.batching.batch_coalesce_timeout_ms < 0) {
       cfg.valid = false;
       throw std::invalid_argument("batch_coalesce_timeout_ms must be >= 0");
     }
@@ -216,20 +217,20 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument(
           "max_message_bytes must be >= 0 and fit in size_t");
     }
-    cfg.max_message_bytes = static_cast<std::size_t>(tmp);
+    cfg.batching.max_message_bytes = static_cast<std::size_t>(tmp);
   }
   if (root["max_batch_size"]) {
-    cfg.max_batch_size = root["max_batch_size"].as<int>();
-    if (cfg.max_batch_size <= 0) {
+    cfg.batching.max_batch_size = root["max_batch_size"].as<int>();
+    if (cfg.batching.max_batch_size <= 0) {
       throw std::invalid_argument("max_batch_size must be > 0");
     }
   }
   if (root["dynamic_batching"]) {
-    cfg.dynamic_batching = root["dynamic_batching"].as<bool>();
+    cfg.batching.dynamic_batching = root["dynamic_batching"].as<bool>();
   }
   if (root["input_slots"]) {
-    cfg.input_slots = root["input_slots"].as<int>();
-    if (cfg.input_slots <= 0) {
+    cfg.batching.input_slots = root["input_slots"].as<int>();
+    if (cfg.batching.input_slots <= 0) {
       throw std::invalid_argument("input_slots must be > 0");
     }
   }
@@ -243,21 +244,21 @@ parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
     if (tmp <= 0) {
       throw std::invalid_argument("pregen_inputs must be > 0");
     }
-    cfg.pregen_inputs = static_cast<size_t>(tmp);
+    cfg.batching.pregen_inputs = static_cast<size_t>(tmp);
   }
   if (root["warmup_pregen_inputs"]) {
     const int tmp = root["warmup_pregen_inputs"].as<int>();
     if (tmp <= 0) {
       throw std::invalid_argument("warmup_pregen_inputs must be > 0");
     }
-    cfg.warmup_pregen_inputs = static_cast<size_t>(tmp);
+    cfg.batching.warmup_pregen_inputs = static_cast<size_t>(tmp);
   }
   if (root["warmup_request_nb"]) {
     const int tmp = root["warmup_request_nb"].as<int>();
     if (tmp < 0) {
       throw std::invalid_argument("warmup_request_nb must be >= 0");
     }
-    cfg.warmup_request_nb = tmp;
+    cfg.batching.warmup_request_nb = tmp;
   }
 }
 
@@ -272,28 +273,28 @@ parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.seed = static_cast<uint64_t>(tmp);
   }
   if (root["rtol"]) {
-    cfg.rtol = root["rtol"].as<double>();
-    if (cfg.rtol < 0) {
+    cfg.validation.rtol = root["rtol"].as<double>();
+    if (cfg.validation.rtol < 0) {
       throw std::invalid_argument("rtol must be >= 0");
     }
   }
   if (root["atol"]) {
-    cfg.atol = root["atol"].as<double>();
-    if (cfg.atol < 0) {
+    cfg.validation.atol = root["atol"].as<double>();
+    if (cfg.validation.atol < 0) {
       throw std::invalid_argument("atol must be >= 0");
     }
   }
   if (root["validate_results"]) {
-    cfg.validate_results = root["validate_results"].as<bool>();
+    cfg.validation.validate_results = root["validate_results"].as<bool>();
   }
   if (root["sync"]) {
-    cfg.synchronous = root["sync"].as<bool>();
+    cfg.batching.synchronous = root["sync"].as<bool>();
   }
   if (root["use_cpu"]) {
-    cfg.use_cpu = root["use_cpu"].as<bool>();
+    cfg.devices.use_cpu = root["use_cpu"].as<bool>();
   }
   if (root["use_cuda"]) {
-    cfg.use_cuda = root["use_cuda"].as<bool>();
+    cfg.devices.use_cuda = root["use_cuda"].as<bool>();
   }
 }
 
@@ -389,8 +390,9 @@ load_config(const std::string& path) -> RuntimeConfig
 
   if (cfg.valid) {
     try {
-      cfg.max_message_bytes = compute_max_message_bytes(
-          cfg.max_batch_size, cfg.models, cfg.max_message_bytes);
+      cfg.batching.max_message_bytes = compute_max_message_bytes(
+          cfg.batching.max_batch_size, cfg.models,
+          cfg.batching.max_message_bytes);
     }
     catch (const InvalidDimensionException& invalid_dimension) {
       log_error(

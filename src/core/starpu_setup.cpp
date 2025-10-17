@@ -66,12 +66,12 @@ configure_cpu(starpu_conf& conf, bool use_cpu)
 void
 configure_gpu(starpu_conf& conf, const RuntimeConfig& opts)
 {
-  if (!opts.use_cuda) {
+  if (!opts.devices.use_cuda) {
     conf.ncuda = 0;
     return;
   }
 
-  if (opts.device_ids.size() > STARPU_NMAXWORKERS) {
+  if (opts.devices.ids.size() > STARPU_NMAXWORKERS) {
     throw std::invalid_argument(std::format(
         "[ERROR] Number of CUDA device IDs exceeds maximum of {}",
         STARPU_NMAXWORKERS));
@@ -79,9 +79,9 @@ configure_gpu(starpu_conf& conf, const RuntimeConfig& opts)
 
   std::unordered_set<int> unique_ids;
   std::vector<int> valid_device_ids;
-  valid_device_ids.reserve(opts.device_ids.size());
+  valid_device_ids.reserve(opts.devices.ids.size());
 
-  for (const int device_id : opts.device_ids) {
+  for (const int device_id : opts.devices.ids) {
     if (device_id < 0) {
       log_error(std::format(
           "Invalid CUDA device ID {}: must be non-negative", device_id));
@@ -113,7 +113,7 @@ initialize_input_pool(const RuntimeConfig& opts)
   }
 
   try {
-    return std::make_unique<InputSlotPool>(opts, opts.input_slots);
+    return std::make_unique<InputSlotPool>(opts, opts.batching.input_slots);
   }
   catch (const std::exception& e) {
     log_error(std::string("Failed to initialize InputSlotPool: ") + e.what());
@@ -130,7 +130,7 @@ initialize_output_pool(const RuntimeConfig& opts)
   }
 
   try {
-    return std::make_unique<OutputSlotPool>(opts, opts.input_slots);
+    return std::make_unique<OutputSlotPool>(opts, opts.batching.input_slots);
   }
   catch (const std::exception& e) {
     log_error(std::string("Failed to initialize OutputSlotPool: ") + e.what());
@@ -416,7 +416,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
   starpu_conf_init(&conf_);
   conf_.sched_policy_name = scheduler_name_.c_str();
 
-  configure_cpu(conf_, opts.use_cpu);
+  configure_cpu(conf_, opts.devices.use_cpu);
   configure_gpu(conf_, opts);
 
   if (starpu_init_fn_ref()(&conf_) != 0) {

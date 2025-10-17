@@ -93,7 +93,7 @@ TEST_F(WarmupRunnerTest, WarmupRunnerRunZeroRequestNb_Integration)
   init(true);
   auto elapsed_ms = measure_ms([&]() { runner->run(0); });
   auto device_workers =
-      starpu_server::StarPUSetup::get_cuda_workers_by_device(opts.device_ids);
+      starpu_server::StarPUSetup::get_cuda_workers_by_device(opts.devices.ids);
   EXPECT_TRUE(device_workers.empty());
   EXPECT_LT(elapsed_ms, 100);
 }

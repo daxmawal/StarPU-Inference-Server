@@ -186,9 +186,9 @@ parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   }
 
   opts.models.resize(1);
-  if (!opts.seen_combined_input) {
+  if (!opts.batching.seen_combined_input) {
     opts.models[0].inputs.clear();
-    opts.seen_combined_input = true;
+    opts.batching.seen_combined_input = true;
   }
 
   TensorConfig tensor_config{};
@@ -293,7 +293,7 @@ static auto
 parse_request_nb(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& request_nb = opts.request_nb;
+  auto& request_nb = opts.batching.request_nb;
   return expect_and_parse(
       "--request-number", idx, args, [&request_nb](const char* val) {
         const auto tmp = std::stoi(val);
@@ -364,7 +364,7 @@ parse_verbose(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 static auto
 parse_delay(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& delay_us = opts.delay_us;
+  auto& delay_us = opts.batching.delay_us;
   return expect_and_parse("--delay", idx, args, [&delay_us](const char* val) {
     delay_us = std::stoi(val);
     if (delay_us < 0) {
@@ -380,7 +380,7 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   if (const bool parsed = expect_and_parse(
           "--device-ids", idx, args,
           [&opts](const char* val) {
-            opts.use_cuda = true;
+            opts.devices.use_cuda = true;
             std::stringstream shape_stream(val);
             std::string id_str;
             while (std::getline(shape_stream, id_str, ',')) {
@@ -388,9 +388,9 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
               if (device_id < 0) {
                 throw std::invalid_argument("Must be >= 0.");
               }
-              opts.device_ids.push_back(device_id);
+              opts.devices.ids.push_back(device_id);
             }
-            if (opts.device_ids.empty()) {
+            if (opts.devices.ids.empty()) {
               throw std::invalid_argument("No device IDs provided.");
             }
           });
@@ -399,8 +399,8 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
   }
 
   if (const std::unordered_set<int> unique_ids(
-          opts.device_ids.begin(), opts.device_ids.end());
-      unique_ids.size() != opts.device_ids.size()) {
+          opts.devices.ids.begin(), opts.devices.ids.end());
+      unique_ids.size() != opts.devices.ids.size()) {
     log_error("Duplicate device IDs provided.");
     return false;
   }
@@ -409,11 +409,11 @@ parse_device_ids(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
       static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
 
   if (const auto invalid_it = std::ranges::find_if(
-          opts.device_ids,
+          opts.devices.ids,
           [device_count](const int device_id) noexcept {
             return device_id >= device_count;
           });
-      invalid_it != opts.device_ids.end()) {
+      invalid_it != opts.devices.ids.end()) {
     log_error(std::format(
         "GPU ID {} out of range. Only {} device(s) available.", *invalid_it,
         device_count));
@@ -438,7 +438,7 @@ static auto
 parse_max_batch_size(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& max_batch_size = opts.max_batch_size;
+  auto& max_batch_size = opts.batching.max_batch_size;
   return expect_and_parse(
       "--max-batch-size", idx, args, [&max_batch_size](const char* val) {
         const int tmp = std::stoi(val);
@@ -453,7 +453,7 @@ static auto
 parse_input_slots(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& input_slots = opts.input_slots;
+  auto& input_slots = opts.batching.input_slots;
   return expect_and_parse(
       "--input-slots", idx, args, [&input_slots](const char* val) {
         const int tmp = std::stoi(val);
@@ -468,7 +468,7 @@ static auto
 parse_slots_alias(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& input_slots = opts.input_slots;
+  auto& input_slots = opts.batching.input_slots;
   return expect_and_parse(
       "--slots", idx, args, [&input_slots](const char* val) {
         const int tmp = std::stoi(val);
@@ -523,7 +523,7 @@ static auto
 parse_pregen_inputs(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& pregen = opts.pregen_inputs;
+  auto& pregen = opts.batching.pregen_inputs;
   return expect_and_parse(
       "--pregen-inputs", idx, args, [&pregen](const char* val) {
         const auto tmp = std::stoi(val);
@@ -538,7 +538,7 @@ static auto
 parse_warmup_pregen_inputs(
     RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& pregen = opts.warmup_pregen_inputs;
+  auto& pregen = opts.batching.warmup_pregen_inputs;
   return expect_and_parse(
       "--warmup-pregen-inputs", idx, args, [&pregen](const char* val) {
         const auto tmp = std::stoi(val);
@@ -553,7 +553,7 @@ static auto
 parse_warmup_request_nb(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     -> bool
 {
-  auto& warmup = opts.warmup_request_nb;
+  auto& warmup = opts.batching.warmup_request_nb;
   return expect_and_parse(
       "--warmup-request_nb", idx, args, [&warmup](const char* val) {
         const auto tmp = std::stoi(val);
@@ -580,7 +580,7 @@ parse_seed(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 static auto
 parse_rtol(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& rtol = opts.rtol;
+  auto& rtol = opts.validation.rtol;
   return expect_and_parse("--rtol", idx, args, [&rtol](const char* val) {
     const auto tmp = std::stod(val);
     if (tmp < 0) {
@@ -593,7 +593,7 @@ parse_rtol(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 static auto
 parse_atol(RuntimeConfig& opts, size_t& idx, std::span<char*> args) -> bool
 {
-  auto& atol = opts.atol;
+  auto& atol = opts.validation.atol;
   return expect_and_parse("--atol", idx, args, [&atol](const char* val) {
     const auto tmp = std::stod(val);
     if (tmp < 0) {
@@ -651,11 +651,11 @@ parse_argument_values(std::span<char*> args_span, RuntimeConfig& opts) -> bool
     const std::string_view arg = args_span[idx];
 
     if (arg == "--sync") {
-      opts.synchronous = true;
+      opts.batching.synchronous = true;
     } else if (arg == "--no_cpu") {
-      opts.use_cpu = false;
+      opts.devices.use_cpu = false;
     } else if (arg == "--no-validate") {
-      opts.validate_results = false;
+      opts.validation.validate_results = false;
     } else if (arg == "--help" || arg == "-h") {
       opts.show_help = true;
       return true;
@@ -731,8 +731,9 @@ parse_arguments(std::span<char*> args_span, RuntimeConfig opts) -> RuntimeConfig
     validate_config(opts);
     if (opts.valid) {
       try {
-        opts.max_message_bytes = compute_max_message_bytes(
-            opts.max_batch_size, opts.models, opts.max_message_bytes);
+        opts.batching.max_message_bytes = compute_max_message_bytes(
+            opts.batching.max_batch_size, opts.models,
+            opts.batching.max_message_bytes);
       }
       catch (const InvalidDimensionException& e) {
         log_error(e.what());

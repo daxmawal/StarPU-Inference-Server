@@ -195,7 +195,7 @@ register_starpu_handle_or_throw(
 
 InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
 {
-  bmax_ = std::max(1, opts.max_batch_size);
+  bmax_ = std::max(1, opts.batching.max_batch_size);
 
   if (opts.models.empty()) {
     throw std::invalid_argument("No model config provided for InputSlotPool");
@@ -275,7 +275,7 @@ InputSlotPool::allocate_slot_buffers_and_register(
   auto& buffer_infos = host_buffer_infos_[static_cast<size_t>(slot_id)];
   buffer_infos.resize(n_in);
 
-  const bool want_pinned = opts.use_cuda;
+  const bool want_pinned = opts.devices.use_cuda;
   const auto batch_size = static_cast<size_t>(bmax_);
 
   for (size_t i = 0; i < n_in; ++i) {

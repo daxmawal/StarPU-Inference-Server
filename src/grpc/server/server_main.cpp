@@ -107,13 +107,16 @@ handle_program_arguments(std::span<char const* const> args)
   log_info(cfg.verbosity, std::format("__cplusplus = {}", __cplusplus));
   log_info(cfg.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
   log_info(cfg.verbosity, std::format("Scheduler       : {}", cfg.scheduler));
-  log_info(cfg.verbosity, std::format("Request_nb      : {}", cfg.request_nb));
+  log_info(
+      cfg.verbosity,
+      std::format("Request_nb      : {}", cfg.batching.request_nb));
 
   if (input_slots_override.has_value()) {
-    cfg.input_slots = *input_slots_override;
+    cfg.batching.input_slots = *input_slots_override;
     starpu_server::log_info(
         cfg.verbosity,
-        std::format("Overriding input_slots from CLI: {}", cfg.input_slots));
+        std::format(
+            "Overriding input_slots from CLI: {}", cfg.batching.input_slots));
   }
 
   return cfg;
@@ -192,10 +195,10 @@ launch_threads(
 
   std::jthread grpc_thread([&]() {
     const auto server_options = starpu_server::GrpcServerOptions{
-        opts.server_address, opts.max_message_bytes, opts.verbosity};
+        opts.server_address, opts.batching.max_message_bytes, opts.verbosity};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
-        opts.max_batch_size, server_options, server_ctx.server);
+        opts.batching.max_batch_size, server_options, server_ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);

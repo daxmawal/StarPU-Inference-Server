@@ -157,10 +157,10 @@ client_worker(
   }
 
   auto pregen_inputs =
-      client_utils::pre_generate_inputs(opts, opts.pregen_inputs);
+      client_utils::pre_generate_inputs(opts, opts.batching.pregen_inputs);
 
   auto next_time = std::chrono::steady_clock::now();
-  const auto delay = std::chrono::microseconds(opts.delay_us);
+  const auto delay = std::chrono::microseconds(opts.batching.delay_us);
   for (auto request_id = 0; request_id < request_nb; ++request_id) {
     std::this_thread::sleep_until(next_time);
     next_time += delay;
@@ -272,8 +272,8 @@ load_model_and_reference_output(const RuntimeConfig& opts)
   try {
     auto model_cpu =
         load_model(opts.models.empty() ? std::string{} : opts.models[0].path);
-    auto models_gpu = opts.use_cuda
-                          ? clone_model_to_gpus(model_cpu, opts.device_ids)
+    auto models_gpu = opts.devices.use_cuda
+                          ? clone_model_to_gpus(model_cpu, opts.devices.ids)
                           : std::vector<torch::jit::script::Module>{};
     auto inputs = generate_inputs(
         opts.models.empty() ? std::vector<TensorConfig>{}
@@ -302,12 +302,12 @@ run_warmup(
     const std::vector<torch::Tensor>& outputs_ref)
 {
   NvtxRange nvtx_scope("warmup");
-  if (!opts.use_cuda || opts.warmup_request_nb <= 0) {
+  if (!opts.devices.use_cuda || opts.batching.warmup_request_nb <= 0) {
     return;
   }
 
   const int warmup_request_nb =
-      std::max(opts.warmup_request_nb, opts.max_batch_size);
+      std::max(opts.batching.warmup_request_nb, opts.batching.max_batch_size);
   log_info(
       opts.verbosity, std::format(
                           "Starting warmup with {} request_nb per CUDA device "
@@ -402,16 +402,16 @@ process_results(
     std::vector<torch::jit::script::Module>& models_gpu,
     const RuntimeConfig& opts)
 {
-  if (!opts.validate_results) {
+  if (!opts.validation.validate_results) {
     log_info(opts.verbosity, "Result validation disabled; skipping checks.");
   }
 
-  auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, opts.device_ids);
+  auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, opts.devices.ids);
   for (const auto& result : results) {
     if (const bool has_results =
             !result.results.empty() && result.results[0].defined();
         !has_results) {
-      if (opts.validate_results) {
+      if (opts.validation.validate_results) {
         log_error(
             std::format("[Client] Job {} failed.", result_job_id(result)));
       }
@@ -419,14 +419,15 @@ process_results(
     }
 
     const auto validation_model = resolve_validation_model(
-        result, model_cpu, gpu_model_lookup, opts.validate_results);
+        result, model_cpu, gpu_model_lookup, opts.validation.validate_results);
     if (!validation_model.has_value()) {
       continue;
     }
 
-    if (opts.validate_results) {
+    if (opts.validation.validate_results) {
       validate_inference_result(
-          result, **validation_model, opts.verbosity, opts.rtol, opts.atol);
+          result, **validation_model, opts.verbosity, opts.validation.rtol,
+          opts.validation.atol);
     }
   }
 }
@@ -444,7 +445,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   NvtxRange nvtx_scope("inference_loop");
   const c10::InferenceMode inference_guard;
   CuDnnBenchmarkGuard cudnn_benchmark_guard(
-      opts.use_cuda && !opts.dynamic_batching);
+      opts.devices.use_cuda && !opts.batching.dynamic_batching);
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;
@@ -469,8 +470,8 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   std::vector<InferenceResult> results;
   std::mutex results_mutex;
 
-  if (opts.request_nb > 0) {
-    results.reserve(static_cast<size_t>(opts.request_nb));
+  if (opts.batching.request_nb > 0) {
+    results.reserve(static_cast<size_t>(opts.batching.request_nb));
   }
 
   std::atomic completed_jobs = 0;
@@ -494,7 +495,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   try {
     server = get_worker_thread_launcher()(worker);
     client = std::jthread([&queue, &opts, &outputs_ref]() {
-      detail::client_worker(queue, opts, outputs_ref, opts.request_nb);
+      detail::client_worker(queue, opts, outputs_ref, opts.batching.request_nb);
     });
   }
   catch (const std::exception& e) {
@@ -512,7 +513,8 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   {
     std::unique_lock lock(all_done_mutex);
     all_done_cv.wait(lock, [&completed_jobs, &opts]() {
-      return completed_jobs.load(std::memory_order_acquire) >= opts.request_nb;
+      return completed_jobs.load(std::memory_order_acquire) >=
+             opts.batching.request_nb;
     });
   }
 

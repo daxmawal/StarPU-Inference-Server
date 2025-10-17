@@ -110,7 +110,7 @@ TEST_F(InferenceTaskTest, FillModelPointersAllNegativeDeviceIds)
 {
   auto job = make_job(1, 1);
   auto task = make_task(job, 1);
-  opts_.device_ids = {-1, -2};
+  opts_.devices.ids = {-1, -2};
 
   auto params = task.create_inference_params();
 
@@ -122,7 +122,7 @@ TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
 {
   auto job = make_job(2, 1);
   auto task = make_task(job, 2);
-  opts_.device_ids = {0, -1};
+  opts_.devices.ids = {0, -1};
 
   auto params = task.create_inference_params();
 

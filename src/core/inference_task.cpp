@@ -210,12 +210,12 @@ InferenceTask::create_context(
 void
 InferenceTask::check_limits(size_t num_inputs) const
 {
-  if (num_inputs > opts_->max_inputs) {
-    throw InferenceExecutionException(
-        std::format("Too many input tensors: max is {}", opts_->max_inputs));
+  if (num_inputs > opts_->limits.max_inputs) {
+    throw InferenceExecutionException(std::format(
+        "Too many input tensors: max is {}", opts_->limits.max_inputs));
   }
 
-  if (models_gpu_->size() > opts_->max_models_gpu) {
+  if (models_gpu_->size() > opts_->limits.max_models_gpu) {
     throw TooManyGpuModelsException(
         "Too many GPU models for the current configuration.");
   }
@@ -229,9 +229,9 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
 
   auto params = std::make_shared<InferenceParams>();
 
-  params->limits.max_inputs = opts_->max_inputs;
-  params->limits.max_dims = opts_->max_dims;
-  params->limits.max_models_gpu = opts_->max_models_gpu;
+  params->limits.max_inputs = opts_->limits.max_inputs;
+  params->limits.max_dims = opts_->limits.max_dims;
+  params->limits.max_models_gpu = opts_->limits.max_models_gpu;
 
   fill_model_pointers(params);
   bind_runtime_job_info(params);
@@ -252,12 +252,12 @@ InferenceTask::fill_model_pointers(
   params->models.num_models_gpu = models_gpu_->size();
   params->models.models_gpu.clear();
 
-  if (opts_ == nullptr || opts_->device_ids.empty() || models_gpu_->empty()) {
+  if (opts_ == nullptr || opts_->devices.ids.empty() || models_gpu_->empty()) {
     return;
   }
 
   const auto max_device_id = *std::ranges::max_element(
-      opts_->device_ids.begin(), opts_->device_ids.end());
+      opts_->devices.ids.begin(), opts_->devices.ids.end());
   if (max_device_id < 0) {
     return;
   }
@@ -266,9 +266,9 @@ InferenceTask::fill_model_pointers(
       static_cast<size_t>(max_device_id) + 1, nullptr);
 
   const size_t replicas =
-      std::min(models_gpu_->size(), opts_->device_ids.size());
+      std::min(models_gpu_->size(), opts_->devices.ids.size());
   for (size_t i = 0; i < replicas; ++i) {
-    const int device_id = opts_->device_ids[i];
+    const int device_id = opts_->devices.ids[i];
     if (device_id < 0) {
       continue;
     }
@@ -306,9 +306,10 @@ InferenceTask::fill_input_layout(
   for (size_t i = 0; i < num_inputs; ++i) {
     const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
-    if (dim > static_cast<int64_t>(opts_->max_dims)) {
+    if (dim > static_cast<int64_t>(opts_->limits.max_dims)) {
       throw InferenceExecutionException(std::format(
-          "Input tensor has too many dimensions: max is {}", opts_->max_dims));
+          "Input tensor has too many dimensions: max is {}",
+          opts_->limits.max_dims));
     }
     params->layout.num_dims[i] = dim;
     const auto sizes = tensor.sizes();
@@ -391,7 +392,7 @@ InferenceTask::create_task(
 
   task->nbuffers = static_cast<int>(num_buffers);
   task->cl = starpu_->get_codelet();
-  task->synchronous = opts_->synchronous ? 1 : 0;
+  task->synchronous = opts_->batching.synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
   task->priority =
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());

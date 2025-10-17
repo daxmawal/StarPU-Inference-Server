@@ -65,8 +65,8 @@ inline auto
 make_client_worker_test_context() -> ClientWorkerTestContext
 {
   starpu_server::RuntimeConfig config{};
-  config.delay_us = 0;
-  config.pregen_inputs = 1;
+  config.batching.delay_us = 0;
+  config.batching.pregen_inputs = 1;
 
   starpu_server::TensorConfig tensor_cfg{
       .name = "input",
@@ -358,12 +358,12 @@ TEST(InferenceRunner_Unit, ClientWorkerStopsWhenQueuePushFails)
   auto& opts = context.config;
   auto& queue = context.queue;
   const auto& outputs_ref = context.outputs_reference;
-  opts.request_nb = 1;
+  opts.batching.request_nb = 1;
 
   testing::internal::CaptureStderr();
   queue.shutdown();
   starpu_server::detail::client_worker(
-      queue, opts, outputs_ref, opts.request_nb);
+      queue, opts, outputs_ref, opts.batching.request_nb);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);
@@ -420,11 +420,11 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
   starpu_server::RuntimeConfig opts{};
-  opts.device_ids = device_ids;
-  opts.validate_results = false;
+  opts.devices.ids = device_ids;
+  opts.validation.validate_results = false;
   opts.verbosity = starpu_server::VerbosityLevel::Info;
-  opts.rtol = 1e-5;
-  opts.atol = 1e-8;
+  opts.validation.rtol = 1e-5;
+  opts.validation.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 1;
@@ -450,11 +450,11 @@ TEST(
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
   starpu_server::RuntimeConfig opts{};
-  opts.device_ids = device_ids;
-  opts.validate_results = false;
+  opts.devices.ids = device_ids;
+  opts.validation.validate_results = false;
   opts.verbosity = starpu_server::VerbosityLevel::Info;
-  opts.rtol = 1e-5;
-  opts.atol = 1e-8;
+  opts.validation.rtol = 1e-5;
+  opts.validation.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 13;
@@ -475,11 +475,11 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
   starpu_server::RuntimeConfig opts{};
-  opts.device_ids = device_ids;
-  opts.validate_results = true;
+  opts.devices.ids = device_ids;
+  opts.validation.validate_results = true;
   opts.verbosity = starpu_server::VerbosityLevel::Info;
-  opts.rtol = 1e-5;
-  opts.atol = 1e-8;
+  opts.validation.rtol = 1e-5;
+  opts.validation.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 99;
@@ -503,11 +503,11 @@ TEST(
   gpu_models.push_back(starpu_server::make_identity_model());
   const std::vector<int> device_ids{0};
   starpu_server::RuntimeConfig opts{};
-  opts.device_ids = device_ids;
-  opts.validate_results = true;
+  opts.devices.ids = device_ids;
+  opts.validation.validate_results = true;
   opts.verbosity = starpu_server::VerbosityLevel::Info;
-  opts.rtol = 1e-5;
-  opts.atol = 1e-8;
+  opts.validation.rtol = 1e-5;
+  opts.validation.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 7;

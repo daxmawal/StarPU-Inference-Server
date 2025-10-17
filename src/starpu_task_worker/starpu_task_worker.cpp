@@ -191,7 +191,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
 
           const std::scoped_lock lock(*results_mutex_);
           auto& stored_result = results_->emplace_back();
-          if (opts_->validate_results) {
+          if (opts_->validation.validate_results) {
             stored_result.inputs = std::move(input_tensors);
             stored_result.results = results;
           }
@@ -345,7 +345,7 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
   }
 
   jobs.push_back(first_job);
-  if (!opts_->dynamic_batching) {
+  if (!opts_->batching.dynamic_batching) {
     return jobs;
   }
   if (first_job->has_aggregated_sub_jobs() ||
@@ -353,14 +353,14 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     return jobs;
   }
 
-  const int max_batch_size = std::max(1, opts_->max_batch_size);
+  const int max_batch_size = std::max(1, opts_->batching.max_batch_size);
   if (max_batch_size <= 1) {
     return jobs;
   }
 
-  const bool enable_wait = opts_->batch_coalesce_timeout_ms > 0;
+  const bool enable_wait = opts_->batching.batch_coalesce_timeout_ms > 0;
   const auto batch_coalesce_timeout =
-      std::chrono::milliseconds(opts_->batch_coalesce_timeout_ms);
+      std::chrono::milliseconds(opts_->batching.batch_coalesce_timeout_ms);
 
   const auto& target_worker = first_job->get_fixed_worker_id();
   while (jobs.size() < static_cast<size_t>(max_batch_size)) {

@@ -151,7 +151,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     SubmitInferenceTaskWithoutPoolsPropagatesExceptions)
 {
-  opts_.max_models_gpu = 0;
+  opts_.limits.max_models_gpu = 0;
   models_gpu_.resize(1);
 
   auto job = make_job(42, {torch::ones({1})}, {at::kFloat});

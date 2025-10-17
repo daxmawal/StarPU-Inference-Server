@@ -58,8 +58,8 @@ WarmupRunner::client_worker(
     rng.seed(std::random_device{}());
   }
 
-  auto pregen_inputs =
-      client_utils::pre_generate_inputs(opts_, opts_.warmup_pregen_inputs);
+  auto pregen_inputs = client_utils::pre_generate_inputs(
+      opts_, opts_.batching.warmup_pregen_inputs);
 
   if (request_nb_per_worker < 0) {
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
@@ -122,7 +122,7 @@ WarmupRunner::run(int request_nb_per_worker)
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
-  if (!opts_.use_cuda) {
+  if (!opts_.devices.use_cuda) {
     return;
   }
 
@@ -148,7 +148,7 @@ WarmupRunner::run(int request_nb_per_worker)
   const std::jthread server(&StarPUTaskRunner::run, &worker);
 
   const auto device_workers =
-      StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);
+      StarPUSetup::get_cuda_workers_by_device(opts_.devices.ids);
 
   const std::jthread client(
       [&]() { client_worker(device_workers, queue, request_nb_per_worker); });

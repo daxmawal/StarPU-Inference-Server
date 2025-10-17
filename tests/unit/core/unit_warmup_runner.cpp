@@ -45,7 +45,7 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   auto device_workers = make_device_workers();
 
   opts.seed = 0;
-  opts.warmup_pregen_inputs = 1;
+  opts.batching.warmup_pregen_inputs = 1;
   starpu_server::InferenceQueue queue_single;
   runner->client_worker(device_workers, queue_single, 1);
 
@@ -60,7 +60,7 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   EXPECT_EQ(unique_single.size(), 1U);
 
   opts.seed = 0;
-  opts.warmup_pregen_inputs = 2;
+  opts.batching.warmup_pregen_inputs = 2;
   starpu_server::InferenceQueue queue_double;
   constexpr int kDoublerequest_nb = 5;
   runner->client_worker(device_workers, queue_double, kDoublerequest_nb);

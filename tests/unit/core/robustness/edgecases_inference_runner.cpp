@@ -46,8 +46,8 @@ class ConstantModelConfigTest : public ::testing::Test {
       std::vector<int> device_ids) const
   {
     auto config = base_config();
-    config.use_cuda = true;
-    config.device_ids = std::move(device_ids);
+    config.devices.use_cuda = true;
+    config.devices.ids = std::move(device_ids);
     return config;
   }
 
@@ -73,8 +73,8 @@ RunWorkerThreadFailureCase(const std::filesystem::path& path)
   using namespace starpu_server;
 
   auto opts = make_single_model_runtime_config(path, {1}, at::kFloat);
-  opts.request_nb = 1;
-  opts.use_cuda = false;
+  opts.batching.request_nb = 1;
+  opts.devices.use_cuda = false;
 
   StarPUSetup starpu(opts);
 
@@ -100,8 +100,8 @@ RunWorkerThreadFailureCase(const std::filesystem::path& path)
 TEST_F(ConstantModelConfigTest, LoadModelAndReferenceOutputUnsupported)
 {
   auto opts = base_config();
-  opts.device_ids = {0};
-  opts.use_cuda = false;
+  opts.devices.ids = {0};
+  opts.devices.use_cuda = false;
 
   torch::manual_seed(3);
   EXPECT_THROW(
@@ -177,8 +177,8 @@ TEST(RunInferenceLoop_Robustesse, LoadModelFailureHandledGracefully)
 
   auto opts = make_single_model_runtime_config(
       "nonexistent_model.pt", std::vector<int64_t>{1}, at::kFloat);
-  opts.request_nb = 1;
-  opts.use_cuda = false;
+  opts.batching.request_nb = 1;
+  opts.devices.use_cuda = false;
 
   StarPUSetup starpu(opts);
 
@@ -206,8 +206,8 @@ TEST_F(ConstantModelConfigTest, InvalidCudaDeviceLogsError)
   using namespace starpu_server;
 
   auto opts = cuda_config(std::vector<int>{-1});
-  opts.request_nb = 1;
-  opts.warmup_request_nb = 0;
+  opts.batching.request_nb = 1;
+  opts.batching.warmup_request_nb = 0;
 
   StarPUSetup starpu(opts);
 
