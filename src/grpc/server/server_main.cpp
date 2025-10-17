@@ -176,10 +176,11 @@ launch_threads(
   }
 
   std::jthread grpc_thread([&, expected_input_types, expected_input_dims]() {
+    const auto server_options = starpu_server::GrpcServerOptions{
+        opts.server_address, opts.max_message_bytes, opts.verbosity};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
-        opts.max_batch_size, opts.server_address, opts.max_message_bytes,
-        opts.verbosity, ctx.server);
+        opts.max_batch_size, server_options, ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);

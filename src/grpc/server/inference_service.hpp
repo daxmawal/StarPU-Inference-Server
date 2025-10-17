@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -164,19 +165,23 @@ inline constexpr std::size_t kMaxGrpcThreads = 8;
 
 auto compute_thread_count_from(unsigned concurrency) -> std::size_t;
 
+struct GrpcServerOptions {
+  std::string address;
+  std::size_t max_message_bytes;
+  VerbosityLevel verbosity;
+};
+
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, const std::string& address,
-    std::size_t max_message_bytes, VerbosityLevel verbosity,
+    int max_batch_size, const GrpcServerOptions& options,
     std::unique_ptr<grpc::Server>& server);
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, std::size_t max_message_bytes,
-    VerbosityLevel verbosity, std::unique_ptr<grpc::Server>& server);
+    const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
 
-void StopServer(std::unique_ptr<grpc::Server>& server);
+void StopServer(const std::unique_ptr<grpc::Server>& server);
 }  // namespace starpu_server

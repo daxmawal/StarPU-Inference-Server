@@ -737,26 +737,27 @@ class ModelInferCallData final : public AsyncCallDataBase {
 
   void Proceed(bool is_ok) override
   {
+    using enum CallStatus;
     switch (status_) {
-      case CallStatus::Create:
-        status_ = CallStatus::Process;
+      case Create:
+        status_ = Process;
         service_->RequestModelInfer(
             &ctx_, &request_, &responder_, cq_, cq_, this);
         break;
-      case CallStatus::Process:
+      case Process:
         if (!is_ok) {
-          status_ = CallStatus::Finish;
+          status_ = Finish;
           delete this;
           return;
         }
         new ModelInferCallData(service_, cq_, impl_);
         impl_->HandleModelInferAsync(
             &ctx_, &request_, &response_, [this](const Status& status) {
-              status_ = CallStatus::Finish;
+              status_ = Finish;
               responder_.Finish(response_, status, this);
             });
         break;
-      case CallStatus::Finish:
+      case Finish:
         delete this;
         break;
     }
@@ -869,8 +870,7 @@ RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, const std::string& address,
-    std::size_t max_message_bytes, VerbosityLevel verbosity,
+    int max_batch_size, const GrpcServerOptions& options,
     std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
@@ -881,23 +881,26 @@ RunGrpcServer(
   AsyncServerContext async_context(async_service, service);
 
   ServerBuilder builder;
-  builder.AddListeningPort(address, grpc::InsecureServerCredentials());
+  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
   async_context.configure(builder);
   const int grpc_max_message_bytes =
-      max_message_bytes >
+      options.max_message_bytes >
               static_cast<std::size_t>(std::numeric_limits<int>::max())
           ? std::numeric_limits<int>::max()
-          : static_cast<int>(max_message_bytes);
+          : static_cast<int>(options.max_message_bytes);
   builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
   builder.SetMaxSendMessageSize(grpc_max_message_bytes);
 
   server = builder.BuildAndStart();
   if (!server) {
-    log_error(std::format("Failed to start gRPC server on {}", address));
+    log_error(
+        std::format("Failed to start gRPC server on {}", options.address));
     return;
   }
   async_context.start();
-  log_info(verbosity, std::format("Server listening on {}", address));
+  log_info(
+      options.verbosity,
+      std::format("Server listening on {}", options.address));
   server->Wait();
   async_context.shutdown();
   server.reset();
@@ -907,8 +910,7 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, std::size_t max_message_bytes,
-    VerbosityLevel verbosity, std::unique_ptr<Server>& server)
+    const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs,
@@ -919,30 +921,33 @@ RunGrpcServer(
   AsyncServerContext async_context(async_service, service);
 
   ServerBuilder builder;
-  builder.AddListeningPort(address, grpc::InsecureServerCredentials());
+  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
   async_context.configure(builder);
   const int grpc_max_message_bytes =
-      max_message_bytes >
+      options.max_message_bytes >
               static_cast<std::size_t>(std::numeric_limits<int>::max())
           ? std::numeric_limits<int>::max()
-          : static_cast<int>(max_message_bytes);
+          : static_cast<int>(options.max_message_bytes);
   builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
   builder.SetMaxSendMessageSize(grpc_max_message_bytes);
 
   server = builder.BuildAndStart();
   if (!server) {
-    log_error(std::format("Failed to start gRPC server on {}", address));
+    log_error(
+        std::format("Failed to start gRPC server on {}", options.address));
     return;
   }
   async_context.start();
-  log_info(verbosity, std::format("Server listening on {}", address));
+  log_info(
+      options.verbosity,
+      std::format("Server listening on {}", options.address));
   server->Wait();
   async_context.shutdown();
   server.reset();
 }
 
 void
-StopServer(std::unique_ptr<Server>& server)
+StopServer(const std::unique_ptr<Server>& server)
 {
   if (server) {
     server->Shutdown();
