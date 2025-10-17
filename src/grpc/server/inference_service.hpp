@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -18,6 +19,8 @@ namespace starpu_server {
 namespace detail {
 struct TimingInfo;
 }
+
+class MetricsRegistry;
 
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
@@ -100,6 +103,27 @@ class InferenceServiceImpl final
       -> grpc::Status;
 
  private:
+  class CallbackHandle {
+   public:
+    explicit CallbackHandle(std::function<void(grpc::Status)> callback);
+    auto TryAcquire() -> bool;
+    void Invoke(grpc::Status status);
+
+   private:
+    std::mutex mutex_;
+    std::function<void(grpc::Status)> callback_;
+    bool consumed_ = false;
+  };
+
+  void handle_async_infer_completion(
+      const inference::ModelInferRequest* request,
+      inference::ModelInferResponse* reply,
+      const std::shared_ptr<CallbackHandle>& callback_handle,
+      std::shared_ptr<MetricsRegistry> metrics,
+      std::chrono::high_resolution_clock::time_point recv_tp, int64_t recv_ms,
+      const grpc::Status& job_status, const std::vector<torch::Tensor>& outs,
+      LatencyBreakdown breakdown, detail::TimingInfo timing_info);
+
   static auto build_latency_breakdown(
       const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
 

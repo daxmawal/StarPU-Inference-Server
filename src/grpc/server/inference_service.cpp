@@ -461,48 +461,108 @@ InferenceServiceImpl::submit_job_and_wait(
 }
 
 
+InferenceServiceImpl::CallbackHandle::CallbackHandle(
+    std::function<void(Status)> callback)
+    : callback_(std::move(callback))
+{
+}
+
+auto
+InferenceServiceImpl::CallbackHandle::TryAcquire() -> bool
+{
+  std::scoped_lock lock(mutex_);
+  if (consumed_) {
+    return false;
+  }
+  consumed_ = true;
+  return true;
+}
+
+void
+InferenceServiceImpl::CallbackHandle::Invoke(Status status)
+{
+  std::function<void(Status)> callback;
+  {
+    std::scoped_lock lock(mutex_);
+    if (!callback_) {
+      return;
+    }
+    consumed_ = true;
+    callback = std::move(callback_);
+  }
+  callback(std::move(status));
+}
+
+void
+InferenceServiceImpl::handle_async_infer_completion(
+    const ModelInferRequest* request, ModelInferResponse* reply,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    std::shared_ptr<MetricsRegistry> metrics,
+    std::chrono::high_resolution_clock::time_point recv_tp, int64_t recv_ms,
+    const Status& job_status, const std::vector<torch::Tensor>& outs,
+    LatencyBreakdown breakdown, detail::TimingInfo timing_info)
+{
+  if (!callback_handle->TryAcquire()) {
+    return;
+  }
+
+  if (!job_status.ok()) {
+    callback_handle->Invoke(job_status);
+    return;
+  }
+
+  const auto zero_tp = std::chrono::high_resolution_clock::time_point{};
+  if (timing_info.enqueued_time > zero_tp) {
+    const auto preprocess_duration = std::chrono::duration<double, std::milli>(
+        timing_info.enqueued_time - recv_tp);
+    breakdown.preprocess_ms = std::max(0.0, preprocess_duration.count());
+  } else {
+    breakdown.preprocess_ms = 0.0;
+  }
+
+  Status populate_status =
+      populate_response(request, reply, outs, recv_ms, breakdown);
+  if (!populate_status.ok()) {
+    callback_handle->Invoke(populate_status);
+    return;
+  }
+
+  const auto send_tp = std::chrono::high_resolution_clock::now();
+  const int64_t send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              send_tp.time_since_epoch())
+                              .count();
+  reply->set_server_send_ms(send_ms);
+
+  if (timing_info.callback_end_time > zero_tp) {
+    const auto postprocess_duration = std::chrono::duration<double, std::milli>(
+        send_tp - timing_info.callback_end_time);
+    breakdown.postprocess_ms = std::max(0.0, postprocess_duration.count());
+  } else {
+    breakdown.postprocess_ms = 0.0;
+  }
+
+  breakdown.overall_ms = std::max(
+      0.0,
+      std::chrono::duration<double, std::milli>(send_tp - recv_tp).count());
+
+  reply->set_server_preprocess_ms(breakdown.preprocess_ms);
+  reply->set_server_postprocess_ms(breakdown.postprocess_ms);
+  reply->set_server_overall_ms(breakdown.overall_ms);
+
+  if (metrics && metrics->inference_latency != nullptr) {
+    const auto latency_ms =
+        std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
+    metrics->inference_latency->Observe(latency_ms);
+  }
+
+  callback_handle->Invoke(Status::OK);
+}
+
 void
 InferenceServiceImpl::HandleModelInferAsync(
     ServerContext* /*context*/, const ModelInferRequest* request,
     ModelInferResponse* reply, std::function<void(Status)> on_done)
 {
-  class CallbackHandle {
-   public:
-    explicit CallbackHandle(std::function<void(Status)> callback)
-        : callback_(std::move(callback))
-    {
-    }
-
-    [[nodiscard]] auto TryAcquire() -> bool
-    {
-      std::scoped_lock lock(mutex_);
-      if (consumed_) {
-        return false;
-      }
-      consumed_ = true;
-      return true;
-    }
-
-    void Invoke(Status status)
-    {
-      std::function<void(Status)> callback;
-      {
-        std::scoped_lock lock(mutex_);
-        if (!callback_) {
-          return;
-        }
-        consumed_ = true;
-        callback = std::move(callback_);
-      }
-      callback(std::move(status));
-    }
-
-   private:
-    std::mutex mutex_;
-    std::function<void(Status)> callback_;
-    bool consumed_ = false;
-  };
-
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
   NvtxRange request_scope("grpc_handle_infer_request");
 
@@ -530,64 +590,9 @@ InferenceServiceImpl::HandleModelInferAsync(
       [this, request, reply, recv_tp, recv_ms, metrics, callback_handle](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
-        if (!callback_handle->TryAcquire()) {
-          return;
-        }
-
-        if (!job_status.ok()) {
-          callback_handle->Invoke(job_status);
-          return;
-        }
-
-        const auto zero_tp = std::chrono::high_resolution_clock::time_point{};
-        if (timing_info.enqueued_time > zero_tp) {
-          const auto preprocess_duration =
-              std::chrono::duration<double, std::milli>(
-                  timing_info.enqueued_time - recv_tp);
-          breakdown.preprocess_ms = std::max(0.0, preprocess_duration.count());
-        } else {
-          breakdown.preprocess_ms = 0.0;
-        }
-
-        Status populate_status =
-            populate_response(request, reply, outs, recv_ms, breakdown);
-        if (!populate_status.ok()) {
-          callback_handle->Invoke(populate_status);
-          return;
-        }
-
-        auto send_tp = std::chrono::high_resolution_clock::now();
-        int64_t send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              send_tp.time_since_epoch())
-                              .count();
-
-        reply->set_server_send_ms(send_ms);
-
-        if (timing_info.callback_end_time > zero_tp) {
-          const auto postprocess_duration =
-              std::chrono::duration<double, std::milli>(
-                  send_tp - timing_info.callback_end_time);
-          breakdown.postprocess_ms =
-              std::max(0.0, postprocess_duration.count());
-        } else {
-          breakdown.postprocess_ms = 0.0;
-        }
-        breakdown.overall_ms = std::max(
-            0.0, std::chrono::duration<double, std::milli>(send_tp - recv_tp)
-                     .count());
-
-        reply->set_server_preprocess_ms(breakdown.preprocess_ms);
-        reply->set_server_postprocess_ms(breakdown.postprocess_ms);
-        reply->set_server_overall_ms(breakdown.overall_ms);
-
-        if (metrics && metrics->inference_latency != nullptr) {
-          const auto latency_ms =
-              std::chrono::duration<double, std::milli>(send_tp - recv_tp)
-                  .count();
-          metrics->inference_latency->Observe(latency_ms);
-        }
-
-        callback_handle->Invoke(Status::OK);
+        handle_async_infer_completion(
+            request, reply, callback_handle, metrics, recv_tp, recv_ms,
+            job_status, outs, std::move(breakdown), timing_info);
       },
       std::move(input_lifetimes), recv_tp);
 
