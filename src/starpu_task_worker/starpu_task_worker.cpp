@@ -888,7 +888,7 @@ StarPUTaskRunner::run()
     batching_done_ = false;
   }
 
-  batching_thread_ = std::thread(&StarPUTaskRunner::batching_loop, this);
+  batching_thread_ = std::jthread(&StarPUTaskRunner::batching_loop, this);
 
   while (true) {
     auto job = wait_for_prepared_job();
