@@ -15,12 +15,14 @@ ARG CMAKE_PREFIX_PATH=""
 ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 
 # Create working directories and install build dependencies
-RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
+RUN mkdir -p "$INSTALL_DIR" "$HOME/.cache" && \
     apt-get update && apt-get install -y --no-install-recommends \
     autoconf \
     automake \
     build-essential \
     git \
+    libfxt-dev \
+    libgtest-dev \
     libhwloc-dev \
     libltdl-dev \
     libssl-dev \
@@ -32,8 +34,6 @@ RUN mkdir -p $INSTALL_DIR $HOME/.cache && \
     software-properties-common \
     unzip \
     wget \
-    libfxt-dev \
-    libgtest-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # === Install CMake ${CMAKE_VERSION} ===
@@ -53,65 +53,65 @@ RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
 # === Install libtorch ${LIBTORCH_VERSION} (${LIBTORCH_CUDA}) ===
 ARG LIBTORCH_VERSION=2.2.2
 ARG LIBTORCH_CUDA=cu118
-RUN mkdir -p $INSTALL_DIR/libtorch && \
+RUN mkdir -p "$INSTALL_DIR/libtorch" && \
     wget https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip -O /tmp/libtorch.zip && \
-    unzip /tmp/libtorch.zip -d $INSTALL_DIR && \
+    unzip /tmp/libtorch.zip -d "$INSTALL_DIR" && \
     rm /tmp/libtorch.zip
 
 # === Build and install Abseil ===
 RUN git clone --depth 1 --branch 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil && \
-    cd /tmp/abseil && mkdir build && cd build && \
-    cmake .. \
+    cmake -S /tmp/abseil -B /tmp/abseil/build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/absl \
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/absl" \
     -DBUILD_SHARED_LIBS=OFF && \
-    make -j"$(nproc)" && make install && \
+    cmake --build /tmp/abseil/build -j"$(nproc)" && \
+    cmake --install /tmp/abseil/build && \
     rm -rf /tmp/abseil
 
 # === Build and install Protobuf 25.3 (static) ===
 RUN git clone --depth 1 --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf && \
-    cd /tmp/protobuf && \
-    git submodule update --init --recursive && \
-    mkdir build && cd build && \
-    cmake .. \
+    git -C /tmp/protobuf submodule update --init --recursive && \
+    cmake -S /tmp/protobuf -B /tmp/protobuf/build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/protobuf \
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/protobuf" \
     -Dprotobuf_BUILD_SHARED_LIBS=OFF \
     -Dprotobuf_BUILD_TESTS=OFF \
     -Dprotobuf_ABSL_PROVIDER=package \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
-    make -j"$(nproc)" && make install && \
+    cmake --build /tmp/protobuf/build -j"$(nproc)" && \
+    cmake --install /tmp/protobuf/build && \
     rm -rf /tmp/protobuf
 
 # === Compile GTest ===
-RUN cd /usr/src/googletest && cmake . -DCMAKE_BUILD_TYPE=Release \ && make -j"$(nproc)" \
-    && mv lib/*.a /usr/lib && rm -rf /usr/src/googletest
+RUN cmake -S /usr/src/googletest -B /usr/src/googletest/build -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build /usr/src/googletest/build -j"$(nproc)" && \
+    mv /usr/src/googletest/build/lib/*.a /usr/lib && \
+    rm -rf /usr/src/googletest
 
 # === Build and install utf8_range ===
 RUN git clone --depth 1 --branch main https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
-    cd /tmp/utf8_range && mkdir build && cd build && \
-    cmake .. \
+    cmake -S /tmp/utf8_range -B /tmp/utf8_range/build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/utf8_range \
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/utf8_range" \
     -DBUILD_SHARED_LIBS=OFF \
     -Dutf8_range_ENABLE_TESTS=OFF \
     -DBUILD_TESTING=OFF && \
-    make -j"$(nproc)" && make install && \
+    cmake --build /tmp/utf8_range/build -j"$(nproc)" && \
+    cmake --install /tmp/utf8_range/build && \
     rm -rf /tmp/utf8_range
 
 # === Build and install gRPC ${GRPC_VERSION} in "package" mode for Protobuf/Abseil ===
 ARG GRPC_VERSION=1.59.0
 RUN git clone --depth 1 --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
-    cd /tmp/grpc && git submodule update --init --recursive && \
-    mkdir -p cmake/build && cd cmake/build && \
-    cmake ../.. \
+    git -C /tmp/grpc submodule update --init --recursive && \
+    cmake -S /tmp/grpc -B /tmp/grpc/cmake/build \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=$INSTALL_DIR/grpc \
+    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/grpc" \
     -DgRPC_INSTALL=ON \
     -DgRPC_BUILD_TESTS=OFF \
     -DgRPC_PROTOBUF_PROVIDER=package \
@@ -121,17 +121,17 @@ RUN git clone --depth 1 --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/g
     -DgRPC_SSL_PROVIDER=module \
     -DgRPC_ZLIB_PROVIDER=module \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" && \
-    cmake --build . --target install -j"$(nproc)" && rm -rf /tmp/grpc
+    cmake --build /tmp/grpc/cmake/build --target install -j"$(nproc)" && \
+    rm -rf /tmp/grpc
 
 # === Build and install StarPU ${STARPU_VERSION} ===
 ARG STARPU_VERSION=1.4.8
+WORKDIR /tmp/starpu
 RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-${STARPU_VERSION}/starpu-starpu-${STARPU_VERSION}.tar.gz && \
-    mkdir -p /tmp/starpu && \
-    tar -xzf /tmp/starpu.tar.gz -C /tmp/starpu --strip-components=1 && \
-    cd /tmp/starpu && \
+    tar -xzf /tmp/starpu.tar.gz --strip-components=1 && \
     ./autogen.sh && \
     ./configure \
-    --prefix=$STARPU_DIR \
+    --prefix="$STARPU_DIR" \
     --enable-tracing \
     --with-fxt \
     --disable-hip \
@@ -140,8 +140,9 @@ RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/s
     --enable-cuda \
     --disable-fortran \
     --disable-openmp \
-    && make -j"$(nproc)" && make install && \
-    rm -rf /tmp/starpu /tmp/starpu.tar.gz
+    && make -j"$(nproc)" && make install
+WORKDIR /
+RUN rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
 # Copy source code
 WORKDIR /app
@@ -203,10 +204,10 @@ RUN apt-get update \
     && add-apt-repository ppa:ubuntu-toolchain-r/test \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
+    libfxt2 \
     libhwloc15 \
     libltdl7 \
     libssl3 \
-    libfxt2 \
     libstdc++6 \
     && apt-get purge -y --auto-remove software-properties-common \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
