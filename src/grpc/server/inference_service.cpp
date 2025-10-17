@@ -432,17 +432,18 @@ InferenceServiceImpl::submit_job_and_wait(
   auto result_future = result_promise->get_future();
 
   const auto receive_time = std::chrono::high_resolution_clock::now();
-  Status submit_status = submit_job_async(
-      inputs,
-      [result_promise](
-          Status status, std::vector<torch::Tensor> outs,
-          LatencyBreakdown timing, detail::TimingInfo timing_info) {
-        result_promise->set_value(
-            JobResult{std::move(status), std::move(outs), timing, timing_info});
-      },
-      std::move(input_lifetimes), receive_time);
-
-  if (!submit_status.ok()) {
+  if (Status submit_status = submit_job_async(
+          inputs,
+          [result_promise](
+              Status status, std::vector<torch::Tensor> outs,
+              LatencyBreakdown cb_breakdown,
+              const detail::TimingInfo& cb_timing_info) {
+            result_promise->set_value(JobResult{
+                std::move(status), std::move(outs), std::move(cb_breakdown),
+                cb_timing_info});
+          },
+          std::move(input_lifetimes), receive_time);
+      !submit_status.ok()) {
     outputs.clear();
     return submit_status;
   }
@@ -454,10 +455,11 @@ InferenceServiceImpl::submit_job_and_wait(
   }
 
   outputs = std::move(result.outputs);
-  breakdown = result.breakdown;
+  breakdown = std::move(result.breakdown);
   timing_info = result.timing_info;
   return Status::OK;
 }
+
 
 void
 InferenceServiceImpl::HandleModelInferAsync(
@@ -473,7 +475,7 @@ InferenceServiceImpl::HandleModelInferAsync(
 
     [[nodiscard]] auto TryAcquire() -> bool
     {
-      std::lock_guard<std::mutex> lock(mutex_);
+      std::scoped_lock lock(mutex_);
       if (consumed_) {
         return false;
       }
@@ -485,7 +487,7 @@ InferenceServiceImpl::HandleModelInferAsync(
     {
       std::function<void(Status)> callback;
       {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::scoped_lock lock(mutex_);
         if (!callback_) {
           return;
         }
