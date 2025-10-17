@@ -128,7 +128,7 @@ struct OutputContextFixture {
     if (options.sentinel_value.has_value()) {
       const auto& base_ptrs = pool.base_ptrs(slot_id);
       if (!base_ptrs.empty() && base_ptrs[0] != nullptr) {
-        *static_cast<float*>(base_ptrs[0]) = *options.sentinel_value;
+        *reinterpret_cast<float*>(base_ptrs[0]) = *options.sentinel_value;
       }
     }
   }
