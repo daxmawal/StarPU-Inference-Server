@@ -18,7 +18,7 @@ class OutputSlotPool {
  public:
   struct SlotInfo {
     int id = -1;
-    std::vector<void*> base_ptrs;
+    std::vector<std::byte*> base_ptrs;
     std::vector<size_t> per_output_numel_single;
     std::vector<size_t> per_output_bytes_single;
     std::vector<starpu_data_handle_t> handles;
@@ -47,7 +47,8 @@ class OutputSlotPool {
   [[nodiscard]] auto slot_info(int slot_id) const -> const SlotInfo&;
   [[nodiscard]] auto handles(int slot_id) const
       -> const std::vector<starpu_data_handle_t>&;
-  [[nodiscard]] auto base_ptrs(int slot_id) const -> const std::vector<void*>&;
+  [[nodiscard]] auto base_ptrs(int slot_id) const
+      -> const std::vector<std::byte*>&;
   [[nodiscard]] int max_batch_size() const { return bmax_; }
   [[nodiscard]] size_t num_outputs() const
   {

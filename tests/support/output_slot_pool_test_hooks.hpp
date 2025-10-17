@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 #include "core/output_slot_pool.hpp"
 
 namespace starpu_server {
@@ -12,7 +14,7 @@ struct OutputSlotPoolTestHook {
   static auto host_buffer_infos(const OutputSlotPool& pool, int slot_id)
       -> const std::vector<OutputSlotPool::HostBufferInfo>&;
   static void free_host_buffer_for_tests(
-      void* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
+      std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
 };
 
 namespace testing {
@@ -21,10 +23,9 @@ using OutputStarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
 using OutputRegisterFailureObserverFn = void (*)(
     const OutputSlotPool::SlotInfo& slot,
     const std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos);
-using OutputHostAllocatorFn = int (*)(void**, size_t alignment, size_t size);
-using OutputCudaPinnedOverrideFn =
-    bool (*)(size_t bytes, bool use_pinned, bool default_cuda_pinned);
-using OutputStarpuMemoryPinFn = int (*)(void* ptr, size_t size);
+using OutputHostAllocatorFn = std::function<int(void**, size_t, size_t)>;
+using OutputCudaPinnedOverrideFn = std::function<bool(size_t, bool, bool)>;
+using OutputStarpuMemoryPinFn = std::function<int(void*, size_t)>;
 
 auto set_output_starpu_vector_register_hook_for_tests(
     OutputStarpuVectorRegisterFn vector_register_hook)

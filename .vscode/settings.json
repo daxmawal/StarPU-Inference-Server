@@ -135,7 +135,8 @@
     "bitset": "cpp",
     "print": "cpp",
     "ios": "cpp",
-    "numeric": "cpp"
+    "numeric": "cpp",
+    "*.md": "cpp"
   },
   "[proto3]": {
     "editor.insertSpaces": true,

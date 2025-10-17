@@ -35,6 +35,12 @@ class StarPURegistrationException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when registering output buffers with StarPU fails
+class OutputSlotRegistrationError : public StarPURegistrationException {
+ public:
+  using StarPURegistrationException::StarPURegistrationException;
+};
+
 /// Thrown when an invalid inference job is submitted or accessed
 class InvalidInferenceJobException : public InferenceEngineException {
  public:

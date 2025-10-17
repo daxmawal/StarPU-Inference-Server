@@ -3,6 +3,7 @@
 #include <starpu.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <format>
@@ -23,7 +24,7 @@
 
 namespace {
 
-std::vector<void*> g_observed_base_ptrs;
+std::vector<std::byte*> g_observed_base_ptrs;
 std::vector<starpu_data_handle_t> g_observed_handles;
 bool g_failure_observer_called = false;
 
@@ -32,7 +33,7 @@ starpu_server::testing::StarpuVectorRegisterFn
     g_succeed_then_fail_previous_hook = nullptr;
 std::vector<starpu_data_handle_t>* g_pre_cleanup_registered_handles = nullptr;
 
-std::vector<void*> g_output_observed_base_ptrs;
+std::vector<std::byte*> g_output_observed_base_ptrs;
 std::vector<starpu_data_handle_t> g_output_observed_handles;
 std::vector<starpu_server::OutputSlotPool::HostBufferInfo>
     g_output_observed_host_buffer_infos;
@@ -223,7 +224,7 @@ TEST(OutputSlotPool_Unit, FreeHostBufferNullPointerNoWarning)
 TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
 {
   constexpr size_t kBytes = 32;
-  void* ptr = std::malloc(kBytes);
+  auto* ptr = static_cast<std::byte*>(std::malloc(kBytes));
   ASSERT_NE(ptr, nullptr);
 
   starpu_server::OutputSlotPool::HostBufferInfo info{};
@@ -251,7 +252,7 @@ TEST(OutputSlotPool_Unit, FreeHostBufferCudaFreeHostFailureLogsWarning)
   }
 
   constexpr size_t kBytes = 32;
-  void* ptr = std::malloc(kBytes);
+  auto* ptr = static_cast<std::byte*>(std::malloc(kBytes));
   ASSERT_NE(ptr, nullptr);
 
   starpu_server::OutputSlotPool::HostBufferInfo info{};
@@ -919,7 +920,7 @@ TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
   ASSERT_EQ(g_observed_base_ptrs.size(), model.inputs.size());
   ASSERT_EQ(g_observed_handles.size(), model.inputs.size());
 
-  for (void* base_ptr : g_observed_base_ptrs) {
+  for (std::byte* base_ptr : g_observed_base_ptrs) {
     EXPECT_EQ(base_ptr, nullptr);
   }
 
@@ -1007,7 +1008,7 @@ TEST(InputSlotPool_Unit, PartialRegisterFailureResetsSlotState)
   EXPECT_EQ(g_observed_base_ptrs.front(), nullptr);
   EXPECT_EQ(g_observed_handles.front(), nullptr);
 
-  for (void* base_ptr : g_observed_base_ptrs) {
+  for (std::byte* base_ptr : g_observed_base_ptrs) {
     EXPECT_EQ(base_ptr, nullptr);
   }
 
@@ -1072,7 +1073,7 @@ TEST(OutputSlotPool_Unit, RegisterFailureResetsSlotState)
   ASSERT_EQ(g_output_observed_handles.size(), model.outputs.size());
   ASSERT_EQ(g_output_observed_host_buffer_infos.size(), model.outputs.size());
 
-  for (void* base_ptr : g_output_observed_base_ptrs) {
+  for (std::byte* base_ptr : g_output_observed_base_ptrs) {
     EXPECT_EQ(base_ptr, nullptr);
   }
 
@@ -1332,7 +1333,7 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersReleasesResources)
 
   auto* raw_ptr = std::malloc(sizeof(int));
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = raw_ptr;
+  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
 
   std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
   buffer_infos[0].bytes = sizeof(int);
@@ -1408,7 +1409,7 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersUnpinsStarpuMemory)
 
   auto* raw_ptr = std::malloc(sizeof(int));
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = raw_ptr;
+  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
 
   ASSERT_EQ(starpu_memory_pin(raw_ptr, sizeof(int)), 0);
 
@@ -1453,7 +1454,7 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersFreesCudaPinnedMemory)
                  << static_cast<int>(alloc_rc);
   }
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = raw_ptr;
+  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
 
   std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
   buffer_infos[0].bytes = sizeof(int);
