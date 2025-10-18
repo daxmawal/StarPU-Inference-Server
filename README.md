@@ -1,4 +1,4 @@
-# StarPU Inference Server
+#StarPU Inference Server
 
 [![CI][ci-badge]][ci-url]
 [![codecov][codecov-badge]][codecov-url]
@@ -31,7 +31,7 @@ asynchronous and heterogeneous execution.
 - [ ] Multithreaded server to receive inference requests
 - [ ] Dynamic batching algorithm for improved throughput
 
-## Documentation
+<!--## Documentation
 
 The project currently provides three entry points for documentation:
 
@@ -56,7 +56,7 @@ The project currently provides three entry points for documentation:
    ```
 
 4. Point your gRPC client to the configured address (defaults to
-   `0.0.0.0:50051`) and monitor Prometheus metrics on port 9090.
+   `0.0.0.0:50051`) and monitor Prometheus metrics on port 9090.-->
 
 [ci-badge]:
   https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg?branch=main

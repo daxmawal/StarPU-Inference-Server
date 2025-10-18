@@ -1,4 +1,4 @@
-# Installation Guide
+<!--# Installation Guide
 
 This guide describes how to prepare a development environment for the
 StarPU Inference Server.
@@ -91,4 +91,4 @@ server validates that model paths exist during startup.
 ## Next Steps
 
 Continue with the [Usage Guide](usage.md) to learn how to launch the
-server and submit inference requests.
+server and submit inference requests.-->
