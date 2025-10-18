@@ -100,7 +100,10 @@ OutputSlotPool::prepare_host_buffer(
 void
 OutputSlotPool::HostBufferDeleter::operator()(HostBufferPtr ptr) const
 {
-  std::free(static_cast<void*>(ptr));
+  if (ptr == nullptr) {
+    return;
+  }
+  output_host_deallocator_hook()(static_cast<void*>(ptr));
 }
 
 auto
@@ -123,6 +126,15 @@ OutputSlotPool::output_host_allocator_hook() -> OutputHostAllocatorHook&
 {
   static OutputHostAllocatorHook allocator = &posix_memalign;
   return allocator;
+}
+
+auto
+OutputSlotPool::output_host_deallocator_hook() -> OutputHostDeallocatorHook&
+{
+  static OutputHostDeallocatorHook deallocator = [](void* ptr) noexcept {
+    std::free(ptr);
+  };  // NOLINT(cppcoreguidelines-no-malloc)
+  return deallocator;
 }
 
 auto

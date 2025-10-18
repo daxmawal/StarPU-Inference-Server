@@ -57,6 +57,13 @@ OutputSlotPoolTestHook::host_allocator_hook_ref()
 }
 
 auto
+OutputSlotPoolTestHook::host_deallocator_hook_ref()
+    -> decltype(OutputSlotPool::output_host_deallocator_hook())
+{
+  return OutputSlotPool::output_host_deallocator_hook();
+}
+
+auto
 OutputSlotPoolTestHook::cuda_pinned_override_hook_ref()
     -> decltype(OutputSlotPool::output_cuda_pinned_override_hook())
 {
@@ -102,6 +109,20 @@ set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
   const auto previous = allocator_hook;
   allocator_hook =
       allocator ? std::move(allocator) : OutputHostAllocatorFn{&posix_memalign};
+  return previous;
+}
+
+auto
+set_output_host_deallocator_for_tests(OutputHostDeallocatorFn deallocator)
+    -> OutputHostDeallocatorFn
+{
+  auto& deallocator_hook = OutputSlotPoolTestHook::host_deallocator_hook_ref();
+  const auto previous = deallocator_hook;
+  deallocator_hook =
+      deallocator ? std::move(deallocator)
+                  : OutputHostDeallocatorFn{[](void* ptr) noexcept {
+                      std::free(ptr);  // NOLINT(cppcoreguidelines-no-malloc)
+                    }};
   return previous;
 }
 

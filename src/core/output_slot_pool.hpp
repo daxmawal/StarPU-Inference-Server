@@ -65,6 +65,7 @@ class OutputSlotPool {
       void (*)(const SlotInfo&, const std::vector<HostBufferInfo>&);
   using OutputHostAllocatorHook = std::function<int(void**, size_t, size_t)>;
   using OutputCudaPinnedOverrideHook = std::function<bool(size_t, bool, bool)>;
+  using OutputHostDeallocatorHook = std::function<void(void*)>;
   using OutputStarpuMemoryPinHook = std::function<int(void*, size_t)>;
 
   void allocate_pool(const RuntimeConfig& opts, int slots);
@@ -100,6 +101,7 @@ class OutputSlotPool {
   static auto output_host_allocator_hook() -> OutputHostAllocatorHook&;
   static auto output_cuda_pinned_override_hook()
       -> OutputCudaPinnedOverrideHook&;
+  static auto output_host_deallocator_hook() -> OutputHostDeallocatorHook&;
   static auto starpu_memory_pin_hook() -> OutputStarpuMemoryPinHook&;
 
   std::vector<size_t> per_output_numel_single_;

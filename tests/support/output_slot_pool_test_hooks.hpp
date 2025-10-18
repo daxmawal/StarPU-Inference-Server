@@ -21,6 +21,8 @@ struct OutputSlotPoolTestHook {
       -> decltype(OutputSlotPool::starpu_register_failure_observer());
   static auto host_allocator_hook_ref()
       -> decltype(OutputSlotPool::output_host_allocator_hook());
+  static auto host_deallocator_hook_ref()
+      -> decltype(OutputSlotPool::output_host_deallocator_hook());
   static auto cuda_pinned_override_hook_ref()
       -> decltype(OutputSlotPool::output_cuda_pinned_override_hook());
   static auto starpu_memory_pin_hook_ref()
@@ -34,6 +36,7 @@ using OutputRegisterFailureObserverFn = void (*)(
     const OutputSlotPool::SlotInfo& slot,
     const std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos);
 using OutputHostAllocatorFn = std::function<int(void**, size_t, size_t)>;
+using OutputHostDeallocatorFn = std::function<void(void*)>;
 using OutputCudaPinnedOverrideFn = std::function<bool(size_t, bool, bool)>;
 using OutputStarpuMemoryPinFn = std::function<int(void*, size_t)>;
 
@@ -47,6 +50,9 @@ auto set_output_register_failure_observer_for_tests(
 
 auto set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
     -> OutputHostAllocatorFn;
+
+auto set_output_host_deallocator_for_tests(OutputHostDeallocatorFn deallocator)
+    -> OutputHostDeallocatorFn;
 
 auto set_output_cuda_pinned_override_for_tests(
     OutputCudaPinnedOverrideFn cuda_pinned_override_hook)
