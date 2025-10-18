@@ -33,13 +33,13 @@ RUN mkdir -p "$INSTALL_DIR" "$HOME/.cache" && \
     pkg-config \
     software-properties-common \
     unzip \
-    wget \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # === Install CMake ${CMAKE_VERSION} ===
 ARG CMAKE_VERSION=3.28.3
-RUN wget -qO- https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz \
-    | tar --strip-components=1 -xz -C /usr/local
+ADD https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz /tmp/cmake-linux-x86_64.tar.gz
+RUN tar --strip-components=1 -xz -f /tmp/cmake-linux-x86_64.tar.gz -C /usr/local && \
+    rm /tmp/cmake-linux-x86_64.tar.gz
 
 # === Install GCC ${GCC_VERSION} and set it as default ===
 ARG GCC_VERSION=13
@@ -53,8 +53,8 @@ RUN add-apt-repository ppa:ubuntu-toolchain-r/test && \
 # === Install libtorch ${LIBTORCH_VERSION} (${LIBTORCH_CUDA}) ===
 ARG LIBTORCH_VERSION=2.2.2
 ARG LIBTORCH_CUDA=cu118
+ADD https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip /tmp/libtorch.zip
 RUN mkdir -p "$INSTALL_DIR/libtorch" && \
-    wget https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip -O /tmp/libtorch.zip && \
     unzip /tmp/libtorch.zip -d "$INSTALL_DIR" && \
     rm /tmp/libtorch.zip
 
@@ -127,8 +127,8 @@ RUN git clone --depth 1 --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/g
 # === Build and install StarPU ${STARPU_VERSION} ===
 ARG STARPU_VERSION=1.4.8
 WORKDIR /tmp/starpu
-RUN wget -O /tmp/starpu.tar.gz https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-${STARPU_VERSION}/starpu-starpu-${STARPU_VERSION}.tar.gz && \
-    tar -xzf /tmp/starpu.tar.gz --strip-components=1 && \
+ADD https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-${STARPU_VERSION}/starpu-starpu-${STARPU_VERSION}.tar.gz /tmp/starpu.tar.gz
+RUN tar -xzf /tmp/starpu.tar.gz --strip-components=1 && \
     ./autogen.sh && \
     ./configure \
     --prefix="$STARPU_DIR" \
