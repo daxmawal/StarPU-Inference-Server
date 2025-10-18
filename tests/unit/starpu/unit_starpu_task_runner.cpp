@@ -135,7 +135,8 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   time.callback_start_time = base + std::chrono::milliseconds(kCallbackStartMs);
   time.callback_end_time = base + std::chrono::milliseconds(kCallbackEndMs);
   constexpr int kLogJobId = 42;
-  constexpr double kTotalLatencyMs = 150.0;
+  constexpr auto kTotalLatencyMs =
+      starpu_server::StarPUTaskRunner::DurationMs{150.0};
   std::string output = starpu_server::capture_stdout(
       [&] { runner_->log_job_timings(kLogJobId, kTotalLatencyMs, time); });
   EXPECT_NE(output.find("Queue = 10.000 ms"), std::string::npos);

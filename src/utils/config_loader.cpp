@@ -98,13 +98,13 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "use_cpu",
           "use_cuda"};
 
-  for (const auto& kv : root) {
-    if (!kv.first.IsScalar()) {
+  for (const auto& kvalue : root) {
+    if (!kvalue.first.IsScalar()) {
       log_error("Configuration keys must be scalar strings");
       cfg.valid = false;
       continue;
     }
-    const auto key = kv.first.as<std::string>();
+    const auto key = kvalue.first.as<std::string>();
     if (!kAllowedKeys.contains(key)) {
       log_error(std::string("Unknown configuration option: ") + key);
       cfg.valid = false;

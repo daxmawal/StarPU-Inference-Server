@@ -58,30 +58,34 @@ job_identifier(const InferenceJob& job) -> int
   return (submission_id >= 0) ? submission_id : job.get_request_id();
 }
 
+struct ExceptionLoggingMessages {
+  std::string_view context_prefix;
+  std::string_view unknown_message;
+};
+
 template <typename Callback>
 void
 run_with_logged_exceptions(
-    Callback&& callback, std::string_view context,
-    std::string_view unknown_message)
+    Callback&& callback, ExceptionLoggingMessages messages)
 {
   try {
     std::forward<Callback>(callback)();
   }
   catch (const InferenceEngineException& e) {
-    log_error(std::string(context) + e.what());
+    log_error(std::string(messages.context_prefix) + e.what());
   }
   catch (const std::runtime_error& e) {
-    log_error(std::string(context) + e.what());
+    log_error(std::string(messages.context_prefix) + e.what());
   }
   catch (const std::logic_error& e) {
-    log_error(std::string(context) + e.what());
+    log_error(std::string(messages.context_prefix) + e.what());
   }
   catch (const std::bad_alloc& e) {
-    log_error(std::string(context) + e.what());
+    log_error(std::string(messages.context_prefix) + e.what());
   }
   catch (
       ...) {  // NOSONAR: required to log non-std exceptions thrown by callbacks
-    log_error(std::string(unknown_message));
+    log_error(std::string(messages.unknown_message));
   }
 }
 
@@ -101,26 +105,31 @@ select_earliest_time(clock::time_point current, clock::time_point candidate)
 }
 
 struct BatchAggregationInfo {
-  std::vector<InferenceJob::AggregatedSubJob> sub_jobs{};
+  std::vector<InferenceJob::AggregatedSubJob> sub_jobs;
   int logical_jobs{0};
   int64_t total_samples{0};
-  clock::time_point earliest_start{};
-  clock::time_point earliest_enqueued{};
-  clock::time_point earliest_batch_collect_start{};
+  clock::time_point earliest_start;
+  clock::time_point earliest_enqueued;
+  clock::time_point earliest_batch_collect_start;
 };
 
 struct SubJobSliceResult {
-  std::vector<torch::Tensor> outputs{};
+  std::vector<torch::Tensor> outputs;
   int64_t processed_length{1};
+};
+
+struct SubJobSliceOptions {
+  std::size_t offset;
+  int64_t batch_size;
 };
 
 inline auto
 slice_outputs_for_sub_job(
-    const std::vector<torch::Tensor>& aggregated_outputs, std::size_t offset,
-    int64_t batch_size) -> SubJobSliceResult
+    const std::vector<torch::Tensor>& aggregated_outputs,
+    SubJobSliceOptions options) -> SubJobSliceResult
 {
   SubJobSliceResult result;
-  const int64_t slice_size = std::max<int64_t>(1, batch_size);
+  const int64_t slice_size = std::max<int64_t>(1, options.batch_size);
   result.processed_length = slice_size;
 
   if (aggregated_outputs.empty()) {
@@ -129,7 +138,7 @@ slice_outputs_for_sub_job(
 
   result.outputs.reserve(aggregated_outputs.size());
   bool determined_length = false;
-  const auto slice_start = static_cast<int64_t>(offset);
+  const auto slice_start = static_cast<int64_t>(options.offset);
 
   for (const auto& tensor : aggregated_outputs) {
     if (!tensor.defined() || tensor.dim() == 0) {
@@ -296,7 +305,7 @@ StarPUTaskRunner::should_shutdown(
 
 void
 StarPUTaskRunner::log_job_timings(
-    int request_id, double latency_ms,
+    int request_id, DurationMs latency,
     const detail::TimingInfo& timing_info) const
 {
   if (!should_log(VerbosityLevel::Stats, opts_->verbosity)) {
@@ -337,7 +346,7 @@ StarPUTaskRunner::log_job_timings(
 
   const int job_id = submission_id >= 0 ? submission_id : request_id;
   const auto header = std::format(
-      "Job {} done. Latency = {:.3f} ms | Queue = ", job_id, latency_ms);
+      "Job {} done. Latency = {:.3f} ms | Queue = ", job_id, latency.count());
 
   log_stats(
       opts_->verbosity,
@@ -362,7 +371,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
 
         store_completed_job_result(job_sptr, results, latency_ms);
         ensure_callback_timing(job_sptr->timing_info());
-        record_job_metrics(job_sptr, latency_ms, batch_size);
+        record_job_metrics(job_sptr, DurationMs{latency_ms}, batch_size);
 
         if (prev_callback) {
           prev_callback(results, latency_ms);
@@ -418,7 +427,7 @@ StarPUTaskRunner::ensure_callback_timing(detail::TimingInfo& timing)
 
 void
 StarPUTaskRunner::record_job_metrics(
-    const std::shared_ptr<InferenceJob>& job, double latency_ms,
+    const std::shared_ptr<InferenceJob>& job, DurationMs latency,
     std::size_t batch_size) const
 {
   auto& timing = job->timing_info();
@@ -427,7 +436,7 @@ StarPUTaskRunner::record_job_metrics(
       job->get_fixed_worker_id().has_value());
 
   timing.submission_id = job->submission_id();
-  log_job_timings(job_identifier(*job), latency_ms, timing);
+  log_job_timings(job_identifier(*job), latency, timing);
 }
 
 void
@@ -457,8 +466,9 @@ StarPUTaskRunner::handle_job_exception(
   const auto& completion = job->get_on_complete();
   run_with_logged_exceptions(
       [&completion]() { completion({}, -1); },
-      "Exception in completion callback: ",
-      "Unknown exception in completion callback");
+      ExceptionLoggingMessages{
+          "Exception in completion callback: ",
+          "Unknown exception in completion callback"});
 }
 
 // =============================================================================
@@ -616,22 +626,22 @@ StarPUTaskRunner::can_merge_jobs(
   }
 
   for (size_t idx = 0; idx < lhs_inputs.size(); ++idx) {
-    const auto& a = lhs_inputs[idx];
-    const auto& b = rhs_inputs[idx];
-    if (!a.defined() || !b.defined()) {
+    const auto& lhs_tensor = lhs_inputs[idx];
+    const auto& rhs_tensor = rhs_inputs[idx];
+    if (!lhs_tensor.defined() || !rhs_tensor.defined()) {
       return false;
     }
-    if (a.dim() != b.dim()) {
+    if (lhs_tensor.dim() != rhs_tensor.dim()) {
       return false;
     }
-    if (a.dim() <= 0) {
+    if (lhs_tensor.dim() <= 0) {
       return false;
     }
-    if (a.dim() <= 1) {
+    if (lhs_tensor.dim() <= 1) {
       continue;
     }
-    for (int64_t dim = 1; dim < a.dim(); ++dim) {
-      if (a.size(dim) != b.size(dim)) {
+    for (int64_t dim = 1; dim < lhs_tensor.dim(); ++dim) {
+      if (lhs_tensor.size(dim) != rhs_tensor.size(dim)) {
         return false;
       }
     }
@@ -724,7 +734,7 @@ StarPUTaskRunner::maybe_build_batched_job(
   }
 
   if (auto merged_inputs = merge_input_tensors(jobs); !merged_inputs.empty()) {
-    master->set_input_tensors(std::move(merged_inputs));
+    master->set_input_tensors(merged_inputs);
   }
 
   const auto prototype_outputs = master->get_output_tensors();
@@ -851,8 +861,8 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
       continue;
     }
 
-    auto slice_result =
-        slice_outputs_for_sub_job(aggregated_outputs, offset, entry.batch_size);
+    auto slice_result = slice_outputs_for_sub_job(
+        aggregated_outputs, SubJobSliceOptions{offset, entry.batch_size});
     auto outputs = std::move(slice_result.outputs);
 
     job_sp->timing_info() = aggregated_job->timing_info();
