@@ -37,8 +37,8 @@ OutputSlotPool::alloc_host_buffer(
     if (err == cudaSuccess && raw_ptr != nullptr) {
       auto* cuda_ptr = static_cast<HostBufferPtr>(raw_ptr);
       bool keep_cuda_pinned = true;
-      auto& cuda_override = output_cuda_pinned_override_hook();
-      if (cuda_override) {
+      if (const auto& cuda_override = output_cuda_pinned_override_hook();
+          cuda_override) {
         keep_cuda_pinned = cuda_override(bytes, use_pinned, true);
       }
       if (keep_cuda_pinned) {
