@@ -63,7 +63,7 @@ if [[ -z "$GRPC_DIR" ]]; then
   shift
 fi
 
-if [[ -z "$LIBTORCH_DIR" ] || [ -z "$GRPC_DIR" ]]; then
+if [[ -z "$LIBTORCH_DIR" ]] || [[ -z "$GRPC_DIR" ]]; then
   echo "Usage: LIBTORCH_DIR=<path> GRPC_DIR=<path> $0 [--file <path/to/file.cpp>] [--dir <path>]"
   echo "   or: $0 <libtorch_dir> <grpc_dir> [--file <path/to/file.cpp>] [--dir <path>]"
   exit 1
