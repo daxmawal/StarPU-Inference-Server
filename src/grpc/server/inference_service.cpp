@@ -658,8 +658,12 @@ class AsyncCallDataBase {
 };
 
 template <typename Request, typename Response>
-class UnaryCallData final : public AsyncCallDataBase {
+class UnaryCallData final
+    : public AsyncCallDataBase,
+      public std::enable_shared_from_this<UnaryCallData<Request, Response>> {
  public:
+  using Self = UnaryCallData<Request, Response>;
+  using SharedPtr = std::shared_ptr<Self>;
   using RequestMethod = void (inference::GRPCInferenceService::AsyncService::*)(
       grpc::ServerContext*, Request*,
       grpc::ServerAsyncResponseWriter<Response>*, grpc::CompletionQueue*,
@@ -675,28 +679,40 @@ class UnaryCallData final : public AsyncCallDataBase {
         impl_(impl), request_method_(request_method),
         handler_(std::move(handler))
   {
-    Proceed(true);
+  }
+
+  static void Start(
+      inference::GRPCInferenceService::AsyncService* service,
+      grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl,
+      RequestMethod request_method, Handler handler)
+  {
+    auto call = std::make_shared<Self>(
+        service, completion_queue, impl, request_method, std::move(handler));
+    call->Proceed(true);
   }
 
   void Proceed(bool is_ok) override
   {
     switch (status_) {
-      case CallStatus::Create:
+      case CallStatus::Create: {
         status_ = CallStatus::Process;
+        self_ref_ = this->shared_from_this();
         (service_->*request_method_)(
             &ctx_, &request_, &responder_, cq_, cq_, this);
         break;
-      case CallStatus::Process:
+      }
+      case CallStatus::Process: {
         if (!is_ok) {
           status_ = CallStatus::Finish;
-          delete this;
+          self_ref_.reset();
           return;
         }
-        new UnaryCallData(service_, cq_, impl_, request_method_, handler_);
+        Start(service_, cq_, impl_, request_method_, handler_);
         HandleRequest();
         break;
+      }
       case CallStatus::Finish:
-        delete this;
+        self_ref_.reset();
         break;
     }
   }
@@ -728,48 +744,71 @@ class UnaryCallData final : public AsyncCallDataBase {
   RequestMethod request_method_;
   Handler handler_;
   CallStatus status_ = CallStatus::Create;
+  SharedPtr self_ref_;
 };
 
-class ModelInferCallData final : public AsyncCallDataBase {
+class ModelInferCallData final
+    : public AsyncCallDataBase,
+      public std::enable_shared_from_this<ModelInferCallData> {
  public:
+  using Self = ModelInferCallData;
+  using SharedPtr = std::shared_ptr<Self>;
+
   ModelInferCallData(
       inference::GRPCInferenceService::AsyncService* service,
       grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl)
       : service_(service), cq_(completion_queue), responder_(&ctx_), impl_(impl)
   {
-    Proceed(true);
+  }
+
+  static void Start(
+      inference::GRPCInferenceService::AsyncService* service,
+      grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl)
+  {
+    auto call = std::make_shared<Self>(service, completion_queue, impl);
+    call->Proceed(true);
   }
 
   void Proceed(bool is_ok) override
   {
     using enum CallStatus;
     switch (status_) {
-      case Create:
+      case Create: {
         status_ = Process;
+        self_ref_ = this->shared_from_this();
         service_->RequestModelInfer(
             &ctx_, &request_, &responder_, cq_, cq_, this);
         break;
-      case Process:
+      }
+      case Process: {
         if (!is_ok) {
           status_ = Finish;
-          delete this;
+          self_ref_.reset();
           return;
         }
-        new ModelInferCallData(service_, cq_, impl_);
+        Start(service_, cq_, impl_);
+        auto self = this->shared_from_this();
         impl_->HandleModelInferAsync(
-            &ctx_, &request_, &response_, [this](const Status& status) {
-              status_ = Finish;
-              responder_.Finish(response_, status, this);
+            &ctx_, &request_, &response_,
+            [self = std::move(self)](const Status& status) {
+              self->OnInferenceComplete(status);
             });
         break;
+      }
       case Finish:
-        delete this;
+        self_ref_.reset();
         break;
     }
   }
 
  private:
   enum class CallStatus : std::uint8_t { Create, Process, Finish };
+
+  void OnInferenceComplete(const Status& status)
+  {
+    status_ = CallStatus::Finish;
+    responder_.Finish(response_, status, this);
+  }
 
   inference::GRPCInferenceService::AsyncService* service_;
   grpc::ServerCompletionQueue* cq_;
@@ -779,6 +818,7 @@ class ModelInferCallData final : public AsyncCallDataBase {
   grpc::ServerAsyncResponseWriter<ModelInferResponse> responder_;
   InferenceServiceImpl* impl_;
   CallStatus status_ = CallStatus::Create;
+  SharedPtr self_ref_;
 };
 
 auto
@@ -816,22 +856,22 @@ AsyncServerContext::start()
     threads_.emplace_back([this]() { this->poll_events(); });
   }
 
-  new UnaryCallData<
-      inference::ServerLiveRequest, inference::ServerLiveResponse>(
-      async_service_, completion_queue_.get(), impl_,
-      &inference::GRPCInferenceService::AsyncService::RequestServerLive,
-      std::mem_fn(&InferenceServiceImpl::ServerLive));
-  new UnaryCallData<
-      inference::ServerReadyRequest, inference::ServerReadyResponse>(
-      async_service_, completion_queue_.get(), impl_,
-      &inference::GRPCInferenceService::AsyncService::RequestServerReady,
-      std::mem_fn(&InferenceServiceImpl::ServerReady));
-  new UnaryCallData<
-      inference::ModelReadyRequest, inference::ModelReadyResponse>(
-      async_service_, completion_queue_.get(), impl_,
-      &inference::GRPCInferenceService::AsyncService::RequestModelReady,
-      std::mem_fn(&InferenceServiceImpl::ModelReady));
-  new ModelInferCallData(async_service_, completion_queue_.get(), impl_);
+  UnaryCallData<inference::ServerLiveRequest, inference::ServerLiveResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestServerLive,
+          std::mem_fn(&InferenceServiceImpl::ServerLive));
+  UnaryCallData<inference::ServerReadyRequest, inference::ServerReadyResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestServerReady,
+          std::mem_fn(&InferenceServiceImpl::ServerReady));
+  UnaryCallData<inference::ModelReadyRequest, inference::ModelReadyResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestModelReady,
+          std::mem_fn(&InferenceServiceImpl::ModelReady));
+  ModelInferCallData::Start(async_service_, completion_queue_.get(), impl_);
 }
 
 void
