@@ -13,7 +13,7 @@ if [[ ! -f "$BUILD_DIR/compile_commands.json" ]]; then
   exit 1
 fi
 
-if [[ -z "$LIBTORCH_DIR" ] || [ -z "$GRPC_DIR" ]]; then
+if [[ -z "$LIBTORCH_DIR" ]] || [[ -z "$GRPC_DIR" ]]; then
   echo "Usage: LIBTORCH_DIR=<path> GRPC_DIR=<path> $0"
   echo "   or: $0 <libtorch_dir> <grpc_dir>"
   exit 1
