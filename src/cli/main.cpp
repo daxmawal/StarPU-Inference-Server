@@ -59,7 +59,8 @@ main(int argc, char* argv[]) -> int
   starpu_server::log_info(
       opts.verbosity, std::format("Scheduler       : {}", opts.scheduler));
   starpu_server::log_info(
-      opts.verbosity, std::format("request_nb      : {}", opts.request_nb));
+      opts.verbosity,
+      std::format("request_nb      : {}", opts.batching.request_nb));
 
   std::unique_ptr<starpu_server::StarPUSetup> starpu;
   try {

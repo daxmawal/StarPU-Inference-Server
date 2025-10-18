@@ -46,8 +46,8 @@ class LoadModelAndReferenceOutputTest
     opts.models.resize(1);
     opts.models[0].path = file.path().string();
     opts.models[0].inputs = param.inputs;
-    opts.device_ids = {kDeviceId0};
-    opts.use_cuda = false;
+    opts.devices.ids = {kDeviceId0};
+    opts.devices.use_cuda = false;
 
     torch::manual_seed(param.seed);
     auto result = starpu_server::load_model_and_reference_output(opts);

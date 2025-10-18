@@ -3,8 +3,10 @@
 #include <array>
 #include <bit>
 #include <complex>
+#include <cstddef>
 #include <functional>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -55,8 +57,8 @@ TEST(TensorBuilder_Robustesse, FromRawPtrUnsupportedQuantized)
 
 struct CopyOutputToBufferParam {
   struct BufferInfo {
-    void* data;
-    size_t elements;
+    std::span<std::byte> data;
+    int64_t expected_elements;
     at::ScalarType expected_dtype;
     std::shared_ptr<void> storage;
   };
@@ -77,7 +79,7 @@ TEST_P(CopyOutputToBufferTest, CopyOutputToBufferThrows)
 
   EXPECT_THROW(
       starpu_server::TensorBuilder::copy_output_to_buffer(
-          tensor, buffer.data, buffer.elements, buffer.expected_dtype),
+          tensor, buffer.data, buffer.expected_elements, buffer.expected_dtype),
       starpu_server::InferenceExecutionException);
 }
 
@@ -92,8 +94,11 @@ INSTANTIATE_TEST_SUITE_P(
             },
             [](const torch::Tensor& tensor) {
               auto buffer = std::make_shared<std::vector<int32_t>>(kElems2);
+              auto buffer_view =
+                  std::span<int32_t>(buffer->data(), buffer->size());
+              auto span_bytes = std::as_writable_bytes(buffer_view);
               return CopyOutputToBufferParam::BufferInfo{
-                  static_cast<void*>(buffer->data()), kElems3,
+                  span_bytes, static_cast<int64_t>(kElems3),
                   tensor.scalar_type(),
                   std::shared_ptr<void>(
                       buffer, static_cast<void*>(buffer->data()))};
@@ -106,8 +111,11 @@ INSTANTIATE_TEST_SUITE_P(
             },
             [](const torch::Tensor& tensor) {
               auto buffer = std::make_shared<std::vector<int32_t>>(kElems2);
+              auto buffer_view =
+                  std::span<int32_t>(buffer->data(), buffer->size());
+              auto span_bytes = std::as_writable_bytes(buffer_view);
               return CopyOutputToBufferParam::BufferInfo{
-                  static_cast<void*>(buffer->data()), kElems2,
+                  span_bytes, static_cast<int64_t>(kElems2),
                   tensor.scalar_type(),
                   std::shared_ptr<void>(
                       buffer, static_cast<void*>(buffer->data()))};
@@ -124,9 +132,11 @@ INSTANTIATE_TEST_SUITE_P(
               EXPECT_FALSE(tensor.is_contiguous());
               auto buffer =
                   std::make_shared<std::vector<float>>(tensor.numel());
+              auto buffer_view =
+                  std::span<float>(buffer->data(), buffer->size());
+              auto span_bytes = std::as_writable_bytes(buffer_view);
               return CopyOutputToBufferParam::BufferInfo{
-                  static_cast<void*>(buffer->data()),
-                  static_cast<size_t>(tensor.numel()), tensor.scalar_type(),
+                  span_bytes, tensor.numel(), tensor.scalar_type(),
                   std::shared_ptr<void>(
                       buffer, static_cast<void*>(buffer->data()))};
             }},
@@ -138,8 +148,8 @@ INSTANTIATE_TEST_SUITE_P(
             },
             [](const torch::Tensor& tensor) {
               return CopyOutputToBufferParam::BufferInfo{
-                  nullptr,
-                  static_cast<size_t>(tensor.numel()),
+                  std::span<std::byte>(),
+                  tensor.numel(),
                   tensor.scalar_type(),
                   {}};
             }},
@@ -152,9 +162,11 @@ INSTANTIATE_TEST_SUITE_P(
             [](const torch::Tensor& tensor) {
               auto buffer =
                   std::make_shared<std::vector<float>>(tensor.numel());
+              auto buffer_view =
+                  std::span<float>(buffer->data(), buffer->size());
+              auto span_bytes = std::as_writable_bytes(buffer_view);
               return CopyOutputToBufferParam::BufferInfo{
-                  static_cast<void*>(buffer->data()),
-                  static_cast<size_t>(tensor.numel()), at::kInt,
+                  span_bytes, tensor.numel(), at::kInt,
                   std::shared_ptr<void>(
                       buffer, static_cast<void*>(buffer->data()))};
             }},
@@ -167,9 +179,11 @@ INSTANTIATE_TEST_SUITE_P(
             [](const torch::Tensor& tensor) {
               auto buffer =
                   std::make_shared<std::vector<int32_t>>(tensor.numel());
+              auto buffer_view =
+                  std::span<int32_t>(buffer->data(), buffer->size());
+              auto span_bytes = std::as_writable_bytes(buffer_view);
               return CopyOutputToBufferParam::BufferInfo{
-                  static_cast<void*>(buffer->data()),
-                  static_cast<size_t>(tensor.numel()), at::kFloat,
+                  span_bytes, tensor.numel(), at::kFloat,
                   std::shared_ptr<void>(
                       buffer, static_cast<void*>(buffer->data()))};
             }}),

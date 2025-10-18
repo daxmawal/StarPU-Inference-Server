@@ -31,28 +31,24 @@ InferenceClient::InferenceClient(
 }
 
 void
-InferenceClient::record_latency(
-    double roundtrip_ms, double server_overall_ms, double preprocess_ms,
-    double queue_ms, double batch_ms, double submit_ms, double scheduling_ms,
-    double codelet_ms, double inference_ms, double callback_ms,
-    double postprocess_ms, double job_total_ms, double request_latency_ms,
-    double response_latency_ms, double client_overhead_ms)
+InferenceClient::record_latency(const LatencySample& sample)
 {
-  latency_records_.roundtrip_ms.push_back(roundtrip_ms);
-  latency_records_.server_overall_ms.push_back(server_overall_ms);
-  latency_records_.server_preprocess_ms.push_back(preprocess_ms);
-  latency_records_.server_queue_ms.push_back(queue_ms);
-  latency_records_.server_batch_ms.push_back(batch_ms);
-  latency_records_.server_submit_ms.push_back(submit_ms);
-  latency_records_.server_scheduling_ms.push_back(scheduling_ms);
-  latency_records_.server_codelet_ms.push_back(codelet_ms);
-  latency_records_.server_inference_ms.push_back(inference_ms);
-  latency_records_.server_callback_ms.push_back(callback_ms);
-  latency_records_.server_postprocess_ms.push_back(postprocess_ms);
-  latency_records_.server_job_total_ms.push_back(job_total_ms);
-  latency_records_.request_latency_ms.push_back(request_latency_ms);
-  latency_records_.response_latency_ms.push_back(response_latency_ms);
-  latency_records_.client_overhead_ms.push_back(client_overhead_ms);
+  latency_records_.roundtrip_ms.push_back(sample.roundtrip_ms);
+  latency_records_.server_overall_ms.push_back(sample.server_overall_ms);
+  latency_records_.server_preprocess_ms.push_back(sample.server_preprocess_ms);
+  latency_records_.server_queue_ms.push_back(sample.server_queue_ms);
+  latency_records_.server_batch_ms.push_back(sample.server_batch_ms);
+  latency_records_.server_submit_ms.push_back(sample.server_submit_ms);
+  latency_records_.server_scheduling_ms.push_back(sample.server_scheduling_ms);
+  latency_records_.server_codelet_ms.push_back(sample.server_codelet_ms);
+  latency_records_.server_inference_ms.push_back(sample.server_inference_ms);
+  latency_records_.server_callback_ms.push_back(sample.server_callback_ms);
+  latency_records_.server_postprocess_ms.push_back(
+      sample.server_postprocess_ms);
+  latency_records_.server_job_total_ms.push_back(sample.server_job_total_ms);
+  latency_records_.request_latency_ms.push_back(sample.request_latency_ms);
+  latency_records_.response_latency_ms.push_back(sample.response_latency_ms);
+  latency_records_.client_overhead_ms.push_back(sample.client_overhead_ms);
 }
 
 void
@@ -360,16 +356,23 @@ InferenceClient::AsyncCompleteRpc()
         client_overhead_ms = 0.0;
       }
 
-      record_latency(
-          static_cast<double>(latency), static_cast<double>(overall_ms),
-          static_cast<double>(preprocess_ms), static_cast<double>(queue_ms),
-          static_cast<double>(batch_ms), static_cast<double>(submit_ms),
-          static_cast<double>(scheduling_ms), static_cast<double>(codelet_ms),
-          static_cast<double>(inference_ms), static_cast<double>(callback_ms),
+      const LatencySample sample{
+          static_cast<double>(latency),
+          static_cast<double>(overall_ms),
+          static_cast<double>(preprocess_ms),
+          static_cast<double>(queue_ms),
+          static_cast<double>(batch_ms),
+          static_cast<double>(submit_ms),
+          static_cast<double>(scheduling_ms),
+          static_cast<double>(codelet_ms),
+          static_cast<double>(inference_ms),
+          static_cast<double>(callback_ms),
           static_cast<double>(postprocess_ms),
           static_cast<double>(server_total_ms),
           static_cast<double>(request_latency_ms),
-          static_cast<double>(response_latency_ms), client_overhead_ms);
+          static_cast<double>(response_latency_ms),
+          client_overhead_ms};
+      record_latency(sample);
 
       log_info(
           verbosity_,

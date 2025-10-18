@@ -4,8 +4,10 @@
 #include <torch/torch.h>
 
 #include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -63,8 +65,8 @@ inline auto
 make_client_worker_test_context() -> ClientWorkerTestContext
 {
   starpu_server::RuntimeConfig config{};
-  config.delay_us = 0;
-  config.pregen_inputs = 1;
+  config.batching.delay_us = 0;
+  config.batching.pregen_inputs = 1;
 
   starpu_server::TensorConfig tensor_cfg{
       .name = "input",
@@ -273,10 +275,9 @@ TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
   result.request_id = 42;
 
   torch::jit::script::Module cpu_model("cpu_module");
-  const std::vector<torch::jit::script::Module*> empty_lookup;
-
   const auto resolved = starpu_server::detail::resolve_validation_model(
-      result, cpu_model, empty_lookup, /*validate_results=*/true);
+      result, cpu_model, std::span<torch::jit::script::Module*>{},
+      /*validate_results=*/true);
 
   EXPECT_FALSE(resolved.has_value());
 }
@@ -357,12 +358,12 @@ TEST(InferenceRunner_Unit, ClientWorkerStopsWhenQueuePushFails)
   auto& opts = context.config;
   auto& queue = context.queue;
   const auto& outputs_ref = context.outputs_reference;
-  opts.request_nb = 1;
+  opts.batching.request_nb = 1;
 
   testing::internal::CaptureStderr();
   queue.shutdown();
   starpu_server::detail::client_worker(
-      queue, opts, outputs_ref, opts.request_nb);
+      queue, opts, outputs_ref, opts.batching.request_nb);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);
@@ -401,8 +402,10 @@ TEST(RunInference_Unit, CopyOutputToBufferCopiesData)
   constexpr size_t kCount5 = 5;
   auto tensor = torch::tensor({kF1, kF2, kF35, kFNeg4, kF025}, torch::kFloat32);
   std::vector<float> dst(kCount5, 0.0F);
+  auto dst_bytes =
+      std::as_writable_bytes(std::span<float>(dst.data(), dst.size()));
   starpu_server::TensorBuilder::copy_output_to_buffer(
-      tensor, dst.data(), tensor.numel(), tensor.scalar_type());
+      tensor, dst_bytes, tensor.numel(), tensor.scalar_type());
   ASSERT_EQ(dst.size(), kCount5);
   EXPECT_FLOAT_EQ(dst[0], kF1);
   EXPECT_FLOAT_EQ(dst[1], kF2);
@@ -416,6 +419,12 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
   auto cpu_model = starpu_server::make_identity_model();
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
+  starpu_server::RuntimeConfig opts{};
+  opts.devices.ids = device_ids;
+  opts.validation.validate_results = false;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.validation.rtol = 1e-5;
+  opts.validation.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 1;
@@ -425,10 +434,7 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_SkipsValidationWhenDisabled)
   const std::vector<starpu_server::InferenceResult> results{result};
 
   testing::internal::CaptureStdout();
-  starpu_server::detail::process_results(
-      results, cpu_model, gpu_models, device_ids,
-      /*validate_results=*/false, starpu_server::VerbosityLevel::Info,
-      /*rtol=*/1e-5, /*atol=*/1e-8);
+  starpu_server::detail::process_results(results, cpu_model, gpu_models, opts);
   const auto captured = testing::internal::GetCapturedStdout();
 
   EXPECT_NE(
@@ -443,6 +449,12 @@ TEST(
   auto cpu_model = starpu_server::make_identity_model();
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
+  starpu_server::RuntimeConfig opts{};
+  opts.devices.ids = device_ids;
+  opts.validation.validate_results = false;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.validation.rtol = 1e-5;
+  opts.validation.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 13;
@@ -451,10 +463,7 @@ TEST(
   const std::vector<starpu_server::InferenceResult> results{result};
 
   testing::internal::CaptureStderr();
-  starpu_server::detail::process_results(
-      results, cpu_model, gpu_models, device_ids,
-      /*validate_results=*/false, starpu_server::VerbosityLevel::Info,
-      /*rtol=*/1e-5, /*atol=*/1e-8);
+  starpu_server::detail::process_results(results, cpu_model, gpu_models, opts);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_EQ(captured.find("[Client] Job"), std::string::npos);
@@ -465,6 +474,12 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
   auto cpu_model = starpu_server::make_identity_model();
   std::vector<torch::jit::script::Module> gpu_models;
   const std::vector<int> device_ids;
+  starpu_server::RuntimeConfig opts{};
+  opts.devices.ids = device_ids;
+  opts.validation.validate_results = true;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.validation.rtol = 1e-5;
+  opts.validation.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 99;
@@ -473,10 +488,7 @@ TEST(InferenceRunner_ProcessResults, ProcessResults_LogsErrorWhenResultMissing)
   const std::vector<starpu_server::InferenceResult> results{result};
 
   testing::internal::CaptureStderr();
-  starpu_server::detail::process_results(
-      results, cpu_model, gpu_models, device_ids,
-      /*validate_results=*/true, starpu_server::VerbosityLevel::Info,
-      /*rtol=*/1e-5, /*atol=*/1e-8);
+  starpu_server::detail::process_results(results, cpu_model, gpu_models, opts);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("[Client] Job"), std::string::npos);
@@ -490,6 +502,12 @@ TEST(
   std::vector<torch::jit::script::Module> gpu_models;
   gpu_models.push_back(starpu_server::make_identity_model());
   const std::vector<int> device_ids{0};
+  starpu_server::RuntimeConfig opts{};
+  opts.devices.ids = device_ids;
+  opts.validation.validate_results = true;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.validation.rtol = 1e-5;
+  opts.validation.atol = 1e-8;
 
   starpu_server::InferenceResult result{};
   result.request_id = 7;
@@ -502,10 +520,7 @@ TEST(
   const std::vector<starpu_server::InferenceResult> results{result};
 
   testing::internal::CaptureStderr();
-  starpu_server::detail::process_results(
-      results, cpu_model, gpu_models, device_ids,
-      /*validate_results=*/true, starpu_server::VerbosityLevel::Info,
-      /*rtol=*/1e-5, /*atol=*/1e-8);
+  starpu_server::detail::process_results(results, cpu_model, gpu_models, opts);
   const auto captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(

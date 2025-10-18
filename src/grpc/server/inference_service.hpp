@@ -7,6 +7,8 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -18,6 +20,8 @@ namespace starpu_server {
 namespace detail {
 struct TimingInfo;
 }
+
+class MetricsRegistry;
 
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
@@ -100,6 +104,30 @@ class InferenceServiceImpl final
       -> grpc::Status;
 
  private:
+  class CallbackHandle {
+   public:
+    explicit CallbackHandle(std::function<void(grpc::Status)> callback);
+    auto TryAcquire() -> bool;
+    void Invoke(grpc::Status status);
+
+   private:
+    std::mutex mutex_;
+    std::function<void(grpc::Status)> callback_;
+    bool consumed_ = false;
+  };
+
+  void handle_async_infer_completion(
+      const inference::ModelInferRequest* request,
+      inference::ModelInferResponse* reply,
+      const std::shared_ptr<CallbackHandle>& callback_handle,
+      std::shared_ptr<MetricsRegistry> metrics,
+      std::chrono::high_resolution_clock::time_point recv_tp, int64_t recv_ms,
+      const grpc::Status& job_status, const std::vector<torch::Tensor>& outs,
+      LatencyBreakdown breakdown, detail::TimingInfo timing_info);
+
+  static auto build_latency_breakdown(
+      const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
+
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
   std::vector<at::ScalarType> expected_input_types_;
@@ -137,19 +165,23 @@ inline constexpr std::size_t kMaxGrpcThreads = 8;
 
 auto compute_thread_count_from(unsigned concurrency) -> std::size_t;
 
+struct GrpcServerOptions {
+  std::string address;
+  std::size_t max_message_bytes;
+  VerbosityLevel verbosity;
+};
+
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, const std::string& address,
-    std::size_t max_message_bytes, VerbosityLevel verbosity,
+    int max_batch_size, const GrpcServerOptions& options,
     std::unique_ptr<grpc::Server>& server);
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::string& address, std::size_t max_message_bytes,
-    VerbosityLevel verbosity, std::unique_ptr<grpc::Server>& server);
+    const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
 
-void StopServer(std::unique_ptr<grpc::Server>& server);
+void StopServer(const std::unique_ptr<grpc::Server>& server);
 }  // namespace starpu_server

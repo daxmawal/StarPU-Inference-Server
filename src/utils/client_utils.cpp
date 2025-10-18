@@ -58,7 +58,7 @@ pick_random_input(
         "Input pool is empty. Cannot pick random input.");
   }
   std::uniform_int_distribution<std::size_t> dist(0, pool.size() - 1);
-  const auto idx = static_cast<size_t>(dist(rng));
+  const auto idx = dist(rng);
   STARPU_ASSERT(idx < pool.size());
   return pool[idx];
 }

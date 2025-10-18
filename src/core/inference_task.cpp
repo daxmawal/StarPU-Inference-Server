@@ -8,10 +8,12 @@
 #include <format>
 #include <limits>
 #include <memory>
+#include <new>
 #include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -21,6 +23,35 @@
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+namespace {
+template <typename Callback>
+void
+run_with_logged_exceptions(
+    Callback&& callback, std::string_view context,
+    std::string_view unknown_message)
+{
+  try {
+    std::forward<Callback>(callback)();
+  }
+  catch (const InferenceEngineException& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (const std::runtime_error& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (const std::logic_error& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (const std::bad_alloc& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (
+      ...) {  // NOSONAR: required to log non-std exceptions thrown by callbacks
+    log_error(std::string(unknown_message));
+  }
+}
+}  // namespace
+
 const InferenceTaskDependencies kDefaultInferenceTaskDependencies{
     .dyn_handles_allocator = std::malloc,
     .dyn_modes_allocator = std::malloc,
@@ -103,8 +134,7 @@ InferenceTask::safe_register_tensor_vector(
 
   const auto numel = static_cast<uint64_t>(tensor.numel());
   const auto elem_size = static_cast<uint64_t>(tensor.element_size());
-  const auto max_size =
-      static_cast<uint64_t>(std::numeric_limits<size_t>::max());
+  const auto max_size = std::numeric_limits<size_t>::max();
 
   if (numel > max_size) {
     throw StarPURegistrationException(std::format(
@@ -117,7 +147,7 @@ InferenceTask::safe_register_tensor_vector(
 
   starpu_vector_data_register(
       &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(tensor.data_ptr()),
-      static_cast<size_t>(numel), static_cast<size_t>(elem_size));
+      numel, elem_size);
 
   if (handle == nullptr) {
     throw StarPURegistrationException(
@@ -180,12 +210,12 @@ InferenceTask::create_context(
 void
 InferenceTask::check_limits(size_t num_inputs) const
 {
-  if (num_inputs > opts_->max_inputs) {
-    throw InferenceExecutionException(
-        std::format("Too many input tensors: max is {}", opts_->max_inputs));
+  if (num_inputs > opts_->limits.max_inputs) {
+    throw InferenceExecutionException(std::format(
+        "Too many input tensors: max is {}", opts_->limits.max_inputs));
   }
 
-  if (models_gpu_->size() > opts_->max_models_gpu) {
+  if (models_gpu_->size() > opts_->limits.max_models_gpu) {
     throw TooManyGpuModelsException(
         "Too many GPU models for the current configuration.");
   }
@@ -199,9 +229,9 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
 
   auto params = std::make_shared<InferenceParams>();
 
-  params->limits.max_inputs = opts_->max_inputs;
-  params->limits.max_dims = opts_->max_dims;
-  params->limits.max_models_gpu = opts_->max_models_gpu;
+  params->limits.max_inputs = opts_->limits.max_inputs;
+  params->limits.max_dims = opts_->limits.max_dims;
+  params->limits.max_models_gpu = opts_->limits.max_models_gpu;
 
   fill_model_pointers(params);
   bind_runtime_job_info(params);
@@ -222,12 +252,12 @@ InferenceTask::fill_model_pointers(
   params->models.num_models_gpu = models_gpu_->size();
   params->models.models_gpu.clear();
 
-  if (opts_ == nullptr || opts_->device_ids.empty() || models_gpu_->empty()) {
+  if (opts_ == nullptr || opts_->devices.ids.empty() || models_gpu_->empty()) {
     return;
   }
 
-  const auto max_device_id = static_cast<int>(
-      *std::max_element(opts_->device_ids.begin(), opts_->device_ids.end()));
+  const auto max_device_id = *std::ranges::max_element(
+      opts_->devices.ids.begin(), opts_->devices.ids.end());
   if (max_device_id < 0) {
     return;
   }
@@ -236,9 +266,9 @@ InferenceTask::fill_model_pointers(
       static_cast<size_t>(max_device_id) + 1, nullptr);
 
   const size_t replicas =
-      std::min(models_gpu_->size(), opts_->device_ids.size());
+      std::min(models_gpu_->size(), opts_->devices.ids.size());
   for (size_t i = 0; i < replicas; ++i) {
-    const int device_id = opts_->device_ids[i];
+    const int device_id = opts_->devices.ids[i];
     if (device_id < 0) {
       continue;
     }
@@ -276,14 +306,14 @@ InferenceTask::fill_input_layout(
   for (size_t i = 0; i < num_inputs; ++i) {
     const auto& tensor = job_->get_input_tensors()[i];
     const int64_t dim = tensor.dim();
-    if (dim > static_cast<int64_t>(opts_->max_dims)) {
+    if (dim > static_cast<int64_t>(opts_->limits.max_dims)) {
       throw InferenceExecutionException(std::format(
-          "Input tensor has too many dimensions: max is {}", opts_->max_dims));
+          "Input tensor has too many dimensions: max is {}",
+          opts_->limits.max_dims));
     }
     params->layout.num_dims[i] = dim;
     const auto sizes = tensor.sizes();
-    using diff_t = std::ranges::range_difference_t<decltype(sizes)>;
-    const auto first_dims = std::views::take(sizes, static_cast<diff_t>(dim));
+    const auto first_dims = std::views::take(sizes, dim);
     params->layout.dims[i].assign(first_dims.begin(), first_dims.end());
   }
 }
@@ -362,9 +392,8 @@ InferenceTask::create_task(
 
   task->nbuffers = static_cast<int>(num_buffers);
   task->cl = starpu_->get_codelet();
-  task->synchronous = opts_->synchronous ? 1 : 0;
+  task->synchronous = opts_->batching.synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
-  // task->cl_arg_size = sizeof(InferenceParams);
   task->priority =
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());
 
@@ -461,7 +490,7 @@ InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
       throw std::invalid_argument("Fixed worker ID must be non-negative");
     }
 
-    const int total_workers = static_cast<int>(starpu_worker_get_count());
+    const auto total_workers = static_cast<int>(starpu_worker_get_count());
     if (worker_id >= total_workers) {
       throw std::out_of_range("Fixed worker ID exceeds available workers");
     }
@@ -563,25 +592,27 @@ InferenceTask::finalize_inference_task(void* arg)
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
 
   if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 && ctx->job) {
-    try {
-      const auto& base_ptrs = ctx->output_pool->base_ptrs(ctx->output_slot_id);
-      const auto& job_outs = ctx->job->get_output_tensors();
-      const size_t tensor_count = std::min(base_ptrs.size(), job_outs.size());
-      for (size_t i = 0; i < tensor_count; ++i) {
-        const auto& job_output_tensor = job_outs[i];
-        if (!job_output_tensor.defined() || !job_output_tensor.is_cpu() ||
-            !job_output_tensor.is_contiguous()) {
-          throw std::runtime_error(
-              "Job output tensor must be defined, CPU and contiguous");
-        }
-        std::memcpy(
-            job_output_tensor.data_ptr(), base_ptrs[i],
-            static_cast<size_t>(job_output_tensor.nbytes()));
-      }
-    }
-    catch (const std::exception& e) {
-      log_error(std::string("Output copy from pool failed: ") + e.what());
-    }
+    run_with_logged_exceptions(
+        [ctx]() {
+          const auto& base_ptrs =
+              ctx->output_pool->base_ptrs(ctx->output_slot_id);
+          const auto& job_outs = ctx->job->get_output_tensors();
+          const size_t tensor_count =
+              std::min(base_ptrs.size(), job_outs.size());
+          for (size_t i = 0; i < tensor_count; ++i) {
+            const auto& job_output_tensor = job_outs[i];
+            if (!job_output_tensor.defined() || !job_output_tensor.is_cpu() ||
+                !job_output_tensor.is_contiguous()) {
+              throw InvalidInferenceJobException(
+                  "Job output tensor must be defined, CPU and contiguous");
+            }
+            std::memcpy(
+                job_output_tensor.data_ptr(), base_ptrs[i],
+                job_output_tensor.nbytes());
+          }
+        },
+        "Output copy from pool failed: ",
+        "Output copy from pool failed due to an unknown exception.");
   }
 
   InferenceTask::release_output_data(ctx->outputs_handles);
@@ -591,12 +622,9 @@ InferenceTask::finalize_inference_task(void* arg)
 
   // Notify (release pooled slot etc.) before we clean up
   if (ctx->on_finished) {
-    try {
-      ctx->on_finished();
-    }
-    catch (const std::exception& e) {
-      log_error(std::string("Exception in on_finished: ") + e.what());
-    }
+    run_with_logged_exceptions(
+        [ctx]() { ctx->on_finished(); }, "Exception in on_finished: ",
+        "Unknown exception in on_finished callback");
   }
 
   InferenceTask::finalize_context(ctx_sptr);
@@ -645,15 +673,12 @@ InferenceTask::record_and_run_completion_callback(
 
   if (ctx->job->has_on_complete()) {
     const auto& callback = ctx->job->get_on_complete();
-    try {
-      callback(ctx->job->get_output_tensors(), latency_ms);
-    }
-    catch (const std::exception& e) {
-      log_error("Exception in completion callback: " + std::string(e.what()));
-    }
-    catch (...) {
-      log_error("Unknown exception in completion callback");
-    }
+    run_with_logged_exceptions(
+        [ctx, &callback, latency_ms]() {
+          callback(ctx->job->get_output_tensors(), latency_ms);
+        },
+        "Exception in completion callback: ",
+        "Unknown exception in completion callback");
   }
 }
 

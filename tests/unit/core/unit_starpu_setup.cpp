@@ -3,6 +3,7 @@
 #include <starpu.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <format>
@@ -23,7 +24,7 @@
 
 namespace {
 
-std::vector<void*> g_observed_base_ptrs;
+std::vector<std::byte*> g_observed_base_ptrs;
 std::vector<starpu_data_handle_t> g_observed_handles;
 bool g_failure_observer_called = false;
 
@@ -32,7 +33,7 @@ starpu_server::testing::StarpuVectorRegisterFn
     g_succeed_then_fail_previous_hook = nullptr;
 std::vector<starpu_data_handle_t>* g_pre_cleanup_registered_handles = nullptr;
 
-std::vector<void*> g_output_observed_base_ptrs;
+std::vector<std::byte*> g_output_observed_base_ptrs;
 std::vector<starpu_data_handle_t> g_output_observed_handles;
 std::vector<starpu_server::OutputSlotPool::HostBufferInfo>
     g_output_observed_host_buffer_infos;
@@ -192,8 +193,8 @@ TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
 TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
 {
   starpu_server::RuntimeConfig opts;
-  opts.use_cuda = true;
-  opts.device_ids = {0, 0};
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, 0};
   EXPECT_THROW(
       { starpu_server::StarPUSetup setup(opts); }, std::invalid_argument);
 }
@@ -223,7 +224,7 @@ TEST(OutputSlotPool_Unit, FreeHostBufferNullPointerNoWarning)
 TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
 {
   constexpr size_t kBytes = 32;
-  void* ptr = std::malloc(kBytes);
+  auto* ptr = static_cast<std::byte*>(std::malloc(kBytes));
   ASSERT_NE(ptr, nullptr);
 
   starpu_server::OutputSlotPool::HostBufferInfo info{};
@@ -251,7 +252,7 @@ TEST(OutputSlotPool_Unit, FreeHostBufferCudaFreeHostFailureLogsWarning)
   }
 
   constexpr size_t kBytes = 32;
-  void* ptr = std::malloc(kBytes);
+  auto* ptr = static_cast<std::byte*>(std::malloc(kBytes));
   ASSERT_NE(ptr, nullptr);
 
   starpu_server::OutputSlotPool::HostBufferInfo info{};
@@ -271,11 +272,11 @@ TEST(OutputSlotPool_Unit, FreeHostBufferCudaFreeHostFailureLogsWarning)
 TEST(StarPUSetup_Unit, TooManyDeviceIdsThrows)
 {
   starpu_server::RuntimeConfig opts;
-  opts.use_cuda = true;
+  opts.devices.use_cuda = true;
 
-  opts.device_ids.reserve(STARPU_NMAXWORKERS + 1);
+  opts.devices.ids.reserve(STARPU_NMAXWORKERS + 1);
   for (int idx = 0; idx < STARPU_NMAXWORKERS + 1; ++idx) {
-    opts.device_ids.push_back(idx);
+    opts.devices.ids.push_back(idx);
   }
 
   EXPECT_THROW(
@@ -300,7 +301,7 @@ TEST_F(
     StarPUSetupInitStubTest, StarPUSetup_InputPoolInitFailureLogsAndPropagates)
 {
   starpu_server::RuntimeConfig opts;
-  opts.input_slots = 1;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig invalid_input;
   invalid_input.name = "invalid_input";
@@ -333,7 +334,7 @@ TEST_F(
     StarPUSetupInitStubTest, StarPUSetup_OutputPoolInitFailureLogsAndPropagates)
 {
   starpu_server::RuntimeConfig opts;
-  opts.input_slots = 1;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig invalid_output;
   invalid_output.name = "invalid_output";
@@ -368,8 +369,8 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = std::numeric_limits<int>::max();
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = std::numeric_limits<int>::max();
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "large_input";
@@ -390,8 +391,8 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersNumelOverflowThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 5;
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = 5;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "numel_overflow_input";
@@ -422,7 +423,7 @@ TEST(InputSlotPool_Unit, NonPositiveBatchDimensionThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "invalid_batch_input";
@@ -452,7 +453,7 @@ TEST(InputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "exceeds_int_max_input";
@@ -482,8 +483,8 @@ TEST(InputSlotPool_Unit, NonPositiveDimensionThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 5;
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = 5;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "non_positive_dims";
@@ -515,8 +516,8 @@ TEST(InputSlotPool_Unit, DimensionProductOverflowThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 5;
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = 5;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "product_overflow_input";
@@ -537,7 +538,7 @@ TEST(InputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "minimal_input";
@@ -585,8 +586,8 @@ TEST(InputSlotPool_Unit, TryAcquireEmptyPoolReturnsNullopt)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = 1;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "minimal_input";
@@ -629,8 +630,8 @@ TEST(InputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   }
 
   starpu_server::RuntimeConfig opts;
-  opts.use_cuda = true;
-  opts.max_batch_size = 1;
+  opts.devices.use_cuda = true;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "cuda_probe_input";
@@ -679,8 +680,8 @@ TEST(OutputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   }
 
   starpu_server::RuntimeConfig opts;
-  opts.use_cuda = true;
-  opts.max_batch_size = 1;
+  opts.devices.use_cuda = true;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "cuda_probe_output";
@@ -719,8 +720,8 @@ TEST(
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.use_cuda = true;
-  opts.max_batch_size = 1;
+  opts.devices.use_cuda = true;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "starpu_pin_success";
@@ -775,8 +776,8 @@ TEST(
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.use_cuda = true;
-  opts.max_batch_size = 1;
+  opts.devices.use_cuda = true;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "starpu_pin_failure";
@@ -829,7 +830,7 @@ TEST(OutputSlotPool_Unit, HostAllocatorFailureThrowsBadAlloc)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "host_allocator_failure";
@@ -870,8 +871,8 @@ TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = 1;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "failing_input";
@@ -919,7 +920,7 @@ TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
   ASSERT_EQ(g_observed_base_ptrs.size(), model.inputs.size());
   ASSERT_EQ(g_observed_handles.size(), model.inputs.size());
 
-  for (void* base_ptr : g_observed_base_ptrs) {
+  for (std::byte* base_ptr : g_observed_base_ptrs) {
     EXPECT_EQ(base_ptr, nullptr);
   }
 
@@ -933,8 +934,8 @@ TEST(InputSlotPool_Unit, PartialRegisterFailureResetsSlotState)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = 1;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig first_tensor;
   first_tensor.name = "first_input";
@@ -1007,7 +1008,7 @@ TEST(InputSlotPool_Unit, PartialRegisterFailureResetsSlotState)
   EXPECT_EQ(g_observed_base_ptrs.front(), nullptr);
   EXPECT_EQ(g_observed_handles.front(), nullptr);
 
-  for (void* base_ptr : g_observed_base_ptrs) {
+  for (std::byte* base_ptr : g_observed_base_ptrs) {
     EXPECT_EQ(base_ptr, nullptr);
   }
 
@@ -1021,8 +1022,8 @@ TEST(OutputSlotPool_Unit, RegisterFailureResetsSlotState)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = 1;
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "failing_output";
@@ -1072,7 +1073,7 @@ TEST(OutputSlotPool_Unit, RegisterFailureResetsSlotState)
   ASSERT_EQ(g_output_observed_handles.size(), model.outputs.size());
   ASSERT_EQ(g_output_observed_host_buffer_infos.size(), model.outputs.size());
 
-  for (void* base_ptr : g_output_observed_base_ptrs) {
+  for (std::byte* base_ptr : g_output_observed_base_ptrs) {
     EXPECT_EQ(base_ptr, nullptr);
   }
 
@@ -1093,8 +1094,8 @@ TEST(OutputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = std::numeric_limits<int>::max();
-  opts.input_slots = 1;
+  opts.batching.max_batch_size = std::numeric_limits<int>::max();
+  opts.batching.input_slots = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "large_output";
@@ -1125,7 +1126,7 @@ TEST(OutputSlotPool_Unit, NonPositiveBatchDimensionThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "invalid_batch_output";
@@ -1155,7 +1156,7 @@ TEST(OutputSlotPool_Unit, NonBatchDimensionNonPositiveThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 5;
+  opts.batching.max_batch_size = 5;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "non_positive_dims_output";
@@ -1185,7 +1186,7 @@ TEST(OutputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "exceeds_int_max_output";
@@ -1215,7 +1216,7 @@ TEST(OutputSlotPool_Unit, NonBatchDimensionOverflowThrows)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 5;
+  opts.batching.max_batch_size = 5;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "dimension_product_overflow_output";
@@ -1246,7 +1247,7 @@ TEST(OutputSlotPool_Unit, ReleaseReturnsSlotToPool)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "simple_output";
@@ -1279,7 +1280,7 @@ TEST(OutputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "minimal_output";
@@ -1332,7 +1333,7 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersReleasesResources)
 
   auto* raw_ptr = std::malloc(sizeof(int));
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = raw_ptr;
+  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
 
   std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
   buffer_infos[0].bytes = sizeof(int);
@@ -1360,7 +1361,7 @@ TEST(OutputSlotPool_Unit, DefaultSlotCountUsesWorkerCount)
   StarpuRuntimeGuard starpu_guard;
 
   starpu_server::RuntimeConfig opts;
-  opts.max_batch_size = 1;
+  opts.batching.max_batch_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "single_output";
@@ -1408,7 +1409,7 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersUnpinsStarpuMemory)
 
   auto* raw_ptr = std::malloc(sizeof(int));
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = raw_ptr;
+  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
 
   ASSERT_EQ(starpu_memory_pin(raw_ptr, sizeof(int)), 0);
 
@@ -1453,7 +1454,7 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersFreesCudaPinnedMemory)
                  << static_cast<int>(alloc_rc);
   }
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = raw_ptr;
+  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
 
   std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
   buffer_infos[0].bytes = sizeof(int);

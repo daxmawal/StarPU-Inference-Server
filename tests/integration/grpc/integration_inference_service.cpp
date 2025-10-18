@@ -109,9 +109,11 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
   std::jthread thread([&]() {
+    const auto options = starpu_server::GrpcServerOptions{
+        "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, "127.0.0.1:0",
-        kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info, server);
+        queue, reference_outputs, {at::kFloat}, options, server);
   });
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -134,10 +136,12 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
   const std::vector<std::vector<int64_t>> expected_input_dims = {
       {kMaxBatchSize, 3, 224, 224}};
   std::jthread thread([&]() {
+    const auto options = starpu_server::GrpcServerOptions{
+        "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
-        kMaxBatchSize, "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, server);
+        kMaxBatchSize, options, server);
   });
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -183,9 +187,11 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
 
   const auto endpoint = "127.0.0.1:" + std::to_string(port);
   auto future = std::async(std::launch::async, [&]() {
+    const auto options = starpu_server::GrpcServerOptions{
+        endpoint, kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, endpoint,
-        kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info, server);
+        queue, reference_outputs, {at::kFloat}, options, server);
   });
 
   EXPECT_EQ(
@@ -226,10 +232,12 @@ TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
 
   const auto endpoint = "127.0.0.1:" + std::to_string(port);
   auto future = std::async(std::launch::async, [&]() {
+    const auto options = starpu_server::GrpcServerOptions{
+        endpoint, kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
-        kMaxBatchSize, endpoint, kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, server);
+        kMaxBatchSize, options, server);
   });
 
   EXPECT_EQ(
@@ -287,10 +295,12 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
-  std::jthread thread([&]() {
+  const auto options = starpu_server::GrpcServerOptions{
+      address, kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info};
+
+  std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, address,
-        kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info, server);
+        queue, reference_outputs, {at::kFloat}, options, server);
   });
 
   while (!server) {
@@ -330,6 +340,9 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
+  const auto options = starpu_server::GrpcServerOptions{
+      address, kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info};
+
   constexpr float kVal1 = 10.0F;
   constexpr float kVal2 = 20.0F;
   constexpr float kVal3 = 30.0F;
@@ -339,10 +352,9 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
 
   auto worker = starpu_server::run_single_job(queue, expected_outputs);
 
-  std::jthread thread([&]() {
+  std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, address,
-        kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info, server);
+        queue, reference_outputs, {at::kFloat}, options, server);
   });
 
   while (!server) {

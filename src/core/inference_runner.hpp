@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -225,7 +226,7 @@ class InferenceJob {
 // =============================================================================
 
 class StarPUTaskRunner;
-using WorkerThreadLauncher = std::jthread (*)(StarPUTaskRunner&);
+using WorkerThreadLauncher = std::function<std::jthread(StarPUTaskRunner&)>;
 auto get_worker_thread_launcher() -> WorkerThreadLauncher;
 void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 
@@ -241,15 +242,14 @@ auto build_gpu_model_lookup(
 
 auto resolve_validation_model(
     const InferenceResult& result, torch::jit::script::Module& cpu_model,
-    const std::vector<torch::jit::script::Module*>& gpu_lookup,
+    std::span<torch::jit::script::Module*> gpu_lookup,
     bool validate_results) -> std::optional<torch::jit::script::Module*>;
 
 void process_results(
     const std::vector<InferenceResult>& results,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<int>& device_ids, bool validate_results,
-    VerbosityLevel verbosity, double rtol, double atol);
+    const RuntimeConfig& opts);
 }  // namespace detail
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)

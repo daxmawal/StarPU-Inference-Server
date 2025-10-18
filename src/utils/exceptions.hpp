@@ -35,6 +35,12 @@ class StarPURegistrationException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when registering output buffers with StarPU fails
+class OutputSlotRegistrationError : public StarPURegistrationException {
+ public:
+  using StarPURegistrationException::StarPURegistrationException;
+};
+
 /// Thrown when an invalid inference job is submitted or accessed
 class InvalidInferenceJobException : public InferenceEngineException {
  public:
@@ -65,7 +71,19 @@ class UnsupportedModelOutputTypeException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when loading the model or its reference outputs fails
+class ModelLoadingException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
 class TooManyGpuModelsException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when an invalid GPU device identifier is provided
+class InvalidGpuDeviceException : public InferenceEngineException {
  public:
   using InferenceEngineException::InferenceEngineException;
 };
@@ -90,6 +108,36 @@ class StarPUWorkerQueryException : public InferenceEngineException {
 
 /// Thrown when computing the message size would overflow
 class MessageSizeOverflowException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when the number of registered inputs does not match the job inputs
+class InputPoolMismatchException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when a batch does not fit within an input pool
+class InputPoolCapacityException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when a tensor provided to the inference pipeline is invalid
+class InvalidInputTensorException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when the number of tensors varies across jobs being merged
+class InconsistentInputTensorCountException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
+/// Thrown when acquiring StarPU data handles fails
+class StarPUDataAcquireException : public InferenceEngineException {
  public:
   using InferenceEngineException::InferenceEngineException;
 };

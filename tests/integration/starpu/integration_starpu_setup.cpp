@@ -12,9 +12,9 @@ class StarPUSetupCodelet_Integration : public ::testing::Test {
   {
     skip_if_no_cuda();
     starpu_server::RuntimeConfig opts;
-    opts.use_cpu = true;
-    opts.use_cuda = true;
-    opts.device_ids = {0};
+    opts.devices.use_cpu = true;
+    opts.devices.use_cuda = true;
+    opts.devices.ids = {0};
     starpu_ = std::make_unique<starpu_server::StarPUSetup>(opts);
   }
 

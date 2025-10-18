@@ -100,7 +100,7 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     starpu_setup_.reset();
 
     opts_.models = {model};
-    opts_.input_slots = input_slots;
+    opts_.batching.input_slots = input_slots;
 
     starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
     config_.starpu = starpu_setup_.get();

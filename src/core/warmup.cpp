@@ -51,27 +51,27 @@ WarmupRunner::client_worker(
     InferenceQueue& queue, int request_nb_per_worker) const
 {
   thread_local std::mt19937 rng;
-  if (opts_.seed) {
-    rng.seed(static_cast<std::mt19937::result_type>(*opts_.seed));
-    torch::manual_seed(static_cast<uint64_t>(*opts_.seed));
+  if (opts_.seed.has_value()) {
+    rng.seed(*opts_.seed);
+    torch::manual_seed(*opts_.seed);
   } else {
     rng.seed(std::random_device{}());
   }
 
-  auto pregen_inputs =
-      client_utils::pre_generate_inputs(opts_, opts_.warmup_pregen_inputs);
+  auto pregen_inputs = client_utils::pre_generate_inputs(
+      opts_, opts_.batching.warmup_pregen_inputs);
 
   if (request_nb_per_worker < 0) {
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
+  const size_t worker_count = std::accumulate(
+      device_workers.begin(), device_workers.end(), std::size_t{0},
+      [](std::size_t sum, const auto& pair) {
+        return sum + pair.second.size();
+      });
   const size_t total_size_t =
-      std::accumulate(
-          device_workers.begin(), device_workers.end(), std::size_t{0},
-          [](std::size_t sum, const auto& pair) {
-            return sum + pair.second.size();
-          }) *
-      static_cast<std::size_t>(request_nb_per_worker);
+      worker_count * static_cast<std::size_t>(request_nb_per_worker);
 
   if (total_size_t > static_cast<size_t>(std::numeric_limits<int>::max())) {
     throw std::overflow_error("Total exceeds int capacity");
@@ -80,27 +80,31 @@ WarmupRunner::client_worker(
   const auto total = static_cast<int>(total_size_t);
   int request_id = 0;
 
-  for (const auto& [device_id, worker_ids] : device_workers) {
-    for (const int worker_id : worker_ids) {
-      for (auto request_nb = 0; request_nb < request_nb_per_worker;
-           ++request_nb) {
-        const auto& inputs =
-            client_utils::pick_random_input(pregen_inputs, rng);
-        auto job = client_utils::create_job(inputs, outputs_ref_, request_id);
-        job->set_fixed_worker_id(worker_id);
+  std::vector<int> flat_worker_ids;
+  flat_worker_ids.reserve(worker_count);
+  for ([[maybe_unused]] const auto& [device_id, worker_ids] : device_workers) {
+    flat_worker_ids.insert(
+        flat_worker_ids.end(), worker_ids.begin(), worker_ids.end());
+  }
 
-        client_utils::log_job_enqueued(
-            opts_, request_id, total, job->timing_info().enqueued_time);
+  for (const int worker_id : flat_worker_ids) {
+    for (auto request_nb = 0; request_nb < request_nb_per_worker;
+         ++request_nb) {
+      const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
+      auto job = client_utils::create_job(inputs, outputs_ref_, request_id);
+      job->set_fixed_worker_id(worker_id);
 
-        if (!queue.push(job)) {
-          log_warning(std::format(
-              "[Warmup] Failed to enqueue job {}: queue shutting down",
-              request_id));
-          queue.shutdown();
-          return;
-        }
-        request_id++;
+      client_utils::log_job_enqueued(
+          opts_, request_id, total, job->timing_info().enqueued_time);
+
+      if (!queue.push(job)) {
+        log_warning(std::format(
+            "[Warmup] Failed to enqueue job {}: queue shutting down",
+            request_id));
+        queue.shutdown();
+        return;
       }
+      request_id++;
     }
   }
 
@@ -118,7 +122,7 @@ WarmupRunner::run(int request_nb_per_worker)
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
-  if (!opts_.use_cuda) {
+  if (!opts_.devices.use_cuda) {
     return;
   }
 
@@ -144,7 +148,7 @@ WarmupRunner::run(int request_nb_per_worker)
   const std::jthread server(&StarPUTaskRunner::run, &worker);
 
   const auto device_workers =
-      StarPUSetup::get_cuda_workers_by_device(opts_.device_ids);
+      StarPUSetup::get_cuda_workers_by_device(opts_.devices.ids);
 
   const std::jthread client(
       [&]() { client_worker(device_workers, queue, request_nb_per_worker); });

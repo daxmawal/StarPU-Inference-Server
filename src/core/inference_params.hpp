@@ -12,22 +12,10 @@ namespace starpu_server {
 // Constants for inference limitations
 // =============================================================================
 
-#ifndef STARPU_SERVER_MAX_INPUTS
-#define STARPU_SERVER_MAX_INPUTS 16
-#endif
-
-#ifndef STARPU_SERVER_MAX_DIMS
-#define STARPU_SERVER_MAX_DIMS 8
-#endif
-
-#ifndef STARPU_SERVER_MAX_MODELS_GPU
-#define STARPU_SERVER_MAX_MODELS_GPU 32
-#endif
-
 namespace InferLimits {
-constexpr size_t MaxInputs = STARPU_SERVER_MAX_INPUTS;
-constexpr size_t MaxDims = STARPU_SERVER_MAX_DIMS;
-constexpr size_t MaxModelsGPU = STARPU_SERVER_MAX_MODELS_GPU;
+inline constexpr size_t MaxInputs = 16;
+inline constexpr size_t MaxDims = 8;
+inline constexpr size_t MaxModelsGPU = 32;
 }  // namespace InferLimits
 
 namespace detail {

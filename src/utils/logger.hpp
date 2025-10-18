@@ -6,6 +6,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace starpu_server {
@@ -16,7 +17,12 @@ namespace starpu_server {
 // interleave. Keep the lock scope minimal for better
 // concurrency.
 
-inline std::mutex log_mutex;
+inline auto&
+log_mutex()
+{
+  static std::mutex instance;
+  return instance;
+}
 
 enum class VerbosityLevel : std::uint8_t {
   Silent = 0,
@@ -41,17 +47,20 @@ static_assert(!should_log(VerbosityLevel::Trace, VerbosityLevel::Info));
 // =============================================================================
 
 inline auto
-parse_verbosity_level(const std::string& val) -> VerbosityLevel
+parse_verbosity_level(std::string_view val) -> VerbosityLevel
 {
   using enum VerbosityLevel;
 
   const auto first = val.find_first_not_of(" \t\n\r\f\v");
-  const auto last = val.find_last_not_of(" \t\n\r\f\v");
-  const std::string trimmed = first == std::string::npos
-                                  ? std::string{}
-                                  : val.substr(first, last - first + 1);
+  if (first == std::string_view::npos) {
+    val = {};
+  } else {
+    const auto last = val.find_last_not_of(" \t\n\r\f\v");
+    val = val.substr(first, last - first + 1);
+  }
+  const std::string trimmed{val};
 
-  if (std::all_of(trimmed.begin(), trimmed.end(), [](unsigned char c) {
+  if (std::ranges::all_of(val.begin(), val.end(), [](unsigned char c) noexcept {
         return std::isdigit(c) != 0;
       })) {
     int level{};
@@ -81,9 +90,11 @@ parse_verbosity_level(const std::string& val) -> VerbosityLevel
   }
 
   std::string lower(trimmed.size(), '\0');
-  std::transform(
+  std::ranges::transform(
       trimmed.begin(), trimmed.end(), lower.begin(),
-      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      [](unsigned char c) noexcept {
+        return static_cast<char>(std::tolower(c));
+      });
   if (lower == "silent") {
     return Silent;
   }
@@ -113,13 +124,13 @@ verbosity_style(const VerbosityLevel level)
   using enum VerbosityLevel;
   switch (level) {
     case Info:
-      return {"\x1b[1;32m", "[INFO] "};  // Green
+      return {"\x{1b}[1;32m", "[INFO] "};  // Green
     case Stats:
-      return {"\x1b[1;35m", "[STATS] "};  // Magenta
+      return {"\x{1b}[1;35m", "[STATS] "};  // Magenta
     case Debug:
-      return {"\x1b[1;34m", "[DEBUG] "};  // Blue
+      return {"\x{1b}[1;34m", "[DEBUG] "};  // Blue
     case Trace:
-      return {"\x1b[1;90m", "[TRACE] "};  // Gray
+      return {"\x{1b}[1;90m", "[TRACE] "};  // Gray
     default:
       return {"", ""};
   }
@@ -136,8 +147,8 @@ log_verbose(
 {
   if (std::to_underlying(current_level) >= std::to_underlying(level)) {
     auto [color, label] = verbosity_style(level);
-    const std::scoped_lock lock(log_mutex);
-    std::cout << color << label << message << "\x1b[0m\n" << std::flush;
+    const std::scoped_lock lock{log_mutex()};
+    std::cout << color << label << message << "\x{1b}[0m\n" << std::flush;
   }
 }
 
@@ -176,30 +187,32 @@ log_trace(const VerbosityLevel lvl, const std::string& msg)
 inline void
 log_warning(const std::string& message)
 {
-  const std::scoped_lock lock(log_mutex);
-  std::cerr << "\x1b[1;33m[WARNING] " << message << "\x1b[0m\n" << std::flush;
+  const std::scoped_lock lock{log_mutex()};
+  std::cerr << "\x{1b}[1;33m[WARNING] " << message << "\x{1b}[0m\n"
+            << std::flush;
 }
 
 inline void
 log_warning_critical(const std::string& message)
 {
-  const std::scoped_lock lock(log_mutex);
-  std::cerr << "\x1b[1;31m[WARNING] " << message << "\x1b[0m\n" << std::flush;
+  const std::scoped_lock lock{log_mutex()};
+  std::cerr << "\x{1b}[1;31m[WARNING] " << message << "\x{1b}[0m\n"
+            << std::flush;
 }
 
 inline void
 log_error(const std::string& message)
 {
-  const std::scoped_lock lock(log_mutex);
-  std::cerr << "\x1b[1;31m[ERROR] " << message << "\x1b[0m\n" << std::flush;
+  const std::scoped_lock lock{log_mutex()};
+  std::cerr << "\x{1b}[1;31m[ERROR] " << message << "\x{1b}[0m\n" << std::flush;
 }
 
 [[noreturn]] inline void
 log_fatal(const std::string& message)
 {
   {
-    const std::scoped_lock lock(log_mutex);
-    std::cerr << "\x1b[1;41m[FATAL] " << message << "\x1b[0m\n";
+    const std::scoped_lock lock{log_mutex()};
+    std::cerr << "\x{1b}[1;41m[FATAL] " << message << "\x{1b}[0m\n";
   }
   std::terminate();
 }

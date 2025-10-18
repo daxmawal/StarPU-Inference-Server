@@ -6,10 +6,12 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <vector>
 
+#include "utils/exceptions.hpp"
 #include "utils/runtime_config.hpp"
 
 namespace starpu_server {
@@ -18,7 +20,7 @@ class InputSlotPool {
  public:
   struct SlotInfo {
     int id = -1;
-    std::vector<void*> base_ptrs;
+    std::vector<std::byte*> base_ptrs;
     std::vector<size_t> per_input_numel_single;
     std::vector<size_t> per_input_bytes_single;
     std::vector<starpu_data_handle_t> handles;
@@ -46,7 +48,8 @@ class InputSlotPool {
   [[nodiscard]] auto slot_info(int slot_id) const -> const SlotInfo&;
   [[nodiscard]] auto handles(int slot_id) const
       -> const std::vector<starpu_data_handle_t>&;
-  [[nodiscard]] auto base_ptrs(int slot_id) const -> const std::vector<void*>&;
+  [[nodiscard]] auto base_ptrs(int slot_id) const
+      -> const std::vector<std::byte*>&;
   [[nodiscard]] auto host_buffer_infos(int slot_id) const
       -> const std::vector<HostBufferInfo>&;
   [[nodiscard]] int max_batch_size() const { return bmax_; }
@@ -79,7 +82,8 @@ class InputSlotPool {
 namespace testing {
 
 using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
-using RegisterFailureObserverFn = void (*)(const InputSlotPool::SlotInfo& slot);
+using RegisterFailureObserverFn =
+    std::function<void(const InputSlotPool::SlotInfo& slot)>;
 
 auto set_starpu_vector_register_hook_for_tests(StarpuVectorRegisterFn fn)
     -> StarpuVectorRegisterFn;

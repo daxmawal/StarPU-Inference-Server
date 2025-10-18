@@ -61,8 +61,8 @@ def main():
     )
     args = parser.parse_args()
 
-    ctor, WeightsEnum = VARIANTS[args.model]
-    weights = None if args.no_pretrained else WeightsEnum.DEFAULT
+    ctor, weights_enum = VARIANTS[args.model]
+    weights = None if args.no_pretrained else weights_enum.DEFAULT
 
     model = ctor(weights=weights).eval()
 

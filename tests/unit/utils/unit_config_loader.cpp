@@ -368,7 +368,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.scheduler, "fcfs");
   EXPECT_EQ(cfg.models[0].path, model_path.string());
-  EXPECT_EQ(cfg.device_ids, (std::vector<int>{0, 1}));
+  EXPECT_EQ(cfg.devices.ids, (std::vector<int>{0, 1}));
   ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
   EXPECT_EQ(cfg.models[0].inputs[0].name, "in");
   EXPECT_EQ(
@@ -379,18 +379,18 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(cfg.models[0].outputs[0].dims, (std::vector<int64_t>{1, 1000}));
   EXPECT_EQ(cfg.models[0].outputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
-  EXPECT_EQ(cfg.max_batch_size, 4);
-  EXPECT_TRUE(cfg.dynamic_batching);
-  EXPECT_EQ(cfg.batch_coalesce_timeout_ms, 15);
-  EXPECT_EQ(cfg.pregen_inputs, 8U);
-  EXPECT_EQ(cfg.warmup_pregen_inputs, 5U);
-  EXPECT_EQ(cfg.warmup_request_nb, 3);
+  EXPECT_EQ(cfg.batching.max_batch_size, 4);
+  EXPECT_TRUE(cfg.batching.dynamic_batching);
+  EXPECT_EQ(cfg.batching.batch_coalesce_timeout_ms, 15);
+  EXPECT_EQ(cfg.batching.pregen_inputs, 8U);
+  EXPECT_EQ(cfg.batching.warmup_pregen_inputs, 5U);
+  EXPECT_EQ(cfg.batching.warmup_request_nb, 3);
   const bool has_seed = cfg.seed.has_value();
   ASSERT_TRUE(has_seed);
   const auto seed_value = cfg.seed.value_or(0U);
   EXPECT_EQ(seed_value, 123U);
-  EXPECT_FALSE(cfg.validate_results);
-  EXPECT_TRUE(cfg.use_cuda);
+  EXPECT_FALSE(cfg.validation.validate_results);
+  EXPECT_TRUE(cfg.devices.use_cuda);
 }
 
 TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
@@ -454,11 +454,11 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_DOUBLE_EQ(cfg.rtol, 1.0e-4);
-  EXPECT_DOUBLE_EQ(cfg.atol, 2.0e-5);
-  EXPECT_TRUE(cfg.synchronous);
-  EXPECT_FALSE(cfg.use_cpu);
-  EXPECT_TRUE(cfg.use_cuda);
+  EXPECT_DOUBLE_EQ(cfg.validation.rtol, 1.0e-4);
+  EXPECT_DOUBLE_EQ(cfg.validation.atol, 2.0e-5);
+  EXPECT_TRUE(cfg.batching.synchronous);
+  EXPECT_FALSE(cfg.devices.use_cpu);
+  EXPECT_TRUE(cfg.devices.use_cuda);
 }
 
 TEST(ConfigLoader, ParsesVerboseAlias)
@@ -516,8 +516,8 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.max_message_bytes, 4096U);
-  EXPECT_EQ(cfg.input_slots, 3);
+  EXPECT_EQ(cfg.batching.max_message_bytes, 4096U);
+  EXPECT_EQ(cfg.batching.input_slots, 3);
 }
 
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
@@ -695,7 +695,7 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.delay_us, 15);
+  EXPECT_EQ(cfg.batching.delay_us, 15);
   EXPECT_EQ(cfg.server_address, "127.0.0.1:50051");
 }
 
@@ -718,7 +718,7 @@ max_batch_size: 0
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
-  EXPECT_EQ(cfg.max_batch_size, 1);
+  EXPECT_EQ(cfg.batching.max_batch_size, 1);
 }
 
 TEST(ConfigLoader, MissingInputSkipsParsingOtherKeys)
@@ -737,7 +737,7 @@ delay: -10
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
-  EXPECT_EQ(cfg.delay_us, 0);
+  EXPECT_EQ(cfg.batching.delay_us, 0);
 }
 
 TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)
@@ -756,7 +756,7 @@ max_batch_size: 0
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
-  EXPECT_EQ(cfg.max_batch_size, 1);
+  EXPECT_EQ(cfg.batching.max_batch_size, 1);
 }
 
 TEST(
