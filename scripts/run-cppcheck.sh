@@ -7,13 +7,13 @@ BUILD_DIR=${BUILD_DIR:-../build}
 LIBTORCH_DIR=${LIBTORCH_DIR:-$1}
 GRPC_DIR=${GRPC_DIR:-$2}
 
-if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
-  echo "Error: $BUILD_DIR/compile_commands.json not found."
-  echo "Did you run: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ?"
+if [[ ! -f "$BUILD_DIR/compile_commands.json" ]]; then
+  echo "Error: $BUILD_DIR/compile_commands.json not found." >&2
+  echo "Did you run: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ?" >&2
   exit 1
 fi
 
-if [ -z "$LIBTORCH_DIR" ] || [ -z "$GRPC_DIR" ]; then
+if [[ -z "$LIBTORCH_DIR" ] || [ -z "$GRPC_DIR" ]]; then
   echo "Usage: LIBTORCH_DIR=<path> GRPC_DIR=<path> $0"
   echo "   or: $0 <libtorch_dir> <grpc_dir>"
   exit 1

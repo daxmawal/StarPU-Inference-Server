@@ -19,6 +19,7 @@
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 
+using starpu_server::StarpuBufferPtr;
 
 namespace {
 const std::vector<int64_t> kShape1{1};
@@ -120,7 +121,7 @@ TEST_F(ConstantModelConfigTest, CloneModelToGpus_InvalidDeviceIdThrows)
 
 namespace starpu_server {
 void run_inference(
-    InferenceParams* params, const std::vector<void*>& buffers,
+    InferenceParams* params, const std::vector<StarpuBufferPtr>& buffers,
     torch::Device device, torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn);
@@ -138,7 +139,7 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
   std::chrono::high_resolution_clock::time_point inference_start;
   params.timing.inference_start_time = &inference_start;
 
-  std::vector<void*> buffers = {&input_iface, &output_iface};
+  std::vector<StarpuBufferPtr> buffers = {&input_iface, &output_iface};
   auto model = starpu_server::make_add_one_model();
 
   auto before = std::chrono::high_resolution_clock::now();

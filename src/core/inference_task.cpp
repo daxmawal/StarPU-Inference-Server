@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdlib>
+#include <exception>
 #include <format>
 #include <limits>
 #include <memory>
@@ -28,12 +29,15 @@ template <typename Callback>
 void
 run_with_logged_exceptions(
     Callback&& callback, std::string_view context,
-    std::string_view unknown_message)
+    std::string_view unknown_message = {})
 {
   try {
     std::forward<Callback>(callback)();
   }
   catch (const InferenceEngineException& e) {
+    log_error(std::string(context) + e.what());
+  }
+  catch (const std::bad_alloc& e) {
     log_error(std::string(context) + e.what());
   }
   catch (const std::runtime_error& e) {
@@ -42,12 +46,15 @@ run_with_logged_exceptions(
   catch (const std::logic_error& e) {
     log_error(std::string(context) + e.what());
   }
-  catch (const std::bad_alloc& e) {
+  catch (const std::exception& e) {
     log_error(std::string(context) + e.what());
   }
-  catch (
-      ...) {  // NOSONAR: required to log non-std exceptions thrown by callbacks
-    log_error(std::string(unknown_message));
+  catch (...) {  // NOSONAR - required to surface non-std exceptions
+    if (!unknown_message.empty()) {
+      log_error(std::string(unknown_message));
+    } else {
+      log_error(std::string(context) + "Unknown exception");
+    }
   }
 }
 }  // namespace
@@ -256,8 +263,7 @@ InferenceTask::fill_model_pointers(
     return;
   }
 
-  const auto max_device_id = *std::ranges::max_element(
-      opts_->devices.ids.begin(), opts_->devices.ids.end());
+  const auto max_device_id = *std::ranges::max_element(opts_->devices.ids);
   if (max_device_id < 0) {
     return;
   }

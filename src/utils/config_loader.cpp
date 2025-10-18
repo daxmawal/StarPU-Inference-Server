@@ -36,11 +36,6 @@ struct TransparentStringHash {
   {
     return (*this)(std::string_view{value});
   }
-
-  auto operator()(const char* value) const noexcept -> std::size_t
-  {
-    return (*this)(std::string_view{value});
-  }
 };
 
 auto parse_tensor_nodes(
@@ -359,6 +354,10 @@ auto
 load_config(const std::string& path) -> RuntimeConfig
 {
   RuntimeConfig cfg;
+  const auto mark_invalid = [&cfg](const std::string& message) {
+    log_error(std::string("Failed to load config: ") + message);
+    cfg.valid = false;
+  };
   try {
     YAML::Node root = YAML::LoadFile(path);
     if (!root || !root.IsMap()) {
@@ -383,9 +382,14 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_generation_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
   }
-  catch (const std::exception& exception) {
-    log_error(std::string("Failed to load config: ") + exception.what());
-    cfg.valid = false;
+  catch (const YAML::Exception& exception) {
+    mark_invalid(exception.what());
+  }
+  catch (const std::invalid_argument& exception) {
+    mark_invalid(exception.what());
+  }
+  catch (const std::filesystem::filesystem_error& exception) {
+    mark_invalid(exception.what());
   }
 
   if (cfg.valid) {

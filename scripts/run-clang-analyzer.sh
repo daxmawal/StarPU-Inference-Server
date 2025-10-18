@@ -10,7 +10,7 @@
 BUILD_DIR=${BUILD_DIR:-../build}
 ANALYZER_OUTPUT=${ANALYZER_OUTPUT:-clang-analyzer}
 
-if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
+if [[ ! -f "$BUILD_DIR/compile_commands.json" ]]; then
   echo "Error: $BUILD_DIR/compile_commands.json not found." >&2
   echo "Did you run: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ?" >&2
   exit 1

@@ -53,7 +53,7 @@ handle_program_arguments(std::span<char const* const> args)
   std::optional<int> input_slots_override;
 
   auto remaining = args.subspan(1);
-  auto require_value = [&](std::string_view flag) -> const char* {
+  auto require_value = [&](std::string_view flag) {
     if (remaining.empty() || remaining.front() == nullptr) {
       starpu_server::log_fatal(
           std::format("Missing value for {} argument.\n", flag));
@@ -87,7 +87,7 @@ handle_program_arguments(std::span<char const* const> args)
       }
       catch (const std::exception& e) {
         starpu_server::log_fatal(
-            std::string("Invalid --input-slots value: ") + e.what() + "\n");
+            std::format("Invalid --input-slots value: {}\n", e.what()));
       }
       continue;
     }

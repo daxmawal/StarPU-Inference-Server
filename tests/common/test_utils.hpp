@@ -76,7 +76,7 @@ struct TestBuffers {
   std::array<float, 3> output_data;
   starpu_variable_interface input_iface;
   starpu_variable_interface output_iface;
-  std::array<void*, 2> buffers;
+  std::array<starpu_server::StarpuBufferPtr, 2> buffers;
 };
 
 inline auto

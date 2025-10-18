@@ -116,7 +116,7 @@ initialize_input_pool(const RuntimeConfig& opts)
     return std::make_unique<InputSlotPool>(opts, opts.batching.input_slots);
   }
   catch (const std::exception& e) {
-    log_error(std::string("Failed to initialize InputSlotPool: ") + e.what());
+    log_error(std::format("Failed to initialize InputSlotPool: {}", e.what()));
     throw;
   }
 }
@@ -133,7 +133,8 @@ initialize_output_pool(const RuntimeConfig& opts)
     return std::make_unique<OutputSlotPool>(opts, opts.batching.input_slots);
   }
   catch (const std::exception& e) {
-    log_error(std::string("Failed to initialize OutputSlotPool: ") + e.what());
+    log_error(
+        std::format("Failed to initialize OutputSlotPool: {}", +e.what()));
     throw;
   }
 }
@@ -187,7 +188,7 @@ append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs)
 }  // namespace
 
 void run_inference(
-    InferenceParams* params, const std::vector<void*>& buffers,
+    InferenceParams* params, const std::vector<StarpuBufferPtr>& buffers,
     torch::Device device, torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn);
@@ -232,8 +233,8 @@ extract_tensors_from_output(const c10::IValue& result)
 
 inline void
 run_inference(
-    InferenceParams* params, std::span<void* const> buffers,
-    torch::Device device, torch::jit::script::Module* model,
+    InferenceParams* params, StarpuBufferSpan buffers, torch::Device device,
+    torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn)
 {
@@ -254,10 +255,9 @@ run_inference(
       "Mismatch between model outputs and StarPU buffers");
 
   for (size_t i = 0; i < params->num_outputs; ++i) {
-    auto* var_iface = static_cast<starpu_variable_interface*>(
-        buffers[params->num_inputs + i]);
+    auto* var_iface = buffers[params->num_inputs + i];
     auto* buffer_ptr = std::bit_cast<std::byte*>(var_iface->ptr);
-    const auto byte_size = static_cast<size_t>(outputs[i].nbytes());
+    const auto byte_size = outputs[i].nbytes();
     std::span<std::byte> buffer(buffer_ptr, byte_size);
     copy_output_fn(outputs[i], buffer);
   }
@@ -265,20 +265,20 @@ run_inference(
 
 void
 run_inference(
-    InferenceParams* params, const std::vector<void*>& buffers,
+    InferenceParams* params, const std::vector<StarpuBufferPtr>& buffers,
     torch::Device device, torch::jit::script::Module* model,
     const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn)
 {
   run_inference(
-      params, std::span<void* const>(buffers.data(), buffers.size()), device,
-      model, copy_output_fn);
+      params, StarpuBufferSpan(buffers.data(), buffers.size()), device, model,
+      copy_output_fn);
 }
 
 template <typename CopyOutputFn>
 void
 run_codelet_inference(
-    InferenceParams* params, std::span<void* const> buffers,
+    InferenceParams* params, StarpuBufferSpan buffers,
     const torch::Device device, torch::jit::script::Module* model,
     CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
@@ -348,8 +348,10 @@ inline void
 InferenceCodelet::cpu_inference_func(void** buffers, void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
-  const std::span<void* const> buffers_span(
-      buffers, params->num_inputs + params->num_outputs);
+  const size_t total_buffers =
+      static_cast<size_t>(params->num_inputs + params->num_outputs);
+  const auto* typed_buffers = reinterpret_cast<StarpuBufferPtr const*>(buffers);
+  const StarpuBufferSpan buffers_span(typed_buffers, total_buffers);
 
   const c10::InferenceMode no_autograd;
 
@@ -370,8 +372,10 @@ inline void
 InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
-  const std::span<void* const> buffers_span(
-      buffers, params->num_inputs + params->num_outputs);
+  const size_t total_buffers =
+      static_cast<size_t>(params->num_inputs + params->num_outputs);
+  const auto* typed_buffers = reinterpret_cast<StarpuBufferPtr const*>(buffers);
+  const StarpuBufferSpan buffers_span(typed_buffers, total_buffers);
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
 

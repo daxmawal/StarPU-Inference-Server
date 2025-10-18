@@ -34,10 +34,6 @@ using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
 using RegisterFailureObserverFn =
     std::function<void(const InputSlotPool::SlotInfo& slot)>;
 
-inline StarpuVectorRegisterFn g_starpu_vector_register_hook =
-    &starpu_vector_data_register;
-inline RegisterFailureObserverFn g_starpu_register_failure_observer = {};
-
 auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
     -> std::byte*
@@ -53,8 +49,8 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
   }
   constexpr size_t kAlign = 64;
   void* aligned_ptr = nullptr;
-  int result_code = posix_memalign(&aligned_ptr, kAlign, bytes);
-  if (result_code != 0 || aligned_ptr == nullptr) {
+  if (int result_code = posix_memalign(&aligned_ptr, kAlign, bytes);
+      result_code != 0 || aligned_ptr == nullptr) {
     throw std::bad_alloc();
   }
   return static_cast<std::byte*>(aligned_ptr);
@@ -78,8 +74,6 @@ free_host_buffer(
   }
   if (buffer_info.cuda_pinned) {
     cudaFreeHost(static_cast<void*>(ptr));
-  } else {
-    std::free(static_cast<void*>(ptr));
   }
 }
 
@@ -142,13 +136,15 @@ allocate_and_pin_buffer(
 auto
 starpu_vector_register_hook() -> StarpuVectorRegisterFn&
 {
-  return g_starpu_vector_register_hook;
+  static StarpuVectorRegisterFn hook = &starpu_vector_data_register;
+  return hook;
 }
 
 auto
 starpu_register_failure_observer() -> RegisterFailureObserverFn&
 {
-  return g_starpu_register_failure_observer;
+  static RegisterFailureObserverFn observer;
+  return observer;
 }
 
 void

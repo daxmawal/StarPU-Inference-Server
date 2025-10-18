@@ -157,8 +157,8 @@ RUN cmake .. \
     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
     -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
-    -DProtobuf_DIR=$INSTALL_DIR/protobuf/lib/cmake/protobuf \
-    -DProtobuf_PROTOC_EXECUTABLE=$INSTALL_DIR/protobuf/bin/protoc \
+    -DProtobuf_DIR="$INSTALL_DIR/protobuf/lib/cmake/protobuf" \
+    -DProtobuf_PROTOC_EXECUTABLE="$INSTALL_DIR/protobuf/bin/protoc" \
     -DProtobuf_USE_STATIC_LIBS=ON \
     -DENABLE_COVERAGE=OFF \
     -DENABLE_SANITIZERS=OFF \

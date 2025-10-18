@@ -22,7 +22,7 @@ TEST(TensorBuilder_Integration, StarPUStyleRoundTrip)
 
   starpu_variable_interface in_v{};
   in_v.ptr = std::bit_cast<uintptr_t>(input.data());
-  std::vector<void*> buffers = {&in_v};
+  std::vector<starpu_server::StarpuBufferPtr> buffers = {&in_v};
 
   starpu_server::InferenceParams params;
   params.num_inputs = 1;

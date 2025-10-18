@@ -17,6 +17,8 @@
 #include "test_constants.hpp"
 #include "utils/exceptions.hpp"
 
+using starpu_server::StarpuBufferPtr;
+
 namespace {
 constexpr size_t kElems2 = 2, kElems3 = 3;
 using starpu_server::test_constants::kF1;
@@ -196,7 +198,7 @@ TEST(TensorBuilder_Robustesse, FromStarpuBuffersTooManyInputs)
   starpu_server::InferenceParams params;
   params.num_inputs = starpu_server::InferLimits::MaxInputs + 1;
   params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
-  std::vector<void*> buffers(params.num_inputs, nullptr);
+  std::vector<StarpuBufferPtr> buffers(params.num_inputs, nullptr);
   EXPECT_THROW(
       [[maybe_unused]] auto _ =
           starpu_server::TensorBuilder::from_starpu_buffers(
