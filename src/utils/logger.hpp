@@ -51,8 +51,8 @@ parse_verbosity_level(std::string_view val) -> VerbosityLevel
 {
   using enum VerbosityLevel;
 
-  const auto first = val.find_first_not_of(" \t\n\r\f\v");
-  if (first == std::string_view::npos) {
+  if (const auto first = val.find_first_not_of(" \t\n\r\f\v");
+      first == std::string_view::npos) {
     val = {};
   } else {
     const auto last = val.find_last_not_of(" \t\n\r\f\v");
@@ -60,9 +60,8 @@ parse_verbosity_level(std::string_view val) -> VerbosityLevel
   }
   const std::string trimmed{val};
 
-  if (std::ranges::all_of(val.begin(), val.end(), [](unsigned char c) noexcept {
-        return std::isdigit(c) != 0;
-      })) {
+  if (std::ranges::all_of(
+          val, [](unsigned char c) noexcept { return std::isdigit(c) != 0; })) {
     int level{};
     try {
       level = std::stoi(trimmed);
@@ -90,11 +89,9 @@ parse_verbosity_level(std::string_view val) -> VerbosityLevel
   }
 
   std::string lower(trimmed.size(), '\0');
-  std::ranges::transform(
-      trimmed.begin(), trimmed.end(), lower.begin(),
-      [](unsigned char c) noexcept {
-        return static_cast<char>(std::tolower(c));
-      });
+  std::ranges::transform(trimmed, lower.begin(), [](unsigned char c) noexcept {
+    return static_cast<char>(std::tolower(c));
+  });
   if (lower == "silent") {
     return Silent;
   }
