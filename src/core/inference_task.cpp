@@ -27,8 +27,8 @@ namespace starpu_server {
 namespace {
 
 struct ExceptionLoggingMessages {
-  std::string_view context_prefix{};
-  std::string_view unknown_message{};
+  std::string_view context_prefix;
+  std::string_view unknown_message;
 };
 
 template <typename Callback>
