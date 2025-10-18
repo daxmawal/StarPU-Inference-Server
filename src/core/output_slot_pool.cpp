@@ -32,10 +32,10 @@ OutputSlotPool::alloc_host_buffer(
   HostBufferPtr ptr = nullptr;
   cuda_pinned_out = false;
   if (use_pinned) {
-    HostBufferPtr cuda_ptr = nullptr;
-    const auto err = cudaHostAlloc(
-        reinterpret_cast<void**>(&cuda_ptr), bytes, cudaHostAllocPortable);
-    if (err == cudaSuccess && cuda_ptr != nullptr) {
+    void* raw_ptr = nullptr;
+    const auto err = cudaHostAlloc(&raw_ptr, bytes, cudaHostAllocPortable);
+    if (err == cudaSuccess && raw_ptr != nullptr) {
+      auto* cuda_ptr = static_cast<HostBufferPtr>(raw_ptr);
       bool keep_cuda_pinned = true;
       auto& cuda_override = output_cuda_pinned_override_hook();
       if (cuda_override) {
@@ -45,7 +45,7 @@ OutputSlotPool::alloc_host_buffer(
         cuda_pinned_out = true;
         return cuda_ptr;
       }
-      cudaFreeHost(static_cast<void*>(cuda_ptr));
+      cudaFreeHost(raw_ptr);
     }
   }
   constexpr size_t kAlign = 64;
