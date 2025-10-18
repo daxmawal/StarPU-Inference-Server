@@ -37,22 +37,21 @@
 
 namespace starpu_server {
 namespace {
-inline StarPUSetup::StarpuInitFn starpu_init_fn_instance = starpu_init;
-inline StarPUSetup::WorkerStreamQueryFn worker_stream_query_fn_instance =
-    starpu_worker_get_stream_workerids;
-
 void append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs);
 
 auto
 starpu_init_fn_ref() -> StarPUSetup::StarpuInitFn&
 {
-  return starpu_init_fn_instance;
+  static auto instance = StarPUSetup::StarpuInitFn(starpu_init);
+  return instance;
 }
 
 auto
 worker_stream_query_fn_ref() -> StarPUSetup::WorkerStreamQueryFn&
 {
-  return worker_stream_query_fn_instance;
+  static auto instance =
+      StarPUSetup::WorkerStreamQueryFn(starpu_worker_get_stream_workerids);
+  return instance;
 }
 
 void
