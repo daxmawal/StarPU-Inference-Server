@@ -97,20 +97,24 @@ default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
 }
 
 namespace {
-inline WorkerThreadLauncher current_worker_thread_launcher =
-    default_worker_thread_launcher;
+inline auto
+current_worker_thread_launcher_storage() -> WorkerThreadLauncher&
+{
+  static WorkerThreadLauncher launcher = default_worker_thread_launcher;
+  return launcher;
+}
 }  // namespace
 
 auto
 get_worker_thread_launcher() -> WorkerThreadLauncher
 {
-  return current_worker_thread_launcher;
+  return current_worker_thread_launcher_storage();
 }
 
 void
 set_worker_thread_launcher(WorkerThreadLauncher launcher)
 {
-  current_worker_thread_launcher = std::move(launcher);
+  current_worker_thread_launcher_storage() = std::move(launcher);
 }
 
 // =============================================================================
