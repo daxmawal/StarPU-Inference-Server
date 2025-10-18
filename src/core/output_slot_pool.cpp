@@ -133,7 +133,7 @@ OutputSlotPool::output_host_deallocator_hook() -> OutputHostDeallocatorHook&
 {
   static OutputHostDeallocatorHook deallocator = [](void* ptr) noexcept {
     std::free(ptr);
-  };  // NOLINT(cppcoreguidelines-no-malloc)
+  };
   return deallocator;
 }
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <functional>
@@ -47,7 +48,8 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
 
 namespace {
 
-using TensorDataPtr = void*;
+using TensorDataByte = std::byte;
+using TensorDataPtr = TensorDataByte*;
 
 auto
 parse_input_dtype(
@@ -190,14 +192,16 @@ convert_input_to_tensor(
         "Raw input size does not match tensor size"};
   }
 
-  auto alias = std::shared_ptr<const void>(request_guard, raw.data());
-  auto holder = std::const_pointer_cast<void>(alias);
-  auto deleter = [holder](TensorDataPtr /*unused*/) mutable {
+  auto byte_data = reinterpret_cast<const TensorDataByte*>(raw.data());
+  auto alias = std::shared_ptr<const TensorDataByte>(request_guard, byte_data);
+  auto holder = std::const_pointer_cast<TensorDataByte>(alias);
+  auto deleter = [holder](void* /*unused*/) mutable {
     auto keep = holder;
     keep.reset();
   };
 
-  tensor = torch::from_blob(holder.get(), shape, deleter, options);
+  TensorDataPtr tensor_data = holder.get();
+  tensor = torch::from_blob(tensor_data, shape, deleter, options);
   if (keep_alive != nullptr) {
     *keep_alive = alias;
   }
@@ -388,20 +392,21 @@ InferenceServiceImpl::submit_job_async(
   NvtxRange submit_scope("grpc_submit_starpu");
 
   job->set_on_complete(
-      [job_ptr = job, on_complete = std::move(on_complete)](
+      [job_ptr = job, callback = std::move(on_complete)](
           const std::vector<torch::Tensor>& outs, double latency_ms) mutable {
         const auto& info = job_ptr->timing_info();
         auto timing = build_latency_breakdown(info, latency_ms);
         detail::TimingInfo copied_info = info;
+
         if (outs.empty()) {
-          on_complete(
+          callback(
               {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
               copied_info);
           return;
         }
 
         auto outputs_copy = outs;
-        on_complete(Status::OK, std::move(outputs_copy), timing, copied_info);
+        callback(Status::OK, std::move(outputs_copy), timing, copied_info);
       });
 
   bool pushed = false;
@@ -437,7 +442,7 @@ InferenceServiceImpl::submit_job_and_wait(
           inputs,
           [result_promise](
               Status status, std::vector<torch::Tensor> outs,
-              LatencyBreakdown cb_breakdown,
+              const LatencyBreakdown& cb_breakdown,
               const detail::TimingInfo& cb_timing_info) {
             result_promise->set_value(JobResult{
                 std::move(status), std::move(outs), cb_breakdown,
