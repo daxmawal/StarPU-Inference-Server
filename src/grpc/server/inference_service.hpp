@@ -116,12 +116,17 @@ class InferenceServiceImpl final
     bool consumed_ = false;
   };
 
+  struct AsyncInferCompletionContext {
+    const inference::ModelInferRequest* request;
+    inference::ModelInferResponse* reply;
+    std::shared_ptr<CallbackHandle> callback_handle;
+    std::shared_ptr<MetricsRegistry> metrics;
+    std::chrono::high_resolution_clock::time_point recv_tp;
+    int64_t recv_ms;
+  };
+
   static void handle_async_infer_completion(
-      const inference::ModelInferRequest* request,
-      inference::ModelInferResponse* reply,
-      const std::shared_ptr<CallbackHandle>& callback_handle,
-      const std::shared_ptr<MetricsRegistry>& metrics,
-      std::chrono::high_resolution_clock::time_point recv_tp, int64_t recv_ms,
+      const AsyncInferCompletionContext& context,
       const grpc::Status& job_status, const std::vector<torch::Tensor>& outs,
       LatencyBreakdown breakdown, detail::TimingInfo timing_info);
 
@@ -183,5 +188,5 @@ void RunGrpcServer(
     const std::vector<at::ScalarType>& expected_input_types,
     const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
 
-void StopServer(const std::unique_ptr<grpc::Server>& server);
+void StopServer(grpc::Server* server);
 }  // namespace starpu_server

@@ -690,7 +690,7 @@ validate_config(RuntimeConfig& opts) -> void
   const bool have_shapes =
       !opts.models.empty() &&
       std::ranges::any_of(
-          opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
+          opts.models[0].inputs,
           [](const auto& tensor) noexcept { return !tensor.dims.empty(); });
   const bool have_types =
       !opts.models.empty() &&

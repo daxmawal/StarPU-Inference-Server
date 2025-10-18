@@ -209,7 +209,7 @@ launch_threads(
     server_ctx.stop_cv.wait(
         lock, [] { return server_context().stop_requested.load(); });
   }
-  starpu_server::StopServer(server_ctx.server);
+  starpu_server::StopServer(server_ctx.server.get());
   if (server_ctx.queue_ptr != nullptr) {
     server_ctx.queue_ptr->shutdown();
   }

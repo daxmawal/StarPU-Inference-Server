@@ -32,20 +32,20 @@ OutputSlotPool::alloc_host_buffer(
   HostBufferPtr ptr = nullptr;
   cuda_pinned_out = false;
   if (use_pinned) {
-    HostBufferPtr cuda_ptr = nullptr;
-    const auto err = cudaHostAlloc(
-        reinterpret_cast<void**>(&cuda_ptr), bytes, cudaHostAllocPortable);
-    if (err == cudaSuccess && cuda_ptr != nullptr) {
+    void* raw_ptr = nullptr;
+    const auto err = cudaHostAlloc(&raw_ptr, bytes, cudaHostAllocPortable);
+    if (err == cudaSuccess && raw_ptr != nullptr) {
+      auto* cuda_ptr = static_cast<HostBufferPtr>(raw_ptr);
       bool keep_cuda_pinned = true;
-      auto& cuda_override = output_cuda_pinned_override_hook();
-      if (cuda_override) {
+      if (const auto& cuda_override = output_cuda_pinned_override_hook();
+          cuda_override) {
         keep_cuda_pinned = cuda_override(bytes, use_pinned, true);
       }
       if (keep_cuda_pinned) {
         cuda_pinned_out = true;
         return cuda_ptr;
       }
-      cudaFreeHost(static_cast<void*>(cuda_ptr));
+      cudaFreeHost(raw_ptr);
     }
   }
   constexpr size_t kAlign = 64;
@@ -133,7 +133,7 @@ OutputSlotPool::output_host_deallocator_hook() -> OutputHostDeallocatorHook&
 {
   static OutputHostDeallocatorHook deallocator = [](void* ptr) noexcept {
     std::free(ptr);
-  };  // NOLINT(cppcoreguidelines-no-malloc)
+  };
   return deallocator;
 }
 

@@ -1,4 +1,4 @@
-# Configuration Reference
+<!--# Configuration Reference
 
 StarPU Inference Server accepts a YAML configuration file. The CLI parser
 merges command-line overrides on top of the values loaded from the file.
@@ -100,4 +100,4 @@ Examples include:
 - Invalid port numbers or message sizes.
 
 The CLI exits early when `valid` is `false`, preventing the server from
-starting with a malformed configuration.
+starting with a malformed configuration.-->

@@ -1,4 +1,4 @@
-# Installation Guide
+<!--# Installation Guide
 
 This guide describes how to prepare a development environment for the
 StarPU Inference Server.
@@ -21,7 +21,7 @@ or build them from source:
 | Library | Purpose | Notes |
 | --- | --- | --- |
 | [StarPU](https://starpu.gitlabpages.inria.fr/) | Heterogeneous task scheduling runtime | Provides CPU/GPU scheduling backend. |
-| [LibTorch](https://pytorch.org/cppdocs/installing.html) | PyTorch C++ API for TorchScript models | Download the prebuilt archive matching your CUDA toolkit (or CPU-only). |
+| [LibTorch](https://pytorch.org/cppdocs/installing.html) | PyTorch C++ API | Pick archive for your CUDA toolkit or CPU-only. |
 | [Protobuf](https://github.com/protocolbuffers/protobuf) | Serialization layer for the gRPC API | gRPC requires version 3.21+. |
 | [gRPC](https://grpc.io/docs/languages/cpp/quickstart/) | Remote procedure call framework | Install with CMake config packages enabled. |
 | [Abseil](https://abseil.io/) | Utility library used by gRPC | Available via most package managers. |
@@ -91,4 +91,4 @@ server validates that model paths exist during startup.
 ## Next Steps
 
 Continue with the [Usage Guide](usage.md) to learn how to launch the
-server and submit inference requests.
+server and submit inference requests.-->

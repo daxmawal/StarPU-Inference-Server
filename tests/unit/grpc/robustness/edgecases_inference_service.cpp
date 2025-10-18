@@ -136,7 +136,7 @@ TEST(InferenceService, InvalidDatatypeReturnsInvalidArgument)
 TEST(GrpcServer, StopServerNullptr)
 {
   std::unique_ptr<grpc::Server> server;
-  EXPECT_NO_THROW(starpu_server::StopServer(server));
+  EXPECT_NO_THROW(starpu_server::StopServer(server.get()));
   EXPECT_EQ(server, nullptr);
 }
 

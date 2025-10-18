@@ -93,6 +93,6 @@ TEST(E2E, FullInference)
       resp.server_send_ms(), response_breakdown);
   EXPECT_GE(resp.server_total_ms(), 0.0);
 
-  starpu_server::StopServer(server.server);
+  starpu_server::StopServer(server.server.get());
   server.thread.join();
 }

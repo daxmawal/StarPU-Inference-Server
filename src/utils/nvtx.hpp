@@ -1,7 +1,9 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #ifdef HAVE_NVTX
 #include <nvtx3/nvToolsExt.h>
@@ -11,8 +13,8 @@ namespace starpu_server {
 
 namespace detail {
 
-using NvtxPushHook = void (*)(std::string_view);
-using NvtxPopHook = void (*)();
+using NvtxPushHook = std::function<void(std::string_view)>;
+using NvtxPopHook = std::function<void()>;
 
 inline void
 DefaultPushHook(std::string_view label)
@@ -50,8 +52,8 @@ PopHookRef()
 inline void
 SetHooks(NvtxPushHook push, NvtxPopHook pop)
 {
-  PushHookRef() = push ? push : &DefaultPushHook;
-  PopHookRef() = pop ? pop : &DefaultPopHook;
+  PushHookRef() = push ? std::move(push) : NvtxPushHook{&DefaultPushHook};
+  PopHookRef() = pop ? std::move(pop) : NvtxPopHook{&DefaultPopHook};
 }
 
 inline void
@@ -70,21 +72,21 @@ InvokePop()
 
 class NvtxRange {
  public:
-  using PushHook = detail::NvtxPushHook;
-  using PopHook = detail::NvtxPopHook;
+  using PushHook = std::function<void(std::string_view)>;
+  using PopHook = std::function<void()>;
 
   explicit NvtxRange(const char* name) { detail::InvokePush(name); }
 
-  explicit NvtxRange(std::string name) { detail::InvokePush(name); }
+  explicit NvtxRange(const std::string& name) { detail::InvokePush(name); }
 
   ~NvtxRange() { detail::InvokePop(); }
 
   static void SetHooks(PushHook push, PopHook pop)
   {
-    detail::SetHooks(push, pop);
+    detail::SetHooks(std::move(push), std::move(pop));
   }
 
-  static void ResetHooks() { detail::SetHooks(nullptr, nullptr); }
+  static void ResetHooks() { detail::SetHooks({}, {}); }
 
   NvtxRange(const NvtxRange&) = delete;
   auto operator=(const NvtxRange&) -> NvtxRange& = delete;

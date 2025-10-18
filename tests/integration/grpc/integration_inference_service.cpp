@@ -118,7 +118,7 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
-  starpu_server::StopServer(server);
+  starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
 }
@@ -146,7 +146,7 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
-  starpu_server::StopServer(server);
+  starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
 }
@@ -156,7 +156,7 @@ TEST(GrpcServer, StartAndStop)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
   auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
-  starpu_server::StopServer(server.server);
+  starpu_server::StopServer(server.server.get());
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
 }
@@ -321,7 +321,7 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
   ASSERT_TRUE(status.ok());
   EXPECT_TRUE(response.live());
 
-  starpu_server::StopServer(server);
+  starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
 }
@@ -386,7 +386,7 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
 
   worker.join();
 
-  starpu_server::StopServer(server);
+  starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
 }

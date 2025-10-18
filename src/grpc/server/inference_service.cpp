@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <functional>
@@ -47,7 +48,8 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
 
 namespace {
 
-using TensorDataPtr = void*;
+using TensorDataByte = std::byte;
+using TensorDataPtr = TensorDataByte*;
 
 auto
 parse_input_dtype(
@@ -190,14 +192,16 @@ convert_input_to_tensor(
         "Raw input size does not match tensor size"};
   }
 
-  auto alias = std::shared_ptr<const void>(request_guard, raw.data());
-  auto holder = std::const_pointer_cast<void>(alias);
-  auto deleter = [holder](TensorDataPtr /*unused*/) mutable {
+  auto byte_data = reinterpret_cast<const TensorDataByte*>(raw.data());
+  auto alias = std::shared_ptr<const TensorDataByte>(request_guard, byte_data);
+  auto holder = std::const_pointer_cast<TensorDataByte>(alias);
+  auto deleter = [holder](void* /*unused*/) mutable {
     auto keep = holder;
     keep.reset();
   };
 
-  tensor = torch::from_blob(holder.get(), shape, deleter, options);
+  TensorDataPtr tensor_data = holder.get();
+  tensor = torch::from_blob(tensor_data, shape, deleter, options);
   if (keep_alive != nullptr) {
     *keep_alive = alias;
   }
@@ -388,20 +392,21 @@ InferenceServiceImpl::submit_job_async(
   NvtxRange submit_scope("grpc_submit_starpu");
 
   job->set_on_complete(
-      [job_ptr = job, on_complete = std::move(on_complete)](
+      [job_ptr = job, callback = std::move(on_complete)](
           const std::vector<torch::Tensor>& outs, double latency_ms) mutable {
         const auto& info = job_ptr->timing_info();
         auto timing = build_latency_breakdown(info, latency_ms);
         detail::TimingInfo copied_info = info;
+
         if (outs.empty()) {
-          on_complete(
+          callback(
               {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
               copied_info);
           return;
         }
 
         auto outputs_copy = outs;
-        on_complete(Status::OK, std::move(outputs_copy), timing, copied_info);
+        callback(Status::OK, std::move(outputs_copy), timing, copied_info);
       });
 
   bool pushed = false;
@@ -437,7 +442,7 @@ InferenceServiceImpl::submit_job_and_wait(
           inputs,
           [result_promise](
               Status status, std::vector<torch::Tensor> outs,
-              LatencyBreakdown cb_breakdown,
+              const LatencyBreakdown& cb_breakdown,
               const detail::TimingInfo& cb_timing_info) {
             result_promise->set_value(JobResult{
                 std::move(status), std::move(outs), cb_breakdown,
@@ -496,13 +501,11 @@ InferenceServiceImpl::CallbackHandle::Invoke(Status status)
 
 void
 InferenceServiceImpl::handle_async_infer_completion(
-    const ModelInferRequest* request, ModelInferResponse* reply,
-    const std::shared_ptr<CallbackHandle>& callback_handle,
-    const std::shared_ptr<MetricsRegistry>& metrics,
-    std::chrono::high_resolution_clock::time_point recv_tp, int64_t recv_ms,
-    const Status& job_status, const std::vector<torch::Tensor>& outs,
-    LatencyBreakdown breakdown, detail::TimingInfo timing_info)
+    const AsyncInferCompletionContext& context, const Status& job_status,
+    const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
+    detail::TimingInfo timing_info)
 {
+  const auto& callback_handle = context.callback_handle;
   if (!callback_handle->TryAcquire()) {
     return;
   }
@@ -515,14 +518,14 @@ InferenceServiceImpl::handle_async_infer_completion(
   const auto zero_tp = std::chrono::high_resolution_clock::time_point{};
   if (timing_info.enqueued_time > zero_tp) {
     const auto preprocess_duration = std::chrono::duration<double, std::milli>(
-        timing_info.enqueued_time - recv_tp);
+        timing_info.enqueued_time - context.recv_tp);
     breakdown.preprocess_ms = std::max(0.0, preprocess_duration.count());
   } else {
     breakdown.preprocess_ms = 0.0;
   }
 
-  Status populate_status =
-      populate_response(request, reply, outs, recv_ms, breakdown);
+  Status populate_status = populate_response(
+      context.request, context.reply, outs, context.recv_ms, breakdown);
   if (!populate_status.ok()) {
     callback_handle->Invoke(populate_status);
     return;
@@ -532,7 +535,7 @@ InferenceServiceImpl::handle_async_infer_completion(
   const int64_t send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                               send_tp.time_since_epoch())
                               .count();
-  reply->set_server_send_ms(send_ms);
+  context.reply->set_server_send_ms(send_ms);
 
   if (timing_info.callback_end_time > zero_tp) {
     const auto postprocess_duration = std::chrono::duration<double, std::milli>(
@@ -543,17 +546,18 @@ InferenceServiceImpl::handle_async_infer_completion(
   }
 
   breakdown.overall_ms = std::max(
-      0.0,
-      std::chrono::duration<double, std::milli>(send_tp - recv_tp).count());
+      0.0, std::chrono::duration<double, std::milli>(send_tp - context.recv_tp)
+               .count());
 
-  reply->set_server_preprocess_ms(breakdown.preprocess_ms);
-  reply->set_server_postprocess_ms(breakdown.postprocess_ms);
-  reply->set_server_overall_ms(breakdown.overall_ms);
+  context.reply->set_server_preprocess_ms(breakdown.preprocess_ms);
+  context.reply->set_server_postprocess_ms(breakdown.postprocess_ms);
+  context.reply->set_server_overall_ms(breakdown.overall_ms);
 
-  if (metrics && metrics->inference_latency != nullptr) {
+  if (context.metrics && context.metrics->inference_latency != nullptr) {
     const auto latency_ms =
-        std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
-    metrics->inference_latency->Observe(latency_ms);
+        std::chrono::duration<double, std::milli>(send_tp - context.recv_tp)
+            .count();
+    context.metrics->inference_latency->Observe(latency_ms);
   }
 
   callback_handle->Invoke(Status::OK);
@@ -592,7 +596,8 @@ InferenceServiceImpl::HandleModelInferAsync(
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
         handle_async_infer_completion(
-            request, reply, callback_handle, metrics, recv_tp, recv_ms,
+            AsyncInferCompletionContext{
+                request, reply, callback_handle, metrics, recv_tp, recv_ms},
             job_status, outs, breakdown, timing_info);
       },
       std::move(input_lifetimes), recv_tp);
@@ -653,8 +658,12 @@ class AsyncCallDataBase {
 };
 
 template <typename Request, typename Response>
-class UnaryCallData final : public AsyncCallDataBase {
+class UnaryCallData final
+    : public AsyncCallDataBase,
+      public std::enable_shared_from_this<UnaryCallData<Request, Response>> {
  public:
+  using Self = UnaryCallData<Request, Response>;
+  using SharedPtr = std::shared_ptr<Self>;
   using RequestMethod = void (inference::GRPCInferenceService::AsyncService::*)(
       grpc::ServerContext*, Request*,
       grpc::ServerAsyncResponseWriter<Response>*, grpc::CompletionQueue*,
@@ -670,28 +679,40 @@ class UnaryCallData final : public AsyncCallDataBase {
         impl_(impl), request_method_(request_method),
         handler_(std::move(handler))
   {
-    Proceed(true);
+  }
+
+  static void Start(
+      inference::GRPCInferenceService::AsyncService* service,
+      grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl,
+      RequestMethod request_method, Handler handler)
+  {
+    auto call = std::make_shared<Self>(
+        service, completion_queue, impl, request_method, std::move(handler));
+    call->Proceed(true);
   }
 
   void Proceed(bool is_ok) override
   {
     switch (status_) {
-      case CallStatus::Create:
+      case CallStatus::Create: {
         status_ = CallStatus::Process;
+        self_ref_ = this->shared_from_this();
         (service_->*request_method_)(
             &ctx_, &request_, &responder_, cq_, cq_, this);
         break;
-      case CallStatus::Process:
+      }
+      case CallStatus::Process: {
         if (!is_ok) {
           status_ = CallStatus::Finish;
-          delete this;
+          self_ref_.reset();
           return;
         }
-        new UnaryCallData(service_, cq_, impl_, request_method_, handler_);
+        Start(service_, cq_, impl_, request_method_, handler_);
         HandleRequest();
         break;
+      }
       case CallStatus::Finish:
-        delete this;
+        self_ref_.reset();
         break;
     }
   }
@@ -723,48 +744,71 @@ class UnaryCallData final : public AsyncCallDataBase {
   RequestMethod request_method_;
   Handler handler_;
   CallStatus status_ = CallStatus::Create;
+  SharedPtr self_ref_;
 };
 
-class ModelInferCallData final : public AsyncCallDataBase {
+class ModelInferCallData final
+    : public AsyncCallDataBase,
+      public std::enable_shared_from_this<ModelInferCallData> {
  public:
+  using Self = ModelInferCallData;
+  using SharedPtr = std::shared_ptr<Self>;
+
   ModelInferCallData(
       inference::GRPCInferenceService::AsyncService* service,
       grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl)
       : service_(service), cq_(completion_queue), responder_(&ctx_), impl_(impl)
   {
-    Proceed(true);
+  }
+
+  static void Start(
+      inference::GRPCInferenceService::AsyncService* service,
+      grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl)
+  {
+    auto call = std::make_shared<Self>(service, completion_queue, impl);
+    call->Proceed(true);
   }
 
   void Proceed(bool is_ok) override
   {
     using enum CallStatus;
     switch (status_) {
-      case Create:
+      case Create: {
         status_ = Process;
+        self_ref_ = this->shared_from_this();
         service_->RequestModelInfer(
             &ctx_, &request_, &responder_, cq_, cq_, this);
         break;
-      case Process:
+      }
+      case Process: {
         if (!is_ok) {
           status_ = Finish;
-          delete this;
+          self_ref_.reset();
           return;
         }
-        new ModelInferCallData(service_, cq_, impl_);
+        Start(service_, cq_, impl_);
+        auto self = this->shared_from_this();
         impl_->HandleModelInferAsync(
-            &ctx_, &request_, &response_, [this](const Status& status) {
-              status_ = Finish;
-              responder_.Finish(response_, status, this);
+            &ctx_, &request_, &response_,
+            [self = std::move(self)](const Status& status) {
+              self->OnInferenceComplete(status);
             });
         break;
+      }
       case Finish:
-        delete this;
+        self_ref_.reset();
         break;
     }
   }
 
  private:
   enum class CallStatus : std::uint8_t { Create, Process, Finish };
+
+  void OnInferenceComplete(const Status& status)
+  {
+    status_ = CallStatus::Finish;
+    responder_.Finish(response_, status, this);
+  }
 
   inference::GRPCInferenceService::AsyncService* service_;
   grpc::ServerCompletionQueue* cq_;
@@ -774,6 +818,7 @@ class ModelInferCallData final : public AsyncCallDataBase {
   grpc::ServerAsyncResponseWriter<ModelInferResponse> responder_;
   InferenceServiceImpl* impl_;
   CallStatus status_ = CallStatus::Create;
+  SharedPtr self_ref_;
 };
 
 auto
@@ -811,22 +856,22 @@ AsyncServerContext::start()
     threads_.emplace_back([this]() { this->poll_events(); });
   }
 
-  new UnaryCallData<
-      inference::ServerLiveRequest, inference::ServerLiveResponse>(
-      async_service_, completion_queue_.get(), impl_,
-      &inference::GRPCInferenceService::AsyncService::RequestServerLive,
-      std::mem_fn(&InferenceServiceImpl::ServerLive));
-  new UnaryCallData<
-      inference::ServerReadyRequest, inference::ServerReadyResponse>(
-      async_service_, completion_queue_.get(), impl_,
-      &inference::GRPCInferenceService::AsyncService::RequestServerReady,
-      std::mem_fn(&InferenceServiceImpl::ServerReady));
-  new UnaryCallData<
-      inference::ModelReadyRequest, inference::ModelReadyResponse>(
-      async_service_, completion_queue_.get(), impl_,
-      &inference::GRPCInferenceService::AsyncService::RequestModelReady,
-      std::mem_fn(&InferenceServiceImpl::ModelReady));
-  new ModelInferCallData(async_service_, completion_queue_.get(), impl_);
+  UnaryCallData<inference::ServerLiveRequest, inference::ServerLiveResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestServerLive,
+          std::mem_fn(&InferenceServiceImpl::ServerLive));
+  UnaryCallData<inference::ServerReadyRequest, inference::ServerReadyResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestServerReady,
+          std::mem_fn(&InferenceServiceImpl::ServerReady));
+  UnaryCallData<inference::ModelReadyRequest, inference::ModelReadyResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestModelReady,
+          std::mem_fn(&InferenceServiceImpl::ModelReady));
+  ModelInferCallData::Start(async_service_, completion_queue_.get(), impl_);
 }
 
 void
@@ -947,9 +992,9 @@ RunGrpcServer(
 }
 
 void
-StopServer(const std::unique_ptr<Server>& server)
+StopServer(Server* server)
 {
-  if (server) {
+  if (server != nullptr) {
     server->Shutdown();
   }
 }

@@ -34,7 +34,8 @@ struct ExceptionLoggingMessages {
 template <typename Callback>
 void
 run_with_logged_exceptions(
-    Callback&& callback, ExceptionLoggingMessages messages = {})
+    Callback&& callback,
+    const ExceptionLoggingMessages& messages = ExceptionLoggingMessages{})
 {
   try {
     std::forward<Callback>(callback)();

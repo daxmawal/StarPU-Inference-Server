@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -26,9 +27,12 @@
 namespace starpu_server {
 namespace task_runner_internal {
 
+template <typename Ptr>
 inline void
-validate_not_null(const void* ptr, std::string_view field_name)
+validate_not_null(Ptr ptr, std::string_view field_name)
 {
+  static_assert(
+      std::is_pointer_v<Ptr>, "validate_not_null expects a pointer argument");
   if (ptr != nullptr) {
     return;
   }
@@ -84,7 +88,7 @@ static void
 invoke_submit_inference_task_hook()
 {
   if (submit_inference_task_hook) {
-    auto hook = submit_inference_task_hook;
+    const auto& hook = submit_inference_task_hook;
     hook();
   }
 }
@@ -92,7 +96,7 @@ invoke_submit_inference_task_hook()
 template <typename Callback>
 void
 run_with_logged_exceptions(
-    Callback&& callback, ExceptionLoggingMessages messages)
+    Callback&& callback, const ExceptionLoggingMessages& messages)
 {
   try {
     std::forward<Callback>(callback)();
@@ -259,20 +263,15 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
           config.dependencies != nullptr ? config.dependencies
                                          : &kDefaultInferenceTaskDependencies)
 {
-  for (const auto& [ptr, name] :
-       std::initializer_list<std::pair<const void*, std::string_view>>{
-           {queue_, "queue"},
-           {model_cpu_, "model_cpu"},
-           {models_gpu_, "models_gpu"},
-           {starpu_, "starpu"},
-           {opts_, "opts"},
-           {results_, "results"},
-           {results_mutex_, "results_mutex"},
-           {completed_jobs_, "completed_jobs"},
-           {all_done_cv_, "all_done_cv"},
-       }) {
-    task_runner_internal::validate_not_null(ptr, name);
-  }
+  task_runner_internal::validate_not_null(queue_, "queue");
+  task_runner_internal::validate_not_null(model_cpu_, "model_cpu");
+  task_runner_internal::validate_not_null(models_gpu_, "models_gpu");
+  task_runner_internal::validate_not_null(starpu_, "starpu");
+  task_runner_internal::validate_not_null(opts_, "opts");
+  task_runner_internal::validate_not_null(results_, "results");
+  task_runner_internal::validate_not_null(results_mutex_, "results_mutex");
+  task_runner_internal::validate_not_null(completed_jobs_, "completed_jobs");
+  task_runner_internal::validate_not_null(all_done_cv_, "all_done_cv");
 }
 
 
@@ -589,12 +588,12 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     if (!next) {
       continue;
     }
-    const bool should_hold_pending =
-        next->is_shutdown() || next->has_aggregated_sub_jobs() ||
-        next->logical_job_count() > 1 ||
-        target_worker != next->get_fixed_worker_id() ||
-        !can_merge_jobs(jobs.front(), next);
-    if (should_hold_pending) {
+    if (const bool should_hold_pending =
+            next->is_shutdown() || next->has_aggregated_sub_jobs() ||
+            next->logical_job_count() > 1 ||
+            target_worker != next->get_fixed_worker_id() ||
+            !can_merge_jobs(jobs.front(), next);
+        should_hold_pending) {
       pending_job_ = next;
       stop_collection = true;
       continue;

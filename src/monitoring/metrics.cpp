@@ -270,10 +270,11 @@ make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
 {
   CpuTotals prev_cpu{};
   bool have_prev_cpu = reader(prev_cpu);
-  return [reader = std::move(reader), prev_cpu,
+
+  return [reader_fn = std::move(reader), prev_cpu,
           have_prev_cpu]() mutable -> std::optional<double> {
     CpuTotals cur_cpu{};
-    if (!reader(cur_cpu)) {
+    if (!reader_fn(cur_cpu)) {
       return std::nullopt;
     }
     std::optional<double> usage{};
@@ -337,7 +338,7 @@ MetricsRegistry::initialize(
   try {
     if (!exposer_handle) {
       auto exposer = std::make_unique<prometheus::Exposer>(
-          "0.0.0.0:" + std::to_string(port));
+          std::format("0.0.0.0:{}", port));
       exposer_handle =
           std::make_unique<PrometheusExposerHandle>(std::move(exposer));
     }

@@ -1,4 +1,4 @@
-# Usage Guide
+<!--# Usage Guide
 
 This document explains how to run the StarPU Inference Server after
 building it.
@@ -64,4 +64,4 @@ before the program exits.
 - Verbose logging: controlled by `verbosity` or `--verbose`.
 
 Use the metrics endpoint to integrate with monitoring dashboards such as
-Prometheus + Grafana.
+Prometheus + Grafana.-->
