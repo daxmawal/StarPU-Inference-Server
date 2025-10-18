@@ -501,13 +501,11 @@ InferenceServiceImpl::CallbackHandle::Invoke(Status status)
 
 void
 InferenceServiceImpl::handle_async_infer_completion(
-    const ModelInferRequest* request, ModelInferResponse* reply,
-    const std::shared_ptr<CallbackHandle>& callback_handle,
-    const std::shared_ptr<MetricsRegistry>& metrics,
-    std::chrono::high_resolution_clock::time_point recv_tp, int64_t recv_ms,
-    const Status& job_status, const std::vector<torch::Tensor>& outs,
-    LatencyBreakdown breakdown, detail::TimingInfo timing_info)
+    const AsyncInferCompletionContext& context, const Status& job_status,
+    const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
+    detail::TimingInfo timing_info)
 {
+  const auto& callback_handle = context.callback_handle;
   if (!callback_handle->TryAcquire()) {
     return;
   }
@@ -520,14 +518,14 @@ InferenceServiceImpl::handle_async_infer_completion(
   const auto zero_tp = std::chrono::high_resolution_clock::time_point{};
   if (timing_info.enqueued_time > zero_tp) {
     const auto preprocess_duration = std::chrono::duration<double, std::milli>(
-        timing_info.enqueued_time - recv_tp);
+        timing_info.enqueued_time - context.recv_tp);
     breakdown.preprocess_ms = std::max(0.0, preprocess_duration.count());
   } else {
     breakdown.preprocess_ms = 0.0;
   }
 
-  Status populate_status =
-      populate_response(request, reply, outs, recv_ms, breakdown);
+  Status populate_status = populate_response(
+      context.request, context.reply, outs, context.recv_ms, breakdown);
   if (!populate_status.ok()) {
     callback_handle->Invoke(populate_status);
     return;
@@ -537,7 +535,7 @@ InferenceServiceImpl::handle_async_infer_completion(
   const int64_t send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                               send_tp.time_since_epoch())
                               .count();
-  reply->set_server_send_ms(send_ms);
+  context.reply->set_server_send_ms(send_ms);
 
   if (timing_info.callback_end_time > zero_tp) {
     const auto postprocess_duration = std::chrono::duration<double, std::milli>(
@@ -548,17 +546,18 @@ InferenceServiceImpl::handle_async_infer_completion(
   }
 
   breakdown.overall_ms = std::max(
-      0.0,
-      std::chrono::duration<double, std::milli>(send_tp - recv_tp).count());
+      0.0, std::chrono::duration<double, std::milli>(send_tp - context.recv_tp)
+               .count());
 
-  reply->set_server_preprocess_ms(breakdown.preprocess_ms);
-  reply->set_server_postprocess_ms(breakdown.postprocess_ms);
-  reply->set_server_overall_ms(breakdown.overall_ms);
+  context.reply->set_server_preprocess_ms(breakdown.preprocess_ms);
+  context.reply->set_server_postprocess_ms(breakdown.postprocess_ms);
+  context.reply->set_server_overall_ms(breakdown.overall_ms);
 
-  if (metrics && metrics->inference_latency != nullptr) {
+  if (context.metrics && context.metrics->inference_latency != nullptr) {
     const auto latency_ms =
-        std::chrono::duration<double, std::milli>(send_tp - recv_tp).count();
-    metrics->inference_latency->Observe(latency_ms);
+        std::chrono::duration<double, std::milli>(send_tp - context.recv_tp)
+            .count();
+    context.metrics->inference_latency->Observe(latency_ms);
   }
 
   callback_handle->Invoke(Status::OK);
@@ -597,7 +596,8 @@ InferenceServiceImpl::HandleModelInferAsync(
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
         handle_async_infer_completion(
-            request, reply, callback_handle, metrics, recv_tp, recv_ms,
+            AsyncInferCompletionContext{
+                request, reply, callback_handle, metrics, recv_tp, recv_ms},
             job_status, outs, breakdown, timing_info);
       },
       std::move(input_lifetimes), recv_tp);
