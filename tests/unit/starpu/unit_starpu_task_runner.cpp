@@ -1,6 +1,7 @@
 #include <chrono>
 
 #include "core/inference_task.hpp"
+#include "exceptions.hpp"
 #include "starpu_task_worker/task_runner_internal.hpp"
 #include "test_starpu_task_runner.hpp"
 #include "utils/perf_observer.hpp"
@@ -49,6 +50,16 @@ class StarPUTaskRunnerTestAdapter {
       -> std::vector<std::shared_ptr<InferenceJob>>
   {
     return runner->collect_batch(first_job);
+  }
+
+  static void set_submit_hook(std::function<void()> hook)
+  {
+    task_runner_internal::set_submit_inference_task_hook(std::move(hook));
+  }
+
+  static void reset_submit_hook()
+  {
+    task_runner_internal::reset_submit_inference_task_hook();
   }
 };
 }  // namespace starpu_server
@@ -804,6 +815,118 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchRespectsConfiguredMaximumBatchSize)
   EXPECT_EQ(collected[0], first);
   EXPECT_EQ(collected[1], second);
   EXPECT_EQ(queue_.size(), 1U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw starpu_server::InferenceEngineException("test inference failure");
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw std::runtime_error("runtime failure");
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw std::logic_error("logic failure");
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw std::bad_alloc();
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
 }
 
 TEST(

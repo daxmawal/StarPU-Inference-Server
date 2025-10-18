@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -46,5 +47,8 @@ auto resize_outputs_for_batch(
 
 void release_inputs_from_additional_jobs(
     std::vector<std::shared_ptr<InferenceJob>>& jobs);
+
+void set_submit_inference_task_hook(std::function<void()> hook);
+void reset_submit_inference_task_hook();
 
 }  // namespace starpu_server::task_runner_internal

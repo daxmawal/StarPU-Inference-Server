@@ -64,6 +64,31 @@ struct ExceptionLoggingMessages {
   std::string_view unknown_message;
 };
 
+namespace {
+std::function<void()> submit_inference_task_hook;
+}  // namespace
+
+void
+set_submit_inference_task_hook(std::function<void()> hook)
+{
+  submit_inference_task_hook = std::move(hook);
+}
+
+void
+reset_submit_inference_task_hook()
+{
+  submit_inference_task_hook = {};
+}
+
+static void
+invoke_submit_inference_task_hook()
+{
+  if (submit_inference_task_hook) {
+    auto hook = submit_inference_task_hook;
+    hook();
+  }
+}
+
 template <typename Callback>
 void
 run_with_logged_exceptions(
@@ -913,6 +938,8 @@ void
 StarPUTaskRunner::submit_inference_task(
     const std::shared_ptr<InferenceJob>& job)
 {
+  task_runner_internal::invoke_submit_inference_task_hook();
+
   auto label =
       std::format("submit job {}", task_runner_internal::job_identifier(*job));
   NvtxRange nvtx_job_scope(label);
