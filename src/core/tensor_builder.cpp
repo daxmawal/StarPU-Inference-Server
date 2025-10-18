@@ -21,7 +21,7 @@ namespace starpu_server {
 
 auto
 TensorBuilder::from_starpu_buffers(
-    const InferenceParams* params, std::span<void* const> buffers,
+    const InferenceParams* params, StarpuBufferSpan buffers,
     torch::Device device) -> std::vector<torch::Tensor>
 {
   if (params->num_inputs > params->limits.max_inputs ||
@@ -39,7 +39,7 @@ TensorBuilder::from_starpu_buffers(
   inputs.reserve(params->num_inputs);
 
   for (size_t idx = 0; idx < params->num_inputs; ++idx) {
-    auto* var_iface = static_cast<starpu_variable_interface*>(buffers[idx]);
+    auto* var_iface = buffers[idx];
     auto input_data = var_iface->ptr;
 
     const auto& dims = params->layout.dims.at(idx);
@@ -83,7 +83,7 @@ TensorBuilder::copy_output_to_buffer(
         "[ERROR] Output tensor must be contiguous");
   }
 
-  const auto bytes_required = static_cast<size_t>(output.nbytes());
+  const auto bytes_required = output.nbytes();
   if (buffer.size() != bytes_required) {
     throw InferenceExecutionException(
         "[ERROR] Output buffer size mismatch in bytes");

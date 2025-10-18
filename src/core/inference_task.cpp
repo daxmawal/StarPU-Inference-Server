@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdlib>
+#include <exception>
 #include <format>
 #include <limits>
 #include <memory>
@@ -24,30 +25,41 @@
 
 namespace starpu_server {
 namespace {
+
+struct ExceptionLoggingMessages {
+  std::string_view context_prefix;
+  std::string_view unknown_message;
+};
+
 template <typename Callback>
 void
 run_with_logged_exceptions(
-    Callback&& callback, std::string_view context,
-    std::string_view unknown_message)
+    Callback&& callback, ExceptionLoggingMessages messages = {})
 {
   try {
     std::forward<Callback>(callback)();
   }
   catch (const InferenceEngineException& e) {
-    log_error(std::string(context) + e.what());
-  }
-  catch (const std::runtime_error& e) {
-    log_error(std::string(context) + e.what());
-  }
-  catch (const std::logic_error& e) {
-    log_error(std::string(context) + e.what());
+    log_error(std::string(messages.context_prefix) + e.what());
   }
   catch (const std::bad_alloc& e) {
-    log_error(std::string(context) + e.what());
+    log_error(std::string(messages.context_prefix) + e.what());
   }
-  catch (
-      ...) {  // NOSONAR: required to log non-std exceptions thrown by callbacks
-    log_error(std::string(unknown_message));
+  catch (const std::runtime_error& e) {
+    log_error(std::string(messages.context_prefix) + e.what());
+  }
+  catch (const std::logic_error& e) {
+    log_error(std::string(messages.context_prefix) + e.what());
+  }
+  catch (const std::exception& e) {
+    log_error(std::string(messages.context_prefix) + e.what());
+  }
+  catch (...) {  // NOSONAR - required to surface non-std exceptions
+    if (!messages.unknown_message.empty()) {
+      log_error(std::string(messages.unknown_message));
+    } else {
+      log_error(std::string(messages.context_prefix) + "Unknown exception");
+    }
   }
 }
 }  // namespace
@@ -256,8 +268,7 @@ InferenceTask::fill_model_pointers(
     return;
   }
 
-  const auto max_device_id = *std::ranges::max_element(
-      opts_->devices.ids.begin(), opts_->devices.ids.end());
+  const auto max_device_id = *std::ranges::max_element(opts_->devices.ids);
   if (max_device_id < 0) {
     return;
   }
@@ -611,8 +622,9 @@ InferenceTask::finalize_inference_task(void* arg)
                 job_output_tensor.nbytes());
           }
         },
-        "Output copy from pool failed: ",
-        "Output copy from pool failed due to an unknown exception.");
+        ExceptionLoggingMessages{
+            "Output copy from pool failed: ",
+            "Output copy from pool failed due to an unknown exception."});
   }
 
   InferenceTask::release_output_data(ctx->outputs_handles);
@@ -623,8 +635,10 @@ InferenceTask::finalize_inference_task(void* arg)
   // Notify (release pooled slot etc.) before we clean up
   if (ctx->on_finished) {
     run_with_logged_exceptions(
-        [ctx]() { ctx->on_finished(); }, "Exception in on_finished: ",
-        "Unknown exception in on_finished callback");
+        [ctx]() { ctx->on_finished(); },
+        ExceptionLoggingMessages{
+            "Exception in on_finished: ",
+            "Unknown exception in on_finished callback"});
   }
 
   InferenceTask::finalize_context(ctx_sptr);
@@ -677,8 +691,9 @@ InferenceTask::record_and_run_completion_callback(
         [ctx, &callback, latency_ms]() {
           callback(ctx->job->get_output_tensors(), latency_ms);
         },
-        "Exception in completion callback: ",
-        "Unknown exception in completion callback");
+        ExceptionLoggingMessages{
+            "Exception in completion callback: ",
+            "Unknown exception in completion callback"});
   }
 }
 

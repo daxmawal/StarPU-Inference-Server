@@ -121,7 +121,7 @@ compute_model_message_bytes(
     throw InvalidDimensionException("max_batch_size must be > 0");
   }
   size_t per_sample_bytes = 0;
-  const auto compute_numel = [](const TensorConfig& t) -> size_t {
+  const auto compute_numel = [](const TensorConfig& t) {
     size_t numel = 1;
     for (int64_t d : t.dims) {
       if (d < 0) {
@@ -137,7 +137,7 @@ compute_model_message_bytes(
     return numel;
   };
 
-  const auto tensor_bytes = [&](const TensorConfig& t) -> size_t {
+  const auto tensor_bytes = [&](const TensorConfig& t) {
     const size_t numel = compute_numel(t);
     size_t type_size = 0;
     try {

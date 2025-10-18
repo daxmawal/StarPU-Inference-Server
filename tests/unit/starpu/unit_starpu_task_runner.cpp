@@ -1,4 +1,8 @@
+#include <chrono>
+
 #include "core/inference_task.hpp"
+#include "exceptions.hpp"
+#include "starpu_task_worker/task_runner_internal.hpp"
 #include "test_starpu_task_runner.hpp"
 #include "utils/perf_observer.hpp"
 
@@ -16,6 +20,46 @@ class StarPUTaskRunnerTestAdapter {
     pools.output_pool = output_pool;
     pools.output_slot = output_slot;
     StarPUTaskRunner::handle_submission_failure(pools, ctx, submit_code);
+  }
+
+  static void propagate_completion_to_sub_jobs(
+      const std::shared_ptr<InferenceJob>& aggregated_job,
+      const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms)
+  {
+    StarPUTaskRunner::propagate_completion_to_sub_jobs(
+        aggregated_job, aggregated_outputs, latency_ms);
+  }
+
+  static auto maybe_build_batched_job(
+      StarPUTaskRunner* runner,
+      std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::shared_ptr<InferenceJob>
+  {
+    return runner->maybe_build_batched_job(jobs);
+  }
+
+  static auto can_merge_jobs(
+      const std::shared_ptr<InferenceJob>& lhs,
+      const std::shared_ptr<InferenceJob>& rhs) -> bool
+  {
+    return StarPUTaskRunner::can_merge_jobs(lhs, rhs);
+  }
+
+  static auto collect_batch(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& first_job)
+      -> std::vector<std::shared_ptr<InferenceJob>>
+  {
+    return runner->collect_batch(first_job);
+  }
+
+  static void set_submit_hook(std::function<void()> hook)
+  {
+    task_runner_internal::set_submit_inference_task_hook(std::move(hook));
+  }
+
+  static void reset_submit_hook()
+  {
+    task_runner_internal::reset_submit_inference_task_hook();
   }
 };
 }  // namespace starpu_server
@@ -135,7 +179,8 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   time.callback_start_time = base + std::chrono::milliseconds(kCallbackStartMs);
   time.callback_end_time = base + std::chrono::milliseconds(kCallbackEndMs);
   constexpr int kLogJobId = 42;
-  constexpr double kTotalLatencyMs = 150.0;
+  constexpr auto kTotalLatencyMs =
+      starpu_server::StarPUTaskRunner::DurationMs{150.0};
   std::string output = starpu_server::capture_stdout(
       [&] { runner_->log_job_timings(kLogJobId, kTotalLatencyMs, time); });
   EXPECT_NE(output.find("Queue = 10.000 ms"), std::string::npos);
@@ -275,4 +320,657 @@ TEST_F(
   ASSERT_TRUE(reacquired_output.has_value());
   EXPECT_EQ(*reacquired_output, output_slot);
   output_pool.release(*reacquired_output);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    MaybeBuildBatchedJobAggregatesInputsAndPropagatesCallbacks)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  const auto base = internal::Clock::now();
+
+  auto make_input = [](float a, float b) {
+    return torch::tensor({{a, b}}, torch::TensorOptions().dtype(torch::kFloat));
+  };
+
+  auto job0_input = make_input(1.0F, 2.0F);
+  auto job1_input = make_input(3.0F, 4.0F);
+  auto job2_input = make_input(5.0F, 6.0F);
+
+  auto job0 = make_job(0, {job0_input});
+  auto job1 = make_job(1, {job1_input});
+  auto job2 = make_job(2, {job2_input});
+
+  job0->set_input_types({at::kFloat});
+  job1->set_input_types({at::kFloat});
+  job2->set_input_types({at::kFloat});
+
+  job0->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+  job1->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+  job2->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  job0->set_start_time(base + std::chrono::milliseconds(6));
+  job1->set_start_time(base + std::chrono::milliseconds(3));
+  job2->set_start_time(base + std::chrono::milliseconds(4));
+
+  job0->timing_info().enqueued_time = base + std::chrono::milliseconds(6);
+  job1->timing_info().enqueued_time = base + std::chrono::milliseconds(2);
+  job2->timing_info().enqueued_time = base + std::chrono::milliseconds(4);
+
+  job0->timing_info().batch_collect_start_time =
+      base + std::chrono::milliseconds(7);
+  job1->timing_info().batch_collect_start_time =
+      base + std::chrono::milliseconds(2);
+  job2->timing_info().batch_collect_start_time =
+      base + std::chrono::milliseconds(1);
+  job0->timing_info().dequeued_time = base + std::chrono::milliseconds(5);
+
+  bool master_called = false;
+  double master_latency = 0.0;
+  std::vector<torch::Tensor> master_outputs;
+  job0->set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        master_called = true;
+        master_latency = latency_ms;
+        master_outputs = outputs;
+      });
+
+  bool job1_called = false;
+  double job1_latency = 0.0;
+  std::vector<torch::Tensor> job1_outputs;
+  job1->set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        job1_called = true;
+        job1_latency = latency_ms;
+        job1_outputs = outputs;
+      });
+
+  bool job2_called = false;
+  double job2_latency = 0.0;
+  std::vector<torch::Tensor> job2_outputs;
+  job2->set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        job2_called = true;
+        job2_latency = latency_ms;
+        job2_outputs = outputs;
+      });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{
+      job0, job1, job2};
+
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+
+  ASSERT_EQ(master, job0);
+  EXPECT_EQ(master->logical_job_count(), 3);
+  const auto& aggregated_sub_jobs = master->aggregated_sub_jobs();
+  ASSERT_EQ(aggregated_sub_jobs.size(), 3U);
+
+  ASSERT_EQ(master->get_input_tensors().size(), 1U);
+  auto expected_inputs =
+      torch::cat({job0_input, job1_input, job2_input}, /*dim=*/0);
+  EXPECT_TRUE(torch::equal(master->get_input_tensors()[0], expected_inputs));
+
+  ASSERT_EQ(master->get_output_tensors().size(), 1U);
+  EXPECT_EQ(master->get_output_tensors()[0].sizes()[0], 3);
+  EXPECT_EQ(master->get_output_tensors()[0].sizes()[1], 2);
+
+  EXPECT_EQ(master->get_start_time(), job1->get_start_time());
+  EXPECT_EQ(
+      master->timing_info().enqueued_time, job1->timing_info().enqueued_time);
+  EXPECT_EQ(
+      master->timing_info().batch_collect_start_time,
+      job2->timing_info().batch_collect_start_time);
+
+  EXPECT_TRUE(job1->get_input_tensors().empty());
+  EXPECT_TRUE(job2->get_input_tensors().empty());
+
+  master->get_device_id() = 11;
+  master->get_worker_id() = 13;
+  master->get_executed_on() = starpu_server::DeviceType::CUDA;
+  master->set_submission_id(99);
+  master->timing_info().submission_id = 99;
+
+  const auto aggregated_primary = torch::tensor(
+      {{11.0F, 12.0F}, {21.0F, 22.0F}, {31.0F, 32.0F}},
+      torch::TensorOptions().dtype(torch::kFloat));
+  const auto aggregated_aux = torch::tensor(
+      {{1.0F}, {2.0F}, {3.0F}}, torch::TensorOptions().dtype(torch::kFloat));
+  const double latency_ms = 9.5;
+
+  master->get_on_complete()({aggregated_primary, aggregated_aux}, latency_ms);
+
+  EXPECT_TRUE(master_called);
+  EXPECT_TRUE(job1_called);
+  EXPECT_TRUE(job2_called);
+  EXPECT_EQ(master_latency, latency_ms);
+  EXPECT_EQ(job1_latency, latency_ms);
+  EXPECT_EQ(job2_latency, latency_ms);
+
+  ASSERT_EQ(master_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      master_outputs[0], aggregated_primary.narrow(/*dim=*/0, /*start=*/0, 1)));
+  EXPECT_TRUE(torch::equal(
+      master_outputs[1], aggregated_aux.narrow(/*dim=*/0, /*start=*/0, 1)));
+
+  ASSERT_EQ(job1_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      job1_outputs[0], aggregated_primary.narrow(/*dim=*/0, /*start=*/1, 1)));
+  EXPECT_TRUE(torch::equal(
+      job1_outputs[1], aggregated_aux.narrow(/*dim=*/0, /*start=*/1, 1)));
+
+  ASSERT_EQ(job2_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      job2_outputs[0], aggregated_primary.narrow(/*dim=*/0, /*start=*/2, 1)));
+  EXPECT_TRUE(torch::equal(
+      job2_outputs[1], aggregated_aux.narrow(/*dim=*/0, /*start=*/2, 1)));
+
+  EXPECT_EQ(job1->timing_info().submission_id, master->submission_id());
+  EXPECT_EQ(job2->timing_info().submission_id, master->submission_id());
+  EXPECT_EQ(job1->get_device_id(), master->get_device_id());
+  EXPECT_EQ(job2->get_device_id(), master->get_device_id());
+  EXPECT_EQ(job1->get_worker_id(), master->get_worker_id());
+  EXPECT_EQ(job2->get_worker_id(), master->get_worker_id());
+  EXPECT_EQ(job1->get_executed_on(), master->get_executed_on());
+  EXPECT_EQ(job2->get_executed_on(), master->get_executed_on());
+  EXPECT_EQ(
+      job1->timing_info().enqueued_time, master->timing_info().enqueued_time);
+  EXPECT_EQ(
+      job2->timing_info().batch_collect_start_time,
+      master->timing_info().batch_collect_start_time);
+}
+
+TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionToSubJobsDistributesSlicesAndMetadata)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto job_one = std::make_shared<starpu_server::InferenceJob>();
+  auto job_two = std::make_shared<starpu_server::InferenceJob>();
+
+  aggregated->set_submission_id(77);
+  aggregated->timing_info().submission_id = 77;
+  aggregated->get_device_id() = 5;
+  aggregated->get_worker_id() = 7;
+  aggregated->get_executed_on() = starpu_server::DeviceType::CUDA;
+
+  const auto base = internal::Clock::now();
+  aggregated->set_start_time(base + std::chrono::milliseconds(10));
+  aggregated->timing_info().enqueued_time = base + std::chrono::milliseconds(2);
+  aggregated->timing_info().batch_collect_start_time =
+      base + std::chrono::milliseconds(3);
+
+  bool job_one_called = false;
+  double job_one_latency = 0.0;
+  std::vector<torch::Tensor> job_one_outputs;
+  job_one->set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        job_one_called = true;
+        job_one_latency = latency_ms;
+        job_one_outputs = outputs;
+      });
+
+  bool job_two_called = false;
+  double job_two_latency = 0.0;
+  std::vector<torch::Tensor> job_two_outputs;
+  job_two->set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        job_two_called = true;
+        job_two_latency = latency_ms;
+        job_two_outputs = outputs;
+      });
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.emplace_back(job_one, job_one->get_on_complete(), 1);
+  sub_jobs.emplace_back(job_two, job_two->get_on_complete(), 2);
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto primary = torch::tensor(
+      {{1.0F, 2.0F}, {3.0F, 4.0F}, {5.0F, 6.0F}},
+      torch::TensorOptions().dtype(torch::kFloat));
+  const auto secondary = torch::tensor(
+      {{10.0F}, {20.0F}, {30.0F}}, torch::TensorOptions().dtype(torch::kFloat));
+  const double latency_ms = 12.5;
+
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, {primary, secondary}, latency_ms);
+
+  EXPECT_TRUE(job_one_called);
+  EXPECT_TRUE(job_two_called);
+  EXPECT_EQ(job_one_latency, latency_ms);
+  EXPECT_EQ(job_two_latency, latency_ms);
+
+  ASSERT_EQ(job_one_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      job_one_outputs[0], primary.narrow(/*dim=*/0, /*start=*/0, 1)));
+  EXPECT_TRUE(torch::equal(
+      job_one_outputs[1], secondary.narrow(/*dim=*/0, /*start=*/0, 1)));
+
+  ASSERT_EQ(job_two_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      job_two_outputs[0], primary.narrow(/*dim=*/0, /*start=*/1, 2)));
+  EXPECT_TRUE(torch::equal(
+      job_two_outputs[1], secondary.narrow(/*dim=*/0, /*start=*/1, 2)));
+
+  EXPECT_EQ(job_one->timing_info().submission_id, aggregated->submission_id());
+  EXPECT_EQ(job_two->timing_info().submission_id, aggregated->submission_id());
+  EXPECT_EQ(job_one->get_device_id(), aggregated->get_device_id());
+  EXPECT_EQ(job_two->get_device_id(), aggregated->get_device_id());
+  EXPECT_EQ(job_one->get_worker_id(), aggregated->get_worker_id());
+  EXPECT_EQ(job_two->get_worker_id(), aggregated->get_worker_id());
+  EXPECT_EQ(job_one->get_executed_on(), aggregated->get_executed_on());
+  EXPECT_EQ(job_two->get_executed_on(), aggregated->get_executed_on());
+  EXPECT_EQ(
+      job_one->timing_info().enqueued_time,
+      aggregated->timing_info().enqueued_time);
+  EXPECT_EQ(
+      job_two->timing_info().batch_collect_start_time,
+      aggregated->timing_info().batch_collect_start_time);
+}
+
+TEST(TaskRunnerInternal, SliceOutputsForSubJobReturnsDefaultLengthWhenEmpty)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  const auto result = internal::slice_outputs_for_sub_job(
+      {}, internal::SubJobSliceOptions{0, 3});
+
+  EXPECT_TRUE(result.outputs.empty());
+  EXPECT_EQ(result.processed_length, 3);
+}
+
+TEST(TaskRunnerInternal, SliceOutputsForSubJobExtractsContiguousRows)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto first = torch::arange(0, 12, torch::TensorOptions().dtype(torch::kInt64))
+                   .reshape({4, 3});
+  auto second =
+      torch::arange(100, 112, torch::TensorOptions().dtype(torch::kInt64))
+          .reshape({4, 3});
+  std::vector<torch::Tensor> aggregated{first, second};
+
+  const auto result = internal::slice_outputs_for_sub_job(
+      aggregated, internal::SubJobSliceOptions{1, 2});
+
+  ASSERT_EQ(result.outputs.size(), 2U);
+  EXPECT_EQ(result.processed_length, 2);
+  auto expected_first = first.narrow(0, 1, 2).contiguous();
+  auto expected_second = second.narrow(0, 1, 2).contiguous();
+  EXPECT_TRUE(torch::equal(result.outputs[0], expected_first));
+  EXPECT_TRUE(result.outputs[0].is_contiguous());
+  EXPECT_TRUE(torch::equal(result.outputs[1], expected_second));
+  EXPECT_TRUE(result.outputs[1].is_contiguous());
+}
+
+TEST(TaskRunnerInternal, AggregateBatchMetadataCollectsEarliestTimings)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto job_one = std::make_shared<starpu_server::InferenceJob>();
+  auto job_two = std::make_shared<starpu_server::InferenceJob>();
+
+  job_one->set_input_tensors({torch::ones({2, 1})});
+  job_two->set_input_tensors({torch::ones({3, 1})});
+  job_one->set_logical_job_count(2);
+  job_two->set_logical_job_count(0);
+
+  bool first_called = false;
+  bool second_called = false;
+  job_one->set_on_complete(
+      [&first_called](const std::vector<torch::Tensor>&, double) {
+        first_called = true;
+      });
+  job_two->set_on_complete(
+      [&second_called](const std::vector<torch::Tensor>&, double) {
+        second_called = true;
+      });
+
+  const auto base = internal::Clock::now();
+  job_one->set_start_time(base + std::chrono::milliseconds(5));
+  job_two->set_start_time(base + std::chrono::milliseconds(3));
+  job_one->timing_info().enqueued_time = base + std::chrono::milliseconds(6);
+  job_two->timing_info().enqueued_time = base + std::chrono::milliseconds(4);
+  job_one->timing_info().batch_collect_start_time =
+      base + std::chrono::milliseconds(7);
+  job_two->timing_info().batch_collect_start_time =
+      base + std::chrono::milliseconds(2);
+
+  const auto info = internal::aggregate_batch_metadata({job_one, job_two});
+
+  EXPECT_EQ(info.total_samples, 5);
+  EXPECT_EQ(info.logical_jobs, 3);
+  EXPECT_EQ(info.sub_jobs.size(), 2U);
+  EXPECT_EQ(info.sub_jobs[0].batch_size, 2);
+  EXPECT_EQ(info.sub_jobs[1].batch_size, 3);
+  EXPECT_EQ(info.earliest_start, job_two->get_start_time());
+  EXPECT_EQ(info.earliest_enqueued, job_two->timing_info().enqueued_time);
+  EXPECT_EQ(
+      info.earliest_batch_collect_start,
+      job_two->timing_info().batch_collect_start_time);
+
+  auto locked_one = info.sub_jobs[0].job.lock();
+  auto locked_two = info.sub_jobs[1].job.lock();
+  ASSERT_TRUE(locked_one);
+  ASSERT_TRUE(locked_two);
+  EXPECT_EQ(locked_one, job_one);
+  EXPECT_EQ(locked_two, job_two);
+
+  ASSERT_TRUE(info.sub_jobs[0].callback);
+  ASSERT_TRUE(info.sub_jobs[1].callback);
+  info.sub_jobs[0].callback({}, 0.0);
+  info.sub_jobs[1].callback({}, 0.0);
+  EXPECT_TRUE(first_called);
+  EXPECT_TRUE(second_called);
+}
+
+TEST(TaskRunnerInternal, ResizeOutputsForBatchRespectsPrototypeLayout)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  torch::Tensor defined =
+      torch::ones({2, 4}, torch::TensorOptions().dtype(torch::kFloat));
+  torch::Tensor scalar = torch::tensor(42.0);
+  torch::Tensor undefined;
+
+  const auto resized =
+      internal::resize_outputs_for_batch({defined, scalar, undefined}, 5);
+
+  ASSERT_EQ(resized.size(), 3U);
+  EXPECT_TRUE(resized[0].is_contiguous());
+  EXPECT_EQ(resized[0].sizes()[0], 5);
+  EXPECT_EQ(resized[0].sizes()[1], 4);
+  EXPECT_EQ(resized[0].dtype(), defined.dtype());
+  EXPECT_EQ(resized[1].dim(), 0);
+  EXPECT_FALSE(resized[2].defined());
+}
+
+TEST(TaskRunnerInternal, ReleaseInputsFromAdditionalJobsClearsExtraEntries)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto make_job = [](int id, int value) {
+    auto job = std::make_shared<starpu_server::InferenceJob>();
+    job->set_request_id(id);
+    job->set_input_tensors(
+        {torch::full({1}, value, torch::TensorOptions().dtype(torch::kInt32))});
+    job->set_input_memory_holders(
+        {std::shared_ptr<const void>{nullptr, [](const void*) {}}});
+    return job;
+  };
+
+  auto job_zero = make_job(0, 1);
+  auto job_one = make_job(1, 2);
+  auto job_two = make_job(2, 3);
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs = {
+      job_zero, job_one, job_two};
+
+  internal::release_inputs_from_additional_jobs(jobs);
+
+  EXPECT_FALSE(job_zero->get_input_tensors().empty());
+  EXPECT_EQ(job_one->get_input_tensors().size(), 0U);
+  EXPECT_EQ(job_two->get_input_tensors().size(), 0U);
+  EXPECT_TRUE(job_one->get_input_memory_holders().empty());
+  EXPECT_TRUE(job_two->get_input_memory_holders().empty());
+  EXPECT_FALSE(job_zero->get_input_memory_holders().empty());
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    CollectBatchReturnsOnlyFirstWhenDynamicBatchingDisabled)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto first = make_job(
+      0, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected.front(), first);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, CollectBatchAggregatesCompatibleQueuedJobs)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(
+      0, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto second = make_job(
+      1, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  ASSERT_TRUE(queue_.push(second));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 2U);
+  EXPECT_EQ(collected[0], first);
+  EXPECT_EQ(collected[1], second);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, CollectBatchStoresNonMergeableJobAsPending)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(
+      0, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto incompatible = make_job(
+      1, {torch::ones({1, 3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  ASSERT_TRUE(queue_.push(incompatible));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected.front(), first);
+  EXPECT_EQ(queue_.size(), 0U);
+
+  auto pending = runner_->wait_for_next_job();
+  ASSERT_EQ(pending, incompatible);
+}
+
+TEST_F(StarPUTaskRunnerFixture, CollectBatchRespectsConfiguredMaximumBatchSize)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 2;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(
+      0, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto second = make_job(
+      1, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto third = make_job(
+      2, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  ASSERT_TRUE(queue_.push(second));
+  ASSERT_TRUE(queue_.push(third));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 2U);
+  EXPECT_EQ(collected[0], first);
+  EXPECT_EQ(collected[1], second);
+  EXPECT_EQ(queue_.size(), 1U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw starpu_server::InferenceEngineException("test inference failure");
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw std::runtime_error("runtime failure");
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw std::logic_error("logic failure");
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw std::bad_alloc();
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  ASSERT_EQ(results_.size(), 1U);
+  EXPECT_EQ(results_[0].latency_ms, -1);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST(
+    StarPUTaskRunnerTestAdapter,
+    CanMergeJobsReturnsTrueForCompatibleInputsAndTypes)
+{
+  auto make_job = [] {
+    auto job = std::make_shared<starpu_server::InferenceJob>();
+    job->set_input_tensors(
+        {torch::ones({2, 3}, torch::TensorOptions().dtype(torch::kFloat)),
+         torch::ones({2}, torch::TensorOptions().dtype(torch::kFloat))});
+    job->set_input_types({at::kFloat, at::kFloat});
+    return job;
+  };
+
+  auto lhs = make_job();
+  auto rhs = make_job();
+
+  EXPECT_TRUE(
+      starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsMismatchedShapesOrTypes)
+{
+  auto base_job = std::make_shared<starpu_server::InferenceJob>();
+  base_job->set_input_tensors(
+      {torch::ones({2, 3}, torch::TensorOptions().dtype(torch::kFloat)),
+       torch::ones({2}, torch::TensorOptions().dtype(torch::kFloat))});
+  base_job->set_input_types({at::kFloat, at::kFloat});
+
+  auto shape_mismatch = std::make_shared<starpu_server::InferenceJob>();
+  shape_mismatch->set_input_tensors(
+      {torch::ones({2, 4}, torch::TensorOptions().dtype(torch::kFloat)),
+       torch::ones({2}, torch::TensorOptions().dtype(torch::kFloat))});
+  shape_mismatch->set_input_types({at::kFloat, at::kFloat});
+
+  auto type_mismatch = std::make_shared<starpu_server::InferenceJob>();
+  type_mismatch->set_input_tensors(
+      {torch::ones({2, 3}, torch::TensorOptions().dtype(torch::kFloat)),
+       torch::ones({2}, torch::TensorOptions().dtype(torch::kFloat))});
+  type_mismatch->set_input_types({at::kFloat, at::kHalf});
+
+  EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(
+      base_job, shape_mismatch));
+  EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(
+      base_job, type_mismatch));
 }

@@ -440,7 +440,7 @@ InferenceServiceImpl::submit_job_and_wait(
               LatencyBreakdown cb_breakdown,
               const detail::TimingInfo& cb_timing_info) {
             result_promise->set_value(JobResult{
-                std::move(status), std::move(outs), std::move(cb_breakdown),
+                std::move(status), std::move(outs), cb_breakdown,
                 cb_timing_info});
           },
           std::move(input_lifetimes), receive_time);
@@ -456,7 +456,7 @@ InferenceServiceImpl::submit_job_and_wait(
   }
 
   outputs = std::move(result.outputs);
-  breakdown = std::move(result.breakdown);
+  breakdown = result.breakdown;
   timing_info = result.timing_info;
   return Status::OK;
 }
@@ -498,7 +498,7 @@ void
 InferenceServiceImpl::handle_async_infer_completion(
     const ModelInferRequest* request, ModelInferResponse* reply,
     const std::shared_ptr<CallbackHandle>& callback_handle,
-    std::shared_ptr<MetricsRegistry> metrics,
+    const std::shared_ptr<MetricsRegistry>& metrics,
     std::chrono::high_resolution_clock::time_point recv_tp, int64_t recv_ms,
     const Status& job_status, const std::vector<torch::Tensor>& outs,
     LatencyBreakdown breakdown, detail::TimingInfo timing_info)
@@ -588,12 +588,12 @@ InferenceServiceImpl::HandleModelInferAsync(
 
   status = submit_job_async(
       inputs,
-      [this, request, reply, recv_tp, recv_ms, metrics, callback_handle](
+      [request, reply, recv_tp, recv_ms, metrics, callback_handle](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
         handle_async_infer_completion(
             request, reply, callback_handle, metrics, recv_tp, recv_ms,
-            job_status, outs, std::move(breakdown), timing_info);
+            job_status, outs, breakdown, timing_info);
       },
       std::move(input_lifetimes), recv_tp);
 

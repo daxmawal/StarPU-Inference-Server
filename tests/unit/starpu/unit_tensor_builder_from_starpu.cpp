@@ -11,6 +11,8 @@
 #include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 
+using starpu_server::StarpuBufferPtr;
+
 TEST(TensorBuilderFromStarPU, BuildsTensors)
 {
   std::array<float, 3> input0{
@@ -24,7 +26,8 @@ TEST(TensorBuilderFromStarPU, BuildsTensors)
   auto params = starpu_server::make_params_for_inputs(
       {{3}, {2, 2}}, {at::kFloat, at::kInt});
 
-  std::array<void*, 2> buffers{buffers_raw.data(), buffers_raw.data() + 1};
+  std::array<StarpuBufferPtr, 2> buffers{
+      buffers_raw.data(), buffers_raw.data() + 1};
   auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
       &params, buffers, torch::Device(torch::kCPU));
 

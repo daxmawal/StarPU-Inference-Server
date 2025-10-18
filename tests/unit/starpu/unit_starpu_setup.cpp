@@ -4,6 +4,8 @@
 
 #include "test_starpu_setup.hpp"
 
+using starpu_server::StarpuBufferPtr;
+
 TEST_P(StarPUSetupExtractTensorsTest, Extract)
 {
   const auto& param = GetParam();
@@ -114,14 +116,14 @@ TEST(InferenceCodelet, RunInferenceExceptionsAreWrapped)
   std::array<starpu_variable_interface, 2> raw_buffers{};
   raw_buffers[0] = starpu_server::make_variable_interface(&dummy_input);
   raw_buffers[1] = starpu_server::make_variable_interface(&dummy_output);
-  std::array<void*, 2> buffers{&raw_buffers[0], &raw_buffers[1]};
+  std::array<StarpuBufferPtr, 2> buffers{&raw_buffers[0], &raw_buffers[1]};
 
   starpu_server::InferenceCodelet inf_cl;
   auto* cpu_func = inf_cl.get_codelet()->cpu_funcs[0];
   ASSERT_NE(cpu_func, nullptr);
 
   try {
-    cpu_func(buffers.data(), &params);
+    cpu_func(reinterpret_cast<void**>(buffers.data()), &params);
     FAIL() << "Expected cpu_func to throw";
   }
   catch (const starpu_server::StarPUCodeletException& ex) {

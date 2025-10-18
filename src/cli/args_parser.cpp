@@ -43,11 +43,11 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
     }
     catch (const std::invalid_argument& e) {
       throw std::invalid_argument(
-          "Shape contains non-integer: " + std::string(e.what()));
+          std::format("Shape contains non-integer: {}", e.what()));
     }
     catch (const std::out_of_range& e) {
       throw std::out_of_range(
-          "Shape value out of range: " + std::string(e.what()));
+          std::format("Shape value out of range: {}", e.what()));
     }
 
     if (dim <= 0) {
@@ -180,7 +180,11 @@ parse_input_combined(RuntimeConfig& opts, size_t& idx, std::span<char*> args)
     dims = parse_shape_string(dims_str);
     dtype = string_to_scalar_type(type_str);
   }
-  catch (const std::exception& e) {
+  catch (const std::invalid_argument& e) {
+    log_error(std::format("Invalid --input '{}': {}", spec, e.what()));
+    return false;
+  }
+  catch (const std::out_of_range& e) {
     log_error(std::format("Invalid --input '{}': {}", spec, e.what()));
     return false;
   }
@@ -685,9 +689,9 @@ validate_config(RuntimeConfig& opts) -> void
       !opts.models.empty() && !opts.models[0].path.empty(), "--model", missing);
   const bool have_shapes =
       !opts.models.empty() &&
-      std::any_of(
+      std::ranges::any_of(
           opts.models[0].inputs.begin(), opts.models[0].inputs.end(),
-          [](const auto& tensor) { return !tensor.dims.empty(); });
+          [](const auto& tensor) noexcept { return !tensor.dims.empty(); });
   const bool have_types =
       !opts.models.empty() &&
       std::ranges::all_of(

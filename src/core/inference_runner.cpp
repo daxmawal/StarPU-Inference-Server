@@ -97,20 +97,24 @@ default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
 }
 
 namespace {
-inline WorkerThreadLauncher current_worker_thread_launcher =
-    default_worker_thread_launcher;
+inline auto
+current_worker_thread_launcher_storage() -> WorkerThreadLauncher&
+{
+  static WorkerThreadLauncher launcher = default_worker_thread_launcher;
+  return launcher;
+}
 }  // namespace
 
 auto
 get_worker_thread_launcher() -> WorkerThreadLauncher
 {
-  return current_worker_thread_launcher;
+  return current_worker_thread_launcher_storage();
 }
 
 void
 set_worker_thread_launcher(WorkerThreadLauncher launcher)
 {
-  current_worker_thread_launcher = std::move(launcher);
+  current_worker_thread_launcher_storage() = std::move(launcher);
 }
 
 // =============================================================================
@@ -193,7 +197,7 @@ load_model(const std::string& model_path) -> torch::jit::script::Module
     return model;
   }
   catch (const c10::Error& e) {
-    log_error("Failed to load model: " + std::string(e.what()));
+    log_error(std::format("Failed to load model: {}", e.what()));
     throw;
   }
 }
@@ -283,9 +287,8 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     return std::tuple{model_cpu, models_gpu, output_refs};
   }
   catch (const c10::Error& e) {
-    log_error(
-        "Failed to load model or run reference inference: " +
-        std::string(e.what()));
+    log_error(std::format(
+        "Failed to load model or run reference inference: {}", e.what()));
     return std::nullopt;
   }
 }
@@ -343,8 +346,7 @@ build_gpu_model_lookup(
     return lookup;
   }
 
-  const auto max_it =
-      std::ranges::max_element(device_ids.begin(), device_ids.end());
+  const auto max_it = std::ranges::max_element(device_ids);
   if (max_it == device_ids.end() || *max_it < 0) {
     return lookup;
   }

@@ -51,4 +51,5 @@ target_sources(
             utils/robustness/edgecases_inference_validator.cpp
             utils/robustness/edgecases_input_generator.cpp
             utils/robustness/edgecases_logger.cpp
-            utils/robustness/edgecases_transparent_hash.cpp)
+            utils/robustness/edgecases_transparent_hash.cpp
+            ../support/output_slot_pool_test_hooks.cpp)

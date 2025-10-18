@@ -6,6 +6,8 @@
 #include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 
+using starpu_server::StarpuBufferPtr;
+
 TEST(TensorBuilderFromStarPU_Integration, BuildsTensors)
 {
   constexpr float kV0 = 1.0F;
@@ -18,7 +20,8 @@ TEST(TensorBuilderFromStarPU_Integration, BuildsTensors)
   buffers_raw[1] = starpu_server::make_variable_interface(input1.data());
   auto params = starpu_server::make_params_for_inputs(
       {{3}, {2, 2}}, {at::kFloat, at::kInt});
-  std::array<void*, 2> buffers{buffers_raw.data(), buffers_raw.data() + 1};
+  std::array<StarpuBufferPtr, 2> buffers{
+      buffers_raw.data(), buffers_raw.data() + 1};
   auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
       &params, buffers, torch::Device(torch::kCPU));
   ASSERT_EQ(tensors.size(), 2U);

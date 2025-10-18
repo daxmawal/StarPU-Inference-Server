@@ -28,11 +28,11 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
     }
     catch (const std::invalid_argument& e) {
       throw std::invalid_argument(
-          "Shape contains non-integer: " + std::string(e.what()));
+          std::format("Shape contains non-integer: {}", e.what()));
     }
     catch (const std::out_of_range& e) {
       throw std::out_of_range(
-          "Shape value out of range: " + std::string(e.what()));
+          std::format("Shape value out of range: {}", e.what()));
     }
     if (dim <= 0) {
       throw std::invalid_argument(
@@ -145,7 +145,7 @@ parse_shape(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
   return expect_and_parse(idx, args, [&cfg](const char* val) {
     cfg.shape = parse_shape_string(val);
     if (cfg.inputs.empty()) {
-      cfg.inputs.emplace_back(InputConfig{"input", cfg.shape, cfg.type});
+      cfg.inputs.emplace_back("input", cfg.shape, cfg.type);
     } else {
       cfg.inputs[0].shape = cfg.shape;
     }
@@ -159,7 +159,7 @@ parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
   return expect_and_parse(idx, args, [&cfg](const char* val) {
     cfg.type = string_to_scalar_type(val);
     if (cfg.inputs.empty()) {
-      cfg.inputs.emplace_back(InputConfig{"input", cfg.shape, cfg.type});
+      cfg.inputs.emplace_back("input", cfg.shape, cfg.type);
     } else {
       cfg.inputs[0].type = cfg.type;
     }

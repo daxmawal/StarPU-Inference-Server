@@ -13,6 +13,8 @@
 #include "test_constants.hpp"
 #include "utils/exceptions.hpp"
 
+using starpu_server::StarpuBufferPtr;
+
 namespace {
 constexpr std::array<int64_t, 2> kShape2x2{{2, 2}};
 constexpr std::array<int64_t, 1> kShape1{{1}};
@@ -282,7 +284,7 @@ TEST(TensorBuilder_Unit, FromStarpuBuffersSuccess)
   std::array<float, 4> data{kF1, kF2, kF3, kF4};
   starpu_variable_interface var{};
   var.ptr = std::bit_cast<uintptr_t>(data.data());
-  std::vector<void*> buffers = {&var};
+  std::vector<StarpuBufferPtr> buffers = {&var};
 
   starpu_server::InferenceParams params;
   params.num_inputs = 1;

@@ -3,6 +3,7 @@
 #include <torch/script.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -46,6 +47,8 @@ class StarPUTaskRunner {
  public:
   explicit StarPUTaskRunner(const StarPUTaskRunnerConfig& config);
 
+  using DurationMs = std::chrono::duration<double, std::milli>;
+
   void run();
   auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
   [[nodiscard]] auto should_shutdown(
@@ -57,7 +60,7 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceJob>& job,
       const std::exception& exception);
   void log_job_timings(
-      int request_id, double latency_ms,
+      int request_id, DurationMs latency,
       const detail::TimingInfo& timing_info) const;
 
  private:
@@ -110,7 +113,7 @@ class StarPUTaskRunner {
       const std::vector<torch::Tensor>& results, double latency_ms) const;
   static void ensure_callback_timing(detail::TimingInfo& timing);
   void record_job_metrics(
-      const std::shared_ptr<InferenceJob>& job, double latency_ms,
+      const std::shared_ptr<InferenceJob>& job, DurationMs latency,
       std::size_t batch_size) const;
   void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
 

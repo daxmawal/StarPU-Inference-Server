@@ -8,6 +8,10 @@
 
 namespace starpu_server {
 
+using StarpuBufferInterface = starpu_variable_interface;
+using StarpuBufferPtr = StarpuBufferInterface*;
+using StarpuBufferSpan = std::span<StarpuBufferPtr const>;
+
 // =============================================================================
 // TensorBuilder: utility class for wrapping StarPU buffers as torch::Tensor
 // =============================================================================
@@ -16,7 +20,7 @@ class TensorBuilder {
   TensorBuilder() = delete;
 
   [[nodiscard]] static auto from_starpu_buffers(
-      const InferenceParams* params, std::span<void* const> buffers,
+      const InferenceParams* params, StarpuBufferSpan buffers,
       torch::Device device) -> std::vector<torch::Tensor>;
 
   static void copy_output_to_buffer(

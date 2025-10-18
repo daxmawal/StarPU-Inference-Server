@@ -847,9 +847,9 @@ using VerbosityCase =
 TEST_P(VerbosityCase, ParsesVerbosityStrings)
 {
   const auto& [value, expected] = GetParam();
-  const std::string yaml = std::string("verbosity: ") + value;
+  const std::string yaml = std::format("verbosity: {}", value);
   const auto tmp = std::filesystem::temp_directory_path() /
-                   (std::string("config_loader_verbosity_") + value + ".yaml");
+                   (std::format("config_loader_verbosity_{}.yaml", value));
   std::ofstream(tmp) << yaml;
 
   const RuntimeConfig cfg = load_config(tmp.string());

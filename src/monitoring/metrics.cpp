@@ -170,8 +170,7 @@ NvmlWrapper::NvmlWrapper()
 {
   const nvmlReturn_t status = nvmlInit();
   if (status != NVML_SUCCESS) {
-    log_warning(
-        std::string("Failed to initialize NVML: ") + error_string(status));
+    log_warning(std::format("Failed to initialize NVML: {}", status));
     return;
   }
   initialized_ = true;
@@ -194,7 +193,7 @@ NvmlWrapper::error_string(nvmlReturn_t status) -> const char*
 auto
 NvmlWrapper::query_stats() -> std::vector<GpuSample>
 {
-  std::lock_guard<std::mutex> guard(mutex_);
+  std::scoped_lock<std::mutex> guard(mutex_);
   if (!initialized_) {
     return {};
   }
@@ -215,8 +214,7 @@ NvmlWrapper::query_stats() -> std::vector<GpuSample>
     status = nvmlDeviceGetHandleByIndex(idx, &device);
     if (status != NVML_SUCCESS) {
       log_warning(
-          std::string("nvmlDeviceGetHandleByIndex failed for GPU ") +
-          std::to_string(idx) + ": " + error_string(status));
+          std::format("nvmlDeviceGetHandleByIndex failed for GPU {}: {}", idx, status);
       continue;
     }
 
@@ -224,17 +222,15 @@ NvmlWrapper::query_stats() -> std::vector<GpuSample>
     status = nvmlDeviceGetUtilizationRates(device, &utilization);
     if (status != NVML_SUCCESS) {
       log_warning(
-          std::string("nvmlDeviceGetUtilizationRates failed for GPU ") +
-          std::to_string(idx) + ": " + error_string(status));
+          std::format("nvmlDeviceGetUtilizationRates failed for GPU {}: {}", idx, status);
       continue;
     }
 
     nvmlMemory_t memory_info{};
     status = nvmlDeviceGetMemoryInfo(device, &memory_info);
     if (status != NVML_SUCCESS) {
-      log_warning(
-          std::string("nvmlDeviceGetMemoryInfo failed for GPU ") +
-          std::to_string(idx) + ": " + error_string(status));
+      log_warning(std::format(
+          "nvmlDeviceGetMemoryInfo failed for GPU {}: {}", idx, status));
       continue;
     }
 
@@ -512,7 +508,7 @@ MetricsRegistry::perform_sampling_request_nb()
       }
     }
     catch (const std::exception& e) {
-      log_error(std::string("CPU metrics sampling failed: ") + e.what());
+      log_error(std::format("CPU metrics sampling failed: {}", e.what()));
     }
     catch (...) {
       log_error("CPU metrics sampling failed due to an unknown error");
@@ -546,7 +542,7 @@ MetricsRegistry::perform_sampling_request_nb()
     }
   }
   catch (const std::exception& e) {
-    log_error(std::string("GPU metrics sampling failed: ") + e.what());
+    log_error(std::format("GPU metrics sampling failed: {}", e.what()));
   }
   catch (...) {
     log_error("GPU metrics sampling failed due to an unknown error");

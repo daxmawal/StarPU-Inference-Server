@@ -24,9 +24,9 @@ fi
 
 BUILD_DIR=${BUILD_DIR:-../build}
 
-if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
-  echo "Error: $BUILD_DIR/compile_commands.json not found."
-  echo "Did you run: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ?"
+if [[ ! -f "$BUILD_DIR/compile_commands.json" ]]; then
+  echo "Error: $BUILD_DIR/compile_commands.json not found." >&2
+  echo "Did you run: cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ?" >&2
   exit 1
 fi
 
@@ -54,16 +54,16 @@ while [[ $# -gt 0 ]]; do
 done
 set -- "${POSITIONAL[@]}"
 
-if [ -z "$LIBTORCH_DIR" ]; then
+if [[ -z "$LIBTORCH_DIR" ]]; then
   LIBTORCH_DIR="$1"
   shift
 fi
-if [ -z "$GRPC_DIR" ]; then
+if [[ -z "$GRPC_DIR" ]]; then
   GRPC_DIR="$1"
   shift
 fi
 
-if [ -z "$LIBTORCH_DIR" ] || [ -z "$GRPC_DIR" ]; then
+if [[ -z "$LIBTORCH_DIR" ]] || [[ -z "$GRPC_DIR" ]]; then
   echo "Usage: LIBTORCH_DIR=<path> GRPC_DIR=<path> $0 [--file <path/to/file.cpp>] [--dir <path>]"
   echo "   or: $0 <libtorch_dir> <grpc_dir> [--file <path/to/file.cpp>] [--dir <path>]"
   exit 1
@@ -91,10 +91,10 @@ CLANG_TIDY_ARGS=(
   -extra-arg=-I"$GRPC_DIR/include"
 )
 
-if [ -n "$TARGET_FILE" ]; then
+if [[ -n "$TARGET_FILE" ]]; then
   FILES="$TARGET_FILE"
 else
-  if [ -n "$TARGET_DIR" ]; then
+  if [[ -n "$TARGET_DIR" ]]; then
     FILTER_DIR=$(realpath "$TARGET_DIR")
     FILES=$(jq -r --arg dir "$FILTER_DIR" '.[] | .file | select(startswith($dir))' \
       "$BUILD_DIR/compile_commands.json" | sort -u | \

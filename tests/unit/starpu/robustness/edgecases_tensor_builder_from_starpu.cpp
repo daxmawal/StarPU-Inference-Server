@@ -8,13 +8,15 @@
 #include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 
+using starpu_server::StarpuBufferPtr;
+
 TEST(TensorBuilderFromStarPU, TooManyInputsThrows)
 {
   const size_t too_many = starpu_server::InferLimits::MaxInputs + 1;
   std::vector<std::vector<int64_t>> shapes(too_many, {1});
   std::vector<at::ScalarType> dtypes(too_many, at::kFloat);
   auto params = starpu_server::make_params_for_inputs(shapes, dtypes);
-  std::vector<void*> dummy(params.num_inputs, nullptr);
+  std::vector<StarpuBufferPtr> dummy(params.num_inputs, nullptr);
   EXPECT_THROW(
       [[maybe_unused]] auto _ =
           starpu_server::TensorBuilder::from_starpu_buffers(
@@ -29,7 +31,7 @@ TEST(TensorBuilderFromStarPU, NegativeNumDimsThrows)
   buf.ptr = std::bit_cast<uintptr_t>(input0.data());
   auto params = starpu_server::make_params_for_inputs({{1}}, {at::kFloat});
   params.layout.num_dims[0] = -1;
-  std::array<void*, 1> buffers{&buf};
+  std::array<StarpuBufferPtr, 1> buffers{&buf};
   EXPECT_THROW(
       [[maybe_unused]] auto _ =
           starpu_server::TensorBuilder::from_starpu_buffers(
@@ -46,7 +48,7 @@ TEST(TensorBuilderFromStarPU, FewerBuffersThanInputsThrows)
   std::array<starpu_variable_interface, 2> buffers_raw{
       starpu_server::make_variable_interface(input0.data()),
       starpu_server::make_variable_interface(input1.data())};
-  std::array<void*, 1> buffers{buffers_raw.data()};
+  std::array<StarpuBufferPtr, 1> buffers{buffers_raw.data()};
   EXPECT_THROW(
       [[maybe_unused]] auto _ =
           starpu_server::TensorBuilder::from_starpu_buffers(
@@ -61,7 +63,7 @@ TEST(TensorBuilderFromStarPU, DimsSizeMismatchThrows)
       starpu_server::make_variable_interface(input0.data());
   auto params = starpu_server::make_params_for_inputs({{2, 2}}, {at::kFloat});
   params.layout.dims[0].push_back(1);
-  std::array<void*, 1> buffers{&buf};
+  std::array<StarpuBufferPtr, 1> buffers{&buf};
   EXPECT_THROW(
       [[maybe_unused]] auto _ =
           starpu_server::TensorBuilder::from_starpu_buffers(

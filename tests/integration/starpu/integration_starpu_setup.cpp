@@ -41,7 +41,8 @@ TEST(InferenceCodelet_Integration, CpuInferenceFuncExecutesAndSetsMetadata)
   starpu_server::InferenceCodelet inf_cl;
   auto* codelet = inf_cl.get_codelet();
   auto before = std::chrono::high_resolution_clock::now();
-  codelet->cpu_funcs[0](buffers.buffers.data(), &timing.params);
+  codelet->cpu_funcs[0](
+      reinterpret_cast<void**>(buffers.buffers.data()), &timing.params);
   auto after = std::chrono::high_resolution_clock::now();
   EXPECT_FLOAT_EQ(buffers.output_data[0], 2.0F);
   EXPECT_FLOAT_EQ(buffers.output_data[1], 3.0F);
