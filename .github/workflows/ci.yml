@@ -103,6 +103,36 @@ jobs:
       - name: Run markdownlint
         run: markdownlint '**/*.md'
 
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            code:
+              - 'src/**'
+              - 'include/**'
+              - 'ops/**'
+              - 'tests/**'
+              - 'CMakeLists.txt'
+              - '**/*.cmake'
+              - '**/*.c'
+              - '**/*.cc'
+              - '**/*.cpp'
+              - '**/*.cxx'
+              - '**/*.h'
+              - '**/*.hh'
+              - '**/*.hpp'
+              - '**/*.hxx'
+
   build:
     needs: [clang-format, cmake-format, whitespace, markdownlint]
     runs-on: self-hosted
@@ -158,7 +188,8 @@ jobs:
           path: build-clang/
 
   clang-analyzer:
-    needs: build
+    needs: [build, changes]
+    if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: self-hosted
 
     steps:
@@ -176,7 +207,7 @@ jobs:
 
       - name: Run Clang Static Analyzer
         run: |
-          scan-build --status-bugs -o clang-analyzer cmake --build build
+          scan-build --status-bugs -o clang-analyzer cmake --build build -- -j"$(nproc)"
         shell: bash
 
       - name: Upload analyzer report
