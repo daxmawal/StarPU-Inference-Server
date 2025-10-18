@@ -1,9 +1,5 @@
 #include "output_slot_pool.hpp"
 
-#ifdef UNIT_TEST
-#include "../../tests/support/output_slot_pool_test_hooks.hpp"
-#endif
-
 #include <cuda_runtime_api.h>
 #include <starpu.h>
 
@@ -220,19 +216,30 @@ cleanup_slot_buffers_impl(
   }
 }
 
-#ifdef UNIT_TEST
-auto
-call_checked_total_numel(size_t per_sample_numel, size_t batch_size) -> size_t
-{
-  return checked_total_numel(per_sample_numel, batch_size);
-}
-#endif
 }  // namespace
 
-#ifdef UNIT_TEST
+namespace detail {
+void cleanup_slot_buffers_for_tests(
+    OutputSlotPool::SlotInfo& slot,
+    std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count);
+auto checked_total_numel_for_tests(size_t per_sample_numel, size_t batch_size)
+    -> size_t;
+void free_host_buffer_for_tests(
+    std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
+auto starpu_vector_register_hook_ref()
+    -> decltype(starpu_vector_register_hook());
+auto register_failure_observer_ref()
+    -> decltype(starpu_register_failure_observer());
+auto host_allocator_hook_ref() -> decltype(output_host_allocator_hook());
+auto cuda_pinned_override_hook_ref()
+    -> decltype(output_cuda_pinned_override_hook());
+auto starpu_memory_pin_hook_ref() -> decltype(starpu_memory_pin_hook());
+}  // namespace detail
+
+namespace detail {
 
 void
-OutputSlotPoolTestHook::cleanup_slot_buffers(
+cleanup_slot_buffers_for_tests(
     OutputSlotPool::SlotInfo& slot,
     std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
 {
@@ -240,87 +247,50 @@ OutputSlotPoolTestHook::cleanup_slot_buffers(
 }
 
 auto
-OutputSlotPoolTestHook::checked_total_numel(
-    size_t per_sample_numel, size_t batch_size) -> size_t
+checked_total_numel_for_tests(size_t per_sample_numel, size_t batch_size)
+    -> size_t
 {
-  return call_checked_total_numel(per_sample_numel, batch_size);
-}
-
-auto
-OutputSlotPoolTestHook::host_buffer_infos(
-    const OutputSlotPool& pool,
-    int slot_id) -> const std::vector<OutputSlotPool::HostBufferInfo>&
-{
-  return pool.host_buffer_infos_.at(static_cast<size_t>(slot_id));
+  return checked_total_numel(per_sample_numel, batch_size);
 }
 
 void
-OutputSlotPoolTestHook::free_host_buffer_for_tests(
-    HostBufferPtr ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
+free_host_buffer_for_tests(
+    std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
 {
   free_host_buffer(ptr, buffer_info);
 }
 
-namespace testing {
-
 auto
-set_output_starpu_vector_register_hook_for_tests(
-    OutputStarpuVectorRegisterFn vector_register_hook)
-    -> OutputStarpuVectorRegisterFn
+starpu_vector_register_hook_ref() -> decltype(starpu_vector_register_hook())
 {
-  auto& hook = starpu_vector_register_hook();
-  const auto previous = hook;
-  hook = vector_register_hook != nullptr ? vector_register_hook
-                                         : &starpu_vector_data_register;
-  return previous;
+  return starpu_vector_register_hook();
 }
 
 auto
-set_output_register_failure_observer_for_tests(
-    OutputRegisterFailureObserverFn observer) -> OutputRegisterFailureObserverFn
+register_failure_observer_ref() -> decltype(starpu_register_failure_observer())
 {
-  auto& observer_hook = starpu_register_failure_observer();
-  const auto previous = observer_hook;
-  observer_hook = observer;
-  return previous;
+  return starpu_register_failure_observer();
 }
 
 auto
-set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
-    -> OutputHostAllocatorFn
+host_allocator_hook_ref() -> decltype(output_host_allocator_hook())
 {
-  auto& allocator_hook = output_host_allocator_hook();
-  const auto previous = allocator_hook;
-  allocator_hook =
-      allocator ? std::move(allocator) : OutputHostAllocatorFn{&posix_memalign};
-  return previous;
+  return output_host_allocator_hook();
 }
 
 auto
-set_output_cuda_pinned_override_for_tests(
-    OutputCudaPinnedOverrideFn cuda_pinned_override_hook)
-    -> OutputCudaPinnedOverrideFn
+cuda_pinned_override_hook_ref() -> decltype(output_cuda_pinned_override_hook())
 {
-  auto& override_hook = output_cuda_pinned_override_hook();
-  const auto previous = override_hook;
-  override_hook = std::move(cuda_pinned_override_hook);
-  return previous;
+  return output_cuda_pinned_override_hook();
 }
 
 auto
-set_output_starpu_memory_pin_hook_for_tests(
-    OutputStarpuMemoryPinFn memory_pin_hook) -> OutputStarpuMemoryPinFn
+starpu_memory_pin_hook_ref() -> decltype(starpu_memory_pin_hook())
 {
-  auto& hook = starpu_memory_pin_hook();
-  const auto previous = hook;
-  hook = memory_pin_hook ? std::move(memory_pin_hook)
-                         : OutputStarpuMemoryPinFn{&starpu_memory_pin};
-  return previous;
+  return starpu_memory_pin_hook();
 }
 
-}  // namespace testing
-
-#endif  // UNIT_TEST
+}  // namespace detail
 
 OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
