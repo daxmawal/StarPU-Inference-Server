@@ -23,66 +23,11 @@ namespace starpu_server {
 
 namespace {
 constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
-
-using OutputStarpuVectorRegisterHook = decltype(&starpu_vector_data_register);
-using OutputRegisterFailureObserverHook = void (*)(
-    const OutputSlotPool::SlotInfo&,
-    const std::vector<OutputSlotPool::HostBufferInfo>&);
-using OutputHostAllocatorHook = std::function<int(void**, size_t, size_t)>;
-using OutputCudaPinnedOverrideHook = std::function<bool(size_t, bool, bool)>;
-using OutputStarpuMemoryPinHook = std::function<int(void*, size_t)>;
-
-using HostBufferPtr = std::byte*;
-struct HostBufferDeleter {
-  void operator()(HostBufferPtr ptr) const
-  {
-    std::free(static_cast<void*>(ptr));
-  }
-};
-using HostBufferOwner = std::unique_ptr<std::byte, HostBufferDeleter>;
-
-inline OutputStarpuVectorRegisterHook g_output_starpu_vector_register_hook =
-    &starpu_vector_data_register;
-inline OutputRegisterFailureObserverHook g_output_register_failure_observer =
-    nullptr;
-inline OutputHostAllocatorHook g_output_host_allocator_hook = &posix_memalign;
-inline OutputCudaPinnedOverrideHook g_output_cuda_pinned_override_hook = {};
-inline OutputStarpuMemoryPinHook g_output_starpu_memory_pin_hook =
-    &starpu_memory_pin;
+}  // namespace
 
 auto
-starpu_vector_register_hook() -> OutputStarpuVectorRegisterHook&
-{
-  return g_output_starpu_vector_register_hook;
-}
-
-auto
-starpu_register_failure_observer() -> OutputRegisterFailureObserverHook&
-{
-  return g_output_register_failure_observer;
-}
-
-auto
-output_host_allocator_hook() -> OutputHostAllocatorHook&
-{
-  return g_output_host_allocator_hook;
-}
-
-auto
-output_cuda_pinned_override_hook() -> OutputCudaPinnedOverrideHook&
-{
-  return g_output_cuda_pinned_override_hook;
-}
-
-auto
-starpu_memory_pin_hook() -> OutputStarpuMemoryPinHook&
-{
-  return g_output_starpu_memory_pin_hook;
-}
-
-auto
-alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
-    -> HostBufferPtr
+OutputSlotPool::alloc_host_buffer(
+    size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> HostBufferPtr
 {
   HostBufferPtr ptr = nullptr;
   cuda_pinned_out = false;
@@ -114,10 +59,120 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
   return ptr;
 }
 
+auto
+OutputSlotPool::checked_total_bytes(size_t per_sample_bytes, size_t batch_size)
+    -> size_t
+{
+  if (per_sample_bytes != 0 && batch_size > kMaxSizeT / per_sample_bytes) {
+    throw std::overflow_error(std::format(
+        "OutputSlotPool: per-sample bytes ({}) times batch size ({}) exceeds "
+        "size_t range",
+        per_sample_bytes, batch_size));
+  }
+  return per_sample_bytes * batch_size;
+}
+
+auto
+OutputSlotPool::prepare_host_buffer(
+    size_t per_sample_bytes, size_t batch_size, bool want_pinned, int slot_id,
+    size_t output_index) -> PreparedHostBuffer
+{
+  PreparedHostBuffer prepared;
+  prepared.info.bytes = checked_total_bytes(per_sample_bytes, batch_size);
+  prepared.ptr = alloc_host_buffer(
+      prepared.info.bytes, want_pinned, prepared.info.cuda_pinned);
+
+  if (want_pinned && !prepared.info.cuda_pinned) {
+    prepared.info.starpu_pin_rc =
+        starpu_memory_pin_hook()(prepared.ptr, prepared.info.bytes);
+    if (prepared.info.starpu_pin_rc == 0) {
+      prepared.info.starpu_pinned = true;
+    } else {
+      log_warning(std::format(
+          "starpu_memory_pin failed for output slot {}, index {}: rc={}",
+          slot_id, output_index, prepared.info.starpu_pin_rc));
+    }
+  }
+
+  return prepared;
+}
 
 void
-free_host_buffer(
-    HostBufferPtr ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
+OutputSlotPool::HostBufferDeleter::operator()(HostBufferPtr ptr) const
+{
+  std::free(static_cast<void*>(ptr));
+}
+
+auto
+OutputSlotPool::starpu_vector_register_hook() -> OutputStarpuVectorRegisterHook&
+{
+  static OutputStarpuVectorRegisterHook hook = &starpu_vector_data_register;
+  return hook;
+}
+
+auto
+OutputSlotPool::starpu_register_failure_observer()
+    -> OutputRegisterFailureObserverHook&
+{
+  static OutputRegisterFailureObserverHook observer = nullptr;
+  return observer;
+}
+
+auto
+OutputSlotPool::output_host_allocator_hook() -> OutputHostAllocatorHook&
+{
+  static OutputHostAllocatorHook allocator = &posix_memalign;
+  return allocator;
+}
+
+auto
+OutputSlotPool::output_cuda_pinned_override_hook()
+    -> OutputCudaPinnedOverrideHook&
+{
+  static OutputCudaPinnedOverrideHook override_hook;
+  return override_hook;
+}
+
+auto
+OutputSlotPool::starpu_memory_pin_hook() -> OutputStarpuMemoryPinHook&
+{
+  static OutputStarpuMemoryPinHook pin_hook = &starpu_memory_pin;
+  return pin_hook;
+}
+
+void
+OutputSlotPool::cleanup_slot_buffers(
+    SlotInfo& slot, std::vector<HostBufferInfo>& buffer_infos, size_t count)
+{
+  for (size_t j = 0; j < count; ++j) {
+    if (slot.base_ptrs[j] != nullptr) {
+      free_host_buffer(slot.base_ptrs[j], buffer_infos[j]);
+      slot.base_ptrs[j] = nullptr;
+      buffer_infos[j] = {};
+    }
+    if (slot.handles[j] != nullptr) {
+      starpu_data_unregister(slot.handles[j]);
+      slot.handles[j] = nullptr;
+    }
+  }
+}
+
+auto
+OutputSlotPool::checked_total_numel(size_t per_sample_numel, size_t batch_size)
+    -> size_t
+{
+  if (per_sample_numel != 0 && batch_size > kMaxSizeT / per_sample_numel) {
+    throw std::overflow_error(std::format(
+        "OutputSlotPool: per-sample numel ({}) times batch size ({}) exceeds "
+        "size_t range",
+        per_sample_numel, batch_size));
+  }
+  return per_sample_numel * batch_size;
+}
+
+void
+OutputSlotPool::free_host_buffer(
+    std::byte* ptr, const HostBufferInfo& buffer_info)
 {
   if (ptr == nullptr) {
     return;
@@ -143,154 +198,6 @@ free_host_buffer(
     }
   }
 }
-
-auto
-checked_total_bytes(size_t per_sample_bytes, size_t batch_size) -> size_t
-{
-  if (per_sample_bytes != 0 && batch_size > kMaxSizeT / per_sample_bytes) {
-    throw std::overflow_error(std::format(
-        "OutputSlotPool: per-sample bytes ({}) times batch size ({}) exceeds "
-        "size_t range",
-        per_sample_bytes, batch_size));
-  }
-  return per_sample_bytes * batch_size;
-}
-
-auto
-checked_total_numel(size_t per_sample_numel, size_t batch_size) -> size_t
-{
-  if (per_sample_numel != 0 && batch_size > kMaxSizeT / per_sample_numel) {
-    throw std::overflow_error(std::format(
-        "OutputSlotPool: per-sample numel ({}) times batch size ({}) exceeds "
-        "size_t range",
-        per_sample_numel, batch_size));
-  }
-  return per_sample_numel * batch_size;
-}
-
-struct PreparedHostBuffer {
-  HostBufferPtr ptr = nullptr;
-  OutputSlotPool::HostBufferInfo info;
-};
-
-auto
-prepare_host_buffer(
-    size_t per_sample_bytes, size_t batch_size, bool want_pinned, int slot_id,
-    size_t output_index) -> PreparedHostBuffer
-{
-  PreparedHostBuffer prepared;
-  prepared.info.bytes = checked_total_bytes(per_sample_bytes, batch_size);
-  prepared.ptr = alloc_host_buffer(
-      prepared.info.bytes, want_pinned, prepared.info.cuda_pinned);
-
-  if (want_pinned && !prepared.info.cuda_pinned) {
-    prepared.info.starpu_pin_rc =
-        starpu_memory_pin_hook()(prepared.ptr, prepared.info.bytes);
-    if (prepared.info.starpu_pin_rc == 0) {
-      prepared.info.starpu_pinned = true;
-    } else {
-      log_warning(std::format(
-          "starpu_memory_pin failed for output slot {}, index {}: rc={}",
-          slot_id, output_index, prepared.info.starpu_pin_rc));
-    }
-  }
-
-  return prepared;
-}
-
-void
-cleanup_slot_buffers_impl(
-    OutputSlotPool::SlotInfo& slot,
-    std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
-{
-  for (size_t j = 0; j < count; ++j) {
-    if (slot.base_ptrs[j] != nullptr) {
-      free_host_buffer(slot.base_ptrs[j], buffer_infos[j]);
-      slot.base_ptrs[j] = nullptr;
-      buffer_infos[j] = {};
-    }
-    if (slot.handles[j] != nullptr) {
-      starpu_data_unregister(slot.handles[j]);
-      slot.handles[j] = nullptr;
-    }
-  }
-}
-
-}  // namespace
-
-namespace detail {
-void cleanup_slot_buffers_for_tests(
-    OutputSlotPool::SlotInfo& slot,
-    std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count);
-auto checked_total_numel_for_tests(size_t per_sample_numel, size_t batch_size)
-    -> size_t;
-void free_host_buffer_for_tests(
-    std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
-auto starpu_vector_register_hook_ref()
-    -> decltype(starpu_vector_register_hook());
-auto register_failure_observer_ref()
-    -> decltype(starpu_register_failure_observer());
-auto host_allocator_hook_ref() -> decltype(output_host_allocator_hook());
-auto cuda_pinned_override_hook_ref()
-    -> decltype(output_cuda_pinned_override_hook());
-auto starpu_memory_pin_hook_ref() -> decltype(starpu_memory_pin_hook());
-}  // namespace detail
-
-namespace detail {
-
-void
-cleanup_slot_buffers_for_tests(
-    OutputSlotPool::SlotInfo& slot,
-    std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
-{
-  cleanup_slot_buffers_impl(slot, buffer_infos, count);
-}
-
-auto
-checked_total_numel_for_tests(size_t per_sample_numel, size_t batch_size)
-    -> size_t
-{
-  return checked_total_numel(per_sample_numel, batch_size);
-}
-
-void
-free_host_buffer_for_tests(
-    std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
-{
-  free_host_buffer(ptr, buffer_info);
-}
-
-auto
-starpu_vector_register_hook_ref() -> decltype(starpu_vector_register_hook())
-{
-  return starpu_vector_register_hook();
-}
-
-auto
-register_failure_observer_ref() -> decltype(starpu_register_failure_observer())
-{
-  return starpu_register_failure_observer();
-}
-
-auto
-host_allocator_hook_ref() -> decltype(output_host_allocator_hook())
-{
-  return output_host_allocator_hook();
-}
-
-auto
-cuda_pinned_override_hook_ref() -> decltype(output_cuda_pinned_override_hook())
-{
-  return output_cuda_pinned_override_hook();
-}
-
-auto
-starpu_memory_pin_hook_ref() -> decltype(starpu_memory_pin_hook())
-{
-  return starpu_memory_pin_hook();
-}
-
-}  // namespace detail
 
 OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
@@ -391,7 +298,7 @@ OutputSlotPool::allocate_slot_buffers_and_register(
         &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(prepared_buffer.ptr),
         total_numel, element_size(output_types_[i]));
     if (handle == nullptr) {
-      cleanup_slot_buffers_impl(slot, buffer_infos, i + 1);
+      cleanup_slot_buffers(slot, buffer_infos, i + 1);
       if (starpu_register_failure_observer() != nullptr) {
         starpu_register_failure_observer()(slot, buffer_infos);
       }

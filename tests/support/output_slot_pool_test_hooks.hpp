@@ -15,6 +15,16 @@ struct OutputSlotPoolTestHook {
       -> const std::vector<OutputSlotPool::HostBufferInfo>&;
   static void free_host_buffer_for_tests(
       std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
+  static auto starpu_vector_register_hook_ref()
+      -> decltype(OutputSlotPool::starpu_vector_register_hook());
+  static auto register_failure_observer_ref()
+      -> decltype(OutputSlotPool::starpu_register_failure_observer());
+  static auto host_allocator_hook_ref()
+      -> decltype(OutputSlotPool::output_host_allocator_hook());
+  static auto cuda_pinned_override_hook_ref()
+      -> decltype(OutputSlotPool::output_cuda_pinned_override_hook());
+  static auto starpu_memory_pin_hook_ref()
+      -> decltype(OutputSlotPool::starpu_memory_pin_hook());
 };
 
 namespace testing {
