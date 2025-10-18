@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -79,4 +80,73 @@ TEST(InferenceQueue_Robustesse, RejectsNullJob)
 
   EXPECT_FALSE(queue.push(null_job));
   EXPECT_EQ(queue.size(), 0U);
+}
+
+TEST(InferenceQueue_Robustesse, TryPopEmptyQueueReturnsFalse)
+{
+  starpu_server::InferenceQueue queue;
+  std::shared_ptr<starpu_server::InferenceJob> job;
+
+  EXPECT_FALSE(queue.try_pop(job));
+  EXPECT_EQ(job, nullptr);
+  EXPECT_EQ(queue.size(), 0U);
+}
+
+TEST(InferenceQueue_Robustesse, TryPopReturnsFrontJobAndShrinksQueue)
+{
+  starpu_server::InferenceQueue queue;
+  auto queued_job = std::make_shared<starpu_server::InferenceJob>();
+  constexpr int kRequestId = 7;
+  queued_job->set_request_id(kRequestId);
+
+  ASSERT_TRUE(queue.push(queued_job));
+  EXPECT_EQ(queue.size(), 1U);
+
+  std::shared_ptr<starpu_server::InferenceJob> popped_job;
+  EXPECT_TRUE(queue.try_pop(popped_job));
+  ASSERT_NE(popped_job, nullptr);
+  EXPECT_EQ(popped_job->get_request_id(), kRequestId);
+  EXPECT_EQ(queue.size(), 0U);
+}
+
+TEST(InferenceQueue_Robustesse, WaitForAndPopReturnsJobBeforeTimeout)
+{
+  starpu_server::InferenceQueue queue;
+  constexpr int kRequestId = 21;
+
+  std::jthread producer([&queue, request_id = kRequestId]() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    auto job = std::make_shared<starpu_server::InferenceJob>();
+    job->set_request_id(request_id);
+    (void)queue.push(job);
+  });
+
+  std::shared_ptr<starpu_server::InferenceJob> popped_job;
+  const auto timeout = std::chrono::milliseconds(200);
+  EXPECT_TRUE(queue.wait_for_and_pop(popped_job, timeout));
+  ASSERT_NE(popped_job, nullptr);
+  EXPECT_EQ(popped_job->get_request_id(), kRequestId);
+}
+
+TEST(InferenceQueue_Robustesse, WaitForAndPopTimesOutWhenQueueRemainsEmpty)
+{
+  starpu_server::InferenceQueue queue;
+  std::shared_ptr<starpu_server::InferenceJob> popped_job;
+
+  const auto timeout = std::chrono::milliseconds(20);
+  EXPECT_FALSE(queue.wait_for_and_pop(popped_job, timeout));
+  EXPECT_EQ(popped_job, nullptr);
+}
+
+TEST(
+    InferenceQueue_Robustesse,
+    WaitForAndPopReturnsFalseAfterShutdownWithoutJobs)
+{
+  starpu_server::InferenceQueue queue;
+  queue.shutdown();
+
+  std::shared_ptr<starpu_server::InferenceJob> popped_job;
+  EXPECT_FALSE(
+      queue.wait_for_and_pop(popped_job, std::chrono::milliseconds(50)));
+  EXPECT_EQ(popped_job, nullptr);
 }
