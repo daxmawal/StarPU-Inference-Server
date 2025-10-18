@@ -78,20 +78,15 @@ class InputSlotPool {
   std::condition_variable cv_;
 };
 
-#ifdef UNIT_TEST
-namespace testing {
+namespace detail {
 
 using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
 using RegisterFailureObserverFn =
     std::function<void(const InputSlotPool::SlotInfo& slot)>;
 
-auto set_starpu_vector_register_hook_for_tests(StarpuVectorRegisterFn fn)
-    -> StarpuVectorRegisterFn;
+auto starpu_vector_register_hook() -> StarpuVectorRegisterFn&;
+auto starpu_register_failure_observer() -> RegisterFailureObserverFn&;
 
-auto set_starpu_register_failure_observer_for_tests(
-    RegisterFailureObserverFn observer) -> RegisterFailureObserverFn;
-
-}  // namespace testing
-#endif  // UNIT_TEST
+}  // namespace detail
 
 }  // namespace starpu_server

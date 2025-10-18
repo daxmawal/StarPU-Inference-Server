@@ -12,13 +12,39 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <utility>
 
 #include "utils/logger.hpp"
 
 namespace starpu_server {
 
+namespace detail {
+
+using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
+using RegisterFailureObserverFn =
+    std::function<void(const InputSlotPool::SlotInfo& slot)>;
+
+auto
+starpu_vector_register_hook() -> StarpuVectorRegisterFn&
+{
+  static StarpuVectorRegisterFn hook = &starpu_vector_data_register;
+  return hook;
+}
+
+auto
+starpu_register_failure_observer() -> RegisterFailureObserverFn&
+{
+  static RegisterFailureObserverFn observer;
+  return observer;
+}
+
+}  // namespace detail
+
 namespace {
+
+using detail::RegisterFailureObserverFn;
+using detail::starpu_register_failure_observer;
+using detail::starpu_vector_register_hook;
+using detail::StarpuVectorRegisterFn;
 
 struct ComputedInputSizes {
   size_t total_bytes = 0;
@@ -29,10 +55,6 @@ struct AllocatedHostBuffer {
   std::byte* ptr = nullptr;
   InputSlotPool::HostBufferInfo info;
 };
-
-using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
-using RegisterFailureObserverFn =
-    std::function<void(const InputSlotPool::SlotInfo& slot)>;
 
 auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
@@ -131,20 +153,6 @@ allocate_and_pin_buffer(
   }
 
   return allocation;
-}
-
-auto
-starpu_vector_register_hook() -> StarpuVectorRegisterFn&
-{
-  static StarpuVectorRegisterFn hook = &starpu_vector_data_register;
-  return hook;
-}
-
-auto
-starpu_register_failure_observer() -> RegisterFailureObserverFn&
-{
-  static RegisterFailureObserverFn observer;
-  return observer;
 }
 
 void
@@ -366,29 +374,3 @@ InputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
 }
 
 }  // namespace starpu_server
-
-#ifdef UNIT_TEST
-namespace starpu_server::testing {
-
-auto
-set_starpu_vector_register_hook_for_tests(StarpuVectorRegisterFn hook_fn)
-    -> StarpuVectorRegisterFn
-{
-  auto& hook = starpu_vector_register_hook();
-  const auto previous = hook;
-  hook = hook_fn != nullptr ? hook_fn : &starpu_vector_data_register;
-  return previous;
-}
-
-auto
-set_starpu_register_failure_observer_for_tests(
-    RegisterFailureObserverFn observer) -> RegisterFailureObserverFn
-{
-  auto& failure_observer = starpu_register_failure_observer();
-  auto previous = failure_observer;
-  failure_observer = std::move(observer);
-  return previous;
-}
-
-}  // namespace starpu_server::testing
-#endif  // UNIT_TEST
