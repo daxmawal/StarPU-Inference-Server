@@ -1,4 +1,4 @@
-#StarPU Inference Server
+# StarPU Inference Server
 
 [![CI][ci-badge]][ci-url]
 [![codecov][codecov-badge]][codecov-url]
