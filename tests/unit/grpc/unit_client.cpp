@@ -285,7 +285,7 @@ TEST(InferenceClient, ModelIsReadyReturnsTrue)
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_TRUE(client.ModelIsReady({"example", "1"}));
 
-  starpu_server::StopServer(server.server);
+  starpu_server::StopServer(server.server.get());
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
 }

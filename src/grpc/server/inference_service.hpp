@@ -188,5 +188,5 @@ void RunGrpcServer(
     const std::vector<at::ScalarType>& expected_input_types,
     const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
 
-void StopServer(const std::unique_ptr<grpc::Server>& server);
+void StopServer(grpc::Server* server);
 }  // namespace starpu_server

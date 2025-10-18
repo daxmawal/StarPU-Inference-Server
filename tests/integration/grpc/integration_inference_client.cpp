@@ -41,7 +41,7 @@ TEST(InferenceClient, ServerIsLiveReturnsTrue)
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_TRUE(client.ServerIsLive());
 
-  starpu_server::StopServer(server.server);
+  starpu_server::StopServer(server.server.get());
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
 }
@@ -59,7 +59,7 @@ TEST(InferenceClient, ServerIsReadyReturnsTrue)
       channel, starpu_server::VerbosityLevel::Silent);
   EXPECT_TRUE(client.ServerIsReady());
 
-  starpu_server::StopServer(server.server);
+  starpu_server::StopServer(server.server.get());
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
 }
@@ -98,7 +98,7 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
   EXPECT_NE(logs.find("request_latency"), std::string::npos);
   EXPECT_NE(logs.find("response_latency"), std::string::npos);
 
-  starpu_server::StopServer(server.server);
+  starpu_server::StopServer(server.server.get());
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
 }

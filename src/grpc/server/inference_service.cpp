@@ -952,9 +952,9 @@ RunGrpcServer(
 }
 
 void
-StopServer(const std::unique_ptr<Server>& server)
+StopServer(Server* server)
 {
-  if (server) {
+  if (server != nullptr) {
     server->Shutdown();
   }
 }
