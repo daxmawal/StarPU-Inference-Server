@@ -15,6 +15,7 @@
 # Additional options:
 #   --file <path>  - analyze only the specified file
 #   --dir  <path>  - analyze files found under the specified directory
+#   --header-filter <regex> - limit which headers receive diagnostics (default: '.*')
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "Error: jq is not installed or not in PATH." >&2
@@ -32,6 +33,7 @@ fi
 
 LIBTORCH_DIR=${LIBTORCH_DIR:-}
 GRPC_DIR=${GRPC_DIR:-}
+HEADER_FILTER=${HEADER_FILTER:-}
 TARGET_FILE=""
 TARGET_DIR=""
 
@@ -44,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dir)
       TARGET_DIR="$2"
+      shift 2
+      ;;
+    --header-filter)
+      HEADER_FILTER="$2"
       shift 2
       ;;
     *)
@@ -64,9 +70,13 @@ if [[ -z "$GRPC_DIR" ]]; then
 fi
 
 if [[ -z "$LIBTORCH_DIR" ]] || [[ -z "$GRPC_DIR" ]]; then
-  echo "Usage: LIBTORCH_DIR=<path> GRPC_DIR=<path> $0 [--file <path/to/file.cpp>] [--dir <path>]"
-  echo "   or: $0 <libtorch_dir> <grpc_dir> [--file <path/to/file.cpp>] [--dir <path>]"
+  echo "Usage: LIBTORCH_DIR=<path> GRPC_DIR=<path> $0 [--file <path/to/file.cpp>] [--dir <path>] [--header-filter <regex>]"
+  echo "   or: $0 <libtorch_dir> <grpc_dir> [--file <path/to/file.cpp>] [--dir <path>] [--header-filter <regex>]"
   exit 1
+fi
+
+if [[ -z "$HEADER_FILTER" ]]; then
+  HEADER_FILTER='.*'
 fi
 
 CLANG_TIDY_ARGS=(
@@ -74,7 +84,7 @@ CLANG_TIDY_ARGS=(
 
   -checks=performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*,clang-diagnostic-unused-includes
 
-  #-header-filter=.*
+  -header-filter="$HEADER_FILTER"
 
   # Ensure clang uses the correct host target and SIMD features
   -extra-arg-before=--target=x86_64-pc-linux-gnu
