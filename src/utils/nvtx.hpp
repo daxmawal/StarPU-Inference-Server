@@ -79,7 +79,15 @@ class NvtxRange {
 
   explicit NvtxRange(const std::string& name) { detail::InvokePush(name); }
 
-  ~NvtxRange() { detail::InvokePop(); }
+  ~NvtxRange() noexcept
+  {
+    try {
+      detail::InvokePop();
+    }
+    catch (...) {
+      // Destructor must not throw.
+    }
+  }
 
   static void SetHooks(PushHook push, PopHook pop)
   {
