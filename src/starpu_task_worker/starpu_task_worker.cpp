@@ -69,26 +69,31 @@ struct ExceptionLoggingMessages {
 };
 
 namespace {
-std::function<void()> submit_inference_task_hook;
+auto
+submit_inference_task_hook_storage() -> std::function<void()>&
+{
+  static std::function<void()> hook;
+  return hook;
+}
 }  // namespace
 
 void
 set_submit_inference_task_hook(std::function<void()> hook)
 {
-  submit_inference_task_hook = std::move(hook);
+  submit_inference_task_hook_storage() = std::move(hook);
 }
 
 void
 reset_submit_inference_task_hook()
 {
-  submit_inference_task_hook = {};
+  submit_inference_task_hook_storage() = {};
 }
 
 static void
 invoke_submit_inference_task_hook()
 {
-  if (submit_inference_task_hook) {
-    const auto& hook = submit_inference_task_hook;
+  const auto& hook = submit_inference_task_hook_storage();
+  if (hook) {
     hook();
   }
 }
