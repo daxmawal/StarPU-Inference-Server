@@ -50,9 +50,9 @@ OutputSlotPool::alloc_host_buffer(
   }
   constexpr size_t kAlign = 64;
 
-  int alloc_rc = output_host_allocator_hook()(
-      reinterpret_cast<void**>(&ptr), kAlign, bytes);
-  if (alloc_rc != 0 || ptr == nullptr) {
+  if (int alloc_rc = output_host_allocator_hook()(
+          reinterpret_cast<void**>(&ptr), kAlign, bytes);
+      alloc_rc != 0 || ptr == nullptr) {
     throw std::bad_alloc();
   }
 
