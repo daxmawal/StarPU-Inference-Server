@@ -72,8 +72,14 @@ class StarPUTaskRunner {
     int input_slot = -1;
     int output_slot = -1;
 
-    [[nodiscard]] bool has_input() const { return input_pool != nullptr; }
-    [[nodiscard]] bool has_output() const { return output_pool != nullptr; }
+    [[nodiscard]] auto has_input() const -> bool
+    {
+      return input_pool != nullptr;
+    }
+    [[nodiscard]] auto has_output() const -> bool
+    {
+      return output_pool != nullptr;
+    }
   };
 
   [[nodiscard]] auto acquire_pools() -> PoolResources;
