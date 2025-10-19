@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <utility>
@@ -192,7 +193,9 @@ convert_input_to_tensor(
         "Raw input size does not match tensor size"};
   }
 
-  auto byte_data = reinterpret_cast<const TensorDataByte*>(raw.data());
+  const auto raw_span = std::span<const char>(raw.data(), raw.size());
+  const auto byte_span = std::as_bytes(raw_span);
+  const auto* byte_data = byte_span.data();
   auto alias = std::shared_ptr<const TensorDataByte>(request_guard, byte_data);
   auto holder = std::const_pointer_cast<TensorDataByte>(alias);
   auto deleter = [holder](void* /*unused*/) mutable {

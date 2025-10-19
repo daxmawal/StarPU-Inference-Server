@@ -55,7 +55,7 @@ run_with_logged_exceptions(
   catch (const std::exception& e) {
     log_error(std::string(messages.context_prefix) + e.what());
   }
-  catch (...) {  // NOSONAR - required to surface non-std exceptions
+  catch (...) {
     if (!messages.unknown_message.empty()) {
       log_error(std::string(messages.unknown_message));
     } else {
@@ -84,7 +84,7 @@ InferenceTask::InferenceTask(
     const RuntimeConfig* opts,
     const InferenceTaskDependencies& dependencies) noexcept
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), opts_(opts), dependencies_(dependencies)
+      models_gpu_(models_gpu), opts_(opts), dependencies_(&dependencies)
 {
 }
 
@@ -216,7 +216,9 @@ InferenceTask::create_context(
   auto params = create_inference_params();
   auto ctx = std::make_shared<InferenceCallbackContext>(
       job_, std::move(params), opts_, job_->get_request_id(), inputs, outputs);
-  ctx->dependencies = &dependencies_;
+  ctx->dependencies = dependencies_ != nullptr
+                          ? dependencies_
+                          : &kDefaultInferenceTaskDependencies;
   return ctx;
 }
 
@@ -393,9 +395,12 @@ InferenceTask::create_task(
   const size_t num_inputs = inputs_handles.size();
   const size_t num_buffers = num_inputs + outputs_handles.size();
 
+  const auto* dependencies = dependencies_ != nullptr
+                                 ? dependencies_
+                                 : &kDefaultInferenceTaskDependencies;
   const auto task_create =
-      dependencies_.task_create_fn != nullptr
-          ? dependencies_.task_create_fn
+      dependencies->task_create_fn != nullptr
+          ? dependencies->task_create_fn
           : kDefaultInferenceTaskDependencies.task_create_fn;
   auto* task = task_create != nullptr ? task_create() : nullptr;
   if (task == nullptr) {
@@ -410,7 +415,7 @@ InferenceTask::create_task(
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());
 
   if (ctx != nullptr && ctx->dependencies == nullptr) {
-    ctx->dependencies = &dependencies_;
+    ctx->dependencies = dependencies;
   }
 
   InferenceTask::allocate_task_buffers(task, num_buffers, ctx);

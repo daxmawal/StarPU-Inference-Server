@@ -80,8 +80,8 @@ generate_random_inputs(const std::vector<TensorConfig>& tensors)
   inputs.reserve(tensors.size());
 
   for (size_t i = 0; i < tensors.size(); ++i) {
-    const auto& t = tensors[i];
-    inputs.push_back(generate_random_tensor(t.dims, t.type, i));
+    const auto& tensor = tensors[i];
+    inputs.push_back(generate_random_tensor(tensor.dims, tensor.type, i));
   }
 
   return inputs;

@@ -9,6 +9,10 @@
 
 namespace starpu_server {
 
+inline constexpr double kPercentileP95 = 95.0;
+inline constexpr double kPercentileP85 = 85.0;
+inline constexpr double kPercentileP50 = 50.0;
+
 struct LatencyStatistics {
   double p100;
   double p95;
@@ -52,9 +56,9 @@ compute_latency_statistics(std::vector<double> latencies)
 
   return LatencyStatistics{
       .p100 = latencies.back(),
-      .p95 = percentile_value(95.0),
-      .p85 = percentile_value(85.0),
-      .p50 = percentile_value(50.0),
+      .p95 = percentile_value(kPercentileP95),
+      .p85 = percentile_value(kPercentileP85),
+      .p50 = percentile_value(kPercentileP50),
       .mean = sum / static_cast<double>(size),
   };
 }

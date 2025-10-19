@@ -22,6 +22,15 @@ namespace starpu_server {
 inline constexpr std::size_t kMaxInputs = 16;
 inline constexpr std::size_t kMaxDims = 8;
 inline constexpr std::size_t kMaxModelsGpu = 32;
+inline constexpr std::size_t kBytesPerKiB = 1024ULL;
+inline constexpr std::size_t kBytesPerMiB = kBytesPerKiB * 1024ULL;
+inline constexpr std::size_t kDefaultMessageSizeMiB = 32ULL;
+inline constexpr std::size_t kDefaultMinMessageBytes =
+    kDefaultMessageSizeMiB * kBytesPerMiB;
+inline constexpr std::size_t kDefaultPregenInputs = 10ULL;
+inline constexpr double kDefaultRelativeTolerance = 1e-3;
+inline constexpr double kDefaultAbsoluteTolerance = 1e-5;
+inline constexpr int kDefaultMetricsPort = 9090;
 
 inline const std::unordered_set<std::string, TransparentHash, std::equal_to<>>
     kAllowedSchedulers = {"lws",  "dmda",   "dmdas", "ws",   "eager", "random",
@@ -74,8 +83,8 @@ struct RuntimeConfig {
     int batch_coalesce_timeout_ms = 0;
     int max_batch_size = 1;
     int input_slots = 0;
-    std::size_t max_message_bytes = 32 * 1024 * 1024;
-    size_t pregen_inputs = 10;
+    std::size_t max_message_bytes = kDefaultMinMessageBytes;
+    size_t pregen_inputs = kDefaultPregenInputs;
     size_t warmup_pregen_inputs = 2;
     int warmup_request_nb = 2;
     bool synchronous = false;
@@ -84,8 +93,8 @@ struct RuntimeConfig {
   };
 
   struct ValidationSettings {
-    double rtol = 1e-3;
-    double atol = 1e-5;
+    double rtol = kDefaultRelativeTolerance;
+    double atol = kDefaultAbsoluteTolerance;
     bool validate_results = true;
   };
 
@@ -98,7 +107,7 @@ struct RuntimeConfig {
   std::string scheduler = "lws";
   std::string config_path;
   std::string server_address = "0.0.0.0:50051";
-  int metrics_port = 9090;
+  int metrics_port = kDefaultMetricsPort;
 
   std::vector<ModelConfig> models;
   VerbosityLevel verbosity = VerbosityLevel::Info;
@@ -106,7 +115,7 @@ struct RuntimeConfig {
   BatchingSettings batching{};
   ValidationSettings validation{};
   Limits limits{};
-  std::optional<uint64_t> seed{};
+  std::optional<uint64_t> seed;
   bool show_help = false;
   bool valid = true;
 };
@@ -115,33 +124,34 @@ inline auto
 compute_model_message_bytes(
     int max_batch_size, const std::vector<TensorConfig>& inputs,
     const std::vector<TensorConfig>& outputs,
-    std::size_t min_message_bytes = 32 * 1024 * 1024) -> std::size_t
+    std::size_t min_message_bytes = kDefaultMinMessageBytes) -> std::size_t
 {
   if (max_batch_size <= 0) {
     throw InvalidDimensionException("max_batch_size must be > 0");
   }
   size_t per_sample_bytes = 0;
-  const auto compute_numel = [](const TensorConfig& t) {
+  const auto compute_numel = [](const TensorConfig& tensor_config) {
     size_t numel = 1;
-    for (int64_t d : t.dims) {
-      if (d < 0) {
+    for (int64_t dim : tensor_config.dims) {
+      if (dim < 0) {
         throw InvalidDimensionException("dimension size must be non-negative");
       }
-      const auto d_size = static_cast<size_t>(d);
-      if (d_size != 0 && numel > std::numeric_limits<size_t>::max() / d_size) {
+      const auto dim_size = static_cast<size_t>(dim);
+      if (dim_size != 0 &&
+          numel > std::numeric_limits<size_t>::max() / dim_size) {
         throw MessageSizeOverflowException(
             "numel * dimension size would overflow size_t");
       }
-      numel *= d_size;
+      numel *= dim_size;
     }
     return numel;
   };
 
-  const auto tensor_bytes = [&](const TensorConfig& t) {
-    const size_t numel = compute_numel(t);
+  const auto tensor_bytes = [&](const TensorConfig& tensor_config) {
+    const size_t numel = compute_numel(tensor_config);
     size_t type_size = 0;
     try {
-      type_size = element_size(t.type);
+      type_size = element_size(tensor_config.type);
     }
     catch (const std::invalid_argument& e) {
       throw UnsupportedDtypeException(e.what());
@@ -154,8 +164,8 @@ compute_model_message_bytes(
   };
 
   const auto accumulate_bytes = [&](const std::vector<TensorConfig>& tensors) {
-    for (const auto& t : tensors) {
-      const size_t current_tensor_bytes = tensor_bytes(t);
+    for (const auto& tensor : tensors) {
+      const size_t current_tensor_bytes = tensor_bytes(tensor);
       if (per_sample_bytes >
           std::numeric_limits<size_t>::max() - current_tensor_bytes) {
         throw MessageSizeOverflowException(
@@ -181,7 +191,7 @@ compute_model_message_bytes(
 inline auto
 compute_max_message_bytes(
     int max_batch_size, const std::vector<ModelConfig>& models,
-    std::size_t min_message_bytes = 32 * 1024 * 1024) -> std::size_t
+    std::size_t min_message_bytes = kDefaultMinMessageBytes) -> std::size_t
 {
   size_t max_bytes = min_message_bytes;
   for (const auto& model : models) {

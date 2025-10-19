@@ -19,9 +19,9 @@ struct BatchAggregationInfo {
   std::vector<InferenceJob::AggregatedSubJob> sub_jobs;
   int logical_jobs{0};
   int64_t total_samples{0};
-  Clock::time_point earliest_start{};
-  Clock::time_point earliest_enqueued{};
-  Clock::time_point earliest_batch_collect_start{};
+  Clock::time_point earliest_start;
+  Clock::time_point earliest_enqueued;
+  Clock::time_point earliest_batch_collect_start;
 };
 
 struct SubJobSliceResult {

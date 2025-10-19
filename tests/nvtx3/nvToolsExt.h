@@ -4,67 +4,79 @@
 #include <string>
 #include <string_view>
 
+// NOLINTNEXTLINE(cppcoreguidelines-macro-to-enum,modernize-macro-to-enum,cppcoreguidelines-macro-usage)
 #define STARPU_SERVER_NVTX_TESTING 1
 
 namespace testing_nvtx {
 
-inline std::atomic<int> push_count{0};
-inline std::atomic<int> pop_count{0};
-
-inline void
-Reset()
+inline auto
+PushCounter() -> std::atomic<int>&
 {
-  push_count.store(0);
-  pop_count.store(0);
+  static std::atomic<int> counter{0};
+  return counter;
 }
 
-inline int
-PushCount()
+inline auto
+PopCounter() -> std::atomic<int>&
 {
-  return push_count.load();
+  static std::atomic<int> counter{0};
+  return counter;
 }
 
-inline int
-PopCount()
+inline auto
+Reset() -> void
 {
-  return pop_count.load();
+  PushCounter().store(0);
+  PopCounter().store(0);
 }
 
-inline void
-TrackPush()
+inline auto
+PushCount() -> int
 {
-  push_count.fetch_add(1);
+  return PushCounter().load();
 }
 
-inline void
-TrackPop()
+inline auto
+PopCount() -> int
 {
-  pop_count.fetch_add(1);
+  return PopCounter().load();
 }
 
-inline void
-TrackPushHook(std::string_view)
+inline auto
+TrackPush() -> void
+{
+  PushCounter().fetch_add(1);
+}
+
+inline auto
+TrackPop() -> void
+{
+  PopCounter().fetch_add(1);
+}
+
+inline auto
+TrackPushHook(std::string_view /*unused*/) -> void
 {
   TrackPush();
 }
 
-inline void
-TrackPopHook()
+inline auto
+TrackPopHook() -> void
 {
   TrackPop();
 }
 
 }  // namespace testing_nvtx
 
-inline int
-nvtxRangePushA(const char*)
+inline auto
+nvtxRangePushA([[maybe_unused]] const char* label) -> int
 {
   testing_nvtx::TrackPush();
   return 0;
 }
 
-inline int
-nvtxRangePop()
+inline auto
+nvtxRangePop() -> int
 {
   testing_nvtx::TrackPop();
   return 0;

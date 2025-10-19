@@ -69,26 +69,31 @@ struct ExceptionLoggingMessages {
 };
 
 namespace {
-std::function<void()> submit_inference_task_hook;
+auto
+submit_inference_task_hook_storage() -> std::function<void()>&
+{
+  static std::function<void()> hook;
+  return hook;
+}
 }  // namespace
 
 void
 set_submit_inference_task_hook(std::function<void()> hook)
 {
-  submit_inference_task_hook = std::move(hook);
+  submit_inference_task_hook_storage() = std::move(hook);
 }
 
 void
 reset_submit_inference_task_hook()
 {
-  submit_inference_task_hook = {};
+  submit_inference_task_hook_storage() = {};
 }
 
 static void
 invoke_submit_inference_task_hook()
 {
-  if (submit_inference_task_hook) {
-    const auto& hook = submit_inference_task_hook;
+  const auto& hook = submit_inference_task_hook_storage();
+  if (hook) {
     hook();
   }
 }
@@ -113,8 +118,7 @@ run_with_logged_exceptions(
   catch (const std::bad_alloc& e) {
     log_error(std::string(messages.context_prefix) + e.what());
   }
-  catch (
-      ...) {  // NOSONAR: required to log non-std exceptions thrown by callbacks
+  catch (...) {
     log_error(std::string(messages.unknown_message));
   }
 }

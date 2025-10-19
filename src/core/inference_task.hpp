@@ -12,7 +12,7 @@ namespace starpu_server {
 // InferenceCallbackContext: passed to StarPU callbacks
 // =============================================================================
 
-class OutputSlotPool;  // forward declaration
+class OutputSlotPool;
 struct InferenceTaskDependencies;
 
 struct InferenceCallbackContext {
@@ -29,7 +29,7 @@ struct InferenceCallbackContext {
   std::mutex mutex;
   bool keep_input_handles = false;
   bool keep_output_handles = false;
-  OutputSlotPool* output_pool = nullptr;  // fwd-declared pointer
+  OutputSlotPool* output_pool = nullptr;
   int output_slot_id = -1;
   std::function<void()> on_finished;
   const struct InferenceTaskDependencies* dependencies = nullptr;
@@ -142,7 +142,7 @@ class InferenceTask {
   static void finalize_inference_task(void* arg);
 
   static void log_exception(
-      const std::string& context, const std::exception& e);
+      const std::string& context, const std::exception& exception);
 
  private:
   StarPUSetup* starpu_;
@@ -150,6 +150,6 @@ class InferenceTask {
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
   const RuntimeConfig* opts_;
-  const InferenceTaskDependencies& dependencies_;
+  const InferenceTaskDependencies* dependencies_;
 };
 }  // namespace starpu_server

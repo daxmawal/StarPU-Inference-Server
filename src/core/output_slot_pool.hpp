@@ -51,8 +51,8 @@ class OutputSlotPool {
       -> const std::vector<starpu_data_handle_t>&;
   [[nodiscard]] auto base_ptrs(int slot_id) const
       -> const std::vector<std::byte*>&;
-  [[nodiscard]] int max_batch_size() const { return bmax_; }
-  [[nodiscard]] size_t num_outputs() const
+  [[nodiscard]] auto max_batch_size() const -> int { return bmax_; }
+  [[nodiscard]] auto num_outputs() const -> size_t
   {
     return per_output_numel_single_.size();
   }
@@ -71,7 +71,7 @@ class OutputSlotPool {
   void allocate_pool(const RuntimeConfig& opts, int slots);
   void allocate_slot_buffers_and_register(
       int slot_id, const RuntimeConfig& opts);
-  static size_t product_dims(const std::vector<int64_t>& dims);
+  static auto product_dims(const std::vector<int64_t>& dims) -> size_t;
   using HostBufferPtr = std::byte*;
   struct HostBufferDeleter {
     void operator()(HostBufferPtr ptr) const;

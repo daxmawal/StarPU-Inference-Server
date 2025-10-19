@@ -46,7 +46,7 @@ struct InferenceResult {
   std::vector<torch::Tensor> results;
   double latency_ms = 0.0;
   detail::TimingInfo timing_info;
-  int request_id;
+  int request_id = -1;
   int submission_id = -1;
   int device_id = -1;
   int worker_id = -1;
@@ -85,11 +85,11 @@ class InferenceJob {
   {
     input_tensors_.clear();
     input_tensors_.reserve(inputs.size());
-    for (const auto& t : inputs) {
-      if (t.is_contiguous()) {
-        input_tensors_.push_back(t);
+    for (const auto& tensor : inputs) {
+      if (tensor.is_contiguous()) {
+        input_tensors_.push_back(tensor);
       } else {
-        input_tensors_.push_back(t.contiguous());
+        input_tensors_.push_back(tensor.contiguous());
       }
     }
   }
@@ -101,8 +101,8 @@ class InferenceJob {
   {
     output_tensors_.clear();
     output_tensors_.reserve(outputs.size());
-    for (const auto& t : outputs) {
-      output_tensors_.push_back(t.contiguous());
+    for (const auto& output_tensor : outputs) {
+      output_tensors_.push_back(output_tensor.contiguous());
     }
   }
   void set_start_time(std::chrono::high_resolution_clock::time_point time)

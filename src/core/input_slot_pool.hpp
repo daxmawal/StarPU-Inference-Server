@@ -52,8 +52,8 @@ class InputSlotPool {
       -> const std::vector<std::byte*>&;
   [[nodiscard]] auto host_buffer_infos(int slot_id) const
       -> const std::vector<HostBufferInfo>&;
-  [[nodiscard]] int max_batch_size() const { return bmax_; }
-  [[nodiscard]] size_t num_inputs() const
+  [[nodiscard]] auto max_batch_size() const -> int { return bmax_; }
+  [[nodiscard]] auto num_inputs() const -> size_t
   {
     return per_input_numel_single_.size();
   }
@@ -62,7 +62,7 @@ class InputSlotPool {
   void allocate_pool(const RuntimeConfig& opts, int slots);
   void allocate_slot_buffers_and_register(
       int slot_id, const RuntimeConfig& opts);
-  static size_t product_dims(const std::vector<int64_t>& dims);
+  static auto product_dims(const std::vector<int64_t>& dims) -> size_t;
 
   std::vector<size_t> per_input_numel_single_;
   std::vector<size_t> per_input_bytes_single_;

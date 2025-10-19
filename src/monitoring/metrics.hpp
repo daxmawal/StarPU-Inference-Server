@@ -27,6 +27,11 @@ namespace starpu_server {
 class MetricsRegistry {
  public:
   struct ExposerHandle {
+    ExposerHandle() = default;
+    ExposerHandle(const ExposerHandle&) = delete;
+    auto operator=(const ExposerHandle&) -> ExposerHandle& = delete;
+    ExposerHandle(ExposerHandle&&) = delete;
+    auto operator=(ExposerHandle&&) -> ExposerHandle& = delete;
     virtual ~ExposerHandle() = default;
     virtual void RegisterCollectable(
         const std::shared_ptr<prometheus::Collectable>& collectable) = 0;
@@ -50,15 +55,27 @@ class MetricsRegistry {
       bool start_sampler_thread = true,
       std::unique_ptr<ExposerHandle> exposer_handle = nullptr);
   ~MetricsRegistry() noexcept;
+  MetricsRegistry(const MetricsRegistry&) = delete;
+  auto operator=(const MetricsRegistry&) -> MetricsRegistry& = delete;
+  MetricsRegistry(MetricsRegistry&&) = delete;
+  auto operator=(MetricsRegistry&&) -> MetricsRegistry& = delete;
 
-  std::shared_ptr<prometheus::Registry> registry;
-  prometheus::Counter* requests_total;
-  prometheus::Histogram* inference_latency;
-  prometheus::Gauge* queue_size_gauge;
+  std::shared_ptr<prometheus::Registry>
+      registry;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
+  prometheus::Counter*
+      requests_total;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
+  prometheus::Histogram*
+      inference_latency;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
+  prometheus::Gauge*
+      queue_size_gauge;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
 
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
   prometheus::Gauge* system_cpu_usage_percent{nullptr};
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
   prometheus::Family<prometheus::Gauge>* gpu_utilization_family{nullptr};
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
   prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family{nullptr};
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
   prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family{nullptr};
 
   void run_sampling_request_nb();
@@ -83,7 +100,7 @@ class MetricsRegistry {
   std::unordered_map<int, prometheus::Gauge*> gpu_memory_total_gauges_;
 };
 
-bool init_metrics(int port);
+auto init_metrics(int port) -> bool;
 void shutdown_metrics();
 void set_queue_size(std::size_t size);
 auto get_metrics() -> std::shared_ptr<MetricsRegistry>;

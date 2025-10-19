@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -16,7 +17,7 @@ class InferenceJob;
 
 class InferenceQueue {
  public:
-  [[nodiscard]] bool push(const std::shared_ptr<InferenceJob>& job)
+  [[nodiscard]] auto push(const std::shared_ptr<InferenceJob>& job) -> bool
   {
     if (job == nullptr) {
       return false;
@@ -32,7 +33,7 @@ class InferenceQueue {
     cv_.notify_one();
     return true;
   }
-  [[nodiscard]] bool wait_and_pop(std::shared_ptr<InferenceJob>& job)
+  [[nodiscard]] auto wait_and_pop(std::shared_ptr<InferenceJob>& job) -> bool
   {
     std::unique_lock lock(mutex_);
     cv_.wait(lock, [this] { return !queue_.empty() || shutdown_; });
@@ -44,7 +45,7 @@ class InferenceQueue {
     set_queue_size(queue_.size());
     return true;
   }
-  [[nodiscard]] bool try_pop(std::shared_ptr<InferenceJob>& job)
+  [[nodiscard]] auto try_pop(std::shared_ptr<InferenceJob>& job) -> bool
   {
     const std::scoped_lock lock(mutex_);
     if (queue_.empty()) {
@@ -56,9 +57,9 @@ class InferenceQueue {
     return true;
   }
   template <typename Rep, typename Period>
-  [[nodiscard]] bool wait_for_and_pop(
+  [[nodiscard]] auto wait_for_and_pop(
       std::shared_ptr<InferenceJob>& job,
-      const std::chrono::duration<Rep, Period>& timeout)
+      const std::chrono::duration<Rep, Period>& timeout) -> bool
   {
     if (std::unique_lock lock(mutex_); cv_.wait_for(
             lock, timeout, [this] { return !queue_.empty() || shutdown_; })) {
@@ -83,16 +84,16 @@ class InferenceQueue {
     cv_.notify_all();
   }
 
-  size_t size()
+  [[nodiscard]] auto size() const -> std::size_t
   {
     const std::scoped_lock lock(mutex_);
     return queue_.size();
   }
 
  private:
+  mutable std::mutex mutex_;
   std::queue<std::shared_ptr<InferenceJob>> queue_;
   bool shutdown_ = false;
-  std::mutex mutex_;
   std::condition_variable cv_;
 };
 }  // namespace starpu_server

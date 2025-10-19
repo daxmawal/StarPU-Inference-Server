@@ -35,35 +35,35 @@ DefaultPopHook()
 #endif
 }
 
-inline auto&
-PushHookRef()
+inline auto
+PushHookRef() -> NvtxPushHook&
 {
   static NvtxPushHook hook = &DefaultPushHook;
   return hook;
 }
 
-inline auto&
-PopHookRef()
+inline auto
+PopHookRef() -> NvtxPopHook&
 {
   static NvtxPopHook hook = &DefaultPopHook;
   return hook;
 }
 
-inline void
-SetHooks(NvtxPushHook push, NvtxPopHook pop)
+inline auto
+SetHooks(NvtxPushHook push, NvtxPopHook pop) -> void
 {
   PushHookRef() = push ? std::move(push) : NvtxPushHook{&DefaultPushHook};
   PopHookRef() = pop ? std::move(pop) : NvtxPopHook{&DefaultPopHook};
 }
 
-inline void
-InvokePush(std::string_view label)
+inline auto
+InvokePush(std::string_view label) -> void
 {
   PushHookRef()(label);
 }
 
-inline void
-InvokePop()
+inline auto
+InvokePop() -> void
 {
   PopHookRef()();
 }
@@ -79,7 +79,16 @@ class NvtxRange {
 
   explicit NvtxRange(const std::string& name) { detail::InvokePush(name); }
 
-  ~NvtxRange() { detail::InvokePop(); }
+  ~NvtxRange() noexcept
+  {
+    try {
+      detail::InvokePop();
+    }
+    // NOLINTNEXTLINE(bugprone-empty-catch)
+    catch (...) {
+      // Destructor must not throw; swallow exceptions from hooks.
+    }
+  }
 
   static void SetHooks(PushHook push, PopHook pop)
   {
@@ -90,6 +99,8 @@ class NvtxRange {
 
   NvtxRange(const NvtxRange&) = delete;
   auto operator=(const NvtxRange&) -> NvtxRange& = delete;
+  NvtxRange(NvtxRange&&) = delete;
+  auto operator=(NvtxRange&&) -> NvtxRange& = delete;
 };
 
 }  // namespace starpu_server

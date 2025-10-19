@@ -50,12 +50,13 @@ OutputSlotPool::alloc_host_buffer(
   }
   constexpr size_t kAlign = 64;
 
-  int alloc_rc = output_host_allocator_hook()(
-      reinterpret_cast<void**>(&ptr), kAlign, bytes);
-  if (alloc_rc != 0 || ptr == nullptr) {
+  void* raw_ptr = nullptr;
+  if (int alloc_rc = output_host_allocator_hook()(&raw_ptr, kAlign, bytes);
+      alloc_rc != 0 || raw_ptr == nullptr) {
     throw std::bad_alloc();
   }
 
+  ptr = static_cast<HostBufferPtr>(raw_ptr);
   return ptr;
 }
 
@@ -132,7 +133,11 @@ auto
 OutputSlotPool::output_host_deallocator_hook() -> OutputHostDeallocatorHook&
 {
   static OutputHostDeallocatorHook deallocator = [](void* ptr) noexcept {
-    std::free(ptr);
+    if (ptr == nullptr) {
+      return;
+    }
+    using FreeDeleter = decltype(&std::free);
+    std::unique_ptr<void, FreeDeleter> guard(ptr, &std::free);
   };
   return deallocator;
 }
