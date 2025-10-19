@@ -15,7 +15,7 @@
 # Additional options:
 #   --file <path>  - analyze only the specified file
 #   --dir  <path>  - analyze files found under the specified directory
-#   --header-filter <regex> - limit which headers receive diagnostics (default: '.*')
+#   --header-filter <regex> - limit which headers receive diagnostics (default: project headers only)
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "Error: jq is not installed or not in PATH." >&2
@@ -76,7 +76,8 @@ if [[ -z "$LIBTORCH_DIR" ]] || [[ -z "$GRPC_DIR" ]]; then
 fi
 
 if [[ -z "$HEADER_FILTER" ]]; then
-  HEADER_FILTER='.*'
+  PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
+  HEADER_FILTER="^${PROJECT_ROOT}/"
 fi
 
 CLANG_TIDY_ARGS=(
