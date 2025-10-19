@@ -348,7 +348,7 @@ InferenceCodelet::cpu_inference_func(void** buffers, void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
   const auto total_buffers = params->num_inputs + params->num_outputs;
-  const auto* typed_buffers = reinterpret_cast<StarpuBufferPtr const*>(buffers);
+  const auto* typed_buffers = std::bit_cast<StarpuBufferPtr const*>(buffers);
   const StarpuBufferSpan buffers_span(typed_buffers, total_buffers);
 
   const c10::InferenceMode no_autograd;
@@ -371,7 +371,7 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
 {
   auto* params = static_cast<InferenceParams*>(cl_arg);
   const auto total_buffers = params->num_inputs + params->num_outputs;
-  const auto* typed_buffers = reinterpret_cast<StarpuBufferPtr const*>(buffers);
+  const auto* typed_buffers = std::bit_cast<StarpuBufferPtr const*>(buffers);
   const StarpuBufferSpan buffers_span(typed_buffers, total_buffers);
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
