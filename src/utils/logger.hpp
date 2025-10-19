@@ -17,8 +17,8 @@ namespace starpu_server {
 // interleave. Keep the lock scope minimal for better
 // concurrency.
 
-inline auto&
-log_mutex()
+inline auto
+log_mutex() -> std::mutex&
 {
   static std::mutex instance;
   return instance;
@@ -60,8 +60,9 @@ parse_verbosity_level(std::string_view val) -> VerbosityLevel
   }
   const std::string trimmed{val};
 
-  if (std::ranges::all_of(
-          val, [](unsigned char c) noexcept { return std::isdigit(c) != 0; })) {
+  if (std::ranges::all_of(val, [](unsigned char character) noexcept {
+        return std::isdigit(character) != 0;
+      })) {
     int level{};
     try {
       level = std::stoi(trimmed);
@@ -89,9 +90,10 @@ parse_verbosity_level(std::string_view val) -> VerbosityLevel
   }
 
   std::string lower(trimmed.size(), '\0');
-  std::ranges::transform(trimmed, lower.begin(), [](unsigned char c) noexcept {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::ranges::transform(
+      trimmed, lower.begin(), [](unsigned char character) noexcept {
+        return static_cast<char>(std::tolower(character));
+      });
   if (lower == "silent") {
     return Silent;
   }

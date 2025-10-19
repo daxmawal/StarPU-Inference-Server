@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 
 #include "transparent_hash.hpp"
@@ -52,8 +53,8 @@ datatype_to_scalar_type(std::string_view dtype) -> at::ScalarType
 {
   std::string dtype_upper(dtype);
   std::ranges::transform(
-      dtype_upper, dtype_upper.begin(), [](unsigned char c) noexcept {
-        return static_cast<char>(std::toupper(c));
+      dtype_upper, dtype_upper.begin(), [](unsigned char character) noexcept {
+        return static_cast<char>(std::toupper(character));
       });
 
   static const std::unordered_map<
@@ -77,12 +78,14 @@ inline auto
 string_to_scalar_type(std::string_view type_str) -> at::ScalarType
 {
   std::string key(type_str);
-  if (key.rfind("TYPE_", 0) == 0) {
-    key = key.substr(5);
+  constexpr std::string_view type_prefix = "TYPE_";
+  if (key.starts_with(type_prefix)) {
+    key.erase(0, type_prefix.size());
   }
-  std::ranges::transform(key, key.begin(), [](unsigned char c) noexcept {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::ranges::transform(
+      key, key.begin(), [](unsigned char character) noexcept {
+        return static_cast<char>(std::tolower(character));
+      });
 
   static const std::unordered_map<
       std::string, at::ScalarType, TransparentHash, std::equal_to<>>
