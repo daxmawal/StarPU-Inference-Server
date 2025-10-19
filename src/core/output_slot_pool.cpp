@@ -133,7 +133,11 @@ auto
 OutputSlotPool::output_host_deallocator_hook() -> OutputHostDeallocatorHook&
 {
   static OutputHostDeallocatorHook deallocator = [](void* ptr) noexcept {
-    std::free(ptr);
+    if (ptr == nullptr) {
+      return;
+    }
+    using FreeDeleter = decltype(&std::free);
+    std::unique_ptr<void, FreeDeleter> guard(ptr, &std::free);
   };
   return deallocator;
 }
