@@ -4,45 +4,54 @@
 #include <string>
 #include <string_view>
 
-#define STARPU_SERVER_NVTX_TESTING \
-  1  // NOLINT(cppcoreguidelines-macro-to-enum,modernize-macro-to-enum,cppcoreguidelines-macro-usage)
+// NOLINTNEXTLINE(cppcoreguidelines-macro-to-enum,modernize-macro-to-enum,cppcoreguidelines-macro-usage)
+#define STARPU_SERVER_NVTX_TESTING 1
 
 namespace testing_nvtx {
 
-inline std::atomic<int> push_count{
-    0};  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-inline std::atomic<int> pop_count{
-    0};  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+inline auto
+PushCounter() -> std::atomic<int>&
+{
+  static std::atomic<int> counter{0};
+  return counter;
+}
+
+inline auto
+PopCounter() -> std::atomic<int>&
+{
+  static std::atomic<int> counter{0};
+  return counter;
+}
 
 inline auto
 Reset() -> void
 {
-  push_count.store(0);
-  pop_count.store(0);
+  PushCounter().store(0);
+  PopCounter().store(0);
 }
 
 inline auto
 PushCount() -> int
 {
-  return push_count.load();
+  return PushCounter().load();
 }
 
 inline auto
 PopCount() -> int
 {
-  return pop_count.load();
+  return PopCounter().load();
 }
 
 inline auto
 TrackPush() -> void
 {
-  push_count.fetch_add(1);
+  PushCounter().fetch_add(1);
 }
 
 inline auto
 TrackPop() -> void
 {
-  pop_count.fetch_add(1);
+  PopCounter().fetch_add(1);
 }
 
 inline auto

@@ -69,14 +69,14 @@ class MetricsRegistry {
   prometheus::Gauge*
       queue_size_gauge;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
 
-  prometheus::Gauge* system_cpu_usage_percent{
-      nullptr};  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Family<prometheus::Gauge>* gpu_utilization_family{
-      nullptr};  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family{
-      nullptr};  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family{
-      nullptr};  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
+  prometheus::Gauge* system_cpu_usage_percent{nullptr};
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
+  prometheus::Family<prometheus::Gauge>* gpu_utilization_family{nullptr};
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
+  prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family{nullptr};
+  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
+  prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family{nullptr};
 
   void run_sampling_request_nb();
   void request_stop();

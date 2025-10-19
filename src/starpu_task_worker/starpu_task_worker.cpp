@@ -118,8 +118,7 @@ run_with_logged_exceptions(
   catch (const std::bad_alloc& e) {
     log_error(std::string(messages.context_prefix) + e.what());
   }
-  catch (
-      ...) {  // NOSONAR: required to log non-std exceptions thrown by callbacks
+  catch (...) {
     log_error(std::string(messages.unknown_message));
   }
 }
