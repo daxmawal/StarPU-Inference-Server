@@ -46,7 +46,7 @@ struct DeviceInfo {
 
 struct ModelPointers {
   torch::jit::script::Module* model_cpu = nullptr;
-  std::vector<torch::jit::script::Module*> models_gpu{};
+  std::vector<torch::jit::script::Module*> models_gpu;
   size_t num_models_gpu = 0;
 };
 

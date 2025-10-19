@@ -55,12 +55,12 @@ class StarPUSetup {
   auto get_codelet() -> struct starpu_codelet*;
 
   auto input_pool() -> InputSlotPool& { return *input_pool_; }
-  [[nodiscard]] bool has_input_pool() const
+  [[nodiscard]] auto has_input_pool() const -> bool
   {
     return static_cast<bool>(input_pool_);
   }
   auto output_pool() -> OutputSlotPool& { return *output_pool_; }
-  [[nodiscard]] bool has_output_pool() const
+  [[nodiscard]] auto has_output_pool() const -> bool
   {
     return static_cast<bool>(output_pool_);
   }
