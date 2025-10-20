@@ -1,4 +1,4 @@
-#StarPU Inference Server Docs
+# StarPU Inference Server Docs
 
 This directory collects the documentation needed to install, run, and tune the StarPU Inference Server.
 

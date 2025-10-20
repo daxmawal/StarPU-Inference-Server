@@ -84,7 +84,8 @@ cmake --version
 ```bash
 LIBTORCH_VERSION=2.2.2
 LIBTORCH_CUDA=cu118
-wget https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip -O /tmp/libtorch.zip
+wget https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip \
+  -O /tmp/libtorch.zip
 unzip /tmp/libtorch.zip -d "$INSTALL_DIR"
 rm /tmp/libtorch.zip
 ```

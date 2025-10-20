@@ -136,7 +136,7 @@
     "print": "cpp",
     "ios": "cpp",
     "numeric": "cpp",
-    "*.md": "cpp"
+    "*.md": "markdown"
   },
   "[proto3]": {
     "editor.insertSpaces": true,
