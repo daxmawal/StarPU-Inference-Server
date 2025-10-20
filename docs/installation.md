@@ -1,94 +1,274 @@
-<!--# Installation Guide
+# Installation Guide
 
-This guide describes how to prepare a development environment for the
-StarPU Inference Server.
+This guide explains how to install and build **StarPU Inference Server** natively
+on a Linux host. If you prefer a container-based workflow, follow
+`docs/installation-docker.md`.
 
-## Prerequisites
+## Tested environment
 
-StarPU Inference Server is built with CMake and a modern C++ toolchain.
-Before configuring the project, install the following base tools:
+- Ubuntu 22.04 LTS
+- CUDA 11.8
+- GCC 13
+- LibTorch 2.2.2 (cu118)
 
-- CMake 3.28 or newer (required by `cmake_minimum_required`).
-- A C++23-capable compiler (GCC 13+, Clang 16+, or MSVC 19.36+).
-- Git and standard build utilities (`build-essential` on Debian/Ubuntu).
+## Hardware and software requirements
 
-### Core Runtime Dependencies
+- NVIDIA GPU with a driver that supports CUDA 11.8 (default build targets
+  compute capability 8.0 and 8.6, adjust if needed).
+- At least 16 GB RAM while building large C++ dependencies (Protobuf, gRPC,
+  StarPU).
+- Around 12 GB of free disk space for third-party installs plus the build tree.
+- Standard development tools (`git`, `cmake`, `gcc`, `ninja` or `make`).
+- Optional: NVML headers (`libnvidia-ml-dev`) to enable GPU metrics.
 
-The top-level `CMakeLists.txt` requests several packages via
-`find_package`. Install these libraries with your system package manager
-or build them from source:
+> **Note:** the commands below assume Ubuntu 22.04. Adapt package names if you
+> are using another distribution.
 
-| Library | Purpose | Notes |
-| --- | --- | --- |
-| [StarPU](https://starpu.gitlabpages.inria.fr/) | Heterogeneous task scheduling runtime | Provides CPU/GPU scheduling backend. |
-| [LibTorch](https://pytorch.org/cppdocs/installing.html) | PyTorch C++ API | Pick archive for your CUDA toolkit or CPU-only. |
-| [Protobuf](https://github.com/protocolbuffers/protobuf) | Serialization layer for the gRPC API | gRPC requires version 3.21+. |
-| [gRPC](https://grpc.io/docs/languages/cpp/quickstart/) | Remote procedure call framework | Install with CMake config packages enabled. |
-| [Abseil](https://abseil.io/) | Utility library used by gRPC | Available via most package managers. |
-| [utf8_range](https://github.com/protocolbuffers/utf8_range) | UTF-8 validation helper used by gRPC | Typically installed with gRPC. |
-| CUDA Toolkit (optional) | Enables GPU execution and NVTX tracing | Detected automatically if available. |
-| NVIDIA NVML (optional) | GPU telemetry for Prometheus metrics | Optional; metrics degrade gracefully if missing. |
+---
 
-> **Tip:** When using the prebuilt LibTorch archive, pass its `share/cmake`
-> directory to CMake through `-DCMAKE_PREFIX_PATH=/path/to/libtorch`.
+## 1. Prepare the environment
 
-### Ubuntu 22.04 Example
-
-The following commands install the required system packages on Ubuntu 22.04:
+Install dependencies into a dedicated prefix to keep the system clean:
 
 ```bash
-sudo apt update
-sudo apt install build-essential cmake ninja-build git pkg-config \
-    libprotobuf-dev protobuf-compiler-grpc libgrpc++-dev \
-    libabsl-dev libstarpu-dev libutf8-range-dev
+export INSTALL_DIR="$HOME/Install"
+export STARPU_DIR="$INSTALL_DIR/starpu"
+export CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/grpc:$INSTALL_DIR/utf8_range:$INSTALL_DIR/libtorch:$STARPU_DIR"
+export LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export Protobuf_DIR="$INSTALL_DIR/protobuf/lib/cmake/protobuf"
+export Protobuf_PROTOC_EXECUTABLE="$INSTALL_DIR/protobuf/bin/protoc"
+mkdir -p "$INSTALL_DIR"
 ```
 
-Then download the LibTorch archive and extract it, e.g.:
+Append these exports to `~/.bashrc` (or the shell profile you use) so they are
+available in future sessions.
+
+## 2. Install system packages
 
 ```bash
-wget https://download.pytorch.org/libtorch/cu121/libtorch-cxx11-abi-shared-with-deps-2.2.0%2Bcu121.zip
-unzip libtorch-cxx11-abi-shared-with-deps-2.2.0+cu121.zip
+sudo apt-get update
+sudo apt-get install -y \
+  autoconf automake build-essential git pkg-config \
+  libfxt-dev libgtest-dev libhwloc-dev libltdl-dev libssl-dev \
+  libtool libtool-bin m4 ninja-build unzip
 ```
 
-Adjust the URL for your CUDA version or use the CPU-only package if you
-plan to run on CPUs only.
+For GPU telemetry via NVML, also install:
 
-## Configure and Build
+```bash
+sudo apt-get install -y nvidia-cuda-toolkit libnvidia-ml-dev
+```
 
-1. Configure a build directory:
+## 3. Install GCC 13
 
-   ```bash
-   cmake -S . -B build -GNinja \
-       -DCMAKE_PREFIX_PATH=$PWD/libtorch \
-       -DCMAKE_BUILD_TYPE=Release
-   ```
+```bash
+sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+sudo apt-get update
+sudo apt-get install -y g++-13
+sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
+sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++-13 100
+```
 
-2. Build the `starpu_server` executable:
+## 4. Install CMake >= 3.28
 
-   ```bash
-   cmake --build build
-   ```
+```bash
+CMAKE_VERSION=3.28.3
+wget https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz -O /tmp/cmake.tar.gz
+sudo tar -C /usr/local --strip-components=1 -xz -f /tmp/cmake.tar.gz
+rm /tmp/cmake.tar.gz
+cmake --version
+```
 
-3. (Optional) Build unit tests:
+## 5. Install LibTorch (cu118)
 
-   ```bash
-   cmake -S . -B build -GNinja \
-       -DCMAKE_PREFIX_PATH=$PWD/libtorch \
-       -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-       -DBUILD_TESTS=ON
-   cmake --build build
-   ctest --test-dir build
-   ```
+```bash
+LIBTORCH_VERSION=2.2.2
+LIBTORCH_CUDA=cu118
+wget https://download.pytorch.org/libtorch/${LIBTORCH_CUDA}/libtorch-cxx11-abi-shared-with-deps-${LIBTORCH_VERSION}%2B${LIBTORCH_CUDA}.zip -O /tmp/libtorch.zip
+unzip /tmp/libtorch.zip -d "$INSTALL_DIR"
+rm /tmp/libtorch.zip
+```
 
-   Enabling `BUILD_TESTS` downloads GoogleTest via CMake `FetchContent`.
+Verify that `"$INSTALL_DIR/libtorch/lib"` is present in `LD_LIBRARY_PATH`.
 
-## Runtime Assets
+## 6. Build C++ dependencies
 
-Prepare the TorchScript model(s) referenced in your configuration file.
-They must be accessible on the filesystem when the server starts. The
-server validates that model paths exist during startup.
+The following steps mirror what the Docker image builds. Adjust `-j$(nproc)` if
+you prefer a different level of parallelism.
 
-## Next Steps
+### Abseil
 
-Continue with the [Usage Guide](usage.md) to learn how to launch the
-server and submit inference requests.-->
+```bash
+git clone --depth 1 --branch 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil
+cmake -S /tmp/abseil -B /tmp/abseil/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_STANDARD=17 \
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/absl" \
+  -DBUILD_SHARED_LIBS=OFF
+cmake --build /tmp/abseil/build -j"$(nproc)"
+cmake --install /tmp/abseil/build
+rm -rf /tmp/abseil
+```
+
+### Protobuf 25.3 (static) and utf8_range
+
+```bash
+git clone --depth 1 --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf
+git -C /tmp/protobuf submodule update --init --recursive
+cmake -S /tmp/protobuf -B /tmp/protobuf/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/protobuf" \
+  -Dprotobuf_BUILD_SHARED_LIBS=OFF \
+  -Dprotobuf_BUILD_TESTS=OFF \
+  -Dprotobuf_ABSL_PROVIDER=package \
+  -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl"
+cmake --build /tmp/protobuf/build -j"$(nproc)"
+cmake --install /tmp/protobuf/build
+rm -rf /tmp/protobuf
+
+git clone --depth 1 https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range
+cmake -S /tmp/utf8_range -B /tmp/utf8_range/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/utf8_range" \
+  -DBUILD_SHARED_LIBS=OFF \
+  -Dutf8_range_ENABLE_TESTS=OFF \
+  -DBUILD_TESTING=OFF
+cmake --build /tmp/utf8_range/build -j"$(nproc)"
+cmake --install /tmp/utf8_range/build
+rm -rf /tmp/utf8_range
+```
+
+### gRPC 1.59.0
+
+```bash
+git clone --depth 1 --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc
+git -C /tmp/grpc submodule update --init --recursive
+cmake -S /tmp/grpc -B /tmp/grpc/cmake/build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/grpc" \
+  -DgRPC_INSTALL=ON \
+  -DgRPC_BUILD_TESTS=OFF \
+  -DgRPC_PROTOBUF_PROVIDER=package \
+  -DgRPC_ABSL_PROVIDER=package \
+  -DgRPC_CARES_PROVIDER=module \
+  -DgRPC_RE2_PROVIDER=module \
+  -DgRPC_SSL_PROVIDER=module \
+  -DgRPC_ZLIB_PROVIDER=module \
+  -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl"
+cmake --build /tmp/grpc/cmake/build --target install -j"$(nproc)"
+rm -rf /tmp/grpc
+```
+
+### StarPU 1.4.8 (with CUDA)
+
+```bash
+STARPU_VERSION=1.4.8
+mkdir -p /tmp/starpu
+wget https://gitlab.inria.fr/starpu/starpu/-/archive/starpu-${STARPU_VERSION}/starpu-starpu-${STARPU_VERSION}.tar.gz -O /tmp/starpu.tar.gz
+tar -xzf /tmp/starpu.tar.gz -C /tmp/starpu --strip-components=1
+pushd /tmp/starpu
+./autogen.sh
+./configure \
+  --prefix="$STARPU_DIR" \
+  --enable-tracing \
+  --with-fxt \
+  --disable-hip \
+  --disable-opencl \
+  --disable-mpi \
+  --enable-cuda \
+  --disable-fortran \
+  --disable-openmp
+make -j"$(nproc)"
+make install
+popd
+rm -rf /tmp/starpu /tmp/starpu.tar.gz
+```
+
+## 7. Sanity checks
+
+- `nvcc --version` should report CUDA 11.8 (or the version you target).
+- `cmake --version` and `g++ --version` should point to the recent toolchain.
+- Optionally validate CUDA availability through LibTorch with a short Python
+  snippet if you also use the Python stack.
+
+## 8. Build StarPU Inference Server
+
+Clone the repository if needed:
+
+```bash
+git clone https://github.com/daxmawal/StarPU-Inference-Server.git
+cd StarPU-Inference-Server
+```
+
+Configure and compile (tune `CMAKE_CUDA_ARCHITECTURES` for your GPU):
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DCMAKE_CUDA_ARCHITECTURES="80;86" \
+  -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
+  -DProtobuf_DIR="$Protobuf_DIR" \
+  -DProtobuf_PROTOC_EXECUTABLE="$Protobuf_PROTOC_EXECUTABLE" \
+  -DProtobuf_USE_STATIC_LIBS=ON
+
+cmake --build build -j"$(nproc)"
+```
+
+The main executables are emitted under `build/`:
+
+- `grpc_server`: gRPC service combining StarPU and LibTorch.
+- `grpc_client_example`: sample CLI client.
+- `starpu_server`: experimental CLI entry point.
+
+## 9. Optional: build and run tests
+
+```bash
+cmake -S . -B build \
+  -DBUILD_TESTS=ON \
+  -DENABLE_SANITIZERS=OFF \
+  -DENABLE_COVERAGE=OFF \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j"$(nproc)"
+ctest --test-dir build --output-on-failure
+```
+
+Tests link against the static `gtest` binaries provided by the system and reuse
+the dependencies you installed above.
+
+## 10. Cleanup
+
+Third-party libraries live under `$INSTALL_DIR`. Remove that directory (or the
+temporary build folders in `/tmp`) when you need to reclaim disk space, and
+update your shell configuration if you move the installation.
+
+---
+
+## Troubleshooting
+
+- **LibTorch not found:** double-check `CMAKE_PREFIX_PATH` and `LD_LIBRARY_PATH`.
+  Ensure you downloaded the `cxx11-abi` archive.
+- **Missing Protobuf symbols:** confirm that you built Protobuf statically
+  (`-Dprotobuf_BUILD_SHARED_LIBS=OFF`) and that `Protobuf_DIR` points to the
+  install tree.
+- **StarPU cannot find CUDA:** verify that `nvcc` is in `PATH` and the StarPU
+  configure step included `--enable-cuda`.
+- **GPU metrics disabled:** install `libnvidia-ml-dev` to provide NVML headers,
+  then rebuild.
+- **Stale FetchContent dependencies:** delete `build/_deps` to force a fresh
+  checkout when CMake caches become inconsistent.
+
+---
+
+## Additional resources
+
+- [StarPU documentation](https://starpu.gitlabpages.inria.fr/)
+- [LibTorch C++ API](https://pytorch.org/cppdocs/)
+- [gRPC C++ quick start](https://grpc.io/docs/languages/cpp/quickstart/)
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
+
+Once the installation works, continue with `docs/configuration.md` and
+`docs/usage.md` (both under construction) to prepare models and configure the
+server.
