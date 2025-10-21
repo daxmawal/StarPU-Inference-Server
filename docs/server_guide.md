@@ -97,7 +97,7 @@ pool_size: 12
 
 Update `model:` to match the absolute path of your TorchScript model and adjust
 the tensor shapes to the sequence length and hidden size exported by your
-training pipeline. **The sample assumes batches of size 1 and lets StarPU expand
+training pipeline. **The sample assumes batches of size 1 and lets the runtime expand
 to `max_batch_size` at runtime.**
 
 ## 4. Launch the inference server
