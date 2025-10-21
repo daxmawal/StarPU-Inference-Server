@@ -30,7 +30,7 @@ configuration is written in YAML and must include the following required keys:
 | `outputs` | Sequence describing each output tensor; every element must define `name`, `data_type`, and `dims`. |
 | `max_batch_size` | Upper bound for per-request batch size. |
 | `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. |
-| `pool_size` | Number of reusable input/output buffer slots to pre-allocate per GPU. |
+| `pool_size` | Number of reusable I/O buffer slots to preallocate per GPU. A value of x allocates x I/O slots per device. |
 
 Each tensor entry under `inputs` or `outputs` must provide:
 
@@ -49,7 +49,7 @@ Optional keys unlock batching, logging, and runtime controls:
 | Key | Description | Default |
 | --- | --- | --- |
 | `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
-| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). | |
+| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). | unset |
 | `use_cpu` | Force CPU execution (`true`/`false`). | `true` |
 | `use_cuda` | Force CUDA execution (`true`/`false`). | `false` |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
@@ -76,7 +76,7 @@ inputs:
   - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }
 outputs:
   - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
-verbosity: "4"
+verbosity: 4
 address: "127.0.0.1:50051"
 metrics_port: 9100
 max_batch_size: 32
