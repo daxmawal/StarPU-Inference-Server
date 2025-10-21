@@ -9,13 +9,14 @@ YAML configuration files it consumes. It assumes you already followed
 From the build directory :
 
 ```bash
-mkdir buil && cd build
+mkdir build && cd build
 cmake ..
 make -j"$(nproc)"
 ```
 
 - `grpc_server` is the executable that exposes the gRPC API.
 - `grpc_client_example` is an example CLI client useful for smoke tests.
+- To write your own client in C++, python, etc, see client_guide.md.
 
 ## 2. Prepare a model configuration
 
