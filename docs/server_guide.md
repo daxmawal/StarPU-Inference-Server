@@ -40,21 +40,11 @@ Optional keys unlock batching, logging, and runtime controls:
 | `use_cuda` | Force CUDA execution (`true`/`false`). |
 | `address` | gRPC listen address (host:port). |
 | `metrics_port` | Port for the Prometheus metrics endpoint. |
-| `request_nb` | Total inference requests to enqueue before exiting (benchmark helper). |
-| `delay_us` | Microseconds to sleep between enqueued requests. |
 | `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. |
 | `max_batch_size` | Upper bound for per-request batch size. |
 | `dynamic_batching` | Enable dynamic batching (`true`/`false`). |
 | `input_slots` | Number of reusable input buffers to pre-allocate. |
-| `max_message_bytes` | gRPC max message size in bytes (auto-computed if omitted). |
-| `pregen_inputs` | Random input samples to pre-generate for steady-state benchmarking. |
-| `warmup_pregen_inputs` | Random input samples to pre-generate for warmup. |
-| `warmup_request_nb` | Inference requests issued per CUDA device during warmup. |
-| `seed` | Seed for synthetic input generation (integer >= 0). |
-| `rtol` | Relative tolerance used when validating outputs. |
-| `atol` | Absolute tolerance used when validating outputs. |
-| `validate_results` | Toggle result validation (`true`/`false`). |
-| `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). |
+| `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`) use this only for debuging. |
 
 ## 3. Example: `models/bert.yml`
 
