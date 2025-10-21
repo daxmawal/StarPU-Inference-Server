@@ -49,11 +49,18 @@ Optional keys unlock batching, logging, and runtime controls:
 | Key | Description | Default |
 | --- | --- | --- |
 | `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
-| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). | unset |
-| `use_cpu` | Force CPU execution (`true`/`false`). | `true` |
-| `use_cuda` | Force CUDA execution (`true`/`false`). | `false` |
+| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). When `use_cuda` is `true`, defaults to `[0]` unless overridden. | unset / `[0]` |
+| `use_cpu` | Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution. | `true` |
+| `use_cuda` | Enable GPU workers. Requires at least one device (defaults to `[0]` if `device_ids` is empty). | `false` |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
 | `metrics_port` | Port for the Prometheus metrics endpoint. | `9100` |
+
+Behaviour of `use_cpu`, `use_cuda`, and `device_ids`:
+
+- `use_cpu: true`, `use_cuda: true` → StarPU runs heterogeneously on CPU and GPU workers.
+- Exactly one of them `true` → pipeline is pinned to the selected backend (CPU or GPU only).
+- Both `false` → configuration is invalid; at least one execution backend must be enabled.
+- If `use_cuda` is `true` and `device_ids` is empty, device `0` is selected automatically.
 
 Optional keys for debugging:
 
