@@ -32,11 +32,11 @@ base_model_yaml() -> std::string
 {
   return std::string{
       "model: {{MODEL_PATH}}\n"
-      "input:\n"
+      "inputs:\n"
       "  - name: in\n"
       "    dims: [1]\n"
       "    data_type: float32\n"
-      "output:\n"
+      "outputs:\n"
       "  - name: out\n"
       "    dims: [1]\n"
       "    data_type: float32\n"};
@@ -75,7 +75,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "NegativeDelaySetsValidFalse",
         [] {
           auto yaml = base_model_yaml();
-          yaml += "delay: -10\n";
+          yaml += "delay_us: -10\n";
           return yaml;
         }(),
         std::nullopt},
@@ -116,11 +116,11 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [-1, 3]\n";
           yaml += "    data_type: float32\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
@@ -132,11 +132,11 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [0, 3]\n";
           yaml += "    data_type: float32\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
@@ -148,13 +148,13 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::ostringstream yaml;
           yaml << "model: {{MODEL_PATH}}\n";
-          yaml << "input:\n";
+          yaml << "inputs:\n";
           yaml << "  - name: in\n";
           yaml << "    dims: [1, "
                << static_cast<long long>(std::numeric_limits<int>::max()) + 1
                << "]\n";
           yaml << "    data_type: float32\n";
-          yaml << "output:\n";
+          yaml << "outputs:\n";
           yaml << "  - name: out\n";
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
@@ -166,10 +166,10 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    data_type: float32\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
@@ -181,10 +181,10 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [1]\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
@@ -198,11 +198,11 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "MissingModelSetsValidFalse",
         [] {
           std::string yaml;
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
@@ -217,7 +217,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
@@ -229,7 +229,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
@@ -241,13 +241,13 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::ostringstream yaml;
           yaml << "model: {{MODEL_PATH}}\n";
-          yaml << "input:\n";
+          yaml << "inputs:\n";
           for (std::size_t i = 0; i <= kMaxInputs; ++i) {
             yaml << "  - name: in" << i << "\n";
             yaml << "    dims: [1]\n";
             yaml << "    data_type: float32\n";
           }
-          yaml << "output:\n";
+          yaml << "outputs:\n";
           yaml << "  - name: out\n";
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
@@ -259,7 +259,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::ostringstream yaml;
           yaml << "model: {{MODEL_PATH}}\n";
-          yaml << "input:\n";
+          yaml << "inputs:\n";
           yaml << "  - name: in\n";
           yaml << "    dims: [";
           for (std::size_t i = 0; i <= kMaxDims; ++i) {
@@ -270,7 +270,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           }
           yaml << "]\n";
           yaml << "    data_type: float32\n";
-          yaml << "output:\n";
+          yaml << "outputs:\n";
           yaml << "  - name: out\n";
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
@@ -341,11 +341,11 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "device_ids: [0, 1]\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1, 3, 224, 224]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1, 1000]\n";
   yaml << "    data_type: float32\n";
@@ -401,11 +401,11 @@ TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  name: bogus\n";
   yaml << "  dims: [1]\n";
   yaml << "  data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -433,11 +433,11 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -469,11 +469,11 @@ TEST(ConfigLoader, ParsesVerboseAlias)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -498,11 +498,11 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   std::ostringstream yaml;
   yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -528,11 +528,11 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -560,11 +560,11 @@ TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -602,11 +602,11 @@ TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -645,11 +645,11 @@ TEST(ConfigLoader, InputSlotsRejectsNonPositive)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -677,15 +677,15 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "delay: 15\n";
+  yaml << "delay_us: 15\n";
   yaml << "address: 127.0.0.1:50051\n";
 
   const auto tmp =
@@ -702,11 +702,11 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
 TEST(ConfigLoader, MissingModelSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
-input:
+inputs:
   - name: in
     dims: [1]
     data_type: float32
-output:
+outputs:
   - name: out
     dims: [1]
     data_type: float32
@@ -725,11 +725,11 @@ TEST(ConfigLoader, MissingInputSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
 model: model.pt
-output:
+outputs:
   - name: out
     dims: [1]
     data_type: float32
-delay: -10
+delay_us: -10
 )";
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_no_input_skip.yaml";
@@ -744,7 +744,7 @@ TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
 model: model.pt
-input:
+inputs:
   - name: in
     dims: [1]
     data_type: float32
@@ -769,11 +769,11 @@ TEST(
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: huge\n";
   yaml << "    dims: [2147483647, 2147483647, 2147483647]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
@@ -811,11 +811,11 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: complex_input\n";
   yaml << "    dims: [1, 1]\n";
   yaml << "    data_type: complex64\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";

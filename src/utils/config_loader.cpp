@@ -55,7 +55,7 @@ parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
 auto
 validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 {
-  const std::vector<std::string> required_keys{"model", "input", "output"};
+  const std::vector<std::string> required_keys{"model", "inputs", "outputs"};
   for (const auto& key : required_keys) {
     if (!root[key]) {
       log_error(std::string("Missing required key: ") + key);
@@ -77,9 +77,9 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "model",
           "request_nb",
           "device_ids",
-          "input",
-          "output",
-          "delay",
+          "inputs",
+          "outputs",
+          "delay_us",
           "batch_coalesce_timeout_ms",
           "address",
           "metrics_port",
@@ -160,26 +160,26 @@ parse_request_nb_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
 void
 parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["input"]) {
+  if (root["inputs"]) {
     cfg.models.resize(1);
     cfg.models[0].inputs = parse_tensor_nodes(
-        root["input"], cfg.limits.max_inputs, cfg.limits.max_dims);
+        root["inputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
-  if (root["output"]) {
+  if (root["outputs"]) {
     cfg.models.resize(1);
     cfg.models[0].outputs = parse_tensor_nodes(
-        root["output"], cfg.limits.max_inputs, cfg.limits.max_dims);
+        root["outputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
 }
 
 void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["delay"]) {
-    cfg.batching.delay_us = root["delay"].as<int>();
+  if (root["delay_us"]) {
+    cfg.batching.delay_us = root["delay_us"].as<int>();
     if (cfg.batching.delay_us < 0) {
       cfg.valid = false;
-      throw std::invalid_argument("delay must be >= 0");
+      throw std::invalid_argument("delay_us must be >= 0");
     }
   }
   if (root["batch_coalesce_timeout_ms"]) {
