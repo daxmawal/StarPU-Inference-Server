@@ -55,7 +55,9 @@ parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
 auto
 validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 {
-  const std::vector<std::string> required_keys{"model", "inputs", "outputs"};
+  const std::vector<std::string> required_keys{
+      "model",     "inputs",         "outputs",
+      "pool_size", "max_batch_size", "batch_coalesce_timeout_ms"};
   for (const auto& key : required_keys) {
     if (!root[key]) {
       log_error(std::string("Missing required key: ") + key);

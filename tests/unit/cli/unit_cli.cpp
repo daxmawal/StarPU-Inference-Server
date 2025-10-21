@@ -74,6 +74,17 @@ TEST(ArgsParser_Unit, ParsesPoolSize)
   EXPECT_EQ(opts.batching.pool_size, 4);
 }
 
+TEST(ArgsParser_Unit, ParsesLegacyInputSlotsFlag)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{"program", "--model",       model.c_str(),
+                                "--shape", "1x1",           "--types",
+                                "float",   "--input-slots", "5"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_EQ(opts.batching.pool_size, 5);
+}
+
 TEST(ArgsParser_Unit, ParsesAllOptions)
 {
   const auto& model = test_model_path();

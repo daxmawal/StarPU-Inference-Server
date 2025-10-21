@@ -21,13 +21,17 @@ make -j"$(nproc)"
 ## 2. Prepare a model configuration
 
 The server loads exactly one TorchScript model per configuration file. The
-configuration is written in YAML and must include the following required keys:
+configuration is written in YAML and must include the following required keys
+to define model I/O and batching behaviour explicitly:
 
 | Key | Description |
 | --- | --- |
 | `model` | Absolute or relative path to the TorchScript `.pt`/`.ts` file. |
 | `inputs` | Sequence describing each input tensor (name, data type, dims). |
 | `outputs` | Sequence describing each output tensor. |
+| `max_batch_size` | Upper bound for per-request batch size. |
+| `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. |
+| `pool_size` | Number of reusable input/output buffer slots to pre-allocate per GPU. |
 
 Optional keys unlock batching, logging, and runtime controls:
 
@@ -39,9 +43,6 @@ Optional keys unlock batching, logging, and runtime controls:
 | `use_cuda` | Force CUDA execution (`true`/`false`). Defaults to `false`. |
 | `address` | gRPC listen address (host:port). Defaults to `127.0.0.1:50051`. |
 | `metrics_port` | Port for the Prometheus metrics endpoint. Defaults to `9100`. |
-| `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. Defaults to `0`. |
-| `max_batch_size` | Upper bound for per-request batch size. Defaults to `1`. |
-| `pool_size` | Number of reusable input/output buffer slots to pre-allocate per GPU. |
 
 Optional keys for debugging:
 
