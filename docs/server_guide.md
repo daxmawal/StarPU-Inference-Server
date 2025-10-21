@@ -35,7 +35,13 @@ configuration is written in YAML and must include the following required keys:
 Each tensor entry under `inputs` or `outputs` must provide:
 
 - `name`: unique identifier.
-- `data_type`: tensor element type (see `models/*.yml` for accepted values).
+- `data_type`: tensor element type. Supported values (see `src/proto/model_config.proto`) are:
+  - `TYPE_BOOL`
+  - `TYPE_UINT8`, `TYPE_UINT16`, `TYPE_UINT32`, `TYPE_UINT64`
+  - `TYPE_INT8`, `TYPE_INT16`, `TYPE_INT32`, `TYPE_INT64`
+  - `TYPE_FP16`, `TYPE_FP32`, `TYPE_FP64`
+  - `TYPE_BF16`
+  - `TYPE_STRING`
 - `dims`: positive integer dimensions (batch dimension first).
 
 Optional keys unlock batching, logging, and runtime controls:
