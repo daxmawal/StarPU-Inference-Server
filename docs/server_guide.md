@@ -6,17 +6,17 @@ YAML configuration files it consumes. It assumes you already followed
 
 ## 1. Build the server
 
-From the build directory :
+From the project root:
 
 ```bash
-mkdir build && cd build
-cmake ..
+mkdir -p build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j"$(nproc)"
 ```
 
 - `grpc_server` is the executable that exposes the gRPC API.
-- `grpc_client_example` is an example CLI client useful for smoke tests.
-- To write your own client in C++, python, etc, see client_guide.md.
+- `grpc_client_example` is an example client useful for smoke tests.
+- To write your own client in C++, Python, etc, see client_guide.md.
 
 ## 2. Prepare a model configuration
 
@@ -25,36 +25,36 @@ configuration is written in YAML and must include the following required keys:
 
 | Key | Description |
 | --- | --- |
-| `model` | Absolute or relative path to the TorchScript `.pt`/`.ts` file. |
-| `input` | Sequence describing each input tensor (name, data type, dims). |
-| `output` | Sequence describing each output tensor. |
+| model | Absolute or relative path to the TorchScript .pt/.ts file. |
+| inputs | Sequence describing each input tensor (name, data type, [N, C, H, W] or [N, L, D] dims). |
+| outputs | Sequence describing each output tensor. |
 
 Optional keys unlock batching, logging, and runtime controls:
 
 | Key | Description |
 | --- | --- |
-| `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). |
-| `verbosity` / `verbose` | Log verbosity level (`0` silent .. `4` trace). |
-| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). Enables CUDA when non-empty. |
-| `use_cpu` | Force CPU execution (`true`/`false`). |
-| `use_cuda` | Force CUDA execution (`true`/`false`). |
-| `address` | gRPC listen address (host:port). |
-| `metrics_port` | Port for the Prometheus metrics endpoint. |
-| `request_nb` | Total inference requests to enqueue before exiting (benchmark helper). |
-| `delay` | Microseconds to sleep between enqueued requests. |
-| `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. |
-| `max_batch_size` | Upper bound for per-request batch size. |
-| `dynamic_batching` | Enable dynamic batching (`true`/`false`). |
-| `input_slots` | Number of reusable input buffers to pre-allocate. |
-| `max_message_bytes` | gRPC max message size in bytes (auto-computed if omitted). |
-| `pregen_inputs` | Random input samples to pre-generate for steady-state benchmarking. |
-| `warmup_pregen_inputs` | Random input samples to pre-generate for warmup. |
-| `warmup_request_nb` | Inference requests issued per CUDA device during warmup. |
-| `seed` | Seed for synthetic input generation (integer >= 0). |
-| `rtol` | Relative tolerance used when validating outputs. |
-| `atol` | Absolute tolerance used when validating outputs. |
-| `validate_results` | Toggle result validation (`true`/`false`). |
-| `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). |
+| scheduler | StarPU scheduler name (e.g., lws, eager, heft). |
+| verbosity | Log verbosity level (`0` silent .. `4` trace). |
+| device_ids | GPU device IDs to bind (e.g., `[0,1]`). Enables CUDA when non-empty. |
+| use_cpu | Force CPU execution (`true`/`false`). |
+| use_cuda | Force CUDA execution (`true`/`false`). |
+| address | gRPC listen address (host:port). |
+| metrics_port | Port for the Prometheus metrics endpoint. |
+| request_nb | Total inference requests to enqueue before exiting (benchmark helper). |
+| delay_us | Microseconds to sleep between enqueued requests. |
+| batch_coalesce_timeout_ms | Milliseconds to wait before flushing a dynamic batch. |
+| max_batch_size | Upper bound for per-request batch size. |
+| dynamic_batching | Enable dynamic batching (`true`/`false`). |
+| input_slots | Number of reusable input buffers to pre-allocate. |
+| max_message_bytes | gRPC max message size in bytes (auto-computed if omitted). |
+| pregen_inputs | Random input samples to pre-generate for steady-state benchmarking. |
+| warmup_pregen_inputs | Random input samples to pre-generate for warmup. |
+| warmup_request_nb | Inference requests issued per CUDA device during warmup. |
+| seed | Seed for synthetic input generation (integer >= 0). |
+| rtol | Relative tolerance used when validating outputs. |
+| atol | Absolute tolerance used when validating outputs. |
+| validate_results | Toggle result validation (`true`/`false`). |
+| sync | Run the StarPU worker pool in synchronous mode (`true`/`false`). |
 
 ## 3. Example: `models/bert.yml`
 
