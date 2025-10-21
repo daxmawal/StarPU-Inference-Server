@@ -21,17 +21,22 @@ make -j"$(nproc)"
 ## 2. Prepare a model configuration
 
 The server loads exactly one TorchScript model per configuration file. The
-configuration is written in YAML and must include the following required keys
-to define model I/O and batching behaviour explicitly:
+configuration is written in YAML and must include the following required keys:
 
 | Key | Description |
 | --- | --- |
 | `model` | Absolute or relative path to the TorchScript `.pt`/`.ts` file. |
-| `inputs` | Sequence describing each input tensor (name, data type, dims). |
-| `outputs` | Sequence describing each output tensor. |
+| `inputs` | Sequence describing each input tensor; every element must define `name`, `data_type`, and `dims`. |
+| `outputs` | Sequence describing each output tensor; every element must define `name`, `data_type`, and `dims`. |
 | `max_batch_size` | Upper bound for per-request batch size. |
 | `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. |
 | `pool_size` | Number of reusable input/output buffer slots to pre-allocate per GPU. |
+
+Each tensor entry under `inputs` or `outputs` must provide:
+
+- `name`: unique identifier.
+- `data_type`: tensor element type (see `models/*.yml` for accepted values).
+- `dims`: positive integer dimensions (batch dimension first).
 
 Optional keys unlock batching, logging, and runtime controls:
 
