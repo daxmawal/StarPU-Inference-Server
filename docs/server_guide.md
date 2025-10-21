@@ -49,13 +49,13 @@ Optional keys unlock batching, logging, and runtime controls:
 | Key | Description | Default |
 | --- | --- | --- |
 | `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
-| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). When `use_cuda` is `true`, defaults to `[0]` unless overridden. | unset / `[0]` |
+| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). | When `use_cuda` is `true`, defaults to `[0]` unless overridden. |
 | `use_cpu` | Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution. | `true` |
 | `use_cuda` | Enable GPU workers. Requires at least one device (defaults to `[0]` if `device_ids` is empty). | `false` |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
 | `metrics_port` | Port for the Prometheus metrics endpoint. | `9100` |
 
-Behaviour of `use_cpu`, `use_cuda`, and `device_ids`:
+Behavior of `use_cpu`, `use_cuda`, and `device_ids`:
 
 - `use_cpu: true`, `use_cuda: true` → StarPU runs heterogeneously on CPU and GPU workers.
 - Exactly one of them `true` → pipeline is pinned to the selected backend (CPU or GPU only).
@@ -84,7 +84,7 @@ inputs:
 outputs:
   - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
 verbosity: 4
-address: "127.0.0.1:50051"
+address: 127.0.0.1:50051
 metrics_port: 9100
 max_batch_size: 32
 batch_coalesce_timeout_ms: 1000
