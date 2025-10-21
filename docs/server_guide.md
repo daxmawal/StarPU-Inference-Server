@@ -49,9 +49,9 @@ Optional keys unlock batching, logging, and runtime controls:
 | Key | Description | Default |
 | --- | --- | --- |
 | `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
-| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). | When `use_cuda` is `true`, defaults to `[0]` unless overridden. |
 | `use_cpu` | Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution. | `true` |
 | `use_cuda` | Enable GPU workers. Requires at least one device (defaults to `[0]` if `device_ids` is empty). | `false` |
+| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). | When `use_cuda` is `true`, defaults to `[0]` unless overridden. |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
 | `metrics_port` | Port for the Prometheus metrics endpoint. | `9100` |
 
