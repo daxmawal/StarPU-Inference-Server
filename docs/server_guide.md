@@ -33,18 +33,23 @@ Optional keys unlock batching, logging, and runtime controls:
 
 | Key | Description |
 | --- | --- |
-| `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). |
-| `verbosity` | Log verbosity level (`0` silent .. `4` trace). |
+| `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). Defaults to `lws`. |
 | `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). Enables CUDA when non-empty. |
-| `use_cpu` | Force CPU execution (`true`/`false`). |
-| `use_cuda` | Force CUDA execution (`true`/`false`). |
-| `address` | gRPC listen address (host:port). |
-| `metrics_port` | Port for the Prometheus metrics endpoint. |
-| `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. |
-| `max_batch_size` | Upper bound for per-request batch size. |
-| `dynamic_batching` | Enable dynamic batching (`true`/`false`). |
-| `input_slots` | Number of reusable input buffers to pre-allocate. |
-| `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`) use this only for debuging. |
+| `use_cpu` | Force CPU execution (`true`/`false`). Defaults to `true`. |
+| `use_cuda` | Force CUDA execution (`true`/`false`). Defaults to `false`. |
+| `address` | gRPC listen address (host:port). Defaults to `127.0.0.1:50051`. |
+| `metrics_port` | Port for the Prometheus metrics endpoint. Defaults to `9100`. |
+| `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. Defaults to `0`. |
+| `max_batch_size` | Upper bound for per-request batch size. Defaults to `1`. |
+| `pool_size` | Number of reusable input/output buffer slots to pre-allocate per GPU. |
+
+Optional keys for debugging:
+
+| Key | Description |
+| --- | --- |
+| `verbosity` | Log verbosity level (`0` silent .. `4` trace). Defaults to `0`. |
+| `dynamic_batching` | Enable dynamic batching (`true`/`false`). Defaults to `true`. |
+| `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). Defaults to `false`; debugging only. |
 
 ## 3. Example: `models/bert.yml`
 
@@ -60,7 +65,7 @@ inputs:
 outputs:
   - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
 verbosity: "4"
-address: "0.0.0.0:50051"
+address: "127.0.0.1:50051"
 metrics_port: 9100
 max_batch_size: 32
 batch_coalesce_timeout_ms: 1000
@@ -68,7 +73,7 @@ dynamic_batching: true
 sync: false
 use_cpu: true
 use_cuda: true
-input_slots: 12
+pool_size: 12
 ```
 
 Update `model:` to match the absolute path of your TorchScript model and adjust

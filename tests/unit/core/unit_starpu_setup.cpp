@@ -302,7 +302,7 @@ TEST_F(
     StarPUSetupInitStubTest, StarPUSetup_InputPoolInitFailureLogsAndPropagates)
 {
   starpu_server::RuntimeConfig opts;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig invalid_input;
   invalid_input.name = "invalid_input";
@@ -335,7 +335,7 @@ TEST_F(
     StarPUSetupInitStubTest, StarPUSetup_OutputPoolInitFailureLogsAndPropagates)
 {
   starpu_server::RuntimeConfig opts;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig invalid_output;
   invalid_output.name = "invalid_output";
@@ -371,7 +371,7 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = std::numeric_limits<int>::max();
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "large_input";
@@ -393,7 +393,7 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersNumelOverflowThrows)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = 5;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "numel_overflow_input";
@@ -485,7 +485,7 @@ TEST(InputSlotPool_Unit, NonPositiveDimensionThrows)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = 5;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "non_positive_dims";
@@ -518,7 +518,7 @@ TEST(InputSlotPool_Unit, DimensionProductOverflowThrows)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = 5;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "product_overflow_input";
@@ -588,7 +588,7 @@ TEST(InputSlotPool_Unit, TryAcquireEmptyPoolReturnsNullopt)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = 1;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "minimal_input";
@@ -873,7 +873,7 @@ TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = 1;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "failing_input";
@@ -936,7 +936,7 @@ TEST(InputSlotPool_Unit, PartialRegisterFailureResetsSlotState)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = 1;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig first_tensor;
   first_tensor.name = "first_input";
@@ -1024,7 +1024,7 @@ TEST(OutputSlotPool_Unit, RegisterFailureResetsSlotState)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = 1;
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "failing_output";
@@ -1096,7 +1096,7 @@ TEST(OutputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
 
   starpu_server::RuntimeConfig opts;
   opts.batching.max_batch_size = std::numeric_limits<int>::max();
-  opts.batching.input_slots = 1;
+  opts.batching.pool_size = 1;
 
   starpu_server::TensorConfig tensor;
   tensor.name = "large_output";

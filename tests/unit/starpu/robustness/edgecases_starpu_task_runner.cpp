@@ -83,7 +83,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
       "test", {make_tensor_config("input0", {3}, at::kFloat)},
       {make_tensor_config("output0", {3}, at::kFloat)});
 
-  reset_runner_with_model(model_config, /*input_slots=*/1);
+  reset_runner_with_model(model_config, /*pool_size=*/1);
 
   auto probe = starpu_server::make_callback_probe();
   auto job = make_job(

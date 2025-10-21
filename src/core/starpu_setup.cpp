@@ -112,7 +112,7 @@ initialize_input_pool(const RuntimeConfig& opts)
   }
 
   try {
-    return std::make_unique<InputSlotPool>(opts, opts.batching.input_slots);
+    return std::make_unique<InputSlotPool>(opts, opts.batching.pool_size);
   }
   catch (const std::exception& e) {
     log_error(std::format("Failed to initialize InputSlotPool: {}", e.what()));
@@ -129,7 +129,7 @@ initialize_output_pool(const RuntimeConfig& opts)
   }
 
   try {
-    return std::make_unique<OutputSlotPool>(opts, opts.batching.input_slots);
+    return std::make_unique<OutputSlotPool>(opts, opts.batching.pool_size);
   }
   catch (const std::exception& e) {
     log_error(

@@ -507,7 +507,7 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "max_message_bytes: 4096\n";
-  yaml << "input_slots: 3\n";
+  yaml << "pool_size: 3\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_slots.yaml";
@@ -517,7 +517,7 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.batching.max_message_bytes, 4096U);
-  EXPECT_EQ(cfg.batching.input_slots, 3);
+  EXPECT_EQ(cfg.batching.pool_size, 3);
 }
 
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
@@ -653,7 +653,7 @@ TEST(ConfigLoader, InputSlotsRejectsNonPositive)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "input_slots: 0\n";
+  yaml << "pool_size: 0\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_zero_slots.yaml";
@@ -663,7 +663,7 @@ TEST(ConfigLoader, InputSlotsRejectsNonPositive)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: input_slots must be > 0";
+      "Failed to load config: pool_size must be > 0";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);

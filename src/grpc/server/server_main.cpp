@@ -50,7 +50,7 @@ handle_program_arguments(std::span<char const* const> args)
     -> starpu_server::RuntimeConfig
 {
   const char* config_path = nullptr;
-  std::optional<int> input_slots_override;
+  std::optional<int> pool_size_override;
 
   auto remaining = args.subspan(1);
   auto require_value = [&](std::string_view flag) {
@@ -76,18 +76,18 @@ handle_program_arguments(std::span<char const* const> args)
       config_path = require_value(arg);
       continue;
     }
-    if (arg == "--input-slots" || arg == "--slots") {
+    if (arg == "--pool-size" || arg == "--input-slots" || arg == "--slots") {
       const char* value = require_value(arg);
       try {
         const int parsed = std::stoi(value);
         if (parsed <= 0) {
-          throw std::invalid_argument("input-slots must be > 0");
+          throw std::invalid_argument("pool-size must be > 0");
         }
-        input_slots_override = parsed;
+        pool_size_override = parsed;
       }
       catch (const std::exception& e) {
         starpu_server::log_fatal(
-            std::format("Invalid --input-slots value: {}\n", e.what()));
+            std::format("Invalid --pool-size value: {}\n", e.what()));
       }
       continue;
     }
@@ -111,12 +111,12 @@ handle_program_arguments(std::span<char const* const> args)
       cfg.verbosity,
       std::format("Request_nb      : {}", cfg.batching.request_nb));
 
-  if (input_slots_override.has_value()) {
-    cfg.batching.input_slots = *input_slots_override;
+  if (pool_size_override.has_value()) {
+    cfg.batching.pool_size = *pool_size_override;
     starpu_server::log_info(
         cfg.verbosity,
         std::format(
-            "Overriding input_slots from CLI: {}", cfg.batching.input_slots));
+            "Overriding pool_size from CLI: {}", cfg.batching.pool_size));
   }
 
   return cfg;

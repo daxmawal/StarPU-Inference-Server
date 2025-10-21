@@ -86,7 +86,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "max_message_bytes",
           "max_batch_size",
           "dynamic_batching",
-          "input_slots",
+          "pool_size",
           "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
@@ -223,10 +223,10 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
   if (root["dynamic_batching"]) {
     cfg.batching.dynamic_batching = root["dynamic_batching"].as<bool>();
   }
-  if (root["input_slots"]) {
-    cfg.batching.input_slots = root["input_slots"].as<int>();
-    if (cfg.batching.input_slots <= 0) {
-      throw std::invalid_argument("input_slots must be > 0");
+  if (root["pool_size"]) {
+    cfg.batching.pool_size = root["pool_size"].as<int>();
+    if (cfg.batching.pool_size <= 0) {
+      throw std::invalid_argument("pool_size must be > 0");
     }
   }
 }

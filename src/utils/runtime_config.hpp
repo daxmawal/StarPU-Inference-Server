@@ -82,13 +82,13 @@ struct RuntimeConfig {
     int delay_us = 0;
     int batch_coalesce_timeout_ms = 0;
     int max_batch_size = 1;
-    int input_slots = 0;
+    int pool_size = 0;
     std::size_t max_message_bytes = kDefaultMinMessageBytes;
     size_t pregen_inputs = kDefaultPregenInputs;
     size_t warmup_pregen_inputs = 2;
     int warmup_request_nb = 2;
     bool synchronous = false;
-    bool dynamic_batching = false;
+    bool dynamic_batching = true;
     bool seen_combined_input = false;
   };
 
@@ -106,11 +106,11 @@ struct RuntimeConfig {
 
   std::string scheduler = "lws";
   std::string config_path;
-  std::string server_address = "0.0.0.0:50051";
+  std::string server_address = "127.0.0.1:50051";
   int metrics_port = kDefaultMetricsPort;
 
   std::vector<ModelConfig> models;
-  VerbosityLevel verbosity = VerbosityLevel::Info;
+  VerbosityLevel verbosity = VerbosityLevel::Silent;
   DeviceSettings devices{};
   BatchingSettings batching{};
   ValidationSettings validation{};

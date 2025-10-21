@@ -92,7 +92,7 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
   }
 
   void reset_runner_with_model(
-      const starpu_server::ModelConfig& model, int input_slots,
+      const starpu_server::ModelConfig& model, int pool_size,
       std::optional<starpu_server::InferenceTaskDependencies> deps =
           std::nullopt)
   {
@@ -100,7 +100,7 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     starpu_setup_.reset();
 
     opts_.models = {model};
-    opts_.batching.input_slots = input_slots;
+    opts_.batching.pool_size = pool_size;
 
     starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
     config_.starpu = starpu_setup_.get();
