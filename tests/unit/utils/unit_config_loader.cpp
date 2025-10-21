@@ -90,7 +90,18 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
     InvalidConfigCase{
         "NegativeBatchCoalesceTimeoutSetsValidFalse",
         [] {
-          auto yaml = base_model_yaml();
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           yaml += "batch_coalesce_timeout_ms: -5\n";
           return yaml;
         }(),
@@ -453,8 +464,8 @@ TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "max_batch_size: 1\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
   yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -488,6 +499,9 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
   yaml << "rtol: 1.0e-4\n";
   yaml << "atol: 2.0e-5\n";
   yaml << "sync: true\n";
@@ -525,6 +539,9 @@ TEST(ConfigLoader, ParsesVerboseAlias)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "verbose: trace\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_verbose.yaml";
@@ -554,6 +571,8 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "max_message_bytes: 4096\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
   yaml << "pool_size: 3\n";
 
   const auto tmp =
@@ -584,6 +603,9 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "max_message_bytes: -1\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_negative_bytes.yaml";
@@ -616,6 +638,8 @@ TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "max_batch_size: 0\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_zero_batch.yaml";
@@ -658,6 +682,9 @@ TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << key << ": " << value << "\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_negative_value.yaml";
@@ -836,6 +863,9 @@ TEST(
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_overflow_dims.yaml";
@@ -878,6 +908,9 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_complex_dtype.yaml";
