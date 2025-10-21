@@ -46,22 +46,22 @@ Each tensor entry under `inputs` or `outputs` must provide:
 
 Optional keys unlock batching, logging, and runtime controls:
 
-| Key | Description |
-| --- | --- |
-| `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). Defaults to `lws`. |
-| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). Enables CUDA when non-empty. |
-| `use_cpu` | Force CPU execution (`true`/`false`). Defaults to `true`. |
-| `use_cuda` | Force CUDA execution (`true`/`false`). Defaults to `false`. |
-| `address` | gRPC listen address (host:port). Defaults to `127.0.0.1:50051`. |
-| `metrics_port` | Port for the Prometheus metrics endpoint. Defaults to `9100`. |
+| Key | Description | Default |
+| --- | --- | --- |
+| `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
+| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). | |
+| `use_cpu` | Force CPU execution (`true`/`false`). | `true` |
+| `use_cuda` | Force CUDA execution (`true`/`false`). | `false` |
+| `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
+| `metrics_port` | Port for the Prometheus metrics endpoint. | `9100` |
 
 Optional keys for debugging:
 
-| Key | Description |
-| --- | --- |
-| `verbosity` | Log verbosity level (`0` silent .. `4` trace). Defaults to `0`. |
-| `dynamic_batching` | Enable dynamic batching (`true`/`false`). Defaults to `true`. |
-| `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). Defaults to `false`; debugging only. |
+| Key | Description | Default |
+| --- | --- | --- |
+| `verbosity` | Log verbosity level. Supported aliases: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`. | `0` |
+| `dynamic_batching` | Enable dynamic batching (`true`/`false`). | `true` |
+| `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). | `false` |
 
 ## 3. Example: `models/bert.yml`
 
