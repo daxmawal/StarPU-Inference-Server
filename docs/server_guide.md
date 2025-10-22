@@ -1,13 +1,13 @@
 # StarPU Inference Server Documentation
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Guide](./server_guide.md) |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) |
 | --- | --- | --- |
 
 ## Server Guide
 
 This guide walks through launching the gRPC inference server and crafting the
 YAML configuration files it consumes. It assumes you already followed
-`docs/installation.md` to install dependencies and build the project.
+`./installation.md` to install dependencies and build the project.
 
 ## 1. Build the server
 

@@ -1,6 +1,6 @@
 # StarPU Inference Server Documentation
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Guide](./server_guide.md) |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) |
 | --- | --- | --- |
 
 ## Quickstart Guide

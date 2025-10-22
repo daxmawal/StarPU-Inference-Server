@@ -1,13 +1,12 @@
 # StarPU Inference Server Documentation
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Guide](./server_guide.md) |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) |
 | --- | --- | --- |
 
 ## Installation Guide
 
 This guide explains how to install and build **StarPU Inference Server** natively
-on a Linux host. If you prefer a container-based workflow, follow
-`docs/installation-docker.md`.
+on a Linux host.
 
 ## Tested environment
 
