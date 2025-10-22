@@ -242,38 +242,3 @@ ctest --test-dir build --output-on-failure
 
 Tests link against the static `gtest` binaries provided by the system and reuse
 the dependencies you installed above.
-
-## 10. Cleanup
-
-Third-party libraries live under `$INSTALL_DIR`. Remove that directory (or the
-temporary build folders in `/tmp`) when you need to reclaim disk space, and
-update your shell configuration if you move the installation.
-
----
-
-## Troubleshooting
-
-- **LibTorch not found:** double-check `CMAKE_PREFIX_PATH` and `LD_LIBRARY_PATH`.
-  Ensure you downloaded the `cxx11-abi` archive.
-- **Missing Protobuf symbols:** confirm that you built Protobuf statically
-  (`-Dprotobuf_BUILD_SHARED_LIBS=OFF`) and that `Protobuf_DIR` points to the
-  install tree.
-- **StarPU cannot find CUDA:** verify that `nvcc` is in `PATH` and the StarPU
-  configure step included `--enable-cuda`.
-- **GPU metrics disabled:** install `libnvidia-ml-dev` to provide NVML headers,
-  then rebuild.
-- **Stale FetchContent dependencies:** delete `build/_deps` to force a fresh
-  checkout when CMake caches become inconsistent.
-
----
-
-## Additional resources
-
-- [StarPU documentation](https://starpu.gitlabpages.inria.fr/)
-- [LibTorch C++ API](https://pytorch.org/cppdocs/)
-- [gRPC C++ quick start](https://grpc.io/docs/languages/cpp/quickstart/)
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
-
-Once the installation works, continue with `docs/configuration.md` and
-`docs/usage.md` (both under construction) to prepare models and configure the
-server.

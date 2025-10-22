@@ -7,12 +7,12 @@ This directory collects the documentation needed to install, run, and tune the S
 
 ## Getting Started
 
-- Start with [Installation](./installation.md) for building the server directly on your machine.
-- Once installed, [Quickstart](./quickstart.md) walks through running inference workloads with the provided tooling.
+- Start with [installation](./installation.md) for building the server directly on your machine.
+- Once installed, [quickstart](./quickstart.md) walks through running inference workloads with the provided tooling.
 
 ## Configuration Reference
 
-- Use [Server Configuration](./server_guide.md) to review runtime options, environment variables, and parameters.
+- Use [server configuration](./server_guide.md) to review runtime options, environment variables, and parameters.
 
 ## Client Guide: Examples & Custom Implementations
 

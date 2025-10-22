@@ -25,12 +25,12 @@ asynchronous and heterogeneous execution.
 
 ## Installation
 
-See [docs/installation.md](docs/installation.md) for setup instructions,
+See [installation](docs/installation.md) for setup instructions,
 including dependency lists and build steps.
 
 ## Documentation
 
-The documentation index lives at [docs/README.md](docs/README.md).
+The documentation index lives at [docs](docs/README.md).
 
 [ci-badge]:
   https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg?branch=main
