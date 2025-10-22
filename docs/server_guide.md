@@ -7,7 +7,7 @@
 
 This guide walks through launching the gRPC inference server and crafting the
 YAML configuration files it consumes. It assumes you already followed
-[installation](docs/installation.md) to install dependencies and build the project.
+[installation](./installation.md) to install dependencies and build the project.
 
 ## 1. Build the server
 

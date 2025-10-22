@@ -13,7 +13,7 @@ with `models/bert.yml`.
 
 ## 1. Build the server
 
-Install dependencies following [installation](docs/installation.md), then compile the
+Install dependencies following [installation](./installation.md), then compile the
 project:
 
 ```bash
