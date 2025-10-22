@@ -12,9 +12,12 @@
 
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <chrono>
 #include <climits>
 #include <cstddef>
+#include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <format>
 #include <functional>
@@ -52,6 +55,22 @@ worker_stream_query_fn_ref() -> StarPUSetup::WorkerStreamQueryFn&
   static auto instance =
       StarPUSetup::WorkerStreamQueryFn(starpu_worker_get_stream_workerids);
   return instance;
+}
+
+void
+apply_starpu_env(const RuntimeConfig& opts)
+{
+  for (const auto& [name, value] : opts.starpu_env) {
+    if (name.empty()) {
+      throw StarPUInitializationException(
+          "Environment variable name cannot be empty");
+    }
+    if (setenv(name.c_str(), value.c_str(), 1) != 0) {
+      throw StarPUInitializationException(std::format(
+          "Failed to set environment variable {}: {}", name,
+          std::strerror(errno)));
+    }
+  }
 }
 
 void
@@ -414,6 +433,7 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
 StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
     : scheduler_name_(opts.scheduler), conf_{}
 {
+  apply_starpu_env(opts);
   starpu_conf_init(&conf_);
   conf_.sched_policy_name = scheduler_name_.c_str();
 

@@ -77,6 +77,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "verbosity",
           "scheduler",
           "model",
+          "starpu_env",
           "request_nb",
           "device_ids",
           "inputs",
@@ -215,6 +216,36 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
     log_error("use_cuda requires at least one device_ids entry");
     cfg.valid = false;
     cfg.devices.use_cuda = false;
+  }
+}
+
+void
+parse_starpu_env(const YAML::Node& root, RuntimeConfig& cfg)
+{
+  const YAML::Node env_node = root["starpu_env"];
+  if (!env_node) {
+    return;
+  }
+
+  if (!env_node.IsMap()) {
+    log_error("starpu_env must be a mapping of variable names to values");
+    cfg.valid = false;
+    return;
+  }
+
+  for (const auto& item : env_node) {
+    if (!item.first.IsScalar()) {
+      log_error("starpu_env entries must have scalar keys");
+      cfg.valid = false;
+      continue;
+    }
+    if (!item.second.IsScalar()) {
+      log_error("starpu_env entries must have scalar values");
+      cfg.valid = false;
+      continue;
+    }
+    const auto key = item.first.as<std::string>();
+    cfg.starpu_env[key] = item.second.as<std::string>();
   }
 }
 
@@ -437,6 +468,7 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_generation_nodes(root, cfg);
     parse_device_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
+    parse_starpu_env(root, cfg);
   }
   catch (const YAML::Exception& exception) {
     mark_invalid(exception.what());

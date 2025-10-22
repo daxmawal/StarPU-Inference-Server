@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -109,6 +111,7 @@ struct RuntimeConfig {
   std::string server_address = "127.0.0.1:50051";
   int metrics_port = kDefaultMetricsPort;
 
+  std::map<std::string, std::string, std::less<>> starpu_env;
   std::vector<ModelConfig> models;
   VerbosityLevel verbosity = VerbosityLevel::Silent;
   DeviceSettings devices{};

@@ -1,4 +1,9 @@
 scheduler: lws
+starpu_env:
+  STARPU_CUDA_THREAD_PER_WORKER: "1"
+  STARPU_CUDA_PIPELINE: "4"
+  STARPU_NWORKER_PER_CUDA: "4"
+  STARPU_WORKERS_GETBIND: "0"
 model: ../models/bert_libtorch.pt
 inputs:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
