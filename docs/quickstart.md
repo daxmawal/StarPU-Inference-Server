@@ -1,4 +1,9 @@
-# Quickstart Guide
+# StarPU Inference Server Documentation
+
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Guide](./server_guide.md) |
+| --- | --- | --- |
+
+## Quickstart Guide
 
 Spin up **StarPU Inference Server** with the `bert-base-uncased` model in three
 steps: build the binaries, export the TorchScript model, and launch the server

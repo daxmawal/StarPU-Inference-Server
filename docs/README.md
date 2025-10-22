@@ -2,6 +2,9 @@
 
 This directory collects the documentation needed to install, run, and tune the StarPU Inference Server.
 
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Guide](./server_guide.md) |
+| --- | --- | --- |
+
 ## Getting Started
 
 - Start with `installation.md` for building the server directly on your machine.

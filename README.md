@@ -17,19 +17,20 @@ inference tasks** across CPUs and GPUs of a compute node. The main goal is to
 **maximize throughput** while maintaining **latency control**, by leveraging
 asynchronous and heterogeneous execution.
 
-#### Goal
+### Goal
 
 - Perform inference of TorchScript models (e.g., ResNet, BERT) using LibTorch.
 - Dynamically schedule inference tasks between CPU and GPU using StarPU.
 - Optimize **throughput** while satisfying **latency constraints**.
 
-##### Features
+## Installation
 
-- [x] Submission of CPU/GPU inference tasks through StarPU
-- [x] TorchScript model execution with LibTorch
-- [x] Asynchronous execution with custom user callbacks
-- [ ] Multithreaded server to receive inference requests
-- [ ] Dynamic batching algorithm for improved throughput
+See [docs/installation.md](docs/installation.md) for setup instructions,
+including dependency lists and build steps.
+
+## Documentation
+
+The documentation index lives at [docs/README.md](docs/README.md).
 
 [ci-badge]:
   https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg?branch=main
