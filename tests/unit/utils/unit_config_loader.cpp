@@ -72,6 +72,15 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "Unknown configuration option: unknown_option"},
     InvalidConfigCase{
+        "DeviceIdsAtRootInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "device_ids: [0]\n";
+          return yaml;
+        }(),
+        "device_ids must be nested inside the use_cuda block (e.g. "
+        "\"use_cuda: [{ device_ids: [0] }]\")"},
+    InvalidConfigCase{
         "InvalidConfigSetsValidFalse",
         [] {
           auto yaml = base_model_yaml();
@@ -87,6 +96,14 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           return yaml;
         }(),
         std::nullopt},
+    InvalidConfigCase{
+        "UseCudaEmptySequenceInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda: []\n";
+          return yaml;
+        }(),
+        "use_cuda requires at least one device_ids entry"},
     InvalidConfigCase{
         "NegativeBatchCoalesceTimeoutSetsValidFalse",
         [] {
@@ -394,7 +411,9 @@ TEST(ConfigLoader, LoadsValidConfig)
   std::ostringstream yaml;
   yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "device_ids: [0, 1]\n";
+  yaml << "use_cpu: true\n";
+  yaml << "use_cuda:\n";
+  yaml << "  - { device_ids: [0, 1] }\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1, 3, 224, 224]\n";
@@ -506,7 +525,8 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   yaml << "atol: 2.0e-5\n";
   yaml << "sync: true\n";
   yaml << "use_cpu: false\n";
-  yaml << "use_cuda: true\n";
+  yaml << "use_cuda:\n";
+  yaml << "  - { device_ids: [0] }\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_flags.yaml";

@@ -50,17 +50,16 @@ Optional keys unlock batching, logging, and runtime controls:
 | --- | --- | --- |
 | `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
 | `use_cpu` | Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution. | `true` |
-| `use_cuda` | Enable GPU workers. Requires at least one device (defaults to `[0]` if `device_ids` is empty). | `false` |
-| `device_ids` | GPU device IDs to bind (e.g., `[0,1]`). | When `use_cuda` is `true`, defaults to `[0]` unless overridden. |
+| `use_cuda` | Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`. | `false` |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
 | `metrics_port` | Port for the Prometheus metrics endpoint. | `9100` |
 
-Behavior of `use_cpu`, `use_cuda`, and `device_ids`:
+Behavior of `use_cpu` and `use_cuda`:
 
-- `use_cpu: true`, `use_cuda: true` → StarPU runs heterogeneously on CPU and GPU workers.
-- Exactly one of them `true` → pipeline is pinned to the selected backend (CPU or GPU only).
-- Both `false` → configuration is invalid; at least one execution backend must be enabled.
-- If `use_cuda` is `true` and `device_ids` is empty, device `0` is selected automatically.
+- `use_cpu: true`, `use_cuda: [{ device_ids: [...] }]` → StarPU runs heterogeneously on CPU and GPU workers.
+- `use_cuda: false` or omitted → pipeline runs on CPU workers only (unless the CLI overrides the setting).
+- `use_cpu: false`, `use_cuda: [{ ... }]` → pipeline runs on GPU workers only.
+- Both `use_cpu: false` and `use_cuda: false` (or an empty sequence) → configuration is invalid; at least one execution backend must be enabled.
 
 Optional keys for debugging:
 
@@ -77,7 +76,6 @@ The repository ships a ready-to-run configuration:
 ```yaml
 scheduler: lws
 model: ../models/bert_libtorch.pt
-device_ids: [0]
 inputs:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
   - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }
@@ -91,7 +89,8 @@ batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false
 use_cpu: true
-use_cuda: true
+use_cuda:
+  - { device_ids: [0] }
 pool_size: 12
 ```
 

@@ -1,6 +1,5 @@
 scheduler: lws
 model: ../models/bert_libtorch.pt
-device_ids: [0]
 inputs:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
   - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }
@@ -14,5 +13,6 @@ batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false
 use_cpu: true
-use_cuda: true
+use_cuda:
+  - { device_ids: [0] }
 pool_size: 12
