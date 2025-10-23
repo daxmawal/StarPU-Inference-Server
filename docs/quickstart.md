@@ -19,7 +19,7 @@ project:
 ```bash
 mkdir -p build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
-make -j"$(nproc)"
+cmake --build . -j"$(nproc)"
 ```
 
 The binaries, including `grpc_server`, are produced inside `build/`.
