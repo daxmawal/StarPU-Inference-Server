@@ -78,7 +78,6 @@ pip install -r python_client/requirements.txt
 
 python python_client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
-  --model-name bert \
   --text "StarPU orchestre CPU et GPU pour servir cette requête." \
   --reference-model models/bert_libtorch.pt
 ```

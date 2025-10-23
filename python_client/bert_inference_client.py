@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Client gRPC pour envoyer une requête d'inférence réelle au serveur StarPU.
+gRPC client used to send real inference requests to the StarPU server.
 
-Deux modes d'utilisation :
-  * Passage d'une ou plusieurs phrases via --text (tokenisation automatique
-    avec HuggingFace).
-  * Chargement d'entrées pré-encodées depuis un fichier .npz contenant
-    `input_ids` et `attention_mask`.
+Two usage modes:
+  * Provide one or more sentences via --text (automatic tokenization with
+    HuggingFace).
+  * Load pre-encoded inputs from an .npz file containing `input_ids` and
+    `attention_mask`.
 
-Le script prépare les tenseurs au format attendu (`int64`, shape [batch, 128])
-par la configuration `models/bert.yml`, envoie la requête `ModelInfer` et
-affiche un résumé des sorties.
+The script prepares tensors in the expected format (`int64`, shape [batch, 128])
+for the `models/bert.yml` configuration, dispatches a `ModelInfer` request, and
+prints a summary of the outputs.
 """
 
 from __future__ import annotations
@@ -54,20 +54,19 @@ CONTENT_FIELD_BY_BASE_DTYPE = {
 
 
 def _load_encoded_inputs(npz_path: Path) -> Tuple[np.ndarray, np.ndarray]:
-    """Charge `input_ids` et `attention_mask` depuis un fichier .npz."""
+    """Load `input_ids` and `attention_mask` from an .npz file."""
     data = np.load(npz_path)
     try:
         input_ids = data["input_ids"]
         attention_mask = data["attention_mask"]
     except KeyError as exc:
         raise ValueError(
-            "Le fichier .npz doit contenir les clés 'input_ids' et " "'attention_mask'."
+            "The .npz file must contain the 'input_ids' and 'attention_mask' keys."
         ) from exc
-
     if input_ids.ndim != 2 or attention_mask.ndim != 2:
-        raise ValueError("Les tenseurs doivent être de rang 2 (batch, sequence).")
+        raise ValueError("Tensors must be rank-2 (batch, sequence).")
     if input_ids.shape != attention_mask.shape:
-        raise ValueError("input_ids et attention_mask doivent avoir la même shape.")
+        raise ValueError("input_ids and attention_mask must share the same shape.")
 
     return (
         np.asarray(input_ids, dtype=np.int64, order="C"),
@@ -78,13 +77,13 @@ def _load_encoded_inputs(npz_path: Path) -> Tuple[np.ndarray, np.ndarray]:
 def _tokenize_texts(
     texts: Iterable[str], tokenizer_name: str, max_length: int
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Tokenise des phrases en batch avec un tokenizer HuggingFace."""
+    """Batch-tokenize sentences with a HuggingFace tokenizer."""
     try:
         from transformers import AutoTokenizer
     except ImportError as exc:
         raise RuntimeError(
-            "transformers n'est pas installé. Exécutez 'pip install transformers'"
-            " ou fournissez un fichier .npz pré-encodé via --encoded-npz."
+            "transformers is not installed. Run 'pip install transformers' "
+            "or provide a pre-encoded .npz via --encoded-npz."
         ) from exc
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -113,7 +112,7 @@ def _resolve_numpy_dtype(dtype_label: str | None) -> Tuple[str, np.dtype]:
     base = _normalise_dtype_label(dtype_label)
     np_dtype = BASE_DTYPE_TO_NUMPY.get(base)
     if np_dtype is None:
-        raise ValueError(f"Datatype {dtype_label} non pris en charge pour l'affichage.")
+        raise ValueError(f"Datatype {dtype_label} is not supported for display.")
     return base, np_dtype
 
 
@@ -134,7 +133,7 @@ def _typed_contents_to_numpy(
 def extract_response_tensors(
     response: grpc_service_pb2.ModelInferResponse,
 ) -> List[dict]:
-    """Convertit les sorties protobuf en tenseurs NumPy."""
+    """Convert protobuf outputs into NumPy tensors."""
     tensors: List[dict] = []
     for idx, output in enumerate(response.outputs):
         name = output.name or f"output{idx}"
@@ -155,8 +154,8 @@ def extract_response_tensors(
 
         if array is None:
             raise ValueError(
-                f"Aucune donnée récupérée pour la sortie '{name}'. "
-                "Vérifiez que le serveur renvoie les contenus bruts."
+                f"No data retrieved for output '{name}'. "
+                "Ensure the server returns raw contents."
             )
 
         tensors.append(
@@ -174,7 +173,7 @@ def extract_response_tensors(
 def _add_input_tensor(
     request: grpc_service_pb2.ModelInferRequest, name: str, array: np.ndarray
 ) -> None:
-    """Ajoute un tenseur brut au message gRPC."""
+    """Append a raw tensor to the gRPC message."""
     dtype_map = {
         np.dtype("float32"): "FP32",
         np.dtype("float64"): "FP64",
@@ -188,9 +187,7 @@ def _add_input_tensor(
     }
     np_dtype = np.dtype(array.dtype)
     if np_dtype not in dtype_map:
-        raise ValueError(
-            f"Datatype {array.dtype} non pris en charge pour l'entrée {name}."
-        )
+        raise ValueError(f"Datatype {array.dtype} is not supported for input {name}.")
 
     array_c = np.ascontiguousarray(array)
     tensor = request.inputs.add()
@@ -208,9 +205,9 @@ def build_infer_request(
     request_id: str | None,
     requested_outputs: List[str],
 ) -> grpc_service_pb2.ModelInferRequest:
-    """Construit la requête `ModelInfer`."""
+    """Build the `ModelInfer` request."""
     if input_ids.shape != attention_mask.shape:
-        raise ValueError("input_ids et attention_mask doivent partager la shape.")
+        raise ValueError("input_ids and attention_mask must share the same shape.")
 
     request = grpc_service_pb2.ModelInferRequest()
     request.model_name = model_name
@@ -235,7 +232,7 @@ def run_inference(
     timeout_s: float,
     max_message_bytes: int,
 ) -> grpc_service_pb2.ModelInferResponse:
-    """Envoie la requête et renvoie la réponse."""
+    """Send the request and return the response."""
     options = [
         ("grpc.max_send_message_length", max_message_bytes),
         ("grpc.max_receive_message_length", max_message_bytes),
@@ -250,14 +247,14 @@ def _summarize_response(
     outputs_info: List[dict],
     max_preview_values: int,
 ) -> None:
-    """Affiche un résumé simple des sorties et, optionnellement, quelques valeurs."""
-    print(f"Modèle: {response.model_name} (version: {response.model_version})")
+    """Print a simple summary of the outputs and optional value previews."""
+    print(f"Model: {response.model_name} (version: {response.model_version})")
     for info in outputs_info:
         tensor = info["array"]
         dtype_label = info["dtype_label"]
         name = info["name"]
 
-        print(f"- Sortie {name}: shape={tensor.shape} dtype={dtype_label}")
+        print(f"- Output {name}: shape={tensor.shape} dtype={dtype_label}")
         print(
             f"  min={tensor.min():.6f} max={tensor.max():.6f} "
             f"mean={tensor.mean():.6f}"
@@ -280,7 +277,7 @@ def _summarize_response(
                 suppress_small=False,
                 max_line_width=80,
             )
-            prefix = "  premiers éléments"
+            prefix = "  first elements"
             if tensor.ndim >= 1 and tensor.shape[0] > 1:
                 prefix += " (batch 0)"
             print(f"{prefix} ({count}): {preview_str}")
@@ -298,13 +295,13 @@ def validate_with_reference(
         import torch
     except ImportError as exc:
         raise RuntimeError(
-            "PyTorch est requis pour --reference-model, mais n'est pas installé "
-            "dans l'environnement courant."
+            "PyTorch is required for --reference-model but is not installed in the "
+            "current environment."
         ) from exc
 
     reference_path = reference_path.expanduser()
     if not reference_path.exists():
-        raise FileNotFoundError(f"Modèle de référence introuvable: {reference_path}")
+        raise FileNotFoundError(f"Reference model not found: {reference_path}")
 
     model = torch.jit.load(str(reference_path), map_location="cpu")
     model.eval()
@@ -321,8 +318,7 @@ def validate_with_reference(
         reference_tensors = list(result)
     else:
         raise RuntimeError(
-            "La sortie du modèle de référence n'est pas un tenseur ou une séquence "
-            "de tenseurs."
+            "The reference model output is neither a tensor nor a tensor sequence."
         )
 
     stats: List[dict] = []
@@ -335,7 +331,7 @@ def validate_with_reference(
                 {
                     "name": name,
                     "ok": False,
-                    "error": "Le modèle de référence a renvoyé moins de sorties.",
+                    "error": "The reference model returned fewer outputs.",
                 }
             )
             continue
@@ -346,7 +342,7 @@ def validate_with_reference(
                 {
                     "name": name,
                     "ok": False,
-                    "error": "Sortie de référence inattendue (non-Tensor).",
+                    "error": "Unexpected reference output type (non-Tensor).",
                 }
             )
             continue
@@ -358,8 +354,8 @@ def validate_with_reference(
                     "name": name,
                     "ok": False,
                     "error": (
-                        f"Shape différente: serveur {server_tensor.shape} "
-                        f"vs référence {ref_array.shape}"
+                        f"Mismatched shape: server {server_tensor.shape} "
+                        f"vs reference {ref_array.shape}"
                     ),
                 }
             )
@@ -387,94 +383,91 @@ def validate_with_reference(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Client gRPC pour StarPU Inference Server (BERT)."
-    )
-    parser.add_argument(
-        "--server",
-        default="127.0.0.1:50051",
-        help="Adresse gRPC du serveur (host:port).",
+        description="gRPC client for the StarPU Inference Server (BERT)."
     )
     parser.add_argument(
         "--model-name",
         default="bert",
-        help="Nom du modèle exposé côté serveur.",
+        help="Name of the model exposed by the server.",
+    )
+    parser.add_argument(
+        "--server",
+        default="127.0.0.1:50051",
+        help="gRPC address of the server (host:port).",
     )
     parser.add_argument(
         "--model-version",
         default="1",
-        help="Version du modèle.",
+        help="Model version.",
     )
     parser.add_argument(
         "--timeout",
         type=float,
         default=30.0,
-        help="Timeout RPC en secondes.",
+        help="RPC timeout in seconds.",
     )
     parser.add_argument(
         "--max-message-mb",
         type=int,
         default=32,
-        help="Taille max des messages gRPC (MiB).",
+        help="Maximum gRPC message size (MiB).",
     )
     parser.add_argument(
         "--request-id",
-        help="Identifiant optionnel transmis au serveur.",
+        help="Optional identifier forwarded to the server.",
     )
 
     input_group = parser.add_mutually_exclusive_group(required=True)
     input_group.add_argument(
         "--encoded-npz",
         type=Path,
-        help="Fichier .npz avec `input_ids` et `attention_mask` (int64).",
+        help="`.npz` file with `input_ids` and `attention_mask` (int64).",
     )
     input_group.add_argument(
         "--text",
         action="append",
-        help="Phrase à inférer (répéter l'option pour le batch).",
+        help="Sentence to infer (repeat the option for batching).",
     )
 
     parser.add_argument(
         "--tokenizer",
         default="bert-base-uncased",
-        help="Tokenizer HuggingFace utilisé pour --text.",
+        help="HuggingFace tokenizer used for --text.",
     )
     parser.add_argument(
         "--max-length",
         type=int,
         default=128,
-        help="Longueur maximale de séquence (padding/troncature).",
+        help="Maximum sequence length (padding/truncation).",
     )
     parser.add_argument(
         "--output",
         action="append",
         default=["output0"],
-        help="Nom des sorties à récupérer (par défaut: output0).",
+        help="Name of the outputs to fetch (default: output0).",
     )
     parser.add_argument(
         "--print-values",
         type=int,
         default=16,
-        help="Nombre de valeurs à afficher par sortie (0 pour désactiver).",
+        help="Number of values to print per output (0 to disable).",
     )
     parser.add_argument(
         "--reference-model",
         type=Path,
-        help=(
-            "Chemin vers un modèle TorchScript local pour valider la sortie du "
-            "serveur."
-        ),
+        help=("Path to a local TorchScript model used to validate the server output."),
     )
     parser.add_argument(
         "--rtol",
         type=float,
         default=1e-3,
-        help="Tolérance relative pour la validation (--reference-model).",
+        help="Relative tolerance for validation (--reference-model).",
     )
     parser.add_argument(
         "--atol",
         type=float,
         default=1e-5,
-        help="Tolérance absolue pour la validation (--reference-model).",
+        help="Absolute tolerance for validation (--reference-model).",
     )
     return parser.parse_args()
 
@@ -521,9 +514,9 @@ def main() -> None:
         for stat in stats:
             name = stat["name"]
             if "error" in stat:
-                print(f"Validation {name}: ERREUR – {stat['error']}")
+                print(f"Validation {name}: ERROR – {stat['error']}")
                 continue
-            status = "OK" if stat["ok"] else "ECHEC"
+            status = "OK" if stat["ok"] else "FAIL"
             print(
                 f"Validation {name}: {status} "
                 f"(max abs diff={stat['max_abs']:.3e}, "

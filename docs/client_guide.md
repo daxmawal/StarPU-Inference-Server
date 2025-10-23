@@ -50,7 +50,6 @@ submit them for inference, and print a short summary of the returned tensor.
 ```bash
 python3 python_client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
-  --model-name bert \
   --text "Your evaluation sentence" \
   --text "Add a second sentence for batching" \
   --reference-model ../models/bert_libtorch.pt \
