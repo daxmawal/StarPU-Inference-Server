@@ -28,6 +28,15 @@ asynchronous and heterogeneous execution.
 See [installation](docs/installation.md) for setup instructions,
 including dependency lists and build steps.
 
+## Quickstart
+
+Follow the [Quickstart guide](docs/quickstart.md) to:
+
+1. Build the gRPC inference server.
+2. Export the `bert-base-uncased` TorchScript model.
+3. Launch the server with the provided configuration.
+4. Drive it using the Python gRPC client or by authoring your own client.
+
 ## Documentation
 
 The documentation index lives in the docs [folder](docs/README.md).
