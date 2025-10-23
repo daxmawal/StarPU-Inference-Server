@@ -1,0 +1,4 @@
+grpcio>=1.54
+protobuf>=4.25
+transformers>=4.37
+numpy>=1.26

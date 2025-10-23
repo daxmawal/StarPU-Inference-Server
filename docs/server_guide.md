@@ -1,7 +1,7 @@
 # StarPU Inference Server Documentation
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) |
-| --- | --- | --- |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) |
+| --- | --- | --- | --- |
 
 ## Server Guide
 
@@ -17,6 +17,7 @@ From the project root:
 mkdir -p build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j"$(nproc)"
+cd ..
 ```
 
 - `grpc_server` is the executable that exposes the gRPC API.
@@ -135,5 +136,5 @@ to `max_batch_size`.**
 Once the configuration YAML is ready and the server binaries are built:
 
 ```bash
-./grpc_server --config path/to/config.yml
+./build/grpc_server --config path/to/config.yml
 ```

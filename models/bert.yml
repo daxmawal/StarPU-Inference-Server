@@ -1,4 +1,4 @@
-scheduler: lws
+scheduler: eager
 starpu_env:
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"

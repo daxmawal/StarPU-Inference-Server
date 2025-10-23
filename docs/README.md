@@ -2,8 +2,8 @@
 
 This directory collects the documentation needed to install, run, and tune the StarPU Inference Server.
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) |
-| --- | --- | --- |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) |
+| --- | --- | --- | --- |
 
 ## Getting Started
 
@@ -19,6 +19,8 @@ This directory collects the documentation needed to install, run, and tune the S
 Clients example:
 
 - `grpc_client_example` – sample CLI that drives the gRPC service; sources under `src/grpc/client`.
+- `python_client/bert_inference_client.py` – Python gRPC client that tokenises
+  real text or replays pre-encoded tensors (see [Client Guide](./client_guide.md)).
 
 Write your own client :
 
