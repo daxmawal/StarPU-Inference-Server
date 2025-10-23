@@ -135,5 +135,5 @@ to `max_batch_size`.**
 Once the configuration YAML is ready and the server binaries are built:
 
 ```bash
-./build/grpc_server --config path/to/config.yml
+./grpc_server --config path/to/config.yml
 ```
