@@ -51,29 +51,11 @@ submit them for inference, and print a short summary of the returned tensor.
 python3 python_client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --model-name bert \
-  --text "Your evaluation sentence"
-```
-
----
-
-## 5. Validate outputs with a local TorchScript model
-
-If you keep the TorchScript artifact on disk, you can double-check that the
-server returns the same tensors as a local forward pass. Pass the path via
-`--reference-model`; the client will execute the module on CPU, compare the
-outputs element-wise, and report the maximum absolute/relative deviation.
-
-```bash
-python3 python_client/bert_inference_client.py \
-  --server 127.0.0.1:50051 \
-  --model-name bert \
   --text "Your evaluation sentence" \
   --reference-model ../models/bert_libtorch.pt \
   --rtol 1e-3 \
   --atol 1e-5
 ```
-
-The summary now includes a validation line per output.
 
 ---
 

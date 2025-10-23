@@ -63,4 +63,32 @@ GPU IDs or a CPU-only setup.
 
 ---
 
+## 4. Launch the client
+
+Open a fresh shell to create a small virtual
+environment for the Python client, install its dependencies, and send a real
+inference request to the running server.
+
+```bash
+cd /path/to/StarPU-Inference-Server
+python3 -m venv .venv-client
+source .venv-client/bin/activate
+pip install --upgrade pip
+pip install -r python_client/requirements.txt
+
+python python_client/bert_inference_client.py \
+  --server 127.0.0.1:50051 \
+  --model-name bert \
+  --text "StarPU orchestre CPU et GPU pour servir cette requête." \
+  --reference-model models/bert_libtorch.pt
+```
+
+The client tokenises the sentence, calls the gRPC endpoint, prints a statistical
+summary of the returned tensor, and (with `--reference-model`) verifies that the
+values match a local TorchScript execution within tight tolerances. Adjust the
+text, add more `--text` flags for batched requests, or drop `--reference-model`
+if you only need the server response.
+
+---
+
 You now have a fully functional inference server ready for BERT workloads.
