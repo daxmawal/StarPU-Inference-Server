@@ -5,9 +5,9 @@
 
 ## Quickstart Guide
 
-Spin up **StarPU Inference Server** with the `bert-base-uncased` model in three
-steps: build the binaries, export the TorchScript model, and launch the server
-with `models/bert.yml`.
+Spin up **StarPU Inference Server** with the `bert-base-uncased` model in four
+steps: build the binaries, export the TorchScript model, launch the server with
+`models/bert.yml`, and exercise the gRPC API with the provided Python client.
 
 ---
 
