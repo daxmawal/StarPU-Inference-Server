@@ -17,7 +17,6 @@ From the project root:
 mkdir -p build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j"$(nproc)"
-cd ..
 ```
 
 - `grpc_server` is the executable that exposes the gRPC API.
