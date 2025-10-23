@@ -38,7 +38,7 @@ source .venv/bin/activate
 pip install --upgrade pip
 pip install torch transformers
 
-python ../models/import_bert-base-uncased.py
+python3 ../models/import_bert-base-uncased.py
 deactivate
 ```
 
@@ -53,7 +53,7 @@ The configuration file `models/bert.yml` already points to the exported model.
 Start the server from the repository root:
 
 ```bash
-./build/grpc_server --config models/bert.yml
+./grpc_server --config models/bert.yml
 ```
 
 The logs should confirm that the model is loaded and the service is listening
@@ -76,7 +76,7 @@ source .venv-client/bin/activate
 pip install --upgrade pip
 pip install -r python_client/requirements.txt
 
-python python_client/bert_inference_client.py \
+python3 python_client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --text "StarPU orchestre CPU et GPU pour servir cette requête." \
   --reference-model models/bert_libtorch.pt

@@ -73,7 +73,7 @@ If you need to write your own client, start from these references:
 Generate fresh Python stubs with:
 
 ```bash
-python -m grpc_tools.protoc \
+python3 -m grpc_tools.protoc \
   -I src/proto \
   --python_out=python_client \
   --grpc_python_out=python_client \
