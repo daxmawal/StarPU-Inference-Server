@@ -50,7 +50,7 @@ deactivate
 ## 3. Launch the inference server
 
 The configuration file `models/bert.yml` already points to the exported model.
-Start the server from the repository root:
+Start the server from the build repository:
 
 ```bash
 ./grpc_server --config ../models/bert.yml
@@ -74,9 +74,9 @@ cd /path/to/StarPU-Inference-Server
 python3 -m venv .venv-client
 source .venv-client/bin/activate
 pip install --upgrade pip
-pip install -r python_client/requirements.txt
+pip install -r client/requirements.txt
 
-python3 python_client/bert_inference_client.py \
+python3 client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --text "StarPU orchestre CPU et GPU pour servir cette requête." \
   --reference-model models/bert_libtorch.pt

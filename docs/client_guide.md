@@ -20,7 +20,7 @@ inputs (token IDs and attention masks) and sends them through the gRPC API.
 python3 -m venv .venv-client
 source .venv-client/bin/activate
 pip install --upgrade pip
-pip install -r python_client/requirements.txt
+pip install -r client/requirements.txt
 ```
 
 > The requirements include `grpcio`, `protobuf`, `numpy` and `transformers`.
@@ -44,11 +44,11 @@ drive it with a client.
 
 ## 3. Run an inference with natural language input
 
-Use `python_client/bert_inference_client.py` to tokenize one or more sentences,
+Use `client/bert_inference_client.py` to tokenize one or more sentences,
 submit them for inference, and print a short summary of the returned tensor.
 
 ```bash
-python3 python_client/bert_inference_client.py \
+python3 client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --text "Your evaluation sentence" \
   --text "Add a second sentence for batching" \
@@ -67,7 +67,7 @@ outputs against a local TorchScript model using the provided tolerances.
 If you need to write your own client, start from these references:
 
 - C++ example: `src/grpc/client/client_main.cpp`.
-- Python example: `python_client/bert_inference_client.py`.
+- Python example: `client/bert_inference_client.py`.
 - gRPC service definition: `src/proto/grpc_service.proto` and `src/proto/model_config.proto`.
 
 Generate fresh Python stubs with:
@@ -75,8 +75,8 @@ Generate fresh Python stubs with:
 ```bash
 python3 -m grpc_tools.protoc \
   -I src/proto \
-  --python_out=python_client \
-  --grpc_python_out=python_client \
+  --python_out=client \
+  --grpc_python_out=client \
   src/proto/grpc_service.proto
 ```
 
