@@ -30,7 +30,7 @@ The binaries, including `grpc_server`, are produced inside `build/`.
 
 Create a lightweight Python environment, install the dependencies, and run the
 export script. It downloads `bert-base-uncased`, traces the model, and stores
-the artifact in `models/bert_libtorch.pt`.
+the artifact in `../models/bert_libtorch.pt`.
 
 ```bash
 python3 -m venv .venv
