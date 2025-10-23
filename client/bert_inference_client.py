@@ -365,30 +365,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--server",
         default=DEFAULT_SERVER,
-        help="gRPC address of the server (host:port)."
+        help="gRPC address of the server (host:port).",
     )
     parser.add_argument(
         "--text",
         action="append",
         required=True,
-        help="Sentence to infer (repeat the option for batching)."
+        help="Sentence to infer (repeat the option for batching).",
     )
     parser.add_argument(
         "--reference-model",
         type=Path,
-        help=("Path to a local TorchScript model used to validate the server output.")
+        help=("Path to a local TorchScript model used to validate the server output."),
     )
     parser.add_argument(
         "--rtol",
         type=float,
         default=1e-3,
-        help="Relative tolerance for validation (--reference-model)."
+        help="Relative tolerance for validation (--reference-model).",
     )
     parser.add_argument(
         "--atol",
         type=float,
         default=1e-5,
-        help="Absolute tolerance for validation (--reference-model)."
+        help="Absolute tolerance for validation (--reference-model).",
     )
     return parser.parse_args()
 
