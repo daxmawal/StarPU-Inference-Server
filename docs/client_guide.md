@@ -61,7 +61,7 @@ python3 python_client/bert_inference_client.py \
 
 If you nee to write your own client, start from these examples:
 
-- C++: `src/grpc/client/client_main.cpp` (and the helpers alongside it).
+- C++: `src/grpc/client/client_main.cpp`.
 - Python: `python_client/bert_inference_client.py`.
 
 ---
