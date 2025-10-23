@@ -25,6 +25,8 @@ pip install -r client/requirements.txt
 
 > The requirements include `grpcio`, `protobuf`, `numpy` and `transformers`.
 > Installing them inside a virtual environment keeps the system Python clean.
+> If you plan to regenerate gRPC stubs, also install `grpcio-tools` with
+> `pip install grpcio-tools`.
 
 ---
 
@@ -73,6 +75,8 @@ If you need to write your own client, start from these references:
 Generate fresh Python stubs with:
 
 ```bash
+# make sure grpcio-tools is available:
+# pip install grpcio-tools
 python3 -m grpc_tools.protoc \
   -I src/proto \
   --python_out=client \
