@@ -57,6 +57,13 @@ python3 python_client/bert_inference_client.py \
   --atol 1e-5
 ```
 
+## 4. Write your own client ?
+
+If you nee to write your own client, start from these examples:
+
+- C++: `src/grpc/client/client_main.cpp` (and the helpers alongside it).
+- Python: `python_client/bert_inference_client.py`, documented in the [Client Guide](./client_guide.md).
+
 ---
 
 You now have an end-to-end loop that uses real data to validate the StarPU
