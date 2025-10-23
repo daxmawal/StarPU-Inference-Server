@@ -26,5 +26,5 @@ Write your own client :
 
 ### Backends
 
-- [StarPU](https://starpu.gitlabpages.inria.fr/) – Is an open-source runtime system that schedules and manages data for task-based applications across heterogeneous processors (CPUs and GPUs) to maximize performance and portability.
-- [LibTorch](https://pytorch.org/cppdocs/) – Is PyTorch’s official C++ library, providing high-performance tensors, automatic differentiation, and neural-network APIs for training and deploying deep-learning models in C++.
+- [StarPU](https://starpu.gitlabpages.inria.fr/) – is an open-source runtime system that schedules and manages data for task-based applications across heterogeneous processors (CPUs and GPUs) to maximize performance and portability.
+- [LibTorch](https://pytorch.org/cppdocs/) – is PyTorch’s official C++ library, providing high-performance tensors, automatic differentiation, and neural-network APIs for training and deploying deep-learning models in C++.

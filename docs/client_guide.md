@@ -52,17 +52,37 @@ python3 python_client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --model-name bert \
   --text "Your evaluation sentence" \
+  --text "Add a second sentence for batching" \
   --reference-model ../models/bert_libtorch.pt \
   --rtol 1e-3 \
   --atol 1e-5
 ```
 
-## 4. Write your own client ?
+The script accepts either repeated `--text` flags (batched tokenisation).
+Responses contain a single tensor shaped `[batch, 128, 768]` by default; the
+client prints sample values and, when `--reference-model` is set, validates the
+outputs against a local TorchScript model using the provided tolerances.
 
-If you nee to write your own client, start from these examples:
+## 4. Write your own client
 
-- C++: `src/grpc/client/client_main.cpp`.
-- Python: `python_client/bert_inference_client.py`.
+If you need to write your own client, start from these references:
+
+- C++ example: `src/grpc/client/client_main.cpp`.
+- Python example: `python_client/bert_inference_client.py`.
+- gRPC service definition: `src/proto/grpc_service.proto` and `src/proto/model_config.proto`.
+
+Generate fresh Python stubs with:
+
+```bash
+python -m grpc_tools.protoc \
+  -I src/proto \
+  --python_out=python_client \
+  --grpc_python_out=python_client \
+  src/proto/grpc_service.proto
+```
+
+The same proto files underpin the C++ client; CMake handles codegen through
+`protobuf_generate` during the normal build.
 
 ---
 
