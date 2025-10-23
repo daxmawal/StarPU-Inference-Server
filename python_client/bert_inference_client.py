@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-gRPC client used to send real inference requests to the StarPU server.
-
-Two usage modes:
-  * Provide one or more sentences via --text (automatic tokenization with
-    HuggingFace).
-  * Load pre-encoded inputs from an .npz file containing `input_ids` and
-    `attention_mask`.
-
-The script prepares tensors in the expected format (`int64`, shape [batch, 128])
-for the `models/bert.yml` configuration, dispatches a `ModelInfer` request, and
-prints a summary of the outputs.
-"""
+"""gRPC client used to send real inference requests to the StarPU server."""
 
 from __future__ import annotations
 
@@ -52,26 +40,15 @@ CONTENT_FIELD_BY_BASE_DTYPE = {
     "BOOL": "bool_contents",
 }
 
-
-def _load_encoded_inputs(npz_path: Path) -> Tuple[np.ndarray, np.ndarray]:
-    """Load `input_ids` and `attention_mask` from an .npz file."""
-    data = np.load(npz_path)
-    try:
-        input_ids = data["input_ids"]
-        attention_mask = data["attention_mask"]
-    except KeyError as exc:
-        raise ValueError(
-            "The .npz file must contain the 'input_ids' and 'attention_mask' keys."
-        ) from exc
-    if input_ids.ndim != 2 or attention_mask.ndim != 2:
-        raise ValueError("Tensors must be rank-2 (batch, sequence).")
-    if input_ids.shape != attention_mask.shape:
-        raise ValueError("input_ids and attention_mask must share the same shape.")
-
-    return (
-        np.asarray(input_ids, dtype=np.int64, order="C"),
-        np.asarray(attention_mask, dtype=np.int64, order="C"),
-    )
+DEFAULT_SERVER = "127.0.0.1:50051"
+DEFAULT_MODEL_NAME = "bert"
+DEFAULT_MODEL_VERSION = "1"
+DEFAULT_TIMEOUT_S = 30.0
+DEFAULT_MAX_MESSAGE_MB = 32
+DEFAULT_TOKENIZER = "bert-base-uncased"
+DEFAULT_MAX_LENGTH = 128
+DEFAULT_REQUESTED_OUTPUTS = ["output0"]
+DEFAULT_PREVIEW_VALUES = 16
 
 
 def _tokenize_texts(
@@ -82,8 +59,8 @@ def _tokenize_texts(
         from transformers import AutoTokenizer
     except ImportError as exc:
         raise RuntimeError(
-            "transformers is not installed. Run 'pip install transformers' "
-            "or provide a pre-encoded .npz via --encoded-npz."
+            "transformers is not installed. Run 'pip install transformers' to "
+            "enable text tokenization."
         ) from exc
 
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -386,121 +363,60 @@ def parse_args() -> argparse.Namespace:
         description="gRPC client for the StarPU Inference Server (BERT)."
     )
     parser.add_argument(
-        "--model-name",
-        default="bert",
-        help="Name of the model exposed by the server.",
-    )
-    parser.add_argument(
         "--server",
-        default="127.0.0.1:50051",
-        help="gRPC address of the server (host:port).",
+        default=DEFAULT_SERVER,
+        help="gRPC address of the server (host:port)."
     )
     parser.add_argument(
-        "--model-version",
-        default="1",
-        help="Model version.",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=30.0,
-        help="RPC timeout in seconds.",
-    )
-    parser.add_argument(
-        "--max-message-mb",
-        type=int,
-        default=32,
-        help="Maximum gRPC message size (MiB).",
-    )
-    parser.add_argument(
-        "--request-id",
-        help="Optional identifier forwarded to the server.",
-    )
-
-    input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument(
-        "--encoded-npz",
-        type=Path,
-        help="`.npz` file with `input_ids` and `attention_mask` (int64).",
-    )
-    input_group.add_argument(
         "--text",
         action="append",
-        help="Sentence to infer (repeat the option for batching).",
-    )
-
-    parser.add_argument(
-        "--tokenizer",
-        default="bert-base-uncased",
-        help="HuggingFace tokenizer used for --text.",
-    )
-    parser.add_argument(
-        "--max-length",
-        type=int,
-        default=128,
-        help="Maximum sequence length (padding/truncation).",
-    )
-    parser.add_argument(
-        "--output",
-        action="append",
-        default=["output0"],
-        help="Name of the outputs to fetch (default: output0).",
-    )
-    parser.add_argument(
-        "--print-values",
-        type=int,
-        default=16,
-        help="Number of values to print per output (0 to disable).",
+        required=True,
+        help="Sentence to infer (repeat the option for batching)."
     )
     parser.add_argument(
         "--reference-model",
         type=Path,
-        help=("Path to a local TorchScript model used to validate the server output."),
+        help=("Path to a local TorchScript model used to validate the server output.")
     )
     parser.add_argument(
         "--rtol",
         type=float,
         default=1e-3,
-        help="Relative tolerance for validation (--reference-model).",
+        help="Relative tolerance for validation (--reference-model)."
     )
     parser.add_argument(
         "--atol",
         type=float,
         default=1e-5,
-        help="Absolute tolerance for validation (--reference-model).",
+        help="Absolute tolerance for validation (--reference-model)."
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.encoded_npz:
-        input_ids, attention_mask = _load_encoded_inputs(args.encoded_npz)
-    else:
-        assert args.text is not None
-        input_ids, attention_mask = _tokenize_texts(
-            args.text, args.tokenizer, args.max_length
-        )
+    input_ids, attention_mask = _tokenize_texts(
+        args.text, DEFAULT_TOKENIZER, DEFAULT_MAX_LENGTH
+    )
 
     request = build_infer_request(
         input_ids=input_ids,
         attention_mask=attention_mask,
-        model_name=args.model_name,
-        model_version=args.model_version,
-        request_id=args.request_id,
-        requested_outputs=list(dict.fromkeys(args.output)),
+        model_name=DEFAULT_MODEL_NAME,
+        model_version=DEFAULT_MODEL_VERSION,
+        request_id=None,
+        requested_outputs=DEFAULT_REQUESTED_OUTPUTS,
     )
 
     response = run_inference(
         server_addr=args.server,
         request=request,
-        timeout_s=args.timeout,
-        max_message_bytes=args.max_message_mb * 1024 * 1024,
+        timeout_s=DEFAULT_TIMEOUT_S,
+        max_message_bytes=DEFAULT_MAX_MESSAGE_MB * 1024 * 1024,
     )
 
     outputs_info = extract_response_tensors(response)
-    max_preview_values = max(0, args.print_values)
-    _summarize_response(response, outputs_info, max_preview_values)
+    _summarize_response(response, outputs_info, DEFAULT_PREVIEW_VALUES)
 
     if args.reference_model:
         stats = validate_with_reference(
