@@ -21,7 +21,7 @@ make -j"$(nproc)"
 
 - `grpc_server` is the executable that exposes the gRPC API.
 - `grpc_client_example` is an example client useful for smoke tests.
-- To write your own client in C++, Python, etc, see ./client_guide.md.
+- To write your own client in C++, Python, etc, see [Client Guide](./client_guide.md).
 
 ## 2. Prepare a model configuration
 

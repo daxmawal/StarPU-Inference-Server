@@ -53,7 +53,7 @@ The configuration file `models/bert.yml` already points to the exported model.
 Start the server from the repository root:
 
 ```bash
-./grpc_server --config models/bert.yml
+./grpc_server --config ../models/bert.yml
 ```
 
 The logs should confirm that the model is loaded and the service is listening

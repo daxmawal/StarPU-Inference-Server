@@ -16,7 +16,7 @@ This directory collects the documentation needed to install, run, and tune the S
 
 ## Client Guide: Examples & Custom Implementations
 
-Clients examples:
+Client examples:
 
 - `grpc_client_example` – sample CLI that drives the gRPC service; sources under `src/grpc/client`.
 - `python_client/bert_inference_client.py` – Python gRPC client that tokenises
