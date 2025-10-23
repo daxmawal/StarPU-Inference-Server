@@ -54,6 +54,7 @@ Optional keys unlock batching, logging, and runtime controls:
 | Key | Description | Default |
 | --- | --- | --- |
 | `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
+| `starpu_env` |  Lets you pin StarPU-specific environment variables. | unset |
 | `use_cpu` | Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution. | `true` |
 | `use_cuda` | Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`. | `false` |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
@@ -73,6 +74,31 @@ Optional keys for debugging:
 | `verbosity` | Log verbosity level. Supported aliases: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`. | `0` |
 | `dynamic_batching` | Enable dynamic batching (`true`/`false`). | `true` |
 | `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). | `false` |
+
+### StarPU environment overrides
+
+The `starpu_env` block lets you pin StarPU-specific environment variables inside
+the YAML instead of exporting them in the shell. Each entry is copied into the
+process environment before StarPU initialises, so it has the same effect as
+`STARPU_*=value ./grpc_server ...`.
+
+```yaml
+starpu_env:
+  STARPU_CUDA_THREAD_PER_WORKER: "1"
+  STARPU_CUDA_PIPELINE: "4"
+  STARPU_NWORKER_PER_CUDA: "4"
+  STARPU_WORKERS_GETBIND: "0"
+```
+
+- `STARPU_CUDA_THREAD_PER_WORKER`: number of CPU helper threads created per CUDA
+  worker. A value of `1` keeps one submission thread per StarPU GPU worker.
+- `STARPU_CUDA_PIPELINE`: depth of the CUDA pipeline, i.e., the number of
+  asynchronous stages StarPU can queue concurrently on each worker.
+- `STARPU_NWORKER_PER_CUDA`: number of StarPU workers spawned for each physical
+  CUDA device; higher values allow more concurrent CUDA streams per GPU.
+- `STARPU_WORKERS_GETBIND`: when set to `0`, disables StarPU’s attempt to query
+  and enforce CPU affinities while initialising workers (can help when bindings
+  are managed externally).
 
 ## 3. Example: `models/bert.yml`
 
