@@ -5,7 +5,7 @@
 
 ## Client Guide
 
-This guide explains how to exercise the gRPC inference API with real data. It
+This guide explains how to exercise the gRPC inference API. It
 focuses on the BERT example shipped with the repository, but the workflow can be
 adapted to any TorchScript model once the tensor names and shapes are known.
 
@@ -60,7 +60,7 @@ python3 client/bert_inference_client.py \
 ```
 
 The script accepts either repeated `--text` flags (batched tokenisation).
-Responses contain a single tensor shaped `[batch, 128, 768]` by default; the
+Responses contain a single tensor shaped `[batch, 128, 768]` by default, the
 client prints sample values and, when `--reference-model` is set, validates the
 outputs against a local TorchScript model using the provided tolerances.
 
@@ -84,7 +84,7 @@ python3 -m grpc_tools.protoc \
   src/proto/grpc_service.proto
 ```
 
-The same proto files underpin the C++ client; CMake handles codegen through
+The same proto files underpin the C++ clien,; CMake handles codegen through
 `protobuf_generate` during the normal build.
 
 ---

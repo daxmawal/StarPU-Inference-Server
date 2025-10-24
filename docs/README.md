@@ -7,7 +7,7 @@ This directory collects the documentation needed to install, run, and tune the S
 
 ## Getting Started
 
-- Start with [installation](./installation.md) for building the server directly on your machine.
+- Start with [installation](./installation.md) for building the server directly on your machine. Or see [docker guide](docs/installation.md) for Docker image build.
 - Once installed, [quickstart](./quickstart.md) walks through running inference workloads with the provided tooling.
 
 ## Configuration Reference
@@ -18,11 +18,8 @@ This directory collects the documentation needed to install, run, and tune the S
 
 Client examples:
 
-- `grpc_client_example` – sample CLI that drives the gRPC service; sources under `src/grpc/client`.
-- `client/bert_inference_client.py` – Python gRPC client that tokenises
-  real text or replays pre-encoded tensors (see [Client Guide](./client_guide.md)).
-
-Write your own client:
+- `grpc_client_example` – sample C++ CLI that drives the gRPC service, sources under `src/grpc/client`.
+- `client/bert_inference_client.py` – Python gRPC client that tokenises text, [Client Guide](./client_guide.md)).
 
 ### Backends
 

@@ -31,8 +31,8 @@ configuration is written in YAML and must include the following required keys:
 | Key | Description |
 | --- | --- |
 | `model` | Absolute or relative path to the TorchScript `.pt`/`.ts` file. |
-| `inputs` | Sequence describing each input tensor; every element must define `name`, `data_type`, and `dims`. |
-| `outputs` | Sequence describing each output tensor; every element must define `name`, `data_type`, and `dims`. |
+| `inputs` | Sequence describing each input tensor, every element must define `name`, `data_type`, and `dims`. |
+| `outputs` | Sequence describing each output tensor, every element must define `name`, `data_type`, and `dims`. |
 | `max_batch_size` | Upper bound for per-request batch size. |
 | `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. |
 | `pool_size` | Number of reusable I/O buffer slots to preallocate per GPU. A value of x allocates x I/O slots per device. |
@@ -65,7 +65,6 @@ Behavior of `use_cpu` and `use_cuda`:
 - `use_cpu: true`, `use_cuda: [{ device_ids: [...] }]` → StarPU runs heterogeneously on CPU and GPU workers.
 - `use_cuda: false` or omitted → pipeline runs on CPU workers only (unless the CLI overrides the setting).
 - `use_cpu: false`, `use_cuda: [{ ... }]` → pipeline runs on GPU workers only.
-- Both `use_cpu: false` and `use_cuda: false` (or an empty sequence) → configuration is invalid; at least one execution backend must be enabled.
 
 Optional keys for debugging:
 

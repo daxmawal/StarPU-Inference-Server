@@ -24,7 +24,7 @@ cmake --build . -j"$(nproc)"
 
 The binaries, including `grpc_server`, are produced inside `build/`.
 
-> Prefer containers? Build the image described in the [docker guide](./docker_guide.md) guide and run
+> Prefer containers? Build the image described in the [docker guide](./docker_guide.md) and run
 
 ---
 
@@ -61,7 +61,7 @@ Start the server from the build repository:
 The logs should confirm that the model is loaded and the service is listening
 on `127.0.0.1:50051`. The sample configuration enables one CPU worker and one
 CUDA worker (device `0`). Adjust the `use_cuda` section if you prefer different
-GPU IDs or a CPU-only setup.
+GPU IDs or a CPU-only setup ([Server Configuration](./server_guide.md)).
 
 ---
 
@@ -80,7 +80,7 @@ pip install -r client/requirements.txt
 
 python3 client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
-  --text "StarPU orchestre CPU et GPU pour servir cette requête." \
+  --text "StarPU orchestrates CPU and GPU to serve this request." \
   --reference-model models/bert_libtorch.pt
 ```
 
