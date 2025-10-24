@@ -26,7 +26,7 @@ asynchronous and heterogeneous execution.
 ## Installation
 
 See [installation](docs/installation.md) for setup instructions,
-including dependency lists and build steps.
+including dependency lists, and native build steps. See [docker guide](docs/installation.md) Docker image build commands and execution.
 
 ## Quickstart
 
