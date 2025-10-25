@@ -1,13 +1,24 @@
 # StarPU Inference Server — Docker Guide (Ubuntu 22.04 + NVIDIA GPU)
 
-This guide walks you **end‑to‑end** through:
+Run through Docker + NVIDIA setup to build, launch, and validate the StarPU inference server in a reproducible environment.
 
-1) installing Docker,  
-2) enabling **GPU** support in containers (NVIDIA Container Toolkit),  
-3) building the image,  
-4) running and testing the inference server,  
+> **Target environment:** Ubuntu 22.04 LTS on an NVIDIA GPU host with local sudo access.
 
-> Written for **Ubuntu 22.04** with an **NVIDIA** GPU and `sudo` privileges.
+---
+
+## Before you start
+
+- **OS & drivers:** `lsb_release -ds` should report Ubuntu 22.04; `nvidia-smi` must succeed before moving on.
+- **Accounts:** a sudo-enabled user (join the `docker` group if you want rootless `docker` later).
+- **Network:** outbound HTTPS to `download.docker.com`, `nvidia.github.io`, and Docker Hub.
+- **Disk:** ~3 GiB for Docker packages plus the StarPU image and model artifacts.
+
+Quick sanity checks:
+
+```bash
+docker --version || true
+nvidia-smi || true
+```
 
 ---
 
@@ -21,38 +32,46 @@ sudo apt-get install -y ca-certificates curl gnupg lsb-release
 # Docker GPG key
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
- | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
 # Docker repo
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
 https://download.docker.com/linux/ubuntu $(. /etc/os-release; echo $UBUNTU_CODENAME) stable" \
- | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# Install
+# Install & enable
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+```
+
+Verify Docker works:
+
+```bash
+sudo docker run --rm hello-world
 ```
 
 Optional: use Docker without `sudo`:
 
 ```bash
 sudo usermod -aG docker $USER
-newgrp docker
+newgrp docker  # or log out/in
+docker run --rm hello-world
 ```
 
 ---
 
-## 2) Enable GPU in containers: NVIDIA Container Toolkit
+## 2) Enable GPU in containers (NVIDIA Container Toolkit)
 
 ```bash
 # NVIDIA repo
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
- | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list \
- | sed 's#deb #deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] #' \
- | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  | sed 's#deb #deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] #' \
+  | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
 sudo apt-get update
 sudo apt-get install -y nvidia-container-toolkit nvidia-container-toolkit-base \
@@ -61,7 +80,7 @@ sudo apt-get install -y nvidia-container-toolkit nvidia-container-toolkit-base \
 
 ### 2.1 Configure Docker with the NVIDIA runtime as default
 
-> **Backup** then write a minimal config. If you already have other Docker settings, merge instead of overwriting.
+Backup first—merge manually if you already maintain a custom `daemon.json`.
 
 ```bash
 sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak 2>/dev/null || true
@@ -78,14 +97,14 @@ EOF'
 
 ### 2.2 Fix the NVIDIA runtime cgroups option
 
-Some installs have `no-cgroups = true`, which breaks NVML inside containers. Force it to `false`:
+Some installs ship with `no-cgroups = true`, which prevents NVML inside containers. Force it to `false`:
 
 ```bash
 sudo sed -i 's/^\s*no-cgroups\s*=.*/no-cgroups = false/; t; $a no-cgroups = false' \
   /etc/nvidia-container-runtime/config.toml
 ```
 
-Restart Docker and **test inside a container** (use a **CUDA 13.0** image, compatible with 58x drivers):
+Restart Docker and validate GPU visibility (CUDA 13.0 runtime works with 535/550 series drivers):
 
 ```bash
 sudo systemctl restart docker
@@ -93,45 +112,51 @@ sudo systemctl restart docker
 docker run --rm --gpus all nvidia/cuda:13.0.0-runtime-ubuntu22.04 nvidia-smi
 ```
 
-- If you see your GPU → great.
-- If you see **“Failed to initialize NVML”**, recheck the cgroups step above and **reboot** if needed.
+- GPU output ✅ → you are ready.
+- `Failed to initialize NVML` → re-run the cgroups fix and reboot if required.
 
 ---
 
-## 3) Build your server image
+## 3) Build the StarPU inference image
 
-From the **repo root** (where the `Dockerfile` is):
+From the repository root (where the `Dockerfile` lives):
 
 ```bash
 docker build --no-cache --pull --network=host -t starpu-inference:latest .
 ```
 
-Check the binary help:
+Confirm the binary starts:
 
 ```bash
 docker run --rm --gpus all starpu-inference:latest --help
 ```
 
-> If the build fails with NVCC 11.8 + GCC 13, force GCC 12 for the CUDA host compiler in your Dockerfile:
+> NVCC 11.8 + GCC 13 sometimes fails. To pin GCC 12 in your `Dockerfile`:
 >
 > ```Dockerfile
 > RUN apt-get update && apt-get install -y g++-12
 > ENV CMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-12
-> # or add -allow-unsupported-compiler to CUDA flags (less clean)
 > ```
 
 ---
 
-## 4) Prepare the config and models
+## 4) Prepare model assets and config
 
-Create a directory on the host, e.g. `~/Workspace/StarPU-Inference-Server/models/`, containing:
+Create a host directory (e.g. `~/Workspace/StarPU-Inference-Server/models/`) and drop in:
 
-- `bert_libtorch.pt` (weights)
-- `bert_docker.yml` (configuration file)
+- `bert_libtorch.pt` — model weights.
+- `bert_docker.yml` — runtime configuration (example below).
+
+Ensure directories are traversable and files readable:
+
+```bash
+chmod 755 ~/Workspace/StarPU-Inference-Server/models
+chmod 644 ~/Workspace/StarPU-Inference-Server/models/*
+```
 
 ### Example `bert_docker.yml`
 
-> Use **absolute** paths **inside the container**. Ensure files are readable (`chmod 644`) and directories are traversable (`chmod 755`).
+> Paths in the YAML refer to container paths. We mount the host directory at `/workspace/models`.
 
 ```yaml
 scheduler: eager
@@ -161,11 +186,13 @@ pool_size: 12
 
 ---
 
-## 5) Run the server
+## 5) Run the server container
 
-Change into the **`models/` directory** (so `$PWD` maps to the correct files):
+Change into the directory that contains `bert_docker.yml` so the volume mount resolves correctly:
 
 ```bash
+cd ~/Workspace/StarPU-Inference-Server/models
+
 docker run -d --name starpu-inference \
   --gpus all --network=host \
   -v "$PWD:/workspace/models:ro" \
@@ -173,7 +200,7 @@ docker run -d --name starpu-inference \
   --config /workspace/models/bert_docker.yml
 ```
 
-View logs:
+Tail logs:
 
 ```bash
 docker logs -f --tail=200 starpu-inference
@@ -183,26 +210,27 @@ docker logs -f --tail=200 starpu-inference
 
 ## 6) Test with the bundled gRPC client
 
-From another container:
-
 ```bash
 docker run --rm --network=host \
   starpu-inference:latest \
   /usr/local/bin/grpc_client_example --address localhost:50051
 ```
 
+Expect a successful RPC response with timing information.
+
 ---
 
 ## 7) Routine operations
 
 ```bash
-# Status
+# Status / health
 docker ps -a --filter name=starpu-inference
+docker inspect starpu-inference --format '{{ .State.Status }}'
 
 # Logs
 docker logs -f --tail=200 starpu-inference
 
-# Stop & remove
+# Stop & remove container
 docker stop starpu-inference
 docker rm starpu-inference
 
@@ -214,7 +242,7 @@ docker rmi starpu-inference:latest
 
 ## 8) Docker Compose (easy relaunch)
 
-Create `docker-compose.yml` (in repo root or in `models/`):
+Create `docker-compose.yml` in the repository root or alongside your models:
 
 ```yaml
 services:
@@ -225,15 +253,18 @@ services:
     command: ["--config", "/workspace/models/bert_docker.yml"]
     volumes:
       - ./models:/workspace/models:ro
+    restart: unless-stopped
 ```
 
-Run / logs / stop:
+Run / monitor / stop:
 
 ```bash
 docker compose up -d
 docker compose logs -f
 docker compose down
 ```
+
+> Compose v2.6+ understands the `gpus:` stanza. For older Compose, add `deploy.resources.reservations.devices` instead.
 
 ---
 
