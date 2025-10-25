@@ -112,7 +112,7 @@ sudo systemctl restart docker
 docker run --rm --gpus all nvidia/cuda:13.0.0-runtime-ubuntu22.04 nvidia-smi
 ```
 
-- GPU output ✅ → you are ready.
+- GPU output → you are ready.
 - `Failed to initialize NVML` → re-run the cgroups fix and reboot if required.
 
 ---
@@ -129,7 +129,7 @@ docker build --no-cache --pull --network=host -t starpu-inference:latest .
 
 ## 4) Prepare model assets and config
 
-Create a host directory (e.g. `~/Workspace/StarPU-Inference-Server/models/`) and drop in:
+Create a host directory (e.g. `/models/`) and drop in:
 
 - `bert_libtorch.pt` — model weights.
 - `bert_docker.yml` — runtime configuration (example below).
@@ -137,13 +137,13 @@ Create a host directory (e.g. `~/Workspace/StarPU-Inference-Server/models/`) and
 Ensure directories are traversable and files readable:
 
 ```bash
-chmod 755 ~/Workspace/StarPU-Inference-Server/models
-chmod 644 ~/Workspace/StarPU-Inference-Server/models/*
+chmod 755 models
+chmod 644 models/*
 ```
 
 ### Example `bert_docker.yml`
 
-> Paths in the YAML refer to container paths. We mount the host directory at `/workspace/models`.
+> Paths in the YAML refer to container paths. We mount the host directory at `/models`.
 
 ```yaml
 scheduler: eager
@@ -178,7 +178,7 @@ pool_size: 12
 Change into the directory that contains `bert_docker.yml` so the volume mount resolves correctly:
 
 ```bash
-cd ~/Workspace/StarPU-Inference-Server/models
+cd models
 
 docker run -d --name starpu-inference \
   --gpus all --network=host \
@@ -195,39 +195,25 @@ docker logs -f --tail=200 starpu-inference
 
 ---
 
-## 6) Test with the bundled gRPC client
+## 6) Test with the Python gRPC client
+
+With the container running on `--network=host`, you can drive it from your host
+using the repository's Python example. Follow the walkthrough in
+[Client Guide – Run an inference with natural language input](./client_guide.md#3-run-an-inference-with-natural-language-input)
+and, once your virtual environment is ready, send a quick request:
 
 ```bash
-docker run --rm --network=host \
-  starpu-inference:latest \
-  /usr/local/bin/grpc_client_example --address localhost:50051
+python client/bert_inference_client.py \
+  --server 127.0.0.1:50051 \
+  --text "The StarPU server is up and running"
 ```
 
-Expect a successful RPC response with timing information.
+The script prints a short summary of the returned tensor (and optionally
+validates against a local TorchScript model if you pass `--reference-model`).
 
 ---
 
-## 7) Routine operations
-
-```bash
-# Status / health
-docker ps -a --filter name=starpu-inference
-docker inspect starpu-inference --format '{{ .State.Status }}'
-
-# Logs
-docker logs -f --tail=200 starpu-inference
-
-# Stop & remove container
-docker stop starpu-inference
-docker rm starpu-inference
-
-# Remove image (optional)
-docker rmi starpu-inference:latest
-```
-
----
-
-## 8) Docker Compose (easy relaunch)
+## 7) Docker Compose (easy relaunch)
 
 Create `docker-compose.yml` in the repository root or alongside your models:
 
