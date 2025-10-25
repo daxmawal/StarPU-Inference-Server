@@ -7,7 +7,7 @@ This directory collects the documentation needed to install, run, and tune the S
 
 ## Getting Started
 
-- Start with [installation](./installation.md) for building the server directly on your machine. Or see [docker guide](docs/docker_guide.md) for Docker image build.
+- Start with [installation](./installation.md) for building the server directly on your machine. Or see [docker guide](./docker_guide.md) for Docker image build.
 - Once installed, [quickstart](./quickstart.md) walks through running inference workloads with the provided tooling.
 
 ## Configuration Reference
