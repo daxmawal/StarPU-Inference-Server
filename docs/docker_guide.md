@@ -1,24 +1,8 @@
-# StarPU Inference Server — Docker Guide (Ubuntu 22.04 + NVIDIA GPU)
+# StarPU Inference Server — Docker Guide
 
 Run through Docker + NVIDIA setup to build, launch, and validate the StarPU inference server in a reproducible environment.
 
-> **Target environment:** Ubuntu 22.04 LTS on an NVIDIA GPU host with local sudo access.
-
----
-
-## Before you start
-
-- **OS & drivers:** `lsb_release -ds` should report Ubuntu 22.04; `nvidia-smi` must succeed before moving on.
-- **Accounts:** a sudo-enabled user (join the `docker` group if you want rootless `docker` later).
-- **Network:** outbound HTTPS to `download.docker.com`, `nvidia.github.io`, and Docker Hub.
-- **Disk:** ~3 GiB for Docker packages plus the StarPU image and model artifacts.
-
-Quick sanity checks:
-
-```bash
-docker --version || true
-nvidia-smi || true
-```
+> **Tested environment:** Ubuntu 22.04 LTS on an NVIDIA GPU host with local sudo access.
 
 ---
 
