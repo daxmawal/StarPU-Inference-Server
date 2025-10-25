@@ -125,19 +125,6 @@ From the repository root (where the `Dockerfile` lives):
 docker build --no-cache --pull --network=host -t starpu-inference:latest .
 ```
 
-Confirm the binary starts:
-
-```bash
-docker run --rm --gpus all starpu-inference:latest --help
-```
-
-> NVCC 11.8 + GCC 13 sometimes fails. To pin GCC 12 in your `Dockerfile`:
->
-> ```Dockerfile
-> RUN apt-get update && apt-get install -y g++-12
-> ENV CMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-12
-> ```
-
 ---
 
 ## 4) Prepare model assets and config
