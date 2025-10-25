@@ -65,11 +65,11 @@ docker run --rm hello-world
 ## 2) Enable GPU in containers (NVIDIA Container Toolkit)
 
 ```bash
-# NVIDIA repo
-distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
+# NVIDIA repo (22.04 is jammy)
+distribution=ubuntu22.04
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
   | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list \
+curl -fsSL https://nvidia.github.io/libnvidia-container/$distribution/libnvidia-container.list \
   | sed 's#deb #deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] #' \
   | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
 
