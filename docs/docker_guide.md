@@ -124,6 +124,11 @@ Use the repository's `models/` directory (already present at the repo root) and 
 If you still need the TorchScript weights, follow the export procedure from [Quickstart – Export the BERT TorchScript model](./quickstart.md#2-export-the-bert-torchscript-model). From the repository root:
 
 ```bash
+# Adjust the path if your checkout lives elsewhere
+cd /path/to/StarPU-Inference-Server
+
+# Reuse an existing venv if you already created it during the quickstart,
+# otherwise create a fresh one (remove .venv first if you want a clean slate)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -136,7 +141,8 @@ Ensure directories are traversable and files readable:
 
 ```bash
 chmod 755 models
-chmod 644 models/*  # run after copying your assets
+[ -e models/bert_libtorch.pt ] && chmod 644 models/bert_libtorch.pt
+[ -e models/bert_docker.yml ] && chmod 644 models/bert_docker.yml
 ```
 
 ### Example `bert_docker.yml`
@@ -173,8 +179,7 @@ pool_size: 12
 
 ## 5) Run the server container
 
-Change into the directory that contains `bert_docker.yml` so the volume mount resolves correctly, `--network=host` only works on Linux.
-If you just joined the `docker` group, open a fresh shell so the new membership takes effect.
+Change into the directory that contains `bert_docker.yml` so the volume mount resolves correctly (`cd /path/to/StarPU-Inference-Server/models`).
 
 ```bash
 cd models
