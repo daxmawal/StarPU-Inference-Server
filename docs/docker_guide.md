@@ -70,7 +70,7 @@ sudo apt-get install -y nvidia-container-toolkit nvidia-container-toolkit-base \
 
 ### 2.1 Configure Docker with the NVIDIA runtime as default
 
-The toolkit ships `nvidia-ctk`, which updates `daemon.json` in-place instead of overwriting your custom settings:
+The toolkit ships `nvidia-ctk`, which updates `daemon.json`:
 
 ```bash
 sudo nvidia-ctk runtime configure --runtime=docker
@@ -240,10 +240,6 @@ docker compose up -d
 docker compose logs -f
 docker compose down
 ```
-
-> Compose v2.6+ understands the `gpus:` stanza. For older Compose, add `deploy.resources.reservations.devices` instead.
-
-Make sure the `models/` directory (with your assets) sits next to the compose file so the relative bind mount resolves correctly.
 
 ---
 
