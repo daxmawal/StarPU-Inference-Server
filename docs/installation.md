@@ -37,7 +37,7 @@ Install dependencies into a dedicated prefix to keep the system clean:
 ```bash
 export INSTALL_DIR="$HOME/Install"
 export STARPU_DIR="$INSTALL_DIR/starpu"
-export CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/grpc:$INSTALL_DIR/utf8_range:$INSTALL_DIR/libtorch:$STARPU_DIR"
+export CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/grpc:$INSTALL_DIR/utf8_range:$INSTALL_DIR/libtorch:$STARPU_DIR:$INSTALL_DIR/protobuf"
 export LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export Protobuf_DIR="$INSTALL_DIR/protobuf/lib/cmake/protobuf"
 export Protobuf_PROTOC_EXECUTABLE="$INSTALL_DIR/protobuf/bin/protoc"
@@ -45,7 +45,13 @@ mkdir -p "$INSTALL_DIR"
 ```
 
 Append these exports to `~/.bashrc` (or the shell profile you use) so they are
-available in future sessions.
+available in future sessions, then run:
+
+```bash
+source ~/.bashrc
+```
+
+Alternatively, open a new terminal so the variables take effect.
 
 ## 2. Install system packages
 
@@ -55,6 +61,16 @@ sudo apt-get install -y \
   autoconf automake build-essential git pkg-config \
   libfxt-dev libgtest-dev libhwloc-dev libltdl-dev libssl-dev \
   libtool libtool-bin m4 ninja-build unzip
+```
+
+Compile the `gtest` static libraries once (the `libgtest-dev` package only ships
+sources):
+
+```bash
+sudo cmake -S /usr/src/googletest -B /usr/src/googletest/build -DCMAKE_BUILD_TYPE=Release
+sudo cmake --build /usr/src/googletest/build -j"$(nproc)"
+sudo cp /usr/src/googletest/build/lib/libgtest*.a /usr/lib/
+sudo rm -rf /usr/src/googletest/build
 ```
 
 For GPU telemetry via NVML, also install:
@@ -132,7 +148,7 @@ cmake --build /tmp/protobuf/build -j"$(nproc)"
 cmake --install /tmp/protobuf/build
 rm -rf /tmp/protobuf
 
-git clone --depth 1 https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range
+git clone --depth 1 --branch v1.1 https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range
 cmake -S /tmp/utf8_range -B /tmp/utf8_range/build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/utf8_range" \
@@ -212,6 +228,7 @@ Configure and compile:
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DCMAKE_CUDA_ARCHITECTURES="80;86" \
   -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
   -DProtobuf_DIR="$Protobuf_DIR" \
   -DProtobuf_PROTOC_EXECUTABLE="$Protobuf_PROTOC_EXECUTABLE" \
@@ -231,8 +248,6 @@ The main executables are emitted under `build/`:
 ```bash
 cmake -S . -B build \
   -DBUILD_TESTS=ON \
-  -DENABLE_SANITIZERS=OFF \
-  -DENABLE_COVERAGE=OFF \
   -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
