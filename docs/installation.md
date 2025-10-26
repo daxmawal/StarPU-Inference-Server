@@ -66,7 +66,6 @@ sudo apt-get install -y nvidia-cuda-toolkit libnvidia-ml-dev
 ## 3. Install GCC 13
 
 ```bash
-sudo add-apt-repository ppa:ubuntu-toolchain-r/test
 sudo apt-get update
 sudo apt-get install -y g++-13
 sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 100
@@ -166,7 +165,7 @@ cmake --build /tmp/grpc/cmake/build --target install -j"$(nproc)"
 rm -rf /tmp/grpc
 ```
 
-### StarPU 1.4.8 (with CUDA)
+### StarPU 1.4.8
 
 ```bash
 STARPU_VERSION=1.4.8
@@ -193,7 +192,7 @@ rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
 ## 7. Sanity checks
 
-- `nvcc --version` should report CUDA 11.8 (or the version you target).
+- `nvcc --version` should report CUDA 11.8 or greater.
 - `cmake --version` and `g++ --version` should point to the recent toolchain.
 - Optionally validate CUDA availability through LibTorch with a short Python
   snippet if you also use the Python stack.
