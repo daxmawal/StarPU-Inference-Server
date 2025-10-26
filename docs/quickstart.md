@@ -24,7 +24,7 @@ cmake --build . -j"$(nproc)"
 
 The binaries, including `grpc_server`, are produced inside `build/`.
 
-> Prefer containers? Build the image described in the [docker guide](./docker_guide.md) and run
+> Prefer containers? Build the image described in the [docker guide](./docker_guide.md).
 
 ---
 

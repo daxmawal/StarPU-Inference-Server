@@ -91,7 +91,7 @@ CONFIG=/etc/nvidia-container-runtime/config.toml
 sudo sed -i 's/^\s*no-cgroups\s*=.*/no-cgroups = false/; t; $a no-cgroups = false' "$CONFIG"
 ```
 
-Restart Docker and validate GPU visibility :
+Restart Docker and validate GPU visibility:
 
 ```bash
 sudo systemctl restart docker
