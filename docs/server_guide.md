@@ -1,7 +1,7 @@
-# StarPU Inference Server Documentation
+# StarPU Inference Server - Server Guide
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) |
-| --- | --- | --- | --- |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) |
+| --- | --- | --- | --- | --- |
 
 ## Server Guide
 
