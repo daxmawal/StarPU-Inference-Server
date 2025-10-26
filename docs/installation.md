@@ -206,13 +206,12 @@ git clone https://github.com/daxmawal/StarPU-Inference-Server.git
 cd StarPU-Inference-Server
 ```
 
-Configure and compile (tune `CMAKE_CUDA_ARCHITECTURES` for your GPU):
+Configure and compile:
 
 ```bash
 cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-  -DCMAKE_CUDA_ARCHITECTURES="80;86" \
   -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
   -DProtobuf_DIR="$Protobuf_DIR" \
   -DProtobuf_PROTOC_EXECUTABLE="$Protobuf_PROTOC_EXECUTABLE" \
