@@ -17,46 +17,29 @@ inference tasks** across CPUs and GPUs of a compute node. The main goal is to
 **maximize throughput** while maintaining **latency control**, by leveraging
 asynchronous and heterogeneous execution.
 
-#### Goal
+### Goal
 
 - Perform inference of TorchScript models (e.g., ResNet, BERT) using LibTorch.
 - Dynamically schedule inference tasks between CPU and GPU using StarPU.
 - Optimize **throughput** while satisfying **latency constraints**.
 
-##### Features
+## Installation
 
-- [x] Submission of CPU/GPU inference tasks through StarPU
-- [x] TorchScript model execution with LibTorch
-- [x] Asynchronous execution with custom user callbacks
-- [ ] Multithreaded server to receive inference requests
-- [ ] Dynamic batching algorithm for improved throughput
+See [installation](docs/installation.md) for setup instructions,
+including dependency lists, and native build steps. See [docker guide](docs/docker_guide.md) for Docker image build commands and execution.
 
-<!--## Documentation
+## Quickstart
 
-The project currently provides three entry points for documentation:
+Follow the [Quickstart guide](docs/quickstart.md) to:
 
-- [Installation Guide](docs/installation.md) – toolchain and dependency setup.
-- [Configuration Reference](docs/configuration.md) – YAML schema and
-  runtime options.
-- [Usage Guide](docs/usage.md) – running the server and using the CLI.
+1. Build the gRPC inference server.
+2. Export the `bert-base-uncased` TorchScript model.
+3. Launch the server with the provided configuration.
+4. Drive it using the Python gRPC client or by authoring your own client.
 
-## Quick Start
+## Documentation
 
-1. Follow the [Installation Guide](docs/installation.md) to install
-   StarPU, LibTorch, gRPC, and the remaining dependencies.
-2. Create a configuration file describing your TorchScript model inputs
-   and outputs. See the [Configuration Reference](docs/configuration.md)
-   for all available options.
-3. Build and run the server:
-
-   ```bash
-   cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/libtorch
-   cmake --build build
-   ./build/starpu_server --config path/to/config.yaml
-   ```
-
-4. Point your gRPC client to the configured address (defaults to
-   `0.0.0.0:50051`) and monitor Prometheus metrics on port 9090.-->
+The documentation index lives in the docs [folder](docs/README.md).
 
 [ci-badge]:
   https://github.com/daxmawal/StarPU-Inference-Server/actions/workflows/ci.yml/badge.svg?branch=main

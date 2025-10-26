@@ -32,14 +32,17 @@ base_model_yaml() -> std::string
 {
   return std::string{
       "model: {{MODEL_PATH}}\n"
-      "input:\n"
+      "inputs:\n"
       "  - name: in\n"
       "    dims: [1]\n"
       "    data_type: float32\n"
-      "output:\n"
+      "outputs:\n"
       "  - name: out\n"
       "    dims: [1]\n"
-      "    data_type: float32\n"};
+      "    data_type: float32\n"
+      "batch_coalesce_timeout_ms: 1\n"
+      "max_batch_size: 1\n"
+      "pool_size: 1\n"};
 }
 
 struct InvalidConfigCase {
@@ -69,20 +72,53 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "Unknown configuration option: unknown_option"},
     InvalidConfigCase{
-        "InvalidConfigSetsValidFalse", "max_batch_size: 0\n", std::nullopt,
-        false, false},
+        "DeviceIdsAtRootInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "device_ids: [0]\n";
+          return yaml;
+        }(),
+        "device_ids must be nested inside the use_cuda block (e.g. "
+        "\"use_cuda: [{ device_ids: [0] }]\")"},
+    InvalidConfigCase{
+        "InvalidConfigSetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "max_batch_size: 0\n";
+          return yaml;
+        }(),
+        std::nullopt, false, false},
     InvalidConfigCase{
         "NegativeDelaySetsValidFalse",
         [] {
           auto yaml = base_model_yaml();
-          yaml += "delay: -10\n";
+          yaml += "delay_us: -10\n";
           return yaml;
         }(),
         std::nullopt},
     InvalidConfigCase{
-        "NegativeBatchCoalesceTimeoutSetsValidFalse",
+        "UseCudaEmptySequenceInvalid",
         [] {
           auto yaml = base_model_yaml();
+          yaml += "use_cuda: []\n";
+          return yaml;
+        }(),
+        "use_cuda requires at least one device_ids entry"},
+    InvalidConfigCase{
+        "NegativeBatchCoalesceTimeoutSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           yaml += "batch_coalesce_timeout_ms: -5\n";
           return yaml;
         }(),
@@ -116,14 +152,17 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [-1, 3]\n";
           yaml += "    data_type: float32\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           return yaml;
         }(),
         std::nullopt},
@@ -132,14 +171,17 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [0, 3]\n";
           yaml += "    data_type: float32\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           return yaml;
         }(),
         std::nullopt},
@@ -148,16 +190,19 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::ostringstream yaml;
           yaml << "model: {{MODEL_PATH}}\n";
-          yaml << "input:\n";
+          yaml << "inputs:\n";
           yaml << "  - name: in\n";
           yaml << "    dims: [1, "
                << static_cast<long long>(std::numeric_limits<int>::max()) + 1
                << "]\n";
           yaml << "    data_type: float32\n";
-          yaml << "output:\n";
+          yaml << "outputs:\n";
           yaml << "  - name: out\n";
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
+          yaml << "batch_coalesce_timeout_ms: 1\n";
+          yaml << "max_batch_size: 1\n";
+          yaml << "pool_size: 1\n";
           return yaml.str();
         }(),
         std::nullopt},
@@ -166,13 +211,16 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    data_type: float32\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           return yaml;
         }(),
         std::nullopt},
@@ -181,31 +229,42 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [1]\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           return yaml;
         }(),
         std::nullopt},
     InvalidConfigCase{
-        "InvalidVerbositySetsValidFalse", "verbosity: unknown\n", std::nullopt,
-        false, false},
+        "InvalidVerbositySetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "verbosity: unknown\n";
+          return yaml;
+        }(),
+        std::nullopt, false, false},
     InvalidConfigCase{
         "MissingModelSetsValidFalse",
         [] {
           std::string yaml;
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           return yaml;
         }(),
         std::nullopt, false, false},
@@ -217,10 +276,13 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "output:\n";
+          yaml += "outputs:\n";
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           return yaml;
         }(),
         std::nullopt},
@@ -229,10 +291,13 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::string yaml;
           yaml += "model: {{MODEL_PATH}}\n";
-          yaml += "input:\n";
+          yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
           return yaml;
         }(),
         std::nullopt},
@@ -241,16 +306,19 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::ostringstream yaml;
           yaml << "model: {{MODEL_PATH}}\n";
-          yaml << "input:\n";
+          yaml << "inputs:\n";
           for (std::size_t i = 0; i <= kMaxInputs; ++i) {
             yaml << "  - name: in" << i << "\n";
             yaml << "    dims: [1]\n";
             yaml << "    data_type: float32\n";
           }
-          yaml << "output:\n";
+          yaml << "outputs:\n";
           yaml << "  - name: out\n";
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
+          yaml << "batch_coalesce_timeout_ms: 1\n";
+          yaml << "max_batch_size: 1\n";
+          yaml << "pool_size: 1\n";
           return yaml.str();
         }(),
         std::nullopt},
@@ -259,7 +327,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         [] {
           std::ostringstream yaml;
           yaml << "model: {{MODEL_PATH}}\n";
-          yaml << "input:\n";
+          yaml << "inputs:\n";
           yaml << "  - name: in\n";
           yaml << "    dims: [";
           for (std::size_t i = 0; i <= kMaxDims; ++i) {
@@ -270,10 +338,13 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           }
           yaml << "]\n";
           yaml << "    data_type: float32\n";
-          yaml << "output:\n";
+          yaml << "outputs:\n";
           yaml << "  - name: out\n";
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
+          yaml << "batch_coalesce_timeout_ms: 1\n";
+          yaml << "max_batch_size: 1\n";
+          yaml << "pool_size: 1\n";
           return yaml.str();
         }(),
         std::nullopt},
@@ -340,17 +411,20 @@ TEST(ConfigLoader, LoadsValidConfig)
   std::ostringstream yaml;
   yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "device_ids: [0, 1]\n";
-  yaml << "input:\n";
+  yaml << "use_cpu: true\n";
+  yaml << "use_cuda:\n";
+  yaml << "  - { device_ids: [0, 1] }\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1, 3, 224, 224]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1, 1000]\n";
   yaml << "    data_type: float32\n";
   yaml << "verbosity: 3\n";
   yaml << "max_batch_size: 4\n";
+  yaml << "pool_size: 2\n";
   yaml << "dynamic_batching: true\n";
   yaml << "batch_coalesce_timeout_ms: 15\n";
   yaml << "pregen_inputs: 8\n";
@@ -401,14 +475,17 @@ TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  name: bogus\n";
   yaml << "  dims: [1]\n";
   yaml << "  data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_non_sequence_input.yaml";
@@ -433,19 +510,23 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
   yaml << "rtol: 1.0e-4\n";
   yaml << "atol: 2.0e-5\n";
   yaml << "sync: true\n";
   yaml << "use_cpu: false\n";
-  yaml << "use_cuda: true\n";
+  yaml << "use_cuda:\n";
+  yaml << "  - { device_ids: [0] }\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_flags.yaml";
@@ -469,15 +550,18 @@ TEST(ConfigLoader, ParsesVerboseAlias)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "verbose: trace\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_verbose.yaml";
@@ -498,16 +582,18 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   std::ostringstream yaml;
   yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "max_message_bytes: 4096\n";
-  yaml << "input_slots: 3\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 3\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_slots.yaml";
@@ -517,7 +603,7 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.batching.max_message_bytes, 4096U);
-  EXPECT_EQ(cfg.batching.input_slots, 3);
+  EXPECT_EQ(cfg.batching.pool_size, 3);
 }
 
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
@@ -528,15 +614,18 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "max_message_bytes: -1\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_negative_bytes.yaml";
@@ -560,15 +649,17 @@ TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "max_batch_size: 0\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_zero_batch.yaml";
@@ -602,15 +693,18 @@ TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << key << ": " << value << "\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_negative_value.yaml";
@@ -637,7 +731,7 @@ INSTANTIATE_TEST_SUITE_P(
         NegativeValueCase{"rtol", "-1.0", "rtol must be >= 0"},
         NegativeValueCase{"atol", "-1.0", "atol must be >= 0"}));
 
-TEST(ConfigLoader, InputSlotsRejectsNonPositive)
+TEST(ConfigLoader, PoolSizeRejectsNonPositive)
 {
   const auto model_path = std::filesystem::temp_directory_path() /
                           "config_loader_zero_slots_model.pt";
@@ -645,15 +739,17 @@ TEST(ConfigLoader, InputSlotsRejectsNonPositive)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "input_slots: 0\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "pool_size: 0\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_zero_slots.yaml";
@@ -663,7 +759,7 @@ TEST(ConfigLoader, InputSlotsRejectsNonPositive)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: input_slots must be > 0";
+      "Failed to load config: pool_size must be > 0";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);
@@ -677,15 +773,18 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "delay: 15\n";
+  yaml << "max_batch_size: 2\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "pool_size: 2\n";
+  yaml << "delay_us: 15\n";
   yaml << "address: 127.0.0.1:50051\n";
 
   const auto tmp =
@@ -702,15 +801,17 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
 TEST(ConfigLoader, MissingModelSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
-input:
+inputs:
   - name: in
     dims: [1]
     data_type: float32
-output:
+outputs:
   - name: out
     dims: [1]
     data_type: float32
 max_batch_size: 0
+batch_coalesce_timeout_ms: 1
+pool_size: 1
 )";
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_no_model_skip.yaml";
@@ -725,11 +826,14 @@ TEST(ConfigLoader, MissingInputSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
 model: model.pt
-output:
+outputs:
   - name: out
     dims: [1]
     data_type: float32
-delay: -10
+delay_us: -10
+max_batch_size: 1
+batch_coalesce_timeout_ms: 1
+pool_size: 1
 )";
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_no_input_skip.yaml";
@@ -744,11 +848,13 @@ TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
 model: model.pt
-input:
+inputs:
   - name: in
     dims: [1]
     data_type: float32
 max_batch_size: 0
+batch_coalesce_timeout_ms: 1
+pool_size: 1
 )";
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_no_output_skip.yaml";
@@ -769,14 +875,17 @@ TEST(
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: huge\n";
   yaml << "    dims: [2147483647, 2147483647, 2147483647]\n";
   yaml << "    data_type: float32\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_overflow_dims.yaml";
@@ -811,14 +920,17 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
 
   std::ostringstream yaml;
   yaml << "model: " << model_path.string() << "\n";
-  yaml << "input:\n";
+  yaml << "inputs:\n";
   yaml << "  - name: complex_input\n";
   yaml << "    dims: [1, 1]\n";
   yaml << "    data_type: complex64\n";
-  yaml << "output:\n";
+  yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
                    "config_loader_complex_dtype.yaml";

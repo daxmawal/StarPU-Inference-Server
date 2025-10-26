@@ -170,7 +170,9 @@ NvmlWrapper::NvmlWrapper()
 {
   const nvmlReturn_t status = nvmlInit();
   if (status != NVML_SUCCESS) {
-    log_warning(std::format("Failed to initialize NVML: {}", status));
+    log_warning(std::format(
+        "Failed to initialize NVML: {} (code {})",
+        std::string(error_string(status)), static_cast<int>(status)));
     return;
   }
   initialized_ = true;
@@ -213,16 +215,18 @@ NvmlWrapper::query_stats() -> std::vector<GpuSample>
     nvmlDevice_t device{};
     status = nvmlDeviceGetHandleByIndex(idx, &device);
     if (status != NVML_SUCCESS) {
-      log_warning(
-          std::format("nvmlDeviceGetHandleByIndex failed for GPU {}: {}", idx, status);
+      log_warning(std::format(
+          "nvmlDeviceGetHandleByIndex failed for GPU {}: {} (code {})", idx,
+          std::string(error_string(status)), static_cast<int>(status)));
       continue;
     }
 
     nvmlUtilization_t utilization{};
     status = nvmlDeviceGetUtilizationRates(device, &utilization);
     if (status != NVML_SUCCESS) {
-      log_warning(
-          std::format("nvmlDeviceGetUtilizationRates failed for GPU {}: {}", idx, status);
+      log_warning(std::format(
+          "nvmlDeviceGetUtilizationRates failed for GPU {}: {} (code {})", idx,
+          std::string(error_string(status)), static_cast<int>(status)));
       continue;
     }
 
@@ -230,7 +234,8 @@ NvmlWrapper::query_stats() -> std::vector<GpuSample>
     status = nvmlDeviceGetMemoryInfo(device, &memory_info);
     if (status != NVML_SUCCESS) {
       log_warning(std::format(
-          "nvmlDeviceGetMemoryInfo failed for GPU {}: {}", idx, status));
+          "nvmlDeviceGetMemoryInfo failed for GPU {}: {} (code {})", idx,
+          std::string(error_string(status)), static_cast<int>(status)));
       continue;
     }
 

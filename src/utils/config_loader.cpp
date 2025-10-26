@@ -55,7 +55,9 @@ parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
 auto
 validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 {
-  const std::vector<std::string> required_keys{"model", "input", "output"};
+  const std::vector<std::string> required_keys{
+      "model",     "inputs",         "outputs",
+      "pool_size", "max_batch_size", "batch_coalesce_timeout_ms"};
   for (const auto& key : required_keys) {
     if (!root[key]) {
       log_error(std::string("Missing required key: ") + key);
@@ -75,18 +77,19 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "verbosity",
           "scheduler",
           "model",
+          "starpu_env",
           "request_nb",
           "device_ids",
-          "input",
-          "output",
-          "delay",
+          "inputs",
+          "outputs",
+          "delay_us",
           "batch_coalesce_timeout_ms",
           "address",
           "metrics_port",
           "max_message_bytes",
           "max_batch_size",
           "dynamic_batching",
-          "input_slots",
+          "pool_size",
           "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
@@ -150,36 +153,125 @@ parse_request_nb_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
     }
   }
   if (root["device_ids"]) {
-    cfg.devices.ids = root["device_ids"].as<std::vector<int>>();
-    if (!cfg.devices.ids.empty()) {
-      cfg.devices.use_cuda = true;
+    log_error(
+        "device_ids must be nested inside the use_cuda block (e.g. "
+        "\"use_cuda: [{ device_ids: [0] }]\")");
+    cfg.valid = false;
+  }
+}
+
+void
+parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
+{
+  if (root["use_cpu"]) {
+    cfg.devices.use_cpu = root["use_cpu"].as<bool>();
+  }
+
+  const YAML::Node use_cuda_node = root["use_cuda"];
+  if (!use_cuda_node) {
+    return;
+  }
+
+  if (use_cuda_node.IsScalar()) {
+    cfg.devices.use_cuda = use_cuda_node.as<bool>();
+    return;
+  }
+
+  if (!use_cuda_node.IsSequence()) {
+    log_error("use_cuda must be a boolean or a sequence of device mappings");
+    cfg.valid = false;
+    return;
+  }
+
+  cfg.devices.use_cuda = true;
+  cfg.devices.ids.clear();
+
+  for (const auto& entry : use_cuda_node) {
+    if (!entry.IsMap()) {
+      log_error("use_cuda entries must be mappings that define device_ids");
+      cfg.valid = false;
+      continue;
     }
+
+    const YAML::Node device_ids_node = entry["device_ids"];
+
+    if (!device_ids_node) {
+      log_error("use_cuda entries require a device_ids sequence");
+      cfg.valid = false;
+      continue;
+    }
+
+    if (!device_ids_node.IsSequence()) {
+      log_error("device_ids inside use_cuda must be a sequence");
+      cfg.valid = false;
+      continue;
+    }
+
+    const auto device_ids = device_ids_node.as<std::vector<int>>();
+    cfg.devices.ids.insert(
+        cfg.devices.ids.end(), device_ids.begin(), device_ids.end());
+  }
+
+  if (cfg.devices.ids.empty()) {
+    log_error("use_cuda requires at least one device_ids entry");
+    cfg.valid = false;
+    cfg.devices.use_cuda = false;
+  }
+}
+
+void
+parse_starpu_env(const YAML::Node& root, RuntimeConfig& cfg)
+{
+  const YAML::Node env_node = root["starpu_env"];
+  if (!env_node) {
+    return;
+  }
+
+  if (!env_node.IsMap()) {
+    log_error("starpu_env must be a mapping of variable names to values");
+    cfg.valid = false;
+    return;
+  }
+
+  for (const auto& item : env_node) {
+    if (!item.first.IsScalar()) {
+      log_error("starpu_env entries must have scalar keys");
+      cfg.valid = false;
+      continue;
+    }
+    if (!item.second.IsScalar()) {
+      log_error("starpu_env entries must have scalar values");
+      cfg.valid = false;
+      continue;
+    }
+    const auto key = item.first.as<std::string>();
+    cfg.starpu_env[key] = item.second.as<std::string>();
   }
 }
 
 void
 parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["input"]) {
+  if (root["inputs"]) {
     cfg.models.resize(1);
     cfg.models[0].inputs = parse_tensor_nodes(
-        root["input"], cfg.limits.max_inputs, cfg.limits.max_dims);
+        root["inputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
-  if (root["output"]) {
+  if (root["outputs"]) {
     cfg.models.resize(1);
     cfg.models[0].outputs = parse_tensor_nodes(
-        root["output"], cfg.limits.max_inputs, cfg.limits.max_dims);
+        root["outputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
 }
 
 void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["delay"]) {
-    cfg.batching.delay_us = root["delay"].as<int>();
+  if (root["delay_us"]) {
+    cfg.batching.delay_us = root["delay_us"].as<int>();
     if (cfg.batching.delay_us < 0) {
       cfg.valid = false;
-      throw std::invalid_argument("delay must be >= 0");
+      throw std::invalid_argument("delay_us must be >= 0");
     }
   }
   if (root["batch_coalesce_timeout_ms"]) {
@@ -223,10 +315,10 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
   if (root["dynamic_batching"]) {
     cfg.batching.dynamic_batching = root["dynamic_batching"].as<bool>();
   }
-  if (root["input_slots"]) {
-    cfg.batching.input_slots = root["input_slots"].as<int>();
-    if (cfg.batching.input_slots <= 0) {
-      throw std::invalid_argument("input_slots must be > 0");
+  if (root["pool_size"]) {
+    cfg.batching.pool_size = root["pool_size"].as<int>();
+    if (cfg.batching.pool_size <= 0) {
+      throw std::invalid_argument("pool_size must be > 0");
     }
   }
 }
@@ -284,12 +376,6 @@ parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
   }
   if (root["sync"]) {
     cfg.batching.synchronous = root["sync"].as<bool>();
-  }
-  if (root["use_cpu"]) {
-    cfg.devices.use_cpu = root["use_cpu"].as<bool>();
-  }
-  if (root["use_cuda"]) {
-    cfg.devices.use_cuda = root["use_cuda"].as<bool>();
   }
 }
 
@@ -380,7 +466,9 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_network_and_delay(root, cfg);
     parse_message_and_batching(root, cfg);
     parse_generation_nodes(root, cfg);
+    parse_device_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
+    parse_starpu_env(root, cfg);
   }
   catch (const YAML::Exception& exception) {
     mark_invalid(exception.what());

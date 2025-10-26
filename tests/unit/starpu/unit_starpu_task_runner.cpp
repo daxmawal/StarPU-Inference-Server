@@ -216,7 +216,7 @@ TEST_F(
        make_tensor_config("input1", {3}, at::kFloat)},
       {make_tensor_config("output0", {3}, at::kFloat)});
 
-  reset_runner_with_model(model_config, /*input_slots=*/1);
+  reset_runner_with_model(model_config, /*pool_size=*/1);
 
   auto job = make_job(7, {torch::ones({3})}, {at::kFloat});
 
@@ -242,7 +242,7 @@ TEST_F(
   auto model_config = make_model_config(
       "output_only", {}, {make_tensor_config("output0", {3}, at::kFloat)});
 
-  reset_runner_with_model(model_config, /*input_slots=*/1);
+  reset_runner_with_model(model_config, /*pool_size=*/1);
   ASSERT_FALSE(starpu_setup_->has_input_pool());
   ASSERT_TRUE(starpu_setup_->has_output_pool());
 
@@ -273,7 +273,7 @@ TEST_F(
 
   auto deps = starpu_server::kDefaultInferenceTaskDependencies;
   deps.task_create_fn = []() -> starpu_task* { return nullptr; };
-  reset_runner_with_model(model_config, /*input_slots=*/1, deps);
+  reset_runner_with_model(model_config, /*pool_size=*/1, deps);
   ASSERT_FALSE(starpu_setup_->has_input_pool());
   ASSERT_TRUE(starpu_setup_->has_output_pool());
 
@@ -298,7 +298,7 @@ TEST_F(
       "test", {make_tensor_config("input0", {3}, at::kFloat)},
       {make_tensor_config("output0", {3}, at::kFloat)});
 
-  reset_runner_with_model(model_config, /*input_slots=*/1);
+  reset_runner_with_model(model_config, /*pool_size=*/1);
 
   auto& input_pool = starpu_setup_->input_pool();
   auto& output_pool = starpu_setup_->output_pool();

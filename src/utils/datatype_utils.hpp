@@ -78,8 +78,8 @@ inline auto
 string_to_scalar_type(std::string_view type_str) -> at::ScalarType
 {
   std::string key(type_str);
-  constexpr std::string_view type_prefix = "TYPE_";
-  if (key.starts_with(type_prefix)) {
+  if (constexpr std::string_view type_prefix = "TYPE_";
+      key.starts_with(type_prefix)) {
     key.erase(0, type_prefix.size());
   }
   std::ranges::transform(

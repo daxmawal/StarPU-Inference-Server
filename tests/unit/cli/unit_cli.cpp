@@ -47,7 +47,7 @@ TEST(ArgsParser_Unit, ParsesSlotsAlias)
 
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  EXPECT_EQ(opts.batching.input_slots, kSlots);
+  EXPECT_EQ(opts.batching.pool_size, kSlots);
 }
 
 TEST(ArgsParser_Unit, RejectsNonPositiveSlotsAlias)
@@ -63,15 +63,26 @@ TEST(ArgsParser_Unit, RejectsNonPositiveSlotsAlias)
   }
 }
 
-TEST(ArgsParser_Unit, ParsesInputSlots)
+TEST(ArgsParser_Unit, ParsesPoolSize)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{"program", "--model",     model.c_str(),
+                                "--shape", "1x1",         "--types",
+                                "float",   "--pool-size", "4"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_EQ(opts.batching.pool_size, 4);
+}
+
+TEST(ArgsParser_Unit, ParsesLegacyInputSlotsFlag)
 {
   const auto& model = test_model_path();
   std::vector<const char*> args{"program", "--model",       model.c_str(),
                                 "--shape", "1x1",           "--types",
-                                "float",   "--input-slots", "4"};
+                                "float",   "--input-slots", "5"};
   const auto opts = parse(args);
   ASSERT_TRUE(opts.valid);
-  EXPECT_EQ(opts.batching.input_slots, 4);
+  EXPECT_EQ(opts.batching.pool_size, 5);
 }
 
 TEST(ArgsParser_Unit, ParsesAllOptions)
@@ -101,6 +112,8 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
       "127.0.0.1:1234",
       "--max-batch-size",
       "2",
+      "--pool-size",
+      "8",
       "--pregen-inputs",
       "7",
       "--warmup-pregen-inputs",
@@ -129,6 +142,7 @@ TEST(ArgsParser_Unit, ParsesAllOptions)
   EXPECT_EQ(opts.verbosity, starpu_server::VerbosityLevel::Debug);
   EXPECT_EQ(opts.server_address, "127.0.0.1:1234");
   EXPECT_EQ(opts.batching.max_batch_size, 2);
+  EXPECT_EQ(opts.batching.pool_size, 8);
   EXPECT_EQ(opts.batching.pregen_inputs, 7U);
   EXPECT_EQ(opts.batching.warmup_pregen_inputs, 5U);
   EXPECT_EQ(opts.batching.warmup_request_nb, 3);
@@ -293,13 +307,13 @@ TEST(ArgsParser_Unit, DisableValidationFlag)
   EXPECT_FALSE(opts.validation.validate_results);
 }
 
-TEST(ArgsParser_Unit, RejectsInvalidInputSlots)
+TEST(ArgsParser_Unit, RejectsInvalidPoolSize)
 {
   const auto& model = test_model_path();
   expect_invalid(
       {"program", "--model", model.c_str(), "--shape", "1x1", "--types",
-       "float", "--input-slots", "0"});
+       "float", "--pool-size", "0"});
   expect_invalid(
       {"program", "--model", model.c_str(), "--shape", "1x1", "--types",
-       "float", "--input-slots", "-1"});
+       "float", "--pool-size", "-1"});
 }
