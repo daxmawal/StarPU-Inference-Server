@@ -88,7 +88,7 @@ sudo sed -i 's/^\s*no-cgroups\s*=.*/no-cgroups = false/; t; $a no-cgroups = fals
   /etc/nvidia-container-runtime/config.toml
 ```
 
-Restart Docker and validate GPU visibility (CUDA 13.0 runtime works with 535/550 series drivers):
+Restart Docker and validate GPU visibility :
 
 ```bash
 sudo systemctl restart docker
