@@ -8,7 +8,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/root
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV CMAKE_CUDA_ARCHITECTURES="80;86"
 ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
 ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
 ARG CMAKE_PREFIX_PATH=""
@@ -155,7 +154,6 @@ WORKDIR /app/build
 RUN cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-    -DCMAKE_CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES} \
     -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
     -DProtobuf_DIR="$INSTALL_DIR/protobuf/lib/cmake/protobuf" \
     -DProtobuf_PROTOC_EXECUTABLE="$INSTALL_DIR/protobuf/bin/protoc" \
@@ -195,7 +193,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/appuser
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV CMAKE_CUDA_ARCHITECTURES="80;86"
 ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
 
 # Runtime dependencies
