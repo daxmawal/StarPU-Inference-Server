@@ -48,6 +48,12 @@ docker run --rm hello-world
 
 ## 2) Enable GPU in containers (NVIDIA Container Toolkit)
 
+Ensure your host already has a recent NVIDIA driver and that GPU access works before continuing:
+
+```bash
+nvidia-smi
+```
+
 ```bash
 # NVIDIA repo
 distribution=$(. /etc/os-release; echo $ID$VERSION_ID)
@@ -64,19 +70,10 @@ sudo apt-get install -y nvidia-container-toolkit nvidia-container-toolkit-base \
 
 ### 2.1 Configure Docker with the NVIDIA runtime as default
 
-Backup first—merge manually if you already maintain a custom `daemon.json`.
+The toolkit ships `nvidia-ctk`, which updates `daemon.json` in-place instead of overwriting your custom settings:
 
 ```bash
-sudo cp /etc/docker/daemon.json /etc/docker/daemon.json.bak 2>/dev/null || true
-
-sudo bash -lc 'cat >/etc/docker/daemon.json <<EOF
-{
-  "default-runtime": "nvidia",
-  "runtimes": {
-    "nvidia": { "path": "nvidia-container-runtime", "runtimeArgs": [] }
-  }
-}
-EOF'
+sudo nvidia-ctk runtime configure --runtime=docker
 ```
 
 ### 2.2 Fix the NVIDIA runtime cgroups option
@@ -84,8 +81,14 @@ EOF'
 Some installs ship with `no-cgroups = true`, which prevents NVML inside containers. Force it to `false`:
 
 ```bash
-sudo sed -i 's/^\s*no-cgroups\s*=.*/no-cgroups = false/; t; $a no-cgroups = false' \
-  /etc/nvidia-container-runtime/config.toml
+sudo nvidia-ctk config --set nvidia-container-cli.no-cgroups=false --in-place
+```
+
+If your toolkit predates `nvidia-ctk`, ensure `/etc/nvidia-container-runtime/config.toml` exists (copy the sample that ships with the package if needed) and then update it manually:
+
+```bash
+CONFIG=/etc/nvidia-container-runtime/config.toml
+sudo sed -i 's/^\s*no-cgroups\s*=.*/no-cgroups = false/; t; $a no-cgroups = false' "$CONFIG"
 ```
 
 Restart Docker and validate GPU visibility :
@@ -113,16 +116,27 @@ docker build --no-cache --pull --network=host -t starpu-inference:latest .
 
 ## 4) Prepare model assets and config
 
-Create a host directory (e.g. `/models/`) and drop in:
+Use the repository's `models/` directory (already present at the repo root) and drop in:
 
 - `bert_libtorch.pt` — model weights.
 - `bert_docker.yml` — runtime configuration (example below).
+
+If you still need the TorchScript weights, follow the export procedure from [Quickstart – Export the BERT TorchScript model](./quickstart.md#2-export-the-bert-torchscript-model). From the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install torch transformers
+python3 models/import_bert-base-uncased.py
+deactivate
+```
 
 Ensure directories are traversable and files readable:
 
 ```bash
 chmod 755 models
-chmod 644 models/*
+chmod 644 models/*  # run after copying your assets
 ```
 
 ### Example `bert_docker.yml`
@@ -159,7 +173,8 @@ pool_size: 12
 
 ## 5) Run the server container
 
-Change into the directory that contains `bert_docker.yml` so the volume mount resolves correctly:
+Change into the directory that contains `bert_docker.yml` so the volume mount resolves correctly, `--network=host` only works on Linux.
+If you just joined the `docker` group, open a fresh shell so the new membership takes effect.
 
 ```bash
 cd models
@@ -222,6 +237,8 @@ docker compose down
 ```
 
 > Compose v2.6+ understands the `gpus:` stanza. For older Compose, add `deploy.resources.reservations.devices` instead.
+
+Make sure the `models/` directory (with your assets) sits next to the compose file so the relative bind mount resolves correctly.
 
 ---
 
