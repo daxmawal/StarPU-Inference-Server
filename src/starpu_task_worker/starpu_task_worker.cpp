@@ -9,6 +9,7 @@
 #include <cstring>
 #include <exception>
 #include <format>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -257,26 +258,13 @@ release_inputs_from_additional_jobs(
 namespace {
 
 inline void
-resize_starpu_vector_handle(
-    starpu_data_handle_t handle, std::size_t numel, std::size_t bytes)
+resize_starpu_vector_interface(
+    starpu_vector_interface* vector_interface, std::size_t numel,
+    std::size_t bytes, bool is_input_handle)
 {
-  if (handle == nullptr) {
-    throw StarPUDataAcquireException("StarPU input handle is null");
+  if (vector_interface == nullptr) {
+    return;
   }
-
-  if (starpu_data_get_interface_id(handle) != STARPU_VECTOR_INTERFACE_ID) {
-    throw StarPUDataAcquireException(
-        "Expected StarPU vector interface for input handle");
-  }
-
-  auto* raw_interface =
-      starpu_data_get_interface_on_node(handle, STARPU_MAIN_RAM);
-  if (raw_interface == nullptr) {
-    throw StarPUDataAcquireException(
-        "Failed to retrieve StarPU host interface for input handle");
-  }
-
-  auto* vector_interface = static_cast<starpu_vector_interface*>(raw_interface);
 
   const auto elem_size = vector_interface->elemsize;
   if (elem_size == 0) {
@@ -285,8 +273,13 @@ resize_starpu_vector_handle(
   }
 
   if (bytes % elem_size != 0) {
-    throw InvalidInputTensorException(std::format(
-        "Input tensor byte size ({}) is not divisible by element size ({})",
+    if (is_input_handle) {
+      throw InvalidInputTensorException(std::format(
+          "Input tensor byte size ({}) is not divisible by element size ({})",
+          bytes, elem_size));
+    }
+    throw InvalidInferenceJobException(std::format(
+        "Output tensor byte size ({}) is not divisible by element size ({})",
         bytes, elem_size));
   }
 
@@ -296,13 +289,74 @@ resize_starpu_vector_handle(
   }
 
   const auto alloc_size = vector_interface->allocsize;
-  if (bytes > alloc_size) {
-    throw InputPoolCapacityException(std::format(
-        "Input tensor requires {} bytes but slot capacity is {} bytes", bytes,
+  if (alloc_size != std::numeric_limits<size_t>::max() && alloc_size != 0 &&
+      bytes > alloc_size) {
+    if (is_input_handle) {
+      throw InputPoolCapacityException(std::format(
+          "Input tensor requires {} bytes but slot capacity is {} bytes", bytes,
+          alloc_size));
+    }
+    throw InvalidInferenceJobException(std::format(
+        "Output tensor requires {} bytes but slot capacity is {} bytes", bytes,
         alloc_size));
   }
 
   vector_interface->nx = numel;
+}
+
+inline void
+resize_starpu_vector_handle(
+    starpu_data_handle_t handle, std::size_t numel, std::size_t bytes,
+    bool is_input_handle)
+{
+  if (handle == nullptr) {
+    throw StarPUDataAcquireException("StarPU vector handle is null");
+  }
+
+  if (starpu_data_get_interface_id(handle) != STARPU_VECTOR_INTERFACE_ID) {
+    throw StarPUDataAcquireException(
+        "Expected StarPU vector interface for handle");
+  }
+
+  const unsigned memory_nodes = starpu_memory_nodes_get_count();
+  for (unsigned node = 0; node < memory_nodes; ++node) {
+    auto* raw_interface = starpu_data_get_interface_on_node(handle, node);
+    if (raw_interface == nullptr) {
+      continue;
+    }
+    auto* vector_interface =
+        static_cast<starpu_vector_interface*>(raw_interface);
+    resize_starpu_vector_interface(
+        vector_interface, numel, bytes, is_input_handle);
+  }
+}
+
+inline void
+resize_output_handles_for_job(
+    const std::vector<torch::Tensor>& outputs,
+    const std::vector<starpu_data_handle_t>& handles)
+{
+  if (outputs.empty()) {
+    return;
+  }
+  if (handles.size() < outputs.size()) {
+    throw InvalidInferenceJobException(
+        "Output count mismatch between job and StarPU handles");
+  }
+
+  for (size_t idx = 0; idx < outputs.size(); ++idx) {
+    const auto& tensor = outputs[idx];
+    if (!tensor.defined()) {
+      continue;
+    }
+    if (!tensor.is_cpu() || !tensor.is_contiguous()) {
+      throw InvalidInferenceJobException(
+          "Output tensor must be defined, CPU and contiguous");
+    }
+    const auto nbytes = static_cast<std::size_t>(tensor.nbytes());
+    const auto numel = static_cast<std::size_t>(tensor.numel());
+    resize_starpu_vector_handle(handles[idx], numel, nbytes, false);
+  }
 }
 
 }  // namespace
@@ -598,7 +652,7 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
     }
     const auto numel = static_cast<std::size_t>(tin.numel());
     const auto nbytes = static_cast<std::size_t>(tin.nbytes());
-    resize_starpu_vector_handle(handles[i], numel, nbytes);
+    resize_starpu_vector_handle(handles[i], numel, nbytes, true);
     std::memcpy(base_ptrs[i], tin.data_ptr(), nbytes);
     starpu_data_release(handles[i]);
   }
@@ -972,6 +1026,10 @@ StarPUTaskRunner::configure_task_context(
           output_pool->release(output_slot);
         }
       };
+  if (ctx->job) {
+    resize_output_handles_for_job(
+        ctx->job->get_output_tensors(), output_handles);
+  }
   if (ctx->inference_params) {
     ctx->inference_params->batch_size = batch_size;
   }
