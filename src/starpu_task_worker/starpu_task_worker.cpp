@@ -1,5 +1,7 @@
 #include "starpu_task_worker.hpp"
 
+#include <starpu.h>
+#include <starpu_data_interfaces.h>
 #include <torch/torch.h>
 
 #include <algorithm>
@@ -251,6 +253,59 @@ release_inputs_from_additional_jobs(
   }
 }
 }  // namespace task_runner_internal
+
+namespace {
+
+inline void
+resize_starpu_vector_handle(
+    starpu_data_handle_t handle, std::size_t numel, std::size_t bytes)
+{
+  if (handle == nullptr) {
+    throw StarPUDataAcquireException("StarPU input handle is null");
+  }
+
+  if (starpu_data_get_interface_id(handle) != STARPU_VECTOR_INTERFACE_ID) {
+    throw StarPUDataAcquireException(
+        "Expected StarPU vector interface for input handle");
+  }
+
+  auto* raw_interface =
+      starpu_data_get_interface_on_node(handle, STARPU_MAIN_RAM);
+  if (raw_interface == nullptr) {
+    throw StarPUDataAcquireException(
+        "Failed to retrieve StarPU host interface for input handle");
+  }
+
+  auto* vector_interface = static_cast<starpu_vector_interface*>(raw_interface);
+
+  const auto elem_size = vector_interface->elemsize;
+  if (elem_size == 0) {
+    throw StarPUDataAcquireException(
+        "StarPU vector interface reported zero element size");
+  }
+
+  if (bytes % elem_size != 0) {
+    throw InvalidInputTensorException(std::format(
+        "Input tensor byte size ({}) is not divisible by element size ({})",
+        bytes, elem_size));
+  }
+
+  const auto required_numel = bytes / elem_size;
+  if (required_numel != numel) {
+    numel = required_numel;
+  }
+
+  const auto alloc_size = vector_interface->allocsize;
+  if (bytes > alloc_size) {
+    throw InputPoolCapacityException(std::format(
+        "Input tensor requires {} bytes but slot capacity is {} bytes", bytes,
+        alloc_size));
+  }
+
+  vector_interface->nx = numel;
+}
+
+}  // namespace
 
 using clock = task_runner_internal::Clock;
 // =============================================================================
@@ -541,7 +596,9 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
     if (status != 0) {
       throw StarPUDataAcquireException("starpu_data_acquire(W) failed");
     }
-    const auto nbytes = tin.nbytes();
+    const auto numel = static_cast<std::size_t>(tin.numel());
+    const auto nbytes = static_cast<std::size_t>(tin.nbytes());
+    resize_starpu_vector_handle(handles[i], numel, nbytes);
     std::memcpy(base_ptrs[i], tin.data_ptr(), nbytes);
     starpu_data_release(handles[i]);
   }
