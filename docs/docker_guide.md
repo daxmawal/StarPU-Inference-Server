@@ -182,17 +182,25 @@ pool_size: 12
 
 ## 5) Run the server container
 
-Change into the directory that contains `bert_docker.yml` so the volume mount resolves correctly (`cd /path/to/StarPU-Inference-Server/models`).
+From the repository root (`/path/to/StarPU-Inference-Server`), start the server
+container. Mount the whole workspace so both the configuration file and the
+TorchScript artifact land in the expected `/workspace/models` directory inside
+the container.
 
 ```bash
-cd models
-
 docker run -d --name starpu-inference \
   --gpus all --network=host \
-  -v "$PWD:/workspace/models:ro" \
+  --user root \
+  -v "$PWD:/workspace:ro" \
   starpu-inference:latest \
   --config /workspace/models/bert_docker.yml
 ```
+
+> **Note:** The runtime image defaults to an unprivileged `appuser`. If your
+> repository tree is not world-readable, grant execute permission on the
+> directories (for example `chmod o+rx /path/to/StarPU-Inference-Server{,/models}`)
+> or keep `--user root` as shown above so the process can traverse the bind
+> mount.
 
 Tail logs:
 
@@ -230,9 +238,10 @@ services:
     image: starpu-inference:latest
     gpus: all
     network_mode: host
+    user: "root"
     command: ["--config", "/workspace/models/bert_docker.yml"]
     volumes:
-      - ./models:/workspace/models:ro
+      - ./:/workspace:ro
     restart: unless-stopped
 ```
 
@@ -243,6 +252,10 @@ docker compose up -d
 docker compose logs -f
 docker compose down
 ```
+
+If you remove the `user: "root"` line, ensure the repository and `models`
+directory are world-readable (`chmod o+rx`) so the container's unprivileged user
+can access the mounted files.
 
 ---
 
