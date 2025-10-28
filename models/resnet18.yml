@@ -17,6 +17,7 @@ batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false
 use_cpu: false
+group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }
 pool_size: 12
