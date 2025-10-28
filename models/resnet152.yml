@@ -18,5 +18,6 @@ dynamic_batching: true
 sync: false
 use_cpu: true
 group_cpu_by_numa: true
-use_cuda: false
+use_cuda:
+  - { device_ids: [0] }
 pool_size: 12
