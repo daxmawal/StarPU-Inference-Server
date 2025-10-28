@@ -173,6 +173,7 @@ batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false
 use_cpu: true
+group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }
 pool_size: 12
@@ -253,9 +254,7 @@ docker compose logs -f
 docker compose down
 ```
 
-If you remove the `user: "root"` line, ensure the repository and `models`
-directory are world-readable (`chmod o+rx`) so the container's unprivileged user
-can access the mounted files.
+> See the permissions note above if you prefer to drop `user: "root"`.
 
 ---
 
