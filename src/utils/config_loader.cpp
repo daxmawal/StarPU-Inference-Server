@@ -80,6 +80,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "starpu_env",
           "request_nb",
           "device_ids",
+          "group_cpu_by_numa",
           "inputs",
           "outputs",
           "delay_us",
@@ -165,6 +166,9 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["use_cpu"]) {
     cfg.devices.use_cpu = root["use_cpu"].as<bool>();
+  }
+  if (root["group_cpu_by_numa"]) {
+    cfg.devices.group_cpu_by_numa = root["group_cpu_by_numa"].as<bool>();
   }
 
   const YAML::Node use_cuda_node = root["use_cuda"];

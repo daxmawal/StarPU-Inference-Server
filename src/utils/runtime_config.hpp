@@ -77,6 +77,7 @@ struct RuntimeConfig {
     std::vector<int> ids;
     bool use_cpu = true;
     bool use_cuda = false;
+    bool group_cpu_by_numa = false;
   };
 
   struct BatchingSettings {

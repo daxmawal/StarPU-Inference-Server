@@ -56,6 +56,7 @@ Optional keys unlock batching, logging, and runtime controls:
 | `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
 | `starpu_env` |  Lets you pin StarPU-specific environment variables. | unset |
 | `use_cpu` | Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution. | `true` |
+| `group_cpu_by_numa` | Spawn one StarPU CPU worker per NUMA node instead of per core. | `false` |
 | `use_cuda` | Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`. | `false` |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
 | `metrics_port` | Port for the Prometheus metrics endpoint. | `9100` |
@@ -65,6 +66,7 @@ Behavior of `use_cpu` and `use_cuda`:
 - `use_cpu: true`, `use_cuda: [{ device_ids: [...] }]` → StarPU runs heterogeneously on CPU and GPU workers.
 - `use_cuda: false` or omitted → pipeline runs on CPU workers only (unless the CLI overrides the setting).
 - `use_cpu: false`, `use_cuda: [{ ... }]` → pipeline runs on GPU workers only.
+- Setting `group_cpu_by_numa: true` keeps CPU workers enabled but collapses them to one worker per NUMA node so that each inference shares the full socket instead of a single core.
 
 Optional keys for debugging:
 
@@ -119,6 +121,7 @@ batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false
 use_cpu: true
+group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }
 pool_size: 12

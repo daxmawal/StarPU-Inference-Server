@@ -5,11 +5,13 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/util/Exception.h>
+#include <hwloc.h>
 #include <starpu.h>
 #include <starpu_config.h>
 #include <starpu_cuda.h>
 #include <torch/types.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cerrno>
@@ -21,8 +23,10 @@
 #include <exception>
 #include <format>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -73,12 +77,240 @@ apply_starpu_env(const RuntimeConfig& opts)
   }
 }
 
-void
-configure_cpu(starpu_conf& conf, bool use_cpu)
+struct CpuBindingInfo {
+  std::vector<unsigned> numa_first_cpu_ids;
+  std::vector<unsigned> all_cpu_ids;
+};
+
+auto
+detect_cpu_binding_info() -> CpuBindingInfo
 {
-  if (!use_cpu) {
-    conf.ncpus = 0;
+  CpuBindingInfo info{};
+  hwloc_topology_t topology{};
+  if (hwloc_topology_init(&topology) != 0) {
+    log_warning(
+        "Failed to initialise hwloc topology; cannot enable NUMA CPU grouping");
+    return info;
   }
+
+  if (hwloc_topology_load(topology) != 0) {
+    log_warning(
+        "Failed to load hwloc topology; cannot enable NUMA CPU grouping");
+    hwloc_topology_destroy(topology);
+    return info;
+  }
+
+  const int pu_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PU);
+  if (pu_count > 0) {
+    info.all_cpu_ids.reserve(static_cast<size_t>(pu_count));
+    for (int idx = 0; idx < pu_count; ++idx) {
+      const hwloc_obj_t obj =
+          hwloc_get_obj_by_type(topology, HWLOC_OBJ_PU, idx);
+      if (obj == nullptr) {
+        continue;
+      }
+      const unsigned cpu_id = obj->os_index != static_cast<unsigned>(-1)
+                                  ? obj->os_index
+                                  : obj->logical_index;
+      info.all_cpu_ids.push_back(cpu_id);
+    }
+  }
+
+  if (info.all_cpu_ids.empty()) {
+    const hwloc_obj_t machine =
+        hwloc_get_obj_by_type(topology, HWLOC_OBJ_MACHINE, 0);
+    if (machine != nullptr && machine->cpuset != nullptr) {
+      const int first_cpu = hwloc_bitmap_first(machine->cpuset);
+      if (first_cpu >= 0) {
+        info.all_cpu_ids.push_back(static_cast<unsigned>(first_cpu));
+      }
+    }
+  }
+
+  const int numa_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_NUMANODE);
+  if (numa_count > 0) {
+    info.numa_first_cpu_ids.reserve(static_cast<size_t>(numa_count));
+    for (int idx = 0; idx < numa_count; ++idx) {
+      const hwloc_obj_t obj =
+          hwloc_get_obj_by_type(topology, HWLOC_OBJ_NUMANODE, idx);
+      if (obj == nullptr || obj->cpuset == nullptr) {
+        continue;
+      }
+      const int first_cpu = hwloc_bitmap_first(obj->cpuset);
+      if (first_cpu < 0) {
+        continue;
+      }
+      info.numa_first_cpu_ids.push_back(static_cast<unsigned>(first_cpu));
+    }
+  }
+
+  if (info.numa_first_cpu_ids.empty() && !info.all_cpu_ids.empty()) {
+    info.numa_first_cpu_ids.push_back(info.all_cpu_ids.front());
+  }
+
+  hwloc_topology_destroy(topology);
+  return info;
+}
+
+auto
+parse_unsigned(const std::string& value) -> std::optional<unsigned>
+{
+  try {
+    const unsigned long parsed = std::stoul(value);
+    if (parsed > std::numeric_limits<unsigned>::max()) {
+      return std::nullopt;
+    }
+    return static_cast<unsigned>(parsed);
+  }
+  catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+auto
+get_env_unsigned(const RuntimeConfig& opts, const char* key)
+    -> std::optional<unsigned>
+{
+  if (const auto it = opts.starpu_env.find(key); it != opts.starpu_env.end()) {
+    if (auto parsed = parse_unsigned(it->second)) {
+      return parsed;
+    }
+    log_warning(std::format(
+        "Invalid value '{}' for {} in configuration; ignoring binding hint",
+        it->second, key));
+    return std::nullopt;
+  }
+
+  if (const char* env_value = std::getenv(key); env_value != nullptr) {
+    if (auto parsed = parse_unsigned(env_value)) {
+      return parsed;
+    }
+    log_warning(std::format(
+        "Invalid value '{}' for environment variable {}; ignoring binding hint",
+        env_value, key));
+  }
+
+  return std::nullopt;
+}
+
+auto
+estimate_non_cpu_workers(const RuntimeConfig& opts) -> unsigned
+{
+  unsigned total = 0;
+
+  if (opts.devices.use_cuda && !opts.devices.ids.empty()) {
+    const unsigned gpu_count = static_cast<unsigned>(opts.devices.ids.size());
+    const unsigned workers_per_gpu = std::max(
+        get_env_unsigned(opts, "STARPU_NWORKER_PER_CUDA").value_or(1U), 1U);
+
+    if (gpu_count > 0) {
+      if (gpu_count > std::numeric_limits<unsigned>::max() / workers_per_gpu) {
+        total = std::numeric_limits<unsigned>::max();
+      } else {
+        total += gpu_count * workers_per_gpu;
+      }
+    }
+  }
+
+  return total;
+}
+
+void
+configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
+{
+  if (!opts.devices.use_cpu) {
+    conf.ncpus = 0;
+    return;
+  }
+
+  if (!opts.devices.group_cpu_by_numa) {
+    return;
+  }
+
+  const CpuBindingInfo binding_info = detect_cpu_binding_info();
+  auto cpu_bind_ids = binding_info.numa_first_cpu_ids;
+  if (cpu_bind_ids.empty()) {
+    log_warning(
+        "Unable to detect NUMA nodes; group_cpu_by_numa ignored and per-core "
+        "workers kept");
+    return;
+  }
+
+  const unsigned non_cpu_workers = estimate_non_cpu_workers(opts);
+
+  if (non_cpu_workers >= STARPU_NMAXWORKERS) {
+    log_warning(
+        "group_cpu_by_numa requested, but non-CPU workers already reach "
+        "StarPU's worker limit");
+    return;
+  }
+
+  const unsigned max_cpu_slots = STARPU_NMAXWORKERS - non_cpu_workers;
+  if (cpu_bind_ids.size() > max_cpu_slots) {
+    log_warning(std::format(
+        "Detected {} NUMA nodes but only {} worker slots available; truncating "
+        "mapping",
+        cpu_bind_ids.size(), max_cpu_slots));
+    cpu_bind_ids.resize(max_cpu_slots);
+  }
+
+  conf.ncpus = static_cast<int>(cpu_bind_ids.size());
+  conf.use_explicit_workers_bindid = 1U;
+  conf.precedence_over_environment_variables = 1;
+
+  std::vector<unsigned> candidate_gpu_bind_ids;
+  candidate_gpu_bind_ids.reserve(binding_info.all_cpu_ids.size());
+  const std::unordered_set<unsigned> reserved_ids(
+      cpu_bind_ids.begin(), cpu_bind_ids.end());
+
+  for (const unsigned cpu_id : binding_info.all_cpu_ids) {
+    if (!reserved_ids.contains(cpu_id)) {
+      candidate_gpu_bind_ids.push_back(cpu_id);
+    }
+  }
+
+  if (candidate_gpu_bind_ids.empty()) {
+    candidate_gpu_bind_ids = binding_info.all_cpu_ids;
+  }
+
+  if (candidate_gpu_bind_ids.empty()) {
+    log_warning(
+        "Unable to determine CPU identifiers for worker binding; "
+        "group_cpu_by_numa ignored");
+    conf.use_explicit_workers_bindid = 0U;
+    conf.precedence_over_environment_variables = 0;
+    return;
+  }
+
+  if (non_cpu_workers > candidate_gpu_bind_ids.size()) {
+    log_trace(
+        opts.verbosity,
+        std::format(
+            "Non-CPU workers ({}) exceed unique binding candidates ({}); "
+            "bindings will wrap",
+            non_cpu_workers, candidate_gpu_bind_ids.size()));
+  }
+
+  const size_t candidate_count = candidate_gpu_bind_ids.size();
+  for (size_t idx = 0; idx < static_cast<size_t>(STARPU_NMAXWORKERS); ++idx) {
+    conf.workers_bindid[idx] = candidate_gpu_bind_ids[idx % candidate_count];
+  }
+
+  for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
+    conf.workers_bindid[idx] = cpu_bind_ids[idx];
+  }
+
+  std::string bind_list;
+  for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
+    bind_list.append(std::to_string(cpu_bind_ids[idx]));
+    if (idx + 1 < cpu_bind_ids.size()) {
+      bind_list.append(", ");
+    }
+  }
+  const auto message = std::format(
+      "Configured {} CPU worker(s) grouped by NUMA nodes (binding CPUs: {})",
+      cpu_bind_ids.size(), bind_list);
+  log_info(opts.verbosity, message);
 }
 
 void
@@ -437,7 +669,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
   starpu_conf_init(&conf_);
   conf_.sched_policy_name = scheduler_name_.c_str();
 
-  configure_cpu(conf_, opts.devices.use_cpu);
+  configure_cpu(conf_, opts);
   configure_gpu(conf_, opts);
 
   if (starpu_init_fn_ref()(&conf_) != 0) {

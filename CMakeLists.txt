@@ -20,6 +20,22 @@ find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
+set(HWLOC_LIBRARY "")
+set(_HWLOC_CANDIDATES /usr/local/lib/libhwloc.so.15
+                      /usr/lib/x86_64-linux-gnu/libhwloc.so.15)
+foreach(_hwloc_path IN LISTS _HWLOC_CANDIDATES)
+  if(EXISTS "${_hwloc_path}")
+    set(HWLOC_LIBRARY "${_hwloc_path}")
+    break()
+  endif()
+endforeach()
+if(NOT HWLOC_LIBRARY)
+  find_library(HWLOC_LIBRARY hwloc HINTS /usr/local/lib
+                                         /usr/lib/x86_64-linux-gnu)
+endif()
+if(HWLOC_LIBRARY)
+  message(STATUS "hwloc library: ${HWLOC_LIBRARY}")
+endif()
 
 # Optional: NVTX instrumentation (nsys --trace=nvtx)
 set(HAVE_NVTX OFF)
@@ -262,7 +278,8 @@ target_link_libraries(
           StarPU::starpu
           yaml-cpp::yaml-cpp
           prometheus-cpp::pull
-          ${ABSL_LIBS})
+          ${ABSL_LIBS}
+          ${HWLOC_LIBRARY})
 
 if(HAVE_NVTX)
   message(STATUS "NVTX 3 header found: enabling NVTX instrumentation")
