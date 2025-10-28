@@ -465,6 +465,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(seed_value, 123U);
   EXPECT_FALSE(cfg.validation.validate_results);
   EXPECT_TRUE(cfg.devices.use_cuda);
+  EXPECT_FALSE(cfg.devices.group_cpu_by_numa);
 }
 
 TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
@@ -524,6 +525,7 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   yaml << "rtol: 1.0e-4\n";
   yaml << "atol: 2.0e-5\n";
   yaml << "sync: true\n";
+  yaml << "group_cpu_by_numa: true\n";
   yaml << "use_cpu: false\n";
   yaml << "use_cuda:\n";
   yaml << "  - { device_ids: [0] }\n";
@@ -538,6 +540,7 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   EXPECT_DOUBLE_EQ(cfg.validation.rtol, 1.0e-4);
   EXPECT_DOUBLE_EQ(cfg.validation.atol, 2.0e-5);
   EXPECT_TRUE(cfg.batching.synchronous);
+  EXPECT_TRUE(cfg.devices.group_cpu_by_numa);
   EXPECT_FALSE(cfg.devices.use_cpu);
   EXPECT_TRUE(cfg.devices.use_cuda);
 }

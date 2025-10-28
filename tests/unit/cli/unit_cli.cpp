@@ -74,6 +74,35 @@ TEST(ArgsParser_Unit, ParsesPoolSize)
   EXPECT_EQ(opts.batching.pool_size, 4);
 }
 
+TEST(ArgsParser_Unit, ParsesCpuGroupByNumaFlag)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{
+      "program", "--model", model.c_str(), "--shape",
+      "1x1",     "--types", "float",       "--cpu-group-by-numa"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_TRUE(opts.devices.group_cpu_by_numa);
+}
+
+TEST(ArgsParser_Unit, ParsesDisableCpuGroupByNumaFlag)
+{
+  const auto& model = test_model_path();
+  std::vector<const char*> args{
+      "program",
+      "--model",
+      model.c_str(),
+      "--shape",
+      "1x1",
+      "--types",
+      "float",
+      "--cpu-group-by-numa",
+      "--no-cpu-group-by-numa"};
+  const auto opts = parse(args);
+  ASSERT_TRUE(opts.valid);
+  EXPECT_FALSE(opts.devices.group_cpu_by_numa);
+}
+
 TEST(ArgsParser_Unit, ParsesLegacyInputSlotsFlag)
 {
   const auto& model = test_model_path();

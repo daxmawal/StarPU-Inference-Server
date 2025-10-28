@@ -5,6 +5,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/util/Exception.h>
+#include <hwloc.h>
 #include <starpu.h>
 #include <starpu_config.h>
 #include <starpu_cuda.h>
@@ -73,12 +74,139 @@ apply_starpu_env(const RuntimeConfig& opts)
   }
 }
 
-void
-configure_cpu(starpu_conf& conf, bool use_cpu)
+auto
+detect_numa_cpu_bindings() -> std::vector<unsigned>
 {
-  if (!use_cpu) {
-    conf.ncpus = 0;
+  hwloc_topology_t topology{};
+  if (hwloc_topology_init(&topology) != 0) {
+    log_warning(
+        "Failed to initialise hwloc topology; cannot enable NUMA CPU grouping");
+    return {};
   }
+
+  std::vector<unsigned> cpu_ids;
+  if (hwloc_topology_load(topology) != 0) {
+    log_warning(
+        "Failed to load hwloc topology; cannot enable NUMA CPU grouping");
+    hwloc_topology_destroy(topology);
+    return cpu_ids;
+  }
+
+  std::vector<hwloc_obj_type_t> candidate_types;
+  candidate_types.push_back(HWLOC_OBJ_NUMANODE);
+
+  for (const hwloc_obj_type_t type : candidate_types) {
+    const int object_count = hwloc_get_nbobjs_by_type(topology, type);
+    if (object_count <= 0) {
+      continue;
+    }
+
+    std::vector<unsigned> per_type_ids;
+    per_type_ids.reserve(static_cast<size_t>(object_count));
+
+    for (int idx = 0; idx < object_count; ++idx) {
+      const hwloc_obj_t obj = hwloc_get_obj_by_type(topology, type, idx);
+      if (obj == nullptr || obj->cpuset == nullptr) {
+        continue;
+      }
+      const int first_cpu = hwloc_bitmap_first(obj->cpuset);
+      if (first_cpu < 0) {
+        continue;
+      }
+      per_type_ids.push_back(static_cast<unsigned>(first_cpu));
+    }
+
+    if (!per_type_ids.empty()) {
+      cpu_ids = std::move(per_type_ids);
+      break;
+    }
+  }
+
+  if (cpu_ids.empty()) {
+    const hwloc_obj_t machine =
+        hwloc_get_obj_by_type(topology, HWLOC_OBJ_MACHINE, 0);
+    if (machine != nullptr && machine->cpuset != nullptr) {
+      const int first_cpu = hwloc_bitmap_first(machine->cpuset);
+      if (first_cpu >= 0) {
+        cpu_ids.push_back(static_cast<unsigned>(first_cpu));
+      }
+    }
+  }
+
+  hwloc_topology_destroy(topology);
+  return cpu_ids;
+}
+
+constexpr auto
+positive_count(const int value) -> unsigned
+{
+  return value > 0 ? static_cast<unsigned>(value) : 0U;
+}
+
+void
+configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
+{
+  if (!opts.devices.use_cpu) {
+    conf.ncpus = 0;
+    return;
+  }
+
+  if (!opts.devices.group_cpu_by_numa) {
+    return;
+  }
+
+  auto cpu_bind_ids = detect_numa_cpu_bindings();
+  if (cpu_bind_ids.empty()) {
+    log_warning(
+        "Unable to detect NUMA nodes; group_cpu_by_numa ignored and per-core "
+        "workers kept");
+    return;
+  }
+
+  const unsigned non_cpu_workers =
+      positive_count(conf.ncuda) + positive_count(conf.nhip) +
+      positive_count(conf.nopencl) + positive_count(conf.nmax_fpga) +
+      positive_count(conf.nmpi_ms) + positive_count(conf.ntcpip_ms);
+
+  if (non_cpu_workers >= STARPU_NMAXWORKERS) {
+    log_warning(
+        "group_cpu_by_numa requested, but non-CPU workers already reach "
+        "StarPU's worker limit");
+    return;
+  }
+
+  const unsigned max_cpu_slots = STARPU_NMAXWORKERS - non_cpu_workers;
+  if (cpu_bind_ids.size() > max_cpu_slots) {
+    log_warning(std::format(
+        "Detected {} NUMA nodes but only {} worker slots available; truncating "
+        "mapping",
+        cpu_bind_ids.size(), max_cpu_slots));
+    cpu_bind_ids.resize(max_cpu_slots);
+  }
+
+  conf.ncpus = static_cast<int>(cpu_bind_ids.size());
+  conf.use_explicit_workers_bindid = 1U;
+  conf.precedence_over_environment_variables = 1;
+
+  for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
+    const auto target_idx = static_cast<size_t>(non_cpu_workers) + idx;
+    if (target_idx >= STARPU_NMAXWORKERS) {
+      break;
+    }
+    conf.workers_bindid[target_idx] = cpu_bind_ids[idx];
+  }
+
+  std::string bind_list;
+  for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
+    bind_list.append(std::to_string(cpu_bind_ids[idx]));
+    if (idx + 1 < cpu_bind_ids.size()) {
+      bind_list.append(", ");
+    }
+  }
+  const auto message = std::format(
+      "Configured {} CPU worker(s) grouped by NUMA nodes (binding CPUs: {})",
+      cpu_bind_ids.size(), bind_list);
+  log_info(opts.verbosity, message);
 }
 
 void
@@ -437,7 +565,7 @@ StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
   starpu_conf_init(&conf_);
   conf_.sched_policy_name = scheduler_name_.c_str();
 
-  configure_cpu(conf_, opts.devices.use_cpu);
+  configure_cpu(conf_, opts);
   configure_gpu(conf_, opts);
 
   if (starpu_init_fn_ref()(&conf_) != 0) {

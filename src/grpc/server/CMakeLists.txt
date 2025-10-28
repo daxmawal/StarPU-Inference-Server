@@ -44,4 +44,5 @@ target_link_libraries(
           ${ABSL_LIBS}
           StarPU::starpu
           prometheus-cpp::pull
-          yaml-cpp::yaml-cpp)
+          yaml-cpp::yaml-cpp
+          ${HWLOC_LIBRARY})

@@ -20,6 +20,7 @@ find_package(Protobuf REQUIRED)
 find_package(gRPC CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
+find_library(HWLOC_LIBRARY hwloc)
 
 # Optional: NVTX instrumentation (nsys --trace=nvtx)
 set(HAVE_NVTX OFF)
@@ -262,7 +263,8 @@ target_link_libraries(
           StarPU::starpu
           yaml-cpp::yaml-cpp
           prometheus-cpp::pull
-          ${ABSL_LIBS})
+          ${ABSL_LIBS}
+          ${HWLOC_LIBRARY})
 
 if(HAVE_NVTX)
   message(STATUS "NVTX 3 header found: enabling NVTX instrumentation")
