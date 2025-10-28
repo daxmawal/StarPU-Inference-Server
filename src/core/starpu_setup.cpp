@@ -11,6 +11,7 @@
 #include <starpu_cuda.h>
 #include <torch/types.h>
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cerrno>
@@ -22,8 +23,10 @@
 #include <exception>
 #include <format>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -74,38 +77,62 @@ apply_starpu_env(const RuntimeConfig& opts)
   }
 }
 
+struct CpuBindingInfo {
+  std::vector<unsigned> numa_first_cpu_ids;
+  std::vector<unsigned> all_cpu_ids;
+};
+
 auto
-detect_numa_cpu_bindings() -> std::vector<unsigned>
+detect_cpu_binding_info() -> CpuBindingInfo
 {
+  CpuBindingInfo info{};
   hwloc_topology_t topology{};
   if (hwloc_topology_init(&topology) != 0) {
     log_warning(
         "Failed to initialise hwloc topology; cannot enable NUMA CPU grouping");
-    return {};
+    return info;
   }
 
-  std::vector<unsigned> cpu_ids;
   if (hwloc_topology_load(topology) != 0) {
     log_warning(
         "Failed to load hwloc topology; cannot enable NUMA CPU grouping");
     hwloc_topology_destroy(topology);
-    return cpu_ids;
+    return info;
   }
 
-  std::vector<hwloc_obj_type_t> candidate_types;
-  candidate_types.push_back(HWLOC_OBJ_NUMANODE);
-
-  for (const hwloc_obj_type_t type : candidate_types) {
-    const int object_count = hwloc_get_nbobjs_by_type(topology, type);
-    if (object_count <= 0) {
-      continue;
+  const int pu_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PU);
+  if (pu_count > 0) {
+    info.all_cpu_ids.reserve(static_cast<size_t>(pu_count));
+    for (int idx = 0; idx < pu_count; ++idx) {
+      const hwloc_obj_t obj =
+          hwloc_get_obj_by_type(topology, HWLOC_OBJ_PU, idx);
+      if (obj == nullptr) {
+        continue;
+      }
+      const unsigned cpu_id = obj->os_index != static_cast<unsigned>(-1)
+                                  ? obj->os_index
+                                  : obj->logical_index;
+      info.all_cpu_ids.push_back(cpu_id);
     }
+  }
 
-    std::vector<unsigned> per_type_ids;
-    per_type_ids.reserve(static_cast<size_t>(object_count));
+  if (info.all_cpu_ids.empty()) {
+    const hwloc_obj_t machine =
+        hwloc_get_obj_by_type(topology, HWLOC_OBJ_MACHINE, 0);
+    if (machine != nullptr && machine->cpuset != nullptr) {
+      const int first_cpu = hwloc_bitmap_first(machine->cpuset);
+      if (first_cpu >= 0) {
+        info.all_cpu_ids.push_back(static_cast<unsigned>(first_cpu));
+      }
+    }
+  }
 
-    for (int idx = 0; idx < object_count; ++idx) {
-      const hwloc_obj_t obj = hwloc_get_obj_by_type(topology, type, idx);
+  const int numa_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_NUMANODE);
+  if (numa_count > 0) {
+    info.numa_first_cpu_ids.reserve(static_cast<size_t>(numa_count));
+    for (int idx = 0; idx < numa_count; ++idx) {
+      const hwloc_obj_t obj =
+          hwloc_get_obj_by_type(topology, HWLOC_OBJ_NUMANODE, idx);
       if (obj == nullptr || obj->cpuset == nullptr) {
         continue;
       }
@@ -113,34 +140,79 @@ detect_numa_cpu_bindings() -> std::vector<unsigned>
       if (first_cpu < 0) {
         continue;
       }
-      per_type_ids.push_back(static_cast<unsigned>(first_cpu));
-    }
-
-    if (!per_type_ids.empty()) {
-      cpu_ids = std::move(per_type_ids);
-      break;
+      info.numa_first_cpu_ids.push_back(static_cast<unsigned>(first_cpu));
     }
   }
 
-  if (cpu_ids.empty()) {
-    const hwloc_obj_t machine =
-        hwloc_get_obj_by_type(topology, HWLOC_OBJ_MACHINE, 0);
-    if (machine != nullptr && machine->cpuset != nullptr) {
-      const int first_cpu = hwloc_bitmap_first(machine->cpuset);
-      if (first_cpu >= 0) {
-        cpu_ids.push_back(static_cast<unsigned>(first_cpu));
+  if (info.numa_first_cpu_ids.empty() && !info.all_cpu_ids.empty()) {
+    info.numa_first_cpu_ids.push_back(info.all_cpu_ids.front());
+  }
+
+  hwloc_topology_destroy(topology);
+  return info;
+}
+
+auto
+parse_unsigned(const std::string& value) -> std::optional<unsigned>
+{
+  try {
+    const unsigned long parsed = std::stoul(value);
+    if (parsed > std::numeric_limits<unsigned>::max()) {
+      return std::nullopt;
+    }
+    return static_cast<unsigned>(parsed);
+  }
+  catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+auto
+get_env_unsigned(const RuntimeConfig& opts, const char* key)
+    -> std::optional<unsigned>
+{
+  if (const auto it = opts.starpu_env.find(key); it != opts.starpu_env.end()) {
+    if (auto parsed = parse_unsigned(it->second)) {
+      return parsed;
+    }
+    log_warning(std::format(
+        "Invalid value '{}' for {} in configuration; ignoring binding hint",
+        it->second, key));
+    return std::nullopt;
+  }
+
+  if (const char* env_value = std::getenv(key); env_value != nullptr) {
+    if (auto parsed = parse_unsigned(env_value)) {
+      return parsed;
+    }
+    log_warning(std::format(
+        "Invalid value '{}' for environment variable {}; ignoring binding hint",
+        env_value, key));
+  }
+
+  return std::nullopt;
+}
+
+auto
+estimate_non_cpu_workers(const RuntimeConfig& opts) -> unsigned
+{
+  unsigned total = 0;
+
+  if (opts.devices.use_cuda && !opts.devices.ids.empty()) {
+    const unsigned gpu_count = static_cast<unsigned>(opts.devices.ids.size());
+    const unsigned workers_per_gpu = std::max(
+        get_env_unsigned(opts, "STARPU_NWORKER_PER_CUDA").value_or(1U), 1U);
+
+    if (gpu_count > 0) {
+      if (gpu_count > std::numeric_limits<unsigned>::max() / workers_per_gpu) {
+        total = std::numeric_limits<unsigned>::max();
+      } else {
+        total += gpu_count * workers_per_gpu;
       }
     }
   }
 
-  hwloc_topology_destroy(topology);
-  return cpu_ids;
-}
-
-constexpr auto
-positive_count(const int value) -> unsigned
-{
-  return value > 0 ? static_cast<unsigned>(value) : 0U;
+  return total;
 }
 
 void
@@ -155,7 +227,8 @@ configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
     return;
   }
 
-  auto cpu_bind_ids = detect_numa_cpu_bindings();
+  const CpuBindingInfo binding_info = detect_cpu_binding_info();
+  auto cpu_bind_ids = binding_info.numa_first_cpu_ids;
   if (cpu_bind_ids.empty()) {
     log_warning(
         "Unable to detect NUMA nodes; group_cpu_by_numa ignored and per-core "
@@ -163,10 +236,7 @@ configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
     return;
   }
 
-  const unsigned non_cpu_workers =
-      positive_count(conf.ncuda) + positive_count(conf.nhip) +
-      positive_count(conf.nopencl) + positive_count(conf.nmax_fpga) +
-      positive_count(conf.nmpi_ms) + positive_count(conf.ntcpip_ms);
+  const unsigned non_cpu_workers = estimate_non_cpu_workers(opts);
 
   if (non_cpu_workers >= STARPU_NMAXWORKERS) {
     log_warning(
@@ -188,12 +258,46 @@ configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
   conf.use_explicit_workers_bindid = 1U;
   conf.precedence_over_environment_variables = 1;
 
-  for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
-    const auto target_idx = static_cast<size_t>(non_cpu_workers) + idx;
-    if (target_idx >= STARPU_NMAXWORKERS) {
-      break;
+  std::vector<unsigned> candidate_gpu_bind_ids;
+  candidate_gpu_bind_ids.reserve(binding_info.all_cpu_ids.size());
+  const std::unordered_set<unsigned> reserved_ids(
+      cpu_bind_ids.begin(), cpu_bind_ids.end());
+
+  for (const unsigned cpu_id : binding_info.all_cpu_ids) {
+    if (!reserved_ids.contains(cpu_id)) {
+      candidate_gpu_bind_ids.push_back(cpu_id);
     }
-    conf.workers_bindid[target_idx] = cpu_bind_ids[idx];
+  }
+
+  if (candidate_gpu_bind_ids.empty()) {
+    candidate_gpu_bind_ids = binding_info.all_cpu_ids;
+  }
+
+  if (candidate_gpu_bind_ids.empty()) {
+    log_warning(
+        "Unable to determine CPU identifiers for worker binding; "
+        "group_cpu_by_numa ignored");
+    conf.use_explicit_workers_bindid = 0U;
+    conf.precedence_over_environment_variables = 0;
+    return;
+  }
+
+  if (non_cpu_workers > candidate_gpu_bind_ids.size()) {
+    log_trace(
+        opts.verbosity,
+        std::format(
+            "Non-CPU workers ({}) exceed unique binding candidates ({}); "
+            "bindings will wrap",
+            non_cpu_workers, candidate_gpu_bind_ids.size()));
+  }
+
+  const size_t candidate_count = candidate_gpu_bind_ids.size();
+  for (size_t idx = 0; idx < static_cast<size_t>(STARPU_NMAXWORKERS); ++idx) {
+    conf.workers_bindid[idx] = candidate_gpu_bind_ids[idx % candidate_count];
+  }
+
+  for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
+    conf.workers_bindid[idx] = cpu_bind_ids[idx];
   }
 
   std::string bind_list;
