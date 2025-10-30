@@ -242,9 +242,32 @@ failing_starpu_init(struct starpu_conf*) -> int
 }
 
 auto
-stub_starpu_init(struct starpu_conf*) -> int
+stub_starpu_init(struct starpu_conf* conf) -> int
 {
-  return 0;
+  const char* const key = "STARPU_NWORKER_PER_CUDA";
+  std::optional<std::string> previous_value;
+
+  if (const char* current = std::getenv(key); current != nullptr) {
+    previous_value = std::string(current);
+  }
+
+  if (setenv(key, "1", 1) != 0) {
+    ADD_FAILURE() << "Failed to set environment variable " << key;
+    return -1;
+  }
+
+  const StarpuInitRawFn real_init = resolve_real_starpu_init();
+  const int rc = real_init != nullptr ? real_init(conf) : 0;
+
+  if (previous_value) {
+    if (setenv(key, previous_value->c_str(), 1) != 0) {
+      ADD_FAILURE() << "Failed to restore environment variable " << key;
+    }
+  } else if (unsetenv(key) != 0) {
+    ADD_FAILURE() << "Failed to unset environment variable " << key;
+  }
+
+  return rc;
 }
 
 class StarPUSetupInitOverrideTest : public ::testing::Test {
@@ -343,6 +366,93 @@ TEST(ConfigureCpu, FallbacksToAllCpuIdsWhenNoGpuCandidates)
   EXPECT_EQ(1, captured.precedence_over_environment_variables);
   EXPECT_EQ(0U, captured.workers_bindid[0]);
   EXPECT_EQ(0U, captured.workers_bindid[1]);
+}
+
+TEST_F(StarPUSetupInitStubTest, ParseUnsignedAcceptsMaxUnsignedConfigValue)
+{
+  EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
+  EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
+  EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+  opts.starpu_env["STARPU_NWORKER_PER_CUDA"] =
+      std::to_string(std::numeric_limits<unsigned>::max());
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  EXPECT_EQ(log.find("Invalid value"), std::string::npos);
+  EXPECT_NE(
+      log.find("group_cpu_by_numa requested, but non-CPU workers already reach "
+               "StarPU's worker limit"),
+      std::string::npos);
+}
+
+TEST_F(
+    StarPUSetupInitStubTest, ParseUnsignedLogsWarningForNonNumericConfigValue)
+{
+  EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
+  EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
+  EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+  constexpr const char* kInvalid = "not-a-number";
+  opts.starpu_env["STARPU_NWORKER_PER_CUDA"] = kInvalid;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  const std::string expected = std::format(
+      "Invalid value '{}' for {} in configuration; ignoring binding hint",
+      kInvalid, "STARPU_NWORKER_PER_CUDA");
+  EXPECT_NE(log.find(expected), std::string::npos);
+}
+
+TEST_F(StarPUSetupInitStubTest, ParseUnsignedLogsWarningForOverflowConfigValue)
+{
+  EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
+  EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
+  EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+  const std::string overflow_value = std::to_string(
+      static_cast<unsigned long>(std::numeric_limits<unsigned>::max()) + 1UL);
+  opts.starpu_env["STARPU_NWORKER_PER_CUDA"] = overflow_value;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  const std::string expected = std::format(
+      "Invalid value '{}' for {} in configuration; ignoring binding hint",
+      overflow_value, "STARPU_NWORKER_PER_CUDA");
+  EXPECT_NE(log.find(expected), std::string::npos);
 }
 
 TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
