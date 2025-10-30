@@ -4,6 +4,8 @@
 #include <starpu.h>
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -40,6 +42,188 @@ std::vector<starpu_data_handle_t> g_output_observed_handles;
 std::vector<starpu_server::OutputSlotPool::HostBufferInfo>
     g_output_observed_host_buffer_infos;
 bool g_output_failure_observer_called = false;
+
+using StarpuWorkerGetIdHook = int (*)();
+using StarpuWorkerGetDevidHook = int (*)(int);
+using StarpuCudaGetLocalStreamHook = cudaStream_t (*)();
+
+StarpuWorkerGetIdHook g_worker_get_id_hook = nullptr;
+StarpuWorkerGetDevidHook g_worker_get_devid_hook = nullptr;
+StarpuCudaGetLocalStreamHook g_cuda_get_local_stream_hook = nullptr;
+
+int g_mock_worker_id = 0;
+int g_mock_device_id = 0;
+cudaStream_t g_mock_cuda_stream = nullptr;
+
+int
+mock_starpu_worker_get_id()
+{
+  return g_mock_worker_id;
+}
+
+int
+mock_starpu_worker_get_devid(int /*unused*/)
+{
+  return g_mock_device_id;
+}
+
+cudaStream_t
+mock_starpu_cuda_get_local_stream()
+{
+  return g_mock_cuda_stream;
+}
+
+auto
+resolve_real_starpu_worker_get_id() -> StarpuWorkerGetIdHook
+{
+  static StarpuWorkerGetIdHook fn = []() -> StarpuWorkerGetIdHook {
+    auto candidate = reinterpret_cast<StarpuWorkerGetIdHook>(
+        dlsym(RTLD_NEXT, "starpu_worker_get_id"));
+    if (candidate == nullptr) {
+      candidate = reinterpret_cast<StarpuWorkerGetIdHook>(
+          dlsym(RTLD_DEFAULT, "starpu_worker_get_id"));
+    }
+    return candidate;
+  }();
+  return fn;
+}
+
+auto
+resolve_real_starpu_worker_get_devid() -> StarpuWorkerGetDevidHook
+{
+  static StarpuWorkerGetDevidHook fn = []() -> StarpuWorkerGetDevidHook {
+    auto candidate = reinterpret_cast<StarpuWorkerGetDevidHook>(
+        dlsym(RTLD_NEXT, "starpu_worker_get_devid"));
+    if (candidate == nullptr) {
+      candidate = reinterpret_cast<StarpuWorkerGetDevidHook>(
+          dlsym(RTLD_DEFAULT, "starpu_worker_get_devid"));
+    }
+    return candidate;
+  }();
+  return fn;
+}
+
+auto
+resolve_real_starpu_cuda_get_local_stream() -> StarpuCudaGetLocalStreamHook
+{
+  static StarpuCudaGetLocalStreamHook fn =
+      []() -> StarpuCudaGetLocalStreamHook {
+    auto candidate = reinterpret_cast<StarpuCudaGetLocalStreamHook>(
+        dlsym(RTLD_NEXT, "starpu_cuda_get_local_stream"));
+    if (candidate == nullptr) {
+      candidate = reinterpret_cast<StarpuCudaGetLocalStreamHook>(
+          dlsym(RTLD_DEFAULT, "starpu_cuda_get_local_stream"));
+    }
+    return candidate;
+  }();
+  return fn;
+}
+
+class ScopedWorkerContextOverride {
+ public:
+  ScopedWorkerContextOverride(
+      StarpuWorkerGetIdHook id_hook, StarpuWorkerGetDevidHook devid_hook,
+      StarpuCudaGetLocalStreamHook stream_hook)
+      : previous_id_{g_worker_get_id_hook},
+        previous_devid_{g_worker_get_devid_hook},
+        previous_stream_{g_cuda_get_local_stream_hook}
+  {
+    g_worker_get_id_hook = id_hook;
+    g_worker_get_devid_hook = devid_hook;
+    g_cuda_get_local_stream_hook = stream_hook;
+  }
+
+  ~ScopedWorkerContextOverride()
+  {
+    g_worker_get_id_hook = previous_id_;
+    g_worker_get_devid_hook = previous_devid_;
+    g_cuda_get_local_stream_hook = previous_stream_;
+  }
+
+  ScopedWorkerContextOverride(const ScopedWorkerContextOverride&) = delete;
+  auto operator=(const ScopedWorkerContextOverride&)
+      -> ScopedWorkerContextOverride& = delete;
+  ScopedWorkerContextOverride(ScopedWorkerContextOverride&&) = delete;
+  auto operator=(ScopedWorkerContextOverride&&)
+      -> ScopedWorkerContextOverride& = delete;
+
+ private:
+  StarpuWorkerGetIdHook previous_id_;
+  StarpuWorkerGetDevidHook previous_devid_;
+  StarpuCudaGetLocalStreamHook previous_stream_;
+};
+
+class ScopedCudaStream {
+ public:
+  explicit ScopedCudaStream(cudaStream_t stream) : stream_{stream} {}
+  ~ScopedCudaStream()
+  {
+    if (stream_ != nullptr) {
+      cudaStreamDestroy(stream_);
+    }
+  }
+  ScopedCudaStream(const ScopedCudaStream&) = delete;
+  auto operator=(const ScopedCudaStream&) -> ScopedCudaStream& = delete;
+  ScopedCudaStream(ScopedCudaStream&& other) noexcept : stream_{other.stream_}
+  {
+    other.stream_ = nullptr;
+  }
+  auto operator=(ScopedCudaStream&& other) noexcept -> ScopedCudaStream&
+  {
+    if (this != &other) {
+      if (stream_ != nullptr) {
+        cudaStreamDestroy(stream_);
+      }
+      stream_ = other.stream_;
+      other.stream_ = nullptr;
+    }
+    return *this;
+  }
+  [[nodiscard]] auto get() const -> cudaStream_t { return stream_; }
+
+ private:
+  cudaStream_t stream_;
+};
+
+class DeviceBufferGuard {
+ public:
+  DeviceBufferGuard() = default;
+  explicit DeviceBufferGuard(void* ptr) : ptr_{ptr} {}
+  ~DeviceBufferGuard()
+  {
+    if (ptr_ != nullptr) {
+      cudaFree(ptr_);
+    }
+  }
+  DeviceBufferGuard(const DeviceBufferGuard&) = delete;
+  auto operator=(const DeviceBufferGuard&) -> DeviceBufferGuard& = delete;
+  DeviceBufferGuard(DeviceBufferGuard&& other) noexcept : ptr_{other.ptr_}
+  {
+    other.ptr_ = nullptr;
+  }
+  auto operator=(DeviceBufferGuard&& other) noexcept -> DeviceBufferGuard&
+  {
+    if (this != &other) {
+      if (ptr_ != nullptr) {
+        cudaFree(ptr_);
+      }
+      ptr_ = other.ptr_;
+      other.ptr_ = nullptr;
+    }
+    return *this;
+  }
+  void reset(void* ptr)
+  {
+    if (ptr_ != nullptr) {
+      cudaFree(ptr_);
+    }
+    ptr_ = ptr;
+  }
+  [[nodiscard]] auto get() const -> void* { return ptr_; }
+
+ private:
+  void* ptr_ = nullptr;
+};
 
 struct CapturedStarpuConf {
   bool called = false;
@@ -293,6 +477,42 @@ class StarPUSetupInitStubTest : public ::testing::Test {
 
 }  // namespace
 
+extern "C" int
+starpu_worker_get_id()
+{
+  if (g_worker_get_id_hook != nullptr) {
+    return g_worker_get_id_hook();
+  }
+  if (auto fn = resolve_real_starpu_worker_get_id(); fn != nullptr) {
+    return fn();
+  }
+  return -1;
+}
+
+extern "C" int
+starpu_worker_get_devid(int workerid)
+{
+  if (g_worker_get_devid_hook != nullptr) {
+    return g_worker_get_devid_hook(workerid);
+  }
+  if (auto fn = resolve_real_starpu_worker_get_devid(); fn != nullptr) {
+    return fn(workerid);
+  }
+  return -1;
+}
+
+extern "C" cudaStream_t
+starpu_cuda_get_local_stream()
+{
+  if (g_cuda_get_local_stream_hook != nullptr) {
+    return g_cuda_get_local_stream_hook();
+  }
+  if (auto fn = resolve_real_starpu_cuda_get_local_stream(); fn != nullptr) {
+    return fn();
+  }
+  return nullptr;
+}
+
 TEST(ConfigureCpu, DisablesCpuWorkersWhenCpuUsageDisabled)
 {
   StarpuInitCaptureGuard capture_guard;
@@ -481,6 +701,148 @@ TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
   opts.devices.ids = {0, 0};
   EXPECT_THROW(
       { starpu_server::StarPUSetup setup(opts); }, std::invalid_argument);
+}
+
+TEST(InferenceCodelet, CudaInferenceFuncCopiesResultsToDeviceBuffer)
+{
+  skip_if_no_cuda();
+
+  constexpr int kDeviceId = 0;
+  constexpr int kWorkerId = 77;
+  constexpr size_t kElementCount = 3;
+  constexpr size_t kBufferBytes = kElementCount * sizeof(float);
+
+  ASSERT_EQ(cudaSetDevice(kDeviceId), cudaSuccess);
+
+  cudaStream_t stream = nullptr;
+  ASSERT_EQ(
+      cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), cudaSuccess);
+  ScopedCudaStream stream_guard{stream};
+
+  g_mock_worker_id = kWorkerId;
+  g_mock_device_id = kDeviceId;
+  g_mock_cuda_stream = stream;
+  ScopedWorkerContextOverride worker_guard(
+      &mock_starpu_worker_get_id, &mock_starpu_worker_get_devid,
+      &mock_starpu_cuda_get_local_stream);
+
+  DeviceBufferGuard input_buffer;
+  DeviceBufferGuard output_buffer;
+
+  void* raw_input = nullptr;
+  ASSERT_EQ(cudaMalloc(&raw_input, kBufferBytes), cudaSuccess);
+  input_buffer.reset(raw_input);
+
+  void* raw_output = nullptr;
+  ASSERT_EQ(cudaMalloc(&raw_output, kBufferBytes), cudaSuccess);
+  output_buffer.reset(raw_output);
+
+  std::array<float, kElementCount> host_input{1.0F, 2.0F, 3.0F};
+  ASSERT_EQ(
+      cudaMemcpy(
+          raw_input, host_input.data(), kBufferBytes, cudaMemcpyHostToDevice),
+      cudaSuccess);
+  ASSERT_EQ(cudaMemset(raw_output, 0, kBufferBytes), cudaSuccess);
+
+  auto params =
+      starpu_server::make_basic_params(static_cast<int>(kElementCount));
+  params.models.models_gpu.resize(kDeviceId + 1, nullptr);
+
+  torch::jit::script::Module module{"m"};
+  module.define(R"JIT(
+        def forward(self, x):
+            return x + 1.5
+    )JIT");
+  module.to(torch::Device(torch::kCUDA, kDeviceId));
+  params.models.models_gpu[kDeviceId] = &module;
+  params.models.num_models_gpu = params.models.models_gpu.size();
+
+  int recorded_device_id = -1;
+  int recorded_worker_id = -1;
+  starpu_server::DeviceType executed_on = starpu_server::DeviceType::Unknown;
+  params.device.device_id = &recorded_device_id;
+  params.device.worker_id = &recorded_worker_id;
+  params.device.executed_on = &executed_on;
+
+  using Clock = std::chrono::high_resolution_clock;
+  Clock::time_point start_tp{};
+  Clock::time_point end_tp{};
+  params.timing.codelet_start_time = &start_tp;
+  params.timing.codelet_end_time = &end_tp;
+
+  starpu_variable_interface input_iface{};
+  input_iface.ptr = reinterpret_cast<uintptr_t>(raw_input);
+  starpu_variable_interface output_iface{};
+  output_iface.ptr = reinterpret_cast<uintptr_t>(raw_output);
+
+  std::array<starpu_server::StarpuBufferPtr, 2> buffers{
+      &input_iface, &output_iface};
+
+  starpu_server::InferenceCodelet codelet;
+  auto* cuda_func = codelet.get_codelet()->cuda_funcs[0];
+  ASSERT_NE(cuda_func, nullptr);
+
+  cuda_func(reinterpret_cast<void**>(buffers.data()), &params);
+  ASSERT_EQ(cudaStreamSynchronize(stream_guard.get()), cudaSuccess);
+
+  std::array<float, kElementCount> host_output{};
+  ASSERT_EQ(
+      cudaMemcpy(
+          host_output.data(), raw_output, kBufferBytes, cudaMemcpyDeviceToHost),
+      cudaSuccess);
+
+  for (size_t idx = 0; idx < kElementCount; ++idx) {
+    EXPECT_FLOAT_EQ(host_output[idx], host_input[idx] + 1.5F);
+  }
+  EXPECT_EQ(recorded_device_id, kDeviceId);
+  EXPECT_EQ(recorded_worker_id, kWorkerId);
+  EXPECT_EQ(executed_on, starpu_server::DeviceType::CUDA);
+  EXPECT_NE(start_tp.time_since_epoch().count(), 0);
+  EXPECT_NE(end_tp.time_since_epoch().count(), 0);
+
+  g_mock_worker_id = 0;
+  g_mock_device_id = 0;
+  g_mock_cuda_stream = nullptr;
+}
+
+TEST(InferenceCodelet, CudaInferenceFuncThrowsWhenGpuModuleMissing)
+{
+  skip_if_no_cuda();
+
+  constexpr int kDeviceId = 0;
+  constexpr int kWorkerId = 91;
+
+  ASSERT_EQ(cudaSetDevice(kDeviceId), cudaSuccess);
+
+  cudaStream_t stream = nullptr;
+  ASSERT_EQ(
+      cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), cudaSuccess);
+  ScopedCudaStream stream_guard{stream};
+
+  g_mock_worker_id = kWorkerId;
+  g_mock_device_id = kDeviceId;
+  g_mock_cuda_stream = stream;
+  ScopedWorkerContextOverride worker_guard(
+      &mock_starpu_worker_get_id, &mock_starpu_worker_get_devid,
+      &mock_starpu_cuda_get_local_stream);
+
+  starpu_server::InferenceCodelet codelet;
+  starpu_server::InferenceParams params{};
+  params.num_inputs = 0;
+  params.num_outputs = 0;
+  params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
+  params.limits.max_dims = starpu_server::InferLimits::MaxDims;
+  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
+
+  auto* cuda_func = codelet.get_codelet()->cuda_funcs[0];
+  ASSERT_NE(cuda_func, nullptr);
+
+  EXPECT_THROW(
+      cuda_func(nullptr, &params), starpu_server::StarPUCodeletException);
+
+  g_mock_worker_id = 0;
+  g_mock_device_id = 0;
+  g_mock_cuda_stream = nullptr;
 }
 
 TEST(OutputSlotPool_Unit, CheckedTotalNumelGuard)
