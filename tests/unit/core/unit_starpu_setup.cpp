@@ -1,4 +1,5 @@
 #include <cuda_runtime_api.h>
+#include <dlfcn.h>
 #include <gtest/gtest.h>
 #include <starpu.h>
 
@@ -39,6 +40,103 @@ std::vector<starpu_data_handle_t> g_output_observed_handles;
 std::vector<starpu_server::OutputSlotPool::HostBufferInfo>
     g_output_observed_host_buffer_infos;
 bool g_output_failure_observer_called = false;
+
+struct CapturedStarpuConf {
+  bool called = false;
+  starpu_conf conf{};
+};
+
+CapturedStarpuConf g_captured_starpu_conf;
+
+using StarpuInitRawFn = int (*)(struct starpu_conf*);
+
+auto
+resolve_real_starpu_init() -> StarpuInitRawFn
+{
+  static StarpuInitRawFn fn = nullptr;
+  if (fn == nullptr) {
+    fn = reinterpret_cast<StarpuInitRawFn>(dlsym(RTLD_NEXT, "starpu_init"));
+    if (fn == nullptr) {
+      fn =
+          reinterpret_cast<StarpuInitRawFn>(dlsym(RTLD_DEFAULT, "starpu_init"));
+    }
+  }
+  return fn;
+}
+
+auto
+capturing_starpu_init(struct starpu_conf* conf) -> int
+{
+  g_captured_starpu_conf.called = true;
+  g_captured_starpu_conf.conf = *conf;
+  if (auto* real_init = resolve_real_starpu_init(); real_init != nullptr) {
+    return real_init(conf);
+  }
+  return -1;
+}
+
+class StarpuInitCaptureGuard {
+ public:
+  StarpuInitCaptureGuard()
+  {
+    g_captured_starpu_conf = {};
+    starpu_server::StarPUSetup::set_starpu_init_fn(&capturing_starpu_init);
+  }
+
+  ~StarpuInitCaptureGuard()
+  {
+    starpu_server::StarPUSetup::reset_starpu_init_fn();
+  }
+
+  StarpuInitCaptureGuard(const StarpuInitCaptureGuard&) = delete;
+  auto operator=(const StarpuInitCaptureGuard&) -> StarpuInitCaptureGuard& =
+                                                       delete;
+  StarpuInitCaptureGuard(StarpuInitCaptureGuard&&) = delete;
+  auto operator=(StarpuInitCaptureGuard&&) -> StarpuInitCaptureGuard& = delete;
+
+  [[nodiscard]] auto called() const -> bool
+  {
+    return g_captured_starpu_conf.called;
+  }
+
+  [[nodiscard]] auto conf() const -> const starpu_conf&
+  {
+    return g_captured_starpu_conf.conf;
+  }
+};
+
+class EnvVarGuard {
+ public:
+  EnvVarGuard(std::string name, std::string value) : name_{std::move(name)}
+  {
+    if (const char* current = std::getenv(name_.c_str()); current != nullptr) {
+      previous_ = std::string(current);
+    }
+    if (setenv(name_.c_str(), value.c_str(), 1) != 0) {
+      ADD_FAILURE() << "Failed to set environment variable " << name_;
+    }
+  }
+
+  ~EnvVarGuard()
+  {
+    if (previous_) {
+      if (setenv(name_.c_str(), previous_->c_str(), 1) != 0) {
+        ADD_FAILURE() << "Failed to restore environment variable " << name_;
+      }
+    } else if (unsetenv(name_.c_str()) != 0) {
+      ADD_FAILURE() << "Failed to unset environment variable " << name_;
+    }
+  }
+
+  EnvVarGuard(const EnvVarGuard&) = delete;
+  auto operator=(const EnvVarGuard&) -> EnvVarGuard& = delete;
+  EnvVarGuard(EnvVarGuard&&) = delete;
+  auto operator=(EnvVarGuard&&) -> EnvVarGuard& = delete;
+
+ private:
+  std::string name_;
+  std::optional<std::string> previous_;
+};
 
 void
 capture_slot_state(const starpu_server::InputSlotPool::SlotInfo& slot)
@@ -171,6 +269,81 @@ class StarPUSetupInitStubTest : public ::testing::Test {
 };
 
 }  // namespace
+
+TEST(ConfigureCpu, DisablesCpuWorkersWhenCpuUsageDisabled)
+{
+  StarpuInitCaptureGuard capture_guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cpu = false;
+  opts.devices.group_cpu_by_numa = true;
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::StarPUSetup setup(opts);
+        }
+        catch (const starpu_server::StarPUInitializationException& ex) {
+          EXPECT_STREQ("[ERROR] StarPU initialization error", ex.what());
+          throw;
+        }
+      },
+      starpu_server::StarPUInitializationException);
+
+  ASSERT_TRUE(capture_guard.called());
+  const starpu_conf captured = capture_guard.conf();
+  EXPECT_EQ(0, captured.ncpus);
+  EXPECT_EQ(0U, captured.use_explicit_workers_bindid);
+  EXPECT_EQ(0, captured.precedence_over_environment_variables);
+}
+
+TEST(ConfigureCpu, BindsCpuWorkersWithExplicitBinding)
+{
+  EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
+  EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:2"};
+  EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+
+  StarpuInitCaptureGuard capture_guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  const starpu_conf captured = capture_guard.conf();
+  EXPECT_EQ(1, captured.ncpus);
+  EXPECT_EQ(1U, captured.use_explicit_workers_bindid);
+  EXPECT_EQ(1, captured.precedence_over_environment_variables);
+  EXPECT_EQ(0U, captured.workers_bindid[0]);
+  EXPECT_EQ(captured.workers_bindid[0], captured.workers_bindid[1]);
+  EXPECT_EQ(captured.workers_bindid[0], captured.workers_bindid[2]);
+}
+
+TEST(ConfigureCpu, FallbacksToAllCpuIdsWhenNoGpuCandidates)
+{
+  ASSERT_GT(STARPU_NMAXWORKERS, 1);
+
+  EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
+  EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
+  EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+
+  StarpuInitCaptureGuard capture_guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  const starpu_conf captured = capture_guard.conf();
+  EXPECT_EQ(1, captured.ncpus);
+  EXPECT_EQ(1U, captured.use_explicit_workers_bindid);
+  EXPECT_EQ(1, captured.precedence_over_environment_variables);
+  EXPECT_EQ(0U, captured.workers_bindid[0]);
+  EXPECT_EQ(0U, captured.workers_bindid[1]);
+}
 
 TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
 {
