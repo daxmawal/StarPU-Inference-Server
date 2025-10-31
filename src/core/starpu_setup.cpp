@@ -30,6 +30,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -82,73 +83,129 @@ struct CpuBindingInfo {
   std::vector<unsigned> all_cpu_ids;
 };
 
+using TopologyPtr = std::unique_ptr<
+    std::remove_pointer_t<hwloc_topology_t>, decltype(&hwloc_topology_destroy)>;
+
+auto
+load_hwloc_topology() -> TopologyPtr
+{
+  TopologyPtr topology(nullptr, hwloc_topology_destroy);
+  hwloc_topology_t raw{};
+  if (hwloc_topology_init(&raw) != 0) {
+    log_warning(
+        "Failed to initialise hwloc topology; cannot enable NUMA CPU grouping");
+    return topology;
+  }
+
+  topology.reset(raw);
+
+  if (hwloc_topology_load(topology.get()) != 0) {
+    log_warning(
+        "Failed to load hwloc topology; cannot enable NUMA CPU grouping");
+    topology.reset();
+  }
+
+  return topology;
+}
+
+auto
+first_cpu_from_cpuset(hwloc_const_cpuset_t cpuset) -> std::optional<unsigned>
+{
+  if (cpuset == nullptr) {
+    return std::nullopt;
+  }
+
+  const int first_cpu = hwloc_bitmap_first(cpuset);
+  if (first_cpu < 0) {
+    return std::nullopt;
+  }
+
+  return static_cast<unsigned>(first_cpu);
+}
+
+auto
+collect_processing_unit_ids(hwloc_topology_t topology) -> std::vector<unsigned>
+{
+  std::vector<unsigned> cpu_ids;
+  const int pu_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PU);
+  if (pu_count <= 0) {
+    return cpu_ids;
+  }
+
+  cpu_ids.reserve(static_cast<size_t>(pu_count));
+  for (int idx = 0; idx < pu_count; ++idx) {
+    const hwloc_obj_t obj = hwloc_get_obj_by_type(topology, HWLOC_OBJ_PU, idx);
+    if (obj == nullptr) {
+      continue;
+    }
+
+    const unsigned cpu_id = obj->os_index != static_cast<unsigned>(-1)
+                                ? obj->os_index
+                                : obj->logical_index;
+    cpu_ids.push_back(cpu_id);
+  }
+
+  return cpu_ids;
+}
+
+auto
+collect_numa_first_cpu_ids(hwloc_topology_t topology) -> std::vector<unsigned>
+{
+  std::vector<unsigned> cpu_ids;
+  const int numa_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_NUMANODE);
+  if (numa_count <= 0) {
+    return cpu_ids;
+  }
+
+  cpu_ids.reserve(static_cast<size_t>(numa_count));
+  for (int idx = 0; idx < numa_count; ++idx) {
+    const hwloc_obj_t obj =
+        hwloc_get_obj_by_type(topology, HWLOC_OBJ_NUMANODE, idx);
+    if (obj == nullptr) {
+      continue;
+    }
+
+    if (const auto first_cpu = first_cpu_from_cpuset(obj->cpuset)) {
+      cpu_ids.push_back(*first_cpu);
+    }
+  }
+
+  return cpu_ids;
+}
+
+auto
+machine_first_cpu(hwloc_topology_t topology) -> std::optional<unsigned>
+{
+  const hwloc_obj_t machine =
+      hwloc_get_obj_by_type(topology, HWLOC_OBJ_MACHINE, 0);
+  if (machine == nullptr) {
+    return std::nullopt;
+  }
+
+  return first_cpu_from_cpuset(machine->cpuset);
+}
+
 auto
 detect_cpu_binding_info() -> CpuBindingInfo
 {
   CpuBindingInfo info{};
-  hwloc_topology_t topology{};
-  if (hwloc_topology_init(&topology) != 0) {
-    log_warning(
-        "Failed to initialise hwloc topology; cannot enable NUMA CPU grouping");
+  auto topology = load_hwloc_topology();
+  if (!topology) {
     return info;
   }
 
-  if (hwloc_topology_load(topology) != 0) {
-    log_warning(
-        "Failed to load hwloc topology; cannot enable NUMA CPU grouping");
-    hwloc_topology_destroy(topology);
-    return info;
-  }
-
-  const int pu_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_PU);
-  if (pu_count > 0) {
-    info.all_cpu_ids.reserve(static_cast<size_t>(pu_count));
-    for (int idx = 0; idx < pu_count; ++idx) {
-      const hwloc_obj_t obj =
-          hwloc_get_obj_by_type(topology, HWLOC_OBJ_PU, idx);
-      if (obj == nullptr) {
-        continue;
-      }
-      const unsigned cpu_id = obj->os_index != static_cast<unsigned>(-1)
-                                  ? obj->os_index
-                                  : obj->logical_index;
-      info.all_cpu_ids.push_back(cpu_id);
-    }
-  }
-
+  info.all_cpu_ids = collect_processing_unit_ids(topology.get());
   if (info.all_cpu_ids.empty()) {
-    const hwloc_obj_t machine =
-        hwloc_get_obj_by_type(topology, HWLOC_OBJ_MACHINE, 0);
-    if (machine != nullptr && machine->cpuset != nullptr) {
-      const int first_cpu = hwloc_bitmap_first(machine->cpuset);
-      if (first_cpu >= 0) {
-        info.all_cpu_ids.push_back(static_cast<unsigned>(first_cpu));
-      }
+    if (const auto fallback_cpu = machine_first_cpu(topology.get())) {
+      info.all_cpu_ids.push_back(*fallback_cpu);
     }
   }
 
-  const int numa_count = hwloc_get_nbobjs_by_type(topology, HWLOC_OBJ_NUMANODE);
-  if (numa_count > 0) {
-    info.numa_first_cpu_ids.reserve(static_cast<size_t>(numa_count));
-    for (int idx = 0; idx < numa_count; ++idx) {
-      const hwloc_obj_t obj =
-          hwloc_get_obj_by_type(topology, HWLOC_OBJ_NUMANODE, idx);
-      if (obj == nullptr || obj->cpuset == nullptr) {
-        continue;
-      }
-      const int first_cpu = hwloc_bitmap_first(obj->cpuset);
-      if (first_cpu < 0) {
-        continue;
-      }
-      info.numa_first_cpu_ids.push_back(static_cast<unsigned>(first_cpu));
-    }
-  }
-
+  info.numa_first_cpu_ids = collect_numa_first_cpu_ids(topology.get());
   if (info.numa_first_cpu_ids.empty() && !info.all_cpu_ids.empty()) {
     info.numa_first_cpu_ids.push_back(info.all_cpu_ids.front());
   }
 
-  hwloc_topology_destroy(topology);
   return info;
 }
 
