@@ -1,3 +1,5 @@
+#include <starpu.h>
+
 #include <chrono>
 
 #include "core/inference_task.hpp"
@@ -65,8 +67,78 @@ class StarPUTaskRunnerTestAdapter {
   {
     task_runner_internal::reset_submit_inference_task_hook();
   }
+
+  static auto validate_batch_and_copy_inputs(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      InputSlotPool* input_pool, int input_slot) -> int64_t
+  {
+    StarPUTaskRunner::PoolResources pools{};
+    pools.input_pool = input_pool;
+    pools.input_slot = input_slot;
+    return runner->validate_batch_and_copy_inputs(job, pools);
+  }
+
+  static auto configure_task_context(
+      InferenceTask& task, InputSlotPool* input_pool, int input_slot,
+      OutputSlotPool* output_pool, int output_slot,
+      const std::vector<starpu_data_handle_t>& input_handles,
+      const std::vector<starpu_data_handle_t>& output_handles,
+      int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>
+  {
+    StarPUTaskRunner::PoolResources pools{};
+    pools.input_pool = input_pool;
+    pools.input_slot = input_slot;
+    pools.output_pool = output_pool;
+    pools.output_slot = output_slot;
+    return StarPUTaskRunner::configure_task_context(
+        task, pools, input_handles, output_handles, batch_size);
+  }
 };
 }  // namespace starpu_server
+
+namespace {
+struct VectorInterfaceSnapshot {
+  starpu_vector_interface* iface = nullptr;
+  std::size_t elemsize = 0;
+  std::size_t allocsize = 0;
+  std::size_t nx = 0;
+};
+
+auto
+snapshot_vector_interfaces(starpu_data_handle_t handle)
+    -> std::vector<VectorInterfaceSnapshot>
+{
+  std::vector<VectorInterfaceSnapshot> snapshots;
+  const unsigned memory_nodes = starpu_memory_nodes_get_count();
+  snapshots.reserve(memory_nodes);
+  for (unsigned node = 0; node < memory_nodes; ++node) {
+    auto* raw_interface = starpu_data_get_interface_on_node(handle, node);
+    if (raw_interface == nullptr) {
+      continue;
+    }
+    auto* vector_interface =
+        static_cast<starpu_vector_interface*>(raw_interface);
+    snapshots.push_back(VectorInterfaceSnapshot{
+        vector_interface, static_cast<std::size_t>(vector_interface->elemsize),
+        vector_interface->allocsize, vector_interface->nx});
+  }
+  return snapshots;
+}
+
+void
+restore_vector_interfaces(const std::vector<VectorInterfaceSnapshot>& snapshots)
+{
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface == nullptr) {
+      continue;
+    }
+    snapshot.iface->elemsize =
+        static_cast<decltype(snapshot.iface->elemsize)>(snapshot.elemsize);
+    snapshot.iface->allocsize = snapshot.allocsize;
+    snapshot.iface->nx = static_cast<decltype(snapshot.iface->nx)>(snapshot.nx);
+  }
+}
+}  // namespace
 
 TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
 {
@@ -292,6 +364,309 @@ TEST_F(
   ASSERT_TRUE(maybe_output_slot.has_value());
   EXPECT_EQ(*maybe_output_slot, kExpectedSlotId);
   starpu_setup_->output_pool().release(*maybe_output_slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenElementSizeZero)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      21, {torch::ones({3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->elemsize = 0;
+    }
+  }
+
+  bool released = false;
+  EXPECT_THROW(
+      ([&] {
+        try {
+          starpu_server::StarPUTaskRunnerTestAdapter::
+              validate_batch_and_copy_inputs(
+                  runner_.get(), job, &input_pool, slot);
+        }
+        catch (...) {
+          if (!released) {
+            starpu_data_release(handle);
+            released = true;
+          }
+          throw;
+        }
+      }()),
+      starpu_server::StarPUDataAcquireException);
+  if (!released) {
+    starpu_data_release(handle);
+  }
+
+  restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenTensorBytesMisaligned)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      22, {torch::ones({3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->elemsize = snapshot.elemsize + 1;
+    }
+  }
+
+  bool released = false;
+  EXPECT_THROW(
+      ([&] {
+        try {
+          starpu_server::StarPUTaskRunnerTestAdapter::
+              validate_batch_and_copy_inputs(
+                  runner_.get(), job, &input_pool, slot);
+        }
+        catch (...) {
+          if (!released) {
+            starpu_data_release(handle);
+            released = true;
+          }
+          throw;
+        }
+      }()),
+      starpu_server::InvalidInputTensorException);
+  if (!released) {
+    starpu_data_release(handle);
+  }
+
+  restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenSlotCapacityExceeded)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      23, {torch::ones({3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  const auto expected_bytes =
+      static_cast<std::size_t>(job->get_input_tensors()[0].nbytes());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->allocsize = expected_bytes - 1;
+    }
+  }
+
+  bool released = false;
+  EXPECT_THROW(
+      ([&] {
+        try {
+          starpu_server::StarPUTaskRunnerTestAdapter::
+              validate_batch_and_copy_inputs(
+                  runner_.get(), job, &input_pool, slot);
+        }
+        catch (...) {
+          if (!released) {
+            starpu_data_release(handle);
+            released = true;
+          }
+          throw;
+        }
+      }()),
+      starpu_server::InputPoolCapacityException);
+  if (!released) {
+    starpu_data_release(handle);
+  }
+
+  restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsUpdatesVectorNumelWhenNeeded)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      24, {torch::ones({3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  const auto tensor_bytes =
+      static_cast<std::size_t>(job->get_input_tensors()[0].nbytes());
+  const auto adjusted_elem_size = tensor_bytes / 2;
+  ASSERT_GT(adjusted_elem_size, 0U);
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->elemsize = adjusted_elem_size;
+    }
+  }
+
+  const auto expected_numel = tensor_bytes / adjusted_elem_size;
+  const auto batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      EXPECT_EQ(
+          snapshot.iface->nx,
+          static_cast<decltype(snapshot.iface->nx)>(expected_numel));
+    }
+  }
+
+  restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ConfigureTaskContextThrowsWhenOutputBytesMisaligned)
+{
+  auto model_config = make_model_config(
+      "output_only", {}, {make_tensor_config("output0", {3}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  auto job = make_job(25, {});
+  job->set_output_tensors(
+      {torch::zeros({3}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(slot);
+  ASSERT_EQ(output_handles.size(), 1U);
+  const auto handle = output_handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->elemsize = snapshot.elemsize + 1;
+    }
+  }
+
+  std::vector<starpu_data_handle_t> input_handles;
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, &output_pool, slot, input_handles, output_handles,
+          /*batch_size=*/1),
+      starpu_server::InvalidInferenceJobException);
+
+  restore_vector_interfaces(snapshots);
+  output_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ConfigureTaskContextThrowsWhenOutputCapacityExceeded)
+{
+  auto model_config = make_model_config(
+      "output_only", {}, {make_tensor_config("output0", {3}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  auto job = make_job(26, {});
+  job->set_output_tensors(
+      {torch::zeros({3}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(slot);
+  ASSERT_EQ(output_handles.size(), 1U);
+  const auto handle = output_handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  const auto tensor_bytes =
+      static_cast<std::size_t>(job->get_output_tensors()[0].nbytes());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->allocsize = tensor_bytes - 1;
+    }
+  }
+
+  std::vector<starpu_data_handle_t> input_handles;
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, &output_pool, slot, input_handles, output_handles,
+          /*batch_size=*/1),
+      starpu_server::InvalidInferenceJobException);
+
+  restore_vector_interfaces(snapshots);
+  output_pool.release(slot);
 }
 
 TEST_F(
