@@ -608,6 +608,48 @@ TEST(TaskRunnerInternal, SliceOutputsForSubJobExtractsContiguousRows)
   EXPECT_TRUE(result.outputs[1].is_contiguous());
 }
 
+TEST(TaskRunnerInternal, SliceOutputsForSubJobPreservesUndefinedAndZeroDimTensors)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  torch::Tensor undefined_tensor;
+  auto scalar_tensor =
+      torch::tensor(42, torch::TensorOptions().dtype(torch::kInt64));
+  auto matrix = torch::arange(0, 6, torch::TensorOptions().dtype(torch::kInt64))
+                    .reshape({3, 2});
+  std::vector<torch::Tensor> aggregated{undefined_tensor, scalar_tensor,
+                                        matrix};
+
+  const auto result = internal::slice_outputs_for_sub_job(
+      aggregated, internal::SubJobSliceOptions{0, 1});
+
+  ASSERT_EQ(result.outputs.size(), aggregated.size());
+  EXPECT_FALSE(result.outputs[0].defined());
+  ASSERT_TRUE(result.outputs[1].defined());
+  EXPECT_EQ(result.outputs[1].dim(), 0);
+  EXPECT_EQ(
+      result.outputs[1].item<int64_t>(), scalar_tensor.item<int64_t>());
+  auto expected_matrix_slice = matrix.narrow(0, 0, 1).contiguous();
+  EXPECT_TRUE(torch::equal(result.outputs[2], expected_matrix_slice));
+  EXPECT_EQ(result.processed_length, 1);
+}
+
+TEST(TaskRunnerInternal, SliceOutputsForSubJobYieldsEmptySliceWhenOffsetExceedsData)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto tensor = torch::arange(0, 6, torch::TensorOptions().dtype(torch::kInt64))
+                    .reshape({3, 2});
+  std::vector<torch::Tensor> aggregated{tensor};
+
+  const auto result = internal::slice_outputs_for_sub_job(
+      aggregated, internal::SubJobSliceOptions{5, 2});
+
+  ASSERT_EQ(result.outputs.size(), 1U);
+  EXPECT_FALSE(result.outputs[0].defined());
+  EXPECT_EQ(result.processed_length, 2);
+}
+
 TEST(TaskRunnerInternal, AggregateBatchMetadataCollectsEarliestTimings)
 {
   namespace internal = starpu_server::task_runner_internal;
