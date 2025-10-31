@@ -608,7 +608,9 @@ TEST(TaskRunnerInternal, SliceOutputsForSubJobExtractsContiguousRows)
   EXPECT_TRUE(result.outputs[1].is_contiguous());
 }
 
-TEST(TaskRunnerInternal, SliceOutputsForSubJobPreservesUndefinedAndZeroDimTensors)
+TEST(
+    TaskRunnerInternal,
+    SliceOutputsForSubJobPreservesUndefinedAndZeroDimTensors)
 {
   namespace internal = starpu_server::task_runner_internal;
 
@@ -617,8 +619,8 @@ TEST(TaskRunnerInternal, SliceOutputsForSubJobPreservesUndefinedAndZeroDimTensor
       torch::tensor(42, torch::TensorOptions().dtype(torch::kInt64));
   auto matrix = torch::arange(0, 6, torch::TensorOptions().dtype(torch::kInt64))
                     .reshape({3, 2});
-  std::vector<torch::Tensor> aggregated{undefined_tensor, scalar_tensor,
-                                        matrix};
+  std::vector<torch::Tensor> aggregated{
+      undefined_tensor, scalar_tensor, matrix};
 
   const auto result = internal::slice_outputs_for_sub_job(
       aggregated, internal::SubJobSliceOptions{0, 1});
@@ -627,14 +629,15 @@ TEST(TaskRunnerInternal, SliceOutputsForSubJobPreservesUndefinedAndZeroDimTensor
   EXPECT_FALSE(result.outputs[0].defined());
   ASSERT_TRUE(result.outputs[1].defined());
   EXPECT_EQ(result.outputs[1].dim(), 0);
-  EXPECT_EQ(
-      result.outputs[1].item<int64_t>(), scalar_tensor.item<int64_t>());
+  EXPECT_EQ(result.outputs[1].item<int64_t>(), scalar_tensor.item<int64_t>());
   auto expected_matrix_slice = matrix.narrow(0, 0, 1).contiguous();
   EXPECT_TRUE(torch::equal(result.outputs[2], expected_matrix_slice));
   EXPECT_EQ(result.processed_length, 1);
 }
 
-TEST(TaskRunnerInternal, SliceOutputsForSubJobYieldsEmptySliceWhenOffsetExceedsData)
+TEST(
+    TaskRunnerInternal,
+    SliceOutputsForSubJobYieldsEmptySliceWhenOffsetExceedsData)
 {
   namespace internal = starpu_server::task_runner_internal;
 
@@ -709,6 +712,33 @@ TEST(TaskRunnerInternal, AggregateBatchMetadataCollectsEarliestTimings)
   info.sub_jobs[1].callback({}, 0.0);
   EXPECT_TRUE(first_called);
   EXPECT_TRUE(second_called);
+}
+
+TEST(
+    TaskRunnerInternal,
+    AggregateBatchMetadataRetainsExistingTimesWhenCandidateUnset)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto job_one = std::make_shared<starpu_server::InferenceJob>();
+  auto job_two = std::make_shared<starpu_server::InferenceJob>();
+
+  job_one->set_input_tensors({torch::ones({2, 1})});
+  job_two->set_input_tensors({torch::ones({1, 1})});
+
+  const auto base = internal::Clock::now();
+  job_one->set_start_time(base + std::chrono::milliseconds(5));
+  job_one->timing_info().enqueued_time = base + std::chrono::milliseconds(6);
+  job_one->timing_info().batch_collect_start_time =
+      base + std::chrono::milliseconds(7);
+
+  const auto info = internal::aggregate_batch_metadata({job_one, job_two});
+
+  EXPECT_EQ(info.earliest_start, job_one->get_start_time());
+  EXPECT_EQ(info.earliest_enqueued, job_one->timing_info().enqueued_time);
+  EXPECT_EQ(
+      info.earliest_batch_collect_start,
+      job_one->timing_info().batch_collect_start_time);
 }
 
 TEST(TaskRunnerInternal, ResizeOutputsForBatchRespectsPrototypeLayout)
