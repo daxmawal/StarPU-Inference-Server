@@ -2,9 +2,11 @@
 #include <dlfcn.h>
 #include <gtest/gtest.h>
 #include <starpu.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -43,15 +45,28 @@ std::vector<starpu_server::OutputSlotPool::HostBufferInfo>
     g_output_observed_host_buffer_infos;
 bool g_output_failure_observer_called = false;
 
+using StarpuInitRawFn = int (*)(struct starpu_conf*);
 using StarpuWorkerGetIdHook = int (*)();
 using StarpuWorkerGetDevidHook = int (*)(int);
 using StarpuCudaGetLocalStreamHook = cudaStream_t (*)();
+using HwlocTopologyInitFn = int (*)(hwloc_topology_t*);
+using HwlocTopologyLoadFn = int (*)(hwloc_topology_t);
+using HwlocTopologyDestroyFn = void (*)(hwloc_topology_t);
+using HwlocGetTypeDepthFn = int (*)(hwloc_topology_t, hwloc_obj_type_t);
+using HwlocGetDepthTypeFn = hwloc_obj_type_t (*)(hwloc_topology_t, int);
+using HwlocGetNbobjsByDepthFn = unsigned (*)(hwloc_topology_t, int);
+using HwlocGetObjByDepthFn = hwloc_obj_t (*)(hwloc_topology_t, int, unsigned);
+using HwlocBitmapFirstFn = int (*)(hwloc_const_bitmap_t);
+using EstimateNonCpuWorkersFn =
+    unsigned (*)(const starpu_server::RuntimeConfig&);
+using SetenvFn = int (*)(const char*, const char*, int);
+
 bool g_starpu_init_stub_called = false;
 bool g_worker_stream_stub_called = false;
-
 StarpuWorkerGetIdHook g_worker_get_id_hook = nullptr;
 StarpuWorkerGetDevidHook g_worker_get_devid_hook = nullptr;
 StarpuCudaGetLocalStreamHook g_cuda_get_local_stream_hook = nullptr;
+SetenvFn g_setenv_override = nullptr;
 
 int g_mock_worker_id = 0;
 int g_mock_device_id = 0;
@@ -88,6 +103,14 @@ worker_stream_stub_for_null(
     enum starpu_worker_archtype /*worker*/)
 {
   g_worker_stream_stub_called = true;
+  return -1;
+}
+
+int
+failing_setenv_stub(
+    const char* /*name*/, const char* /*value*/, int /*overwrite*/)
+{
+  errno = EPERM;
   return -1;
 }
 
@@ -133,6 +156,110 @@ resolve_real_starpu_cuda_get_local_stream() -> StarpuCudaGetLocalStreamHook
           dlsym(RTLD_DEFAULT, "starpu_cuda_get_local_stream"));
     }
     return candidate;
+  }();
+  return fn;
+}
+
+auto
+resolve_real_hwloc_topology_init() -> HwlocTopologyInitFn
+{
+  static HwlocTopologyInitFn fn = []() -> HwlocTopologyInitFn {
+    return reinterpret_cast<HwlocTopologyInitFn>(
+        dlsym(RTLD_NEXT, "hwloc_topology_init"));
+  }();
+  return fn;
+}
+
+auto
+resolve_real_hwloc_topology_load() -> HwlocTopologyLoadFn
+{
+  static HwlocTopologyLoadFn fn = []() -> HwlocTopologyLoadFn {
+    return reinterpret_cast<HwlocTopologyLoadFn>(
+        dlsym(RTLD_NEXT, "hwloc_topology_load"));
+  }();
+  return fn;
+}
+
+auto
+resolve_real_hwloc_topology_destroy() -> HwlocTopologyDestroyFn
+{
+  static HwlocTopologyDestroyFn fn = []() -> HwlocTopologyDestroyFn {
+    return reinterpret_cast<HwlocTopologyDestroyFn>(
+        dlsym(RTLD_NEXT, "hwloc_topology_destroy"));
+  }();
+  return fn;
+}
+
+auto
+resolve_real_hwloc_get_type_depth() -> HwlocGetTypeDepthFn
+{
+  static HwlocGetTypeDepthFn fn = []() -> HwlocGetTypeDepthFn {
+    return reinterpret_cast<HwlocGetTypeDepthFn>(
+        dlsym(RTLD_NEXT, "hwloc_get_type_depth"));
+  }();
+  return fn;
+}
+
+auto
+resolve_real_hwloc_get_depth_type() -> HwlocGetDepthTypeFn
+{
+  static HwlocGetDepthTypeFn fn = []() -> HwlocGetDepthTypeFn {
+    return reinterpret_cast<HwlocGetDepthTypeFn>(
+        dlsym(RTLD_NEXT, "hwloc_get_depth_type"));
+  }();
+  return fn;
+}
+
+auto
+resolve_real_hwloc_get_nbobjs_by_depth() -> HwlocGetNbobjsByDepthFn
+{
+  static HwlocGetNbobjsByDepthFn fn = []() -> HwlocGetNbobjsByDepthFn {
+    return reinterpret_cast<HwlocGetNbobjsByDepthFn>(
+        dlsym(RTLD_NEXT, "hwloc_get_nbobjs_by_depth"));
+  }();
+  return fn;
+}
+
+auto
+resolve_real_hwloc_get_obj_by_depth() -> HwlocGetObjByDepthFn
+{
+  static HwlocGetObjByDepthFn fn = []() -> HwlocGetObjByDepthFn {
+    return reinterpret_cast<HwlocGetObjByDepthFn>(
+        dlsym(RTLD_NEXT, "hwloc_get_obj_by_depth"));
+  }();
+  return fn;
+}
+
+auto
+resolve_real_hwloc_bitmap_first() -> HwlocBitmapFirstFn
+{
+  static HwlocBitmapFirstFn fn = []() -> HwlocBitmapFirstFn {
+    return reinterpret_cast<HwlocBitmapFirstFn>(
+        dlsym(RTLD_NEXT, "hwloc_bitmap_first"));
+  }();
+  return fn;
+}
+
+auto
+resolve_estimate_non_cpu_workers() -> EstimateNonCpuWorkersFn
+{
+  static EstimateNonCpuWorkersFn fn = []() -> EstimateNonCpuWorkersFn {
+    constexpr const char* symbol_name =
+        "_ZN13starpu_server12_GLOBAL__N_124estimate_non_cpu_workersERKNS_"
+        "13RuntimeConfigE";
+    if (void* sym = dlsym(RTLD_DEFAULT, symbol_name); sym != nullptr) {
+      return reinterpret_cast<EstimateNonCpuWorkersFn>(sym);
+    }
+    return nullptr;
+  }();
+  return fn;
+}
+
+auto
+resolve_real_setenv() -> SetenvFn
+{
+  static SetenvFn fn = []() -> SetenvFn {
+    return reinterpret_cast<SetenvFn>(dlsym(RTLD_NEXT, "setenv"));
   }();
   return fn;
 }
@@ -249,8 +376,6 @@ struct CapturedStarpuConf {
 };
 
 CapturedStarpuConf g_captured_starpu_conf;
-
-using StarpuInitRawFn = int (*)(struct starpu_conf*);
 
 auto
 resolve_real_starpu_init() -> StarpuInitRawFn
@@ -377,6 +502,25 @@ class EnvVarGuard {
  private:
   std::string name_;
   std::optional<std::string> previous_;
+};
+
+class SetenvOverrideGuard {
+ public:
+  explicit SetenvOverrideGuard(SetenvFn override_fn)
+      : previous_{g_setenv_override}
+  {
+    g_setenv_override = override_fn;
+  }
+
+  ~SetenvOverrideGuard() { g_setenv_override = previous_; }
+
+  SetenvOverrideGuard(const SetenvOverrideGuard&) = delete;
+  auto operator=(const SetenvOverrideGuard&) -> SetenvOverrideGuard& = delete;
+  SetenvOverrideGuard(SetenvOverrideGuard&&) = delete;
+  auto operator=(SetenvOverrideGuard&&) -> SetenvOverrideGuard& = delete;
+
+ private:
+  SetenvFn previous_;
 };
 
 void
@@ -568,6 +712,18 @@ starpu_cuda_get_local_stream()
     return fn();
   }
   return nullptr;
+}
+
+extern "C" int
+setenv(const char* name, const char* value, int overwrite)
+{
+  if (g_setenv_override != nullptr) {
+    return g_setenv_override(name, value, overwrite);
+  }
+  if (auto fn = resolve_real_setenv(); fn != nullptr) {
+    return fn(name, value, overwrite);
+  }
+  return -1;
 }
 
 TEST(ConfigureCpu, DisablesCpuWorkersWhenCpuUsageDisabled)
@@ -791,6 +947,44 @@ TEST_F(StarPUSetupInitStubTest, GetEnvUnsignedHandlesInvalidEnvironmentValue)
       log.find("group_cpu_by_numa requested, but non-CPU workers already reach "
                "StarPU's worker limit"),
       std::string::npos);
+}
+
+TEST(ApplyStarpuEnv, EmptyNameThrowsInitializationException)
+{
+  StarpuInitCaptureStubGuard capture_guard;
+  starpu_server::RuntimeConfig opts;
+  opts.starpu_env[""] = "value";
+
+  try {
+    starpu_server::StarPUSetup setup(opts);
+    FAIL() << "Expected StarPUInitializationException";
+  }
+  catch (const starpu_server::StarPUInitializationException& ex) {
+    const std::string_view message(ex.what());
+    EXPECT_NE(
+        message.find("Environment variable name cannot be empty"),
+        std::string::npos);
+  }
+}
+
+TEST(ApplyStarpuEnv, SetenvFailureThrowsInitializationException)
+{
+  StarpuInitCaptureStubGuard capture_guard;
+  SetenvOverrideGuard setenv_guard(&failing_setenv_stub);
+
+  starpu_server::RuntimeConfig opts;
+  opts.starpu_env["STARPU_TEST_VAR"] = "1";
+
+  try {
+    starpu_server::StarPUSetup setup(opts);
+    FAIL() << "Expected StarPUInitializationException";
+  }
+  catch (const starpu_server::StarPUInitializationException& ex) {
+    const std::string_view message(ex.what());
+    EXPECT_NE(
+        message.find("Failed to set environment variable STARPU_TEST_VAR"),
+        std::string::npos);
+  }
 }
 
 TEST(EstimateNonCpuWorkers, ReturnsMaxUnsignedOnOverflow)
