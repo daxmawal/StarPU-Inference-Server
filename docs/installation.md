@@ -19,10 +19,6 @@ on a Linux host.
 
 - NVIDIA GPU with a driver that supports CUDA 11.8 (default build targets
   compute capability 8.0 and 8.6, adjust if needed).
-- At least 16 GB RAM while building large C++ dependencies (Protobuf, gRPC,
-  StarPU).
-- Around 12 GB of free disk space for third-party installs plus the build tree.
-- Standard development tools (`git`, `cmake`, `gcc`, `ninja` or `make`).
 - Optional: NVML headers (`libnvidia-ml-dev`) to enable GPU metrics.
 
 > **Note:** the commands below assume Ubuntu 22.04. Adapt package names if you

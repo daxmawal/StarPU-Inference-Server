@@ -1,3 +1,5 @@
+#include <starpu.h>
+
 #include <chrono>
 
 #include "core/inference_task.hpp"
@@ -5,6 +7,10 @@
 #include "starpu_task_worker/task_runner_internal.hpp"
 #include "test_starpu_task_runner.hpp"
 #include "utils/perf_observer.hpp"
+
+using starpu_server::CaptureStream;
+using starpu_server::ErrorLevel;
+using starpu_server::expected_log_line;
 
 namespace starpu_server {
 class StarPUTaskRunnerTestAdapter {
@@ -61,8 +67,107 @@ class StarPUTaskRunnerTestAdapter {
   {
     task_runner_internal::reset_submit_inference_task_hook();
   }
+
+  static auto validate_batch_and_copy_inputs(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      InputSlotPool* input_pool, int input_slot) -> int64_t
+  {
+    StarPUTaskRunner::PoolResources pools{};
+    pools.input_pool = input_pool;
+    pools.input_slot = input_slot;
+    return runner->validate_batch_and_copy_inputs(job, pools);
+  }
+
+  static auto configure_task_context(
+      InferenceTask& task, InputSlotPool* input_pool, int input_slot,
+      OutputSlotPool* output_pool, int output_slot,
+      const std::vector<starpu_data_handle_t>& input_handles,
+      const std::vector<starpu_data_handle_t>& output_handles,
+      int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>
+  {
+    StarPUTaskRunner::PoolResources pools{};
+    pools.input_pool = input_pool;
+    pools.input_slot = input_slot;
+    pools.output_pool = output_pool;
+    pools.output_slot = output_slot;
+    return StarPUTaskRunner::configure_task_context(
+        task, pools, input_handles, output_handles, batch_size);
+  }
 };
 }  // namespace starpu_server
+
+namespace {
+struct VectorInterfaceSnapshot {
+  starpu_vector_interface* iface = nullptr;
+  std::size_t elemsize = 0;
+  std::size_t allocsize = 0;
+  std::size_t nx = 0;
+};
+
+auto
+snapshot_vector_interfaces(starpu_data_handle_t handle)
+    -> std::vector<VectorInterfaceSnapshot>
+{
+  std::vector<VectorInterfaceSnapshot> snapshots;
+  const unsigned memory_nodes = starpu_memory_nodes_get_count();
+  snapshots.reserve(memory_nodes);
+  for (unsigned node = 0; node < memory_nodes; ++node) {
+    auto* raw_interface = starpu_data_get_interface_on_node(handle, node);
+    if (raw_interface == nullptr) {
+      continue;
+    }
+    auto* vector_interface =
+        static_cast<starpu_vector_interface*>(raw_interface);
+    snapshots.push_back(VectorInterfaceSnapshot{
+        vector_interface, static_cast<std::size_t>(vector_interface->elemsize),
+        vector_interface->allocsize, vector_interface->nx});
+  }
+  return snapshots;
+}
+
+void
+restore_vector_interfaces(const std::vector<VectorInterfaceSnapshot>& snapshots)
+{
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface == nullptr) {
+      continue;
+    }
+    snapshot.iface->elemsize =
+        static_cast<decltype(snapshot.iface->elemsize)>(snapshot.elemsize);
+    snapshot.iface->allocsize = snapshot.allocsize;
+    snapshot.iface->nx = static_cast<decltype(snapshot.iface->nx)>(snapshot.nx);
+  }
+}
+}  // namespace
+
+TEST(TaskRunnerInternal, ReleaseInputsFromAdditionalJobsSkipsNullEntries)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto job0 = std::make_shared<starpu_server::InferenceJob>();
+  job0->set_input_tensors({torch::tensor({1})});
+  auto job0_holder = std::make_shared<int>(7);
+  job0->set_input_memory_holders(
+      {std::shared_ptr<const void>(job0_holder, job0_holder.get())});
+
+  auto job2 = std::make_shared<starpu_server::InferenceJob>();
+  job2->set_input_tensors({torch::tensor({2})});
+  auto job2_holder = std::make_shared<int>(9);
+  job2->set_input_memory_holders(
+      {std::shared_ptr<const void>(job2_holder, job2_holder.get())});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{
+      job0, nullptr, job2};
+
+  internal::release_inputs_from_additional_jobs(jobs);
+
+  ASSERT_EQ(job0->get_input_tensors().size(), 1U);
+  EXPECT_FALSE(job0->get_input_tensors().empty());
+  EXPECT_EQ(job0->get_input_memory_holders().size(), 1U);
+
+  EXPECT_TRUE(job2->get_input_tensors().empty());
+  EXPECT_TRUE(job2->get_input_memory_holders().empty());
+}
 
 TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
 {
@@ -292,6 +397,309 @@ TEST_F(
 
 TEST_F(
     StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenElementSizeZero)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      21, {torch::ones({3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->elemsize = 0;
+    }
+  }
+
+  bool released = false;
+  EXPECT_THROW(
+      ([&] {
+        try {
+          starpu_server::StarPUTaskRunnerTestAdapter::
+              validate_batch_and_copy_inputs(
+                  runner_.get(), job, &input_pool, slot);
+        }
+        catch (...) {
+          if (!released) {
+            starpu_data_release(handle);
+            released = true;
+          }
+          throw;
+        }
+      }()),
+      starpu_server::StarPUDataAcquireException);
+  if (!released) {
+    starpu_data_release(handle);
+  }
+
+  restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenTensorBytesMisaligned)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      22, {torch::ones({3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->elemsize = snapshot.elemsize + 1;
+    }
+  }
+
+  bool released = false;
+  EXPECT_THROW(
+      ([&] {
+        try {
+          starpu_server::StarPUTaskRunnerTestAdapter::
+              validate_batch_and_copy_inputs(
+                  runner_.get(), job, &input_pool, slot);
+        }
+        catch (...) {
+          if (!released) {
+            starpu_data_release(handle);
+            released = true;
+          }
+          throw;
+        }
+      }()),
+      starpu_server::InvalidInputTensorException);
+  if (!released) {
+    starpu_data_release(handle);
+  }
+
+  restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenSlotCapacityExceeded)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      23, {torch::ones({3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  const auto expected_bytes =
+      static_cast<std::size_t>(job->get_input_tensors()[0].nbytes());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->allocsize = expected_bytes - 1;
+    }
+  }
+
+  bool released = false;
+  EXPECT_THROW(
+      ([&] {
+        try {
+          starpu_server::StarPUTaskRunnerTestAdapter::
+              validate_batch_and_copy_inputs(
+                  runner_.get(), job, &input_pool, slot);
+        }
+        catch (...) {
+          if (!released) {
+            starpu_data_release(handle);
+            released = true;
+          }
+          throw;
+        }
+      }()),
+      starpu_server::InputPoolCapacityException);
+  if (!released) {
+    starpu_data_release(handle);
+  }
+
+  restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsUpdatesVectorNumelWhenNeeded)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      24, {torch::ones({3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  const auto tensor_bytes =
+      static_cast<std::size_t>(job->get_input_tensors()[0].nbytes());
+  const auto adjusted_elem_size = tensor_bytes / 2;
+  ASSERT_GT(adjusted_elem_size, 0U);
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->elemsize = adjusted_elem_size;
+    }
+  }
+
+  const auto expected_numel = tensor_bytes / adjusted_elem_size;
+  const auto batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      EXPECT_EQ(
+          snapshot.iface->nx,
+          static_cast<decltype(snapshot.iface->nx)>(expected_numel));
+    }
+  }
+
+  restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ConfigureTaskContextThrowsWhenOutputBytesMisaligned)
+{
+  auto model_config = make_model_config(
+      "output_only", {}, {make_tensor_config("output0", {3}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  auto job = make_job(25, {});
+  job->set_output_tensors(
+      {torch::zeros({3}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(slot);
+  ASSERT_EQ(output_handles.size(), 1U);
+  const auto handle = output_handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->elemsize = snapshot.elemsize + 1;
+    }
+  }
+
+  std::vector<starpu_data_handle_t> input_handles;
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, &output_pool, slot, input_handles, output_handles,
+          /*batch_size=*/1),
+      starpu_server::InvalidInferenceJobException);
+
+  restore_vector_interfaces(snapshots);
+  output_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ConfigureTaskContextThrowsWhenOutputCapacityExceeded)
+{
+  auto model_config = make_model_config(
+      "output_only", {}, {make_tensor_config("output0", {3}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  auto job = make_job(26, {});
+  job->set_output_tensors(
+      {torch::zeros({3}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(slot);
+  ASSERT_EQ(output_handles.size(), 1U);
+  const auto handle = output_handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  const auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+  const auto tensor_bytes =
+      static_cast<std::size_t>(job->get_output_tensors()[0].nbytes());
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      snapshot.iface->allocsize = tensor_bytes - 1;
+    }
+  }
+
+  std::vector<starpu_data_handle_t> input_handles;
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, &output_pool, slot, input_handles, output_handles,
+          /*batch_size=*/1),
+      starpu_server::InvalidInferenceJobException);
+
+  restore_vector_interfaces(snapshots);
+  output_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
     HandleSubmissionFailureReleasesSlotsThroughTestHook)
 {
   auto model_config = make_model_config(
@@ -320,6 +728,118 @@ TEST_F(
   ASSERT_TRUE(reacquired_output.has_value());
   EXPECT_EQ(*reacquired_output, output_slot);
   output_pool.release(*reacquired_output);
+}
+
+TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobReturnsNullWhenNoJobs)
+{
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs;
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+  EXPECT_EQ(master, nullptr);
+}
+
+TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobSingleJobResetsState)
+{
+  auto job = make_job(
+      5, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_logical_job_count(4);
+  starpu_server::InferenceJob::AggregatedSubJob sub_job{};
+  sub_job.job = job;
+  sub_job.callback = [](const std::vector<torch::Tensor>&, double) {};
+  sub_job.batch_size = 3;
+  job->set_aggregated_sub_jobs({sub_job});
+
+  bool callback_called = false;
+  job->set_on_complete([&](const std::vector<torch::Tensor>&, double) {
+    callback_called = true;
+  });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job};
+
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+
+  ASSERT_EQ(master, job);
+  EXPECT_EQ(master->logical_job_count(), 1);
+  EXPECT_TRUE(master->aggregated_sub_jobs().empty());
+
+  master->get_on_complete()({}, 0.0);
+  EXPECT_TRUE(callback_called);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    MaybeBuildBatchedJobFallsBackToEarliestTimesAndMergesMemory)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  const auto base = internal::Clock::now();
+
+  auto job0 = make_job(
+      0, {torch::tensor(
+             {{1.0F, 2.0F}}, torch::TensorOptions().dtype(torch::kFloat))});
+  auto job1 = make_job(
+      1, {torch::tensor(
+             {{3.0F, 4.0F}}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  job0->set_input_types({at::kFloat});
+  job1->set_input_types({at::kFloat});
+
+  job0->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+  job1->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  auto holder0 = std::make_shared<int>(1);
+  auto holder1 = std::make_shared<int>(2);
+  job0->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder0, holder0.get())});
+  job1->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder1, holder1.get())});
+
+  job0->timing_info().dequeued_time = base + std::chrono::milliseconds(5);
+  job0->timing_info().enqueued_time = internal::Clock::time_point{};
+  job0->timing_info().batch_collect_start_time = internal::Clock::time_point{};
+  job1->timing_info().enqueued_time = base + std::chrono::milliseconds(8);
+  job1->timing_info().batch_collect_start_time = internal::Clock::time_point{};
+
+  bool job1_called = false;
+  job1->set_on_complete(
+      [&](const std::vector<torch::Tensor>&, double) { job1_called = true; });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job0, job1};
+
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+
+  ASSERT_EQ(master, job0);
+  EXPECT_EQ(master->logical_job_count(), 2);
+  EXPECT_EQ(master->aggregated_sub_jobs().size(), 2U);
+
+  EXPECT_EQ(master->get_start_time(), job1->timing_info().enqueued_time);
+  EXPECT_EQ(
+      master->timing_info().enqueued_time, job1->timing_info().enqueued_time);
+  EXPECT_EQ(
+      master->timing_info().batch_collect_start_time,
+      job0->timing_info().dequeued_time);
+
+  const auto& holders = master->get_input_memory_holders();
+  ASSERT_EQ(holders.size(), 2U);
+  EXPECT_EQ(holders.front().get(), static_cast<const void*>(holder0.get()));
+  EXPECT_EQ(holders.back().get(), static_cast<const void*>(holder1.get()));
+
+  EXPECT_TRUE(job1->get_input_memory_holders().empty());
+  EXPECT_TRUE(job1->get_input_tensors().empty());
+
+  ASSERT_EQ(master->get_output_tensors().size(), 1U);
+  EXPECT_EQ(master->get_output_tensors()[0].size(0), 2);
+
+  const std::vector<torch::Tensor> aggregated_outputs = {
+      torch::zeros({2, 2}, torch::TensorOptions().dtype(torch::kFloat))};
+  master->get_on_complete()(aggregated_outputs, 3.4);
+  EXPECT_TRUE(job1_called);
 }
 
 TEST_F(
@@ -608,6 +1128,65 @@ TEST(TaskRunnerInternal, SliceOutputsForSubJobExtractsContiguousRows)
   EXPECT_TRUE(result.outputs[1].is_contiguous());
 }
 
+TEST(
+    TaskRunnerInternal,
+    SliceOutputsForSubJobPreservesUndefinedAndZeroDimTensors)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  torch::Tensor undefined_tensor;
+  auto scalar_tensor =
+      torch::tensor(42, torch::TensorOptions().dtype(torch::kInt64));
+  auto matrix = torch::arange(0, 6, torch::TensorOptions().dtype(torch::kInt64))
+                    .reshape({3, 2});
+  std::vector<torch::Tensor> aggregated{
+      undefined_tensor, scalar_tensor, matrix};
+
+  const auto result = internal::slice_outputs_for_sub_job(
+      aggregated, internal::SubJobSliceOptions{0, 1});
+
+  ASSERT_EQ(result.outputs.size(), aggregated.size());
+  EXPECT_FALSE(result.outputs[0].defined());
+  ASSERT_TRUE(result.outputs[1].defined());
+  EXPECT_EQ(result.outputs[1].dim(), 0);
+  EXPECT_EQ(result.outputs[1].item<int64_t>(), scalar_tensor.item<int64_t>());
+  auto expected_matrix_slice = matrix.narrow(0, 0, 1).contiguous();
+  EXPECT_TRUE(torch::equal(result.outputs[2], expected_matrix_slice));
+  EXPECT_EQ(result.processed_length, 1);
+}
+
+TEST(
+    TaskRunnerInternal,
+    SliceOutputsForSubJobYieldsEmptySliceWhenOffsetExceedsData)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto tensor = torch::arange(0, 6, torch::TensorOptions().dtype(torch::kInt64))
+                    .reshape({3, 2});
+  std::vector<torch::Tensor> aggregated{tensor};
+
+  const auto result = internal::slice_outputs_for_sub_job(
+      aggregated, internal::SubJobSliceOptions{5, 2});
+
+  ASSERT_EQ(result.outputs.size(), 1U);
+  EXPECT_FALSE(result.outputs[0].defined());
+  EXPECT_EQ(result.processed_length, 2);
+}
+
+TEST(TaskRunnerInternal, AggregateBatchMetadataReturnsDefaultsForEmptyJobs)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  const auto info = internal::aggregate_batch_metadata({});
+
+  EXPECT_TRUE(info.sub_jobs.empty());
+  EXPECT_EQ(info.logical_jobs, 0);
+  EXPECT_EQ(info.total_samples, 0);
+  EXPECT_EQ(info.earliest_start, internal::Clock::time_point{});
+  EXPECT_EQ(info.earliest_enqueued, internal::Clock::time_point{});
+  EXPECT_EQ(info.earliest_batch_collect_start, internal::Clock::time_point{});
+}
+
 TEST(TaskRunnerInternal, AggregateBatchMetadataCollectsEarliestTimings)
 {
   namespace internal = starpu_server::task_runner_internal;
@@ -667,6 +1246,88 @@ TEST(TaskRunnerInternal, AggregateBatchMetadataCollectsEarliestTimings)
   info.sub_jobs[1].callback({}, 0.0);
   EXPECT_TRUE(first_called);
   EXPECT_TRUE(second_called);
+}
+
+TEST(
+    TaskRunnerInternal,
+    AggregateBatchMetadataRetainsExistingTimesWhenCandidateUnset)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto job_one = std::make_shared<starpu_server::InferenceJob>();
+  auto job_two = std::make_shared<starpu_server::InferenceJob>();
+
+  job_one->set_input_tensors({torch::ones({2, 1})});
+  job_two->set_input_tensors({torch::ones({1, 1})});
+
+  const auto base = internal::Clock::now();
+  job_one->set_start_time(base + std::chrono::milliseconds(5));
+  job_one->timing_info().enqueued_time = base + std::chrono::milliseconds(6);
+  job_one->timing_info().batch_collect_start_time =
+      base + std::chrono::milliseconds(7);
+
+  const auto info = internal::aggregate_batch_metadata({job_one, job_two});
+
+  EXPECT_EQ(info.earliest_start, job_one->get_start_time());
+  EXPECT_EQ(info.earliest_enqueued, job_one->timing_info().enqueued_time);
+  EXPECT_EQ(
+      info.earliest_batch_collect_start,
+      job_one->timing_info().batch_collect_start_time);
+}
+
+TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsInferenceEngineException)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
+    throw starpu_server::InferenceEngineException("inference failure");
+  });
+
+  CaptureStream capture{std::cerr};
+  starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error("outer failure"));
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel, "Exception in completion callback: inference failure");
+  EXPECT_NE(logs.find(expected), std::string::npos);
+}
+
+TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsLogicError)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
+    throw std::logic_error("logic failure");
+  });
+
+  CaptureStream capture{std::cerr};
+  starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error("outer failure"));
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel, "Exception in completion callback: logic failure");
+  EXPECT_NE(logs.find(expected), std::string::npos);
+}
+
+TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsBadAlloc)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
+    throw std::bad_alloc();
+  });
+
+  CaptureStream capture{std::cerr};
+  starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error("outer failure"));
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel, "Exception in completion callback: std::bad_alloc");
+  const auto alt_expected = expected_log_line(
+      ErrorLevel, "Exception in completion callback: bad_alloc");
+  EXPECT_TRUE(
+      logs.find(expected) != std::string::npos ||
+      logs.find(alt_expected) != std::string::npos);
 }
 
 TEST(TaskRunnerInternal, ResizeOutputsForBatchRespectsPrototypeLayout)

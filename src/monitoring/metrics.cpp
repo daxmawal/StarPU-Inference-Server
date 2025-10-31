@@ -168,8 +168,7 @@ NvmlWrapper::instance() -> NvmlWrapper&
 
 NvmlWrapper::NvmlWrapper()
 {
-  const nvmlReturn_t status = nvmlInit();
-  if (status != NVML_SUCCESS) {
+  if (const nvmlReturn_t status = nvmlInit(); status != NVML_SUCCESS) {
     log_warning(std::format(
         "Failed to initialize NVML: {} (code {})",
         std::string(error_string(status)), static_cast<int>(status)));

@@ -72,6 +72,15 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "Unknown configuration option: unknown_option"},
     InvalidConfigCase{
+        "NonScalarKeySetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "? [invalid, key]\n";
+          yaml += ": true\n";
+          return yaml;
+        }(),
+        "Configuration keys must be scalar strings"},
+    InvalidConfigCase{
         "DeviceIdsAtRootInvalid",
         [] {
           auto yaml = base_model_yaml();
@@ -104,6 +113,72 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           return yaml;
         }(),
         "use_cuda requires at least one device_ids entry"},
+    InvalidConfigCase{
+        "UseCudaNonSequenceInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  device_ids: [0]\n";
+          return yaml;
+        }(),
+        "use_cuda must be a boolean or a sequence of device mappings"},
+    InvalidConfigCase{
+        "UseCudaEntryNotMapInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - true\n";
+          yaml += "  - { device_ids: [0] }\n";
+          return yaml;
+        }(),
+        "use_cuda entries must be mappings that define device_ids"},
+    InvalidConfigCase{
+        "UseCudaEntryMissingDeviceIdsInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - {}\n";
+          yaml += "  - { device_ids: [0] }\n";
+          return yaml;
+        }(),
+        "use_cuda entries require a device_ids sequence"},
+    InvalidConfigCase{
+        "UseCudaEntryDeviceIdsNotSequenceInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - { device_ids: 0 }\n";
+          yaml += "  - { device_ids: [1] }\n";
+          return yaml;
+        }(),
+        "device_ids inside use_cuda must be a sequence"},
+    InvalidConfigCase{
+        "StarpuEnvNotMapInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "starpu_env: []\n";
+          return yaml;
+        }(),
+        "starpu_env must be a mapping of variable names to values"},
+    InvalidConfigCase{
+        "StarpuEnvKeyNotScalarInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "starpu_env:\n";
+          yaml += "  ? [invalid, key]\n";
+          yaml += "  : value\n";
+          return yaml;
+        }(),
+        "starpu_env entries must have scalar keys"},
+    InvalidConfigCase{
+        "StarpuEnvValueNotScalarInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "starpu_env:\n";
+          yaml += "  VAR: [1, 2]\n";
+          return yaml;
+        }(),
+        "starpu_env entries must have scalar values"},
     InvalidConfigCase{
         "NegativeBatchCoalesceTimeoutSetsValidFalse",
         [] {
@@ -401,6 +476,83 @@ TEST_P(InvalidConfigTest, MarksConfigInvalid)
 INSTANTIATE_TEST_SUITE_P(
     InvalidConfigs, InvalidConfigTest, ::testing::ValuesIn(kInvalidConfigCases),
     InvalidConfigCaseName);
+
+TEST(ConfigLoader, AllowsBooleanUseCuda)
+{
+  const auto model_path = WriteTempFile(
+      "config_loader_scalar_use_cuda_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+  yaml += "use_cuda: true\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_scalar_use_cuda.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(config_path.string());
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_TRUE(cfg.devices.use_cuda);
+  EXPECT_TRUE(cfg.devices.ids.empty());
+}
+
+TEST(ConfigLoader, RejectsNonMappingRoot)
+{
+  const auto config_path =
+      WriteTempFile("config_loader_non_mapping_root.yaml", "- item\n");
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(config_path.string());
+  const std::string expected =
+      expected_log_line(ErrorLevel, "Config root must be a mapping");
+  EXPECT_EQ(capture.str(), expected);
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, RejectsEmptyConfig)
+{
+  const auto config_path =
+      WriteTempFile("config_loader_empty.yaml", std::string{});
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(config_path.string());
+  const std::string expected =
+      expected_log_line(ErrorLevel, "Config root must be a mapping");
+  EXPECT_EQ(capture.str(), expected);
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, LoadsStarpuEnvVariables)
+{
+  const auto model_path =
+      WriteTempFile("config_loader_starpu_env_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+  yaml += "starpu_env:\n";
+  yaml += "  VAR_ONE: VALUE1\n";
+  yaml += "  VAR_TWO: VALUE2\n";
+
+  const auto config_path = WriteTempFile("config_loader_starpu_env.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(config_path.string());
+  EXPECT_TRUE(cfg.valid);
+  auto it_one = cfg.starpu_env.find("VAR_ONE");
+  ASSERT_NE(it_one, cfg.starpu_env.end());
+  EXPECT_EQ(it_one->second, "VALUE1");
+  auto it_two = cfg.starpu_env.find("VAR_TWO");
+  ASSERT_NE(it_two, cfg.starpu_env.end());
+  EXPECT_EQ(it_two->second, "VALUE2");
+}
 
 TEST(ConfigLoader, LoadsValidConfig)
 {
