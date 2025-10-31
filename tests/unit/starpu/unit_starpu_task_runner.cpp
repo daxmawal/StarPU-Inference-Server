@@ -653,6 +653,20 @@ TEST(
   EXPECT_EQ(result.processed_length, 2);
 }
 
+TEST(TaskRunnerInternal, AggregateBatchMetadataReturnsDefaultsForEmptyJobs)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  const auto info = internal::aggregate_batch_metadata({});
+
+  EXPECT_TRUE(info.sub_jobs.empty());
+  EXPECT_EQ(info.logical_jobs, 0);
+  EXPECT_EQ(info.total_samples, 0);
+  EXPECT_EQ(info.earliest_start, internal::Clock::time_point{});
+  EXPECT_EQ(info.earliest_enqueued, internal::Clock::time_point{});
+  EXPECT_EQ(info.earliest_batch_collect_start, internal::Clock::time_point{});
+}
+
 TEST(TaskRunnerInternal, AggregateBatchMetadataCollectsEarliestTimings)
 {
   namespace internal = starpu_server::task_runner_internal;
