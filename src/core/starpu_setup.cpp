@@ -228,13 +228,14 @@ auto
 get_env_unsigned(const RuntimeConfig& opts, const char* key)
     -> std::optional<unsigned>
 {
-  if (const auto it = opts.starpu_env.find(key); it != opts.starpu_env.end()) {
-    if (auto parsed = parse_unsigned(it->second)) {
+  if (const auto env_it = opts.starpu_env.find(key);
+      env_it != opts.starpu_env.end()) {
+    if (auto parsed = parse_unsigned(env_it->second)) {
       return parsed;
     }
     log_warning(std::format(
         "Invalid value '{}' for {} in configuration; ignoring binding hint",
-        it->second, key));
+        env_it->second, key));
     return std::nullopt;
   }
 
@@ -349,13 +350,12 @@ configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
   }
 
   const size_t candidate_count = candidate_gpu_bind_ids.size();
-  for (size_t idx = 0; idx < static_cast<size_t>(STARPU_NMAXWORKERS); ++idx) {
-    conf.workers_bindid[idx] = candidate_gpu_bind_ids[idx % candidate_count];
+  auto worker_bindid = std::span(conf.workers_bindid);
+  for (size_t idx = 0; idx < worker_bindid.size(); ++idx) {
+    worker_bindid[idx] = candidate_gpu_bind_ids[idx % candidate_count];
   }
 
-  for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
-    conf.workers_bindid[idx] = cpu_bind_ids[idx];
-  }
+  std::copy(cpu_bind_ids.begin(), cpu_bind_ids.end(), worker_bindid.begin());
 
   std::string bind_list;
   for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
