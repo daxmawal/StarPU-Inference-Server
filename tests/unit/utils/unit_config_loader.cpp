@@ -153,6 +153,33 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "device_ids inside use_cuda must be a sequence"},
     InvalidConfigCase{
+        "StarpuEnvNotMapInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "starpu_env: []\n";
+          return yaml;
+        }(),
+        "starpu_env must be a mapping of variable names to values"},
+    InvalidConfigCase{
+        "StarpuEnvKeyNotScalarInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "starpu_env:\n";
+          yaml += "  ? [invalid, key]\n";
+          yaml += "  : value\n";
+          return yaml;
+        }(),
+        "starpu_env entries must have scalar keys"},
+    InvalidConfigCase{
+        "StarpuEnvValueNotScalarInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "starpu_env:\n";
+          yaml += "  VAR: [1, 2]\n";
+          return yaml;
+        }(),
+        "starpu_env entries must have scalar values"},
+    InvalidConfigCase{
         "NegativeBatchCoalesceTimeoutSetsValidFalse",
         [] {
           std::string yaml;
@@ -472,6 +499,35 @@ TEST(ConfigLoader, AllowsBooleanUseCuda)
   EXPECT_TRUE(cfg.valid);
   EXPECT_TRUE(cfg.devices.use_cuda);
   EXPECT_TRUE(cfg.devices.ids.empty());
+}
+
+TEST(ConfigLoader, LoadsStarpuEnvVariables)
+{
+  const auto model_path =
+      WriteTempFile("config_loader_starpu_env_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+  yaml += "starpu_env:\n";
+  yaml += "  VAR_ONE: VALUE1\n";
+  yaml += "  VAR_TWO: VALUE2\n";
+
+  const auto config_path = WriteTempFile("config_loader_starpu_env.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(config_path.string());
+  EXPECT_TRUE(cfg.valid);
+  auto it_one = cfg.starpu_env.find("VAR_ONE");
+  ASSERT_NE(it_one, cfg.starpu_env.end());
+  EXPECT_EQ(it_one->second, "VALUE1");
+  auto it_two = cfg.starpu_env.find("VAR_TWO");
+  ASSERT_NE(it_two, cfg.starpu_env.end());
+  EXPECT_EQ(it_two->second, "VALUE2");
 }
 
 TEST(ConfigLoader, LoadsValidConfig)
