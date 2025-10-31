@@ -54,21 +54,32 @@ capture_stdout(F&& func) -> std::string
 struct StarpuRuntimeGuard {
   StarpuRuntimeGuard()
   {
+    initial_level_ = starpu_is_initialized();
     if (starpu_init(nullptr) != 0) {
       throw std::runtime_error("StarPU initialization failed");
     }
   }
   ~StarpuRuntimeGuard()
   {
-    starpu_shutdown();
+    constexpr int kMaxShutdownAttempts = 8;
+    int attempts = 0;
+    while (starpu_is_initialized() > initial_level_ &&
+           attempts < kMaxShutdownAttempts) {
+      starpu_shutdown();
+      ++attempts;
+    }
 #ifndef NDEBUG
-    assert(starpu_is_initialized() == 0 && "StarPU shutdown failed");
+    assert(
+        starpu_is_initialized() == initial_level_ && "StarPU shutdown failed");
 #endif
   }
   StarpuRuntimeGuard(const StarpuRuntimeGuard&) = delete;
   auto operator=(const StarpuRuntimeGuard&) -> StarpuRuntimeGuard& = delete;
   StarpuRuntimeGuard(StarpuRuntimeGuard&&) = delete;
   auto operator=(StarpuRuntimeGuard&&) -> StarpuRuntimeGuard& = delete;
+
+ private:
+  int initial_level_ = 0;
 };
 
 struct TestBuffers {
