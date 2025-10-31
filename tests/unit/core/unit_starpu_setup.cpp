@@ -307,6 +307,45 @@ class StarpuInitCaptureGuard {
   }
 };
 
+auto
+capturing_starpu_init_noop(struct starpu_conf* conf) -> int
+{
+  g_captured_starpu_conf.called = true;
+  g_captured_starpu_conf.conf = *conf;
+  return 0;
+}
+
+class StarpuInitCaptureStubGuard {
+ public:
+  StarpuInitCaptureStubGuard()
+  {
+    g_captured_starpu_conf = {};
+    starpu_server::StarPUSetup::set_starpu_init_fn(&capturing_starpu_init_noop);
+  }
+
+  ~StarpuInitCaptureStubGuard()
+  {
+    starpu_server::StarPUSetup::reset_starpu_init_fn();
+  }
+
+  StarpuInitCaptureStubGuard(const StarpuInitCaptureStubGuard&) = delete;
+  auto operator=(const StarpuInitCaptureStubGuard&)
+      -> StarpuInitCaptureStubGuard& = delete;
+  StarpuInitCaptureStubGuard(StarpuInitCaptureStubGuard&&) = delete;
+  auto operator=(StarpuInitCaptureStubGuard&&) -> StarpuInitCaptureStubGuard& =
+                                                      delete;
+
+  [[nodiscard]] auto called() const -> bool
+  {
+    return g_captured_starpu_conf.called;
+  }
+
+  [[nodiscard]] auto conf() const -> const starpu_conf&
+  {
+    return g_captured_starpu_conf.conf;
+  }
+};
+
 class EnvVarGuard {
  public:
   EnvVarGuard(std::string name, std::string value) : name_{std::move(name)}
@@ -749,6 +788,37 @@ TEST_F(StarPUSetupInitStubTest, GetEnvUnsignedHandlesInvalidEnvironmentValue)
                "STARPU_NWORKER_PER_CUDA; ignoring binding hint"),
       std::string::npos);
   EXPECT_EQ(
+      log.find("group_cpu_by_numa requested, but non-CPU workers already reach "
+               "StarPU's worker limit"),
+      std::string::npos);
+}
+
+TEST(EstimateNonCpuWorkers, ReturnsMaxUnsignedOnOverflow)
+{
+  EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
+  EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
+  EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+
+  StarpuInitCaptureStubGuard capture_guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, 1};
+  const unsigned workers_per_gpu =
+      (std::numeric_limits<unsigned>::max() / 2U) + 1U;
+  opts.starpu_env["STARPU_NWORKER_PER_CUDA"] = std::to_string(workers_per_gpu);
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  EXPECT_NE(
       log.find("group_cpu_by_numa requested, but non-CPU workers already reach "
                "StarPU's worker limit"),
       std::string::npos);
