@@ -72,6 +72,15 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "Unknown configuration option: unknown_option"},
     InvalidConfigCase{
+        "NonScalarKeySetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "? [invalid, key]\n";
+          yaml += ": true\n";
+          return yaml;
+        }(),
+        "Configuration keys must be scalar strings"},
+    InvalidConfigCase{
         "DeviceIdsAtRootInvalid",
         [] {
           auto yaml = base_model_yaml();
