@@ -730,6 +730,118 @@ TEST_F(
   output_pool.release(*reacquired_output);
 }
 
+TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobReturnsNullWhenNoJobs)
+{
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs;
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+  EXPECT_EQ(master, nullptr);
+}
+
+TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobSingleJobResetsState)
+{
+  auto job = make_job(
+      5, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_logical_job_count(4);
+  starpu_server::InferenceJob::AggregatedSubJob sub_job{};
+  sub_job.job = job;
+  sub_job.callback = [](const std::vector<torch::Tensor>&, double) {};
+  sub_job.batch_size = 3;
+  job->set_aggregated_sub_jobs({sub_job});
+
+  bool callback_called = false;
+  job->set_on_complete([&](const std::vector<torch::Tensor>&, double) {
+    callback_called = true;
+  });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job};
+
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+
+  ASSERT_EQ(master, job);
+  EXPECT_EQ(master->logical_job_count(), 1);
+  EXPECT_TRUE(master->aggregated_sub_jobs().empty());
+
+  master->get_on_complete()({}, 0.0);
+  EXPECT_TRUE(callback_called);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    MaybeBuildBatchedJobFallsBackToEarliestTimesAndMergesMemory)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  const auto base = internal::Clock::now();
+
+  auto job0 = make_job(
+      0, {torch::tensor(
+             {{1.0F, 2.0F}}, torch::TensorOptions().dtype(torch::kFloat))});
+  auto job1 = make_job(
+      1, {torch::tensor(
+             {{3.0F, 4.0F}}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  job0->set_input_types({at::kFloat});
+  job1->set_input_types({at::kFloat});
+
+  job0->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+  job1->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  auto holder0 = std::make_shared<int>(1);
+  auto holder1 = std::make_shared<int>(2);
+  job0->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder0, holder0.get())});
+  job1->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder1, holder1.get())});
+
+  job0->timing_info().dequeued_time = base + std::chrono::milliseconds(5);
+  job0->timing_info().enqueued_time = internal::Clock::time_point{};
+  job0->timing_info().batch_collect_start_time = internal::Clock::time_point{};
+  job1->timing_info().enqueued_time = base + std::chrono::milliseconds(8);
+  job1->timing_info().batch_collect_start_time = internal::Clock::time_point{};
+
+  bool job1_called = false;
+  job1->set_on_complete(
+      [&](const std::vector<torch::Tensor>&, double) { job1_called = true; });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job0, job1};
+
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+
+  ASSERT_EQ(master, job0);
+  EXPECT_EQ(master->logical_job_count(), 2);
+  EXPECT_EQ(master->aggregated_sub_jobs().size(), 2U);
+
+  EXPECT_EQ(master->get_start_time(), job1->timing_info().enqueued_time);
+  EXPECT_EQ(
+      master->timing_info().enqueued_time, job1->timing_info().enqueued_time);
+  EXPECT_EQ(
+      master->timing_info().batch_collect_start_time,
+      job0->timing_info().dequeued_time);
+
+  const auto& holders = master->get_input_memory_holders();
+  ASSERT_EQ(holders.size(), 2U);
+  EXPECT_EQ(holders.front().get(), static_cast<const void*>(holder0.get()));
+  EXPECT_EQ(holders.back().get(), static_cast<const void*>(holder1.get()));
+
+  EXPECT_TRUE(job1->get_input_memory_holders().empty());
+  EXPECT_TRUE(job1->get_input_tensors().empty());
+
+  ASSERT_EQ(master->get_output_tensors().size(), 1U);
+  EXPECT_EQ(master->get_output_tensors()[0].size(0), 2);
+
+  const std::vector<torch::Tensor> aggregated_outputs = {
+      torch::zeros({2, 2}, torch::TensorOptions().dtype(torch::kFloat))};
+  master->get_on_complete()(aggregated_outputs, 3.4);
+  EXPECT_TRUE(job1_called);
+}
+
 TEST_F(
     StarPUTaskRunnerFixture,
     MaybeBuildBatchedJobAggregatesInputsAndPropagatesCallbacks)
