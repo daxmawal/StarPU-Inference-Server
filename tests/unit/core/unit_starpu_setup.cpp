@@ -818,6 +818,50 @@ TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
       { starpu_server::StarPUSetup setup(opts); }, std::invalid_argument);
 }
 
+TEST(InferenceCodelet, RunCodeletInferenceLogsTraceMessage)
+{
+  const StarpuRuntimeGuard guard;
+
+  auto params = starpu_server::make_basic_params(3);
+  params.verbosity = starpu_server::VerbosityLevel::Trace;
+  params.request_id = 99;
+
+  torch::jit::script::Module module{"trace_logger"};
+  module.define(R"JIT(
+        def forward(self, x):
+            return x
+    )JIT");
+  params.models.model_cpu = &module;
+
+  TestBuffers buffers = make_test_buffers();
+
+  g_mock_worker_id = 11;
+  g_mock_device_id = 5;
+  ScopedWorkerContextOverride worker_guard(
+      &mock_starpu_worker_get_id, &mock_starpu_worker_get_devid, nullptr);
+
+  starpu_server::InferenceCodelet codelet;
+  auto* cpu_func = codelet.get_codelet()->cpu_funcs[0];
+  ASSERT_NE(cpu_func, nullptr);
+
+  starpu_server::CaptureStream capture{std::cout};
+  cpu_func(reinterpret_cast<void**>(buffers.buffers.data()), &params);
+  const std::string log = capture.str();
+
+  EXPECT_NE(
+      log.find(std::format(
+          "CPU device id {}, worker id {}, job id {}", g_mock_device_id,
+          g_mock_worker_id, params.request_id)),
+      std::string::npos);
+
+  for (float value : buffers.output_data) {
+    EXPECT_NE(value, 0.0F);
+  }
+
+  g_mock_worker_id = 0;
+  g_mock_device_id = 0;
+}
+
 TEST(InferenceCodelet, CudaInferenceFuncCopiesResultsToDeviceBuffer)
 {
   skip_if_no_cuda();
