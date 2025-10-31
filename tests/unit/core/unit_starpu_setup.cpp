@@ -46,6 +46,8 @@ bool g_output_failure_observer_called = false;
 using StarpuWorkerGetIdHook = int (*)();
 using StarpuWorkerGetDevidHook = int (*)(int);
 using StarpuCudaGetLocalStreamHook = cudaStream_t (*)();
+bool g_starpu_init_stub_called = false;
+bool g_worker_stream_stub_called = false;
 
 StarpuWorkerGetIdHook g_worker_get_id_hook = nullptr;
 StarpuWorkerGetDevidHook g_worker_get_devid_hook = nullptr;
@@ -71,6 +73,22 @@ cudaStream_t
 mock_starpu_cuda_get_local_stream()
 {
   return g_mock_cuda_stream;
+}
+
+int
+starpu_init_stub_for_null(struct starpu_conf*)
+{
+  g_starpu_init_stub_called = true;
+  return 0;
+}
+
+int
+worker_stream_stub_for_null(
+    unsigned int /*device_id*/, int* /*workerids*/,
+    enum starpu_worker_archtype /*worker*/)
+{
+  g_worker_stream_stub_called = true;
+  return -1;
 }
 
 auto
@@ -734,6 +752,42 @@ TEST_F(StarPUSetupInitStubTest, GetEnvUnsignedHandlesInvalidEnvironmentValue)
       log.find("group_cpu_by_numa requested, but non-CPU workers already reach "
                "StarPU's worker limit"),
       std::string::npos);
+}
+
+TEST(StarPUSetupHooks, SetStarpuInitFnNullRestoresDefault)
+{
+  g_starpu_init_stub_called = false;
+  starpu_server::StarPUSetup::set_starpu_init_fn(&starpu_init_stub_for_null);
+  starpu_server::StarPUSetup::set_starpu_init_fn(nullptr);
+
+  starpu_server::RuntimeConfig opts;
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  EXPECT_FALSE(g_starpu_init_stub_called);
+  starpu_server::StarPUSetup::reset_starpu_init_fn();
+}
+
+TEST(StarPUSetupHooks, SetWorkerStreamQueryFnNullRestoresDefault)
+{
+  g_worker_stream_stub_called = false;
+  starpu_server::StarPUSetup::set_worker_stream_query_fn(
+      &worker_stream_stub_for_null);
+  starpu_server::StarPUSetup::set_worker_stream_query_fn(nullptr);
+
+  {
+    StarpuRuntimeGuard guard;
+    try {
+      std::ignore = starpu_server::StarPUSetup::get_cuda_workers_by_device({0});
+    }
+    catch (const std::exception&) {
+      // Ignore failures; only verifying that the stub was not invoked.
+    }
+  }
+
+  EXPECT_FALSE(g_worker_stream_stub_called);
+  starpu_server::StarPUSetup::reset_worker_stream_query_fn();
 }
 
 TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
