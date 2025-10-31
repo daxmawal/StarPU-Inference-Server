@@ -501,6 +501,30 @@ TEST(ConfigLoader, AllowsBooleanUseCuda)
   EXPECT_TRUE(cfg.devices.ids.empty());
 }
 
+TEST(ConfigLoader, RejectsNonMappingRoot)
+{
+  const auto config_path =
+      WriteTempFile("config_loader_non_mapping_root.yaml", "- item\n");
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(config_path.string());
+  const std::string expected =
+      expected_log_line(ErrorLevel, "Config root must be a mapping");
+  EXPECT_EQ(capture.str(), expected);
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, RejectsEmptyConfig)
+{
+  const auto config_path =
+      WriteTempFile("config_loader_empty.yaml", std::string{});
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(config_path.string());
+  const std::string expected =
+      expected_log_line(ErrorLevel, "Config root must be a mapping");
+  EXPECT_EQ(capture.str(), expected);
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, LoadsStarpuEnvVariables)
 {
   const auto model_path =
