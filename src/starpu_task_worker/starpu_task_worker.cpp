@@ -257,10 +257,15 @@ release_inputs_from_additional_jobs(
 
 namespace {
 
+struct VectorResizeSpec {
+  std::size_t element_count;
+  std::size_t byte_count;
+};
+
 inline void
 resize_starpu_vector_interface(
-    starpu_vector_interface* vector_interface, std::size_t numel,
-    std::size_t bytes, bool is_input_handle)
+    starpu_vector_interface* vector_interface, VectorResizeSpec spec,
+    bool is_input_handle)
 {
   if (vector_interface == nullptr) {
     return;
@@ -272,42 +277,41 @@ resize_starpu_vector_interface(
         "StarPU vector interface reported zero element size");
   }
 
-  if (bytes % elem_size != 0) {
+  if (spec.byte_count % elem_size != 0) {
     if (is_input_handle) {
       throw InvalidInputTensorException(std::format(
           "Input tensor byte size ({}) is not divisible by element size ({})",
-          bytes, elem_size));
+          spec.byte_count, elem_size));
     }
     throw InvalidInferenceJobException(std::format(
         "Output tensor byte size ({}) is not divisible by element size ({})",
-        bytes, elem_size));
+        spec.byte_count, elem_size));
   }
 
-  const auto required_numel = bytes / elem_size;
-  if (required_numel != numel) {
-    numel = required_numel;
+  const auto required_numel = spec.byte_count / elem_size;
+  if (required_numel != spec.element_count) {
+    spec.element_count = required_numel;
   }
 
   const auto alloc_size = vector_interface->allocsize;
   if (alloc_size != std::numeric_limits<size_t>::max() && alloc_size != 0 &&
-      bytes > alloc_size) {
+      spec.byte_count > alloc_size) {
     if (is_input_handle) {
       throw InputPoolCapacityException(std::format(
-          "Input tensor requires {} bytes but slot capacity is {} bytes", bytes,
-          alloc_size));
+          "Input tensor requires {} bytes but slot capacity is {} bytes",
+          spec.byte_count, alloc_size));
     }
     throw InvalidInferenceJobException(std::format(
-        "Output tensor requires {} bytes but slot capacity is {} bytes", bytes,
-        alloc_size));
+        "Output tensor requires {} bytes but slot capacity is {} bytes",
+        spec.byte_count, alloc_size));
   }
 
-  vector_interface->nx = numel;
+  vector_interface->nx = spec.element_count;
 }
 
 inline void
 resize_starpu_vector_handle(
-    starpu_data_handle_t handle, std::size_t numel, std::size_t bytes,
-    bool is_input_handle)
+    starpu_data_handle_t handle, VectorResizeSpec spec, bool is_input_handle)
 {
   if (handle == nullptr) {
     throw StarPUDataAcquireException("StarPU vector handle is null");
@@ -326,8 +330,7 @@ resize_starpu_vector_handle(
     }
     auto* vector_interface =
         static_cast<starpu_vector_interface*>(raw_interface);
-    resize_starpu_vector_interface(
-        vector_interface, numel, bytes, is_input_handle);
+    resize_starpu_vector_interface(vector_interface, spec, is_input_handle);
   }
 }
 
@@ -353,9 +356,10 @@ resize_output_handles_for_job(
       throw InvalidInferenceJobException(
           "Output tensor must be defined, CPU and contiguous");
     }
-    const auto nbytes = tensor.nbytes();
-    const auto numel = tensor.numel();
-    resize_starpu_vector_handle(handles[idx], numel, nbytes, false);
+    const VectorResizeSpec spec{
+        static_cast<std::size_t>(tensor.numel()),
+        static_cast<std::size_t>(tensor.nbytes())};
+    resize_starpu_vector_handle(handles[idx], spec, false);
   }
 }
 
@@ -650,10 +654,11 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
     if (status != 0) {
       throw StarPUDataAcquireException("starpu_data_acquire(W) failed");
     }
-    const auto numel = static_cast<std::size_t>(tin.numel());
-    const auto nbytes = static_cast<std::size_t>(tin.nbytes());
-    resize_starpu_vector_handle(handles[i], numel, nbytes, true);
-    std::memcpy(base_ptrs[i], tin.data_ptr(), nbytes);
+    const VectorResizeSpec spec{
+        static_cast<std::size_t>(tin.numel()),
+        static_cast<std::size_t>(tin.nbytes())};
+    resize_starpu_vector_handle(handles[i], spec, true);
+    std::memcpy(base_ptrs[i], tin.data_ptr(), spec.byte_count);
     starpu_data_release(handles[i]);
   }
 
