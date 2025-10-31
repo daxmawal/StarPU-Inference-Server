@@ -6,6 +6,10 @@
 #include "test_starpu_task_runner.hpp"
 #include "utils/perf_observer.hpp"
 
+using starpu_server::CaptureStream;
+using starpu_server::ErrorLevel;
+using starpu_server::expected_log_line;
+
 namespace starpu_server {
 class StarPUTaskRunnerTestAdapter {
  public:
@@ -753,6 +757,61 @@ TEST(
   EXPECT_EQ(
       info.earliest_batch_collect_start,
       job_one->timing_info().batch_collect_start_time);
+}
+
+TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsInferenceEngineException)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
+    throw starpu_server::InferenceEngineException("inference failure");
+  });
+
+  CaptureStream capture{std::cerr};
+  starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error("outer failure"));
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel, "Exception in completion callback: inference failure");
+  EXPECT_NE(logs.find(expected), std::string::npos);
+}
+
+TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsLogicError)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
+    throw std::logic_error("logic failure");
+  });
+
+  CaptureStream capture{std::cerr};
+  starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error("outer failure"));
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel, "Exception in completion callback: logic failure");
+  EXPECT_NE(logs.find(expected), std::string::npos);
+}
+
+TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsBadAlloc)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
+    throw std::bad_alloc();
+  });
+
+  CaptureStream capture{std::cerr};
+  starpu_server::StarPUTaskRunner::handle_job_exception(
+      job, std::runtime_error("outer failure"));
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel, "Exception in completion callback: std::bad_alloc");
+  const auto alt_expected = expected_log_line(
+      ErrorLevel, "Exception in completion callback: bad_alloc");
+  EXPECT_TRUE(
+      logs.find(expected) != std::string::npos ||
+      logs.find(alt_expected) != std::string::npos);
 }
 
 TEST(TaskRunnerInternal, ResizeOutputsForBatchRespectsPrototypeLayout)
