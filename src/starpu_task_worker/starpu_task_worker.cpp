@@ -353,8 +353,8 @@ resize_output_handles_for_job(
       throw InvalidInferenceJobException(
           "Output tensor must be defined, CPU and contiguous");
     }
-    const auto nbytes = static_cast<std::size_t>(tensor.nbytes());
-    const auto numel = static_cast<std::size_t>(tensor.numel());
+    const auto nbytes = tensor.nbytes();
+    const auto numel = tensor.numel();
     resize_starpu_vector_handle(handles[idx], numel, nbytes, false);
   }
 }

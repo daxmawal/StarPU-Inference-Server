@@ -199,7 +199,7 @@ estimate_non_cpu_workers(const RuntimeConfig& opts) -> unsigned
   unsigned total = 0;
 
   if (opts.devices.use_cuda && !opts.devices.ids.empty()) {
-    const unsigned gpu_count = static_cast<unsigned>(opts.devices.ids.size());
+    const auto gpu_count = static_cast<unsigned>(opts.devices.ids.size());
     const unsigned workers_per_gpu = std::max(
         get_env_unsigned(opts, "STARPU_NWORKER_PER_CUDA").value_or(1U), 1U);
 
