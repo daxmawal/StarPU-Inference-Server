@@ -114,6 +114,45 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "use_cuda requires at least one device_ids entry"},
     InvalidConfigCase{
+        "UseCudaNonSequenceInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  device_ids: [0]\n";
+          return yaml;
+        }(),
+        "use_cuda must be a boolean or a sequence of device mappings"},
+    InvalidConfigCase{
+        "UseCudaEntryNotMapInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - true\n";
+          yaml += "  - { device_ids: [0] }\n";
+          return yaml;
+        }(),
+        "use_cuda entries must be mappings that define device_ids"},
+    InvalidConfigCase{
+        "UseCudaEntryMissingDeviceIdsInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - {}\n";
+          yaml += "  - { device_ids: [0] }\n";
+          return yaml;
+        }(),
+        "use_cuda entries require a device_ids sequence"},
+    InvalidConfigCase{
+        "UseCudaEntryDeviceIdsNotSequenceInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - { device_ids: 0 }\n";
+          yaml += "  - { device_ids: [1] }\n";
+          return yaml;
+        }(),
+        "device_ids inside use_cuda must be a sequence"},
+    InvalidConfigCase{
         "NegativeBatchCoalesceTimeoutSetsValidFalse",
         [] {
           std::string yaml;
@@ -410,6 +449,30 @@ TEST_P(InvalidConfigTest, MarksConfigInvalid)
 INSTANTIATE_TEST_SUITE_P(
     InvalidConfigs, InvalidConfigTest, ::testing::ValuesIn(kInvalidConfigCases),
     InvalidConfigCaseName);
+
+TEST(ConfigLoader, AllowsBooleanUseCuda)
+{
+  const auto model_path = WriteTempFile(
+      "config_loader_scalar_use_cuda_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+  yaml += "use_cuda: true\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_scalar_use_cuda.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(config_path.string());
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_TRUE(cfg.devices.use_cuda);
+  EXPECT_TRUE(cfg.devices.ids.empty());
+}
 
 TEST(ConfigLoader, LoadsValidConfig)
 {
