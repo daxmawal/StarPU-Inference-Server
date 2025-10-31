@@ -140,6 +140,35 @@ restore_vector_interfaces(const std::vector<VectorInterfaceSnapshot>& snapshots)
 }
 }  // namespace
 
+TEST(TaskRunnerInternal, ReleaseInputsFromAdditionalJobsSkipsNullEntries)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto job0 = std::make_shared<starpu_server::InferenceJob>();
+  job0->set_input_tensors({torch::tensor({1})});
+  auto job0_holder = std::make_shared<int>(7);
+  job0->set_input_memory_holders(
+      {std::shared_ptr<const void>(job0_holder, job0_holder.get())});
+
+  auto job2 = std::make_shared<starpu_server::InferenceJob>();
+  job2->set_input_tensors({torch::tensor({2})});
+  auto job2_holder = std::make_shared<int>(9);
+  job2->set_input_memory_holders(
+      {std::shared_ptr<const void>(job2_holder, job2_holder.get())});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{
+      job0, nullptr, job2};
+
+  internal::release_inputs_from_additional_jobs(jobs);
+
+  ASSERT_EQ(job0->get_input_tensors().size(), 1U);
+  EXPECT_FALSE(job0->get_input_tensors().empty());
+  EXPECT_EQ(job0->get_input_memory_holders().size(), 1U);
+
+  EXPECT_TRUE(job2->get_input_tensors().empty());
+  EXPECT_TRUE(job2->get_input_memory_holders().empty());
+}
+
 TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
 {
   auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
