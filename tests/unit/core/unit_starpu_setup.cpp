@@ -675,6 +675,67 @@ TEST_F(StarPUSetupInitStubTest, ParseUnsignedLogsWarningForOverflowConfigValue)
   EXPECT_NE(log.find(expected), std::string::npos);
 }
 
+TEST_F(StarPUSetupInitStubTest, GetEnvUnsignedUsesEnvironmentValue)
+{
+  EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
+  EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
+  EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+  EnvVarGuard workers_guard{
+      "STARPU_NWORKER_PER_CUDA", std::to_string(STARPU_NMAXWORKERS)};
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cpu = true;
+  opts.devices.group_cpu_by_numa = true;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  EXPECT_NE(
+      log.find("group_cpu_by_numa requested, but non-CPU workers already reach "
+               "StarPU's worker limit"),
+      std::string::npos);
+}
+
+TEST_F(StarPUSetupInitStubTest, GetEnvUnsignedHandlesInvalidEnvironmentValue)
+{
+  EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
+  EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
+  EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+  EnvVarGuard workers_guard{"STARPU_NWORKER_PER_CUDA", "invalid"};
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cpu = true;
+  opts.devices.group_cpu_by_numa = true;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  EXPECT_NE(
+      log.find("Invalid value 'invalid' for environment variable "
+               "STARPU_NWORKER_PER_CUDA; ignoring binding hint"),
+      std::string::npos);
+  EXPECT_EQ(
+      log.find("group_cpu_by_numa requested, but non-CPU workers already reach "
+               "StarPU's worker limit"),
+      std::string::npos);
+}
+
 TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
 {
   starpu_server::RuntimeConfig opts;
