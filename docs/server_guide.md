@@ -59,7 +59,7 @@ Optional keys unlock batching, logging, and runtime controls:
 | `group_cpu_by_numa` | Spawn one StarPU CPU worker per NUMA node instead of per core. | `false` |
 | `use_cuda` | Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`. | `false` |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
-| `metrics_port` | Port for the Prometheus metrics endpoint. | `9100` |
+| `metrics_port` | Port for the Prometheus metrics endpoint. | `9090` |
 
 Behavior of `use_cpu` and `use_cuda`:
 
@@ -115,7 +115,7 @@ outputs:
   - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
 verbosity: 4
 address: 127.0.0.1:50051
-metrics_port: 9100
+metrics_port: 9090
 max_batch_size: 32
 batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
