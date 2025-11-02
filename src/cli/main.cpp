@@ -58,6 +58,10 @@ main(int argc, char* argv[]) -> int
       opts.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
   starpu_server::log_info(
       opts.verbosity, std::format("Scheduler       : {}", opts.scheduler));
+  if (!opts.name.empty()) {
+    starpu_server::log_info(
+        opts.verbosity, std::format("Configuration   : {}", opts.name));
+  }
   starpu_server::log_info(
       opts.verbosity,
       std::format("request_nb      : {}", opts.batching.request_nb));

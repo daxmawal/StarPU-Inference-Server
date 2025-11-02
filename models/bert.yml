@@ -1,3 +1,4 @@
+name: bert
 scheduler: eager
 starpu_env:
   STARPU_CUDA_THREAD_PER_WORKER: "1"

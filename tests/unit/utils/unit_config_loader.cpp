@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -31,6 +32,7 @@ auto
 base_model_yaml() -> std::string
 {
   return std::string{
+      "name: config_loader_test\n"
       "model: {{MODEL_PATH}}\n"
       "inputs:\n"
       "  - name: in\n"
@@ -183,6 +185,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "NegativeBatchCoalesceTimeoutSetsValidFalse",
         [] {
           std::string yaml;
+          yaml += "name: config_loader_test\n";
           yaml += "model: {{MODEL_PATH}}\n";
           yaml += "inputs:\n";
           yaml += "  - name: in\n";
@@ -226,6 +229,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "NegativeDimensionSetsValidFalse",
         [] {
           std::string yaml;
+          yaml += "name: config_loader_test\n";
           yaml += "model: {{MODEL_PATH}}\n";
           yaml += "inputs:\n";
           yaml += "  - name: in\n";
@@ -245,6 +249,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "ZeroDimensionSetsValidFalse",
         [] {
           std::string yaml;
+          yaml += "name: config_loader_test\n";
           yaml += "model: {{MODEL_PATH}}\n";
           yaml += "inputs:\n";
           yaml += "  - name: in\n";
@@ -264,6 +269,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "DimensionExceedsIntMaxSetsValidFalse",
         [] {
           std::ostringstream yaml;
+          yaml << "name: config_loader_test\n";
           yaml << "model: {{MODEL_PATH}}\n";
           yaml << "inputs:\n";
           yaml << "  - name: in\n";
@@ -285,6 +291,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "MissingDimsSetsValidFalse",
         [] {
           std::string yaml;
+          yaml += "name: config_loader_test\n";
           yaml += "model: {{MODEL_PATH}}\n";
           yaml += "inputs:\n";
           yaml += "  - name: in\n";
@@ -303,6 +310,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "MissingDataTypeSetsValidFalse",
         [] {
           std::string yaml;
+          yaml += "name: config_loader_test\n";
           yaml += "model: {{MODEL_PATH}}\n";
           yaml += "inputs:\n";
           yaml += "  - name: in\n";
@@ -326,9 +334,29 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt, false, false},
     InvalidConfigCase{
+        "MissingNameSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Missing required key: name"},
+    InvalidConfigCase{
         "MissingModelSetsValidFalse",
         [] {
           std::string yaml;
+          yaml += "name: config_loader_test\n";
           yaml += "inputs:\n";
           yaml += "  - name: in\n";
           yaml += "    dims: [1]\n";
@@ -350,6 +378,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "MissingInputSetsValidFalse",
         [] {
           std::string yaml;
+          yaml += "name: config_loader_test\n";
           yaml += "model: {{MODEL_PATH}}\n";
           yaml += "outputs:\n";
           yaml += "  - name: out\n";
@@ -365,6 +394,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "MissingOutputSetsValidFalse",
         [] {
           std::string yaml;
+          yaml += "name: config_loader_test\n";
           yaml += "model: {{MODEL_PATH}}\n";
           yaml += "inputs:\n";
           yaml += "  - name: in\n";
@@ -380,6 +410,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "TooManyInputsSetsValidFalse",
         [] {
           std::ostringstream yaml;
+          yaml << "name: config_loader_test\n";
           yaml << "model: {{MODEL_PATH}}\n";
           yaml << "inputs:\n";
           for (std::size_t i = 0; i <= kMaxInputs; ++i) {
@@ -401,6 +432,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "TooManyDimsSetsValidFalse",
         [] {
           std::ostringstream yaml;
+          yaml << "name: config_loader_test\n";
           yaml << "model: {{MODEL_PATH}}\n";
           yaml << "inputs:\n";
           yaml << "  - name: in\n";
@@ -561,6 +593,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: fcfs_config\n";
   yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "use_cpu: true\n";
@@ -592,6 +625,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.name, "fcfs_config");
   EXPECT_EQ(cfg.scheduler, "fcfs");
   EXPECT_EQ(cfg.models[0].path, model_path.string());
   EXPECT_EQ(cfg.devices.ids, (std::vector<int>{0, 1}));
@@ -627,6 +661,7 @@ TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: config_loader_test\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  name: bogus\n";
@@ -662,6 +697,7 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: runtime_flags\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
@@ -704,6 +740,7 @@ TEST(ConfigLoader, ParsesVerboseAlias)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: verbose_alias\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
@@ -735,6 +772,7 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: slots_test\n";
   yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
@@ -768,6 +806,7 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: negative_bytes\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
@@ -803,6 +842,7 @@ TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: negative_value\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
@@ -847,6 +887,7 @@ TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: zero_pool\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
@@ -893,6 +934,7 @@ TEST(ConfigLoader, PoolSizeRejectsNonPositive)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: delay_addr\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
@@ -927,6 +969,7 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: overflow_dims\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
@@ -956,6 +999,7 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
 TEST(ConfigLoader, MissingModelSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
+name: config_loader_test
 inputs:
   - name: in
     dims: [1]
@@ -980,6 +1024,7 @@ pool_size: 1
 TEST(ConfigLoader, MissingInputSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
+name: config_loader_test
 model: model.pt
 outputs:
   - name: out
@@ -1002,6 +1047,7 @@ pool_size: 1
 TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(
+name: config_loader_test
 model: model.pt
 inputs:
   - name: in
@@ -1029,6 +1075,7 @@ TEST(
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: overflow_dims\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: huge\n";
@@ -1074,6 +1121,7 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   std::ofstream(model_path).put('\0');
 
   std::ostringstream yaml;
+  yaml << "name: complex_dtype\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: complex_input\n";
@@ -1114,10 +1162,22 @@ using VerbosityCase =
 TEST_P(VerbosityCase, ParsesVerbosityStrings)
 {
   const auto& [value, expected] = GetParam();
-  const std::string yaml = std::format("verbosity: {}", value);
-  const auto tmp = std::filesystem::temp_directory_path() /
-                   (std::format("config_loader_verbosity_{}.yaml", value));
-  std::ofstream(tmp) << yaml;
+  const auto model_path = WriteTempFile(
+      std::format("config_loader_verbosity_{}.pt", value),
+      std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+  yaml += std::format("verbosity: {}\n", value);
+
+  const auto tmp = WriteTempFile(
+      std::format("config_loader_verbosity_{}.yaml", value), yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
 

@@ -30,6 +30,7 @@ configuration is written in YAML and must include the following required keys:
 
 | Key | Description |
 | --- | --- |
+| `name` | Model configuration identifier. |
 | `model` | Absolute or relative path to the TorchScript `.pt`/`.ts` file. |
 | `inputs` | Sequence describing each input tensor, every element must define `name`, `data_type`, and `dims`. |
 | `outputs` | Sequence describing each output tensor, every element must define `name`, `data_type`, and `dims`. |
@@ -107,6 +108,7 @@ The repository ships a ready-to-run configuration:
 
 ```yaml
 scheduler: lws
+name: bert_local
 model: ../models/bert_libtorch.pt
 inputs:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
@@ -126,6 +128,9 @@ use_cuda:
   - { device_ids: [0] }
 pool_size: 12
 ```
+
+Pick a distinct `name` for each deployment (e.g., `bert_local`, `bert_prod`) so
+logs and metrics identify which configuration is running.
 
 Update `model:` to match the absolute path of your TorchScript model and adjust
 the tensor shapes to the sequence length and hidden size exported by your
