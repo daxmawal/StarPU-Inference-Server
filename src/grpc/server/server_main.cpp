@@ -17,6 +17,7 @@
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
+#include "utils/batching_trace_logger.hpp"
 #include "utils/config_loader.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
@@ -225,6 +226,7 @@ main(int argc, char* argv[]) -> int
   try {
     starpu_server::RuntimeConfig opts =
         handle_program_arguments({argv, static_cast<size_t>(argc)});
+    starpu_server::BatchingTraceLogger::instance().configure_from_runtime(opts);
     const bool metrics_ok = starpu_server::init_metrics(opts.metrics_port);
     if (!metrics_ok) {
       starpu_server::log_warning(

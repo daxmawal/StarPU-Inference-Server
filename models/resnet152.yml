@@ -1,4 +1,6 @@
 name: resnet152
+trace_enabled: true
+trace_file: /local/home/jd258565/Workspace/StarPU-Inference-Server/build/batching_trace.csv
 scheduler: eager
 starpu_env:
   STARPU_CUDA_THREAD_PER_WORKER: "1"

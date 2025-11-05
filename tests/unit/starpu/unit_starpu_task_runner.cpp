@@ -748,6 +748,7 @@ TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobSingleJobResetsState)
   sub_job.job = job;
   sub_job.callback = [](const std::vector<torch::Tensor>&, double) {};
   sub_job.batch_size = 3;
+  sub_job.request_id = job->get_request_id();
   job->set_aggregated_sub_jobs({sub_job});
 
   bool callback_called = false;
@@ -1047,7 +1048,9 @@ TEST(
 
   std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
   sub_jobs.emplace_back(job_one, job_one->get_on_complete(), 1);
+  sub_jobs.back().request_id = job_one->get_request_id();
   sub_jobs.emplace_back(job_two, job_two->get_on_complete(), 2);
+  sub_jobs.back().request_id = job_two->get_request_id();
   aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
 
   const auto primary = torch::tensor(

@@ -24,6 +24,7 @@
 #include "inference_task.hpp"
 #include "logger.hpp"
 #include "task_runner_internal.hpp"
+#include "utils/batching_trace_logger.hpp"
 #include "utils/nvtx.hpp"
 #include "utils/perf_observer.hpp"
 
@@ -212,8 +213,12 @@ aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
         info.earliest_batch_collect_start,
         job->timing_info().batch_collect_start_time);
 
-    info.sub_jobs.emplace_back(
-        std::weak_ptr<InferenceJob>(job), job->get_on_complete(), job_batch);
+    InferenceJob::AggregatedSubJob entry{};
+    entry.job = std::weak_ptr<InferenceJob>(job);
+    entry.callback = job->get_on_complete();
+    entry.batch_size = job_batch;
+    entry.request_id = job->get_request_id();
+    info.sub_jobs.push_back(std::move(entry));
   }
 
   return info;
@@ -486,22 +491,33 @@ StarPUTaskRunner::prepare_job_completion_callback(
     const std::shared_ptr<InferenceJob>& job)
 {
   auto prev_callback = job->get_on_complete();
-  job->set_on_complete(
-      [this, job_sptr = job, prev_callback](
-          const std::vector<torch::Tensor>& results, double latency_ms) {
-        const auto batch_size = task_runner_internal::batch_size_from_inputs(
-            job_sptr->get_input_tensors());
+  job->set_on_complete([this, job_sptr = job, prev_callback](
+                           const std::vector<torch::Tensor>& results,
+                           double latency_ms) {
+    const auto batch_size = task_runner_internal::batch_size_from_inputs(
+        job_sptr->get_input_tensors());
 
-        store_completed_job_result(job_sptr, results, latency_ms);
-        ensure_callback_timing(job_sptr->timing_info());
-        record_job_metrics(job_sptr, DurationMs{latency_ms}, batch_size);
+    store_completed_job_result(job_sptr, results, latency_ms);
+    ensure_callback_timing(job_sptr->timing_info());
+    record_job_metrics(job_sptr, DurationMs{latency_ms}, batch_size);
 
-        if (prev_callback) {
-          prev_callback(results, latency_ms);
-        }
+    auto& tracer = BatchingTraceLogger::instance();
+    if (tracer.enabled()) {
+      const std::size_t logical_jobs =
+          static_cast<std::size_t>(std::max(1, job_sptr->logical_job_count()));
+      const auto total_samples =
+          std::max<std::size_t>(std::size_t{1}, batch_size);
+      tracer.log_batch_completed(
+          job_sptr->submission_id(), job_sptr->model_name(), logical_jobs,
+          total_samples);
+    }
 
-        finalize_job_completion(job_sptr);
-      });
+    if (prev_callback) {
+      prev_callback(results, latency_ms);
+    }
+
+    finalize_job_completion(job_sptr);
+  });
 }
 
 void
@@ -1070,6 +1086,16 @@ StarPUTaskRunner::submit_inference_task(
     InferenceTask task(
         starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
     task.submit();
+    auto& tracer = BatchingTraceLogger::instance();
+    if (tracer.enabled()) {
+      const std::size_t logical_jobs =
+          static_cast<std::size_t>(std::max(1, job->logical_job_count()));
+      const auto total_samples = std::max<std::size_t>(
+          std::size_t{1}, task_runner_internal::batch_size_from_inputs(
+                              job->get_input_tensors()));
+      tracer.log_batch_submitted(
+          job->submission_id(), job->model_name(), logical_jobs, total_samples);
+    }
     return;
   }
 
@@ -1118,6 +1144,17 @@ StarPUTaskRunner::submit_inference_task(
     if (ret != 0) {
       release_output_slot_on_exception = false;
       handle_submission_failure(pools, ctx, ret);
+    } else {
+      auto& tracer = BatchingTraceLogger::instance();
+      if (tracer.enabled()) {
+        const std::size_t logical_jobs =
+            static_cast<std::size_t>(std::max(1, job->logical_job_count()));
+        const auto total_samples =
+            static_cast<std::size_t>(std::max<int64_t>(int64_t{1}, batch));
+        tracer.log_batch_submitted(
+            job->submission_id(), job->model_name(), logical_jobs,
+            total_samples);
+      }
     }
     release_output_slot_on_exception = false;
   }
@@ -1173,6 +1210,32 @@ StarPUTaskRunner::run()
               "Dequeued job submission {} (request {}), queue size : {}, "
               "aggregated requests: {}",
               job_id, request_id, queue_->size(), logical_jobs));
+    }
+
+    auto& tracer = BatchingTraceLogger::instance();
+    if (tracer.enabled()) {
+      const std::size_t logical_count =
+          static_cast<std::size_t>(std::max(1, job->logical_job_count()));
+      const auto total_samples = std::max<std::size_t>(
+          std::size_t{1}, task_runner_internal::batch_size_from_inputs(
+                              job->get_input_tensors()));
+      if (job->has_aggregated_sub_jobs()) {
+        for (const auto& sub_job : job->aggregated_sub_jobs()) {
+          int request = sub_job.request_id;
+          if (request < 0) {
+            if (auto locked = sub_job.job.lock()) {
+              request = locked->get_request_id();
+            }
+          }
+          tracer.log_request_assigned_to_batch(
+              request, submission_id, job->model_name(), logical_count,
+              total_samples);
+        }
+      } else {
+        tracer.log_request_assigned_to_batch(
+            job->get_request_id(), submission_id, job->model_name(),
+            logical_count, total_samples);
+      }
     }
 
     prepare_job_completion_callback(job);

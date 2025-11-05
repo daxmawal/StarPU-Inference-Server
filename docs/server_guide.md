@@ -76,6 +76,8 @@ Optional keys for debugging:
 | `verbosity` | Log verbosity level. Supported aliases: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`. | `0` |
 | `dynamic_batching` | Enable dynamic batching (`true`/`false`). | `true` |
 | `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). | `false` |
+| `trace_enabled` | Emit batching trace CSV (queueing/assignment/submission/completion events). | `false` |
+| `trace_file` | Output path for the batching trace CSV (requires `trace_enabled: true`). | `batching_trace.log` |
 
 ### StarPU environment overrides
 

@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "monitoring/metrics.hpp"
+#include "utils/batching_trace_logger.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
@@ -386,11 +387,12 @@ auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
-    std::chrono::high_resolution_clock::time_point receive_time) -> Status
+    std::chrono::high_resolution_clock::time_point receive_time,
+    std::string model_name) -> Status
 {
   auto job = client_utils::create_job(
       inputs, *reference_outputs_, next_request_id_++,
-      std::move(input_lifetimes), receive_time);
+      std::move(input_lifetimes), receive_time, std::move(model_name));
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
@@ -419,6 +421,10 @@ InferenceServiceImpl::submit_job_async(
   }
   if (!pushed) {
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
+  }
+  auto& tracer = BatchingTraceLogger::instance();
+  if (tracer.enabled()) {
+    tracer.log_request_enqueued(job->get_request_id(), job->model_name());
   }
   return Status::OK;
 }
@@ -603,7 +609,7 @@ InferenceServiceImpl::HandleModelInferAsync(
                 request, reply, callback_handle, metrics, recv_tp, recv_ms},
             job_status, outs, breakdown, timing_info);
       },
-      std::move(input_lifetimes), recv_tp);
+      std::move(input_lifetimes), recv_tp, request->model_name());
 
   if (!status.ok()) {
     callback_handle->Invoke(status);

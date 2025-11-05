@@ -29,8 +29,7 @@ auto create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref, int request_id,
     std::vector<std::shared_ptr<const void>> input_lifetimes = {},
-    std::chrono::high_resolution_clock::time_point start_time =
-        std::chrono::high_resolution_clock::now())
-    -> std::shared_ptr<InferenceJob>;
+    std::chrono::high_resolution_clock::time_point start_time = {},
+    std::string model_name = {}) -> std::shared_ptr<InferenceJob>;
 
 }  // namespace starpu_server::client_utils

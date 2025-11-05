@@ -112,6 +112,8 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "max_batch_size",
           "dynamic_batching",
           "pool_size",
+          "trace_enabled",
+          "trace_file",
           "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
@@ -344,6 +346,15 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.batching.pool_size = root["pool_size"].as<int>();
     if (cfg.batching.pool_size <= 0) {
       throw std::invalid_argument("pool_size must be > 0");
+    }
+  }
+  if (root["trace_enabled"]) {
+    cfg.batching.trace_enabled = root["trace_enabled"].as<bool>();
+  }
+  if (root["trace_file"]) {
+    cfg.batching.trace_file_path = root["trace_file"].as<std::string>();
+    if (cfg.batching.trace_file_path.empty()) {
+      throw std::invalid_argument("trace_file must not be empty");
     }
   }
 }

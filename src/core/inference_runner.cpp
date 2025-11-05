@@ -35,6 +35,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
+#include "utils/batching_trace_logger.hpp"
 #include "utils/nvtx.hpp"
 #include "warmup.hpp"
 
@@ -169,7 +170,8 @@ client_worker(
     std::this_thread::sleep_until(next_time);
     next_time += delay;
     const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
-    auto job = client_utils::create_job(inputs, outputs_ref, request_id);
+    auto job = client_utils::create_job(
+        inputs, outputs_ref, request_id, {}, {}, opts.name);
     client_utils::log_job_enqueued(
         opts, request_id, request_nb, job->timing_info().enqueued_time);
     if (!queue.push(job)) {
@@ -177,6 +179,11 @@ client_worker(
           "[Client] Failed to enqueue job {}: queue shutting down",
           request_id));
       break;
+    } else {
+      auto& tracer = BatchingTraceLogger::instance();
+      if (tracer.enabled()) {
+        tracer.log_request_enqueued(job->get_request_id(), job->model_name());
+      }
     }
   }
 
@@ -445,6 +452,7 @@ void
 run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
   NvtxRange nvtx_scope("inference_loop");
+  BatchingTraceLogger::instance().configure_from_runtime(opts);
   const c10::InferenceMode inference_guard;
   CuDnnBenchmarkGuard cudnn_benchmark_guard(
       opts.devices.use_cuda && !opts.batching.dynamic_batching);

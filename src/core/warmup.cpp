@@ -91,7 +91,8 @@ WarmupRunner::client_worker(
     for (auto request_nb = 0; request_nb < request_nb_per_worker;
          ++request_nb) {
       const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
-      auto job = client_utils::create_job(inputs, outputs_ref_, request_id);
+      auto job = client_utils::create_job(
+          inputs, outputs_ref_, request_id, {}, {}, opts_.name);
       job->set_fixed_worker_id(worker_id);
 
       client_utils::log_job_enqueued(

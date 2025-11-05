@@ -7,6 +7,8 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -65,6 +67,7 @@ class InferenceJob {
     std::weak_ptr<InferenceJob> job;
     std::function<void(const std::vector<torch::Tensor>&, double)> callback;
     int64_t batch_size = 1;
+    int request_id = -1;
   };
 
   InferenceJob() noexcept = default;
@@ -113,6 +116,14 @@ class InferenceJob {
       std::function<void(const std::vector<torch::Tensor>&, double)> call_back)
   {
     on_complete_ = std::move(call_back);
+  }
+  void set_model_name(std::string model_name)
+  {
+    model_name_ = std::move(model_name);
+  }
+  [[nodiscard]] auto model_name() const -> std::string_view
+  {
+    return model_name_;
   }
 
   void set_input_memory_holders(
@@ -209,6 +220,7 @@ class InferenceJob {
   std::optional<int> fixed_worker_id_;
   std::function<void(const std::vector<torch::Tensor>&, double)> on_complete_;
   std::chrono::high_resolution_clock::time_point start_time_;
+  std::string model_name_;
 
   DeviceType executed_on_ = DeviceType::Unknown;
   int device_id_ = -1;

@@ -83,7 +83,8 @@ class InferenceServiceImpl final
       const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
       std::vector<std::shared_ptr<const void>> input_lifetimes = {},
       std::chrono::high_resolution_clock::time_point receive_time =
-          std::chrono::high_resolution_clock::now()) -> grpc::Status;
+          std::chrono::high_resolution_clock::now(),
+      std::string model_name = {}) -> grpc::Status;
 
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
