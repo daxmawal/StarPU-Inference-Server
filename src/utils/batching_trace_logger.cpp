@@ -5,6 +5,7 @@
 #include <sstream>
 #include <utility>
 
+#include "device_type.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 
@@ -82,7 +83,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
   }
 
   stream_ << "timestamp_us,event,request_id,batch_id,logical_jobs,"
-          << "sample_count,model_name\n";
+          << "sample_count,model_name,worker_id,worker_type\n";
 
   enabled_.store(true, std::memory_order_release);
 }
@@ -105,43 +106,45 @@ BatchingTraceLogger::log_request_enqueued(
 {
   write_record(
       BatchingTraceEvent::RequestQueued, model_name, request_id, kInvalidId, 0,
-      0);
+      0, kInvalidId, DeviceType::Unknown);
 }
 
 void
 BatchingTraceLogger::log_request_assigned_to_batch(
     int request_id, int batch_id, std::string_view model_name,
-    std::size_t logical_jobs, std::size_t sample_count)
+    std::size_t logical_jobs, std::size_t sample_count, int worker_id,
+    DeviceType worker_type)
 {
   write_record(
       BatchingTraceEvent::RequestAssigned, model_name, request_id, batch_id,
-      logical_jobs, sample_count);
+      logical_jobs, sample_count, worker_id, worker_type);
 }
 
 void
 BatchingTraceLogger::log_batch_submitted(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
-    std::size_t sample_count)
+    std::size_t sample_count, int worker_id, DeviceType worker_type)
 {
   write_record(
       BatchingTraceEvent::BatchSubmitted, model_name, kInvalidId, batch_id,
-      logical_jobs, sample_count);
+      logical_jobs, sample_count, worker_id, worker_type);
 }
 
 void
 BatchingTraceLogger::log_batch_completed(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
-    std::size_t sample_count)
+    std::size_t sample_count, int worker_id, DeviceType worker_type)
 {
   write_record(
       BatchingTraceEvent::BatchCompleted, model_name, kInvalidId, batch_id,
-      logical_jobs, sample_count);
+      logical_jobs, sample_count, worker_id, worker_type);
 }
 
 void
 BatchingTraceLogger::write_record(
     BatchingTraceEvent event, std::string_view model_name, int request_id,
-    int batch_id, std::size_t logical_jobs, std::size_t sample_count)
+    int batch_id, std::size_t logical_jobs, std::size_t sample_count,
+    int worker_id, DeviceType worker_type)
 {
   if (!enabled()) {
     return;
@@ -155,7 +158,8 @@ BatchingTraceLogger::write_record(
   std::ostringstream line;
   line << timestamp_us << ',' << event_to_string(event) << ',' << request_id
        << ',' << batch_id << ',' << logical_jobs << ',' << sample_count << ','
-       << format_model_name(model_name) << '\n';
+       << format_model_name(model_name) << ',' << worker_id << ','
+       << device_type_to_string(worker_type) << '\n';
 
   std::lock_guard lock(mutex_);
   if (!stream_.is_open()) {
@@ -179,6 +183,20 @@ BatchingTraceLogger::event_to_string(BatchingTraceEvent event)
       return "batch_completed";
   }
   return "unknown";
+}
+
+auto
+BatchingTraceLogger::device_type_to_string(DeviceType type) -> std::string_view
+{
+  switch (type) {
+    case DeviceType::CPU:
+      return "cpu";
+    case DeviceType::CUDA:
+      return "cuda";
+    case DeviceType::Unknown:
+    default:
+      return "unknown";
+  }
 }
 
 }  // namespace starpu_server

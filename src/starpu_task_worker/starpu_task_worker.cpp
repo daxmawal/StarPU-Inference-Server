@@ -509,7 +509,8 @@ StarPUTaskRunner::prepare_job_completion_callback(
           std::max<std::size_t>(std::size_t{1}, batch_size);
       tracer.log_batch_completed(
           job_sptr->submission_id(), job_sptr->model_name(), logical_jobs,
-          total_samples);
+          total_samples, job_sptr->get_worker_id(),
+          job_sptr->get_executed_on());
     }
 
     if (prev_callback) {
@@ -1094,7 +1095,8 @@ StarPUTaskRunner::submit_inference_task(
           std::size_t{1}, task_runner_internal::batch_size_from_inputs(
                               job->get_input_tensors()));
       tracer.log_batch_submitted(
-          job->submission_id(), job->model_name(), logical_jobs, total_samples);
+          job->submission_id(), job->model_name(), logical_jobs, total_samples,
+          job->get_worker_id(), job->get_executed_on());
     }
     return;
   }
@@ -1153,7 +1155,7 @@ StarPUTaskRunner::submit_inference_task(
             static_cast<std::size_t>(std::max<int64_t>(int64_t{1}, batch));
         tracer.log_batch_submitted(
             job->submission_id(), job->model_name(), logical_jobs,
-            total_samples);
+            total_samples, job->get_worker_id(), job->get_executed_on());
       }
     }
     release_output_slot_on_exception = false;

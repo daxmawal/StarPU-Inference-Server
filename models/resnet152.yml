@@ -19,7 +19,7 @@ max_batch_size: 16
 batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false
-use_cpu: true
+use_cpu: false
 group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }
