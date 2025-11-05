@@ -72,7 +72,7 @@ main(int argc, char* argv[]) -> int
     starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
     starpu_server::run_inference_loop(opts, *starpu);
     if (const auto stats = starpu_server::perf_observer::snapshot()) {
-      starpu_server::log_stats(
+      starpu_server::log_info(
           opts.verbosity,
           std::format(
               "Throughput: {:.3f} inf/s ({} inferences over {:.3f} s)",

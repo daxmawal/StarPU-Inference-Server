@@ -544,7 +544,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 
     if (auto stats = compute_latency_statistics(std::move(latencies))) {
       if (should_log(VerbosityLevel::Stats, opts.verbosity)) {
-        log_stats(
+        log_info(
             opts.verbosity,
             std::format(
                 "Latency stats (ms): p50={:.3f}, p85={:.3f}, p95={:.3f}, "
