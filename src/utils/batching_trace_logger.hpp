@@ -44,6 +44,12 @@ class BatchingTraceLogger {
       std::size_t sample_count, int worker_id = -1,
       DeviceType worker_type = DeviceType::Unknown,
       std::span<const int> request_ids = {});
+  void log_batch_build_span(
+      int batch_id, std::string_view model_name, std::size_t logical_jobs,
+      std::size_t sample_count,
+      std::chrono::high_resolution_clock::time_point start_time,
+      std::chrono::high_resolution_clock::time_point end_time,
+      std::span<const int> request_ids = {});
   void log_batch_completed(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
       std::size_t sample_count, int worker_id,
@@ -62,6 +68,10 @@ class BatchingTraceLogger {
       std::string_view model_name, int batch_id, std::size_t logical_jobs,
       std::size_t sample_count, int worker_id, DeviceType worker_type,
       int64_t start_ts, int64_t duration_us);
+  void write_batch_build_span(
+      std::string_view model_name, int batch_id, std::size_t logical_jobs,
+      std::size_t sample_count, int64_t start_ts, int64_t duration_us,
+      std::span<const int> request_ids);
   [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
       -> std::string_view;
   [[nodiscard]] static auto device_type_to_string(DeviceType type)

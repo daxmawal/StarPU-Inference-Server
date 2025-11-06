@@ -79,4 +79,31 @@ TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::microseconds(150);
+  const std::array<int, 2> request_ids{7, 8};
+  logger.log_batch_build_span(
+      21, "demo_model", 3, 9, start, end, std::span<const int>(request_ids));
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+
+  EXPECT_NE(content.find("\"name\":\"batch_build\""), std::string::npos);
+  EXPECT_NE(content.find("\"tid\":5"), std::string::npos);
+  EXPECT_NE(content.find("\"request_ids\":[7,8]"), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 }}  // namespace starpu_server

@@ -263,6 +263,34 @@ release_inputs_from_additional_jobs(
 
 namespace {
 
+auto
+build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
+    -> std::vector<int>
+{
+  std::vector<int> ids;
+  if (!job) {
+    return ids;
+  }
+
+  if (job->has_aggregated_sub_jobs()) {
+    const auto& aggregated = job->aggregated_sub_jobs();
+    ids.reserve(aggregated.size());
+    for (const auto& sub_job : aggregated) {
+      int request = sub_job.request_id;
+      if (request < 0) {
+        if (auto locked = sub_job.job.lock()) {
+          request = locked->get_request_id();
+        }
+      }
+      ids.push_back(request);
+    }
+  } else {
+    ids.push_back(job->get_request_id());
+  }
+
+  return ids;
+}
+
 struct VectorResizeSpec {
   std::size_t element_count;
   std::size_t byte_count;
@@ -1085,23 +1113,6 @@ StarPUTaskRunner::submit_inference_task(
   auto label =
       std::format("submit job {}", task_runner_internal::job_identifier(*job));
   NvtxRange nvtx_job_scope(label);
-  const auto build_request_ids_for_trace =
-      [](const std::shared_ptr<InferenceJob>& job_ptr) {
-        std::vector<int> ids;
-        if (!job_ptr) {
-          return ids;
-        }
-        if (job_ptr->has_aggregated_sub_jobs()) {
-          const auto& aggregated = job_ptr->aggregated_sub_jobs();
-          ids.reserve(aggregated.size());
-          for (const auto& sub_job : aggregated) {
-            ids.push_back(sub_job.request_id);
-          }
-        } else {
-          ids.push_back(job_ptr->get_request_id());
-        }
-        return ids;
-      };
   if (!(starpu_->has_input_pool() || starpu_->has_output_pool())) {
     InferenceTask task(
         starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
@@ -1244,6 +1255,12 @@ StarPUTaskRunner::run()
       const auto total_samples = std::max<std::size_t>(
           std::size_t{1}, task_runner_internal::batch_size_from_inputs(
                               job->get_input_tensors()));
+      const auto request_ids = build_request_ids_for_trace(job);
+      tracer.log_batch_build_span(
+          submission_id, job->model_name(), logical_count, total_samples,
+          job->timing_info().batch_collect_start_time,
+          job->timing_info().batch_collect_end_time,
+          std::span<const int>(request_ids));
       if (job->has_aggregated_sub_jobs()) {
         for (const auto& sub_job : job->aggregated_sub_jobs()) {
           int request = sub_job.request_id;

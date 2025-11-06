@@ -20,7 +20,9 @@ constexpr int kTaskQueueTrackId = 1;
 constexpr int kRequestEnqueuedTrackId = 2;
 constexpr int kRequestAssignedTrackId = 3;
 constexpr int kBatchSubmittedTrackId = 4;
+constexpr int kBatchBuildTrackId = 5;
 constexpr int kWorkerThreadOffset = 10;
+constexpr int kBatchBuildSortIndex = -5;
 constexpr int kTaskQueueSortIndex = -4;
 constexpr int kRequestEnqueuedSortIndex = -3;
 constexpr int kRequestAssignedSortIndex = -2;
@@ -30,6 +32,7 @@ constexpr std::string_view kTaskQueueTrackName = "task_queue";
 constexpr std::string_view kRequestEnqueuedTrackName = "request_enqueued";
 constexpr std::string_view kRequestAssignedTrackName = "request_assigned";
 constexpr std::string_view kBatchSubmittedTrackName = "batch_submitted";
+constexpr std::string_view kBatchBuildTrackName = "batch_build";
 }  // namespace
 
 auto
@@ -133,6 +136,30 @@ BatchingTraceLogger::log_batch_submitted(
   write_record(
       BatchingTraceEvent::BatchSubmitted, model_name, kInvalidId, batch_id,
       logical_jobs, sample_count, worker_id, worker_type, request_ids);
+}
+
+void
+BatchingTraceLogger::log_batch_build_span(
+    int batch_id, std::string_view model_name, std::size_t logical_jobs,
+    std::size_t sample_count,
+    std::chrono::high_resolution_clock::time_point start_time,
+    std::chrono::high_resolution_clock::time_point end_time,
+    std::span<const int> request_ids)
+{
+  if (!enabled()) {
+    return;
+  }
+
+  const auto start_ts = relative_timestamp_from_time_point(start_time);
+  const auto end_ts = relative_timestamp_from_time_point(end_time);
+  if (!start_ts || !end_ts || *end_ts < *start_ts) {
+    return;
+  }
+
+  const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
+  write_batch_build_span(
+      model_name, batch_id, logical_jobs, sample_count, *start_ts, duration,
+      request_ids);
 }
 
 void
@@ -315,6 +342,48 @@ BatchingTraceLogger::write_batch_compute_span(
     return;
   }
   ensure_thread_metadata_locked(thread_id, worker_label, sort_index);
+  write_line_locked(line.str());
+}
+
+void
+BatchingTraceLogger::write_batch_build_span(
+    std::string_view model_name, int batch_id, std::size_t logical_jobs,
+    std::size_t sample_count, int64_t start_ts, int64_t duration_us,
+    std::span<const int> request_ids)
+{
+  if (duration_us <= 0) {
+    duration_us = 1;
+  }
+
+  const auto escaped_model = escape_json_string(model_name);
+
+  std::ostringstream line;
+  line << "{\"name\":\"batch_build\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
+       << start_ts << ",\"dur\":" << duration_us
+       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << kBatchBuildTrackId
+       << ",\"args\":{" << "\"batch_id\":" << batch_id
+       << ",\"logical_jobs\":" << logical_jobs
+       << ",\"sample_count\":" << sample_count << ",\"model_name\":\""
+       << escaped_model << "\"";
+  if (!request_ids.empty()) {
+    line << ",\"request_ids\":[";
+    for (size_t idx = 0; idx < request_ids.size(); ++idx) {
+      if (idx > 0) {
+        line << ',';
+      }
+      line << request_ids[idx];
+    }
+    line << "]";
+  }
+  line << ",\"start_ts\":" << start_ts
+       << ",\"end_ts\":" << (start_ts + duration_us) << "}}";
+
+  std::lock_guard lock(mutex_);
+  if (!stream_.is_open() || !header_written_) {
+    return;
+  }
+  ensure_thread_metadata_locked(
+      kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex);
   write_line_locked(line.str());
 }
 
