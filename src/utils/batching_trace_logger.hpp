@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include "device_type.hpp"
 
@@ -24,6 +25,7 @@ enum class BatchingTraceEvent : uint8_t {
 class BatchingTraceLogger {
  public:
   static auto instance() -> BatchingTraceLogger&;
+  ~BatchingTraceLogger();
 
   void configure(bool enabled, std::string file_path);
   void configure_from_runtime(const RuntimeConfig& cfg);
@@ -53,7 +55,25 @@ class BatchingTraceLogger {
       -> std::string_view;
   [[nodiscard]] static auto device_type_to_string(DeviceType type)
       -> std::string_view;
+  [[nodiscard]] static auto escape_json_string(std::string_view value)
+      -> std::string;
 
+  void write_header_locked();
+  void write_footer_locked();
+  void close_stream_locked();
+  void write_line_locked(const std::string& line);
+  void write_process_metadata_locked();
+  void ensure_thread_metadata_locked(
+      int thread_id, std::string_view thread_name, int sort_index);
+
+  struct ThreadMetadata {
+    std::string name;
+    bool sort_emitted = false;
+  };
+
+  bool first_record_{true};
+  bool header_written_{false};
+  std::unordered_map<int, ThreadMetadata> thread_metadata_;
   std::mutex mutex_;
   std::ofstream stream_;
   std::atomic<bool> enabled_{false};

@@ -94,7 +94,7 @@ struct RuntimeConfig {
     bool dynamic_batching = true;
     bool seen_combined_input = false;
     bool trace_enabled = false;
-    std::string trace_file_path = "batching_trace.log";
+    std::string trace_file_path = "batching_trace.json";
   };
 
   struct ValidationSettings {

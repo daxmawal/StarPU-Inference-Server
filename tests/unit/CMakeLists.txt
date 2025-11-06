@@ -40,6 +40,7 @@ target_sources(
             utils/unit_inference_validator.cpp
             utils/unit_input_generator.cpp
             utils/unit_logger.cpp
+            utils/unit_batching_trace_logger.cpp
             utils/unit_nvtx.cpp
             utils/unit_perf_observer.cpp
             utils/unit_time_utils.cpp
