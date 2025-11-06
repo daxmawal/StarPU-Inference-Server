@@ -1,3 +1,5 @@
+#include <gtest/gtest.h>
+
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -5,18 +7,14 @@
 #include <iterator>
 #include <string>
 
-#include <gtest/gtest.h>
-
 #include "utils/batching_trace_logger.hpp"
 
-namespace starpu_server {
-namespace {
+namespace starpu_server { namespace {
 
 auto
 make_temp_trace_path() -> std::filesystem::path
 {
-  const auto now =
-      std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
   return std::filesystem::temp_directory_path() /
          std::format("batching_trace_test_{}.json", now);
 }
@@ -37,10 +35,9 @@ TEST(BatchingTraceLoggerTest, RoutesInvalidWorkerEventsToQueueTrack)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
 
-  EXPECT_NE(content.find("\"tid\":0"), std::string::npos);
+  EXPECT_NE(content.find("\"tid\":100000"), std::string::npos);
   EXPECT_NE(content.find("\"worker_id\":-1"), std::string::npos);
   EXPECT_NE(content.find("inference_task_queue"), std::string::npos);
-  EXPECT_NE(content.find("\"tid\":1"), std::string::npos);
   EXPECT_NE(content.find("\"worker_id\":0"), std::string::npos);
   EXPECT_NE(content.find("worker-0 (cpu)"), std::string::npos);
 
@@ -48,5 +45,4 @@ TEST(BatchingTraceLoggerTest, RoutesInvalidWorkerEventsToQueueTrack)
   std::filesystem::remove(trace_path, ec);
 }
 
-}  // namespace
-}  // namespace starpu_server
+}}  // namespace starpu_server

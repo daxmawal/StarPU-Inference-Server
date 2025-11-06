@@ -15,8 +15,9 @@ namespace starpu_server {
 namespace {
 constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
-constexpr int kRequestThreadId = 0;
+constexpr int kRequestThreadId = 100'000;
 constexpr int kWorkerThreadOffset = 1;
+constexpr int kQueueSortIndex = -1;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
 constexpr std::string_view kRequestThreadName = "inference_task_queue";
 }  // namespace
@@ -73,6 +74,8 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
     return;
   }
 
+  trace_start_us_ = now_us();
+  trace_start_initialized_ = true;
   write_header_locked();
 
   enabled_.store(true, std::memory_order_release);
@@ -140,10 +143,7 @@ BatchingTraceLogger::write_record(
     return;
   }
 
-  const auto timestamp_us =
-      std::chrono::duration_cast<std::chrono::microseconds>(
-          std::chrono::system_clock::now().time_since_epoch())
-          .count();
+  const auto timestamp_us = relative_timestamp_us(now_us());
 
   const auto escaped_model = escape_json_string(model_name);
   const auto worker_type_str = device_type_to_string(worker_type);
@@ -152,7 +152,7 @@ BatchingTraceLogger::write_record(
       is_worker_lane ? worker_id + kWorkerThreadOffset : kRequestThreadId;
   std::string worker_label;
   std::string_view thread_name = kRequestThreadName;
-  int sort_index = 0;
+  int sort_index = kQueueSortIndex;
   if (is_worker_lane) {
     worker_label = std::format("worker-{} ({})", worker_id, worker_type_str);
     thread_name = worker_label;
@@ -258,7 +258,9 @@ BatchingTraceLogger::write_header_locked()
   header_written_ = true;
   thread_metadata_.clear();
   write_process_metadata_locked();
-  ensure_thread_metadata_locked(kRequestThreadId, kRequestThreadName, 0);
+  ensure_thread_metadata_locked(
+      kRequestThreadId, kRequestThreadName, kQueueSortIndex);
+  write_queue_track_marker_locked();
 }
 
 void
@@ -284,6 +286,8 @@ BatchingTraceLogger::close_stream_locked()
   first_record_ = true;
   header_written_ = false;
   thread_metadata_.clear();
+  trace_start_us_ = 0;
+  trace_start_initialized_ = false;
 }
 
 void
@@ -334,6 +338,38 @@ BatchingTraceLogger::ensure_thread_metadata_locked(
     write_line_locked(sort_line);
     metadata.sort_emitted = true;
   }
+}
+
+void
+BatchingTraceLogger::write_queue_track_marker_locked()
+{
+  const std::string marker = std::format(
+      "{{\"name\":\"queue_track_ready\",\"cat\":\"batching\",\"ph\":\"i\","
+      "\"ts\":0,"
+      "\"pid\":{},\"tid\":{},\"args\":{{\"worker_id\":-1,\"model_name\":\"\"}}}"
+      "}",
+      kTraceProcessId, kRequestThreadId);
+  write_line_locked(marker);
+}
+
+auto
+BatchingTraceLogger::now_us() const -> int64_t
+{
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+
+auto
+BatchingTraceLogger::relative_timestamp_us(int64_t absolute_us) const -> int64_t
+{
+  if (!trace_start_initialized_) {
+    return absolute_us;
+  }
+  if (absolute_us < trace_start_us_) {
+    return 0;
+  }
+  return absolute_us - trace_start_us_;
 }
 
 }  // namespace starpu_server
