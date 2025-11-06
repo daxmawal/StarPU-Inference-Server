@@ -1,5 +1,6 @@
 #include "batching_trace_logger.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <format>
@@ -126,24 +127,43 @@ BatchingTraceLogger::log_batch_submitted(
 void
 BatchingTraceLogger::log_batch_completed(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
-    std::size_t sample_count, int worker_id, DeviceType worker_type)
+    std::size_t sample_count, int worker_id, DeviceType worker_type,
+    std::chrono::high_resolution_clock::time_point codelet_start,
+    std::chrono::high_resolution_clock::time_point codelet_end)
 {
+  if (!enabled()) {
+    return;
+  }
+
+  const auto start_ts = relative_timestamp_from_time_point(codelet_start);
+  const auto end_ts = relative_timestamp_from_time_point(codelet_end);
+  if (start_ts && end_ts && *end_ts >= *start_ts && worker_id >= 0) {
+    const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
+    write_batch_compute_span(
+        model_name, batch_id, logical_jobs, sample_count, worker_id,
+        worker_type, *start_ts, duration);
+  }
+
   write_record(
       BatchingTraceEvent::BatchCompleted, model_name, kInvalidId, batch_id,
-      logical_jobs, sample_count, worker_id, worker_type);
+      logical_jobs, sample_count, worker_id, worker_type, end_ts, start_ts);
 }
 
 void
 BatchingTraceLogger::write_record(
     BatchingTraceEvent event, std::string_view model_name, int request_id,
     int batch_id, std::size_t logical_jobs, std::size_t sample_count,
-    int worker_id, DeviceType worker_type)
+    int worker_id, DeviceType worker_type,
+    std::optional<int64_t> override_timestamp,
+    std::optional<int64_t> compute_start_ts)
 {
   if (!enabled()) {
     return;
   }
 
-  const auto timestamp_us = relative_timestamp_us(now_us());
+  const auto timestamp_us = override_timestamp.has_value()
+                                ? *override_timestamp
+                                : relative_timestamp_us(now_us());
 
   const auto escaped_model = escape_json_string(model_name);
   const auto worker_type_str = device_type_to_string(worker_type);
@@ -167,7 +187,11 @@ BatchingTraceLogger::write_record(
        << ",\"batch_id\":" << batch_id << ",\"logical_jobs\":" << logical_jobs
        << ",\"sample_count\":" << sample_count << ",\"model_name\":\""
        << escaped_model << "\",\"worker_id\":" << worker_id
-       << ",\"worker_type\":\"" << worker_type_str << "\"}}";
+       << ",\"worker_type\":\"" << worker_type_str << "\"";
+  if (compute_start_ts.has_value()) {
+    line << ",\"start_ts\":" << *compute_start_ts;
+  }
+  line << "}}";
 
   std::lock_guard lock(mutex_);
   if (!stream_.is_open() || !header_written_) {
@@ -206,6 +230,47 @@ BatchingTraceLogger::device_type_to_string(DeviceType type) -> std::string_view
     default:
       return "unknown";
   }
+}
+
+void
+BatchingTraceLogger::write_batch_compute_span(
+    std::string_view model_name, int batch_id, std::size_t logical_jobs,
+    std::size_t sample_count, int worker_id, DeviceType worker_type,
+    int64_t start_ts, int64_t duration_us)
+{
+  if (worker_id < 0) {
+    return;
+  }
+  if (duration_us <= 0) {
+    duration_us = 1;
+  }
+
+  const auto escaped_model = escape_json_string(model_name);
+  const auto worker_type_str = device_type_to_string(worker_type);
+  const int thread_id = worker_id + kWorkerThreadOffset;
+  const int sort_index = worker_id + kWorkerThreadOffset;
+  const std::string worker_label =
+      std::format("worker-{} ({})", worker_id, worker_type_str);
+
+  std::ostringstream line;
+  line
+      << "{\"name\":\"batch_compute\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
+      << start_ts << ",\"dur\":" << duration_us
+      << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id
+      << ",\"args\":" << "{\"batch_id\":" << batch_id
+      << ",\"logical_jobs\":" << logical_jobs
+      << ",\"sample_count\":" << sample_count << ",\"model_name\":\""
+      << escaped_model << "\",\"worker_id\":" << worker_id
+      << ",\"worker_type\":\"" << worker_type_str
+      << "\",\"start_ts\":" << start_ts
+      << ",\"end_ts\":" << (start_ts + duration_us) << "}}";
+
+  std::lock_guard lock(mutex_);
+  if (!stream_.is_open() || !header_written_) {
+    return;
+  }
+  ensure_thread_metadata_locked(thread_id, worker_label, sort_index);
+  write_line_locked(line.str());
 }
 
 auto
@@ -356,7 +421,7 @@ auto
 BatchingTraceLogger::now_us() const -> int64_t
 {
   return std::chrono::duration_cast<std::chrono::microseconds>(
-             std::chrono::system_clock::now().time_since_epoch())
+             std::chrono::high_resolution_clock::now().time_since_epoch())
       .count();
 }
 
@@ -370,6 +435,22 @@ BatchingTraceLogger::relative_timestamp_us(int64_t absolute_us) const -> int64_t
     return 0;
   }
   return absolute_us - trace_start_us_;
+}
+
+auto
+BatchingTraceLogger::relative_timestamp_from_time_point(
+    std::chrono::high_resolution_clock::time_point tp) const
+    -> std::optional<int64_t>
+{
+  if (!trace_start_initialized_ ||
+      tp == std::chrono::high_resolution_clock::time_point{}) {
+    return std::nullopt;
+  }
+  const auto absolute_us =
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          tp.time_since_epoch())
+          .count();
+  return relative_timestamp_us(absolute_us);
 }
 
 }  // namespace starpu_server

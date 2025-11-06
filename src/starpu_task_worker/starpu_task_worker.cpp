@@ -509,8 +509,9 @@ StarPUTaskRunner::prepare_job_completion_callback(
           std::max<std::size_t>(std::size_t{1}, batch_size);
       tracer.log_batch_completed(
           job_sptr->submission_id(), job_sptr->model_name(), logical_jobs,
-          total_samples, job_sptr->get_worker_id(),
-          job_sptr->get_executed_on());
+          total_samples, job_sptr->get_worker_id(), job_sptr->get_executed_on(),
+          job_sptr->timing_info().codelet_start_time,
+          job_sptr->timing_info().codelet_end_time);
     }
 
     if (prev_callback) {

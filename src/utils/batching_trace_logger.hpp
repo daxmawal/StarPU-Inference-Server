@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -44,19 +45,30 @@ class BatchingTraceLogger {
   void log_batch_completed(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
       std::size_t sample_count, int worker_id,
-      DeviceType worker_type = DeviceType::Unknown);
+      DeviceType worker_type = DeviceType::Unknown,
+      std::chrono::high_resolution_clock::time_point codelet_start = {},
+      std::chrono::high_resolution_clock::time_point codelet_end = {});
 
  private:
   void write_record(
       BatchingTraceEvent event, std::string_view model_name, int request_id,
       int batch_id, std::size_t logical_jobs, std::size_t sample_count,
-      int worker_id, DeviceType worker_type);
+      int worker_id, DeviceType worker_type,
+      std::optional<int64_t> override_timestamp = std::nullopt,
+      std::optional<int64_t> compute_start_ts = std::nullopt);
+  void write_batch_compute_span(
+      std::string_view model_name, int batch_id, std::size_t logical_jobs,
+      std::size_t sample_count, int worker_id, DeviceType worker_type,
+      int64_t start_ts, int64_t duration_us);
   [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
       -> std::string_view;
   [[nodiscard]] static auto device_type_to_string(DeviceType type)
       -> std::string_view;
   [[nodiscard]] static auto escape_json_string(std::string_view value)
       -> std::string;
+  [[nodiscard]] auto relative_timestamp_from_time_point(
+      std::chrono::high_resolution_clock::time_point tp) const
+      -> std::optional<int64_t>;
 
   void write_header_locked();
   void write_footer_locked();
