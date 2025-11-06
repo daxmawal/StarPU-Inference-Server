@@ -100,7 +100,7 @@ BatchingTraceLogger::log_request_enqueued(
 {
   write_record(
       BatchingTraceEvent::RequestQueued, model_name, request_id, kInvalidId, 0,
-      0, kInvalidId, DeviceType::Unknown);
+      0, kInvalidId, DeviceType::Unknown, std::span<const int>{});
 }
 
 void
@@ -111,17 +111,19 @@ BatchingTraceLogger::log_request_assigned_to_batch(
 {
   write_record(
       BatchingTraceEvent::RequestAssigned, model_name, request_id, batch_id,
-      logical_jobs, sample_count, worker_id, worker_type);
+      logical_jobs, sample_count, worker_id, worker_type,
+      std::span<const int>{});
 }
 
 void
 BatchingTraceLogger::log_batch_submitted(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
-    std::size_t sample_count, int worker_id, DeviceType worker_type)
+    std::size_t sample_count, int worker_id, DeviceType worker_type,
+    std::span<const int> request_ids)
 {
   write_record(
       BatchingTraceEvent::BatchSubmitted, model_name, kInvalidId, batch_id,
-      logical_jobs, sample_count, worker_id, worker_type);
+      logical_jobs, sample_count, worker_id, worker_type, request_ids);
 }
 
 void
@@ -146,14 +148,15 @@ BatchingTraceLogger::log_batch_completed(
 
   write_record(
       BatchingTraceEvent::BatchCompleted, model_name, kInvalidId, batch_id,
-      logical_jobs, sample_count, worker_id, worker_type, end_ts, start_ts);
+      logical_jobs, sample_count, worker_id, worker_type,
+      std::span<const int>{}, end_ts, start_ts);
 }
 
 void
 BatchingTraceLogger::write_record(
     BatchingTraceEvent event, std::string_view model_name, int request_id,
     int batch_id, std::size_t logical_jobs, std::size_t sample_count,
-    int worker_id, DeviceType worker_type,
+    int worker_id, DeviceType worker_type, std::span<const int> request_ids,
     std::optional<int64_t> override_timestamp,
     std::optional<int64_t> compute_start_ts)
 {
@@ -188,6 +191,16 @@ BatchingTraceLogger::write_record(
        << ",\"sample_count\":" << sample_count << ",\"model_name\":\""
        << escaped_model << "\",\"worker_id\":" << worker_id
        << ",\"worker_type\":\"" << worker_type_str << "\"";
+  if (!request_ids.empty()) {
+    line << ",\"request_ids\":[";
+    for (size_t idx = 0; idx < request_ids.size(); ++idx) {
+      if (idx > 0) {
+        line << ',';
+      }
+      line << request_ids[idx];
+    }
+    line << "]";
+  }
   if (compute_start_ts.has_value()) {
     line << ",\"start_ts\":" << *compute_start_ts;
   }

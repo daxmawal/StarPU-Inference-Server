@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1084,6 +1085,23 @@ StarPUTaskRunner::submit_inference_task(
   auto label =
       std::format("submit job {}", task_runner_internal::job_identifier(*job));
   NvtxRange nvtx_job_scope(label);
+  const auto build_request_ids_for_trace =
+      [](const std::shared_ptr<InferenceJob>& job_ptr) {
+        std::vector<int> ids;
+        if (!job_ptr) {
+          return ids;
+        }
+        if (job_ptr->has_aggregated_sub_jobs()) {
+          const auto& aggregated = job_ptr->aggregated_sub_jobs();
+          ids.reserve(aggregated.size());
+          for (const auto& sub_job : aggregated) {
+            ids.push_back(sub_job.request_id);
+          }
+        } else {
+          ids.push_back(job_ptr->get_request_id());
+        }
+        return ids;
+      };
   if (!(starpu_->has_input_pool() || starpu_->has_output_pool())) {
     InferenceTask task(
         starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
@@ -1095,9 +1113,11 @@ StarPUTaskRunner::submit_inference_task(
       const auto total_samples = std::max<std::size_t>(
           std::size_t{1}, task_runner_internal::batch_size_from_inputs(
                               job->get_input_tensors()));
+      const auto request_ids = build_request_ids_for_trace(job);
       tracer.log_batch_submitted(
           job->submission_id(), job->model_name(), logical_jobs, total_samples,
-          job->get_worker_id(), job->get_executed_on());
+          job->get_worker_id(), job->get_executed_on(),
+          std::span<const int>(request_ids));
     }
     return;
   }
@@ -1154,9 +1174,11 @@ StarPUTaskRunner::submit_inference_task(
             static_cast<std::size_t>(std::max(1, job->logical_job_count()));
         const auto total_samples =
             static_cast<std::size_t>(std::max<int64_t>(int64_t{1}, batch));
+        const auto request_ids = build_request_ids_for_trace(job);
         tracer.log_batch_submitted(
             job->submission_id(), job->model_name(), logical_jobs,
-            total_samples, job->get_worker_id(), job->get_executed_on());
+            total_samples, job->get_worker_id(), job->get_executed_on(),
+            std::span<const int>(request_ids));
       }
     }
     release_output_slot_on_exception = false;

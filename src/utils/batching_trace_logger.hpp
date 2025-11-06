@@ -6,6 +6,7 @@
 #include <fstream>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -41,7 +42,8 @@ class BatchingTraceLogger {
   void log_batch_submitted(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
       std::size_t sample_count, int worker_id = -1,
-      DeviceType worker_type = DeviceType::Unknown);
+      DeviceType worker_type = DeviceType::Unknown,
+      std::span<const int> request_ids = {});
   void log_batch_completed(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
       std::size_t sample_count, int worker_id,
@@ -53,7 +55,7 @@ class BatchingTraceLogger {
   void write_record(
       BatchingTraceEvent event, std::string_view model_name, int request_id,
       int batch_id, std::size_t logical_jobs, std::size_t sample_count,
-      int worker_id, DeviceType worker_type,
+      int worker_id, DeviceType worker_type, std::span<const int> request_ids,
       std::optional<int64_t> override_timestamp = std::nullopt,
       std::optional<int64_t> compute_start_ts = std::nullopt);
   void write_batch_compute_span(
