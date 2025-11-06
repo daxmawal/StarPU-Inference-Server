@@ -16,11 +16,20 @@ namespace starpu_server {
 namespace {
 constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
-constexpr int kRequestThreadId = 1;
-constexpr int kWorkerThreadOffset = 2;
-constexpr int kQueueSortIndex = -1;
+constexpr int kTaskQueueTrackId = 1;
+constexpr int kRequestEnqueuedTrackId = 2;
+constexpr int kRequestAssignedTrackId = 3;
+constexpr int kBatchSubmittedTrackId = 4;
+constexpr int kWorkerThreadOffset = 10;
+constexpr int kTaskQueueSortIndex = -4;
+constexpr int kRequestEnqueuedSortIndex = -3;
+constexpr int kRequestAssignedSortIndex = -2;
+constexpr int kBatchSubmittedSortIndex = -1;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
-constexpr std::string_view kRequestThreadName = "task_queue";
+constexpr std::string_view kTaskQueueTrackName = "task_queue";
+constexpr std::string_view kRequestEnqueuedTrackName = "request_enqueued";
+constexpr std::string_view kRequestAssignedTrackName = "request_assigned";
+constexpr std::string_view kBatchSubmittedTrackName = "batch_submitted";
 }  // namespace
 
 auto
@@ -171,15 +180,38 @@ BatchingTraceLogger::write_record(
   const auto escaped_model = escape_json_string(model_name);
   const auto worker_type_str = device_type_to_string(worker_type);
   const bool is_worker_lane = worker_id >= 0;
-  const int thread_id =
-      is_worker_lane ? worker_id + kWorkerThreadOffset : kRequestThreadId;
   std::string worker_label;
-  std::string_view thread_name = kRequestThreadName;
-  int sort_index = kQueueSortIndex;
+  int thread_id = kTaskQueueTrackId;
+  std::string_view thread_name = kTaskQueueTrackName;
+  int sort_index = kTaskQueueSortIndex;
   if (is_worker_lane) {
     worker_label = std::format("worker-{} ({})", worker_id, worker_type_str);
     thread_name = worker_label;
     sort_index = worker_id + kWorkerThreadOffset;
+    thread_id = worker_id + kWorkerThreadOffset;
+  } else {
+    switch (event) {
+      case BatchingTraceEvent::RequestQueued:
+        thread_id = kRequestEnqueuedTrackId;
+        thread_name = kRequestEnqueuedTrackName;
+        sort_index = kRequestEnqueuedSortIndex;
+        break;
+      case BatchingTraceEvent::RequestAssigned:
+        thread_id = kRequestAssignedTrackId;
+        thread_name = kRequestAssignedTrackName;
+        sort_index = kRequestAssignedSortIndex;
+        break;
+      case BatchingTraceEvent::BatchSubmitted:
+        thread_id = kBatchSubmittedTrackId;
+        thread_name = kBatchSubmittedTrackName;
+        sort_index = kBatchSubmittedSortIndex;
+        break;
+      case BatchingTraceEvent::BatchCompleted:
+        thread_id = kTaskQueueTrackId;
+        thread_name = kTaskQueueTrackName;
+        sort_index = kTaskQueueSortIndex;
+        break;
+    }
   }
 
   std::ostringstream line;
@@ -337,7 +369,7 @@ BatchingTraceLogger::write_header_locked()
   thread_metadata_.clear();
   write_process_metadata_locked();
   ensure_thread_metadata_locked(
-      kRequestThreadId, kRequestThreadName, kQueueSortIndex);
+      kTaskQueueTrackId, kTaskQueueTrackName, kTaskQueueSortIndex);
   write_queue_track_marker_locked();
 }
 
@@ -426,7 +458,7 @@ BatchingTraceLogger::write_queue_track_marker_locked()
       "\"ts\":0,"
       "\"pid\":{},\"tid\":{},\"args\":{{\"worker_id\":-1,\"model_name\":\"\"}}}"
       "}",
-      kTraceProcessId, kRequestThreadId);
+      kTraceProcessId, kTaskQueueTrackId);
   write_line_locked(marker);
 }
 
