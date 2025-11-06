@@ -35,9 +35,9 @@ TEST(BatchingTraceLoggerTest, RoutesInvalidWorkerEventsToQueueTrack)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
 
-  EXPECT_NE(content.find("\"tid\":100000"), std::string::npos);
+  EXPECT_NE(content.find("\"tid\":1"), std::string::npos);
   EXPECT_NE(content.find("\"worker_id\":-1"), std::string::npos);
-  EXPECT_NE(content.find("inference_task_queue"), std::string::npos);
+  EXPECT_NE(content.find("task_queue"), std::string::npos);
   EXPECT_NE(content.find("\"worker_id\":0"), std::string::npos);
   EXPECT_NE(content.find("worker-0 (cpu)"), std::string::npos);
 

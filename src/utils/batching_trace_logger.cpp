@@ -15,11 +15,11 @@ namespace starpu_server {
 namespace {
 constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
-constexpr int kRequestThreadId = 100'000;
-constexpr int kWorkerThreadOffset = 1;
+constexpr int kRequestThreadId = 1;
+constexpr int kWorkerThreadOffset = 2;
 constexpr int kQueueSortIndex = -1;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
-constexpr std::string_view kRequestThreadName = "inference_task_queue";
+constexpr std::string_view kRequestThreadName = "task_queue";
 }  // namespace
 
 auto
