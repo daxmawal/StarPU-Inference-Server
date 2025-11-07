@@ -18,19 +18,16 @@ constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
 constexpr int kTaskQueueTrackId = 1;
 constexpr int kRequestEnqueuedTrackId = 2;
-constexpr int kRequestAssignedTrackId = 3;
-constexpr int kBatchSubmittedTrackId = 4;
-constexpr int kBatchBuildTrackId = 5;
+constexpr int kBatchSubmittedTrackId = 3;
+constexpr int kBatchBuildTrackId = 4;
 constexpr int kWorkerThreadOffset = 10;
 constexpr int kBatchBuildSortIndex = -5;
 constexpr int kTaskQueueSortIndex = -4;
 constexpr int kRequestEnqueuedSortIndex = -3;
-constexpr int kRequestAssignedSortIndex = -2;
-constexpr int kBatchSubmittedSortIndex = -1;
+constexpr int kBatchSubmittedSortIndex = -2;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
 constexpr std::string_view kTaskQueueTrackName = "task_queue";
 constexpr std::string_view kRequestEnqueuedTrackName = "request_enqueued";
-constexpr std::string_view kRequestAssignedTrackName = "request_assigned";
 constexpr std::string_view kBatchSubmittedTrackName = "batch_submitted";
 constexpr std::string_view kBatchBuildTrackName = "batch_build";
 }  // namespace
@@ -116,18 +113,6 @@ BatchingTraceLogger::log_request_enqueued(
 }
 
 void
-BatchingTraceLogger::log_request_assigned_to_batch(
-    int request_id, int batch_id, std::string_view model_name,
-    std::size_t logical_jobs, std::size_t sample_count, int worker_id,
-    DeviceType worker_type)
-{
-  write_record(
-      BatchingTraceEvent::RequestAssigned, model_name, request_id, batch_id,
-      logical_jobs, sample_count, worker_id, worker_type,
-      std::span<const int>{});
-}
-
-void
 BatchingTraceLogger::log_batch_submitted(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
     std::size_t sample_count, int worker_id, DeviceType worker_type,
@@ -163,29 +148,26 @@ BatchingTraceLogger::log_batch_build_span(
 }
 
 void
-BatchingTraceLogger::log_batch_completed(
+BatchingTraceLogger::log_batch_compute_span(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
     std::size_t sample_count, int worker_id, DeviceType worker_type,
     std::chrono::high_resolution_clock::time_point codelet_start,
     std::chrono::high_resolution_clock::time_point codelet_end)
 {
-  if (!enabled()) {
+  if (!enabled() || worker_id < 0) {
     return;
   }
 
   const auto start_ts = relative_timestamp_from_time_point(codelet_start);
   const auto end_ts = relative_timestamp_from_time_point(codelet_end);
-  if (start_ts && end_ts && *end_ts >= *start_ts && worker_id >= 0) {
-    const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
-    write_batch_compute_span(
-        model_name, batch_id, logical_jobs, sample_count, worker_id,
-        worker_type, *start_ts, duration);
+  if (!start_ts || !end_ts || *end_ts < *start_ts) {
+    return;
   }
 
-  write_record(
-      BatchingTraceEvent::BatchCompleted, model_name, kInvalidId, batch_id,
-      logical_jobs, sample_count, worker_id, worker_type,
-      std::span<const int>{}, end_ts, start_ts);
+  const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
+  write_batch_compute_span(
+      model_name, batch_id, logical_jobs, sample_count, worker_id, worker_type,
+      *start_ts, duration);
 }
 
 void
@@ -193,8 +175,7 @@ BatchingTraceLogger::write_record(
     BatchingTraceEvent event, std::string_view model_name, int request_id,
     int batch_id, std::size_t logical_jobs, std::size_t sample_count,
     int worker_id, DeviceType worker_type, std::span<const int> request_ids,
-    std::optional<int64_t> override_timestamp,
-    std::optional<int64_t> compute_start_ts)
+    std::optional<int64_t> override_timestamp)
 {
   if (!enabled()) {
     return;
@@ -223,20 +204,10 @@ BatchingTraceLogger::write_record(
         thread_name = kRequestEnqueuedTrackName;
         sort_index = kRequestEnqueuedSortIndex;
         break;
-      case BatchingTraceEvent::RequestAssigned:
-        thread_id = kRequestAssignedTrackId;
-        thread_name = kRequestAssignedTrackName;
-        sort_index = kRequestAssignedSortIndex;
-        break;
       case BatchingTraceEvent::BatchSubmitted:
         thread_id = kBatchSubmittedTrackId;
         thread_name = kBatchSubmittedTrackName;
         sort_index = kBatchSubmittedSortIndex;
-        break;
-      case BatchingTraceEvent::BatchCompleted:
-        thread_id = kTaskQueueTrackId;
-        thread_name = kTaskQueueTrackName;
-        sort_index = kTaskQueueSortIndex;
         break;
     }
   }
@@ -260,9 +231,6 @@ BatchingTraceLogger::write_record(
     }
     line << "]";
   }
-  if (compute_start_ts.has_value()) {
-    line << ",\"start_ts\":" << *compute_start_ts;
-  }
   line << "}}";
 
   std::lock_guard lock(mutex_);
@@ -280,12 +248,8 @@ BatchingTraceLogger::event_to_string(BatchingTraceEvent event)
   switch (event) {
     case BatchingTraceEvent::RequestQueued:
       return "request_enqueued";
-    case BatchingTraceEvent::RequestAssigned:
-      return "request_assigned";
     case BatchingTraceEvent::BatchSubmitted:
       return "batch_submitted";
-    case BatchingTraceEvent::BatchCompleted:
-      return "batch_completed";
   }
   return "unknown";
 }

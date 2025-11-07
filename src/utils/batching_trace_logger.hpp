@@ -17,12 +17,7 @@ namespace starpu_server {
 
 struct RuntimeConfig;
 
-enum class BatchingTraceEvent : uint8_t {
-  RequestQueued,
-  RequestAssigned,
-  BatchSubmitted,
-  BatchCompleted
-};
+enum class BatchingTraceEvent : uint8_t { RequestQueued, BatchSubmitted };
 
 class BatchingTraceLogger {
  public:
@@ -35,10 +30,6 @@ class BatchingTraceLogger {
   [[nodiscard]] auto enabled() const -> bool;
 
   void log_request_enqueued(int request_id, std::string_view model_name);
-  void log_request_assigned_to_batch(
-      int request_id, int batch_id, std::string_view model_name,
-      std::size_t logical_jobs, std::size_t sample_count, int worker_id = -1,
-      DeviceType worker_type = DeviceType::Unknown);
   void log_batch_submitted(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
       std::size_t sample_count, int worker_id = -1,
@@ -50,7 +41,7 @@ class BatchingTraceLogger {
       std::chrono::high_resolution_clock::time_point start_time,
       std::chrono::high_resolution_clock::time_point end_time,
       std::span<const int> request_ids = {});
-  void log_batch_completed(
+  void log_batch_compute_span(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
       std::size_t sample_count, int worker_id,
       DeviceType worker_type = DeviceType::Unknown,
@@ -62,8 +53,7 @@ class BatchingTraceLogger {
       BatchingTraceEvent event, std::string_view model_name, int request_id,
       int batch_id, std::size_t logical_jobs, std::size_t sample_count,
       int worker_id, DeviceType worker_type, std::span<const int> request_ids,
-      std::optional<int64_t> override_timestamp = std::nullopt,
-      std::optional<int64_t> compute_start_ts = std::nullopt);
+      std::optional<int64_t> override_timestamp = std::nullopt);
   void write_batch_compute_span(
       std::string_view model_name, int batch_id, std::size_t logical_jobs,
       std::size_t sample_count, int worker_id, DeviceType worker_type,

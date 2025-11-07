@@ -536,7 +536,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
           static_cast<std::size_t>(std::max(1, job_sptr->logical_job_count()));
       const auto total_samples =
           std::max<std::size_t>(std::size_t{1}, batch_size);
-      tracer.log_batch_completed(
+      tracer.log_batch_compute_span(
           job_sptr->submission_id(), job_sptr->model_name(), logical_jobs,
           total_samples, job_sptr->get_worker_id(), job_sptr->get_executed_on(),
           job_sptr->timing_info().codelet_start_time,
@@ -1261,23 +1261,6 @@ StarPUTaskRunner::run()
           job->timing_info().batch_collect_start_time,
           job->timing_info().batch_collect_end_time,
           std::span<const int>(request_ids));
-      if (job->has_aggregated_sub_jobs()) {
-        for (const auto& sub_job : job->aggregated_sub_jobs()) {
-          int request = sub_job.request_id;
-          if (request < 0) {
-            if (auto locked = sub_job.job.lock()) {
-              request = locked->get_request_id();
-            }
-          }
-          tracer.log_request_assigned_to_batch(
-              request, submission_id, job->model_name(), logical_count,
-              total_samples);
-        }
-      } else {
-        tracer.log_request_assigned_to_batch(
-            job->get_request_id(), submission_id, job->model_name(),
-            logical_count, total_samples);
-      }
     }
 
     prepare_job_completion_callback(job);
