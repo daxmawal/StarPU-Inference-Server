@@ -38,13 +38,18 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
 
-  EXPECT_NE(content.find("\"worker_id\":-1"), std::string::npos);
+  EXPECT_EQ(content.find("\"worker_id\":-1"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":1"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":2"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":3"), std::string::npos);
   EXPECT_NE(content.find("request_enqueued"), std::string::npos);
   EXPECT_NE(content.find("batch_submitted"), std::string::npos);
   EXPECT_NE(content.find("\"batch_size\":1"), std::string::npos);
+  EXPECT_NE(content.find("\"request_id\":1"), std::string::npos);
+  EXPECT_EQ(content.find("\"batch_id\":-1"), std::string::npos);
+  EXPECT_EQ(content.find("\"logical_jobs\":0"), std::string::npos);
+  EXPECT_EQ(content.find("\"sample_count\":0"), std::string::npos);
+  EXPECT_EQ(content.find("\"worker_type\":\"unknown\""), std::string::npos);
   EXPECT_EQ(content.find("task_queue"), std::string::npos);
   EXPECT_EQ(content.find("\"worker_id\":0"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":10"), std::string::npos);
@@ -93,7 +98,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
   const auto end = start + std::chrono::microseconds(150);
   const std::array<int, 2> request_ids{7, 8};
   logger.log_batch_build_span(
-      21, "demo_model", 3, 9, start, end, std::span<const int>(request_ids));
+      21, "demo_model", 9, start, end, std::span<const int>(request_ids));
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -105,6 +110,9 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
   EXPECT_NE(content.find("\"name\":\"batch_build\""), std::string::npos);
   EXPECT_NE(content.find("\"tid\":2"), std::string::npos);
   EXPECT_NE(content.find("\"request_ids\":[7,8]"), std::string::npos);
+  EXPECT_NE(content.find("\"batch_size\":9"), std::string::npos);
+  EXPECT_EQ(content.find("\"logical_jobs\":"), std::string::npos);
+  EXPECT_EQ(content.find("\"sample_count\":"), std::string::npos);
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
@@ -123,7 +131,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
       11, "demo_model", 1, 1, 0, DeviceType::CPU,
       std::span<const int>(request_ids), /*is_warmup=*/true);
   logger.log_batch_build_span(
-      11, "demo_model", 1, 1, start, end, std::span<const int>(request_ids),
+      11, "demo_model", 1, start, end, std::span<const int>(request_ids),
       /*is_warmup=*/true);
   logger.log_batch_compute_span(
       11, "demo_model", 1, 1, 0, DeviceType::CPU, start, end,

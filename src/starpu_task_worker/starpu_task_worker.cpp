@@ -1260,14 +1260,12 @@ StarPUTaskRunner::run()
 
     auto& tracer = BatchingTraceLogger::instance();
     if (tracer.enabled()) {
-      const std::size_t logical_count =
-          static_cast<std::size_t>(std::max(1, job->logical_job_count()));
-      const auto total_samples = std::max<std::size_t>(
+      const auto batch_size = std::max<std::size_t>(
           std::size_t{1}, task_runner_internal::batch_size_from_inputs(
                               job->get_input_tensors()));
       const auto request_ids = build_request_ids_for_trace(job);
       tracer.log_batch_build_span(
-          submission_id, job->model_name(), logical_count, total_samples,
+          submission_id, job->model_name(), batch_size,
           job->timing_info().batch_collect_start_time,
           job->timing_info().batch_collect_end_time,
           std::span<const int>(request_ids), warmup_job);

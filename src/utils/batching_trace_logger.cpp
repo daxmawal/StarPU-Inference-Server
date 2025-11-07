@@ -106,7 +106,7 @@ BatchingTraceLogger::log_request_enqueued(
 {
   write_record(
       BatchingTraceEvent::RequestQueued, model_name, request_id, kInvalidId, 0,
-      0, kInvalidId, DeviceType::Unknown, std::span<const int>{}, std::nullopt,
+      kInvalidId, DeviceType::Unknown, std::span<const int>{}, std::nullopt,
       is_warmup);
 }
 
@@ -118,14 +118,13 @@ BatchingTraceLogger::log_batch_submitted(
 {
   write_record(
       BatchingTraceEvent::BatchSubmitted, model_name, kInvalidId, batch_id,
-      logical_jobs, sample_count, worker_id, worker_type, request_ids,
-      std::nullopt, is_warmup);
+      logical_jobs, worker_id, worker_type, request_ids, std::nullopt,
+      is_warmup);
 }
 
 void
 BatchingTraceLogger::log_batch_build_span(
-    int batch_id, std::string_view model_name, std::size_t logical_jobs,
-    std::size_t sample_count,
+    int batch_id, std::string_view model_name, std::size_t batch_size,
     std::chrono::high_resolution_clock::time_point start_time,
     std::chrono::high_resolution_clock::time_point end_time,
     std::span<const int> request_ids, bool is_warmup)
@@ -142,8 +141,8 @@ BatchingTraceLogger::log_batch_build_span(
 
   const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
   write_batch_build_span(
-      model_name, batch_id, logical_jobs, sample_count, *start_ts, duration,
-      request_ids, is_warmup);
+      model_name, batch_id, batch_size, *start_ts, duration, request_ids,
+      is_warmup);
 }
 
 void
@@ -172,8 +171,8 @@ BatchingTraceLogger::log_batch_compute_span(
 void
 BatchingTraceLogger::write_record(
     BatchingTraceEvent event, std::string_view model_name, int request_id,
-    int batch_id, std::size_t logical_jobs, std::size_t sample_count,
-    int worker_id, DeviceType worker_type, std::span<const int> request_ids,
+    int batch_id, std::size_t logical_jobs, int worker_id,
+    DeviceType worker_type, std::span<const int> request_ids,
     std::optional<int64_t> override_timestamp, bool is_warmup)
 {
   if (!enabled()) {
@@ -235,18 +234,16 @@ BatchingTraceLogger::write_record(
     line << "\"" << warmup_prefix << key << "\":\"" << value << "\"";
   };
 
-  if (event == BatchingTraceEvent::BatchSubmitted) {
-    append_numeric("batch_id", batch_id);
-    append_numeric("batch_size", logical_jobs);
-    append_string("model_name", escaped_model);
-  } else {
-    append_numeric("request_id", request_id);
-    append_numeric("batch_id", batch_id);
-    append_numeric("logical_jobs", logical_jobs);
-    append_numeric("sample_count", sample_count);
-    append_string("model_name", escaped_model);
-    append_numeric("worker_id", worker_id);
-    append_string("worker_type", worker_type_str);
+  switch (event) {
+    case BatchingTraceEvent::BatchSubmitted:
+      append_numeric("batch_id", batch_id);
+      append_numeric("batch_size", logical_jobs);
+      append_string("model_name", escaped_model);
+      break;
+    case BatchingTraceEvent::RequestQueued:
+      append_numeric("request_id", request_id);
+      append_string("model_name", escaped_model);
+      break;
   }
 
   if (!request_ids.empty()) {
@@ -344,9 +341,9 @@ BatchingTraceLogger::write_batch_compute_span(
 
 void
 BatchingTraceLogger::write_batch_build_span(
-    std::string_view model_name, int batch_id, std::size_t logical_jobs,
-    std::size_t sample_count, int64_t start_ts, int64_t duration_us,
-    std::span<const int> request_ids, bool is_warmup)
+    std::string_view model_name, int batch_id, std::size_t batch_size,
+    int64_t start_ts, int64_t duration_us, std::span<const int> request_ids,
+    bool is_warmup)
 {
   if (duration_us <= 0) {
     duration_us = 1;
@@ -361,8 +358,7 @@ BatchingTraceLogger::write_batch_build_span(
        << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << kBatchBuildTrackId << ",\"args\":{" << "\""
        << warmup_prefix << "batch_id\":" << batch_id << ",\"" << warmup_prefix
-       << "logical_jobs\":" << logical_jobs << ",\"" << warmup_prefix
-       << "sample_count\":" << sample_count << ",\"" << warmup_prefix
+       << "batch_size\":" << batch_size << ",\"" << warmup_prefix
        << "model_name\":\"" << escaped_model << "\"";
   if (!request_ids.empty()) {
     line << ",\"" << warmup_prefix << "request_ids\":[";
