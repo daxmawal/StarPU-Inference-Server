@@ -217,16 +217,41 @@ BatchingTraceLogger::write_record(
   line << "{\"name\":\"" << warmup_prefix << event_to_string(event)
        << "\",\"cat\":\"batching\",\"ph\":\"i\",\"ts\":" << timestamp_us
        << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id
-       << ",\"args\":{" << "\"" << warmup_prefix
-       << "request_id\":" << request_id << ",\"" << warmup_prefix
-       << "batch_id\":" << batch_id << ",\"" << warmup_prefix
-       << "logical_jobs\":" << logical_jobs << ",\"" << warmup_prefix
-       << "sample_count\":" << sample_count << ",\"" << warmup_prefix
-       << "model_name\":\"" << escaped_model << "\"" << ",\"" << warmup_prefix
-       << "worker_id\":" << worker_id << ",\"" << warmup_prefix
-       << "worker_type\":\"" << worker_type_str << "\"";
+       << ",\"args\":{";
+
+  bool first_arg = true;
+  const auto append_delimiter = [&]() {
+    if (!first_arg) {
+      line << ',';
+    }
+    first_arg = false;
+  };
+  const auto append_numeric = [&](std::string_view key, auto value) {
+    append_delimiter();
+    line << "\"" << warmup_prefix << key << "\":" << value;
+  };
+  const auto append_string = [&](std::string_view key, std::string_view value) {
+    append_delimiter();
+    line << "\"" << warmup_prefix << key << "\":\"" << value << "\"";
+  };
+
+  if (event == BatchingTraceEvent::BatchSubmitted) {
+    append_numeric("batch_id", batch_id);
+    append_numeric("batch_size", logical_jobs);
+    append_string("model_name", escaped_model);
+  } else {
+    append_numeric("request_id", request_id);
+    append_numeric("batch_id", batch_id);
+    append_numeric("logical_jobs", logical_jobs);
+    append_numeric("sample_count", sample_count);
+    append_string("model_name", escaped_model);
+    append_numeric("worker_id", worker_id);
+    append_string("worker_type", worker_type_str);
+  }
+
   if (!request_ids.empty()) {
-    line << ",\"" << warmup_prefix << "request_ids\":[";
+    append_delimiter();
+    line << "\"" << warmup_prefix << "request_ids\":[";
     for (size_t idx = 0; idx < request_ids.size(); ++idx) {
       if (idx > 0) {
         line << ',';
@@ -235,6 +260,7 @@ BatchingTraceLogger::write_record(
     }
     line << "]";
   }
+
   line << "}}";
 
   std::lock_guard lock(mutex_);

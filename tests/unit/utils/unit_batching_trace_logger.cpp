@@ -44,8 +44,9 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
   EXPECT_NE(content.find("\"tid\":3"), std::string::npos);
   EXPECT_NE(content.find("request_enqueued"), std::string::npos);
   EXPECT_NE(content.find("batch_submitted"), std::string::npos);
+  EXPECT_NE(content.find("\"batch_size\":1"), std::string::npos);
   EXPECT_EQ(content.find("task_queue"), std::string::npos);
-  EXPECT_NE(content.find("\"worker_id\":0"), std::string::npos);
+  EXPECT_EQ(content.find("\"worker_id\":0"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":10"), std::string::npos);
   EXPECT_NE(content.find("worker-0 (cpu)"), std::string::npos);
 
@@ -72,6 +73,11 @@ TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
       std::istreambuf_iterator<char>());
 
   EXPECT_NE(content.find("\"request_ids\":[42,43,44]"), std::string::npos);
+  EXPECT_NE(content.find("\"batch_size\":2"), std::string::npos);
+  EXPECT_EQ(content.find("\"worker_id\":1"), std::string::npos);
+  EXPECT_EQ(content.find("\"worker_type\":\"cuda\""), std::string::npos);
+  EXPECT_EQ(content.find("\"sample_count\":6"), std::string::npos);
+  EXPECT_EQ(content.find("\"request_id\":"), std::string::npos);
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
@@ -132,6 +138,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
 
   EXPECT_NE(
       content.find("\"name\":\"warming_batch_submitted\""), std::string::npos);
+  EXPECT_NE(content.find("\"warming_batch_size\":1"), std::string::npos);
   EXPECT_NE(content.find("\"warming_request_ids\":[1,2]"), std::string::npos);
   EXPECT_NE(
       content.find("\"name\":\"warming_batch_build\""), std::string::npos);
