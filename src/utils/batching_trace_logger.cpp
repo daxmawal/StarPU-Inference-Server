@@ -102,22 +102,24 @@ BatchingTraceLogger::enabled() const -> bool
 
 void
 BatchingTraceLogger::log_request_enqueued(
-    int request_id, std::string_view model_name)
+    int request_id, std::string_view model_name, bool is_warmup)
 {
   write_record(
       BatchingTraceEvent::RequestQueued, model_name, request_id, kInvalidId, 0,
-      0, kInvalidId, DeviceType::Unknown, std::span<const int>{});
+      0, kInvalidId, DeviceType::Unknown, std::span<const int>{}, std::nullopt,
+      is_warmup);
 }
 
 void
 BatchingTraceLogger::log_batch_submitted(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
     std::size_t sample_count, int worker_id, DeviceType worker_type,
-    std::span<const int> request_ids)
+    std::span<const int> request_ids, bool is_warmup)
 {
   write_record(
       BatchingTraceEvent::BatchSubmitted, model_name, kInvalidId, batch_id,
-      logical_jobs, sample_count, worker_id, worker_type, request_ids);
+      logical_jobs, sample_count, worker_id, worker_type, request_ids,
+      std::nullopt, is_warmup);
 }
 
 void
@@ -126,7 +128,7 @@ BatchingTraceLogger::log_batch_build_span(
     std::size_t sample_count,
     std::chrono::high_resolution_clock::time_point start_time,
     std::chrono::high_resolution_clock::time_point end_time,
-    std::span<const int> request_ids)
+    std::span<const int> request_ids, bool is_warmup)
 {
   if (!enabled()) {
     return;
@@ -141,7 +143,7 @@ BatchingTraceLogger::log_batch_build_span(
   const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
   write_batch_build_span(
       model_name, batch_id, logical_jobs, sample_count, *start_ts, duration,
-      request_ids);
+      request_ids, is_warmup);
 }
 
 void
@@ -149,7 +151,7 @@ BatchingTraceLogger::log_batch_compute_span(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
     std::size_t sample_count, int worker_id, DeviceType worker_type,
     std::chrono::high_resolution_clock::time_point codelet_start,
-    std::chrono::high_resolution_clock::time_point codelet_end)
+    std::chrono::high_resolution_clock::time_point codelet_end, bool is_warmup)
 {
   if (!enabled() || worker_id < 0) {
     return;
@@ -164,7 +166,7 @@ BatchingTraceLogger::log_batch_compute_span(
   const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
   write_batch_compute_span(
       model_name, batch_id, logical_jobs, sample_count, worker_id, worker_type,
-      *start_ts, duration);
+      *start_ts, duration, is_warmup);
 }
 
 void
@@ -172,7 +174,7 @@ BatchingTraceLogger::write_record(
     BatchingTraceEvent event, std::string_view model_name, int request_id,
     int batch_id, std::size_t logical_jobs, std::size_t sample_count,
     int worker_id, DeviceType worker_type, std::span<const int> request_ids,
-    std::optional<int64_t> override_timestamp)
+    std::optional<int64_t> override_timestamp, bool is_warmup)
 {
   if (!enabled()) {
     return;
@@ -209,17 +211,22 @@ BatchingTraceLogger::write_record(
     }
   }
 
+  const char* warmup_prefix = is_warmup ? "warming_" : "";
+
   std::ostringstream line;
-  line << "{\"name\":\"" << event_to_string(event)
+  line << "{\"name\":\"" << warmup_prefix << event_to_string(event)
        << "\",\"cat\":\"batching\",\"ph\":\"i\",\"ts\":" << timestamp_us
        << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id
-       << ",\"args\":{" << "\"request_id\":" << request_id
-       << ",\"batch_id\":" << batch_id << ",\"logical_jobs\":" << logical_jobs
-       << ",\"sample_count\":" << sample_count << ",\"model_name\":\""
-       << escaped_model << "\",\"worker_id\":" << worker_id
-       << ",\"worker_type\":\"" << worker_type_str << "\"";
+       << ",\"args\":{" << "\"" << warmup_prefix
+       << "request_id\":" << request_id << ",\"" << warmup_prefix
+       << "batch_id\":" << batch_id << ",\"" << warmup_prefix
+       << "logical_jobs\":" << logical_jobs << ",\"" << warmup_prefix
+       << "sample_count\":" << sample_count << ",\"" << warmup_prefix
+       << "model_name\":\"" << escaped_model << "\"" << ",\"" << warmup_prefix
+       << "worker_id\":" << worker_id << ",\"" << warmup_prefix
+       << "worker_type\":\"" << worker_type_str << "\"";
   if (!request_ids.empty()) {
-    line << ",\"request_ids\":[";
+    line << ",\"" << warmup_prefix << "request_ids\":[";
     for (size_t idx = 0; idx < request_ids.size(); ++idx) {
       if (idx > 0) {
         line << ',';
@@ -269,7 +276,7 @@ void
 BatchingTraceLogger::write_batch_compute_span(
     std::string_view model_name, int batch_id, std::size_t logical_jobs,
     std::size_t sample_count, int worker_id, DeviceType worker_type,
-    int64_t start_ts, int64_t duration_us)
+    int64_t start_ts, int64_t duration_us, bool is_warmup)
 {
   if (worker_id < 0) {
     return;
@@ -285,18 +292,21 @@ BatchingTraceLogger::write_batch_compute_span(
   const std::string worker_label =
       std::format("worker-{} ({})", worker_id, worker_type_str);
 
+  const char* warmup_prefix = is_warmup ? "warming_" : "";
+
   std::ostringstream line;
-  line
-      << "{\"name\":\"batch_compute\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
-      << start_ts << ",\"dur\":" << duration_us
-      << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id
-      << ",\"args\":" << "{\"batch_id\":" << batch_id
-      << ",\"logical_jobs\":" << logical_jobs
-      << ",\"sample_count\":" << sample_count << ",\"model_name\":\""
-      << escaped_model << "\",\"worker_id\":" << worker_id
-      << ",\"worker_type\":\"" << worker_type_str
-      << "\",\"start_ts\":" << start_ts
-      << ",\"end_ts\":" << (start_ts + duration_us) << "}}";
+  line << "{\"name\":\"" << warmup_prefix
+       << "batch_compute\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
+       << start_ts << ",\"dur\":" << duration_us
+       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id
+       << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
+       << ",\"" << warmup_prefix << "logical_jobs\":" << logical_jobs << ",\""
+       << warmup_prefix << "sample_count\":" << sample_count << ",\""
+       << warmup_prefix << "model_name\":\"" << escaped_model << "\"" << ",\""
+       << warmup_prefix << "worker_id\":" << worker_id << ",\"" << warmup_prefix
+       << "worker_type\":\"" << worker_type_str << "\"" << ",\""
+       << warmup_prefix << "start_ts\":" << start_ts << ",\"" << warmup_prefix
+       << "end_ts\":" << (start_ts + duration_us) << "}}";
 
   std::lock_guard lock(mutex_);
   if (!stream_.is_open() || !header_written_) {
@@ -310,24 +320,26 @@ void
 BatchingTraceLogger::write_batch_build_span(
     std::string_view model_name, int batch_id, std::size_t logical_jobs,
     std::size_t sample_count, int64_t start_ts, int64_t duration_us,
-    std::span<const int> request_ids)
+    std::span<const int> request_ids, bool is_warmup)
 {
   if (duration_us <= 0) {
     duration_us = 1;
   }
 
   const auto escaped_model = escape_json_string(model_name);
+  const char* warmup_prefix = is_warmup ? "warming_" : "";
 
   std::ostringstream line;
-  line << "{\"name\":\"batch_build\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
-       << start_ts << ",\"dur\":" << duration_us
-       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << kBatchBuildTrackId
-       << ",\"args\":{" << "\"batch_id\":" << batch_id
-       << ",\"logical_jobs\":" << logical_jobs
-       << ",\"sample_count\":" << sample_count << ",\"model_name\":\""
-       << escaped_model << "\"";
+  line << "{\"name\":\"" << warmup_prefix
+       << "batch_build\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":" << start_ts
+       << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
+       << ",\"tid\":" << kBatchBuildTrackId << ",\"args\":{" << "\""
+       << warmup_prefix << "batch_id\":" << batch_id << ",\"" << warmup_prefix
+       << "logical_jobs\":" << logical_jobs << ",\"" << warmup_prefix
+       << "sample_count\":" << sample_count << ",\"" << warmup_prefix
+       << "model_name\":\"" << escaped_model << "\"";
   if (!request_ids.empty()) {
-    line << ",\"request_ids\":[";
+    line << ",\"" << warmup_prefix << "request_ids\":[";
     for (size_t idx = 0; idx < request_ids.size(); ++idx) {
       if (idx > 0) {
         line << ',';
@@ -336,8 +348,8 @@ BatchingTraceLogger::write_batch_build_span(
     }
     line << "]";
   }
-  line << ",\"start_ts\":" << start_ts
-       << ",\"end_ts\":" << (start_ts + duration_us) << "}}";
+  line << ",\"" << warmup_prefix << "start_ts\":" << start_ts << ",\""
+       << warmup_prefix << "end_ts\":" << (start_ts + duration_us) << "}}";
 
   std::lock_guard lock(mutex_);
   if (!stream_.is_open() || !header_written_) {
