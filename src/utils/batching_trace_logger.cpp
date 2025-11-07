@@ -16,20 +16,17 @@ namespace starpu_server {
 namespace {
 constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
-constexpr int kTaskQueueTrackId = 1;
-constexpr int kRequestEnqueuedTrackId = 2;
+constexpr int kRequestEnqueuedTrackId = 1;
+constexpr int kBatchBuildTrackId = 2;
 constexpr int kBatchSubmittedTrackId = 3;
-constexpr int kBatchBuildTrackId = 4;
 constexpr int kWorkerThreadOffset = 10;
-constexpr int kBatchBuildSortIndex = -5;
-constexpr int kTaskQueueSortIndex = -4;
 constexpr int kRequestEnqueuedSortIndex = -3;
-constexpr int kBatchSubmittedSortIndex = -2;
+constexpr int kBatchBuildSortIndex = -2;
+constexpr int kBatchSubmittedSortIndex = -1;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
-constexpr std::string_view kTaskQueueTrackName = "task_queue";
 constexpr std::string_view kRequestEnqueuedTrackName = "request_enqueued";
-constexpr std::string_view kBatchSubmittedTrackName = "batch_submitted";
 constexpr std::string_view kBatchBuildTrackName = "batch_build";
+constexpr std::string_view kBatchSubmittedTrackName = "batch_submitted";
 }  // namespace
 
 auto
@@ -189,9 +186,9 @@ BatchingTraceLogger::write_record(
   const auto worker_type_str = device_type_to_string(worker_type);
   const bool is_worker_lane = worker_id >= 0;
   std::string worker_label;
-  int thread_id = kTaskQueueTrackId;
-  std::string_view thread_name = kTaskQueueTrackName;
-  int sort_index = kTaskQueueSortIndex;
+  int thread_id = kRequestEnqueuedTrackId;
+  std::string_view thread_name = kRequestEnqueuedTrackName;
+  int sort_index = kRequestEnqueuedSortIndex;
   if (is_worker_lane) {
     worker_label = std::format("worker-{} ({})", worker_id, worker_type_str);
     thread_name = worker_label;
@@ -402,8 +399,13 @@ BatchingTraceLogger::write_header_locked()
   thread_metadata_.clear();
   write_process_metadata_locked();
   ensure_thread_metadata_locked(
-      kTaskQueueTrackId, kTaskQueueTrackName, kTaskQueueSortIndex);
-  write_queue_track_marker_locked();
+      kRequestEnqueuedTrackId, kRequestEnqueuedTrackName,
+      kRequestEnqueuedSortIndex);
+  ensure_thread_metadata_locked(
+      kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex);
+  ensure_thread_metadata_locked(
+      kBatchSubmittedTrackId, kBatchSubmittedTrackName,
+      kBatchSubmittedSortIndex);
 }
 
 void
@@ -481,18 +483,6 @@ BatchingTraceLogger::ensure_thread_metadata_locked(
     write_line_locked(sort_line);
     metadata.sort_emitted = true;
   }
-}
-
-void
-BatchingTraceLogger::write_queue_track_marker_locked()
-{
-  const std::string marker = std::format(
-      "{{\"name\":\"queue_track_ready\",\"cat\":\"batching\",\"ph\":\"i\","
-      "\"ts\":0,"
-      "\"pid\":{},\"tid\":{},\"args\":{{\"worker_id\":-1,\"model_name\":\"\"}}}"
-      "}",
-      kTraceProcessId, kTaskQueueTrackId);
-  write_line_locked(marker);
 }
 
 auto

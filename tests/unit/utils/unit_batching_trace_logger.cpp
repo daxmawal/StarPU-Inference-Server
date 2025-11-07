@@ -39,11 +39,12 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
       std::istreambuf_iterator<char>());
 
   EXPECT_NE(content.find("\"worker_id\":-1"), std::string::npos);
+  EXPECT_NE(content.find("\"tid\":1"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":2"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":3"), std::string::npos);
   EXPECT_NE(content.find("request_enqueued"), std::string::npos);
   EXPECT_NE(content.find("batch_submitted"), std::string::npos);
-  EXPECT_NE(content.find("task_queue"), std::string::npos);
+  EXPECT_EQ(content.find("task_queue"), std::string::npos);
   EXPECT_NE(content.find("\"worker_id\":0"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":10"), std::string::npos);
   EXPECT_NE(content.find("worker-0 (cpu)"), std::string::npos);
@@ -96,7 +97,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
       std::istreambuf_iterator<char>());
 
   EXPECT_NE(content.find("\"name\":\"batch_build\""), std::string::npos);
-  EXPECT_NE(content.find("\"tid\":4"), std::string::npos);
+  EXPECT_NE(content.find("\"tid\":2"), std::string::npos);
   EXPECT_NE(content.find("\"request_ids\":[7,8]"), std::string::npos);
 
   std::error_code ec;

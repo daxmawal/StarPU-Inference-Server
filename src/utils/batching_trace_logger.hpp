@@ -79,7 +79,6 @@ class BatchingTraceLogger {
   void write_process_metadata_locked();
   void ensure_thread_metadata_locked(
       int thread_id, std::string_view thread_name, int sort_index);
-  void write_queue_track_marker_locked();
   [[nodiscard]] auto now_us() const -> int64_t;
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
