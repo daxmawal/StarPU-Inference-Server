@@ -147,8 +147,8 @@ BatchingTraceLogger::log_batch_build_span(
 
 void
 BatchingTraceLogger::log_batch_compute_span(
-    int batch_id, std::string_view model_name, std::size_t logical_jobs,
-    std::size_t sample_count, int worker_id, DeviceType worker_type,
+    int batch_id, std::string_view model_name, std::size_t batch_size,
+    int worker_id, DeviceType worker_type,
     std::chrono::high_resolution_clock::time_point codelet_start,
     std::chrono::high_resolution_clock::time_point codelet_end, bool is_warmup)
 {
@@ -164,8 +164,8 @@ BatchingTraceLogger::log_batch_compute_span(
 
   const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
   write_batch_compute_span(
-      model_name, batch_id, logical_jobs, sample_count, worker_id, worker_type,
-      *start_ts, duration, is_warmup);
+      model_name, batch_id, batch_size, worker_id, worker_type, *start_ts,
+      duration, is_warmup);
 }
 
 void
@@ -297,9 +297,9 @@ BatchingTraceLogger::device_type_to_string(DeviceType type) -> std::string_view
 
 void
 BatchingTraceLogger::write_batch_compute_span(
-    std::string_view model_name, int batch_id, std::size_t logical_jobs,
-    std::size_t sample_count, int worker_id, DeviceType worker_type,
-    int64_t start_ts, int64_t duration_us, bool is_warmup)
+    std::string_view model_name, int batch_id, std::size_t batch_size,
+    int worker_id, DeviceType worker_type, int64_t start_ts,
+    int64_t duration_us, bool is_warmup)
 {
   if (worker_id < 0) {
     return;
@@ -323,8 +323,7 @@ BatchingTraceLogger::write_batch_compute_span(
        << start_ts << ",\"dur\":" << duration_us
        << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id
        << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
-       << ",\"" << warmup_prefix << "logical_jobs\":" << logical_jobs << ",\""
-       << warmup_prefix << "sample_count\":" << sample_count << ",\""
+       << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
        << warmup_prefix << "model_name\":\"" << escaped_model << "\"" << ",\""
        << warmup_prefix << "worker_id\":" << worker_id << ",\"" << warmup_prefix
        << "worker_type\":\"" << worker_type_str << "\"" << ",\""

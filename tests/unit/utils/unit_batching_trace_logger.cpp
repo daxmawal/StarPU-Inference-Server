@@ -134,7 +134,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
       11, "demo_model", 1, start, end, std::span<const int>(request_ids),
       /*is_warmup=*/true);
   logger.log_batch_compute_span(
-      11, "demo_model", 1, 1, 0, DeviceType::CPU, start, end,
+      11, "demo_model", 1, 0, DeviceType::CPU, start, end,
       /*is_warmup=*/true);
   logger.configure(false, "");
 
@@ -153,6 +153,12 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   EXPECT_NE(content.find("\"warming_batch_id\""), std::string::npos);
   EXPECT_NE(
       content.find("\"name\":\"warming_batch_compute\""), std::string::npos);
+  EXPECT_NE(
+      content.find(
+          "\"warming_batch_size\":1,\"warming_model_name\":\"demo_model\","
+          "\"warming_worker_id\""),
+      std::string::npos);
+  EXPECT_EQ(content.find("\"warming_sample_count\""), std::string::npos);
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);

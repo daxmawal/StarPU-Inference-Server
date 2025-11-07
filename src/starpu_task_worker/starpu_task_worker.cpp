@@ -538,14 +538,12 @@ StarPUTaskRunner::prepare_job_completion_callback(
 
     auto& tracer = BatchingTraceLogger::instance();
     if (tracer.enabled()) {
-      const std::size_t logical_jobs =
-          static_cast<std::size_t>(std::max(1, job_sptr->logical_job_count()));
-      const auto total_samples =
+      const std::size_t actual_batch_size =
           std::max<std::size_t>(std::size_t{1}, batch_size);
       const bool warmup_job = is_warmup_job(job_sptr);
       tracer.log_batch_compute_span(
-          job_sptr->submission_id(), job_sptr->model_name(), logical_jobs,
-          total_samples, job_sptr->get_worker_id(), job_sptr->get_executed_on(),
+          job_sptr->submission_id(), job_sptr->model_name(), actual_batch_size,
+          job_sptr->get_worker_id(), job_sptr->get_executed_on(),
           job_sptr->timing_info().codelet_start_time,
           job_sptr->timing_info().codelet_end_time, warmup_job);
     }
