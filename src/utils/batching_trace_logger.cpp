@@ -161,8 +161,8 @@ BatchingTraceLogger::log_request_enqueued(
 void
 BatchingTraceLogger::log_batch_submitted(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
-    std::size_t sample_count, int worker_id, DeviceType worker_type,
-    std::span<const int> request_ids, bool is_warmup)
+    int worker_id, DeviceType worker_type, std::span<const int> request_ids,
+    bool is_warmup)
 {
   write_record(
       BatchingTraceEvent::BatchSubmitted, model_name, kInvalidId, batch_id,

@@ -33,8 +33,7 @@ class BatchingTraceLogger {
       int request_id, std::string_view model_name, bool is_warmup = false);
   void log_batch_submitted(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
-      std::size_t sample_count, int worker_id = -1,
-      DeviceType worker_type = DeviceType::Unknown,
+      int worker_id = -1, DeviceType worker_type = DeviceType::Unknown,
       std::span<const int> request_ids = {}, bool is_warmup = false);
   void log_batch_build_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,

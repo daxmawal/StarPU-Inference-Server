@@ -1127,12 +1127,9 @@ StarPUTaskRunner::submit_inference_task(
     if (tracer.enabled()) {
       const std::size_t logical_jobs =
           static_cast<std::size_t>(std::max(1, job->logical_job_count()));
-      const auto total_samples = std::max<std::size_t>(
-          std::size_t{1}, task_runner_internal::batch_size_from_inputs(
-                              job->get_input_tensors()));
       const auto request_ids = build_request_ids_for_trace(job);
       tracer.log_batch_submitted(
-          job->submission_id(), job->model_name(), logical_jobs, total_samples,
+          job->submission_id(), job->model_name(), logical_jobs,
           job->get_worker_id(), job->get_executed_on(),
           std::span<const int>(request_ids), warmup_job);
     }
@@ -1189,12 +1186,10 @@ StarPUTaskRunner::submit_inference_task(
       if (tracer.enabled()) {
         const std::size_t logical_jobs =
             static_cast<std::size_t>(std::max(1, job->logical_job_count()));
-        const auto total_samples =
-            static_cast<std::size_t>(std::max<int64_t>(int64_t{1}, batch));
         const auto request_ids = build_request_ids_for_trace(job);
         tracer.log_batch_submitted(
             job->submission_id(), job->model_name(), logical_jobs,
-            total_samples, job->get_worker_id(), job->get_executed_on(),
+            job->get_worker_id(), job->get_executed_on(),
             std::span<const int>(request_ids), warmup_job);
       }
     }

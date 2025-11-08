@@ -28,8 +28,8 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
 
   logger.configure(true, trace_path.string());
   logger.log_request_enqueued(1, "demo_model");
-  logger.log_batch_submitted(5, "demo_model", 1, 1);
-  logger.log_batch_submitted(7, "demo_model", 1, 1, 0, DeviceType::CPU);
+  logger.log_batch_submitted(5, "demo_model", 1);
+  logger.log_batch_submitted(7, "demo_model", 1, 0, DeviceType::CPU);
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -67,7 +67,7 @@ TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
   logger.configure(true, trace_path.string());
   const std::array<int, 3> request_ids{42, 43, 44};
   logger.log_batch_submitted(
-      9, "demo_model", 2, 6, 1, DeviceType::CUDA,
+      9, "demo_model", 2, 1, DeviceType::CUDA,
       std::span<const int>(request_ids));
   logger.configure(false, "");
 
@@ -128,7 +128,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   const auto end = start + std::chrono::microseconds(100);
   const std::array<int, 2> request_ids{1, 2};
   logger.log_batch_submitted(
-      11, "demo_model", 1, 1, 0, DeviceType::CPU,
+      11, "demo_model", 1, 0, DeviceType::CPU,
       std::span<const int>(request_ids), /*is_warmup=*/true);
   logger.log_batch_build_span(
       11, "demo_model", 1, start, end, std::span<const int>(request_ids),
@@ -180,14 +180,14 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   const auto warm_end = warm_start + std::chrono::microseconds(75);
   logger.log_batch_build_span(
       0, "demo_model", 2, build_start, build_end, std::span<const int>{});
-  logger.log_batch_submitted(0, "demo_model", 2, 2, 0, DeviceType::CPU);
+  logger.log_batch_submitted(0, "demo_model", 2, 0, DeviceType::CPU);
   logger.log_batch_compute_span(
       0, "demo_model", 2, 0, DeviceType::CPU, start, end);
   logger.log_batch_build_span(
       0, "demo_model", 1, warm_build_start, warm_build_end,
       std::span<const int>{}, /*is_warmup=*/true);
   logger.log_batch_submitted(
-      0, "demo_model", 1, 1, 1, DeviceType::CPU, std::span<const int>{},
+      0, "demo_model", 1, 1, DeviceType::CPU, std::span<const int>{},
       /*is_warmup=*/true);
   logger.log_batch_compute_span(
       0, "demo_model", 1, 1, DeviceType::CPU, warm_start, warm_end,
