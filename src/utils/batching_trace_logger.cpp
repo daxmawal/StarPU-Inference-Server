@@ -27,6 +27,41 @@ constexpr std::string_view kProcessName = "StarPU Inference Server";
 constexpr std::string_view kRequestEnqueuedTrackName = "request_enqueued";
 constexpr std::string_view kBatchBuildTrackName = "batch_build";
 constexpr std::string_view kBatchSubmittedTrackName = "batch_submitted";
+
+enum class FlowDirection : uint8_t { None, Source, Target };
+
+auto
+make_flow_bind_id(int batch_id, bool is_warmup) -> std::optional<uint64_t>
+{
+  if (batch_id < 0) {
+    return std::nullopt;
+  }
+  const uint64_t scope_bit = is_warmup ? (uint64_t{1} << 63) : 0;
+  return scope_bit | static_cast<uint64_t>(static_cast<uint32_t>(batch_id));
+}
+
+void
+append_flow_annotation(
+    std::ostringstream& line, FlowDirection direction, int batch_id,
+    bool is_warmup)
+{
+  if (direction == FlowDirection::None) {
+    return;
+  }
+  const auto bind_id = make_flow_bind_id(batch_id, is_warmup);
+  if (!bind_id) {
+    return;
+  }
+  const std::string_view scope = is_warmup ? "warming" : "serving";
+  const auto bind_label = std::format("0x{:016X}", *bind_id);
+  line << ",\"id_scope\":\"" << scope << "\",\"id2\":{\"local\":" << batch_id
+       << "},\"bind_id\":\"" << bind_label << "\"";
+  if (direction == FlowDirection::Source) {
+    line << ",\"flow_out\":true";
+  } else {
+    line << ",\"flow_in\":true";
+  }
+}
 }  // namespace
 
 auto
@@ -212,11 +247,20 @@ BatchingTraceLogger::write_record(
 
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
+  const bool is_batch_span = event == BatchingTraceEvent::BatchSubmitted;
+
   std::ostringstream line;
   line << "{\"name\":\"" << warmup_prefix << event_to_string(event)
-       << "\",\"cat\":\"batching\",\"ph\":\"i\",\"ts\":" << timestamp_us
-       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id
-       << ",\"args\":{";
+       << "\",\"cat\":\"batching\",\"ph\":\"" << (is_batch_span ? 'X' : 'i')
+       << "\",\"ts\":" << timestamp_us;
+  if (is_batch_span) {
+    line << ",\"dur\":1";
+  }
+  line << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id;
+  append_flow_annotation(
+      line, is_batch_span ? FlowDirection::Source : FlowDirection::None,
+      batch_id, is_warmup);
+  line << ",\"args\":{";
 
   bool first_arg = true;
   const auto append_delimiter = [&]() {
@@ -321,8 +365,9 @@ BatchingTraceLogger::write_batch_compute_span(
   line << "{\"name\":\"" << warmup_prefix
        << "batch_compute\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
        << start_ts << ",\"dur\":" << duration_us
-       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id
-       << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
+       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id;
+  append_flow_annotation(line, FlowDirection::Target, batch_id, is_warmup);
+  line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
        << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
        << warmup_prefix << "model_name\":\"" << escaped_model << "\"" << ",\""
        << warmup_prefix << "worker_id\":" << worker_id << ",\"" << warmup_prefix

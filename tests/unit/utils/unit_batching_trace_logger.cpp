@@ -164,4 +164,79 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::microseconds(75);
+  logger.log_batch_submitted(0, "demo_model", 2, 2, 0, DeviceType::CPU);
+  logger.log_batch_compute_span(
+      0, "demo_model", 2, 0, DeviceType::CPU, start, end);
+  logger.log_batch_submitted(
+      0, "demo_model", 1, 1, 1, DeviceType::CPU, std::span<const int>{},
+      /*is_warmup=*/true);
+  logger.log_batch_compute_span(
+      0, "demo_model", 1, 1, DeviceType::CPU, start, end,
+      /*is_warmup=*/true);
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+
+  const auto serving_submit = content.find("\"name\":\"batch_submitted\"");
+  ASSERT_NE(serving_submit, std::string::npos);
+  EXPECT_NE(
+      content.find(
+          "\"id_scope\":\"serving\",\"id2\":{\"local\":0}", serving_submit),
+      std::string::npos);
+  EXPECT_NE(
+      content.find("\"flow_out\":true", serving_submit), std::string::npos);
+  EXPECT_NE(
+      content.find("\"bind_id\":\"0x0000000000000000\"", serving_submit),
+      std::string::npos);
+
+  const auto warming_submit =
+      content.find("\"name\":\"warming_batch_submitted\"");
+  ASSERT_NE(warming_submit, std::string::npos);
+  EXPECT_NE(
+      content.find(
+          "\"id_scope\":\"warming\",\"id2\":{\"local\":0}", warming_submit),
+      std::string::npos);
+  EXPECT_NE(
+      content.find("\"flow_out\":true", warming_submit), std::string::npos);
+  EXPECT_NE(
+      content.find("\"bind_id\":\"0x8000000000000000\"", warming_submit),
+      std::string::npos);
+
+  const auto serving_compute = content.find("\"name\":\"batch_compute\"");
+  ASSERT_NE(serving_compute, std::string::npos);
+  EXPECT_NE(
+      content.find("\"flow_in\":true", serving_compute), std::string::npos);
+  EXPECT_NE(
+      content.find("\"bind_id\":\"0x0000000000000000\"", serving_compute),
+      std::string::npos);
+
+  const auto warming_compute =
+      content.find("\"name\":\"warming_batch_compute\"");
+  ASSERT_NE(warming_compute, std::string::npos);
+  EXPECT_NE(
+      content.find("\"flow_in\":true", warming_compute), std::string::npos);
+  EXPECT_NE(
+      content.find("\"bind_id\":\"0x8000000000000000\"", warming_compute),
+      std::string::npos);
+
+  EXPECT_EQ(content.find("\"ph\":\"s\""), std::string::npos);
+  EXPECT_EQ(content.find("\"ph\":\"f\""), std::string::npos);
+  EXPECT_EQ(content.find(",\"id\":"), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 }}  // namespace starpu_server
