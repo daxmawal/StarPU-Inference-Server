@@ -395,9 +395,8 @@ BatchingTraceLogger::write_batch_compute_span(
 
   std::ostringstream line;
   line << "{\"name\":\"" << warmup_prefix
-       << "batch_compute\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
-       << start_ts << ",\"dur\":" << duration_us
-       << ",\"pid\":" << kTraceProcessId
+       << "inference\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":" << start_ts
+       << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << lane_assignment.thread_id;
   append_flow_annotation(line, FlowDirection::Target, batch_id, is_warmup);
   line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id

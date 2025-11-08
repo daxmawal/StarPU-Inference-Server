@@ -179,8 +179,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   EXPECT_NE(
       content.find("\"name\":\"warming_batch_build\""), std::string::npos);
   EXPECT_NE(content.find("\"warming_batch_id\""), std::string::npos);
-  EXPECT_NE(
-      content.find("\"name\":\"warming_batch_compute\""), std::string::npos);
+  EXPECT_NE(content.find("\"name\":\"warming_inference\""), std::string::npos);
   EXPECT_NE(
       content.find(
           "\"warming_batch_size\":1,\"warming_model_name\":\"demo_model\","
@@ -232,10 +231,10 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
     return std::stoi(tid_str);
   };
 
-  const auto first_compute = content.find("\"name\":\"batch_compute\"");
+  const auto first_compute = content.find("\"name\":\"inference\"");
   ASSERT_NE(first_compute, std::string::npos);
   const auto second_compute =
-      content.find("\"name\":\"batch_compute\"", first_compute + 1);
+      content.find("\"name\":\"inference\"", first_compute + 1);
   ASSERT_NE(second_compute, std::string::npos);
 
   const int tid_one = extract_tid(first_compute);
@@ -282,10 +281,9 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   const std::string content(
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
-  const auto serving_compute = content.find("\"name\":\"batch_compute\"");
+  const auto serving_compute = content.find("\"name\":\"inference\"");
   ASSERT_NE(serving_compute, std::string::npos);
-  const auto warming_compute =
-      content.find("\"name\":\"warming_batch_compute\"");
+  const auto warming_compute = content.find("\"name\":\"warming_inference\"");
   ASSERT_NE(warming_compute, std::string::npos);
 
   const auto serving_build =
