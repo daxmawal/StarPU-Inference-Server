@@ -24,9 +24,9 @@ constexpr int kRequestEnqueuedSortIndex = -3;
 constexpr int kBatchBuildSortIndex = -2;
 constexpr int kBatchSubmittedSortIndex = -1;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
-constexpr std::string_view kRequestEnqueuedTrackName = "request_enqueued";
-constexpr std::string_view kBatchBuildTrackName = "batch_build";
-constexpr std::string_view kBatchSubmittedTrackName = "batch_submitted";
+constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
+constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
+constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
 
 enum class FlowDirection : uint8_t {
   None,
@@ -74,6 +74,18 @@ append_flow_annotation(
   if (emit_flow_in) {
     line << ",\"flow_in\":true";
   }
+}
+
+auto
+format_worker_label(
+    int worker_id, std::string_view worker_type_str,
+    int device_id) -> std::string
+{
+  if (device_id >= 0) {
+    return std::format(
+        "device {} worker {} ({})", device_id, worker_id, worker_type_str);
+  }
+  return std::format("worker-{} ({})", worker_id, worker_type_str);
 }
 }  // namespace
 
@@ -155,19 +167,19 @@ BatchingTraceLogger::log_request_enqueued(
   write_record(
       BatchingTraceEvent::RequestQueued, model_name, request_id, kInvalidId, 0,
       kInvalidId, DeviceType::Unknown, std::span<const int>{}, std::nullopt,
-      is_warmup);
+      is_warmup, kInvalidId);
 }
 
 void
 BatchingTraceLogger::log_batch_submitted(
     int batch_id, std::string_view model_name, std::size_t logical_jobs,
     int worker_id, DeviceType worker_type, std::span<const int> request_ids,
-    bool is_warmup)
+    bool is_warmup, int device_id)
 {
   write_record(
       BatchingTraceEvent::BatchSubmitted, model_name, kInvalidId, batch_id,
       logical_jobs, worker_id, worker_type, request_ids, std::nullopt,
-      is_warmup);
+      is_warmup, device_id);
 }
 
 void
@@ -198,7 +210,8 @@ BatchingTraceLogger::log_batch_compute_span(
     int batch_id, std::string_view model_name, std::size_t batch_size,
     int worker_id, DeviceType worker_type,
     std::chrono::high_resolution_clock::time_point codelet_start,
-    std::chrono::high_resolution_clock::time_point codelet_end, bool is_warmup)
+    std::chrono::high_resolution_clock::time_point codelet_end, bool is_warmup,
+    int device_id)
 {
   if (!enabled() || worker_id < 0) {
     return;
@@ -213,7 +226,7 @@ BatchingTraceLogger::log_batch_compute_span(
   const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
   write_batch_compute_span(
       model_name, batch_id, batch_size, worker_id, worker_type, *start_ts,
-      duration, is_warmup);
+      duration, is_warmup, device_id);
 }
 
 void
@@ -221,7 +234,7 @@ BatchingTraceLogger::write_record(
     BatchingTraceEvent event, std::string_view model_name, int request_id,
     int batch_id, std::size_t logical_jobs, int worker_id,
     DeviceType worker_type, std::span<const int> request_ids,
-    std::optional<int64_t> override_timestamp, bool is_warmup)
+    std::optional<int64_t> override_timestamp, bool is_warmup, int device_id)
 {
   if (!enabled()) {
     return;
@@ -239,7 +252,7 @@ BatchingTraceLogger::write_record(
   std::string_view thread_name = kRequestEnqueuedTrackName;
   int sort_index = kRequestEnqueuedSortIndex;
   if (is_worker_lane) {
-    worker_label = std::format("worker-{} ({})", worker_id, worker_type_str);
+    worker_label = format_worker_label(worker_id, worker_type_str, device_id);
     thread_name = worker_label;
     sort_index = worker_id + kWorkerThreadOffset;
     thread_id = worker_id + kWorkerThreadOffset;
@@ -356,7 +369,7 @@ void
 BatchingTraceLogger::write_batch_compute_span(
     std::string_view model_name, int batch_id, std::size_t batch_size,
     int worker_id, DeviceType worker_type, int64_t start_ts,
-    int64_t duration_us, bool is_warmup)
+    int64_t duration_us, bool is_warmup, int device_id)
 {
   if (worker_id < 0) {
     return;
@@ -370,7 +383,7 @@ BatchingTraceLogger::write_batch_compute_span(
   const int thread_id = worker_id + kWorkerThreadOffset;
   const int sort_index = worker_id + kWorkerThreadOffset;
   const std::string worker_label =
-      std::format("worker-{} ({})", worker_id, worker_type_str);
+      format_worker_label(worker_id, worker_type_str, device_id);
 
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 

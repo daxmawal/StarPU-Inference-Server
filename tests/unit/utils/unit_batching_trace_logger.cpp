@@ -59,6 +59,34 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::microseconds(50);
+  logger.log_batch_submitted(
+      3, "demo_model", 1, 4, DeviceType::CUDA, std::span<const int>{},
+      /*is_warmup=*/false, /*device_id=*/7);
+  logger.log_batch_compute_span(
+      3, "demo_model", 1, 4, DeviceType::CUDA, start, end,
+      /*is_warmup=*/false, /*device_id=*/7);
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+
+  EXPECT_NE(content.find("device 7 worker 4 (cuda)"), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
 {
   const auto trace_path = make_temp_trace_path();
@@ -205,9 +233,11 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
       content.find("\"name\":\"warming_batch_compute\"");
   ASSERT_NE(warming_compute, std::string::npos);
 
-  const auto serving_build = content.find("\"name\":\"batch_build\"");
+  const auto serving_build =
+      content.find("\"name\":\"batch_build\",\"cat\":\"batching\"");
   ASSERT_NE(serving_build, std::string::npos);
-  const auto serving_submit = content.find("\"name\":\"batch_submitted\"");
+  const auto serving_submit =
+      content.find("\"name\":\"batch_submitted\",\"cat\":\"batching\"");
   ASSERT_NE(serving_submit, std::string::npos);
   EXPECT_LT(serving_build, serving_submit);
   EXPECT_NE(

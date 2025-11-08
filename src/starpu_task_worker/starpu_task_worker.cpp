@@ -545,7 +545,8 @@ StarPUTaskRunner::prepare_job_completion_callback(
           job_sptr->submission_id(), job_sptr->model_name(), actual_batch_size,
           job_sptr->get_worker_id(), job_sptr->get_executed_on(),
           job_sptr->timing_info().codelet_start_time,
-          job_sptr->timing_info().codelet_end_time, warmup_job);
+          job_sptr->timing_info().codelet_end_time, warmup_job,
+          job_sptr->get_device_id());
     }
 
     if (prev_callback) {
@@ -1131,7 +1132,7 @@ StarPUTaskRunner::submit_inference_task(
       tracer.log_batch_submitted(
           job->submission_id(), job->model_name(), logical_jobs,
           job->get_worker_id(), job->get_executed_on(),
-          std::span<const int>(request_ids), warmup_job);
+          std::span<const int>(request_ids), warmup_job, job->get_device_id());
     }
     return;
   }
@@ -1190,7 +1191,8 @@ StarPUTaskRunner::submit_inference_task(
         tracer.log_batch_submitted(
             job->submission_id(), job->model_name(), logical_jobs,
             job->get_worker_id(), job->get_executed_on(),
-            std::span<const int>(request_ids), warmup_job);
+            std::span<const int>(request_ids), warmup_job,
+            job->get_device_id());
       }
     }
     release_output_slot_on_exception = false;

@@ -34,7 +34,8 @@ class BatchingTraceLogger {
   void log_batch_submitted(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
       int worker_id = -1, DeviceType worker_type = DeviceType::Unknown,
-      std::span<const int> request_ids = {}, bool is_warmup = false);
+      std::span<const int> request_ids = {}, bool is_warmup = false,
+      int device_id = -1);
   void log_batch_build_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,
       std::chrono::high_resolution_clock::time_point start_time,
@@ -45,7 +46,7 @@ class BatchingTraceLogger {
       int worker_id, DeviceType worker_type = DeviceType::Unknown,
       std::chrono::high_resolution_clock::time_point codelet_start = {},
       std::chrono::high_resolution_clock::time_point codelet_end = {},
-      bool is_warmup = false);
+      bool is_warmup = false, int device_id = -1);
 
  private:
   void write_record(
@@ -53,11 +54,11 @@ class BatchingTraceLogger {
       int batch_id, std::size_t logical_jobs, int worker_id,
       DeviceType worker_type, std::span<const int> request_ids,
       std::optional<int64_t> override_timestamp = std::nullopt,
-      bool is_warmup = false);
+      bool is_warmup = false, int device_id = -1);
   void write_batch_compute_span(
       std::string_view model_name, int batch_id, std::size_t batch_size,
       int worker_id, DeviceType worker_type, int64_t start_ts,
-      int64_t duration_us, bool is_warmup);
+      int64_t duration_us, bool is_warmup, int device_id);
   void write_batch_build_span(
       std::string_view model_name, int batch_id, std::size_t batch_size,
       int64_t start_ts, int64_t duration_us, std::span<const int> request_ids,
