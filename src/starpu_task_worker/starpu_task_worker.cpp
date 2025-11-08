@@ -773,6 +773,8 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
   const bool enable_wait = opts_->batching.batch_coalesce_timeout_ms > 0;
   const auto batch_coalesce_timeout =
       std::chrono::milliseconds(opts_->batching.batch_coalesce_timeout_ms);
+  const auto coalesce_deadline =
+      enable_wait ? clock::now() + batch_coalesce_timeout : clock::time_point{};
 
   const auto& target_worker = first_job->get_fixed_worker_id();
   bool stop_collection = false;
@@ -781,7 +783,12 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     std::shared_ptr<InferenceJob> next;
     if (bool got_job = queue_->try_pop(next); !got_job) {
       if (enable_wait) {
-        got_job = queue_->wait_for_and_pop(next, batch_coalesce_timeout);
+        const auto now = clock::now();
+        if (now >= coalesce_deadline) {
+          break;
+        }
+        const auto remaining = coalesce_deadline - now;
+        got_job = queue_->wait_for_and_pop(next, remaining);
       }
       if (!got_job) {
         break;
