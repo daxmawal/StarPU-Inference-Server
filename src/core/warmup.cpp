@@ -3,6 +3,7 @@
 #include <torch/torch.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <format>
@@ -95,9 +96,6 @@ WarmupRunner::client_worker(
           inputs, outputs_ref_, request_id, {}, {}, opts_.name);
       job->set_fixed_worker_id(worker_id);
 
-      client_utils::log_job_enqueued(
-          opts_, request_id, total, job->timing_info().enqueued_time);
-
       if (!queue.push(job)) {
         log_warning(std::format(
             "[Warmup] Failed to enqueue job {}: queue shutting down",
@@ -105,6 +103,11 @@ WarmupRunner::client_worker(
         queue.shutdown();
         return;
       }
+      const auto enqueued_now = std::chrono::high_resolution_clock::now();
+      job->timing_info().enqueued_time = enqueued_now;
+      job->timing_info().last_enqueued_time = enqueued_now;
+      client_utils::log_job_enqueued(
+          opts_, request_id, total, job->timing_info().enqueued_time);
       request_id++;
     }
   }

@@ -31,7 +31,8 @@ class BatchingTraceLogger {
   [[nodiscard]] auto enabled() const -> bool;
 
   void log_request_enqueued(
-      int request_id, std::string_view model_name, bool is_warmup = false);
+      int request_id, std::string_view model_name, bool is_warmup = false,
+      std::chrono::high_resolution_clock::time_point event_time = {});
   void log_batch_submitted(
       int batch_id, std::string_view model_name, std::size_t logical_jobs,
       int worker_id = -1, DeviceType worker_type = DeviceType::Unknown,
@@ -89,6 +90,9 @@ class BatchingTraceLogger {
   void write_process_metadata_locked();
   void ensure_thread_metadata_locked(
       int thread_id, std::string_view thread_name, int sort_index);
+  void remember_request_enqueue_timestamp(int request_id, int64_t timestamp_us);
+  [[nodiscard]] auto consume_latest_request_enqueue_timestamp(
+      std::span<const int> request_ids) -> std::optional<int64_t>;
   [[nodiscard]] auto now_us() const -> int64_t;
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
@@ -126,6 +130,8 @@ class BatchingTraceLogger {
 
   std::unordered_map<int, std::vector<WorkerLaneState>> worker_lanes_;
   static constexpr int kWorkerLaneSortStride = 1000;
+  std::mutex request_time_mutex_;
+  std::unordered_map<int, int64_t> request_enqueue_times_;
 };
 
 }  // namespace starpu_server

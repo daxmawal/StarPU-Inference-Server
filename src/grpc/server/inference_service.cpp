@@ -418,13 +418,20 @@ InferenceServiceImpl::submit_job_async(
   {
     NvtxRange queue_scope("grpc_submit_starpu_queue");
     pushed = queue_->push(job);
+    if (pushed) {
+      const auto enqueued_now = std::chrono::high_resolution_clock::now();
+      job->timing_info().enqueued_time = enqueued_now;
+      job->timing_info().last_enqueued_time = enqueued_now;
+    }
   }
   if (!pushed) {
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
   auto& tracer = BatchingTraceLogger::instance();
   if (tracer.enabled()) {
-    tracer.log_request_enqueued(job->get_request_id(), job->model_name());
+    tracer.log_request_enqueued(
+        job->get_request_id(), job->model_name(), /*is_warmup=*/false,
+        job->timing_info().last_enqueued_time);
   }
   return Status::OK;
 }

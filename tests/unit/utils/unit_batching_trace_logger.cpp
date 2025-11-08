@@ -185,6 +185,45 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const auto base = std::chrono::high_resolution_clock::now();
+  const auto first = base + std::chrono::microseconds(10);
+  const auto second = first + std::chrono::microseconds(5);
+  const auto last = first + std::chrono::microseconds(25);
+  logger.log_request_enqueued(101, "demo_model", false, first);
+  logger.log_request_enqueued(102, "demo_model", false, second);
+  logger.log_request_enqueued(103, "demo_model", false, last);
+  const std::array<int, 3> request_ids{101, 102, 103};
+  logger.log_batch_enqueue_span(
+      99, "demo_model", first, second, std::span<const int>(request_ids));
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+
+  const auto window_pos = content.find("\"name\":\"request_enqueue_window\"");
+  ASSERT_NE(window_pos, std::string::npos);
+  const auto dur_pos = content.find("\"dur\":", window_pos);
+  ASSERT_NE(dur_pos, std::string::npos);
+  const auto value_start = dur_pos + std::string("\"dur\":").size();
+  const auto value_end = content.find_first_of(",}", value_start);
+  ASSERT_NE(value_end, std::string::npos);
+  const auto duration =
+      std::stoll(content.substr(value_start, value_end - value_start));
+  EXPECT_EQ(duration, 25);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
 {
   const auto trace_path = make_temp_trace_path();

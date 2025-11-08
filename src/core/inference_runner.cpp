@@ -172,18 +172,22 @@ client_worker(
     const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
     auto job = client_utils::create_job(
         inputs, outputs_ref, request_id, {}, {}, opts.name);
-    client_utils::log_job_enqueued(
-        opts, request_id, request_nb, job->timing_info().enqueued_time);
     if (!queue.push(job)) {
       log_warning(std::format(
           "[Client] Failed to enqueue job {}: queue shutting down",
           request_id));
       break;
-    } else {
-      auto& tracer = BatchingTraceLogger::instance();
-      if (tracer.enabled()) {
-        tracer.log_request_enqueued(job->get_request_id(), job->model_name());
-      }
+    }
+    const auto enqueued_now = std::chrono::high_resolution_clock::now();
+    job->timing_info().enqueued_time = enqueued_now;
+    job->timing_info().last_enqueued_time = enqueued_now;
+    client_utils::log_job_enqueued(
+        opts, request_id, request_nb, job->timing_info().enqueued_time);
+    auto& tracer = BatchingTraceLogger::instance();
+    if (tracer.enabled()) {
+      tracer.log_request_enqueued(
+          job->get_request_id(), job->model_name(), /*is_warmup=*/false,
+          enqueued_now);
     }
   }
 

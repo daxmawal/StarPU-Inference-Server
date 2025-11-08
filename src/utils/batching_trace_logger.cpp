@@ -172,12 +172,15 @@ BatchingTraceLogger::enabled() const -> bool
 
 void
 BatchingTraceLogger::log_request_enqueued(
-    int request_id, std::string_view model_name, bool is_warmup)
+    int request_id, std::string_view model_name, bool is_warmup,
+    std::chrono::high_resolution_clock::time_point event_time)
 {
+  const auto override_timestamp =
+      relative_timestamp_from_time_point(event_time);
   write_record(
       BatchingTraceEvent::RequestQueued, model_name, request_id, kInvalidId, 0,
-      kInvalidId, DeviceType::Unknown, std::span<const int>{}, std::nullopt,
-      is_warmup, kInvalidId);
+      kInvalidId, DeviceType::Unknown, std::span<const int>{},
+      override_timestamp, is_warmup, kInvalidId);
 }
 
 void
@@ -281,6 +284,10 @@ BatchingTraceLogger::write_record(
                                 ? *override_timestamp
                                 : relative_timestamp_us(now_us());
 
+  if (event == BatchingTraceEvent::RequestQueued) {
+    remember_request_enqueue_timestamp(request_id, timestamp_us);
+  }
+
   const auto escaped_model = escape_json_string(model_name);
   const auto worker_type_str = device_type_to_string(worker_type);
   const bool is_worker_lane = worker_id >= 0;
@@ -374,6 +381,40 @@ BatchingTraceLogger::write_record(
   }
   ensure_thread_metadata_locked(thread_id, thread_name, sort_index);
   write_line_locked(line.str());
+}
+
+void
+BatchingTraceLogger::remember_request_enqueue_timestamp(
+    int request_id, int64_t timestamp_us)
+{
+  if (request_id < 0) {
+    return;
+  }
+  std::lock_guard lock(request_time_mutex_);
+  request_enqueue_times_[request_id] = timestamp_us;
+}
+
+auto
+BatchingTraceLogger::consume_latest_request_enqueue_timestamp(
+    std::span<const int> request_ids) -> std::optional<int64_t>
+{
+  std::optional<int64_t> latest;
+  std::lock_guard lock(request_time_mutex_);
+  for (int request_id : request_ids) {
+    if (request_id < 0) {
+      continue;
+    }
+    const auto it = request_enqueue_times_.find(request_id);
+    if (it == request_enqueue_times_.end()) {
+      continue;
+    }
+    const int64_t ts = it->second;
+    if (!latest || ts > *latest) {
+      latest = ts;
+    }
+    request_enqueue_times_.erase(it);
+  }
+  return latest;
 }
 
 auto
@@ -508,13 +549,23 @@ BatchingTraceLogger::write_batch_enqueue_span(
     duration_us = 1;
   }
 
+  auto adjusted_duration = duration_us;
+  const auto latest_request_ts =
+      consume_latest_request_enqueue_timestamp(request_ids);
+  if (latest_request_ts) {
+    const int64_t requested_duration = *latest_request_ts - start_ts;
+    if (requested_duration > adjusted_duration) {
+      adjusted_duration = std::max<int64_t>(int64_t{1}, requested_duration);
+    }
+  }
+
   const auto escaped_model = escape_json_string(model_name);
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
   std::ostringstream line;
   line << "{\"name\":\"" << warmup_prefix
        << "request_enqueue_window\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
-       << start_ts << ",\"dur\":" << duration_us
+       << start_ts << ",\"dur\":" << adjusted_duration
        << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << kBatchEnqueueTrackId;
   line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
        << ",\"" << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
@@ -672,6 +723,10 @@ BatchingTraceLogger::close_stream_locked()
   trace_start_us_ = 0;
   trace_start_initialized_ = false;
   worker_lanes_.clear();
+  {
+    std::lock_guard request_lock(request_time_mutex_);
+    request_enqueue_times_.clear();
+  }
 }
 
 void
