@@ -172,14 +172,25 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   logger.configure(true, trace_path.string());
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::microseconds(75);
+  const auto build_start = start - std::chrono::microseconds(50);
+  const auto build_end = build_start + std::chrono::microseconds(20);
+  const auto warm_build_start = end + std::chrono::microseconds(50);
+  const auto warm_build_end = warm_build_start + std::chrono::microseconds(20);
+  const auto warm_start = warm_build_end + std::chrono::microseconds(25);
+  const auto warm_end = warm_start + std::chrono::microseconds(75);
+  logger.log_batch_build_span(
+      0, "demo_model", 2, build_start, build_end, std::span<const int>{});
   logger.log_batch_submitted(0, "demo_model", 2, 2, 0, DeviceType::CPU);
   logger.log_batch_compute_span(
       0, "demo_model", 2, 0, DeviceType::CPU, start, end);
+  logger.log_batch_build_span(
+      0, "demo_model", 1, warm_build_start, warm_build_end,
+      std::span<const int>{}, /*is_warmup=*/true);
   logger.log_batch_submitted(
       0, "demo_model", 1, 1, 1, DeviceType::CPU, std::span<const int>{},
       /*is_warmup=*/true);
   logger.log_batch_compute_span(
-      0, "demo_model", 1, 1, DeviceType::CPU, start, end,
+      0, "demo_model", 1, 1, DeviceType::CPU, warm_start, warm_end,
       /*is_warmup=*/true);
   logger.configure(false, "");
 
@@ -188,43 +199,85 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   const std::string content(
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
+  const auto serving_compute = content.find("\"name\":\"batch_compute\"");
+  ASSERT_NE(serving_compute, std::string::npos);
+  const auto warming_compute =
+      content.find("\"name\":\"warming_batch_compute\"");
+  ASSERT_NE(warming_compute, std::string::npos);
 
+  const auto serving_build = content.find("\"name\":\"batch_build\"");
+  ASSERT_NE(serving_build, std::string::npos);
   const auto serving_submit = content.find("\"name\":\"batch_submitted\"");
   ASSERT_NE(serving_submit, std::string::npos);
+  EXPECT_LT(serving_build, serving_submit);
+  EXPECT_NE(
+      content.find(
+          "\"id_scope\":\"serving\",\"id2\":{\"local\":0}", serving_build),
+      std::string::npos);
+  const auto serving_build_flow_out =
+      content.find("\"flow_out\":true", serving_build);
+  ASSERT_NE(serving_build_flow_out, std::string::npos);
+  EXPECT_LT(serving_build_flow_out, serving_submit);
+  const auto serving_build_bind =
+      content.find("\"bind_id\":\"0x0000000000000000\"", serving_build);
+  ASSERT_NE(serving_build_bind, std::string::npos);
+  EXPECT_LT(serving_build_bind, serving_submit);
   EXPECT_NE(
       content.find(
           "\"id_scope\":\"serving\",\"id2\":{\"local\":0}", serving_submit),
       std::string::npos);
-  EXPECT_NE(
-      content.find("\"flow_out\":true", serving_submit), std::string::npos);
+  const auto serving_submit_flow_in =
+      content.find("\"flow_in\":true", serving_submit);
+  ASSERT_NE(serving_submit_flow_in, std::string::npos);
+  EXPECT_LT(serving_submit_flow_in, serving_compute);
+  const auto serving_submit_flow_out =
+      content.find("\"flow_out\":true", serving_submit);
+  ASSERT_NE(serving_submit_flow_out, std::string::npos);
+  EXPECT_LT(serving_submit_flow_out, serving_compute);
   EXPECT_NE(
       content.find("\"bind_id\":\"0x0000000000000000\"", serving_submit),
       std::string::npos);
 
   const auto warming_submit =
       content.find("\"name\":\"warming_batch_submitted\"");
+  const auto warming_build = content.find("\"name\":\"warming_batch_build\"");
+  ASSERT_NE(warming_build, std::string::npos);
   ASSERT_NE(warming_submit, std::string::npos);
+  EXPECT_LT(warming_build, warming_submit);
+  EXPECT_NE(
+      content.find(
+          "\"id_scope\":\"warming\",\"id2\":{\"local\":0}", warming_build),
+      std::string::npos);
+  const auto warming_build_flow_out =
+      content.find("\"flow_out\":true", warming_build);
+  ASSERT_NE(warming_build_flow_out, std::string::npos);
+  EXPECT_LT(warming_build_flow_out, warming_submit);
+  const auto warming_build_bind =
+      content.find("\"bind_id\":\"0x8000000000000000\"", warming_build);
+  ASSERT_NE(warming_build_bind, std::string::npos);
+  EXPECT_LT(warming_build_bind, warming_submit);
   EXPECT_NE(
       content.find(
           "\"id_scope\":\"warming\",\"id2\":{\"local\":0}", warming_submit),
       std::string::npos);
-  EXPECT_NE(
-      content.find("\"flow_out\":true", warming_submit), std::string::npos);
+  const auto warming_submit_flow_in =
+      content.find("\"flow_in\":true", warming_submit);
+  ASSERT_NE(warming_submit_flow_in, std::string::npos);
+  EXPECT_LT(warming_submit_flow_in, warming_compute);
+  const auto warming_submit_flow_out =
+      content.find("\"flow_out\":true", warming_submit);
+  ASSERT_NE(warming_submit_flow_out, std::string::npos);
+  EXPECT_LT(warming_submit_flow_out, warming_compute);
   EXPECT_NE(
       content.find("\"bind_id\":\"0x8000000000000000\"", warming_submit),
       std::string::npos);
 
-  const auto serving_compute = content.find("\"name\":\"batch_compute\"");
-  ASSERT_NE(serving_compute, std::string::npos);
   EXPECT_NE(
       content.find("\"flow_in\":true", serving_compute), std::string::npos);
   EXPECT_NE(
       content.find("\"bind_id\":\"0x0000000000000000\"", serving_compute),
       std::string::npos);
 
-  const auto warming_compute =
-      content.find("\"name\":\"warming_batch_compute\"");
-  ASSERT_NE(warming_compute, std::string::npos);
   EXPECT_NE(
       content.find("\"flow_in\":true", warming_compute), std::string::npos);
   EXPECT_NE(

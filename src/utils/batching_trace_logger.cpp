@@ -28,7 +28,12 @@ constexpr std::string_view kRequestEnqueuedTrackName = "request_enqueued";
 constexpr std::string_view kBatchBuildTrackName = "batch_build";
 constexpr std::string_view kBatchSubmittedTrackName = "batch_submitted";
 
-enum class FlowDirection : uint8_t { None, Source, Target };
+enum class FlowDirection : uint8_t {
+  None,
+  Source,
+  Target,
+  SourceAndTarget,
+};
 
 auto
 make_flow_bind_id(int batch_id, bool is_warmup) -> std::optional<uint64_t>
@@ -52,13 +57,21 @@ append_flow_annotation(
   if (!bind_id) {
     return;
   }
+  const bool emit_flow_out = direction == FlowDirection::Source ||
+                             direction == FlowDirection::SourceAndTarget;
+  const bool emit_flow_in = direction == FlowDirection::Target ||
+                            direction == FlowDirection::SourceAndTarget;
+  if (!emit_flow_out && !emit_flow_in) {
+    return;
+  }
   const std::string_view scope = is_warmup ? "warming" : "serving";
   const auto bind_label = std::format("0x{:016X}", *bind_id);
   line << ",\"id_scope\":\"" << scope << "\",\"id2\":{\"local\":" << batch_id
        << "},\"bind_id\":\"" << bind_label << "\"";
-  if (direction == FlowDirection::Source) {
+  if (emit_flow_out) {
     line << ",\"flow_out\":true";
-  } else {
+  }
+  if (emit_flow_in) {
     line << ",\"flow_in\":true";
   }
 }
@@ -257,9 +270,9 @@ BatchingTraceLogger::write_record(
     line << ",\"dur\":1";
   }
   line << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id;
-  append_flow_annotation(
-      line, is_batch_span ? FlowDirection::Source : FlowDirection::None,
-      batch_id, is_warmup);
+  const auto span_flow_direction =
+      is_batch_span ? FlowDirection::SourceAndTarget : FlowDirection::None;
+  append_flow_annotation(line, span_flow_direction, batch_id, is_warmup);
   line << ",\"args\":{";
 
   bool first_arg = true;
@@ -400,10 +413,11 @@ BatchingTraceLogger::write_batch_build_span(
   line << "{\"name\":\"" << warmup_prefix
        << "batch_build\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":" << start_ts
        << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
-       << ",\"tid\":" << kBatchBuildTrackId << ",\"args\":{" << "\""
-       << warmup_prefix << "batch_id\":" << batch_id << ",\"" << warmup_prefix
-       << "batch_size\":" << batch_size << ",\"" << warmup_prefix
-       << "model_name\":\"" << escaped_model << "\"";
+       << ",\"tid\":" << kBatchBuildTrackId;
+  append_flow_annotation(line, FlowDirection::Source, batch_id, is_warmup);
+  line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
+       << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
+       << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
   if (!request_ids.empty()) {
     line << ",\"" << warmup_prefix << "request_ids\":[";
     for (size_t idx = 0; idx < request_ids.size(); ++idx) {
