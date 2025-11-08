@@ -28,7 +28,7 @@ constexpr int kBatchBuildSortIndex = -1;
 constexpr int kBatchSubmittedSortIndex = 0;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
 constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
-constexpr std::string_view kBatchEnqueueTrackName = "batch window";
+constexpr std::string_view kBatchEnqueueTrackName = "batch";
 constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
 constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
 
@@ -564,9 +564,9 @@ BatchingTraceLogger::write_batch_enqueue_span(
 
   std::ostringstream line;
   line << "{\"name\":\"" << warmup_prefix
-       << "request_enqueue_window\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
-       << start_ts << ",\"dur\":" << adjusted_duration
-       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << kBatchEnqueueTrackId;
+       << "batch\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":" << start_ts
+       << ",\"dur\":" << adjusted_duration << ",\"pid\":" << kTraceProcessId
+       << ",\"tid\":" << kBatchEnqueueTrackId;
   line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
        << ",\"" << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
   if (!request_ids.empty()) {

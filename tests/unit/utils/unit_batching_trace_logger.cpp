@@ -50,7 +50,7 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
   EXPECT_NE(content.find("\"tid\":3"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":4"), std::string::npos);
   EXPECT_NE(content.find("request_enqueued"), std::string::npos);
-  EXPECT_NE(content.find("request_enqueue_window"), std::string::npos);
+  EXPECT_NE(content.find("\"name\":\"batch\""), std::string::npos);
   EXPECT_NE(content.find("batch_submitted"), std::string::npos);
   EXPECT_NE(content.find("\"batch_size\":1"), std::string::npos);
   EXPECT_NE(content.find("\"request_id\":1"), std::string::npos);
@@ -173,8 +173,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
 
-  EXPECT_NE(
-      content.find("\"name\":\"request_enqueue_window\""), std::string::npos);
+  EXPECT_NE(content.find("\"name\":\"batch\""), std::string::npos);
   EXPECT_NE(content.find("\"tid\":4"), std::string::npos);
   EXPECT_NE(content.find("\"request_ids\":[4,5,6]"), std::string::npos);
   EXPECT_NE(content.find("\"start_ts\":"), std::string::npos);
@@ -209,7 +208,7 @@ TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
 
-  const auto window_pos = content.find("\"name\":\"request_enqueue_window\"");
+  const auto window_pos = content.find("\"name\":\"batch\"");
   ASSERT_NE(window_pos, std::string::npos);
   const auto dur_pos = content.find("\"dur\":", window_pos);
   ASSERT_NE(dur_pos, std::string::npos);
