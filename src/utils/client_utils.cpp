@@ -134,6 +134,7 @@ create_job(
   }
   job->set_start_time(start_time);
   job->timing_info().enqueued_time = enqueued_time;
+  job->timing_info().last_enqueued_time = enqueued_time;
 
   return job;
 }

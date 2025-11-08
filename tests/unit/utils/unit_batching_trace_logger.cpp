@@ -28,6 +28,12 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
 
   logger.configure(true, trace_path.string());
   logger.log_request_enqueued(1, "demo_model");
+  const auto enqueue_start = std::chrono::high_resolution_clock::now();
+  const auto enqueue_end = enqueue_start + std::chrono::microseconds(10);
+  const std::array<int, 2> request_ids{0, 1};
+  logger.log_batch_enqueue_span(
+      5, "demo_model", enqueue_start, enqueue_end,
+      std::span<const int>(request_ids));
   logger.log_batch_submitted(5, "demo_model", 1);
   logger.log_batch_submitted(7, "demo_model", 1, 0, DeviceType::CPU);
   logger.configure(false, "");
@@ -42,7 +48,9 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
   EXPECT_NE(content.find("\"tid\":1"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":2"), std::string::npos);
   EXPECT_NE(content.find("\"tid\":3"), std::string::npos);
+  EXPECT_NE(content.find("\"tid\":4"), std::string::npos);
   EXPECT_NE(content.find("request_enqueued"), std::string::npos);
+  EXPECT_NE(content.find("request_enqueue_window"), std::string::npos);
   EXPECT_NE(content.find("batch_submitted"), std::string::npos);
   EXPECT_NE(content.find("\"batch_size\":1"), std::string::npos);
   EXPECT_NE(content.find("\"request_id\":1"), std::string::npos);
@@ -141,6 +149,37 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
   EXPECT_NE(content.find("\"batch_size\":9"), std::string::npos);
   EXPECT_EQ(content.find("\"logical_jobs\":"), std::string::npos);
   EXPECT_EQ(content.find("\"sample_count\":"), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::microseconds(60);
+  const std::array<int, 3> request_ids{4, 5, 6};
+  logger.log_batch_enqueue_span(
+      21, "demo_model", start, end, std::span<const int>(request_ids));
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+
+  EXPECT_NE(
+      content.find("\"name\":\"request_enqueue_window\""), std::string::npos);
+  EXPECT_NE(content.find("\"tid\":4"), std::string::npos);
+  EXPECT_NE(content.find("\"request_ids\":[4,5,6]"), std::string::npos);
+  EXPECT_NE(content.find("\"start_ts\":"), std::string::npos);
+  EXPECT_NE(content.find("\"end_ts\":"), std::string::npos);
+  EXPECT_EQ(content.find("\"batch_size\":"), std::string::npos);
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);

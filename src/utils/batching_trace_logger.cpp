@@ -17,15 +17,18 @@ namespace {
 constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
 constexpr int kRequestEnqueuedTrackId = 1;
-constexpr int kBatchBuildTrackId = 2;
-constexpr int kBatchSubmittedTrackId = 3;
+constexpr int kBatchEnqueueTrackId = 2;
+constexpr int kBatchBuildTrackId = 3;
+constexpr int kBatchSubmittedTrackId = 4;
 constexpr int kWorkerThreadOffset = 10;
 constexpr int kWorkerLaneThreadStride = 1000;
 constexpr int kRequestEnqueuedSortIndex = -3;
-constexpr int kBatchBuildSortIndex = -2;
-constexpr int kBatchSubmittedSortIndex = -1;
+constexpr int kBatchEnqueueSortIndex = -2;
+constexpr int kBatchBuildSortIndex = -1;
+constexpr int kBatchSubmittedSortIndex = 0;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
 constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
+constexpr std::string_view kBatchEnqueueTrackName = "batch window";
 constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
 constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
 
@@ -210,6 +213,33 @@ BatchingTraceLogger::log_batch_build_span(
   write_batch_build_span(
       model_name, batch_id, batch_size, *start_ts, duration, request_ids,
       is_warmup);
+}
+
+void
+BatchingTraceLogger::log_batch_enqueue_span(
+    int batch_id, std::string_view model_name,
+    std::chrono::high_resolution_clock::time_point start_time,
+    std::chrono::high_resolution_clock::time_point end_time,
+    std::span<const int> request_ids, bool is_warmup)
+{
+  if (!enabled()) {
+    return;
+  }
+
+  const auto start_ts = relative_timestamp_from_time_point(start_time);
+  const auto end_ts = relative_timestamp_from_time_point(end_time);
+  if (!start_ts || !end_ts) {
+    return;
+  }
+
+  int64_t duration = *end_ts - *start_ts;
+  if (duration < 0) {
+    duration = 0;
+  }
+  duration = std::max<int64_t>(int64_t{1}, duration);
+
+  write_batch_enqueue_span(
+      model_name, batch_id, *start_ts, duration, request_ids, is_warmup);
 }
 
 void
@@ -470,6 +500,47 @@ BatchingTraceLogger::format_worker_lane_label(
 }
 
 void
+BatchingTraceLogger::write_batch_enqueue_span(
+    std::string_view model_name, int batch_id, int64_t start_ts,
+    int64_t duration_us, std::span<const int> request_ids, bool is_warmup)
+{
+  if (duration_us <= 0) {
+    duration_us = 1;
+  }
+
+  const auto escaped_model = escape_json_string(model_name);
+  const char* warmup_prefix = is_warmup ? "warming_" : "";
+
+  std::ostringstream line;
+  line << "{\"name\":\"" << warmup_prefix
+       << "request_enqueue_window\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
+       << start_ts << ",\"dur\":" << duration_us
+       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << kBatchEnqueueTrackId;
+  line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
+       << ",\"" << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
+  if (!request_ids.empty()) {
+    line << ",\"" << warmup_prefix << "request_ids\":[";
+    for (size_t idx = 0; idx < request_ids.size(); ++idx) {
+      if (idx > 0) {
+        line << ',';
+      }
+      line << request_ids[idx];
+    }
+    line << "]";
+  }
+  line << ",\"" << warmup_prefix << "start_ts\":" << start_ts << ",\""
+       << warmup_prefix << "end_ts\":" << (start_ts + duration_us) << "}}";
+
+  std::lock_guard lock(mutex_);
+  if (!stream_.is_open() || !header_written_) {
+    return;
+  }
+  ensure_thread_metadata_locked(
+      kBatchEnqueueTrackId, kBatchEnqueueTrackName, kBatchEnqueueSortIndex);
+  write_line_locked(line.str());
+}
+
+void
 BatchingTraceLogger::write_batch_build_span(
     std::string_view model_name, int batch_id, std::size_t batch_size,
     int64_t start_ts, int64_t duration_us, std::span<const int> request_ids,
@@ -566,6 +637,8 @@ BatchingTraceLogger::write_header_locked()
   ensure_thread_metadata_locked(
       kRequestEnqueuedTrackId, kRequestEnqueuedTrackName,
       kRequestEnqueuedSortIndex);
+  ensure_thread_metadata_locked(
+      kBatchEnqueueTrackId, kBatchEnqueueTrackName, kBatchEnqueueSortIndex);
   ensure_thread_metadata_locked(
       kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex);
   ensure_thread_metadata_locked(

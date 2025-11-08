@@ -25,6 +25,7 @@ namespace starpu_server {
 namespace detail {
 struct TimingInfo {
   std::chrono::high_resolution_clock::time_point enqueued_time;
+  std::chrono::high_resolution_clock::time_point last_enqueued_time;
   std::chrono::high_resolution_clock::time_point dequeued_time;
   std::chrono::high_resolution_clock::time_point batch_collect_start_time;
   std::chrono::high_resolution_clock::time_point batch_collect_end_time;

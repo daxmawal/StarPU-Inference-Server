@@ -42,6 +42,11 @@ class BatchingTraceLogger {
       std::chrono::high_resolution_clock::time_point start_time,
       std::chrono::high_resolution_clock::time_point end_time,
       std::span<const int> request_ids = {}, bool is_warmup = false);
+  void log_batch_enqueue_span(
+      int batch_id, std::string_view model_name,
+      std::chrono::high_resolution_clock::time_point start_time,
+      std::chrono::high_resolution_clock::time_point end_time,
+      std::span<const int> request_ids = {}, bool is_warmup = false);
   void log_batch_compute_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,
       int worker_id, DeviceType worker_type = DeviceType::Unknown,
@@ -60,6 +65,9 @@ class BatchingTraceLogger {
       std::string_view model_name, int batch_id, std::size_t batch_size,
       int worker_id, DeviceType worker_type, int64_t start_ts,
       int64_t duration_us, bool is_warmup, int device_id);
+  void write_batch_enqueue_span(
+      std::string_view model_name, int batch_id, int64_t start_ts,
+      int64_t duration_us, std::span<const int> request_ids, bool is_warmup);
   void write_batch_build_span(
       std::string_view model_name, int batch_id, std::size_t batch_size,
       int64_t start_ts, int64_t duration_us, std::span<const int> request_ids,

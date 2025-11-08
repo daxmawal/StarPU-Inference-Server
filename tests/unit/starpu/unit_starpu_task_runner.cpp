@@ -257,6 +257,7 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   using clock = std::chrono::high_resolution_clock;
   auto base = clock::now();
   time.enqueued_time = base;
+  time.last_enqueued_time = base;
   constexpr int kQueueMs = 10;
   constexpr int kBatchMs = 5;
   constexpr int kSubmitDeltaMs = 15;
@@ -801,8 +802,10 @@ TEST_F(
 
   job0->timing_info().dequeued_time = base + std::chrono::milliseconds(5);
   job0->timing_info().enqueued_time = internal::Clock::time_point{};
+  job0->timing_info().last_enqueued_time = internal::Clock::time_point{};
   job0->timing_info().batch_collect_start_time = internal::Clock::time_point{};
   job1->timing_info().enqueued_time = base + std::chrono::milliseconds(8);
+  job1->timing_info().last_enqueued_time = job1->timing_info().enqueued_time;
   job1->timing_info().batch_collect_start_time = internal::Clock::time_point{};
 
   bool job1_called = false;
@@ -878,8 +881,11 @@ TEST_F(
   job2->set_start_time(base + std::chrono::milliseconds(4));
 
   job0->timing_info().enqueued_time = base + std::chrono::milliseconds(6);
+  job0->timing_info().last_enqueued_time = job0->timing_info().enqueued_time;
   job1->timing_info().enqueued_time = base + std::chrono::milliseconds(2);
+  job1->timing_info().last_enqueued_time = job1->timing_info().enqueued_time;
   job2->timing_info().enqueued_time = base + std::chrono::milliseconds(4);
+  job2->timing_info().last_enqueued_time = job2->timing_info().enqueued_time;
 
   job0->timing_info().batch_collect_start_time =
       base + std::chrono::milliseconds(7);
@@ -1023,6 +1029,8 @@ TEST(
   const auto base = internal::Clock::now();
   aggregated->set_start_time(base + std::chrono::milliseconds(10));
   aggregated->timing_info().enqueued_time = base + std::chrono::milliseconds(2);
+  aggregated->timing_info().last_enqueued_time =
+      aggregated->timing_info().enqueued_time;
   aggregated->timing_info().batch_collect_start_time =
       base + std::chrono::milliseconds(3);
 
@@ -1217,7 +1225,11 @@ TEST(TaskRunnerInternal, AggregateBatchMetadataCollectsEarliestTimings)
   job_one->set_start_time(base + std::chrono::milliseconds(5));
   job_two->set_start_time(base + std::chrono::milliseconds(3));
   job_one->timing_info().enqueued_time = base + std::chrono::milliseconds(6);
+  job_one->timing_info().last_enqueued_time =
+      job_one->timing_info().enqueued_time;
   job_two->timing_info().enqueued_time = base + std::chrono::milliseconds(4);
+  job_two->timing_info().last_enqueued_time =
+      job_two->timing_info().enqueued_time;
   job_one->timing_info().batch_collect_start_time =
       base + std::chrono::milliseconds(7);
   job_two->timing_info().batch_collect_start_time =
@@ -1266,6 +1278,8 @@ TEST(
   const auto base = internal::Clock::now();
   job_one->set_start_time(base + std::chrono::milliseconds(5));
   job_one->timing_info().enqueued_time = base + std::chrono::milliseconds(6);
+  job_one->timing_info().last_enqueued_time =
+      job_one->timing_info().enqueued_time;
   job_one->timing_info().batch_collect_start_time =
       base + std::chrono::milliseconds(7);
 

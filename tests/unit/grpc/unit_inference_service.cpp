@@ -520,6 +520,7 @@ TEST_F(
       expected_outputs, worker_outputs, [](starpu_server::InferenceJob& job) {
         job.timing_info().enqueued_time =
             std::chrono::high_resolution_clock::time_point{};
+        job.timing_info().last_enqueued_time = job.timing_info().enqueued_time;
         job.timing_info().callback_end_time =
             std::chrono::high_resolution_clock::now() -
             std::chrono::milliseconds(1);

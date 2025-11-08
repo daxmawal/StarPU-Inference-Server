@@ -141,6 +141,19 @@ select_earliest_time(Clock::time_point current, Clock::time_point candidate)
   return current;
 }
 
+inline auto
+select_latest_time(Clock::time_point current, Clock::time_point candidate)
+    -> Clock::time_point
+{
+  if (candidate == Clock::time_point{}) {
+    return current;
+  }
+  if (current == Clock::time_point{} || candidate > current) {
+    return candidate;
+  }
+  return current;
+}
+
 auto
 slice_outputs_for_sub_job(
     const std::vector<torch::Tensor>& aggregated_outputs,
@@ -198,6 +211,7 @@ aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
   info.sub_jobs.reserve(jobs.size());
   info.earliest_start = jobs.front()->get_start_time();
   info.earliest_enqueued = jobs.front()->timing_info().enqueued_time;
+  info.latest_enqueued = jobs.front()->timing_info().enqueued_time;
   info.earliest_batch_collect_start =
       jobs.front()->timing_info().batch_collect_start_time;
 
@@ -210,6 +224,8 @@ aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
         select_earliest_time(info.earliest_start, job->get_start_time());
     info.earliest_enqueued = select_earliest_time(
         info.earliest_enqueued, job->timing_info().enqueued_time);
+    info.latest_enqueued = select_latest_time(
+        info.latest_enqueued, job->timing_info().enqueued_time);
     info.earliest_batch_collect_start = select_earliest_time(
         info.earliest_batch_collect_start,
         job->timing_info().batch_collect_start_time);
@@ -607,6 +623,10 @@ StarPUTaskRunner::ensure_callback_timing(detail::TimingInfo& timing)
       timing.enqueued_time >= timing.callback_end_time) {
     timing.enqueued_time = timing.callback_start_time;
   }
+  if (timing.last_enqueued_time == zero_tp ||
+      timing.last_enqueued_time < timing.enqueued_time) {
+    timing.last_enqueued_time = timing.enqueued_time;
+  }
 }
 
 void
@@ -933,6 +953,10 @@ StarPUTaskRunner::maybe_build_batched_job(
 
   master->set_start_time(earliest_start);
   master->timing_info().enqueued_time = earliest_enqueued;
+  master->timing_info().last_enqueued_time =
+      batch_info.latest_enqueued == clock::time_point{}
+          ? earliest_enqueued
+          : batch_info.latest_enqueued;
   master->timing_info().batch_collect_start_time = earliest_batch_collect_start;
 
   auto master_wp = std::weak_ptr<InferenceJob>(master);
@@ -1268,11 +1292,22 @@ StarPUTaskRunner::run()
           std::size_t{1}, task_runner_internal::batch_size_from_inputs(
                               job->get_input_tensors()));
       const auto request_ids = build_request_ids_for_trace(job);
+      const auto request_ids_span = std::span<const int>(request_ids);
+      const auto enqueue_start = job->timing_info().enqueued_time;
+      auto enqueue_end = job->timing_info().last_enqueued_time;
+      const auto zero_tp = clock::time_point{};
+      if (enqueue_end == zero_tp ||
+          (enqueue_start != zero_tp && enqueue_end < enqueue_start)) {
+        enqueue_end = enqueue_start;
+      }
+      tracer.log_batch_enqueue_span(
+          submission_id, job->model_name(), enqueue_start, enqueue_end,
+          request_ids_span, warmup_job);
       tracer.log_batch_build_span(
           submission_id, job->model_name(), batch_size,
           job->timing_info().batch_collect_start_time,
-          job->timing_info().batch_collect_end_time,
-          std::span<const int>(request_ids), warmup_job);
+          job->timing_info().batch_collect_end_time, request_ids_span,
+          warmup_job);
     }
 
     prepare_job_completion_callback(job);
