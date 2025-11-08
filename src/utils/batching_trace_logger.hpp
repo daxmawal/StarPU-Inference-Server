@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "device_type.hpp"
 
@@ -98,6 +99,27 @@ class BatchingTraceLogger {
   std::string file_path_;
   int64_t trace_start_us_{0};
   bool trace_start_initialized_{false};
+  struct WorkerLaneAssignment {
+    int thread_id;
+    int sort_index;
+    int lane_index;
+  };
+  struct WorkerLaneState {
+    int thread_id;
+    int64_t last_end_ts;
+  };
+  [[nodiscard]] auto assign_worker_lane_locked(
+      int worker_id, int64_t start_ts, int64_t end_ts) -> WorkerLaneAssignment;
+  [[nodiscard]] static auto worker_lane_sort_index(
+      int worker_id, int lane_index) -> int;
+  [[nodiscard]] static auto format_worker_lane_label(
+      int worker_id, std::string_view worker_type_str, int device_id,
+      int lane_index) -> std::string;
+
+  std::unordered_map<int, std::vector<WorkerLaneState>> worker_lanes_;
+  static constexpr int kWorkerLaneSortStride = 1000;
+  static constexpr int kFirstExtraWorkerLaneTid = 10000;
+  int next_worker_lane_thread_id_{kFirstExtraWorkerLaneTid};
 };
 
 }  // namespace starpu_server

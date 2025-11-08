@@ -380,18 +380,25 @@ BatchingTraceLogger::write_batch_compute_span(
 
   const auto escaped_model = escape_json_string(model_name);
   const auto worker_type_str = device_type_to_string(worker_type);
-  const int thread_id = worker_id + kWorkerThreadOffset;
-  const int sort_index = worker_id + kWorkerThreadOffset;
-  const std::string worker_label =
-      format_worker_label(worker_id, worker_type_str, device_id);
-
+  const int64_t end_ts = start_ts + duration_us;
   const char* warmup_prefix = is_warmup ? "warming_" : "";
+
+  std::lock_guard lock(mutex_);
+  if (!stream_.is_open() || !header_written_) {
+    return;
+  }
+
+  const auto lane_assignment =
+      assign_worker_lane_locked(worker_id, start_ts, end_ts);
+  const std::string worker_label = format_worker_lane_label(
+      worker_id, worker_type_str, device_id, lane_assignment.lane_index);
 
   std::ostringstream line;
   line << "{\"name\":\"" << warmup_prefix
        << "batch_compute\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":"
        << start_ts << ",\"dur\":" << duration_us
-       << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id;
+       << ",\"pid\":" << kTraceProcessId
+       << ",\"tid\":" << lane_assignment.thread_id;
   append_flow_annotation(line, FlowDirection::Target, batch_id, is_warmup);
   line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
        << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
@@ -401,12 +408,57 @@ BatchingTraceLogger::write_batch_compute_span(
        << warmup_prefix << "start_ts\":" << start_ts << ",\"" << warmup_prefix
        << "end_ts\":" << (start_ts + duration_us) << "}}";
 
-  std::lock_guard lock(mutex_);
-  if (!stream_.is_open() || !header_written_) {
-    return;
-  }
-  ensure_thread_metadata_locked(thread_id, worker_label, sort_index);
+  ensure_thread_metadata_locked(
+      lane_assignment.thread_id, worker_label, lane_assignment.sort_index);
   write_line_locked(line.str());
+}
+
+auto
+BatchingTraceLogger::assign_worker_lane_locked(
+    int worker_id, int64_t start_ts, int64_t end_ts) -> WorkerLaneAssignment
+{
+  auto& lanes = worker_lanes_[worker_id];
+  if (lanes.empty()) {
+    lanes.push_back(
+        WorkerLaneState{worker_id + kWorkerThreadOffset, /*last_end_ts=*/0});
+  }
+
+  int lane_index = 0;
+  for (auto& lane : lanes) {
+    if (start_ts >= lane.last_end_ts) {
+      lane.last_end_ts = end_ts;
+      return WorkerLaneAssignment{
+          lane.thread_id, worker_lane_sort_index(worker_id, lane_index),
+          lane_index};
+    }
+    ++lane_index;
+  }
+
+  const int thread_id = next_worker_lane_thread_id_++;
+  lanes.push_back(WorkerLaneState{thread_id, end_ts});
+  lane_index = static_cast<int>(lanes.size()) - 1;
+  return WorkerLaneAssignment{
+      thread_id, worker_lane_sort_index(worker_id, lane_index), lane_index};
+}
+
+auto
+BatchingTraceLogger::worker_lane_sort_index(int worker_id, int lane_index)
+    -> int
+{
+  const int base = worker_id + kWorkerThreadOffset;
+  return base * kWorkerLaneSortStride + lane_index;
+}
+
+auto
+BatchingTraceLogger::format_worker_lane_label(
+    int worker_id, std::string_view worker_type_str, int device_id,
+    int lane_index) -> std::string
+{
+  auto label = format_worker_label(worker_id, worker_type_str, device_id);
+  if (lane_index <= 0) {
+    return label;
+  }
+  return std::format("{} lane {}", label, lane_index + 1);
 }
 
 void
@@ -538,6 +590,8 @@ BatchingTraceLogger::close_stream_locked()
   thread_metadata_.clear();
   trace_start_us_ = 0;
   trace_start_initialized_ = false;
+  worker_lanes_.clear();
+  next_worker_lane_thread_id_ = kFirstExtraWorkerLaneTid;
 }
 
 void

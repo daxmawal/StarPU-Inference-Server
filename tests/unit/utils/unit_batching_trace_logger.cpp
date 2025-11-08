@@ -192,6 +192,61 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const auto base = std::chrono::high_resolution_clock::now();
+  const auto overlapping_start = base + std::chrono::microseconds(50);
+  const auto overlapping_end =
+      overlapping_start + std::chrono::microseconds(40);
+  const auto long_end = base + std::chrono::microseconds(180);
+
+  logger.log_batch_compute_span(
+      1, "demo_model", 1, 0, DeviceType::CPU, overlapping_start,
+      overlapping_end);
+  logger.log_batch_compute_span(
+      2, "demo_model", 1, 0, DeviceType::CPU, base, long_end);
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+
+  auto extract_tid = [&](size_t start_pos) -> int {
+    const auto tid_pos = content.find("\"tid\":", start_pos);
+    if (tid_pos == std::string::npos) {
+      ADD_FAILURE() << "Missing tid for compute span";
+      return -1;
+    }
+    const auto tid_end = content.find_first_of(",}", tid_pos);
+    if (tid_end == std::string::npos) {
+      ADD_FAILURE() << "Malformed tid for compute span";
+      return -1;
+    }
+    const auto tid_str = content.substr(tid_pos + 6, tid_end - (tid_pos + 6));
+    return std::stoi(tid_str);
+  };
+
+  const auto first_compute = content.find("\"name\":\"batch_compute\"");
+  ASSERT_NE(first_compute, std::string::npos);
+  const auto second_compute =
+      content.find("\"name\":\"batch_compute\"", first_compute + 1);
+  ASSERT_NE(second_compute, std::string::npos);
+
+  const int tid_one = extract_tid(first_compute);
+  const int tid_two = extract_tid(second_compute);
+  EXPECT_NE(tid_one, tid_two);
+  EXPECT_NE(content.find("worker-0 (cpu) lane 2"), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
 {
   const auto trace_path = make_temp_trace_path();
