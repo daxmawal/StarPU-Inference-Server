@@ -541,12 +541,21 @@ StarPUTaskRunner::prepare_job_completion_callback(
       const std::size_t actual_batch_size =
           std::max<std::size_t>(std::size_t{1}, batch_size);
       const bool warmup_job = is_warmup_job(job_sptr);
+      auto& timing = job_sptr->timing_info();
+      const auto zero_tp = clock::time_point{};
+      auto compute_start = timing.inference_start_time;
+      if (compute_start == zero_tp) {
+        compute_start = timing.codelet_start_time;
+      }
+      auto compute_end = timing.callback_start_time;
+      if (compute_end == zero_tp || compute_end < compute_start) {
+        compute_end = timing.codelet_end_time;
+      }
+
       tracer.log_batch_compute_span(
           job_sptr->submission_id(), job_sptr->model_name(), actual_batch_size,
-          job_sptr->get_worker_id(), job_sptr->get_executed_on(),
-          job_sptr->timing_info().codelet_start_time,
-          job_sptr->timing_info().codelet_end_time, warmup_job,
-          job_sptr->get_device_id());
+          job_sptr->get_worker_id(), job_sptr->get_executed_on(), compute_start,
+          compute_end, warmup_job, job_sptr->get_device_id());
     }
 
     if (prev_callback) {
