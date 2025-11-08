@@ -87,6 +87,7 @@ class InferenceJob {
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
+    effective_batch_size_.reset();
     input_tensors_.clear();
     input_tensors_.reserve(inputs.size());
     for (const auto& tensor : inputs) {
@@ -199,6 +200,42 @@ class InferenceJob {
     aggregated_sub_jobs_ = std::move(jobs);
   }
 
+  void set_effective_batch_size(int64_t batch)
+  {
+    effective_batch_size_ = batch;
+  }
+
+  void reset_effective_batch_size() { effective_batch_size_.reset(); }
+
+  [[nodiscard]] auto effective_batch_size() const -> std::optional<int64_t>
+  {
+    return effective_batch_size_;
+  }
+
+  void set_pending_sub_jobs(std::vector<std::shared_ptr<InferenceJob>> jobs)
+  {
+    pending_sub_jobs_ = std::move(jobs);
+  }
+
+  void clear_pending_sub_jobs() { pending_sub_jobs_.clear(); }
+
+  [[nodiscard]] auto pending_sub_jobs() const
+      -> const std::vector<std::shared_ptr<InferenceJob>>&
+  {
+    return pending_sub_jobs_;
+  }
+
+  [[nodiscard]] auto has_pending_sub_jobs() const -> bool
+  {
+    return !pending_sub_jobs_.empty();
+  }
+
+  [[nodiscard]] auto take_pending_sub_jobs()
+      -> std::vector<std::shared_ptr<InferenceJob>>
+  {
+    return std::exchange(pending_sub_jobs_, {});
+  }
+
   [[nodiscard]] auto aggregated_sub_jobs() const
       -> const std::vector<AggregatedSubJob>&
   {
@@ -232,6 +269,8 @@ class InferenceJob {
   bool is_shutdown_signal_ = false;
   int logical_job_count_ = 1;
   std::vector<AggregatedSubJob> aggregated_sub_jobs_;
+  std::optional<int64_t> effective_batch_size_;
+  std::vector<std::shared_ptr<InferenceJob>> pending_sub_jobs_;
 };
 
 // =============================================================================

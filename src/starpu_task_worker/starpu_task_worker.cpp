@@ -545,8 +545,8 @@ StarPUTaskRunner::prepare_job_completion_callback(
   job->set_on_complete([this, job_sptr = job, prev_callback](
                            const std::vector<torch::Tensor>& results,
                            double latency_ms) {
-    const auto batch_size = task_runner_internal::batch_size_from_inputs(
-        job_sptr->get_input_tensors());
+    const auto batch_size = std::max<std::size_t>(
+        std::size_t{1}, static_cast<std::size_t>(resolve_batch_size(job_sptr)));
 
     store_completed_job_result(job_sptr, results, latency_ms);
     ensure_callback_timing(job_sptr->timing_info());
@@ -554,8 +554,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
 
     auto& tracer = BatchingTraceLogger::instance();
     if (tracer.enabled()) {
-      const std::size_t actual_batch_size =
-          std::max<std::size_t>(std::size_t{1}, batch_size);
+      const std::size_t actual_batch_size = batch_size;
       const bool warmup_job = is_warmup_job(job_sptr);
       auto& timing = job_sptr->timing_info();
       const auto zero_tp = clock::time_point{};
@@ -699,16 +698,8 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
     const std::shared_ptr<InferenceJob>& job,
     const PoolResources& pools) -> int64_t
 {
-  int64_t batch = 1;
   const auto& inputs = job->get_input_tensors();
-
-  if (!opts_->models.empty() && !opts_->models[0].inputs.empty() &&
-      !inputs.empty()) {
-    const auto per_sample_rank =
-        static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
-    const auto rank0 = inputs[0].dim();
-    batch = (rank0 == per_sample_rank + 1) ? inputs[0].size(0) : 1;
-  }
+  int64_t batch = resolve_batch_size(job);
 
   if (!pools.has_input()) {
     return batch;
@@ -726,25 +717,138 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
 
   NvtxRange nvtx_copy_scope("HtoD-staged host copy (pooled inputs)");
   const auto& handles = pools.input_pool->handles(pools.input_slot);
-  for (size_t i = 0; i < inputs.size(); ++i) {
-    const auto& tin = inputs[i];
-    if (!tin.defined() || !tin.is_cpu() || !tin.is_contiguous()) {
-      throw InvalidInputTensorException(
-          "Input tensor must be defined, CPU and contiguous");
+  if (job->has_pending_sub_jobs()) {
+    auto pending_jobs = job->take_pending_sub_jobs();
+    copy_job_inputs_to_slot(job, pending_jobs, handles, base_ptrs);
+    release_pending_jobs(job, pending_jobs);
+  } else {
+    for (size_t i = 0; i < inputs.size(); ++i) {
+      const auto& tin = inputs[i];
+      if (!tin.defined() || !tin.is_cpu() || !tin.is_contiguous()) {
+        throw InvalidInputTensorException(
+            "Input tensor must be defined, CPU and contiguous");
+      }
+      const int status = starpu_data_acquire(handles[i], STARPU_W);
+      if (status != 0) {
+        throw StarPUDataAcquireException("starpu_data_acquire(W) failed");
+      }
+      const VectorResizeSpec spec{
+          static_cast<std::size_t>(tin.numel()),
+          static_cast<std::size_t>(tin.nbytes())};
+      resize_starpu_vector_handle(handles[i], spec, true);
+      std::memcpy(base_ptrs[i], tin.data_ptr(), spec.byte_count);
+      starpu_data_release(handles[i]);
     }
-    const int status = starpu_data_acquire(handles[i], STARPU_W);
-    if (status != 0) {
-      throw StarPUDataAcquireException("starpu_data_acquire(W) failed");
-    }
-    const VectorResizeSpec spec{
-        static_cast<std::size_t>(tin.numel()),
-        static_cast<std::size_t>(tin.nbytes())};
-    resize_starpu_vector_handle(handles[i], spec, true);
-    std::memcpy(base_ptrs[i], tin.data_ptr(), spec.byte_count);
-    starpu_data_release(handles[i]);
   }
 
   return batch;
+}
+
+auto
+StarPUTaskRunner::resolve_batch_size(
+    const std::shared_ptr<InferenceJob>& job) const -> int64_t
+{
+  if (!job) {
+    return 1;
+  }
+  if (const auto effective = job->effective_batch_size();
+      effective.has_value()) {
+    return std::max<int64_t>(1, *effective);
+  }
+
+  const auto& inputs = job->get_input_tensors();
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  if (!opts_->models.empty() && !opts_->models[0].inputs.empty()) {
+    const auto per_sample_rank =
+        static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
+    const auto rank0 = inputs[0].dim();
+    if (rank0 == per_sample_rank + 1 && rank0 > 0) {
+      return inputs[0].size(0);
+    }
+    return 1;
+  }
+
+  return static_cast<int64_t>(
+      task_runner_internal::batch_size_from_inputs(inputs));
+}
+
+void
+StarPUTaskRunner::copy_job_inputs_to_slot(
+    const std::shared_ptr<InferenceJob>& job,
+    const std::vector<std::shared_ptr<InferenceJob>>& pending_jobs,
+    const std::vector<starpu_data_handle_t>& handles,
+    const std::vector<std::byte*>& base_ptrs) const
+{
+  if (!job) {
+    return;
+  }
+
+  const auto& master_inputs = job->get_input_tensors();
+  for (size_t input_idx = 0; input_idx < master_inputs.size(); ++input_idx) {
+    const auto acquire_status =
+        starpu_data_acquire(handles[input_idx], STARPU_W);
+    if (acquire_status != 0) {
+      throw StarPUDataAcquireException("starpu_data_acquire(W) failed");
+    }
+
+    auto* dst = base_ptrs[input_idx];
+    std::size_t offset = 0;
+    std::size_t total_numel = 0;
+    std::size_t total_bytes = 0;
+
+    auto copy_tensor = [&](const torch::Tensor& tensor) {
+      if (!tensor.defined() || !tensor.is_cpu() || !tensor.is_contiguous()) {
+        throw InvalidInputTensorException(
+            "Input tensor must be defined, CPU and contiguous");
+      }
+      const auto bytes = static_cast<std::size_t>(tensor.nbytes());
+      const auto numel = static_cast<std::size_t>(tensor.numel());
+      std::memcpy(dst + offset, tensor.data_ptr(), bytes);
+      offset += bytes;
+      total_bytes += bytes;
+      total_numel += numel;
+    };
+
+    copy_tensor(master_inputs[input_idx]);
+    for (const auto& pending : pending_jobs) {
+      if (!pending) {
+        continue;
+      }
+      const auto& pending_inputs = pending->get_input_tensors();
+      if (input_idx >= pending_inputs.size()) {
+        starpu_data_release(handles[input_idx]);
+        throw InconsistentInputTensorCountException(
+            "Inconsistent input tensor count");
+      }
+      copy_tensor(pending_inputs[input_idx]);
+    }
+
+    const VectorResizeSpec spec{total_numel, total_bytes};
+    resize_starpu_vector_handle(handles[input_idx], spec, true);
+    starpu_data_release(handles[input_idx]);
+  }
+}
+
+void
+StarPUTaskRunner::release_pending_jobs(
+    const std::shared_ptr<InferenceJob>& job,
+    std::vector<std::shared_ptr<InferenceJob>>& pending_jobs) const
+{
+  if (pending_jobs.empty()) {
+    return;
+  }
+
+  std::vector<std::shared_ptr<InferenceJob>> release_jobs;
+  release_jobs.reserve(pending_jobs.size() + 1);
+  release_jobs.push_back(job);
+  for (auto& pending : pending_jobs) {
+    release_jobs.push_back(std::move(pending));
+  }
+  task_runner_internal::release_inputs_from_additional_jobs(release_jobs);
+  pending_jobs.clear();
 }
 
 auto
@@ -947,16 +1051,13 @@ StarPUTaskRunner::maybe_build_batched_job(
     master->set_input_memory_holders(std::move(lifetimes));
   }
 
-  if (auto merged_inputs = merge_input_tensors(jobs); !merged_inputs.empty()) {
-    master->set_input_tensors(merged_inputs);
-  }
-
   const auto prototype_outputs = master->get_output_tensors();
   const int64_t effective_batch = batch_info.total_samples > 0
                                       ? batch_info.total_samples
                                       : static_cast<int64_t>(jobs.size());
   master->set_output_tensors(task_runner_internal::resize_outputs_for_batch(
       prototype_outputs, effective_batch));
+  master->set_effective_batch_size(effective_batch);
 
   master->set_start_time(earliest_start);
   master->timing_info().enqueued_time = earliest_enqueued;
@@ -965,6 +1066,25 @@ StarPUTaskRunner::maybe_build_batched_job(
           ? earliest_enqueued
           : batch_info.latest_enqueued;
   master->timing_info().batch_collect_start_time = earliest_batch_collect_start;
+
+  const bool need_materialized_inputs =
+      !starpu_->has_input_pool() || opts_->validation.validate_results;
+
+  if (need_materialized_inputs) {
+    if (auto merged_inputs = merge_input_tensors(jobs);
+        !merged_inputs.empty()) {
+      master->set_input_tensors(merged_inputs);
+    }
+    task_runner_internal::release_inputs_from_additional_jobs(jobs);
+    master->clear_pending_sub_jobs();
+  } else {
+    std::vector<std::shared_ptr<InferenceJob>> pending_jobs;
+    pending_jobs.reserve(jobs.size() > 0 ? jobs.size() - 1 : 0);
+    for (size_t idx = 1; idx < jobs.size(); ++idx) {
+      pending_jobs.push_back(jobs[idx]);
+    }
+    master->set_pending_sub_jobs(std::move(pending_jobs));
+  }
 
   auto master_wp = std::weak_ptr<InferenceJob>(master);
   master->set_on_complete(
@@ -976,8 +1096,6 @@ StarPUTaskRunner::maybe_build_batched_job(
               master_sp, aggregated_outputs, latency_ms);
         }
       });
-
-  task_runner_internal::release_inputs_from_additional_jobs(jobs);
 
   if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
     log_trace(
@@ -1296,8 +1414,7 @@ StarPUTaskRunner::run()
     auto& tracer = BatchingTraceLogger::instance();
     if (tracer.enabled()) {
       const auto batch_size = std::max<std::size_t>(
-          std::size_t{1}, task_runner_internal::batch_size_from_inputs(
-                              job->get_input_tensors()));
+          std::size_t{1}, static_cast<std::size_t>(resolve_batch_size(job)));
       const auto request_ids = build_request_ids_for_trace(job);
       const auto request_ids_span = std::span<const int>(request_ids);
       const auto enqueue_start = job->timing_info().enqueued_time;
