@@ -240,7 +240,7 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
   const int tid_one = extract_tid(first_compute);
   const int tid_two = extract_tid(second_compute);
   EXPECT_NE(tid_one, tid_two);
-  EXPECT_NE(content.find("worker-0 (cpu) lane 2"), std::string::npos);
+  EXPECT_NE(content.find("worker-0 (cpu) #2"), std::string::npos);
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);

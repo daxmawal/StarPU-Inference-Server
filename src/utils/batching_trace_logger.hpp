@@ -118,8 +118,6 @@ class BatchingTraceLogger {
 
   std::unordered_map<int, std::vector<WorkerLaneState>> worker_lanes_;
   static constexpr int kWorkerLaneSortStride = 1000;
-  static constexpr int kFirstExtraWorkerLaneTid = 10000;
-  int next_worker_lane_thread_id_{kFirstExtraWorkerLaneTid};
 };
 
 }  // namespace starpu_server

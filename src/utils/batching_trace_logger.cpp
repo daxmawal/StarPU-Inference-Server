@@ -20,6 +20,7 @@ constexpr int kRequestEnqueuedTrackId = 1;
 constexpr int kBatchBuildTrackId = 2;
 constexpr int kBatchSubmittedTrackId = 3;
 constexpr int kWorkerThreadOffset = 10;
+constexpr int kWorkerLaneThreadStride = 1000;
 constexpr int kRequestEnqueuedSortIndex = -3;
 constexpr int kBatchBuildSortIndex = -2;
 constexpr int kBatchSubmittedSortIndex = -1;
@@ -86,6 +87,12 @@ format_worker_label(
         "device {} worker {} ({})", device_id, worker_id, worker_type_str);
   }
   return std::format("worker-{} ({})", worker_id, worker_type_str);
+}
+
+auto
+worker_lane_thread_id(int worker_id, int lane_index) -> int
+{
+  return kWorkerThreadOffset + worker_id * kWorkerLaneThreadStride + lane_index;
 }
 }  // namespace
 
@@ -254,8 +261,9 @@ BatchingTraceLogger::write_record(
   if (is_worker_lane) {
     worker_label = format_worker_label(worker_id, worker_type_str, device_id);
     thread_name = worker_label;
-    sort_index = worker_id + kWorkerThreadOffset;
-    thread_id = worker_id + kWorkerThreadOffset;
+    constexpr int kBaseLaneIndex = 0;
+    sort_index = worker_lane_sort_index(worker_id, kBaseLaneIndex);
+    thread_id = worker_lane_thread_id(worker_id, kBaseLaneIndex);
   } else {
     switch (event) {
       case BatchingTraceEvent::RequestQueued:
@@ -418,8 +426,9 @@ BatchingTraceLogger::assign_worker_lane_locked(
 {
   auto& lanes = worker_lanes_[worker_id];
   if (lanes.empty()) {
-    lanes.push_back(
-        WorkerLaneState{worker_id + kWorkerThreadOffset, /*last_end_ts=*/0});
+    lanes.push_back(WorkerLaneState{
+        worker_lane_thread_id(worker_id, /*lane_index=*/0),
+        /*last_end_ts=*/0});
   }
 
   int lane_index = 0;
@@ -433,9 +442,9 @@ BatchingTraceLogger::assign_worker_lane_locked(
     ++lane_index;
   }
 
-  const int thread_id = next_worker_lane_thread_id_++;
+  lane_index = static_cast<int>(lanes.size());
+  const int thread_id = worker_lane_thread_id(worker_id, lane_index);
   lanes.push_back(WorkerLaneState{thread_id, end_ts});
-  lane_index = static_cast<int>(lanes.size()) - 1;
   return WorkerLaneAssignment{
       thread_id, worker_lane_sort_index(worker_id, lane_index), lane_index};
 }
@@ -444,7 +453,7 @@ auto
 BatchingTraceLogger::worker_lane_sort_index(int worker_id, int lane_index)
     -> int
 {
-  const int base = worker_id + kWorkerThreadOffset;
+  const int base = worker_lane_thread_id(worker_id, /*lane_index=*/0);
   return base * kWorkerLaneSortStride + lane_index;
 }
 
@@ -457,7 +466,7 @@ BatchingTraceLogger::format_worker_lane_label(
   if (lane_index <= 0) {
     return label;
   }
-  return std::format("{} lane {}", label, lane_index + 1);
+  return std::format("{} #{}", label, lane_index + 1);
 }
 
 void
@@ -590,7 +599,6 @@ BatchingTraceLogger::close_stream_locked()
   trace_start_us_ = 0;
   trace_start_initialized_ = false;
   worker_lanes_.clear();
-  next_worker_lane_thread_id_ = kFirstExtraWorkerLaneTid;
 }
 
 void
