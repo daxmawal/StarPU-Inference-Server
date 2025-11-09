@@ -980,23 +980,56 @@ StarPUTaskRunner::merge_input_tensors(
   }
   const auto& first_inputs = jobs.front()->get_input_tensors();
   merged.reserve(first_inputs.size());
+  const bool single_job_batch = jobs.size() == 1;
 
   for (size_t tensor_idx = 0; tensor_idx < first_inputs.size(); ++tensor_idx) {
-    std::vector<torch::Tensor> to_concat;
-    to_concat.reserve(jobs.size());
+    if (single_job_batch) {
+      merged.push_back(first_inputs[tensor_idx]);
+      continue;
+    }
+
+    const auto& prototype = first_inputs[tensor_idx];
+    if (!prototype.defined()) {
+      throw InvalidInputTensorException(
+          "Input tensor must be defined before batching");
+    }
+
+    auto target_sizes = prototype.sizes().vec();
+    if (target_sizes.empty()) {
+      throw InvalidInputTensorException(
+          "Input tensor must have at least one dimension");
+    }
+
+    int64_t total_dim0 = 0;
     for (const auto& job : jobs) {
       const auto& tensors = job->get_input_tensors();
       if (tensor_idx >= tensors.size()) {
         throw InconsistentInputTensorCountException(
             "Inconsistent input tensor count");
       }
-      to_concat.push_back(tensors[tensor_idx]);
+      const auto& tensor = tensors[tensor_idx];
+      if (!tensor.defined()) {
+        throw InvalidInputTensorException(
+            "Input tensor must be defined before batching");
+      }
+      total_dim0 += tensor.size(0);
     }
-    if (to_concat.size() == 1) {
-      merged.push_back(to_concat.front());
-    } else {
-      merged.push_back(torch::cat(to_concat, 0));
+
+    target_sizes[0] = total_dim0;
+    auto merged_tensor = torch::empty(target_sizes, prototype.options());
+
+    int64_t offset = 0;
+    for (const auto& job : jobs) {
+      const auto& tensors = job->get_input_tensors();
+      const auto& tensor = tensors[tensor_idx];
+      const int64_t slice_len = tensor.size(0);
+      if (slice_len == 0) {
+        continue;
+      }
+      merged_tensor.narrow(0, offset, slice_len).copy_(tensor);
+      offset += slice_len;
     }
+    merged.push_back(std::move(merged_tensor));
   }
 
   return merged;
