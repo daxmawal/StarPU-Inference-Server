@@ -56,9 +56,9 @@ class StarPUTaskRunner {
   void prepare_job_completion_callback(
       const std::shared_ptr<InferenceJob>& job);
   void submit_inference_task(const std::shared_ptr<InferenceJob>& job);
-  static void handle_job_exception(
+  static auto handle_job_exception(
       const std::shared_ptr<InferenceJob>& job,
-      const std::exception& exception);
+      const std::exception& exception) -> bool;
   void log_job_timings(
       int request_id, DurationMs latency,
       const detail::TimingInfo& timing_info) const;

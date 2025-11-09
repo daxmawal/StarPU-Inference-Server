@@ -739,23 +739,32 @@ StarPUTaskRunner::finalize_job_completion(
 // Error Handling for Failed Jobs
 // =============================================================================
 
-void
+auto
 StarPUTaskRunner::handle_job_exception(
-    const std::shared_ptr<InferenceJob>& job, const std::exception& exception)
+    const std::shared_ptr<InferenceJob>& job,
+    const std::exception& exception) -> bool
 {
   const int job_id = job ? task_runner_internal::job_identifier(*job) : -1;
   log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
 
-  if (job == nullptr || !job->has_on_complete()) {
-    return;
+  if (job == nullptr) {
+    return false;
   }
 
-  const auto& completion = job->get_on_complete();
-  task_runner_internal::run_with_logged_exceptions(
-      [&completion]() { completion({}, -1); },
-      task_runner_internal::ExceptionLoggingMessages{
-          "Exception in completion callback: ",
-          "Unknown exception in completion callback"});
+  bool completion_invoked = false;
+  if (job->has_on_complete()) {
+    const auto completion = job->get_on_complete();
+    task_runner_internal::run_with_logged_exceptions(
+        [&]() {
+          completion({}, -1);
+          completion_invoked = true;
+        },
+        task_runner_internal::ExceptionLoggingMessages{
+            "Exception in completion callback: ",
+            "Unknown exception in completion callback"});
+  }
+
+  return completion_invoked;
 }
 
 // =============================================================================
@@ -1564,23 +1573,39 @@ StarPUTaskRunner::run()
       submit_inference_task(job);
     }
     catch (const InferenceEngineException& exception) {
-      StarPUTaskRunner::handle_job_exception(job, exception);
+      const bool completion_done =
+          StarPUTaskRunner::handle_job_exception(job, exception);
+      if (!completion_done && job) {
+        finalize_job_completion(job);
+      }
     }
     catch (const std::runtime_error& exception) {
       log_error(std::format(
           "Unexpected runtime error for job {}: {}", job_id, exception.what()));
-      StarPUTaskRunner::handle_job_exception(job, exception);
+      const bool completion_done =
+          StarPUTaskRunner::handle_job_exception(job, exception);
+      if (!completion_done && job) {
+        finalize_job_completion(job);
+      }
     }
     catch (const std::logic_error& exception) {
       log_error(std::format(
           "Unexpected logic error for job {}: {}", job_id, exception.what()));
-      StarPUTaskRunner::handle_job_exception(job, exception);
+      const bool completion_done =
+          StarPUTaskRunner::handle_job_exception(job, exception);
+      if (!completion_done && job) {
+        finalize_job_completion(job);
+      }
     }
     catch (const std::bad_alloc& exception) {
       log_error(std::format(
           "Memory allocation failure for job {}: {}", job_id,
           exception.what()));
-      StarPUTaskRunner::handle_job_exception(job, exception);
+      const bool completion_done =
+          StarPUTaskRunner::handle_job_exception(job, exception);
+      if (!completion_done && job) {
+        finalize_job_completion(job);
+      }
     }
   }
 
