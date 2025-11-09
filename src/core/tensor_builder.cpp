@@ -2,45 +2,110 @@
 
 #include <ATen/core/ScalarType.h>
 #include <c10/core/Device.h>
+#include <c10/core/Storage.h>
 #include <c10/util/Exception.h>
 
+#include <algorithm>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <functional>
+#include <numeric>
 #include <span>
 #include <vector>
 
 #include "exceptions.hpp"
 #include "inference_params.hpp"
+#include "utils/datatype_utils.hpp"
 
 namespace starpu_server {
-// =============================================================================
-// Build input tensors from StarPU raw buffers and layout metadata
-// =============================================================================
+namespace {
+void
+noop_deleter(void*) noexcept
+{
+}
 
 auto
-TensorBuilder::from_starpu_buffers(
-    const InferenceParams* params, StarpuBufferSpan buffers,
-    torch::Device device) -> std::vector<torch::Tensor>
+compute_default_strides(const std::vector<int64_t>& dims)
+    -> std::vector<int64_t>
 {
+  std::vector<int64_t> strides(dims.size(), 1);
+  int64_t stride = 1;
+  for (int64_t idx = static_cast<int64_t>(dims.size()) - 1; idx >= 0; --idx) {
+    strides[static_cast<size_t>(idx)] = stride;
+    stride *= dims[static_cast<size_t>(idx)];
+  }
+  return strides;
+}
+
+auto
+compute_numel(const std::vector<int64_t>& dims) -> int64_t
+{
+  return std::accumulate(
+      dims.begin(), dims.end(), static_cast<int64_t>(1),
+      std::multiplies<int64_t>());
+}
+
+void
+validate_input_layout(const InferenceParams* params, StarpuBufferSpan buffers)
+{
+  if (params == nullptr) {
+    throw InferenceExecutionException("[ERROR] InferenceParams is null");
+  }
   if (params->num_inputs > params->limits.max_inputs ||
       params->num_inputs > params->layout.dims.size() ||
       params->num_inputs > params->layout.num_dims.size() ||
       params->num_inputs > params->layout.input_types.size()) {
     throw InferenceExecutionException("[ERROR] Too many input tensors");
   }
-
   if (buffers.size() < params->num_inputs) {
     throw InferenceExecutionException("[ERROR] Too few input buffers");
   }
+}
 
-  std::vector<torch::Tensor> inputs;
-  inputs.reserve(params->num_inputs);
+void
+assign_tensor_view(
+    torch::Tensor& tensor, uintptr_t raw_ptr, at::ScalarType dtype,
+    const std::vector<int64_t>& dims, torch::Device device)
+{
+  const auto options = torch::TensorOptions().dtype(dtype).device(device);
+  if (!tensor.defined()) {
+    tensor = torch::from_blob(std::bit_cast<void*>(raw_ptr), dims, options);
+    return;
+  }
+
+  auto strides = compute_default_strides(dims);
+  const int64_t numel = compute_numel(dims);
+  const size_t byte_size =
+      static_cast<size_t>(std::max<int64_t>(numel, 0)) * element_size(dtype);
+
+  c10::DataPtr data_ptr(
+      std::bit_cast<void*>(raw_ptr), std::bit_cast<void*>(raw_ptr),
+      &noop_deleter, device.type());
+  auto storage = c10::Storage(
+      c10::Storage::use_byte_size_t(), byte_size, std::move(data_ptr),
+      /*allocator=*/nullptr, /*resizable=*/false);
+
+  tensor.set_(storage, 0, dims, strides);
+}
+
+void
+refresh_input_cache(
+    InferenceParams* params, StarpuBufferSpan buffers, torch::Device device)
+{
+  validate_input_layout(params, buffers);
+
+  auto& tensor_cache = params->cached_input_tensors;
+  auto& ivalue_cache = params->cached_input_ivalues;
+  tensor_cache.resize(params->num_inputs);
+  ivalue_cache.resize(params->num_inputs);
 
   for (size_t idx = 0; idx < params->num_inputs; ++idx) {
-    auto* var_iface = buffers[idx];
-    auto input_data = var_iface->ptr;
+    const auto* var_iface = buffers[idx];
+    if (var_iface == nullptr) {
+      throw InferenceExecutionException("[ERROR] StarPU buffer is null");
+    }
 
     const auto& dims = params->layout.dims.at(idx);
     const auto raw_ndim = params->layout.num_dims.at(idx);
@@ -52,10 +117,41 @@ TensorBuilder::from_starpu_buffers(
     }
 
     const at::ScalarType dtype = params->layout.input_types.at(idx);
-    inputs.emplace_back(from_raw_ptr(input_data, dtype, dims, device));
+    assign_tensor_view(tensor_cache[idx], var_iface->ptr, dtype, dims, device);
+    ivalue_cache[idx] = tensor_cache[idx];
   }
+}
+}  // namespace
 
-  return inputs;
+// =============================================================================
+// Build input tensors from StarPU raw buffers and layout metadata
+// =============================================================================
+
+auto
+TensorBuilder::from_starpu_buffers(
+    InferenceParams* params, StarpuBufferSpan buffers,
+    torch::Device device) -> std::vector<torch::Tensor>
+{
+  const auto& cached = prepare_input_tensors(params, buffers, device);
+  return std::vector<torch::Tensor>(cached.begin(), cached.end());
+}
+
+auto
+TensorBuilder::prepare_input_tensors(
+    InferenceParams* params, StarpuBufferSpan buffers,
+    torch::Device device) -> const std::vector<torch::Tensor>&
+{
+  refresh_input_cache(params, buffers, device);
+  return params->cached_input_tensors;
+}
+
+auto
+TensorBuilder::prepare_input_ivalues(
+    InferenceParams* params, StarpuBufferSpan buffers,
+    torch::Device device) -> const std::vector<c10::IValue>&
+{
+  refresh_input_cache(params, buffers, device);
+  return params->cached_input_ivalues;
 }
 
 // =============================================================================
