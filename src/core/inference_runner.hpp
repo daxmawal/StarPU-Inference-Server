@@ -37,6 +37,10 @@ struct TimingInfo {
   std::chrono::high_resolution_clock::time_point callback_end_time;
   int submission_id = -1;
 };
+
+void set_cuda_device_count_override(std::optional<int> override);
+auto get_cuda_device_count() -> int;
+void validate_device_ids(std::span<const int> device_ids, int device_count);
 }  // namespace detail
 
 // =============================================================================

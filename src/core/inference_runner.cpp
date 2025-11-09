@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <format>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -43,6 +44,13 @@
 namespace starpu_server {
 
 namespace {
+
+auto
+cuda_device_count_override_storage() -> std::optional<int>&
+{
+  static std::optional<int> override;
+  return override;
+}
 
 class CuDnnBenchmarkGuard {
  public:
@@ -97,6 +105,61 @@ default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
 {
   return std::jthread(&StarPUTaskRunner::run, &worker);
 }
+
+namespace detail {
+
+void
+set_cuda_device_count_override(std::optional<int> override)
+{
+  if (override.has_value() && *override < 0) {
+    throw std::invalid_argument(
+        "CUDA device count override must be non-negative");
+  }
+  cuda_device_count_override_storage() = override;
+}
+
+auto
+get_cuda_device_count() -> int
+{
+  if (const auto& override = cuda_device_count_override_storage();
+      override.has_value()) {
+    return *override;
+  }
+
+  const auto raw_count = torch::cuda::device_count();
+  if (raw_count < 0) {
+    throw InvalidGpuDeviceException(
+        "torch::cuda::device_count returned a negative value.");
+  }
+  if (raw_count > std::numeric_limits<int>::max()) {
+    throw InvalidGpuDeviceException(std::format(
+        "torch::cuda::device_count returned {}, which exceeds int range.",
+        raw_count));
+  }
+
+  return static_cast<int>(raw_count);
+}
+
+void
+validate_device_ids(std::span<const int> device_ids, int available_device_count)
+{
+  if (available_device_count < 0) {
+    throw InvalidGpuDeviceException("CUDA device count cannot be negative.");
+  }
+
+  for (const int device_id : device_ids) {
+    if (device_id < 0 || device_id >= available_device_count) {
+      log_error(std::format(
+          "GPU ID {} out of range. Only {} device(s) available.", device_id,
+          available_device_count));
+      throw InvalidGpuDeviceException(std::format(
+          "Invalid GPU device ID {} ({} device(s) available).", device_id,
+          available_device_count));
+    }
+  }
+}
+
+}  // namespace detail
 
 namespace {
 inline auto
@@ -220,18 +283,12 @@ clone_model_to_gpus(
     const std::vector<int>& device_ids)
     -> std::vector<torch::jit::script::Module>
 {
-  const auto device_count =
-      static_cast<int>(static_cast<unsigned char>(torch::cuda::device_count()));
-  for (const int device_id : device_ids) {
-    if (device_id < 0 || device_id >= device_count) {
-      log_error(std::format(
-          "GPU ID {} out of range. Only {} device(s) available.", device_id,
-          device_count));
-      throw InvalidGpuDeviceException(std::format(
-          "Invalid GPU device ID {} ({} device(s) available).", device_id,
-          device_count));
-    }
+  if (device_ids.empty()) {
+    return {};
   }
+
+  const auto device_count = detail::get_cuda_device_count();
+  detail::validate_device_ids(device_ids, device_count);
 
   std::vector<torch::jit::script::Module> models_gpu;
   models_gpu.reserve(device_ids.size());
