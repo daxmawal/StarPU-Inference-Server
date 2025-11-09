@@ -106,9 +106,8 @@ InferenceClient::log_latency_summary() const
       const auto batch_size =
           last_batch_size_.has_value() ? *last_batch_size_ : std::size_t{1};
       stats_msg += std::format(
-          "\n  - throughput: {:.3f} inferences/s ({} inferences over {:.3f} s, "
-          "batch_size={})",
-          throughput, total_inference_count_, elapsed_seconds, batch_size);
+          "\n  - throughput: {:.3f} inferences/s ({} inferences over {:.3f} s)",
+          throughput, total_inference_count_, elapsed_seconds);
     } else {
       stats_msg += std::format(
           "\n  - throughput: {} inferences (elapsed time too small to compute "

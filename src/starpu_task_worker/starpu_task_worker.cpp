@@ -1588,10 +1588,6 @@ StarPUTaskRunner::run()
     batching_thread_.join();
   }
 
-  if (batching_thread_.joinable()) {
-    batching_thread_.join();
-  }
-
   log_info(opts_->verbosity, "StarPUTaskRunner stopped.");
 }
 }  // namespace starpu_server
