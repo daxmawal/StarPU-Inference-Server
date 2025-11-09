@@ -96,7 +96,10 @@ free_host_buffer(
   }
   if (buffer_info.cuda_pinned) {
     cudaFreeHost(static_cast<void*>(ptr));
+    return;
   }
+
+  std::free(static_cast<void*>(ptr));
 }
 
 auto
