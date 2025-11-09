@@ -331,6 +331,58 @@ run_reference_inference(
   }
 }
 
+static auto
+synthesize_outputs_from_config(const RuntimeConfig& opts)
+    -> std::optional<std::vector<torch::Tensor>>
+{
+  if (opts.models.empty()) {
+    return std::nullopt;
+  }
+
+  const auto& model_cfg = opts.models.front();
+  if (model_cfg.outputs.empty()) {
+    return std::nullopt;
+  }
+
+  std::vector<torch::Tensor> outputs;
+  outputs.reserve(model_cfg.outputs.size());
+
+  for (const auto& tensor_cfg : model_cfg.outputs) {
+    const auto tensor_name =
+        tensor_cfg.name.empty() ? "<unnamed output>" : tensor_cfg.name;
+    if (tensor_cfg.type == at::ScalarType::Undefined) {
+      log_warning(std::format(
+          "Output tensor '{}' is missing a valid data_type; falling back to "
+          "reference inference.",
+          tensor_name));
+      return std::nullopt;
+    }
+    if (tensor_cfg.dims.empty()) {
+      log_warning(std::format(
+          "Output tensor '{}' is missing dims; falling back to reference "
+          "inference.",
+          tensor_name));
+      return std::nullopt;
+    }
+
+    for (const auto dim : tensor_cfg.dims) {
+      if (dim <= 0) {
+        log_warning(std::format(
+            "Output tensor '{}' has non-positive dimension {}; falling back to "
+            "reference inference.",
+            tensor_name, dim));
+        return std::nullopt;
+      }
+    }
+
+    const auto options =
+        torch::TensorOptions().device(torch::kCPU).dtype(tensor_cfg.type);
+    outputs.emplace_back(torch::empty(tensor_cfg.dims, options));
+  }
+
+  return outputs;
+}
+
 // =============================================================================
 // Model and Reference Output Loader: returns CPU model, GPU clones, and ref
 // outputs
@@ -348,10 +400,30 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     auto models_gpu = opts.devices.use_cuda
                           ? clone_model_to_gpus(model_cpu, opts.devices.ids)
                           : std::vector<torch::jit::script::Module>{};
-    auto inputs = generate_inputs(
-        opts.models.empty() ? std::vector<TensorConfig>{}
-                            : opts.models[0].inputs);
-    auto output_refs = run_reference_inference(model_cpu, inputs);
+    std::optional<std::vector<torch::Tensor>> synthetic_outputs;
+    if (!opts.validation.validate_results) {
+      synthetic_outputs = synthesize_outputs_from_config(opts);
+    }
+
+    std::vector<torch::Tensor> output_refs;
+    if (opts.validation.validate_results || !synthetic_outputs.has_value()) {
+      if (!opts.validation.validate_results) {
+        log_debug(
+            opts.verbosity,
+            "Validation disabled but missing usable output schema; running "
+            "reference inference once to infer output sizes.");
+      }
+      auto inputs = generate_inputs(
+          opts.models.empty() ? std::vector<TensorConfig>{}
+                              : opts.models[0].inputs);
+      output_refs = run_reference_inference(model_cpu, inputs);
+    } else {
+      log_debug(
+          opts.verbosity,
+          "Validation disabled; using configured output schema instead of "
+          "running CPU reference inference.");
+      output_refs = std::move(*synthetic_outputs);
+    }
 
     return std::tuple{model_cpu, models_gpu, output_refs};
   }
