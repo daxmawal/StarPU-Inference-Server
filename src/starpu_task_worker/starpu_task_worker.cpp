@@ -1428,8 +1428,8 @@ StarPUTaskRunner::run()
         enqueue_end = enqueue_start;
       }
       tracer.log_batch_enqueue_span(
-          submission_id, job->model_name(), enqueue_start, enqueue_end,
-          request_ids_span, warmup_job);
+          submission_id, job->model_name(), batch_size, enqueue_start,
+          enqueue_end, request_ids_span, warmup_job);
       tracer.log_batch_build_span(
           submission_id, job->model_name(), batch_size,
           job->timing_info().batch_collect_start_time,

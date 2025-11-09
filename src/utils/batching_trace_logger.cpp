@@ -220,7 +220,7 @@ BatchingTraceLogger::log_batch_build_span(
 
 void
 BatchingTraceLogger::log_batch_enqueue_span(
-    int batch_id, std::string_view model_name,
+    int batch_id, std::string_view model_name, std::size_t batch_size,
     std::chrono::high_resolution_clock::time_point start_time,
     std::chrono::high_resolution_clock::time_point end_time,
     std::span<const int> request_ids, bool is_warmup)
@@ -242,7 +242,8 @@ BatchingTraceLogger::log_batch_enqueue_span(
   duration = std::max<int64_t>(int64_t{1}, duration);
 
   write_batch_enqueue_span(
-      model_name, batch_id, *start_ts, duration, request_ids, is_warmup);
+      model_name, batch_id, batch_size, *start_ts, duration, request_ids,
+      is_warmup);
 }
 
 void
@@ -542,8 +543,9 @@ BatchingTraceLogger::format_worker_lane_label(
 
 void
 BatchingTraceLogger::write_batch_enqueue_span(
-    std::string_view model_name, int batch_id, int64_t start_ts,
-    int64_t duration_us, std::span<const int> request_ids, bool is_warmup)
+    std::string_view model_name, int batch_id, std::size_t batch_size,
+    int64_t start_ts, int64_t duration_us, std::span<const int> request_ids,
+    bool is_warmup)
 {
   if (duration_us <= 0) {
     duration_us = 1;
@@ -568,7 +570,8 @@ BatchingTraceLogger::write_batch_enqueue_span(
        << ",\"dur\":" << adjusted_duration << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << kBatchEnqueueTrackId;
   line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
-       << ",\"" << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
+       << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
+       << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
   if (!request_ids.empty()) {
     line << ",\"" << warmup_prefix << "request_ids\":[";
     for (size_t idx = 0; idx < request_ids.size(); ++idx) {

@@ -32,7 +32,7 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
   const auto enqueue_end = enqueue_start + std::chrono::microseconds(10);
   const std::array<int, 2> request_ids{0, 1};
   logger.log_batch_enqueue_span(
-      5, "demo_model", enqueue_start, enqueue_end,
+      5, "demo_model", request_ids.size(), enqueue_start, enqueue_end,
       std::span<const int>(request_ids));
   logger.log_batch_submitted(5, "demo_model", 1);
   logger.log_batch_submitted(7, "demo_model", 1, 0, DeviceType::CPU);
@@ -164,7 +164,8 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
   const auto end = start + std::chrono::microseconds(60);
   const std::array<int, 3> request_ids{4, 5, 6};
   logger.log_batch_enqueue_span(
-      21, "demo_model", start, end, std::span<const int>(request_ids));
+      21, "demo_model", request_ids.size(), start, end,
+      std::span<const int>(request_ids));
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -176,9 +177,10 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
   EXPECT_NE(content.find("\"name\":\"batch\""), std::string::npos);
   EXPECT_NE(content.find("\"tid\":4"), std::string::npos);
   EXPECT_NE(content.find("\"request_ids\":[4,5,6]"), std::string::npos);
+  EXPECT_NE(content.find("\"batch_size\":3"), std::string::npos);
   EXPECT_NE(content.find("\"start_ts\":"), std::string::npos);
   EXPECT_NE(content.find("\"end_ts\":"), std::string::npos);
-  EXPECT_EQ(content.find("\"batch_size\":"), std::string::npos);
+  EXPECT_EQ(content.find("\"logical_jobs\":"), std::string::npos);
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
@@ -199,7 +201,8 @@ TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
   logger.log_request_enqueued(103, "demo_model", false, last);
   const std::array<int, 3> request_ids{101, 102, 103};
   logger.log_batch_enqueue_span(
-      99, "demo_model", first, second, std::span<const int>(request_ids));
+      99, "demo_model", request_ids.size(), first, second,
+      std::span<const int>(request_ids));
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
