@@ -398,7 +398,7 @@ InferenceServiceImpl::submit_job_async(
 
   job->set_on_complete(
       [job_ptr = job, callback = std::move(on_complete)](
-          const std::vector<torch::Tensor>& outs, double latency_ms) mutable {
+          std::vector<torch::Tensor> outs, double latency_ms) mutable {
         const auto& info = job_ptr->timing_info();
         auto timing = build_latency_breakdown(info, latency_ms);
         detail::TimingInfo copied_info = info;
@@ -410,8 +410,7 @@ InferenceServiceImpl::submit_job_async(
           return;
         }
 
-        auto outputs_copy = outs;
-        callback(Status::OK, std::move(outputs_copy), timing, copied_info);
+        callback(Status::OK, std::move(outs), timing, copied_info);
       });
 
   bool pushed = false;

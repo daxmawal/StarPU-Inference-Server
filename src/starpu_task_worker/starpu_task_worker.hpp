@@ -105,7 +105,7 @@ class StarPUTaskRunner {
       -> std::vector<std::shared_ptr<const void>>;
   static void propagate_completion_to_sub_jobs(
       const std::shared_ptr<InferenceJob>& aggregated_job,
-      const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
+      std::vector<torch::Tensor> aggregated_outputs, double latency_ms);
   static auto configure_task_context(
       InferenceTask& task, const PoolResources& pools,
       const std::vector<starpu_data_handle_t>& input_handles,

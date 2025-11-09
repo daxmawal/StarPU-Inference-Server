@@ -543,12 +543,13 @@ StarPUTaskRunner::prepare_job_completion_callback(
 {
   auto prev_callback = job->get_on_complete();
   job->set_on_complete([this, job_sptr = job, prev_callback](
-                           const std::vector<torch::Tensor>& results,
-                           double latency_ms) {
+                           std::vector<torch::Tensor> results,
+                           double latency_ms) mutable {
     const auto batch_size = std::max<std::size_t>(
         std::size_t{1}, static_cast<std::size_t>(resolve_batch_size(job_sptr)));
 
-    store_completed_job_result(job_sptr, results, latency_ms);
+    const auto& results_ref = results;
+    store_completed_job_result(job_sptr, results_ref, latency_ms);
     ensure_callback_timing(job_sptr->timing_info());
     record_job_metrics(job_sptr, DurationMs{latency_ms}, batch_size);
 
@@ -574,7 +575,7 @@ StarPUTaskRunner::prepare_job_completion_callback(
     }
 
     if (prev_callback) {
-      prev_callback(results, latency_ms);
+      prev_callback(std::move(results), latency_ms);
     }
 
     finalize_job_completion(job_sptr);
@@ -1089,11 +1090,10 @@ StarPUTaskRunner::maybe_build_batched_job(
   auto master_wp = std::weak_ptr<InferenceJob>(master);
   master->set_on_complete(
       [master_wp](
-          const std::vector<torch::Tensor>& aggregated_outputs,
-          double latency_ms) {
+          std::vector<torch::Tensor> aggregated_outputs, double latency_ms) {
         if (auto master_sp = master_wp.lock()) {
           propagate_completion_to_sub_jobs(
-              master_sp, aggregated_outputs, latency_ms);
+              master_sp, std::move(aggregated_outputs), latency_ms);
         }
       });
 
@@ -1176,7 +1176,7 @@ StarPUTaskRunner::batching_loop()
 void
 StarPUTaskRunner::propagate_completion_to_sub_jobs(
     const std::shared_ptr<InferenceJob>& aggregated_job,
-    const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms)
+    std::vector<torch::Tensor> aggregated_outputs, double latency_ms)
 {
   if (!aggregated_job) {
     return;
@@ -1210,7 +1210,7 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
     job_sp->timing_info().submission_id = aggregated_job->submission_id();
 
     if (entry.callback) {
-      entry.callback(outputs, latency_ms);
+      entry.callback(std::move(outputs), latency_ms);
     }
 
     offset += static_cast<std::size_t>(

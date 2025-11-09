@@ -3,6 +3,8 @@ trace_enabled: true
 trace_file: /local/home/jd258565/Workspace/StarPU-Inference-Server/build/batching_trace.json
 scheduler: eager
 starpu_env:
+  STARPU_FXT_TRACE: "1"
+  STARPU_FXT_PREFIX: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build"
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"
   STARPU_NWORKER_PER_CUDA: "4"
