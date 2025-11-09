@@ -381,6 +381,12 @@ InferenceTask::submit()
   const int ret = starpu_task_submit(task);
   if (ret != 0) {
     cleanup(ctx);
+    if (ctx != nullptr) {
+      ctx->self_keep_alive.reset();
+    }
+    if (task != nullptr) {
+      starpu_task_destroy(task);
+    }
     throw StarPUTaskSubmissionException(
         std::format("[ERROR] StarPU task submission failed (code {})", ret));
   }
