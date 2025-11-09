@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -18,6 +19,10 @@
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+class BatchCollector;
+class SlotManager;
+class ResultDispatcher;
+
 class InferenceTask;
 struct InferenceCallbackContext;
 // ============================================================================
@@ -46,6 +51,7 @@ struct StarPUTaskRunnerConfig {
 class StarPUTaskRunner {
  public:
   explicit StarPUTaskRunner(const StarPUTaskRunnerConfig& config);
+  ~StarPUTaskRunner();
 
   using DurationMs = std::chrono::duration<double, std::milli>;
 
@@ -65,6 +71,9 @@ class StarPUTaskRunner {
 
  private:
   friend class StarPUTaskRunnerTestAdapter;
+  friend class SlotManager;
+  friend class ResultDispatcher;
+  friend class BatchCollector;
 
   struct PoolResources {
     InputSlotPool* input_pool = nullptr;
@@ -127,7 +136,7 @@ class StarPUTaskRunner {
   void store_completed_job_result(
       const std::shared_ptr<InferenceJob>& job,
       const std::vector<torch::Tensor>& results, double latency_ms) const;
-  static void ensure_callback_timing(detail::TimingInfo& timing);
+  void ensure_callback_timing(detail::TimingInfo& timing) const;
   void record_job_metrics(
       const std::shared_ptr<InferenceJob>& job, DurationMs latency,
       std::size_t batch_size) const;
@@ -151,5 +160,9 @@ class StarPUTaskRunner {
   std::condition_variable prepared_cv_;
   std::deque<std::shared_ptr<InferenceJob>> prepared_jobs_;
   bool batching_done_ = false;
+
+  std::unique_ptr<BatchCollector> batch_collector_;
+  std::unique_ptr<SlotManager> slot_manager_;
+  std::unique_ptr<ResultDispatcher> result_dispatcher_;
 };
 }  // namespace starpu_server

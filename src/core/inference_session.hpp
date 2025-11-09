@@ -16,7 +16,7 @@
 
 namespace starpu_server {
 
-class RuntimeConfig;
+struct RuntimeConfig;
 class StarPUSetup;
 
 class InferenceSession {

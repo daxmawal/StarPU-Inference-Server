@@ -505,69 +505,230 @@ resize_output_handles_for_job(
 }  // namespace
 
 using clock = task_runner_internal::Clock;
-// =============================================================================
-// Constructor
-// =============================================================================
 
-StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
-    : queue_(config.queue), model_cpu_(config.model_cpu),
-      models_gpu_(config.models_gpu), starpu_(config.starpu),
-      opts_(config.opts), results_(config.results),
-      results_mutex_(config.results_mutex),
-      completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv),
-      dependencies_(
-          config.dependencies != nullptr ? config.dependencies
-                                         : &kDefaultInferenceTaskDependencies)
-{
-  task_runner_internal::validate_not_null(queue_, "queue");
-  task_runner_internal::validate_not_null(model_cpu_, "model_cpu");
-  task_runner_internal::validate_not_null(models_gpu_, "models_gpu");
-  task_runner_internal::validate_not_null(starpu_, "starpu");
-  task_runner_internal::validate_not_null(opts_, "opts");
-  task_runner_internal::validate_not_null(results_, "results");
-  task_runner_internal::validate_not_null(results_mutex_, "results_mutex");
-  task_runner_internal::validate_not_null(completed_jobs_, "completed_jobs");
-  task_runner_internal::validate_not_null(all_done_cv_, "all_done_cv");
-}
-
-
-// =============================================================================
-// Job Queue Management
-// =============================================================================
-
-auto
-StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
-{
-  if (pending_job_) {
-    return std::exchange(pending_job_, nullptr);
+class ResultDispatcher {
+ public:
+  ResultDispatcher(
+      const RuntimeConfig* opts, std::vector<InferenceResult>* results,
+      std::mutex* results_mutex, std::atomic<int>* completed_jobs,
+      std::condition_variable* all_done_cv)
+      : opts_(opts), results_(results), results_mutex_(results_mutex),
+        completed_jobs_(completed_jobs), all_done_cv_(all_done_cv)
+  {
   }
-  std::shared_ptr<InferenceJob> job;
-  if (!queue_->wait_and_pop(job)) {
-    return nullptr;
-  }
-  return job;
-}
 
-auto
-StarPUTaskRunner::should_shutdown(
-    const std::shared_ptr<InferenceJob>& job) const -> bool
-{
-  if (job->is_shutdown()) {
-    log_info(
-        opts_->verbosity,
-        "Received shutdown signal. Exiting StarPUTaskRunner loop.");
-    return true;
-  }
-  return false;
-}
+  void prepare_job_completion_callback(
+      StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job) const;
 
-// =============================================================================
-// Completion Callback Handling
-// =============================================================================
+  void store_completed_job_result(
+      const std::shared_ptr<InferenceJob>& job,
+      const std::vector<torch::Tensor>& results, double latency_ms) const;
+
+  void ensure_callback_timing(detail::TimingInfo& timing) const;
+
+  void record_job_metrics(
+      const std::shared_ptr<InferenceJob>& job,
+      StarPUTaskRunner::DurationMs latency, std::size_t batch_size) const;
+
+  void log_job_timings(
+      int request_id, StarPUTaskRunner::DurationMs latency,
+      const detail::TimingInfo& timing_info) const;
+
+  void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
+
+  static void propagate_completion_to_sub_jobs(
+      const std::shared_ptr<InferenceJob>& aggregated_job,
+      std::vector<torch::Tensor> aggregated_outputs, double latency_ms);
+
+ private:
+  const RuntimeConfig* opts_;
+  std::vector<InferenceResult>* results_;
+  std::mutex* results_mutex_;
+  std::atomic<int>* completed_jobs_;
+  std::condition_variable* all_done_cv_;
+};
+
+class SlotManager {
+ public:
+  explicit SlotManager(StarPUSetup* starpu) : starpu_(starpu) {}
+
+  auto acquire_pools() -> StarPUTaskRunner::PoolResources;
+
+  auto validate_batch_and_copy_inputs(
+      const std::shared_ptr<InferenceJob>& job, int64_t batch,
+      const StarPUTaskRunner::PoolResources& pools) const -> int64_t;
+
+  static void copy_job_inputs_to_slot(
+      const std::shared_ptr<InferenceJob>& job,
+      const std::vector<std::shared_ptr<InferenceJob>>& pending_jobs,
+      const std::vector<starpu_data_handle_t>& handles,
+      const std::vector<std::byte*>& base_ptrs);
+
+  static void release_pending_jobs(
+      const std::shared_ptr<InferenceJob>& job,
+      std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
+
+ private:
+  StarPUSetup* starpu_;
+};
+
+class BatchCollector {
+ public:
+  BatchCollector(
+      InferenceQueue* queue, const RuntimeConfig* opts, StarPUSetup* starpu,
+      std::shared_ptr<InferenceJob>* pending_job, std::mutex* prepared_mutex,
+      std::condition_variable* prepared_cv,
+      std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs,
+      bool* batching_done)
+      : queue_(queue), opts_(opts), starpu_(starpu), pending_job_(pending_job),
+        prepared_mutex_(prepared_mutex), prepared_cv_(prepared_cv),
+        prepared_jobs_(prepared_jobs), batching_done_(batching_done)
+  {
+  }
+
+  auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
+  auto collect_batch(const std::shared_ptr<InferenceJob>& first_job)
+      -> std::vector<std::shared_ptr<InferenceJob>>;
+  auto maybe_build_batched_job(std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::shared_ptr<InferenceJob>;
+  void enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job);
+  auto wait_for_prepared_job() -> std::shared_ptr<InferenceJob>;
+  void batching_loop();
+
+  static auto can_merge_jobs(
+      const std::shared_ptr<InferenceJob>& lhs,
+      const std::shared_ptr<InferenceJob>& rhs) -> bool;
+  static auto merge_input_tensors(
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::vector<torch::Tensor>;
+  static auto merge_input_memory_holders(
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::vector<std::shared_ptr<const void>>;
+
+ private:
+  InferenceQueue* queue_;
+  const RuntimeConfig* opts_;
+  StarPUSetup* starpu_;
+  std::shared_ptr<InferenceJob>* pending_job_;
+  std::mutex* prepared_mutex_;
+  std::condition_variable* prepared_cv_;
+  std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs_;
+  bool* batching_done_;
+};
 
 void
-StarPUTaskRunner::log_job_timings(
-    int request_id, DurationMs latency,
+ResultDispatcher::prepare_job_completion_callback(
+    StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job) const
+{
+  auto prev_callback = job->get_on_complete();
+  auto* dispatcher = this;
+  job->set_on_complete([dispatcher, prev_callback, job_sptr = job, &runner](
+                           std::vector<torch::Tensor> results,
+                           double latency_ms) mutable {
+    const auto batch_size = std::max<std::size_t>(
+        std::size_t{1},
+        static_cast<std::size_t>(runner.resolve_batch_size(job_sptr)));
+
+    const auto& results_ref = results;
+    dispatcher->store_completed_job_result(job_sptr, results_ref, latency_ms);
+    dispatcher->ensure_callback_timing(job_sptr->timing_info());
+    dispatcher->record_job_metrics(
+        job_sptr, StarPUTaskRunner::DurationMs{latency_ms}, batch_size);
+
+    auto& tracer = BatchingTraceLogger::instance();
+    if (tracer.enabled()) {
+      const std::size_t actual_batch_size = batch_size;
+      const bool warmup_job = is_warmup_job(job_sptr);
+      auto& timing = job_sptr->timing_info();
+      const auto zero_tp = clock::time_point{};
+      auto compute_start = timing.inference_start_time;
+      if (compute_start == zero_tp) {
+        compute_start = timing.codelet_start_time;
+      }
+      auto compute_end = timing.callback_start_time;
+      if (compute_end == zero_tp || compute_end < compute_start) {
+        compute_end = timing.codelet_end_time;
+      }
+
+      tracer.log_batch_compute_span(
+          job_sptr->submission_id(), job_sptr->model_name(), actual_batch_size,
+          job_sptr->get_worker_id(), job_sptr->get_executed_on(), compute_start,
+          compute_end, warmup_job, job_sptr->get_device_id());
+    }
+
+    if (prev_callback) {
+      prev_callback(std::move(results), latency_ms);
+    }
+
+    dispatcher->finalize_job_completion(job_sptr);
+  });
+}
+
+void
+ResultDispatcher::store_completed_job_result(
+    const std::shared_ptr<InferenceJob>& job,
+    const std::vector<torch::Tensor>& results, double latency_ms) const
+{
+  auto input_tensors = job->release_input_tensors();
+
+  const std::scoped_lock lock(*results_mutex_);
+  auto& stored_result = results_->emplace_back();
+  if (opts_->validation.validate_results) {
+    stored_result.inputs = std::move(input_tensors);
+    stored_result.results = results;
+  }
+  stored_result.latency_ms = latency_ms;
+  stored_result.timing_info = job->timing_info();
+  stored_result.request_id = job->get_request_id();
+  stored_result.submission_id = job->submission_id();
+  stored_result.device_id = job->get_device_id();
+  stored_result.worker_id = job->get_worker_id();
+  stored_result.executed_on = job->get_executed_on();
+}
+
+void
+ResultDispatcher::ensure_callback_timing(detail::TimingInfo& timing) const
+{
+  const auto zero_tp = clock::time_point{};
+  const auto now = clock::now();
+
+  if (timing.callback_start_time == zero_tp) {
+    timing.callback_start_time = now;
+  }
+  if (timing.callback_end_time == zero_tp) {
+    timing.callback_end_time = now;
+  }
+  if (timing.callback_end_time <= timing.callback_start_time) {
+    timing.callback_end_time = timing.callback_start_time + clock::duration{1};
+  }
+  if (timing.enqueued_time == zero_tp ||
+      timing.enqueued_time >= timing.callback_end_time) {
+    timing.enqueued_time = timing.callback_start_time;
+  }
+  if (timing.last_enqueued_time == zero_tp ||
+      timing.last_enqueued_time < timing.enqueued_time) {
+    timing.last_enqueued_time = timing.enqueued_time;
+  }
+}
+
+void
+ResultDispatcher::record_job_metrics(
+    const std::shared_ptr<InferenceJob>& job,
+    StarPUTaskRunner::DurationMs latency, std::size_t batch_size) const
+{
+  auto& timing = job->timing_info();
+  perf_observer::record_job(
+      timing.enqueued_time, timing.callback_end_time, batch_size,
+      is_warmup_job(job));
+
+  timing.submission_id = job->submission_id();
+  const int job_id = task_runner_internal::job_identifier(*job);
+  log_job_timings(job_id, latency, timing);
+}
+
+void
+ResultDispatcher::log_job_timings(
+    int request_id, StarPUTaskRunner::DurationMs latency,
     const detail::TimingInfo& timing_info) const
 {
   if (!should_log(VerbosityLevel::Stats, opts_->verbosity)) {
@@ -621,113 +782,7 @@ StarPUTaskRunner::log_job_timings(
 }
 
 void
-StarPUTaskRunner::prepare_job_completion_callback(
-    const std::shared_ptr<InferenceJob>& job)
-{
-  auto prev_callback = job->get_on_complete();
-  job->set_on_complete([this, job_sptr = job, prev_callback](
-                           std::vector<torch::Tensor> results,
-                           double latency_ms) mutable {
-    const auto batch_size = std::max<std::size_t>(
-        std::size_t{1}, static_cast<std::size_t>(resolve_batch_size(job_sptr)));
-
-    const auto& results_ref = results;
-    store_completed_job_result(job_sptr, results_ref, latency_ms);
-    ensure_callback_timing(job_sptr->timing_info());
-    record_job_metrics(job_sptr, DurationMs{latency_ms}, batch_size);
-
-    auto& tracer = BatchingTraceLogger::instance();
-    if (tracer.enabled()) {
-      const std::size_t actual_batch_size = batch_size;
-      const bool warmup_job = is_warmup_job(job_sptr);
-      auto& timing = job_sptr->timing_info();
-      const auto zero_tp = clock::time_point{};
-      auto compute_start = timing.inference_start_time;
-      if (compute_start == zero_tp) {
-        compute_start = timing.codelet_start_time;
-      }
-      auto compute_end = timing.callback_start_time;
-      if (compute_end == zero_tp || compute_end < compute_start) {
-        compute_end = timing.codelet_end_time;
-      }
-
-      tracer.log_batch_compute_span(
-          job_sptr->submission_id(), job_sptr->model_name(), actual_batch_size,
-          job_sptr->get_worker_id(), job_sptr->get_executed_on(), compute_start,
-          compute_end, warmup_job, job_sptr->get_device_id());
-    }
-
-    if (prev_callback) {
-      prev_callback(std::move(results), latency_ms);
-    }
-
-    finalize_job_completion(job_sptr);
-  });
-}
-
-void
-StarPUTaskRunner::store_completed_job_result(
-    const std::shared_ptr<InferenceJob>& job,
-    const std::vector<torch::Tensor>& results, double latency_ms) const
-{
-  auto input_tensors = job->release_input_tensors();
-
-  const std::scoped_lock lock(*results_mutex_);
-  auto& stored_result = results_->emplace_back();
-  if (opts_->validation.validate_results) {
-    stored_result.inputs = std::move(input_tensors);
-    stored_result.results = results;
-  }
-  stored_result.latency_ms = latency_ms;
-  stored_result.timing_info = job->timing_info();
-  stored_result.request_id = job->get_request_id();
-  stored_result.submission_id = job->submission_id();
-  stored_result.device_id = job->get_device_id();
-  stored_result.worker_id = job->get_worker_id();
-  stored_result.executed_on = job->get_executed_on();
-}
-
-void
-StarPUTaskRunner::ensure_callback_timing(detail::TimingInfo& timing)
-{
-  const auto zero_tp = clock::time_point{};
-  const auto now = clock::now();
-
-  if (timing.callback_start_time == zero_tp) {
-    timing.callback_start_time = now;
-  }
-  if (timing.callback_end_time == zero_tp) {
-    timing.callback_end_time = now;
-  }
-  if (timing.callback_end_time <= timing.callback_start_time) {
-    timing.callback_end_time = timing.callback_start_time + clock::duration{1};
-  }
-  if (timing.enqueued_time == zero_tp ||
-      timing.enqueued_time >= timing.callback_end_time) {
-    timing.enqueued_time = timing.callback_start_time;
-  }
-  if (timing.last_enqueued_time == zero_tp ||
-      timing.last_enqueued_time < timing.enqueued_time) {
-    timing.last_enqueued_time = timing.enqueued_time;
-  }
-}
-
-void
-StarPUTaskRunner::record_job_metrics(
-    const std::shared_ptr<InferenceJob>& job, DurationMs latency,
-    std::size_t batch_size) const
-{
-  auto& timing = job->timing_info();
-  perf_observer::record_job(
-      timing.enqueued_time, timing.callback_end_time, batch_size,
-      is_warmup_job(job));
-
-  timing.submission_id = job->submission_id();
-  log_job_timings(task_runner_internal::job_identifier(*job), latency, timing);
-}
-
-void
-StarPUTaskRunner::finalize_job_completion(
+ResultDispatcher::finalize_job_completion(
     const std::shared_ptr<InferenceJob>& job) const
 {
   const int logical_jobs = std::max(1, job->logical_job_count());
@@ -735,51 +790,60 @@ StarPUTaskRunner::finalize_job_completion(
   all_done_cv_->notify_all();
 }
 
-// =============================================================================
-// Error Handling for Failed Jobs
-// =============================================================================
-
-auto
-StarPUTaskRunner::handle_job_exception(
-    const std::shared_ptr<InferenceJob>& job,
-    const std::exception& exception) -> bool
+void
+ResultDispatcher::propagate_completion_to_sub_jobs(
+    const std::shared_ptr<InferenceJob>& aggregated_job,
+    std::vector<torch::Tensor> aggregated_outputs, double latency_ms)
 {
-  const int job_id = job ? task_runner_internal::job_identifier(*job) : -1;
-  log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
-
-  if (job == nullptr) {
-    return false;
+  if (!aggregated_job) {
+    return;
   }
 
-  bool completion_invoked = false;
-  if (job->has_on_complete()) {
-    const auto completion = job->get_on_complete();
-    task_runner_internal::run_with_logged_exceptions(
-        [&]() {
-          completion({}, -1);
-          completion_invoked = true;
-        },
-        task_runner_internal::ExceptionLoggingMessages{
-            "Exception in completion callback: ",
-            "Unknown exception in completion callback"});
+  const auto& sub_jobs = aggregated_job->aggregated_sub_jobs();
+  if (sub_jobs.empty()) {
+    return;
   }
 
-  return completion_invoked;
+  size_t offset = 0;
+  for (const auto& entry : sub_jobs) {
+    auto job_sp = entry.job.lock();
+    const auto slice_size =
+        static_cast<std::size_t>(std::max<int64_t>(1, entry.batch_size));
+    if (!job_sp) {
+      offset += slice_size;
+      continue;
+    }
+
+    auto slice_result = task_runner_internal::slice_outputs_for_sub_job(
+        aggregated_outputs,
+        task_runner_internal::SubJobSliceOptions{offset, entry.batch_size});
+    auto outputs = std::move(slice_result.outputs);
+
+    job_sp->timing_info() = aggregated_job->timing_info();
+    job_sp->get_device_id() = aggregated_job->get_device_id();
+    job_sp->get_worker_id() = aggregated_job->get_worker_id();
+    job_sp->get_executed_on() = aggregated_job->get_executed_on();
+    job_sp->set_submission_id(aggregated_job->submission_id());
+    job_sp->timing_info().submission_id = aggregated_job->submission_id();
+
+    if (entry.callback) {
+      entry.callback(std::move(outputs), latency_ms);
+    }
+
+    offset += static_cast<std::size_t>(
+        std::max<int64_t>(1, slice_result.processed_length));
+  }
 }
 
-// =============================================================================
-// StarPU Task Submission
-// =============================================================================
-
 auto
-StarPUTaskRunner::acquire_pools() -> PoolResources
+SlotManager::acquire_pools() -> StarPUTaskRunner::PoolResources
 {
-  PoolResources pools{};
-  if (starpu_->has_input_pool()) {
+  StarPUTaskRunner::PoolResources pools{};
+  if (starpu_ != nullptr && starpu_->has_input_pool()) {
     pools.input_pool = &starpu_->input_pool();
     pools.input_slot = pools.input_pool->acquire();
   }
-  if (starpu_->has_output_pool()) {
+  if (starpu_ != nullptr && starpu_->has_output_pool()) {
     pools.output_pool = &starpu_->output_pool();
     pools.output_slot = pools.output_pool->acquire();
   }
@@ -787,17 +851,15 @@ StarPUTaskRunner::acquire_pools() -> PoolResources
 }
 
 auto
-StarPUTaskRunner::validate_batch_and_copy_inputs(
-    const std::shared_ptr<InferenceJob>& job,
-    const PoolResources& pools) -> int64_t
+SlotManager::validate_batch_and_copy_inputs(
+    const std::shared_ptr<InferenceJob>& job, int64_t batch,
+    const StarPUTaskRunner::PoolResources& pools) const -> int64_t
 {
-  const auto& inputs = job->get_input_tensors();
-  int64_t batch = resolve_batch_size(job);
-
   if (!pools.has_input()) {
     return batch;
   }
 
+  const auto& inputs = job->get_input_tensors();
   const auto& base_ptrs = pools.input_pool->base_ptrs(pools.input_slot);
   if (inputs.size() != base_ptrs.size()) {
     throw InputPoolMismatchException(
@@ -837,43 +899,12 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
   return batch;
 }
 
-auto
-StarPUTaskRunner::resolve_batch_size(
-    const std::shared_ptr<InferenceJob>& job) const -> int64_t
-{
-  if (!job) {
-    return 1;
-  }
-  if (const auto effective = job->effective_batch_size();
-      effective.has_value()) {
-    return std::max<int64_t>(1, *effective);
-  }
-
-  const auto& inputs = job->get_input_tensors();
-  if (inputs.empty()) {
-    return 1;
-  }
-
-  if (!opts_->models.empty() && !opts_->models[0].inputs.empty()) {
-    const auto per_sample_rank =
-        static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
-    const auto rank0 = inputs[0].dim();
-    if (rank0 == per_sample_rank + 1 && rank0 > 0) {
-      return inputs[0].size(0);
-    }
-    return 1;
-  }
-
-  return static_cast<int64_t>(
-      task_runner_internal::batch_size_from_inputs(inputs));
-}
-
 void
-StarPUTaskRunner::copy_job_inputs_to_slot(
+SlotManager::copy_job_inputs_to_slot(
     const std::shared_ptr<InferenceJob>& job,
     const std::vector<std::shared_ptr<InferenceJob>>& pending_jobs,
     const std::vector<starpu_data_handle_t>& handles,
-    const std::vector<std::byte*>& base_ptrs) const
+    const std::vector<std::byte*>& base_ptrs)
 {
   if (!job) {
     return;
@@ -925,9 +956,9 @@ StarPUTaskRunner::copy_job_inputs_to_slot(
 }
 
 void
-StarPUTaskRunner::release_pending_jobs(
+SlotManager::release_pending_jobs(
     const std::shared_ptr<InferenceJob>& job,
-    std::vector<std::shared_ptr<InferenceJob>>& pending_jobs) const
+    std::vector<std::shared_ptr<InferenceJob>>& pending_jobs)
 {
   if (pending_jobs.empty()) {
     return;
@@ -944,7 +975,20 @@ StarPUTaskRunner::release_pending_jobs(
 }
 
 auto
-StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
+BatchCollector::wait_for_next_job() -> std::shared_ptr<InferenceJob>
+{
+  if (pending_job_ != nullptr && pending_job_->get()) {
+    return std::exchange(*pending_job_, nullptr);
+  }
+  std::shared_ptr<InferenceJob> job;
+  if (queue_ == nullptr || !queue_->wait_and_pop(job)) {
+    return nullptr;
+  }
+  return job;
+}
+
+auto
+BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     -> std::vector<std::shared_ptr<InferenceJob>>
 {
   std::vector<std::shared_ptr<InferenceJob>> jobs;
@@ -977,18 +1021,17 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
   while (!stop_collection &&
          jobs.size() < static_cast<size_t>(max_batch_size)) {
     std::shared_ptr<InferenceJob> next;
-    if (bool got_job = queue_->try_pop(next); !got_job) {
-      if (enable_wait) {
-        const auto now = clock::now();
-        if (now >= coalesce_deadline) {
-          break;
-        }
-        const auto remaining = coalesce_deadline - now;
-        got_job = queue_->wait_for_and_pop(next, remaining);
-      }
-      if (!got_job) {
+    bool got_job = queue_ != nullptr && queue_->try_pop(next);
+    if (!got_job && enable_wait) {
+      const auto now = clock::now();
+      if (now >= coalesce_deadline) {
         break;
       }
+      const auto remaining = coalesce_deadline - now;
+      got_job = queue_->wait_for_and_pop(next, remaining);
+    }
+    if (!got_job) {
+      break;
     }
     if (!next) {
       continue;
@@ -999,7 +1042,9 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
             target_worker != next->get_fixed_worker_id() ||
             !can_merge_jobs(jobs.front(), next);
         should_hold_pending) {
-      pending_job_ = next;
+      if (pending_job_ != nullptr) {
+        *pending_job_ = next;
+      }
       stop_collection = true;
       continue;
     }
@@ -1010,7 +1055,7 @@ StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
 }
 
 auto
-StarPUTaskRunner::can_merge_jobs(
+BatchCollector::can_merge_jobs(
     const std::shared_ptr<InferenceJob>& lhs,
     const std::shared_ptr<InferenceJob>& rhs) -> bool
 {
@@ -1061,7 +1106,7 @@ StarPUTaskRunner::can_merge_jobs(
 }
 
 auto
-StarPUTaskRunner::merge_input_tensors(
+BatchCollector::merge_input_tensors(
     const std::vector<std::shared_ptr<InferenceJob>>& jobs)
     -> std::vector<torch::Tensor>
 {
@@ -1127,7 +1172,7 @@ StarPUTaskRunner::merge_input_tensors(
 }
 
 auto
-StarPUTaskRunner::merge_input_memory_holders(
+BatchCollector::merge_input_memory_holders(
     const std::vector<std::shared_ptr<InferenceJob>>& jobs)
     -> std::vector<std::shared_ptr<const void>>
 {
@@ -1140,7 +1185,7 @@ StarPUTaskRunner::merge_input_memory_holders(
 }
 
 auto
-StarPUTaskRunner::maybe_build_batched_job(
+BatchCollector::maybe_build_batched_job(
     std::vector<std::shared_ptr<InferenceJob>>& jobs)
     -> std::shared_ptr<InferenceJob>
 {
@@ -1192,7 +1237,8 @@ StarPUTaskRunner::maybe_build_batched_job(
   master->timing_info().batch_collect_start_time = earliest_batch_collect_start;
 
   const bool need_materialized_inputs =
-      !starpu_->has_input_pool() || opts_->validation.validate_results;
+      !(starpu_ != nullptr && starpu_->has_input_pool()) ||
+      (opts_ != nullptr && opts_->validation.validate_results);
 
   if (need_materialized_inputs) {
     if (auto merged_inputs = merge_input_tensors(jobs);
@@ -1217,12 +1263,12 @@ StarPUTaskRunner::maybe_build_batched_job(
       [master_wp](
           std::vector<torch::Tensor> aggregated_outputs, double latency_ms) {
         if (auto master_sp = master_wp.lock()) {
-          propagate_completion_to_sub_jobs(
+          ResultDispatcher::propagate_completion_to_sub_jobs(
               master_sp, std::move(aggregated_outputs), latency_ms);
         }
       });
 
-  if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
+  if (opts_ != nullptr && should_log(VerbosityLevel::Trace, opts_->verbosity)) {
     log_trace(
         opts_->verbosity,
         std::format(
@@ -1234,31 +1280,40 @@ StarPUTaskRunner::maybe_build_batched_job(
 }
 
 void
-StarPUTaskRunner::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
+BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
 {
-  {
-    const std::scoped_lock lock(prepared_mutex_);
-    prepared_jobs_.push_back(job);
+  if (prepared_mutex_ == nullptr || prepared_jobs_ == nullptr ||
+      prepared_cv_ == nullptr) {
+    return;
   }
-  prepared_cv_.notify_one();
+  {
+    const std::scoped_lock lock(*prepared_mutex_);
+    prepared_jobs_->push_back(job);
+  }
+  prepared_cv_->notify_one();
 }
 
 auto
-StarPUTaskRunner::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
+BatchCollector::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
 {
-  std::unique_lock lock(prepared_mutex_);
-  prepared_cv_.wait(
-      lock, [this] { return !prepared_jobs_.empty() || batching_done_; });
-  if (prepared_jobs_.empty()) {
+  if (prepared_mutex_ == nullptr || prepared_jobs_ == nullptr ||
+      prepared_cv_ == nullptr) {
     return nullptr;
   }
-  auto job = prepared_jobs_.front();
-  prepared_jobs_.pop_front();
+  std::unique_lock lock(*prepared_mutex_);
+  prepared_cv_->wait(lock, [this] {
+    return !prepared_jobs_->empty() || (batching_done_ && *batching_done_);
+  });
+  if (prepared_jobs_->empty()) {
+    return nullptr;
+  }
+  auto job = prepared_jobs_->front();
+  prepared_jobs_->pop_front();
   return job;
 }
 
 void
-StarPUTaskRunner::batching_loop()
+BatchCollector::batching_loop()
 {
   bool should_stop = false;
   while (!should_stop) {
@@ -1291,11 +1346,278 @@ StarPUTaskRunner::batching_loop()
     enqueue_prepared_job(job);
   }
 
-  {
-    const std::scoped_lock lock(prepared_mutex_);
-    batching_done_ = true;
+  if (prepared_mutex_ != nullptr && prepared_cv_ != nullptr &&
+      batching_done_ != nullptr) {
+    {
+      const std::scoped_lock lock(*prepared_mutex_);
+      *batching_done_ = true;
+    }
+    prepared_cv_->notify_all();
   }
-  prepared_cv_.notify_all();
+}
+// =============================================================================
+// Constructor
+// =============================================================================
+
+StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
+    : queue_(config.queue), model_cpu_(config.model_cpu),
+      models_gpu_(config.models_gpu), starpu_(config.starpu),
+      opts_(config.opts), results_(config.results),
+      results_mutex_(config.results_mutex),
+      completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv),
+      dependencies_(
+          config.dependencies != nullptr ? config.dependencies
+                                         : &kDefaultInferenceTaskDependencies),
+      batch_collector_(std::make_unique<BatchCollector>(
+          queue_, opts_, starpu_, &pending_job_, &prepared_mutex_,
+          &prepared_cv_, &prepared_jobs_, &batching_done_)),
+      slot_manager_(std::make_unique<SlotManager>(starpu_)),
+      result_dispatcher_(std::make_unique<ResultDispatcher>(
+          opts_, results_, results_mutex_, completed_jobs_, all_done_cv_))
+{
+  task_runner_internal::validate_not_null(queue_, "queue");
+  task_runner_internal::validate_not_null(model_cpu_, "model_cpu");
+  task_runner_internal::validate_not_null(models_gpu_, "models_gpu");
+  task_runner_internal::validate_not_null(starpu_, "starpu");
+  task_runner_internal::validate_not_null(opts_, "opts");
+  task_runner_internal::validate_not_null(results_, "results");
+  task_runner_internal::validate_not_null(results_mutex_, "results_mutex");
+  task_runner_internal::validate_not_null(completed_jobs_, "completed_jobs");
+  task_runner_internal::validate_not_null(all_done_cv_, "all_done_cv");
+}
+
+StarPUTaskRunner::~StarPUTaskRunner() = default;
+
+
+// =============================================================================
+// Job Queue Management
+// =============================================================================
+
+auto
+StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
+{
+  return batch_collector_->wait_for_next_job();
+}
+
+auto
+StarPUTaskRunner::should_shutdown(
+    const std::shared_ptr<InferenceJob>& job) const -> bool
+{
+  if (job->is_shutdown()) {
+    log_info(
+        opts_->verbosity,
+        "Received shutdown signal. Exiting StarPUTaskRunner loop.");
+    return true;
+  }
+  return false;
+}
+
+// =============================================================================
+// Completion Callback Handling
+// =============================================================================
+
+void
+StarPUTaskRunner::log_job_timings(
+    int request_id, DurationMs latency,
+    const detail::TimingInfo& timing_info) const
+{
+  result_dispatcher_->log_job_timings(request_id, latency, timing_info);
+}
+
+void
+StarPUTaskRunner::prepare_job_completion_callback(
+    const std::shared_ptr<InferenceJob>& job)
+{
+  result_dispatcher_->prepare_job_completion_callback(*this, job);
+}
+
+void
+StarPUTaskRunner::store_completed_job_result(
+    const std::shared_ptr<InferenceJob>& job,
+    const std::vector<torch::Tensor>& results, double latency_ms) const
+{
+  result_dispatcher_->store_completed_job_result(job, results, latency_ms);
+}
+
+void
+StarPUTaskRunner::ensure_callback_timing(detail::TimingInfo& timing) const
+{
+  result_dispatcher_->ensure_callback_timing(timing);
+}
+
+void
+StarPUTaskRunner::record_job_metrics(
+    const std::shared_ptr<InferenceJob>& job, DurationMs latency,
+    std::size_t batch_size) const
+{
+  result_dispatcher_->record_job_metrics(job, latency, batch_size);
+}
+
+void
+StarPUTaskRunner::finalize_job_completion(
+    const std::shared_ptr<InferenceJob>& job) const
+{
+  result_dispatcher_->finalize_job_completion(job);
+}
+
+// =============================================================================
+// Error Handling for Failed Jobs
+// =============================================================================
+
+auto
+StarPUTaskRunner::handle_job_exception(
+    const std::shared_ptr<InferenceJob>& job,
+    const std::exception& exception) -> bool
+{
+  const int job_id = job ? task_runner_internal::job_identifier(*job) : -1;
+  log_error(std::format("[Exception] Job {}: {}", job_id, exception.what()));
+
+  if (job == nullptr) {
+    return false;
+  }
+
+  bool completion_invoked = false;
+  if (job->has_on_complete()) {
+    const auto completion = job->get_on_complete();
+    task_runner_internal::run_with_logged_exceptions(
+        [&]() {
+          completion({}, -1);
+          completion_invoked = true;
+        },
+        task_runner_internal::ExceptionLoggingMessages{
+            "Exception in completion callback: ",
+            "Unknown exception in completion callback"});
+  }
+
+  return completion_invoked;
+}
+
+// =============================================================================
+// StarPU Task Submission
+// =============================================================================
+
+auto
+StarPUTaskRunner::acquire_pools() -> PoolResources
+{
+  return slot_manager_->acquire_pools();
+}
+
+auto
+StarPUTaskRunner::validate_batch_and_copy_inputs(
+    const std::shared_ptr<InferenceJob>& job,
+    const PoolResources& pools) -> int64_t
+{
+  const int64_t batch = resolve_batch_size(job);
+  if (!pools.has_input()) {
+    return batch;
+  }
+  return slot_manager_->validate_batch_and_copy_inputs(job, batch, pools);
+}
+
+auto
+StarPUTaskRunner::resolve_batch_size(
+    const std::shared_ptr<InferenceJob>& job) const -> int64_t
+{
+  if (!job) {
+    return 1;
+  }
+  if (const auto effective = job->effective_batch_size();
+      effective.has_value()) {
+    return std::max<int64_t>(1, *effective);
+  }
+
+  const auto& inputs = job->get_input_tensors();
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  if (!opts_->models.empty() && !opts_->models[0].inputs.empty()) {
+    const auto per_sample_rank =
+        static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
+    const auto rank0 = inputs[0].dim();
+    if (rank0 == per_sample_rank + 1 && rank0 > 0) {
+      return inputs[0].size(0);
+    }
+    return 1;
+  }
+
+  return static_cast<int64_t>(
+      task_runner_internal::batch_size_from_inputs(inputs));
+}
+
+void
+StarPUTaskRunner::copy_job_inputs_to_slot(
+    const std::shared_ptr<InferenceJob>& job,
+    const std::vector<std::shared_ptr<InferenceJob>>& pending_jobs,
+    const std::vector<starpu_data_handle_t>& handles,
+    const std::vector<std::byte*>& base_ptrs) const
+{
+  SlotManager::copy_job_inputs_to_slot(job, pending_jobs, handles, base_ptrs);
+}
+
+void
+StarPUTaskRunner::release_pending_jobs(
+    const std::shared_ptr<InferenceJob>& job,
+    std::vector<std::shared_ptr<InferenceJob>>& pending_jobs) const
+{
+  SlotManager::release_pending_jobs(job, pending_jobs);
+}
+
+auto
+StarPUTaskRunner::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
+    -> std::vector<std::shared_ptr<InferenceJob>>
+{
+  return batch_collector_->collect_batch(first_job);
+}
+
+auto
+StarPUTaskRunner::can_merge_jobs(
+    const std::shared_ptr<InferenceJob>& lhs,
+    const std::shared_ptr<InferenceJob>& rhs) -> bool
+{
+  return BatchCollector::can_merge_jobs(lhs, rhs);
+}
+
+auto
+StarPUTaskRunner::merge_input_tensors(
+    const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+    -> std::vector<torch::Tensor>
+{
+  return BatchCollector::merge_input_tensors(jobs);
+}
+
+auto
+StarPUTaskRunner::merge_input_memory_holders(
+    const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+    -> std::vector<std::shared_ptr<const void>>
+{
+  return BatchCollector::merge_input_memory_holders(jobs);
+}
+
+auto
+StarPUTaskRunner::maybe_build_batched_job(
+    std::vector<std::shared_ptr<InferenceJob>>& jobs)
+    -> std::shared_ptr<InferenceJob>
+{
+  return batch_collector_->maybe_build_batched_job(jobs);
+}
+
+void
+StarPUTaskRunner::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
+{
+  batch_collector_->enqueue_prepared_job(job);
+}
+
+auto
+StarPUTaskRunner::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
+{
+  return batch_collector_->wait_for_prepared_job();
+}
+
+void
+StarPUTaskRunner::batching_loop()
+{
+  batch_collector_->batching_loop();
 }
 
 void
@@ -1303,44 +1625,8 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
     const std::shared_ptr<InferenceJob>& aggregated_job,
     std::vector<torch::Tensor> aggregated_outputs, double latency_ms)
 {
-  if (!aggregated_job) {
-    return;
-  }
-
-  const auto& sub_jobs = aggregated_job->aggregated_sub_jobs();
-  if (sub_jobs.empty()) {
-    return;
-  }
-
-  size_t offset = 0;
-  for (const auto& entry : sub_jobs) {
-    auto job_sp = entry.job.lock();
-    const auto slice_size =
-        static_cast<std::size_t>(std::max<int64_t>(1, entry.batch_size));
-    if (!job_sp) {
-      offset += slice_size;
-      continue;
-    }
-
-    auto slice_result = task_runner_internal::slice_outputs_for_sub_job(
-        aggregated_outputs,
-        task_runner_internal::SubJobSliceOptions{offset, entry.batch_size});
-    auto outputs = std::move(slice_result.outputs);
-
-    job_sp->timing_info() = aggregated_job->timing_info();
-    job_sp->get_device_id() = aggregated_job->get_device_id();
-    job_sp->get_worker_id() = aggregated_job->get_worker_id();
-    job_sp->get_executed_on() = aggregated_job->get_executed_on();
-    job_sp->set_submission_id(aggregated_job->submission_id());
-    job_sp->timing_info().submission_id = aggregated_job->submission_id();
-
-    if (entry.callback) {
-      entry.callback(std::move(outputs), latency_ms);
-    }
-
-    offset += static_cast<std::size_t>(
-        std::max<int64_t>(1, slice_result.processed_length));
-  }
+  ResultDispatcher::propagate_completion_to_sub_jobs(
+      aggregated_job, std::move(aggregated_outputs), latency_ms);
 }
 
 auto
