@@ -28,6 +28,7 @@
 #include "client_utils.hpp"
 #include "exceptions.hpp"
 #include "inference_queue.hpp"
+#include "inference_session.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
 #include "latency_statistics.hpp"
@@ -460,100 +461,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   const c10::InferenceMode inference_guard;
   CuDnnBenchmarkGuard cudnn_benchmark_guard(
       opts.devices.use_cuda && !opts.batching.dynamic_batching);
-  torch::jit::script::Module model_cpu;
-  std::vector<torch::jit::script::Module> models_gpu;
-  std::vector<torch::Tensor> outputs_ref;
-
-  try {
-    auto result = load_model_and_reference_output(opts);
-    if (!result) {
-      log_error("Failed to load model or reference outputs");
-      return;
-    }
-    std::tie(model_cpu, models_gpu, outputs_ref) = std::move(*result);
-  }
-  catch (const InferenceEngineException& e) {
-    log_error(
-        std::format("Failed to load model or reference outputs: {}", e.what()));
-    return;
-  }
-
-  run_warmup(opts, starpu, model_cpu, models_gpu, outputs_ref);
-
-  InferenceQueue queue;
-  std::vector<InferenceResult> results;
-  std::mutex results_mutex;
-
-  if (opts.batching.request_nb > 0) {
-    results.reserve(static_cast<size_t>(opts.batching.request_nb));
-  }
-
-  std::atomic completed_jobs = 0;
-  std::condition_variable all_done_cv;
-  std::mutex all_done_mutex;
-
-  StarPUTaskRunnerConfig config{};
-  config.queue = &queue;
-  config.model_cpu = &model_cpu;
-  config.models_gpu = &models_gpu;
-  config.starpu = &starpu;
-  config.opts = &opts;
-  config.results = &results;
-  config.results_mutex = &results_mutex;
-  config.completed_jobs = &completed_jobs;
-  config.all_done_cv = &all_done_cv;
-  StarPUTaskRunner worker(config);
-
-  std::jthread server;
-  std::jthread client;
-  try {
-    server = get_worker_thread_launcher()(worker);
-    client = std::jthread([&queue, &opts, &outputs_ref]() {
-      detail::client_worker(queue, opts, outputs_ref, opts.batching.request_nb);
-    });
-  }
-  catch (const std::exception& e) {
-    log_error(std::format("Failed to start worker thread: {}", e.what()));
-    queue.shutdown();
-    if (client.joinable()) {
-      client.join();
-    }
-    if (server.joinable()) {
-      server.join();
-    }
-    throw;
-  }
-
-  {
-    std::unique_lock lock(all_done_mutex);
-    all_done_cv.wait(lock, [&completed_jobs, &opts]() {
-      return completed_jobs.load(std::memory_order_acquire) >=
-             opts.batching.request_nb;
-    });
-  }
-
-  if (client.joinable()) {
-    client.join();
-  }
-  if (server.joinable()) {
-    server.join();
-  }
-
-  {
-    const std::span<const InferenceResult> results_span(results);
-    if (auto stats = compute_latency_statistics(
-            results_span, &InferenceResult::latency_ms)) {
-      if (should_log(VerbosityLevel::Stats, opts.verbosity)) {
-        log_info(
-            opts.verbosity,
-            std::format(
-                "Latency stats (ms): p50={:.3f}, p85={:.3f}, p95={:.3f}, "
-                "p100={:.3f}, mean={:.3f}",
-                stats->p50, stats->p85, stats->p95, stats->p100, stats->mean));
-      }
-    }
-  }
-
-  detail::process_results(results, model_cpu, models_gpu, opts);
+  InferenceSession session(opts, starpu, detail::client_worker);
+  session.run();
 }
 }  // namespace starpu_server

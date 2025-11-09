@@ -20,6 +20,7 @@ add_executable(
   ${CORE_DIR}/warmup.cpp
   ${CORE_DIR}/tensor_builder.cpp
   ${CORE_DIR}/starpu_setup.cpp
+  ${CORE_DIR}/inference_session.cpp
   ${CORE_DIR}/inference_runner.cpp
   ${GRPC_SERVER_DIR}/inference_service.cpp
   ${SRC_DIR}/monitoring/metrics.cpp

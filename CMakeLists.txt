@@ -137,6 +137,7 @@ target_sources(
   starpu_server
   PRIVATE ${SRC_DIR}/cli/args_parser.cpp
           ${SRC_DIR}/cli/main.cpp
+          ${SRC_DIR}/core/inference_session.cpp
           ${SRC_DIR}/core/inference_runner.cpp
           ${SRC_DIR}/core/inference_task.cpp
           ${SRC_DIR}/core/input_slot_pool.cpp

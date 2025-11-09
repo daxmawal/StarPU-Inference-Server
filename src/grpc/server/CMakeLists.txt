@@ -13,6 +13,7 @@ target_sources(
           ${CORE_DIR}/starpu_setup.cpp
           ${CORE_DIR}/tensor_builder.cpp
           ${CORE_DIR}/warmup.cpp
+          ${CORE_DIR}/inference_session.cpp
           ${CORE_DIR}/inference_runner.cpp
           ${UTILS_DIR}/client_utils.cpp
           ${UTILS_DIR}/batching_trace_logger.cpp
