@@ -1011,6 +1011,39 @@ TEST_F(
       master->timing_info().batch_collect_start_time);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture,
+    MaybeBuildBatchedJobPreservesEffectiveBatchSizeAfterMergingInputs)
+{
+  opts_.validation.validate_results = true;
+
+  auto make_input = [](float a, float b) {
+    return torch::tensor({{a, b}}, torch::TensorOptions().dtype(torch::kFloat));
+  };
+
+  auto job0 = make_job(0, {make_input(1.0F, 2.0F)});
+  auto job1 = make_job(1, {make_input(3.0F, 4.0F)});
+  auto job2 = make_job(2, {make_input(5.0F, 6.0F)});
+
+  job0->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+  job1->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+  job2->set_output_tensors(
+      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{
+      job0, job1, job2};
+
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+
+  ASSERT_EQ(master, job0);
+  ASSERT_TRUE(master->effective_batch_size().has_value());
+  EXPECT_EQ(*master->effective_batch_size(), 3);
+}
+
 TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionToSubJobsDistributesSlicesAndMetadata)

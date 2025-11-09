@@ -1058,7 +1058,6 @@ StarPUTaskRunner::maybe_build_batched_job(
                                       : static_cast<int64_t>(jobs.size());
   master->set_output_tensors(task_runner_internal::resize_outputs_for_batch(
       prototype_outputs, effective_batch));
-  master->set_effective_batch_size(effective_batch);
 
   master->set_start_time(earliest_start);
   master->timing_info().enqueued_time = earliest_enqueued;
@@ -1086,6 +1085,8 @@ StarPUTaskRunner::maybe_build_batched_job(
     }
     master->set_pending_sub_jobs(std::move(pending_jobs));
   }
+
+  master->set_effective_batch_size(effective_batch);
 
   auto master_wp = std::weak_ptr<InferenceJob>(master);
   master->set_on_complete(
@@ -1284,9 +1285,10 @@ StarPUTaskRunner::submit_inference_task(
     task.submit();
     auto& tracer = BatchingTraceLogger::instance();
     if (tracer.enabled()) {
-      const std::size_t logical_jobs =
-          static_cast<std::size_t>(std::max(1, job->logical_job_count()));
       const auto request_ids = build_request_ids_for_trace(job);
+      const std::size_t logical_jobs = std::max(
+          static_cast<std::size_t>(std::max(1, job->logical_job_count())),
+          request_ids.size());
       tracer.log_batch_submitted(
           job->submission_id(), job->model_name(), logical_jobs,
           job->get_worker_id(), job->get_executed_on(),
@@ -1343,9 +1345,10 @@ StarPUTaskRunner::submit_inference_task(
     } else {
       auto& tracer = BatchingTraceLogger::instance();
       if (tracer.enabled()) {
-        const std::size_t logical_jobs =
-            static_cast<std::size_t>(std::max(1, job->logical_job_count()));
         const auto request_ids = build_request_ids_for_trace(job);
+        const std::size_t logical_jobs = std::max(
+            static_cast<std::size_t>(std::max(1, job->logical_job_count())),
+            request_ids.size());
         tracer.log_batch_submitted(
             job->submission_id(), job->model_name(), logical_jobs,
             job->get_worker_id(), job->get_executed_on(),
