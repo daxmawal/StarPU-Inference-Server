@@ -340,6 +340,27 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
       req, reply, outputs, recv_ms, send_ms, breakdown);
 }
 
+TEST(InferenceServiceImpl, PopulateResponseUsesOverrideModelName)
+{
+  auto req = starpu_server::make_model_request("client_model", "1");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = kI10;
+  int64_t send_ms = kI20;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  breakdown.total_ms = 1.0;
+  breakdown.overall_ms = 2.0;
+
+  const std::string server_model = "server_model";
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, server_model);
+  ASSERT_TRUE(status.ok());
+  reply.set_server_send_ms(send_ms);
+  starpu_server::verify_populate_response(
+      req, reply, outputs, recv_ms, send_ms, breakdown, server_model);
+}
+
 TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
 {
   auto req = starpu_server::make_model_request("model", "1");

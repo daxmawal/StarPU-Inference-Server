@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -30,13 +31,14 @@ class InferenceServiceImpl final
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      std::vector<std::vector<int64_t>> expected_input_dims,
-      int max_batch_size);
+      std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
+      std::string default_model_name = {});
 
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
-      std::vector<at::ScalarType> expected_input_types);
+      std::vector<at::ScalarType> expected_input_types,
+      std::string default_model_name = {});
 
   auto ServerLive(
       grpc::ServerContext* context, const inference::ServerLiveRequest* request,
@@ -73,7 +75,8 @@ class InferenceServiceImpl final
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
-      const LatencyBreakdown& breakdown) -> grpc::Status;
+      const LatencyBreakdown& breakdown,
+      std::string_view model_name_override = {}) -> grpc::Status;
 
   using AsyncJobCallback = std::function<void(
       grpc::Status, std::vector<torch::Tensor>, LatencyBreakdown,
@@ -124,6 +127,7 @@ class InferenceServiceImpl final
     std::shared_ptr<MetricsRegistry> metrics;
     std::chrono::high_resolution_clock::time_point recv_tp;
     int64_t recv_ms;
+    std::string resolved_model_name;
   };
 
   static void handle_async_infer_completion(
@@ -134,11 +138,15 @@ class InferenceServiceImpl final
   static auto build_latency_breakdown(
       const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
 
+  [[nodiscard]] auto resolve_model_name(std::string model_name) const
+      -> std::string;
+
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
   std::vector<at::ScalarType> expected_input_types_;
   std::vector<std::vector<int64_t>> expected_input_dims_;
   int max_batch_size_ = 0;
+  std::string default_model_name_;
   std::atomic<int> next_request_id_{0};
 };
 
@@ -175,6 +183,7 @@ struct GrpcServerOptions {
   std::string address;
   std::size_t max_message_bytes;
   VerbosityLevel verbosity;
+  std::string default_model_name;
 };
 
 void RunGrpcServer(
