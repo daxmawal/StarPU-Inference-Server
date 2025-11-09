@@ -540,13 +540,9 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   }
 
   {
-    std::vector<double> latencies;
-    latencies.reserve(results.size());
-    for (const auto& result : results) {
-      latencies.push_back(result.latency_ms);
-    }
-
-    if (auto stats = compute_latency_statistics(std::move(latencies))) {
+    const std::span<const InferenceResult> results_span(results);
+    if (auto stats = compute_latency_statistics(
+            results_span, &InferenceResult::latency_ms)) {
       if (should_log(VerbosityLevel::Stats, opts.verbosity)) {
         log_info(
             opts.verbosity,
