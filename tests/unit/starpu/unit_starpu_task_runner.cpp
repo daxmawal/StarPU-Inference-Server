@@ -425,26 +425,10 @@ TEST_F(
     }
   }
 
-  bool released = false;
   EXPECT_THROW(
-      ([&] {
-        try {
-          starpu_server::StarPUTaskRunnerTestAdapter::
-              validate_batch_and_copy_inputs(
-                  runner_.get(), job, &input_pool, slot);
-        }
-        catch (...) {
-          if (!released) {
-            starpu_data_release(handle);
-            released = true;
-          }
-          throw;
-        }
-      }()),
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
       starpu_server::StarPUDataAcquireException);
-  if (!released) {
-    starpu_data_release(handle);
-  }
 
   restore_vector_interfaces(snapshots);
   input_pool.release(slot);
@@ -479,26 +463,10 @@ TEST_F(
     }
   }
 
-  bool released = false;
   EXPECT_THROW(
-      ([&] {
-        try {
-          starpu_server::StarPUTaskRunnerTestAdapter::
-              validate_batch_and_copy_inputs(
-                  runner_.get(), job, &input_pool, slot);
-        }
-        catch (...) {
-          if (!released) {
-            starpu_data_release(handle);
-            released = true;
-          }
-          throw;
-        }
-      }()),
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
       starpu_server::InvalidInputTensorException);
-  if (!released) {
-    starpu_data_release(handle);
-  }
 
   restore_vector_interfaces(snapshots);
   input_pool.release(slot);
@@ -535,26 +503,10 @@ TEST_F(
     }
   }
 
-  bool released = false;
   EXPECT_THROW(
-      ([&] {
-        try {
-          starpu_server::StarPUTaskRunnerTestAdapter::
-              validate_batch_and_copy_inputs(
-                  runner_.get(), job, &input_pool, slot);
-        }
-        catch (...) {
-          if (!released) {
-            starpu_data_release(handle);
-            released = true;
-          }
-          throw;
-        }
-      }()),
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
       starpu_server::InputPoolCapacityException);
-  if (!released) {
-    starpu_data_release(handle);
-  }
 
   restore_vector_interfaces(snapshots);
   input_pool.release(slot);
