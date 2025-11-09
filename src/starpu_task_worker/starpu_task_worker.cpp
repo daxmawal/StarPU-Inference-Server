@@ -5,14 +5,17 @@
 #include <torch/torch.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <exception>
+#include <execution>
 #include <format>
 #include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <numeric>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -320,6 +323,83 @@ struct VectorResizeSpec {
   std::size_t element_count;
   std::size_t byte_count;
 };
+
+class StarpuHandleGuard {
+ public:
+  explicit StarpuHandleGuard(starpu_data_handle_t handle) noexcept
+      : handle_(handle)
+  {
+  }
+
+  StarpuHandleGuard(const StarpuHandleGuard&) = delete;
+  StarpuHandleGuard& operator=(const StarpuHandleGuard&) = delete;
+  StarpuHandleGuard(StarpuHandleGuard&& other) noexcept : handle_(other.handle_)
+  {
+    other.handle_ = nullptr;
+  }
+
+  StarpuHandleGuard& operator=(StarpuHandleGuard&& other) noexcept
+  {
+    if (this != &other) {
+      release();
+      handle_ = other.handle_;
+      other.handle_ = nullptr;
+    }
+    return *this;
+  }
+
+  ~StarpuHandleGuard() { release(); }
+
+  void release() noexcept
+  {
+    if (handle_ != nullptr) {
+      starpu_data_release(handle_);
+      handle_ = nullptr;
+    }
+  }
+
+ private:
+  starpu_data_handle_t handle_{nullptr};
+};
+
+template <typename Func>
+void
+parallel_for_each_index(std::size_t count, Func&& func)
+{
+  if (count == 0) {
+    return;
+  }
+
+  std::vector<std::size_t> indices(count);
+  std::iota(indices.begin(), indices.end(), 0);
+
+  std::atomic<bool> abort{false};
+  std::exception_ptr first_error;
+  std::mutex error_mutex;
+  auto&& task = std::forward<Func>(func);
+
+  std::for_each(
+      std::execution::par_unseq, indices.begin(), indices.end(),
+      [&](std::size_t idx) {
+        if (abort.load(std::memory_order_acquire)) {
+          return;
+        }
+        try {
+          task(idx);
+        }
+        catch (...) {
+          std::lock_guard<std::mutex> lock(error_mutex);
+          if (!first_error) {
+            first_error = std::current_exception();
+            abort.store(true, std::memory_order_release);
+          }
+        }
+      });
+
+  if (first_error) {
+    std::rethrow_exception(first_error);
+  }
+}
 
 inline void
 resize_starpu_vector_interface(
@@ -726,23 +806,23 @@ StarPUTaskRunner::validate_batch_and_copy_inputs(
     copy_job_inputs_to_slot(job, pending_jobs, handles, base_ptrs);
     release_pending_jobs(job, pending_jobs);
   } else {
-    for (size_t i = 0; i < inputs.size(); ++i) {
-      const auto& tin = inputs[i];
+    parallel_for_each_index(inputs.size(), [&](std::size_t input_idx) {
+      const auto& tin = inputs[input_idx];
       if (!tin.defined() || !tin.is_cpu() || !tin.is_contiguous()) {
         throw InvalidInputTensorException(
             "Input tensor must be defined, CPU and contiguous");
       }
-      const int status = starpu_data_acquire(handles[i], STARPU_W);
+      const int status = starpu_data_acquire(handles[input_idx], STARPU_W);
       if (status != 0) {
         throw StarPUDataAcquireException("starpu_data_acquire(W) failed");
       }
+      StarpuHandleGuard handle_guard(handles[input_idx]);
       const VectorResizeSpec spec{
           static_cast<std::size_t>(tin.numel()),
           static_cast<std::size_t>(tin.nbytes())};
-      resize_starpu_vector_handle(handles[i], spec, true);
-      std::memcpy(base_ptrs[i], tin.data_ptr(), spec.byte_count);
-      starpu_data_release(handles[i]);
-    }
+      resize_starpu_vector_handle(handles[input_idx], spec, true);
+      std::memcpy(base_ptrs[input_idx], tin.data_ptr(), spec.byte_count);
+    });
   }
 
   return batch;
@@ -791,12 +871,13 @@ StarPUTaskRunner::copy_job_inputs_to_slot(
   }
 
   const auto& master_inputs = job->get_input_tensors();
-  for (size_t input_idx = 0; input_idx < master_inputs.size(); ++input_idx) {
+  parallel_for_each_index(master_inputs.size(), [&](std::size_t input_idx) {
     const auto acquire_status =
         starpu_data_acquire(handles[input_idx], STARPU_W);
     if (acquire_status != 0) {
       throw StarPUDataAcquireException("starpu_data_acquire(W) failed");
     }
+    StarpuHandleGuard handle_guard(handles[input_idx]);
 
     auto* dst = base_ptrs[input_idx];
     std::size_t offset = 0;
@@ -823,7 +904,6 @@ StarPUTaskRunner::copy_job_inputs_to_slot(
       }
       const auto& pending_inputs = pending->get_input_tensors();
       if (input_idx >= pending_inputs.size()) {
-        starpu_data_release(handles[input_idx]);
         throw InconsistentInputTensorCountException(
             "Inconsistent input tensor count");
       }
@@ -832,8 +912,7 @@ StarPUTaskRunner::copy_job_inputs_to_slot(
 
     const VectorResizeSpec spec{total_numel, total_bytes};
     resize_starpu_vector_handle(handles[input_idx], spec, true);
-    starpu_data_release(handles[input_idx]);
-  }
+  });
 }
 
 void
