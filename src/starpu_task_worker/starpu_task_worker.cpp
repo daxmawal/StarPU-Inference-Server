@@ -192,8 +192,11 @@ slice_outputs_for_sub_job(
       determined_length = true;
     }
 
-    result.outputs.push_back(
-        tensor.narrow(0, slice_start, length).contiguous());
+    auto slice_view = tensor.narrow(0, slice_start, length);
+    if (!slice_view.is_contiguous()) {
+      slice_view = slice_view.contiguous();
+    }
+    result.outputs.push_back(std::move(slice_view));
   }
 
   return result;
