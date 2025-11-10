@@ -159,6 +159,43 @@ validate_device_ids(std::span<const int> device_ids, int available_device_count)
   }
 }
 
+auto
+compute_latency_breakdown(const TimingInfo& timing, double total_latency_ms)
+    -> BaseLatencyBreakdown
+{
+  using duration_f = std::chrono::duration<double, std::milli>;
+
+  BaseLatencyBreakdown breakdown{};
+  breakdown.queue_ms =
+      duration_f(timing.dequeued_time - timing.enqueued_time).count();
+  breakdown.batch_ms = std::max(
+      0.0, duration_f(
+               timing.batch_collect_end_time - timing.batch_collect_start_time)
+               .count());
+
+  auto submit_start = timing.batch_collect_start_time;
+  if (submit_start == std::chrono::high_resolution_clock::time_point{}) {
+    submit_start = timing.dequeued_time;
+  }
+  breakdown.submit_ms = std::max(
+      0.0,
+      duration_f(timing.before_starpu_submitted_time - submit_start).count());
+
+  breakdown.scheduling_ms =
+      duration_f(
+          timing.codelet_start_time - timing.before_starpu_submitted_time)
+          .count();
+  breakdown.codelet_ms =
+      duration_f(timing.codelet_end_time - timing.codelet_start_time).count();
+  breakdown.inference_ms =
+      duration_f(timing.callback_start_time - timing.inference_start_time)
+          .count();
+  breakdown.callback_ms =
+      duration_f(timing.callback_end_time - timing.callback_start_time).count();
+  breakdown.total_ms = total_latency_ms;
+  return breakdown;
+}
+
 }  // namespace detail
 
 namespace {

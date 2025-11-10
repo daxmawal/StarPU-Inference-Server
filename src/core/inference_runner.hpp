@@ -38,9 +38,22 @@ struct TimingInfo {
   int submission_id = -1;
 };
 
+struct BaseLatencyBreakdown {
+  double queue_ms = 0.0;
+  double batch_ms = 0.0;
+  double submit_ms = 0.0;
+  double scheduling_ms = 0.0;
+  double codelet_ms = 0.0;
+  double inference_ms = 0.0;
+  double callback_ms = 0.0;
+  double total_ms = 0.0;
+};
+
 void set_cuda_device_count_override(std::optional<int> override);
 auto get_cuda_device_count() -> int;
 void validate_device_ids(std::span<const int> device_ids, int device_count);
+auto compute_latency_breakdown(
+    const TimingInfo& timing, double total_latency_ms) -> BaseLatencyBreakdown;
 }  // namespace detail
 
 // =============================================================================

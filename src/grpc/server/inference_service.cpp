@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/inference_runner.hpp"
 #include "monitoring/metrics.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/client_utils.hpp"
@@ -364,28 +365,17 @@ auto
 InferenceServiceImpl::build_latency_breakdown(
     const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown
 {
-  using duration_f = std::chrono::duration<double, std::milli>;
-  LatencyBreakdown timing{};
-  timing.queue_ms = duration_f(info.dequeued_time - info.enqueued_time).count();
-  timing.batch_ms = std::max(
-      0.0,
-      duration_f(info.batch_collect_end_time - info.batch_collect_start_time)
-          .count());
-  timing.submit_ms = std::max(
-      0.0, duration_f(
-               info.before_starpu_submitted_time - info.batch_collect_end_time)
-               .count());
-  timing.scheduling_ms =
-      duration_f(info.codelet_start_time - info.before_starpu_submitted_time)
-          .count();
-  timing.codelet_ms =
-      duration_f(info.codelet_end_time - info.codelet_start_time).count();
-  timing.inference_ms =
-      duration_f(info.callback_start_time - info.inference_start_time).count();
-  timing.callback_ms =
-      duration_f(info.callback_end_time - info.callback_start_time).count();
-  timing.total_ms = latency_ms;
-  return timing;
+  const auto base = detail::compute_latency_breakdown(info, latency_ms);
+  LatencyBreakdown breakdown{};
+  breakdown.queue_ms = base.queue_ms;
+  breakdown.batch_ms = base.batch_ms;
+  breakdown.submit_ms = base.submit_ms;
+  breakdown.scheduling_ms = base.scheduling_ms;
+  breakdown.codelet_ms = base.codelet_ms;
+  breakdown.inference_ms = base.inference_ms;
+  breakdown.callback_ms = base.callback_ms;
+  breakdown.total_ms = base.total_ms;
+  return breakdown;
 }
 
 auto

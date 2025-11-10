@@ -740,37 +740,8 @@ ResultDispatcher::log_job_timings(
   }
 
   const auto submission_id = timing_info.submission_id;
-  using duration_f = std::chrono::duration<double, std::milli>;
-  const auto queue_ms =
-      duration_f(timing_info.dequeued_time - timing_info.enqueued_time).count();
-  const auto batch_ms = std::max(
-      0.0, duration_f(
-               timing_info.batch_collect_end_time -
-               timing_info.batch_collect_start_time)
-               .count());
-  auto submit_start = timing_info.batch_collect_start_time;
-  if (submit_start == std::chrono::high_resolution_clock::time_point{}) {
-    submit_start = timing_info.dequeued_time;
-  }
-  const auto submit_ms = std::max(
-      0.0, duration_f(timing_info.before_starpu_submitted_time - submit_start)
-               .count());
-  const auto scheduling_ms = duration_f(
-                                 timing_info.codelet_start_time -
-                                 timing_info.before_starpu_submitted_time)
-                                 .count();
-  const auto codelet_ms =
-      duration_f(timing_info.codelet_end_time - timing_info.codelet_start_time)
-          .count();
-  const auto inference_ms =
-      duration_f(
-          timing_info.callback_start_time - timing_info.inference_start_time)
-          .count();
-  const auto callback_ms =
-      duration_f(
-          timing_info.callback_end_time - timing_info.callback_start_time)
-          .count();
-
+  const auto base =
+      detail::compute_latency_breakdown(timing_info, latency.count());
   const int job_id = submission_id >= 0 ? submission_id : request_id;
   const auto header = std::format(
       "Job {} done. Latency = {:.3f} ms | Queue = ", job_id, latency.count());
@@ -781,8 +752,9 @@ ResultDispatcher::log_job_timings(
           "{}{:.3f} ms, Batch = {:.3f} ms, Submit = {:.3f} ms, Scheduling = "
           "{:.3f} ms, Codelet = {:.3f} ms, Inference = {:.3f} ms, Callback = "
           "{:.3f} ms",
-          header, queue_ms, batch_ms, submit_ms, scheduling_ms, codelet_ms,
-          inference_ms, callback_ms));
+          header, base.queue_ms, base.batch_ms, base.submit_ms,
+          base.scheduling_ms, base.codelet_ms, base.inference_ms,
+          base.callback_ms));
 }
 
 void
