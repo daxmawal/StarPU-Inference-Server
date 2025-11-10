@@ -16,6 +16,7 @@
 #include <mutex>
 #include <new>
 #include <numeric>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -370,8 +371,7 @@ parallel_for_each_index(std::size_t count, Func&& func)
     return;
   }
 
-  std::vector<std::size_t> indices(count);
-  std::iota(indices.begin(), indices.end(), 0);
+  const auto indices = std::views::iota(std::size_t{0}, count);
 
   std::atomic<bool> abort{false};
   std::exception_ptr first_error;
