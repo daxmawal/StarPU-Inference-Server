@@ -1130,13 +1130,13 @@ BatchCollector::merge_input_tensors(
           "Input tensor must be defined before batching");
     }
 
-    auto target_sizes = prototype.sizes().vec();
-    if (target_sizes.empty()) {
+    if (prototype.dim() <= 0) {
       throw InvalidInputTensorException(
           "Input tensor must have at least one dimension");
     }
 
-    int64_t total_dim0 = 0;
+    std::vector<torch::Tensor> slices;
+    slices.reserve(jobs.size());
     for (const auto& job : jobs) {
       const auto& tensors = job->get_input_tensors();
       if (tensor_idx >= tensors.size()) {
@@ -1148,24 +1148,17 @@ BatchCollector::merge_input_tensors(
         throw InvalidInputTensorException(
             "Input tensor must be defined before batching");
       }
-      total_dim0 += tensor.size(0);
+      slices.push_back(tensor);
     }
 
-    target_sizes[0] = total_dim0;
-    auto merged_tensor = torch::empty(target_sizes, prototype.options());
-
-    int64_t offset = 0;
-    for (const auto& job : jobs) {
-      const auto& tensors = job->get_input_tensors();
-      const auto& tensor = tensors[tensor_idx];
-      const int64_t slice_len = tensor.size(0);
-      if (slice_len == 0) {
-        continue;
-      }
-      merged_tensor.narrow(0, offset, slice_len).copy_(tensor);
-      offset += slice_len;
+    try {
+      merged.push_back(torch::cat(slices, /*dim=*/0));
     }
-    merged.push_back(std::move(merged_tensor));
+    catch (const c10::Error& e) {
+      throw InvalidInputTensorException(std::format(
+          "Failed to concatenate batched inputs for tensor {}: {}", tensor_idx,
+          e.what()));
+    }
   }
 
   return merged;
