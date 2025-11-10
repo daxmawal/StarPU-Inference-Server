@@ -1,5 +1,7 @@
 #include "inference_task.hpp"
 
+#include <starpu.h>
+
 #include <algorithm>
 #include <bit>
 #include <chrono>
@@ -63,6 +65,39 @@ run_with_logged_exceptions(
     }
   }
 }
+
+class StarpuHandleVectorGuard {
+ public:
+  explicit StarpuHandleVectorGuard(
+      std::vector<starpu_data_handle_t>& handles) noexcept
+      : handles_(handles)
+  {
+  }
+
+  StarpuHandleVectorGuard(const StarpuHandleVectorGuard&) = delete;
+  auto operator=(const StarpuHandleVectorGuard&) -> StarpuHandleVectorGuard& =
+                                                        delete;
+
+  ~StarpuHandleVectorGuard() noexcept { reset(); }
+
+  void dismiss() noexcept { active_ = false; }
+
+ private:
+  void reset() noexcept
+  {
+    if (!active_) {
+      return;
+    }
+    for (const auto handle : handles_) {
+      if (handle != nullptr) {
+        starpu_data_unregister(handle);
+      }
+    }
+  }
+
+  std::vector<starpu_data_handle_t>& handles_;
+  bool active_ = true;
+};
 }  // namespace
 
 const InferenceTaskDependencies kDefaultInferenceTaskDependencies{
@@ -177,12 +212,14 @@ InferenceTask::register_inputs_handles(
 {
   std::vector<starpu_data_handle_t> handles;
   handles.reserve(input_tensors.size());
+  StarpuHandleVectorGuard unregister_guard(handles);
 
   for (size_t i = 0; i < input_tensors.size(); ++i) {
     handles.push_back(safe_register_tensor_vector(
         input_tensors[i], std::format("input[{}]", i)));
   }
 
+  unregister_guard.dismiss();
   return handles;
 }
 
@@ -193,12 +230,14 @@ InferenceTask::register_outputs_handles(
 {
   std::vector<starpu_data_handle_t> handles;
   handles.reserve(outputs_tensors.size());
+  StarpuHandleVectorGuard unregister_guard(handles);
 
   for (size_t i = 0; i < outputs_tensors.size(); ++i) {
     handles.push_back(safe_register_tensor_vector(
         outputs_tensors[i], std::format("output[{}]", i)));
   }
 
+  unregister_guard.dismiss();
   return handles;
 }
 
