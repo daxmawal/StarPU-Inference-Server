@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "utils/datatype_utils.hpp"
@@ -44,6 +45,16 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
     throw std::invalid_argument("Shape string is empty or invalid.");
   }
   return shape;
+}
+
+auto
+ensure_primary_input(ClientConfig& cfg) -> InputConfig&
+{
+  if (cfg.inputs.empty()) {
+    cfg.inputs.emplace_back();
+    cfg.inputs.front().name = "input";
+  }
+  return cfg.inputs.front();
 }
 
 }  // namespace
@@ -145,12 +156,8 @@ auto
 parse_shape(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&cfg](const char* val) {
-    cfg.shape = parse_shape_string(val);
-    if (cfg.inputs.empty()) {
-      cfg.inputs.emplace_back("input", cfg.shape, cfg.type);
-    } else {
-      cfg.inputs[0].shape = cfg.shape;
-    }
+    auto& primary_input = ensure_primary_input(cfg);
+    primary_input.shape = parse_shape_string(val);
   });
 }
 
@@ -159,12 +166,8 @@ auto
 parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(idx, args, [&cfg](const char* val) {
-    cfg.type = string_to_scalar_type(val);
-    if (cfg.inputs.empty()) {
-      cfg.inputs.emplace_back("input", cfg.shape, cfg.type);
-    } else {
-      cfg.inputs[0].type = cfg.type;
-    }
+    auto& primary_input = ensure_primary_input(cfg);
+    primary_input.type = string_to_scalar_type(val);
   });
 }
 
@@ -188,10 +191,6 @@ append_input_config(ClientConfig& cfg, const char* val)
   input.shape = parse_shape_string(shape_str);
   input.type = string_to_scalar_type(type_str);
   cfg.inputs.push_back(std::move(input));
-  if (cfg.inputs.size() == 1) {
-    cfg.shape = cfg.inputs[0].shape;
-    cfg.type = cfg.inputs[0].type;
-  }
 }
 
 }  // namespace

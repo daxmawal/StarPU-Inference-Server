@@ -17,8 +17,6 @@ struct InputConfig {
 };
 
 struct ClientConfig {
-  std::vector<int64_t> shape;
-  at::ScalarType type = at::kFloat;
   std::vector<InputConfig> inputs;
   std::string server_address = "localhost:50051";
   std::string model_name = "example";
