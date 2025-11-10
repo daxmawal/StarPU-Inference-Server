@@ -1,7 +1,6 @@
 set(SRC_DIR ${PROJECT_SOURCE_DIR}/src)
 set(UTILS_DIR ${SRC_DIR}/utils)
 set(CORE_DIR ${SRC_DIR}/core)
-set(CLI_DIR ${SRC_DIR}/cli)
 set(TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
 set(GRPC_SERVER_DIR ${SRC_DIR}/grpc/server)
 set(GRPC_CLIENT_DIR ${SRC_DIR}/grpc/client)
@@ -13,7 +12,6 @@ add_subdirectory(integration)
 
 add_executable(
   all_tests
-  ${SRC_DIR}/cli/args_parser.cpp
   ${CORE_DIR}/inference_task.cpp
   ${CORE_DIR}/input_slot_pool.cpp
   ${CORE_DIR}/output_slot_pool.cpp
@@ -47,7 +45,6 @@ target_include_directories(
           ${TESTS_DIR}/common
           ${SRC_DIR}
           ${UTILS_DIR}
-          ${CLI_DIR}
           ${CORE_DIR}
           ${TASK_WORKER_DIR}
           ${GRPC_SERVER_DIR}
@@ -70,6 +67,12 @@ target_link_libraries(
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp
           ${HWLOC_LIBRARY})
+
+if(STARPU_HAVE_NVML)
+  target_compile_definitions(all_tests PRIVATE STARPU_HAVE_NVML=1)
+  target_include_directories(all_tests PRIVATE ${NVML_INCLUDE_DIR})
+  target_link_libraries(all_tests PRIVATE ${NVML_LIBRARY})
+endif()
 
 if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(all_tests PRIVATE -fprofile-arcs -ftest-coverage -O0

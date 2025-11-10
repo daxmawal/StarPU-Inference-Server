@@ -45,7 +45,6 @@ TEST(ClientArgs, ShapeOverridesExistingInput)
   ASSERT_TRUE(cfg.valid);
   ASSERT_EQ(cfg.inputs.size(), 1U);
   EXPECT_EQ(cfg.inputs[0].shape, (std::vector<int64_t>{2}));
-  EXPECT_EQ(cfg.shape, (std::vector<int64_t>{2}));
 }
 
 TEST(ClientArgs, HelpFlagSetsShowHelp)
@@ -58,7 +57,6 @@ TEST(ClientArgs, HelpFlagSetsShowHelp)
     EXPECT_TRUE(cfg.show_help);
     EXPECT_TRUE(cfg.valid);
     EXPECT_TRUE(cfg.inputs.empty());
-    EXPECT_TRUE(cfg.shape.empty());
   }
 }
 

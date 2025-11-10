@@ -10,7 +10,6 @@ target_sources(
             starpu/integration_tensor_builder_from_starpu.cpp
             utils/integration_skipped_modules.cpp
             utils/integration_inference_validator.cpp
-            cli/integration_cli.cpp
             core/integration_inference_queue.cpp
             core/integration_inference_runner_helpers.cpp
             core/integration_inference_task_errors.cpp

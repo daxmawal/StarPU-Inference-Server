@@ -48,3 +48,16 @@ target_link_libraries(
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp
           ${HWLOC_LIBRARY})
+
+if(STARPU_HAVE_NVML)
+  target_compile_definitions(grpc_server PRIVATE STARPU_HAVE_NVML=1)
+  target_include_directories(grpc_server PRIVATE ${NVML_INCLUDE_DIR})
+  target_link_libraries(grpc_server PRIVATE ${NVML_LIBRARY})
+endif()
+
+if(HAVE_NVTX)
+  target_compile_definitions(grpc_server PRIVATE HAVE_NVTX=1)
+  if(CUDAToolkit_FOUND)
+    target_include_directories(grpc_server PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+  endif()
+endif()

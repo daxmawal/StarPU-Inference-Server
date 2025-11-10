@@ -237,7 +237,6 @@ The main executables are emitted under `build/`:
 
 - `grpc_server`: gRPC service combining StarPU and LibTorch.
 - `grpc_client_example`: sample CLI client.
-- `starpu_server`: experimental CLI entry point.
 
 ## 9. Optional: build and run tests
 
