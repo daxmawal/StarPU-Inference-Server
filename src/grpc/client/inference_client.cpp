@@ -1,12 +1,20 @@
 #include "inference_client.hpp"
 
+#include <c10/util/BFloat16.h>
+#include <c10/util/Half.h>
+
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 #include "core/latency_statistics.hpp"
+#include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
 #include "utils/time_utils.hpp"
 
@@ -21,7 +29,109 @@ struct AsyncClientCall {
   std::chrono::high_resolution_clock::time_point start_time;
   int request_id = 0;
   std::size_t inference_count = 1;
+  std::optional<InferenceClient::OutputSummary> expected_outputs;
 };
+
+namespace {
+constexpr double kOutputComparisonTolerance = 1e-4;
+
+template <typename T>
+void
+append_converted_values(
+    std::vector<double>& destination, std::string_view raw, std::size_t count)
+{
+  for (std::size_t idx = 0; idx < count; ++idx) {
+    T value{};
+    std::memcpy(&value, raw.data() + idx * sizeof(T), sizeof(T));
+    destination.push_back(static_cast<double>(value));
+  }
+}
+
+template <>
+void
+append_converted_values<c10::Half>(
+    std::vector<double>& destination, std::string_view raw, std::size_t count)
+{
+  for (std::size_t idx = 0; idx < count; ++idx) {
+    c10::Half value;
+    std::memcpy(
+        &value, raw.data() + idx * sizeof(c10::Half), sizeof(c10::Half));
+    destination.push_back(static_cast<double>(static_cast<float>(value)));
+  }
+}
+
+template <>
+void
+append_converted_values<c10::BFloat16>(
+    std::vector<double>& destination, std::string_view raw, std::size_t count)
+{
+  for (std::size_t idx = 0; idx < count; ++idx) {
+    c10::BFloat16 value;
+    std::memcpy(
+        &value, raw.data() + idx * sizeof(c10::BFloat16),
+        sizeof(c10::BFloat16));
+    destination.push_back(static_cast<double>(static_cast<float>(value)));
+  }
+}
+
+auto
+decode_output_values(
+    const inference::ModelInferResponse::InferOutputTensor& tensor,
+    std::string_view raw, std::size_t limit) -> std::vector<double>
+{
+  if (limit == 0) {
+    return {};
+  }
+
+  const at::ScalarType type = datatype_to_scalar_type(tensor.datatype());
+  const std::size_t elem_size = element_size(type);
+  if (elem_size == 0) {
+    throw std::invalid_argument("Unsupported element size");
+  }
+
+  const std::size_t available = raw.size() / elem_size;
+  const std::size_t count = std::min(limit, available);
+
+  std::vector<double> decoded;
+  decoded.reserve(count);
+
+  switch (type) {
+    case at::kFloat:
+      append_converted_values<float>(decoded, raw, count);
+      break;
+    case at::kDouble:
+      append_converted_values<double>(decoded, raw, count);
+      break;
+    case at::kHalf:
+      append_converted_values<c10::Half>(decoded, raw, count);
+      break;
+    case at::kBFloat16:
+      append_converted_values<c10::BFloat16>(decoded, raw, count);
+      break;
+    case at::kInt:
+      append_converted_values<int32_t>(decoded, raw, count);
+      break;
+    case at::kLong:
+      append_converted_values<int64_t>(decoded, raw, count);
+      break;
+    case at::kShort:
+      append_converted_values<int16_t>(decoded, raw, count);
+      break;
+    case at::kChar:
+      append_converted_values<int8_t>(decoded, raw, count);
+      break;
+    case at::kByte:
+    case at::kBool:
+      append_converted_values<uint8_t>(decoded, raw, count);
+      break;
+    default:
+      throw std::invalid_argument(
+          std::format("Unsupported output datatype '{}'", tensor.datatype()));
+  }
+
+  return decoded;
+}
+}  // namespace
 
 InferenceClient::InferenceClient(
     std::shared_ptr<grpc::Channel>& channel, VerbosityLevel verbosity)
@@ -221,7 +331,8 @@ InferenceClient::ModelIsReady(const ModelId& model) -> bool
 
 void
 InferenceClient::AsyncModelInfer(
-    const std::vector<torch::Tensor>& tensors, const ClientConfig& cfg)
+    const std::vector<torch::Tensor>& tensors, const ClientConfig& cfg,
+    std::optional<OutputSummary> expected_outputs)
 {
   const int current_id = next_request_id_++;
 
@@ -230,6 +341,7 @@ InferenceClient::AsyncModelInfer(
   call->start_time = std::chrono::high_resolution_clock::now();
   call->inference_count = determine_inference_count(cfg);
   last_batch_size_ = call->inference_count;
+  call->expected_outputs = std::move(expected_outputs);
 
   if (!first_request_time_) {
     first_request_time_ = call->start_time;
@@ -289,6 +401,98 @@ InferenceClient::AsyncModelInfer(
   call->response_reader = stub_->AsyncModelInfer(&call->context, request, &cq_);
   call->response_reader->Finish(&call->reply, &call->status, call.get());
   [[maybe_unused]] auto* released_call = call.release();
+}
+
+void
+InferenceClient::validate_server_response(const AsyncClientCall& call) const
+{
+  if (!call.expected_outputs.has_value()) {
+    return;
+  }
+
+  const auto& expected = *call.expected_outputs;
+  if (expected.empty()) {
+    return;
+  }
+
+  const int server_outputs = call.reply.outputs_size();
+  if (server_outputs == 0) {
+    log_warning(std::format(
+        "Request {}: server response does not contain outputs; skipping "
+        "validation.",
+        call.request_id));
+    return;
+  }
+
+  const int raw_count = call.reply.raw_output_contents_size();
+  const std::size_t outputs_to_check =
+      std::min<std::size_t>(expected.size(), server_outputs);
+
+  for (std::size_t idx = 0; idx < outputs_to_check; ++idx) {
+    const auto& expected_values = expected[idx];
+    if (expected_values.empty()) {
+      continue;
+    }
+
+    if (static_cast<int>(idx) >= raw_count) {
+      log_warning(std::format(
+          "Request {} output {} missing raw contents; skipping validation.",
+          call.request_id, idx));
+      continue;
+    }
+
+    const auto& tensor_meta = call.reply.outputs(static_cast<int>(idx));
+    const auto& raw = call.reply.raw_output_contents(static_cast<int>(idx));
+    const std::string_view raw_view(raw.data(), raw.size());
+
+    std::vector<double> decoded;
+    try {
+      decoded =
+          decode_output_values(tensor_meta, raw_view, expected_values.size());
+    }
+    catch (const std::exception& e) {
+      log_warning(std::format(
+          "Request {} output {}: failed to decode server output: {}",
+          call.request_id, idx, e.what()));
+      continue;
+    }
+
+    if (decoded.size() != expected_values.size()) {
+      log_warning(std::format(
+          "Request {} output {}: expected {} values, decoded {}",
+          call.request_id, idx, expected_values.size(), decoded.size()));
+      continue;
+    }
+
+    bool mismatch = false;
+    for (std::size_t value_idx = 0; value_idx < decoded.size(); ++value_idx) {
+      const double diff =
+          std::abs(decoded[value_idx] - expected_values[value_idx]);
+      if (diff > kOutputComparisonTolerance) {
+        mismatch = true;
+        log_warning(std::format(
+            "Request {} output {} value {} mismatch: expected {:.6f}, got "
+            "{:.6f} (Δ={:.6f})",
+            call.request_id, idx, value_idx, expected_values[value_idx],
+            decoded[value_idx], diff));
+        break;
+      }
+    }
+
+    if (!mismatch) {
+      log_trace(
+          verbosity_, std::format(
+                          "Request {} output {} validated on {} values",
+                          call.request_id, idx, decoded.size()));
+    }
+  }
+
+  if (static_cast<std::size_t>(server_outputs) < expected.size()) {
+    log_warning(std::format(
+        "Request {}: server returned {} outputs but {} were available for "
+        "validation.",
+        call.request_id, server_outputs, expected.size()));
+  }
 }
 
 void
@@ -389,6 +593,7 @@ InferenceClient::AsyncCompleteRpc()
               postprocess_ms, server_total_ms, request_latency_ms,
               response_latency_ms, client_overhead_ms));
 
+      validate_server_response(*call);
       total_inference_count_ += call->inference_count;
       last_response_time_ = end;
     } else {

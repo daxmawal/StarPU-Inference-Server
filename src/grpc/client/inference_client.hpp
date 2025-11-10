@@ -24,6 +24,8 @@ struct ModelId {
 
 class InferenceClient {
  public:
+  using OutputSummary = std::vector<std::vector<double>>;
+
   explicit InferenceClient(
       std::shared_ptr<grpc::Channel>& channel, VerbosityLevel verbosity);
 
@@ -31,7 +33,8 @@ class InferenceClient {
   auto ServerIsReady() -> bool;
   auto ModelIsReady(const ModelId& model) -> bool;
   void AsyncModelInfer(
-      const std::vector<torch::Tensor>& tensors, const ClientConfig& cfg);
+      const std::vector<torch::Tensor>& tensors, const ClientConfig& cfg,
+      std::optional<OutputSummary> expected_outputs = std::nullopt);
   void AsyncCompleteRpc();
   void Shutdown();
 
@@ -89,5 +92,6 @@ class InferenceClient {
   void record_latency(const LatencySample& sample);
   void log_latency_summary() const;
   static auto determine_inference_count(const ClientConfig& cfg) -> std::size_t;
+  void validate_server_response(const AsyncClientCall& call) const;
 };
 }  // namespace starpu_server

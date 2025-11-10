@@ -23,6 +23,7 @@ struct ClientConfig {
   std::string server_address = "localhost:50051";
   std::string model_name = "example";
   std::string model_version = "1";
+  std::string client_model_path;
   int request_nb = 1;
   int delay_us = 0;
   VerbosityLevel verbosity = VerbosityLevel::Info;
