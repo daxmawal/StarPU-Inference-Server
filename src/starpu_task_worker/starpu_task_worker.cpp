@@ -606,6 +606,10 @@ class BatchCollector {
       -> std::vector<std::shared_ptr<const void>>;
 
  private:
+  [[nodiscard]] auto job_sample_size(
+      const std::shared_ptr<InferenceJob>& job) const -> int64_t;
+  [[nodiscard]] auto sample_limit_per_batch() const -> int;
+
   InferenceQueue* queue_;
   const RuntimeConfig* opts_;
   StarPUSetup* starpu_;
@@ -1005,10 +1009,13 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     return jobs;
   }
 
-  const int max_batch_size = std::max(1, opts_->batching.max_batch_size);
-  if (max_batch_size <= 1) {
+  const int max_job_count = std::max(1, opts_->batching.max_batch_size);
+  if (max_job_count <= 1) {
     return jobs;
   }
+
+  const int max_samples_cap = sample_limit_per_batch();
+  int64_t accumulated_samples = job_sample_size(first_job);
 
   const bool enable_wait = opts_->batching.batch_coalesce_timeout_ms > 0;
   const auto batch_coalesce_timeout =
@@ -1018,8 +1025,7 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
 
   const auto& target_worker = first_job->get_fixed_worker_id();
   bool stop_collection = false;
-  while (!stop_collection &&
-         jobs.size() < static_cast<size_t>(max_batch_size)) {
+  while (!stop_collection && jobs.size() < static_cast<size_t>(max_job_count)) {
     std::shared_ptr<InferenceJob> next;
     bool got_job = queue_ != nullptr && queue_->try_pop(next);
     if (!got_job && enable_wait) {
@@ -1048,7 +1054,17 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
       stop_collection = true;
       continue;
     }
+    const int64_t next_samples = job_sample_size(next);
+    if (accumulated_samples + next_samples >
+        static_cast<int64_t>(max_samples_cap)) {
+      if (pending_job_ != nullptr) {
+        *pending_job_ = next;
+      }
+      stop_collection = true;
+      continue;
+    }
     jobs.push_back(next);
+    accumulated_samples += next_samples;
   }
 
   return jobs;
@@ -1180,6 +1196,51 @@ BatchCollector::merge_input_memory_holders(
     holders.insert(holders.end(), job_holders.begin(), job_holders.end());
   }
   return holders;
+}
+
+auto
+BatchCollector::job_sample_size(const std::shared_ptr<InferenceJob>& job) const
+    -> int64_t
+{
+  if (!job) {
+    return 0;
+  }
+  if (const auto effective = job->effective_batch_size();
+      effective.has_value()) {
+    return std::max<int64_t>(1, *effective);
+  }
+
+  const auto& inputs = job->get_input_tensors();
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  if (opts_ != nullptr && !opts_->models.empty() &&
+      !opts_->models[0].inputs.empty()) {
+    const auto per_sample_rank =
+        static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
+    const int64_t rank0 = inputs[0].dim();
+    if (rank0 == per_sample_rank + 1 && rank0 > 0) {
+      return std::max<int64_t>(1, inputs[0].size(0));
+    }
+  }
+
+  return static_cast<int64_t>(
+      task_runner_internal::batch_size_from_inputs(inputs));
+}
+
+auto
+BatchCollector::sample_limit_per_batch() const -> int
+{
+  const int configured_limit =
+      opts_ != nullptr ? std::max(1, opts_->batching.max_batch_size) : 1;
+
+  if (starpu_ != nullptr && starpu_->has_input_pool()) {
+    const int pool_limit = std::max(1, starpu_->input_pool().max_batch_size());
+    return std::min(configured_limit, pool_limit);
+  }
+
+  return configured_limit;
 }
 
 auto
