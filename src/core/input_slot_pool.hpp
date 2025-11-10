@@ -21,8 +21,6 @@ class InputSlotPool {
   struct SlotInfo {
     int id = -1;
     std::vector<std::byte*> base_ptrs;
-    std::vector<size_t> per_input_numel_single;
-    std::vector<size_t> per_input_bytes_single;
     std::vector<starpu_data_handle_t> handles;
   };
 
