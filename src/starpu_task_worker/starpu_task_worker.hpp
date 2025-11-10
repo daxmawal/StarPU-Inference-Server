@@ -107,8 +107,8 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceJob>& lhs,
       const std::shared_ptr<InferenceJob>& rhs) -> bool;
   static auto merge_input_tensors(
-      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
-      -> std::vector<torch::Tensor>;
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+      int64_t total_samples) -> std::vector<torch::Tensor>;
   static auto merge_input_memory_holders(
       const std::vector<std::shared_ptr<InferenceJob>>& jobs)
       -> std::vector<std::shared_ptr<const void>>;

@@ -599,8 +599,8 @@ class BatchCollector {
       const std::shared_ptr<InferenceJob>& lhs,
       const std::shared_ptr<InferenceJob>& rhs) -> bool;
   static auto merge_input_tensors(
-      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
-      -> std::vector<torch::Tensor>;
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+      int64_t total_samples) -> std::vector<torch::Tensor>;
   static auto merge_input_memory_holders(
       const std::vector<std::shared_ptr<InferenceJob>>& jobs)
       -> std::vector<std::shared_ptr<const void>>;
@@ -1123,8 +1123,8 @@ BatchCollector::can_merge_jobs(
 
 auto
 BatchCollector::merge_input_tensors(
-    const std::vector<std::shared_ptr<InferenceJob>>& jobs)
-    -> std::vector<torch::Tensor>
+    const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+    int64_t total_samples) -> std::vector<torch::Tensor>
 {
   std::vector<torch::Tensor> merged;
   if (jobs.empty()) {
@@ -1151,8 +1151,7 @@ BatchCollector::merge_input_tensors(
           "Input tensor must have at least one dimension");
     }
 
-    std::vector<torch::Tensor> slices;
-    slices.reserve(jobs.size());
+    int64_t accumulated_samples = 0;
     for (const auto& job : jobs) {
       const auto& tensors = job->get_input_tensors();
       if (tensor_idx >= tensors.size()) {
@@ -1164,17 +1163,43 @@ BatchCollector::merge_input_tensors(
         throw InvalidInputTensorException(
             "Input tensor must be defined before batching");
       }
-      slices.push_back(tensor);
+      if (tensor.dim() != prototype.dim()) {
+        throw InvalidInputTensorException(
+            "Input tensor rank mismatch during batching");
+      }
+      if (tensor.dim() <= 0) {
+        throw InvalidInputTensorException(
+            "Input tensor must have at least one dimension");
+      }
+      for (int64_t dim = 1; dim < tensor.dim(); ++dim) {
+        if (tensor.size(dim) != prototype.size(dim)) {
+          throw InvalidInputTensorException(
+              "Input tensor shape mismatch during batching");
+        }
+      }
+      accumulated_samples += tensor.size(0);
     }
 
-    try {
-      merged.push_back(torch::cat(slices, /*dim=*/0));
+    const int64_t target_samples =
+        total_samples > 0 ? total_samples : accumulated_samples;
+    if (accumulated_samples != target_samples) {
+      throw InvalidInputTensorException(
+          "Total samples mismatch while batching inputs");
     }
-    catch (const c10::Error& e) {
-      throw InvalidInputTensorException(std::format(
-          "Failed to concatenate batched inputs for tensor {}: {}", tensor_idx,
-          e.what()));
+
+    auto shape = prototype.sizes().vec();
+    shape.front() = target_samples;
+    auto merged_tensor = torch::empty(shape, prototype.options());
+
+    int64_t offset = 0;
+    for (const auto& job : jobs) {
+      const auto& tensor = job->get_input_tensors()[tensor_idx];
+      const int64_t slice = tensor.size(0);
+      merged_tensor.narrow(0, offset, slice).copy_(tensor);
+      offset += slice;
     }
+
+    merged.emplace_back(std::move(merged_tensor));
   }
 
   return merged;
@@ -1300,7 +1325,7 @@ BatchCollector::maybe_build_batched_job(
       (opts_ != nullptr && opts_->validation.validate_results);
 
   if (need_materialized_inputs) {
-    if (auto merged_inputs = merge_input_tensors(jobs);
+    if (auto merged_inputs = merge_input_tensors(jobs, effective_batch);
         !merged_inputs.empty()) {
       master->set_input_tensors(merged_inputs);
     }
@@ -1639,10 +1664,10 @@ StarPUTaskRunner::can_merge_jobs(
 
 auto
 StarPUTaskRunner::merge_input_tensors(
-    const std::vector<std::shared_ptr<InferenceJob>>& jobs)
-    -> std::vector<torch::Tensor>
+    const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+    int64_t total_samples) -> std::vector<torch::Tensor>
 {
-  return BatchCollector::merge_input_tensors(jobs);
+  return BatchCollector::merge_input_tensors(jobs, total_samples);
 }
 
 auto
