@@ -593,8 +593,7 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
   NvtxRange nvtx_scope("inference_loop");
   BatchingTraceLogger::instance().configure_from_runtime(opts);
   const c10::InferenceMode inference_guard;
-  CuDnnBenchmarkGuard cudnn_benchmark_guard(
-      opts.devices.use_cuda && !opts.batching.dynamic_batching);
+  CuDnnBenchmarkGuard cudnn_benchmark_guard(opts.devices.use_cuda);
   InferenceSession session(opts, starpu, detail::client_worker);
   session.run();
 }
