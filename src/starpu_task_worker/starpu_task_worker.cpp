@@ -1170,6 +1170,11 @@ BatchCollector::merge_input_memory_holders(
     -> std::vector<std::shared_ptr<const void>>
 {
   std::vector<std::shared_ptr<const void>> holders;
+  std::size_t total_holders = 0;
+  for (const auto& job : jobs) {
+    total_holders += job->get_input_memory_holders().size();
+  }
+  holders.reserve(total_holders);
   for (const auto& job : jobs) {
     const auto& job_holders = job->get_input_memory_holders();
     holders.insert(holders.end(), job_holders.begin(), job_holders.end());
