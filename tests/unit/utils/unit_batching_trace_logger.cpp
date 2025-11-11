@@ -406,6 +406,96 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(
+    BatchingTraceLoggerTest,
+    LogBatchComputeSpanSkipsWhenDisabledOrWorkerInvalid)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = true;
+    logger.first_record_ = true;
+  }
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{1000}};
+  const auto end = start + std::chrono::microseconds{10};
+  const BatchingTraceLogger::TimeRange codelet_times{start, end};
+
+  logger.enabled_.store(false, std::memory_order_release);
+  logger.log_batch_compute_span(
+      1, "disabled_model", 1, 5, DeviceType::CPU, codelet_times, false, -1);
+
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.log_batch_compute_span(
+      2, "invalid_worker_model", 1, -1, DeviceType::CPU, codelet_times, false,
+      -1);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty()) << "log_batch_compute_span should not emit when "
+                                  "disabled or worker_id < 0.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = true;
+    logger.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{2000}};
+  const auto end = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{1500}};
+  const BatchingTraceLogger::TimeRange codelet_times{start, end};
+
+  logger.log_batch_compute_span(
+      3, "invalid_time_model", 1, 7, DeviceType::CPU, codelet_times, false, -1);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_batch_compute_span should not emit when timestamps are invalid.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
 {
   const auto trace_path = make_temp_trace_path();
