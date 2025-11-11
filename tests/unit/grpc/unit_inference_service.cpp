@@ -2,15 +2,20 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <future>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <span>
 #include <string>
+#include <system_error>
 
 #include "monitoring/metrics.hpp"
 #include "test_constants.hpp"
 #include "test_inference_service.hpp"
+#include "utils/batching_trace_logger.hpp"
 
 namespace {
 using starpu_server::test_constants::kF1;
@@ -20,6 +25,27 @@ using starpu_server::test_constants::kF4;
 using starpu_server::test_constants::kI10;
 using starpu_server::test_constants::kI20;
 using starpu_server::test_constants::kI30;
+
+auto
+make_temp_trace_path() -> std::filesystem::path
+{
+  const auto suffix =
+      std::chrono::steady_clock::now().time_since_epoch().count();
+  return std::filesystem::temp_directory_path() /
+         ("submit_job_trace_" + std::to_string(suffix) + ".json");
+}
+
+struct TraceFileGuard {
+  starpu_server::BatchingTraceLogger& tracer;
+  std::filesystem::path path;
+
+  ~TraceFileGuard()
+  {
+    tracer.configure(false, "");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+  }
+};
 }  // namespace
 
 class MetricsInferenceServiceTest : public InferenceServiceTest {
@@ -530,6 +556,40 @@ TEST_F(
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
   EXPECT_TRUE(outputs.empty());
+}
+
+TEST_F(
+    InferenceServiceTest, SubmitJobAsyncLogsTraceEventWhenBatchingTracerEnabled)
+{
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(false, "");
+
+  const auto trace_path = make_temp_trace_path();
+  tracer.configure(true, trace_path.string());
+  TraceFileGuard guard{tracer, trace_path};
+
+  ref_outputs = {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1, kF2}, torch::TensorOptions().dtype(at::kFloat))};
+
+  auto status = service->submit_job_async(
+      inputs, [](grpc::Status, std::vector<torch::Tensor>,
+                 starpu_server::InferenceServiceImpl::LatencyBreakdown,
+                 starpu_server::detail::TimingInfo) {});
+  ASSERT_TRUE(status.ok());
+
+  std::shared_ptr<starpu_server::InferenceJob> enqueued_job;
+  ASSERT_TRUE(queue.try_pop(enqueued_job));
+
+  tracer.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_NE(content.find("\"name\":\"request_enqueued\""), std::string::npos);
+  EXPECT_NE(content.find("\"request_id\":0"), std::string::npos);
 }
 
 TEST_F(
