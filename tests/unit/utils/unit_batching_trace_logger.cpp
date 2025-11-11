@@ -350,6 +350,87 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = true;
+    logger.first_record_ = true;
+  }
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{1500}};
+  const auto end = start + std::chrono::microseconds{20};
+  const BatchingTraceLogger::TimeRange schedule{start, end};
+
+  logger.enabled_.store(false, std::memory_order_release);
+  logger.log_batch_build_span(4, "disabled_build", 1, schedule);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_batch_build_span should not emit when tracing is disabled.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = true;
+    logger.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{7000}};
+  const auto end = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{6500}};
+  const BatchingTraceLogger::TimeRange schedule{start, end};
+
+  logger.log_batch_build_span(5, "invalid_build_timing", 1, schedule);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_batch_build_span should not emit when timestamps are invalid.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
 {
   const auto trace_path = make_temp_trace_path();
