@@ -104,6 +104,43 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanClampsNonPositiveDuration)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = false;
+    logger.first_record_ = true;
+  }
+
+  BatchingTraceLogger::BatchSpanTiming timing{
+      .start_ts = 10,
+      .duration_us = 5,
+  };
+  logger.write_batch_build_span(
+      "demo_model", 1, 1, timing, std::span<const int>{}, /*is_warmup=*/false);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "write_batch_build_span should not emit without an open header.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
 {
   const auto trace_path = make_temp_trace_path();
