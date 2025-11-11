@@ -167,4 +167,25 @@ TEST(LoadModelAndReferenceOutput, LogsWhenUsingSyntheticOutputs)
   EXPECT_EQ(outputs[0].sizes().vec(), opts.models[0].outputs[0].dims);
 }
 
+TEST(InferenceRunner, LoadModelLoadsTorchScriptModule)
+{
+  TemporaryModelFile model_file{"load_model_basic", make_add_one_model()};
+
+  auto module = load_model(model_file.path().string());
+
+  const auto input = torch::ones({1}, torch::TensorOptions().dtype(at::kFloat));
+  const auto output = module.forward({input}).toTensor();
+  EXPECT_TRUE(output.allclose(input + 1));
+}
+
+TEST(InferenceRunner, CloneModelToGpusReturnsEmptyWhenNoDeviceIds)
+{
+  auto cpu_model = make_add_one_model();
+  const std::vector<int> device_ids;
+
+  const auto gpu_models = clone_model_to_gpus(cpu_model, device_ids);
+
+  EXPECT_TRUE(gpu_models.empty());
+}
+
 }}  // namespace starpu_server
