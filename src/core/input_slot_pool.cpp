@@ -11,6 +11,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <string>
 
@@ -42,6 +43,8 @@ starpu_register_failure_observer() -> RegisterFailureObserverFn&
 
 namespace {
 
+constexpr auto kHostBufferAlignment = std::align_val_t{64};
+
 using detail::RegisterFailureObserverFn;
 using detail::starpu_register_failure_observer;
 using detail::starpu_vector_register_hook;
@@ -70,13 +73,7 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
       return static_cast<std::byte*>(cuda_ptr);
     }
   }
-  constexpr size_t kAlign = 64;
-  void* aligned_ptr = nullptr;
-  if (int result_code = posix_memalign(&aligned_ptr, kAlign, bytes);
-      result_code != 0 || aligned_ptr == nullptr) {
-    throw std::bad_alloc();
-  }
-  return static_cast<std::byte*>(aligned_ptr);
+  return static_cast<std::byte*>(::operator new(bytes, kHostBufferAlignment));
 }
 
 struct HostBufferDeleter {
@@ -100,7 +97,7 @@ struct HostBufferDeleter {
       cudaFreeHost(static_cast<void*>(ptr));
       return;
     }
-    std::free(static_cast<void*>(ptr));
+    ::operator delete(static_cast<void*>(ptr), kHostBufferAlignment);
   }
 };
 
