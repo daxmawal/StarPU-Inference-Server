@@ -25,6 +25,52 @@ make_temp_trace_path() -> std::filesystem::path
          std::format("batching_trace_test_{}.json", now);
 }
 
+TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
+{
+  BatchingTraceLogger logger;
+  std::error_code ec;
+  std::filesystem::remove("batching_trace.json", ec);
+
+  logger.configure(true, "");
+  EXPECT_TRUE(logger.enabled());
+  EXPECT_EQ(logger.file_path_, "batching_trace.json");
+
+  {
+    std::ifstream stream("batching_trace.json");
+    EXPECT_TRUE(stream.is_open());
+  }
+
+  logger.configure(false, "");
+  std::filesystem::remove("batching_trace.json", ec);
+}
+
+TEST(BatchingTraceLoggerTest, ConfigureHandlesDirectoryCreationFailures)
+{
+  BatchingTraceLogger logger;
+  const auto temp_dir =
+      std::filesystem::temp_directory_path() /
+      std::format(
+          "batching_trace_conflict_{}",
+          std::chrono::steady_clock::now().time_since_epoch().count());
+  std::filesystem::create_directories(temp_dir);
+  const auto conflicting_parent = temp_dir / "not_a_directory";
+  {
+    std::ofstream file(conflicting_parent);
+    ASSERT_TRUE(file.is_open());
+    file << "conflict";
+  }
+  const auto trace_path = conflicting_parent / "trace.json";
+
+  logger.configure(true, trace_path.string());
+  EXPECT_FALSE(logger.enabled());
+  EXPECT_TRUE(logger.file_path_.empty());
+  EXPECT_FALSE(std::filesystem::exists(trace_path));
+
+  std::error_code ec;
+  std::filesystem::remove(conflicting_parent, ec);
+  std::filesystem::remove(temp_dir, ec);
+}
+
 TEST(BatchingTraceLoggerTest, RelativeTimestampBypassesOffsetWhenUninitialized)
 {
   BatchingTraceLogger fresh_logger;
