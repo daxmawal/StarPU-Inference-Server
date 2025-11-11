@@ -326,6 +326,86 @@ TEST(BatchingTraceLoggerTest, RememberRequestEnqueueTimestampSkipsNegativeId)
       << "Negative request IDs should be ignored.";
 }
 
+TEST(BatchingTraceLoggerTest, WriteRecordSkipsWhenDisabled)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = true;
+    logger.first_record_ = true;
+  }
+  logger.enabled_.store(false, std::memory_order_release);
+
+  const BatchingTraceLogger::BatchRecordContext record_context{
+      .request_id = 1, .batch_id = 1, .logical_jobs = 1};
+  const BatchingTraceLogger::WorkerThreadInfo worker_info{
+      .worker_id = -1, .worker_type = DeviceType::Unknown, .device_id = -1};
+
+  logger.write_record(
+      BatchingTraceEvent::RequestQueued, "demo_model", record_context,
+      worker_info, std::span<const int>{}, std::nullopt, /*is_warmup=*/false);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "write_record should not emit when tracing is disabled.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = false;
+    logger.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+
+  const BatchingTraceLogger::BatchRecordContext record_context{
+      .request_id = 2, .batch_id = 3, .logical_jobs = 4};
+  const BatchingTraceLogger::WorkerThreadInfo worker_info{
+      .worker_id = -1, .worker_type = DeviceType::Unknown, .device_id = -1};
+
+  logger.write_record(
+      BatchingTraceEvent::BatchSubmitted, "demo_model", record_context,
+      worker_info, std::span<const int>{}, std::nullopt, /*is_warmup=*/false);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "write_record should not emit before the trace header is written.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
 {
   const auto trace_path = make_temp_trace_path();
