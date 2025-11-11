@@ -10,6 +10,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -52,6 +53,10 @@ class StarPUTaskRunner {
  public:
   explicit StarPUTaskRunner(const StarPUTaskRunnerConfig& config);
   ~StarPUTaskRunner();
+  StarPUTaskRunner(const StarPUTaskRunner&) = delete;
+  auto operator=(const StarPUTaskRunner&) -> StarPUTaskRunner& = delete;
+  StarPUTaskRunner(StarPUTaskRunner&&) = delete;
+  auto operator=(StarPUTaskRunner&&) -> StarPUTaskRunner& = delete;
 
   using DurationMs = std::chrono::duration<double, std::milli>;
 
@@ -74,6 +79,11 @@ class StarPUTaskRunner {
   friend class SlotManager;
   friend class ResultDispatcher;
   friend class BatchCollector;
+
+  struct SubmissionInfo {
+    int submission_id;
+    int job_id;
+  };
 
   struct PoolResources {
     InputSlotPool* input_pool = nullptr;
@@ -114,7 +124,7 @@ class StarPUTaskRunner {
       -> std::vector<std::shared_ptr<const void>>;
   static void propagate_completion_to_sub_jobs(
       const std::shared_ptr<InferenceJob>& aggregated_job,
-      std::vector<torch::Tensor> aggregated_outputs, double latency_ms);
+      const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
   static auto configure_task_context(
       InferenceTask& task, const PoolResources& pools,
       const std::vector<starpu_data_handle_t>& input_handles,
@@ -125,17 +135,25 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
   [[nodiscard]] auto resolve_batch_size(
       const std::shared_ptr<InferenceJob>& job) const -> int64_t;
-  void release_pending_jobs(
+  static void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
-      std::vector<std::shared_ptr<InferenceJob>>& pending_jobs) const;
+      std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
   void store_completed_job_result(
       const std::shared_ptr<InferenceJob>& job,
       const std::vector<torch::Tensor>& results, double latency_ms) const;
-  void ensure_callback_timing(detail::TimingInfo& timing) const;
+  static void ensure_callback_timing(detail::TimingInfo& timing);
   void record_job_metrics(
       const std::shared_ptr<InferenceJob>& job, DurationMs latency,
       std::size_t batch_size) const;
   void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
+  void trace_batch_if_enabled(
+      const std::shared_ptr<InferenceJob>& job, bool warmup_job,
+      int submission_id) const;
+  void submit_job_or_handle_failure(
+      const std::shared_ptr<InferenceJob>& job, SubmissionInfo submission_info);
+  void finalize_job_after_exception(
+      const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
+      std::string_view log_prefix, int job_id);
 
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;

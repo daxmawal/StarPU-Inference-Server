@@ -50,8 +50,6 @@ make_flow_bind_id(int batch_id, bool is_warmup) -> std::optional<uint64_t>
   return scope_bit | static_cast<uint64_t>(static_cast<uint32_t>(batch_id));
 }
 
-using WorkerLaneKey = BatchingTraceLogger::WorkerLaneKey;
-
 void
 append_flow_annotation(
     std::ostringstream& line, FlowDirection direction, int batch_id,
@@ -95,12 +93,6 @@ format_worker_label(
   return std::format("worker-{} ({})", worker_id, worker_type_str);
 }
 
-auto
-worker_lane_thread_id(WorkerLaneKey lane_key) -> int
-{
-  return kWorkerThreadOffset + lane_key.worker_id * kWorkerLaneThreadStride +
-         lane_key.lane_index;
-}
 }  // namespace
 
 auto
@@ -191,11 +183,12 @@ BatchingTraceLogger::log_request_enqueued(
 
 void
 BatchingTraceLogger::log_batch_submitted(
-    int batch_id, std::string_view model_name, std::size_t logical_jobs,
-    int worker_id, DeviceType worker_type, std::span<const int> request_ids,
+    int batch_id, std::string_view model_name, std::size_t logical_job_count,
+    DeviceType worker_type, int worker_id, std::span<const int> request_ids,
     bool is_warmup, int device_id)
 {
-  const BatchRecordContext record_context{kInvalidId, batch_id, logical_jobs};
+  const BatchRecordContext record_context{
+      kInvalidId, batch_id, logical_job_count};
   const WorkerThreadInfo worker_info{worker_id, worker_type, device_id};
   write_record(
       BatchingTraceEvent::BatchSubmitted, model_name, record_context,
@@ -540,6 +533,13 @@ BatchingTraceLogger::worker_lane_sort_index(WorkerLaneKey lane_key) -> int
       .worker_id = lane_key.worker_id, .lane_index = 0};
   const int base = worker_lane_thread_id(base_lane);
   return base * kWorkerLaneSortStride + lane_key.lane_index;
+}
+
+auto
+BatchingTraceLogger::worker_lane_thread_id(WorkerLaneKey lane_key) -> int
+{
+  return kWorkerThreadOffset + lane_key.worker_id * kWorkerLaneThreadStride +
+         lane_key.lane_index;
 }
 
 auto

@@ -77,6 +77,9 @@ class StarpuHandleVectorGuard {
   StarpuHandleVectorGuard(const StarpuHandleVectorGuard&) = delete;
   auto operator=(const StarpuHandleVectorGuard&) -> StarpuHandleVectorGuard& =
                                                         delete;
+  StarpuHandleVectorGuard(StarpuHandleVectorGuard&&) = delete;
+  auto operator=(StarpuHandleVectorGuard&&) -> StarpuHandleVectorGuard& =
+                                                   delete;
 
   ~StarpuHandleVectorGuard() noexcept { reset(); }
 
@@ -88,7 +91,7 @@ class StarpuHandleVectorGuard {
     if (!active_) {
       return;
     }
-    for (const auto handle : handles_) {
+    for (auto* const handle : handles_) {
       if (handle != nullptr) {
         starpu_data_unregister(handle);
       }

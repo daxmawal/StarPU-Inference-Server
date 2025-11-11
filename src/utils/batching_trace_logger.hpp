@@ -42,6 +42,7 @@ class BatchingTraceLogger {
   };
 
   static auto instance() -> BatchingTraceLogger&;
+  BatchingTraceLogger() = default;
   ~BatchingTraceLogger();
   BatchingTraceLogger(const BatchingTraceLogger&) = delete;
   auto operator=(const BatchingTraceLogger&) -> BatchingTraceLogger& = delete;
@@ -57,8 +58,9 @@ class BatchingTraceLogger {
       int request_id, std::string_view model_name, bool is_warmup = false,
       std::chrono::high_resolution_clock::time_point event_time = {});
   void log_batch_submitted(
-      int batch_id, std::string_view model_name, std::size_t logical_jobs,
-      int worker_id = -1, DeviceType worker_type = DeviceType::Unknown,
+      int batch_id, std::string_view model_name,
+      std::size_t logical_job_count = 0,
+      DeviceType worker_type = DeviceType::Unknown, int worker_id = -1,
       std::span<const int> request_ids = {}, bool is_warmup = false,
       int device_id = -1);
   void log_batch_build_span(
@@ -149,6 +151,8 @@ class BatchingTraceLogger {
   [[nodiscard]] auto assign_worker_lane_locked(
       int worker_id, WorkerLaneSpan lane_span) -> WorkerLaneAssignment;
   [[nodiscard]] static auto worker_lane_sort_index(WorkerLaneKey lane_key)
+      -> int;
+  [[nodiscard]] static auto worker_lane_thread_id(WorkerLaneKey lane_key)
       -> int;
   [[nodiscard]] static auto format_worker_lane_label(
       WorkerLaneKey lane_key, std::string_view worker_type_str,

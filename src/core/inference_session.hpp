@@ -29,6 +29,10 @@ class InferenceSession {
       const RuntimeConfig& opts, StarPUSetup& starpu,
       ClientRoutine client_routine = nullptr);
   ~InferenceSession();
+  InferenceSession(const InferenceSession&) = delete;
+  auto operator=(const InferenceSession&) -> InferenceSession& = delete;
+  InferenceSession(InferenceSession&&) = delete;
+  auto operator=(InferenceSession&&) -> InferenceSession& = delete;
 
   void run();
 

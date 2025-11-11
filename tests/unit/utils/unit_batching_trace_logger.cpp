@@ -32,10 +32,11 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
   const auto enqueue_end = enqueue_start + std::chrono::microseconds(10);
   const std::array<int, 2> request_ids{0, 1};
   logger.log_batch_enqueue_span(
-      5, "demo_model", request_ids.size(), enqueue_start, enqueue_end,
+      5, "demo_model", request_ids.size(),
+      BatchingTraceLogger::TimeRange{enqueue_start, enqueue_end},
       std::span<const int>(request_ids));
   logger.log_batch_submitted(5, "demo_model", 1);
-  logger.log_batch_submitted(7, "demo_model", 1, 0, DeviceType::CPU);
+  logger.log_batch_submitted(7, "demo_model", 1, DeviceType::CPU, 0);
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -76,10 +77,11 @@ TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::microseconds(50);
   logger.log_batch_submitted(
-      3, "demo_model", 1, 4, DeviceType::CUDA, std::span<const int>{},
+      3, "demo_model", 1, DeviceType::CUDA, 4, std::span<const int>{},
       /*is_warmup=*/false, /*device_id=*/7);
   logger.log_batch_compute_span(
-      3, "demo_model", 1, 4, DeviceType::CUDA, start, end,
+      3, "demo_model", 1, 4, DeviceType::CUDA,
+      BatchingTraceLogger::TimeRange{start, end},
       /*is_warmup=*/false, /*device_id=*/7);
   logger.configure(false, "");
 
@@ -103,7 +105,7 @@ TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
   logger.configure(true, trace_path.string());
   const std::array<int, 3> request_ids{42, 43, 44};
   logger.log_batch_submitted(
-      9, "demo_model", 2, 1, DeviceType::CUDA,
+      9, "demo_model", 2, DeviceType::CUDA, 1,
       std::span<const int>(request_ids));
   logger.configure(false, "");
 
@@ -134,7 +136,8 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
   const auto end = start + std::chrono::microseconds(150);
   const std::array<int, 2> request_ids{7, 8};
   logger.log_batch_build_span(
-      21, "demo_model", 9, start, end, std::span<const int>(request_ids));
+      21, "demo_model", 9, BatchingTraceLogger::TimeRange{start, end},
+      std::span<const int>(request_ids));
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -164,7 +167,8 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
   const auto end = start + std::chrono::microseconds(60);
   const std::array<int, 3> request_ids{4, 5, 6};
   logger.log_batch_enqueue_span(
-      21, "demo_model", request_ids.size(), start, end,
+      21, "demo_model", request_ids.size(),
+      BatchingTraceLogger::TimeRange{start, end},
       std::span<const int>(request_ids));
   logger.configure(false, "");
 
@@ -201,7 +205,8 @@ TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
   logger.log_request_enqueued(103, "demo_model", false, last);
   const std::array<int, 3> request_ids{101, 102, 103};
   logger.log_batch_enqueue_span(
-      99, "demo_model", request_ids.size(), first, second,
+      99, "demo_model", request_ids.size(),
+      BatchingTraceLogger::TimeRange{first, second},
       std::span<const int>(request_ids));
   logger.configure(false, "");
 
@@ -236,14 +241,14 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   const auto end = start + std::chrono::microseconds(100);
   const std::array<int, 2> request_ids{1, 2};
   logger.log_batch_submitted(
-      11, "demo_model", 1, 0, DeviceType::CPU,
+      11, "demo_model", 1, DeviceType::CPU, 0,
       std::span<const int>(request_ids), /*is_warmup=*/true);
   logger.log_batch_build_span(
-      11, "demo_model", 1, start, end, std::span<const int>(request_ids),
-      /*is_warmup=*/true);
+      11, "demo_model", 1, BatchingTraceLogger::TimeRange{start, end},
+      std::span<const int>(request_ids), /*is_warmup=*/true);
   logger.log_batch_compute_span(
-      11, "demo_model", 1, 0, DeviceType::CPU, start, end,
-      /*is_warmup=*/true);
+      11, "demo_model", 1, 0, DeviceType::CPU,
+      BatchingTraceLogger::TimeRange{start, end}, /*is_warmup=*/true);
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -284,10 +289,11 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
   const auto long_end = base + std::chrono::microseconds(180);
 
   logger.log_batch_compute_span(
-      1, "demo_model", 1, 0, DeviceType::CPU, overlapping_start,
-      overlapping_end);
+      1, "demo_model", 1, 0, DeviceType::CPU,
+      BatchingTraceLogger::TimeRange{overlapping_start, overlapping_end});
   logger.log_batch_compute_span(
-      2, "demo_model", 1, 0, DeviceType::CPU, base, long_end);
+      2, "demo_model", 1, 0, DeviceType::CPU,
+      BatchingTraceLogger::TimeRange{base, long_end});
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -341,18 +347,23 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   const auto warm_start = warm_build_end + std::chrono::microseconds(25);
   const auto warm_end = warm_start + std::chrono::microseconds(75);
   logger.log_batch_build_span(
-      0, "demo_model", 2, build_start, build_end, std::span<const int>{});
-  logger.log_batch_submitted(0, "demo_model", 2, 0, DeviceType::CPU);
+      0, "demo_model", 2,
+      BatchingTraceLogger::TimeRange{build_start, build_end},
+      std::span<const int>{});
+  logger.log_batch_submitted(0, "demo_model", 2, DeviceType::CPU, 0);
   logger.log_batch_compute_span(
-      0, "demo_model", 2, 0, DeviceType::CPU, start, end);
+      0, "demo_model", 2, 0, DeviceType::CPU,
+      BatchingTraceLogger::TimeRange{start, end});
   logger.log_batch_build_span(
-      0, "demo_model", 1, warm_build_start, warm_build_end,
+      0, "demo_model", 1,
+      BatchingTraceLogger::TimeRange{warm_build_start, warm_build_end},
       std::span<const int>{}, /*is_warmup=*/true);
   logger.log_batch_submitted(
-      0, "demo_model", 1, 1, DeviceType::CPU, std::span<const int>{},
+      0, "demo_model", 1, DeviceType::CPU, 1, std::span<const int>{},
       /*is_warmup=*/true);
   logger.log_batch_compute_span(
-      0, "demo_model", 1, 1, DeviceType::CPU, warm_start, warm_end,
+      0, "demo_model", 1, 1, DeviceType::CPU,
+      BatchingTraceLogger::TimeRange{warm_start, warm_end},
       /*is_warmup=*/true);
   logger.configure(false, "");
 

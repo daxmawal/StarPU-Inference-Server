@@ -22,7 +22,7 @@
 namespace starpu_server {
 namespace {
 void
-noop_deleter(void*) noexcept
+noop_deleter(void* /*unused*/) noexcept
 {
 }
 
@@ -43,8 +43,7 @@ auto
 compute_numel(const std::vector<int64_t>& dims) -> int64_t
 {
   return std::accumulate(
-      dims.begin(), dims.end(), static_cast<int64_t>(1),
-      std::multiplies<int64_t>());
+      dims.begin(), dims.end(), static_cast<int64_t>(1), std::multiplies<>());
 }
 
 void
@@ -133,7 +132,7 @@ TensorBuilder::from_starpu_buffers(
     torch::Device device) -> std::vector<torch::Tensor>
 {
   const auto& cached = prepare_input_tensors(params, buffers, device);
-  return std::vector<torch::Tensor>(cached.begin(), cached.end());
+  return {cached.begin(), cached.end()};
 }
 
 auto

@@ -53,7 +53,7 @@ append_converted_values<c10::Half>(
     std::vector<double>& destination, std::string_view raw, std::size_t count)
 {
   for (std::size_t idx = 0; idx < count; ++idx) {
-    c10::Half value;
+    c10::Half value{};
     std::memcpy(
         &value, raw.data() + idx * sizeof(c10::Half), sizeof(c10::Half));
     destination.push_back(static_cast<double>(static_cast<float>(value)));
@@ -66,7 +66,7 @@ append_converted_values<c10::BFloat16>(
     std::vector<double>& destination, std::string_view raw, std::size_t count)
 {
   for (std::size_t idx = 0; idx < count; ++idx) {
-    c10::BFloat16 value;
+    c10::BFloat16 value{};
     std::memcpy(
         &value, raw.data() + idx * sizeof(c10::BFloat16),
         sizeof(c10::BFloat16));
@@ -213,8 +213,6 @@ InferenceClient::log_latency_summary() const
     if (elapsed_seconds > 0.0) {
       const double throughput =
           static_cast<double>(total_inference_count_) / elapsed_seconds;
-      const auto batch_size =
-          last_batch_size_.has_value() ? *last_batch_size_ : std::size_t{1};
       stats_msg += std::format(
           "\n  - throughput: {:.3f} inferences/s ({} inferences over {:.3f} s)",
           throughput, total_inference_count_, elapsed_seconds);

@@ -10,6 +10,7 @@
 #include <format>
 #include <functional>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -78,6 +79,31 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
   return static_cast<std::byte*>(aligned_ptr);
 }
 
+struct HostBufferDeleter {
+  InputSlotPool::HostBufferInfo info;
+
+  void operator()(std::byte* ptr) const noexcept
+  {
+    if (ptr == nullptr) {
+      return;
+    }
+    if (info.starpu_pinned) {
+      const int result_code =
+          starpu_memory_unpin(static_cast<void*>(ptr), info.bytes);
+      if (result_code != 0) {
+        log_warning(std::format(
+            "starpu_memory_unpin failed for input buffer: rc={}",
+            std::to_string(result_code)));
+      }
+    }
+    if (info.cuda_pinned) {
+      cudaFreeHost(static_cast<void*>(ptr));
+      return;
+    }
+    std::free(static_cast<void*>(ptr));
+  }
+};
+
 void
 free_host_buffer(
     std::byte* ptr, const InputSlotPool::HostBufferInfo& buffer_info)
@@ -85,21 +111,8 @@ free_host_buffer(
   if (ptr == nullptr) {
     return;
   }
-  if (buffer_info.starpu_pinned) {
-    const int result_code =
-        starpu_memory_unpin(static_cast<void*>(ptr), buffer_info.bytes);
-    if (result_code != 0) {
-      log_warning(std::format(
-          "starpu_memory_unpin failed for input buffer: rc={}",
-          std::to_string(result_code)));
-    }
-  }
-  if (buffer_info.cuda_pinned) {
-    cudaFreeHost(static_cast<void*>(ptr));
-    return;
-  }
-
-  std::free(static_cast<void*>(ptr));
+  std::unique_ptr<std::byte, HostBufferDeleter> owner(
+      ptr, HostBufferDeleter{buffer_info});
 }
 
 auto
