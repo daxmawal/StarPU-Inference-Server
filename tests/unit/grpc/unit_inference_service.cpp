@@ -276,6 +276,31 @@ TEST_F(
 
 TEST_F(
     ConfiguredShapeWithBatchingInferenceServiceTest,
+    ValidateInputsConfiguredShapeRejectsZeroBatchSize)
+{
+  auto zero_batch_override_req = starpu_server::make_shape_request({0, 2});
+  std::vector<torch::Tensor> inputs;
+  auto status =
+      service->validate_and_convert_inputs(&zero_batch_override_req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST_F(
+    ConfiguredShapeWithBatchingInferenceServiceTest,
+    ValidateInputsConfiguredShapeAllowsBatchOverrideWhenRanksMatch)
+{
+  auto overridden_batch_req = starpu_server::make_shape_request({3, 2});
+  std::vector<torch::Tensor> inputs;
+  auto status =
+      service->validate_and_convert_inputs(&overridden_batch_req, inputs);
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 1U);
+  EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{3, 2}));
+}
+
+TEST_F(
+    ConfiguredShapeWithBatchingInferenceServiceTest,
     ValidateInputsConfiguredShapeRejectsTailLengthMismatch)
 {
   auto mismatched_tail_length_req =
