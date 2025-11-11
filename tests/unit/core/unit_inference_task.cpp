@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <format>
 #include <memory>
+#include <new>
 #include <stdexcept>
 
 #include "core/output_slot_pool.hpp"

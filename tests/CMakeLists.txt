@@ -12,7 +12,6 @@ add_subdirectory(integration)
 
 add_executable(
   all_tests
-  ${CORE_DIR}/inference_task.cpp
   ${CORE_DIR}/input_slot_pool.cpp
   ${CORE_DIR}/output_slot_pool.cpp
   ${CORE_DIR}/warmup.cpp
