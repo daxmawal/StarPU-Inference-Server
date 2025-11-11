@@ -125,11 +125,6 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
   auto resolve_batch_size(const std::shared_ptr<InferenceJob>& job) const
       -> int64_t;
-  void copy_job_inputs_to_slot(
-      const std::shared_ptr<InferenceJob>& job,
-      const std::vector<std::shared_ptr<InferenceJob>>& pending_jobs,
-      const std::vector<starpu_data_handle_t>& handles,
-      const std::vector<std::byte*>& base_ptrs) const;
   void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs) const;
