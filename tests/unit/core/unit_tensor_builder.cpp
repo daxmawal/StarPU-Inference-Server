@@ -197,6 +197,18 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
   verify_copy_by_dtype(param);
 }
 
+TEST(TensorBuilderCopyBuffer_Unit, CopyOutputFailsWhenBufferSizeMismatch)
+{
+  auto tensor =
+      torch::tensor({kF1, kF2}, torch::TensorOptions().dtype(at::kFloat));
+  std::array<std::byte, 4> small_buffer{};
+  auto buffer_span = std::span<std::byte>(small_buffer);
+  EXPECT_THROW(
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          tensor, buffer_span, tensor.numel(), at::kFloat),
+      starpu_server::InferenceExecutionException);
+}
+
 namespace {
 inline auto
 copy_float_buffer_ref() -> std::array<float, 3>&
