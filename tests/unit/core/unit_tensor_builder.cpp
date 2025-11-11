@@ -347,6 +347,26 @@ TEST(TensorBuilderInternals_Unit, ValidateInputLayoutNullParamsThrows)
       starpu_server::InferenceExecutionException);
 }
 
+TEST(TensorBuilderInternals_Unit, RefreshInputCacheNullBufferThrows)
+{
+  std::vector<StarpuBufferPtr> buffers = {nullptr};
+
+  starpu_server::InferenceParams params;
+  params.num_inputs = 1;
+  params.layout.input_types = {at::kFloat};
+  params.layout.num_dims = {2};
+  params.layout.dims = {{2, 2}};
+  params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
+  params.limits.max_dims = starpu_server::InferLimits::MaxDims;
+  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
+
+  const auto device = torch::Device(torch::kCPU);
+  EXPECT_THROW(
+      starpu_server::TensorBuilder::from_starpu_buffers(
+          &params, buffers, device),
+      starpu_server::InferenceExecutionException);
+}
+
 TEST(TensorBuilderInternals_Unit, ComputeDefaultStridesMatchesRowMajor)
 {
   const std::vector<int64_t> dims{2, 3, 4};
