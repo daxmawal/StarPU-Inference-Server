@@ -43,6 +43,7 @@ cudaGetErrorString([[maybe_unused]] cudaError_t error) -> const char*
   return "mock cuda error";
 }
 
+
 namespace {
 constexpr int64_t kJobId = 7;
 constexpr int64_t kWorkerId = 3;
