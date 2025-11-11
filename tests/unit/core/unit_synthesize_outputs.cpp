@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,22 @@ make_valid_model_config() -> ModelConfig
           .type = at::kDouble,
       }};
   return model;
+}
+
+auto
+make_runtime_config_for_model(const std::filesystem::path& path)
+    -> RuntimeConfig
+{
+  RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].path = path.string();
+  opts.models[0].inputs = {TensorConfig{
+      .name = "input0",
+      .dims = {1},
+      .type = at::kFloat,
+  }};
+  opts.devices.use_cuda = false;
+  return opts;
 }
 
 TEST(SynthesizeOutputsFromConfig, ReturnsNulloptWhenNoModels)
@@ -100,6 +117,54 @@ TEST(SynthesizeOutputsFromConfig, CreatesOutputsWhenConfigValid)
   EXPECT_EQ(outputs->at(0).dtype(), torch::kFloat32);
   EXPECT_TRUE(outputs->at(1).sizes().vec() == opts.models[0].outputs[1].dims);
   EXPECT_EQ(outputs->at(1).dtype(), torch::kFloat64);
+}
+
+TEST(LoadModelAndReferenceOutput, LogsFallbackWhenSyntheticMissing)
+{
+  TemporaryModelFile model_file{"load_model_missing", make_add_one_model()};
+  RuntimeConfig opts = make_runtime_config_for_model(model_file.path());
+  opts.validation.validate_results = false;
+  opts.verbosity = VerbosityLevel::Debug;
+  opts.models[0].outputs = {TensorConfig{
+      .name = "bad_output",
+      .dims = {},
+      .type = at::kFloat,
+  }};
+
+  CaptureStream capture{std::cout};
+  const auto result = load_model_and_reference_output(opts);
+
+  EXPECT_TRUE(result.has_value());
+  EXPECT_NE(
+      capture.str().find(
+          "Validation disabled but missing usable output schema"),
+      std::string::npos);
+}
+
+TEST(LoadModelAndReferenceOutput, LogsWhenUsingSyntheticOutputs)
+{
+  TemporaryModelFile model_file{"load_model_synthetic", make_add_one_model()};
+  RuntimeConfig opts = make_runtime_config_for_model(model_file.path());
+  opts.validation.validate_results = false;
+  opts.verbosity = VerbosityLevel::Debug;
+  opts.models[0].outputs = {TensorConfig{
+      .name = "output0",
+      .dims = {1},
+      .type = at::kFloat,
+  }};
+
+  CaptureStream capture{std::cout};
+  const auto result = load_model_and_reference_output(opts);
+
+  ASSERT_TRUE(result.has_value());
+  EXPECT_NE(
+      capture.str().find(
+          "Validation disabled; using configured output schema instead"),
+      std::string::npos);
+  const auto& outputs = std::get<2>(*result);
+  ASSERT_EQ(outputs.size(), 1U);
+  EXPECT_TRUE(outputs[0].defined());
+  EXPECT_EQ(outputs[0].sizes().vec(), opts.models[0].outputs[0].dims);
 }
 
 }}  // namespace starpu_server
