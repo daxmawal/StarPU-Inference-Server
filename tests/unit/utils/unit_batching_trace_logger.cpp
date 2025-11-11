@@ -9,7 +9,11 @@
 #include <span>
 #include <string>
 
+#define private public
+#define protected public
 #include "utils/batching_trace_logger.hpp"
+#undef protected
+#undef private
 
 namespace starpu_server { namespace {
 
@@ -19,6 +23,19 @@ make_temp_trace_path() -> std::filesystem::path
   const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
   return std::filesystem::temp_directory_path() /
          std::format("batching_trace_test_{}.json", now);
+}
+
+TEST(BatchingTraceLoggerTest, RelativeTimestampBypassesOffsetWhenUninitialized)
+{
+  BatchingTraceLogger fresh_logger;
+  const int64_t sample_timestamp = 123456;
+
+  EXPECT_EQ(
+      fresh_logger.relative_timestamp_us(sample_timestamp), sample_timestamp);
+
+  fresh_logger.trace_start_initialized_ = true;
+  fresh_logger.trace_start_us_ = sample_timestamp + 50;
+  EXPECT_EQ(fresh_logger.relative_timestamp_us(sample_timestamp), 0);
 }
 
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
