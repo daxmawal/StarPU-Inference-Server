@@ -25,6 +25,52 @@ make_temp_trace_path() -> std::filesystem::path
          std::format("batching_trace_test_{}.json", now);
 }
 
+TEST(BatchingTraceLoggerTest, BatchSubmittedSkipsFlowMetadataForNegativeId)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  logger.log_batch_submitted(-7, "demo_model", 3);
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  ASSERT_NE(content.find("\"batch_id\":-7"), std::string::npos);
+  EXPECT_EQ(content.find("\"id_scope\""), std::string::npos);
+  EXPECT_EQ(content.find("\"flow_out\":true"), std::string::npos);
+  EXPECT_EQ(content.find("\"flow_in\":true"), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, RequestQueuedEventsEmitNoFlowAnnotations)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  logger.log_request_enqueued(9, "demo_model");
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  ASSERT_NE(content.find("\"request_id\":9"), std::string::npos);
+  EXPECT_EQ(content.find("\"id_scope\""), std::string::npos);
+  EXPECT_EQ(content.find("\"flow_out\":true"), std::string::npos);
+  EXPECT_EQ(content.find("\"flow_in\":true"), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
 {
   BatchingTraceLogger logger;
