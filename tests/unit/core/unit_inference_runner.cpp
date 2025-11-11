@@ -365,6 +365,25 @@ TEST(
   EXPECT_FALSE(resolved.has_value());
 }
 
+TEST(InferenceRunner_Unit, ResolveValidationModelReturnsGpuModelWhenAvailable)
+{
+  starpu_server::InferenceResult result{};
+  result.executed_on = starpu_server::DeviceType::CUDA;
+  result.device_id = 1;
+  result.request_id = 99;
+
+  torch::jit::script::Module cpu_model("cpu_module");
+  torch::jit::script::Module gpu_module_0("gpu_module_0");
+  torch::jit::script::Module gpu_module_1("gpu_module_1");
+  std::vector<torch::jit::script::Module*> lookup{&gpu_module_0, &gpu_module_1};
+
+  const auto resolved = starpu_server::detail::resolve_validation_model(
+      result, cpu_model, lookup, /*validate_results=*/true);
+
+  ASSERT_TRUE(resolved.has_value());
+  EXPECT_EQ(*resolved, &gpu_module_1);
+}
+
 TEST(InferenceRunner_Unit, ClientWorkerSeedsRngWhenSeedProvided)
 {
   auto context = make_client_worker_test_context();
