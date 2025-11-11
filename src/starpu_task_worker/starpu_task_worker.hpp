@@ -123,8 +123,8 @@ class StarPUTaskRunner {
   [[noreturn]] static void handle_submission_failure(
       const PoolResources& pools,
       const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
-  auto resolve_batch_size(const std::shared_ptr<InferenceJob>& job) const
-      -> int64_t;
+  [[nodiscard]] auto resolve_batch_size(
+      const std::shared_ptr<InferenceJob>& job) const -> int64_t;
   void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs) const;

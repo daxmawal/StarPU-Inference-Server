@@ -33,7 +33,7 @@ class InferenceSession {
   void run();
 
  private:
-  bool load_models_and_reference();
+  auto load_models_and_reference() -> bool;
   void warmup();
   void prepare_results_storage();
   void configure_worker();

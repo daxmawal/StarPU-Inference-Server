@@ -22,6 +22,7 @@ constexpr int kBatchBuildTrackId = 3;
 constexpr int kBatchSubmittedTrackId = 4;
 constexpr int kWorkerThreadOffset = 10;
 constexpr int kWorkerLaneThreadStride = 1000;
+constexpr unsigned char kAsciiPrintableFloor = 0x20;
 constexpr int kRequestEnqueuedSortIndex = -3;
 constexpr int kBatchEnqueueSortIndex = -2;
 constexpr int kBatchBuildSortIndex = -1;
@@ -49,6 +50,8 @@ make_flow_bind_id(int batch_id, bool is_warmup) -> std::optional<uint64_t>
   return scope_bit | static_cast<uint64_t>(static_cast<uint32_t>(batch_id));
 }
 
+using WorkerLaneKey = BatchingTraceLogger::WorkerLaneKey;
+
 void
 append_flow_annotation(
     std::ostringstream& line, FlowDirection direction, int batch_id,
@@ -70,13 +73,13 @@ append_flow_annotation(
   }
   const std::string_view scope = is_warmup ? "warming" : "serving";
   const auto bind_label = std::format("0x{:016X}", *bind_id);
-  line << ",\"id_scope\":\"" << scope << "\",\"id2\":{\"local\":" << batch_id
-       << "},\"bind_id\":\"" << bind_label << "\"";
+  line << R"(,"id_scope":")" << scope << R"(","id2":{"local":)" << batch_id
+       << R"(},"bind_id":")" << bind_label << '"';
   if (emit_flow_out) {
-    line << ",\"flow_out\":true";
+    line << R"(,"flow_out":true)";
   }
   if (emit_flow_in) {
-    line << ",\"flow_in\":true";
+    line << R"(,"flow_in":true)";
   }
 }
 
@@ -93,9 +96,10 @@ format_worker_label(
 }
 
 auto
-worker_lane_thread_id(int worker_id, int lane_index) -> int
+worker_lane_thread_id(WorkerLaneKey lane_key) -> int
 {
-  return kWorkerThreadOffset + worker_id * kWorkerLaneThreadStride + lane_index;
+  return kWorkerThreadOffset + lane_key.worker_id * kWorkerLaneThreadStride +
+         lane_key.lane_index;
 }
 }  // namespace
 
@@ -177,10 +181,12 @@ BatchingTraceLogger::log_request_enqueued(
 {
   const auto override_timestamp =
       relative_timestamp_from_time_point(event_time);
+  const BatchRecordContext record_context{request_id, kInvalidId, 0};
+  const WorkerThreadInfo worker_info{
+      kInvalidId, DeviceType::Unknown, kInvalidId};
   write_record(
-      BatchingTraceEvent::RequestQueued, model_name, request_id, kInvalidId, 0,
-      kInvalidId, DeviceType::Unknown, std::span<const int>{},
-      override_timestamp, is_warmup, kInvalidId);
+      BatchingTraceEvent::RequestQueued, model_name, record_context,
+      worker_info, std::span<const int>{}, override_timestamp, is_warmup);
 }
 
 void
@@ -189,48 +195,46 @@ BatchingTraceLogger::log_batch_submitted(
     int worker_id, DeviceType worker_type, std::span<const int> request_ids,
     bool is_warmup, int device_id)
 {
+  const BatchRecordContext record_context{kInvalidId, batch_id, logical_jobs};
+  const WorkerThreadInfo worker_info{worker_id, worker_type, device_id};
   write_record(
-      BatchingTraceEvent::BatchSubmitted, model_name, kInvalidId, batch_id,
-      logical_jobs, worker_id, worker_type, request_ids, std::nullopt,
-      is_warmup, device_id);
+      BatchingTraceEvent::BatchSubmitted, model_name, record_context,
+      worker_info, request_ids, std::nullopt, is_warmup);
 }
 
 void
 BatchingTraceLogger::log_batch_build_span(
     int batch_id, std::string_view model_name, std::size_t batch_size,
-    std::chrono::high_resolution_clock::time_point start_time,
-    std::chrono::high_resolution_clock::time_point end_time,
-    std::span<const int> request_ids, bool is_warmup)
+    TimeRange schedule, std::span<const int> request_ids, bool is_warmup)
 {
   if (!enabled()) {
     return;
   }
 
-  const auto start_ts = relative_timestamp_from_time_point(start_time);
-  const auto end_ts = relative_timestamp_from_time_point(end_time);
+  const auto start_ts = relative_timestamp_from_time_point(schedule.start);
+  const auto end_ts = relative_timestamp_from_time_point(schedule.end);
   if (!start_ts || !end_ts || *end_ts < *start_ts) {
     return;
   }
 
   const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
   write_batch_build_span(
-      model_name, batch_id, batch_size, *start_ts, duration, request_ids,
-      is_warmup);
+      model_name, batch_id, batch_size,
+      BatchSpanTiming{.start_ts = *start_ts, .duration_us = duration},
+      request_ids, is_warmup);
 }
 
 void
 BatchingTraceLogger::log_batch_enqueue_span(
     int batch_id, std::string_view model_name, std::size_t batch_size,
-    std::chrono::high_resolution_clock::time_point start_time,
-    std::chrono::high_resolution_clock::time_point end_time,
-    std::span<const int> request_ids, bool is_warmup)
+    TimeRange queue_times, std::span<const int> request_ids, bool is_warmup)
 {
   if (!enabled()) {
     return;
   }
 
-  const auto start_ts = relative_timestamp_from_time_point(start_time);
-  const auto end_ts = relative_timestamp_from_time_point(end_time);
+  const auto start_ts = relative_timestamp_from_time_point(queue_times.start);
+  const auto end_ts = relative_timestamp_from_time_point(queue_times.end);
   if (!start_ts || !end_ts) {
     return;
   }
@@ -242,24 +246,23 @@ BatchingTraceLogger::log_batch_enqueue_span(
   duration = std::max<int64_t>(int64_t{1}, duration);
 
   write_batch_enqueue_span(
-      model_name, batch_id, batch_size, *start_ts, duration, request_ids,
-      is_warmup);
+      model_name, batch_id, batch_size,
+      BatchSpanTiming{.start_ts = *start_ts, .duration_us = duration},
+      request_ids, is_warmup);
 }
 
 void
 BatchingTraceLogger::log_batch_compute_span(
     int batch_id, std::string_view model_name, std::size_t batch_size,
-    int worker_id, DeviceType worker_type,
-    std::chrono::high_resolution_clock::time_point codelet_start,
-    std::chrono::high_resolution_clock::time_point codelet_end, bool is_warmup,
-    int device_id)
+    int worker_id, DeviceType worker_type, TimeRange codelet_times,
+    bool is_warmup, int device_id)
 {
   if (!enabled() || worker_id < 0) {
     return;
   }
 
-  const auto start_ts = relative_timestamp_from_time_point(codelet_start);
-  const auto end_ts = relative_timestamp_from_time_point(codelet_end);
+  const auto start_ts = relative_timestamp_from_time_point(codelet_times.start);
+  const auto end_ts = relative_timestamp_from_time_point(codelet_times.end);
   if (!start_ts || !end_ts || *end_ts < *start_ts) {
     return;
   }
@@ -272,10 +275,10 @@ BatchingTraceLogger::log_batch_compute_span(
 
 void
 BatchingTraceLogger::write_record(
-    BatchingTraceEvent event, std::string_view model_name, int request_id,
-    int batch_id, std::size_t logical_jobs, int worker_id,
-    DeviceType worker_type, std::span<const int> request_ids,
-    std::optional<int64_t> override_timestamp, bool is_warmup, int device_id)
+    BatchingTraceEvent event, std::string_view model_name,
+    const BatchRecordContext& record_context,
+    const WorkerThreadInfo& worker_info, std::span<const int> request_ids,
+    std::optional<int64_t> override_timestamp, bool is_warmup)
 {
   if (!enabled()) {
     return;
@@ -286,22 +289,25 @@ BatchingTraceLogger::write_record(
                                 : relative_timestamp_us(now_us());
 
   if (event == BatchingTraceEvent::RequestQueued) {
-    remember_request_enqueue_timestamp(request_id, timestamp_us);
+    remember_request_enqueue_timestamp(record_context.request_id, timestamp_us);
   }
 
   const auto escaped_model = escape_json_string(model_name);
-  const auto worker_type_str = device_type_to_string(worker_type);
-  const bool is_worker_lane = worker_id >= 0;
+  const auto worker_type_str = device_type_to_string(worker_info.worker_type);
+  const bool is_worker_lane = worker_info.worker_id >= 0;
   std::string worker_label;
   int thread_id = kRequestEnqueuedTrackId;
   std::string_view thread_name = kRequestEnqueuedTrackName;
   int sort_index = kRequestEnqueuedSortIndex;
   if (is_worker_lane) {
-    worker_label = format_worker_label(worker_id, worker_type_str, device_id);
+    worker_label = format_worker_label(
+        worker_info.worker_id, worker_type_str, worker_info.device_id);
     thread_name = worker_label;
     constexpr int kBaseLaneIndex = 0;
-    sort_index = worker_lane_sort_index(worker_id, kBaseLaneIndex);
-    thread_id = worker_lane_thread_id(worker_id, kBaseLaneIndex);
+    const WorkerLaneKey base_lane{
+        .worker_id = worker_info.worker_id, .lane_index = kBaseLaneIndex};
+    sort_index = worker_lane_sort_index(base_lane);
+    thread_id = worker_lane_thread_id(base_lane);
   } else {
     switch (event) {
       case BatchingTraceEvent::RequestQueued:
@@ -322,16 +328,17 @@ BatchingTraceLogger::write_record(
   const bool is_batch_span = event == BatchingTraceEvent::BatchSubmitted;
 
   std::ostringstream line;
-  line << "{\"name\":\"" << warmup_prefix << event_to_string(event)
-       << "\",\"cat\":\"batching\",\"ph\":\"" << (is_batch_span ? 'X' : 'i')
-       << "\",\"ts\":" << timestamp_us;
+  line << R"({"name":")" << warmup_prefix << event_to_string(event)
+       << R"(","cat":"batching","ph":")" << (is_batch_span ? 'X' : 'i')
+       << R"(","ts":)" << timestamp_us;
   if (is_batch_span) {
     line << ",\"dur\":1";
   }
   line << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id;
   const auto span_flow_direction =
       is_batch_span ? FlowDirection::SourceAndTarget : FlowDirection::None;
-  append_flow_annotation(line, span_flow_direction, batch_id, is_warmup);
+  append_flow_annotation(
+      line, span_flow_direction, record_context.batch_id, is_warmup);
   line << ",\"args\":{";
 
   bool first_arg = true;
@@ -352,12 +359,12 @@ BatchingTraceLogger::write_record(
 
   switch (event) {
     case BatchingTraceEvent::BatchSubmitted:
-      append_numeric("batch_id", batch_id);
-      append_numeric("batch_size", logical_jobs);
+      append_numeric("batch_id", record_context.batch_id);
+      append_numeric("batch_size", record_context.logical_jobs);
       append_string("model_name", escaped_model);
       break;
     case BatchingTraceEvent::RequestQueued:
-      append_numeric("request_id", request_id);
+      append_numeric("request_id", record_context.request_id);
       append_string("model_name", escaped_model);
       break;
   }
@@ -405,15 +412,15 @@ BatchingTraceLogger::consume_latest_request_enqueue_timestamp(
     if (request_id < 0) {
       continue;
     }
-    const auto it = request_enqueue_times_.find(request_id);
-    if (it == request_enqueue_times_.end()) {
+    const auto timestamp_iter = request_enqueue_times_.find(request_id);
+    if (timestamp_iter == request_enqueue_times_.end()) {
       continue;
     }
-    const int64_t ts = it->second;
-    if (!latest || ts > *latest) {
-      latest = ts;
+    const int64_t timestamp_us = timestamp_iter->second;
+    if (!latest || timestamp_us > *latest) {
+      latest = timestamp_us;
     }
-    request_enqueue_times_.erase(it);
+    request_enqueue_times_.erase(timestamp_iter);
   }
   return latest;
 }
@@ -468,14 +475,16 @@ BatchingTraceLogger::write_batch_compute_span(
     return;
   }
 
-  const auto lane_assignment =
-      assign_worker_lane_locked(worker_id, start_ts, end_ts);
-  const std::string worker_label = format_worker_lane_label(
-      worker_id, worker_type_str, device_id, lane_assignment.lane_index);
+  const auto lane_assignment = assign_worker_lane_locked(
+      worker_id, WorkerLaneSpan{.start_ts = start_ts, .end_ts = end_ts});
+  const WorkerLaneKey lane_key{
+      .worker_id = worker_id, .lane_index = lane_assignment.lane_index};
+  const std::string worker_label =
+      format_worker_lane_label(lane_key, worker_type_str, device_id);
 
   std::ostringstream line;
-  line << "{\"name\":\"" << warmup_prefix << escaped_model
-       << "\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":" << start_ts
+  line << R"({"name":")" << warmup_prefix << escaped_model
+       << R"(","cat":"batching","ph":"X","ts":)" << start_ts
        << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << lane_assignment.thread_id;
   append_flow_annotation(line, FlowDirection::Target, batch_id, is_warmup);
@@ -494,68 +503,72 @@ BatchingTraceLogger::write_batch_compute_span(
 
 auto
 BatchingTraceLogger::assign_worker_lane_locked(
-    int worker_id, int64_t start_ts, int64_t end_ts) -> WorkerLaneAssignment
+    int worker_id, WorkerLaneSpan lane_span) -> WorkerLaneAssignment
 {
   auto& lanes = worker_lanes_[worker_id];
   if (lanes.empty()) {
-    lanes.push_back(WorkerLaneState{
-        worker_lane_thread_id(worker_id, /*lane_index=*/0),
-        /*last_end_ts=*/0});
+    const WorkerLaneKey lane_key{.worker_id = worker_id, .lane_index = 0};
+    lanes.push_back(
+        WorkerLaneState{worker_lane_thread_id(lane_key), /*last_end_ts=*/0});
   }
 
   int lane_index = 0;
   for (auto& lane : lanes) {
-    if (start_ts >= lane.last_end_ts) {
-      lane.last_end_ts = end_ts;
+    if (lane_span.start_ts >= lane.last_end_ts) {
+      lane.last_end_ts = lane_span.end_ts;
+      const WorkerLaneKey lane_key{
+          .worker_id = worker_id, .lane_index = lane_index};
       return WorkerLaneAssignment{
-          lane.thread_id, worker_lane_sort_index(worker_id, lane_index),
-          lane_index};
+          lane.thread_id, worker_lane_sort_index(lane_key), lane_index};
     }
     ++lane_index;
   }
 
   lane_index = static_cast<int>(lanes.size());
-  const int thread_id = worker_lane_thread_id(worker_id, lane_index);
-  lanes.push_back(WorkerLaneState{thread_id, end_ts});
+  const WorkerLaneKey lane_key{
+      .worker_id = worker_id, .lane_index = lane_index};
+  const int thread_id = worker_lane_thread_id(lane_key);
+  lanes.push_back(WorkerLaneState{thread_id, lane_span.end_ts});
   return WorkerLaneAssignment{
-      thread_id, worker_lane_sort_index(worker_id, lane_index), lane_index};
+      thread_id, worker_lane_sort_index(lane_key), lane_index};
 }
 
 auto
-BatchingTraceLogger::worker_lane_sort_index(int worker_id, int lane_index)
-    -> int
+BatchingTraceLogger::worker_lane_sort_index(WorkerLaneKey lane_key) -> int
 {
-  const int base = worker_lane_thread_id(worker_id, /*lane_index=*/0);
-  return base * kWorkerLaneSortStride + lane_index;
+  const WorkerLaneKey base_lane{
+      .worker_id = lane_key.worker_id, .lane_index = 0};
+  const int base = worker_lane_thread_id(base_lane);
+  return base * kWorkerLaneSortStride + lane_key.lane_index;
 }
 
 auto
 BatchingTraceLogger::format_worker_lane_label(
-    int worker_id, std::string_view worker_type_str, int device_id,
-    int lane_index) -> std::string
+    WorkerLaneKey lane_key, std::string_view worker_type_str,
+    int device_id) -> std::string
 {
-  auto label = format_worker_label(worker_id, worker_type_str, device_id);
-  if (lane_index <= 0) {
+  auto label =
+      format_worker_label(lane_key.worker_id, worker_type_str, device_id);
+  if (lane_key.lane_index <= 0) {
     return label;
   }
-  return std::format("{} #{}", label, lane_index + 1);
+  return std::format("{} #{}", label, lane_key.lane_index + 1);
 }
 
 void
 BatchingTraceLogger::write_batch_enqueue_span(
     std::string_view model_name, int batch_id, std::size_t batch_size,
-    int64_t start_ts, int64_t duration_us, std::span<const int> request_ids,
-    bool is_warmup)
+    BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup)
 {
-  if (duration_us <= 0) {
-    duration_us = 1;
+  if (timing.duration_us <= 0) {
+    timing.duration_us = 1;
   }
 
-  auto adjusted_duration = duration_us;
+  auto adjusted_duration = timing.duration_us;
   const auto latest_request_ts =
       consume_latest_request_enqueue_timestamp(request_ids);
   if (latest_request_ts) {
-    const int64_t requested_duration = *latest_request_ts - start_ts;
+    const int64_t requested_duration = *latest_request_ts - timing.start_ts;
     if (requested_duration > adjusted_duration) {
       adjusted_duration = std::max<int64_t>(int64_t{1}, requested_duration);
     }
@@ -565,8 +578,8 @@ BatchingTraceLogger::write_batch_enqueue_span(
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
   std::ostringstream line;
-  line << "{\"name\":\"" << warmup_prefix
-       << "batch\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":" << start_ts
+  line << R"({"name":")" << warmup_prefix
+       << R"(batch","cat":"batching","ph":"X","ts":)" << timing.start_ts
        << ",\"dur\":" << adjusted_duration << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << kBatchEnqueueTrackId;
   line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
@@ -582,8 +595,9 @@ BatchingTraceLogger::write_batch_enqueue_span(
     }
     line << "]";
   }
-  line << ",\"" << warmup_prefix << "start_ts\":" << start_ts << ",\""
-       << warmup_prefix << "end_ts\":" << (start_ts + duration_us) << "}}";
+  line << ",\"" << warmup_prefix << "start_ts\":" << timing.start_ts << ",\""
+       << warmup_prefix << "end_ts\":" << (timing.start_ts + timing.duration_us)
+       << "}}";
 
   std::lock_guard lock(mutex_);
   if (!stream_.is_open() || !header_written_) {
@@ -597,20 +611,19 @@ BatchingTraceLogger::write_batch_enqueue_span(
 void
 BatchingTraceLogger::write_batch_build_span(
     std::string_view model_name, int batch_id, std::size_t batch_size,
-    int64_t start_ts, int64_t duration_us, std::span<const int> request_ids,
-    bool is_warmup)
+    BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup)
 {
-  if (duration_us <= 0) {
-    duration_us = 1;
+  if (timing.duration_us <= 0) {
+    timing.duration_us = 1;
   }
 
   const auto escaped_model = escape_json_string(model_name);
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
   std::ostringstream line;
-  line << "{\"name\":\"" << warmup_prefix
-       << "batch_build\",\"cat\":\"batching\",\"ph\":\"X\",\"ts\":" << start_ts
-       << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
+  line << R"({"name":")" << warmup_prefix
+       << R"(batch_build","cat":"batching","ph":"X","ts":)" << timing.start_ts
+       << ",\"dur\":" << timing.duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << kBatchBuildTrackId;
   append_flow_annotation(line, FlowDirection::Source, batch_id, is_warmup);
   line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
@@ -626,8 +639,9 @@ BatchingTraceLogger::write_batch_build_span(
     }
     line << "]";
   }
-  line << ",\"" << warmup_prefix << "start_ts\":" << start_ts << ",\""
-       << warmup_prefix << "end_ts\":" << (start_ts + duration_us) << "}}";
+  line << ",\"" << warmup_prefix << "start_ts\":" << timing.start_ts << ",\""
+       << warmup_prefix << "end_ts\":" << (timing.start_ts + timing.duration_us)
+       << "}}";
 
   std::lock_guard lock(mutex_);
   if (!stream_.is_open() || !header_written_) {
@@ -643,8 +657,8 @@ BatchingTraceLogger::escape_json_string(std::string_view value) -> std::string
 {
   std::string escaped;
   escaped.reserve(value.size());
-  for (const unsigned char ch : value) {
-    switch (ch) {
+  for (const unsigned char character : value) {
+    switch (character) {
       case '"':
         escaped += "\\\"";
         break;
@@ -667,13 +681,11 @@ BatchingTraceLogger::escape_json_string(std::string_view value) -> std::string
         escaped += "\\t";
         break;
       default:
-        if (ch < 0x20) {
-          char buffer[7];
-          std::snprintf(
-              buffer, sizeof(buffer), "\\u%04X", static_cast<unsigned int>(ch));
-          escaped.append(buffer, 6);
+        if (character < kAsciiPrintableFloor) {
+          escaped +=
+              std::format("\\u{:04X}", static_cast<unsigned int>(character));
         } else {
-          escaped.push_back(static_cast<char>(ch));
+          escaped.push_back(static_cast<char>(character));
         }
     }
   }
@@ -783,7 +795,7 @@ BatchingTraceLogger::ensure_thread_metadata_locked(
 }
 
 auto
-BatchingTraceLogger::now_us() const -> int64_t
+BatchingTraceLogger::now_us() -> int64_t
 {
   return std::chrono::duration_cast<std::chrono::microseconds>(
              std::chrono::high_resolution_clock::now().time_since_epoch())
@@ -804,16 +816,16 @@ BatchingTraceLogger::relative_timestamp_us(int64_t absolute_us) const -> int64_t
 
 auto
 BatchingTraceLogger::relative_timestamp_from_time_point(
-    std::chrono::high_resolution_clock::time_point tp) const
+    std::chrono::high_resolution_clock::time_point time_point) const
     -> std::optional<int64_t>
 {
   if (!trace_start_initialized_ ||
-      tp == std::chrono::high_resolution_clock::time_point{}) {
+      time_point == std::chrono::high_resolution_clock::time_point{}) {
     return std::nullopt;
   }
   const auto absolute_us =
       std::chrono::duration_cast<std::chrono::microseconds>(
-          tp.time_since_epoch())
+          time_point.time_since_epoch())
           .count();
   return relative_timestamp_us(absolute_us);
 }

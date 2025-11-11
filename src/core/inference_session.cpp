@@ -41,8 +41,8 @@ InferenceSession::run()
   process_results();
 }
 
-bool
-InferenceSession::load_models_and_reference()
+auto
+InferenceSession::load_models_and_reference() -> bool
 {
   try {
     auto result = load_model_and_reference_output(opts_);
