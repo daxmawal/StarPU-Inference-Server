@@ -217,6 +217,139 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = true;
+    logger.first_record_ = true;
+  }
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{1000}};
+  const auto end = start + std::chrono::microseconds{10};
+  const BatchingTraceLogger::TimeRange queue_times{start, end};
+
+  logger.enabled_.store(false, std::memory_order_release);
+  logger.log_batch_enqueue_span(1, "disabled_model", 1, queue_times);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_batch_enqueue_span should not emit when tracing is disabled.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = true;
+    logger.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto invalid_start = std::chrono::high_resolution_clock::time_point{};
+  const auto valid_end = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{5000}};
+  const BatchingTraceLogger::TimeRange queue_times{invalid_start, valid_end};
+
+  logger.log_batch_enqueue_span(2, "invalid_timestamps", 1, queue_times);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_batch_enqueue_span should not emit when timestamps cannot be "
+         "converted.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = true;
+    logger.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{5000}};
+  const auto end = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{3000}};
+  const BatchingTraceLogger::TimeRange queue_times{start, end};
+
+  logger.log_batch_enqueue_span(3, "clamped_enqueue", 1, queue_times);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  const std::string span_token = "\"name\":\"batch\"";
+  const auto span_pos = content.find(span_token);
+  ASSERT_NE(span_pos, std::string::npos);
+  const std::string dur_token = "\"dur\":";
+  const auto dur_pos = content.find(dur_token, span_pos);
+  ASSERT_NE(dur_pos, std::string::npos);
+  const auto value_start = dur_pos + dur_token.size();
+  const auto value_end = content.find(',', value_start);
+  ASSERT_NE(value_end, std::string::npos);
+  const auto duration_value =
+      content.substr(value_start, value_end - value_start);
+  EXPECT_EQ(duration_value, "1");
+  EXPECT_EQ(content.find("\"dur\":0", span_pos), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
 {
   const auto trace_path = make_temp_trace_path();
