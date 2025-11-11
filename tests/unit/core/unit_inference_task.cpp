@@ -1,3 +1,5 @@
+#include <dlfcn.h>
+
 #include <array>
 #include <cstdlib>
 #include <format>
@@ -5,6 +7,7 @@
 #include <stdexcept>
 
 #include "core/output_slot_pool.hpp"
+#include "core/starpu_setup.hpp"
 #include "test_inference_task.hpp"
 #include "test_utils.hpp"
 
@@ -21,6 +24,27 @@ unregister_handles_ref() -> std::vector<starpu_data_handle_t>&
 {
   static std::vector<starpu_data_handle_t> handles;
   return handles;
+}
+
+inline auto
+task_destroy_call_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+inline auto
+last_destroyed_task_ref() -> starpu_task*&
+{
+  static starpu_task* ptr = nullptr;
+  return ptr;
+}
+
+inline auto
+task_submit_call_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
 }
 
 inline auto
@@ -43,9 +67,55 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
 }
 
 extern "C" void
-starpu_task_destroy(struct starpu_task* /*task*/)
+starpu_task_destroy(struct starpu_task* task)
 {
+  ++task_destroy_call_count_ref();
+  last_destroyed_task_ref() = task;
 }
+
+namespace {
+using TaskSubmitOverrideFn = int (*)(starpu_task*);
+
+inline auto
+task_submit_override_ref() -> TaskSubmitOverrideFn&
+{
+  static TaskSubmitOverrideFn fn = nullptr;
+  return fn;
+}
+
+inline auto
+resolve_real_starpu_task_submit() -> TaskSubmitOverrideFn
+{
+  static TaskSubmitOverrideFn fn = []() -> TaskSubmitOverrideFn {
+    void* symbol = dlsym(RTLD_NEXT, "starpu_task_submit");
+    if (symbol == nullptr) {
+      throw std::runtime_error("Failed to resolve starpu_task_submit");
+    }
+    return reinterpret_cast<TaskSubmitOverrideFn>(symbol);
+  }();
+  return fn;
+}
+}  // namespace
+
+#ifdef starpu_task_submit
+#define STARPU_TASK_SUBMIT_MACRO_WAS_DEFINED 1
+#undef starpu_task_submit
+#endif
+
+extern "C" int
+starpu_task_submit(starpu_task* task)
+{
+  if (auto override = task_submit_override_ref()) {
+    return override(task);
+  }
+  return resolve_real_starpu_task_submit()(task);
+}
+
+#ifdef STARPU_TASK_SUBMIT_MACRO_WAS_DEFINED
+#define starpu_task_submit(task) \
+  starpu_task_submit_line((task), __FILE__, __LINE__)
+#undef STARPU_TASK_SUBMIT_MACRO_WAS_DEFINED
+#endif
 
 namespace {
 inline auto
@@ -67,6 +137,30 @@ AlwaysFailingAcquire(
 {
   return -42;
 }
+
+auto
+AlwaysFailingTaskSubmit(starpu_task*) -> int
+{
+  ++task_submit_call_count_ref();
+  return -99;
+}
+
+class ScopedTaskSubmitOverride {
+ public:
+  explicit ScopedTaskSubmitOverride(TaskSubmitOverrideFn fn)
+  {
+    task_submit_override_ref() = fn;
+  }
+
+  ScopedTaskSubmitOverride(const ScopedTaskSubmitOverride&) = delete;
+  auto operator=(const ScopedTaskSubmitOverride&) -> ScopedTaskSubmitOverride& =
+                                                         delete;
+  ScopedTaskSubmitOverride(ScopedTaskSubmitOverride&&) = delete;
+  auto operator=(ScopedTaskSubmitOverride&&) -> ScopedTaskSubmitOverride& =
+                                                    delete;
+
+  ~ScopedTaskSubmitOverride() { task_submit_override_ref() = nullptr; }
+};
 }  // namespace
 
 TEST_F(InferenceTaskTest, TooManyInputsThrows)
@@ -203,6 +297,36 @@ TEST_F(
     std::free(t);
   };
   free_task(created_task);
+}
+
+TEST_F(InferenceTaskTest, SubmitCleansUpAndThrowsOnTaskSubmissionFailure)
+{
+  unregister_call_count_ref() = 0;
+  unregister_handles_ref().clear();
+  task_destroy_call_count_ref() = 0;
+  task_submit_call_count_ref() = 0;
+  last_destroyed_task_ref() = nullptr;
+
+  auto job = make_job(7, 1);
+  starpu_server::RuntimeConfig opts;
+  model_cpu_ = starpu_server::make_add_one_model();
+  models_gpu_.clear();
+  auto starpu_setup = std::make_unique<starpu_server::StarPUSetup>(opts);
+  auto dependencies = starpu_server::kDefaultInferenceTaskDependencies;
+  starpu_server::InferenceTask task(
+      starpu_setup.get(), job, &model_cpu_, &models_gpu_, &opts, dependencies);
+
+  ScopedTaskSubmitOverride submit_override(&AlwaysFailingTaskSubmit);
+
+  EXPECT_THROW(task.submit(), starpu_server::StarPUTaskSubmissionException);
+
+  EXPECT_EQ(task_submit_call_count_ref(), 1);
+  EXPECT_EQ(task_destroy_call_count_ref(), 1);
+  EXPECT_NE(last_destroyed_task_ref(), nullptr);
+  EXPECT_EQ(unregister_call_count_ref(), 2);
+  EXPECT_EQ(unregister_handles_ref().size(), 2U);
+
+  unregister_handles_ref().clear();
 }
 
 TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
