@@ -66,6 +66,44 @@ TEST(BatchingTraceLoggerTest, WriteLineLockedNoOpsWithoutHeader)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanClampsNonPositiveDuration)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+  logger.configure(true, trace_path.string());
+
+  BatchingTraceLogger::BatchSpanTiming timing{
+      .start_ts = 5000,
+      .duration_us = 0,
+  };
+  logger.write_batch_build_span(
+      "demo_model", 9, 3, timing, std::span<const int>{},
+      /*is_warmup=*/false);
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  const std::string span_token = "\"name\":\"batch_build\"";
+  const auto span_pos = content.find(span_token);
+  ASSERT_NE(span_pos, std::string::npos);
+  const std::string dur_token = "\"dur\":";
+  const auto dur_pos = content.find(dur_token, span_pos);
+  ASSERT_NE(dur_pos, std::string::npos);
+  const auto value_start = dur_pos + dur_token.size();
+  const auto value_end = content.find(',', value_start);
+  ASSERT_NE(value_end, std::string::npos);
+  const auto duration_value =
+      content.substr(value_start, value_end - value_start);
+  EXPECT_EQ(duration_value, "1");
+  EXPECT_EQ(content.find("\"dur\":0", span_pos), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
 {
   const auto trace_path = make_temp_trace_path();
