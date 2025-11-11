@@ -47,16 +47,6 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
   return shape;
 }
 
-auto
-ensure_primary_input(ClientConfig& cfg) -> InputConfig&
-{
-  if (cfg.inputs.empty()) {
-    cfg.inputs.emplace_back();
-    cfg.inputs.front().name = "input";
-  }
-  return cfg.inputs.front();
-}
-
 }  // namespace
 
 void
@@ -67,14 +57,11 @@ display_client_help(const char* prog_name)
       << "  --request-number N Number of requests to send (default: 1)\n"
       << "  --delay US        Delay between requests in microseconds (default: "
          "0)\n"
-      << "  --shape WxHxC     Input tensor shape (e.g., 1x3x224x224)\n"
-      << "  --type TYPE       Input tensor type (e.g., float32)\n"
       << "  --input NAME:SHAPE:TYPE  Specify an input (may be repeated)\n"
       << "  --server ADDR     gRPC server address (default: localhost:50051)\n"
       << "  --model NAME      Model name (default: example)\n"
       << "  --client-model PATH  Optional TorchScript model to validate "
          "responses\n"
-      << "  --version VER     Model version (default: 1)\n"
       << "  --verbose [0-4]   Verbosity level: 0=silent to 4=trace\n"
       << "  --help            Show this help message\n";
 }
@@ -125,7 +112,7 @@ expect_and_parse(size_t& idx, std::span<const char*> args, Func&& parser)
 }
 
 // =============================================================================
-// Individual Argument Parsers for --model, --shape, etc.
+// Individual Argument Parsers for the supported CLI options.
 // =============================================================================
 
 auto
@@ -149,25 +136,6 @@ parse_delay(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
     if (cfg.delay_us < 0) {
       throw std::invalid_argument("Must be >= 0.");
     }
-  });
-}
-
-auto
-parse_shape(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
-{
-  return expect_and_parse(idx, args, [&cfg](const char* val) {
-    auto& primary_input = ensure_primary_input(cfg);
-    primary_input.shape = parse_shape_string(val);
-  });
-}
-
-
-auto
-parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
-{
-  return expect_and_parse(idx, args, [&cfg](const char* val) {
-    auto& primary_input = ensure_primary_input(cfg);
-    primary_input.type = string_to_scalar_type(val);
   });
 }
 
@@ -218,14 +186,6 @@ parse_model(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 }
 
 auto
-parse_version(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
-    -> bool
-{
-  return expect_and_parse(
-      idx, args, [&cfg](const char* val) { cfg.model_version = val; });
-}
-
-auto
 parse_client_model_path(
     ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
@@ -256,13 +216,10 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       dispatch = {
           {"--request-number", parse_request_nb},
           {"--delay", parse_delay},
-          {"--shape", parse_shape},
-          {"--type", parse_type},
           {"--input", parse_input},
           {"--server", parse_server},
           {"--model", parse_model},
           {"--client-model", parse_client_model_path},
-          {"--version", parse_version},
           {"--verbose", parse_verbose},
       };
 
