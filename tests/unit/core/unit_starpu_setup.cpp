@@ -1290,6 +1290,17 @@ TEST(OutputSlotPool_Unit, FreeHostBufferNullPointerNoWarning)
   EXPECT_TRUE(capture.str().empty());
 }
 
+TEST(OutputSlotPool_Unit, HostDeallocatorHookIgnoresNullptr)
+{
+  auto& deallocator_hook =
+      starpu_server::OutputSlotPoolTestHook::host_deallocator_hook_ref();
+  ASSERT_TRUE(static_cast<bool>(deallocator_hook));
+
+  starpu_server::CaptureStream capture{std::cerr};
+  EXPECT_NO_THROW(deallocator_hook(nullptr));
+  EXPECT_TRUE(capture.str().empty());
+}
+
 TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
 {
   constexpr size_t kBytes = 32;
