@@ -11,6 +11,7 @@
 #include <optional>
 #include <sstream>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "test_helpers.hpp"
@@ -58,6 +59,15 @@ MakeUniqueTempDir(const std::string& prefix) -> std::filesystem::path
   std::filesystem::create_directories(path);
   return path;
 }
+
+struct ConfigLoaderHookGuard {
+  explicit ConfigLoaderHookGuard(ConfigLoaderPostParseHook hook)
+  {
+    set_config_loader_post_parse_hook(std::move(hook));
+  }
+
+  ~ConfigLoaderHookGuard() { reset_config_loader_post_parse_hook(); }
+};
 
 auto
 base_model_yaml() -> std::string
@@ -927,6 +937,38 @@ TEST(ConfigLoader, TraceFileRejectsEmptyPath)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(
+    ConfigLoader, InvalidDimensionDuringMaxMessageComputationMarksConfigInvalid)
+{
+  const auto model_path =
+      WriteTempFile("config_loader_invalid_dim_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+
+  const auto tmp = WriteTempFile("config_loader_invalid_dim.yaml", yaml);
+
+  ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
+    if (!cfg.models.empty() && !cfg.models[0].inputs.empty()) {
+      cfg.models[0].inputs[0].dims[0] = -1;
+    }
+  });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: dimension size must be non-negative";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, FilesystemErrorsMarkConfigInvalid)
 {
   const auto protected_dir = MakeUniqueTempDir("config_loader_no_access");
@@ -1278,10 +1320,10 @@ TEST(
       (std::vector<int64_t>{2147483647, 2147483647, 2147483647}));
   ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
 
-  // InvalidDimensionException cannot be triggered here because
+  // InvalidDimensionException cannot be triggered via YAML alone because
   // parse_tensor_nodes already rejects non-positive dimensions when reading the
-  // YAML. Covering the overflow path protects compute_max_message_bytes against
-  // future changes.
+  // config. A dedicated test uses the config loader post-parse hook to mutate
+  // the parsed model and cover that catch.
 }
 
 TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)

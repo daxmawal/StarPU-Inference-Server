@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "datatype_utils.hpp"
@@ -22,6 +23,13 @@ namespace {
 
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
+
+auto
+config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
+{
+  static ConfigLoaderPostParseHook hook;
+  return hook;
+}
 
 struct TransparentStringHash {
   using hash_type = std::hash<std::string_view>;
@@ -472,6 +480,18 @@ parse_tensor_nodes(
 
 }  // namespace
 
+void
+set_config_loader_post_parse_hook(ConfigLoaderPostParseHook hook)
+{
+  config_loader_post_parse_hook() = std::move(hook);
+}
+
+void
+reset_config_loader_post_parse_hook()
+{
+  config_loader_post_parse_hook() = {};
+}
+
 auto
 load_config(const std::string& path) -> RuntimeConfig
 {
@@ -506,6 +526,9 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_device_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
     parse_starpu_env(root, cfg);
+    if (auto& hook = config_loader_post_parse_hook(); hook) {
+      hook(cfg);
+    }
   }
   catch (const YAML::Exception& exception) {
     mark_invalid(exception.what());
