@@ -6,9 +6,12 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "core/inference_runner.hpp"
@@ -17,6 +20,7 @@
 #include "test_constants.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
+#include "utils/batching_trace_logger.hpp"
 
 namespace {
 inline auto
@@ -82,6 +86,16 @@ make_client_worker_test_context() -> ClientWorkerTestContext
   return ClientWorkerTestContext{
       std::move(config), std::move(outputs_ref),
       starpu_server::InferenceQueue()};
+}
+
+inline auto
+make_trace_file_path(const char* suffix) -> std::filesystem::path
+{
+  const auto timestamp =
+      std::chrono::high_resolution_clock::now().time_since_epoch().count();
+  std::string filename = std::string("client_worker_trace_") + suffix + "_" +
+                         std::to_string(timestamp) + ".json";
+  return std::filesystem::temp_directory_path() / filename;
 }
 
 inline auto
@@ -422,6 +436,64 @@ TEST(InferenceRunner_Unit, ClientWorkerStopsWhenQueuePushFails)
 
   std::shared_ptr<starpu_server::InferenceJob> job;
   EXPECT_FALSE(queue.wait_and_pop(job));
+}
+
+TEST(InferenceRunner_Unit, ClientWorkerLogsTraceEventsWhenTracerEnabled)
+{
+  auto context = make_client_worker_test_context();
+  auto& opts = context.config;
+  opts.batching.request_nb = 1;
+  opts.name = "trace-model";
+  const auto& outputs_ref = context.outputs_reference;
+
+  const auto trace_path = make_trace_file_path("enabled");
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(false, "");
+  tracer.configure(true, trace_path.string());
+
+  starpu_server::detail::client_worker(
+      context.queue, opts, outputs_ref, opts.batching.request_nb);
+
+  tracer.configure(false, "");
+
+  std::shared_ptr<starpu_server::InferenceJob> drained;
+  while (context.queue.try_pop(drained)) {
+  }
+
+  ASSERT_TRUE(std::filesystem::exists(trace_path));
+  std::ifstream trace_file(trace_path);
+  ASSERT_TRUE(trace_file.is_open());
+  std::string content(
+      (std::istreambuf_iterator<char>(trace_file)),
+      std::istreambuf_iterator<char>());
+  EXPECT_NE(content.find("request enqueued"), std::string::npos);
+  std::filesystem::remove(trace_path);
+}
+
+TEST(InferenceRunner_Unit, ClientWorkerSkipsTraceEventsWhenTracerDisabled)
+{
+  auto context = make_client_worker_test_context();
+  auto& opts = context.config;
+  opts.batching.request_nb = 1;
+  opts.name = "trace-model";
+  const auto& outputs_ref = context.outputs_reference;
+
+  const auto trace_path = make_trace_file_path("disabled");
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(false, "");
+
+  starpu_server::detail::client_worker(
+      context.queue, opts, outputs_ref, opts.batching.request_nb);
+
+  tracer.configure(false, "");
+
+  EXPECT_FALSE(std::filesystem::exists(trace_path));
 }
 
 TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
