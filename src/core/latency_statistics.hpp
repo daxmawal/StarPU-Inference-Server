@@ -16,6 +16,7 @@ inline constexpr double kPercentileP85 = 85.0;
 inline constexpr double kPercentileP50 = 50.0;
 
 struct LatencyStatistics {
+  double p0;
   double p100;
   double p95;
   double p85;
@@ -81,8 +82,12 @@ compute_latency_statistics(
         return acc + static_cast<double>(std::invoke(projection, sample));
       });
 
+  const double min_value = percentile_value(0.0);
+  const double max_value = percentile_value(100.0);
+
   return LatencyStatistics{
-      .p100 = sorted_value(size - 1U),
+      .p0 = min_value,
+      .p100 = max_value,
       .p95 = percentile_value(kPercentileP95),
       .p85 = percentile_value(kPercentileP85),
       .p50 = percentile_value(kPercentileP50),
