@@ -20,7 +20,6 @@ add_executable(
   ${CORE_DIR}/starpu_setup.cpp
   ${CORE_DIR}/inference_session.cpp
   ${CORE_DIR}/inference_runner.cpp
-  ${GRPC_SERVER_DIR}/inference_service.cpp
   ${SRC_DIR}/monitoring/metrics.cpp
   ${GRPC_CLIENT_DIR}/inference_client.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
