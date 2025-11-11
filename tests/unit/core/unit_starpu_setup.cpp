@@ -1301,6 +1301,22 @@ TEST(OutputSlotPool_Unit, HostDeallocatorHookIgnoresNullptr)
   EXPECT_TRUE(capture.str().empty());
 }
 
+TEST(OutputSlotPool_Unit, HostBufferDeleterNoopForNullptr)
+{
+  bool deallocator_invoked = false;
+  const auto previous_deallocator =
+      starpu_server::testing::set_output_host_deallocator_for_tests(
+          [&](void*) noexcept { deallocator_invoked = true; });
+
+  EXPECT_NO_THROW(
+      starpu_server::OutputSlotPoolTestHook::invoke_host_buffer_deleter(
+          nullptr));
+  EXPECT_FALSE(deallocator_invoked);
+
+  starpu_server::testing::set_output_host_deallocator_for_tests(
+      previous_deallocator);
+}
+
 TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
 {
   constexpr size_t kBytes = 32;

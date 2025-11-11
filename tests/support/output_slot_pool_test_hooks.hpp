@@ -15,6 +15,7 @@ struct OutputSlotPoolTestHook {
       -> const std::vector<OutputSlotPool::HostBufferInfo>&;
   static void free_host_buffer_for_tests(
       std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
+  static void invoke_host_buffer_deleter(std::byte* ptr);
   static auto starpu_vector_register_hook_ref()
       -> decltype(OutputSlotPool::starpu_vector_register_hook());
   static auto register_failure_observer_ref()
