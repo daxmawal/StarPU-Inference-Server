@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <format>
@@ -9,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <system_error>
 #include <vector>
 
 #include "test_helpers.hpp"
@@ -25,6 +27,35 @@ WriteTempFile(const std::string& name, const std::string& contents)
 {
   const auto path = std::filesystem::temp_directory_path() / name;
   std::ofstream(path) << contents;
+  return path;
+}
+
+struct ScopedPermissionRestorer {
+  explicit ScopedPermissionRestorer(std::filesystem::path p)
+      : path(std::move(p))
+  {
+  }
+
+  ~ScopedPermissionRestorer()
+  {
+    std::error_code ec;
+    std::filesystem::permissions(
+        path, std::filesystem::perms::owner_all,
+        std::filesystem::perm_options::replace, ec);
+    std::filesystem::remove_all(path, ec);
+  }
+
+  std::filesystem::path path;
+};
+
+auto
+MakeUniqueTempDir(const std::string& prefix) -> std::filesystem::path
+{
+  const auto unique_suffix =
+      std::chrono::steady_clock::now().time_since_epoch().count();
+  auto path = std::filesystem::temp_directory_path() /
+              (prefix + "_" + std::to_string(unique_suffix));
+  std::filesystem::create_directories(path);
   return path;
 }
 
@@ -894,6 +925,48 @@ TEST(ConfigLoader, TraceFileRejectsEmptyPath)
       "Failed to load config: trace_file must not be empty";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, FilesystemErrorsMarkConfigInvalid)
+{
+  const auto protected_dir = MakeUniqueTempDir("config_loader_no_access");
+  ScopedPermissionRestorer cleanup(protected_dir);
+
+  const auto protected_model = protected_dir / "model.pt";
+  std::ofstream(protected_model).put('\0');
+
+  std::filesystem::permissions(
+      protected_dir, std::filesystem::perms::none,
+      std::filesystem::perm_options::replace);
+
+  std::string expected_error_message;
+  try {
+    [[maybe_unused]] const bool exists_result =
+        std::filesystem::exists(protected_model);
+  }
+  catch (const std::filesystem::filesystem_error& error) {
+    expected_error_message =
+        std::string{"Failed to load config: "} + error.what();
+  }
+  ASSERT_FALSE(expected_error_message.empty());
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = protected_model.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+
+  const auto tmp = WriteTempFile("config_loader_filesystem_error.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(), expected_log_line(ErrorLevel, expected_error_message));
 }
 
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
