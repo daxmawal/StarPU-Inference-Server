@@ -314,6 +314,18 @@ TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
   EXPECT_EQ(value, "unknown");
 }
 
+TEST(BatchingTraceLoggerTest, RememberRequestEnqueueTimestampSkipsNegativeId)
+{
+  BatchingTraceLogger logger;
+  logger.remember_request_enqueue_timestamp(-5, 1234);
+
+  const std::array<int, 1> request_ids{-5};
+  const auto timestamp =
+      logger.consume_latest_request_enqueue_timestamp(request_ids);
+  EXPECT_FALSE(timestamp.has_value())
+      << "Negative request IDs should be ignored.";
+}
+
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
 {
   const auto trace_path = make_temp_trace_path();
