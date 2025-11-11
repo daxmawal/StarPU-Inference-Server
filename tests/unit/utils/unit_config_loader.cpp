@@ -334,6 +334,27 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt, false, false},
     InvalidConfigCase{
+        "NonScalarNameSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name:\n";
+          yaml += "  nested: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Configuration option 'name' must be a scalar string"},
+    InvalidConfigCase{
         "MissingNameSetsValidFalse",
         [] {
           std::string yaml;
