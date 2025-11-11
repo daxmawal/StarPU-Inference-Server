@@ -21,6 +21,37 @@ make_temp_trace_path() -> std::filesystem::path
          std::format("batching_trace_test_{}.json", now);
 }
 
+TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::microseconds(10);
+  std::string model_name = "\"\\\b\f\n\r\tA";
+  model_name.push_back(static_cast<char>(0x01));
+  logger.log_batch_build_span(
+      11, model_name, 1, BatchingTraceLogger::TimeRange{start, end},
+      std::span<const int>{});
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+
+  const std::string expected_fragment =
+      "\"model_name\":\"\\\"\\\\\\b\\f\\n\\r\\tA\\u0001\"";
+  EXPECT_NE(content.find(expected_fragment), std::string::npos)
+      << "Escaped model name was not serialized as expected. Trace content:\n"
+      << content;
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
 TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
 {
   const auto trace_path = make_temp_trace_path();
