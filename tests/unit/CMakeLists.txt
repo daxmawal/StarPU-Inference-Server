@@ -19,6 +19,7 @@ target_sources(
             core/robustness/edgecases_inference_task_limits.cpp
             core/robustness/edgecases_tensor_builder.cpp
             grpc/async_server_context_test.cpp
+            grpc/callback_handle_test.cpp
             grpc/unary_call_data_guard_test.cpp
             grpc/unit_inference_service.cpp
             grpc/unit_client.cpp
