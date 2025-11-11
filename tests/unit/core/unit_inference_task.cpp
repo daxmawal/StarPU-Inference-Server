@@ -133,11 +133,11 @@ TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
 
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
 {
-  auto job = make_job(3, 1);
+  StarpuRuntimeGuard starpu_guard;
   const unsigned total_workers = starpu_worker_get_count();
-  if (total_workers == 0) {
-    GTEST_SKIP() << "No StarPU workers available";
-  }
+  ASSERT_GT(total_workers, 0U) << "StarPU worker count must be positive";
+
+  auto job = make_job(3, 1);
 
   const int worker_id =
       total_workers > 2U ? 2 : static_cast<int>(total_workers) - 1;
