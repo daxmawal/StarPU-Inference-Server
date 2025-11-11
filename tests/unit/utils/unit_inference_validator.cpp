@@ -8,6 +8,7 @@ constexpr int kJobIdTolerance = 150;
 constexpr int kCudaMismatchJobId = 101;
 constexpr int kCudaCpuInputsJobId = 102;
 constexpr int kOutputCountMismatchJobId = 45;
+constexpr int kC10ErrorJobId = 151;
 constexpr float kDelta = 0.01F;
 constexpr float kBase2F = 2.0F;
 constexpr float kBase3F = 3.0F;
@@ -174,4 +175,21 @@ TEST_F(InferenceValidatorTest, OutputCountMismatch)
       result, model, starpu_server::VerbosityLevel::Silent));
   std::string logs = testing::internal::GetCapturedStderr();
   EXPECT_NE(logs.find("Output count mismatch"), std::string::npos);
+}
+
+TEST_F(InferenceValidatorTest, CatchesC10ErrorAndLogs)
+{
+  auto model = starpu_server::make_add_one_model();
+  auto result = starpu_server::make_result(
+      {torch::tensor({1, 2, 3})}, {torch::tensor({2, 3, 4})}, kC10ErrorJobId,
+      starpu_server::DeviceType::CUDA,
+      /*device_id=*/9999);
+
+  testing::internal::CaptureStderr();
+  EXPECT_THROW(
+      validate_inference_result(
+          result, model, starpu_server::VerbosityLevel::Silent),
+      starpu_server::InferenceExecutionException);
+  std::string logs = testing::internal::GetCapturedStderr();
+  EXPECT_NE(logs.find("C10 error in job"), std::string::npos);
 }
