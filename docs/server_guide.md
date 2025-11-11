@@ -19,8 +19,8 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 cmake --build . -j"$(nproc)"
 ```
 
-- `grpc_server` is the executable that exposes the gRPC API.
-- `grpc_client_example` is an example client useful for smoke tests.
+- `starpu_server` is the executable that exposes the gRPC API.
+- `client_example` is an example client useful for smoke tests.
 - To write your own client in C++, Python, etc, see [Client Guide](./client_guide.md).
 
 ## 2. Prepare a model configuration
@@ -86,7 +86,7 @@ Traces use the [Chrome trace-event JSON format](https://perfetto.dev/docs/concep
 The `starpu_env` block lets you pin StarPU-specific environment variables inside
 the YAML instead of exporting them in the shell. Each entry is copied into the
 process environment before StarPU initialises, so it has the same effect as
-`STARPU_*=value ./grpc_server ...`.
+`STARPU_*=value ./starpu_server ...`.
 
 ```yaml
 starpu_env:
@@ -146,5 +146,5 @@ to `max_batch_size`.**
 Once the configuration YAML is ready and the server binaries are built:
 
 ```bash
-./grpc_server --config path/to/config.yml
+./starpu_server --config path/to/config.yml
 ```

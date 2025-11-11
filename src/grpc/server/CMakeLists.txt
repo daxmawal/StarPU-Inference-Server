@@ -4,9 +4,9 @@ set(UTILS_DIR ${SRC_DIR}/utils)
 set(STARPU_TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
 set(MONITORING_DIR ${SRC_DIR}/monitoring)
 
-add_executable(grpc_server)
+add_executable(starpu_server)
 target_sources(
-  grpc_server
+  starpu_server
   PRIVATE ${CORE_DIR}/inference_task.cpp
           ${CORE_DIR}/input_slot_pool.cpp
           ${CORE_DIR}/output_slot_pool.cpp
@@ -26,16 +26,16 @@ target_sources(
           ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp
           ${MONITORING_DIR}/metrics.cpp)
 
-set_target_properties(grpc_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY
-                                             ${CMAKE_BINARY_DIR})
-target_compile_features(grpc_server PRIVATE cxx_std_23)
-target_compile_definitions(grpc_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
+set_target_properties(starpu_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY
+                                               ${CMAKE_BINARY_DIR})
+target_compile_features(starpu_server PRIVATE cxx_std_23)
+target_compile_definitions(starpu_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 target_include_directories(
-  grpc_server PRIVATE ${SRC_DIR} ${CORE_DIR} ${UTILS_DIR}
-                      ${STARPU_TASK_WORKER_DIR} ${MONITORING_DIR})
+  starpu_server PRIVATE ${SRC_DIR} ${CORE_DIR} ${UTILS_DIR}
+                        ${STARPU_TASK_WORKER_DIR} ${MONITORING_DIR})
 
 target_link_libraries(
-  grpc_server
+  starpu_server
   PRIVATE Torch::Torch
           inference_proto
           gRPC::grpc++_reflection
@@ -50,14 +50,15 @@ target_link_libraries(
           ${HWLOC_LIBRARY})
 
 if(STARPU_HAVE_NVML)
-  target_compile_definitions(grpc_server PRIVATE STARPU_HAVE_NVML=1)
-  target_include_directories(grpc_server PRIVATE ${NVML_INCLUDE_DIR})
-  target_link_libraries(grpc_server PRIVATE ${NVML_LIBRARY})
+  target_compile_definitions(starpu_server PRIVATE STARPU_HAVE_NVML=1)
+  target_include_directories(starpu_server PRIVATE ${NVML_INCLUDE_DIR})
+  target_link_libraries(starpu_server PRIVATE ${NVML_LIBRARY})
 endif()
 
 if(HAVE_NVTX)
-  target_compile_definitions(grpc_server PRIVATE HAVE_NVTX=1)
+  target_compile_definitions(starpu_server PRIVATE HAVE_NVTX=1)
   if(CUDAToolkit_FOUND)
-    target_include_directories(grpc_server PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_include_directories(starpu_server
+                               PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   endif()
 endif()

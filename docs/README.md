@@ -18,7 +18,7 @@ This directory collects the documentation needed to install, run, and tune the S
 
 Client examples:
 
-- `grpc_client_example` – sample C++ CLI that drives the gRPC service, sources under `src/grpc/client`.
+- `client_example` – sample C++ CLI that drives the gRPC service, sources under `src/grpc/client`.
 - `client/bert_inference_client.py` – Python gRPC client that tokenises text, [Client Guide](./client_guide.md).
 
 ### Backends
