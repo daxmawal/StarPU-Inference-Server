@@ -27,6 +27,20 @@ unregister_handles_ref() -> std::vector<starpu_data_handle_t>&
 }
 
 inline auto
+data_unregister_call_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+inline auto
+data_unregister_handles_ref() -> std::vector<starpu_data_handle_t>&
+{
+  static std::vector<starpu_data_handle_t> handles;
+  return handles;
+}
+
+inline auto
 task_destroy_call_count_ref() -> int&
 {
   static int value = 0;
@@ -64,6 +78,31 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
 {
   ++unregister_call_count_ref();
   unregister_handles_ref().push_back(handle);
+}
+
+namespace {
+using DataUnregisterFn = void (*)(starpu_data_handle_t);
+
+inline auto
+resolve_real_starpu_data_unregister() -> DataUnregisterFn
+{
+  static DataUnregisterFn fn = []() -> DataUnregisterFn {
+    void* symbol = dlsym(RTLD_NEXT, "starpu_data_unregister");
+    if (symbol == nullptr) {
+      throw std::runtime_error("Failed to resolve starpu_data_unregister");
+    }
+    return reinterpret_cast<DataUnregisterFn>(symbol);
+  }();
+  return fn;
+}
+}  // namespace
+
+extern "C" void
+starpu_data_unregister(starpu_data_handle_t handle)
+{
+  ++data_unregister_call_count_ref();
+  data_unregister_handles_ref().push_back(handle);
+  resolve_real_starpu_data_unregister()(handle);
 }
 
 extern "C" void
@@ -297,6 +336,28 @@ TEST_F(
     std::free(t);
   };
   free_task(created_task);
+}
+
+TEST(InferenceTask, RegisterInputsHandlesUnregistersHandlesOnFailure)
+{
+  StarpuRuntimeGuard starpu_guard;
+  data_unregister_call_count_ref() = 0;
+  data_unregister_handles_ref().clear();
+
+  std::vector<torch::Tensor> tensors;
+  tensors.push_back(torch::ones({1}, torch::TensorOptions().dtype(at::kFloat)));
+  tensors.emplace_back();
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::register_inputs_handles(tensors),
+      starpu_server::StarPURegistrationException);
+
+  EXPECT_EQ(data_unregister_call_count_ref(), 1);
+  ASSERT_EQ(data_unregister_handles_ref().size(), 1U);
+  EXPECT_NE(data_unregister_handles_ref()[0], nullptr);
+
+  data_unregister_call_count_ref() = 0;
+  data_unregister_handles_ref().clear();
 }
 
 TEST_F(InferenceTaskTest, SubmitCleansUpAndThrowsOnTaskSubmissionFailure)
