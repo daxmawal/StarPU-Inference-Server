@@ -339,6 +339,14 @@ TEST(TensorBuilderInternals_Unit, UsesNoopDeleterForTensorViews)
   EXPECT_EQ(tensor.data_ptr<float>(), data.data());
 }
 
+TEST(TensorBuilderInternals_Unit, ValidateInputLayoutNullParamsThrows)
+{
+  const auto buffers = starpu_server::StarpuBufferSpan{};
+  EXPECT_THROW(
+      starpu_server::validate_input_layout(nullptr, buffers),
+      starpu_server::InferenceExecutionException);
+}
+
 TEST(TensorBuilderInternals_Unit, ComputeDefaultStridesMatchesRowMajor)
 {
   const std::vector<int64_t> dims{2, 3, 4};
