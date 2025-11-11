@@ -1,5 +1,7 @@
 #include <array>
+#include <cstdlib>
 #include <format>
+#include <memory>
 #include <stdexcept>
 
 #include "core/output_slot_pool.hpp"
@@ -165,6 +167,42 @@ TEST_F(InferenceTaskTest, CreateTaskThrowsWhenStarpuTaskCreateFails)
   EXPECT_THROW(
       task.create_task(inputs, outputs, ctx),
       starpu_server::StarPUTaskCreationException);
+}
+
+TEST_F(
+    InferenceTaskTest,
+    CreateTaskAssignsDependenciesToContextWhenMissingDependenciesPointer)
+{
+  auto job = make_job(6, 0);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.task_create_fn = []() -> starpu_task* {
+    return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
+  };
+  auto task = make_task(job, 0, &dependencies);
+
+  const std::vector<starpu_data_handle_t> inputs;
+  const std::vector<starpu_data_handle_t> outputs;
+  auto params = task.create_inference_params();
+  auto ctx =
+      make_callback_context(job, &opts_, inputs, outputs, nullptr, params);
+  ASSERT_EQ(ctx->dependencies, nullptr);
+
+  auto* created_task = task.create_task(inputs, outputs, ctx);
+  ASSERT_NE(created_task, nullptr);
+
+  EXPECT_EQ(ctx->dependencies, &dependencies);
+
+  ctx->self_keep_alive.reset();
+  auto free_task = [](starpu_task* t) {
+    if (t == nullptr) {
+      return;
+    }
+    std::free(t->dyn_handles);
+    std::free(t->dyn_modes);
+    std::free(t);
+  };
+  free_task(created_task);
 }
 
 TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
