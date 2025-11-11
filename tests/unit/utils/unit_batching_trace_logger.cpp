@@ -217,6 +217,103 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
   std::filesystem::remove(trace_path, ec);
 }
 
+TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+  logger.configure(true, trace_path.string());
+
+  logger.write_batch_compute_span(
+      "skip_model", 11, 4, -1, DeviceType::CPU, 100, 10, /*is_warmup=*/false,
+      /*device_id=*/-1);
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_EQ(content.find("skip_model"), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanClampsNonPositiveDuration)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+  logger.configure(true, trace_path.string());
+
+  logger.write_batch_compute_span(
+      "clamp_model", 12, 5, 2, DeviceType::CPU, 500, 0, /*is_warmup=*/false,
+      /*device_id=*/-1);
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  const std::string event_token = "\"name\":\"clamp_model\"";
+  const auto event_pos = content.find(event_token);
+  ASSERT_NE(event_pos, std::string::npos);
+  const std::string dur_token = "\"dur\":";
+  const auto dur_pos = content.find(dur_token, event_pos);
+  ASSERT_NE(dur_pos, std::string::npos);
+  const auto value_start = dur_pos + dur_token.size();
+  const auto value_end = content.find(',', value_start);
+  ASSERT_NE(value_end, std::string::npos);
+  const auto duration_value =
+      content.substr(value_start, value_end - value_start);
+  EXPECT_EQ(duration_value, "1");
+  EXPECT_EQ(content.find("\"dur\":0", event_pos), std::string::npos);
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.stream_.is_open());
+    logger.header_written_ = false;
+    logger.first_record_ = true;
+  }
+
+  logger.write_batch_compute_span(
+      "demo_model", 13, 2, 3, DeviceType::CPU, 1000, 25,
+      /*is_warmup=*/false, /*device_id=*/-1);
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "write_batch_compute_span should not emit without an open header.";
+
+  std::error_code ec;
+  std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
+{
+  const auto value = BatchingTraceLogger::event_to_string(
+      static_cast<BatchingTraceEvent>(255));
+  EXPECT_EQ(value, "unknown");
+}
+
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
 {
   const auto trace_path = make_temp_trace_path();
