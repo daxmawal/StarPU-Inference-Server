@@ -496,6 +496,14 @@ TEST(InferenceRunner_Unit, ClientWorkerSkipsTraceEventsWhenTracerDisabled)
   EXPECT_FALSE(std::filesystem::exists(trace_path));
 }
 
+TEST(InferenceRunner_Unit, ValidateDeviceIdsNegativeAvailableCountThrows)
+{
+  const std::vector<int> device_ids{0, 1};
+  EXPECT_THROW(
+      starpu_server::detail::validate_device_ids(device_ids, -1),
+      starpu_server::InvalidGpuDeviceException);
+}
+
 TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
 {
   const std::vector<std::vector<int64_t>> shapes{kShape2x3, kShape1};
