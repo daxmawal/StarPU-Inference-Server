@@ -38,6 +38,32 @@ TEST(CpuUsageProvider, ReturnsFalseWhenFirstTokenIsNotCpu)
   EXPECT_EQ(provider(), std::nullopt);
 }
 
+TEST(CpuUsageProvider, ReturnsFalseWhenStreamIsEmpty)
+{
+  CpuTotals totals{};
+  std::istringstream input{""};
+  EXPECT_FALSE(read_total_cpu_times(input, totals));
+
+  auto provider = make_cpu_usage_provider([](CpuTotals& out) {
+    std::istringstream failing_stream{""};
+    return read_total_cpu_times(failing_stream, out);
+  });
+  EXPECT_EQ(provider(), std::nullopt);
+}
+
+TEST(CpuUsageProvider, ReturnsFalseWhenCpuTotalsAreIncomplete)
+{
+  CpuTotals totals{};
+  std::istringstream input{"cpu 1 2 3 4 5 6"};
+  EXPECT_FALSE(read_total_cpu_times(input, totals));
+
+  auto provider = make_cpu_usage_provider([](CpuTotals& out) {
+    std::istringstream failing_stream{"cpu 1 2 3 4 5 6"};
+    return read_total_cpu_times(failing_stream, out);
+  });
+  EXPECT_EQ(provider(), std::nullopt);
+}
+
 TEST(CpuUsageProvider, FailureDoesNotOverwritePreviousSample)
 {
   CpuTotals first{};
