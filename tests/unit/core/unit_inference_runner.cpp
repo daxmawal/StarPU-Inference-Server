@@ -504,6 +504,13 @@ TEST(InferenceRunner_Unit, ValidateDeviceIdsNegativeAvailableCountThrows)
       starpu_server::InvalidGpuDeviceException);
 }
 
+TEST(InferenceRunner_Unit, SetCudaDeviceCountOverrideRejectsNegative)
+{
+  EXPECT_THROW(
+      starpu_server::detail::set_cuda_device_count_override(-5),
+      std::invalid_argument);
+}
+
 TEST(InferenceRunnerUtils_Unit, GenerateInputsShapeAndType)
 {
   const std::vector<std::vector<int64_t>> shapes{kShape2x3, kShape1};
