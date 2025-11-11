@@ -820,6 +820,82 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   EXPECT_EQ(cfg.batching.pool_size, 3);
 }
 
+TEST(ConfigLoader, ParsesTraceEnabledFlag)
+{
+  const auto model_path = WriteTempFile(
+      "config_loader_trace_enabled_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+  yaml += "trace_enabled: true\n";
+
+  const auto tmp = WriteTempFile("config_loader_trace_enabled.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_TRUE(cfg.batching.trace_enabled);
+}
+
+TEST(ConfigLoader, ParsesTraceFilePath)
+{
+  const auto model_path =
+      WriteTempFile("config_loader_trace_file_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+
+  const auto trace_file_path =
+      (std::filesystem::temp_directory_path() / "config_loader_trace.json")
+          .string();
+  yaml += "trace_file: " + trace_file_path + "\n";
+
+  const auto tmp = WriteTempFile("config_loader_trace_file.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.batching.trace_file_path, trace_file_path);
+}
+
+TEST(ConfigLoader, TraceFileRejectsEmptyPath)
+{
+  const auto model_path =
+      WriteTempFile("config_loader_empty_trace_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+  yaml += "trace_file: \"\"\n";
+
+  const auto tmp = WriteTempFile("config_loader_empty_trace.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: trace_file must not be empty";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
 {
   const auto model_path = std::filesystem::temp_directory_path() /
