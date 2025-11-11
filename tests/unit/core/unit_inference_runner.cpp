@@ -198,6 +198,39 @@ TEST(InferenceJobTest, ConstructorInitializesState)
   EXPECT_DOUBLE_EQ(callback_latency, kLatencyMs);
 }
 
+TEST(InferenceJobTest, SetPendingSubJobsStoresJobs)
+{
+  auto parent = std::make_shared<starpu_server::InferenceJob>();
+  auto child1 = std::make_shared<starpu_server::InferenceJob>();
+  auto child2 = std::make_shared<starpu_server::InferenceJob>();
+  child1->set_request_id(10);
+  child2->set_request_id(11);
+
+  parent->set_pending_sub_jobs({child1, child2});
+
+  const auto& pending = parent->pending_sub_jobs();
+  ASSERT_EQ(pending.size(), 2U);
+  EXPECT_EQ(pending[0], child1);
+  EXPECT_EQ(pending[1], child2);
+  EXPECT_TRUE(parent->has_pending_sub_jobs());
+}
+
+TEST(InferenceJobTest, TakePendingSubJobsReturnsAndClears)
+{
+  auto parent = std::make_shared<starpu_server::InferenceJob>();
+  auto child = std::make_shared<starpu_server::InferenceJob>();
+  child->set_request_id(99);
+
+  parent->set_pending_sub_jobs({child});
+
+  auto taken = parent->take_pending_sub_jobs();
+
+  ASSERT_EQ(taken.size(), 1U);
+  EXPECT_EQ(taken[0], child);
+  EXPECT_TRUE(parent->pending_sub_jobs().empty());
+  EXPECT_FALSE(parent->has_pending_sub_jobs());
+}
+
 TEST(InferenceJobTest, SettersGettersAndCallback)
 {
   const std::vector<torch::Tensor> inputs{torch::ones(kShape2x2)};
