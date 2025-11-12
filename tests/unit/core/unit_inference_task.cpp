@@ -22,6 +22,7 @@
 
 #include "core/output_slot_pool.hpp"
 #include "core/starpu_setup.hpp"
+#include "support/starpu_task_submit_override.hpp"
 #include "test_inference_task.hpp"
 #include "test_utils.hpp"
 
@@ -185,8 +186,6 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
 
 namespace {
 using DataUnregisterFn = void (*)(starpu_data_handle_t);
-using DataReleaseFn = void (*)(starpu_data_handle_t);
-using VectorRegisterFn = decltype(&starpu_vector_data_register);
 
 inline auto
 resolve_real_starpu_data_unregister() -> DataUnregisterFn
@@ -201,45 +200,6 @@ resolve_real_starpu_data_unregister() -> DataUnregisterFn
   return fn;
 }
 
-inline auto
-vector_register_override_ref() -> VectorRegisterFn&
-{
-  static VectorRegisterFn fn = nullptr;
-  return fn;
-}
-
-inline auto
-resolve_real_starpu_vector_data_register() -> VectorRegisterFn
-{
-  static VectorRegisterFn fn = []() -> VectorRegisterFn {
-    void* symbol = dlsym(RTLD_NEXT, "starpu_vector_data_register");
-    if (symbol == nullptr) {
-      throw std::runtime_error("Failed to resolve starpu_vector_data_register");
-    }
-    return reinterpret_cast<VectorRegisterFn>(symbol);
-  }();
-  return fn;
-}
-
-inline auto
-data_release_override_ref() -> DataReleaseFn&
-{
-  static DataReleaseFn fn = nullptr;
-  return fn;
-}
-
-inline auto
-resolve_real_starpu_data_release() -> DataReleaseFn
-{
-  static DataReleaseFn fn = []() -> DataReleaseFn {
-    void* symbol = dlsym(RTLD_NEXT, "starpu_data_release");
-    if (symbol == nullptr) {
-      throw std::runtime_error("Failed to resolve starpu_data_release");
-    }
-    return reinterpret_cast<DataReleaseFn>(symbol);
-  }();
-  return fn;
-}
 }  // namespace
 
 extern "C" void
@@ -257,75 +217,9 @@ starpu_task_destroy(struct starpu_task* task)
   last_destroyed_task_ref() = task;
 }
 
-extern "C" void
-starpu_vector_data_register(
-    starpu_data_handle_t* handle, int home_node, uintptr_t ptr, size_t nx,
-    size_t elemsize)
-{
-  if (auto override = vector_register_override_ref()) {
-    override(handle, home_node, ptr, nx, elemsize);
-    return;
-  }
-  resolve_real_starpu_vector_data_register()(
-      handle, home_node, ptr, nx, elemsize);
-}
-
-extern "C" void
-starpu_data_release(starpu_data_handle_t handle)
-{
-  if (auto override = data_release_override_ref()) {
-    override(handle);
-    return;
-  }
-  resolve_real_starpu_data_release()(handle);
-}
-
 namespace {
-using TaskSubmitOverrideFn = int (*)(starpu_task*);
 
-inline auto
-task_submit_override_ref() -> TaskSubmitOverrideFn&
-{
-  static TaskSubmitOverrideFn fn = nullptr;
-  return fn;
-}
-
-inline auto
-resolve_real_starpu_task_submit() -> TaskSubmitOverrideFn
-{
-  static TaskSubmitOverrideFn fn = []() -> TaskSubmitOverrideFn {
-    void* symbol = dlsym(RTLD_NEXT, "starpu_task_submit");
-    if (symbol == nullptr) {
-      throw std::runtime_error("Failed to resolve starpu_task_submit");
-    }
-    return reinterpret_cast<TaskSubmitOverrideFn>(symbol);
-  }();
-  return fn;
-}
-}  // namespace
-
-#ifdef starpu_task_submit
-#define STARPU_TASK_SUBMIT_MACRO_WAS_DEFINED 1
-#undef starpu_task_submit
-#endif
-
-extern "C" int
-starpu_task_submit(starpu_task* task)
-{
-  if (auto override = task_submit_override_ref()) {
-    return override(task);
-  }
-  return resolve_real_starpu_task_submit()(task);
-}
-
-#ifdef STARPU_TASK_SUBMIT_MACRO_WAS_DEFINED
-#define starpu_task_submit(task) \
-  starpu_task_submit_line((task), __FILE__, __LINE__)
-#undef STARPU_TASK_SUBMIT_MACRO_WAS_DEFINED
-#endif
-
-namespace {
-inline auto
+auto
 AlwaysNullAllocator(size_t) -> void*
 {
   return nullptr;
@@ -379,57 +273,6 @@ ThrowingDataRelease(starpu_data_handle_t)
   throw starpu_server::InvalidInferenceJobException(
       "forced data release failure");
 }
-
-class ScopedTaskSubmitOverride {
- public:
-  explicit ScopedTaskSubmitOverride(TaskSubmitOverrideFn fn)
-  {
-    task_submit_override_ref() = fn;
-  }
-
-  ScopedTaskSubmitOverride(const ScopedTaskSubmitOverride&) = delete;
-  auto operator=(const ScopedTaskSubmitOverride&) -> ScopedTaskSubmitOverride& =
-                                                         delete;
-  ScopedTaskSubmitOverride(ScopedTaskSubmitOverride&&) = delete;
-  auto operator=(ScopedTaskSubmitOverride&&) -> ScopedTaskSubmitOverride& =
-                                                    delete;
-
-  ~ScopedTaskSubmitOverride() { task_submit_override_ref() = nullptr; }
-};
-
-class ScopedVectorRegisterOverride {
- public:
-  explicit ScopedVectorRegisterOverride(VectorRegisterFn fn)
-  {
-    vector_register_override_ref() = fn;
-  }
-
-  ScopedVectorRegisterOverride(const ScopedVectorRegisterOverride&) = delete;
-  auto operator=(const ScopedVectorRegisterOverride&)
-      -> ScopedVectorRegisterOverride& = delete;
-  ScopedVectorRegisterOverride(ScopedVectorRegisterOverride&&) = delete;
-  auto operator=(ScopedVectorRegisterOverride&&)
-      -> ScopedVectorRegisterOverride& = delete;
-
-  ~ScopedVectorRegisterOverride() { vector_register_override_ref() = nullptr; }
-};
-
-class ScopedDataReleaseOverride {
- public:
-  explicit ScopedDataReleaseOverride(DataReleaseFn fn)
-  {
-    data_release_override_ref() = fn;
-  }
-
-  ScopedDataReleaseOverride(const ScopedDataReleaseOverride&) = delete;
-  auto operator=(const ScopedDataReleaseOverride&)
-      -> ScopedDataReleaseOverride& = delete;
-  ScopedDataReleaseOverride(ScopedDataReleaseOverride&&) = delete;
-  auto operator=(ScopedDataReleaseOverride&&) -> ScopedDataReleaseOverride& =
-                                                     delete;
-
-  ~ScopedDataReleaseOverride() { data_release_override_ref() = nullptr; }
-};
 
 class ScopedDefaultDataAcquireNullifier {
  public:
@@ -513,6 +356,7 @@ class ScopedDefaultDataAcquireNullifier {
   bool need_restore_got_perms_ = false;
   bool got_valid_ = false;
 };
+
 }  // namespace
 
 TEST_F(InferenceTaskTest, TooManyInputsThrows)
@@ -705,7 +549,8 @@ TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenStarpuRegistrationFails)
   StarpuRuntimeGuard starpu_guard;
   torch::Tensor tensor =
       torch::ones({1}, torch::TensorOptions().dtype(at::kFloat));
-  ScopedVectorRegisterOverride override(&AlwaysFailingVectorRegister);
+  starpu_test::ScopedStarpuVectorRegisterOverride override(
+      &AlwaysFailingVectorRegister);
 
   EXPECT_THROW(
       starpu_server::InferenceTask::safe_register_tensor_vector(
@@ -730,7 +575,8 @@ TEST_F(InferenceTaskTest, SubmitCleansUpAndThrowsOnTaskSubmissionFailure)
   starpu_server::InferenceTask task(
       starpu_setup.get(), job, &model_cpu_, &models_gpu_, &opts, dependencies);
 
-  ScopedTaskSubmitOverride submit_override(&AlwaysFailingTaskSubmit);
+  starpu_test::ScopedStarpuTaskSubmitOverride submit_override(
+      &AlwaysFailingTaskSubmit);
 
   EXPECT_THROW(task.submit(), starpu_server::StarPUTaskSubmissionException);
 
@@ -887,7 +733,8 @@ TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
 TEST(InferenceTask, AcquireOutputHandleLogsInferenceEngineException)
 {
   StarpuRuntimeGuard starpu_guard;
-  ScopedDataReleaseOverride release_override(&ThrowingDataRelease);
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &ThrowingDataRelease);
   OutputContextFixture fixture;
   auto ctx = fixture.ctx;
   ctx->self_keep_alive = ctx;

@@ -60,4 +60,5 @@ target_sources(
             utils/robustness/edgecases_logger.cpp
             utils/robustness/edgecases_transparent_hash.cpp
             ../support/output_slot_pool_test_hooks.cpp
+            ../support/starpu_task_submit_override.cpp
             ../support/torch_cuda_device_count_override.cpp)

@@ -12,6 +12,7 @@
 #include "core/inference_task.hpp"
 #include "exceptions.hpp"
 #include "starpu_task_worker/task_runner_internal.hpp"
+#include "support/starpu_task_submit_override.hpp"
 #include "test_starpu_task_runner.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/perf_observer.hpp"
@@ -289,6 +290,27 @@ restore_vector_interfaces(const std::vector<VectorInterfaceSnapshot>& snapshots)
     snapshot.iface->nx = static_cast<decltype(snapshot.iface->nx)>(snapshot.nx);
   }
 }
+
+std::atomic<int> submit_override_calls = 0;
+
+auto
+AlwaysFailStarpuSubmit(starpu_task*) -> int
+{
+  submit_override_calls.fetch_add(1, std::memory_order_relaxed);
+  return -17;
+}
+
+auto
+NoOpStarpuDataAcquire(starpu_data_handle_t, starpu_data_access_mode) -> int
+{
+  return 0;
+}
+
+void
+NoOpStarpuDataRelease(starpu_data_handle_t)
+{
+}
+
 }  // namespace
 
 TEST(TaskRunnerInternal, ReleaseInputsFromAdditionalJobsSkipsNullEntries)
@@ -798,6 +820,44 @@ TEST_F(
   const auto expected_ids = std::format("\"request_ids\":[{}]", kRequestId);
   EXPECT_NE(trace_content.find(expected_ids), std::string::npos)
       << trace_content;
+}
+
+TEST_F(StarPUTaskRunnerFixture, SubmitInferenceTaskHandlesStarpuSubmitFailures)
+{
+  auto model_config = make_model_config(
+      "trace_model", {make_tensor_config("input0", {1}, at::kFloat)},
+      {make_tensor_config("output0", {1}, at::kFloat)});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+
+  opts_.validation.validate_results = false;
+
+  starpu_test::ScopedStarpuDataAcquireOverride acquire_override(
+      &NoOpStarpuDataAcquire);
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &NoOpStarpuDataRelease);
+  submit_override_calls = 0;
+  starpu_test::ScopedStarpuTaskSubmitOverride submit_override(
+      &AlwaysFailStarpuSubmit);
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto job = make_job(703, {torch::ones({1}, tensor_opts)}, {at::kFloat});
+  job->set_model_name("trace_model");
+  job->set_output_tensors({torch::zeros({1}, tensor_opts)});
+
+  EXPECT_THROW(
+      runner_->submit_inference_task(job),
+      starpu_server::StarPUTaskSubmissionException);
+  EXPECT_EQ(submit_override_calls.load(), 1);
+
+  auto maybe_input_slot = starpu_setup_->input_pool().try_acquire();
+  ASSERT_TRUE(maybe_input_slot.has_value());
+  EXPECT_EQ(*maybe_input_slot, 0);
+  starpu_setup_->input_pool().release(*maybe_input_slot);
+
+  auto maybe_output_slot = starpu_setup_->output_pool().try_acquire();
+  ASSERT_TRUE(maybe_output_slot.has_value());
+  EXPECT_EQ(*maybe_output_slot, 0);
+  starpu_setup_->output_pool().release(*maybe_output_slot);
 }
 
 TEST_F(
