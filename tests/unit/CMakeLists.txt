@@ -27,6 +27,7 @@ target_sources(
             grpc/unary_call_data_guard_test.cpp
             grpc/unit_inference_service.cpp
             grpc/unit_client.cpp
+            grpc/inference_client_helpers_test.cpp
             grpc/robustness/edgecases_client.cpp
             grpc/robustness/edgecases_inference_service.cpp
             starpu/unit_starpu_setup.cpp
