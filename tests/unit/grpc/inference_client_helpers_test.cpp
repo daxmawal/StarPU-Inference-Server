@@ -3,11 +3,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#define private public
+#include "grpc/client/inference_client.hpp"
+#undef private
 // Include the implementation to exercise helpers with internal linkage.
 #include "grpc/client/inference_client.cpp"
 
@@ -32,6 +37,32 @@ expect_matches(
         << "Mismatch at index " << idx;
   }
 }
+
+constexpr const char* kTestServerAddress = "dns:///localhost:50051";
+
+auto
+make_test_channel() -> std::shared_ptr<grpc::Channel>
+{
+  return grpc::CreateChannel(
+      kTestServerAddress, grpc::InsecureChannelCredentials());
+}
+
+inline void
+append_raw_bytes(
+    inference::ModelInferResponse& response, const std::string& raw)
+{
+  response.add_raw_output_contents()->assign(raw.data(), raw.size());
+}
+
+template <typename Fn>
+auto
+capture_stderr(Fn&& fn) -> std::string
+{
+  testing::internal::CaptureStderr();
+  std::forward<Fn>(fn)();
+  return testing::internal::GetCapturedStderr();
+}
+
 }  // namespace
 
 namespace starpu_server {
@@ -129,6 +160,177 @@ TEST(InferenceClientHelpers, DecodeOutputValuesRejectsUnsupportedDatatype)
   EXPECT_THROW(
       decode_output_values(tensor, std::string_view(raw), 1U),
       std::invalid_argument);
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseIgnoresMissingExpected)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 101;
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_TRUE(err.empty());
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseIgnoresEmptySummary)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 102;
+  call.expected_outputs = InferenceClient::OutputSummary{};
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_TRUE(err.empty());
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseSkipsEmptyExpectedEntry)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 103;
+  call.expected_outputs = InferenceClient::OutputSummary{{}};
+  call.reply.add_outputs()->set_datatype("FP32");
+  const auto raw = make_raw_data(std::vector<float>{1.0F});
+  append_raw_bytes(call.reply, raw);
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_TRUE(err.empty());
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseWarnsWhenNoOutputs)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 200;
+  call.expected_outputs = InferenceClient::OutputSummary{{1.0}};
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_NE(
+      err.find("server response does not contain outputs"), std::string::npos);
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseWarnsWhenRawMissing)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 201;
+  call.expected_outputs = InferenceClient::OutputSummary{{4.0}, {8.0}};
+
+  call.reply.add_outputs()->set_datatype("FP32");
+  call.reply.add_outputs()->set_datatype("FP32");
+
+  const auto raw = make_raw_data(std::vector<float>{4.0F});
+  append_raw_bytes(call.reply, raw);
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_NE(err.find("missing raw contents"), std::string::npos);
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseLogsDecodeFailure)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 202;
+  call.expected_outputs = InferenceClient::OutputSummary{{5.0}};
+
+  auto* tensor = call.reply.add_outputs();
+  tensor->set_datatype("COMPLEX64");
+  const std::string raw(8, '\0');
+  append_raw_bytes(call.reply, raw);
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_NE(err.find("failed to decode server output"), std::string::npos);
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseWarnsOnCountMismatch)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 203;
+  call.expected_outputs = InferenceClient::OutputSummary{{1.0, 2.0}};
+
+  auto* tensor = call.reply.add_outputs();
+  tensor->set_datatype("FP32");
+  const auto raw = make_raw_data(std::vector<float>{1.0F});
+  append_raw_bytes(call.reply, raw);
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_NE(err.find("expected 2 values, decoded 1"), std::string::npos);
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseWarnsOnValueMismatch)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 204;
+  call.expected_outputs = InferenceClient::OutputSummary{{1.0, 2.0}};
+
+  auto* tensor = call.reply.add_outputs();
+  tensor->set_datatype("FP32");
+  const auto raw = make_raw_data(std::vector<float>{1.0F, 2.01F});
+  append_raw_bytes(call.reply, raw);
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_NE(err.find("value 1 mismatch"), std::string::npos);
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseLogsTraceOnSuccess)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Trace);
+  AsyncClientCall call;
+  call.request_id = 205;
+  call.expected_outputs = InferenceClient::OutputSummary{{3.5, -7.25}};
+
+  auto* tensor = call.reply.add_outputs();
+  tensor->set_datatype("FP32");
+  const auto raw = make_raw_data(std::vector<float>{3.5F, -7.25F});
+  append_raw_bytes(call.reply, raw);
+
+  testing::internal::CaptureStdout();
+  testing::internal::CaptureStderr();
+  client.validate_server_response(call);
+  const std::string err = testing::internal::GetCapturedStderr();
+  const std::string out = testing::internal::GetCapturedStdout();
+
+  EXPECT_TRUE(err.empty());
+  EXPECT_NE(out.find("validated on 2 values"), std::string::npos);
+}
+
+TEST(InferenceClientHelpers, ValidateServerResponseWarnsWhenServerOutputsTooFew)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+  AsyncClientCall call;
+  call.request_id = 206;
+  call.expected_outputs = InferenceClient::OutputSummary{{9.0}, {10.0}};
+
+  auto* tensor = call.reply.add_outputs();
+  tensor->set_datatype("FP32");
+  const auto raw = make_raw_data(std::vector<float>{9.0F});
+  append_raw_bytes(call.reply, raw);
+
+  const auto err =
+      capture_stderr([&] { client.validate_server_response(call); });
+  EXPECT_NE(
+      err.find("server returned 1 outputs but 2 were available"),
+      std::string::npos);
 }
 
 }  // namespace starpu_server
