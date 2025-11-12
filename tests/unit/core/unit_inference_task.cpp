@@ -1,3 +1,7 @@
+#include <ATen/core/TensorBody.h>
+#include <c10/core/DispatchKeySet.h>
+#include <c10/core/ScalarTypeToTypeMeta.h>
+#include <c10/core/Storage.h>
 #include <dlfcn.h>
 
 #include <array>
@@ -6,6 +10,7 @@
 #include <memory>
 #include <new>
 #include <stdexcept>
+#include <utility>
 
 #include "core/output_slot_pool.hpp"
 #include "core/starpu_setup.hpp"
@@ -70,6 +75,20 @@ MakeHandle(int index) -> starpu_data_handle_t
   void* ptr =
       &dummy_storage.at(static_cast<std::size_t>(index) % kDummyStorageSize);
   return static_cast<starpu_data_handle_t>(ptr);
+}
+
+inline auto
+MakeNullDataTensor() -> torch::Tensor
+{
+  auto data_ptr = c10::DataPtr(nullptr, c10::Device(c10::DeviceType::CPU));
+  c10::Storage storage(
+      c10::Storage::use_byte_size_t{},
+      /*size_bytes=*/0, std::move(data_ptr),
+      /*allocator=*/nullptr,
+      /*resizable=*/false);
+  return at::detail::make_tensor<c10::TensorImpl>(
+      std::move(storage), c10::DispatchKeySet(c10::DispatchKey::CPU),
+      c10::scalarTypeToTypeMeta(at::kFloat));
 }
 
 }  // namespace
@@ -359,6 +378,19 @@ TEST(InferenceTask, RegisterInputsHandlesUnregistersHandlesOnFailure)
 
   data_unregister_call_count_ref() = 0;
   data_unregister_handles_ref().clear();
+}
+
+TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenDataPointerIsNull)
+{
+  StarpuRuntimeGuard starpu_guard;
+  auto tensor = MakeNullDataTensor();
+  ASSERT_TRUE(tensor.defined());
+  ASSERT_EQ(tensor.data_ptr(), nullptr);
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::safe_register_tensor_vector(
+          tensor, "null_data_tensor"),
+      starpu_server::StarPURegistrationException);
 }
 
 TEST_F(InferenceTaskTest, SubmitCleansUpAndThrowsOnTaskSubmissionFailure)
