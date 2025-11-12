@@ -23,6 +23,11 @@ using starpu_server::CaptureStream;
 using starpu_server::ErrorLevel;
 using starpu_server::expected_log_line;
 
+extern "C" int64_t
+batch_collector_job_sample_size(const starpu_server::BatchCollector* collector, const std::shared_ptr<starpu_server::InferenceJob>& job) __asm__(
+    "_ZNK13starpu_server14BatchCollector15job_sample_sizeERKSt10shared_ptrINS_"
+    "12InferenceJobEE");
+
 namespace starpu_server {
 class StarPUTaskRunnerTestAdapter {
  public:
@@ -124,6 +129,16 @@ class StarPUTaskRunnerTestAdapter {
       bool warmup_job, int submission_id)
   {
     runner->trace_batch_if_enabled(job, warmup_job, submission_id);
+  }
+
+  static auto job_sample_size(
+      StarPUTaskRunner* runner,
+      const std::shared_ptr<InferenceJob>& job) -> int64_t
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return -1;
+    }
+    return batch_collector_job_sample_size(runner->batch_collector_.get(), job);
   }
 
   static void enqueue_prepared_job(
@@ -2089,6 +2104,18 @@ TEST_F(
   EXPECT_EQ(collected[0], first);
   EXPECT_EQ(collected[1], second);
   EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, JobSampleSizeTreatsNullJobAsZeroSamples)
+{
+  auto model_config = make_model_config("null_job_model", {}, {});
+  reset_runner_with_model(model_config, /*pool_size=*/0);
+
+  const int64_t samples =
+      starpu_server::StarPUTaskRunnerTestAdapter::job_sample_size(
+          runner_.get(), nullptr);
+
+  EXPECT_EQ(samples, 0);
 }
 
 TEST_F(StarPUTaskRunnerFixture, CollectBatchInfersSampleCountFromInputRank)
