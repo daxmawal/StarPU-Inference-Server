@@ -66,6 +66,20 @@ class StarPUTaskRunnerTestAdapter {
     return runner->collect_batch(first_job);
   }
 
+  static auto merge_input_tensors(
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+      int64_t total_samples) -> std::vector<torch::Tensor>
+  {
+    return StarPUTaskRunner::merge_input_tensors(jobs, total_samples);
+  }
+
+  static auto merge_input_memory_holders(
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::vector<std::shared_ptr<const void>>
+  {
+    return StarPUTaskRunner::merge_input_memory_holders(jobs);
+  }
+
   static void set_submit_hook(std::function<void()> hook)
   {
     task_runner_internal::set_submit_inference_task_hook(std::move(hook));
@@ -107,6 +121,25 @@ class StarPUTaskRunnerTestAdapter {
       bool warmup_job, int submission_id)
   {
     runner->trace_batch_if_enabled(job, warmup_job, submission_id);
+  }
+
+  static void enqueue_prepared_job(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job)
+  {
+    runner->enqueue_prepared_job(job);
+  }
+
+  static auto wait_for_prepared_job(StarPUTaskRunner* runner)
+      -> std::shared_ptr<InferenceJob>
+  {
+    return runner->wait_for_prepared_job();
+  }
+
+  static void release_pending_jobs(
+      const std::shared_ptr<InferenceJob>& job,
+      std::vector<std::shared_ptr<InferenceJob>>& pending_jobs)
+  {
+    StarPUTaskRunner::release_pending_jobs(job, pending_jobs);
   }
 };
 }  // namespace starpu_server
@@ -829,6 +862,119 @@ TEST_F(
       starpu_server::InconsistentInputTensorCountException);
 
   input_pool.release(slot);
+}
+
+TEST_F(StarPUTaskRunnerFixture, MergeInputTensorsConcatenatesBatchedJobs)
+{
+  auto job_a = make_job(
+      40,
+      {torch::tensor(
+          {{1.0F}, {2.0F}}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto job_b = make_job(
+      41,
+      {torch::tensor({{3.0F}}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job_a, job_b};
+  const auto merged =
+      starpu_server::StarPUTaskRunnerTestAdapter::merge_input_tensors(
+          jobs, /*total_samples=*/3);
+
+  ASSERT_EQ(merged.size(), 1U);
+  const auto expected = torch::tensor(
+      {{1.0F}, {2.0F}, {3.0F}}, torch::TensorOptions().dtype(torch::kFloat));
+  EXPECT_TRUE(torch::equal(merged[0], expected));
+}
+
+TEST_F(StarPUTaskRunnerFixture, MergeInputTensorsThrowsWhenTotalSamplesMismatch)
+{
+  auto job_a = make_job(
+      42,
+      {torch::tensor(
+          {{1.0F}, {2.0F}}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto job_b = make_job(
+      43,
+      {torch::tensor({{3.0F}}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job_a, job_b};
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::merge_input_tensors(
+          jobs, /*total_samples=*/5),
+      starpu_server::InvalidInputTensorException);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, MergeInputMemoryHoldersPreservesOriginalOrdering)
+{
+  auto job_a = make_job(44, {});
+  auto owner_a0 = std::make_shared<int>(7);
+  auto owner_a1 = std::make_shared<int>(9);
+  job_a->set_input_memory_holders(
+      {std::shared_ptr<const void>(owner_a0, owner_a0.get()),
+       std::shared_ptr<const void>(owner_a1, owner_a1.get())});
+
+  auto job_b = make_job(45, {});
+  auto owner_b0 = std::make_shared<int>(11);
+  job_b->set_input_memory_holders(
+      {std::shared_ptr<const void>(owner_b0, owner_b0.get())});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job_a, job_b};
+  const auto holders =
+      starpu_server::StarPUTaskRunnerTestAdapter::merge_input_memory_holders(
+          jobs);
+
+  ASSERT_EQ(holders.size(), 3U);
+  EXPECT_EQ(holders[0].get(), owner_a0.get());
+  EXPECT_EQ(holders[1].get(), owner_a1.get());
+  EXPECT_EQ(holders[2].get(), owner_b0.get());
+}
+
+TEST_F(StarPUTaskRunnerFixture, EnqueuePreparedJobDeliversJobToWaiter)
+{
+  auto job = make_job(46, {});
+
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), job);
+
+  auto dequeued =
+      starpu_server::StarPUTaskRunnerTestAdapter::wait_for_prepared_job(
+          runner_.get());
+  ASSERT_TRUE(dequeued);
+  EXPECT_EQ(dequeued, job);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ReleasePendingJobsClearsInputsForAdditionalJobsOnly)
+{
+  auto master_job = make_job(
+      47, {torch::tensor({5.0F}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto master_holder = std::make_shared<int>(21);
+  master_job->set_input_memory_holders(
+      {std::shared_ptr<const void>(master_holder, master_holder.get())});
+
+  auto pending_job = make_job(
+      48, {torch::tensor({9.0F}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto pending_holder = std::make_shared<int>(22);
+  pending_job->set_input_memory_holders(
+      {std::shared_ptr<const void>(pending_holder, pending_holder.get())});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs{
+      pending_job};
+  starpu_server::StarPUTaskRunnerTestAdapter::release_pending_jobs(
+      master_job, pending_jobs);
+
+  EXPECT_TRUE(pending_jobs.empty());
+  EXPECT_TRUE(pending_job->get_input_tensors().empty());
+  EXPECT_TRUE(pending_job->get_input_memory_holders().empty());
+  EXPECT_FALSE(master_job->get_input_tensors().empty());
+  EXPECT_FALSE(master_job->get_input_memory_holders().empty());
 }
 
 TEST_F(
