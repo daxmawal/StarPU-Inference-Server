@@ -2155,6 +2155,41 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
   EXPECT_EQ(queue_.size(), 0U);
 }
 
+TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
+{
+  opts_.batching.dynamic_batching = false;
+  opts_.verbosity = starpu_server::VerbosityLevel::Trace;
+
+  constexpr int kRequestId = 123;
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_request_id(kRequestId);
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw starpu_server::InferenceEngineException("trace guard");
+  });
+
+  CaptureStream capture{std::cout};
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  const auto logs = capture.str();
+  EXPECT_NE(logs.find("Dequeued job submission"), std::string::npos);
+  EXPECT_NE(
+      logs.find(std::format("(request {})", kRequestId)), std::string::npos);
+  EXPECT_NE(logs.find("aggregated requests: 1"), std::string::npos);
+
+  assert_failure_result(probe);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
 TEST(
     StarPUTaskRunnerTestAdapter,
     CanMergeJobsReturnsTrueForCompatibleInputsAndTypes)
