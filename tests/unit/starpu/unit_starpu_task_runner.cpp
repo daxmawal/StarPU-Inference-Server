@@ -1988,6 +1988,38 @@ TEST_F(
   EXPECT_NE(logs.find("requests (2 samples)"), std::string::npos) << logs;
 }
 
+TEST_F(StarPUTaskRunnerFixture, SampleLimitPerBatchRespectsInputPoolCapacity)
+{
+  auto model_config = make_model_config(
+      "pooled_model", {make_tensor_config("input0", {1, 1}, at::kFloat)},
+      {make_tensor_config("output0", {1, 1}, at::kFloat)});
+  constexpr int kPoolSize = 1;
+  reset_runner_with_model(model_config, /*pool_size=*/kPoolSize);
+
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(
+      0, {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto second = make_job(
+      1, {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  ASSERT_TRUE(queue_.push(second));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), static_cast<std::size_t>(kPoolSize));
+  EXPECT_EQ(collected[0], first);
+  EXPECT_EQ(queue_.size(), 0U);
+
+  auto pending = runner_->wait_for_next_job();
+  ASSERT_EQ(pending, second);
+}
+
 TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionToSubJobsDistributesSlicesAndMetadata)
