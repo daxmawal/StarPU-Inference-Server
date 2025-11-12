@@ -1919,6 +1919,42 @@ TEST_F(
   EXPECT_TRUE(job1->get_input_tensors().empty());
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture,
+    MaybeBuildBatchedJobStoresPendingSubJobsWhenInputPoolAvailable)
+{
+  opts_.validation.validate_results = false;
+
+  auto model_config = make_model_config(
+      "pending_pool_model", {make_tensor_config("input0", {1, 2}, at::kFloat)},
+      {make_tensor_config("output0", {1, 2}, at::kFloat)});
+  reset_runner_with_model(model_config, /*pool_size=*/2);
+
+  auto make_input = [](float a, float b) {
+    return torch::tensor({{a, b}}, torch::TensorOptions().dtype(torch::kFloat));
+  };
+
+  auto job0 = make_job(0, {make_input(1.0F, 2.0F)});
+  auto job1 = make_job(1, {make_input(3.0F, 4.0F)});
+  auto job2 = make_job(2, {make_input(5.0F, 6.0F)});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{
+      job0, job1, job2};
+
+  auto master =
+      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
+          runner_.get(), jobs);
+
+  ASSERT_EQ(master, job0);
+  const auto& pending = master->pending_sub_jobs();
+  ASSERT_EQ(pending.size(), 2U);
+  EXPECT_EQ(pending[0], job1);
+  EXPECT_EQ(pending[1], job2);
+
+  EXPECT_FALSE(job1->get_input_tensors().empty());
+  EXPECT_FALSE(job2->get_input_tensors().empty());
+}
+
 TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionToSubJobsDistributesSlicesAndMetadata)
