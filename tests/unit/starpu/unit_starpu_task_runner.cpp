@@ -1398,6 +1398,27 @@ TEST_F(StarPUTaskRunnerFixture, MergeInputTensorsReturnsEmptyWhenNoJobs)
 }
 
 TEST_F(
+    StarPUTaskRunnerFixture, MergeInputTensorsReturnOriginalWhenSingleJobBatch)
+{
+  auto job = make_job(
+      46,
+      {torch::tensor(
+          {{5.0F}, {7.0F}}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job};
+
+  const auto merged =
+      starpu_server::StarPUTaskRunnerTestAdapter::merge_input_tensors(
+          jobs, /*total_samples=*/0);
+
+  ASSERT_EQ(merged.size(), 1U);
+  const auto& original = job->get_input_tensors().front();
+  EXPECT_EQ(merged.front().data_ptr(), original.data_ptr());
+  EXPECT_TRUE(torch::equal(merged.front(), original));
+}
+
+TEST_F(
     StarPUTaskRunnerFixture, MergeInputMemoryHoldersPreservesOriginalOrdering)
 {
   auto job_a = make_job(44, {});
