@@ -2020,6 +2020,87 @@ TEST_F(StarPUTaskRunnerFixture, SampleLimitPerBatchRespectsInputPoolCapacity)
   ASSERT_EQ(pending, second);
 }
 
+TEST_F(StarPUTaskRunnerFixture, CollectBatchLimitsUsingEffectiveBatchSize)
+{
+  auto model_config = make_model_config("eff_model", {}, {});
+  reset_runner_with_model(model_config, /*pool_size=*/0);
+
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 5;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(
+      10, {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  first->set_effective_batch_size(5);
+  auto second = make_job(
+      11, {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(second));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected.front(), first);
+  auto pending = runner_->wait_for_next_job();
+  ASSERT_EQ(pending, second);
+}
+
+TEST_F(StarPUTaskRunnerFixture, CollectBatchDefaultsSampleSizeToOneWhenNoInputs)
+{
+  auto model_config = make_model_config("no_input_model", {}, {});
+  reset_runner_with_model(model_config, /*pool_size=*/0);
+
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 1;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(20, {});
+  auto second = make_job(21, {});
+  ASSERT_TRUE(queue_.push(second));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected.front(), first);
+  auto pending = runner_->wait_for_next_job();
+  ASSERT_EQ(pending, second);
+}
+
+TEST_F(StarPUTaskRunnerFixture, CollectBatchInfersSampleCountFromInputRank)
+{
+  auto model_config = make_model_config(
+      "rank_model", {make_tensor_config("input0", {1, 2}, at::kFloat)},
+      {make_tensor_config("output0", {1, 2}, at::kFloat)});
+  reset_runner_with_model(model_config, /*pool_size=*/4);
+
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 3;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(
+      30, {torch::ones({3, 1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto second = make_job(
+      31, {torch::ones({1, 1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(second));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected.front(), first);
+  auto pending = runner_->wait_for_next_job();
+  ASSERT_EQ(pending, second);
+}
+
+TEST_F(StarPUTaskRunnerFixture, CollectBatchIgnoresNullFirstJob)
+{
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), nullptr);
+  EXPECT_TRUE(collected.empty());
+}
+
 TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionToSubJobsDistributesSlicesAndMetadata)
