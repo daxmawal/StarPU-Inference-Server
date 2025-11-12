@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <complex>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -12,11 +13,46 @@
 #include <utility>
 #include <vector>
 
+#include "utils/datatype_utils.hpp"
+
+namespace starpu_server {
+static auto starpu_test_wrapped_datatype_to_scalar_type(std::string_view dtype)
+    -> at::ScalarType;
+static auto starpu_test_wrapped_element_size(at::ScalarType type) -> size_t;
+}  // namespace starpu_server
+
+#define datatype_to_scalar_type starpu_test_wrapped_datatype_to_scalar_type
+#define element_size starpu_test_wrapped_element_size
 #define private public
 #include "grpc/client/inference_client.hpp"
 #undef private
 // Include the implementation to exercise helpers with internal linkage.
 #include "grpc/client/inference_client.cpp"
+#undef element_size
+#undef datatype_to_scalar_type
+
+constexpr std::string_view kUnsupportedDatatypeTag = "TEST_UNSUPPORTED_SWITCH";
+
+namespace starpu_server {
+static auto
+starpu_test_wrapped_datatype_to_scalar_type(std::string_view dtype)
+    -> at::ScalarType
+{
+  if (dtype == kUnsupportedDatatypeTag) {
+    return at::kComplexFloat;
+  }
+  return datatype_to_scalar_type(dtype);
+}
+
+static auto
+starpu_test_wrapped_element_size(at::ScalarType type) -> size_t
+{
+  if (type == at::kComplexFloat) {
+    return sizeof(std::complex<float>);
+  }
+  return element_size(type);
+}
+}  // namespace starpu_server
 
 namespace {
 template <typename T>
@@ -220,6 +256,16 @@ TEST(InferenceClientHelpers, DecodeOutputValuesHandlesAllScalarTypes)
   expect_decode_roundtrip("INT8", std::vector<int8_t>{-128, -1, 127});
   expect_decode_roundtrip("UINT8", std::vector<uint8_t>{0U, 17U, 255U});
   expect_decode_roundtrip("BOOL", std::vector<uint8_t>{0U, 1U, 0U});
+}
+
+TEST(InferenceClientHelpers, DecodeOutputValuesHitsDefaultCase)
+{
+  inference::ModelInferResponse::InferOutputTensor tensor;
+  tensor.set_datatype(std::string(kUnsupportedDatatypeTag));
+  const std::string raw(sizeof(std::complex<float>), '\0');
+  EXPECT_THROW(
+      decode_output_values(tensor, std::string_view(raw), 1U),
+      std::invalid_argument);
 }
 
 TEST(InferenceClientHelpers, ValidateServerResponseIgnoresMissingExpected)
