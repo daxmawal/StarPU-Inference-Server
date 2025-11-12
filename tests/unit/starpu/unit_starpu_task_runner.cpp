@@ -2387,6 +2387,22 @@ TEST_F(
   EXPECT_EQ(job, nullptr);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture, EnqueuePreparedJobNoopsWhenSyncPrimitivesMissing)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::disable_prepared_job_sync(
+      runner_.get());
+
+  auto job = make_job(901, {});
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), job);
+
+  auto dequeued =
+      starpu_server::StarPUTaskRunnerTestAdapter::wait_for_prepared_job(
+          runner_.get());
+  EXPECT_EQ(dequeued, nullptr);
+}
+
 TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
 {
   opts_.batching.dynamic_batching = false;
