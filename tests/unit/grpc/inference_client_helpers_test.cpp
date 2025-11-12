@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -66,6 +68,43 @@ capture_stderr(Fn&& fn) -> std::string
 }  // namespace
 
 namespace starpu_server {
+namespace {
+template <typename T>
+auto
+value_to_double(const T& value) -> double
+{
+  if constexpr (std::is_same_v<T, c10::Half>) {
+    return static_cast<double>(static_cast<float>(value));
+  } else if constexpr (std::is_same_v<T, c10::BFloat16>) {
+    return static_cast<double>(static_cast<float>(value));
+  } else if constexpr (std::is_same_v<T, bool>) {
+    return value ? 1.0 : 0.0;
+  } else {
+    return static_cast<double>(value);
+  }
+}
+
+template <typename T>
+void
+expect_decode_roundtrip(
+    std::string_view datatype, const std::vector<T>& values, double tol = 0.0)
+{
+  inference::ModelInferResponse::InferOutputTensor tensor;
+  tensor.set_datatype(std::string(datatype));
+  const auto raw = make_raw_data(values);
+  const auto decoded =
+      decode_output_values(tensor, std::string_view(raw), values.size());
+  ASSERT_EQ(decoded.size(), values.size());
+  for (std::size_t idx = 0; idx < values.size(); ++idx) {
+    const double expected = value_to_double(values[idx]);
+    if (tol == 0.0) {
+      EXPECT_DOUBLE_EQ(decoded[idx], expected) << "Mismatch at index " << idx;
+    } else {
+      EXPECT_NEAR(decoded[idx], expected, tol) << "Mismatch at index " << idx;
+    }
+  }
+}
+}  // namespace
 
 TEST(InferenceClientHelpers, AppendConvertedValuesPrimitives)
 {
@@ -160,6 +199,27 @@ TEST(InferenceClientHelpers, DecodeOutputValuesRejectsUnsupportedDatatype)
   EXPECT_THROW(
       decode_output_values(tensor, std::string_view(raw), 1U),
       std::invalid_argument);
+}
+
+TEST(InferenceClientHelpers, DecodeOutputValuesHandlesAllScalarTypes)
+{
+  expect_decode_roundtrip("FP32", std::vector<float>{1.25F, -3.5F, 0.0F});
+  expect_decode_roundtrip("FP64", std::vector<double>{0.5, -8.25, 12.0});
+  expect_decode_roundtrip(
+      "FP16", std::vector<c10::Half>{c10::Half(1.5F), c10::Half(-0.75F)}, 1e-5);
+  expect_decode_roundtrip(
+      "BF16",
+      std::vector<c10::BFloat16>{
+          c10::BFloat16(2.0F), c10::BFloat16(-1.0F), c10::BFloat16(0.125F)},
+      1e-3);
+  expect_decode_roundtrip("INT32", std::vector<int32_t>{42, -17, 8192});
+  expect_decode_roundtrip(
+      "INT64",
+      std::vector<int64_t>{std::numeric_limits<int32_t>::max(), -9000, 0});
+  expect_decode_roundtrip("INT16", std::vector<int16_t>{-32768, 1234, 0});
+  expect_decode_roundtrip("INT8", std::vector<int8_t>{-128, -1, 127});
+  expect_decode_roundtrip("UINT8", std::vector<uint8_t>{0U, 17U, 255U});
+  expect_decode_roundtrip("BOOL", std::vector<uint8_t>{0U, 1U, 0U});
 }
 
 TEST(InferenceClientHelpers, ValidateServerResponseIgnoresMissingExpected)
