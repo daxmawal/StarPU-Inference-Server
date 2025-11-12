@@ -1386,6 +1386,17 @@ TEST_F(StarPUTaskRunnerFixture, MergeInputTensorsThrowsWhenTotalSamplesMismatch)
       starpu_server::InvalidInputTensorException);
 }
 
+TEST_F(StarPUTaskRunnerFixture, MergeInputTensorsReturnsEmptyWhenNoJobs)
+{
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs;
+
+  const auto merged =
+      starpu_server::StarPUTaskRunnerTestAdapter::merge_input_tensors(
+          jobs, /*total_samples=*/0);
+
+  EXPECT_TRUE(merged.empty());
+}
+
 TEST_F(
     StarPUTaskRunnerFixture, MergeInputMemoryHoldersPreservesOriginalOrdering)
 {
