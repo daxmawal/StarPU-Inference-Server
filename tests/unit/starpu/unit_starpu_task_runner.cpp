@@ -718,6 +718,71 @@ TEST_F(
 
 TEST_F(
     StarPUTaskRunnerFixture,
+    TraceBatchIfEnabledHandlesMissingLastEnqueuedTimestamp)
+{
+  TraceLoggerSession session;
+
+  auto job = make_job(777, {torch::ones({1})}, {at::kFloat});
+  job->set_model_name("demo_trace");
+  job->set_submission_id(31);
+  job->set_effective_batch_size(1);
+  populate_trace_timing(*job);
+  job->timing_info().submission_id = job->submission_id();
+  job->timing_info().last_enqueued_time =
+      std::chrono::high_resolution_clock::time_point{};
+
+  starpu_server::StarPUTaskRunnerTestAdapter::trace_batch_if_enabled(
+      runner_.get(), job, /*warmup_job=*/false, job->submission_id());
+
+  session.close();
+  const auto trace_content = read_trace_file(session.path());
+  ASSERT_FALSE(trace_content.empty());
+
+  constexpr std::string_view kBatchEvent = "\"name\":\"batch\"";
+  EXPECT_NE(trace_content.find(kBatchEvent), std::string::npos)
+      << trace_content;
+  const auto id_token = std::format("\"batch_id\":{}", job->submission_id());
+  EXPECT_NE(trace_content.find(id_token), std::string::npos) << trace_content;
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    TraceBatchIfEnabledClampsLastEnqueuedTimestampBeforeStart)
+{
+  using clock = std::chrono::high_resolution_clock;
+  using namespace std::chrono_literals;
+
+  TraceLoggerSession session;
+
+  auto job = make_job(778, {torch::ones({1})}, {at::kFloat});
+  job->set_model_name("demo_trace");
+  job->set_submission_id(32);
+  job->set_effective_batch_size(1);
+  populate_trace_timing(*job);
+  job->timing_info().submission_id = job->submission_id();
+
+  job->timing_info().last_enqueued_time =
+      job->timing_info().enqueued_time - 5ms;
+  ASSERT_TRUE(job->timing_info().enqueued_time != clock::time_point{});
+  ASSERT_LT(
+      job->timing_info().last_enqueued_time, job->timing_info().enqueued_time);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::trace_batch_if_enabled(
+      runner_.get(), job, /*warmup_job=*/false, job->submission_id());
+
+  session.close();
+  const auto trace_content = read_trace_file(session.path());
+  ASSERT_FALSE(trace_content.empty());
+
+  constexpr std::string_view kBatchEvent = "\"name\":\"batch\"";
+  EXPECT_NE(trace_content.find(kBatchEvent), std::string::npos)
+      << trace_content;
+  const auto id_token = std::format("\"batch_id\":{}", job->submission_id());
+  EXPECT_NE(trace_content.find(id_token), std::string::npos) << trace_content;
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
     SubmitInferenceTaskWithoutPoolsPropagatesExceptions)
 {
   opts_.limits.max_models_gpu = 0;
