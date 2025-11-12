@@ -81,6 +81,25 @@ TEST(ClientArgs, RejectsMalformedInputFormat)
   EXPECT_NE(err.find("Input must be NAME:SHAPE:TYPE"), std::string::npos);
 }
 
+TEST(ClientArgs, ParsesClientModelPathWhenProvided)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--client-model",
+       "/tmp/model.pt"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.client_model_path, "/tmp/model.pt");
+}
+
+TEST(ClientArgs, MissingClientModelPathValueFailsParsing)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--client-model"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_TRUE(cfg.client_model_path.empty());
+}
+
 TEST(ClientArgs, RejectsNegativeDelay)
 {
   auto argv = std::to_array<const char*>(
