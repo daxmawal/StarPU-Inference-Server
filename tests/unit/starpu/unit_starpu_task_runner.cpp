@@ -754,6 +754,53 @@ TEST_F(
 }
 
 TEST_F(
+    StarPUTaskRunnerFixture, SubmitInferenceTaskLogsBatchWhenTraceLoggerEnabled)
+{
+  TraceLoggerSession session;
+
+  opts_.validation.validate_results = false;
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+
+  auto model_config = make_model_config(
+      "trace_model", {make_tensor_config("input0", {1}, at::kFloat)},
+      {make_tensor_config("output0", {1}, at::kFloat)});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+
+  model_cpu_ = torch::jit::script::Module("trace_model");
+  model_cpu_.define(R"JIT(
+        def forward(self, x):
+            return x + 1
+    )JIT");
+
+  constexpr int kRequestId = 602;
+  constexpr int kSubmissionId = 77;
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto job =
+      make_job(kRequestId, {torch::ones({1}, tensor_opts)}, {at::kFloat});
+  job->set_model_name("trace_model");
+  job->set_output_tensors({torch::zeros({1}, tensor_opts)});
+  job->set_submission_id(kSubmissionId);
+  job->timing_info().submission_id = kSubmissionId;
+  job->set_start_time(std::chrono::high_resolution_clock::now());
+
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  ASSERT_NO_THROW(runner_->submit_inference_task(job));
+  starpu_task_wait_for_all();
+
+  session.close();
+  const auto trace_content = read_trace_file(session.path());
+  ASSERT_FALSE(trace_content.empty());
+  EXPECT_NE(trace_content.find("\"batch_submitted\""), std::string::npos)
+      << trace_content;
+  const auto expected_ids = std::format("\"request_ids\":[{}]", kRequestId);
+  EXPECT_NE(trace_content.find(expected_ids), std::string::npos)
+      << trace_content;
+}
+
+TEST_F(
     StarPUTaskRunnerFixture,
     ValidateBatchAndCopyInputsThrowsWhenElementSizeZero)
 {
