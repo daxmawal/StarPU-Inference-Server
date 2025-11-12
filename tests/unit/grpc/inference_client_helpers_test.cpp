@@ -1,5 +1,8 @@
+#include <grpc/support/time.h>
+#include <grpcpp/alarm.h>
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <complex>
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -16,6 +20,15 @@
 #include "utils/datatype_utils.hpp"
 
 namespace starpu_server {
+namespace {
+using DatatypeToScalarFn = auto (*)(std::string_view) -> at::ScalarType;
+using ElementSizeFn = auto (*)(at::ScalarType) -> size_t;
+constexpr DatatypeToScalarFn kRealDatatypeToScalar =
+    static_cast<DatatypeToScalarFn>(datatype_to_scalar_type);
+constexpr ElementSizeFn kRealElementSize =
+    static_cast<ElementSizeFn>(element_size);
+}  // namespace
+
 static auto starpu_test_wrapped_datatype_to_scalar_type(std::string_view dtype)
     -> at::ScalarType;
 static auto starpu_test_wrapped_element_size(at::ScalarType type) -> size_t;
@@ -32,6 +45,7 @@ static auto starpu_test_wrapped_element_size(at::ScalarType type) -> size_t;
 #undef datatype_to_scalar_type
 
 constexpr std::string_view kUnsupportedDatatypeTag = "TEST_UNSUPPORTED_SWITCH";
+constexpr std::string_view kZeroElementSizeTag = "TEST_ZERO_ELEMENT_SIZE";
 
 namespace starpu_server {
 static auto
@@ -41,16 +55,22 @@ starpu_test_wrapped_datatype_to_scalar_type(std::string_view dtype)
   if (dtype == kUnsupportedDatatypeTag) {
     return at::kComplexFloat;
   }
-  return datatype_to_scalar_type(dtype);
+  if (dtype == kZeroElementSizeTag) {
+    return at::ScalarType::Undefined;
+  }
+  return kRealDatatypeToScalar(dtype);
 }
 
 static auto
 starpu_test_wrapped_element_size(at::ScalarType type) -> size_t
 {
+  if (type == at::ScalarType::Undefined) {
+    return 0U;
+  }
   if (type == at::kComplexFloat) {
     return sizeof(std::complex<float>);
   }
-  return element_size(type);
+  return kRealElementSize(type);
 }
 }  // namespace starpu_server
 
@@ -99,6 +119,27 @@ capture_stderr(Fn&& fn) -> std::string
   testing::internal::CaptureStderr();
   std::forward<Fn>(fn)();
   return testing::internal::GetCapturedStderr();
+}
+
+auto
+immediate_deadline() -> gpr_timespec
+{
+  return gpr_time_add(
+      gpr_now(GPR_CLOCK_REALTIME), gpr_time_from_micros(100, GPR_TIMESPAN));
+}
+
+template <typename Predicate>
+bool
+wait_until(Predicate&& predicate, std::chrono::milliseconds timeout)
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (std::forward<Predicate>(predicate)()) {
+      return true;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return std::forward<Predicate>(predicate)();
 }
 
 }  // namespace
@@ -237,6 +278,16 @@ TEST(InferenceClientHelpers, DecodeOutputValuesRejectsUnsupportedDatatype)
       std::invalid_argument);
 }
 
+TEST(InferenceClientHelpers, DecodeOutputValuesRejectsZeroElementSize)
+{
+  inference::ModelInferResponse::InferOutputTensor tensor;
+  tensor.set_datatype(std::string(kZeroElementSizeTag));
+  const std::string raw(4, '\0');
+  EXPECT_THROW(
+      decode_output_values(tensor, std::string_view(raw), 1U),
+      std::invalid_argument);
+}
+
 TEST(InferenceClientHelpers, DecodeOutputValuesHandlesAllScalarTypes)
 {
   expect_decode_roundtrip("FP32", std::vector<float>{1.25F, -3.5F, 0.0F});
@@ -266,6 +317,70 @@ TEST(InferenceClientHelpers, DecodeOutputValuesHitsDefaultCase)
   EXPECT_THROW(
       decode_output_values(tensor, std::string_view(raw), 1U),
       std::invalid_argument);
+}
+
+TEST(InferenceClientHelpers, AsyncCompleteRpcLogsInvalidCompletion)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+
+  grpc::Alarm alarm;
+  alarm.Set(&client.cq_, immediate_deadline(), nullptr);
+  alarm.Cancel();
+
+  const auto err = capture_stderr([&] { client.AsyncCompleteRpc(); });
+  EXPECT_NE(
+      err.find("Received invalid RPC completion, exiting CQ loop"),
+      std::string::npos);
+
+  client.cq_.Shutdown();
+}
+
+TEST(InferenceClientHelpers, AsyncCompleteRpcClampsNegativeLatencies)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Info);
+
+  std::thread runner([&] { client.AsyncCompleteRpc(); });
+
+  auto* call = new AsyncClientCall();
+  call->request_id = 501;
+  call->inference_count = 1;
+  call->status = grpc::Status::OK;
+  call->start_time = std::chrono::high_resolution_clock::now();
+  const auto start_ms = static_cast<int64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          call->start_time.time_since_epoch())
+          .count());
+  call->reply.set_server_receive_ms(start_ms - 25);
+  call->reply.set_server_send_ms(start_ms + 1'000'000);
+  call->reply.set_server_preprocess_ms(0);
+  call->reply.set_server_queue_ms(0);
+  call->reply.set_server_batch_ms(0);
+  call->reply.set_server_submit_ms(0);
+  call->reply.set_server_scheduling_ms(0);
+  call->reply.set_server_codelet_ms(0);
+  call->reply.set_server_inference_ms(0);
+  call->reply.set_server_callback_ms(0);
+  call->reply.set_server_postprocess_ms(0);
+  call->reply.set_server_total_ms(1);
+  call->reply.set_server_overall_ms(1);
+
+  grpc::Alarm alarm;
+  alarm.Set(&client.cq_, immediate_deadline(), call);
+
+  const bool sample_ready = wait_until(
+      [&client] { return !client.latency_records_.roundtrip_ms.empty(); },
+      std::chrono::milliseconds(200));
+
+  client.cq_.Shutdown();
+  runner.join();
+
+  ASSERT_TRUE(sample_ready) << "Timed out waiting for latency sample";
+  ASSERT_EQ(client.latency_records_.request_latency_ms.size(), 1U);
+  ASSERT_EQ(client.latency_records_.response_latency_ms.size(), 1U);
+  EXPECT_DOUBLE_EQ(client.latency_records_.request_latency_ms[0], 0.0);
+  EXPECT_DOUBLE_EQ(client.latency_records_.response_latency_ms[0], 0.0);
 }
 
 TEST(InferenceClientHelpers, ValidateServerResponseIgnoresMissingExpected)
