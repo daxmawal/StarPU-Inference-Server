@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <span>
+#include <sstream>
 #include <string>
 
 #define private public
@@ -14,6 +15,8 @@
 #include "utils/batching_trace_logger.hpp"
 #undef protected
 #undef private
+
+#include "utils/batching_trace_logger.cpp"  // NOLINT(bugprone-suspicious-include)
 
 namespace starpu_server { namespace {
 
@@ -69,6 +72,20 @@ TEST(BatchingTraceLoggerTest, RequestQueuedEventsEmitNoFlowAnnotations)
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
+}
+
+TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
+{
+  std::ostringstream line;
+  line << R"({"prefix":true)";
+
+  const auto invalid_direction = static_cast<FlowDirection>(0xFF);
+  append_flow_annotation(
+      line, invalid_direction, /*batch_id=*/42, /*is_warmup=*/false);
+
+  EXPECT_EQ(line.str(), R"({"prefix":true)");
+  EXPECT_EQ(line.str().find("\"flow_"), std::string::npos);
+  EXPECT_EQ(line.str().find("\"id_scope\""), std::string::npos);
 }
 
 TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
