@@ -4,13 +4,20 @@
 #include <c10/core/Storage.h>
 #include <c10/core/TensorImpl.h>
 #include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
+#include <algorithm>
 #include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <format>
+#include <fstream>
 #include <memory>
 #include <new>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "core/output_slot_pool.hpp"
@@ -19,6 +26,56 @@
 #include "test_utils.hpp"
 
 namespace {
+inline auto
+align_to_page(void* ptr, size_t page_size) -> void*
+{
+  const auto addr = reinterpret_cast<uintptr_t>(ptr);
+  return reinterpret_cast<void*>(addr & ~(page_size - 1));
+}
+
+struct PointerEntryInfo {
+  void* entry = nullptr;
+  void* page_start = nullptr;
+  bool needs_restore = false;
+};
+
+auto
+find_pointer_entry(void* symbol, size_t page_size)
+    -> std::optional<PointerEntryInfo>
+{
+  std::ifstream maps("/proc/self/maps");
+  if (!maps.is_open()) {
+    return std::nullopt;
+  }
+  const auto symbol_addr = reinterpret_cast<uintptr_t>(symbol);
+  std::string line;
+  while (std::getline(maps, line)) {
+    uintptr_t start = 0;
+    uintptr_t end = 0;
+    char perms[5] = {};
+    if (std::sscanf(line.c_str(), "%lx-%lx %4s", &start, &end, perms) != 3) {
+      continue;
+    }
+    if (perms[0] != 'r') {
+      continue;
+    }
+    const bool writable = perms[1] == 'w';
+    for (uintptr_t addr = start; addr + sizeof(uintptr_t) <= end;
+         addr += sizeof(uintptr_t)) {
+      const auto current = *reinterpret_cast<const uintptr_t*>(addr);
+      if (current == symbol_addr) {
+        PointerEntryInfo info;
+        info.entry = reinterpret_cast<void*>(addr);
+        info.page_start =
+            align_to_page(reinterpret_cast<void*>(addr), page_size);
+        info.needs_restore = !writable;
+        return info;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 inline auto
 unregister_call_count_ref() -> int&
 {
@@ -298,6 +355,89 @@ class ScopedVectorRegisterOverride {
       -> ScopedVectorRegisterOverride& = delete;
 
   ~ScopedVectorRegisterOverride() { vector_register_override_ref() = nullptr; }
+};
+
+class ScopedDefaultDataAcquireNullifier {
+ public:
+  ScopedDefaultDataAcquireNullifier()
+  {
+    deps_ = const_cast<starpu_server::InferenceTaskDependencies*>(
+        &starpu_server::kDefaultInferenceTaskDependencies);
+    const long reported_page_size = ::sysconf(_SC_PAGESIZE);
+    const long page_size_fallback = ::getpagesize();
+    const long resolved_page_size =
+        reported_page_size > 0 ? reported_page_size : page_size_fallback;
+    page_size_ = resolved_page_size > 0
+                     ? static_cast<size_t>(resolved_page_size)
+                     : static_cast<size_t>(4096);
+    if (resolved_page_size > 0) {
+      const auto addr = reinterpret_cast<uintptr_t>(deps_);
+      page_start_ = align_to_page(reinterpret_cast<void*>(addr), page_size_);
+      if (::mprotect(page_start_, page_size_, PROT_READ | PROT_WRITE) == 0) {
+        original_ = deps_->starpu_data_acquire_fn;
+        deps_->starpu_data_acquire_fn = nullptr;
+        default_valid_ = true;
+      }
+    }
+
+    if (auto* symbol = dlsym(RTLD_DEFAULT, "starpu_data_acquire_cb")) {
+      auto entry = find_pointer_entry(symbol, page_size_);
+      if (entry.has_value()) {
+        got_entry_ = entry->entry;
+        got_page_start_ = entry->page_start;
+        if (entry->needs_restore &&
+            ::mprotect(got_page_start_, page_size_, PROT_READ | PROT_WRITE) !=
+                0) {
+          got_entry_ = nullptr;
+        } else {
+          got_original_ = *reinterpret_cast<void**>(got_entry_);
+          *reinterpret_cast<void**>(got_entry_) = nullptr;
+          need_restore_got_perms_ = entry->needs_restore;
+          got_valid_ = true;
+        }
+      }
+    }
+  }
+
+  ScopedDefaultDataAcquireNullifier(const ScopedDefaultDataAcquireNullifier&) =
+      delete;
+  auto operator=(const ScopedDefaultDataAcquireNullifier&)
+      -> ScopedDefaultDataAcquireNullifier& = delete;
+  ScopedDefaultDataAcquireNullifier(ScopedDefaultDataAcquireNullifier&&) =
+      delete;
+  auto operator=(ScopedDefaultDataAcquireNullifier&&)
+      -> ScopedDefaultDataAcquireNullifier& = delete;
+
+  ~ScopedDefaultDataAcquireNullifier()
+  {
+    if (default_valid_) {
+      deps_->starpu_data_acquire_fn = original_;
+      ::mprotect(page_start_, page_size_, PROT_READ);
+    }
+    if (got_valid_) {
+      *reinterpret_cast<void**>(got_entry_) = got_original_;
+      if (need_restore_got_perms_) {
+        ::mprotect(got_page_start_, page_size_, PROT_READ);
+      }
+    }
+  }
+
+  [[nodiscard]] auto is_valid() const -> bool
+  {
+    return default_valid_ && got_valid_;
+  }
+
+ private:
+  starpu_server::InferenceTaskDependencies* deps_;
+  void* page_start_ = nullptr;
+  size_t page_size_ = 0;
+  starpu_server::InferenceTaskDependencies::DataAcquireFn original_;
+  bool default_valid_ = false;
+  void* got_entry_ = nullptr;
+  void* got_page_start_ = nullptr;
+  void* got_original_ = nullptr;
+  bool need_restore_got_perms_ = false;
+  bool got_valid_ = false;
 };
 }  // namespace
 
@@ -668,6 +808,31 @@ TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
       starpu_server::ErrorLevel,
       std::format("starpu_data_acquire_cb failed with code {}", -42));
   EXPECT_NE(log.find(expected), std::string::npos);
+}
+
+TEST(InferenceTask, AcquireOutputHandleThrowsWhenDataAcquireFunctionMissing)
+{
+  StarpuRuntimeGuard starpu_guard;
+  ScopedDefaultDataAcquireNullifier nullifier;
+  ASSERT_TRUE(nullifier.is_valid()) << "Failed to patch default dependencies";
+  ASSERT_EQ(
+      starpu_server::kDefaultInferenceTaskDependencies.starpu_data_acquire_fn,
+      nullptr);
+  starpu_server::RuntimeConfig opts;
+  auto handle = MakeHandle(1);
+  auto outputs = std::vector<starpu_data_handle_t>{handle};
+  auto ctx = make_callback_context(nullptr, &opts, {}, outputs);
+  ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()),
+      starpu_server::StarPURegistrationException);
+
+  const auto log = capture.str();
+  EXPECT_NE(
+      log.find("starpu_data_acquire_fn is null; cannot acquire output handle."),
+      std::string::npos);
 }
 
 TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
