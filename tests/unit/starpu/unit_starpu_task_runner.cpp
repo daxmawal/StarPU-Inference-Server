@@ -29,10 +29,14 @@ using starpu_server::expected_log_line;
 
 namespace {
 using ValidateTensorFn = void (*)(const torch::Tensor&, const torch::Tensor&);
+using ValidatePrototypeFn = void (*)(const torch::Tensor&);
 
 constexpr std::string_view kValidateTensorSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_133validate_tensor_against_"
     "prototypeERKN2at6TensorES4_";
+constexpr std::string_view kValidatePrototypeSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_125validate_prototype_"
+    "tensorERKN2at6TensorE";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -127,15 +131,32 @@ executable_base_address() -> std::uintptr_t
 }
 
 auto
+resolve_symbol_address(std::string_view name) -> std::uintptr_t
+{
+  const auto offset = locate_symbol_offset(name);
+  if (!offset.has_value()) {
+    return 0;
+  }
+  return executable_base_address() + *offset;
+}
+
+auto
 resolve_validate_tensor_against_prototype_fn() -> ValidateTensorFn
 {
   static ValidateTensorFn fn = [] {
-    const auto offset = locate_symbol_offset(kValidateTensorSymbolName);
-    if (!offset.has_value()) {
-      return ValidateTensorFn{};
-    }
-    return reinterpret_cast<ValidateTensorFn>(
-        executable_base_address() + *offset);
+    const auto address = resolve_symbol_address(kValidateTensorSymbolName);
+    return address != 0 ? reinterpret_cast<ValidateTensorFn>(address) : nullptr;
+  }();
+  return fn;
+}
+
+auto
+resolve_validate_prototype_tensor_fn() -> ValidatePrototypeFn
+{
+  static ValidatePrototypeFn fn = [] {
+    const auto address = resolve_symbol_address(kValidatePrototypeSymbolName);
+    return address != 0 ? reinterpret_cast<ValidatePrototypeFn>(address)
+                        : nullptr;
   }();
   return fn;
 }
@@ -1615,6 +1636,26 @@ TEST(ValidateTensorAgainstPrototype, RejectsShapeMismatchBeyondBatchDimension)
 
   EXPECT_THROW(
       fn(tensor, prototype), starpu_server::InvalidInputTensorException);
+}
+
+TEST(ValidatePrototypeTensor, RejectsUndefinedTensorBeforeBatching)
+{
+  auto fn = resolve_validate_prototype_tensor_fn();
+  ASSERT_NE(fn, nullptr);
+
+  torch::Tensor undefined_tensor;
+  EXPECT_THROW(
+      fn(undefined_tensor), starpu_server::InvalidInputTensorException);
+}
+
+TEST(ValidatePrototypeTensor, RejectsNonPositiveRankTensors)
+{
+  auto fn = resolve_validate_prototype_tensor_fn();
+  ASSERT_NE(fn, nullptr);
+
+  auto scalar =
+      torch::tensor(1.0F, torch::TensorOptions().dtype(torch::kFloat));
+  EXPECT_THROW(fn(scalar), starpu_server::InvalidInputTensorException);
 }
 
 TEST_F(
