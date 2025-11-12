@@ -14,6 +14,7 @@ target_sources(
             core/unit_tensor_builder.cpp
             core/unit_warmup_runner.cpp
             core/unit_starpu_setup.cpp
+            core/unit_input_slot_pool_deleter.cpp
             core/robustness/edgecases_inference_queue.cpp
             core/robustness/edgecases_inference_runner_helpers.cpp
             core/robustness/edgecases_inference_task_errors.cpp
