@@ -1182,6 +1182,40 @@ TEST_F(
   input_pool.release(slot);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsInfersBatchFromTensorRank)
+{
+  constexpr int64_t kBatchSize = 2;
+  opts_.batching.max_batch_size = kBatchSize;
+
+  auto model_config = make_model_config(
+      "ranked_input", {make_tensor_config("input0", {3}, at::kFloat)}, {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto job =
+      make_job(34, {torch::ones({kBatchSize, 3}, tensor_opts)}, {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+
+  const int64_t batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, kBatchSize);
+
+  auto base_ptr = input_pool.base_ptrs(slot).at(0);
+  ASSERT_NE(base_ptr, nullptr);
+  std::vector<float> actual(static_cast<std::size_t>(kBatchSize * 3));
+  std::memcpy(actual.data(), base_ptr, actual.size() * sizeof(actual.front()));
+  for (const auto value : actual) {
+    EXPECT_FLOAT_EQ(value, 1.0F);
+  }
+
+  input_pool.release(slot);
+}
+
 TEST_F(StarPUTaskRunnerFixture, MergeInputTensorsConcatenatesBatchedJobs)
 {
   auto job_a = make_job(
