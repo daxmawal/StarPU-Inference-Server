@@ -130,6 +130,13 @@ class StarPUTaskRunnerTestAdapter {
     runner->enqueue_prepared_job(job);
   }
 
+  static auto resolve_batch_size(
+      StarPUTaskRunner* runner,
+      const std::shared_ptr<InferenceJob>& job) -> int64_t
+  {
+    return runner->resolve_batch_size(job);
+  }
+
   static auto wait_for_prepared_job(StarPUTaskRunner* runner)
       -> std::shared_ptr<InferenceJob>
   {
@@ -348,6 +355,16 @@ TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
   auto normal_job = make_job(0, {});
   EXPECT_TRUE(runner_->should_shutdown(shutdown_job));
   EXPECT_FALSE(runner_->should_shutdown(normal_job));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ResolveBatchSizeWithoutJobDefaultsToSingleSample)
+{
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::resolve_batch_size(
+          runner_.get(), missing_job),
+      1);
 }
 
 TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
