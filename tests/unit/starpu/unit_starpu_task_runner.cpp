@@ -2067,6 +2067,30 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchDefaultsSampleSizeToOneWhenNoInputs)
   ASSERT_EQ(pending, second);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture,
+    CollectBatchBatchesMultipleJobsWhenInputsAreMissing)
+{
+  auto model_config = make_model_config("no_input_model", {}, {});
+  reset_runner_with_model(model_config, /*pool_size=*/0);
+
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 2;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(22, {});
+  auto second = make_job(23, {});
+  ASSERT_TRUE(queue_.push(second));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 2U);
+  EXPECT_EQ(collected[0], first);
+  EXPECT_EQ(collected[1], second);
+  EXPECT_EQ(queue_.size(), 0U);
+}
+
 TEST_F(StarPUTaskRunnerFixture, CollectBatchInfersSampleCountFromInputRank)
 {
   auto model_config = make_model_config(
