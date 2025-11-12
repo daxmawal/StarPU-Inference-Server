@@ -1,6 +1,7 @@
 #include <starpu.h>
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -734,6 +735,99 @@ TEST_F(
   }
 
   restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsCopiesPendingJobInputsSequentially)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
+
+  opts_.batching.max_batch_size = 2;
+  reset_runner_with_model(model_config, /*pool_size=*/2);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      30,
+      {torch::tensor(
+          std::vector<float>{1.0F, 2.0F},
+          torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto pending = make_job(
+      31,
+      {torch::tensor(
+          std::vector<float>{3.0F, 4.0F},
+          torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  job->set_pending_sub_jobs({pending});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& handles = input_pool.handles(slot);
+  ASSERT_EQ(handles.size(), 1U);
+  const auto handle = handles[0];
+  ASSERT_NE(handle, nullptr);
+
+  auto snapshots = snapshot_vector_interfaces(handle);
+  ASSERT_FALSE(snapshots.empty());
+
+  const int64_t batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+
+  const std::vector<float> expected{1.0F, 2.0F, 3.0F, 4.0F};
+  auto base_ptr = input_pool.base_ptrs(slot).at(0);
+  ASSERT_NE(base_ptr, nullptr);
+  std::vector<float> actual(expected.size());
+  std::memcpy(actual.data(), base_ptr, expected.size() * sizeof(float));
+  for (size_t idx = 0; idx < expected.size(); ++idx) {
+    EXPECT_FLOAT_EQ(actual[idx], expected[idx]);
+  }
+
+  const auto total_numel = expected.size();
+  for (const auto& snapshot : snapshots) {
+    if (snapshot.iface != nullptr) {
+      EXPECT_EQ(
+          snapshot.iface->nx,
+          static_cast<decltype(snapshot.iface->nx)>(total_numel));
+    }
+  }
+
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenPendingJobInputCountMismatch)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
+
+  opts_.batching.max_batch_size = 2;
+  reset_runner_with_model(model_config, /*pool_size=*/2);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      32,
+      {torch::tensor(
+          std::vector<float>{1.0F, 2.0F},
+          torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto pending = make_job(33, {}, {});
+
+  job->set_pending_sub_jobs({pending});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
+      starpu_server::InconsistentInputTensorCountException);
+
   input_pool.release(slot);
 }
 
