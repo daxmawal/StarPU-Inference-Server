@@ -121,6 +121,7 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
 
 namespace {
 using DataUnregisterFn = void (*)(starpu_data_handle_t);
+using VectorRegisterFn = decltype(&starpu_vector_data_register);
 
 inline auto
 resolve_real_starpu_data_unregister() -> DataUnregisterFn
@@ -131,6 +132,26 @@ resolve_real_starpu_data_unregister() -> DataUnregisterFn
       throw std::runtime_error("Failed to resolve starpu_data_unregister");
     }
     return reinterpret_cast<DataUnregisterFn>(symbol);
+  }();
+  return fn;
+}
+
+inline auto
+vector_register_override_ref() -> VectorRegisterFn&
+{
+  static VectorRegisterFn fn = nullptr;
+  return fn;
+}
+
+inline auto
+resolve_real_starpu_vector_data_register() -> VectorRegisterFn
+{
+  static VectorRegisterFn fn = []() -> VectorRegisterFn {
+    void* symbol = dlsym(RTLD_NEXT, "starpu_vector_data_register");
+    if (symbol == nullptr) {
+      throw std::runtime_error("Failed to resolve starpu_vector_data_register");
+    }
+    return reinterpret_cast<VectorRegisterFn>(symbol);
   }();
   return fn;
 }
@@ -149,6 +170,19 @@ starpu_task_destroy(struct starpu_task* task)
 {
   ++task_destroy_call_count_ref();
   last_destroyed_task_ref() = task;
+}
+
+extern "C" void
+starpu_vector_data_register(
+    starpu_data_handle_t* handle, int home_node, uintptr_t ptr, size_t nx,
+    size_t elemsize)
+{
+  if (auto override = vector_register_override_ref()) {
+    override(handle, home_node, ptr, nx, elemsize);
+    return;
+  }
+  resolve_real_starpu_vector_data_register()(
+      handle, home_node, ptr, nx, elemsize);
 }
 
 namespace {
@@ -223,6 +257,15 @@ AlwaysFailingTaskSubmit(starpu_task*) -> int
   return -99;
 }
 
+void
+AlwaysFailingVectorRegister(
+    starpu_data_handle_t* handle, int, uintptr_t, size_t, size_t)
+{
+  if (handle != nullptr) {
+    *handle = nullptr;
+  }
+}
+
 class ScopedTaskSubmitOverride {
  public:
   explicit ScopedTaskSubmitOverride(TaskSubmitOverrideFn fn)
@@ -238,6 +281,23 @@ class ScopedTaskSubmitOverride {
                                                     delete;
 
   ~ScopedTaskSubmitOverride() { task_submit_override_ref() = nullptr; }
+};
+
+class ScopedVectorRegisterOverride {
+ public:
+  explicit ScopedVectorRegisterOverride(VectorRegisterFn fn)
+  {
+    vector_register_override_ref() = fn;
+  }
+
+  ScopedVectorRegisterOverride(const ScopedVectorRegisterOverride&) = delete;
+  auto operator=(const ScopedVectorRegisterOverride&)
+      -> ScopedVectorRegisterOverride& = delete;
+  ScopedVectorRegisterOverride(ScopedVectorRegisterOverride&&) = delete;
+  auto operator=(ScopedVectorRegisterOverride&&)
+      -> ScopedVectorRegisterOverride& = delete;
+
+  ~ScopedVectorRegisterOverride() { vector_register_override_ref() = nullptr; }
 };
 }  // namespace
 
@@ -423,6 +483,19 @@ TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenTensorNotOnCpu)
   EXPECT_THROW(
       starpu_server::InferenceTask::safe_register_tensor_vector(
           tensor, "gpu_tensor"),
+      starpu_server::StarPURegistrationException);
+}
+
+TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenStarpuRegistrationFails)
+{
+  StarpuRuntimeGuard starpu_guard;
+  torch::Tensor tensor =
+      torch::ones({1}, torch::TensorOptions().dtype(at::kFloat));
+  ScopedVectorRegisterOverride override(&AlwaysFailingVectorRegister);
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::safe_register_tensor_vector(
+          tensor, "failed_register_tensor"),
       starpu_server::StarPURegistrationException);
 }
 
