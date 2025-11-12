@@ -101,4 +101,54 @@ TEST(CpuUsageProvider, FailureDoesNotOverwritePreviousSample)
   EXPECT_EQ(call_count, 3);
 }
 
+TEST(CpuUsageProvider, ClampsNegativeUsageToZero)
+{
+  CpuTotals samples[2]{};
+  samples[0].user = 500;
+  samples[0].system = 250;
+  samples[0].idle = 400;
+
+  samples[1].user = 300;  // Non-idle time decreases.
+  samples[1].system = 100;
+  samples[1].idle = 900;  // Idle grows enough to make usage negative.
+
+  int sample_index = 0;
+  auto provider = make_cpu_usage_provider([&](CpuTotals& out) {
+    if (sample_index >= 2) {
+      return false;
+    }
+    out = samples[sample_index++];
+    return true;
+  });
+
+  const auto usage = provider();
+  ASSERT_TRUE(usage.has_value());
+  EXPECT_DOUBLE_EQ(*usage, 0.0);
+}
+
+TEST(CpuUsageProvider, ReportsFullUtilizationWhenIdleDoesNotChange)
+{
+  CpuTotals samples[2]{};
+  samples[0].user = 200;
+  samples[0].system = 150;
+  samples[0].idle = 600;
+
+  samples[1].user = 800;
+  samples[1].system = 550;
+  samples[1].idle = 600;  // No additional idle cycles recorded.
+
+  int sample_index = 0;
+  auto provider = make_cpu_usage_provider([&](CpuTotals& out) {
+    if (sample_index >= 2) {
+      return false;
+    }
+    out = samples[sample_index++];
+    return true;
+  });
+
+  const auto usage = provider();
+  ASSERT_TRUE(usage.has_value());
+  EXPECT_DOUBLE_EQ(*usage, 100.0);
+}
+
 }  // namespace
