@@ -1419,6 +1419,31 @@ TEST_F(
 }
 
 TEST_F(
+    StarPUTaskRunnerFixture,
+    MergeInputTensorsThrowsWhenJobLacksExpectedTensorIndex)
+{
+  auto job_a = make_job(
+      47,
+      {torch::tensor(
+           {{1.0F}, {2.0F}}, torch::TensorOptions().dtype(torch::kFloat)),
+       torch::tensor(
+           {{3.0F}, {4.0F}}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat, at::kFloat});
+  auto job_b = make_job(
+      48,
+      {torch::tensor(
+          {{5.0F}, {6.0F}}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job_a, job_b};
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::merge_input_tensors(
+          jobs, /*total_samples=*/0),
+      starpu_server::InconsistentInputTensorCountException);
+}
+
+TEST_F(
     StarPUTaskRunnerFixture, MergeInputMemoryHoldersPreservesOriginalOrdering)
 {
   auto job_a = make_job(44, {});
