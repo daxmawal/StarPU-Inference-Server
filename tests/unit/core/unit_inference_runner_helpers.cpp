@@ -5,6 +5,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -124,6 +125,31 @@ TEST(
   starpu_server::detail::set_cuda_device_count_override(std::nullopt);
   const starpu_server::testing::TorchCudaDeviceCountOverrideGuard guard(
       static_cast<c10::DeviceIndex>(-1));
+
+  EXPECT_THROW(
+      starpu_server::detail::get_cuda_device_count(),
+      starpu_server::InvalidGpuDeviceException);
+}
+
+TEST(
+    InferenceRunnerDeviceValidationTest,
+    GetCudaDeviceCountThrowsWhenRawCountExceedsIntMax)
+{
+  starpu_server::detail::set_cuda_device_count_override(std::nullopt);
+
+  if (std::numeric_limits<c10::DeviceIndex>::max() <=
+      std::numeric_limits<int>::max()) {
+    GTEST_SKIP()
+        << "c10::DeviceIndex max ("
+        << static_cast<long long>(std::numeric_limits<c10::DeviceIndex>::max())
+        << ") does not exceed std::numeric_limits<int>::max(); overflow "
+           "scenario cannot occur on this platform.";
+  }
+
+  const auto overflowing_raw_count = static_cast<c10::DeviceIndex>(
+      static_cast<long long>(std::numeric_limits<int>::max()) + 1);
+  const starpu_server::testing::TorchCudaDeviceCountOverrideGuard guard(
+      overflowing_raw_count);
 
   EXPECT_THROW(
       starpu_server::detail::get_cuda_device_count(),
