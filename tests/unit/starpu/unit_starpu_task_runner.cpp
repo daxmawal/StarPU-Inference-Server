@@ -2062,6 +2062,21 @@ TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsInferenceEngineException)
   EXPECT_NE(logs.find(expected), std::string::npos);
 }
 
+TEST(TaskRunnerInternal, HandleJobExceptionWithoutJobReturnsFalse)
+{
+  CaptureStream capture{std::cerr};
+  const auto handled = starpu_server::StarPUTaskRunner::handle_job_exception(
+      std::shared_ptr<starpu_server::InferenceJob>{},
+      std::runtime_error("outer failure"));
+
+  EXPECT_FALSE(handled);
+
+  const auto logs = capture.str();
+  const auto expected =
+      expected_log_line(ErrorLevel, "[Exception] Job -1: outer failure");
+  EXPECT_NE(logs.find(expected), std::string::npos);
+}
+
 TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsLogicError)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
