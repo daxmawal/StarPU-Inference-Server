@@ -1,12 +1,16 @@
+#include <elf.h>
+#include <link.h>
 #include <starpu.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -22,6 +26,120 @@
 using starpu_server::CaptureStream;
 using starpu_server::ErrorLevel;
 using starpu_server::expected_log_line;
+
+namespace {
+using ValidateTensorFn = void (*)(const torch::Tensor&, const torch::Tensor&);
+
+constexpr std::string_view kValidateTensorSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_133validate_tensor_against_"
+    "prototypeERKN2at6TensorES4_";
+
+auto
+map_self_executable() -> const std::vector<char>&
+{
+  static const std::vector<char> image = [] {
+    std::ifstream exe("/proc/self/exe", std::ios::binary);
+    if (!exe) {
+      return std::vector<char>{};
+    }
+    exe.seekg(0, std::ios::end);
+    const auto size = exe.tellg();
+    if (size <= 0) {
+      return std::vector<char>{};
+    }
+    std::vector<char> buffer(static_cast<std::size_t>(size));
+    exe.seekg(0, std::ios::beg);
+    exe.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    return buffer;
+  }();
+  return image;
+}
+
+auto
+locate_symbol_offset(std::string_view name) -> std::optional<std::uint64_t>
+{
+  const auto& image = map_self_executable();
+  if (image.size() < sizeof(Elf64_Ehdr)) {
+    return std::nullopt;
+  }
+
+  const auto* ehdr = reinterpret_cast<const Elf64_Ehdr*>(image.data());
+  if (std::memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
+    return std::nullopt;
+  }
+  if (ehdr->e_shoff == 0 || ehdr->e_shnum == 0) {
+    return std::nullopt;
+  }
+
+  const auto* shdrs =
+      reinterpret_cast<const Elf64_Shdr*>(image.data() + ehdr->e_shoff);
+  if (ehdr->e_shstrndx == SHN_UNDEF || ehdr->e_shstrndx >= ehdr->e_shnum) {
+    return std::nullopt;
+  }
+
+  const Elf64_Shdr* symtab = nullptr;
+  const Elf64_Shdr* strtab = nullptr;
+  for (int idx = 0; idx < ehdr->e_shnum; ++idx) {
+    if (shdrs[idx].sh_type == SHT_SYMTAB) {
+      symtab = &shdrs[idx];
+      if (symtab->sh_link < ehdr->e_shnum) {
+        strtab = &shdrs[symtab->sh_link];
+      }
+      break;
+    }
+  }
+  if (symtab == nullptr || strtab == nullptr) {
+    return std::nullopt;
+  }
+
+  const auto* symbols =
+      reinterpret_cast<const Elf64_Sym*>(image.data() + symtab->sh_offset);
+  const char* names =
+      reinterpret_cast<const char*>(image.data() + strtab->sh_offset);
+  const std::size_t symbol_count =
+      symtab->sh_size / std::max<std::size_t>(symtab->sh_entsize, 1U);
+
+  for (std::size_t idx = 0; idx < symbol_count; ++idx) {
+    const auto& sym = symbols[idx];
+    const char* sym_name = names + sym.st_name;
+    if (sym_name != nullptr && std::strcmp(sym_name, name.data()) == 0) {
+      return sym.st_value;
+    }
+  }
+  return std::nullopt;
+}
+
+auto
+executable_base_address() -> std::uintptr_t
+{
+  std::uintptr_t base = 0;
+  dl_iterate_phdr(
+      [](dl_phdr_info* info, size_t, void* data) -> int {
+        if (info->dlpi_name == nullptr || info->dlpi_name[0] == '\0') {
+          *static_cast<std::uintptr_t*>(data) =
+              static_cast<std::uintptr_t>(info->dlpi_addr);
+          return 1;
+        }
+        return 0;
+      },
+      &base);
+  return base;
+}
+
+auto
+resolve_validate_tensor_against_prototype_fn() -> ValidateTensorFn
+{
+  static ValidateTensorFn fn = [] {
+    const auto offset = locate_symbol_offset(kValidateTensorSymbolName);
+    if (!offset.has_value()) {
+      return ValidateTensorFn{};
+    }
+    return reinterpret_cast<ValidateTensorFn>(
+        executable_base_address() + *offset);
+  }();
+  return fn;
+}
+}  // namespace
 
 extern "C" int64_t
 batch_collector_job_sample_size(const starpu_server::BatchCollector* collector, const std::shared_ptr<starpu_server::InferenceJob>& job) __asm__(
@@ -1441,6 +1559,62 @@ TEST_F(
       starpu_server::StarPUTaskRunnerTestAdapter::merge_input_tensors(
           jobs, /*total_samples=*/0),
       starpu_server::InconsistentInputTensorCountException);
+}
+
+TEST(ValidateTensorAgainstPrototype, RejectsUndefinedTensorBeforeBatching)
+{
+  auto fn = resolve_validate_tensor_against_prototype_fn();
+  ASSERT_NE(fn, nullptr);
+
+  torch::Tensor undefined_tensor;
+  auto prototype =
+      torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat));
+
+  EXPECT_THROW(
+      fn(undefined_tensor, prototype),
+      starpu_server::InvalidInputTensorException);
+}
+
+TEST(ValidateTensorAgainstPrototype, RejectsRankMismatchDuringBatching)
+{
+  auto fn = resolve_validate_tensor_against_prototype_fn();
+  ASSERT_NE(fn, nullptr);
+
+  auto tensor =
+      torch::ones({1, 2, 3}, torch::TensorOptions().dtype(torch::kFloat));
+  auto prototype =
+      torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat));
+
+  EXPECT_THROW(
+      fn(tensor, prototype), starpu_server::InvalidInputTensorException);
+}
+
+TEST(ValidateTensorAgainstPrototype, RejectsNonPositiveRankTensors)
+{
+  auto fn = resolve_validate_tensor_against_prototype_fn();
+  ASSERT_NE(fn, nullptr);
+
+  auto tensor =
+      torch::tensor(1.0F, torch::TensorOptions().dtype(torch::kFloat));
+  auto prototype =
+      torch::tensor(0.0F, torch::TensorOptions().dtype(torch::kFloat));
+
+  EXPECT_THROW(
+      fn(tensor, prototype), starpu_server::InvalidInputTensorException);
+}
+
+TEST(ValidateTensorAgainstPrototype, RejectsShapeMismatchBeyondBatchDimension)
+{
+  auto fn = resolve_validate_tensor_against_prototype_fn();
+  ASSERT_NE(fn, nullptr);
+
+  auto tensor =
+      torch::ones({2, 3}, torch::TensorOptions().dtype(torch::kFloat));
+  auto prototype =
+      torch::ones({2, 4}, torch::TensorOptions().dtype(torch::kFloat));
+
+  EXPECT_THROW(
+      fn(tensor, prototype), starpu_server::InvalidInputTensorException);
 }
 
 TEST_F(
