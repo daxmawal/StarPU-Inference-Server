@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -149,6 +150,30 @@ class StarPUTaskRunnerTestAdapter {
       -> std::shared_ptr<InferenceJob>
   {
     return runner->wait_for_prepared_job();
+  }
+
+  static void disable_prepared_job_sync(StarPUTaskRunner* runner)
+  {
+    struct BatchCollectorAccessor {
+      InferenceQueue* queue;
+      const RuntimeConfig* opts;
+      StarPUSetup* starpu;
+      std::shared_ptr<InferenceJob>* pending_job;
+      std::mutex* prepared_mutex;
+      std::condition_variable* prepared_cv;
+      std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs;
+      bool* batching_done;
+    };
+
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return;
+    }
+
+    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
+        runner->batch_collector_.get());
+    accessor->prepared_mutex = nullptr;
+    accessor->prepared_cv = nullptr;
+    accessor->prepared_jobs = nullptr;
   }
 
   static void release_pending_jobs(
@@ -2348,6 +2373,18 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchRespectsConfiguredMaximumBatchSize)
   EXPECT_EQ(collected[0], first);
   EXPECT_EQ(collected[1], second);
   EXPECT_EQ(queue_.size(), 1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    WaitForPreparedJobReturnsNullWhenSyncPrimitivesMissing)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::disable_prepared_job_sync(
+      runner_.get());
+
+  auto job = starpu_server::StarPUTaskRunnerTestAdapter::wait_for_prepared_job(
+      runner_.get());
+  EXPECT_EQ(job, nullptr);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
