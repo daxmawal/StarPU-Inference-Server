@@ -11,6 +11,7 @@
 #include "core/inference_runner.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
+#include "torch_cuda_device_count_override.hpp"
 #include "utils/exceptions.hpp"
 
 namespace {
@@ -113,5 +114,18 @@ TEST(InferenceRunnerDeviceValidationTest, HandlesMockedLargeCudaDeviceCount)
   EXPECT_THROW(
       starpu_server::detail::validate_device_ids(
           invalid_ids, starpu_server::detail::get_cuda_device_count()),
+      starpu_server::InvalidGpuDeviceException);
+}
+
+TEST(
+    InferenceRunnerDeviceValidationTest,
+    GetCudaDeviceCountThrowsOnNegativeRawCount)
+{
+  starpu_server::detail::set_cuda_device_count_override(std::nullopt);
+  const starpu_server::testing::TorchCudaDeviceCountOverrideGuard guard(
+      static_cast<c10::DeviceIndex>(-1));
+
+  EXPECT_THROW(
+      starpu_server::detail::get_cuda_device_count(),
       starpu_server::InvalidGpuDeviceException);
 }
