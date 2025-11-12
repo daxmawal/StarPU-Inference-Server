@@ -17,8 +17,7 @@ class ResolveModelNameTest : public ::testing::Test {
       -> std::unique_ptr<starpu_server::InferenceServiceImpl>
   {
     return std::make_unique<starpu_server::InferenceServiceImpl>(
-        &queue_, &reference_outputs_,
-        std::vector<at::ScalarType>{at::kFloat},
+        &queue_, &reference_outputs_, std::vector<at::ScalarType>{at::kFloat},
         std::move(default_model_name));
   }
 
@@ -27,9 +26,7 @@ class ResolveModelNameTest : public ::testing::Test {
       torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
 };
 
-TEST_F(
-    ResolveModelNameTest,
-    ReturnsDefaultNameWhenClientRequestsDifferentModel)
+TEST_F(ResolveModelNameTest, ReturnsDefaultNameWhenClientRequestsDifferentModel)
 {
   auto service = make_service("server_default");
   const auto resolved = service->resolve_model_name("client_provided");

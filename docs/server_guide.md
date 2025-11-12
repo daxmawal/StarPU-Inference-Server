@@ -79,7 +79,7 @@ Optional keys for debugging:
 | `trace_enabled` | Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI. | `false` |
 | `trace_file` | Output path for the batching Perfetto trace (requires `trace_enabled: true`). | `batching_trace.json` |
 
-Traces use the [Chrome trace-event JSON format](https://perfetto.dev/docs/concepts/trace-formats#json-trace-format), so you can drag the resulting file (e.g., `batching_trace.json`) into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect queueing and batching activity.
+Traces use the [Chrome trace-event JSON format](https://perfetto.dev/docs/concepts/trace-formats#json-trace-format), so you can drag the resulting file  into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity.
 
 ### StarPU environment overrides
 

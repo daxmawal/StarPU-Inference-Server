@@ -1,11 +1,18 @@
 #include <starpu.h>
 
 #include <chrono>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <iterator>
+#include <string>
+#include <system_error>
 
 #include "core/inference_task.hpp"
 #include "exceptions.hpp"
 #include "starpu_task_worker/task_runner_internal.hpp"
 #include "test_starpu_task_runner.hpp"
+#include "utils/batching_trace_logger.hpp"
 #include "utils/perf_observer.hpp"
 
 using starpu_server::CaptureStream;
@@ -93,10 +100,95 @@ class StarPUTaskRunnerTestAdapter {
     return StarPUTaskRunner::configure_task_context(
         task, pools, input_handles, output_handles, batch_size);
   }
+
+  static void trace_batch_if_enabled(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      bool warmup_job, int submission_id)
+  {
+    runner->trace_batch_if_enabled(job, warmup_job, submission_id);
+  }
 };
 }  // namespace starpu_server
 
 namespace {
+class TraceLoggerSession {
+ public:
+  TraceLoggerSession()
+      : path_(
+            std::filesystem::temp_directory_path() /
+            std::format(
+                "trace_request_ids_{}.json",
+                std::chrono::steady_clock::now().time_since_epoch().count()))
+  {
+    starpu_server::BatchingTraceLogger::instance().configure(
+        true, path_.string());
+  }
+
+  TraceLoggerSession(const TraceLoggerSession&) = delete;
+  auto operator=(const TraceLoggerSession&) -> TraceLoggerSession& = delete;
+
+  ~TraceLoggerSession()
+  {
+    close();
+    std::error_code ec;
+    std::filesystem::remove(path_, ec);
+  }
+
+  void close()
+  {
+    if (closed_) {
+      return;
+    }
+    starpu_server::BatchingTraceLogger::instance().configure(false, "");
+    closed_ = true;
+  }
+
+  [[nodiscard]] auto path() const -> const std::filesystem::path&
+  {
+    return path_;
+  }
+
+ private:
+  std::filesystem::path path_;
+  bool closed_{false};
+};
+
+auto
+read_trace_file(const std::filesystem::path& path) -> std::string
+{
+  std::ifstream stream(path);
+  if (!stream.is_open()) {
+    return {};
+  }
+  return std::string(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+}
+
+void
+populate_trace_timing(starpu_server::InferenceJob& job)
+{
+  using clock = std::chrono::high_resolution_clock;
+  const auto now = clock::now();
+  job.timing_info().enqueued_time = now - std::chrono::milliseconds(3);
+  job.timing_info().last_enqueued_time = now - std::chrono::milliseconds(2);
+  job.timing_info().batch_collect_start_time =
+      now - std::chrono::milliseconds(1);
+  job.timing_info().batch_collect_end_time = now;
+}
+
+auto
+make_aggregated_sub_job(
+    const std::shared_ptr<starpu_server::InferenceJob>& job,
+    int request_id) -> starpu_server::InferenceJob::AggregatedSubJob
+{
+  starpu_server::InferenceJob::AggregatedSubJob aggregated{};
+  aggregated.job = job;
+  aggregated.request_id = request_id;
+  aggregated.batch_size = 1;
+  return aggregated;
+}
+
 struct VectorInterfaceSnapshot {
   starpu_vector_interface* iface = nullptr;
   std::size_t elemsize = 0;
@@ -296,6 +388,90 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   EXPECT_NE(output.find("Codelet = 30.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Inference = 45.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Callback = 15.000 ms"), std::string::npos);
+}
+
+TEST_F(StarPUTaskRunnerFixture, TraceBatchIfEnabledLogsAggregatedRequestIds)
+{
+  TraceLoggerSession session;
+
+  auto aggregated_job = std::make_shared<starpu_server::InferenceJob>();
+  aggregated_job->set_model_name("demo_model");
+  aggregated_job->set_submission_id(11);
+  aggregated_job->set_effective_batch_size(2);
+  populate_trace_timing(*aggregated_job);
+
+  auto sub_job_a = std::make_shared<starpu_server::InferenceJob>();
+  sub_job_a->set_request_id(41);
+  auto sub_job_b = std::make_shared<starpu_server::InferenceJob>();
+  sub_job_b->set_request_id(42);
+
+  aggregated_job->set_aggregated_sub_jobs(
+      {make_aggregated_sub_job(sub_job_a, 41),
+       make_aggregated_sub_job(sub_job_b, 42)});
+  aggregated_job->set_logical_job_count(2);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::trace_batch_if_enabled(
+      runner_.get(), aggregated_job, /*warmup_job=*/false,
+      aggregated_job->submission_id());
+
+  session.close();
+  const auto trace_content = read_trace_file(session.path());
+  ASSERT_FALSE(trace_content.empty());
+  EXPECT_NE(trace_content.find("\"request_ids\":[41,42]"), std::string::npos)
+      << trace_content;
+}
+
+TEST_F(StarPUTaskRunnerFixture, TraceBatchIfEnabledFallsBackToSubJobRequestIds)
+{
+  TraceLoggerSession session;
+
+  auto aggregated_job = std::make_shared<starpu_server::InferenceJob>();
+  aggregated_job->set_model_name("demo_model");
+  aggregated_job->set_submission_id(15);
+  aggregated_job->set_effective_batch_size(2);
+  populate_trace_timing(*aggregated_job);
+
+  auto explicit_job = std::make_shared<starpu_server::InferenceJob>();
+  explicit_job->set_request_id(77);
+  auto inferred_job = std::make_shared<starpu_server::InferenceJob>();
+  inferred_job->set_request_id(88);
+
+  aggregated_job->set_aggregated_sub_jobs(
+      {make_aggregated_sub_job(explicit_job, 77),
+       make_aggregated_sub_job(inferred_job, -1)});
+  aggregated_job->set_logical_job_count(2);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::trace_batch_if_enabled(
+      runner_.get(), aggregated_job, /*warmup_job=*/false,
+      aggregated_job->submission_id());
+
+  session.close();
+  const auto trace_content = read_trace_file(session.path());
+  ASSERT_FALSE(trace_content.empty());
+  EXPECT_NE(trace_content.find("\"request_ids\":[77,88]"), std::string::npos)
+      << trace_content;
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    TraceBatchIfEnabledUsesJobRequestIdWhenNotAggregated)
+{
+  TraceLoggerSession session;
+
+  auto job = make_job(901, {torch::ones({1})}, {at::kFloat});
+  job->set_model_name("demo_model");
+  job->set_submission_id(21);
+  job->set_effective_batch_size(1);
+  populate_trace_timing(*job);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::trace_batch_if_enabled(
+      runner_.get(), job, /*warmup_job=*/false, job->submission_id());
+
+  session.close();
+  const auto trace_content = read_trace_file(session.path());
+  ASSERT_FALSE(trace_content.empty());
+  EXPECT_NE(trace_content.find("\"request_ids\":[901]"), std::string::npos)
+      << trace_content;
 }
 
 TEST_F(
