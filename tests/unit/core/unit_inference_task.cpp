@@ -126,6 +126,13 @@ task_submit_call_count_ref() -> int&
 }
 
 inline auto
+data_release_throw_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+inline auto
 MakeHandle(int index) -> starpu_data_handle_t
 {
   constexpr std::size_t kDummyStorageSize = 8;
@@ -178,6 +185,7 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
 
 namespace {
 using DataUnregisterFn = void (*)(starpu_data_handle_t);
+using DataReleaseFn = void (*)(starpu_data_handle_t);
 using VectorRegisterFn = decltype(&starpu_vector_data_register);
 
 inline auto
@@ -212,6 +220,26 @@ resolve_real_starpu_vector_data_register() -> VectorRegisterFn
   }();
   return fn;
 }
+
+inline auto
+data_release_override_ref() -> DataReleaseFn&
+{
+  static DataReleaseFn fn = nullptr;
+  return fn;
+}
+
+inline auto
+resolve_real_starpu_data_release() -> DataReleaseFn
+{
+  static DataReleaseFn fn = []() -> DataReleaseFn {
+    void* symbol = dlsym(RTLD_NEXT, "starpu_data_release");
+    if (symbol == nullptr) {
+      throw std::runtime_error("Failed to resolve starpu_data_release");
+    }
+    return reinterpret_cast<DataReleaseFn>(symbol);
+  }();
+  return fn;
+}
 }  // namespace
 
 extern "C" void
@@ -240,6 +268,16 @@ starpu_vector_data_register(
   }
   resolve_real_starpu_vector_data_register()(
       handle, home_node, ptr, nx, elemsize);
+}
+
+extern "C" void
+starpu_data_release(starpu_data_handle_t handle)
+{
+  if (auto override = data_release_override_ref()) {
+    override(handle);
+    return;
+  }
+  resolve_real_starpu_data_release()(handle);
 }
 
 namespace {
@@ -308,6 +346,17 @@ AlwaysFailingAcquire(
 }
 
 auto
+ImmediateCallbackAcquire(
+    starpu_data_handle_t, starpu_data_access_mode, void (*callback)(void*),
+    void* ctx) -> int
+{
+  if (callback != nullptr) {
+    callback(ctx);
+  }
+  return 0;
+}
+
+auto
 AlwaysFailingTaskSubmit(starpu_task*) -> int
 {
   ++task_submit_call_count_ref();
@@ -321,6 +370,14 @@ AlwaysFailingVectorRegister(
   if (handle != nullptr) {
     *handle = nullptr;
   }
+}
+
+void
+ThrowingDataRelease(starpu_data_handle_t)
+{
+  ++data_release_throw_count_ref();
+  throw starpu_server::InvalidInferenceJobException(
+      "forced data release failure");
 }
 
 class ScopedTaskSubmitOverride {
@@ -355,6 +412,23 @@ class ScopedVectorRegisterOverride {
       -> ScopedVectorRegisterOverride& = delete;
 
   ~ScopedVectorRegisterOverride() { vector_register_override_ref() = nullptr; }
+};
+
+class ScopedDataReleaseOverride {
+ public:
+  explicit ScopedDataReleaseOverride(DataReleaseFn fn)
+  {
+    data_release_override_ref() = fn;
+  }
+
+  ScopedDataReleaseOverride(const ScopedDataReleaseOverride&) = delete;
+  auto operator=(const ScopedDataReleaseOverride&)
+      -> ScopedDataReleaseOverride& = delete;
+  ScopedDataReleaseOverride(ScopedDataReleaseOverride&&) = delete;
+  auto operator=(ScopedDataReleaseOverride&&) -> ScopedDataReleaseOverride& =
+                                                     delete;
+
+  ~ScopedDataReleaseOverride() { data_release_override_ref() = nullptr; }
 };
 
 class ScopedDefaultDataAcquireNullifier {
@@ -808,6 +882,33 @@ TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
       starpu_server::ErrorLevel,
       std::format("starpu_data_acquire_cb failed with code {}", -42));
   EXPECT_NE(log.find(expected), std::string::npos);
+}
+
+TEST(InferenceTask, AcquireOutputHandleLogsInferenceEngineException)
+{
+  StarpuRuntimeGuard starpu_guard;
+  ScopedDataReleaseOverride release_override(&ThrowingDataRelease);
+  OutputContextFixture fixture;
+  auto ctx = fixture.ctx;
+  ctx->self_keep_alive = ctx;
+  auto handle = MakeHandle(0);
+  ctx->outputs_handles = {handle};
+  ctx->remaining_outputs_to_acquire = 1;
+  data_release_throw_count_ref() = 0;
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_data_acquire_fn = &ImmediateCallbackAcquire;
+  ctx->dependencies = &dependencies;
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()));
+
+  const auto log = capture.str();
+  ctx->self_keep_alive.reset();
+  ctx->outputs_handles.clear();
+  EXPECT_EQ(data_release_throw_count_ref(), 1);
+  EXPECT_NE(log.find("forced data release failure"), std::string::npos);
 }
 
 TEST(InferenceTask, AcquireOutputHandleThrowsWhenDataAcquireFunctionMissing)
