@@ -141,6 +141,31 @@ class StarPUTaskRunnerTestAdapter {
   {
     StarPUTaskRunner::release_pending_jobs(job, pending_jobs);
   }
+
+  static void store_completed_job_result(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      const std::vector<torch::Tensor>& results, double latency_ms)
+  {
+    runner->store_completed_job_result(job, results, latency_ms);
+  }
+
+  static void ensure_callback_timing(detail::TimingInfo& timing)
+  {
+    StarPUTaskRunner::ensure_callback_timing(timing);
+  }
+
+  static void record_job_metrics(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      StarPUTaskRunner::DurationMs latency, std::size_t batch_size)
+  {
+    runner->record_job_metrics(job, latency, batch_size);
+  }
+
+  static void finalize_job_completion(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job)
+  {
+    runner->finalize_job_completion(job);
+  }
 };
 }  // namespace starpu_server
 
@@ -422,6 +447,128 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   EXPECT_NE(output.find("Codelet = 30.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Inference = 45.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Callback = 15.000 ms"), std::string::npos);
+}
+
+TEST_F(StarPUTaskRunnerFixture, StoreCompletedJobResultTracksInputsAndOutputs)
+{
+  opts_.validation.validate_results = true;
+
+  std::vector<torch::Tensor> inputs{torch::tensor({1.0, 2.0})};
+  const std::vector<torch::Tensor> outputs{torch::tensor({5.0})};
+  constexpr double kLatencyMs = 7.5;
+
+  auto job = make_job(77, inputs);
+  job->set_submission_id(11);
+  job->timing_info().submission_id = job->submission_id();
+  job->get_device_id() = 3;
+  job->get_worker_id() = 9;
+  job->get_executed_on() = starpu_server::DeviceType::CUDA;
+  job->timing_info().callback_start_time =
+      starpu_server::task_runner_internal::Clock::now();
+  job->timing_info().callback_end_time =
+      job->timing_info().callback_start_time + std::chrono::milliseconds(1);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::store_completed_job_result(
+      runner_.get(), job, outputs, kLatencyMs);
+
+  ASSERT_EQ(results_.size(), 1U);
+  const auto& stored = results_.front();
+  ASSERT_EQ(stored.inputs.size(), inputs.size());
+  EXPECT_TRUE(torch::equal(stored.inputs[0], inputs[0]));
+  ASSERT_EQ(stored.results.size(), outputs.size());
+  EXPECT_TRUE(torch::equal(stored.results[0], outputs[0]));
+  EXPECT_EQ(stored.latency_ms, kLatencyMs);
+  EXPECT_EQ(stored.request_id, job->get_request_id());
+  EXPECT_EQ(stored.submission_id, job->submission_id());
+  EXPECT_EQ(stored.device_id, job->get_device_id());
+  EXPECT_EQ(stored.worker_id, job->get_worker_id());
+  EXPECT_EQ(stored.executed_on, job->get_executed_on());
+  EXPECT_EQ(
+      stored.timing_info.callback_start_time,
+      job->timing_info().callback_start_time);
+  EXPECT_TRUE(job->get_input_tensors().empty());
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    EnsureCallbackTimingFillsMissingAndInvalidTimestamps)
+{
+  using Clock = starpu_server::task_runner_internal::Clock;
+  using namespace std::chrono_literals;
+
+  starpu_server::detail::TimingInfo missing{};
+  starpu_server::StarPUTaskRunnerTestAdapter::ensure_callback_timing(missing);
+  EXPECT_NE(missing.callback_start_time, Clock::time_point{});
+  EXPECT_NE(missing.callback_end_time, Clock::time_point{});
+  EXPECT_EQ(missing.enqueued_time, missing.callback_start_time);
+  EXPECT_EQ(missing.last_enqueued_time, missing.enqueued_time);
+
+  starpu_server::detail::TimingInfo inconsistent{};
+  inconsistent.callback_start_time = Clock::now();
+  inconsistent.callback_end_time = inconsistent.callback_start_time - 1ms;
+  inconsistent.enqueued_time = inconsistent.callback_start_time + 2ms;
+  inconsistent.last_enqueued_time = inconsistent.enqueued_time - 5ms;
+  const auto original_start = inconsistent.callback_start_time;
+
+  starpu_server::StarPUTaskRunnerTestAdapter::ensure_callback_timing(
+      inconsistent);
+
+  EXPECT_EQ(inconsistent.callback_start_time, original_start);
+  EXPECT_GT(inconsistent.callback_end_time, inconsistent.callback_start_time);
+  EXPECT_EQ(inconsistent.enqueued_time, inconsistent.callback_start_time);
+  EXPECT_EQ(inconsistent.last_enqueued_time, inconsistent.enqueued_time);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RecordJobMetricsUpdatesPerfObserver)
+{
+  using Clock = starpu_server::task_runner_internal::Clock;
+  using namespace std::chrono_literals;
+
+  starpu_server::perf_observer::reset();
+
+  auto job = make_job(21, {torch::tensor({3})});
+  const auto enqueue_time = Clock::now();
+  const auto completion_time = enqueue_time + 2ms;
+  job->timing_info().enqueued_time = enqueue_time;
+  job->timing_info().callback_end_time = completion_time;
+  job->set_submission_id(55);
+  job->timing_info().submission_id = -1;
+
+  constexpr std::size_t kBatchSize = 4;
+  const auto latency = starpu_server::StarPUTaskRunner::DurationMs{5.0};
+
+  starpu_server::StarPUTaskRunnerTestAdapter::record_job_metrics(
+      runner_.get(), job, latency, kBatchSize);
+
+  const auto snapshot = starpu_server::perf_observer::snapshot();
+  ASSERT_TRUE(snapshot.has_value());
+  const double expected_duration =
+      std::chrono::duration<double>(completion_time - enqueue_time).count();
+  EXPECT_EQ(snapshot->total_inferences, kBatchSize);
+  EXPECT_DOUBLE_EQ(snapshot->duration_seconds, expected_duration);
+  EXPECT_DOUBLE_EQ(
+      snapshot->throughput,
+      static_cast<double>(kBatchSize) / expected_duration);
+  EXPECT_EQ(job->timing_info().submission_id, job->submission_id());
+
+  starpu_server::perf_observer::reset();
+}
+
+TEST_F(StarPUTaskRunnerFixture, FinalizeJobCompletionCountsLogicalJobs)
+{
+  completed_jobs_.store(0);
+
+  auto job = make_job(31, {});
+  job->set_logical_job_count(3);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_completion(
+      runner_.get(), job);
+  EXPECT_EQ(completed_jobs_.load(), 3);
+
+  job->set_logical_job_count(0);
+  starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_completion(
+      runner_.get(), job);
+  EXPECT_EQ(completed_jobs_.load(), 4);
 }
 
 TEST_F(StarPUTaskRunnerFixture, TraceBatchIfEnabledLogsAggregatedRequestIds)
