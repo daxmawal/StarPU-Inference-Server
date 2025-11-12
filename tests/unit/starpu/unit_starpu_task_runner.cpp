@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 #include "core/inference_task.hpp"
@@ -135,6 +136,13 @@ class StarPUTaskRunnerTestAdapter {
       const std::shared_ptr<InferenceJob>& job) -> int64_t
   {
     return runner->resolve_batch_size(job);
+  }
+
+  static void finalize_job_after_exception(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      const std::exception& exception, std::string_view log_prefix, int job_id)
+  {
+    runner->finalize_job_after_exception(job, exception, log_prefix, job_id);
   }
 
   static auto wait_for_prepared_job(StarPUTaskRunner* runner)
@@ -608,6 +616,20 @@ TEST_F(StarPUTaskRunnerFixture, FinalizeJobCompletionCountsLogicalJobs)
   starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_completion(
       runner_.get(), job);
   EXPECT_EQ(completed_jobs_.load(), 4);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    FinalizeJobAfterExceptionCompletesJobWhenCallbackMissing)
+{
+  completed_jobs_.store(0);
+  auto job = make_job(88, {});
+  const std::runtime_error error("runtime failure");
+
+  starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
+      runner_.get(), job, error, "runtime failure", job->get_request_id());
+
+  EXPECT_EQ(completed_jobs_.load(), 1);
 }
 
 TEST_F(StarPUTaskRunnerFixture, TraceBatchIfEnabledLogsAggregatedRequestIds)
