@@ -3143,3 +3143,108 @@ TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsMismatchedShapesOrTypes)
   EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(
       base_job, type_mismatch));
 }
+
+namespace {
+struct InferenceJobInputsAccessor {
+  std::vector<torch::Tensor> input_tensors;
+};
+}  // namespace
+
+TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsNullJobs)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_input_tensors(
+      {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  EXPECT_FALSE(
+      starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(nullptr, job));
+  EXPECT_FALSE(
+      starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(job, nullptr));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsDifferentInputCounts)
+{
+  auto lhs = std::make_shared<starpu_server::InferenceJob>();
+  lhs->set_input_tensors(
+      {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat)),
+       torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))});
+  lhs->set_input_types({at::kFloat, at::kFloat});
+
+  auto rhs = std::make_shared<starpu_server::InferenceJob>();
+  rhs->set_input_tensors(
+      {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))});
+  rhs->set_input_types({at::kFloat});
+
+  EXPECT_FALSE(
+      starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsDifferentTypeCounts)
+{
+  auto lhs = std::make_shared<starpu_server::InferenceJob>();
+  lhs->set_input_tensors(
+      {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))});
+  lhs->set_input_types({at::kFloat});
+
+  auto rhs = std::make_shared<starpu_server::InferenceJob>();
+  rhs->set_input_tensors(
+      {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))});
+  rhs->set_input_types({});
+
+  EXPECT_FALSE(
+      starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsUndefinedTensors)
+{
+  auto make_job = [] {
+    auto job = std::make_shared<starpu_server::InferenceJob>();
+    job->set_input_tensors(
+        {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))});
+    job->set_input_types({at::kFloat});
+    return job;
+  };
+
+  auto lhs = make_job();
+  auto rhs = make_job();
+
+  auto* lhs_inputs = reinterpret_cast<InferenceJobInputsAccessor*>(lhs.get());
+  lhs_inputs->input_tensors[0] = torch::Tensor();
+
+  EXPECT_FALSE(
+      starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsRankMismatch)
+{
+  auto lhs = std::make_shared<starpu_server::InferenceJob>();
+  lhs->set_input_tensors(
+      {torch::ones({2, 3}, torch::TensorOptions().dtype(torch::kFloat))});
+  lhs->set_input_types({at::kFloat});
+
+  auto rhs = std::make_shared<starpu_server::InferenceJob>();
+  rhs->set_input_tensors(
+      {torch::ones({2}, torch::TensorOptions().dtype(torch::kFloat))});
+  rhs->set_input_types({at::kFloat});
+
+  EXPECT_FALSE(
+      starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsNonPositiveRankTensors)
+{
+  auto make_job = [] {
+    auto job = std::make_shared<starpu_server::InferenceJob>();
+    job->set_input_tensors(
+        {torch::tensor(1.0F, torch::TensorOptions().dtype(torch::kFloat))});
+    job->set_input_types({at::kFloat});
+    return job;
+  };
+
+  auto lhs = make_job();
+  auto rhs = make_job();
+
+  EXPECT_FALSE(
+      starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
