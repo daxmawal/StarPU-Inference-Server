@@ -2,6 +2,7 @@
 #include <c10/core/DispatchKeySet.h>
 #include <c10/core/ScalarTypeToTypeMeta.h>
 #include <c10/core/Storage.h>
+#include <c10/core/TensorImpl.h>
 #include <dlfcn.h>
 
 #include <array>
@@ -89,6 +90,24 @@ MakeNullDataTensor() -> torch::Tensor
   return at::detail::make_tensor<c10::TensorImpl>(
       std::move(storage), c10::DispatchKeySet(c10::DispatchKey::CPU),
       c10::scalarTypeToTypeMeta(at::kFloat));
+}
+
+inline auto
+MakeCudaTensor() -> torch::Tensor
+{
+  static float storage_value = 1.0F;
+  auto device = c10::Device(c10::DeviceType::CUDA, 0);
+  c10::DataPtr data_ptr(&storage_value, device);
+  c10::Storage storage(
+      c10::Storage::use_byte_size_t{}, sizeof(float), std::move(data_ptr),
+      /*allocator=*/nullptr,
+      /*resizable=*/false);
+  auto tensor = at::detail::make_tensor<c10::TensorImpl>(
+      std::move(storage), c10::DispatchKeySet(c10::DispatchKey::CUDA),
+      c10::scalarTypeToTypeMeta(at::kFloat));
+  tensor.unsafeGetTensorImpl()->set_storage_offset(0);
+  tensor.unsafeGetTensorImpl()->set_sizes_contiguous({1});
+  return tensor;
 }
 
 }  // namespace
@@ -390,6 +409,20 @@ TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenDataPointerIsNull)
   EXPECT_THROW(
       starpu_server::InferenceTask::safe_register_tensor_vector(
           tensor, "null_data_tensor"),
+      starpu_server::StarPURegistrationException);
+}
+
+TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenTensorNotOnCpu)
+{
+  StarpuRuntimeGuard starpu_guard;
+  auto tensor = MakeCudaTensor();
+  ASSERT_TRUE(tensor.defined());
+  ASSERT_NE(tensor.data_ptr(), nullptr);
+  ASSERT_FALSE(tensor.device().is_cpu());
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::safe_register_tensor_vector(
+          tensor, "gpu_tensor"),
       starpu_server::StarPURegistrationException);
 }
 
