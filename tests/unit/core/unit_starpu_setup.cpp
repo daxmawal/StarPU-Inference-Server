@@ -910,6 +910,34 @@ class ScopedFakeHwlocSpec {
   FakeHwlocSpecification previous_;
 };
 
+class ScopedMachineCpusetNullGuard {
+ public:
+  ScopedMachineCpusetNullGuard()
+      : previous_cpuset_{g_fake_hwloc_topology.machine.cpuset},
+        previous_obj_cpuset_{g_fake_hwloc_topology.machine.obj.cpuset}
+  {
+    g_fake_hwloc_topology.machine.cpuset = nullptr;
+    g_fake_hwloc_topology.machine.obj.cpuset = nullptr;
+  }
+
+  ~ScopedMachineCpusetNullGuard()
+  {
+    g_fake_hwloc_topology.machine.cpuset = previous_cpuset_;
+    g_fake_hwloc_topology.machine.obj.cpuset = previous_obj_cpuset_;
+  }
+
+  ScopedMachineCpusetNullGuard(const ScopedMachineCpusetNullGuard&) = delete;
+  auto operator=(const ScopedMachineCpusetNullGuard&)
+      -> ScopedMachineCpusetNullGuard& = delete;
+  ScopedMachineCpusetNullGuard(ScopedMachineCpusetNullGuard&&) = delete;
+  auto operator=(ScopedMachineCpusetNullGuard&&)
+      -> ScopedMachineCpusetNullGuard& = delete;
+
+ private:
+  hwloc_bitmap_t previous_cpuset_;
+  hwloc_bitmap_t previous_obj_cpuset_;
+};
+
 }  // namespace
 
 extern "C" int
@@ -1268,6 +1296,36 @@ TEST(ConfigureCpu, ReusesAllCpuIdsWhenGpuCandidatesEmpty)
   EXPECT_EQ(conf.workers_bindid[0], conf.workers_bindid[2]);
   EXPECT_EQ(
       log.find("Unable to determine CPU identifiers for worker binding"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, DisablesExplicitBindingWhenGpuCandidatesUnavailable)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {}, true);
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedMachineCpusetNullGuard machine_cpuset_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(0U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0, conf.precedence_over_environment_variables);
+  EXPECT_NE(
+      log.find("Unable to determine CPU identifiers for worker binding; "
+               "group_cpu_by_numa ignored"),
       std::string::npos);
 }
 
