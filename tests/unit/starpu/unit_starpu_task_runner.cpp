@@ -167,6 +167,11 @@ batch_collector_job_sample_size(const starpu_server::BatchCollector* collector, 
     "_ZNK13starpu_server14BatchCollector15job_sample_sizeERKSt10shared_ptrINS_"
     "12InferenceJobEE");
 
+extern "C" bool
+batch_collector_should_hold_job(const std::shared_ptr<starpu_server::InferenceJob>& candidate, const std::shared_ptr<starpu_server::InferenceJob>& reference, const std::optional<int>& target_worker) __asm__(
+    "_ZN13starpu_server14BatchCollector15should_hold_jobERKSt10shared_ptrINS_"
+    "12InferenceJobEES5_RKSt8optionalIiE");
+
 namespace starpu_server {
 class StarPUTaskRunnerTestAdapter {
  public:
@@ -360,6 +365,14 @@ class StarPUTaskRunnerTestAdapter {
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job)
   {
     runner->finalize_job_completion(job);
+  }
+
+  static auto should_hold_job(
+      const std::shared_ptr<InferenceJob>& candidate,
+      const std::shared_ptr<InferenceJob>& reference,
+      const std::optional<int>& target_worker) -> bool
+  {
+    return batch_collector_should_hold_job(candidate, reference, target_worker);
   }
 };
 }  // namespace starpu_server
@@ -3192,6 +3205,50 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
 
   assert_failure_result(probe);
   EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsFalseWhenCandidateMissing)
+{
+  auto reference = std::make_shared<starpu_server::InferenceJob>();
+  auto empty_candidate = std::shared_ptr<starpu_server::InferenceJob>();
+
+  EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
+      empty_candidate, reference, std::nullopt));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsTrueForShutdownCandidate)
+{
+  auto reference = std::make_shared<starpu_server::InferenceJob>();
+  auto shutdown_candidate = starpu_server::InferenceJob::make_shutdown_job();
+
+  EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
+      shutdown_candidate, reference, std::nullopt));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsTrueForAggregatedSubJobs)
+{
+  auto reference = std::make_shared<starpu_server::InferenceJob>();
+  auto candidate = std::make_shared<starpu_server::InferenceJob>();
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  starpu_server::InferenceJob::AggregatedSubJob sub{};
+  sub.job = aggregated;
+  sub.batch_size = 1;
+  sub.request_id = 42;
+  candidate->set_aggregated_sub_jobs({sub});
+
+  EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
+      candidate, reference, std::nullopt));
+}
+
+TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsTrueForWorkerMismatch)
+{
+  auto reference = std::make_shared<starpu_server::InferenceJob>();
+  auto candidate = std::make_shared<starpu_server::InferenceJob>();
+  candidate->set_fixed_worker_id(7);
+
+  const std::optional<int> target_worker = 3;
+  EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
+      candidate, reference, target_worker));
 }
 
 TEST(
