@@ -1855,6 +1855,24 @@ TEST_F(
   EXPECT_FALSE(master_job->get_input_memory_holders().empty());
 }
 
+TEST_F(StarPUTaskRunnerFixture, ReleasePendingJobsNoopsWhenNoAdditionalJobs)
+{
+  auto master_job = make_job(
+      50, {torch::tensor({7.0F}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto master_holder = std::make_shared<int>(23);
+  master_job->set_input_memory_holders(
+      {std::shared_ptr<const void>(master_holder, master_holder.get())});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  starpu_server::StarPUTaskRunnerTestAdapter::release_pending_jobs(
+      master_job, pending_jobs);
+
+  EXPECT_TRUE(pending_jobs.empty());
+  EXPECT_FALSE(master_job->get_input_tensors().empty());
+  EXPECT_FALSE(master_job->get_input_memory_holders().empty());
+}
+
 TEST_F(
     StarPUTaskRunnerFixture,
     ConfigureTaskContextThrowsWhenOutputBytesMisaligned)
