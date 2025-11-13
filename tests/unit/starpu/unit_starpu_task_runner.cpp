@@ -818,6 +818,53 @@ TEST_F(
   starpu_server::perf_observer::reset();
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackUsesCodeletStartWhenInferenceStartMissing)
+{
+  starpu_server::perf_observer::reset();
+  TraceLoggerSession session;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_request_id(808);
+  job->set_submission_id(903);
+  job->set_model_name("trace_missing_inference_start");
+  job->set_input_tensors({torch::tensor({1})});
+  job->get_worker_id() = 2;
+  job->get_device_id() = 0;
+  job->get_executed_on() = starpu_server::DeviceType::CPU;
+  populate_trace_timing(*job);
+
+  using clock = std::chrono::high_resolution_clock;
+  const auto base = clock::now();
+  auto& timing = job->timing_info();
+  timing.inference_start_time = clock::time_point{};
+  timing.codelet_start_time = base - std::chrono::microseconds(600);
+  timing.codelet_end_time =
+      timing.codelet_start_time + std::chrono::microseconds(250);
+  timing.callback_start_time =
+      timing.codelet_end_time + std::chrono::microseconds(75);
+  timing.callback_end_time =
+      timing.callback_start_time + std::chrono::microseconds(25);
+
+  runner_->prepare_job_completion_callback(job);
+
+  auto outputs = std::vector<torch::Tensor>{torch::tensor({4})};
+  job->get_on_complete()(outputs, 1.0);
+
+  EXPECT_TRUE(probe.called);
+
+  session.close();
+  const auto trace_content = read_trace_file(session.path());
+  const auto expected_event_fragment =
+      std::format("\"name\":\"{}\",\"cat\":\"batching\"", job->model_name());
+  EXPECT_NE(trace_content.find(expected_event_fragment), std::string::npos)
+      << trace_content;
+
+  starpu_server::perf_observer::reset();
+}
+
 TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 {
   opts_.verbosity = starpu_server::VerbosityLevel::Stats;
