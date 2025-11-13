@@ -2308,6 +2308,112 @@ TEST_F(
 
 TEST_F(
     StarPUTaskRunnerFixture,
+    ConfigureTaskContextThrowsWhenOutputHandleCountMismatch)
+{
+  auto model_config = make_model_config(
+      "single_output_model", {},
+      {make_tensor_config("output0", {3}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto job = make_job(27, {});
+  job->set_output_tensors(
+      {torch::zeros({3}, tensor_opts), torch::zeros({3}, tensor_opts)});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(slot);
+  ASSERT_EQ(output_handles.size(), 1U);
+
+  std::vector<starpu_data_handle_t> input_handles;
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, &output_pool, slot, input_handles, output_handles,
+          /*batch_size=*/1),
+      starpu_server::InvalidInferenceJobException);
+
+  output_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ConfigureTaskContextAllowsUndefinedOutputTensors)
+{
+  auto model_config = make_model_config(
+      "undefined_output_model", {},
+      {make_tensor_config("output0", {2}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  auto job = make_job(28, {});
+  job->set_output_tensors({torch::Tensor()});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(slot);
+  ASSERT_EQ(output_handles.size(), 1U);
+
+  std::vector<starpu_data_handle_t> input_handles;
+  EXPECT_NO_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, &output_pool, slot, input_handles, output_handles,
+          /*batch_size=*/1));
+
+  output_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ConfigureTaskContextThrowsWhenOutputTensorNotCpu)
+{
+  auto model_config = make_model_config(
+      "non_contiguous_output_model", {},
+      {make_tensor_config("output0", {2, 2}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA device not available for non-CPU tensor test";
+  }
+  const auto tensor_opts =
+      torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA);
+  auto gpu_tensor = torch::ones({2, 2}, tensor_opts);
+  EXPECT_FALSE(gpu_tensor.is_cpu());
+
+  auto job = make_job(29, {});
+  job->set_output_tensors({gpu_tensor});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(slot);
+  ASSERT_EQ(output_handles.size(), 1U);
+
+  std::vector<starpu_data_handle_t> input_handles;
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, &output_pool, slot, input_handles, output_handles,
+          /*batch_size=*/1),
+      starpu_server::InvalidInferenceJobException);
+
+  output_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
     HandleSubmissionFailureReleasesSlotsThroughTestHook)
 {
   auto model_config = make_model_config(
