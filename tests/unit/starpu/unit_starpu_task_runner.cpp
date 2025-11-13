@@ -168,6 +168,12 @@ batch_collector_job_sample_size(const starpu_server::BatchCollector* collector, 
     "12InferenceJobEE");
 
 extern "C" bool
+batch_collector_exceeds_sample_limit(const starpu_server::BatchCollector* collector, int64_t accumulated_samples, const std::shared_ptr<starpu_server::InferenceJob>& job, int64_t max_samples_cap) __asm__(
+    "_ZNK13starpu_server14BatchCollector20exceeds_sample_limitElRKSt10shared_"
+    "ptr"
+    "INS_12InferenceJobEEl");
+
+extern "C" bool
 batch_collector_should_hold_job(const std::shared_ptr<starpu_server::InferenceJob>& candidate, const std::shared_ptr<starpu_server::InferenceJob>& reference, const std::optional<int>& target_worker) __asm__(
     "_ZN13starpu_server14BatchCollector15should_hold_jobERKSt10shared_ptrINS_"
     "12InferenceJobEES5_RKSt8optionalIiE");
@@ -373,6 +379,18 @@ class StarPUTaskRunnerTestAdapter {
       const std::optional<int>& target_worker) -> bool
   {
     return batch_collector_should_hold_job(candidate, reference, target_worker);
+  }
+
+  static auto exceeds_sample_limit(
+      StarPUTaskRunner* runner, int64_t accumulated_samples,
+      const std::shared_ptr<InferenceJob>& job, int64_t max_samples_cap) -> bool
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return false;
+    }
+    return batch_collector_exceeds_sample_limit(
+        runner->batch_collector_.get(), accumulated_samples, job,
+        max_samples_cap);
   }
 };
 }  // namespace starpu_server
@@ -2414,6 +2432,22 @@ TEST_F(StarPUTaskRunnerFixture, SampleLimitPerBatchRespectsInputPoolCapacity)
 
   auto pending = runner_->wait_for_next_job();
   ASSERT_EQ(pending, second);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ExceedsSampleLimitReturnsFalseWhenCapNonPositive)
+{
+  auto job = make_job(
+      42, {torch::ones({2, 3}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_NE(runner_, nullptr);
+
+  EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::exceeds_sample_limit(
+      runner_.get(), /*accumulated_samples=*/5, job,
+      /*max_samples_cap=*/0));
+  EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::exceeds_sample_limit(
+      runner_.get(), /*accumulated_samples=*/5, job,
+      /*max_samples_cap=*/-7));
 }
 
 TEST_F(StarPUTaskRunnerFixture, CollectBatchLimitsUsingEffectiveBatchSize)
