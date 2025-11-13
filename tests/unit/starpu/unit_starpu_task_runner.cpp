@@ -4,6 +4,7 @@
 #include <link.h>
 #include <starpu.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -121,6 +122,91 @@ cuda_stream_create_failure_count() -> int
 {
   return g_cuda_stream_create_failure_count.load(std::memory_order_relaxed);
 }
+
+struct SlotHandleLeaseAcquireContext {
+  std::vector<starpu_data_handle_t>* calls = nullptr;
+  std::optional<starpu_data_handle_t> fail_handle;
+  int fail_code = 0;
+};
+
+struct SlotHandleLeaseReleaseContext {
+  std::vector<starpu_data_handle_t>* calls = nullptr;
+};
+
+SlotHandleLeaseAcquireContext* g_slot_handle_lease_acquire_ctx = nullptr;
+SlotHandleLeaseReleaseContext* g_slot_handle_lease_release_ctx = nullptr;
+
+auto
+slot_handle_lease_acquire_callback(
+    starpu_data_handle_t handle, starpu_data_access_mode) -> int
+{
+  if (g_slot_handle_lease_acquire_ctx != nullptr &&
+      g_slot_handle_lease_acquire_ctx->calls != nullptr) {
+    g_slot_handle_lease_acquire_ctx->calls->push_back(handle);
+    if (g_slot_handle_lease_acquire_ctx->fail_handle.has_value() &&
+        handle == g_slot_handle_lease_acquire_ctx->fail_handle.value()) {
+      return g_slot_handle_lease_acquire_ctx->fail_code;
+    }
+  }
+  return 0;
+}
+
+void
+slot_handle_lease_release_callback(starpu_data_handle_t handle)
+{
+  if (g_slot_handle_lease_release_ctx != nullptr &&
+      g_slot_handle_lease_release_ctx->calls != nullptr) {
+    g_slot_handle_lease_release_ctx->calls->push_back(handle);
+  }
+}
+
+struct ScopedSlotHandleLeaseAcquireContext {
+  SlotHandleLeaseAcquireContext* previous = nullptr;
+  SlotHandleLeaseAcquireContext* current = nullptr;
+  starpu_test::ScopedStarpuDataAcquireOverride guard;
+
+  explicit ScopedSlotHandleLeaseAcquireContext(
+      SlotHandleLeaseAcquireContext& ctx)
+      : previous(g_slot_handle_lease_acquire_ctx), current(&ctx),
+        guard(&slot_handle_lease_acquire_callback)
+  {
+    g_slot_handle_lease_acquire_ctx = current;
+  }
+
+  ScopedSlotHandleLeaseAcquireContext(
+      const ScopedSlotHandleLeaseAcquireContext&) = delete;
+  auto operator=(const ScopedSlotHandleLeaseAcquireContext&)
+      -> ScopedSlotHandleLeaseAcquireContext& = delete;
+
+  ~ScopedSlotHandleLeaseAcquireContext()
+  {
+    g_slot_handle_lease_acquire_ctx = previous;
+  }
+};
+
+struct ScopedSlotHandleLeaseReleaseContext {
+  SlotHandleLeaseReleaseContext* previous = nullptr;
+  SlotHandleLeaseReleaseContext* current = nullptr;
+  starpu_test::ScopedStarpuDataReleaseOverride guard;
+
+  explicit ScopedSlotHandleLeaseReleaseContext(
+      SlotHandleLeaseReleaseContext& ctx)
+      : previous(g_slot_handle_lease_release_ctx), current(&ctx),
+        guard(&slot_handle_lease_release_callback)
+  {
+    g_slot_handle_lease_release_ctx = current;
+  }
+
+  ScopedSlotHandleLeaseReleaseContext(
+      const ScopedSlotHandleLeaseReleaseContext&) = delete;
+  auto operator=(const ScopedSlotHandleLeaseReleaseContext&)
+      -> ScopedSlotHandleLeaseReleaseContext& = delete;
+
+  ~ScopedSlotHandleLeaseReleaseContext()
+  {
+    g_slot_handle_lease_release_ctx = previous;
+  }
+};
 }  // namespace
 
 extern "C" cudaError_t
@@ -196,6 +282,11 @@ constexpr std::string_view kCudaCopyBatchFinalizeSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatch8finalizeEv";
 constexpr std::string_view kCudaCopyBatchCtorSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatchC2Eb";
+constexpr std::string_view kSlotHandleLeaseCtorSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_115SlotHandleLeaseC2ESt4spanIKP18_starpu_"
+    "data_stateLm18446744073709551615EE23starpu_data_access_mode";
+constexpr std::string_view kSlotHandleLeaseDtorSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_115SlotHandleLeaseD2Ev";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -372,6 +463,32 @@ resolve_cuda_copy_batch_ctor_fn() -> CudaCopyBatchCtorFn
   static CudaCopyBatchCtorFn fn = [] {
     const auto address = resolve_symbol_address(kCudaCopyBatchCtorSymbolName);
     return address != 0 ? reinterpret_cast<CudaCopyBatchCtorFn>(address)
+                        : nullptr;
+  }();
+  return fn;
+}
+
+using SlotHandleLeaseCtorFn = void (*)(
+    void*, std::span<const starpu_data_handle_t>, starpu_data_access_mode);
+using SlotHandleLeaseDtorFn = void (*)(void*);
+
+auto
+resolve_slot_handle_lease_ctor_fn() -> SlotHandleLeaseCtorFn
+{
+  static SlotHandleLeaseCtorFn fn = [] {
+    const auto address = resolve_symbol_address(kSlotHandleLeaseCtorSymbolName);
+    return address != 0 ? reinterpret_cast<SlotHandleLeaseCtorFn>(address)
+                        : nullptr;
+  }();
+  return fn;
+}
+
+auto
+resolve_slot_handle_lease_dtor_fn() -> SlotHandleLeaseDtorFn
+{
+  static SlotHandleLeaseDtorFn fn = [] {
+    const auto address = resolve_symbol_address(kSlotHandleLeaseDtorSymbolName);
+    return address != 0 ? reinterpret_cast<SlotHandleLeaseDtorFn>(address)
                         : nullptr;
   }();
   return fn;
@@ -1944,6 +2061,78 @@ TEST_F(
       sentinel_pattern.begin(), sentinel_pattern.end()));
 
   input_pool.release(slot);
+}
+
+TEST(SlotHandleLeaseTest, ConstructorSkipsNullHandles)
+{
+  auto ctor_fn = resolve_slot_handle_lease_ctor_fn();
+  auto dtor_fn = resolve_slot_handle_lease_dtor_fn();
+  ASSERT_NE(ctor_fn, nullptr);
+  ASSERT_NE(dtor_fn, nullptr);
+
+  const auto valid_handle =
+      reinterpret_cast<starpu_data_handle_t>(static_cast<uintptr_t>(0x1));
+  std::array<starpu_data_handle_t, 2> handles{nullptr, valid_handle};
+  std::vector<starpu_data_handle_t> acquired;
+  std::vector<starpu_data_handle_t> released;
+
+  SlotHandleLeaseAcquireContext acquire_ctx;
+  acquire_ctx.calls = &acquired;
+  SlotHandleLeaseReleaseContext release_ctx;
+  release_ctx.calls = &released;
+
+  ScopedSlotHandleLeaseAcquireContext acquire_scope(acquire_ctx);
+  ScopedSlotHandleLeaseReleaseContext release_scope(release_ctx);
+
+  alignas(std::max_align_t) std::array<std::byte, 256> storage{};
+  ctor_fn(
+      storage.data(), std::span<const starpu_data_handle_t>(handles), STARPU_W);
+
+  ASSERT_EQ(acquired.size(), 1U);
+  EXPECT_EQ(acquired[0], valid_handle);
+
+  dtor_fn(storage.data());
+  ASSERT_EQ(released.size(), 1U);
+  EXPECT_EQ(released[0], valid_handle);
+}
+
+TEST(SlotHandleLeaseTest, ConstructorPropagatesAcquireFailures)
+{
+  auto ctor_fn = resolve_slot_handle_lease_ctor_fn();
+  ASSERT_NE(ctor_fn, nullptr);
+
+  const auto handle_ok =
+      reinterpret_cast<starpu_data_handle_t>(static_cast<uintptr_t>(0x10));
+  const auto handle_fail =
+      reinterpret_cast<starpu_data_handle_t>(static_cast<uintptr_t>(0x20));
+  std::array handles{handle_ok, handle_fail};
+
+  std::vector<starpu_data_handle_t> acquired;
+  std::vector<starpu_data_handle_t> released;
+
+  SlotHandleLeaseAcquireContext acquire_ctx;
+  acquire_ctx.calls = &acquired;
+  acquire_ctx.fail_handle = handle_fail;
+  acquire_ctx.fail_code = -7;
+  SlotHandleLeaseReleaseContext release_ctx;
+  release_ctx.calls = &released;
+
+  ScopedSlotHandleLeaseAcquireContext acquire_scope(acquire_ctx);
+  ScopedSlotHandleLeaseReleaseContext release_scope(release_ctx);
+
+  alignas(std::max_align_t) std::array<std::byte, 256> storage{};
+  EXPECT_THROW(
+      ctor_fn(
+          storage.data(), std::span<const starpu_data_handle_t>(handles),
+          STARPU_W),
+      starpu_server::StarPUDataAcquireException);
+
+  ASSERT_EQ(acquired.size(), 2U);
+  EXPECT_EQ(acquired[0], handle_ok);
+  EXPECT_EQ(acquired[1], handle_fail);
+
+  ASSERT_EQ(released.size(), 1U);
+  EXPECT_EQ(released[0], handle_ok);
 }
 
 struct CudaCopyBatchMirror {
