@@ -3,6 +3,7 @@
 #include <starpu.h>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -37,6 +38,11 @@ constexpr std::string_view kValidateTensorSymbolName =
 constexpr std::string_view kValidatePrototypeSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_125validate_prototype_"
     "tensorERKN2at6TensorE";
+constexpr std::string_view kSlotManagerCopyJobInputsSymbolName =
+    "_ZN13starpu_server11SlotManager23copy_job_inputs_to_slotERKSt10shared_ptr"
+    "INS_12InferenceJobEERKSt6vectorIS3_SaIS3_EERKS6_IP18_starpu_data_stateSaI"
+    "SC_EERKS6_IPSt4byteSaISI_EERKS6_INS_13InputSlotPool14HostBufferInfoESaIS"
+    "O_EERNS_12_GLOBAL__N_113CudaCopyBatchE";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -160,6 +166,23 @@ resolve_validate_prototype_tensor_fn() -> ValidatePrototypeFn
   }();
   return fn;
 }
+
+using CopyJobInputsFn = void (*)(
+    const std::shared_ptr<starpu_server::InferenceJob>&,
+    const std::vector<std::shared_ptr<starpu_server::InferenceJob>>&,
+    const std::vector<starpu_data_handle_t>&, const std::vector<std::byte*>&,
+    const std::vector<starpu_server::InputSlotPool::HostBufferInfo>&, void*);
+
+auto
+resolve_copy_job_inputs_fn() -> CopyJobInputsFn
+{
+  static CopyJobInputsFn fn = [] {
+    const auto address =
+        resolve_symbol_address(kSlotManagerCopyJobInputsSymbolName);
+    return address != 0 ? reinterpret_cast<CopyJobInputsFn>(address) : nullptr;
+  }();
+  return fn;
+}
 }  // namespace
 
 extern "C" int64_t
@@ -177,6 +200,12 @@ extern "C" bool
 batch_collector_should_hold_job(const std::shared_ptr<starpu_server::InferenceJob>& candidate, const std::shared_ptr<starpu_server::InferenceJob>& reference, const std::optional<int>& target_worker) __asm__(
     "_ZN13starpu_server14BatchCollector15should_hold_jobERKSt10shared_ptrINS_"
     "12InferenceJobEES5_RKSt8optionalIiE");
+
+namespace starpu_server::testing_slot_manager {
+struct CopyBatchStub {
+  alignas(void*) unsigned char storage[sizeof(void*)];
+};
+}  // namespace starpu_server::testing_slot_manager
 
 namespace starpu_server {
 class StarPUTaskRunnerTestAdapter {
@@ -1989,6 +2018,24 @@ TEST_F(StarPUTaskRunnerFixture, ReleasePendingJobsNoopsWhenNoAdditionalJobs)
   EXPECT_TRUE(pending_jobs.empty());
   EXPECT_FALSE(master_job->get_input_tensors().empty());
   EXPECT_FALSE(master_job->get_input_memory_holders().empty());
+}
+
+TEST(SlotManagerCopyJobInputsToSlotTest, ReturnsImmediatelyWhenJobNull)
+{
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  std::vector<starpu_data_handle_t> handles;
+  std::vector<std::byte*> base_ptrs;
+  std::vector<starpu_server::InputSlotPool::HostBufferInfo> buffer_infos;
+  starpu_server::testing_slot_manager::CopyBatchStub copy_batch{};
+
+  auto copy_inputs = resolve_copy_job_inputs_fn();
+  ASSERT_NE(copy_inputs, nullptr);
+
+  EXPECT_NO_THROW(copy_inputs(
+      missing_job, pending_jobs, handles, base_ptrs, buffer_infos,
+      &copy_batch));
 }
 
 TEST_F(
