@@ -276,6 +276,7 @@ bool g_fake_hwloc_enabled = false;
 FakeHwlocSpecification g_fake_hwloc_spec{
     std::vector<unsigned>{0, 1}, std::vector<unsigned>{0, 1}};
 bool g_force_machine_object_null = false;
+std::unordered_set<unsigned> g_fake_null_numa_object_indices;
 
 void cleanup_fake_hwloc_topology();
 void initialize_fake_hwloc_topology();
@@ -959,6 +960,29 @@ class ScopedMachineObjectNullGuard {
   bool previous_;
 };
 
+class ScopedNullNumaObjectGuard {
+ public:
+  explicit ScopedNullNumaObjectGuard(std::vector<unsigned> null_indices = {})
+      : previous_{g_fake_null_numa_object_indices}
+  {
+    g_fake_null_numa_object_indices.clear();
+    g_fake_null_numa_object_indices.insert(
+        null_indices.begin(), null_indices.end());
+  }
+
+  ~ScopedNullNumaObjectGuard() { g_fake_null_numa_object_indices = previous_; }
+
+  ScopedNullNumaObjectGuard(const ScopedNullNumaObjectGuard&) = delete;
+  auto operator=(const ScopedNullNumaObjectGuard&)
+      -> ScopedNullNumaObjectGuard& = delete;
+  ScopedNullNumaObjectGuard(ScopedNullNumaObjectGuard&&) = delete;
+  auto operator=(ScopedNullNumaObjectGuard&&) -> ScopedNullNumaObjectGuard& =
+                                                     delete;
+
+ private:
+  std::unordered_set<unsigned> previous_;
+};
+
 }  // namespace
 
 extern "C" int
@@ -1060,6 +1084,9 @@ hwloc_get_obj_by_depth(hwloc_topology_t topology, int depth, unsigned idx)
         break;
       case 1:
         if (idx < g_fake_hwloc_topology.numa_nodes.size()) {
+          if (g_fake_null_numa_object_indices.contains(idx)) {
+            return nullptr;
+          }
           return &g_fake_hwloc_topology.numa_nodes[idx].obj;
         }
         break;
@@ -1320,6 +1347,58 @@ TEST(ConfigureCpu, ReusesAllCpuIdsWhenGpuCandidatesEmpty)
   EXPECT_EQ(conf.workers_bindid[0], conf.workers_bindid[2]);
   EXPECT_EQ(
       log.find("Unable to determine CPU identifiers for worker binding"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, SkipsNullNumaObjectsDuringBinding)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 1}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullNumaObjectGuard null_guard({1});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+  EXPECT_EQ(1U, conf.workers_bindid[1]);
+}
+
+TEST(ConfigureCpu, RecoversFromAllNullNumaObjects)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 1}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullNumaObjectGuard null_guard({0, 1});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+  EXPECT_EQ(1U, conf.workers_bindid[1]);
+  EXPECT_EQ(
+      log.find("Unable to detect NUMA nodes; group_cpu_by_numa ignored"),
       std::string::npos);
 }
 
