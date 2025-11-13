@@ -1,3 +1,5 @@
+#include <cuda_runtime_api.h>
+#include <dlfcn.h>
 #include <elf.h>
 #include <link.h>
 #include <starpu.h>
@@ -31,6 +33,73 @@ using starpu_server::ErrorLevel;
 using starpu_server::expected_log_line;
 
 namespace {
+using CudaStreamSynchronizeFn = cudaError_t (*)(cudaStream_t);
+
+auto
+resolve_real_cuda_stream_synchronize() -> CudaStreamSynchronizeFn
+{
+  static CudaStreamSynchronizeFn fn = [] {
+    void* symbol = dlsym(RTLD_NEXT, "cudaStreamSynchronize");
+    if (symbol == nullptr) {
+      symbol = dlsym(RTLD_DEFAULT, "cudaStreamSynchronize");
+    }
+    return reinterpret_cast<CudaStreamSynchronizeFn>(symbol);
+  }();
+  return fn;
+}
+
+std::atomic<bool> g_force_cuda_stream_sync_failure = false;
+std::atomic<void*> g_cuda_stream_sync_failure_target = nullptr;
+std::atomic<int> g_cuda_stream_sync_failure_count = 0;
+
+class ScopedCudaStreamSyncFailure {
+ public:
+  explicit ScopedCudaStreamSyncFailure(cudaStream_t target)
+  {
+    g_cuda_stream_sync_failure_count.store(0, std::memory_order_relaxed);
+    g_cuda_stream_sync_failure_target.store(
+        reinterpret_cast<void*>(target), std::memory_order_release);
+    g_force_cuda_stream_sync_failure.store(true, std::memory_order_release);
+  }
+
+  ScopedCudaStreamSyncFailure(const ScopedCudaStreamSyncFailure&) = delete;
+  auto operator=(const ScopedCudaStreamSyncFailure&)
+      -> ScopedCudaStreamSyncFailure& = delete;
+
+  ~ScopedCudaStreamSyncFailure()
+  {
+    g_force_cuda_stream_sync_failure.store(false, std::memory_order_release);
+    g_cuda_stream_sync_failure_target.store(nullptr, std::memory_order_release);
+  }
+};
+
+auto
+cuda_stream_sync_failure_count() -> int
+{
+  return g_cuda_stream_sync_failure_count.load(std::memory_order_relaxed);
+}
+}  // namespace
+
+extern "C" cudaError_t
+cudaStreamSynchronize(cudaStream_t stream)
+{
+  static auto real_fn = resolve_real_cuda_stream_synchronize();
+  if (g_force_cuda_stream_sync_failure.load(std::memory_order_acquire)) {
+    const auto target =
+        g_cuda_stream_sync_failure_target.load(std::memory_order_acquire);
+    if (target == nullptr || target == reinterpret_cast<void*>(stream)) {
+      g_cuda_stream_sync_failure_count.fetch_add(1, std::memory_order_relaxed);
+      return cudaErrorUnknown;
+    }
+  }
+  if (real_fn == nullptr) {
+    return cudaErrorUnknown;
+  }
+  return real_fn(stream);
+}
+
+namespace {
+
 struct VectorResizeSpecShim {
   std::size_t element_count;
   std::size_t byte_count;
@@ -60,6 +129,8 @@ constexpr std::string_view kResizeStarpuVectorInterfaceSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_130resize_starpu_vector_"
     "interfaceEP23starpu_"
     "vector_interfaceNS0_16VectorResizeSpecEb";
+constexpr std::string_view kCudaCopyBatchFinalizeSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatch8finalizeEv";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -210,6 +281,20 @@ resolve_resize_starpu_vector_interface_fn() -> ResizeStarpuVectorInterfaceFn
     return address != 0
                ? reinterpret_cast<ResizeStarpuVectorInterfaceFn>(address)
                : nullptr;
+  }();
+  return fn;
+}
+
+using CudaCopyBatchFinalizeFn = void (*)(void*);
+
+auto
+resolve_cuda_copy_batch_finalize_fn() -> CudaCopyBatchFinalizeFn
+{
+  static CudaCopyBatchFinalizeFn fn = [] {
+    const auto address =
+        resolve_symbol_address(kCudaCopyBatchFinalizeSymbolName);
+    return address != 0 ? reinterpret_cast<CudaCopyBatchFinalizeFn>(address)
+                        : nullptr;
   }();
   return fn;
 }
@@ -1781,6 +1866,38 @@ TEST_F(
       sentinel_pattern.begin(), sentinel_pattern.end()));
 
   input_pool.release(slot);
+}
+
+TEST(CudaCopyBatchTest, FinalizeDisablesAsyncCopyWhenStreamSyncFails)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA runtime unavailable for finalize test";
+  }
+
+  auto finalize_fn = resolve_cuda_copy_batch_finalize_fn();
+  ASSERT_NE(finalize_fn, nullptr);
+
+  cudaStream_t stream = nullptr;
+  ASSERT_EQ(
+      cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), cudaSuccess);
+
+  struct CudaCopyBatchMirror {
+    cudaStream_t stream;
+    bool enabled;
+    bool pending;
+  };
+  CudaCopyBatchMirror batch{stream, true, true};
+
+  {
+    ScopedCudaStreamSyncFailure guard(stream);
+    finalize_fn(&batch);
+  }
+
+  EXPECT_FALSE(batch.enabled);
+  EXPECT_FALSE(batch.pending);
+  EXPECT_GE(cuda_stream_sync_failure_count(), 1);
+
+  EXPECT_EQ(cudaStreamDestroy(stream), cudaSuccess);
 }
 
 TEST_F(
