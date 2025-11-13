@@ -255,6 +255,119 @@ resolve_estimate_non_cpu_workers() -> EstimateNonCpuWorkersFn
   return fn;
 }
 
+struct FakeHwlocObject {
+  hwloc_obj obj{};
+  hwloc_bitmap_t cpuset = nullptr;
+};
+
+struct FakeHwlocTopologyData {
+  std::vector<FakeHwlocObject> numa_nodes;
+  std::vector<FakeHwlocObject> processing_units;
+  FakeHwlocObject machine;
+};
+
+FakeHwlocTopologyData g_fake_hwloc_topology;
+bool g_fake_hwloc_enabled = false;
+
+auto
+fake_topology_handle() -> hwloc_topology_t
+{
+  return reinterpret_cast<hwloc_topology_t>(&g_fake_hwloc_topology);
+}
+
+void
+cleanup_fake_hwloc_object(FakeHwlocObject& object)
+{
+  if (object.cpuset != nullptr) {
+    hwloc_bitmap_free(object.cpuset);
+    object.cpuset = nullptr;
+    object.obj.cpuset = nullptr;
+  }
+}
+
+void
+cleanup_fake_hwloc_topology()
+{
+  for (auto& node : g_fake_hwloc_topology.numa_nodes) {
+    cleanup_fake_hwloc_object(node);
+  }
+  g_fake_hwloc_topology.numa_nodes.clear();
+
+  for (auto& pu : g_fake_hwloc_topology.processing_units) {
+    cleanup_fake_hwloc_object(pu);
+  }
+  g_fake_hwloc_topology.processing_units.clear();
+
+  cleanup_fake_hwloc_object(g_fake_hwloc_topology.machine);
+}
+
+auto
+make_cpuset_for_cpu(unsigned cpu_id) -> hwloc_bitmap_t
+{
+  hwloc_bitmap_t bitmap = hwloc_bitmap_alloc();
+  if (bitmap == nullptr) {
+    throw std::runtime_error("Failed to allocate hwloc bitmap");
+  }
+  hwloc_bitmap_zero(bitmap);
+  hwloc_bitmap_set(bitmap, static_cast<int>(cpu_id));
+  return bitmap;
+}
+
+void
+initialize_fake_hwloc_topology()
+{
+  cleanup_fake_hwloc_topology();
+
+  g_fake_hwloc_topology.numa_nodes.reserve(2);
+  g_fake_hwloc_topology.processing_units.reserve(2);
+
+  auto& numa0 = g_fake_hwloc_topology.numa_nodes.emplace_back();
+  numa0.cpuset = make_cpuset_for_cpu(0);
+  numa0.obj.cpuset = numa0.cpuset;
+  numa0.obj.os_index = 0;
+  numa0.obj.logical_index = 0;
+
+  auto& numa1 = g_fake_hwloc_topology.numa_nodes.emplace_back();
+  numa1.cpuset = make_cpuset_for_cpu(1);
+  numa1.obj.cpuset = numa1.cpuset;
+  numa1.obj.os_index = 1;
+  numa1.obj.logical_index = 1;
+
+  for (unsigned cpu_id = 0; cpu_id < 2; ++cpu_id) {
+    auto& pu = g_fake_hwloc_topology.processing_units.emplace_back();
+    pu.obj.os_index = cpu_id;
+    pu.obj.logical_index = cpu_id;
+  }
+
+  g_fake_hwloc_topology.machine.cpuset = hwloc_bitmap_alloc();
+  if (g_fake_hwloc_topology.machine.cpuset == nullptr) {
+    throw std::runtime_error("Failed to allocate machine cpuset");
+  }
+  hwloc_bitmap_zero(g_fake_hwloc_topology.machine.cpuset);
+  hwloc_bitmap_set(g_fake_hwloc_topology.machine.cpuset, 0);
+  hwloc_bitmap_set(g_fake_hwloc_topology.machine.cpuset, 1);
+  g_fake_hwloc_topology.machine.obj.cpuset =
+      g_fake_hwloc_topology.machine.cpuset;
+  g_fake_hwloc_topology.machine.obj.os_index = 0;
+  g_fake_hwloc_topology.machine.obj.logical_index = 0;
+}
+
+void
+enable_fake_hwloc_mode()
+{
+  g_fake_hwloc_enabled = true;
+  initialize_fake_hwloc_topology();
+}
+
+void
+disable_fake_hwloc_mode()
+{
+  if (g_fake_hwloc_enabled) {
+    cleanup_fake_hwloc_topology();
+    g_fake_hwloc_enabled = false;
+  }
+}
+
 auto
 resolve_real_setenv() -> SetenvFn
 {
@@ -676,7 +789,179 @@ class StarPUSetupInitStubTest : public ::testing::Test {
   }
 };
 
+class FakeHwlocTopologyGuard {
+ public:
+  FakeHwlocTopologyGuard()
+  {
+    enable_fake_hwloc_mode();
+    active_ = true;
+  }
+
+  ~FakeHwlocTopologyGuard() { disable(); }
+
+  void disable()
+  {
+    if (active_) {
+      disable_fake_hwloc_mode();
+      active_ = false;
+    }
+  }
+
+  FakeHwlocTopologyGuard(const FakeHwlocTopologyGuard&) = delete;
+  auto operator=(const FakeHwlocTopologyGuard&) -> FakeHwlocTopologyGuard& =
+                                                       delete;
+  FakeHwlocTopologyGuard(FakeHwlocTopologyGuard&&) = delete;
+  auto operator=(FakeHwlocTopologyGuard&&) -> FakeHwlocTopologyGuard& = delete;
+
+ private:
+  bool active_ = false;
+};
+
+auto
+starpu_init_with_fake_hwloc_capture(struct starpu_conf* conf) -> int
+{
+  disable_fake_hwloc_mode();
+  return capturing_starpu_init(conf);
+}
+
+class FakeHwlocStarpuInitGuard {
+ public:
+  FakeHwlocStarpuInitGuard()
+  {
+    g_captured_starpu_conf = {};
+    starpu_server::StarPUSetup::set_starpu_init_fn(
+        &starpu_init_with_fake_hwloc_capture);
+  }
+
+  ~FakeHwlocStarpuInitGuard()
+  {
+    starpu_server::StarPUSetup::reset_starpu_init_fn();
+  }
+
+  FakeHwlocStarpuInitGuard(const FakeHwlocStarpuInitGuard&) = delete;
+  auto operator=(const FakeHwlocStarpuInitGuard&) -> FakeHwlocStarpuInitGuard& =
+                                                         delete;
+  FakeHwlocStarpuInitGuard(FakeHwlocStarpuInitGuard&&) = delete;
+  auto operator=(FakeHwlocStarpuInitGuard&&) -> FakeHwlocStarpuInitGuard& =
+                                                    delete;
+};
+
 }  // namespace
+
+extern "C" int
+hwloc_topology_init(hwloc_topology_t* topology)
+{
+  if (g_fake_hwloc_enabled) {
+    if (topology == nullptr) {
+      errno = EINVAL;
+      return -1;
+    }
+    *topology = fake_topology_handle();
+    return 0;
+  }
+  if (auto fn = resolve_real_hwloc_topology_init(); fn != nullptr) {
+    return fn(topology);
+  }
+  return -1;
+}
+
+extern "C" int
+hwloc_topology_load(hwloc_topology_t topology)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    return 0;
+  }
+  if (auto fn = resolve_real_hwloc_topology_load(); fn != nullptr) {
+    return fn(topology);
+  }
+  return -1;
+}
+
+extern "C" void
+hwloc_topology_destroy(hwloc_topology_t topology)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    cleanup_fake_hwloc_topology();
+    return;
+  }
+  if (auto fn = resolve_real_hwloc_topology_destroy(); fn != nullptr) {
+    fn(topology);
+  }
+}
+
+extern "C" int
+hwloc_get_type_depth(hwloc_topology_t topology, hwloc_obj_type_t type)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    switch (type) {
+      case HWLOC_OBJ_MACHINE:
+        return 0;
+      case HWLOC_OBJ_NUMANODE:
+        return 1;
+      case HWLOC_OBJ_PU:
+        return 2;
+      default:
+        return HWLOC_TYPE_DEPTH_UNKNOWN;
+    }
+  }
+  if (auto fn = resolve_real_hwloc_get_type_depth(); fn != nullptr) {
+    return fn(topology, type);
+  }
+  return HWLOC_TYPE_DEPTH_UNKNOWN;
+}
+
+extern "C" unsigned
+hwloc_get_nbobjs_by_depth(hwloc_topology_t topology, int depth)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    switch (depth) {
+      case 0:
+        return 1;
+      case 1:
+        return static_cast<unsigned>(g_fake_hwloc_topology.numa_nodes.size());
+      case 2:
+        return static_cast<unsigned>(
+            g_fake_hwloc_topology.processing_units.size());
+      default:
+        return 0;
+    }
+  }
+  if (auto fn = resolve_real_hwloc_get_nbobjs_by_depth(); fn != nullptr) {
+    return fn(topology, depth);
+  }
+  return 0;
+}
+
+extern "C" hwloc_obj_t
+hwloc_get_obj_by_depth(hwloc_topology_t topology, int depth, unsigned idx)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    switch (depth) {
+      case 0:
+        if (idx == 0U) {
+          return &g_fake_hwloc_topology.machine.obj;
+        }
+        break;
+      case 1:
+        if (idx < g_fake_hwloc_topology.numa_nodes.size()) {
+          return &g_fake_hwloc_topology.numa_nodes[idx].obj;
+        }
+        break;
+      case 2:
+        if (idx < g_fake_hwloc_topology.processing_units.size()) {
+          return &g_fake_hwloc_topology.processing_units[idx].obj;
+        }
+        break;
+      default:
+        break;
+    }
+    return nullptr;
+  }
+  if (auto fn = resolve_real_hwloc_get_obj_by_depth(); fn != nullptr) {
+    return fn(topology, depth, idx);
+  }
+  return nullptr;
+}
 
 extern "C" int
 starpu_worker_get_id()
@@ -799,6 +1084,29 @@ TEST(ConfigureCpu, FallbacksToAllCpuIdsWhenNoGpuCandidates)
   EXPECT_EQ(1, captured.precedence_over_environment_variables);
   EXPECT_EQ(0U, captured.workers_bindid[0]);
   EXPECT_EQ(0U, captured.workers_bindid[1]);
+}
+
+TEST(ConfigureCpu, LogsCommaSeparatedBindingList)
+{
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cout};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  EXPECT_NE(
+      log.find("Configured 2 CPU worker(s) grouped by NUMA nodes "
+               "(binding CPUs: 0, 1)"),
+      std::string::npos);
 }
 
 TEST_F(StarPUSetupInitStubTest, ParseUnsignedAcceptsMaxUnsignedConfigValue)
