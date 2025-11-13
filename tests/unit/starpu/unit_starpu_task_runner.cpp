@@ -1507,6 +1507,28 @@ TEST_F(
 }
 
 TEST_F(
+    StarPUTaskRunnerFixture, ValidateBatchAndCopyInputsHandlesJobsWithoutInputs)
+{
+  starpu_server::RuntimeConfig pool_config{};
+  pool_config.models = {make_model_config("empty_inputs", {}, {})};
+  pool_config.batching.pool_size = 1;
+  pool_config.batching.max_batch_size = 1;
+
+  starpu_server::InputSlotPool input_pool(pool_config, /*slots=*/1);
+  const int slot = input_pool.acquire();
+
+  auto job = make_job(712, {});
+  const int64_t batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs_custom(
+          runner_.get(), job, /*batch=*/1, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+  EXPECT_TRUE(input_pool.base_ptrs(slot).empty());
+  EXPECT_TRUE(input_pool.host_buffer_infos(slot).empty());
+
+  input_pool.release(slot);
+}
+
+TEST_F(
     StarPUTaskRunnerFixture,
     ValidateBatchAndCopyInputsThrowsOnBaseBufferMismatch)
 {
@@ -1699,6 +1721,65 @@ TEST_F(
       starpu_server::InputPoolCapacityException);
 
   restore_vector_interfaces(snapshots);
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsAbortsRemainingCopiesAfterFailure)
+{
+  opts_.devices.use_cuda = false;
+  auto model_config = make_model_config(
+      "multi_input",
+      {make_tensor_config("input0", {3}, at::kFloat),
+       make_tensor_config("input1", {3}, at::kFloat),
+       make_tensor_config("input2", {3}, at::kFloat)},
+      {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto valid_a =
+      torch::tensor(std::vector<float>{1.0F, 2.0F, 3.0F}, tensor_opts);
+  torch::Tensor undefined_tensor;
+  ASSERT_FALSE(undefined_tensor.defined());
+  auto valid_b =
+      torch::tensor(std::vector<float>{4.0F, 5.0F, 6.0F}, tensor_opts);
+
+  auto job = make_job(
+      714, {valid_a, undefined_tensor, valid_b},
+      {at::kFloat, at::kFloat, at::kFloat});
+  const auto& job_inputs = job->get_input_tensors();
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& base_ptrs = input_pool.base_ptrs(slot);
+  const auto& buffer_infos = input_pool.host_buffer_infos(slot);
+  ASSERT_EQ(base_ptrs.size(), job_inputs.size());
+
+  constexpr unsigned char kSentinel = 0x7F;
+  for (size_t idx = 0; idx < base_ptrs.size(); ++idx) {
+    std::memset(base_ptrs[idx], kSentinel, buffer_infos[idx].bytes);
+  }
+
+  const auto last_tensor_bytes =
+      static_cast<std::size_t>(job_inputs.back().nbytes());
+  ASSERT_GT(last_tensor_bytes, 0U);
+  ASSERT_GE(buffer_infos.back().bytes, last_tensor_bytes);
+  std::vector<std::byte> sentinel_pattern(
+      last_tensor_bytes, static_cast<std::byte>(kSentinel));
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
+      starpu_server::InvalidInputTensorException);
+
+  auto* last_destination = base_ptrs.back();
+  ASSERT_NE(last_destination, nullptr);
+  EXPECT_TRUE(std::equal(
+      last_destination, last_destination + last_tensor_bytes,
+      sentinel_pattern.begin(), sentinel_pattern.end()));
+
   input_pool.release(slot);
 }
 
