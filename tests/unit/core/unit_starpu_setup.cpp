@@ -275,6 +275,7 @@ FakeHwlocTopologyData g_fake_hwloc_topology;
 bool g_fake_hwloc_enabled = false;
 FakeHwlocSpecification g_fake_hwloc_spec{
     std::vector<unsigned>{0, 1}, std::vector<unsigned>{0, 1}};
+bool g_force_machine_object_null = false;
 
 void cleanup_fake_hwloc_topology();
 void initialize_fake_hwloc_topology();
@@ -938,6 +939,26 @@ class ScopedMachineCpusetNullGuard {
   hwloc_bitmap_t previous_obj_cpuset_;
 };
 
+class ScopedMachineObjectNullGuard {
+ public:
+  ScopedMachineObjectNullGuard() : previous_{g_force_machine_object_null}
+  {
+    g_force_machine_object_null = true;
+  }
+
+  ~ScopedMachineObjectNullGuard() { g_force_machine_object_null = previous_; }
+
+  ScopedMachineObjectNullGuard(const ScopedMachineObjectNullGuard&) = delete;
+  auto operator=(const ScopedMachineObjectNullGuard&)
+      -> ScopedMachineObjectNullGuard& = delete;
+  ScopedMachineObjectNullGuard(ScopedMachineObjectNullGuard&&) = delete;
+  auto operator=(ScopedMachineObjectNullGuard&&)
+      -> ScopedMachineObjectNullGuard& = delete;
+
+ private:
+  bool previous_;
+};
+
 }  // namespace
 
 extern "C" int
@@ -1030,6 +1051,9 @@ hwloc_get_obj_by_depth(hwloc_topology_t topology, int depth, unsigned idx)
   if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
     switch (depth) {
       case 0:
+        if (g_force_machine_object_null) {
+          return nullptr;
+        }
         if (idx == 0U) {
           return &g_fake_hwloc_topology.machine.obj;
         }
@@ -1305,6 +1329,36 @@ TEST(ConfigureCpu, DisablesExplicitBindingWhenGpuCandidatesUnavailable)
   FakeHwlocTopologyGuard fake_hwloc_guard;
   FakeHwlocStarpuInitGuard init_guard;
   ScopedMachineCpusetNullGuard machine_cpuset_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(0U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0, conf.precedence_over_environment_variables);
+  EXPECT_NE(
+      log.find("Unable to determine CPU identifiers for worker binding; "
+               "group_cpu_by_numa ignored"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, HandlesMissingMachineObjectDuringFallback)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {}, true);
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedMachineObjectNullGuard machine_object_guard;
 
   starpu_server::RuntimeConfig opts;
   opts.devices.group_cpu_by_numa = true;
