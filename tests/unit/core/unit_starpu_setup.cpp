@@ -277,6 +277,7 @@ FakeHwlocSpecification g_fake_hwloc_spec{
     std::vector<unsigned>{0, 1}, std::vector<unsigned>{0, 1}};
 bool g_force_machine_object_null = false;
 std::unordered_set<unsigned> g_fake_null_numa_object_indices;
+std::unordered_set<unsigned> g_fake_null_pu_object_indices;
 
 void cleanup_fake_hwloc_topology();
 void initialize_fake_hwloc_topology();
@@ -983,6 +984,33 @@ class ScopedNullNumaObjectGuard {
   std::unordered_set<unsigned> previous_;
 };
 
+class ScopedNullProcessingUnitGuard {
+ public:
+  explicit ScopedNullProcessingUnitGuard(
+      std::vector<unsigned> null_indices = {})
+      : previous_{g_fake_null_pu_object_indices}
+  {
+    g_fake_null_pu_object_indices.clear();
+    g_fake_null_pu_object_indices.insert(
+        null_indices.begin(), null_indices.end());
+  }
+
+  ~ScopedNullProcessingUnitGuard()
+  {
+    g_fake_null_pu_object_indices = previous_;
+  }
+
+  ScopedNullProcessingUnitGuard(const ScopedNullProcessingUnitGuard&) = delete;
+  auto operator=(const ScopedNullProcessingUnitGuard&)
+      -> ScopedNullProcessingUnitGuard& = delete;
+  ScopedNullProcessingUnitGuard(ScopedNullProcessingUnitGuard&&) = delete;
+  auto operator=(ScopedNullProcessingUnitGuard&&)
+      -> ScopedNullProcessingUnitGuard& = delete;
+
+ private:
+  std::unordered_set<unsigned> previous_;
+};
+
 }  // namespace
 
 extern "C" int
@@ -1092,6 +1120,9 @@ hwloc_get_obj_by_depth(hwloc_topology_t topology, int depth, unsigned idx)
         break;
       case 2:
         if (idx < g_fake_hwloc_topology.processing_units.size()) {
+          if (g_fake_null_pu_object_indices.contains(idx)) {
+            return nullptr;
+          }
           return &g_fake_hwloc_topology.processing_units[idx].obj;
         }
         break;
@@ -1400,6 +1431,50 @@ TEST(ConfigureCpu, RecoversFromAllNullNumaObjects)
   EXPECT_EQ(
       log.find("Unable to detect NUMA nodes; group_cpu_by_numa ignored"),
       std::string::npos);
+}
+
+TEST(ConfigureCpu, NullProcessingUnitsReduceGpuCandidates)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullProcessingUnitGuard null_guard({1});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+  EXPECT_EQ(0U, conf.workers_bindid[1]);
+}
+
+TEST(ConfigureCpu, FallbacksToMachineCpuWhenProcessingUnitsNull)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {0});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullProcessingUnitGuard null_guard({0});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+  EXPECT_EQ(0U, conf.workers_bindid[1]);
 }
 
 TEST(ConfigureCpu, DisablesExplicitBindingWhenGpuCandidatesUnavailable)
