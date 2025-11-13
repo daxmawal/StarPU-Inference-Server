@@ -43,6 +43,10 @@ constexpr std::string_view kSlotManagerCopyJobInputsSymbolName =
     "INS_12InferenceJobEERKSt6vectorIS3_SaIS3_EERKS6_IP18_starpu_data_stateSaI"
     "SC_EERKS6_IPSt4byteSaISI_EERKS6_INS_13InputSlotPool14HostBufferInfoESaIS"
     "O_EERNS_12_GLOBAL__N_113CudaCopyBatchE";
+constexpr std::string_view kSlotManagerValidateBatchSymbolName =
+    "_ZNK13starpu_server11SlotManager30validate_batch_and_copy_"
+    "inputsERKSt10shared_ptr"
+    "INS_12InferenceJobEElRKNS_16StarPUTaskRunner13PoolResourcesE";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -183,6 +187,7 @@ resolve_copy_job_inputs_fn() -> CopyJobInputsFn
   }();
   return fn;
 }
+
 }  // namespace
 
 extern "C" int64_t
@@ -285,6 +290,36 @@ class StarPUTaskRunnerTestAdapter {
     pools.input_pool = input_pool;
     pools.input_slot = input_slot;
     return runner->validate_batch_and_copy_inputs(job, pools);
+  }
+
+  static auto validate_batch_and_copy_inputs_with_pools(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      int64_t batch, const StarPUTaskRunner::PoolResources& pools) -> int64_t
+  {
+    using SlotManagerValidateFn = int64_t (*)(
+        const SlotManager*, const std::shared_ptr<InferenceJob>&, int64_t,
+        const StarPUTaskRunner::PoolResources&);
+    static SlotManagerValidateFn validate_fn = [] {
+      const auto address =
+          resolve_symbol_address(kSlotManagerValidateBatchSymbolName);
+      return address != 0 ? reinterpret_cast<SlotManagerValidateFn>(address)
+                          : nullptr;
+    }();
+    if (runner == nullptr || runner->slot_manager_ == nullptr ||
+        validate_fn == nullptr) {
+      return -1;
+    }
+    return validate_fn(runner->slot_manager_.get(), job, batch, pools);
+  }
+
+  static auto validate_batch_and_copy_inputs_custom(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      int64_t batch, InputSlotPool* input_pool, int input_slot) -> int64_t
+  {
+    StarPUTaskRunner::PoolResources pools{};
+    pools.input_pool = input_pool;
+    pools.input_slot = input_slot;
+    return validate_batch_and_copy_inputs_with_pools(runner, job, batch, pools);
   }
 
   static auto configure_task_context(
@@ -1344,6 +1379,102 @@ TEST_F(StarPUTaskRunnerFixture, SubmitInferenceTaskHandlesStarpuSubmitFailures)
   ASSERT_TRUE(maybe_output_slot.has_value());
   EXPECT_EQ(*maybe_output_slot, 0);
   starpu_setup_->output_pool().release(*maybe_output_slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsReturnsBatchWhenPoolMissing)
+{
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto job = make_job(710, {torch::ones({1}, tensor_opts)}, {at::kFloat});
+
+  constexpr int64_t kExpectedBatch = 3;
+
+  const auto batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs_custom(
+          runner_.get(), job, kExpectedBatch, /*input_pool=*/nullptr,
+          /*input_slot=*/-1);
+  EXPECT_EQ(batch, kExpectedBatch);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsOnBaseBufferMismatch)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {1}, at::kFloat)}, {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto job = make_job(711, {torch::ones({1}, tensor_opts)}, {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto original_infos = input_pool.host_buffer_infos(slot);
+  auto& mutable_infos =
+      const_cast<std::vector<starpu_server::InputSlotPool::HostBufferInfo>&>(
+          input_pool.host_buffer_infos(slot));
+  if (mutable_infos.empty()) {
+    input_pool.release(slot);
+    FAIL() << "Input slot must expose buffer metadata";
+  }
+  mutable_infos.pop_back();
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs_custom(
+              runner_.get(), job, /*batch=*/1, &input_pool, slot),
+      starpu_server::InputPoolMismatchException);
+
+  mutable_infos = original_infos;
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenBatchOutsidePoolCapacity)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {1}, at::kFloat)}, {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto job = make_job(712, {torch::ones({1}, tensor_opts)}, {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs_custom(
+              runner_.get(), job, /*batch=*/0, &input_pool, slot),
+      starpu_server::InputPoolCapacityException);
+
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ValidateBatchAndCopyInputsRejectsUndefinedTensor)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {2, 2}, at::kFloat)}, {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  torch::Tensor undefined;
+  ASSERT_FALSE(undefined.defined());
+  auto job = make_job(713, {undefined}, {at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs_custom(
+              runner_.get(), job, /*batch=*/1, &input_pool, slot),
+      starpu_server::InvalidInputTensorException);
+
+  input_pool.release(slot);
 }
 
 TEST_F(
