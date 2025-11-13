@@ -2955,6 +2955,59 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchIgnoresNullFirstJob)
 
 TEST(
     StarPUTaskRunnerTestAdapter,
+    PropagateCompletionToSubJobsNoopsWhenAggregatedJobNull)
+{
+  const auto outputs = std::vector<torch::Tensor>{
+      torch::tensor({1.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+  EXPECT_NO_THROW(starpu_server::StarPUTaskRunnerTestAdapter::
+                      propagate_completion_to_sub_jobs(nullptr, outputs, 5.0));
+}
+
+TEST(
+    StarPUTaskRunnerTestAdapter, PropagateCompletionToSubJobsNoopsWhenNoSubJobs)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  aggregated->set_aggregated_sub_jobs({});
+
+  const auto outputs = std::vector<torch::Tensor>{
+      torch::tensor({2.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 3.5);
+
+  EXPECT_TRUE(aggregated->aggregated_sub_jobs().empty());
+}
+
+TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionToSubJobsSkipsExpiredSubJobPointers)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  bool callback_invoked = false;
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  {
+    auto expired = std::make_shared<starpu_server::InferenceJob>();
+    starpu_server::InferenceJob::AggregatedSubJob entry{};
+    entry.job = expired;
+    entry.callback = [&](const std::vector<torch::Tensor>&, double) {
+      callback_invoked = true;
+    };
+    entry.batch_size = 2;
+    sub_jobs.push_back(entry);
+  }  // expired shared_ptr goes out of scope and invalidates weak_ptr
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto outputs = std::vector<torch::Tensor>{
+      torch::tensor({3.0F, 4.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 4.5);
+
+  EXPECT_FALSE(callback_invoked);
+}
+
+TEST(
+    StarPUTaskRunnerTestAdapter,
     PropagateCompletionToSubJobsDistributesSlicesAndMetadata)
 {
   namespace internal = starpu_server::task_runner_internal;
