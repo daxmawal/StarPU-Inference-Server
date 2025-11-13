@@ -2,6 +2,7 @@
 #include <link.h>
 #include <starpu.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include "core/inference_task.hpp"
 #include "exceptions.hpp"
 #include "starpu_task_worker/task_runner_internal.hpp"
+#include "support/starpu_data_interface_override.hpp"
 #include "support/starpu_task_submit_override.hpp"
 #include "test_starpu_task_runner.hpp"
 #include "utils/batching_trace_logger.hpp"
@@ -581,6 +583,30 @@ restore_vector_interfaces(const std::vector<VectorInterfaceSnapshot>& snapshots)
 }
 
 std::atomic<int> submit_override_calls = 0;
+
+std::atomic<int> missing_interface_override_hits = 0;
+starpu_data_handle_t missing_interface_override_handle = nullptr;
+
+auto
+missing_interface_override(starpu_data_handle_t handle, unsigned node) -> void*
+{
+  if (handle != missing_interface_override_handle) {
+    return starpu_test::call_real_starpu_data_get_interface_on_node(
+        handle, node);
+  }
+  if (node == 0) {
+    return starpu_test::call_real_starpu_data_get_interface_on_node(
+        handle, node);
+  }
+  missing_interface_override_hits.fetch_add(1, std::memory_order_relaxed);
+  return nullptr;
+}
+
+auto
+two_memory_nodes_override() -> unsigned
+{
+  return 2;
+}
 
 auto
 AlwaysFailStarpuSubmit(starpu_task*) -> int
@@ -2338,6 +2364,114 @@ TEST_F(
           /*batch_size=*/1),
       starpu_server::InvalidInferenceJobException);
 
+  output_pool.release(slot);
+}
+
+TEST_F(StarPUTaskRunnerFixture, ConfigureTaskContextThrowsWhenOutputHandleNull)
+{
+  auto model_config = make_model_config(
+      "null_output_handle_model", {},
+      {make_tensor_config("output0", {3}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+
+  auto job = make_job(30, {});
+  job->set_output_tensors(
+      {torch::zeros({3}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  std::vector<starpu_data_handle_t> input_handles;
+  std::vector<starpu_data_handle_t> output_handles = {nullptr};
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, nullptr, -1, input_handles, output_handles,
+          /*batch_size=*/1),
+      starpu_server::StarPUDataAcquireException);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ConfigureTaskContextThrowsWhenHandleNotVectorInterface)
+{
+  auto model_config = make_model_config(
+      "non_vector_handle_model", {},
+      {make_tensor_config("output0", {2}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+
+  auto job = make_job(31, {});
+  job->set_output_tensors(
+      {torch::zeros({2}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  int non_vector_value = 0;
+  starpu_data_handle_t non_vector_handle = nullptr;
+  starpu_variable_data_register(
+      &non_vector_handle, STARPU_MAIN_RAM,
+      reinterpret_cast<uintptr_t>(&non_vector_value), sizeof(non_vector_value));
+  ASSERT_NE(non_vector_handle, nullptr);
+
+  std::vector<starpu_data_handle_t> input_handles;
+  std::vector<starpu_data_handle_t> output_handles = {non_vector_handle};
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+          task, nullptr, -1, nullptr, -1, input_handles, output_handles,
+          /*batch_size=*/1),
+      starpu_server::StarPUDataAcquireException);
+
+  starpu_data_unregister(non_vector_handle);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ConfigureTaskContextSkipsMissingVectorInterfacesOnNodes)
+{
+  auto model_config = make_model_config(
+      "missing_interface_model", {},
+      {make_tensor_config("output0", {2}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  auto job = make_job(32, {});
+  job->set_output_tensors(
+      {torch::zeros({2}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(slot);
+  ASSERT_FALSE(output_handles.empty());
+
+  missing_interface_override_handle = output_handles[0];
+  missing_interface_override_hits = 0;
+
+  std::vector<starpu_data_handle_t> input_handles;
+  {
+    starpu_test::ScopedStarpuMemoryNodesGetCountOverride nodes_override(
+        two_memory_nodes_override);
+    starpu_test::ScopedStarpuDataGetInterfaceOnNodeOverride interface_override(
+        missing_interface_override);
+
+    EXPECT_NO_THROW(
+        starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+            task, nullptr, -1, &output_pool, slot, input_handles,
+            output_handles, /*batch_size=*/1));
+  }
+
+  EXPECT_GT(missing_interface_override_hits.load(), 0);
+
+  missing_interface_override_handle = nullptr;
   output_pool.release(slot);
 }
 
