@@ -49,6 +49,7 @@ using StarpuInitRawFn = int (*)(struct starpu_conf*);
 using StarpuWorkerGetIdHook = int (*)();
 using StarpuWorkerGetDevidHook = int (*)(int);
 using StarpuCudaGetLocalStreamHook = cudaStream_t (*)();
+using StarpuShutdownFn = void (*)();
 using HwlocTopologyInitFn = int (*)(hwloc_topology_t*);
 using HwlocTopologyLoadFn = int (*)(hwloc_topology_t);
 using HwlocTopologyDestroyFn = void (*)(hwloc_topology_t);
@@ -154,6 +155,21 @@ resolve_real_starpu_cuda_get_local_stream() -> StarpuCudaGetLocalStreamHook
     if (candidate == nullptr) {
       candidate = reinterpret_cast<StarpuCudaGetLocalStreamHook>(
           dlsym(RTLD_DEFAULT, "starpu_cuda_get_local_stream"));
+    }
+    return candidate;
+  }();
+  return fn;
+}
+
+auto
+resolve_real_starpu_shutdown() -> StarpuShutdownFn
+{
+  static StarpuShutdownFn fn = []() -> StarpuShutdownFn {
+    auto candidate =
+        reinterpret_cast<StarpuShutdownFn>(dlsym(RTLD_NEXT, "starpu_shutdown"));
+    if (candidate == nullptr) {
+      candidate = reinterpret_cast<StarpuShutdownFn>(
+          dlsym(RTLD_DEFAULT, "starpu_shutdown"));
     }
     return candidate;
   }();
@@ -279,6 +295,9 @@ bool g_force_machine_object_null = false;
 std::unordered_set<unsigned> g_fake_null_numa_object_indices;
 std::unordered_set<unsigned> g_fake_null_pu_object_indices;
 std::unordered_set<hwloc_const_bitmap_t> g_hwloc_bitmap_first_negative_cpusets;
+bool g_force_hwloc_topology_init_failure = false;
+bool g_force_hwloc_topology_load_failure = false;
+bool g_fake_starpu_shutdown = false;
 
 void cleanup_fake_hwloc_topology();
 void initialize_fake_hwloc_topology();
@@ -1046,11 +1065,87 @@ class ScopedBitmapFirstNegativeGuard {
   std::vector<hwloc_const_bitmap_t> bitmaps_;
 };
 
+class ScopedHwlocTopologyInitFailureGuard {
+ public:
+  ScopedHwlocTopologyInitFailureGuard()
+      : previous_{g_force_hwloc_topology_init_failure}
+  {
+    g_force_hwloc_topology_init_failure = true;
+  }
+
+  ~ScopedHwlocTopologyInitFailureGuard()
+  {
+    g_force_hwloc_topology_init_failure = previous_;
+  }
+
+  ScopedHwlocTopologyInitFailureGuard(
+      const ScopedHwlocTopologyInitFailureGuard&) = delete;
+  auto operator=(const ScopedHwlocTopologyInitFailureGuard&)
+      -> ScopedHwlocTopologyInitFailureGuard& = delete;
+  ScopedHwlocTopologyInitFailureGuard(ScopedHwlocTopologyInitFailureGuard&&) =
+      delete;
+  auto operator=(ScopedHwlocTopologyInitFailureGuard&&)
+      -> ScopedHwlocTopologyInitFailureGuard& = delete;
+
+ private:
+  bool previous_;
+};
+
+class ScopedHwlocTopologyLoadFailureGuard {
+ public:
+  ScopedHwlocTopologyLoadFailureGuard()
+      : previous_{g_force_hwloc_topology_load_failure}
+  {
+    g_force_hwloc_topology_load_failure = true;
+  }
+
+  ~ScopedHwlocTopologyLoadFailureGuard()
+  {
+    g_force_hwloc_topology_load_failure = previous_;
+  }
+
+  ScopedHwlocTopologyLoadFailureGuard(
+      const ScopedHwlocTopologyLoadFailureGuard&) = delete;
+  auto operator=(const ScopedHwlocTopologyLoadFailureGuard&)
+      -> ScopedHwlocTopologyLoadFailureGuard& = delete;
+  ScopedHwlocTopologyLoadFailureGuard(ScopedHwlocTopologyLoadFailureGuard&&) =
+      delete;
+  auto operator=(ScopedHwlocTopologyLoadFailureGuard&&)
+      -> ScopedHwlocTopologyLoadFailureGuard& = delete;
+
+ private:
+  bool previous_;
+};
+
+class ScopedStarpuShutdownStubGuard {
+ public:
+  ScopedStarpuShutdownStubGuard() : previous_{g_fake_starpu_shutdown}
+  {
+    g_fake_starpu_shutdown = true;
+  }
+
+  ~ScopedStarpuShutdownStubGuard() { g_fake_starpu_shutdown = previous_; }
+
+  ScopedStarpuShutdownStubGuard(const ScopedStarpuShutdownStubGuard&) = delete;
+  auto operator=(const ScopedStarpuShutdownStubGuard&)
+      -> ScopedStarpuShutdownStubGuard& = delete;
+  ScopedStarpuShutdownStubGuard(ScopedStarpuShutdownStubGuard&&) = delete;
+  auto operator=(ScopedStarpuShutdownStubGuard&&)
+      -> ScopedStarpuShutdownStubGuard& = delete;
+
+ private:
+  bool previous_;
+};
+
 }  // namespace
 
 extern "C" int
 hwloc_topology_init(hwloc_topology_t* topology)
 {
+  if (g_force_hwloc_topology_init_failure) {
+    errno = EINVAL;
+    return -1;
+  }
   if (g_fake_hwloc_enabled) {
     if (topology == nullptr) {
       errno = EINVAL;
@@ -1068,6 +1163,10 @@ hwloc_topology_init(hwloc_topology_t* topology)
 extern "C" int
 hwloc_topology_load(hwloc_topology_t topology)
 {
+  if (g_force_hwloc_topology_load_failure) {
+    errno = EIO;
+    return -1;
+  }
   if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
     return 0;
   }
@@ -1221,6 +1320,17 @@ starpu_cuda_get_local_stream()
   return nullptr;
 }
 
+extern "C" void
+starpu_shutdown()
+{
+  if (g_fake_starpu_shutdown) {
+    return;
+  }
+  if (auto fn = resolve_real_starpu_shutdown(); fn != nullptr) {
+    fn();
+  }
+}
+
 extern "C" int
 setenv(const char* name, const char* value, int overwrite)
 {
@@ -1353,6 +1463,59 @@ TEST(ConfigureCpu, WarnsWhenNumasMissing)
   EXPECT_EQ(0U, g_captured_starpu_conf.conf.use_explicit_workers_bindid);
   EXPECT_NE(
       log.find("Unable to detect NUMA nodes; group_cpu_by_numa ignored"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, LogsWarningWhenHwlocInitFails)
+{
+  ScopedHwlocTopologyInitFailureGuard init_fail_guard;
+  StarpuInitCaptureStubGuard capture_guard;
+  ScopedStarpuShutdownStubGuard shutdown_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  EXPECT_EQ(0U, capture_guard.conf().use_explicit_workers_bindid);
+  EXPECT_NE(
+      log.find("Failed to initialise hwloc topology; cannot enable NUMA CPU "
+               "grouping"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, LogsWarningWhenHwlocLoadFails)
+{
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  ScopedHwlocTopologyLoadFailureGuard load_fail_guard;
+  StarpuInitCaptureStubGuard capture_guard;
+  ScopedStarpuShutdownStubGuard shutdown_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  EXPECT_EQ(0U, capture_guard.conf().use_explicit_workers_bindid);
+  EXPECT_NE(
+      log.find(
+          "Failed to load hwloc topology; cannot enable NUMA CPU grouping"),
       std::string::npos);
 }
 
