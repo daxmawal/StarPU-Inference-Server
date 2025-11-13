@@ -278,6 +278,7 @@ FakeHwlocSpecification g_fake_hwloc_spec{
 bool g_force_machine_object_null = false;
 std::unordered_set<unsigned> g_fake_null_numa_object_indices;
 std::unordered_set<unsigned> g_fake_null_pu_object_indices;
+std::unordered_set<hwloc_const_bitmap_t> g_hwloc_bitmap_first_negative_cpusets;
 
 void cleanup_fake_hwloc_topology();
 void initialize_fake_hwloc_topology();
@@ -1011,6 +1012,40 @@ class ScopedNullProcessingUnitGuard {
   std::unordered_set<unsigned> previous_;
 };
 
+class ScopedBitmapFirstNegativeGuard {
+ public:
+  explicit ScopedBitmapFirstNegativeGuard(
+      std::vector<hwloc_const_bitmap_t> bitmaps)
+      : bitmaps_{std::move(bitmaps)}
+  {
+    for (auto bitmap : bitmaps_) {
+      if (bitmap != nullptr) {
+        g_hwloc_bitmap_first_negative_cpusets.insert(bitmap);
+      }
+    }
+  }
+
+  ~ScopedBitmapFirstNegativeGuard()
+  {
+    for (auto bitmap : bitmaps_) {
+      if (bitmap != nullptr) {
+        g_hwloc_bitmap_first_negative_cpusets.erase(bitmap);
+      }
+    }
+  }
+
+  ScopedBitmapFirstNegativeGuard(const ScopedBitmapFirstNegativeGuard&) =
+      delete;
+  auto operator=(const ScopedBitmapFirstNegativeGuard&)
+      -> ScopedBitmapFirstNegativeGuard& = delete;
+  ScopedBitmapFirstNegativeGuard(ScopedBitmapFirstNegativeGuard&&) = delete;
+  auto operator=(ScopedBitmapFirstNegativeGuard&&)
+      -> ScopedBitmapFirstNegativeGuard& = delete;
+
+ private:
+  std::vector<hwloc_const_bitmap_t> bitmaps_;
+};
+
 }  // namespace
 
 extern "C" int
@@ -1135,6 +1170,19 @@ hwloc_get_obj_by_depth(hwloc_topology_t topology, int depth, unsigned idx)
     return fn(topology, depth, idx);
   }
   return nullptr;
+}
+
+extern "C" int
+hwloc_bitmap_first(hwloc_const_bitmap_t bitmap)
+{
+  if (bitmap != nullptr &&
+      g_hwloc_bitmap_first_negative_cpusets.contains(bitmap)) {
+    return -1;
+  }
+  if (auto fn = resolve_real_hwloc_bitmap_first(); fn != nullptr) {
+    return fn(bitmap);
+  }
+  return -1;
 }
 
 extern "C" int
@@ -1430,6 +1478,63 @@ TEST(ConfigureCpu, RecoversFromAllNullNumaObjects)
   EXPECT_EQ(1U, conf.workers_bindid[1]);
   EXPECT_EQ(
       log.find("Unable to detect NUMA nodes; group_cpu_by_numa ignored"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, NumaBitmapFirstNegativeFallsBackToProcessingUnits)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 1}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  std::vector<hwloc_const_bitmap_t> numa_sets;
+  for (const auto& node : g_fake_hwloc_topology.numa_nodes) {
+    numa_sets.push_back(node.cpuset);
+  }
+  ScopedBitmapFirstNegativeGuard bitmap_guard(std::move(numa_sets));
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+}
+
+TEST(ConfigureCpu, BitmapFirstNegativePreventsMachineFallback)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {0});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullProcessingUnitGuard pu_null_guard({0});
+  ScopedBitmapFirstNegativeGuard bitmap_guard(
+      {g_fake_hwloc_topology.machine.cpuset});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(0U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0, conf.precedence_over_environment_variables);
+  EXPECT_NE(
+      log.find("Unable to determine CPU identifiers for worker binding; "
+               "group_cpu_by_numa ignored"),
       std::string::npos);
 }
 
