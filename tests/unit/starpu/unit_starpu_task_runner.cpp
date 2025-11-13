@@ -2521,6 +2521,78 @@ TEST_F(
   EXPECT_EQ(queue_.size(), 0U);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture, CollectBatchReturnsAggregatedJobWithoutCoalescing)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto aggregated = make_job(
+      24, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto sub_job = make_job(
+      25, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      make_aggregated_sub_job(sub_job, sub_job->get_request_id()));
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  auto queued = make_job(
+      26, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(queued));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), aggregated);
+
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected.front(), aggregated);
+  EXPECT_EQ(queue_.size(), 1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    WaitForNextJobDeliversAggregatedJobWithoutCoalescing)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 10;
+
+  auto aggregated = make_job(
+      27, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto sub_job = make_job(
+      28, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      make_aggregated_sub_job(sub_job, sub_job->get_request_id()));
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  ASSERT_TRUE(aggregated->has_aggregated_sub_jobs());
+
+  auto follower = make_job(
+      29, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(aggregated));
+  ASSERT_TRUE(queue_.push(follower));
+
+  auto first = runner_->wait_for_next_job();
+  ASSERT_EQ(first, aggregated);
+  ASSERT_TRUE(first->has_aggregated_sub_jobs());
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected.front(), aggregated);
+  EXPECT_EQ(queue_.size(), 1U);
+  auto remaining = runner_->wait_for_next_job();
+  ASSERT_EQ(remaining, follower);
+}
+
 TEST_F(StarPUTaskRunnerFixture, JobSampleSizeTreatsNullJobAsZeroSamples)
 {
   auto model_config = make_model_config("null_job_model", {}, {});
