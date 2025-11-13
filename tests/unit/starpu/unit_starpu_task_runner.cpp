@@ -1577,6 +1577,124 @@ TEST_F(
 
 TEST_F(
     StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenPendingTensorUndefined)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
+
+  opts_.batching.max_batch_size = 2;
+  reset_runner_with_model(model_config, /*pool_size=*/2);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      34,
+      {torch::tensor(
+          std::vector<float>{1.0F, 2.0F},
+          torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto pending = make_job(35, {}, {at::kFloat});
+  torch::Tensor undefined;
+  pending->set_input_tensors({undefined});
+  job->set_pending_sub_jobs({pending});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
+      starpu_server::InvalidInputTensorException);
+
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsThrowsWhenPendingTensorExceedsSlotCapacity)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
+
+  opts_.batching.max_batch_size = 2;
+  reset_runner_with_model(model_config, /*pool_size=*/2);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto job = make_job(
+      36,
+      {torch::tensor(
+          std::vector<float>{1.0F, 2.0F},
+          torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto pending = make_job(
+      37,
+      {torch::tensor(
+          std::vector<float>{3.0F, 4.0F},
+          torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  job->set_pending_sub_jobs({pending});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  auto& buffer_infos =
+      const_cast<std::vector<starpu_server::InputSlotPool::HostBufferInfo>&>(
+          input_pool.host_buffer_infos(slot));
+  ASSERT_FALSE(buffer_infos.empty());
+  const auto original_bytes = buffer_infos[0].bytes;
+  const auto tensor_bytes =
+      static_cast<std::size_t>(job->get_input_tensors()[0].nbytes());
+  buffer_infos[0].bytes = tensor_bytes + tensor_bytes / 2;
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
+      starpu_server::InputPoolCapacityException);
+
+  buffer_infos[0].bytes = original_bytes;
+  input_pool.release(slot);
+}
+
+TEST_F(StarPUTaskRunnerFixture, ValidateBatchAndCopyInputsSkipsNullPendingJobs)
+{
+  auto model_config = make_model_config(
+      "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
+
+  opts_.batching.max_batch_size = 3;
+  reset_runner_with_model(model_config, /*pool_size=*/3);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  auto tensor_from = [](float a, float b) {
+    return torch::tensor(
+        std::vector<float>{a, b}, torch::TensorOptions().dtype(torch::kFloat));
+  };
+
+  auto job = make_job(38, {tensor_from(1.0F, 2.0F)}, {at::kFloat});
+  auto pending_a = make_job(39, {tensor_from(3.0F, 4.0F)}, {at::kFloat});
+  std::shared_ptr<starpu_server::InferenceJob> pending_null;
+  auto pending_b = make_job(40, {tensor_from(5.0F, 6.0F)}, {at::kFloat});
+
+  job->set_pending_sub_jobs({pending_a, pending_null, pending_b});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+
+  const int64_t batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+
+  auto base_ptr = input_pool.base_ptrs(slot).at(0);
+  ASSERT_NE(base_ptr, nullptr);
+  const std::vector<float> expected{1.0F, 2.0F, 3.0F, 4.0F, 5.0F, 6.0F};
+  std::vector<float> actual(expected.size());
+  std::memcpy(actual.data(), base_ptr, expected.size() * sizeof(float));
+  for (size_t idx = 0; idx < expected.size(); ++idx) {
+    EXPECT_FLOAT_EQ(actual[idx], expected[idx]);
+  }
+
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
     ValidateBatchAndCopyInputsInfersBatchFromTensorRank)
 {
   constexpr int64_t kBatchSize = 2;
