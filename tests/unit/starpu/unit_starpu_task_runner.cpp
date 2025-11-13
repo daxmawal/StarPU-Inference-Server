@@ -31,8 +31,15 @@ using starpu_server::ErrorLevel;
 using starpu_server::expected_log_line;
 
 namespace {
+struct VectorResizeSpecShim {
+  std::size_t element_count;
+  std::size_t byte_count;
+};
+
 using ValidateTensorFn = void (*)(const torch::Tensor&, const torch::Tensor&);
 using ValidatePrototypeFn = void (*)(const torch::Tensor&);
+using ResizeStarpuVectorInterfaceFn =
+    void (*)(starpu_vector_interface*, VectorResizeSpecShim, bool);
 
 constexpr std::string_view kValidateTensorSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_133validate_tensor_against_"
@@ -49,6 +56,10 @@ constexpr std::string_view kSlotManagerValidateBatchSymbolName =
     "_ZNK13starpu_server11SlotManager30validate_batch_and_copy_"
     "inputsERKSt10shared_ptr"
     "INS_12InferenceJobEElRKNS_16StarPUTaskRunner13PoolResourcesE";
+constexpr std::string_view kResizeStarpuVectorInterfaceSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_130resize_starpu_vector_"
+    "interfaceEP23starpu_"
+    "vector_interfaceNS0_16VectorResizeSpecEb";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -186,6 +197,19 @@ resolve_copy_job_inputs_fn() -> CopyJobInputsFn
     const auto address =
         resolve_symbol_address(kSlotManagerCopyJobInputsSymbolName);
     return address != 0 ? reinterpret_cast<CopyJobInputsFn>(address) : nullptr;
+  }();
+  return fn;
+}
+
+auto
+resolve_resize_starpu_vector_interface_fn() -> ResizeStarpuVectorInterfaceFn
+{
+  static ResizeStarpuVectorInterfaceFn fn = [] {
+    const auto address =
+        resolve_symbol_address(kResizeStarpuVectorInterfaceSymbolName);
+    return address != 0
+               ? reinterpret_cast<ResizeStarpuVectorInterfaceFn>(address)
+               : nullptr;
   }();
   return fn;
 }
@@ -655,6 +679,18 @@ TEST(TaskRunnerInternal, ReleaseInputsFromAdditionalJobsSkipsNullEntries)
 
   EXPECT_TRUE(job2->get_input_tensors().empty());
   EXPECT_TRUE(job2->get_input_memory_holders().empty());
+}
+
+TEST(
+    StarPUTaskWorkerInternals,
+    ResizeVectorInterfaceReturnsEarlyWhenInterfaceMissing)
+{
+  const auto resize_fn = resolve_resize_starpu_vector_interface_fn();
+  ASSERT_NE(resize_fn, nullptr);
+
+  constexpr VectorResizeSpecShim spec{5, 20};
+
+  EXPECT_NO_THROW(resize_fn(nullptr, spec, true));
 }
 
 TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
