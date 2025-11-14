@@ -9,6 +9,7 @@ constexpr int kCudaMismatchJobId = 101;
 constexpr int kCudaCpuInputsJobId = 102;
 constexpr int kOutputCountMismatchJobId = 45;
 constexpr int kC10ErrorJobId = 151;
+constexpr int kShapeErrorJobId = 152;
 constexpr float kDelta = 0.01F;
 constexpr float kBase2F = 2.0F;
 constexpr float kBase3F = 3.0F;
@@ -175,6 +176,19 @@ TEST_F(InferenceValidatorTest, OutputCountMismatch)
       result, model, starpu_server::VerbosityLevel::Silent));
   std::string logs = testing::internal::GetCapturedStderr();
   EXPECT_NE(logs.find("Output count mismatch"), std::string::npos);
+}
+
+TEST_F(InferenceValidatorTest, ShapeErrorModelThrows)
+{
+  auto model = make_shape_error_model();
+  auto result = starpu_server::make_result(
+      {torch::rand({2, 2})}, /*outputs*/ {}, kShapeErrorJobId,
+      starpu_server::DeviceType::CPU);
+
+  EXPECT_THROW(
+      validate_inference_result(
+          result, model, starpu_server::VerbosityLevel::Silent),
+      starpu_server::InferenceExecutionException);
 }
 
 TEST_F(InferenceValidatorTest, CatchesC10ErrorAndLogs)
