@@ -16,10 +16,9 @@ target_sources(
             core/unit_starpu_setup.cpp
             core/unit_input_slot_pool_deleter.cpp
             core/robustness/edgecases_inference_queue.cpp
-            core/robustness/edgecases_inference_task_errors.cpp
             core/robustness/edgecases_warmup_runner.cpp
             core/robustness/edgecases_inference_runner.cpp
-            core/robustness/edgecases_inference_task_limits.cpp
+            core/robustness/edgecases_inference_task.cpp
             core/robustness/edgecases_tensor_builder.cpp
             grpc/async_server_context_test.cpp
             grpc/callback_handle_test.cpp
