@@ -123,6 +123,53 @@ cuda_stream_create_failure_count() -> int
   return g_cuda_stream_create_failure_count.load(std::memory_order_relaxed);
 }
 
+using CudaMemcpyAsyncFn = cudaError_t (*)(
+    void*, const void*, std::size_t, cudaMemcpyKind, cudaStream_t);
+
+auto
+resolve_real_cuda_memcpy_async() -> CudaMemcpyAsyncFn
+{
+  static CudaMemcpyAsyncFn fn = [] {
+    void* symbol = dlsym(RTLD_NEXT, "cudaMemcpyAsync");
+    if (symbol == nullptr) {
+      symbol = dlsym(RTLD_DEFAULT, "cudaMemcpyAsync");
+    }
+    return reinterpret_cast<CudaMemcpyAsyncFn>(symbol);
+  }();
+  return fn;
+}
+
+std::atomic<bool> g_force_cuda_memcpy_failure = false;
+std::atomic<void*> g_cuda_memcpy_failure_stream = nullptr;
+std::atomic<int> g_cuda_memcpy_failure_count = 0;
+
+class ScopedCudaMemcpyAsyncFailure {
+ public:
+  explicit ScopedCudaMemcpyAsyncFailure(cudaStream_t target)
+  {
+    g_cuda_memcpy_failure_count.store(0, std::memory_order_relaxed);
+    g_cuda_memcpy_failure_stream.store(
+        reinterpret_cast<void*>(target), std::memory_order_release);
+    g_force_cuda_memcpy_failure.store(true, std::memory_order_release);
+  }
+
+  ScopedCudaMemcpyAsyncFailure(const ScopedCudaMemcpyAsyncFailure&) = delete;
+  auto operator=(const ScopedCudaMemcpyAsyncFailure&)
+      -> ScopedCudaMemcpyAsyncFailure& = delete;
+
+  ~ScopedCudaMemcpyAsyncFailure()
+  {
+    g_force_cuda_memcpy_failure.store(false, std::memory_order_release);
+    g_cuda_memcpy_failure_stream.store(nullptr, std::memory_order_release);
+  }
+};
+
+auto
+cuda_memcpy_failure_count() -> int
+{
+  return g_cuda_memcpy_failure_count.load(std::memory_order_relaxed);
+}
+
 struct SlotHandleLeaseAcquireContext {
   std::vector<starpu_data_handle_t>* calls = nullptr;
   std::optional<starpu_data_handle_t> fail_handle;
@@ -247,6 +294,26 @@ cudaStreamCreateWithFlags(cudaStream_t* stream, unsigned int flags)
   return real_fn(stream, flags);
 }
 
+extern "C" cudaError_t
+cudaMemcpyAsync(
+    void* dst, const void* src, std::size_t count, cudaMemcpyKind kind,
+    cudaStream_t stream)
+{
+  static auto real_fn = resolve_real_cuda_memcpy_async();
+  if (g_force_cuda_memcpy_failure.load(std::memory_order_acquire)) {
+    const auto target =
+        g_cuda_memcpy_failure_stream.load(std::memory_order_acquire);
+    if (target == nullptr || target == reinterpret_cast<void*>(stream)) {
+      g_cuda_memcpy_failure_count.fetch_add(1, std::memory_order_relaxed);
+      return cudaErrorUnknown;
+    }
+  }
+  if (real_fn == nullptr) {
+    return cudaErrorUnknown;
+  }
+  return real_fn(dst, src, count, kind, stream);
+}
+
 namespace {
 
 struct VectorResizeSpecShim {
@@ -282,6 +349,8 @@ constexpr std::string_view kCudaCopyBatchFinalizeSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatch8finalizeEv";
 constexpr std::string_view kCudaCopyBatchCtorSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatchC2Eb";
+constexpr std::string_view kCudaCopyBatchDestructorSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatchD2Ev";
 constexpr std::string_view kSlotHandleLeaseCtorSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_115SlotHandleLeaseC2ESt4spanIKP18_starpu_"
     "data_stateLm18446744073709551615EE23starpu_data_access_mode";
@@ -294,6 +363,8 @@ constexpr std::string_view kBuildRequestIdsForTraceSymbolName =
 constexpr std::string_view kBatchSizeFromInputsSymbolName =
     "_ZN13starpu_server20task_runner_internal22batch_size_from_"
     "inputsERKSt6vectorIN2at6TensorESaIS3_EE";
+constexpr std::string_view kCudaCopyBatchEnqueueSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatch7enqueueEPvPKvmb";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -463,6 +534,9 @@ resolve_cuda_copy_batch_finalize_fn() -> CudaCopyBatchFinalizeFn
 }
 
 using CudaCopyBatchCtorFn = void (*)(void*, bool);
+using CudaCopyBatchDestructorFn = void (*)(void*);
+using CudaCopyBatchEnqueueFn =
+    bool (*)(void*, void*, const void*, std::size_t, bool);
 
 auto
 resolve_cuda_copy_batch_ctor_fn() -> CudaCopyBatchCtorFn
@@ -470,6 +544,30 @@ resolve_cuda_copy_batch_ctor_fn() -> CudaCopyBatchCtorFn
   static CudaCopyBatchCtorFn fn = [] {
     const auto address = resolve_symbol_address(kCudaCopyBatchCtorSymbolName);
     return address != 0 ? reinterpret_cast<CudaCopyBatchCtorFn>(address)
+                        : nullptr;
+  }();
+  return fn;
+}
+
+auto
+resolve_cuda_copy_batch_enqueue_fn() -> CudaCopyBatchEnqueueFn
+{
+  static CudaCopyBatchEnqueueFn fn = [] {
+    const auto address =
+        resolve_symbol_address(kCudaCopyBatchEnqueueSymbolName);
+    return address != 0 ? reinterpret_cast<CudaCopyBatchEnqueueFn>(address)
+                        : nullptr;
+  }();
+  return fn;
+}
+
+auto
+resolve_cuda_copy_batch_destructor_fn() -> CudaCopyBatchDestructorFn
+{
+  static CudaCopyBatchDestructorFn fn = [] {
+    const auto address =
+        resolve_symbol_address(kCudaCopyBatchDestructorSymbolName);
+    return address != 0 ? reinterpret_cast<CudaCopyBatchDestructorFn>(address)
                         : nullptr;
   }();
   return fn;
@@ -2272,6 +2370,45 @@ TEST(CudaCopyBatchTest, ConstructorHandlesStreamCreationFailure)
   EXPECT_EQ(batch->stream, nullptr);
   EXPECT_FALSE(batch->enabled);
   EXPECT_FALSE(batch->pending);
+}
+
+TEST(CudaCopyBatchTest, EnqueueDisablesAsyncCopyWhenMemcpyFails)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA runtime unavailable for enqueue test";
+  }
+
+  auto ctor_fn = resolve_cuda_copy_batch_ctor_fn();
+  auto enqueue_fn = resolve_cuda_copy_batch_enqueue_fn();
+  auto dtor_fn = resolve_cuda_copy_batch_destructor_fn();
+  ASSERT_NE(ctor_fn, nullptr);
+  ASSERT_NE(enqueue_fn, nullptr);
+  ASSERT_NE(dtor_fn, nullptr);
+
+  alignas(CudaCopyBatchMirror) std::byte storage[sizeof(CudaCopyBatchMirror)];
+  auto* batch = reinterpret_cast<CudaCopyBatchMirror*>(storage);
+  std::memset(storage, 0, sizeof(storage));
+  ctor_fn(batch, true);
+  ASSERT_TRUE(batch->enabled);
+  ASSERT_NE(batch->stream, nullptr);
+
+  int src = 42;
+  int dst = 0;
+
+  {
+    ScopedCudaMemcpyAsyncFailure guard(batch->stream);
+    const bool ok = enqueue_fn(
+        batch, static_cast<void*>(&dst), static_cast<const void*>(&src),
+        sizeof(src), /*allow_async=*/true);
+    EXPECT_FALSE(ok);
+  }
+
+  EXPECT_FALSE(batch->enabled);
+  EXPECT_FALSE(batch->pending);
+  EXPECT_GE(cuda_memcpy_failure_count(), 1);
+  EXPECT_EQ(dst, 0);
+
+  dtor_fn(batch);
 }
 
 TEST_F(
