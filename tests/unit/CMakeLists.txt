@@ -28,7 +28,6 @@ target_sources(
             grpc/inference_client_helpers_test.cpp
             grpc/robustness/edgecases_client.cpp
             grpc/robustness/edgecases_inference_service.cpp
-            starpu/unit_starpu_setup.cpp
             starpu/unit_starpu_task_runner.cpp
             starpu/unit_tensor_builder_from_starpu.cpp
             starpu/robustness/edgecases_starpu_setup.cpp
