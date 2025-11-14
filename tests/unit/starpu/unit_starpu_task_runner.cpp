@@ -291,6 +291,9 @@ constexpr std::string_view kBuildRequestIdsForTraceSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_127build_request_ids_for_"
     "traceERKSt10shared_"
     "ptrINS_12InferenceJobEE";
+constexpr std::string_view kBatchSizeFromInputsSymbolName =
+    "_ZN13starpu_server20task_runner_internal22batch_size_from_"
+    "inputsERKSt6vectorIN2at6TensorESaIS3_EE";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -508,6 +511,20 @@ resolve_build_request_ids_for_trace_fn() -> BuildRequestIdsForTraceFn
     const auto address =
         resolve_symbol_address(kBuildRequestIdsForTraceSymbolName);
     return address != 0 ? reinterpret_cast<BuildRequestIdsForTraceFn>(address)
+                        : nullptr;
+  }();
+  return fn;
+}
+
+using BatchSizeFromInputsFn =
+    std::size_t (*)(const std::vector<torch::Tensor>&);
+
+auto
+resolve_batch_size_from_inputs_fn() -> BatchSizeFromInputsFn
+{
+  static BatchSizeFromInputsFn fn = [] {
+    const auto address = resolve_symbol_address(kBatchSizeFromInputsSymbolName);
+    return address != 0 ? reinterpret_cast<BatchSizeFromInputsFn>(address)
                         : nullptr;
   }();
   return fn;
@@ -2169,15 +2186,14 @@ TEST(SliceOutputsForSubJobTest, MakesSlicesContiguousWhenSourceIsNot)
   using starpu_server::task_runner_internal::slice_outputs_for_sub_job;
   using starpu_server::task_runner_internal::SubJobSliceOptions;
 
-  auto tensor = torch::arange(
-      0, 12, torch::TensorOptions().dtype(torch::kFloat32));
+  auto tensor =
+      torch::arange(0, 12, torch::TensorOptions().dtype(torch::kFloat32));
   tensor = tensor.view({3, 4});
   auto non_contiguous = tensor.transpose(0, 1);
   ASSERT_FALSE(non_contiguous.is_contiguous());
 
   std::vector<torch::Tensor> aggregated{non_contiguous};
-  const SubJobSliceOptions options{
-      /*offset=*/1, /*batch_size=*/2};
+  const SubJobSliceOptions options{/*offset=*/1, /*batch_size=*/2};
 
   auto result = slice_outputs_for_sub_job(aggregated, options);
   ASSERT_EQ(result.outputs.size(), 1U);
@@ -2191,6 +2207,14 @@ TEST(SliceOutputsForSubJobTest, MakesSlicesContiguousWhenSourceIsNot)
   auto expected = non_contiguous.narrow(0, 1, 2).contiguous();
   EXPECT_TRUE(torch::allclose(slice, expected));
   EXPECT_EQ(result.processed_length, expected.size(0));
+}
+
+TEST(BatchSizeFromInputsTest, ReturnsOneWhenInputsEmpty)
+{
+  auto fn = resolve_batch_size_from_inputs_fn();
+  ASSERT_NE(fn, nullptr);
+  const std::vector<torch::Tensor> empty_inputs;
+  EXPECT_EQ(fn(empty_inputs), 1U);
 }
 
 struct CudaCopyBatchMirror {
