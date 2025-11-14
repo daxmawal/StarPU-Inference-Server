@@ -55,17 +55,17 @@ append_flow_annotation(
     std::ostringstream& line, FlowDirection direction, int batch_id,
     bool is_warmup)
 {
-  if (direction == FlowDirection::None) {
+  using enum FlowDirection;
+  if (direction == None) {
     return;
   }
   const auto bind_id = make_flow_bind_id(batch_id, is_warmup);
   if (!bind_id.has_value()) {
     return;
   }
-  const bool emit_flow_out = direction == FlowDirection::Source ||
-                             direction == FlowDirection::SourceAndTarget;
-  const bool emit_flow_in = direction == FlowDirection::Target ||
-                            direction == FlowDirection::SourceAndTarget;
+  const bool emit_flow_out =
+      direction == Source || direction == SourceAndTarget;
+  const bool emit_flow_in = direction == Target || direction == SourceAndTarget;
   if (!emit_flow_out && !emit_flow_in) {
     return;
   }
@@ -409,8 +409,8 @@ BatchingTraceLogger::consume_latest_request_enqueue_timestamp(
     if (timestamp_iter == request_enqueue_times_.end()) {
       continue;
     }
-    const int64_t timestamp_us = timestamp_iter->second;
-    if (!latest || timestamp_us > *latest) {
+    if (const int64_t timestamp_us = timestamp_iter->second;
+        !latest || timestamp_us > *latest) {
       latest = timestamp_us;
     }
     request_enqueue_times_.erase(timestamp_iter);
@@ -434,12 +434,13 @@ BatchingTraceLogger::event_to_string(BatchingTraceEvent event)
 auto
 BatchingTraceLogger::device_type_to_string(DeviceType type) -> std::string_view
 {
+  using enum DeviceType;
   switch (type) {
-    case DeviceType::CPU:
+    case CPU:
       return "cpu";
-    case DeviceType::CUDA:
+    case CUDA:
       return "cuda";
-    case DeviceType::Unknown:
+    case Unknown:
     default:
       return "unknown";
   }
@@ -565,9 +566,9 @@ BatchingTraceLogger::write_batch_enqueue_span(
   }
 
   auto adjusted_duration = timing.duration_us;
-  const auto latest_request_ts =
-      consume_latest_request_enqueue_timestamp(request_ids);
-  if (latest_request_ts.has_value()) {
+  if (const auto latest_request_ts =
+          consume_latest_request_enqueue_timestamp(request_ids);
+      latest_request_ts.has_value()) {
     const int64_t requested_duration = *latest_request_ts - timing.start_ts;
     if (requested_duration > adjusted_duration) {
       adjusted_duration = std::max<int64_t>(int64_t{1}, requested_duration);
@@ -660,25 +661,25 @@ BatchingTraceLogger::escape_json_string(std::string_view value) -> std::string
   for (const unsigned char character : value) {
     switch (character) {
       case '"':
-        escaped += "\\\"";
+        escaped += R"(\")";
         break;
       case '\\':
-        escaped += "\\\\";
+        escaped += R"(\\)";
         break;
       case '\b':
-        escaped += "\\b";
+        escaped += R"(\b)";
         break;
       case '\f':
-        escaped += "\\f";
+        escaped += R"(\f)";
         break;
       case '\n':
-        escaped += "\\n";
+        escaped += R"(\n)";
         break;
       case '\r':
-        escaped += "\\r";
+        escaped += R"(\r)";
         break;
       case '\t':
-        escaped += "\\t";
+        escaped += R"(\t)";
         break;
       default:
         if (character < kAsciiPrintableFloor) {
@@ -763,8 +764,7 @@ void
 BatchingTraceLogger::write_process_metadata_locked()
 {
   const std::string line = std::format(
-      "{{\"name\":\"process_name\",\"ph\":\"M\",\"ts\":0,\"pid\":{},\"args\":{{"
-      "\"name\":\"{}\"}}}}",
+      R"({{"name":"process_name","ph":"M","ts":0,"pid":{},"args":{{"name":"{}"}}}})",
       kTraceProcessId, kProcessName);
   write_line_locked(line);
 }
@@ -778,16 +778,14 @@ BatchingTraceLogger::ensure_thread_metadata_locked(
     metadata.name.assign(thread_name.begin(), thread_name.end());
     const std::string escaped_name = escape_json_string(metadata.name);
     const std::string name_line = std::format(
-        "{{\"name\":\"thread_name\",\"ph\":\"M\",\"ts\":0,\"pid\":{},\"tid\":{}"
-        ",\"args\":{{\"name\":\"{}\"}}}}",
+        R"({{"name":"thread_name","ph":"M","ts":0,"pid":{},"tid":{},"args":{{"name":"{}"}}}})",
         kTraceProcessId, thread_id, escaped_name);
     write_line_locked(name_line);
   }
 
   if (!metadata.sort_emitted) {
     const std::string sort_line = std::format(
-        "{{\"name\":\"thread_sort_index\",\"ph\":\"M\",\"ts\":0,\"pid\":{},"
-        "\"tid\":{},\"args\":{{\"sort_index\":{}}}}}",
+        R"({{"name":"thread_sort_index","ph":"M","ts":0,"pid":{},"tid":{},"args":{{"sort_index":{}}}}})",
         kTraceProcessId, thread_id, sort_index);
     write_line_locked(sort_line);
     metadata.sort_emitted = true;
