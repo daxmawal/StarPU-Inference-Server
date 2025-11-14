@@ -327,57 +327,6 @@ OutputSlotPool::allocate_slot_buffers_and_register(
 }
 
 auto
-OutputSlotPool::acquire() -> int
-{
-  std::unique_lock pool_lock(mtx_);
-  cv_.wait(pool_lock, [this] { return !free_ids_.empty(); });
-  const int slot_id_value = free_ids_.back();
-  free_ids_.pop_back();
-  return slot_id_value;
-}
-
-auto
-OutputSlotPool::try_acquire() -> std::optional<int>
-{
-  std::scoped_lock<std::mutex> pool_lock(mtx_);
-  if (free_ids_.empty()) {
-    return std::nullopt;
-  }
-  const int slot_id_value = free_ids_.back();
-  free_ids_.pop_back();
-  return slot_id_value;
-}
-
-void
-OutputSlotPool::release(int slot_id)
-{
-  {
-    const std::scoped_lock<std::mutex> pool_lock(mtx_);
-    free_ids_.push_back(slot_id);
-  }
-  cv_.notify_one();
-}
-
-auto
-OutputSlotPool::slot_info(int slot_id) const -> const SlotInfo&
-{
-  return slots_.at(static_cast<size_t>(slot_id));
-}
-
-auto
-OutputSlotPool::handles(int slot_id) const
-    -> const std::vector<starpu_data_handle_t>&
-{
-  return slots_.at(static_cast<size_t>(slot_id)).handles;
-}
-
-auto
-OutputSlotPool::base_ptrs(int slot_id) const -> const std::vector<std::byte*>&
-{
-  return slots_.at(static_cast<size_t>(slot_id)).base_ptrs;
-}
-
-auto
 OutputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
 {
   size_t product = 1;

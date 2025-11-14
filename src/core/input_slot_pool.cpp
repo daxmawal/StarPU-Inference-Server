@@ -310,57 +310,6 @@ InputSlotPool::allocate_slot_buffers_and_register(
 }
 
 auto
-InputSlotPool::acquire() -> int
-{
-  std::unique_lock lock(mtx_);
-  cv_.wait(lock, [this] { return !free_ids_.empty(); });
-  const int slot_id = free_ids_.back();
-  free_ids_.pop_back();
-  return slot_id;
-}
-
-auto
-InputSlotPool::try_acquire() -> std::optional<int>
-{
-  std::scoped_lock lock(mtx_);
-  if (free_ids_.empty()) {
-    return std::nullopt;
-  }
-  const int slot_id = free_ids_.back();
-  free_ids_.pop_back();
-  return slot_id;
-}
-
-void
-InputSlotPool::release(int slot_id)
-{
-  {
-    const std::scoped_lock lock(mtx_);
-    free_ids_.push_back(slot_id);
-  }
-  cv_.notify_one();
-}
-
-auto
-InputSlotPool::slot_info(int slot_id) const -> const SlotInfo&
-{
-  return slots_.at(static_cast<size_t>(slot_id));
-}
-
-auto
-InputSlotPool::handles(int slot_id) const
-    -> const std::vector<starpu_data_handle_t>&
-{
-  return slots_.at(static_cast<size_t>(slot_id)).handles;
-}
-
-auto
-InputSlotPool::base_ptrs(int slot_id) const -> const std::vector<std::byte*>&
-{
-  return slots_.at(static_cast<size_t>(slot_id)).base_ptrs;
-}
-
-auto
 InputSlotPool::host_buffer_infos(int slot_id) const
     -> const std::vector<HostBufferInfo>&
 {

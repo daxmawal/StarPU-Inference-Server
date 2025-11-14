@@ -3,26 +3,20 @@
 
 #include <starpu.h>
 
-#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <mutex>
-#include <optional>
 #include <vector>
 
+#include "core/slot_pool_base.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/runtime_config.hpp"
 
 namespace starpu_server {
 
-class InputSlotPool {
+class InputSlotPool : public SlotPoolBase<SlotPoolSlot> {
  public:
-  struct SlotInfo {
-    int id = -1;
-    std::vector<std::byte*> base_ptrs;
-    std::vector<starpu_data_handle_t> handles;
-  };
+  using SlotInfo = SlotPoolSlot;
 
   struct HostBufferInfo {
     bool cuda_pinned = false;
@@ -39,15 +33,14 @@ class InputSlotPool {
   InputSlotPool(InputSlotPool&&) = delete;
   auto operator=(InputSlotPool&&) -> InputSlotPool& = delete;
 
-  auto acquire() -> int;
-  [[nodiscard]] auto try_acquire() -> std::optional<int>;
-  void release(int slot_id);
+  using SlotPoolBase<SlotPoolSlot>::acquire;
+  using SlotPoolBase<SlotPoolSlot>::try_acquire;
+  using SlotPoolBase<SlotPoolSlot>::release;
 
-  [[nodiscard]] auto slot_info(int slot_id) const -> const SlotInfo&;
-  [[nodiscard]] auto handles(int slot_id) const
-      -> const std::vector<starpu_data_handle_t>&;
-  [[nodiscard]] auto base_ptrs(int slot_id) const
-      -> const std::vector<std::byte*>&;
+  using SlotPoolBase<SlotPoolSlot>::slot_info;
+  using SlotPoolBase<SlotPoolSlot>::handles;
+  using SlotPoolBase<SlotPoolSlot>::base_ptrs;
+
   [[nodiscard]] auto host_buffer_infos(int slot_id) const
       -> const std::vector<HostBufferInfo>&;
   [[nodiscard]] auto max_batch_size() const -> int { return bmax_; }
@@ -66,14 +59,9 @@ class InputSlotPool {
   std::vector<size_t> per_input_bytes_single_;
   std::vector<at::ScalarType> input_types_;
 
-  std::vector<SlotInfo> slots_;
   int bmax_ = 1;
 
   std::vector<std::vector<HostBufferInfo>> host_buffer_infos_;
-
-  std::vector<int> free_ids_;
-  std::mutex mtx_;
-  std::condition_variable cv_;
 };
 
 namespace detail {
