@@ -25,8 +25,7 @@ an opening error.
 
 ## 2. JSON layout
 
-The output follows the
-[Chrome trace-event format](https://perfetto.dev/docs/concepts/trace-formats#json-trace-format).
+The output follows the Chrome trace-event format.
 
 ![Aperçu Perfetto](images/perfetto_example.png)
 
@@ -40,7 +39,7 @@ Key event types:
   worker that eventually executes the batch.
 - `batch_submitted` (track “batch submitted”) is an instant event that ties a
   batch to the worker that will execute it.
-- Entries named after your model correspond to worker lanes.
+- Entries named after correspond to worker lanes.
 
 Warmup requests reuse the same keys with a `warming_` prefix so they can be
 filtered out quickly inside Perfetto.
