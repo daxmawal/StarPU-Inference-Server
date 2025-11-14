@@ -48,8 +48,8 @@ namespace {
 auto
 cuda_device_count_override_storage() -> std::optional<int>&
 {
-  static std::optional<int> override;
-  return override;
+  static std::optional<int> override_storage;
+  return override_storage;
 }
 
 class CuDnnBenchmarkGuard {
@@ -121,9 +121,9 @@ set_cuda_device_count_override(std::optional<int> override_count)
 auto
 get_cuda_device_count() -> int
 {
-  if (const auto& override = cuda_device_count_override_storage();
-      override.has_value()) {
-    return *override;
+  if (const auto& override_storage = cuda_device_count_override_storage();
+      override_storage.has_value()) {
+    return *override_storage;
   }
 
   const auto raw_count = static_cast<long long>(torch::cuda::device_count());
