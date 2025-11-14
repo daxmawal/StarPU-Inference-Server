@@ -22,6 +22,11 @@ class SlotPoolBase {
  public:
   using SlotInfo = SlotInfoType;
 
+  SlotPoolBase(const SlotPoolBase&) = delete;
+  auto operator=(const SlotPoolBase&) -> SlotPoolBase& = delete;
+  SlotPoolBase(SlotPoolBase&&) = delete;
+  auto operator=(SlotPoolBase&&) -> SlotPoolBase& = delete;
+
   auto acquire() -> int
   {
     std::unique_lock lock(mtx_);
@@ -72,11 +77,12 @@ class SlotPoolBase {
   SlotPoolBase() = default;
   ~SlotPoolBase() = default;
 
-  SlotPoolBase(const SlotPoolBase&) = delete;
-  auto operator=(const SlotPoolBase&) -> SlotPoolBase& = delete;
-  SlotPoolBase(SlotPoolBase&&) = delete;
-  auto operator=(SlotPoolBase&&) -> SlotPoolBase& = delete;
+  auto slots() -> std::vector<SlotInfo>& { return slots_; }
+  auto slots() const -> const std::vector<SlotInfo>& { return slots_; }
+  auto free_ids() -> std::vector<int>& { return free_ids_; }
+  auto free_ids() const -> const std::vector<int>& { return free_ids_; }
 
+ private:
   std::vector<SlotInfo> slots_;
   std::vector<int> free_ids_;
   mutable std::mutex mtx_;
