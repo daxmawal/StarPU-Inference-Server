@@ -126,7 +126,7 @@ get_cuda_device_count() -> int
     return *override;
   }
 
-  const auto raw_count = torch::cuda::device_count();
+  const auto raw_count = static_cast<long long>(torch::cuda::device_count());
   if (raw_count < 0) {
     throw InvalidGpuDeviceException(
         "torch::cuda::device_count returned a negative value.");
