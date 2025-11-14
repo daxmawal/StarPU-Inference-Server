@@ -78,7 +78,7 @@ summarize_tensor(const torch::Tensor& tensor, std::size_t max_values)
 
   std::vector<double> summary;
   summary.reserve(count);
-  const auto* data_ptr = flattened.const_data_ptr<double>();
+  const double* data_ptr = flattened.data_ptr<double>();
   const std::span<const double> tensor_values(data_ptr, total);
   for (const double value : tensor_values.first(count)) {
     summary.push_back(value);
