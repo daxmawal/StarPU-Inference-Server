@@ -438,8 +438,7 @@ InferenceServiceImpl::submit_job_async(
   if (!pushed) {
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
-  auto& tracer = BatchingTraceLogger::instance();
-  if (tracer.enabled()) {
+  if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
     tracer.log_request_enqueued(
         job->get_request_id(), job->model_name(), /*is_warmup=*/false,
         job->timing_info().last_enqueued_time);

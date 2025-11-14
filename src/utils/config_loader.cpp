@@ -526,7 +526,7 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_device_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
     parse_starpu_env(root, cfg);
-    if (auto& hook = config_loader_post_parse_hook(); hook) {
+    if (const auto& hook = config_loader_post_parse_hook(); hook) {
       hook(cfg);
     }
   }

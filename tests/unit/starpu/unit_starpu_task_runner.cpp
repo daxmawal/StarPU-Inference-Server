@@ -16,6 +16,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -334,9 +335,10 @@ constexpr std::string_view kValidatePrototypeSymbolName =
     "tensorERKN2at6TensorE";
 constexpr std::string_view kSlotManagerCopyJobInputsSymbolName =
     "_ZN13starpu_server11SlotManager23copy_job_inputs_to_slotERKSt10shared_ptr"
-    "INS_12InferenceJobEERKSt6vectorIS3_SaIS3_EERKS6_IP18_starpu_data_stateSaI"
-    "SC_EERKS6_IPSt4byteSaISI_EERKS6_INS_13InputSlotPool14HostBufferInfoESaIS"
-    "O_EERNS_12_GLOBAL__N_113CudaCopyBatchE";
+    "INS_12InferenceJobEESt4spanIS4_Lm18446744073709551615EES6_IKP18_starpu_"
+    "data_stateLm18446744073709551615EES6_IKPSt4byteLm18446744073709551615EE"
+    "S6_IKNS_13InputSlotPool14HostBufferInfoELm18446744073709551615EERNS_12_"
+    "GLOBAL__N_113CudaCopyBatchE";
 constexpr std::string_view kSlotManagerValidateBatchSymbolName =
     "_ZNK13starpu_server11SlotManager30validate_batch_and_copy_"
     "inputsERKSt10shared_ptr"
@@ -491,9 +493,9 @@ resolve_validate_prototype_tensor_fn() -> ValidatePrototypeFn
 
 using CopyJobInputsFn = void (*)(
     const std::shared_ptr<starpu_server::InferenceJob>&,
-    const std::vector<std::shared_ptr<starpu_server::InferenceJob>>&,
-    const std::vector<starpu_data_handle_t>&, const std::vector<std::byte*>&,
-    const std::vector<starpu_server::InputSlotPool::HostBufferInfo>&, void*);
+    std::span<const std::shared_ptr<starpu_server::InferenceJob>>,
+    std::span<const starpu_data_handle_t>, std::span<std::byte* const>,
+    std::span<const starpu_server::InputSlotPool::HostBufferInfo>, void*);
 
 auto
 resolve_copy_job_inputs_fn() -> CopyJobInputsFn
@@ -2983,8 +2985,15 @@ TEST(SlotManagerCopyJobInputsToSlotTest, ReturnsImmediatelyWhenJobNull)
   auto copy_inputs = resolve_copy_job_inputs_fn();
   ASSERT_NE(copy_inputs, nullptr);
 
+  const std::span<const std::shared_ptr<starpu_server::InferenceJob>>
+      pending_span(pending_jobs);
+  const std::span<const starpu_data_handle_t> handle_span(handles);
+  const std::span<std::byte* const> base_ptrs_span(base_ptrs);
+  const std::span<const starpu_server::InputSlotPool::HostBufferInfo>
+      buffer_info_span(buffer_infos);
+
   EXPECT_NO_THROW(copy_inputs(
-      missing_job, pending_jobs, handles, base_ptrs, buffer_infos,
+      missing_job, pending_span, handle_span, base_ptrs_span, buffer_info_span,
       &copy_batch));
 }
 

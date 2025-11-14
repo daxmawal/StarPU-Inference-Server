@@ -426,10 +426,10 @@ class CudaCopyBatch {
     if (!enabled_ || !allow_async || bytes == 0) {
       return false;
     }
-    const auto status = cudaMemcpyAsync(
-        static_cast<void*>(dst), static_cast<const void*>(src), bytes,
-        cudaMemcpyHostToHost, stream_);
-    if (status != cudaSuccess) {
+    if (const auto status = cudaMemcpyAsync(
+            static_cast<void*>(dst), static_cast<const void*>(src), bytes,
+            cudaMemcpyHostToHost, stream_);
+        status != cudaSuccess) {
       enabled_ = false;
       pending_ = false;
       return false;
@@ -443,8 +443,8 @@ class CudaCopyBatch {
     if (!enabled_ || !pending_) {
       return;
     }
-    const auto status = cudaStreamSynchronize(stream_);
-    if (status != cudaSuccess) {
+    if (const auto status = cudaStreamSynchronize(stream_);
+        status != cudaSuccess) {
       enabled_ = false;
     }
     pending_ = false;
@@ -655,10 +655,10 @@ class SlotManager {
 
   static void copy_job_inputs_to_slot(
       const std::shared_ptr<InferenceJob>& job,
-      const std::vector<std::shared_ptr<InferenceJob>>& pending_jobs,
-      const std::vector<starpu_data_handle_t>& handles,
-      const std::vector<std::byte*>& base_ptrs,
-      const std::vector<InputSlotPool::HostBufferInfo>& buffer_infos,
+      std::span<const std::shared_ptr<InferenceJob>> pending_jobs,
+      std::span<const starpu_data_handle_t> handles,
+      std::span<std::byte* const> base_ptrs,
+      std::span<const InputSlotPool::HostBufferInfo> buffer_infos,
       CudaCopyBatch& copy_batch);
 
   static void release_pending_jobs(
@@ -1019,10 +1019,10 @@ SlotManager::validate_batch_and_copy_inputs(
 void
 SlotManager::copy_job_inputs_to_slot(
     const std::shared_ptr<InferenceJob>& job,
-    const std::vector<std::shared_ptr<InferenceJob>>& pending_jobs,
-    const std::vector<starpu_data_handle_t>& handles,
-    const std::vector<std::byte*>& base_ptrs,
-    const std::vector<InputSlotPool::HostBufferInfo>& buffer_infos,
+    std::span<const std::shared_ptr<InferenceJob>> pending_jobs,
+    std::span<const starpu_data_handle_t> handles,
+    std::span<std::byte* const> base_ptrs,
+    std::span<const InputSlotPool::HostBufferInfo> buffer_infos,
     CudaCopyBatch& copy_batch)
 {
   if (!job) {
@@ -1032,11 +1032,11 @@ SlotManager::copy_job_inputs_to_slot(
   const auto& master_inputs = job->get_input_tensors();
   for (std::size_t input_idx = 0; input_idx < master_inputs.size();
        ++input_idx) {
-    auto* dst = base_ptrs.at(input_idx);
+    auto* dst = base_ptrs[input_idx];
     std::size_t offset = 0;
     std::size_t total_numel = 0;
     std::size_t total_bytes = 0;
-    const auto& buffer_info = buffer_infos.at(input_idx);
+    const auto& buffer_info = buffer_infos[input_idx];
     auto buffer_span = std::span<std::byte>(dst, buffer_info.bytes);
     const bool allow_async =
         buffer_info.cuda_pinned || buffer_info.starpu_pinned;
@@ -1052,8 +1052,8 @@ SlotManager::copy_job_inputs_to_slot(
         throw InputPoolCapacityException(
             "Input tensor exceeds allocated slot buffer capacity");
       }
-      auto* destination = buffer_span.subspan(offset, bytes).data();
-      if (!copy_batch.enqueue(
+      if (auto* destination = buffer_span.subspan(offset, bytes).data();
+          !copy_batch.enqueue(
               destination, static_cast<const std::byte*>(tensor.data_ptr()),
               bytes, allow_async)) {
         std::memcpy(destination, tensor.data_ptr(), bytes);
@@ -1345,7 +1345,7 @@ accumulate_samples_for_tensor(
 void
 copy_tensor_slices_to_merged(
     const std::vector<std::shared_ptr<InferenceJob>>& jobs, size_t tensor_idx,
-    torch::Tensor& merged_tensor)
+    const torch::Tensor& merged_tensor)
 {
   int64_t offset = 0;
   for (const auto& job : jobs) {
@@ -1515,11 +1515,9 @@ BatchCollector::maybe_build_batched_job(
           : batch_info.latest_enqueued;
   master->timing_info().batch_collect_start_time = earliest_batch_collect_start;
 
-  const bool need_materialized_inputs =
-      (starpu_ == nullptr || !starpu_->has_input_pool()) ||
-      (opts_ != nullptr && opts_->validation.validate_results);
-
-  if (need_materialized_inputs) {
+  if (const bool need_materialized_inputs =
+          (starpu_ == nullptr || !starpu_->has_input_pool()) ||
+          (opts_ != nullptr && opts_->validation.validate_results)) {
     if (auto merged_inputs = merge_input_tensors(jobs, effective_batch);
         !merged_inputs.empty()) {
       master->set_input_tensors(merged_inputs);
@@ -1757,8 +1755,8 @@ StarPUTaskRunner::trace_batch_if_enabled(
   const auto request_ids_span = std::span<const int>(request_ids);
   const auto enqueue_start = job->timing_info().enqueued_time;
   auto enqueue_end = job->timing_info().last_enqueued_time;
-  const auto zero_tp = clock::time_point{};
-  if (enqueue_end == zero_tp ||
+  if (const auto zero_tp = clock::time_point{};
+      enqueue_end == zero_tp ||
       (enqueue_start != zero_tp && enqueue_end < enqueue_start)) {
     enqueue_end = enqueue_start;
   }
@@ -1895,8 +1893,8 @@ StarPUTaskRunner::resolve_batch_size(
   if (!opts_->models.empty() && !opts_->models[0].inputs.empty()) {
     const auto per_sample_rank =
         static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
-    const auto rank0 = inputs[0].dim();
-    if (rank0 == per_sample_rank + 1 && rank0 > 0) {
+    if (const auto rank0 = inputs[0].dim();
+        rank0 == per_sample_rank + 1 && rank0 > 0) {
       return inputs[0].size(0);
     }
     return 1;

@@ -39,10 +39,10 @@ compute_latency_statistics(
   std::iota(order.begin(), order.end(), std::size_t{0});
 
   const auto projected_value =
-      [&](std::size_t index) noexcept(noexcept(static_cast<double>(
-          std::invoke(projection, samples[index])))) -> double {
-    return static_cast<double>(std::invoke(projection, samples[index]));
-  };
+      [&](std::size_t index) noexcept(noexcept(
+          static_cast<double>(std::invoke(projection, samples[index])))) {
+        return static_cast<double>(std::invoke(projection, samples[index]));
+      };
 
   const auto comparator =
       [&](std::size_t lhs, std::size_t rhs) noexcept(
