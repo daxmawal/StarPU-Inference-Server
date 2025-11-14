@@ -582,9 +582,17 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
   BatchingTraceLogger logger;
   logger.configure(true, trace_path.string());
 
-  logger.write_batch_compute_span(
-      "skip_model", 11, 4, -1, DeviceType::CPU, 100, 10, /*is_warmup=*/false,
-      /*device_id=*/-1);
+  logger.write_batch_compute_span(BatchingTraceLogger::BatchComputeWriteArgs{
+      .model_name = "skip_model",
+      .batch_id = 11,
+      .batch_size = 4,
+      .worker_id = -1,
+      .worker_type = DeviceType::CPU,
+      .start_ts = 100,
+      .duration_us = 10,
+      .is_warmup = false,
+      .device_id = -1,
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -604,9 +612,17 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanClampsNonPositiveDuration)
   BatchingTraceLogger logger;
   logger.configure(true, trace_path.string());
 
-  logger.write_batch_compute_span(
-      "clamp_model", 12, 5, 2, DeviceType::CPU, 500, 0, /*is_warmup=*/false,
-      /*device_id=*/-1);
+  logger.write_batch_compute_span(BatchingTraceLogger::BatchComputeWriteArgs{
+      .model_name = "clamp_model",
+      .batch_id = 12,
+      .batch_size = 5,
+      .worker_id = 2,
+      .worker_type = DeviceType::CPU,
+      .start_ts = 500,
+      .duration_us = 0,
+      .is_warmup = false,
+      .device_id = -1,
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -646,9 +662,17 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
     logger.trace_writer_.first_record_ = true;
   }
 
-  logger.write_batch_compute_span(
-      "demo_model", 13, 2, 3, DeviceType::CPU, 1000, 25,
-      /*is_warmup=*/false, /*device_id=*/-1);
+  logger.write_batch_compute_span(BatchingTraceLogger::BatchComputeWriteArgs{
+      .model_name = "demo_model",
+      .batch_id = 13,
+      .batch_size = 2,
+      .worker_id = 3,
+      .worker_type = DeviceType::CPU,
+      .start_ts = 1000,
+      .duration_us = 25,
+      .is_warmup = false,
+      .device_id = -1,
+  });
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
@@ -791,13 +815,28 @@ TEST(
   const BatchingTraceLogger::TimeRange codelet_times{start, end};
 
   logger.enabled_.store(false, std::memory_order_release);
-  logger.log_batch_compute_span(
-      1, "disabled_model", 1, 5, DeviceType::CPU, codelet_times, false, -1);
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 1,
+      .model_name = "disabled_model",
+      .batch_size = 1,
+      .worker_id = 5,
+      .worker_type = DeviceType::CPU,
+      .codelet_times = codelet_times,
+      .is_warmup = false,
+      .device_id = -1,
+  });
 
   logger.enabled_.store(true, std::memory_order_release);
-  logger.log_batch_compute_span(
-      2, "invalid_worker_model", 1, -1, DeviceType::CPU, codelet_times, false,
-      -1);
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 2,
+      .model_name = "invalid_worker_model",
+      .batch_size = 1,
+      .worker_id = -1,
+      .worker_type = DeviceType::CPU,
+      .codelet_times = codelet_times,
+      .is_warmup = false,
+      .device_id = -1,
+  });
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
@@ -839,8 +878,16 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
       std::chrono::microseconds{1500}};
   const BatchingTraceLogger::TimeRange codelet_times{start, end};
 
-  logger.log_batch_compute_span(
-      3, "invalid_time_model", 1, 7, DeviceType::CPU, codelet_times, false, -1);
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 3,
+      .model_name = "invalid_time_model",
+      .batch_size = 1,
+      .worker_id = 7,
+      .worker_type = DeviceType::CPU,
+      .codelet_times = codelet_times,
+      .is_warmup = false,
+      .device_id = -1,
+  });
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
@@ -948,10 +995,16 @@ TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
   logger.log_batch_submitted(
       3, "demo_model", 1, DeviceType::CUDA, 4, std::span<const int>{},
       /*is_warmup=*/false, /*device_id=*/7);
-  logger.log_batch_compute_span(
-      3, "demo_model", 1, 4, DeviceType::CUDA,
-      BatchingTraceLogger::TimeRange{start, end},
-      /*is_warmup=*/false, /*device_id=*/7);
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 3,
+      .model_name = "demo_model",
+      .batch_size = 1,
+      .worker_id = 4,
+      .worker_type = DeviceType::CUDA,
+      .codelet_times = BatchingTraceLogger::TimeRange{start, end},
+      .is_warmup = false,
+      .device_id = 7,
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -1115,9 +1168,15 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   logger.log_batch_build_span(
       11, "demo_model", 1, BatchingTraceLogger::TimeRange{start, end},
       std::span<const int>(request_ids), /*is_warmup=*/true);
-  logger.log_batch_compute_span(
-      11, "demo_model", 1, 0, DeviceType::CPU,
-      BatchingTraceLogger::TimeRange{start, end}, /*is_warmup=*/true);
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 11,
+      .model_name = "demo_model",
+      .batch_size = 1,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .codelet_times = BatchingTraceLogger::TimeRange{start, end},
+      .is_warmup = true,
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -1157,12 +1216,23 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
       overlapping_start + std::chrono::microseconds(40);
   const auto long_end = base + std::chrono::microseconds(180);
 
-  logger.log_batch_compute_span(
-      1, "demo_model", 1, 0, DeviceType::CPU,
-      BatchingTraceLogger::TimeRange{overlapping_start, overlapping_end});
-  logger.log_batch_compute_span(
-      2, "demo_model", 1, 0, DeviceType::CPU,
-      BatchingTraceLogger::TimeRange{base, long_end});
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 1,
+      .model_name = "demo_model",
+      .batch_size = 1,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .codelet_times =
+          BatchingTraceLogger::TimeRange{overlapping_start, overlapping_end},
+  });
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 2,
+      .model_name = "demo_model",
+      .batch_size = 1,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .codelet_times = BatchingTraceLogger::TimeRange{base, long_end},
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -1220,9 +1290,14 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
       BatchingTraceLogger::TimeRange{build_start, build_end},
       std::span<const int>{});
   logger.log_batch_submitted(0, "demo_model", 2, DeviceType::CPU, 0);
-  logger.log_batch_compute_span(
-      0, "demo_model", 2, 0, DeviceType::CPU,
-      BatchingTraceLogger::TimeRange{start, end});
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 0,
+      .model_name = "demo_model",
+      .batch_size = 2,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .codelet_times = BatchingTraceLogger::TimeRange{start, end},
+  });
   logger.log_batch_build_span(
       0, "demo_model", 1,
       BatchingTraceLogger::TimeRange{warm_build_start, warm_build_end},
@@ -1230,10 +1305,15 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   logger.log_batch_submitted(
       0, "demo_model", 1, DeviceType::CPU, 1, std::span<const int>{},
       /*is_warmup=*/true);
-  logger.log_batch_compute_span(
-      0, "demo_model", 1, 1, DeviceType::CPU,
-      BatchingTraceLogger::TimeRange{warm_start, warm_end},
-      /*is_warmup=*/true);
+  logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = 0,
+      .model_name = "demo_model",
+      .batch_size = 1,
+      .worker_id = 1,
+      .worker_type = DeviceType::CPU,
+      .codelet_times = BatchingTraceLogger::TimeRange{warm_start, warm_end},
+      .is_warmup = true,
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);

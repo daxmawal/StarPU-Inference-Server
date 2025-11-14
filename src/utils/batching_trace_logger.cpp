@@ -150,14 +150,14 @@ WorkerLaneManager::assign_lane(int worker_id, Span lane_span) -> Assignment
     auto& lane = lanes[idx];
     if (lane_span.start_ts >= lane.last_end_ts) {
       lane.last_end_ts = lane_span.end_ts;
-      const int lane_index = static_cast<int>(idx);
+      const auto lane_index = static_cast<int>(idx);
       return Assignment{
           lane.thread_id, worker_lane_sort_index(worker_id, lane_index),
           lane_index};
     }
   }
 
-  const int lane_index = static_cast<int>(lanes.size());
+  const auto lane_index = static_cast<int>(lanes.size());
   const int thread_id = worker_lane_thread_id(worker_id, lane_index);
   lanes.push_back(LaneState{thread_id, lane_span.end_ts});
   return Assignment{
@@ -519,25 +519,32 @@ BatchingTraceLogger::log_batch_enqueue_span(
 }
 
 void
-BatchingTraceLogger::log_batch_compute_span(
-    int batch_id, std::string_view model_name, std::size_t batch_size,
-    int worker_id, DeviceType worker_type, TimeRange codelet_times,
-    bool is_warmup, int device_id)
+BatchingTraceLogger::log_batch_compute_span(const BatchComputeLogArgs& args)
 {
-  if (!enabled() || worker_id < 0) {
+  if (!enabled() || args.worker_id < 0) {
     return;
   }
 
-  const auto start_ts = relative_timestamp_from_time_point(codelet_times.start);
-  const auto end_ts = relative_timestamp_from_time_point(codelet_times.end);
+  const auto start_ts =
+      relative_timestamp_from_time_point(args.codelet_times.start);
+  const auto end_ts =
+      relative_timestamp_from_time_point(args.codelet_times.end);
   if (!start_ts || !end_ts || *end_ts < *start_ts) {
     return;
   }
 
   const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
-  write_batch_compute_span(
-      model_name, batch_id, batch_size, worker_id, worker_type, *start_ts,
-      duration, is_warmup, device_id);
+  write_batch_compute_span(BatchComputeWriteArgs{
+      .model_name = args.model_name,
+      .batch_id = args.batch_id,
+      .batch_size = args.batch_size,
+      .worker_id = args.worker_id,
+      .worker_type = args.worker_type,
+      .start_ts = *start_ts,
+      .duration_us = duration,
+      .is_warmup = args.is_warmup,
+      .device_id = args.device_id,
+  });
 }
 
 void
@@ -686,22 +693,20 @@ BatchingTraceLogger::device_type_to_string(DeviceType type) -> std::string_view
 }
 
 void
-BatchingTraceLogger::write_batch_compute_span(
-    std::string_view model_name, int batch_id, std::size_t batch_size,
-    int worker_id, DeviceType worker_type, int64_t start_ts,
-    int64_t duration_us, bool is_warmup, int device_id)
+BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
 {
-  if (worker_id < 0) {
+  if (args.worker_id < 0) {
     return;
   }
+  int64_t duration_us = args.duration_us;
   if (duration_us <= 0) {
     duration_us = 1;
   }
 
-  const auto escaped_model = detail::escape_json_string(model_name);
-  const auto worker_type_str = device_type_to_string(worker_type);
-  const int64_t end_ts = start_ts + duration_us;
-  const char* warmup_prefix = is_warmup ? "warming_" : "";
+  const auto escaped_model = detail::escape_json_string(args.model_name);
+  const auto worker_type_str = device_type_to_string(args.worker_type);
+  const int64_t end_ts = args.start_ts + duration_us;
+  const char* warmup_prefix = args.is_warmup ? "warming_" : "";
 
   std::lock_guard lock(mutex_);
   if (!trace_writer_.ready()) {
@@ -709,24 +714,26 @@ BatchingTraceLogger::write_batch_compute_span(
   }
 
   const auto lane_assignment = worker_lane_manager_.assign_lane(
-      worker_id,
-      detail::WorkerLaneManager::Span{.start_ts = start_ts, .end_ts = end_ts});
+      args.worker_id, detail::WorkerLaneManager::Span{
+                          .start_ts = args.start_ts, .end_ts = end_ts});
   const std::string worker_label = detail::WorkerLaneManager::format_label(
-      worker_id, lane_assignment, worker_type_str, device_id);
+      args.worker_id, lane_assignment, worker_type_str, args.device_id);
 
   std::ostringstream line;
   line << R"({"name":")" << warmup_prefix << escaped_model
-       << R"(","cat":"batching","ph":"X","ts":)" << start_ts
+       << R"(","cat":"batching","ph":"X","ts":)" << args.start_ts
        << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << lane_assignment.thread_id;
-  append_flow_annotation(line, FlowDirection::Target, batch_id, is_warmup);
-  line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
-       << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
-       << warmup_prefix << "model_name\":\"" << escaped_model << "\"" << ",\""
-       << warmup_prefix << "worker_id\":" << worker_id << ",\"" << warmup_prefix
+  append_flow_annotation(
+      line, FlowDirection::Target, args.batch_id, args.is_warmup);
+  line << ",\"args\":{" << "\"" << warmup_prefix
+       << "batch_id\":" << args.batch_id << ",\"" << warmup_prefix
+       << "batch_size\":" << args.batch_size << ",\"" << warmup_prefix
+       << "model_name\":\"" << escaped_model << "\"" << ",\"" << warmup_prefix
+       << "worker_id\":" << args.worker_id << ",\"" << warmup_prefix
        << "worker_type\":\"" << worker_type_str << "\"" << ",\""
-       << warmup_prefix << "start_ts\":" << start_ts << ",\"" << warmup_prefix
-       << "end_ts\":" << end_ts << "}}";
+       << warmup_prefix << "start_ts\":" << args.start_ts << ",\""
+       << warmup_prefix << "end_ts\":" << end_ts << "}}";
 
   trace_writer_.ensure_thread_metadata(
       lane_assignment.thread_id, worker_label, lane_assignment.sort_index);

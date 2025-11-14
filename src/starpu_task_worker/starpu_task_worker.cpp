@@ -670,17 +670,24 @@ class SlotManager {
   const RuntimeConfig* opts_;
 };
 
+struct PreparedBatchingContext {
+  std::mutex* prepared_mutex{};
+  std::condition_variable* prepared_cv{};
+  std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs{};
+  bool* batching_done{};
+};
+
 class BatchCollector {
  public:
   BatchCollector(
       InferenceQueue* queue, const RuntimeConfig* opts, StarPUSetup* starpu,
-      std::shared_ptr<InferenceJob>* pending_job, std::mutex* prepared_mutex,
-      std::condition_variable* prepared_cv,
-      std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs,
-      bool* batching_done)
+      std::shared_ptr<InferenceJob>* pending_job,
+      const PreparedBatchingContext& prepared)
       : queue_(queue), opts_(opts), starpu_(starpu), pending_job_(pending_job),
-        prepared_mutex_(prepared_mutex), prepared_cv_(prepared_cv),
-        prepared_jobs_(prepared_jobs), batching_done_(batching_done)
+        prepared_mutex_(prepared.prepared_mutex),
+        prepared_cv_(prepared.prepared_cv),
+        prepared_jobs_(prepared.prepared_jobs),
+        batching_done_(prepared.batching_done)
   {
   }
 
@@ -763,11 +770,17 @@ ResultDispatcher::prepare_job_completion_callback(
         compute_end = timing.codelet_end_time;
       }
 
-      tracer.log_batch_compute_span(
-          job_sptr->submission_id(), job_sptr->model_name(), actual_batch_size,
-          job_sptr->get_worker_id(), job_sptr->get_executed_on(),
-          BatchingTraceLogger::TimeRange{compute_start, compute_end},
-          warmup_job, job_sptr->get_device_id());
+      tracer.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+          .batch_id = job_sptr->submission_id(),
+          .model_name = job_sptr->model_name(),
+          .batch_size = actual_batch_size,
+          .worker_id = job_sptr->get_worker_id(),
+          .worker_type = job_sptr->get_executed_on(),
+          .codelet_times =
+              BatchingTraceLogger::TimeRange{compute_start, compute_end},
+          .is_warmup = warmup_job,
+          .device_id = job_sptr->get_device_id(),
+      });
     }
 
     if (prev_callback) {
@@ -1148,15 +1161,13 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
 
   while (jobs.size() < static_cast<size_t>(max_job_count)) {
     auto next = try_acquire_next_job(enable_wait, coalesce_deadline);
-    if (!next) {
-      break;
-    }
-    if (should_hold_job(next, jobs.front(), target_worker)) {
+    const bool should_break =
+        next == nullptr || should_hold_job(next, jobs.front(), target_worker) ||
+        exceeds_sample_limit(accumulated_samples, next, max_samples_cap);
+    if (next && should_break) {
       store_pending_job(next);
-      break;
     }
-    if (exceeds_sample_limit(accumulated_samples, next, max_samples_cap)) {
-      store_pending_job(next);
+    if (should_break) {
       break;
     }
     accumulated_samples += job_sample_size(next);
@@ -1648,8 +1659,13 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
           config.dependencies != nullptr ? config.dependencies
                                          : &kDefaultInferenceTaskDependencies),
       batch_collector_(std::make_unique<BatchCollector>(
-          queue_, opts_, starpu_, &pending_job_, &prepared_mutex_,
-          &prepared_cv_, &prepared_jobs_, &batching_done_)),
+          queue_, opts_, starpu_, &pending_job_,
+          PreparedBatchingContext{
+              .prepared_mutex = &prepared_mutex_,
+              .prepared_cv = &prepared_cv_,
+              .prepared_jobs = &prepared_jobs_,
+              .batching_done = &batching_done_,
+          })),
       slot_manager_(std::make_unique<SlotManager>(starpu_, opts_)),
       result_dispatcher_(std::make_unique<ResultDispatcher>(
           opts_, results_, results_mutex_, completed_jobs_, all_done_cv_))
