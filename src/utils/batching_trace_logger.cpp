@@ -59,7 +59,7 @@ append_flow_annotation(
     return;
   }
   const auto bind_id = make_flow_bind_id(batch_id, is_warmup);
-  if (!bind_id) {
+  if (!bind_id.has_value()) {
     return;
   }
   const bool emit_flow_out = direction == FlowDirection::Source ||
@@ -228,7 +228,7 @@ BatchingTraceLogger::log_batch_enqueue_span(
 
   const auto start_ts = relative_timestamp_from_time_point(queue_times.start);
   const auto end_ts = relative_timestamp_from_time_point(queue_times.end);
-  if (!start_ts || !end_ts) {
+  if (!start_ts.has_value() || !end_ts.has_value()) {
     return;
   }
 
@@ -567,7 +567,7 @@ BatchingTraceLogger::write_batch_enqueue_span(
   auto adjusted_duration = timing.duration_us;
   const auto latest_request_ts =
       consume_latest_request_enqueue_timestamp(request_ids);
-  if (latest_request_ts) {
+  if (latest_request_ts.has_value()) {
     const int64_t requested_duration = *latest_request_ts - timing.start_ts;
     if (requested_duration > adjusted_duration) {
       adjusted_duration = std::max<int64_t>(int64_t{1}, requested_duration);

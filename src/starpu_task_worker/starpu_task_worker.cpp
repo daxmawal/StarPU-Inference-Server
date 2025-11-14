@@ -581,8 +581,7 @@ resize_output_handles_for_job(
           "Output tensor must be defined, CPU and contiguous");
     }
     const VectorResizeSpec spec{
-        static_cast<std::size_t>(tensor.numel()),
-        static_cast<std::size_t>(tensor.nbytes())};
+        static_cast<std::size_t>(tensor.numel()), tensor.nbytes()};
     resize_starpu_vector_handle(handles[idx], spec, false);
   }
 }
@@ -977,8 +976,7 @@ SlotManager::validate_batch_and_copy_inputs(
           "Input tensor must be defined, CPU and contiguous");
     }
     const VectorResizeSpec spec{
-        static_cast<std::size_t>(tensor.numel()),
-        static_cast<std::size_t>(tensor.nbytes())};
+        static_cast<std::size_t>(tensor.numel()), tensor.nbytes()};
     resize_starpu_vector_handle(handles[input_idx], spec, true);
 
     const auto& buffer_info = buffer_infos.at(input_idx);
@@ -1039,7 +1037,7 @@ SlotManager::copy_job_inputs_to_slot(
         throw InvalidInputTensorException(
             "Input tensor must be defined, CPU and contiguous");
       }
-      const auto bytes = static_cast<std::size_t>(tensor.nbytes());
+      const auto bytes = tensor.nbytes();
       const auto numel = static_cast<std::size_t>(tensor.numel());
       if (buffer_span.size() < offset + bytes) {
         throw InputPoolCapacityException(
@@ -1833,7 +1831,7 @@ StarPUTaskRunner::handle_job_exception(
   if (job->has_on_complete()) {
     const auto completion = job->get_on_complete();
     task_runner_internal::run_with_logged_exceptions(
-        [&]() {
+        [&completion, &completion_invoked]() {
           completion({}, -1);
           completion_invoked = true;
         },

@@ -355,7 +355,8 @@ configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
     worker_bindid[idx] = candidate_gpu_bind_ids[idx % candidate_count];
   }
 
-  std::copy(cpu_bind_ids.begin(), cpu_bind_ids.end(), worker_bindid.begin());
+  std::ranges::copy(
+      cpu_bind_ids.begin(), cpu_bind_ids.end(), worker_bindid.begin());
 
   std::string bind_list;
   for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
