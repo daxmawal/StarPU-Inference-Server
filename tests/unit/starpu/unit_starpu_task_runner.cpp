@@ -364,7 +364,7 @@ constexpr std::string_view kBatchSizeFromInputsSymbolName =
     "_ZN13starpu_server20task_runner_internal22batch_size_from_"
     "inputsERKSt6vectorIN2at6TensorESaIS3_EE";
 constexpr std::string_view kCudaCopyBatchEnqueueSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatch7enqueueEPvPKvmb";
+    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatch7enqueueEPSt4bytePKS2_mb";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -536,7 +536,7 @@ resolve_cuda_copy_batch_finalize_fn() -> CudaCopyBatchFinalizeFn
 using CudaCopyBatchCtorFn = void (*)(void*, bool);
 using CudaCopyBatchDestructorFn = void (*)(void*);
 using CudaCopyBatchEnqueueFn =
-    bool (*)(void*, void*, const void*, std::size_t, bool);
+    bool (*)(void*, std::byte*, const std::byte*, std::size_t, bool);
 
 auto
 resolve_cuda_copy_batch_ctor_fn() -> CudaCopyBatchCtorFn
@@ -2398,8 +2398,9 @@ TEST(CudaCopyBatchTest, EnqueueDisablesAsyncCopyWhenMemcpyFails)
   {
     ScopedCudaMemcpyAsyncFailure guard(batch->stream);
     const bool ok = enqueue_fn(
-        batch, static_cast<void*>(&dst), static_cast<const void*>(&src),
-        sizeof(src), /*allow_async=*/true);
+        batch, reinterpret_cast<std::byte*>(&dst),
+        reinterpret_cast<const std::byte*>(&src), sizeof(src),
+        /*allow_async=*/true);
     EXPECT_FALSE(ok);
   }
 

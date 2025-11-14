@@ -413,14 +413,16 @@ class CudaCopyBatch {
 
   [[nodiscard]] auto active() const -> bool { return enabled_; }
 
-  auto enqueue(void* dst, const void* src, std::size_t bytes, bool allow_async)
-      -> bool
+  auto enqueue(
+      std::byte* dst, const std::byte* src, std::size_t bytes,
+      bool allow_async) -> bool
   {
     if (!enabled_ || !allow_async || bytes == 0) {
       return false;
     }
-    const auto status =
-        cudaMemcpyAsync(dst, src, bytes, cudaMemcpyHostToHost, stream_);
+    const auto status = cudaMemcpyAsync(
+        static_cast<void*>(dst), static_cast<const void*>(src), bytes,
+        cudaMemcpyHostToHost, stream_);
     if (status != cudaSuccess) {
       enabled_ = false;
       pending_ = false;
@@ -983,7 +985,8 @@ SlotManager::validate_batch_and_copy_inputs(
     const bool allow_async =
         buffer_info.cuda_pinned || buffer_info.starpu_pinned;
     if (!copy_batch.enqueue(
-            base_ptrs[input_idx], tensor.data_ptr(), spec.byte_count,
+            base_ptrs[input_idx],
+            static_cast<const std::byte*>(tensor.data_ptr()), spec.byte_count,
             allow_async)) {
       std::memcpy(base_ptrs[input_idx], tensor.data_ptr(), spec.byte_count);
     }
@@ -1045,7 +1048,8 @@ SlotManager::copy_job_inputs_to_slot(
       }
       auto* destination = buffer_span.subspan(offset, bytes).data();
       if (!copy_batch.enqueue(
-              destination, tensor.data_ptr(), bytes, allow_async)) {
+              destination, static_cast<const std::byte*>(tensor.data_ptr()),
+              bytes, allow_async)) {
         std::memcpy(destination, tensor.data_ptr(), bytes);
       }
       offset += bytes;
