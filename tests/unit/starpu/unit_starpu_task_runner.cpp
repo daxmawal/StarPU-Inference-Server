@@ -287,6 +287,10 @@ constexpr std::string_view kSlotHandleLeaseCtorSymbolName =
     "data_stateLm18446744073709551615EE23starpu_data_access_mode";
 constexpr std::string_view kSlotHandleLeaseDtorSymbolName =
     "_ZN13starpu_server12_GLOBAL__N_115SlotHandleLeaseD2Ev";
+constexpr std::string_view kBuildRequestIdsForTraceSymbolName =
+    "_ZN13starpu_server12_GLOBAL__N_127build_request_ids_for_"
+    "traceERKSt10shared_"
+    "ptrINS_12InferenceJobEE";
 
 auto
 map_self_executable() -> const std::vector<char>&
@@ -489,6 +493,21 @@ resolve_slot_handle_lease_dtor_fn() -> SlotHandleLeaseDtorFn
   static SlotHandleLeaseDtorFn fn = [] {
     const auto address = resolve_symbol_address(kSlotHandleLeaseDtorSymbolName);
     return address != 0 ? reinterpret_cast<SlotHandleLeaseDtorFn>(address)
+                        : nullptr;
+  }();
+  return fn;
+}
+
+using BuildRequestIdsForTraceFn =
+    std::vector<int> (*)(const std::shared_ptr<starpu_server::InferenceJob>&);
+
+auto
+resolve_build_request_ids_for_trace_fn() -> BuildRequestIdsForTraceFn
+{
+  static BuildRequestIdsForTraceFn fn = [] {
+    const auto address =
+        resolve_symbol_address(kBuildRequestIdsForTraceSymbolName);
+    return address != 0 ? reinterpret_cast<BuildRequestIdsForTraceFn>(address)
                         : nullptr;
   }();
   return fn;
@@ -2133,6 +2152,16 @@ TEST(SlotHandleLeaseTest, ConstructorPropagatesAcquireFailures)
 
   ASSERT_EQ(released.size(), 1U);
   EXPECT_EQ(released[0], handle_ok);
+}
+
+TEST(BuildRequestIdsForTraceTest, ReturnsEmptyWhenJobMissing)
+{
+  auto fn = resolve_build_request_ids_for_trace_fn();
+  ASSERT_NE(fn, nullptr);
+
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+  const auto ids = fn(missing_job);
+  EXPECT_TRUE(ids.empty());
 }
 
 struct CudaCopyBatchMirror {
