@@ -288,29 +288,35 @@ release_inputs_from_additional_jobs(
 
 namespace {
 
+[[nodiscard]] auto
+request_id_from_sub_job(const InferenceJob::AggregatedSubJob& sub_job) -> int
+{
+  if (sub_job.request_id >= 0) {
+    return sub_job.request_id;
+  }
+  if (auto locked = sub_job.job.lock()) {
+    return locked->get_request_id();
+  }
+  return sub_job.request_id;
+}
+
 auto
 build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
     -> std::vector<int>
 {
-  std::vector<int> ids;
   if (!job) {
-    return ids;
+    return {};
   }
 
-  if (job->has_aggregated_sub_jobs()) {
-    const auto& aggregated = job->aggregated_sub_jobs();
-    ids.reserve(aggregated.size());
-    for (const auto& sub_job : aggregated) {
-      int request = sub_job.request_id;
-      if (request < 0) {
-        if (auto locked = sub_job.job.lock()) {
-          request = locked->get_request_id();
-        }
-      }
-      ids.push_back(request);
-    }
-  } else {
-    ids.push_back(job->get_request_id());
+  if (!job->has_aggregated_sub_jobs()) {
+    return std::vector<int>{job->get_request_id()};
+  }
+
+  const auto& aggregated = job->aggregated_sub_jobs();
+  std::vector<int> ids;
+  ids.reserve(aggregated.size());
+  for (const auto& sub_job : aggregated) {
+    ids.push_back(request_id_from_sub_job(sub_job));
   }
 
   return ids;
