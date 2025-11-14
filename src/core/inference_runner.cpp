@@ -109,13 +109,13 @@ default_worker_thread_launcher(StarPUTaskRunner& worker) -> std::jthread
 namespace detail {
 
 void
-set_cuda_device_count_override(std::optional<int> override)
+set_cuda_device_count_override(std::optional<int> override_count)
 {
-  if (override.has_value() && *override < 0) {
+  if (override_count.has_value() && *override_count < 0) {
     throw std::invalid_argument(
         "CUDA device count override must be non-negative");
   }
-  cuda_device_count_override_storage() = override;
+  cuda_device_count_override_storage() = override_count;
 }
 
 auto

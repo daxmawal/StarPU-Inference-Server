@@ -154,14 +154,14 @@ main(int argc, char* argv[]) -> int
   std::unique_ptr<torch::jit::script::Module> reference_model;
   if (!config.client_model_path.empty()) {
     try {
-      auto module = torch::jit::load(config.client_model_path);
-      module.eval();
+      auto model = torch::jit::load(config.client_model_path);
+      model.eval();
       starpu_server::log_info(
           config.verbosity, std::format(
                                 "Loaded client model '{}' for local validation",
                                 config.client_model_path));
       reference_model =
-          std::make_unique<torch::jit::script::Module>(std::move(module));
+          std::make_unique<torch::jit::script::Module>(std::move(model));
     }
     catch (const c10::Error& e) {
       starpu_server::log_error(std::format(
