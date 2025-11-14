@@ -85,3 +85,10 @@ TEST_F(InputGeneratorTest, SupportsHalfAndBFloat16)
   EXPECT_EQ(tensors[0].dtype(), at::kHalf);
   EXPECT_EQ(tensors[1].dtype(), at::kBFloat16);
 }
+
+TEST(InputGenerator, ThrowsOnUnsupportedType)
+{
+  EXPECT_THROW(
+      generate_random_inputs({TensorConfig{"", {1}, at::kComplexDouble}}),
+      UnsupportedDtypeException);
+}

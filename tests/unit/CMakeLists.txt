@@ -51,9 +51,6 @@ target_sources(
             utils/unit_config_loader.cpp
             utils/unit_transparent_hash.cpp
             utils/robustness/edgecases_client_utils.cpp
-            utils/robustness/edgecases_datatype_utils.cpp
-            utils/robustness/edgecases_input_generator.cpp
-            utils/robustness/edgecases_transparent_hash.cpp
             ../support/output_slot_pool_test_hooks.cpp
             ../support/starpu_data_interface_override.cpp
             ../support/starpu_task_submit_override.cpp
