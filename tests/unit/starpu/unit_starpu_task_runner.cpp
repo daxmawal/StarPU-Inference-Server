@@ -2164,6 +2164,35 @@ TEST(BuildRequestIdsForTraceTest, ReturnsEmptyWhenJobMissing)
   EXPECT_TRUE(ids.empty());
 }
 
+TEST(SliceOutputsForSubJobTest, MakesSlicesContiguousWhenSourceIsNot)
+{
+  using starpu_server::task_runner_internal::slice_outputs_for_sub_job;
+  using starpu_server::task_runner_internal::SubJobSliceOptions;
+
+  auto tensor = torch::arange(
+      0, 12, torch::TensorOptions().dtype(torch::kFloat32));
+  tensor = tensor.view({3, 4});
+  auto non_contiguous = tensor.transpose(0, 1);
+  ASSERT_FALSE(non_contiguous.is_contiguous());
+
+  std::vector<torch::Tensor> aggregated{non_contiguous};
+  const SubJobSliceOptions options{
+      /*offset=*/1, /*batch_size=*/2};
+
+  auto result = slice_outputs_for_sub_job(aggregated, options);
+  ASSERT_EQ(result.outputs.size(), 1U);
+  const auto& slice = result.outputs[0];
+
+  EXPECT_TRUE(slice.is_contiguous());
+  ASSERT_EQ(slice.dim(), 2);
+  EXPECT_EQ(slice.size(0), 2);
+  EXPECT_EQ(slice.size(1), 3);
+
+  auto expected = non_contiguous.narrow(0, 1, 2).contiguous();
+  EXPECT_TRUE(torch::allclose(slice, expected));
+  EXPECT_EQ(result.processed_length, expected.size(0));
+}
+
 struct CudaCopyBatchMirror {
   cudaStream_t stream;
   bool enabled;
