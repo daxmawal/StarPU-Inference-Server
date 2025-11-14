@@ -154,13 +154,14 @@ TEST(BatchingTraceLoggerTest, WriteLineLockedNoOpsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = false;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = false;
+    logger.trace_writer_.first_record_ = true;
 
-    logger.write_line_locked(R"({"dummy":"event"})");
-    logger.stream_.close();
+    logger.trace_writer_.write_line(R"({"dummy":"event"})");
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -169,7 +170,7 @@ TEST(BatchingTraceLoggerTest, WriteLineLockedNoOpsWithoutHeader)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
   EXPECT_TRUE(content.empty())
-      << "write_line_locked should not emit content before header.";
+      << "trace writer should not emit content before header.";
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
@@ -182,12 +183,13 @@ TEST(BatchingTraceLoggerTest, WriteFooterLockedNoOpsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = false;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = false;
 
-    logger.write_footer_locked();
-    logger.stream_.close();
+    logger.trace_writer_.write_footer();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -196,7 +198,7 @@ TEST(BatchingTraceLoggerTest, WriteFooterLockedNoOpsWithoutHeader)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
   EXPECT_TRUE(content.empty())
-      << "write_footer_locked should not emit content before header.";
+      << "trace writer should not emit content before header.";
 
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
@@ -284,10 +286,11 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = false;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = false;
+    logger.trace_writer_.first_record_ = true;
   }
 
   BatchingTraceLogger::BatchSpanTiming timing{
@@ -299,7 +302,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -321,10 +324,11 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = false;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = false;
+    logger.trace_writer_.first_record_ = true;
   }
 
   BatchingTraceLogger::BatchSpanTiming timing{
@@ -338,7 +342,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -360,10 +364,11 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = true;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
@@ -378,7 +383,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -400,10 +405,11 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = true;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.enabled_.store(true, std::memory_order_release);
   logger.trace_start_initialized_ = true;
@@ -418,7 +424,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -441,10 +447,11 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = true;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.enabled_.store(true, std::memory_order_release);
   logger.trace_start_initialized_ = true;
@@ -460,7 +467,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -493,10 +500,11 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = true;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
@@ -511,7 +519,7 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -533,10 +541,11 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = true;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.enabled_.store(true, std::memory_order_release);
   logger.trace_start_initialized_ = true;
@@ -552,7 +561,7 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -630,10 +639,11 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = false;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = false;
+    logger.trace_writer_.first_record_ = true;
   }
 
   logger.write_batch_compute_span(
@@ -642,7 +652,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -667,11 +677,10 @@ TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
 TEST(BatchingTraceLoggerTest, RememberRequestEnqueueTimestampSkipsNegativeId)
 {
   BatchingTraceLogger logger;
-  logger.remember_request_enqueue_timestamp(-5, 1234);
+  logger.request_timeline_.remember(-5, 1234);
 
   const std::array<int, 1> request_ids{-5};
-  const auto timestamp =
-      logger.consume_latest_request_enqueue_timestamp(request_ids);
+  const auto timestamp = logger.request_timeline_.consume_latest(request_ids);
   EXPECT_FALSE(timestamp.has_value())
       << "Negative request IDs should be ignored.";
 }
@@ -683,10 +692,11 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWhenDisabled)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = true;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.enabled_.store(false, std::memory_order_release);
 
@@ -701,7 +711,7 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWhenDisabled)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -723,10 +733,11 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = false;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = false;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.enabled_.store(true, std::memory_order_release);
 
@@ -741,7 +752,7 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -765,10 +776,11 @@ TEST(
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = true;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
@@ -789,7 +801,7 @@ TEST(
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);
@@ -811,10 +823,11 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.open(trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.stream_.is_open());
-    logger.header_written_ = true;
-    logger.first_record_ = true;
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
   }
   logger.enabled_.store(true, std::memory_order_release);
   logger.trace_start_initialized_ = true;
@@ -831,7 +844,7 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
 
   {
     std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.stream_.close();
+    logger.trace_writer_.stream_.close();
   }
 
   std::ifstream stream(trace_path);

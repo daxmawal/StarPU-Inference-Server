@@ -95,6 +95,281 @@ format_worker_label(
 
 }  // namespace
 
+namespace detail {
+
+void
+RequestTimelineTracker::remember(int request_id, int64_t timestamp_us)
+{
+  if (request_id < 0) {
+    return;
+  }
+  std::lock_guard lock(mutex_);
+  enqueue_times_[request_id] = timestamp_us;
+}
+
+auto
+RequestTimelineTracker::consume_latest(std::span<const int> request_ids)
+    -> std::optional<int64_t>
+{
+  std::optional<int64_t> latest;
+  std::lock_guard lock(mutex_);
+  for (int request_id : request_ids) {
+    if (request_id < 0) {
+      continue;
+    }
+    const auto timestamp_iter = enqueue_times_.find(request_id);
+    if (timestamp_iter == enqueue_times_.end()) {
+      continue;
+    }
+    if (const int64_t timestamp_us = timestamp_iter->second;
+        !latest || timestamp_us > *latest) {
+      latest = timestamp_us;
+    }
+    enqueue_times_.erase(timestamp_iter);
+  }
+  return latest;
+}
+
+void
+RequestTimelineTracker::reset()
+{
+  std::lock_guard lock(mutex_);
+  enqueue_times_.clear();
+}
+
+auto
+WorkerLaneManager::assign_lane(int worker_id, Span lane_span) -> Assignment
+{
+  auto& lanes = worker_lanes_[worker_id];
+  if (lanes.empty()) {
+    const int thread_id = worker_lane_thread_id(worker_id, /*lane_index=*/0);
+    lanes.push_back(LaneState{thread_id, /*last_end_ts=*/0});
+  }
+
+  for (size_t idx = 0; idx < lanes.size(); ++idx) {
+    auto& lane = lanes[idx];
+    if (lane_span.start_ts >= lane.last_end_ts) {
+      lane.last_end_ts = lane_span.end_ts;
+      const int lane_index = static_cast<int>(idx);
+      return Assignment{
+          lane.thread_id, worker_lane_sort_index(worker_id, lane_index),
+          lane_index};
+    }
+  }
+
+  const int lane_index = static_cast<int>(lanes.size());
+  const int thread_id = worker_lane_thread_id(worker_id, lane_index);
+  lanes.push_back(LaneState{thread_id, lane_span.end_ts});
+  return Assignment{
+      thread_id, worker_lane_sort_index(worker_id, lane_index), lane_index};
+}
+
+auto
+WorkerLaneManager::format_label(
+    int worker_id, const Assignment& assignment,
+    std::string_view worker_type_str, int device_id) -> std::string
+{
+  auto label = format_worker_label(worker_id, worker_type_str, device_id);
+  if (assignment.lane_index <= 0) {
+    return label;
+  }
+  return std::format("{} #{}", label, assignment.lane_index + 1);
+}
+
+void
+WorkerLaneManager::reset()
+{
+  worker_lanes_.clear();
+}
+
+auto
+WorkerLaneManager::base_thread_id(int worker_id) -> int
+{
+  return worker_lane_thread_id(worker_id, /*lane_index=*/0);
+}
+
+auto
+WorkerLaneManager::base_sort_index(int worker_id) -> int
+{
+  return worker_lane_sort_index(worker_id, /*lane_index=*/0);
+}
+
+auto
+WorkerLaneManager::worker_lane_sort_index(int worker_id, int lane_index) -> int
+{
+  const int base_thread_id = worker_lane_thread_id(worker_id, /*lane_index=*/0);
+  return base_thread_id * kWorkerLaneSortStride + lane_index;
+}
+
+auto
+WorkerLaneManager::worker_lane_thread_id(int worker_id, int lane_index) -> int
+{
+  return kWorkerThreadOffset + worker_id * kWorkerLaneThreadStride + lane_index;
+}
+
+bool
+TraceFileWriter::open(const std::filesystem::path& file_path)
+{
+  stream_.open(file_path, std::ios::out | std::ios::trunc);
+  reset_state();
+  return stream_.is_open();
+}
+
+void
+TraceFileWriter::close()
+{
+  if (stream_.is_open()) {
+    write_footer();
+    stream_.close();
+  }
+  reset_state();
+}
+
+void
+TraceFileWriter::write_header()
+{
+  if (!stream_.is_open()) {
+    return;
+  }
+  stream_ << "{\"traceEvents\":[";
+  first_record_ = true;
+  header_written_ = true;
+  thread_metadata_.clear();
+  write_process_metadata();
+  ensure_thread_metadata(
+      kRequestEnqueuedTrackId, kRequestEnqueuedTrackName,
+      kRequestEnqueuedSortIndex);
+  ensure_thread_metadata(
+      kBatchEnqueueTrackId, kBatchEnqueueTrackName, kBatchEnqueueSortIndex);
+  ensure_thread_metadata(
+      kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex);
+  ensure_thread_metadata(
+      kBatchSubmittedTrackId, kBatchSubmittedTrackName,
+      kBatchSubmittedSortIndex);
+}
+
+void
+TraceFileWriter::write_footer()
+{
+  if (!header_written_) {
+    return;
+  }
+  if (!first_record_) {
+    stream_ << '\n';
+  }
+  stream_ << "]\n}\n";
+  header_written_ = false;
+}
+
+void
+TraceFileWriter::write_line(const std::string& line)
+{
+  if (!header_written_) {
+    return;
+  }
+  if (!first_record_) {
+    stream_ << ",\n  ";
+  } else {
+    stream_ << "\n  ";
+    first_record_ = false;
+  }
+  stream_ << line;
+}
+
+void
+TraceFileWriter::write_process_metadata()
+{
+  const std::string line = std::format(
+      R"({{"name":"process_name","ph":"M","ts":0,"pid":{},"args":{{"name":"{}"}}}})",
+      kTraceProcessId, kProcessName);
+  write_line(line);
+}
+
+void
+TraceFileWriter::ensure_thread_metadata(
+    int thread_id, std::string_view thread_name, int sort_index)
+{
+  auto& metadata = thread_metadata_[thread_id];
+  if (metadata.name != thread_name) {
+    metadata.name.assign(thread_name.begin(), thread_name.end());
+    const std::string escaped_name = escape_json_string(metadata.name);
+    const std::string name_line = std::format(
+        R"({{"name":"thread_name","ph":"M","ts":0,"pid":{},"tid":{},"args":{{"name":"{}"}}}})",
+        kTraceProcessId, thread_id, escaped_name);
+    write_line(name_line);
+  }
+
+  if (!metadata.sort_emitted) {
+    const std::string sort_line = std::format(
+        R"({{"name":"thread_sort_index","ph":"M","ts":0,"pid":{},"tid":{},"args":{{"sort_index":{}}}}})",
+        kTraceProcessId, thread_id, sort_index);
+    write_line(sort_line);
+    metadata.sort_emitted = true;
+  }
+}
+
+auto
+TraceFileWriter::ready() const -> bool
+{
+  return header_written_ && stream_.is_open();
+}
+
+auto
+TraceFileWriter::is_open() const -> bool
+{
+  return stream_.is_open();
+}
+
+void
+TraceFileWriter::reset_state()
+{
+  first_record_ = true;
+  header_written_ = false;
+  thread_metadata_.clear();
+}
+
+auto
+escape_json_string(std::string_view value) -> std::string
+{
+  std::string escaped;
+  escaped.reserve(value.size());
+  for (const unsigned char character : value) {
+    switch (character) {
+      case '"':
+        escaped += R"(\")";
+        break;
+      case '\\':
+        escaped += R"(\\)";
+        break;
+      case '\b':
+        escaped += R"(\b)";
+        break;
+      case '\f':
+        escaped += R"(\f)";
+        break;
+      case '\n':
+        escaped += R"(\n)";
+        break;
+      case '\r':
+        escaped += R"(\r)";
+        break;
+      case '\t':
+        escaped += R"(\t)";
+        break;
+      default:
+        if (character < kAsciiPrintableFloor) {
+          escaped +=
+              std::format("\\u{:04X}", static_cast<unsigned int>(character));
+        } else {
+          escaped.push_back(static_cast<char>(character));
+        }
+    }
+  }
+  return escaped;
+}
+
+}  // namespace detail
+
 auto
 BatchingTraceLogger::instance() -> BatchingTraceLogger&
 {
@@ -138,8 +413,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
     }
   }
 
-  stream_.open(path, std::ios::out | std::ios::trunc);
-  if (!stream_.is_open()) {
+  if (!trace_writer_.open(path)) {
     log_warning(std::format(
         "Failed to open batching trace file '{}'; tracing disabled.",
         file_path_));
@@ -149,7 +423,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
 
   trace_start_us_ = now_us();
   trace_start_initialized_ = true;
-  write_header_locked();
+  trace_writer_.write_header();
 
   enabled_.store(true, std::memory_order_release);
 }
@@ -282,10 +556,10 @@ BatchingTraceLogger::write_record(
                                 : relative_timestamp_us(now_us());
 
   if (event == BatchingTraceEvent::RequestQueued) {
-    remember_request_enqueue_timestamp(record_context.request_id, timestamp_us);
+    request_timeline_.remember(record_context.request_id, timestamp_us);
   }
 
-  const auto escaped_model = escape_json_string(model_name);
+  const auto escaped_model = detail::escape_json_string(model_name);
   const auto worker_type_str = device_type_to_string(worker_info.worker_type);
   const bool is_worker_lane = worker_info.worker_id >= 0;
   std::string worker_label;
@@ -296,11 +570,10 @@ BatchingTraceLogger::write_record(
     worker_label = format_worker_label(
         worker_info.worker_id, worker_type_str, worker_info.device_id);
     thread_name = worker_label;
-    constexpr int kBaseLaneIndex = 0;
-    const WorkerLaneKey base_lane{
-        .worker_id = worker_info.worker_id, .lane_index = kBaseLaneIndex};
-    sort_index = worker_lane_sort_index(base_lane);
-    thread_id = worker_lane_thread_id(base_lane);
+    sort_index =
+        detail::WorkerLaneManager::base_sort_index(worker_info.worker_id);
+    thread_id =
+        detail::WorkerLaneManager::base_thread_id(worker_info.worker_id);
   } else {
     switch (event) {
       case BatchingTraceEvent::RequestQueued:
@@ -377,45 +650,11 @@ BatchingTraceLogger::write_record(
   line << "}}";
 
   std::lock_guard lock(mutex_);
-  if (!stream_.is_open() || !header_written_) {
+  if (!trace_writer_.ready()) {
     return;
   }
-  ensure_thread_metadata_locked(thread_id, thread_name, sort_index);
-  write_line_locked(line.str());
-}
-
-void
-BatchingTraceLogger::remember_request_enqueue_timestamp(
-    int request_id, int64_t timestamp_us)
-{
-  if (request_id < 0) {
-    return;
-  }
-  std::lock_guard lock(request_time_mutex_);
-  request_enqueue_times_[request_id] = timestamp_us;
-}
-
-auto
-BatchingTraceLogger::consume_latest_request_enqueue_timestamp(
-    std::span<const int> request_ids) -> std::optional<int64_t>
-{
-  std::optional<int64_t> latest;
-  std::lock_guard lock(request_time_mutex_);
-  for (int request_id : request_ids) {
-    if (request_id < 0) {
-      continue;
-    }
-    const auto timestamp_iter = request_enqueue_times_.find(request_id);
-    if (timestamp_iter == request_enqueue_times_.end()) {
-      continue;
-    }
-    if (const int64_t timestamp_us = timestamp_iter->second;
-        !latest || timestamp_us > *latest) {
-      latest = timestamp_us;
-    }
-    request_enqueue_times_.erase(timestamp_iter);
-  }
-  return latest;
+  trace_writer_.ensure_thread_metadata(thread_id, thread_name, sort_index);
+  trace_writer_.write_line(line.str());
 }
 
 auto
@@ -459,22 +698,21 @@ BatchingTraceLogger::write_batch_compute_span(
     duration_us = 1;
   }
 
-  const auto escaped_model = escape_json_string(model_name);
+  const auto escaped_model = detail::escape_json_string(model_name);
   const auto worker_type_str = device_type_to_string(worker_type);
   const int64_t end_ts = start_ts + duration_us;
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
   std::lock_guard lock(mutex_);
-  if (!stream_.is_open() || !header_written_) {
+  if (!trace_writer_.ready()) {
     return;
   }
 
-  const auto lane_assignment = assign_worker_lane_locked(
-      worker_id, WorkerLaneSpan{.start_ts = start_ts, .end_ts = end_ts});
-  const WorkerLaneKey lane_key{
-      .worker_id = worker_id, .lane_index = lane_assignment.lane_index};
-  const std::string worker_label =
-      format_worker_lane_label(lane_key, worker_type_str, device_id);
+  const auto lane_assignment = worker_lane_manager_.assign_lane(
+      worker_id,
+      detail::WorkerLaneManager::Span{.start_ts = start_ts, .end_ts = end_ts});
+  const std::string worker_label = detail::WorkerLaneManager::format_label(
+      worker_id, lane_assignment, worker_type_str, device_id);
 
   std::ostringstream line;
   line << R"({"name":")" << warmup_prefix << escaped_model
@@ -488,72 +726,11 @@ BatchingTraceLogger::write_batch_compute_span(
        << warmup_prefix << "worker_id\":" << worker_id << ",\"" << warmup_prefix
        << "worker_type\":\"" << worker_type_str << "\"" << ",\""
        << warmup_prefix << "start_ts\":" << start_ts << ",\"" << warmup_prefix
-       << "end_ts\":" << (start_ts + duration_us) << "}}";
+       << "end_ts\":" << end_ts << "}}";
 
-  ensure_thread_metadata_locked(
+  trace_writer_.ensure_thread_metadata(
       lane_assignment.thread_id, worker_label, lane_assignment.sort_index);
-  write_line_locked(line.str());
-}
-
-auto
-BatchingTraceLogger::assign_worker_lane_locked(
-    int worker_id, WorkerLaneSpan lane_span) -> WorkerLaneAssignment
-{
-  auto& lanes = worker_lanes_[worker_id];
-  if (lanes.empty()) {
-    const WorkerLaneKey lane_key{.worker_id = worker_id, .lane_index = 0};
-    lanes.push_back(
-        WorkerLaneState{worker_lane_thread_id(lane_key), /*last_end_ts=*/0});
-  }
-
-  int lane_index = 0;
-  for (auto& lane : lanes) {
-    if (lane_span.start_ts >= lane.last_end_ts) {
-      lane.last_end_ts = lane_span.end_ts;
-      const WorkerLaneKey lane_key{
-          .worker_id = worker_id, .lane_index = lane_index};
-      return WorkerLaneAssignment{
-          lane.thread_id, worker_lane_sort_index(lane_key), lane_index};
-    }
-    ++lane_index;
-  }
-
-  lane_index = static_cast<int>(lanes.size());
-  const WorkerLaneKey lane_key{
-      .worker_id = worker_id, .lane_index = lane_index};
-  const int thread_id = worker_lane_thread_id(lane_key);
-  lanes.push_back(WorkerLaneState{thread_id, lane_span.end_ts});
-  return WorkerLaneAssignment{
-      thread_id, worker_lane_sort_index(lane_key), lane_index};
-}
-
-auto
-BatchingTraceLogger::worker_lane_sort_index(WorkerLaneKey lane_key) -> int
-{
-  const WorkerLaneKey base_lane{
-      .worker_id = lane_key.worker_id, .lane_index = 0};
-  const int base = worker_lane_thread_id(base_lane);
-  return base * kWorkerLaneSortStride + lane_key.lane_index;
-}
-
-auto
-BatchingTraceLogger::worker_lane_thread_id(WorkerLaneKey lane_key) -> int
-{
-  return kWorkerThreadOffset + lane_key.worker_id * kWorkerLaneThreadStride +
-         lane_key.lane_index;
-}
-
-auto
-BatchingTraceLogger::format_worker_lane_label(
-    WorkerLaneKey lane_key, std::string_view worker_type_str,
-    int device_id) -> std::string
-{
-  auto label =
-      format_worker_label(lane_key.worker_id, worker_type_str, device_id);
-  if (lane_key.lane_index <= 0) {
-    return label;
-  }
-  return std::format("{} #{}", label, lane_key.lane_index + 1);
+  trace_writer_.write_line(line.str());
 }
 
 void
@@ -567,7 +744,7 @@ BatchingTraceLogger::write_batch_enqueue_span(
 
   auto adjusted_duration = timing.duration_us;
   if (const auto latest_request_ts =
-          consume_latest_request_enqueue_timestamp(request_ids);
+          request_timeline_.consume_latest(request_ids);
       latest_request_ts.has_value()) {
     const int64_t requested_duration = *latest_request_ts - timing.start_ts;
     if (requested_duration > adjusted_duration) {
@@ -575,7 +752,7 @@ BatchingTraceLogger::write_batch_enqueue_span(
     }
   }
 
-  const auto escaped_model = escape_json_string(model_name);
+  const auto escaped_model = detail::escape_json_string(model_name);
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
   std::ostringstream line;
@@ -601,12 +778,12 @@ BatchingTraceLogger::write_batch_enqueue_span(
        << "}}";
 
   std::lock_guard lock(mutex_);
-  if (!stream_.is_open() || !header_written_) {
+  if (!trace_writer_.ready()) {
     return;
   }
-  ensure_thread_metadata_locked(
+  trace_writer_.ensure_thread_metadata(
       kBatchEnqueueTrackId, kBatchEnqueueTrackName, kBatchEnqueueSortIndex);
-  write_line_locked(line.str());
+  trace_writer_.write_line(line.str());
 }
 
 void
@@ -618,7 +795,7 @@ BatchingTraceLogger::write_batch_build_span(
     timing.duration_us = 1;
   }
 
-  const auto escaped_model = escape_json_string(model_name);
+  const auto escaped_model = detail::escape_json_string(model_name);
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
   std::ostringstream line;
@@ -645,151 +822,22 @@ BatchingTraceLogger::write_batch_build_span(
        << "}}";
 
   std::lock_guard lock(mutex_);
-  if (!stream_.is_open() || !header_written_) {
+  if (!trace_writer_.ready()) {
     return;
   }
-  ensure_thread_metadata_locked(
+  trace_writer_.ensure_thread_metadata(
       kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex);
-  write_line_locked(line.str());
-}
-
-auto
-BatchingTraceLogger::escape_json_string(std::string_view value) -> std::string
-{
-  std::string escaped;
-  escaped.reserve(value.size());
-  for (const unsigned char character : value) {
-    switch (character) {
-      case '"':
-        escaped += R"(\")";
-        break;
-      case '\\':
-        escaped += R"(\\)";
-        break;
-      case '\b':
-        escaped += R"(\b)";
-        break;
-      case '\f':
-        escaped += R"(\f)";
-        break;
-      case '\n':
-        escaped += R"(\n)";
-        break;
-      case '\r':
-        escaped += R"(\r)";
-        break;
-      case '\t':
-        escaped += R"(\t)";
-        break;
-      default:
-        if (character < kAsciiPrintableFloor) {
-          escaped +=
-              std::format("\\u{:04X}", static_cast<unsigned int>(character));
-        } else {
-          escaped.push_back(static_cast<char>(character));
-        }
-    }
-  }
-  return escaped;
-}
-
-void
-BatchingTraceLogger::write_header_locked()
-{
-  stream_ << "{\"traceEvents\":[";
-  first_record_ = true;
-  header_written_ = true;
-  thread_metadata_.clear();
-  write_process_metadata_locked();
-  ensure_thread_metadata_locked(
-      kRequestEnqueuedTrackId, kRequestEnqueuedTrackName,
-      kRequestEnqueuedSortIndex);
-  ensure_thread_metadata_locked(
-      kBatchEnqueueTrackId, kBatchEnqueueTrackName, kBatchEnqueueSortIndex);
-  ensure_thread_metadata_locked(
-      kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex);
-  ensure_thread_metadata_locked(
-      kBatchSubmittedTrackId, kBatchSubmittedTrackName,
-      kBatchSubmittedSortIndex);
-}
-
-void
-BatchingTraceLogger::write_footer_locked()
-{
-  if (!header_written_) {
-    return;
-  }
-  if (!first_record_) {
-    stream_ << '\n';
-  }
-  stream_ << "]\n}\n";
-  header_written_ = false;
+  trace_writer_.write_line(line.str());
 }
 
 void
 BatchingTraceLogger::close_stream_locked()
 {
-  if (stream_.is_open()) {
-    write_footer_locked();
-    stream_.close();
-  }
-  first_record_ = true;
-  header_written_ = false;
-  thread_metadata_.clear();
+  trace_writer_.close();
   trace_start_us_ = 0;
   trace_start_initialized_ = false;
-  worker_lanes_.clear();
-  {
-    std::lock_guard request_lock(request_time_mutex_);
-    request_enqueue_times_.clear();
-  }
-}
-
-void
-BatchingTraceLogger::write_line_locked(const std::string& line)
-{
-  if (!header_written_) {
-    return;
-  }
-  if (!first_record_) {
-    stream_ << ",\n  ";
-  } else {
-    stream_ << "\n  ";
-    first_record_ = false;
-  }
-  stream_ << line;
-}
-
-void
-BatchingTraceLogger::write_process_metadata_locked()
-{
-  const std::string line = std::format(
-      R"({{"name":"process_name","ph":"M","ts":0,"pid":{},"args":{{"name":"{}"}}}})",
-      kTraceProcessId, kProcessName);
-  write_line_locked(line);
-}
-
-void
-BatchingTraceLogger::ensure_thread_metadata_locked(
-    int thread_id, std::string_view thread_name, int sort_index)
-{
-  auto& metadata = thread_metadata_[thread_id];
-  if (metadata.name != thread_name) {
-    metadata.name.assign(thread_name.begin(), thread_name.end());
-    const std::string escaped_name = escape_json_string(metadata.name);
-    const std::string name_line = std::format(
-        R"({{"name":"thread_name","ph":"M","ts":0,"pid":{},"tid":{},"args":{{"name":"{}"}}}})",
-        kTraceProcessId, thread_id, escaped_name);
-    write_line_locked(name_line);
-  }
-
-  if (!metadata.sort_emitted) {
-    const std::string sort_line = std::format(
-        R"({{"name":"thread_sort_index","ph":"M","ts":0,"pid":{},"tid":{},"args":{{"sort_index":{}}}}})",
-        kTraceProcessId, thread_id, sort_index);
-    write_line_locked(sort_line);
-    metadata.sort_emitted = true;
-  }
+  worker_lane_manager_.reset();
+  request_timeline_.reset();
 }
 
 auto
