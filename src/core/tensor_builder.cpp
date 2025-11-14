@@ -24,6 +24,7 @@ namespace {
 void
 noop_deleter(void* /*unused*/) noexcept
 {
+  // Storage is backed by StarPU pool allocations which remain owned elsewhere.
 }
 
 auto
