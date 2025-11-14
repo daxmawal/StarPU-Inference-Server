@@ -466,7 +466,7 @@ parallel_for_each_index(std::size_t count, Func&& func)
 
   const auto indices = std::views::iota(std::size_t{0}, count);
 
-  std::atomic<bool> abort{false};
+  std::atomic abort{false};
   std::exception_ptr first_error;
   std::mutex error_mutex;
   auto&& task = std::forward<Func>(func);
@@ -481,7 +481,7 @@ parallel_for_each_index(std::size_t count, Func&& func)
           task(idx);
         }
         catch (...) {
-          std::lock_guard<std::mutex> lock(error_mutex);
+          std::lock_guard lock(error_mutex);
           if (!first_error) {
             first_error = std::current_exception();
             abort.store(true, std::memory_order_release);
