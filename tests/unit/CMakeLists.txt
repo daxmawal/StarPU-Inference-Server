@@ -16,7 +16,6 @@ target_sources(
             core/unit_starpu_setup.cpp
             core/unit_input_slot_pool_deleter.cpp
             core/robustness/edgecases_inference_queue.cpp
-            core/robustness/edgecases_inference_runner_helpers.cpp
             core/robustness/edgecases_inference_task_errors.cpp
             core/robustness/edgecases_warmup_runner.cpp
             core/robustness/edgecases_inference_runner.cpp
@@ -57,7 +56,6 @@ target_sources(
             utils/robustness/edgecases_datatype_utils.cpp
             utils/robustness/edgecases_inference_validator.cpp
             utils/robustness/edgecases_input_generator.cpp
-            utils/robustness/edgecases_logger.cpp
             utils/robustness/edgecases_transparent_hash.cpp
             ../support/output_slot_pool_test_hooks.cpp
             ../support/starpu_data_interface_override.cpp

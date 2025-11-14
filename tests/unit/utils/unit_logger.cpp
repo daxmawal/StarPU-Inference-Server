@@ -1,8 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <bit>
+#include <csignal>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <memory>
+#include <string>
 #include <utility>
 
 #include "core/inference_task.hpp"
@@ -152,3 +156,49 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{"\t2\n", VerbosityLevel::Stats},
         std::pair{" debug", VerbosityLevel::Debug},
         std::pair{"trace ", VerbosityLevel::Trace}));
+
+TEST(Logger, LogFatalDeath)
+{
+  EXPECT_DEATH({ log_fatal("boom"); }, "\\[FATAL\\] boom");
+}
+
+TEST(Logger, LogFatalExit)
+{
+  EXPECT_EXIT(
+      log_fatal("fatal test"), ::testing::KilledBySignal(SIGABRT),
+      "fatal test");
+}
+
+struct ExceptionCase {
+  std::function<std::unique_ptr<std::exception>()> make_exception;
+  std::string expected;
+};
+class LogException : public ::testing::TestWithParam<ExceptionCase> {};
+
+TEST_P(LogException, LogsExpectedMessage)
+{
+  const auto& param = GetParam();
+  auto excep = param.make_exception();
+  CaptureStream capture{std::cerr};
+  InferenceTask::log_exception("ctx", *excep);
+  EXPECT_EQ(capture.str(), param.expected);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ExceptionLogging, LogException,
+    ::testing::Values(
+        ExceptionCase{
+            []() {
+              return std::make_unique<InferenceExecutionException>("exec");
+            },
+            expected_log_line(
+                ErrorLevel, "InferenceExecutionException in ctx: exec")},
+        ExceptionCase{
+            []() {
+              return std::make_unique<StarPUTaskSubmissionException>("sub");
+            },
+            expected_log_line(
+                ErrorLevel, "StarPU submission error in ctx: sub")},
+        ExceptionCase{
+            []() { return std::make_unique<std::runtime_error>("boom"); },
+            expected_log_line(ErrorLevel, "std::exception in ctx: boom")}));
