@@ -21,6 +21,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <utility>
@@ -488,17 +489,27 @@ run_warmup(
     const std::vector<torch::Tensor>& outputs_ref)
 {
   NvtxRange nvtx_scope("warmup");
-  if (!opts.devices.use_cuda || opts.batching.warmup_request_nb <= 0) {
+  if (opts.batching.warmup_request_nb <= 0 ||
+      (!opts.devices.use_cpu && !opts.devices.use_cuda)) {
     return;
   }
 
   const int warmup_request_nb =
       std::max(opts.batching.warmup_request_nb, opts.batching.max_batch_size);
+  const auto target_desc = [&opts]() -> std::string_view {
+    if (opts.devices.use_cpu && opts.devices.use_cuda) {
+      return "CPU and CUDA workers";
+    }
+    if (opts.devices.use_cuda) {
+      return "CUDA workers";
+    }
+    return "CPU workers";
+  }();
   log_info(
       opts.verbosity, std::format(
-                          "Starting warmup with {} request_nb per CUDA device "
+                          "Starting warmup with {} request(s) per {} "
                           "(enforcing max_batch_size)...",
-                          warmup_request_nb));
+                          warmup_request_nb, target_desc));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
   warmup_runner.run(warmup_request_nb);

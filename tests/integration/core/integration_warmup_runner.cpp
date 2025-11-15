@@ -17,6 +17,7 @@
 #undef private
 
 #include "core/inference_runner.hpp"
+#include "core/starpu_setup.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
@@ -42,11 +43,23 @@ TEST_F(WarmupRunnerTest, WarmupRunnerRunNoCuda_Integration)
   EXPECT_LT(elapsed_ms, 1000);
 }
 
-TEST_F(WarmupRunnerTest, RunReturnsImmediatelyWhenCudaDisabled_Integration)
+TEST_F(WarmupRunnerTest, WarmupRunsOnCpuWhenCudaDisabled_Integration)
 {
-  constexpr int kWarmupShort = 100;
-  auto elapsed_ms = measure_ms([&]() { runner->run(kWarmupShort); });
-  EXPECT_LT(elapsed_ms, 100);
+  std::atomic<int> last_observed{0};
+  init(false, [&](std::atomic<int>& completed_jobs) {
+    last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
+  });
+
+  const auto cpu_workers =
+      starpu_server::StarPUSetup::get_worker_ids_by_type(STARPU_CPU_WORKER);
+  ASSERT_FALSE(cpu_workers.empty());
+
+  constexpr int kWarmupShort = 3;
+  runner->run(kWarmupShort);
+
+  const auto expected_jobs =
+      static_cast<int>(cpu_workers.size() * static_cast<size_t>(kWarmupShort));
+  EXPECT_EQ(last_observed.load(), expected_jobs);
 }
 
 TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers_Integration)
@@ -102,6 +115,12 @@ TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads_Integration)
 {
   WarmupRunnerTestFixture fixture;
   fixture.init();
+  fixture.opts.devices.use_cpu = false;
+  fixture.opts.devices.use_cuda = false;
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
   auto runner = fixture.make_runner();
   const auto before = count_threads();
   constexpr int kWarmupShort = 100;

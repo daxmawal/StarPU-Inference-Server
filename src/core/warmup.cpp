@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <format>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <numeric>
@@ -26,6 +27,43 @@
 #include "starpu_task_worker.hpp"
 
 namespace starpu_server {
+namespace {
+constexpr int kCpuWarmupDeviceId = std::numeric_limits<int>::min();
+
+auto
+collect_device_workers(const RuntimeConfig& opts)
+    -> std::map<int, std::vector<int32_t>>
+{
+  std::map<int, std::vector<int32_t>> workers;
+
+  if (opts.devices.use_cuda) {
+    const auto device_workers =
+        StarPUSetup::get_cuda_workers_by_device(opts.devices.ids);
+    for (const auto& [device_id, worker_ids] : device_workers) {
+      if (worker_ids.empty()) {
+        continue;
+      }
+      auto& destination = workers[device_id];
+      destination.reserve(destination.size() + worker_ids.size());
+      destination.insert(
+          destination.end(), worker_ids.begin(), worker_ids.end());
+    }
+  }
+
+  if (opts.devices.use_cpu) {
+    const auto cpu_workers =
+        StarPUSetup::get_worker_ids_by_type(STARPU_CPU_WORKER);
+    if (!cpu_workers.empty()) {
+      auto& destination = workers[kCpuWarmupDeviceId];
+      destination.reserve(destination.size() + cpu_workers.size());
+      destination.insert(
+          destination.end(), cpu_workers.begin(), cpu_workers.end());
+    }
+  }
+
+  return workers;
+}
+}  // namespace
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -128,7 +166,11 @@ WarmupRunner::run(int request_nb_per_worker)
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
-  if (!opts_.devices.use_cuda) {
+  auto device_workers = collect_device_workers(opts_);
+  if (device_workers.empty()) {
+    log_info(
+        opts_.verbosity,
+        "Warmup skipped because no eligible workers were detected.");
     return;
   }
 
@@ -152,9 +194,6 @@ WarmupRunner::run(int request_nb_per_worker)
   StarPUTaskRunner worker(config);
 
   const std::jthread server(&StarPUTaskRunner::run, &worker);
-
-  const auto device_workers =
-      StarPUSetup::get_cuda_workers_by_device(opts_.devices.ids);
 
   const std::jthread client(
       [&]() { client_worker(device_workers, queue, request_nb_per_worker); });
