@@ -4812,12 +4812,6 @@ TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsMismatchedShapesOrTypes)
       base_job, type_mismatch));
 }
 
-namespace {
-struct InferenceJobInputsAccessor {
-  std::vector<torch::Tensor> input_tensors;
-};
-}  // namespace
-
 TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsNullJobs)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
@@ -4877,8 +4871,9 @@ TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsUndefinedTensors)
   auto lhs = make_job();
   auto rhs = make_job();
 
-  auto* lhs_inputs = reinterpret_cast<InferenceJobInputsAccessor*>(lhs.get());
-  lhs_inputs->input_tensors[0] = torch::Tensor();
+  auto& lhs_inputs =
+      const_cast<std::vector<torch::Tensor>&>(lhs->get_input_tensors());
+  lhs_inputs[0] = torch::Tensor();
 
   EXPECT_FALSE(
       starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));

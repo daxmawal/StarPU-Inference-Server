@@ -78,8 +78,9 @@ struct InferenceResult {
 // =============================================================================
 
 class InferenceQueue;
+class InferenceJob;
 
-class InferenceJob {
+class JobBatchState {
  public:
   struct AggregatedSubJob {
     std::weak_ptr<InferenceJob> job;
@@ -87,6 +88,75 @@ class InferenceJob {
     int64_t batch_size = 1;
     int request_id = -1;
   };
+
+  void set_logical_job_count(int count) { logical_job_count_ = count; }
+  [[nodiscard]] auto logical_job_count() const -> int
+  {
+    return logical_job_count_;
+  }
+
+  void set_aggregated_sub_jobs(std::vector<AggregatedSubJob> jobs)
+  {
+    aggregated_sub_jobs_ = std::move(jobs);
+  }
+
+  void set_effective_batch_size(int64_t batch)
+  {
+    effective_batch_size_ = batch;
+  }
+
+  void reset_effective_batch_size() { effective_batch_size_.reset(); }
+
+  [[nodiscard]] auto effective_batch_size() const -> std::optional<int64_t>
+  {
+    return effective_batch_size_;
+  }
+
+  void set_pending_sub_jobs(std::vector<std::shared_ptr<InferenceJob>> jobs)
+  {
+    pending_sub_jobs_ = std::move(jobs);
+  }
+
+  void clear_pending_sub_jobs() { pending_sub_jobs_.clear(); }
+
+  [[nodiscard]] auto pending_sub_jobs() const
+      -> const std::vector<std::shared_ptr<InferenceJob>>&
+  {
+    return pending_sub_jobs_;
+  }
+
+  [[nodiscard]] auto has_pending_sub_jobs() const -> bool
+  {
+    return !pending_sub_jobs_.empty();
+  }
+
+  [[nodiscard]] auto take_pending_sub_jobs()
+      -> std::vector<std::shared_ptr<InferenceJob>>
+  {
+    return std::exchange(pending_sub_jobs_, {});
+  }
+
+  [[nodiscard]] auto aggregated_sub_jobs() const
+      -> const std::vector<AggregatedSubJob>&
+  {
+    return aggregated_sub_jobs_;
+  }
+
+  [[nodiscard]] auto has_aggregated_sub_jobs() const -> bool
+  {
+    return !aggregated_sub_jobs_.empty();
+  }
+
+ protected:
+  int logical_job_count_ = 1;
+  std::vector<AggregatedSubJob> aggregated_sub_jobs_;
+  std::optional<int64_t> effective_batch_size_;
+  std::vector<std::shared_ptr<InferenceJob>> pending_sub_jobs_;
+};
+
+class InferenceJob : public JobBatchState {
+ public:
+  using AggregatedSubJob = JobBatchState::AggregatedSubJob;
 
   InferenceJob() noexcept = default;
 
@@ -206,64 +276,6 @@ class InferenceJob {
 
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }
 
-  void set_logical_job_count(int count) { logical_job_count_ = count; }
-  [[nodiscard]] auto logical_job_count() const -> int
-  {
-    return logical_job_count_;
-  }
-
-  void set_aggregated_sub_jobs(std::vector<AggregatedSubJob> jobs)
-  {
-    aggregated_sub_jobs_ = std::move(jobs);
-  }
-
-  void set_effective_batch_size(int64_t batch)
-  {
-    effective_batch_size_ = batch;
-  }
-
-  void reset_effective_batch_size() { effective_batch_size_.reset(); }
-
-  [[nodiscard]] auto effective_batch_size() const -> std::optional<int64_t>
-  {
-    return effective_batch_size_;
-  }
-
-  void set_pending_sub_jobs(std::vector<std::shared_ptr<InferenceJob>> jobs)
-  {
-    pending_sub_jobs_ = std::move(jobs);
-  }
-
-  void clear_pending_sub_jobs() { pending_sub_jobs_.clear(); }
-
-  [[nodiscard]] auto pending_sub_jobs() const
-      -> const std::vector<std::shared_ptr<InferenceJob>>&
-  {
-    return pending_sub_jobs_;
-  }
-
-  [[nodiscard]] auto has_pending_sub_jobs() const -> bool
-  {
-    return !pending_sub_jobs_.empty();
-  }
-
-  [[nodiscard]] auto take_pending_sub_jobs()
-      -> std::vector<std::shared_ptr<InferenceJob>>
-  {
-    return std::exchange(pending_sub_jobs_, {});
-  }
-
-  [[nodiscard]] auto aggregated_sub_jobs() const
-      -> const std::vector<AggregatedSubJob>&
-  {
-    return aggregated_sub_jobs_;
-  }
-
-  [[nodiscard]] auto has_aggregated_sub_jobs() const -> bool
-  {
-    return !aggregated_sub_jobs_.empty();
-  }
-
  private:
   std::vector<torch::Tensor> input_tensors_;
   std::vector<at::ScalarType> input_types_;
@@ -284,10 +296,6 @@ class InferenceJob {
   detail::TimingInfo timing_info_;
 
   bool is_shutdown_signal_ = false;
-  int logical_job_count_ = 1;
-  std::vector<AggregatedSubJob> aggregated_sub_jobs_;
-  std::optional<int64_t> effective_batch_size_;
-  std::vector<std::shared_ptr<InferenceJob>> pending_sub_jobs_;
 };
 
 // =============================================================================

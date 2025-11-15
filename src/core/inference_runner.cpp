@@ -239,8 +239,8 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
   job->is_shutdown_signal_ = true;
-  job->logical_job_count_ = 0;
-  job->aggregated_sub_jobs_.clear();
+  job->set_logical_job_count(0);
+  job->set_aggregated_sub_jobs({});
   return job;
 }
 

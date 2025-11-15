@@ -750,18 +750,19 @@ ResultDispatcher::prepare_job_completion_callback(
 {
   auto prev_callback = job->get_on_complete();
   const auto* dispatcher = this;
-  job->set_on_complete([dispatcher, prev_callback, job_sptr = job, &runner](
-                           std::vector<torch::Tensor> results,
-                           double latency_ms) mutable {
-    dispatcher->store_completed_job_result(job_sptr, results, latency_ms);
-    ResultDispatcher::ensure_callback_timing(job_sptr->timing_info());
-    dispatcher->record_job_metrics(
-        job_sptr, StarPUTaskRunner::DurationMs{latency_ms},
-        dispatcher->resolve_batch_size(runner, job_sptr));
-    dispatcher->emit_batch_traces(job_sptr, runner);
-    dispatcher->invoke_previous_callback(prev_callback, results, latency_ms);
-    dispatcher->finalize_job_completion(job_sptr);
-  });
+  job->set_on_complete(
+      [dispatcher, prev_callback, job_sptr = job, &runner](
+          std::vector<torch::Tensor> results, double latency_ms) mutable {
+        dispatcher->store_completed_job_result(job_sptr, results, latency_ms);
+        ResultDispatcher::ensure_callback_timing(job_sptr->timing_info());
+        dispatcher->record_job_metrics(
+            job_sptr, StarPUTaskRunner::DurationMs{latency_ms},
+            dispatcher->resolve_batch_size(runner, job_sptr));
+        dispatcher->emit_batch_traces(job_sptr, runner);
+        ResultDispatcher::invoke_previous_callback(
+            prev_callback, results, latency_ms);
+        dispatcher->finalize_job_completion(job_sptr);
+      });
 }
 
 void
@@ -1049,8 +1050,8 @@ SlotManager::copy_job_inputs_to_slot(
     };
     auto copy_tensor = [&](const torch::Tensor& tensor) {
       validate_tensor(tensor);
-      const size_t bytes = static_cast<size_t>(tensor.nbytes());
-      const size_t numel = static_cast<size_t>(tensor.numel());
+      const size_t bytes = tensor.nbytes();
+      const auto numel = static_cast<size_t>(tensor.numel());
       ensure_capacity(bytes);
       transfer_tensor_data(tensor, bytes);
       offset += bytes;
