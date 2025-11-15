@@ -456,17 +456,15 @@ BatchingTraceLogger::log_request_enqueued(
 }
 
 void
-BatchingTraceLogger::log_batch_submitted(
-    int batch_id, std::string_view model_name, std::size_t logical_job_count,
-    DeviceType worker_type, int worker_id, std::span<const int> request_ids,
-    bool is_warmup, int device_id)
+BatchingTraceLogger::log_batch_submitted(const BatchSubmittedLogArgs& args)
 {
   const BatchRecordContext record_context{
-      kInvalidId, batch_id, logical_job_count};
-  const WorkerThreadInfo worker_info{worker_id, worker_type, device_id};
+      kInvalidId, args.batch_id, args.logical_job_count};
+  const WorkerThreadInfo worker_info{
+      args.worker_id, args.worker_type, args.device_id};
   write_record(
-      BatchingTraceEvent::BatchSubmitted, model_name, record_context,
-      worker_info, request_ids, std::nullopt, is_warmup);
+      BatchingTraceEvent::BatchSubmitted, args.model_name, record_context,
+      worker_info, args.request_ids, std::nullopt, args.is_warmup);
 }
 
 void

@@ -175,7 +175,7 @@ main(int argc, char* argv[]) -> int
   tensor_pool.reserve(NUM_TENSORS);
   std::vector<std::optional<OutputSummary>> reference_summaries;
   reference_summaries.reserve(NUM_TENSORS);
-  bool validation_active = static_cast<bool>(reference_model);
+  auto validation_active = static_cast<bool>(reference_model);
   for (int i = 0; i < NUM_TENSORS; ++i) {
     std::vector<torch::Tensor> tensors;
     tensors.reserve(config.inputs.size());

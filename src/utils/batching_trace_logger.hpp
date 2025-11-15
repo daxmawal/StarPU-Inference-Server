@@ -118,6 +118,16 @@ class BatchingTraceLogger {
     DeviceType worker_type;
     int device_id;
   };
+  struct BatchSubmittedLogArgs {
+    int batch_id;
+    std::string_view model_name;
+    std::size_t logical_job_count = 0;
+    DeviceType worker_type = DeviceType::Unknown;
+    int worker_id = -1;
+    std::span<const int> request_ids{};
+    bool is_warmup = false;
+    int device_id = -1;
+  };
   struct BatchComputeLogArgs {
     int batch_id;
     std::string_view model_name;
@@ -156,12 +166,7 @@ class BatchingTraceLogger {
   void log_request_enqueued(
       int request_id, std::string_view model_name, bool is_warmup = false,
       std::chrono::high_resolution_clock::time_point event_time = {});
-  void log_batch_submitted(
-      int batch_id, std::string_view model_name,
-      std::size_t logical_job_count = 0,
-      DeviceType worker_type = DeviceType::Unknown, int worker_id = -1,
-      std::span<const int> request_ids = {}, bool is_warmup = false,
-      int device_id = -1);
+  void log_batch_submitted(const BatchSubmittedLogArgs& args);
   void log_batch_build_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,
       TimeRange schedule, std::span<const int> request_ids = {},

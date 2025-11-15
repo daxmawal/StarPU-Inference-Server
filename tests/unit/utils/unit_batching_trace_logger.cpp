@@ -34,7 +34,11 @@ TEST(BatchingTraceLoggerTest, BatchSubmittedSkipsFlowMetadataForNegativeId)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  logger.log_batch_submitted(-7, "demo_model", 3);
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = -7,
+      .model_name = "demo_model",
+      .logical_job_count = 3,
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -951,8 +955,18 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
       5, "demo_model", request_ids.size(),
       BatchingTraceLogger::TimeRange{enqueue_start, enqueue_end},
       std::span<const int>(request_ids));
-  logger.log_batch_submitted(5, "demo_model", 1);
-  logger.log_batch_submitted(7, "demo_model", 1, DeviceType::CPU, 0);
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = 5,
+      .model_name = "demo_model",
+      .logical_job_count = 1,
+  });
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = 7,
+      .model_name = "demo_model",
+      .logical_job_count = 1,
+      .worker_type = DeviceType::CPU,
+      .worker_id = 0,
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -992,9 +1006,14 @@ TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
   logger.configure(true, trace_path.string());
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::microseconds(50);
-  logger.log_batch_submitted(
-      3, "demo_model", 1, DeviceType::CUDA, 4, std::span<const int>{},
-      /*is_warmup=*/false, /*device_id=*/7);
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = 3,
+      .model_name = "demo_model",
+      .logical_job_count = 1,
+      .worker_type = DeviceType::CUDA,
+      .worker_id = 4,
+      .device_id = 7,
+  });
   logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
       .batch_id = 3,
       .model_name = "demo_model",
@@ -1026,9 +1045,14 @@ TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
 
   logger.configure(true, trace_path.string());
   const std::array<int, 3> request_ids{42, 43, 44};
-  logger.log_batch_submitted(
-      9, "demo_model", 2, DeviceType::CUDA, 1,
-      std::span<const int>(request_ids));
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = 9,
+      .model_name = "demo_model",
+      .logical_job_count = 2,
+      .worker_type = DeviceType::CUDA,
+      .worker_id = 1,
+      .request_ids = std::span<const int>(request_ids),
+  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -1162,9 +1186,15 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::microseconds(100);
   const std::array<int, 2> request_ids{1, 2};
-  logger.log_batch_submitted(
-      11, "demo_model", 1, DeviceType::CPU, 0,
-      std::span<const int>(request_ids), /*is_warmup=*/true);
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = 11,
+      .model_name = "demo_model",
+      .logical_job_count = 1,
+      .worker_type = DeviceType::CPU,
+      .worker_id = 0,
+      .request_ids = std::span<const int>(request_ids),
+      .is_warmup = true,
+  });
   logger.log_batch_build_span(
       11, "demo_model", 1, BatchingTraceLogger::TimeRange{start, end},
       std::span<const int>(request_ids), /*is_warmup=*/true);
@@ -1289,7 +1319,13 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
       0, "demo_model", 2,
       BatchingTraceLogger::TimeRange{build_start, build_end},
       std::span<const int>{});
-  logger.log_batch_submitted(0, "demo_model", 2, DeviceType::CPU, 0);
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = 0,
+      .model_name = "demo_model",
+      .logical_job_count = 2,
+      .worker_type = DeviceType::CPU,
+      .worker_id = 0,
+  });
   logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
       .batch_id = 0,
       .model_name = "demo_model",
@@ -1302,9 +1338,14 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
       0, "demo_model", 1,
       BatchingTraceLogger::TimeRange{warm_build_start, warm_build_end},
       std::span<const int>{}, /*is_warmup=*/true);
-  logger.log_batch_submitted(
-      0, "demo_model", 1, DeviceType::CPU, 1, std::span<const int>{},
-      /*is_warmup=*/true);
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = 0,
+      .model_name = "demo_model",
+      .logical_job_count = 1,
+      .worker_type = DeviceType::CPU,
+      .worker_id = 1,
+      .is_warmup = true,
+  });
   logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
       .batch_id = 0,
       .model_name = "demo_model",
