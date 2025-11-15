@@ -147,7 +147,7 @@ class JobBatchState {
     return !aggregated_sub_jobs_.empty();
   }
 
- protected:
+ private:
   int logical_job_count_ = 1;
   std::vector<AggregatedSubJob> aggregated_sub_jobs_;
   std::optional<int64_t> effective_batch_size_;
@@ -174,7 +174,7 @@ class InferenceJob : public JobBatchState {
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
-    effective_batch_size_.reset();
+    reset_effective_batch_size();
     input_tensors_.clear();
     input_tensors_.reserve(inputs.size());
     for (const auto& tensor : inputs) {

@@ -108,8 +108,8 @@ free_host_buffer(
   if (ptr == nullptr) {
     return;
   }
-  std::unique_ptr<std::byte, HostBufferDeleter> owner(
-      ptr, HostBufferDeleter{buffer_info});
+  HostBufferDeleter deleter{buffer_info};
+  std::unique_ptr<std::byte, HostBufferDeleter> owner(ptr, deleter);
 }
 
 auto
