@@ -627,6 +627,14 @@ class ResultDispatcher {
       const detail::TimingInfo& timing_info) const;
 
   void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
+  auto resolve_batch_size(
+      StarPUTaskRunner& runner,
+      const std::shared_ptr<InferenceJob>& job) const -> std::size_t;
+  void emit_batch_traces(
+      const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner) const;
+  static void invoke_previous_callback(
+      const std::function<void(std::vector<torch::Tensor>&&, double)>& previous,
+      std::vector<torch::Tensor>& results, double latency_ms);
 
   static void propagate_completion_to_sub_jobs(
       const std::shared_ptr<InferenceJob>& aggregated_job,
@@ -745,48 +753,13 @@ ResultDispatcher::prepare_job_completion_callback(
   job->set_on_complete([dispatcher, prev_callback, job_sptr = job, &runner](
                            std::vector<torch::Tensor> results,
                            double latency_ms) mutable {
-    const auto batch_size = std::max<std::size_t>(
-        std::size_t{1},
-        static_cast<std::size_t>(runner.resolve_batch_size(job_sptr)));
-
-    const auto& results_ref = results;
-    dispatcher->store_completed_job_result(job_sptr, results_ref, latency_ms);
+    dispatcher->store_completed_job_result(job_sptr, results, latency_ms);
     ResultDispatcher::ensure_callback_timing(job_sptr->timing_info());
     dispatcher->record_job_metrics(
-        job_sptr, StarPUTaskRunner::DurationMs{latency_ms}, batch_size);
-
-    auto& tracer = BatchingTraceLogger::instance();
-    if (tracer.enabled()) {
-      const std::size_t actual_batch_size = batch_size;
-      const bool warmup_job = is_warmup_job(job_sptr);
-      auto& timing = job_sptr->timing_info();
-      const auto zero_tp = clock::time_point{};
-      auto compute_start = timing.inference_start_time;
-      if (compute_start == zero_tp) {
-        compute_start = timing.codelet_start_time;
-      }
-      auto compute_end = timing.callback_start_time;
-      if (compute_end == zero_tp || compute_end < compute_start) {
-        compute_end = timing.codelet_end_time;
-      }
-
-      tracer.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
-          .batch_id = job_sptr->submission_id(),
-          .model_name = job_sptr->model_name(),
-          .batch_size = actual_batch_size,
-          .worker_id = job_sptr->get_worker_id(),
-          .worker_type = job_sptr->get_executed_on(),
-          .codelet_times =
-              BatchingTraceLogger::TimeRange{compute_start, compute_end},
-          .is_warmup = warmup_job,
-          .device_id = job_sptr->get_device_id(),
-      });
-    }
-
-    if (prev_callback) {
-      prev_callback(std::move(results), latency_ms);
-    }
-
+        job_sptr, StarPUTaskRunner::DurationMs{latency_ms},
+        dispatcher->resolve_batch_size(runner, job_sptr));
+    dispatcher->emit_batch_traces(job_sptr, runner);
+    dispatcher->invoke_previous_callback(prev_callback, results, latency_ms);
     dispatcher->finalize_job_completion(job_sptr);
   });
 }
@@ -1054,23 +1027,32 @@ SlotManager::copy_job_inputs_to_slot(
     const bool allow_async =
         buffer_info.cuda_pinned || buffer_info.starpu_pinned;
 
-    auto copy_tensor = [&](const torch::Tensor& tensor) {
+    const auto validate_tensor = [](const torch::Tensor& tensor) {
       if (!tensor.defined() || !tensor.is_cpu() || !tensor.is_contiguous()) {
         throw InvalidInputTensorException(
             "Input tensor must be defined, CPU and contiguous");
       }
-      const auto bytes = tensor.nbytes();
-      const auto numel = static_cast<std::size_t>(tensor.numel());
+    };
+    auto ensure_capacity = [&](size_t bytes) {
       if (buffer_span.size() < offset + bytes) {
         throw InputPoolCapacityException(
             "Input tensor exceeds allocated slot buffer capacity");
       }
-      if (auto* destination = buffer_span.subspan(offset, bytes).data();
-          !copy_batch.enqueue(
+    };
+    auto transfer_tensor_data = [&](const torch::Tensor& tensor, size_t bytes) {
+      auto* destination = buffer_span.subspan(offset, bytes).data();
+      if (!copy_batch.enqueue(
               destination, static_cast<const std::byte*>(tensor.data_ptr()),
               bytes, allow_async)) {
         std::memcpy(destination, tensor.data_ptr(), bytes);
       }
+    };
+    auto copy_tensor = [&](const torch::Tensor& tensor) {
+      validate_tensor(tensor);
+      const size_t bytes = static_cast<size_t>(tensor.nbytes());
+      const size_t numel = static_cast<size_t>(tensor.numel());
+      ensure_capacity(bytes);
+      transfer_tensor_data(tensor, bytes);
       offset += bytes;
       total_bytes += bytes;
       total_numel += numel;
@@ -2209,5 +2191,58 @@ StarPUTaskRunner::run()
   }
 
   log_info(opts_->verbosity, "StarPUTaskRunner stopped.");
+}
+
+auto
+ResultDispatcher::resolve_batch_size(
+    StarPUTaskRunner& runner,
+    const std::shared_ptr<InferenceJob>& job) const -> std::size_t
+{
+  return std::max<std::size_t>(
+      std::size_t{1}, static_cast<std::size_t>(runner.resolve_batch_size(job)));
+}
+
+void
+ResultDispatcher::emit_batch_traces(
+    const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner) const
+{
+  auto& tracer = BatchingTraceLogger::instance();
+  if (!tracer.enabled()) {
+    return;
+  }
+  const bool warmup_job = is_warmup_job(job);
+  auto& timing = job->timing_info();
+  const auto zero_tp = clock::time_point{};
+  auto compute_start = timing.inference_start_time;
+  if (compute_start == zero_tp) {
+    compute_start = timing.codelet_start_time;
+  }
+  auto compute_end = timing.callback_start_time;
+  if (compute_end == zero_tp || compute_end < compute_start) {
+    compute_end = timing.codelet_end_time;
+  }
+
+  tracer.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
+      .batch_id = job->submission_id(),
+      .model_name = job->model_name(),
+      .batch_size = resolve_batch_size(runner, job),
+      .worker_id = job->get_worker_id(),
+      .worker_type = job->get_executed_on(),
+      .codelet_times =
+          BatchingTraceLogger::TimeRange{compute_start, compute_end},
+      .is_warmup = warmup_job,
+      .device_id = job->get_device_id(),
+  });
+}
+
+void
+ResultDispatcher::invoke_previous_callback(
+    const std::function<void(std::vector<torch::Tensor>&&, double)>& previous,
+    std::vector<torch::Tensor>& results, double latency_ms)
+{
+  if (!previous) {
+    return;
+  }
+  previous(std::move(results), latency_ms);
 }
 }  // namespace starpu_server
