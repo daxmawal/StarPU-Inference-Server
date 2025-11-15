@@ -355,7 +355,8 @@ configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
     worker_bindid[idx] = candidate_gpu_bind_ids[idx % candidate_count];
   }
 
-  std::copy(cpu_bind_ids.begin(), cpu_bind_ids.end(), worker_bindid.begin());
+  std::ranges::copy(
+      cpu_bind_ids.begin(), cpu_bind_ids.end(), worker_bindid.begin());
 
   std::string bind_list;
   for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
@@ -545,9 +546,8 @@ run_inference(
     const std::function<void(const at::Tensor&, std::span<std::byte>)>&
         copy_output_fn)
 {
-  const auto inputs =
-      TensorBuilder::from_starpu_buffers(params, buffers, device);
-  const std::vector<c10::IValue> ivalue_inputs(inputs.begin(), inputs.end());
+  const auto& ivalue_inputs =
+      TensorBuilder::prepare_input_ivalues(params, buffers, device);
 
   if (params->timing.inference_start_time != nullptr) {
     *params->timing.inference_start_time =

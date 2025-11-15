@@ -91,8 +91,8 @@ create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref, int request_id,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
-    std::chrono::high_resolution_clock::time_point start_time_arg)
-    -> std::shared_ptr<InferenceJob>
+    std::chrono::high_resolution_clock::time_point start_time_arg,
+    std::string model_name) -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
   job->set_input_tensors(inputs);
@@ -125,6 +125,7 @@ create_job(
   job->set_output_tensors(outputs);
 
   job->set_request_id(request_id);
+  job->set_model_name(std::move(model_name));
 
   auto start_time = start_time_arg;
   const auto enqueued_time = std::chrono::high_resolution_clock::now();
@@ -133,6 +134,7 @@ create_job(
   }
   job->set_start_time(start_time);
   job->timing_info().enqueued_time = enqueued_time;
+  job->timing_info().last_enqueued_time = enqueued_time;
 
   return job;
 }

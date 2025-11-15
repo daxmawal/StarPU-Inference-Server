@@ -93,6 +93,8 @@ struct RuntimeConfig {
     bool synchronous = false;
     bool dynamic_batching = true;
     bool seen_combined_input = false;
+    bool trace_enabled = false;
+    std::string trace_file_path = "batching_trace.json";
   };
 
   struct ValidationSettings {
@@ -108,6 +110,7 @@ struct RuntimeConfig {
   };
 
   std::string scheduler = "lws";
+  std::string name;
   std::string config_path;
   std::string server_address = "127.0.0.1:50051";
   int metrics_port = kDefaultMetricsPort;

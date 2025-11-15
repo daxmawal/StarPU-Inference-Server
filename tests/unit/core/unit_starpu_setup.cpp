@@ -17,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_set>
 #include <vector>
@@ -25,6 +26,7 @@
 #include "core/starpu_setup.hpp"
 #include "support/input_slot_pool_test_hooks.hpp"
 #include "support/output_slot_pool_test_hooks.hpp"
+#include "test_starpu_setup.hpp"
 #include "test_utils.hpp"
 #include "utils/runtime_config.hpp"
 
@@ -49,6 +51,7 @@ using StarpuInitRawFn = int (*)(struct starpu_conf*);
 using StarpuWorkerGetIdHook = int (*)();
 using StarpuWorkerGetDevidHook = int (*)(int);
 using StarpuCudaGetLocalStreamHook = cudaStream_t (*)();
+using StarpuShutdownFn = void (*)();
 using HwlocTopologyInitFn = int (*)(hwloc_topology_t*);
 using HwlocTopologyLoadFn = int (*)(hwloc_topology_t);
 using HwlocTopologyDestroyFn = void (*)(hwloc_topology_t);
@@ -161,6 +164,21 @@ resolve_real_starpu_cuda_get_local_stream() -> StarpuCudaGetLocalStreamHook
 }
 
 auto
+resolve_real_starpu_shutdown() -> StarpuShutdownFn
+{
+  static StarpuShutdownFn fn = []() -> StarpuShutdownFn {
+    auto candidate =
+        reinterpret_cast<StarpuShutdownFn>(dlsym(RTLD_NEXT, "starpu_shutdown"));
+    if (candidate == nullptr) {
+      candidate = reinterpret_cast<StarpuShutdownFn>(
+          dlsym(RTLD_DEFAULT, "starpu_shutdown"));
+    }
+    return candidate;
+  }();
+  return fn;
+}
+
+auto
 resolve_real_hwloc_topology_init() -> HwlocTopologyInitFn
 {
   static HwlocTopologyInitFn fn = []() -> HwlocTopologyInitFn {
@@ -253,6 +271,163 @@ resolve_estimate_non_cpu_workers() -> EstimateNonCpuWorkersFn
     return nullptr;
   }();
   return fn;
+}
+
+struct FakeHwlocSpecification {
+  std::vector<unsigned> numa_first_cpu_ids;
+  std::vector<unsigned> processing_unit_cpu_ids;
+};
+
+struct FakeHwlocObject {
+  hwloc_obj obj{};
+  hwloc_bitmap_t cpuset = nullptr;
+};
+
+struct FakeHwlocTopologyData {
+  std::vector<FakeHwlocObject> numa_nodes;
+  std::vector<FakeHwlocObject> processing_units;
+  FakeHwlocObject machine;
+};
+
+FakeHwlocTopologyData g_fake_hwloc_topology;
+bool g_fake_hwloc_enabled = false;
+FakeHwlocSpecification g_fake_hwloc_spec{
+    std::vector<unsigned>{0, 1}, std::vector<unsigned>{0, 1}};
+bool g_force_machine_object_null = false;
+std::unordered_set<unsigned> g_fake_null_numa_object_indices;
+std::unordered_set<unsigned> g_fake_null_pu_object_indices;
+std::unordered_set<hwloc_const_bitmap_t> g_hwloc_bitmap_first_negative_cpusets;
+bool g_force_hwloc_topology_init_failure = false;
+bool g_force_hwloc_topology_load_failure = false;
+bool g_fake_starpu_shutdown = false;
+
+void cleanup_fake_hwloc_topology();
+void initialize_fake_hwloc_topology();
+
+void
+set_fake_hwloc_topology_spec(
+    std::vector<unsigned> numa_first_cpu_ids,
+    std::vector<unsigned> processing_unit_cpu_ids,
+    bool ensure_processing_units = true)
+{
+  if (ensure_processing_units && processing_unit_cpu_ids.empty() &&
+      numa_first_cpu_ids.empty()) {
+    processing_unit_cpu_ids.push_back(0);
+  }
+  g_fake_hwloc_spec.numa_first_cpu_ids = std::move(numa_first_cpu_ids);
+  g_fake_hwloc_spec.processing_unit_cpu_ids =
+      std::move(processing_unit_cpu_ids);
+  if (g_fake_hwloc_enabled) {
+    initialize_fake_hwloc_topology();
+  }
+}
+
+auto
+fake_topology_handle() -> hwloc_topology_t
+{
+  return reinterpret_cast<hwloc_topology_t>(&g_fake_hwloc_topology);
+}
+
+void
+cleanup_fake_hwloc_object(FakeHwlocObject& object)
+{
+  if (object.cpuset != nullptr) {
+    hwloc_bitmap_free(object.cpuset);
+    object.cpuset = nullptr;
+    object.obj.cpuset = nullptr;
+  }
+}
+
+void
+cleanup_fake_hwloc_topology()
+{
+  for (auto& node : g_fake_hwloc_topology.numa_nodes) {
+    cleanup_fake_hwloc_object(node);
+  }
+  g_fake_hwloc_topology.numa_nodes.clear();
+
+  for (auto& pu : g_fake_hwloc_topology.processing_units) {
+    cleanup_fake_hwloc_object(pu);
+  }
+  g_fake_hwloc_topology.processing_units.clear();
+
+  cleanup_fake_hwloc_object(g_fake_hwloc_topology.machine);
+}
+
+auto
+make_cpuset_for_cpu(unsigned cpu_id) -> hwloc_bitmap_t
+{
+  hwloc_bitmap_t bitmap = hwloc_bitmap_alloc();
+  if (bitmap == nullptr) {
+    throw std::runtime_error("Failed to allocate hwloc bitmap");
+  }
+  hwloc_bitmap_zero(bitmap);
+  hwloc_bitmap_set(bitmap, static_cast<int>(cpu_id));
+  return bitmap;
+}
+
+void
+initialize_fake_hwloc_topology()
+{
+  cleanup_fake_hwloc_topology();
+
+  const auto& numa_ids = g_fake_hwloc_spec.numa_first_cpu_ids;
+  const auto& pu_ids = g_fake_hwloc_spec.processing_unit_cpu_ids;
+
+  g_fake_hwloc_topology.numa_nodes.reserve(numa_ids.size());
+  g_fake_hwloc_topology.processing_units.reserve(pu_ids.size());
+
+  for (size_t idx = 0; idx < numa_ids.size(); ++idx) {
+    auto& numa_node = g_fake_hwloc_topology.numa_nodes.emplace_back();
+    numa_node.cpuset = make_cpuset_for_cpu(numa_ids[idx]);
+    numa_node.obj.cpuset = numa_node.cpuset;
+    numa_node.obj.os_index = static_cast<unsigned>(numa_ids[idx]);
+    numa_node.obj.logical_index = static_cast<unsigned>(idx);
+  }
+
+  for (size_t idx = 0; idx < pu_ids.size(); ++idx) {
+    auto& pu = g_fake_hwloc_topology.processing_units.emplace_back();
+    pu.obj.os_index = static_cast<unsigned>(pu_ids[idx]);
+    pu.obj.logical_index = static_cast<unsigned>(idx);
+  }
+
+  std::unordered_set<unsigned> machine_cpus;
+  machine_cpus.insert(numa_ids.begin(), numa_ids.end());
+  machine_cpus.insert(pu_ids.begin(), pu_ids.end());
+
+  if (!machine_cpus.empty()) {
+    g_fake_hwloc_topology.machine.cpuset = hwloc_bitmap_alloc();
+    if (g_fake_hwloc_topology.machine.cpuset == nullptr) {
+      throw std::runtime_error("Failed to allocate machine cpuset");
+    }
+    hwloc_bitmap_zero(g_fake_hwloc_topology.machine.cpuset);
+    for (unsigned cpu : machine_cpus) {
+      hwloc_bitmap_set(g_fake_hwloc_topology.machine.cpuset, cpu);
+    }
+    g_fake_hwloc_topology.machine.obj.cpuset =
+        g_fake_hwloc_topology.machine.cpuset;
+  } else {
+    g_fake_hwloc_topology.machine.cpuset = nullptr;
+    g_fake_hwloc_topology.machine.obj.cpuset = nullptr;
+  }
+  g_fake_hwloc_topology.machine.obj.os_index = 0;
+  g_fake_hwloc_topology.machine.obj.logical_index = 0;
+}
+
+void
+enable_fake_hwloc_mode()
+{
+  g_fake_hwloc_enabled = true;
+  initialize_fake_hwloc_topology();
+}
+
+void
+disable_fake_hwloc_mode()
+{
+  if (g_fake_hwloc_enabled) {
+    cleanup_fake_hwloc_topology();
+    g_fake_hwloc_enabled = false;
+  }
 }
 
 auto
@@ -676,7 +851,440 @@ class StarPUSetupInitStubTest : public ::testing::Test {
   }
 };
 
+class FakeHwlocTopologyGuard {
+ public:
+  FakeHwlocTopologyGuard()
+  {
+    enable_fake_hwloc_mode();
+    active_ = true;
+  }
+
+  ~FakeHwlocTopologyGuard() { disable(); }
+
+  void disable()
+  {
+    if (active_) {
+      disable_fake_hwloc_mode();
+      active_ = false;
+    }
+  }
+
+  FakeHwlocTopologyGuard(const FakeHwlocTopologyGuard&) = delete;
+  auto operator=(const FakeHwlocTopologyGuard&) -> FakeHwlocTopologyGuard& =
+                                                       delete;
+  FakeHwlocTopologyGuard(FakeHwlocTopologyGuard&&) = delete;
+  auto operator=(FakeHwlocTopologyGuard&&) -> FakeHwlocTopologyGuard& = delete;
+
+ private:
+  bool active_ = false;
+};
+
+auto
+starpu_init_with_fake_hwloc_capture(struct starpu_conf* conf) -> int
+{
+  disable_fake_hwloc_mode();
+  return capturing_starpu_init(conf);
+}
+
+class FakeHwlocStarpuInitGuard {
+ public:
+  FakeHwlocStarpuInitGuard()
+  {
+    g_captured_starpu_conf = {};
+    starpu_server::StarPUSetup::set_starpu_init_fn(
+        &starpu_init_with_fake_hwloc_capture);
+  }
+
+  ~FakeHwlocStarpuInitGuard()
+  {
+    starpu_server::StarPUSetup::reset_starpu_init_fn();
+  }
+
+  FakeHwlocStarpuInitGuard(const FakeHwlocStarpuInitGuard&) = delete;
+  auto operator=(const FakeHwlocStarpuInitGuard&) -> FakeHwlocStarpuInitGuard& =
+                                                         delete;
+  FakeHwlocStarpuInitGuard(FakeHwlocStarpuInitGuard&&) = delete;
+  auto operator=(FakeHwlocStarpuInitGuard&&) -> FakeHwlocStarpuInitGuard& =
+                                                    delete;
+};
+
+class ScopedFakeHwlocSpec {
+ public:
+  ScopedFakeHwlocSpec(
+      std::vector<unsigned> numa_cpu_ids,
+      std::vector<unsigned> processing_unit_cpu_ids, bool allow_empty = false)
+      : previous_{g_fake_hwloc_spec}
+  {
+    set_fake_hwloc_topology_spec(
+        std::move(numa_cpu_ids), std::move(processing_unit_cpu_ids),
+        !allow_empty);
+  }
+
+  ~ScopedFakeHwlocSpec()
+  {
+    set_fake_hwloc_topology_spec(
+        previous_.numa_first_cpu_ids, previous_.processing_unit_cpu_ids);
+  }
+
+  ScopedFakeHwlocSpec(const ScopedFakeHwlocSpec&) = delete;
+  auto operator=(const ScopedFakeHwlocSpec&) -> ScopedFakeHwlocSpec& = delete;
+  ScopedFakeHwlocSpec(ScopedFakeHwlocSpec&&) = delete;
+  auto operator=(ScopedFakeHwlocSpec&&) -> ScopedFakeHwlocSpec& = delete;
+
+ private:
+  FakeHwlocSpecification previous_;
+};
+
+class ScopedMachineCpusetNullGuard {
+ public:
+  ScopedMachineCpusetNullGuard()
+      : previous_cpuset_{g_fake_hwloc_topology.machine.cpuset},
+        previous_obj_cpuset_{g_fake_hwloc_topology.machine.obj.cpuset}
+  {
+    g_fake_hwloc_topology.machine.cpuset = nullptr;
+    g_fake_hwloc_topology.machine.obj.cpuset = nullptr;
+  }
+
+  ~ScopedMachineCpusetNullGuard()
+  {
+    g_fake_hwloc_topology.machine.cpuset = previous_cpuset_;
+    g_fake_hwloc_topology.machine.obj.cpuset = previous_obj_cpuset_;
+  }
+
+  ScopedMachineCpusetNullGuard(const ScopedMachineCpusetNullGuard&) = delete;
+  auto operator=(const ScopedMachineCpusetNullGuard&)
+      -> ScopedMachineCpusetNullGuard& = delete;
+  ScopedMachineCpusetNullGuard(ScopedMachineCpusetNullGuard&&) = delete;
+  auto operator=(ScopedMachineCpusetNullGuard&&)
+      -> ScopedMachineCpusetNullGuard& = delete;
+
+ private:
+  hwloc_bitmap_t previous_cpuset_;
+  hwloc_bitmap_t previous_obj_cpuset_;
+};
+
+class ScopedMachineObjectNullGuard {
+ public:
+  ScopedMachineObjectNullGuard() : previous_{g_force_machine_object_null}
+  {
+    g_force_machine_object_null = true;
+  }
+
+  ~ScopedMachineObjectNullGuard() { g_force_machine_object_null = previous_; }
+
+  ScopedMachineObjectNullGuard(const ScopedMachineObjectNullGuard&) = delete;
+  auto operator=(const ScopedMachineObjectNullGuard&)
+      -> ScopedMachineObjectNullGuard& = delete;
+  ScopedMachineObjectNullGuard(ScopedMachineObjectNullGuard&&) = delete;
+  auto operator=(ScopedMachineObjectNullGuard&&)
+      -> ScopedMachineObjectNullGuard& = delete;
+
+ private:
+  bool previous_;
+};
+
+class ScopedNullNumaObjectGuard {
+ public:
+  explicit ScopedNullNumaObjectGuard(std::vector<unsigned> null_indices = {})
+      : previous_{g_fake_null_numa_object_indices}
+  {
+    g_fake_null_numa_object_indices.clear();
+    g_fake_null_numa_object_indices.insert(
+        null_indices.begin(), null_indices.end());
+  }
+
+  ~ScopedNullNumaObjectGuard() { g_fake_null_numa_object_indices = previous_; }
+
+  ScopedNullNumaObjectGuard(const ScopedNullNumaObjectGuard&) = delete;
+  auto operator=(const ScopedNullNumaObjectGuard&)
+      -> ScopedNullNumaObjectGuard& = delete;
+  ScopedNullNumaObjectGuard(ScopedNullNumaObjectGuard&&) = delete;
+  auto operator=(ScopedNullNumaObjectGuard&&) -> ScopedNullNumaObjectGuard& =
+                                                     delete;
+
+ private:
+  std::unordered_set<unsigned> previous_;
+};
+
+class ScopedNullProcessingUnitGuard {
+ public:
+  explicit ScopedNullProcessingUnitGuard(
+      std::vector<unsigned> null_indices = {})
+      : previous_{g_fake_null_pu_object_indices}
+  {
+    g_fake_null_pu_object_indices.clear();
+    g_fake_null_pu_object_indices.insert(
+        null_indices.begin(), null_indices.end());
+  }
+
+  ~ScopedNullProcessingUnitGuard()
+  {
+    g_fake_null_pu_object_indices = previous_;
+  }
+
+  ScopedNullProcessingUnitGuard(const ScopedNullProcessingUnitGuard&) = delete;
+  auto operator=(const ScopedNullProcessingUnitGuard&)
+      -> ScopedNullProcessingUnitGuard& = delete;
+  ScopedNullProcessingUnitGuard(ScopedNullProcessingUnitGuard&&) = delete;
+  auto operator=(ScopedNullProcessingUnitGuard&&)
+      -> ScopedNullProcessingUnitGuard& = delete;
+
+ private:
+  std::unordered_set<unsigned> previous_;
+};
+
+class ScopedBitmapFirstNegativeGuard {
+ public:
+  explicit ScopedBitmapFirstNegativeGuard(
+      std::vector<hwloc_const_bitmap_t> bitmaps)
+      : bitmaps_{std::move(bitmaps)}
+  {
+    for (auto bitmap : bitmaps_) {
+      if (bitmap != nullptr) {
+        g_hwloc_bitmap_first_negative_cpusets.insert(bitmap);
+      }
+    }
+  }
+
+  ~ScopedBitmapFirstNegativeGuard()
+  {
+    for (auto bitmap : bitmaps_) {
+      if (bitmap != nullptr) {
+        g_hwloc_bitmap_first_negative_cpusets.erase(bitmap);
+      }
+    }
+  }
+
+  ScopedBitmapFirstNegativeGuard(const ScopedBitmapFirstNegativeGuard&) =
+      delete;
+  auto operator=(const ScopedBitmapFirstNegativeGuard&)
+      -> ScopedBitmapFirstNegativeGuard& = delete;
+  ScopedBitmapFirstNegativeGuard(ScopedBitmapFirstNegativeGuard&&) = delete;
+  auto operator=(ScopedBitmapFirstNegativeGuard&&)
+      -> ScopedBitmapFirstNegativeGuard& = delete;
+
+ private:
+  std::vector<hwloc_const_bitmap_t> bitmaps_;
+};
+
+class ScopedHwlocTopologyInitFailureGuard {
+ public:
+  ScopedHwlocTopologyInitFailureGuard()
+      : previous_{g_force_hwloc_topology_init_failure}
+  {
+    g_force_hwloc_topology_init_failure = true;
+  }
+
+  ~ScopedHwlocTopologyInitFailureGuard()
+  {
+    g_force_hwloc_topology_init_failure = previous_;
+  }
+
+  ScopedHwlocTopologyInitFailureGuard(
+      const ScopedHwlocTopologyInitFailureGuard&) = delete;
+  auto operator=(const ScopedHwlocTopologyInitFailureGuard&)
+      -> ScopedHwlocTopologyInitFailureGuard& = delete;
+  ScopedHwlocTopologyInitFailureGuard(ScopedHwlocTopologyInitFailureGuard&&) =
+      delete;
+  auto operator=(ScopedHwlocTopologyInitFailureGuard&&)
+      -> ScopedHwlocTopologyInitFailureGuard& = delete;
+
+ private:
+  bool previous_;
+};
+
+class ScopedHwlocTopologyLoadFailureGuard {
+ public:
+  ScopedHwlocTopologyLoadFailureGuard()
+      : previous_{g_force_hwloc_topology_load_failure}
+  {
+    g_force_hwloc_topology_load_failure = true;
+  }
+
+  ~ScopedHwlocTopologyLoadFailureGuard()
+  {
+    g_force_hwloc_topology_load_failure = previous_;
+  }
+
+  ScopedHwlocTopologyLoadFailureGuard(
+      const ScopedHwlocTopologyLoadFailureGuard&) = delete;
+  auto operator=(const ScopedHwlocTopologyLoadFailureGuard&)
+      -> ScopedHwlocTopologyLoadFailureGuard& = delete;
+  ScopedHwlocTopologyLoadFailureGuard(ScopedHwlocTopologyLoadFailureGuard&&) =
+      delete;
+  auto operator=(ScopedHwlocTopologyLoadFailureGuard&&)
+      -> ScopedHwlocTopologyLoadFailureGuard& = delete;
+
+ private:
+  bool previous_;
+};
+
+class ScopedStarpuShutdownStubGuard {
+ public:
+  ScopedStarpuShutdownStubGuard() : previous_{g_fake_starpu_shutdown}
+  {
+    g_fake_starpu_shutdown = true;
+  }
+
+  ~ScopedStarpuShutdownStubGuard() { g_fake_starpu_shutdown = previous_; }
+
+  ScopedStarpuShutdownStubGuard(const ScopedStarpuShutdownStubGuard&) = delete;
+  auto operator=(const ScopedStarpuShutdownStubGuard&)
+      -> ScopedStarpuShutdownStubGuard& = delete;
+  ScopedStarpuShutdownStubGuard(ScopedStarpuShutdownStubGuard&&) = delete;
+  auto operator=(ScopedStarpuShutdownStubGuard&&)
+      -> ScopedStarpuShutdownStubGuard& = delete;
+
+ private:
+  bool previous_;
+};
+
 }  // namespace
+
+extern "C" int
+hwloc_topology_init(hwloc_topology_t* topology)
+{
+  if (g_force_hwloc_topology_init_failure) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (g_fake_hwloc_enabled) {
+    if (topology == nullptr) {
+      errno = EINVAL;
+      return -1;
+    }
+    *topology = fake_topology_handle();
+    return 0;
+  }
+  if (auto fn = resolve_real_hwloc_topology_init(); fn != nullptr) {
+    return fn(topology);
+  }
+  return -1;
+}
+
+extern "C" int
+hwloc_topology_load(hwloc_topology_t topology)
+{
+  if (g_force_hwloc_topology_load_failure) {
+    errno = EIO;
+    return -1;
+  }
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    return 0;
+  }
+  if (auto fn = resolve_real_hwloc_topology_load(); fn != nullptr) {
+    return fn(topology);
+  }
+  return -1;
+}
+
+extern "C" void
+hwloc_topology_destroy(hwloc_topology_t topology)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    cleanup_fake_hwloc_topology();
+    return;
+  }
+  if (auto fn = resolve_real_hwloc_topology_destroy(); fn != nullptr) {
+    fn(topology);
+  }
+}
+
+extern "C" int
+hwloc_get_type_depth(hwloc_topology_t topology, hwloc_obj_type_t type)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    switch (type) {
+      case HWLOC_OBJ_MACHINE:
+        return 0;
+      case HWLOC_OBJ_NUMANODE:
+        return 1;
+      case HWLOC_OBJ_PU:
+        return 2;
+      default:
+        return HWLOC_TYPE_DEPTH_UNKNOWN;
+    }
+  }
+  if (auto fn = resolve_real_hwloc_get_type_depth(); fn != nullptr) {
+    return fn(topology, type);
+  }
+  return HWLOC_TYPE_DEPTH_UNKNOWN;
+}
+
+extern "C" unsigned
+hwloc_get_nbobjs_by_depth(hwloc_topology_t topology, int depth)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    switch (depth) {
+      case 0:
+        return 1;
+      case 1:
+        return static_cast<unsigned>(g_fake_hwloc_topology.numa_nodes.size());
+      case 2:
+        return static_cast<unsigned>(
+            g_fake_hwloc_topology.processing_units.size());
+      default:
+        return 0;
+    }
+  }
+  if (auto fn = resolve_real_hwloc_get_nbobjs_by_depth(); fn != nullptr) {
+    return fn(topology, depth);
+  }
+  return 0;
+}
+
+extern "C" hwloc_obj_t
+hwloc_get_obj_by_depth(hwloc_topology_t topology, int depth, unsigned idx)
+{
+  if (g_fake_hwloc_enabled && topology == fake_topology_handle()) {
+    switch (depth) {
+      case 0:
+        if (g_force_machine_object_null) {
+          return nullptr;
+        }
+        if (idx == 0U) {
+          return &g_fake_hwloc_topology.machine.obj;
+        }
+        break;
+      case 1:
+        if (idx < g_fake_hwloc_topology.numa_nodes.size()) {
+          if (g_fake_null_numa_object_indices.contains(idx)) {
+            return nullptr;
+          }
+          return &g_fake_hwloc_topology.numa_nodes[idx].obj;
+        }
+        break;
+      case 2:
+        if (idx < g_fake_hwloc_topology.processing_units.size()) {
+          if (g_fake_null_pu_object_indices.contains(idx)) {
+            return nullptr;
+          }
+          return &g_fake_hwloc_topology.processing_units[idx].obj;
+        }
+        break;
+      default:
+        break;
+    }
+    return nullptr;
+  }
+  if (auto fn = resolve_real_hwloc_get_obj_by_depth(); fn != nullptr) {
+    return fn(topology, depth, idx);
+  }
+  return nullptr;
+}
+
+extern "C" int
+hwloc_bitmap_first(hwloc_const_bitmap_t bitmap)
+{
+  if (bitmap != nullptr &&
+      g_hwloc_bitmap_first_negative_cpusets.contains(bitmap)) {
+    return -1;
+  }
+  if (auto fn = resolve_real_hwloc_bitmap_first(); fn != nullptr) {
+    return fn(bitmap);
+  }
+  return -1;
+}
 
 extern "C" int
 starpu_worker_get_id()
@@ -712,6 +1320,17 @@ starpu_cuda_get_local_stream()
     return fn();
   }
   return nullptr;
+}
+
+extern "C" void
+starpu_shutdown()
+{
+  if (g_fake_starpu_shutdown) {
+    return;
+  }
+  if (auto fn = resolve_real_starpu_shutdown(); fn != nullptr) {
+    fn();
+  }
 }
 
 extern "C" int
@@ -799,6 +1418,420 @@ TEST(ConfigureCpu, FallbacksToAllCpuIdsWhenNoGpuCandidates)
   EXPECT_EQ(1, captured.precedence_over_environment_variables);
   EXPECT_EQ(0U, captured.workers_bindid[0]);
   EXPECT_EQ(0U, captured.workers_bindid[1]);
+}
+
+TEST(ConfigureCpu, LogsCommaSeparatedBindingList)
+{
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cout};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  EXPECT_NE(
+      log.find("Configured 2 CPU worker(s) grouped by NUMA nodes "
+               "(binding CPUs: 0, 1)"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, WarnsWhenNumasMissing)
+{
+  ScopedFakeHwlocSpec spec_guard({}, {}, true);
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  EXPECT_EQ(0U, g_captured_starpu_conf.conf.use_explicit_workers_bindid);
+  EXPECT_NE(
+      log.find("Unable to detect NUMA nodes; group_cpu_by_numa ignored"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, LogsWarningWhenHwlocInitFails)
+{
+  ScopedHwlocTopologyInitFailureGuard init_fail_guard;
+  StarpuInitCaptureStubGuard capture_guard;
+  ScopedStarpuShutdownStubGuard shutdown_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  EXPECT_EQ(0U, capture_guard.conf().use_explicit_workers_bindid);
+  EXPECT_NE(
+      log.find("Failed to initialise hwloc topology; cannot enable NUMA CPU "
+               "grouping"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, LogsWarningWhenHwlocLoadFails)
+{
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  ScopedHwlocTopologyLoadFailureGuard load_fail_guard;
+  StarpuInitCaptureStubGuard capture_guard;
+  ScopedStarpuShutdownStubGuard shutdown_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  EXPECT_EQ(0U, capture_guard.conf().use_explicit_workers_bindid);
+  EXPECT_NE(
+      log.find(
+          "Failed to load hwloc topology; cannot enable NUMA CPU grouping"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, TruncatesCpuBindingsWhenSlotsLimited)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 1, 2}, {0, 1, 2});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  EnvVarGuard workers_guard{
+      "STARPU_NWORKER_PER_CUDA", std::to_string(STARPU_NMAXWORKERS - 1)};
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  EXPECT_EQ(1, g_captured_starpu_conf.conf.ncpus);
+  EXPECT_NE(log.find("truncating mapping"), std::string::npos);
+}
+
+TEST(ConfigureCpu, AddsUnreservedCpuIdsToGpuCandidates)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 2}, {0, 1, 2});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(2, conf.ncpus);
+  EXPECT_EQ(1U, conf.workers_bindid[2]);
+}
+
+TEST(ConfigureCpu, ReusesAllCpuIdsWhenGpuCandidatesEmpty)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 1}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(conf.workers_bindid[0], conf.workers_bindid[2]);
+  EXPECT_EQ(
+      log.find("Unable to determine CPU identifiers for worker binding"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, SkipsNullNumaObjectsDuringBinding)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 1}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullNumaObjectGuard null_guard({1});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+  EXPECT_EQ(1U, conf.workers_bindid[1]);
+}
+
+TEST(ConfigureCpu, RecoversFromAllNullNumaObjects)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 1}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullNumaObjectGuard null_guard({0, 1});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+  EXPECT_EQ(1U, conf.workers_bindid[1]);
+  EXPECT_EQ(
+      log.find("Unable to detect NUMA nodes; group_cpu_by_numa ignored"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, NumaBitmapFirstNegativeFallsBackToProcessingUnits)
+{
+  ScopedFakeHwlocSpec spec_guard({0, 1}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  std::vector<hwloc_const_bitmap_t> numa_sets;
+  for (const auto& node : g_fake_hwloc_topology.numa_nodes) {
+    numa_sets.push_back(node.cpuset);
+  }
+  ScopedBitmapFirstNegativeGuard bitmap_guard(std::move(numa_sets));
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+}
+
+TEST(ConfigureCpu, BitmapFirstNegativePreventsMachineFallback)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {0});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullProcessingUnitGuard pu_null_guard({0});
+  ScopedBitmapFirstNegativeGuard bitmap_guard(
+      {g_fake_hwloc_topology.machine.cpuset});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(0U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0, conf.precedence_over_environment_variables);
+  EXPECT_NE(
+      log.find("Unable to determine CPU identifiers for worker binding; "
+               "group_cpu_by_numa ignored"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, NullProcessingUnitsReduceGpuCandidates)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullProcessingUnitGuard null_guard({1});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+  EXPECT_EQ(0U, conf.workers_bindid[1]);
+}
+
+TEST(ConfigureCpu, FallbacksToMachineCpuWhenProcessingUnitsNull)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {0});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedNullProcessingUnitGuard null_guard({0});
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  {
+    starpu_server::StarPUSetup setup(opts);
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(1U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0U, conf.workers_bindid[0]);
+  EXPECT_EQ(0U, conf.workers_bindid[1]);
+}
+
+TEST(ConfigureCpu, DisablesExplicitBindingWhenGpuCandidatesUnavailable)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {}, true);
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedMachineCpusetNullGuard machine_cpuset_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(0U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0, conf.precedence_over_environment_variables);
+  EXPECT_NE(
+      log.find("Unable to determine CPU identifiers for worker binding; "
+               "group_cpu_by_numa ignored"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, HandlesMissingMachineObjectDuringFallback)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {}, true);
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  ScopedMachineObjectNullGuard machine_object_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(g_captured_starpu_conf.called);
+  const auto& conf = g_captured_starpu_conf.conf;
+  EXPECT_EQ(1, conf.ncpus);
+  EXPECT_EQ(0U, conf.use_explicit_workers_bindid);
+  EXPECT_EQ(0, conf.precedence_over_environment_variables);
+  EXPECT_NE(
+      log.find("Unable to determine CPU identifiers for worker binding; "
+               "group_cpu_by_numa ignored"),
+      std::string::npos);
+}
+
+TEST(ConfigureCpu, LogsTraceWhenNonCpuWorkersExceedCandidates)
+{
+  ScopedFakeHwlocSpec spec_guard({0}, {0, 1});
+  FakeHwlocTopologyGuard fake_hwloc_guard;
+  FakeHwlocStarpuInitGuard init_guard;
+  EnvVarGuard workers_guard{"STARPU_NWORKER_PER_CUDA", "2"};
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.group_cpu_by_numa = true;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, 1};
+  opts.verbosity = starpu_server::VerbosityLevel::Trace;
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cout};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  EXPECT_NE(
+      log.find("Non-CPU workers (4) exceed unique binding candidates (1)"),
+      std::string::npos);
 }
 
 TEST_F(StarPUSetupInitStubTest, ParseUnsignedAcceptsMaxUnsignedConfigValue)
@@ -1288,6 +2321,33 @@ TEST(OutputSlotPool_Unit, FreeHostBufferNullPointerNoWarning)
   starpu_server::OutputSlotPoolTestHook::free_host_buffer_for_tests(
       nullptr, info);
   EXPECT_TRUE(capture.str().empty());
+}
+
+TEST(OutputSlotPool_Unit, HostDeallocatorHookIgnoresNullptr)
+{
+  auto& deallocator_hook =
+      starpu_server::OutputSlotPoolTestHook::host_deallocator_hook_ref();
+  ASSERT_TRUE(static_cast<bool>(deallocator_hook));
+
+  starpu_server::CaptureStream capture{std::cerr};
+  EXPECT_NO_THROW(deallocator_hook(nullptr));
+  EXPECT_TRUE(capture.str().empty());
+}
+
+TEST(OutputSlotPool_Unit, HostBufferDeleterNoopForNullptr)
+{
+  bool deallocator_invoked = false;
+  const auto previous_deallocator =
+      starpu_server::testing::set_output_host_deallocator_for_tests(
+          [&](void*) noexcept { deallocator_invoked = true; });
+
+  EXPECT_NO_THROW(
+      starpu_server::OutputSlotPoolTestHook::invoke_host_buffer_deleter(
+          nullptr));
+  EXPECT_FALSE(deallocator_invoked);
+
+  starpu_server::testing::set_output_host_deallocator_for_tests(
+      previous_deallocator);
 }
 
 TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
@@ -2547,4 +3607,161 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersFreesCudaPinnedMemory)
   EXPECT_FALSE(buffer_infos[0].starpu_pinned);
   EXPECT_EQ(buffer_infos[0].starpu_pin_rc, 0);
   EXPECT_EQ(buffer_infos[0].bytes, 0U);
+}
+
+TEST_P(StarPUSetupExtractTensorsTest, Extract)
+{
+  const auto& param = GetParam();
+  auto outputs = starpu_server::extract_tensors_from_output(param.input);
+  ASSERT_EQ(outputs.size(), param.expected.size());
+  for (size_t i = 0; i < param.expected.size(); ++i) {
+    EXPECT_TRUE(outputs[i].equal(param.expected[i]));
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    StarPUSetupExtractTensorsTestCases, StarPUSetupExtractTensorsTest,
+    ::testing::Values(
+        []() {
+          at::Tensor tensor = torch::arange(6).view({2, 3});
+          return ExtractTensorsParam{c10::IValue(tensor), {tensor}};
+        }(),
+        []() {
+          at::Tensor tensor_1 = torch::ones({2, 2});
+          at::Tensor tensor_2 = torch::zeros({1, 3});
+          auto tuple = c10::ivalue::Tuple::create({tensor_1, tensor_2});
+          return ExtractTensorsParam{c10::IValue(tuple), {tensor_1, tensor_2}};
+        }(),
+        []() {
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          c10::List<at::Tensor> list;
+          list.push_back(tensor_1);
+          list.push_back(tensor_2);
+          return ExtractTensorsParam{c10::IValue(list), {tensor_1, tensor_2}};
+        }(),
+        []() {
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          at::Tensor tensor_3 = torch::rand({4});
+          c10::impl::GenericList inner(c10::AnyType::get());
+          inner.push_back(tensor_2);
+          inner.push_back(tensor_3);
+          c10::impl::GenericList outer(c10::AnyType::get());
+          outer.push_back(tensor_1);
+          outer.push_back(c10::IValue(inner));
+          return ExtractTensorsParam{
+              c10::IValue(outer), {tensor_1, tensor_2, tensor_3}};
+        }(),
+        []() {
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          c10::Dict<std::string, at::Tensor> dict;
+          dict.insert("first", tensor_1);
+          dict.insert("second", tensor_2);
+          return ExtractTensorsParam{c10::IValue(dict), {tensor_1, tensor_2}};
+        }(),
+        []() {
+          at::Tensor tensor_1 = torch::rand({2});
+          at::Tensor tensor_2 = torch::rand({3});
+          at::Tensor tensor_3 = torch::rand({4});
+          c10::impl::GenericDict inner(
+              c10::StringType::get(), c10::AnyType::get());
+          inner.insert(c10::IValue("second"), c10::IValue(tensor_2));
+          inner.insert(c10::IValue("third"), c10::IValue(tensor_3));
+          c10::impl::GenericDict outer(
+              c10::StringType::get(), c10::AnyType::get());
+          outer.insert(c10::IValue("first"), c10::IValue(tensor_1));
+          outer.insert(c10::IValue("nested"), c10::IValue(inner));
+          return ExtractTensorsParam{
+              c10::IValue(outer), {tensor_1, tensor_2, tensor_3}};
+        }()),
+    [](const ::testing::TestParamInfo<ExtractTensorsParam>& info) {
+      switch (info.index) {
+        case 0:
+          return std::string{"SingleTensor"};
+        case 1:
+          return std::string{"TupleOfTensors"};
+        case 2:
+          return std::string{"TensorList"};
+        case 3:
+          return std::string{"NestedList"};
+        case 4:
+          return std::string{"Dict"};
+        case 5:
+          return std::string{"NestedDict"};
+        default:
+          return std::string{"Unknown"};
+      }
+    });
+
+TEST(InferenceCodelet, FieldsAreInitialized)
+{
+  starpu_server::InferenceCodelet inf_cl;
+  auto* codelet = inf_cl.get_codelet();
+  EXPECT_EQ(codelet->nbuffers, STARPU_VARIABLE_NBUFFERS);
+  EXPECT_NE(codelet->cpu_funcs[0], nullptr);
+  EXPECT_NE(codelet->cuda_funcs[0], nullptr);
+  EXPECT_EQ(codelet->cuda_flags[0], 1U);
+  EXPECT_EQ(codelet->max_parallelism, INT_MAX);
+}
+
+TEST(InferenceCodelet, RunInferenceExceptionsAreWrapped)
+{
+  const StarpuRuntimeGuard guard;
+
+  auto params = starpu_server::make_basic_params(1);
+  params.limits.max_inputs = 0;
+  params.num_inputs = 1;
+
+  float dummy_input = 0.0F;
+  float dummy_output = 0.0F;
+  std::array<starpu_variable_interface, 2> raw_buffers{};
+  raw_buffers[0] = starpu_server::make_variable_interface(&dummy_input);
+  raw_buffers[1] = starpu_server::make_variable_interface(&dummy_output);
+  std::array<starpu_server::StarpuBufferPtr, 2> buffers{
+      &raw_buffers[0], &raw_buffers[1]};
+
+  starpu_server::InferenceCodelet inf_cl;
+  auto* cpu_func = inf_cl.get_codelet()->cpu_funcs[0];
+  ASSERT_NE(cpu_func, nullptr);
+
+  try {
+    cpu_func(reinterpret_cast<void**>(buffers.data()), &params);
+    FAIL() << "Expected cpu_func to throw";
+  }
+  catch (const starpu_server::StarPUCodeletException& ex) {
+    const std::string_view message(ex.what());
+    EXPECT_NE(message.find("[ERROR] Codelet failure"), std::string::npos);
+  }
+}
+
+TEST(InferenceCodelet, SelectGpuModuleThrowsWhenReplicaMissing)
+{
+  skip_if_no_cuda();
+
+  auto params = starpu_server::make_basic_params(1);
+  const int device_id = 0;
+
+  EXPECT_THROW(
+      starpu_server::select_gpu_module(params, device_id),
+      starpu_server::StarPUCodeletException);
+}
+
+TEST(InferenceCodelet, SelectGpuModuleReturnsMatchingReplica)
+{
+  skip_if_no_cuda();
+
+  auto params = starpu_server::make_basic_params(1);
+  const int device_id = 0;
+
+  auto module = std::make_unique<torch::jit::script::Module>("dummy");
+  params.models.models_gpu.resize(1);
+  params.models.models_gpu[0] = module.get();
+  params.models.num_models_gpu = params.models.models_gpu.size();
+
+  torch::jit::script::Module* selected =
+      starpu_server::select_gpu_module(params, device_id);
+
+  EXPECT_EQ(selected, module.get());
 }

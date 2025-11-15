@@ -7,6 +7,8 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,6 +25,7 @@ namespace starpu_server {
 namespace detail {
 struct TimingInfo {
   std::chrono::high_resolution_clock::time_point enqueued_time;
+  std::chrono::high_resolution_clock::time_point last_enqueued_time;
   std::chrono::high_resolution_clock::time_point dequeued_time;
   std::chrono::high_resolution_clock::time_point batch_collect_start_time;
   std::chrono::high_resolution_clock::time_point batch_collect_end_time;
@@ -34,6 +37,23 @@ struct TimingInfo {
   std::chrono::high_resolution_clock::time_point callback_end_time;
   int submission_id = -1;
 };
+
+struct BaseLatencyBreakdown {
+  double queue_ms = 0.0;
+  double batch_ms = 0.0;
+  double submit_ms = 0.0;
+  double scheduling_ms = 0.0;
+  double codelet_ms = 0.0;
+  double inference_ms = 0.0;
+  double callback_ms = 0.0;
+  double total_ms = 0.0;
+};
+
+void set_cuda_device_count_override(std::optional<int> override_count);
+auto get_cuda_device_count() -> int;
+void validate_device_ids(std::span<const int> device_ids, int device_count);
+auto compute_latency_breakdown(
+    const TimingInfo& timing, double total_latency_ms) -> BaseLatencyBreakdown;
 }  // namespace detail
 
 // =============================================================================
@@ -58,14 +78,85 @@ struct InferenceResult {
 // =============================================================================
 
 class InferenceQueue;
+class InferenceJob;
 
-class InferenceJob {
+class JobBatchState {
  public:
   struct AggregatedSubJob {
     std::weak_ptr<InferenceJob> job;
     std::function<void(const std::vector<torch::Tensor>&, double)> callback;
     int64_t batch_size = 1;
+    int request_id = -1;
   };
+
+  void set_logical_job_count(int count) { logical_job_count_ = count; }
+  [[nodiscard]] auto logical_job_count() const -> int
+  {
+    return logical_job_count_;
+  }
+
+  void set_aggregated_sub_jobs(std::vector<AggregatedSubJob> jobs)
+  {
+    aggregated_sub_jobs_ = std::move(jobs);
+  }
+
+  void set_effective_batch_size(int64_t batch)
+  {
+    effective_batch_size_ = batch;
+  }
+
+  void reset_effective_batch_size() { effective_batch_size_.reset(); }
+
+  [[nodiscard]] auto effective_batch_size() const -> std::optional<int64_t>
+  {
+    return effective_batch_size_;
+  }
+
+  void set_pending_sub_jobs(std::vector<std::shared_ptr<InferenceJob>> jobs)
+  {
+    pending_sub_jobs_ = std::move(jobs);
+  }
+
+  void clear_pending_sub_jobs() { pending_sub_jobs_.clear(); }
+
+  [[nodiscard]] auto pending_sub_jobs() const
+      -> const std::vector<std::shared_ptr<InferenceJob>>&
+  {
+    return pending_sub_jobs_;
+  }
+
+  [[nodiscard]] auto has_pending_sub_jobs() const -> bool
+  {
+    return !pending_sub_jobs_.empty();
+  }
+
+  [[nodiscard]] auto take_pending_sub_jobs()
+      -> std::vector<std::shared_ptr<InferenceJob>>
+  {
+    return std::exchange(pending_sub_jobs_, {});
+  }
+
+  [[nodiscard]] auto aggregated_sub_jobs() const
+      -> const std::vector<AggregatedSubJob>&
+  {
+    return aggregated_sub_jobs_;
+  }
+
+  [[nodiscard]] auto has_aggregated_sub_jobs() const -> bool
+  {
+    return !aggregated_sub_jobs_.empty();
+  }
+
+ private:
+  int logical_job_count_ = 1;
+  std::vector<AggregatedSubJob> aggregated_sub_jobs_;
+  std::optional<int64_t> effective_batch_size_;
+  std::vector<std::shared_ptr<InferenceJob>> pending_sub_jobs_;
+};
+
+class InferenceJob : public JobBatchState {
+ public:
+  using AggregatedSubJob = JobBatchState::AggregatedSubJob;
 
   InferenceJob() noexcept = default;
 
@@ -83,6 +174,7 @@ class InferenceJob {
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
+    reset_effective_batch_size();
     input_tensors_.clear();
     input_tensors_.reserve(inputs.size());
     for (const auto& tensor : inputs) {
@@ -110,9 +202,17 @@ class InferenceJob {
     start_time_ = time;
   }
   void set_on_complete(
-      std::function<void(const std::vector<torch::Tensor>&, double)> call_back)
+      std::function<void(std::vector<torch::Tensor>, double)> call_back)
   {
     on_complete_ = std::move(call_back);
+  }
+  void set_model_name(std::string model_name)
+  {
+    model_name_ = std::move(model_name);
+  }
+  [[nodiscard]] auto model_name() const -> std::string_view
+  {
+    return model_name_;
   }
 
   void set_input_memory_holders(
@@ -161,7 +261,7 @@ class InferenceJob {
     return fixed_worker_id_;
   }
   [[nodiscard]] auto get_on_complete() const
-      -> const std::function<void(const std::vector<torch::Tensor>&, double)>&
+      -> const std::function<void(std::vector<torch::Tensor>, double)>&
   {
     return on_complete_;
   }
@@ -176,28 +276,6 @@ class InferenceJob {
 
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }
 
-  void set_logical_job_count(int count) { logical_job_count_ = count; }
-  [[nodiscard]] auto logical_job_count() const -> int
-  {
-    return logical_job_count_;
-  }
-
-  void set_aggregated_sub_jobs(std::vector<AggregatedSubJob> jobs)
-  {
-    aggregated_sub_jobs_ = std::move(jobs);
-  }
-
-  [[nodiscard]] auto aggregated_sub_jobs() const
-      -> const std::vector<AggregatedSubJob>&
-  {
-    return aggregated_sub_jobs_;
-  }
-
-  [[nodiscard]] auto has_aggregated_sub_jobs() const -> bool
-  {
-    return !aggregated_sub_jobs_.empty();
-  }
-
  private:
   std::vector<torch::Tensor> input_tensors_;
   std::vector<at::ScalarType> input_types_;
@@ -207,8 +285,9 @@ class InferenceJob {
   int request_id_ = 0;
   int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
-  std::function<void(const std::vector<torch::Tensor>&, double)> on_complete_;
+  std::function<void(std::vector<torch::Tensor>, double)> on_complete_;
   std::chrono::high_resolution_clock::time_point start_time_;
+  std::string model_name_;
 
   DeviceType executed_on_ = DeviceType::Unknown;
   int device_id_ = -1;
@@ -217,8 +296,6 @@ class InferenceJob {
   detail::TimingInfo timing_info_;
 
   bool is_shutdown_signal_ = false;
-  int logical_job_count_ = 1;
-  std::vector<AggregatedSubJob> aggregated_sub_jobs_;
 };
 
 // =============================================================================

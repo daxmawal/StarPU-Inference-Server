@@ -13,11 +13,14 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
+#include "core/inference_runner.hpp"
 #include "monitoring/metrics.hpp"
+#include "utils/batching_trace_logger.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/datatype_utils.hpp"
 #include "utils/logger.hpp"
@@ -246,19 +249,23 @@ fill_output_tensor(
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
-    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size)
+    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
+    std::string default_model_name)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types)),
       expected_input_dims_(std::move(expected_input_dims)),
-      max_batch_size_(max_batch_size)
+      max_batch_size_(max_batch_size),
+      default_model_name_(std::move(default_model_name))
 {
 }
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
-    std::vector<at::ScalarType> expected_input_types)
+    std::vector<at::ScalarType> expected_input_types,
+    std::string default_model_name)
     : queue_(queue), reference_outputs_(reference_outputs),
-      expected_input_types_(std::move(expected_input_types))
+      expected_input_types_(std::move(expected_input_types)),
+      default_model_name_(std::move(default_model_name))
 {
 }
 
@@ -358,45 +365,52 @@ auto
 InferenceServiceImpl::build_latency_breakdown(
     const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown
 {
-  using duration_f = std::chrono::duration<double, std::milli>;
-  LatencyBreakdown timing{};
-  timing.queue_ms = duration_f(info.dequeued_time - info.enqueued_time).count();
-  timing.batch_ms = std::max(
-      0.0,
-      duration_f(info.batch_collect_end_time - info.batch_collect_start_time)
-          .count());
-  timing.submit_ms = std::max(
-      0.0, duration_f(
-               info.before_starpu_submitted_time - info.batch_collect_end_time)
-               .count());
-  timing.scheduling_ms =
-      duration_f(info.codelet_start_time - info.before_starpu_submitted_time)
-          .count();
-  timing.codelet_ms =
-      duration_f(info.codelet_end_time - info.codelet_start_time).count();
-  timing.inference_ms =
-      duration_f(info.callback_start_time - info.inference_start_time).count();
-  timing.callback_ms =
-      duration_f(info.callback_end_time - info.callback_start_time).count();
-  timing.total_ms = latency_ms;
-  return timing;
+  const auto base = detail::compute_latency_breakdown(info, latency_ms);
+  LatencyBreakdown breakdown{};
+  breakdown.queue_ms = base.queue_ms;
+  breakdown.batch_ms = base.batch_ms;
+  breakdown.submit_ms = base.submit_ms;
+  breakdown.scheduling_ms = base.scheduling_ms;
+  breakdown.codelet_ms = base.codelet_ms;
+  breakdown.inference_ms = base.inference_ms;
+  breakdown.callback_ms = base.callback_ms;
+  breakdown.total_ms = base.total_ms;
+  return breakdown;
+}
+
+auto
+InferenceServiceImpl::resolve_model_name(std::string model_name) const
+    -> std::string
+{
+  if (default_model_name_.empty()) {
+    return model_name;
+  }
+  if (!model_name.empty() && model_name != default_model_name_) {
+    log_warning(std::format(
+        "Client requested model '{}' but server is configured for '{}'; "
+        "defaulting to server model",
+        model_name, default_model_name_));
+  }
+  return default_model_name_;
 }
 
 auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
-    std::chrono::high_resolution_clock::time_point receive_time) -> Status
+    std::chrono::high_resolution_clock::time_point receive_time,
+    std::string model_name) -> Status
 {
+  auto resolved_model_name = resolve_model_name(std::move(model_name));
   auto job = client_utils::create_job(
       inputs, *reference_outputs_, next_request_id_++,
-      std::move(input_lifetimes), receive_time);
+      std::move(input_lifetimes), receive_time, std::move(resolved_model_name));
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
   job->set_on_complete(
       [job_ptr = job, callback = std::move(on_complete)](
-          const std::vector<torch::Tensor>& outs, double latency_ms) mutable {
+          std::vector<torch::Tensor> outs, double latency_ms) mutable {
         const auto& info = job_ptr->timing_info();
         auto timing = build_latency_breakdown(info, latency_ms);
         detail::TimingInfo copied_info = info;
@@ -408,17 +422,26 @@ InferenceServiceImpl::submit_job_async(
           return;
         }
 
-        auto outputs_copy = outs;
-        callback(Status::OK, std::move(outputs_copy), timing, copied_info);
+        callback(Status::OK, std::move(outs), timing, copied_info);
       });
 
   bool pushed = false;
   {
     NvtxRange queue_scope("grpc_submit_starpu_queue");
     pushed = queue_->push(job);
+    if (pushed) {
+      const auto enqueued_now = std::chrono::high_resolution_clock::now();
+      job->timing_info().enqueued_time = enqueued_now;
+      job->timing_info().last_enqueued_time = enqueued_now;
+    }
   }
   if (!pushed) {
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
+  }
+  if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
+    tracer.log_request_enqueued(
+        job->get_request_id(), job->model_name(), /*is_warmup=*/false,
+        job->timing_info().last_enqueued_time);
   }
   return Status::OK;
 }
@@ -528,7 +551,8 @@ InferenceServiceImpl::handle_async_infer_completion(
   }
 
   Status populate_status = populate_response(
-      context.request, context.reply, outs, context.recv_ms, breakdown);
+      context.request, context.reply, outs, context.recv_ms, breakdown,
+      context.resolved_model_name);
   if (!populate_status.ok()) {
     callback_handle->Invoke(populate_status);
     return;
@@ -593,17 +617,20 @@ InferenceServiceImpl::HandleModelInferAsync(
     return;
   }
 
+  const auto resolved_model_name = resolve_model_name(request->model_name());
   status = submit_job_async(
       inputs,
-      [request, reply, recv_tp, recv_ms, metrics, callback_handle](
+      [request, reply, recv_tp, recv_ms, metrics, callback_handle,
+       resolved_model_name](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
         handle_async_infer_completion(
             AsyncInferCompletionContext{
-                request, reply, callback_handle, metrics, recv_tp, recv_ms},
+                request, reply, callback_handle, metrics, recv_tp, recv_ms,
+                resolved_model_name},
             job_status, outs, breakdown, timing_info);
       },
-      std::move(input_lifetimes), recv_tp);
+      std::move(input_lifetimes), recv_tp, resolved_model_name);
 
   if (!status.ok()) {
     callback_handle->Invoke(status);
@@ -614,9 +641,14 @@ auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
-    const LatencyBreakdown& breakdown) -> Status
+    const LatencyBreakdown& breakdown,
+    std::string_view model_name_override) -> Status
 {
-  reply->set_model_name(request->model_name());
+  if (!model_name_override.empty()) {
+    reply->set_model_name(std::string(model_name_override));
+  } else {
+    reply->set_model_name(request->model_name());
+  }
   reply->set_model_version(request->model_version());
   reply->set_server_receive_ms(recv_ms);
   reply->set_server_queue_ms(breakdown.queue_ms);
@@ -923,7 +955,7 @@ RunGrpcServer(
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size);
+      max_batch_size, options.default_model_name);
 
   inference::GRPCInferenceService::AsyncService async_service;
   AsyncServerContext async_context(async_service, service);
@@ -963,7 +995,8 @@ RunGrpcServer(
   InferenceServiceImpl service(
       &queue, &reference_outputs,
       std::vector<at::ScalarType>(
-          expected_input_types.begin(), expected_input_types.end()));
+          expected_input_types.begin(), expected_input_types.end()),
+      options.default_model_name);
 
   inference::GRPCInferenceService::AsyncService async_service;
   AsyncServerContext async_context(async_service, service);

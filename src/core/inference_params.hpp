@@ -69,7 +69,6 @@ struct Limits {
   size_t max_dims = 0;
   size_t max_models_gpu = 0;
 };
-
 }  // namespace detail
 
 // =============================================================================
@@ -87,6 +86,10 @@ struct InferenceParams {
   int64_t batch_size = 1;
   int request_id = 0;
   VerbosityLevel verbosity = VerbosityLevel::Silent;
+
+  // Cached views reused for each codelet invocation to avoid re-allocations.
+  std::vector<torch::Tensor> cached_input_tensors;
+  std::vector<c10::IValue> cached_input_ivalues;
 };
 
 }  // namespace starpu_server

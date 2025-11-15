@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "utils/datatype_utils.hpp"
@@ -56,12 +57,11 @@ display_client_help(const char* prog_name)
       << "  --request-number N Number of requests to send (default: 1)\n"
       << "  --delay US        Delay between requests in microseconds (default: "
          "0)\n"
-      << "  --shape WxHxC     Input tensor shape (e.g., 1x3x224x224)\n"
-      << "  --type TYPE       Input tensor type (e.g., float32)\n"
       << "  --input NAME:SHAPE:TYPE  Specify an input (may be repeated)\n"
       << "  --server ADDR     gRPC server address (default: localhost:50051)\n"
       << "  --model NAME      Model name (default: example)\n"
-      << "  --version VER     Model version (default: 1)\n"
+      << "  --client-model PATH  Optional TorchScript model to validate "
+         "responses\n"
       << "  --verbose [0-4]   Verbosity level: 0=silent to 4=trace\n"
       << "  --help            Show this help message\n";
 }
@@ -112,7 +112,7 @@ expect_and_parse(size_t& idx, std::span<const char*> args, Func&& parser)
 }
 
 // =============================================================================
-// Individual Argument Parsers for --model, --shape, etc.
+// Individual Argument Parsers for the supported CLI options.
 // =============================================================================
 
 auto
@@ -139,33 +139,6 @@ parse_delay(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
   });
 }
 
-auto
-parse_shape(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
-{
-  return expect_and_parse(idx, args, [&cfg](const char* val) {
-    cfg.shape = parse_shape_string(val);
-    if (cfg.inputs.empty()) {
-      cfg.inputs.emplace_back("input", cfg.shape, cfg.type);
-    } else {
-      cfg.inputs[0].shape = cfg.shape;
-    }
-  });
-}
-
-
-auto
-parse_type(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
-{
-  return expect_and_parse(idx, args, [&cfg](const char* val) {
-    cfg.type = string_to_scalar_type(val);
-    if (cfg.inputs.empty()) {
-      cfg.inputs.emplace_back("input", cfg.shape, cfg.type);
-    } else {
-      cfg.inputs[0].type = cfg.type;
-    }
-  });
-}
-
 namespace {
 
 void
@@ -186,10 +159,6 @@ append_input_config(ClientConfig& cfg, const char* val)
   input.shape = parse_shape_string(shape_str);
   input.type = string_to_scalar_type(type_str);
   cfg.inputs.push_back(std::move(input));
-  if (cfg.inputs.size() == 1) {
-    cfg.shape = cfg.inputs[0].shape;
-    cfg.type = cfg.inputs[0].type;
-  }
 }
 
 }  // namespace
@@ -217,11 +186,11 @@ parse_model(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 }
 
 auto
-parse_version(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
-    -> bool
+parse_client_model_path(
+    ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
   return expect_and_parse(
-      idx, args, [&cfg](const char* val) { cfg.model_version = val; });
+      idx, args, [&cfg](const char* val) { cfg.client_model_path = val; });
 }
 
 auto
@@ -247,12 +216,10 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       dispatch = {
           {"--request-number", parse_request_nb},
           {"--delay", parse_delay},
-          {"--shape", parse_shape},
-          {"--type", parse_type},
           {"--input", parse_input},
           {"--server", parse_server},
           {"--model", parse_model},
-          {"--version", parse_version},
+          {"--client-model", parse_client_model_path},
           {"--verbose", parse_verbose},
       };
 

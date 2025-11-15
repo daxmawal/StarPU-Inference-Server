@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "datatype_utils.hpp"
@@ -22,6 +23,13 @@ namespace {
 
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
+
+auto
+config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
+{
+  static ConfigLoaderPostParseHook hook;
+  return hook;
+}
 
 struct TransparentStringHash {
   using hash_type = std::hash<std::string_view>;
@@ -52,12 +60,32 @@ parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
+void
+parse_config_name(const YAML::Node& root, RuntimeConfig& cfg)
+{
+  const YAML::Node name_node = root["name"];
+  if (!name_node) {
+    return;
+  }
+  if (!name_node.IsScalar()) {
+    log_error("Configuration option 'name' must be a scalar string");
+    cfg.valid = false;
+    return;
+  }
+  cfg.name = name_node.as<std::string>();
+}
+
 auto
 validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 {
   const std::vector<std::string> required_keys{
-      "model",     "inputs",         "outputs",
-      "pool_size", "max_batch_size", "batch_coalesce_timeout_ms"};
+      "name",
+      "model",
+      "inputs",
+      "outputs",
+      "pool_size",
+      "max_batch_size",
+      "batch_coalesce_timeout_ms"};
   for (const auto& key : required_keys) {
     if (!root[key]) {
       log_error(std::string("Missing required key: ") + key);
@@ -75,6 +103,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
       kAllowedKeys{
           "verbose",
           "verbosity",
+          "name",
           "scheduler",
           "model",
           "starpu_env",
@@ -91,6 +120,8 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "max_batch_size",
           "dynamic_batching",
           "pool_size",
+          "trace_enabled",
+          "trace_file",
           "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
@@ -325,6 +356,15 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("pool_size must be > 0");
     }
   }
+  if (root["trace_enabled"]) {
+    cfg.batching.trace_enabled = root["trace_enabled"].as<bool>();
+  }
+  if (root["trace_file"]) {
+    cfg.batching.trace_file_path = root["trace_file"].as<std::string>();
+    if (cfg.batching.trace_file_path.empty()) {
+      throw std::invalid_argument("trace_file must not be empty");
+    }
+  }
 }
 
 void
@@ -440,6 +480,18 @@ parse_tensor_nodes(
 
 }  // namespace
 
+void
+set_config_loader_post_parse_hook(ConfigLoaderPostParseHook hook)
+{
+  config_loader_post_parse_hook() = std::move(hook);
+}
+
+void
+reset_config_loader_post_parse_hook()
+{
+  config_loader_post_parse_hook() = {};
+}
+
 auto
 load_config(const std::string& path) -> RuntimeConfig
 {
@@ -457,6 +509,7 @@ load_config(const std::string& path) -> RuntimeConfig
     }
 
     parse_verbosity(root, cfg);
+    parse_config_name(root, cfg);
     if (!validate_allowed_keys(root, cfg)) {
       return cfg;
     }
@@ -473,6 +526,9 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_device_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
     parse_starpu_env(root, cfg);
+    if (const auto& hook = config_loader_post_parse_hook(); hook) {
+      hook(cfg);
+    }
   }
   catch (const YAML::Exception& exception) {
     mark_invalid(exception.what());

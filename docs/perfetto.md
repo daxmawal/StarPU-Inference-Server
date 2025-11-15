@@ -1,0 +1,47 @@
+# Perfetto Trace Guide
+
+This guide explains how to generate `batching_trace.json`, understand its
+contents, and inspect it with the Perfetto UI. Enable tracing only during
+benchmarks or local debugging sessions.
+
+## 1. Enable the JSON trace
+
+Tracing is disabled by default. Enable it in the `batching` section of your
+model configuration:
+
+```yaml
+batching:
+  trace_enabled: true
+  trace_file: /tmp/starpu/batching_trace.json  # optional custom path
+```
+
+- `trace_enabled` flips the instrumentation on as soon as the server starts.
+- `trace_file` is optional; when omitted the server writes
+  `batching_trace.json` in the working directory.
+
+Each server restart truncates the previous file, so copy the trace elsewhere
+before launching another run. Stop the server before opening the trace to avoid
+an opening error.
+
+## 2. JSON layout
+
+The output follows the Chrome trace-event format.
+
+![Aperçu Perfetto](images/perfetto_example.png)
+
+Key event types:
+
+- `request_enqueued` (track “request enqueued”) records each incoming request.
+- `batch` (track “batch”) spans the time requests spend waiting for a dynamic
+  batch.
+- `batch_build` (track "dynamic batching") covers the time spent assembling the
+  batch before it is handed off to StarPU. Flow arrows link these slices to the
+  worker that eventually executes the batch.
+- `batch_submitted` (track “batch submitted”) is an instant event that ties a
+  batch to the worker that will execute it.
+- Entries named after correspond to worker lanes.
+
+Warmup requests reuse the same keys with a `warming_` prefix so they can be
+filtered out quickly inside Perfetto.
+
+All timestamps are relative microseconds since the trace started.

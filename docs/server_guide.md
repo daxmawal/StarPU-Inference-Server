@@ -19,8 +19,8 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 cmake --build . -j"$(nproc)"
 ```
 
-- `grpc_server` is the executable that exposes the gRPC API.
-- `grpc_client_example` is an example client useful for smoke tests.
+- `starpu_server` is the executable that exposes the gRPC API.
+- `client_example` is an example client useful for smoke tests.
 - To write your own client in C++, Python, etc, see [Client Guide](./client_guide.md).
 
 ## 2. Prepare a model configuration
@@ -30,6 +30,7 @@ configuration is written in YAML and must include the following required keys:
 
 | Key | Description |
 | --- | --- |
+| `name` | Model configuration identifier. |
 | `model` | Absolute or relative path to the TorchScript `.pt`/`.ts` file. |
 | `inputs` | Sequence describing each input tensor, every element must define `name`, `data_type`, and `dims`. |
 | `outputs` | Sequence describing each output tensor, every element must define `name`, `data_type`, and `dims`. |
@@ -59,7 +60,7 @@ Optional keys unlock batching, logging, and runtime controls:
 | `group_cpu_by_numa` | Spawn one StarPU CPU worker per NUMA node instead of per core. | `false` |
 | `use_cuda` | Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`. | `false` |
 | `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
-| `metrics_port` | Port for the Prometheus metrics endpoint. | `9100` |
+| `metrics_port` | Port for the Prometheus metrics endpoint. | `9090` |
 
 Behavior of `use_cpu` and `use_cuda`:
 
@@ -75,13 +76,17 @@ Optional keys for debugging:
 | `verbosity` | Log verbosity level. Supported aliases: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`. | `0` |
 | `dynamic_batching` | Enable dynamic batching (`true`/`false`). | `true` |
 | `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). | `false` |
+| `trace_enabled` | Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI. | `false` |
+| `trace_file` | Output path for the batching Perfetto trace (requires `trace_enabled: true`). | `batching_trace.json` |
+
+Traces use the [Chrome trace-event JSON format](https://perfetto.dev/docs/concepts/trace-formats#json-trace-format), so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [Perfetto trace guide](./perfetto.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, and navigating the Perfetto UI. Enable it only while profiling dynamic batching, for detailed StarPU scheduling instrumentation use `STARPU_FXT_TRACE`, and for GPU-wide timelines rely on NVIDIA `nsys`.
 
 ### StarPU environment overrides
 
 The `starpu_env` block lets you pin StarPU-specific environment variables inside
 the YAML instead of exporting them in the shell. Each entry is copied into the
 process environment before StarPU initialises, so it has the same effect as
-`STARPU_*=value ./grpc_server ...`.
+`STARPU_*=value ./starpu_server ...`.
 
 ```yaml
 starpu_env:
@@ -107,6 +112,7 @@ The repository ships a ready-to-run configuration:
 
 ```yaml
 scheduler: lws
+name: bert_local
 model: ../models/bert_libtorch.pt
 inputs:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
@@ -115,7 +121,7 @@ outputs:
   - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
 verbosity: 4
 address: 127.0.0.1:50051
-metrics_port: 9100
+metrics_port: 9090
 max_batch_size: 32
 batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
@@ -127,6 +133,9 @@ use_cuda:
 pool_size: 12
 ```
 
+Pick a distinct `name` for each deployment (e.g., `bert_local`, `bert_prod`) so
+logs and metrics identify which configuration is running.
+
 Update `model:` to match the absolute path of your TorchScript model and adjust
 the tensor shapes to the sequence length and hidden size exported by your
 training pipeline. **The sample assumes batches of size 1 and lets the runtime expand
@@ -137,5 +146,5 @@ to `max_batch_size`.**
 Once the configuration YAML is ready and the server binaries are built:
 
 ```bash
-./grpc_server --config path/to/config.yml
+./starpu_server --config path/to/config.yml
 ```

@@ -19,6 +19,7 @@ CMakeConfigureLog.yaml
 # Generated binaries
 /starpu_server
 *.elf
+*.out
 *.map
 
 # Temporary files

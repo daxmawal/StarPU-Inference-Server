@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <utility>
 
 #include "monitoring/metrics.hpp"
 
@@ -17,7 +18,7 @@ class InferenceJob;
 
 class InferenceQueue {
  public:
-  [[nodiscard]] auto push(const std::shared_ptr<InferenceJob>& job) -> bool
+  [[nodiscard]] auto push(std::shared_ptr<InferenceJob> job) -> bool
   {
     if (job == nullptr) {
       return false;
@@ -27,7 +28,7 @@ class InferenceQueue {
       if (shutdown_) {
         return false;
       }
-      queue_.push(job);
+      queue_.push(std::move(job));
       set_queue_size(queue_.size());
     }
     cv_.notify_one();
@@ -40,7 +41,7 @@ class InferenceQueue {
     if (queue_.empty()) {
       return false;
     }
-    job = queue_.front();
+    job = std::move(queue_.front());
     queue_.pop();
     set_queue_size(queue_.size());
     return true;
@@ -51,7 +52,7 @@ class InferenceQueue {
     if (queue_.empty()) {
       return false;
     }
-    job = queue_.front();
+    job = std::move(queue_.front());
     queue_.pop();
     set_queue_size(queue_.size());
     return true;

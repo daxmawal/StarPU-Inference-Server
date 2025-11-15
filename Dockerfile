@@ -213,11 +213,11 @@ RUN apt-get update \
 COPY --from=build --chown=appuser:appuser /root/Install/libtorch ${INSTALL_DIR}/libtorch
 COPY --from=build --chown=appuser:appuser /root/Install/grpc ${INSTALL_DIR}/grpc
 COPY --from=build --chown=appuser:appuser /root/Install/starpu ${STARPU_DIR}
-COPY --from=build --chown=appuser:appuser /app/build/grpc_server /usr/local/bin/grpc_server
-COPY --from=build --chown=appuser:appuser /app/build/grpc_client_example /usr/local/bin/grpc_client_example
+COPY --from=build --chown=appuser:appuser /app/build/starpu_server /usr/local/bin/starpu_server
+COPY --from=build --chown=appuser:appuser /app/build/client_example /usr/local/bin/client_example
 
 RUN install -d -o appuser -g appuser /workspace
 WORKDIR /workspace
 USER appuser
-ENTRYPOINT ["/usr/local/bin/grpc_server"]
+ENTRYPOINT ["/usr/local/bin/starpu_server"]
 CMD ["--help"]

@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <span>
+#include <vector>
 
 #include "inference_params.hpp"
 
@@ -20,8 +21,16 @@ class TensorBuilder {
   TensorBuilder() = delete;
 
   [[nodiscard]] static auto from_starpu_buffers(
-      const InferenceParams* params, StarpuBufferSpan buffers,
+      InferenceParams* params, StarpuBufferSpan buffers,
       torch::Device device) -> std::vector<torch::Tensor>;
+
+  [[nodiscard]] static auto prepare_input_tensors(
+      InferenceParams* params, StarpuBufferSpan buffers,
+      torch::Device device) -> const std::vector<torch::Tensor>&;
+
+  [[nodiscard]] static auto prepare_input_ivalues(
+      InferenceParams* params, StarpuBufferSpan buffers,
+      torch::Device device) -> const std::vector<c10::IValue>&;
 
   static void copy_output_to_buffer(
       const at::Tensor& output, std::span<std::byte> buffer,

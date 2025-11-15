@@ -131,163 +131,16 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   endif()
 endif()
 
-# === Executable ===
-add_executable(starpu_server)
-target_sources(
-  starpu_server
-  PRIVATE ${SRC_DIR}/cli/args_parser.cpp
-          ${SRC_DIR}/cli/main.cpp
-          ${SRC_DIR}/core/inference_runner.cpp
-          ${SRC_DIR}/core/inference_task.cpp
-          ${SRC_DIR}/core/input_slot_pool.cpp
-          ${SRC_DIR}/core/output_slot_pool.cpp
-          ${SRC_DIR}/core/starpu_setup.cpp
-          ${SRC_DIR}/core/tensor_builder.cpp
-          ${SRC_DIR}/core/warmup.cpp
-          ${SRC_DIR}/utils/client_utils.cpp
-          ${SRC_DIR}/utils/config_loader.cpp
-          ${SRC_DIR}/utils/inference_validator.cpp
-          ${SRC_DIR}/utils/perf_observer.cpp
-          ${SRC_DIR}/utils/time_utils.cpp
-          ${SRC_DIR}/monitoring/metrics.cpp
-          ${SRC_DIR}/starpu_task_worker/starpu_task_worker.cpp)
-
-target_compile_features(starpu_server PRIVATE cxx_std_23)
-target_compile_definitions(starpu_server PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
-
-# === Include Directories ===
-target_include_directories(
-  starpu_server PRIVATE ${SRC_DIR} ${SRC_DIR}/core ${SRC_DIR}/utils
-                        ${SRC_DIR}/cli ${SRC_DIR}/starpu_task_worker)
-
+# === Optional NVML support ===
 find_path(NVML_INCLUDE_DIR NAMES nvml.h)
 find_library(NVML_LIBRARY NAMES nvidia-ml nvml)
 
 if(NVML_INCLUDE_DIR AND NVML_LIBRARY)
+  set(STARPU_HAVE_NVML ON)
   message(STATUS "NVML found: ${NVML_LIBRARY}")
-  target_compile_definitions(starpu_server PRIVATE STARPU_HAVE_NVML=1)
-  target_include_directories(starpu_server PRIVATE ${NVML_INCLUDE_DIR})
-  target_link_libraries(starpu_server PRIVATE ${NVML_LIBRARY})
 else()
+  set(STARPU_HAVE_NVML OFF)
   message(STATUS "NVML not found: GPU metrics will be disabled")
-endif()
-
-# === Compiler Warnings ===
-set(DEBUG_MIN_FRAME_SIZE
-    8192
-    CACHE STRING "Minimum stack frame size for warning")
-
-# Fine-grained warnings by compiler to avoid unknown-warning-option noise
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  target_compile_options(
-    starpu_server
-    PRIVATE -Wall
-            -Wextra
-            -Wpedantic
-            -Walloca
-            -Wcast-align
-            -Wcast-qual
-            -Wcomma-subscript
-            -Wctor-dtor-privacy
-            -Wdeprecated-copy-dtor
-            -Wdouble-promotion
-            -Wduplicated-branches
-            -Wduplicated-cond
-            -Wenum-conversion
-            -Wextra-semi
-            -Wfloat-equal
-            -Wformat=2
-            -Wframe-larger-than=${DEBUG_MIN_FRAME_SIZE}
-            -Wlogical-op
-            -Wmismatched-tags
-            -Wmissing-braces
-            -Wmultichar
-            -Wnoexcept
-            -Wnon-virtual-dtor
-            -Woverloaded-virtual
-            -Wpointer-arith
-            -Wrange-loop-construct
-            -Wrestrict
-            -Wshadow
-            -Wstrict-null-sentinel
-            -Wsuggest-attribute=format
-            -Wsuggest-attribute=malloc
-            -Wvla
-            -Wvolatile
-            -Wwrite-strings
-            -Wmissing-declarations
-            -Wmissing-include-dirs
-            -Wundef
-            -Wold-style-cast)
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  target_compile_options(
-    starpu_server
-    PRIVATE -Wall
-            -Wextra
-            -Wpedantic
-            -Walloca
-            -Wcast-align
-            -Wcast-qual
-            -Wdouble-promotion
-            -Wenum-conversion
-            -Wextra-semi
-            -Wfloat-equal
-            -Wformat=2
-            -Wframe-larger-than=${DEBUG_MIN_FRAME_SIZE}
-            -Wmismatched-tags
-            -Wmissing-braces
-            -Wmultichar
-            -Wnon-virtual-dtor
-            -Woverloaded-virtual
-            -Wpointer-arith
-            -Wrange-loop-construct
-            -Wshadow
-            -Wvla
-            -Wwrite-strings
-            -Wmissing-declarations
-            -Wmissing-include-dirs
-            -Wundef
-            -Wold-style-cast)
-endif()
-
-# === Coverage Flags ===
-if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(starpu_server PRIVATE -fprofile-arcs -ftest-coverage
-                                               -O0 -g)
-  target_link_options(starpu_server PRIVATE -fprofile-arcs -ftest-coverage -O0
-                      -g)
-endif()
-
-# === Sanitizers ===
-if(ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-  target_compile_options(starpu_server PRIVATE -fsanitize=address,undefined -g)
-  target_link_options(starpu_server PRIVATE -fsanitize=address,undefined -g)
-endif()
-
-if(ENABLE_COVERAGE AND ENABLE_SANITIZERS)
-  message(FATAL_ERROR "ENABLE_COVERAGE and ENABLE_SANITIZERS are incompatible.")
-endif()
-
-# === Linking ===
-target_link_libraries(
-  starpu_server
-  PRIVATE Torch::Torch
-          protobuf::libprotobuf
-          gRPC::grpc++
-          utf8_range::utf8_range
-          StarPU::starpu
-          yaml-cpp::yaml-cpp
-          prometheus-cpp::pull
-          ${ABSL_LIBS}
-          ${HWLOC_LIBRARY})
-
-if(HAVE_NVTX)
-  message(STATUS "NVTX 3 header found: enabling NVTX instrumentation")
-  target_compile_definitions(starpu_server PRIVATE HAVE_NVTX=1)
-  if(CUDAToolkit_FOUND)
-    target_include_directories(starpu_server
-                               PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-  endif()
 endif()
 
 # === Status Messages ===

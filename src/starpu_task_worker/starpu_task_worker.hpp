@@ -8,7 +8,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -18,6 +20,10 @@
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+class BatchCollector;
+class SlotManager;
+class ResultDispatcher;
+
 class InferenceTask;
 struct InferenceCallbackContext;
 // ============================================================================
@@ -46,6 +52,11 @@ struct StarPUTaskRunnerConfig {
 class StarPUTaskRunner {
  public:
   explicit StarPUTaskRunner(const StarPUTaskRunnerConfig& config);
+  ~StarPUTaskRunner();
+  StarPUTaskRunner(const StarPUTaskRunner&) = delete;
+  auto operator=(const StarPUTaskRunner&) -> StarPUTaskRunner& = delete;
+  StarPUTaskRunner(StarPUTaskRunner&&) = delete;
+  auto operator=(StarPUTaskRunner&&) -> StarPUTaskRunner& = delete;
 
   using DurationMs = std::chrono::duration<double, std::milli>;
 
@@ -56,15 +67,23 @@ class StarPUTaskRunner {
   void prepare_job_completion_callback(
       const std::shared_ptr<InferenceJob>& job);
   void submit_inference_task(const std::shared_ptr<InferenceJob>& job);
-  static void handle_job_exception(
+  static auto handle_job_exception(
       const std::shared_ptr<InferenceJob>& job,
-      const std::exception& exception);
+      const std::exception& exception) -> bool;
   void log_job_timings(
       int request_id, DurationMs latency,
       const detail::TimingInfo& timing_info) const;
 
  private:
   friend class StarPUTaskRunnerTestAdapter;
+  friend class SlotManager;
+  friend class ResultDispatcher;
+  friend class BatchCollector;
+
+  struct SubmissionInfo {
+    int submission_id;
+    int job_id;
+  };
 
   struct PoolResources {
     InputSlotPool* input_pool = nullptr;
@@ -98,8 +117,8 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceJob>& lhs,
       const std::shared_ptr<InferenceJob>& rhs) -> bool;
   static auto merge_input_tensors(
-      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
-      -> std::vector<torch::Tensor>;
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+      int64_t total_samples) -> std::vector<torch::Tensor>;
   static auto merge_input_memory_holders(
       const std::vector<std::shared_ptr<InferenceJob>>& jobs)
       -> std::vector<std::shared_ptr<const void>>;
@@ -114,6 +133,11 @@ class StarPUTaskRunner {
   [[noreturn]] static void handle_submission_failure(
       const PoolResources& pools,
       const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
+  [[nodiscard]] auto resolve_batch_size(
+      const std::shared_ptr<InferenceJob>& job) const -> int64_t;
+  static void release_pending_jobs(
+      const std::shared_ptr<InferenceJob>& job,
+      std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
   void store_completed_job_result(
       const std::shared_ptr<InferenceJob>& job,
       const std::vector<torch::Tensor>& results, double latency_ms) const;
@@ -122,6 +146,14 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceJob>& job, DurationMs latency,
       std::size_t batch_size) const;
   void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
+  void trace_batch_if_enabled(
+      const std::shared_ptr<InferenceJob>& job, bool warmup_job,
+      int submission_id) const;
+  void submit_job_or_handle_failure(
+      const std::shared_ptr<InferenceJob>& job, SubmissionInfo submission_info);
+  void finalize_job_after_exception(
+      const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
+      std::string_view log_prefix, int job_id);
 
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;
@@ -141,5 +173,9 @@ class StarPUTaskRunner {
   std::condition_variable prepared_cv_;
   std::deque<std::shared_ptr<InferenceJob>> prepared_jobs_;
   bool batching_done_ = false;
+
+  std::unique_ptr<BatchCollector> batch_collector_;
+  std::unique_ptr<SlotManager> slot_manager_;
+  std::unique_ptr<ResultDispatcher> result_dispatcher_;
 };
 }  // namespace starpu_server

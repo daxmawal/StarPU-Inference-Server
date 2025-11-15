@@ -35,6 +35,13 @@ OutputSlotPoolTestHook::free_host_buffer_for_tests(
   OutputSlotPool::free_host_buffer(ptr, buffer_info);
 }
 
+void
+OutputSlotPoolTestHook::invoke_host_buffer_deleter(std::byte* ptr)
+{
+  OutputSlotPool::HostBufferDeleter deleter;
+  deleter(ptr);
+}
+
 auto
 OutputSlotPoolTestHook::starpu_vector_register_hook_ref()
     -> decltype(OutputSlotPool::starpu_vector_register_hook())

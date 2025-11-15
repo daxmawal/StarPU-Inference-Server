@@ -118,6 +118,24 @@ INSTANTIATE_TEST_SUITE_P(
             make_expect_throw<starpu_server::MessageSizeOverflowException>(),
             compute_model_message_bytes_callable},
         RuntimeErrorCase{
+            [](starpu_server::ModelConfig&,
+               std::vector<starpu_server::TensorConfig>& inputs,
+               std::vector<starpu_server::TensorConfig>&, int64_t&) {
+              const size_t type_size = starpu_server::element_size(at::kFloat);
+              const size_t threshold =
+                  std::numeric_limits<size_t>::max() / type_size;
+              const auto dim_size =
+                  static_cast<int64_t>(threshold + static_cast<size_t>(1));
+
+              starpu_server::TensorConfig tensor;
+              tensor.dims = {dim_size};
+              tensor.type = at::kFloat;
+
+              inputs = {tensor};
+            },
+            make_expect_throw<starpu_server::MessageSizeOverflowException>(),
+            compute_model_message_bytes_callable},
+        RuntimeErrorCase{
             [](starpu_server::ModelConfig& model,
                std::vector<starpu_server::TensorConfig>&,
                std::vector<starpu_server::TensorConfig>&, int64_t&) {

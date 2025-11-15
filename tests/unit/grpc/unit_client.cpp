@@ -22,8 +22,8 @@ TEST(ClientArgs, ParsesValidArguments)
 {
   auto argv = std::to_array<const char*>(
       {"prog", "--input", "input:1x3x224x224:float32", "--server",
-       "localhost:1234", "--model", "my_model", "--version", "2",
-       "--request-number", "5", "--delay", "10", "--verbose", "2"});
+       "localhost:1234", "--model", "my_model", "--request-number", "5",
+       "--delay", "10", "--verbose", "2"});
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_TRUE(cfg.valid);
   ASSERT_EQ(cfg.inputs.size(), 1U);
@@ -31,21 +31,10 @@ TEST(ClientArgs, ParsesValidArguments)
   EXPECT_EQ(cfg.inputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.server_address, "localhost:1234");
   EXPECT_EQ(cfg.model_name, "my_model");
-  EXPECT_EQ(cfg.model_version, "2");
+  EXPECT_EQ(cfg.model_version, "1");
   EXPECT_EQ(cfg.request_nb, 5);
   EXPECT_EQ(cfg.delay_us, 10);
   EXPECT_EQ(cfg.verbosity, starpu_server::VerbosityLevel::Stats);
-}
-
-TEST(ClientArgs, ShapeOverridesExistingInput)
-{
-  auto argv = std::to_array<const char*>(
-      {"prog", "--input", "input:1:float32", "--shape", "2"});
-  auto cfg = starpu_server::parse_client_args(std::span{argv});
-  ASSERT_TRUE(cfg.valid);
-  ASSERT_EQ(cfg.inputs.size(), 1U);
-  EXPECT_EQ(cfg.inputs[0].shape, (std::vector<int64_t>{2}));
-  EXPECT_EQ(cfg.shape, (std::vector<int64_t>{2}));
 }
 
 TEST(ClientArgs, HelpFlagSetsShowHelp)
@@ -58,7 +47,6 @@ TEST(ClientArgs, HelpFlagSetsShowHelp)
     EXPECT_TRUE(cfg.show_help);
     EXPECT_TRUE(cfg.valid);
     EXPECT_TRUE(cfg.inputs.empty());
-    EXPECT_TRUE(cfg.shape.empty());
   }
 }
 
@@ -93,6 +81,25 @@ TEST(ClientArgs, RejectsMalformedInputFormat)
   EXPECT_NE(err.find("Input must be NAME:SHAPE:TYPE"), std::string::npos);
 }
 
+TEST(ClientArgs, ParsesClientModelPathWhenProvided)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--client-model",
+       "/tmp/model.pt"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.client_model_path, "/tmp/model.pt");
+}
+
+TEST(ClientArgs, MissingClientModelPathValueFailsParsing)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--client-model"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_TRUE(cfg.client_model_path.empty());
+}
+
 TEST(ClientArgs, RejectsNegativeDelay)
 {
   auto argv = std::to_array<const char*>(
@@ -112,7 +119,7 @@ TEST(ClientArgs, VerboseLevels)
           {{"0", Silent}, {"1", Info}, {"3", Debug}, {"4", Trace}});
   for (const auto& [level_str, expected] : cases) {
     auto argv = std::to_array<const char*>(
-        {"prog", "--shape", "1", "--verbose", level_str});
+        {"prog", "--input", "input:1:float32", "--verbose", level_str});
     auto cfg = starpu_server::parse_client_args(std::span{argv});
     ASSERT_TRUE(cfg.valid);
     EXPECT_EQ(cfg.verbosity, expected);
@@ -121,11 +128,13 @@ TEST(ClientArgs, VerboseLevels)
 
 TEST(ClientArgs, RejectsNonPositiveShapeDims)
 {
-  auto argv_neg = std::to_array<const char*>({"prog", "--shape", "1x-3x224"});
+  auto argv_neg =
+      std::to_array<const char*>({"prog", "--input", "input:1x-3x224:float32"});
   auto cfg_neg = starpu_server::parse_client_args(std::span{argv_neg});
   EXPECT_FALSE(cfg_neg.valid);
 
-  auto argv_zero = std::to_array<const char*>({"prog", "--shape", "1x0x224"});
+  auto argv_zero =
+      std::to_array<const char*>({"prog", "--input", "input:1x0x224:float32"});
   auto cfg_zero = starpu_server::parse_client_args(std::span{argv_zero});
   EXPECT_FALSE(cfg_zero.valid);
 }
@@ -135,31 +144,11 @@ TEST(ClientArgs, RejectsMalformedShapeTokens)
   const auto cases =
       std::to_array<const char*>({"1xax2", "9223372036854775808", ""});
   for (const auto* shape : cases) {
-    auto argv = std::to_array<const char*>({"prog", "--shape", shape});
+    const std::string spec = std::string{"input:"} + shape + ":float32";
+    auto argv = std::to_array<const char*>({"prog", "--input", spec.c_str()});
     auto cfg = starpu_server::parse_client_args(std::span{argv});
     EXPECT_FALSE(cfg.valid);
   }
-}
-
-TEST(ClientArgs, TypeFlagCreatesDefaultInput)
-{
-  auto argv = std::to_array<const char*>({"prog", "--type", "float32"});
-  auto cfg = starpu_server::parse_client_args(std::span{argv});
-  ASSERT_TRUE(cfg.valid);
-  ASSERT_EQ(cfg.inputs.size(), 1U);
-  EXPECT_EQ(cfg.inputs[0].name, "input");
-  EXPECT_EQ(cfg.inputs[0].type, at::kFloat);
-}
-
-TEST(ClientArgs, TypeFlagOverridesExistingInput)
-{
-  auto argv =
-      std::to_array<const char*>({"prog", "--shape", "1", "--type", "int32"});
-  auto cfg = starpu_server::parse_client_args(std::span{argv});
-  ASSERT_TRUE(cfg.valid);
-  ASSERT_EQ(cfg.inputs.size(), 1U);
-  EXPECT_EQ(cfg.inputs[0].name, "input");
-  EXPECT_EQ(cfg.inputs[0].type, at::kInt);
 }
 
 TEST(ClientArgsHelp, ContainsKeyOptions)
@@ -169,14 +158,15 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
   const std::string out = testing::internal::GetCapturedStdout();
   EXPECT_NE(out.find("--request-number"), std::string::npos);
   EXPECT_NE(out.find("--delay"), std::string::npos);
-  EXPECT_NE(out.find("--shape"), std::string::npos);
-  EXPECT_NE(out.find("--type"), std::string::npos);
   EXPECT_NE(out.find("--input"), std::string::npos);
   EXPECT_NE(out.find("--server"), std::string::npos);
   EXPECT_NE(out.find("--model"), std::string::npos);
-  EXPECT_NE(out.find("--version"), std::string::npos);
+  EXPECT_NE(out.find("--client-model"), std::string::npos);
   EXPECT_NE(out.find("--verbose"), std::string::npos);
   EXPECT_NE(out.find("--help"), std::string::npos);
+  EXPECT_EQ(out.find("--shape"), std::string::npos);
+  EXPECT_EQ(out.find("--type"), std::string::npos);
+  EXPECT_EQ(out.find("--version"), std::string::npos);
 }
 
 TEST(InferenceClientDetermineInferenceCount, HandlesEdgeCases)

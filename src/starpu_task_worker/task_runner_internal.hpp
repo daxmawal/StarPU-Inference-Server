@@ -22,6 +22,7 @@ struct BatchAggregationInfo {
   Clock::time_point earliest_start;
   Clock::time_point earliest_enqueued;
   Clock::time_point earliest_batch_collect_start;
+  Clock::time_point latest_enqueued;
 };
 
 struct SubJobSliceResult {

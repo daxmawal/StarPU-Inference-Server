@@ -20,6 +20,7 @@
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -386,9 +387,12 @@ verify_populate_response(
     const inference::ModelInferResponse& resp,
     const std::vector<torch::Tensor>& outputs, uint64_t recv_ms,
     uint64_t send_ms,
-    const starpu_server::InferenceServiceImpl::LatencyBreakdown& breakdown)
+    const starpu_server::InferenceServiceImpl::LatencyBreakdown& breakdown,
+    std::string_view expected_model_name = {})
 {
-  EXPECT_EQ(resp.model_name(), req.model_name());
+  const auto& model_name =
+      expected_model_name.empty() ? req.model_name() : expected_model_name;
+  EXPECT_EQ(resp.model_name(), model_name);
   EXPECT_EQ(resp.model_version(), req.model_version());
   EXPECT_EQ(resp.server_receive_ms(), recv_ms);
   EXPECT_EQ(resp.server_send_ms(), send_ms);

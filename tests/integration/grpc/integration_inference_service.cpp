@@ -111,7 +111,7 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
   std::jthread thread([&]() {
     const auto options = starpu_server::GrpcServerOptions{
         "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info};
+        starpu_server::VerbosityLevel::Info, ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, {at::kFloat}, options, server);
   });
@@ -138,7 +138,7 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
   std::jthread thread([&]() {
     const auto options = starpu_server::GrpcServerOptions{
         "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info};
+        starpu_server::VerbosityLevel::Info, ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
         kMaxBatchSize, options, server);
@@ -189,7 +189,7 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
   auto future = std::async(std::launch::async, [&]() {
     const auto options = starpu_server::GrpcServerOptions{
         endpoint, kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info};
+        starpu_server::VerbosityLevel::Info, ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, {at::kFloat}, options, server);
   });
@@ -234,7 +234,7 @@ TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
   auto future = std::async(std::launch::async, [&]() {
     const auto options = starpu_server::GrpcServerOptions{
         endpoint, kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info};
+        starpu_server::VerbosityLevel::Info, ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
         kMaxBatchSize, options, server);
@@ -296,7 +296,8 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
   const auto options = starpu_server::GrpcServerOptions{
-      address, kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info};
+      address, kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info,
+      ""};
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
@@ -341,7 +342,8 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
   const auto options = starpu_server::GrpcServerOptions{
-      address, kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info};
+      address, kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info,
+      ""};
 
   constexpr float kVal1 = 10.0F;
   constexpr float kVal2 = 20.0F;

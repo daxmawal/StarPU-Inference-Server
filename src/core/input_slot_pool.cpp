@@ -10,6 +10,8 @@
 #include <format>
 #include <functional>
 #include <limits>
+#include <memory>
+#include <new>
 #include <stdexcept>
 #include <string>
 
@@ -41,6 +43,8 @@ starpu_register_failure_observer() -> RegisterFailureObserverFn&
 
 namespace {
 
+constexpr auto kHostBufferAlignment = std::align_val_t{64};
+
 using detail::RegisterFailureObserverFn;
 using detail::starpu_register_failure_observer;
 using detail::starpu_vector_register_hook;
@@ -69,14 +73,33 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
       return static_cast<std::byte*>(cuda_ptr);
     }
   }
-  constexpr size_t kAlign = 64;
-  void* aligned_ptr = nullptr;
-  if (int result_code = posix_memalign(&aligned_ptr, kAlign, bytes);
-      result_code != 0 || aligned_ptr == nullptr) {
-    throw std::bad_alloc();
-  }
-  return static_cast<std::byte*>(aligned_ptr);
+  return static_cast<std::byte*>(::operator new(bytes, kHostBufferAlignment));
 }
+
+struct HostBufferDeleter {
+  InputSlotPool::HostBufferInfo info;
+
+  void operator()(std::byte* ptr) const noexcept
+  {
+    if (ptr == nullptr) {
+      return;
+    }
+    if (info.starpu_pinned) {
+      const int result_code =
+          starpu_memory_unpin(static_cast<void*>(ptr), info.bytes);
+      if (result_code != 0) {
+        log_warning(std::format(
+            "starpu_memory_unpin failed for input buffer: rc={}",
+            std::to_string(result_code)));
+      }
+    }
+    if (info.cuda_pinned) {
+      cudaFreeHost(static_cast<void*>(ptr));
+      return;
+    }
+    ::operator delete(static_cast<void*>(ptr), kHostBufferAlignment);
+  }
+};
 
 void
 free_host_buffer(
@@ -85,18 +108,8 @@ free_host_buffer(
   if (ptr == nullptr) {
     return;
   }
-  if (buffer_info.starpu_pinned) {
-    const int result_code =
-        starpu_memory_unpin(static_cast<void*>(ptr), buffer_info.bytes);
-    if (result_code != 0) {
-      log_warning(std::format(
-          "starpu_memory_unpin failed for input buffer: rc={}",
-          std::to_string(result_code)));
-    }
-  }
-  if (buffer_info.cuda_pinned) {
-    cudaFreeHost(static_cast<void*>(ptr));
-  }
+  HostBufferDeleter deleter{buffer_info};
+  std::unique_ptr<std::byte, HostBufferDeleter> owner(ptr, deleter);
 }
 
 auto
@@ -233,8 +246,9 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
 
 InputSlotPool::~InputSlotPool()
 {
-  for (size_t slot_index = 0; slot_index < slots_.size(); ++slot_index) {
-    auto& slot = slots_[slot_index];
+  auto& slots_storage = slots();
+  for (size_t slot_index = 0; slot_index < slots_storage.size(); ++slot_index) {
+    auto& slot = slots_storage[slot_index];
     for (auto& handle : slot.handles) {
       if (handle != nullptr) {
         starpu_data_unregister(handle);
@@ -256,15 +270,17 @@ InputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
     auto workers = static_cast<int>(starpu_worker_get_count());
     slot_count = std::max(2, workers);
   }
-  slots_.reserve(static_cast<size_t>(slot_count));
+  auto& slots_storage = this->slots();
+  auto& free_ids_storage = this->free_ids();
+  slots_storage.reserve(static_cast<size_t>(slot_count));
   host_buffer_infos_.reserve(static_cast<size_t>(slot_count));
-  free_ids_.reserve(static_cast<size_t>(slot_count));
-  slots_.resize(static_cast<size_t>(slot_count));
+  free_ids_storage.reserve(static_cast<size_t>(slot_count));
+  slots_storage.resize(static_cast<size_t>(slot_count));
   host_buffer_infos_.resize(static_cast<size_t>(slot_count));
   for (int i = 0; i < slot_count; ++i) {
-    slots_[static_cast<size_t>(i)].id = i;
+    slots_storage[static_cast<size_t>(i)].id = i;
     allocate_slot_buffers_and_register(i, opts);
-    free_ids_.push_back(i);
+    free_ids_storage.push_back(i);
   }
 }
 
@@ -273,7 +289,7 @@ InputSlotPool::allocate_slot_buffers_and_register(
     int slot_id, const RuntimeConfig& opts)
 {
   const size_t n_in = per_input_numel_single_.size();
-  auto& slot = slots_.at(static_cast<size_t>(slot_id));
+  auto& slot = slots().at(static_cast<size_t>(slot_id));
   slot.base_ptrs.resize(n_in);
   slot.handles.resize(n_in);
   auto& buffer_infos = host_buffer_infos_[static_cast<size_t>(slot_id)];
@@ -294,57 +310,6 @@ InputSlotPool::allocate_slot_buffers_and_register(
     slot.handles[i] = register_starpu_handle_or_throw(
         allocation.ptr, sizes, input_types_[i], i, slot, buffer_infos);
   }
-}
-
-auto
-InputSlotPool::acquire() -> int
-{
-  std::unique_lock lock(mtx_);
-  cv_.wait(lock, [this] { return !free_ids_.empty(); });
-  const int slot_id = free_ids_.back();
-  free_ids_.pop_back();
-  return slot_id;
-}
-
-auto
-InputSlotPool::try_acquire() -> std::optional<int>
-{
-  std::scoped_lock lock(mtx_);
-  if (free_ids_.empty()) {
-    return std::nullopt;
-  }
-  const int slot_id = free_ids_.back();
-  free_ids_.pop_back();
-  return slot_id;
-}
-
-void
-InputSlotPool::release(int slot_id)
-{
-  {
-    const std::scoped_lock lock(mtx_);
-    free_ids_.push_back(slot_id);
-  }
-  cv_.notify_one();
-}
-
-auto
-InputSlotPool::slot_info(int slot_id) const -> const SlotInfo&
-{
-  return slots_.at(static_cast<size_t>(slot_id));
-}
-
-auto
-InputSlotPool::handles(int slot_id) const
-    -> const std::vector<starpu_data_handle_t>&
-{
-  return slots_.at(static_cast<size_t>(slot_id)).handles;
-}
-
-auto
-InputSlotPool::base_ptrs(int slot_id) const -> const std::vector<std::byte*>&
-{
-  return slots_.at(static_cast<size_t>(slot_id)).base_ptrs;
 }
 
 auto

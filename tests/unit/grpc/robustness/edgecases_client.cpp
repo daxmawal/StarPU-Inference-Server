@@ -11,7 +11,7 @@ TEST(ClientArgs, InvalidTypeIsDetected)
 {
   constexpr std::size_t kArgc = 5;
   std::array<const char*, kArgc> argv = {
-      "prog", "--shape", "1", "--type", "unknown"};
+      "prog", "--input", "input:1:unknown", "--request-number", "1"};
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_FALSE(cfg.valid);
 }
@@ -19,7 +19,7 @@ TEST(ClientArgs, InvalidTypeIsDetected)
 TEST(ClientArgs, MissingValueMarksConfigInvalid)
 {
   constexpr std::size_t kArgc = 2;
-  std::array<const char*, kArgc> argv = {"prog", "--shape"};
+  std::array<const char*, kArgc> argv = {"prog", "--input"};
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_FALSE(cfg.valid);
 }
@@ -28,7 +28,7 @@ TEST(ClientArgs, NegativeRequestNbMarkedInvalid)
 {
   constexpr std::size_t kArgc = 5;
   std::array<const char*, kArgc> argv = {
-      "prog", "--shape", "1", "--request-number", "-3"};
+      "prog", "--input", "input:1:float32", "--request-number", "-3"};
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_FALSE(cfg.valid);
 }
@@ -37,15 +37,15 @@ TEST(ClientArgs, InvalidVerboseValuesMarkedInvalid)
 {
   constexpr std::size_t kArgc = 5;
   std::array<const char*, kArgc> neg = {
-      "prog", "--shape", "1", "--verbose", "-1"};
+      "prog", "--input", "input:1:float32", "--verbose", "-1"};
   EXPECT_FALSE(starpu_server::parse_client_args(std::span{neg}).valid);
 
   std::array<const char*, kArgc> high = {
-      "prog", "--shape", "1", "--verbose", "5"};
+      "prog", "--input", "input:1:float32", "--verbose", "5"};
   EXPECT_FALSE(starpu_server::parse_client_args(std::span{high}).valid);
 
   std::array<const char*, kArgc> str = {
-      "prog", "--shape", "1", "--verbose", "foo"};
+      "prog", "--input", "input:1:float32", "--verbose", "foo"};
   EXPECT_FALSE(starpu_server::parse_client_args(std::span{str}).valid);
 }
 

@@ -2,15 +2,20 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <future>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <span>
 #include <string>
+#include <system_error>
 
 #include "monitoring/metrics.hpp"
 #include "test_constants.hpp"
 #include "test_inference_service.hpp"
+#include "utils/batching_trace_logger.hpp"
 
 namespace {
 using starpu_server::test_constants::kF1;
@@ -20,6 +25,27 @@ using starpu_server::test_constants::kF4;
 using starpu_server::test_constants::kI10;
 using starpu_server::test_constants::kI20;
 using starpu_server::test_constants::kI30;
+
+auto
+make_temp_trace_path() -> std::filesystem::path
+{
+  const auto suffix =
+      std::chrono::steady_clock::now().time_since_epoch().count();
+  return std::filesystem::temp_directory_path() /
+         ("submit_job_trace_" + std::to_string(suffix) + ".json");
+}
+
+struct TraceFileGuard {
+  starpu_server::BatchingTraceLogger& tracer;
+  std::filesystem::path path;
+
+  ~TraceFileGuard()
+  {
+    tracer.configure(false, "");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+  }
+};
 }  // namespace
 
 class MetricsInferenceServiceTest : public InferenceServiceTest {
@@ -276,6 +302,31 @@ TEST_F(
 
 TEST_F(
     ConfiguredShapeWithBatchingInferenceServiceTest,
+    ValidateInputsConfiguredShapeRejectsZeroBatchSize)
+{
+  auto zero_batch_override_req = starpu_server::make_shape_request({0, 2});
+  std::vector<torch::Tensor> inputs;
+  auto status =
+      service->validate_and_convert_inputs(&zero_batch_override_req, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST_F(
+    ConfiguredShapeWithBatchingInferenceServiceTest,
+    ValidateInputsConfiguredShapeAllowsBatchOverrideWhenRanksMatch)
+{
+  auto overridden_batch_req = starpu_server::make_shape_request({3, 2});
+  std::vector<torch::Tensor> inputs;
+  auto status =
+      service->validate_and_convert_inputs(&overridden_batch_req, inputs);
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 1U);
+  EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{3, 2}));
+}
+
+TEST_F(
+    ConfiguredShapeWithBatchingInferenceServiceTest,
     ValidateInputsConfiguredShapeRejectsTailLengthMismatch)
 {
   auto mismatched_tail_length_req =
@@ -338,6 +389,27 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   reply.set_server_send_ms(send_ms);
   starpu_server::verify_populate_response(
       req, reply, outputs, recv_ms, send_ms, breakdown);
+}
+
+TEST(InferenceServiceImpl, PopulateResponseUsesOverrideModelName)
+{
+  auto req = starpu_server::make_model_request("client_model", "1");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2, 3}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = kI10;
+  int64_t send_ms = kI20;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  breakdown.total_ms = 1.0;
+  breakdown.overall_ms = 2.0;
+
+  const std::string server_model = "server_model";
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, server_model);
+  ASSERT_TRUE(status.ok());
+  reply.set_server_send_ms(send_ms);
+  starpu_server::verify_populate_response(
+      req, reply, outputs, recv_ms, send_ms, breakdown, server_model);
 }
 
 TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
@@ -487,6 +559,40 @@ TEST_F(
 }
 
 TEST_F(
+    InferenceServiceTest, SubmitJobAsyncLogsTraceEventWhenBatchingTracerEnabled)
+{
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(false, "");
+
+  const auto trace_path = make_temp_trace_path();
+  tracer.configure(true, trace_path.string());
+  TraceFileGuard guard{tracer, trace_path};
+
+  ref_outputs = {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1, kF2}, torch::TensorOptions().dtype(at::kFloat))};
+
+  auto status = service->submit_job_async(
+      inputs, [](grpc::Status, std::vector<torch::Tensor>,
+                 starpu_server::InferenceServiceImpl::LatencyBreakdown,
+                 starpu_server::detail::TimingInfo) {});
+  ASSERT_TRUE(status.ok());
+
+  std::shared_ptr<starpu_server::InferenceJob> enqueued_job;
+  ASSERT_TRUE(queue.try_pop(enqueued_job));
+
+  tracer.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_NE(content.find("\"name\":\"request_enqueued\""), std::string::npos);
+  EXPECT_NE(content.find("\"request_id\":0"), std::string::npos);
+}
+
+TEST_F(
     InferenceServiceTest,
     HandleModelInferAsyncInvokesCallbackWhenSubmitJobAsyncFails)
 {
@@ -520,6 +626,7 @@ TEST_F(
       expected_outputs, worker_outputs, [](starpu_server::InferenceJob& job) {
         job.timing_info().enqueued_time =
             std::chrono::high_resolution_clock::time_point{};
+        job.timing_info().last_enqueued_time = job.timing_info().enqueued_time;
         job.timing_info().callback_end_time =
             std::chrono::high_resolution_clock::now() -
             std::chrono::milliseconds(1);

@@ -22,7 +22,7 @@ cmake -DCMAKE_BUILD_TYPE=Release ..
 cmake --build . -j"$(nproc)"
 ```
 
-The binaries, including `grpc_server`, are produced inside `build/`.
+The binaries, including `starpu_server`, are produced inside `build/`.
 
 > Prefer containers? Build the image described in the [docker guide](./docker_guide.md).
 
@@ -55,7 +55,7 @@ The configuration file `models/bert.yml` already points to the exported model.
 Start the server from the build repository:
 
 ```bash
-./grpc_server --config ../models/bert.yml
+./starpu_server --config ../models/bert.yml
 ```
 
 The logs should confirm that the model is loaded and the service is listening

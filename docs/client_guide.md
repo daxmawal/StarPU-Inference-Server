@@ -36,7 +36,7 @@ Build the project and start the server with the provided configuration (see
 [Quickstart](./quickstart.md) for the full context):
 
 ```bash
-./grpc_server --config models/bert.yml
+./starpu_server --config models/bert.yml
 ```
 
 When the logs show that the server is listening on `127.0.0.1:50051`, you can

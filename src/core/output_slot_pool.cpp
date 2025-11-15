@@ -252,8 +252,9 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 
 OutputSlotPool::~OutputSlotPool()
 {
-  for (size_t slot_index = 0; slot_index < slots_.size(); ++slot_index) {
-    auto& slot = slots_[slot_index];
+  auto& slots_storage = slots();
+  for (size_t slot_index = 0; slot_index < slots_storage.size(); ++slot_index) {
+    auto& slot = slots_storage[slot_index];
     for (auto& handle : slot.handles) {
       if (handle != nullptr) {
         starpu_data_unregister(handle);
@@ -275,15 +276,17 @@ OutputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
     auto workers = static_cast<int>(starpu_worker_get_count());
     requested_slots = std::max(2, workers);
   }
-  slots_.reserve(static_cast<size_t>(requested_slots));
+  auto& slots_storage = this->slots();
+  auto& free_ids_storage = this->free_ids();
+  slots_storage.reserve(static_cast<size_t>(requested_slots));
   host_buffer_infos_.reserve(static_cast<size_t>(requested_slots));
-  free_ids_.reserve(static_cast<size_t>(requested_slots));
-  slots_.resize(static_cast<size_t>(requested_slots));
+  free_ids_storage.reserve(static_cast<size_t>(requested_slots));
+  slots_storage.resize(static_cast<size_t>(requested_slots));
   host_buffer_infos_.resize(static_cast<size_t>(requested_slots));
   for (int i = 0; i < requested_slots; ++i) {
-    slots_[static_cast<size_t>(i)].id = i;
+    slots_storage[static_cast<size_t>(i)].id = i;
     allocate_slot_buffers_and_register(i, opts);
-    free_ids_.push_back(i);
+    free_ids_storage.push_back(i);
   }
 }
 
@@ -292,7 +295,7 @@ OutputSlotPool::allocate_slot_buffers_and_register(
     int slot_id, const RuntimeConfig& opts)
 {
   const size_t num_outputs = per_output_numel_single_.size();
-  auto& slot = slots_.at(static_cast<size_t>(slot_id));
+  auto& slot = slots().at(static_cast<size_t>(slot_id));
   slot.base_ptrs.assign(num_outputs, nullptr);
   slot.handles.assign(num_outputs, nullptr);
   auto& buffer_infos = host_buffer_infos_[static_cast<size_t>(slot_id)];
@@ -324,57 +327,6 @@ OutputSlotPool::allocate_slot_buffers_and_register(
     }
     slot.handles[i] = handle;
   }
-}
-
-auto
-OutputSlotPool::acquire() -> int
-{
-  std::unique_lock pool_lock(mtx_);
-  cv_.wait(pool_lock, [this] { return !free_ids_.empty(); });
-  const int slot_id_value = free_ids_.back();
-  free_ids_.pop_back();
-  return slot_id_value;
-}
-
-auto
-OutputSlotPool::try_acquire() -> std::optional<int>
-{
-  std::scoped_lock<std::mutex> pool_lock(mtx_);
-  if (free_ids_.empty()) {
-    return std::nullopt;
-  }
-  const int slot_id_value = free_ids_.back();
-  free_ids_.pop_back();
-  return slot_id_value;
-}
-
-void
-OutputSlotPool::release(int slot_id)
-{
-  {
-    const std::scoped_lock<std::mutex> pool_lock(mtx_);
-    free_ids_.push_back(slot_id);
-  }
-  cv_.notify_one();
-}
-
-auto
-OutputSlotPool::slot_info(int slot_id) const -> const SlotInfo&
-{
-  return slots_.at(static_cast<size_t>(slot_id));
-}
-
-auto
-OutputSlotPool::handles(int slot_id) const
-    -> const std::vector<starpu_data_handle_t>&
-{
-  return slots_.at(static_cast<size_t>(slot_id)).handles;
-}
-
-auto
-OutputSlotPool::base_ptrs(int slot_id) const -> const std::vector<std::byte*>&
-{
-  return slots_.at(static_cast<size_t>(slot_id)).base_ptrs;
 }
 
 auto

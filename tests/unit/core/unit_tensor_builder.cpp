@@ -10,6 +10,7 @@
 #include "core/tensor_builder.hpp"
 #undef private
 
+#include "core/tensor_builder.cpp"
 #include "test_constants.hpp"
 #include "utils/exceptions.hpp"
 
@@ -196,6 +197,18 @@ TEST_P(TensorBuilderCopyBuffer_Unit, CopiesToRawBuffer)
   verify_copy_by_dtype(param);
 }
 
+TEST(TensorBuilderCopyBuffer_Unit, CopyOutputFailsWhenBufferSizeMismatch)
+{
+  auto tensor =
+      torch::tensor({kF1, kF2}, torch::TensorOptions().dtype(at::kFloat));
+  std::array<std::byte, 4> small_buffer{};
+  auto buffer_span = std::span<std::byte>(small_buffer);
+  EXPECT_THROW(
+      starpu_server::TensorBuilder::copy_output_to_buffer(
+          tensor, buffer_span, tensor.numel(), at::kFloat),
+      starpu_server::InferenceExecutionException);
+}
+
 namespace {
 inline auto
 copy_float_buffer_ref() -> std::array<float, 3>&
@@ -303,4 +316,98 @@ TEST(TensorBuilder_Unit, FromStarpuBuffersSuccess)
   EXPECT_EQ(tensors[0].dtype(), torch::kFloat);
   EXPECT_EQ(tensors[0].device(), device);
   EXPECT_EQ(tensors[0].data_ptr<float>(), data.data());
+}
+
+TEST(TensorBuilderInternals_Unit, UsesNoopDeleterForTensorViews)
+{
+  std::array<float, 4> data{kF1, kF2, kF3, kF4};
+  starpu_variable_interface var{};
+  var.ptr = std::bit_cast<uintptr_t>(data.data());
+  std::vector<StarpuBufferPtr> buffers = {&var};
+
+  starpu_server::InferenceParams params;
+  params.num_inputs = 1;
+  params.layout.input_types = {at::kFloat};
+  params.layout.num_dims = {2};
+  params.layout.dims = {{2, 2}};
+  params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
+  params.limits.max_dims = starpu_server::InferLimits::MaxDims;
+  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
+
+  const auto device = torch::Device(torch::kCPU);
+  // First call creates tensors via torch::from_blob (default deleter)
+  static_cast<void>(starpu_server::TensorBuilder::from_starpu_buffers(
+      &params, buffers, device));
+  // Second call reuses cached tensors and installs noop_deleter-backed storage.
+  auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
+      &params, buffers, device);
+  ASSERT_EQ(tensors.size(), 1U);
+  auto& tensor = tensors.front();
+
+  const auto deleter = tensor.storage().data_ptr().get_deleter();
+  ASSERT_NE(deleter, nullptr);
+  EXPECT_EQ(deleter, &starpu_server::noop_deleter);
+  EXPECT_NO_THROW(deleter(tensor.data_ptr()));
+  EXPECT_EQ(tensor.data_ptr<float>(), data.data());
+}
+
+TEST(TensorBuilderInternals_Unit, ValidateInputLayoutNullParamsThrows)
+{
+  const auto buffers = starpu_server::StarpuBufferSpan{};
+  EXPECT_THROW(
+      starpu_server::validate_input_layout(nullptr, buffers),
+      starpu_server::InferenceExecutionException);
+}
+
+TEST(TensorBuilderInternals_Unit, RefreshInputCacheNullBufferThrows)
+{
+  std::vector<StarpuBufferPtr> buffers = {nullptr};
+
+  starpu_server::InferenceParams params;
+  params.num_inputs = 1;
+  params.layout.input_types = {at::kFloat};
+  params.layout.num_dims = {2};
+  params.layout.dims = {{2, 2}};
+  params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
+  params.limits.max_dims = starpu_server::InferLimits::MaxDims;
+  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
+
+  const auto device = torch::Device(torch::kCPU);
+  EXPECT_THROW(
+      starpu_server::TensorBuilder::from_starpu_buffers(
+          &params, buffers, device),
+      starpu_server::InferenceExecutionException);
+}
+
+TEST(TensorBuilderInternals_Unit, ComputeDefaultStridesMatchesRowMajor)
+{
+  const std::vector<int64_t> dims{2, 3, 4};
+  const auto strides = starpu_server::compute_default_strides(dims);
+  const std::vector<int64_t> expected{12, 4, 1};
+  EXPECT_EQ(strides, expected);
+}
+
+TEST(TensorBuilderInternals_Unit, ComputeDefaultStridesHandlesEmptyDims)
+{
+  const std::vector<int64_t> dims{};
+  const auto strides = starpu_server::compute_default_strides(dims);
+  EXPECT_TRUE(strides.empty());
+}
+
+TEST(TensorBuilderInternals_Unit, ComputeNumelReturnsProduct)
+{
+  const std::vector<int64_t> dims{2, 3, 4};
+  EXPECT_EQ(starpu_server::compute_numel(dims), 24);
+}
+
+TEST(TensorBuilderInternals_Unit, ComputeNumelZeroDimensionReturnsZero)
+{
+  const std::vector<int64_t> dims{2, 0, 4};
+  EXPECT_EQ(starpu_server::compute_numel(dims), 0);
+}
+
+TEST(TensorBuilderInternals_Unit, ComputeNumelEmptyDimsReturnsIdentity)
+{
+  const std::vector<int64_t> dims{};
+  EXPECT_EQ(starpu_server::compute_numel(dims), 1);
 }

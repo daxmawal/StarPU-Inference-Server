@@ -3,6 +3,7 @@
 
 #include <bit>
 #include <limits>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -114,6 +115,28 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{std::string{"InT16"}, at::kShort},
         std::pair{std::string{"bF16"}, at::kBFloat16},
         std::pair{std::string{"Bool"}, at::kBool}));
+
+class DatatypeToScalarInvalid
+    : public ::testing::TestWithParam<std::string_view> {};
+
+TEST_P(DatatypeToScalarInvalid, ThrowsInvalidArgument)
+{
+  EXPECT_THROW(
+      starpu_server::datatype_to_scalar_type(GetParam()),
+      std::invalid_argument);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    InvalidStrings, DatatypeToScalarInvalid,
+    ::testing::Values(
+        std::string_view{"BADTYPE"}, std::string_view{""},
+        std::string_view{"#FP32"}, std::string_view{"UNKNOWN"},
+        std::string_view{"notatype"}, std::string_view{" "},
+        std::string_view{"!"}, std::string_view{"123"},
+        std::string_view{"FP32extra"},
+        std::string_view{
+            "\xF0\x9D\x94\xBD\xE2\x84\x99\xF0\x9D\x97\x9B\xF0\x9D\x97\x9A"},
+        std::string_view{"fp32\n"}));
 
 TEST(DatatypeUtils, ScalarTypeToString)
 {

@@ -2,30 +2,31 @@ add_library(unit_tests INTERFACE)
 
 target_sources(
   unit_tests
-  INTERFACE cli/unit_cli.cpp
-            cli/robustness/edgecases_cli.cpp
-            core/unit_inference_runner_helpers.cpp
+  INTERFACE core/unit_inference_runner_helpers.cpp
             core/unit_inference_task_errors.cpp
             core/unit_inference_runner.cpp
+            core/unit_inference_session.cpp
+            core/unit_synthesize_outputs.cpp
             core/unit_latency_statistics.cpp
-            core/unit_inference_task_limits.cpp
             core/unit_inference_task.cpp
+            core/unit_run_with_logged_exceptions.cpp
             core/unit_tensor_builder.cpp
             core/unit_warmup_runner.cpp
             core/unit_starpu_setup.cpp
+            core/unit_input_slot_pool_deleter.cpp
             core/robustness/edgecases_inference_queue.cpp
-            core/robustness/edgecases_inference_runner_helpers.cpp
-            core/robustness/edgecases_inference_task_errors.cpp
             core/robustness/edgecases_warmup_runner.cpp
             core/robustness/edgecases_inference_runner.cpp
-            core/robustness/edgecases_inference_task_limits.cpp
+            core/robustness/edgecases_inference_task.cpp
             core/robustness/edgecases_tensor_builder.cpp
             grpc/async_server_context_test.cpp
+            grpc/resolve_model_name_test.cpp
+            grpc/unary_call_data_guard_test.cpp
             grpc/unit_inference_service.cpp
             grpc/unit_client.cpp
+            grpc/inference_client_helpers_test.cpp
             grpc/robustness/edgecases_client.cpp
             grpc/robustness/edgecases_inference_service.cpp
-            starpu/unit_starpu_setup.cpp
             starpu/unit_starpu_task_runner.cpp
             starpu/unit_tensor_builder_from_starpu.cpp
             starpu/robustness/edgecases_starpu_setup.cpp
@@ -40,6 +41,7 @@ target_sources(
             utils/unit_inference_validator.cpp
             utils/unit_input_generator.cpp
             utils/unit_logger.cpp
+            utils/unit_batching_trace_logger.cpp
             utils/unit_nvtx.cpp
             utils/unit_perf_observer.cpp
             utils/unit_time_utils.cpp
@@ -47,9 +49,7 @@ target_sources(
             utils/unit_config_loader.cpp
             utils/unit_transparent_hash.cpp
             utils/robustness/edgecases_client_utils.cpp
-            utils/robustness/edgecases_datatype_utils.cpp
-            utils/robustness/edgecases_inference_validator.cpp
-            utils/robustness/edgecases_input_generator.cpp
-            utils/robustness/edgecases_logger.cpp
-            utils/robustness/edgecases_transparent_hash.cpp
-            ../support/output_slot_pool_test_hooks.cpp)
+            ../support/output_slot_pool_test_hooks.cpp
+            ../support/starpu_data_interface_override.cpp
+            ../support/starpu_task_submit_override.cpp
+            ../support/torch_cuda_device_count_override.cpp)

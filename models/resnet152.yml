@@ -1,5 +1,10 @@
+name: resnet152
+trace_enabled: true
+trace_file: /tmp
 scheduler: eager
 starpu_env:
+  STARPU_FXT_TRACE: "1"
+  STARPU_FXT_PREFIX: "/tmp"
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"
   STARPU_NWORKER_PER_CUDA: "4"
@@ -13,10 +18,10 @@ verbosity: 2
 address: 127.0.0.1:50051
 metrics_port: 9100
 max_batch_size: 16
-batch_coalesce_timeout_ms: 1000
+batch_coalesce_timeout_ms: 10
 dynamic_batching: true
 sync: false
-use_cpu: true
+use_cpu: false
 group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }

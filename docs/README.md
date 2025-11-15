@@ -13,12 +13,13 @@ This directory collects the documentation needed to install, run, and tune the S
 ## Configuration Reference
 
 - Use [server configuration](./server_guide.md) to review runtime options, environment variables, and parameters.
+- For instrumentation, the [Perfetto trace guide](./perfetto.md) explains how to emit and visualise batching traces when debugging dynamic batching (use StarPU `starpu_fxt` or NVIDIA `nsys` for deeper scheduling insight).
 
 ## Client Guide: Examples & Custom Implementations
 
 Client examples:
 
-- `grpc_client_example` – sample C++ CLI that drives the gRPC service, sources under `src/grpc/client`.
+- `client_example` – sample C++ CLI that drives the gRPC service, sources under `src/grpc/client`.
 - `client/bert_inference_client.py` – Python gRPC client that tokenises text, [Client Guide](./client_guide.md).
 
 ### Backends

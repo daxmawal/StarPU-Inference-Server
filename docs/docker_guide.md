@@ -154,6 +154,7 @@ chmod 755 models
 
 ```yaml
 scheduler: eager
+name: bert_docker
 starpu_env:
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"

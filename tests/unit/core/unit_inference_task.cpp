@@ -1,12 +1,82 @@
+#include <ATen/core/TensorBody.h>
+#include <c10/core/DispatchKeySet.h>
+#include <c10/core/ScalarTypeToTypeMeta.h>
+#include <c10/core/Storage.h>
+#include <c10/core/TensorImpl.h>
+#include <dlfcn.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
 #include <format>
+#include <fstream>
+#include <memory>
+#include <new>
+#include <optional>
 #include <stdexcept>
+#include <string>
+#include <utility>
 
 #include "core/output_slot_pool.hpp"
+#include "core/starpu_setup.hpp"
+#include "support/starpu_task_submit_override.hpp"
 #include "test_inference_task.hpp"
 #include "test_utils.hpp"
 
 namespace {
+inline auto
+align_to_page(void* ptr, size_t page_size) -> void*
+{
+  const auto addr = reinterpret_cast<uintptr_t>(ptr);
+  return reinterpret_cast<void*>(addr & ~(page_size - 1));
+}
+
+struct PointerEntryInfo {
+  void* entry = nullptr;
+  void* page_start = nullptr;
+  bool needs_restore = false;
+};
+
+auto
+find_pointer_entry(void* symbol, size_t page_size)
+    -> std::optional<PointerEntryInfo>
+{
+  std::ifstream maps("/proc/self/maps");
+  if (!maps.is_open()) {
+    return std::nullopt;
+  }
+  const auto symbol_addr = reinterpret_cast<uintptr_t>(symbol);
+  std::string line;
+  while (std::getline(maps, line)) {
+    uintptr_t start = 0;
+    uintptr_t end = 0;
+    char perms[5] = {};
+    if (std::sscanf(line.c_str(), "%lx-%lx %4s", &start, &end, perms) != 3) {
+      continue;
+    }
+    if (perms[0] != 'r') {
+      continue;
+    }
+    const bool writable = perms[1] == 'w';
+    for (uintptr_t addr = start; addr + sizeof(uintptr_t) <= end;
+         addr += sizeof(uintptr_t)) {
+      const auto current = *reinterpret_cast<const uintptr_t*>(addr);
+      if (current == symbol_addr) {
+        PointerEntryInfo info;
+        info.entry = reinterpret_cast<void*>(addr);
+        info.page_start =
+            align_to_page(reinterpret_cast<void*>(addr), page_size);
+        info.needs_restore = !writable;
+        return info;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
 inline auto
 unregister_call_count_ref() -> int&
 {
@@ -22,6 +92,48 @@ unregister_handles_ref() -> std::vector<starpu_data_handle_t>&
 }
 
 inline auto
+data_unregister_call_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+inline auto
+data_unregister_handles_ref() -> std::vector<starpu_data_handle_t>&
+{
+  static std::vector<starpu_data_handle_t> handles;
+  return handles;
+}
+
+inline auto
+task_destroy_call_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+inline auto
+last_destroyed_task_ref() -> starpu_task*&
+{
+  static starpu_task* ptr = nullptr;
+  return ptr;
+}
+
+inline auto
+task_submit_call_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+inline auto
+data_release_throw_count_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+inline auto
 MakeHandle(int index) -> starpu_data_handle_t
 {
   constexpr std::size_t kDummyStorageSize = 8;
@@ -29,6 +141,38 @@ MakeHandle(int index) -> starpu_data_handle_t
   void* ptr =
       &dummy_storage.at(static_cast<std::size_t>(index) % kDummyStorageSize);
   return static_cast<starpu_data_handle_t>(ptr);
+}
+
+inline auto
+MakeNullDataTensor() -> torch::Tensor
+{
+  auto data_ptr = c10::DataPtr(nullptr, c10::Device(c10::DeviceType::CPU));
+  c10::Storage storage(
+      c10::Storage::use_byte_size_t{},
+      /*size_bytes=*/0, std::move(data_ptr),
+      /*allocator=*/nullptr,
+      /*resizable=*/false);
+  return at::detail::make_tensor<c10::TensorImpl>(
+      std::move(storage), c10::DispatchKeySet(c10::DispatchKey::CPU),
+      c10::scalarTypeToTypeMeta(at::kFloat));
+}
+
+inline auto
+MakeCudaTensor() -> torch::Tensor
+{
+  static float storage_value = 1.0F;
+  auto device = c10::Device(c10::DeviceType::CUDA, 0);
+  c10::DataPtr data_ptr(&storage_value, device);
+  c10::Storage storage(
+      c10::Storage::use_byte_size_t{}, sizeof(float), std::move(data_ptr),
+      /*allocator=*/nullptr,
+      /*resizable=*/false);
+  auto tensor = at::detail::make_tensor<c10::TensorImpl>(
+      std::move(storage), c10::DispatchKeySet(c10::DispatchKey::CUDA),
+      c10::scalarTypeToTypeMeta(at::kFloat));
+  tensor.unsafeGetTensorImpl()->set_storage_offset(0);
+  tensor.unsafeGetTensorImpl()->set_sizes_contiguous({1});
+  return tensor;
 }
 
 }  // namespace
@@ -40,13 +184,42 @@ starpu_data_unregister_submit(starpu_data_handle_t handle)
   unregister_handles_ref().push_back(handle);
 }
 
-extern "C" void
-starpu_task_destroy(struct starpu_task* /*task*/)
+namespace {
+using DataUnregisterFn = void (*)(starpu_data_handle_t);
+
+inline auto
+resolve_real_starpu_data_unregister() -> DataUnregisterFn
 {
+  static DataUnregisterFn fn = []() -> DataUnregisterFn {
+    void* symbol = dlsym(RTLD_NEXT, "starpu_data_unregister");
+    if (symbol == nullptr) {
+      throw std::runtime_error("Failed to resolve starpu_data_unregister");
+    }
+    return reinterpret_cast<DataUnregisterFn>(symbol);
+  }();
+  return fn;
+}
+
+}  // namespace
+
+extern "C" void
+starpu_data_unregister(starpu_data_handle_t handle)
+{
+  ++data_unregister_call_count_ref();
+  data_unregister_handles_ref().push_back(handle);
+  resolve_real_starpu_data_unregister()(handle);
+}
+
+extern "C" void
+starpu_task_destroy(struct starpu_task* task)
+{
+  ++task_destroy_call_count_ref();
+  last_destroyed_task_ref() = task;
 }
 
 namespace {
-inline auto
+
+auto
 AlwaysNullAllocator(size_t) -> void*
 {
   return nullptr;
@@ -65,6 +238,125 @@ AlwaysFailingAcquire(
 {
   return -42;
 }
+
+auto
+ImmediateCallbackAcquire(
+    starpu_data_handle_t, starpu_data_access_mode, void (*callback)(void*),
+    void* ctx) -> int
+{
+  if (callback != nullptr) {
+    callback(ctx);
+  }
+  return 0;
+}
+
+auto
+AlwaysFailingTaskSubmit(starpu_task*) -> int
+{
+  ++task_submit_call_count_ref();
+  return -99;
+}
+
+void
+AlwaysFailingVectorRegister(
+    starpu_data_handle_t* handle, int, uintptr_t, size_t, size_t)
+{
+  if (handle != nullptr) {
+    *handle = nullptr;
+  }
+}
+
+void
+ThrowingDataRelease(starpu_data_handle_t)
+{
+  ++data_release_throw_count_ref();
+  throw starpu_server::InvalidInferenceJobException(
+      "forced data release failure");
+}
+
+class ScopedDefaultDataAcquireNullifier {
+ public:
+  ScopedDefaultDataAcquireNullifier()
+  {
+    deps_ = const_cast<starpu_server::InferenceTaskDependencies*>(
+        &starpu_server::kDefaultInferenceTaskDependencies);
+    const long reported_page_size = ::sysconf(_SC_PAGESIZE);
+    const long page_size_fallback = ::getpagesize();
+    const long resolved_page_size =
+        reported_page_size > 0 ? reported_page_size : page_size_fallback;
+    page_size_ = resolved_page_size > 0
+                     ? static_cast<size_t>(resolved_page_size)
+                     : static_cast<size_t>(4096);
+    if (resolved_page_size > 0) {
+      const auto addr = reinterpret_cast<uintptr_t>(deps_);
+      page_start_ = align_to_page(reinterpret_cast<void*>(addr), page_size_);
+      if (::mprotect(page_start_, page_size_, PROT_READ | PROT_WRITE) == 0) {
+        original_ = deps_->starpu_data_acquire_fn;
+        deps_->starpu_data_acquire_fn = nullptr;
+        default_valid_ = true;
+      }
+    }
+
+    if (auto* symbol = dlsym(RTLD_DEFAULT, "starpu_data_acquire_cb")) {
+      auto entry = find_pointer_entry(symbol, page_size_);
+      if (entry.has_value()) {
+        got_entry_ = entry->entry;
+        got_page_start_ = entry->page_start;
+        if (entry->needs_restore &&
+            ::mprotect(got_page_start_, page_size_, PROT_READ | PROT_WRITE) !=
+                0) {
+          got_entry_ = nullptr;
+        } else {
+          got_original_ = *reinterpret_cast<void**>(got_entry_);
+          *reinterpret_cast<void**>(got_entry_) = nullptr;
+          need_restore_got_perms_ = entry->needs_restore;
+          got_valid_ = true;
+        }
+      }
+    }
+  }
+
+  ScopedDefaultDataAcquireNullifier(const ScopedDefaultDataAcquireNullifier&) =
+      delete;
+  auto operator=(const ScopedDefaultDataAcquireNullifier&)
+      -> ScopedDefaultDataAcquireNullifier& = delete;
+  ScopedDefaultDataAcquireNullifier(ScopedDefaultDataAcquireNullifier&&) =
+      delete;
+  auto operator=(ScopedDefaultDataAcquireNullifier&&)
+      -> ScopedDefaultDataAcquireNullifier& = delete;
+
+  ~ScopedDefaultDataAcquireNullifier()
+  {
+    if (default_valid_) {
+      deps_->starpu_data_acquire_fn = original_;
+      ::mprotect(page_start_, page_size_, PROT_READ);
+    }
+    if (got_valid_) {
+      *reinterpret_cast<void**>(got_entry_) = got_original_;
+      if (need_restore_got_perms_) {
+        ::mprotect(got_page_start_, page_size_, PROT_READ);
+      }
+    }
+  }
+
+  [[nodiscard]] auto is_valid() const -> bool
+  {
+    return default_valid_ && got_valid_;
+  }
+
+ private:
+  starpu_server::InferenceTaskDependencies* deps_;
+  void* page_start_ = nullptr;
+  size_t page_size_ = 0;
+  starpu_server::InferenceTaskDependencies::DataAcquireFn original_;
+  bool default_valid_ = false;
+  void* got_entry_ = nullptr;
+  void* got_page_start_ = nullptr;
+  void* got_original_ = nullptr;
+  bool need_restore_got_perms_ = false;
+  bool got_valid_ = false;
+};
+
 }  // namespace
 
 TEST_F(InferenceTaskTest, TooManyInputsThrows)
@@ -133,11 +425,11 @@ TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
 
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
 {
-  auto job = make_job(3, 1);
+  StarpuRuntimeGuard starpu_guard;
   const unsigned total_workers = starpu_worker_get_count();
-  if (total_workers == 0) {
-    GTEST_SKIP() << "No StarPU workers available";
-  }
+  ASSERT_GT(total_workers, 0U) << "StarPU worker count must be positive";
+
+  auto job = make_job(3, 1);
 
   const int worker_id =
       total_workers > 2U ? 2 : static_cast<int>(total_workers) - 1;
@@ -165,6 +457,136 @@ TEST_F(InferenceTaskTest, CreateTaskThrowsWhenStarpuTaskCreateFails)
   EXPECT_THROW(
       task.create_task(inputs, outputs, ctx),
       starpu_server::StarPUTaskCreationException);
+}
+
+TEST_F(
+    InferenceTaskTest,
+    CreateTaskAssignsDependenciesToContextWhenMissingDependenciesPointer)
+{
+  auto job = make_job(6, 0);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.task_create_fn = []() -> starpu_task* {
+    return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
+  };
+  auto task = make_task(job, 0, &dependencies);
+
+  const std::vector<starpu_data_handle_t> inputs;
+  const std::vector<starpu_data_handle_t> outputs;
+  auto params = task.create_inference_params();
+  auto ctx =
+      make_callback_context(job, &opts_, inputs, outputs, nullptr, params);
+  ASSERT_EQ(ctx->dependencies, nullptr);
+
+  auto* created_task = task.create_task(inputs, outputs, ctx);
+  ASSERT_NE(created_task, nullptr);
+
+  EXPECT_EQ(ctx->dependencies, &dependencies);
+
+  ctx->self_keep_alive.reset();
+  auto free_task = [](starpu_task* t) {
+    if (t == nullptr) {
+      return;
+    }
+    std::free(t->dyn_handles);
+    std::free(t->dyn_modes);
+    std::free(t);
+  };
+  free_task(created_task);
+}
+
+TEST(InferenceTask, RegisterInputsHandlesUnregistersHandlesOnFailure)
+{
+  StarpuRuntimeGuard starpu_guard;
+  data_unregister_call_count_ref() = 0;
+  data_unregister_handles_ref().clear();
+
+  std::vector<torch::Tensor> tensors;
+  tensors.push_back(torch::ones({1}, torch::TensorOptions().dtype(at::kFloat)));
+  tensors.emplace_back();
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::register_inputs_handles(tensors),
+      starpu_server::StarPURegistrationException);
+
+  EXPECT_EQ(data_unregister_call_count_ref(), 1);
+  ASSERT_EQ(data_unregister_handles_ref().size(), 1U);
+  EXPECT_NE(data_unregister_handles_ref()[0], nullptr);
+
+  data_unregister_call_count_ref() = 0;
+  data_unregister_handles_ref().clear();
+}
+
+TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenDataPointerIsNull)
+{
+  StarpuRuntimeGuard starpu_guard;
+  auto tensor = MakeNullDataTensor();
+  ASSERT_TRUE(tensor.defined());
+  ASSERT_EQ(tensor.data_ptr(), nullptr);
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::safe_register_tensor_vector(
+          tensor, "null_data_tensor"),
+      starpu_server::StarPURegistrationException);
+}
+
+TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenTensorNotOnCpu)
+{
+  StarpuRuntimeGuard starpu_guard;
+  auto tensor = MakeCudaTensor();
+  ASSERT_TRUE(tensor.defined());
+  ASSERT_NE(tensor.data_ptr(), nullptr);
+  ASSERT_FALSE(tensor.device().is_cpu());
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::safe_register_tensor_vector(
+          tensor, "gpu_tensor"),
+      starpu_server::StarPURegistrationException);
+}
+
+TEST(InferenceTask, SafeRegisterTensorVectorThrowsWhenStarpuRegistrationFails)
+{
+  StarpuRuntimeGuard starpu_guard;
+  torch::Tensor tensor =
+      torch::ones({1}, torch::TensorOptions().dtype(at::kFloat));
+  starpu_test::ScopedStarpuVectorRegisterOverride override(
+      &AlwaysFailingVectorRegister);
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::safe_register_tensor_vector(
+          tensor, "failed_register_tensor"),
+      starpu_server::StarPURegistrationException);
+}
+
+TEST_F(InferenceTaskTest, SubmitCleansUpAndThrowsOnTaskSubmissionFailure)
+{
+  unregister_call_count_ref() = 0;
+  unregister_handles_ref().clear();
+  task_destroy_call_count_ref() = 0;
+  task_submit_call_count_ref() = 0;
+  last_destroyed_task_ref() = nullptr;
+
+  auto job = make_job(7, 1);
+  starpu_server::RuntimeConfig opts;
+  model_cpu_ = starpu_server::make_add_one_model();
+  models_gpu_.clear();
+  auto starpu_setup = std::make_unique<starpu_server::StarPUSetup>(opts);
+  auto dependencies = starpu_server::kDefaultInferenceTaskDependencies;
+  starpu_server::InferenceTask task(
+      starpu_setup.get(), job, &model_cpu_, &models_gpu_, &opts, dependencies);
+
+  starpu_test::ScopedStarpuTaskSubmitOverride submit_override(
+      &AlwaysFailingTaskSubmit);
+
+  EXPECT_THROW(task.submit(), starpu_server::StarPUTaskSubmissionException);
+
+  EXPECT_EQ(task_submit_call_count_ref(), 1);
+  EXPECT_EQ(task_destroy_call_count_ref(), 1);
+  EXPECT_NE(last_destroyed_task_ref(), nullptr);
+  EXPECT_EQ(unregister_call_count_ref(), 2);
+  EXPECT_EQ(unregister_handles_ref().size(), 2U);
+
+  unregister_handles_ref().clear();
 }
 
 TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
@@ -306,6 +728,59 @@ TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
       starpu_server::ErrorLevel,
       std::format("starpu_data_acquire_cb failed with code {}", -42));
   EXPECT_NE(log.find(expected), std::string::npos);
+}
+
+TEST(InferenceTask, AcquireOutputHandleLogsInferenceEngineException)
+{
+  StarpuRuntimeGuard starpu_guard;
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &ThrowingDataRelease);
+  OutputContextFixture fixture;
+  auto ctx = fixture.ctx;
+  ctx->self_keep_alive = ctx;
+  auto handle = MakeHandle(0);
+  ctx->outputs_handles = {handle};
+  ctx->remaining_outputs_to_acquire = 1;
+  data_release_throw_count_ref() = 0;
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_data_acquire_fn = &ImmediateCallbackAcquire;
+  ctx->dependencies = &dependencies;
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()));
+
+  const auto log = capture.str();
+  ctx->self_keep_alive.reset();
+  ctx->outputs_handles.clear();
+  EXPECT_EQ(data_release_throw_count_ref(), 1);
+  EXPECT_NE(log.find("forced data release failure"), std::string::npos);
+}
+
+TEST(InferenceTask, AcquireOutputHandleThrowsWhenDataAcquireFunctionMissing)
+{
+  StarpuRuntimeGuard starpu_guard;
+  ScopedDefaultDataAcquireNullifier nullifier;
+  ASSERT_TRUE(nullifier.is_valid()) << "Failed to patch default dependencies";
+  ASSERT_EQ(
+      starpu_server::kDefaultInferenceTaskDependencies.starpu_data_acquire_fn,
+      nullptr);
+  starpu_server::RuntimeConfig opts;
+  auto handle = MakeHandle(1);
+  auto outputs = std::vector<starpu_data_handle_t>{handle};
+  auto ctx = make_callback_context(nullptr, &opts, {}, outputs);
+  ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
+  starpu_server::CaptureStream capture{std::cerr};
+
+  EXPECT_THROW(
+      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()),
+      starpu_server::StarPURegistrationException);
+
+  const auto log = capture.str();
+  EXPECT_NE(
+      log.find("starpu_data_acquire_fn is null; cannot acquire output handle."),
+      std::string::npos);
 }
 
 TEST(InferenceTask, CleanupUnregistersAndNullsHandles)

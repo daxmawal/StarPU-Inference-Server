@@ -4,7 +4,6 @@
 #include <format>
 #include <iostream>
 #include <memory>
-#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -17,6 +16,7 @@
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
+#include "utils/batching_trace_logger.hpp"
 #include "utils/config_loader.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
@@ -50,7 +50,6 @@ handle_program_arguments(std::span<char const* const> args)
     -> starpu_server::RuntimeConfig
 {
   const char* config_path = nullptr;
-  std::optional<int> pool_size_override;
 
   auto remaining = args.subspan(1);
   auto require_value = [&](std::string_view flag) {
@@ -76,21 +75,10 @@ handle_program_arguments(std::span<char const* const> args)
       config_path = require_value(arg);
       continue;
     }
-    if (arg == "--pool-size" || arg == "--input-slots" || arg == "--slots") {
-      const char* value = require_value(arg);
-      try {
-        const int parsed = std::stoi(value);
-        if (parsed <= 0) {
-          throw std::invalid_argument("pool-size must be > 0");
-        }
-        pool_size_override = parsed;
-      }
-      catch (const std::exception& e) {
-        starpu_server::log_fatal(
-            std::format("Invalid --pool-size value: {}\n", e.what()));
-      }
-      continue;
-    }
+    starpu_server::log_fatal(std::format(
+        "Unknown argument '{}'. Only --config/-c is supported; all other "
+        "settings must live in the YAML file.\n",
+        arg));
   }
 
   if (config_path == nullptr) {
@@ -107,17 +95,12 @@ handle_program_arguments(std::span<char const* const> args)
   log_info(cfg.verbosity, std::format("__cplusplus = {}", __cplusplus));
   log_info(cfg.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
   log_info(cfg.verbosity, std::format("Scheduler       : {}", cfg.scheduler));
+  if (!cfg.name.empty()) {
+    log_info(cfg.verbosity, std::format("Configuration   : {}", cfg.name));
+  }
   log_info(
       cfg.verbosity,
       std::format("Request_nb      : {}", cfg.batching.request_nb));
-
-  if (pool_size_override.has_value()) {
-    cfg.batching.pool_size = *pool_size_override;
-    starpu_server::log_info(
-        cfg.verbosity,
-        std::format(
-            "Overriding pool_size from CLI: {}", cfg.batching.pool_size));
-  }
 
   return cfg;
 }
@@ -194,8 +177,13 @@ launch_threads(
   }
 
   std::jthread grpc_thread([&]() {
+    std::string default_model_name = opts.name;
+    if (default_model_name.empty() && !opts.models.empty()) {
+      default_model_name = opts.models[0].name;
+    }
     const auto server_options = starpu_server::GrpcServerOptions{
-        opts.server_address, opts.batching.max_message_bytes, opts.verbosity};
+        opts.server_address, opts.batching.max_message_bytes, opts.verbosity,
+        std::move(default_model_name)};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
         opts.batching.max_batch_size, server_options, server_ctx.server);
@@ -222,6 +210,7 @@ main(int argc, char* argv[]) -> int
   try {
     starpu_server::RuntimeConfig opts =
         handle_program_arguments({argv, static_cast<size_t>(argc)});
+    starpu_server::BatchingTraceLogger::instance().configure_from_runtime(opts);
     const bool metrics_ok = starpu_server::init_metrics(opts.metrics_port);
     if (!metrics_ok) {
       starpu_server::log_warning(

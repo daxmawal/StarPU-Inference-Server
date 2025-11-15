@@ -56,3 +56,29 @@ TEST_F(AsyncServerContextFixture, StartAfterConfigureIsIdempotent)
   context.shutdown();
   server->Wait();
 }
+
+TEST_F(AsyncServerContextFixture, ShutdownBeforeStartIsNoOp)
+{
+  starpu_server::AsyncServerContext context(async_service, impl);
+
+  EXPECT_FALSE(context.started());
+  EXPECT_EQ(context.thread_count(), 0U);
+
+  context.shutdown();
+
+  EXPECT_FALSE(context.started());
+  EXPECT_EQ(context.thread_count(), 0U);
+
+  grpc::ServerBuilder builder;
+  builder.AddListeningPort("localhost:0", grpc::InsecureServerCredentials());
+  context.configure(builder);
+  auto server = builder.BuildAndStart();
+  ASSERT_NE(server, nullptr);
+
+  context.start();
+  EXPECT_TRUE(context.started());
+
+  server->Shutdown();
+  context.shutdown();
+  server->Wait();
+}
