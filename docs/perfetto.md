@@ -23,8 +23,9 @@ batching:
   batch size, request IDs, queue/build/submit/scheduling/codelet/inference/
   callback durations, and total time. Warmup batches are excluded.)
   The server automatically runs `scripts/plot_batch_summary.py` at shutdown to
-  produce latency scatter plots (combined, CPU-only, GPU-only) plus a stacked
-  thermometer showing the contribution of each phase.
+  produce latency scatter plots (combined, CPU-only, GPU-only), a stacked
+  thermometer (queue→callback), and batch-size/latency distributions
+  (histograms + CPU/GPU violin plots).
 
 Each server restart truncates the previous file, so copy the trace elsewhere
 before launching another run. Stop the server before opening the trace to avoid

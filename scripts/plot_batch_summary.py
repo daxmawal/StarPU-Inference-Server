@@ -48,14 +48,15 @@ def parse_args() -> argparse.Namespace:
 
 def load_latencies(
     csv_path: Path,
-) -> List[Tuple[int, float, str, Tuple[float, ...]]]:
-    batches: List[Tuple[int, float, str, Tuple[float, ...]]] = []
+) -> List[Tuple[int, float, str, int, Tuple[float, ...]]]:
+    batches: List[Tuple[int, float, str, int, Tuple[float, ...]]] = []
     with csv_path.open(newline="") as handle:
         reader = csv.DictReader(handle)
         required = {
             "batch_id",
             "total_ms",
             "worker_type",
+            "batch_size",
             "queue_ms",
             "batch_ms",
             "submit_ms",
@@ -76,6 +77,7 @@ def load_latencies(
             except ValueError as exc:
                 raise ValueError(f"Invalid numeric values in row: {row}") from exc
             worker_type = (row.get("worker_type") or "unknown").strip().lower()
+            batch_size = int(row["batch_size"])
             breakdown = (
                 float(row["queue_ms"]),
                 float(row["batch_ms"]),
@@ -85,7 +87,7 @@ def load_latencies(
                 float(row["inference_ms"]),
                 float(row["callback_ms"]),
             )
-            batches.append((batch_id, latency, worker_type, breakdown))
+            batches.append((batch_id, latency, worker_type, batch_size, breakdown))
     return batches
 
 
@@ -93,16 +95,18 @@ def filter_latencies(
     data: Iterable[Tuple[int, float, str]],
     *,
     worker_type: str | None = None,
-) -> Tuple[List[int], List[float], List[Tuple[float, ...]]]:
+) -> Tuple[List[int], List[float], List[int], List[Tuple[float, ...]]]:
     ids: List[int] = []
     latencies: List[float] = []
+    batch_sizes: List[int] = []
     breakdowns: List[Tuple[float, ...]] = []
-    for batch_id, latency, device, breakdown in data:
+    for batch_id, latency, device, batch_size, breakdown in data:
         if worker_type is None or device == worker_type:
             ids.append(batch_id)
             latencies.append(latency)
+            batch_sizes.append(batch_size)
             breakdowns.append(breakdown)
-    return ids, latencies, breakdowns
+    return ids, latencies, batch_sizes, breakdowns
 
 
 def plot_latency_stack(
@@ -154,6 +158,28 @@ def scatter_plot(
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
+def plot_violin(
+    ax,
+    data: Sequence[float],
+    label: str,
+    color: str | None = None,
+) -> None:
+    if not data:
+        ax.set_title(f"{label} (no data)")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        return
+    parts = ax.violinplot(data, showmeans=True, showmedians=False)
+    if color:
+        for pc in parts["bodies"]:
+            pc.set_facecolor(color)
+            pc.set_edgecolor("black")
+        parts["cbars"].set_edgecolor(color)
+        parts["cmins"].set_edgecolor(color)
+        parts["cmaxes"].set_edgecolor(color)
+    ax.set_title(label)
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+
 def main() -> int:
     args = parse_args()
     csv_path = args.summary_csv
@@ -167,18 +193,51 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    all_ids, all_lat, all_breakdowns = filter_latencies(data)
-    cpu_ids, cpu_lat, cpu_breakdowns = filter_latencies(data, worker_type="cpu")
-    gpu_ids, gpu_lat, gpu_breakdowns = filter_latencies(data, worker_type="cuda")
+    all_ids, all_lat, all_sizes, all_breakdowns = filter_latencies(data)
+    cpu_ids, cpu_lat, cpu_sizes, cpu_breakdowns = filter_latencies(
+        data, worker_type="cpu"
+    )
+    gpu_ids, gpu_lat, gpu_sizes, gpu_breakdowns = filter_latencies(
+        data, worker_type="cuda"
+    )
     cpu_color = "#d62728"
 
-    fig, axes = plt.subplots(4, 1, figsize=(12, 14), sharex=True)
+    fig, axes = plt.subplots(6, 1, figsize=(12, 20), sharex=False)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
         axes[0].scatter(cpu_ids, cpu_lat, s=14, alpha=0.7, c=cpu_color)
     scatter_plot(axes[1], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
     scatter_plot(axes[2], gpu_ids, gpu_lat, "GPU workers only")
     plot_latency_stack(axes[3], all_ids, all_breakdowns)
+
+    axes[4].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
+    if cpu_sizes:
+        axes[4].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
+    if gpu_sizes:
+        axes[4].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
+    axes[4].set_title("Batch size distribution")
+    axes[4].set_xlabel("Batch size")
+    axes[4].set_ylabel("Count")
+    axes[4].legend()
+    axes[4].grid(True, linestyle="--", alpha=0.3)
+
+    violin_data = []
+    labels = []
+    if cpu_lat:
+        violin_data.append(cpu_lat)
+        labels.append("CPU")
+    if gpu_lat:
+        violin_data.append(gpu_lat)
+        labels.append("GPU")
+    if violin_data:
+        axes[5].violinplot(violin_data, showmeans=True, showmedians=False)
+        axes[5].set_xticks(range(1, len(labels) + 1), labels)
+        axes[5].set_title("Latency distribution (violin plot)")
+        axes[5].set_ylabel("Latency (ms)")
+        axes[5].grid(True, linestyle="--", alpha=0.3)
+    else:
+        axes[5].set_title("Latency distribution (no data)")
+        axes[5].grid(True, linestyle="--", alpha=0.3)
     fig.tight_layout()
 
     if args.output:
