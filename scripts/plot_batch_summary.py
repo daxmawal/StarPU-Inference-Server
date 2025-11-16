@@ -320,6 +320,58 @@ def plot_worker_radar(
     ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1.1), fontsize="small")
 
 
+def plot_worker_time_heatmap(
+    ax,
+    worker_ids: Sequence[int],
+    batch_ids: Sequence[int],
+    latencies: Sequence[float],
+    max_workers: int = 12,
+    bucket_size: int = 100,
+) -> None:
+    if not worker_ids or not batch_ids or not latencies:
+        ax.set_title("Worker-time heatmap (no data)")
+        ax.set_xlabel("Batch bucket")
+        ax.set_ylabel("Worker ID")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        return
+
+    sorted_workers = sorted(set(worker_ids), key=lambda wid: (wid < 0, wid))[
+        :max_workers
+    ]
+    worker_index = {wid: idx for idx, wid in enumerate(sorted_workers)}
+    bucket_map: dict[tuple[int, int], list[float]] = {}
+    for wid, bid, latency in zip(worker_ids, batch_ids, latencies):
+        if wid not in worker_index or wid < 0:
+            continue
+        bucket = bid // bucket_size
+        bucket_map.setdefault((wid, bucket), []).append(latency)
+
+    if not bucket_map:
+        ax.set_title("Worker-time heatmap (no data)")
+        ax.set_xlabel("Batch bucket")
+        ax.set_ylabel("Worker ID")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        return
+
+    buckets = sorted({bucket for _, bucket in bucket_map.keys()})
+    heatmap = np.full((len(sorted_workers), len(buckets)), np.nan)
+    bucket_index = {bucket: idx for idx, bucket in enumerate(buckets)}
+    for (wid, bucket), samples in bucket_map.items():
+        row = worker_index[wid]
+        col = bucket_index[bucket]
+        heatmap[row, col] = np.mean(samples)
+
+    im = ax.imshow(heatmap, aspect="auto", cmap="plasma", origin="lower")
+    ax.set_xticks(
+        range(len(buckets)), [str(bucket * bucket_size) for bucket in buckets]
+    )
+    ax.set_yticks(range(len(sorted_workers)), [str(w) for w in sorted_workers])
+    ax.set_xlabel("Batch ID bucket")
+    ax.set_ylabel("Worker ID")
+    ax.set_title("Worker-time heatmap (avg latency)")
+    plt.colorbar(im, ax=ax, label="Latency (ms)")
+
+
 def plot_phase_heatmap(
     ax,
     batch_sizes: Sequence[int],
@@ -524,7 +576,7 @@ def main() -> int:
     )
     cpu_color = "#d62728"
 
-    fig, axes_array = plt.subplots(16, 1, figsize=(12, 60), sharex=False)
+    fig, axes_array = plt.subplots(17, 1, figsize=(12, 64), sharex=False)
     axes = list(axes_array)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
@@ -616,9 +668,10 @@ def main() -> int:
         axes[13].grid(True, linestyle="--", alpha=0.3)
 
     plot_worker_boxplots(axes[14], all_workers, all_lat)
-    axes[15].remove()
-    axes[15] = fig.add_subplot(16, 1, 16, projection="polar")
-    plot_worker_radar(axes[15], all_workers, all_breakdowns)
+    plot_worker_time_heatmap(axes[15], all_workers, all_ids, all_lat)
+    axes[16].remove()
+    axes[16] = fig.add_subplot(17, 1, 17, projection="polar")
+    plot_worker_radar(axes[16], all_workers, all_breakdowns)
     fig.tight_layout()
 
     if args.output:

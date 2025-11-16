@@ -28,7 +28,8 @@ batching:
   back to batch size when logical job counts are absent), a stacked thermometer
   (queue->callback), a phase vs batch_size heatmap, a CPU/GPU waterfall, a phase
   Pareto chart, latency vs batch size correlations, batch_size distributions,
-  CPU/GPU violin plots, and per-worker boxplots plus radar charts.
+  CPU/GPU violin plots, per-worker boxplots, radar charts, and a worker/time
+  heatmap.
   correlation view.
 
 Each server restart truncates the previous file, so copy the trace elsewhere
