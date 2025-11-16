@@ -83,14 +83,16 @@ def filter_latencies(
     return ids, latencies
 
 
-def scatter_plot(ax, x: List[int], y: List[float], title: str) -> None:
+def scatter_plot(
+    ax, x: List[int], y: List[float], title: str, *, color: str | None = None
+) -> None:
     if not x:
         ax.set_title(f"{title} (no data)")
         ax.set_xlabel("Batch ID")
         ax.set_ylabel("Latency (ms)")
         ax.grid(True, linestyle="--", alpha=0.4)
         return
-    ax.scatter(x, y, s=14, alpha=0.7)
+    ax.scatter(x, y, s=14, alpha=0.7, c=color)
     ax.set_title(title)
     ax.set_xlabel("Batch ID")
     ax.set_ylabel("Latency (ms)")
@@ -113,10 +115,13 @@ def main() -> int:
     all_ids, all_lat = filter_latencies(data)
     cpu_ids, cpu_lat = filter_latencies(data, worker_type="cpu")
     gpu_ids, gpu_lat = filter_latencies(data, worker_type="cuda")
+    cpu_color = "#d62728"
 
     fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
-    scatter_plot(axes[1], cpu_ids, cpu_lat, "CPU workers only")
+    if cpu_ids:
+        axes[0].scatter(cpu_ids, cpu_lat, s=14, alpha=0.7, c=cpu_color)
+    scatter_plot(axes[1], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
     scatter_plot(axes[2], gpu_ids, gpu_lat, "GPU workers only")
     fig.tight_layout()
 
