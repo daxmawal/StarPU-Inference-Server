@@ -32,6 +32,7 @@ constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
 constexpr std::string_view kBatchEnqueueTrackName = "batch";
 constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
 constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
+constexpr std::string_view kSummarySuffix = "_summary.csv";
 
 enum class FlowDirection : uint8_t {
   None,
@@ -39,6 +40,46 @@ enum class FlowDirection : uint8_t {
   Target,
   SourceAndTarget,
 };
+
+auto
+summary_path_from_trace(const std::filesystem::path& trace_path)
+    -> std::filesystem::path
+{
+  auto summary_path = trace_path;
+  auto stem = summary_path.stem().string();
+  if (stem.empty()) {
+    stem = "batching_trace";
+  }
+  summary_path.replace_filename(stem + std::string{kSummarySuffix});
+  return summary_path;
+}
+
+auto
+escape_csv_field(std::string_view value) -> std::string
+{
+  std::string escaped;
+  escaped.reserve(value.size());
+  for (char ch : value) {
+    if (ch == '"') {
+      escaped.push_back('"');
+    }
+    escaped.push_back(ch);
+  }
+  return escaped;
+}
+
+auto
+format_request_ids(std::span<const int> request_ids) -> std::string
+{
+  std::ostringstream oss;
+  for (size_t idx = 0; idx < request_ids.size(); ++idx) {
+    if (idx > 0) {
+      oss << ';';
+    }
+    oss << request_ids[idx];
+  }
+  return oss.str();
+}
 
 auto
 make_flow_bind_id(int batch_id, bool is_warmup) -> std::optional<uint64_t>
@@ -420,6 +461,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
     file_path_.clear();
     return;
   }
+  configure_summary_writer(path);
 
   trace_start_us_ = now_us();
   trace_start_initialized_ = true;
@@ -836,9 +878,23 @@ BatchingTraceLogger::write_batch_build_span(
 }
 
 void
+BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
+{
+  if (!enabled()) {
+    return;
+  }
+  std::lock_guard lock(mutex_);
+  if (!summary_stream_.is_open()) {
+    return;
+  }
+  write_summary_line_locked(args);
+}
+
+void
 BatchingTraceLogger::close_stream_locked()
 {
   trace_writer_.close();
+  close_summary_writer();
   trace_start_us_ = 0;
   trace_start_initialized_ = false;
   worker_lane_manager_.reset();
@@ -879,6 +935,58 @@ BatchingTraceLogger::relative_timestamp_from_time_point(
           time_point.time_since_epoch())
           .count();
   return relative_timestamp_us(absolute_us);
+}
+
+void
+BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
+{
+  const auto request_ids_string = format_request_ids(args.request_ids);
+  const auto escaped_model = escape_csv_field(args.model_name);
+  const auto escaped_requests = escape_csv_field(request_ids_string);
+  summary_stream_ << args.batch_id << ",\"" << escaped_model << "\","
+                  << args.worker_id << ",\""
+                  << device_type_to_string(args.worker_type) << "\","
+                  << args.device_id << ',' << args.batch_size << ",\""
+                  << escaped_requests << "\","
+                  << std::format("{:.3f}", args.queue_ms) << ','
+                  << std::format("{:.3f}", args.batch_ms) << ','
+                  << std::format("{:.3f}", args.submit_ms) << ','
+                  << std::format("{:.3f}", args.scheduling_ms) << ','
+                  << std::format("{:.3f}", args.codelet_ms) << ','
+                  << std::format("{:.3f}", args.inference_ms) << ','
+                  << std::format("{:.3f}", args.callback_ms) << ','
+                  << std::format("{:.3f}", args.total_ms) << ','
+                  << (args.is_warmup ? "true" : "false") << '\n';
+}
+
+bool
+BatchingTraceLogger::configure_summary_writer(
+    const std::filesystem::path& trace_path)
+{
+  close_summary_writer();
+  summary_file_path_ = summary_path_from_trace(trace_path);
+  summary_stream_.open(summary_file_path_, std::ios::out | std::ios::trunc);
+  if (!summary_stream_.is_open()) {
+    log_warning(std::format(
+        "Failed to open batching summary file '{}'; summary export disabled.",
+        summary_file_path_.string()));
+    summary_file_path_.clear();
+    return false;
+  }
+  summary_stream_
+      << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
+         "request_ids,queue_ms,batch_ms,submit_ms,scheduling_ms,codelet_ms,"
+         "inference_ms,callback_ms,total_ms,warmup\n";
+  return true;
+}
+
+void
+BatchingTraceLogger::close_summary_writer()
+{
+  if (summary_stream_.is_open()) {
+    summary_stream_.close();
+  }
+  summary_file_path_.clear();
 }
 
 }  // namespace starpu_server

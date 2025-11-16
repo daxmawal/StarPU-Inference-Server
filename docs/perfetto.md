@@ -16,9 +16,12 @@ batching:
 ```
 
 - `trace_enabled` flips the instrumentation on as soon as the server starts.
-- `trace_file` is optional and must point to a directory,
-  the server writes `batching_trace.json` inside. When
-  omitted the server writes the file in the working directory.
+- `trace_file` is optional and must point to a directory; the server writes
+  `batching_trace.json` inside. When omitted the server writes the file in the
+  working directory. The same directory also receives
+  `batching_trace_summary.csv`, a CSV dump of each batch (worker ID and type,
+  batch size, request IDs, queue/build/submit/scheduling/codelet/inference/
+  callback durations, and total time).
 
 Each server restart truncates the previous file, so copy the trace elsewhere
 before launching another run. Stop the server before opening the trace to avoid

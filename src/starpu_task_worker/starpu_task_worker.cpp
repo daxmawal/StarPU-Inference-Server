@@ -825,6 +825,31 @@ ResultDispatcher::record_job_metrics(
   timing.submission_id = job->submission_id();
   const int job_id = task_runner_internal::job_identifier(*job);
   log_job_timings(job_id, latency, timing);
+
+  auto& tracer = BatchingTraceLogger::instance();
+  if (tracer.enabled()) {
+    const auto breakdown =
+        detail::compute_latency_breakdown(timing, latency.count());
+    const auto request_ids = build_request_ids_for_trace(job);
+    tracer.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
+        .batch_id = job_id,
+        .model_name = job->model_name(),
+        .batch_size = batch_size,
+        .request_ids = request_ids,
+        .worker_id = job->get_worker_id(),
+        .worker_type = job->get_executed_on(),
+        .device_id = job->get_device_id(),
+        .queue_ms = breakdown.queue_ms,
+        .batch_ms = breakdown.batch_ms,
+        .submit_ms = breakdown.submit_ms,
+        .scheduling_ms = breakdown.scheduling_ms,
+        .codelet_ms = breakdown.codelet_ms,
+        .inference_ms = breakdown.inference_ms,
+        .callback_ms = breakdown.callback_ms,
+        .total_ms = breakdown.total_ms,
+        .is_warmup = is_warmup_job(job),
+    });
+  }
 }
 
 void

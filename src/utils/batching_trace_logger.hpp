@@ -149,6 +149,24 @@ class BatchingTraceLogger {
     bool is_warmup;
     int device_id;
   };
+  struct BatchSummaryLogArgs {
+    int batch_id;
+    std::string_view model_name;
+    std::size_t batch_size;
+    std::span<const int> request_ids;
+    int worker_id;
+    DeviceType worker_type;
+    int device_id;
+    double queue_ms;
+    double batch_ms;
+    double submit_ms;
+    double scheduling_ms;
+    double codelet_ms;
+    double inference_ms;
+    double callback_ms;
+    double total_ms;
+    bool is_warmup = false;
+  };
 
   static auto instance() -> BatchingTraceLogger&;
   BatchingTraceLogger() = default;
@@ -176,6 +194,7 @@ class BatchingTraceLogger {
       TimeRange queue_times, std::span<const int> request_ids = {},
       bool is_warmup = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
+  void log_batch_summary(const BatchSummaryLogArgs& args);
 
  private:
   void write_record(
@@ -191,6 +210,9 @@ class BatchingTraceLogger {
   void write_batch_build_span(
       std::string_view model_name, int batch_id, std::size_t batch_size,
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
+  void write_summary_line_locked(const BatchSummaryLogArgs& args);
+  bool configure_summary_writer(const std::filesystem::path& trace_path);
+  void close_summary_writer();
   [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
       -> std::string_view;
   [[nodiscard]] static auto device_type_to_string(DeviceType type)
@@ -213,6 +235,8 @@ class BatchingTraceLogger {
   detail::TraceFileWriter trace_writer_;
   detail::RequestTimelineTracker request_timeline_;
   detail::WorkerLaneManager worker_lane_manager_;
+  std::ofstream summary_stream_;
+  std::filesystem::path summary_file_path_;
 };
 
 }  // namespace starpu_server
