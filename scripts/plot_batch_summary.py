@@ -20,7 +20,7 @@ import argparse
 import csv
 import sys
 from pathlib import Path
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 
@@ -48,11 +48,22 @@ def parse_args() -> argparse.Namespace:
 
 def load_latencies(
     csv_path: Path,
-) -> List[Tuple[int, float, str]]:
-    batches: List[Tuple[int, float, str]] = []
+) -> List[Tuple[int, float, str, Tuple[float, ...]]]:
+    batches: List[Tuple[int, float, str, Tuple[float, ...]]] = []
     with csv_path.open(newline="") as handle:
         reader = csv.DictReader(handle)
-        required = {"batch_id", "total_ms", "worker_type"}
+        required = {
+            "batch_id",
+            "total_ms",
+            "worker_type",
+            "queue_ms",
+            "batch_ms",
+            "submit_ms",
+            "scheduling_ms",
+            "codelet_ms",
+            "inference_ms",
+            "callback_ms",
+        }
         missing = sorted(required - set(reader.fieldnames or []))
         if missing:
             raise ValueError(
@@ -65,7 +76,16 @@ def load_latencies(
             except ValueError as exc:
                 raise ValueError(f"Invalid numeric values in row: {row}") from exc
             worker_type = (row.get("worker_type") or "unknown").strip().lower()
-            batches.append((batch_id, latency, worker_type))
+            breakdown = (
+                float(row["queue_ms"]),
+                float(row["batch_ms"]),
+                float(row["submit_ms"]),
+                float(row["scheduling_ms"]),
+                float(row["codelet_ms"]),
+                float(row["inference_ms"]),
+                float(row["callback_ms"]),
+            )
+            batches.append((batch_id, latency, worker_type, breakdown))
     return batches
 
 
@@ -73,14 +93,49 @@ def filter_latencies(
     data: Iterable[Tuple[int, float, str]],
     *,
     worker_type: str | None = None,
-) -> Tuple[List[int], List[float]]:
+) -> Tuple[List[int], List[float], List[Tuple[float, ...]]]:
     ids: List[int] = []
     latencies: List[float] = []
-    for batch_id, latency, device in data:
+    breakdowns: List[Tuple[float, ...]] = []
+    for batch_id, latency, device, breakdown in data:
         if worker_type is None or device == worker_type:
             ids.append(batch_id)
             latencies.append(latency)
-    return ids, latencies
+            breakdowns.append(breakdown)
+    return ids, latencies, breakdowns
+
+
+def plot_latency_stack(
+    ax,
+    batch_ids: Sequence[int],
+    breakdowns: Sequence[Tuple[float, ...]],
+) -> None:
+    if not batch_ids or not breakdowns:
+        ax.set_title("Latency composition per batch (no data)")
+        ax.set_xlabel("Batch ID")
+        ax.set_ylabel("Latency contribution (ms)")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        return
+
+    labels = [
+        "queue",
+        "batch",
+        "submit",
+        "scheduling",
+        "codelet",
+        "inference",
+        "callback",
+    ]
+    components = list(map(list, zip(*breakdowns)))
+    bottom = [0.0] * len(batch_ids)
+    ax.set_title("Latency composition per batch")
+    for values, label in zip(components, labels):
+        ax.bar(batch_ids, values, bottom=bottom, label=label, width=0.6)
+        bottom = [b + v for b, v in zip(bottom, values)]
+    ax.set_xlabel("Batch ID")
+    ax.set_ylabel("Latency contribution (ms)")
+    ax.legend(loc="upper right", fontsize="small")
+    ax.grid(True, linestyle="--", alpha=0.3)
 
 
 def scatter_plot(
@@ -112,17 +167,18 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    all_ids, all_lat = filter_latencies(data)
-    cpu_ids, cpu_lat = filter_latencies(data, worker_type="cpu")
-    gpu_ids, gpu_lat = filter_latencies(data, worker_type="cuda")
+    all_ids, all_lat, all_breakdowns = filter_latencies(data)
+    cpu_ids, cpu_lat, cpu_breakdowns = filter_latencies(data, worker_type="cpu")
+    gpu_ids, gpu_lat, gpu_breakdowns = filter_latencies(data, worker_type="cuda")
     cpu_color = "#d62728"
 
-    fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+    fig, axes = plt.subplots(4, 1, figsize=(12, 14), sharex=True)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
         axes[0].scatter(cpu_ids, cpu_lat, s=14, alpha=0.7, c=cpu_color)
     scatter_plot(axes[1], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
     scatter_plot(axes[2], gpu_ids, gpu_lat, "GPU workers only")
+    plot_latency_stack(axes[3], all_ids, all_breakdowns)
     fig.tight_layout()
 
     if args.output:

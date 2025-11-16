@@ -21,11 +21,10 @@ batching:
   working directory. The same directory also receives
   `batching_trace_summary.csv`, a CSV dump of each batch (worker ID and type,
   batch size, request IDs, queue/build/submit/scheduling/codelet/inference/
-  callback durations, and total time). Warmup batches are excluded.
+  callback durations, and total time. Warmup batches are excluded.)
   The server automatically runs `scripts/plot_batch_summary.py` at shutdown to
-  produce latency scatter plots (combined, CPU-only, GPU-only). Re-run the
-  script manually with `./scripts/plot_batch_summary.py batching_trace_summary.csv`
-  and `--output` to regenerate the figures elsewhere if needed.
+  produce latency scatter plots (combined, CPU-only, GPU-only) plus a stacked
+  thermometer showing the contribution of each phase.
 
 Each server restart truncates the previous file, so copy the trace elsewhere
 before launching another run. Stop the server before opening the trace to avoid
