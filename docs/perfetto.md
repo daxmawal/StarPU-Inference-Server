@@ -24,10 +24,11 @@ batching:
   callback durations, and total time. Warmup batches are excluded.)
   The server automatically runs `scripts/plot_batch_summary.py` at shutdown to
   produce latency scatter plots (combined, multi-dimension batch-size, CPU-only,
-  GPU-only), cumulative + moving average timelines, a stacked thermometer
-  (queue->callback), a phase vs. batch_size heatmap, a phase Pareto chart,
-  batch_size/latency distributions (histograms + CPU/GPU violin plots),
-  boxplots per worker, a radar chart per worker, and a latency vs batch_size
+  GPU-only), cumulative + moving average timelines, throughput vs time
+  (falling back to batch size when logical job counts are absent), a
+  stacked thermometer (queue->callback), a phase vs. batch_size heatmap, a phase
+  Pareto chart, latency vs batch size correlations, batch_size/latency distributions
+  (histograms + CPU/GPU violin plots), per-worker boxplots and radar charts.
   correlation view.
 
 Each server restart truncates the previous file, so copy the trace elsewhere
