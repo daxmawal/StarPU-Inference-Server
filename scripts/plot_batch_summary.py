@@ -47,6 +47,10 @@ PHASE_COLORS = {
     "callback": "#e377c2",
 }
 
+ROLLING_WINDOW = 50
+MAX_BATCH_CDF_SERIES = 4
+PHASE_INDEX = {label: idx for idx, label in enumerate(PHASE_LABELS)}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -320,6 +324,50 @@ def plot_worker_radar(
     ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1.1), fontsize="small")
 
 
+def plot_worker_phase_utilization(
+    ax,
+    worker_ids: Sequence[int],
+    breakdowns: Sequence[Tuple[float, ...]],
+) -> None:
+    contributions: dict[int, np.ndarray] = {}
+    for worker, phases in zip(worker_ids, breakdowns):
+        if worker < 0:
+            continue
+        contributions.setdefault(worker, np.zeros(len(PHASE_LABELS)))
+        contributions[worker] += np.array(phases)
+    if not contributions:
+        ax.set_title("Worker phase utilization (no data)")
+        ax.set_xlabel("Total time (ms)")
+        ax.set_ylabel("Worker ID")
+        ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+        return
+    sorted_items = sorted(
+        contributions.items(), key=lambda item: item[1].sum(), reverse=True
+    )
+    worker_labels = [str(worker) for worker, _ in sorted_items]
+    y_pos = np.arange(len(sorted_items))
+    left = np.zeros(len(sorted_items), dtype=float)
+    legend_added: set[str] = set()
+    for idx, phase in enumerate(PHASE_LABELS):
+        values = [item[1][idx] for item in sorted_items]
+        color = PHASE_COLORS.get(phase, None)
+        ax.barh(
+            y_pos,
+            values,
+            left=left,
+            color=color,
+            label=phase if phase not in legend_added else None,
+        )
+        left += np.array(values)
+        legend_added.add(phase)
+    ax.set_yticks(y_pos, worker_labels)
+    ax.set_xlabel("Total time (ms)")
+    ax.set_ylabel("Worker ID")
+    ax.set_title("Worker phase utilization")
+    ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+    ax.legend(loc="upper right", fontsize="small")
+
+
 def plot_worker_time_heatmap(
     ax,
     worker_ids: Sequence[int],
@@ -420,6 +468,46 @@ def plot_phase_heatmap(
     plt.colorbar(im, ax=ax, label="Average duration (ms)")
 
 
+def plot_phase_correlation(ax, breakdowns: Sequence[Tuple[float, ...]]) -> None:
+    title = "Phase correlation heatmap"
+    if not breakdowns:
+        ax.set_title(f"{title} (no data)")
+        ax.set_xlabel("Phase")
+        ax.set_ylabel("Phase")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        return
+    matrix = np.array(breakdowns, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[0] < 2:
+        ax.set_title(f"{title} (insufficient data)")
+        ax.set_xlabel("Phase")
+        ax.set_ylabel("Phase")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        return
+    with np.errstate(invalid="ignore"):
+        corr = np.corrcoef(matrix, rowvar=False)
+    if np.all(np.isnan(corr)):
+        ax.set_title(f"{title} (no variation)")
+        ax.set_xlabel("Phase")
+        ax.set_ylabel("Phase")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        return
+    masked = np.ma.masked_invalid(corr)
+    im = ax.imshow(
+        masked,
+        cmap="coolwarm",
+        origin="lower",
+        vmin=-1,
+        vmax=1,
+        aspect="auto",
+    )
+    ax.set_xticks(range(len(PHASE_LABELS)), PHASE_LABELS, rotation=45, ha="right")
+    ax.set_yticks(range(len(PHASE_LABELS)), PHASE_LABELS)
+    ax.set_xlabel("Phase")
+    ax.set_ylabel("Phase")
+    ax.set_title(title)
+    plt.colorbar(im, ax=ax, label="Pearson r")
+
+
 def plot_phase_pareto(
     ax,
     breakdowns: Sequence[Tuple[float, ...]],
@@ -510,6 +598,32 @@ def compute_moving_average(
     return rolling_ids, rolling_vals
 
 
+def compute_rolling_percentiles(
+    ids: Sequence[int],
+    values: Sequence[float],
+    *,
+    window_size: int = 50,
+    percentiles: Sequence[int] = (50, 95, 99),
+) -> dict[int, Tuple[List[int], List[float]]]:
+    percentiles = tuple(percentiles)
+    result = {perc: ([], []) for perc in percentiles}
+    if not ids or not values:
+        return result
+    sorted_pairs = sorted(zip(ids, values), key=lambda pair: pair[0])
+    window = deque()
+    window_size = max(1, window_size)
+    for batch_id, value in sorted_pairs:
+        window.append(float(value))
+        if len(window) > window_size:
+            window.popleft()
+        window_array = np.fromiter(window, dtype=float)
+        percentile_values = np.percentile(window_array, percentiles)
+        for perc, perc_value in zip(percentiles, percentile_values):
+            result[perc][0].append(batch_id)
+            result[perc][1].append(float(perc_value))
+    return result
+
+
 def compute_cumulative_latency(
     ids: Sequence[int], values: Sequence[float]
 ) -> Tuple[List[int], List[float]]:
@@ -552,6 +666,137 @@ def compute_throughput(
     return throughput_ids, throughput_vals
 
 
+def compute_empirical_cdf(values: Sequence[float]) -> Tuple[List[float], List[float]]:
+    if not values:
+        return [], []
+    arr = np.sort(np.array(values, dtype=float))
+    probabilities = np.arange(1, len(arr) + 1, dtype=float) / len(arr)
+    return arr.tolist(), probabilities.tolist()
+
+
+def plot_latency_cdf(
+    ax,
+    datasets: Sequence[Sequence[float]],
+    labels: Sequence[str],
+    title: str,
+) -> None:
+    colors = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#17becf",
+    ]
+    plotted = False
+    for idx, (series, label) in enumerate(zip(datasets, labels)):
+        if not series:
+            continue
+        xs, ys = compute_empirical_cdf(series)
+        ax.step(
+            xs,
+            ys,
+            where="post",
+            label=label,
+            color=colors[idx % len(colors)],
+        )
+        plotted = True
+    if not plotted:
+        ax.set_title(f"{title} (no data)")
+        ax.set_xlabel("Latency (ms)")
+        ax.set_ylabel("Cumulative probability")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        return
+    ax.set_title(title)
+    ax.set_xlabel("Latency (ms)")
+    ax.set_ylabel("Cumulative probability")
+    ax.set_ylim(0, 1.01)
+    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.legend(loc="lower right", fontsize="small")
+
+
+def plot_queue_vs_inference(
+    ax,
+    batch_sizes: Sequence[int],
+    breakdowns: Sequence[Tuple[float, ...]],
+) -> None:
+    queue_idx = PHASE_INDEX["queue"]
+    inference_idx = PHASE_INDEX["inference"]
+    queue_times: List[float] = []
+    inference_times: List[float] = []
+    sizes: List[int] = []
+    for size, phases in zip(batch_sizes, breakdowns):
+        if queue_idx >= len(phases) or inference_idx >= len(phases):
+            continue
+        queue_times.append(phases[queue_idx])
+        inference_times.append(phases[inference_idx])
+        sizes.append(size)
+    title = "Queue vs inference latency (colored by batch size)"
+    if not queue_times:
+        ax.set_title(f"{title} (no data)")
+        ax.set_xlabel("queue_ms")
+        ax.set_ylabel("inference_ms")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        return
+    max_size = max(sizes)
+    min_size = max(1, min(sizes))
+    scale = []
+    for value in sizes:
+        if max_size == min_size:
+            scale.append(120.0)
+        else:
+            norm = (value - min_size) / (max_size - min_size)
+            scale.append(40.0 + norm * 200.0)
+    scatter = ax.scatter(
+        queue_times,
+        inference_times,
+        c=sizes,
+        s=scale,
+        cmap="plasma",
+        alpha=0.75,
+    )
+    ax.set_title(title)
+    ax.set_xlabel("queue_ms")
+    ax.set_ylabel("inference_ms")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    cbar = plt.colorbar(scatter, ax=ax)
+    cbar.set_label("Batch size")
+
+
+def plot_rolling_percentiles(
+    ax,
+    batch_ids: Sequence[int],
+    latencies: Sequence[float],
+    worker_label: str,
+    *,
+    window_size: int = ROLLING_WINDOW,
+) -> None:
+    percentiles = (50, 95, 99)
+    series = compute_rolling_percentiles(
+        batch_ids,
+        latencies,
+        window_size=window_size,
+        percentiles=percentiles,
+    )
+    has_data = any(series[perc][0] for perc in percentiles)
+    title = f"{worker_label} rolling latency percentiles (window={window_size})"
+    if not has_data:
+        ax.set_title(f"{title} (no data)")
+        ax.set_xlabel("Batch ID")
+        ax.set_ylabel("Latency (ms)")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        return
+    colors = {50: "#1f77b4", 95: "#ff7f0e", 99: "#d62728"}
+    for perc in percentiles:
+        ids_series, values_series = series[perc]
+        ax.plot(ids_series, values_series, label=f"P{perc}", color=colors.get(perc))
+    ax.set_title(title)
+    ax.set_xlabel("Batch ID")
+    ax.set_ylabel("Latency (ms)")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    ax.legend(loc="upper right", fontsize="small")
+
+
 def main() -> int:
     args = parse_args()
     csv_path = args.summary_csv
@@ -576,7 +821,7 @@ def main() -> int:
     )
     cpu_color = "#d62728"
 
-    fig, axes_array = plt.subplots(17, 1, figsize=(12, 64), sharex=False)
+    fig, axes_array = plt.subplots(24, 1, figsize=(12, 92), sharex=False)
     axes = list(axes_array)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
@@ -608,10 +853,10 @@ def main() -> int:
         axes[5].set_title("Throughput vs batch ID (no data)")
         axes[5].grid(True, linestyle="--", alpha=0.3)
 
-    avg_ids, avg_vals = compute_moving_average(all_ids, all_lat)
+    avg_ids, avg_vals = compute_moving_average(all_ids, all_lat, window=ROLLING_WINDOW)
     if avg_ids:
         axes[6].plot(avg_ids, avg_vals, color="purple")
-        axes[6].set_title("Rolling average latency (window=50)")
+        axes[6].set_title(f"Rolling average latency (window={ROLLING_WINDOW})")
         axes[6].set_xlabel("Batch ID")
         axes[6].set_ylabel("Latency (ms)")
         axes[6].grid(True, linestyle="--", alpha=0.3)
@@ -619,12 +864,20 @@ def main() -> int:
         axes[6].set_title("Rolling average latency (no data)")
         axes[6].grid(True, linestyle="--", alpha=0.3)
 
-    plot_latency_stack(axes[7], all_ids, all_breakdowns)
-    plot_phase_heatmap(axes[8], all_sizes, all_breakdowns)
-    plot_phase_waterfall(axes[9], cpu_breakdowns, gpu_breakdowns)
-    plot_phase_pareto(axes[10], all_breakdowns)
+    plot_rolling_percentiles(
+        axes[7], cpu_ids, cpu_lat, "CPU", window_size=ROLLING_WINDOW
+    )
+    plot_rolling_percentiles(
+        axes[8], gpu_ids, gpu_lat, "GPU", window_size=ROLLING_WINDOW
+    )
 
-    axes[11].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
+    plot_latency_stack(axes[9], all_ids, all_breakdowns)
+    plot_phase_heatmap(axes[10], all_sizes, all_breakdowns)
+    plot_phase_correlation(axes[11], all_breakdowns)
+    plot_phase_waterfall(axes[12], cpu_breakdowns, gpu_breakdowns)
+    plot_phase_pareto(axes[13], all_breakdowns)
+
+    axes[14].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
     if len(all_sizes) >= 2:
         sorted_pairs = sorted(zip(all_sizes, all_lat))
         xs = np.array([p[0] for p in sorted_pairs])
@@ -632,22 +885,24 @@ def main() -> int:
         coeffs = np.polyfit(xs, ys, deg=1)
         fit_x = np.linspace(xs.min(), xs.max(), num=200)
         fit_y = np.polyval(coeffs, fit_x)
-        axes[11].plot(fit_x, fit_y, color="black", linestyle="--")
-    axes[11].set_title("Latency vs batch size (correlation)")
-    axes[11].set_xlabel("Batch size")
-    axes[11].set_ylabel("Latency (ms)")
-    axes[11].grid(True, linestyle="--", alpha=0.3)
+        axes[14].plot(fit_x, fit_y, color="black", linestyle="--")
+    axes[14].set_title("Latency vs batch size (correlation)")
+    axes[14].set_xlabel("Batch size")
+    axes[14].set_ylabel("Latency (ms)")
+    axes[14].grid(True, linestyle="--", alpha=0.3)
 
-    axes[12].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
+    plot_queue_vs_inference(axes[15], all_sizes, all_breakdowns)
+
+    axes[16].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
     if cpu_sizes:
-        axes[12].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
+        axes[16].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
     if gpu_sizes:
-        axes[12].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
-    axes[12].set_title("Batch size distribution")
-    axes[12].set_xlabel("Batch size")
-    axes[12].set_ylabel("Count")
-    axes[12].legend()
-    axes[12].grid(True, linestyle="--", alpha=0.3)
+        axes[16].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
+    axes[16].set_title("Batch size distribution")
+    axes[16].set_xlabel("Batch size")
+    axes[16].set_ylabel("Count")
+    axes[16].legend()
+    axes[16].grid(True, linestyle="--", alpha=0.3)
 
     violin_data = []
     labels = []
@@ -658,20 +913,51 @@ def main() -> int:
         violin_data.append(gpu_lat)
         labels.append("GPU")
     if violin_data:
-        axes[13].violinplot(violin_data, showmeans=True, showmedians=False)
-        axes[13].set_xticks(range(1, len(labels) + 1), labels)
-        axes[13].set_title("Latency distribution (violin plot)")
-        axes[13].set_ylabel("Latency (ms)")
-        axes[13].grid(True, linestyle="--", alpha=0.3)
+        axes[17].violinplot(violin_data, showmeans=True, showmedians=False)
+        axes[17].set_xticks(range(1, len(labels) + 1), labels)
+        axes[17].set_title("Latency distribution (violin plot)")
+        axes[17].set_ylabel("Latency (ms)")
+        axes[17].grid(True, linestyle="--", alpha=0.3)
     else:
-        axes[13].set_title("Latency distribution (no data)")
-        axes[13].grid(True, linestyle="--", alpha=0.3)
+        axes[17].set_title("Latency distribution (no data)")
+        axes[17].grid(True, linestyle="--", alpha=0.3)
 
-    plot_worker_boxplots(axes[14], all_workers, all_lat)
-    plot_worker_time_heatmap(axes[15], all_workers, all_ids, all_lat)
-    axes[16].remove()
-    axes[16] = fig.add_subplot(17, 1, 17, projection="polar")
-    plot_worker_radar(axes[16], all_workers, all_breakdowns)
+    worker_cdf_data: List[Sequence[float]] = []
+    worker_cdf_labels: List[str] = []
+    if cpu_lat:
+        worker_cdf_data.append(cpu_lat)
+        worker_cdf_labels.append("CPU")
+    if gpu_lat:
+        worker_cdf_data.append(gpu_lat)
+        worker_cdf_labels.append("GPU")
+    plot_latency_cdf(
+        axes[18],
+        worker_cdf_data,
+        worker_cdf_labels,
+        "Latency CDF by worker type",
+    )
+
+    size_latencies: dict[int, List[float]] = {}
+    for size, latency in zip(all_sizes, all_lat):
+        size_latencies.setdefault(size, []).append(latency)
+    top_sizes = sorted(
+        size_latencies.items(), key=lambda item: len(item[1]), reverse=True
+    )[:MAX_BATCH_CDF_SERIES]
+    batch_cdf_data = [item[1] for item in top_sizes]
+    batch_cdf_labels = [f"size {item[0]}" for item in top_sizes]
+    plot_latency_cdf(
+        axes[19],
+        batch_cdf_data,
+        batch_cdf_labels,
+        "Latency CDF by batch size",
+    )
+
+    plot_worker_phase_utilization(axes[20], all_workers, all_breakdowns)
+    plot_worker_boxplots(axes[21], all_workers, all_lat)
+    plot_worker_time_heatmap(axes[22], all_workers, all_ids, all_lat)
+    axes[23].remove()
+    axes[23] = fig.add_subplot(24, 1, 24, projection="polar")
+    plot_worker_radar(axes[23], all_workers, all_breakdowns)
     fig.tight_layout()
 
     if args.output:
