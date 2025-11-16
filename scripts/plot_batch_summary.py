@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Iterable, List, Sequence, Tuple
 
@@ -92,7 +93,7 @@ def load_latencies(
 
 
 def filter_latencies(
-    data: Iterable[Tuple[int, float, str]],
+    data: Iterable[Tuple[int, float, str, int, Tuple[float, ...]]],
     *,
     worker_type: str | None = None,
 ) -> Tuple[List[int], List[float], List[int], List[Tuple[float, ...]]]:
@@ -180,6 +181,64 @@ def plot_violin(
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
+def scatter_with_size(
+    ax,
+    x: Sequence[int],
+    y: Sequence[float],
+    sizes: Sequence[int],
+    title: str,
+) -> None:
+    if not x or not y or not sizes:
+        ax.set_title(f"{title} (no data)")
+        ax.set_xlabel("Batch ID")
+        ax.set_ylabel("Latency (ms)")
+        ax.grid(True, linestyle="--", alpha=0.4)
+        return
+    max_size = max(sizes)
+    min_size = max(1, min(sizes))
+    scale = []
+    for value in sizes:
+        norm = value / max_size if max_size > 0 else 0.0
+        scale.append(50 + norm * 200)
+    scatter = ax.scatter(
+        x,
+        y,
+        s=scale,
+        c=sizes,
+        cmap="viridis",
+        alpha=0.7,
+    )
+    ax.set_title(title)
+    ax.set_xlabel("Batch ID")
+    ax.set_ylabel("Latency (ms)")
+    ax.grid(True, linestyle="--", alpha=0.4)
+    cbar = plt.colorbar(scatter, ax=ax)
+    cbar.set_label("Batch size")
+
+
+def compute_moving_average(
+    ids: Sequence[int], values: Sequence[float], window: int = 50
+) -> Tuple[List[int], List[float]]:
+    if not ids or not values:
+        return [], []
+    sorted_pairs = sorted(zip(ids, values), key=lambda pair: pair[0])
+    sorted_ids = [pair[0] for pair in sorted_pairs]
+    sorted_vals = [pair[1] for pair in sorted_pairs]
+    window = max(1, min(window, len(sorted_vals)))
+    rolling_ids: List[int] = []
+    rolling_vals: List[float] = []
+    window_sum = 0.0
+    current = deque()
+    for batch_id, value in zip(sorted_ids, sorted_vals):
+        current.append(value)
+        window_sum += value
+        if len(current) > window:
+            window_sum -= current.popleft()
+        rolling_ids.append(batch_id)
+        rolling_vals.append(window_sum / len(current))
+    return rolling_ids, rolling_vals
+
+
 def main() -> int:
     args = parse_args()
     csv_path = args.summary_csv
@@ -202,24 +261,38 @@ def main() -> int:
     )
     cpu_color = "#d62728"
 
-    fig, axes = plt.subplots(6, 1, figsize=(12, 20), sharex=False)
+    fig, axes = plt.subplots(8, 1, figsize=(12, 28), sharex=False)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
         axes[0].scatter(cpu_ids, cpu_lat, s=14, alpha=0.7, c=cpu_color)
-    scatter_plot(axes[1], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
-    scatter_plot(axes[2], gpu_ids, gpu_lat, "GPU workers only")
-    plot_latency_stack(axes[3], all_ids, all_breakdowns)
+    scatter_with_size(
+        axes[1], all_ids, all_lat, all_sizes, "Latency vs batch size (multidim)"
+    )
+    scatter_plot(axes[2], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
+    scatter_plot(axes[3], gpu_ids, gpu_lat, "GPU workers only")
+    avg_ids, avg_vals = compute_moving_average(all_ids, all_lat)
+    if avg_ids:
+        axes[4].plot(avg_ids, avg_vals, color="purple")
+        axes[4].set_title("Rolling average latency (window=50)")
+        axes[4].set_xlabel("Batch ID")
+        axes[4].set_ylabel("Latency (ms)")
+        axes[4].grid(True, linestyle="--", alpha=0.3)
+    else:
+        axes[4].set_title("Rolling average latency (no data)")
+        axes[4].grid(True, linestyle="--", alpha=0.3)
 
-    axes[4].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
+    plot_latency_stack(axes[5], all_ids, all_breakdowns)
+
+    axes[6].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
     if cpu_sizes:
-        axes[4].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
+        axes[6].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
     if gpu_sizes:
-        axes[4].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
-    axes[4].set_title("Batch size distribution")
-    axes[4].set_xlabel("Batch size")
-    axes[4].set_ylabel("Count")
-    axes[4].legend()
-    axes[4].grid(True, linestyle="--", alpha=0.3)
+        axes[6].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
+    axes[6].set_title("Batch size distribution")
+    axes[6].set_xlabel("Batch size")
+    axes[6].set_ylabel("Count")
+    axes[6].legend()
+    axes[6].grid(True, linestyle="--", alpha=0.3)
 
     violin_data = []
     labels = []
@@ -230,14 +303,14 @@ def main() -> int:
         violin_data.append(gpu_lat)
         labels.append("GPU")
     if violin_data:
-        axes[5].violinplot(violin_data, showmeans=True, showmedians=False)
-        axes[5].set_xticks(range(1, len(labels) + 1), labels)
-        axes[5].set_title("Latency distribution (violin plot)")
-        axes[5].set_ylabel("Latency (ms)")
-        axes[5].grid(True, linestyle="--", alpha=0.3)
+        axes[7].violinplot(violin_data, showmeans=True, showmedians=False)
+        axes[7].set_xticks(range(1, len(labels) + 1), labels)
+        axes[7].set_title("Latency distribution (violin plot)")
+        axes[7].set_ylabel("Latency (ms)")
+        axes[7].grid(True, linestyle="--", alpha=0.3)
     else:
-        axes[5].set_title("Latency distribution (no data)")
-        axes[5].grid(True, linestyle="--", alpha=0.3)
+        axes[7].set_title("Latency distribution (no data)")
+        axes[7].grid(True, linestyle="--", alpha=0.3)
     fig.tight_layout()
 
     if args.output:
