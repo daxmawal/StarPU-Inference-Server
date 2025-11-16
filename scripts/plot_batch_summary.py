@@ -197,6 +197,24 @@ def filter_latencies(
     return ids, latencies, worker_ids, batch_sizes, logical_jobs, breakdowns, arrivals
 
 
+def flatten_request_arrival_seconds(
+    arrival_sequences: Sequence[Sequence[int]],
+) -> List[float]:
+    events: List[int] = []
+    for sequence in arrival_sequences:
+        for timestamp in sequence:
+            if timestamp > 0:
+                events.append(timestamp)
+    if not events:
+        return []
+    events.sort()
+    start = events[0]
+    relative_seconds = [
+        (timestamp - start) / 1_000_000.0 for timestamp in events if timestamp >= start
+    ]
+    return relative_seconds
+
+
 def plot_latency_stack(
     ax,
     batch_ids: Sequence[int],
@@ -811,22 +829,13 @@ def plot_request_arrival_timeline(
     ax,
     arrival_sequences: Sequence[Sequence[int]],
 ) -> None:
-    events: List[int] = []
-    for sequence in arrival_sequences:
-        for timestamp in sequence:
-            if timestamp > 0:
-                events.append(timestamp)
-    if not events:
+    relative_seconds = flatten_request_arrival_seconds(arrival_sequences)
+    if not relative_seconds:
         ax.set_title("Request arrival timeline (no data)")
         ax.set_xlabel("Time since first arrival (s)")
         ax.set_ylabel("Cumulative requests")
         ax.grid(True, linestyle="--", alpha=0.3)
         return
-    events.sort()
-    start = events[0]
-    relative_seconds = [
-        (timestamp - start) / 1_000_000.0 for timestamp in events if timestamp >= start
-    ]
     counts = np.arange(1, len(relative_seconds) + 1)
     ax.step(relative_seconds, counts, where="post", color="#ff9896")
     ax.set_title("Request arrival timeline")
@@ -847,6 +856,50 @@ def plot_request_arrival_timeline(
                 fontsize="small",
                 color="#444444",
             )
+
+
+def plot_request_arrival_rate(
+    ax,
+    arrival_sequences: Sequence[Sequence[int]],
+    *,
+    bin_width: float = 1.0,
+    max_bins: int = 200,
+) -> None:
+    relative_seconds = flatten_request_arrival_seconds(arrival_sequences)
+    if not relative_seconds:
+        ax.set_title("Request arrival rate (no data)")
+        ax.set_xlabel("Time since first arrival (s)")
+        ax.set_ylabel("Requests/s")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        return
+    duration = max(relative_seconds[-1], bin_width)
+    bin_width = max(bin_width, 0.1)
+    bin_count = min(max_bins, max(1, int(np.ceil(duration / bin_width))))
+    bins = np.linspace(0.0, bin_count * bin_width, num=bin_count + 1)
+    counts, edges = np.histogram(relative_seconds, bins=bins)
+    rates = counts / bin_width
+    ax.bar(
+        edges[:-1],
+        rates,
+        width=bin_width * 0.9,
+        align="edge",
+        color="#98df8a",
+    )
+    ax.set_title(f"Request arrival rate (bin={bin_width:.1f}s)")
+    ax.set_xlabel("Time since first arrival (s)")
+    ax.set_ylabel("Requests/s")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    peak_rate = rates.max() if len(rates) else 0.0
+    ax.text(
+        0.98,
+        0.85,
+        f"peak {peak_rate:.1f} req/s",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize="small",
+        color="#444444",
+    )
 
 
 def compute_sla_coverage(
@@ -1126,7 +1179,7 @@ def main() -> int:
     ) = filter_latencies(data, worker_type="cuda")
     cpu_color = "#d62728"
 
-    fig, axes_array = plt.subplots(29, 1, figsize=(12, 112), sharex=False)
+    fig, axes_array = plt.subplots(30, 1, figsize=(12, 116), sharex=False)
     axes = list(axes_array)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
@@ -1267,9 +1320,10 @@ def main() -> int:
     plot_worker_boxplots(axes[25], all_workers, all_lat)
     plot_worker_time_heatmap(axes[26], all_workers, all_ids, all_lat)
     plot_request_arrival_timeline(axes[27], all_arrivals)
-    axes[28].remove()
-    axes[28] = fig.add_subplot(29, 1, 29, projection="polar")
-    plot_worker_radar(axes[28], all_workers, all_breakdowns)
+    plot_request_arrival_rate(axes[28], all_arrivals)
+    axes[29].remove()
+    axes[29] = fig.add_subplot(30, 1, 30, projection="polar")
+    plot_worker_radar(axes[29], all_workers, all_breakdowns)
     fig.subplots_adjust(hspace=0.6, top=0.98, bottom=0.02)
 
     if args.output:

@@ -26,8 +26,8 @@ batching:
   The server automatically runs `scripts/plot_batch_summary.py` at shutdown to
   produce latency scatter plots (combined, multi-dimension batch-size, CPU-only,
   GPU-only), cumulative + moving average timelines, throughput vs time (falling
-  back to batch size when logical job counts are absent), a request-arrival
-  timeline (cumulative requests vs time since the first arrival), SLA coverage curves
+  back to batch size when logical job counts are absent), request-arrival views
+  (cumulative timeline plus instantaneous rate), SLA coverage curves
   (cumulative % under 50/100/200 ms), rolling percentile curves (worker-type
   P50/P95/P99), a stacked thermometer (queue->callback), a
   phase vs batch_size heatmap, a worker/phase heatmap, a phase correlation
