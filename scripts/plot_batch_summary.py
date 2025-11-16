@@ -20,6 +20,7 @@ import argparse
 import csv
 import sys
 from collections import Counter, deque
+from itertools import cycle
 from pathlib import Path
 from typing import Iterable, List, Sequence, Tuple
 
@@ -239,6 +240,50 @@ def plot_worker_boxplots(
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
+def plot_worker_radar(
+    ax,
+    worker_ids: Sequence[int],
+    breakdowns: Sequence[Tuple[float, ...]],
+    max_workers: int = 4,
+) -> None:
+    contributions: dict[int, np.ndarray] = {}
+    counts: dict[int, int] = {}
+    for worker, phases in zip(worker_ids, breakdowns):
+        if worker < 0:
+            continue
+        contributions.setdefault(worker, np.zeros(len(PHASE_LABELS)))
+        contributions[worker] += np.array(phases)
+        counts[worker] = counts.get(worker, 0) + 1
+
+    if not contributions:
+        ax.set_title("Worker radar (no data)")
+        ax.set_axis_off()
+        return
+
+    averages = []
+    for worker, total in contributions.items():
+        average = total / counts[worker]
+        averages.append((worker, average))
+    averages.sort(key=lambda item: counts[item[0]], reverse=True)
+    averages = averages[:max_workers]
+
+    angles = np.linspace(0, 2 * np.pi, len(PHASE_LABELS), endpoint=False)
+    angles = np.concatenate((angles, [angles[0]]))
+    color_cycle = cycle(["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"])
+    ax.set_theta_offset(np.pi / 2)
+    ax.set_theta_direction(-1)
+    ax.set_xticks(angles[:-1], PHASE_LABELS)
+    ax.set_title("Worker radar (avg phase ms)")
+
+    for worker, avg in averages:
+        values = np.concatenate((avg, [avg[0]]))
+        color = next(color_cycle)
+        ax.plot(angles, values, label=f"worker {worker}", color=color)
+        ax.fill(angles, values, alpha=0.1, color=color)
+
+    ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1.1), fontsize="small")
+
+
 def plot_phase_heatmap(
     ax,
     batch_sizes: Sequence[int],
@@ -372,7 +417,8 @@ def main() -> int:
     )
     cpu_color = "#d62728"
 
-    fig, axes = plt.subplots(12, 1, figsize=(12, 44), sharex=False)
+    fig, axes_array = plt.subplots(14, 1, figsize=(12, 52), sharex=False)
+    axes = list(axes_array)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
         axes[0].scatter(cpu_ids, cpu_lat, s=14, alpha=0.7, c=cpu_color)
@@ -407,16 +453,30 @@ def main() -> int:
     plot_phase_heatmap(axes[7], all_sizes, all_breakdowns)
     plot_phase_pareto(axes[8], all_breakdowns)
 
-    axes[9].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
-    if cpu_sizes:
-        axes[9].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
-    if gpu_sizes:
-        axes[9].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
-    axes[9].set_title("Batch size distribution")
+    axes[9].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
+    if len(all_sizes) >= 2:
+        sorted_pairs = sorted(zip(all_sizes, all_lat))
+        xs = np.array([p[0] for p in sorted_pairs])
+        ys = np.array([p[1] for p in sorted_pairs])
+        coeffs = np.polyfit(xs, ys, deg=1)
+        fit_x = np.linspace(xs.min(), xs.max(), num=200)
+        fit_y = np.polyval(coeffs, fit_x)
+        axes[9].plot(fit_x, fit_y, color="black", linestyle="--")
+    axes[9].set_title("Latency vs batch size (correlation)")
     axes[9].set_xlabel("Batch size")
-    axes[9].set_ylabel("Count")
-    axes[9].legend()
+    axes[9].set_ylabel("Latency (ms)")
     axes[9].grid(True, linestyle="--", alpha=0.3)
+
+    axes[10].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
+    if cpu_sizes:
+        axes[10].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
+    if gpu_sizes:
+        axes[10].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
+    axes[10].set_title("Batch size distribution")
+    axes[10].set_xlabel("Batch size")
+    axes[10].set_ylabel("Count")
+    axes[10].legend()
+    axes[10].grid(True, linestyle="--", alpha=0.3)
 
     violin_data = []
     labels = []
@@ -427,16 +487,19 @@ def main() -> int:
         violin_data.append(gpu_lat)
         labels.append("GPU")
     if violin_data:
-        axes[10].violinplot(violin_data, showmeans=True, showmedians=False)
-        axes[10].set_xticks(range(1, len(labels) + 1), labels)
-        axes[10].set_title("Latency distribution (violin plot)")
-        axes[10].set_ylabel("Latency (ms)")
-        axes[10].grid(True, linestyle="--", alpha=0.3)
+        axes[11].violinplot(violin_data, showmeans=True, showmedians=False)
+        axes[11].set_xticks(range(1, len(labels) + 1), labels)
+        axes[11].set_title("Latency distribution (violin plot)")
+        axes[11].set_ylabel("Latency (ms)")
+        axes[11].grid(True, linestyle="--", alpha=0.3)
     else:
-        axes[10].set_title("Latency distribution (no data)")
-        axes[10].grid(True, linestyle="--", alpha=0.3)
+        axes[11].set_title("Latency distribution (no data)")
+        axes[11].grid(True, linestyle="--", alpha=0.3)
 
-    plot_worker_boxplots(axes[11], all_workers, all_lat)
+    plot_worker_boxplots(axes[12], all_workers, all_lat)
+    axes[13].remove()
+    axes[13] = fig.add_subplot(14, 1, 14, projection="polar")
+    plot_worker_radar(axes[13], all_workers, all_breakdowns)
     fig.tight_layout()
 
     if args.output:
