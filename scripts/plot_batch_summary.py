@@ -54,6 +54,17 @@ PHASE_INDEX = {label: idx for idx, label in enumerate(PHASE_LABELS)}
 SLA_THRESHOLDS_MS = (50.0, 100.0, 200.0)
 MAX_WORKER_CDFS = 6
 
+BatchRow = Tuple[
+    int,  # batch_id
+    float,  # total latency (ms)
+    str,  # worker type
+    int,  # worker_id
+    int,  # batch size
+    int,  # logical job count
+    Tuple[float, ...],  # phase breakdown
+    Tuple[int, ...],  # request arrival timestamps (us)
+]
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -76,10 +87,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def parse_request_arrival_field(field: str | None) -> Tuple[int, ...]:
+    if not field:
+        return ()
+    values: List[int] = []
+    for raw in field.split(";"):
+        token = raw.strip()
+        if not token:
+            continue
+        try:
+            values.append(int(token))
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid request_arrival_us entry '{raw}' in field '{field}'"
+            ) from exc
+    return tuple(values)
+
+
 def load_latencies(
     csv_path: Path,
-) -> List[Tuple[int, float, str, int, int, int, Tuple[float, ...]]]:
-    batches: List[Tuple[int, float, str, int, int, int, Tuple[float, ...]]] = []
+) -> List[BatchRow]:
+    batches: List[BatchRow] = []
     with csv_path.open(newline="") as handle:
         reader = csv.DictReader(handle)
         required = {
@@ -111,6 +139,8 @@ def load_latencies(
                 else batch_size
             )
             breakdown = tuple(float(row[f"{label}_ms"]) for label in PHASE_LABELS)
+            arrivals_field = row.get("request_arrival_us")
+            arrivals = parse_request_arrival_field(arrivals_field)
             batches.append(
                 (
                     batch_id,
@@ -120,17 +150,24 @@ def load_latencies(
                     batch_size,
                     logical_jobs,
                     breakdown,
+                    arrivals,
                 )
             )
     return batches
 
 
 def filter_latencies(
-    data: Iterable[Tuple[int, float, str, int, int, int, Tuple[float, ...]]],
+    data: Iterable[BatchRow],
     *,
     worker_type: str | None = None,
 ) -> Tuple[
-    List[int], List[float], List[int], List[int], List[int], List[Tuple[float, ...]]
+    List[int],
+    List[float],
+    List[int],
+    List[int],
+    List[int],
+    List[Tuple[float, ...]],
+    List[Tuple[int, ...]],
 ]:
     ids: List[int] = []
     latencies: List[float] = []
@@ -138,6 +175,7 @@ def filter_latencies(
     batch_sizes: List[int] = []
     logical_jobs: List[int] = []
     breakdowns: List[Tuple[float, ...]] = []
+    arrivals: List[Tuple[int, ...]] = []
     for (
         batch_id,
         latency,
@@ -146,6 +184,7 @@ def filter_latencies(
         batch_size,
         logical_job_count,
         breakdown,
+        request_arrivals,
     ) in data:
         if worker_type is None or device == worker_type:
             ids.append(batch_id)
@@ -154,7 +193,8 @@ def filter_latencies(
             batch_sizes.append(batch_size)
             logical_jobs.append(logical_job_count)
             breakdowns.append(breakdown)
-    return ids, latencies, worker_ids, batch_sizes, logical_jobs, breakdowns
+            arrivals.append(request_arrivals)
+    return ids, latencies, worker_ids, batch_sizes, logical_jobs, breakdowns, arrivals
 
 
 def plot_latency_stack(
@@ -767,6 +807,48 @@ def compute_throughput(
     return throughput_ids, throughput_vals
 
 
+def plot_request_arrival_timeline(
+    ax,
+    arrival_sequences: Sequence[Sequence[int]],
+) -> None:
+    events: List[int] = []
+    for sequence in arrival_sequences:
+        for timestamp in sequence:
+            if timestamp > 0:
+                events.append(timestamp)
+    if not events:
+        ax.set_title("Request arrival timeline (no data)")
+        ax.set_xlabel("Time since first arrival (s)")
+        ax.set_ylabel("Cumulative requests")
+        ax.grid(True, linestyle="--", alpha=0.3)
+        return
+    events.sort()
+    start = events[0]
+    relative_seconds = [
+        (timestamp - start) / 1_000_000.0 for timestamp in events if timestamp >= start
+    ]
+    counts = np.arange(1, len(relative_seconds) + 1)
+    ax.step(relative_seconds, counts, where="post", color="#ff9896")
+    ax.set_title("Request arrival timeline")
+    ax.set_xlabel("Time since first arrival (s)")
+    ax.set_ylabel("Cumulative requests")
+    ax.grid(True, linestyle="--", alpha=0.3)
+    if relative_seconds:
+        duration = relative_seconds[-1]
+        if duration > 0:
+            avg_rate = counts[-1] / duration
+            ax.text(
+                0.98,
+                0.05,
+                f"avg {avg_rate:.1f} req/s",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize="small",
+                color="#444444",
+            )
+
+
 def compute_sla_coverage(
     ids: Sequence[int],
     latencies: Sequence[float],
@@ -1015,18 +1097,36 @@ def main() -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    all_ids, all_lat, all_workers, all_sizes, all_jobs, all_breakdowns = (
-        filter_latencies(data)
-    )
-    cpu_ids, cpu_lat, cpu_workers, cpu_sizes, cpu_jobs, cpu_breakdowns = (
-        filter_latencies(data, worker_type="cpu")
-    )
-    gpu_ids, gpu_lat, gpu_workers, gpu_sizes, gpu_jobs, gpu_breakdowns = (
-        filter_latencies(data, worker_type="cuda")
-    )
+    (
+        all_ids,
+        all_lat,
+        all_workers,
+        all_sizes,
+        all_jobs,
+        all_breakdowns,
+        all_arrivals,
+    ) = filter_latencies(data)
+    (
+        cpu_ids,
+        cpu_lat,
+        cpu_workers,
+        cpu_sizes,
+        cpu_jobs,
+        cpu_breakdowns,
+        cpu_arrivals,
+    ) = filter_latencies(data, worker_type="cpu")
+    (
+        gpu_ids,
+        gpu_lat,
+        gpu_workers,
+        gpu_sizes,
+        gpu_jobs,
+        gpu_breakdowns,
+        gpu_arrivals,
+    ) = filter_latencies(data, worker_type="cuda")
     cpu_color = "#d62728"
 
-    fig, axes_array = plt.subplots(28, 1, figsize=(12, 108), sharex=False)
+    fig, axes_array = plt.subplots(29, 1, figsize=(12, 112), sharex=False)
     axes = list(axes_array)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
@@ -1166,9 +1266,10 @@ def main() -> int:
     plot_worker_phase_utilization(axes[24], all_workers, all_breakdowns)
     plot_worker_boxplots(axes[25], all_workers, all_lat)
     plot_worker_time_heatmap(axes[26], all_workers, all_ids, all_lat)
-    axes[27].remove()
-    axes[27] = fig.add_subplot(28, 1, 28, projection="polar")
-    plot_worker_radar(axes[27], all_workers, all_breakdowns)
+    plot_request_arrival_timeline(axes[27], all_arrivals)
+    axes[28].remove()
+    axes[28] = fig.add_subplot(29, 1, 29, projection="polar")
+    plot_worker_radar(axes[28], all_workers, all_breakdowns)
     fig.subplots_adjust(hspace=0.6, top=0.98, bottom=0.02)
 
     if args.output:

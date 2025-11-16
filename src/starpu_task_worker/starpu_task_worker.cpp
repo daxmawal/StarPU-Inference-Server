@@ -244,6 +244,7 @@ aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
     entry.callback = job->get_on_complete();
     entry.batch_size = job_batch;
     entry.request_id = job->get_request_id();
+    entry.arrival_time = job->timing_info().enqueued_time;
     info.sub_jobs.push_back(std::move(entry));
   }
 
@@ -320,6 +321,44 @@ build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
   }
 
   return ids;
+}
+
+auto
+build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
+    -> std::vector<int64_t>
+{
+  using Clock = std::chrono::high_resolution_clock;
+  const auto to_microseconds = [](Clock::time_point tp) -> int64_t {
+    if (tp == Clock::time_point{}) {
+      return 0;
+    }
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               tp.time_since_epoch())
+        .count();
+  };
+
+  if (!job) {
+    return {};
+  }
+
+  if (!job->has_aggregated_sub_jobs()) {
+    return std::vector<int64_t>{
+        to_microseconds(job->timing_info().enqueued_time)};
+  }
+
+  const auto& aggregated = job->aggregated_sub_jobs();
+  std::vector<int64_t> arrivals;
+  arrivals.reserve(aggregated.size());
+  for (const auto& sub_job : aggregated) {
+    auto arrival = sub_job.arrival_time;
+    if (arrival == Clock::time_point{}) {
+      if (auto locked = sub_job.job.lock()) {
+        arrival = locked->timing_info().enqueued_time;
+      }
+    }
+    arrivals.push_back(to_microseconds(arrival));
+  }
+  return arrivals;
 }
 
 inline auto
@@ -831,11 +870,13 @@ ResultDispatcher::record_job_metrics(
     const auto breakdown =
         detail::compute_latency_breakdown(timing, latency.count());
     const auto request_ids = build_request_ids_for_trace(job);
+    const auto request_arrivals = build_request_arrival_us_for_trace(job);
     tracer.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
         .batch_id = job_id,
         .model_name = job->model_name(),
         .batch_size = batch_size,
         .request_ids = request_ids,
+        .request_arrival_us = request_arrivals,
         .worker_id = job->get_worker_id(),
         .worker_type = job->get_executed_on(),
         .device_id = job->get_device_id(),

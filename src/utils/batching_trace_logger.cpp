@@ -82,6 +82,20 @@ format_request_ids(std::span<const int> request_ids) -> std::string
 }
 
 auto
+format_request_arrivals(std::span<const int64_t> request_arrivals)
+    -> std::string
+{
+  std::ostringstream oss;
+  for (size_t idx = 0; idx < request_arrivals.size(); ++idx) {
+    if (idx > 0) {
+      oss << ';';
+    }
+    oss << request_arrivals[idx];
+  }
+  return oss.str();
+}
+
+auto
 make_flow_bind_id(int batch_id, bool is_warmup) -> std::optional<uint64_t>
 {
   if (batch_id < 0) {
@@ -952,13 +966,16 @@ void
 BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
 {
   const auto request_ids_string = format_request_ids(args.request_ids);
+  const auto request_arrivals_string =
+      format_request_arrivals(args.request_arrival_us);
   const auto escaped_model = escape_csv_field(args.model_name);
   const auto escaped_requests = escape_csv_field(request_ids_string);
+  const auto escaped_arrivals = escape_csv_field(request_arrivals_string);
   summary_stream_ << args.batch_id << ",\"" << escaped_model << "\","
                   << args.worker_id << ",\""
                   << device_type_to_string(args.worker_type) << "\","
                   << args.device_id << ',' << args.batch_size << ",\""
-                  << escaped_requests << "\","
+                  << escaped_requests << "\",\"" << escaped_arrivals << "\","
                   << std::format("{:.3f}", args.queue_ms) << ','
                   << std::format("{:.3f}", args.batch_ms) << ','
                   << std::format("{:.3f}", args.submit_ms) << ','
@@ -986,8 +1003,8 @@ BatchingTraceLogger::configure_summary_writer(
   }
   summary_stream_
       << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
-         "request_ids,queue_ms,batch_ms,submit_ms,scheduling_ms,codelet_ms,"
-         "inference_ms,callback_ms,total_ms,warmup\n";
+         "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
+         "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,warmup\n";
   return true;
 }
 

@@ -154,6 +154,7 @@ class BatchingTraceLogger {
     std::string_view model_name;
     std::size_t batch_size;
     std::span<const int> request_ids;
+    std::span<const int64_t> request_arrival_us{};
     int worker_id;
     DeviceType worker_type;
     int device_id;

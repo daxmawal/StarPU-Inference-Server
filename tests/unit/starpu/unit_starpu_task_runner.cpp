@@ -991,6 +991,9 @@ make_aggregated_sub_job(
   aggregated.job = job;
   aggregated.request_id = request_id;
   aggregated.batch_size = 1;
+  if (job) {
+    aggregated.arrival_time = job->timing_info().enqueued_time;
+  }
   return aggregated;
 }
 

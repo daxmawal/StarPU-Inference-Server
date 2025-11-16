@@ -1473,11 +1473,13 @@ TEST(BatchingTraceLoggerTest, WritesBatchSummaryEntries)
 
   logger.configure(true, trace_path.string());
   const std::array<int, 2> request_ids{100, 101};
+  const std::array<int64_t, 2> request_arrivals{1000, 2000};
   logger.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
       .batch_id = 99,
       .model_name = "demo_model",
       .batch_size = 3,
       .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
       .worker_id = 7,
       .worker_type = DeviceType::CUDA,
       .device_id = 4,
@@ -1498,9 +1500,12 @@ TEST(BatchingTraceLoggerTest, WritesBatchSummaryEntries)
   ASSERT_EQ(lines.size(), 2U);
   EXPECT_TRUE(lines[0].starts_with("batch_id,model_name,worker_id"))
       << "Unexpected header line: " << lines[0];
+  EXPECT_NE(lines[0].find("request_arrival_us"), std::string::npos)
+      << "Missing arrival column header: " << lines[0];
   EXPECT_NE(lines[1].find("\"demo_model\""), std::string::npos);
   EXPECT_NE(lines[1].find("\"cuda\""), std::string::npos);
   EXPECT_NE(lines[1].find("\"100;101\""), std::string::npos);
+  EXPECT_NE(lines[1].find("\"1000;2000\""), std::string::npos);
   EXPECT_NE(lines[1].find(",7.000,"), std::string::npos);
 
   remove_trace_outputs(trace_path);
@@ -1513,11 +1518,13 @@ TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
 
   logger.configure(true, trace_path.string());
   const std::array<int, 1> request_ids{1};
+  const std::array<int64_t, 1> request_arrivals{500};
   logger.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
       .batch_id = 7,
       .model_name = "warm_model",
       .batch_size = 1,
       .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
       .worker_id = 2,
       .worker_type = DeviceType::CPU,
       .device_id = -1,

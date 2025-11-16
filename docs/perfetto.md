@@ -20,12 +20,14 @@ batching:
   `batching_trace.json` inside. When omitted the server writes the file in the
   working directory. The same directory also receives
   `batching_trace_summary.csv`, a CSV dump of each batch (worker ID and type,
-  batch size, request IDs, queue/build/submit/scheduling/codelet/inference/
+  batch size, request IDs, request arrival timestamps (microseconds), queue/build/
+  submit/scheduling/codelet/inference/
   callback durations, and total time. Warmup batches are excluded.)
   The server automatically runs `scripts/plot_batch_summary.py` at shutdown to
   produce latency scatter plots (combined, multi-dimension batch-size, CPU-only,
   GPU-only), cumulative + moving average timelines, throughput vs time (falling
-  back to batch size when logical job counts are absent), SLA coverage curves
+  back to batch size when logical job counts are absent), a request-arrival
+  timeline (cumulative requests vs time since the first arrival), SLA coverage curves
   (cumulative % under 50/100/200 ms), rolling percentile curves (worker-type
   P50/P95/P99), a stacked thermometer (queue->callback), a
   phase vs batch_size heatmap, a worker/phase heatmap, a phase correlation
