@@ -880,7 +880,7 @@ BatchingTraceLogger::write_batch_build_span(
 void
 BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
 {
-  if (!enabled()) {
+  if (!enabled() || args.is_warmup) {
     return;
   }
   std::lock_guard lock(mutex_);

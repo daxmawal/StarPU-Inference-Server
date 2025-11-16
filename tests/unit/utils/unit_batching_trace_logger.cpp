@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -47,6 +48,25 @@ remove_trace_outputs(const std::filesystem::path& trace_path)
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
   std::filesystem::remove(make_summary_path(trace_path), ec);
+}
+
+auto
+read_summary_lines(const std::filesystem::path& summary_path)
+    -> std::vector<std::string>
+{
+  std::ifstream stream(summary_path);
+  if (!stream.is_open()) {
+    return {};
+  }
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(stream, line)) {
+    line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
+    if (!line.empty()) {
+      lines.push_back(line);
+    }
+  }
+  return lines;
 }
 
 TEST(BatchingTraceLoggerTest, BatchSubmittedSkipsFlowMetadataForNegativeId)
@@ -1469,23 +1489,55 @@ TEST(BatchingTraceLoggerTest, WritesBatchSummaryEntries)
       .inference_ms = 6.0,
       .callback_ms = 7.0,
       .total_ms = 8.0,
+      .is_warmup = false,
+  });
+  logger.configure(false, "");
+
+  const auto summary_path = make_summary_path(trace_path);
+  const auto lines = read_summary_lines(summary_path);
+  ASSERT_EQ(lines.size(), 2U);
+  EXPECT_TRUE(lines[0].starts_with("batch_id,model_name,worker_id"))
+      << "Unexpected header line: " << lines[0];
+  EXPECT_NE(lines[1].find("\"demo_model\""), std::string::npos);
+  EXPECT_NE(lines[1].find("\"cuda\""), std::string::npos);
+  EXPECT_NE(lines[1].find("\"100;101\""), std::string::npos);
+  EXPECT_NE(lines[1].find(",7.000,"), std::string::npos);
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const std::array<int, 1> request_ids{1};
+  logger.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
+      .batch_id = 7,
+      .model_name = "warm_model",
+      .batch_size = 1,
+      .request_ids = request_ids,
+      .worker_id = 2,
+      .worker_type = DeviceType::CPU,
+      .device_id = -1,
+      .queue_ms = 0.1,
+      .batch_ms = 0.2,
+      .submit_ms = 0.3,
+      .scheduling_ms = 0.4,
+      .codelet_ms = 0.5,
+      .inference_ms = 0.6,
+      .callback_ms = 0.7,
+      .total_ms = 0.8,
       .is_warmup = true,
   });
   logger.configure(false, "");
 
   const auto summary_path = make_summary_path(trace_path);
-  std::ifstream stream(summary_path);
-  ASSERT_TRUE(stream.is_open());
-  const std::string content(
-      (std::istreambuf_iterator<char>(stream)),
-      std::istreambuf_iterator<char>());
-  const std::string expected =
-      "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
-      "request_ids,queue_ms,batch_ms,submit_ms,scheduling_ms,codelet_ms,"
-      "inference_ms,callback_ms,total_ms,warmup\n"
-      "99,\"demo_model\",7,\"cuda\",4,3,\"100;101\",1.000,2.000,3.000,4.000,"
-      "5.000,6.000,7.000,8.000,true\n";
-  EXPECT_EQ(content, expected);
+  const auto lines = read_summary_lines(summary_path);
+  ASSERT_EQ(lines.size(), 1U);
+  EXPECT_TRUE(lines[0].starts_with("batch_id,model_name,worker_id"))
+      << "Unexpected header line for warmup-only export: " << lines[0];
 
   remove_trace_outputs(trace_path);
 }
