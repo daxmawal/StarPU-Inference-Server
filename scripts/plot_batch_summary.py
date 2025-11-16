@@ -287,6 +287,30 @@ def plot_phase_heatmap(
     plt.colorbar(im, ax=ax, label="Average duration (ms)")
 
 
+def plot_phase_pareto(
+    ax,
+    breakdowns: Sequence[Tuple[float, ...]],
+) -> None:
+    if not breakdowns:
+        ax.set_title("Phase Pareto (no data)")
+        ax.set_xlabel("Phase")
+        ax.set_ylabel("Average duration (ms)")
+        ax.grid(True, axis="y", linestyle="--", alpha=0.3)
+        return
+    totals = np.zeros(len(PHASE_LABELS), dtype=float)
+    for phases in breakdowns:
+        totals += np.array(phases)
+    averages = totals / len(breakdowns)
+    sorted_indices = np.argsort(-averages)
+    sorted_labels = [PHASE_LABELS[idx] for idx in sorted_indices]
+    sorted_values = averages[sorted_indices]
+    ax.bar(sorted_labels, sorted_values, color="#6a4c93")
+    ax.set_title("Phase Pareto (avg ms)")
+    ax.set_xlabel("Phase")
+    ax.set_ylabel("Average duration (ms)")
+    ax.grid(True, axis="y", linestyle="--", alpha=0.3)
+
+
 def compute_moving_average(
     ids: Sequence[int], values: Sequence[float], window: int = 50
 ) -> Tuple[List[int], List[float]]:
@@ -308,6 +332,22 @@ def compute_moving_average(
         rolling_ids.append(batch_id)
         rolling_vals.append(window_sum / len(current))
     return rolling_ids, rolling_vals
+
+
+def compute_cumulative_latency(
+    ids: Sequence[int], values: Sequence[float]
+) -> Tuple[List[int], List[float]]:
+    if not ids or not values:
+        return [], []
+    sorted_pairs = sorted(zip(ids, values), key=lambda pair: pair[0])
+    cum_sum = 0.0
+    cum_ids: List[int] = []
+    cum_vals: List[float] = []
+    for batch_id, latency in sorted_pairs:
+        cum_sum += latency
+        cum_ids.append(batch_id)
+        cum_vals.append(cum_sum)
+    return cum_ids, cum_vals
 
 
 def main() -> int:
@@ -332,7 +372,7 @@ def main() -> int:
     )
     cpu_color = "#d62728"
 
-    fig, axes = plt.subplots(10, 1, figsize=(12, 36), sharex=False)
+    fig, axes = plt.subplots(12, 1, figsize=(12, 44), sharex=False)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
         axes[0].scatter(cpu_ids, cpu_lat, s=14, alpha=0.7, c=cpu_color)
@@ -341,30 +381,42 @@ def main() -> int:
     )
     scatter_plot(axes[2], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
     scatter_plot(axes[3], gpu_ids, gpu_lat, "GPU workers only")
-    avg_ids, avg_vals = compute_moving_average(all_ids, all_lat)
-    if avg_ids:
-        axes[4].plot(avg_ids, avg_vals, color="purple")
-        axes[4].set_title("Rolling average latency (window=50)")
+    cum_ids, cum_vals = compute_cumulative_latency(all_ids, all_lat)
+    if cum_ids:
+        axes[4].plot(cum_ids, cum_vals, color="teal")
+        axes[4].set_title("Cumulative latency vs batch ID")
         axes[4].set_xlabel("Batch ID")
-        axes[4].set_ylabel("Latency (ms)")
+        axes[4].set_ylabel("Cumulative latency (ms)")
         axes[4].grid(True, linestyle="--", alpha=0.3)
     else:
-        axes[4].set_title("Rolling average latency (no data)")
+        axes[4].set_title("Cumulative latency vs batch ID (no data)")
         axes[4].grid(True, linestyle="--", alpha=0.3)
 
-    plot_latency_stack(axes[5], all_ids, all_breakdowns)
-    plot_phase_heatmap(axes[6], all_sizes, all_breakdowns)
+    avg_ids, avg_vals = compute_moving_average(all_ids, all_lat)
+    if avg_ids:
+        axes[5].plot(avg_ids, avg_vals, color="purple")
+        axes[5].set_title("Rolling average latency (window=50)")
+        axes[5].set_xlabel("Batch ID")
+        axes[5].set_ylabel("Latency (ms)")
+        axes[5].grid(True, linestyle="--", alpha=0.3)
+    else:
+        axes[5].set_title("Rolling average latency (no data)")
+        axes[5].grid(True, linestyle="--", alpha=0.3)
 
-    axes[7].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
+    plot_latency_stack(axes[6], all_ids, all_breakdowns)
+    plot_phase_heatmap(axes[7], all_sizes, all_breakdowns)
+    plot_phase_pareto(axes[8], all_breakdowns)
+
+    axes[9].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
     if cpu_sizes:
-        axes[7].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
+        axes[9].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
     if gpu_sizes:
-        axes[7].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
-    axes[7].set_title("Batch size distribution")
-    axes[7].set_xlabel("Batch size")
-    axes[7].set_ylabel("Count")
-    axes[7].legend()
-    axes[7].grid(True, linestyle="--", alpha=0.3)
+        axes[9].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
+    axes[9].set_title("Batch size distribution")
+    axes[9].set_xlabel("Batch size")
+    axes[9].set_ylabel("Count")
+    axes[9].legend()
+    axes[9].grid(True, linestyle="--", alpha=0.3)
 
     violin_data = []
     labels = []
@@ -375,16 +427,16 @@ def main() -> int:
         violin_data.append(gpu_lat)
         labels.append("GPU")
     if violin_data:
-        axes[8].violinplot(violin_data, showmeans=True, showmedians=False)
-        axes[8].set_xticks(range(1, len(labels) + 1), labels)
-        axes[8].set_title("Latency distribution (violin plot)")
-        axes[8].set_ylabel("Latency (ms)")
-        axes[8].grid(True, linestyle="--", alpha=0.3)
+        axes[10].violinplot(violin_data, showmeans=True, showmedians=False)
+        axes[10].set_xticks(range(1, len(labels) + 1), labels)
+        axes[10].set_title("Latency distribution (violin plot)")
+        axes[10].set_ylabel("Latency (ms)")
+        axes[10].grid(True, linestyle="--", alpha=0.3)
     else:
-        axes[8].set_title("Latency distribution (no data)")
-        axes[8].grid(True, linestyle="--", alpha=0.3)
+        axes[10].set_title("Latency distribution (no data)")
+        axes[10].grid(True, linestyle="--", alpha=0.3)
 
-    plot_worker_boxplots(axes[9], all_workers, all_lat)
+    plot_worker_boxplots(axes[11], all_workers, all_lat)
     fig.tight_layout()
 
     if args.output:
