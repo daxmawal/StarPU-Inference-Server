@@ -37,6 +37,16 @@ PHASE_LABELS = [
     "callback",
 ]
 
+PHASE_COLORS = {
+    "queue": "#1f77b4",
+    "batch": "#ff7f0e",
+    "submit": "#2ca02c",
+    "scheduling": "#d62728",
+    "codelet": "#9467bd",
+    "inference": "#8c564b",
+    "callback": "#e377c2",
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -382,6 +392,49 @@ def plot_phase_pareto(
     ax.grid(True, axis="y", linestyle="--", alpha=0.3)
 
 
+def plot_phase_waterfall(
+    ax,
+    cpu_breakdowns: Sequence[Tuple[float, ...]],
+    gpu_breakdowns: Sequence[Tuple[float, ...]],
+) -> None:
+    categories = []
+    data = []
+    if cpu_breakdowns:
+        categories.append("CPU")
+        data.append(np.array(cpu_breakdowns))
+    if gpu_breakdowns:
+        categories.append("GPU")
+        data.append(np.array(gpu_breakdowns))
+    if not categories:
+        ax.set_title("Phase waterfall (no data)")
+        ax.set_xlabel("Total time (ms)")
+        ax.set_ylabel("Worker type")
+        ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+        return
+
+    y_positions = np.arange(len(categories))
+    legend_added = set()
+    for idx, (label, breakdown_array) in enumerate(zip(categories, data)):
+        totals = breakdown_array.sum(axis=0)
+        left = 0.0
+        for phase, value in zip(PHASE_LABELS, totals):
+            color = PHASE_COLORS.get(phase, None)
+            bar = ax.barh(
+                y_positions[idx],
+                value,
+                left=left,
+                color=color,
+                label=phase if phase not in legend_added else None,
+            )
+            left += value
+            legend_added.add(phase)
+    ax.set_yticks(y_positions, categories)
+    ax.set_xlabel("Total time (ms)")
+    ax.set_title("Phase waterfall (CPU vs GPU)")
+    ax.grid(True, axis="x", linestyle="--", alpha=0.3)
+    ax.legend(loc="upper right", fontsize="small")
+
+
 def compute_moving_average(
     ids: Sequence[int], values: Sequence[float], window: int = 50
 ) -> Tuple[List[int], List[float]]:
@@ -471,7 +524,7 @@ def main() -> int:
     )
     cpu_color = "#d62728"
 
-    fig, axes_array = plt.subplots(15, 1, figsize=(12, 56), sharex=False)
+    fig, axes_array = plt.subplots(16, 1, figsize=(12, 60), sharex=False)
     axes = list(axes_array)
     scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
     if cpu_ids:
@@ -516,9 +569,10 @@ def main() -> int:
 
     plot_latency_stack(axes[7], all_ids, all_breakdowns)
     plot_phase_heatmap(axes[8], all_sizes, all_breakdowns)
-    plot_phase_pareto(axes[9], all_breakdowns)
+    plot_phase_waterfall(axes[9], cpu_breakdowns, gpu_breakdowns)
+    plot_phase_pareto(axes[10], all_breakdowns)
 
-    axes[10].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
+    axes[11].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
     if len(all_sizes) >= 2:
         sorted_pairs = sorted(zip(all_sizes, all_lat))
         xs = np.array([p[0] for p in sorted_pairs])
@@ -526,22 +580,22 @@ def main() -> int:
         coeffs = np.polyfit(xs, ys, deg=1)
         fit_x = np.linspace(xs.min(), xs.max(), num=200)
         fit_y = np.polyval(coeffs, fit_x)
-        axes[10].plot(fit_x, fit_y, color="black", linestyle="--")
-    axes[10].set_title("Latency vs batch size (correlation)")
-    axes[10].set_xlabel("Batch size")
-    axes[10].set_ylabel("Latency (ms)")
-    axes[10].grid(True, linestyle="--", alpha=0.3)
-
-    axes[11].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
-    if cpu_sizes:
-        axes[11].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
-    if gpu_sizes:
-        axes[11].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
-    axes[11].set_title("Batch size distribution")
+        axes[11].plot(fit_x, fit_y, color="black", linestyle="--")
+    axes[11].set_title("Latency vs batch size (correlation)")
     axes[11].set_xlabel("Batch size")
-    axes[11].set_ylabel("Count")
-    axes[11].legend()
+    axes[11].set_ylabel("Latency (ms)")
     axes[11].grid(True, linestyle="--", alpha=0.3)
+
+    axes[12].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
+    if cpu_sizes:
+        axes[12].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
+    if gpu_sizes:
+        axes[12].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
+    axes[12].set_title("Batch size distribution")
+    axes[12].set_xlabel("Batch size")
+    axes[12].set_ylabel("Count")
+    axes[12].legend()
+    axes[12].grid(True, linestyle="--", alpha=0.3)
 
     violin_data = []
     labels = []
@@ -552,19 +606,19 @@ def main() -> int:
         violin_data.append(gpu_lat)
         labels.append("GPU")
     if violin_data:
-        axes[12].violinplot(violin_data, showmeans=True, showmedians=False)
-        axes[12].set_xticks(range(1, len(labels) + 1), labels)
-        axes[12].set_title("Latency distribution (violin plot)")
-        axes[12].set_ylabel("Latency (ms)")
-        axes[12].grid(True, linestyle="--", alpha=0.3)
+        axes[13].violinplot(violin_data, showmeans=True, showmedians=False)
+        axes[13].set_xticks(range(1, len(labels) + 1), labels)
+        axes[13].set_title("Latency distribution (violin plot)")
+        axes[13].set_ylabel("Latency (ms)")
+        axes[13].grid(True, linestyle="--", alpha=0.3)
     else:
-        axes[12].set_title("Latency distribution (no data)")
-        axes[12].grid(True, linestyle="--", alpha=0.3)
+        axes[13].set_title("Latency distribution (no data)")
+        axes[13].grid(True, linestyle="--", alpha=0.3)
 
-    plot_worker_boxplots(axes[13], all_workers, all_lat)
-    axes[14].remove()
-    axes[14] = fig.add_subplot(15, 1, 15, projection="polar")
-    plot_worker_radar(axes[14], all_workers, all_breakdowns)
+    plot_worker_boxplots(axes[14], all_workers, all_lat)
+    axes[15].remove()
+    axes[15] = fig.add_subplot(16, 1, 16, projection="polar")
+    plot_worker_radar(axes[15], all_workers, all_breakdowns)
     fig.tight_layout()
 
     if args.output:
