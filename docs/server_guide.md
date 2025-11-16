@@ -77,7 +77,7 @@ Optional keys for debugging:
 | `dynamic_batching` | Enable dynamic batching (`true`/`false`). | `true` |
 | `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). | `false` |
 | `trace_enabled` | Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI. | `false` |
-| `trace_file` | Output path for the batching Perfetto trace (requires `trace_enabled: true`). | `batching_trace.json` |
+| `trace_file` | Directory for the batching Perfetto trace (requires `trace_enabled: true`). | `.` |
 | `warmup_batches_per_worker` | Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests (set `0` to disable batch-based warmup). | `1` |
 
 Traces use the [Chrome trace-event JSON format](https://perfetto.dev/docs/concepts/trace-formats#json-trace-format), so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [Perfetto trace guide](./perfetto.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, and navigating the Perfetto UI. Enable it only while profiling dynamic batching, for detailed StarPU scheduling instrumentation use `STARPU_FXT_TRACE`, and for GPU-wide timelines rely on NVIDIA `nsys`.

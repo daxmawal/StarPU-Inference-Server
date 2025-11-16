@@ -12,12 +12,13 @@ model configuration:
 ```yaml
 batching:
   trace_enabled: true
-  trace_file: /tmp/starpu/batching_trace.json  # optional custom path
+  trace_file: /tmp/starpu/  # optional custom path
 ```
 
 - `trace_enabled` flips the instrumentation on as soon as the server starts.
-- `trace_file` is optional; when omitted the server writes
-  `batching_trace.json` in the working directory.
+- `trace_file` is optional and must point to a directory,
+  the server writes `batching_trace.json` inside. When
+  omitted the server writes the file in the working directory.
 
 Each server restart truncates the previous file, so copy the trace elsewhere
 before launching another run. Stop the server before opening the trace to avoid
