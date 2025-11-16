@@ -677,6 +677,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "pregen_inputs: 8\n";
   yaml << "warmup_pregen_inputs: 5\n";
   yaml << "warmup_request_nb: 3\n";
+  yaml << "warmup_batches_per_worker: 2\n";
   yaml << "seed: 123\n";
   yaml << "validate_results: false\n";
 
@@ -707,6 +708,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(cfg.batching.pregen_inputs, 8U);
   EXPECT_EQ(cfg.batching.warmup_pregen_inputs, 5U);
   EXPECT_EQ(cfg.batching.warmup_request_nb, 3);
+  EXPECT_EQ(cfg.batching.warmup_batches_per_worker, 2);
   const bool has_seed = cfg.seed.has_value();
   ASSERT_TRUE(has_seed);
   const auto seed_value = cfg.seed.value_or(0U);
@@ -1135,6 +1137,9 @@ INSTANTIATE_TEST_SUITE_P(
             "warmup_pregen_inputs", "0", "warmup_pregen_inputs must be > 0"},
         NegativeValueCase{
             "warmup_request_nb", "-1", "warmup_request_nb must be >= 0"},
+        NegativeValueCase{
+            "warmup_batches_per_worker", "-1",
+            "warmup_batches_per_worker must be >= 0"},
         NegativeValueCase{"seed", "-1", "seed must be >= 0"},
         NegativeValueCase{"rtol", "-1.0", "rtol must be >= 0"},
         NegativeValueCase{"atol", "-1.0", "atol must be >= 0"}));

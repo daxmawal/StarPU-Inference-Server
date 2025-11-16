@@ -125,6 +125,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
+          "warmup_batches_per_worker",
           "seed",
           "rtol",
           "atol",
@@ -390,6 +391,13 @@ parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("warmup_request_nb must be >= 0");
     }
     cfg.batching.warmup_request_nb = tmp;
+  }
+  if (root["warmup_batches_per_worker"]) {
+    const int tmp = root["warmup_batches_per_worker"].as<int>();
+    if (tmp < 0) {
+      throw std::invalid_argument("warmup_batches_per_worker must be >= 0");
+    }
+    cfg.batching.warmup_batches_per_worker = tmp;
   }
 }
 

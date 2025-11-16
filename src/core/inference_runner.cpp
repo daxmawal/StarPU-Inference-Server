@@ -489,17 +489,23 @@ run_warmup(
     const std::vector<torch::Tensor>& outputs_ref)
 {
   NvtxRange nvtx_scope("warmup");
-  if (opts.batching.warmup_request_nb <= 0 ||
-      (!opts.devices.use_cpu && !opts.devices.use_cuda)) {
+  if (!opts.devices.use_cpu && !opts.devices.use_cuda) {
     return;
   }
 
-  constexpr int kMinBatchWarmupsPerWorker = 3;
+  const int configured_batches =
+      std::max(0, opts.batching.warmup_batches_per_worker);
+  if (opts.batching.warmup_request_nb <= 0 && configured_batches <= 0) {
+    return;
+  }
+
   const int max_batch_size = std::max(1, opts.batching.max_batch_size);
-  const int min_requests_for_batches =
-      kMinBatchWarmupsPerWorker * max_batch_size;
+  const int min_requests_for_batches = configured_batches * max_batch_size;
   const int warmup_request_nb =
       std::max(opts.batching.warmup_request_nb, min_requests_for_batches);
+  if (warmup_request_nb <= 0) {
+    return;
+  }
   const auto target_desc = [&opts]() -> std::string_view {
     if (opts.devices.use_cpu && opts.devices.use_cuda) {
       return "CPU and CUDA workers";
@@ -510,11 +516,10 @@ run_warmup(
     return "CPU workers";
   }();
   log_info(
-      opts.verbosity,
-      std::format(
-          "Starting warmup with {} request(s) per {} "
-          "(enforcing at least {} batch runs)...",
-          warmup_request_nb, target_desc, kMinBatchWarmupsPerWorker));
+      opts.verbosity, std::format(
+                          "Starting warmup with {} request(s) per {} "
+                          "(configured batch runs per worker: {})...",
+                          warmup_request_nb, target_desc, configured_batches));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
   warmup_runner.run(warmup_request_nb);
