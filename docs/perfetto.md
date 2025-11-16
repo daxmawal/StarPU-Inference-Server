@@ -25,14 +25,16 @@ batching:
   The server automatically runs `scripts/plot_batch_summary.py` at shutdown to
   produce latency scatter plots (combined, multi-dimension batch-size, CPU-only,
   GPU-only), cumulative + moving average timelines, throughput vs time (falling
-  back to batch size when logical job counts are absent), rolling percentile
-  curves (worker-type P50/P95/P99), a stacked thermometer (queue->callback), a
-  phase vs batch_size heatmap, a phase correlation heatmap, a CPU/GPU waterfall,
+  back to batch size when logical job counts are absent), SLA coverage curves
+  (cumulative % under 50/100/200 ms), rolling percentile curves (worker-type
+  P50/P95/P99), a stacked thermometer (queue->callback), a
+  phase vs batch_size heatmap, a worker/phase heatmap, a phase correlation
+  heatmap, a queue/codelet/inference pairplot, a CPU/GPU waterfall,
   a phase Pareto chart, latency vs batch size correlations, queue-vs-inference
   backlog scatters (colored by batch size), batch_size distributions, CPU/GPU
-  violin plots, latency CDFs (worker type and dominant batch sizes), worker
-  phase-utilization bars, per-worker boxplots, radar charts, and a worker/time
-  heatmap.
+  violin plots, latency CDFs (worker type, per-worker grids, and dominant batch
+  sizes), worker phase-utilization bars, per-worker boxplots, radar charts, and
+  a worker/time heatmap.
   correlation view.
 
 Each server restart truncates the previous file, so copy the trace elsewhere
