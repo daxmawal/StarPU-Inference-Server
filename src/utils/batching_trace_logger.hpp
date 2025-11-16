@@ -195,6 +195,8 @@ class BatchingTraceLogger {
       bool is_warmup = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
   void log_batch_summary(const BatchSummaryLogArgs& args);
+  [[nodiscard]] auto summary_file_path() const
+      -> std::optional<std::filesystem::path>;
 
  private:
   void write_record(
@@ -226,7 +228,7 @@ class BatchingTraceLogger {
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
 
-  std::mutex mutex_;
+  mutable std::mutex mutex_;
   std::atomic<bool> enabled_{false};
   std::string file_path_;
   int64_t trace_start_us_{0};

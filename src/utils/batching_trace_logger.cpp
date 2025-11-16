@@ -890,6 +890,17 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
   write_summary_line_locked(args);
 }
 
+auto
+BatchingTraceLogger::summary_file_path() const
+    -> std::optional<std::filesystem::path>
+{
+  std::lock_guard lock(mutex_);
+  if (summary_file_path_.empty()) {
+    return std::nullopt;
+  }
+  return summary_file_path_;
+}
+
 void
 BatchingTraceLogger::close_stream_locked()
 {
@@ -986,7 +997,6 @@ BatchingTraceLogger::close_summary_writer()
   if (summary_stream_.is_open()) {
     summary_stream_.close();
   }
-  summary_file_path_.clear();
 }
 
 }  // namespace starpu_server

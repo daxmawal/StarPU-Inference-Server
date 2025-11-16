@@ -22,6 +22,10 @@ batching:
   `batching_trace_summary.csv`, a CSV dump of each batch (worker ID and type,
   batch size, request IDs, queue/build/submit/scheduling/codelet/inference/
   callback durations, and total time).
+  The server automatically runs `scripts/plot_batch_summary.py` at shutdown to
+  produce latency scatter plots (combined, CPU-only, GPU-only). Re-run the
+  script manually with `./scripts/plot_batch_summary.py batching_trace_summary.csv`
+  and `--output` to regenerate the figures elsewhere if needed.
 
 Each server restart truncates the previous file, so copy the trace elsewhere
 before launching another run. Stop the server before opening the trace to avoid
