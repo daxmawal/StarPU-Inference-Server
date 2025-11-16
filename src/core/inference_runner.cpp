@@ -518,7 +518,7 @@ run_warmup(
   log_info(
       opts.verbosity, std::format(
                           "Starting warmup with {} request(s) per {} "
-                          "(configured batch runs per worker: {})...",
+                          "(configured batch runs per worker: {})",
                           warmup_request_nb, target_desc, configured_batches));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
