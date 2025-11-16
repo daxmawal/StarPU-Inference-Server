@@ -1,3 +1,5 @@
+#include <starpu.h>
+
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -333,6 +335,39 @@ launch_threads(
 }
 
 auto
+worker_type_label(const enum starpu_worker_archtype type) -> std::string
+{
+  switch (type) {
+    case STARPU_CPU_WORKER:
+      return "CPU";
+    case STARPU_CUDA_WORKER:
+      return "CUDA";
+    default:
+      return std::format("Other({})", static_cast<int>(type));
+  }
+}
+
+void
+log_worker_inventory(const starpu_server::RuntimeConfig& opts)
+{
+  const int total_workers = static_cast<int>(starpu_worker_get_count());
+  starpu_server::log_info(
+      opts.verbosity,
+      std::format("Configured {} StarPU worker(s).", total_workers));
+
+  for (int worker_id = 0; worker_id < total_workers; ++worker_id) {
+    const auto type = starpu_worker_get_type(worker_id);
+    const int device_id = starpu_worker_get_devid(worker_id);
+    const std::string device_label =
+        device_id >= 0 ? std::to_string(device_id) : "N/A";
+    starpu_server::log_info(
+        opts.verbosity, std::format(
+                            "Worker {:2d}: type={}, device id={}", worker_id,
+                            worker_type_label(type), device_label));
+  }
+}
+
+auto
 main(int argc, char* argv[]) -> int
 {
   try {
@@ -345,6 +380,7 @@ main(int argc, char* argv[]) -> int
           "Metrics server failed to start; continuing without metrics.");
     }
     starpu_server::StarPUSetup starpu(opts);
+    log_worker_inventory(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
