@@ -77,7 +77,7 @@ TEST(InferenceClient, AsyncCompleteRpcSuccess)
       "127.0.0.1:" + std::to_string(server.port),
       grpc::InsecureChannelCredentials());
   starpu_server::InferenceClient client(
-      channel, starpu_server::VerbosityLevel::Info);
+      channel, starpu_server::VerbosityLevel::Stats);
 
   testing::internal::CaptureStdout();
   std::jthread cq_thread(
