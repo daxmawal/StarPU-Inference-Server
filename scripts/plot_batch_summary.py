@@ -1111,7 +1111,16 @@ def plot_queue_vs_inference(
     ax.set_xlabel("queue_ms")
     ax.set_ylabel("inference_ms")
     ax.grid(True, linestyle="--", alpha=0.3)
-    cbar = plt.colorbar(scatter, ax=ax)
+    cax = inset_axes(
+        ax,
+        width="2%",
+        height="70%",
+        loc="lower left",
+        bbox_to_anchor=(1.02, 0.15, 1, 1),
+        bbox_transform=ax.transAxes,
+        borderpad=0.0,
+    )
+    cbar = plt.colorbar(scatter, cax=cax)
     cbar.set_label("Batch size")
 
 
