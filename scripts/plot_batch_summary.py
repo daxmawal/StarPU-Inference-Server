@@ -295,7 +295,6 @@ def scatter_with_size(
         ax.grid(True, linestyle="--", alpha=0.4)
         return
     max_size = max(sizes)
-    min_size = max(1, min(sizes))
     scale = []
     for value in sizes:
         norm = value / max_size if max_size > 0 else 0.0
@@ -753,7 +752,7 @@ def plot_phase_waterfall(
         left = 0.0
         for phase, value in zip(PHASE_LABELS, totals):
             color = PHASE_COLORS.get(phase, None)
-            bar = ax.barh(
+            ax.barh(
                 y_positions[idx],
                 value,
                 left=left,
@@ -947,7 +946,7 @@ def compute_sla_coverage(
         return result
     sorted_pairs = sorted(zip(ids, latencies), key=lambda pair: pair[0])
     total = 0
-    passed = {thr: 0 for thr in thresholds}
+    passed = dict.fromkeys(thresholds, 0)
     for batch_id, latency in sorted_pairs:
         total += 1
         for thr in thresholds:

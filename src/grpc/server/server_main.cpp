@@ -128,7 +128,7 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
     return;
   }
 
-  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  const auto& tracer = starpu_server::BatchingTraceLogger::instance();
   const auto summary_path_opt = tracer.summary_file_path();
   if (!summary_path_opt) {
     starpu_server::log_warning(
