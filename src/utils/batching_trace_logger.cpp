@@ -262,8 +262,8 @@ WorkerLaneManager::worker_lane_thread_id(int worker_id, int lane_index) -> int
   return kWorkerThreadOffset + worker_id * kWorkerLaneThreadStride + lane_index;
 }
 
-bool
-TraceFileWriter::open(const std::filesystem::path& file_path)
+auto
+TraceFileWriter::open(const std::filesystem::path& file_path) -> bool
 {
   stream_.open(file_path, std::ios::out | std::ios::trunc);
   reset_state();
@@ -987,9 +987,9 @@ BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
                   << (args.is_warmup ? "true" : "false") << '\n';
 }
 
-bool
+auto
 BatchingTraceLogger::configure_summary_writer(
-    const std::filesystem::path& trace_path)
+    const std::filesystem::path& trace_path) -> bool
 {
   close_summary_writer();
   summary_file_path_ = summary_path_from_trace(trace_path);

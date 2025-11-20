@@ -24,6 +24,7 @@
 #include <string_view>
 #include <thread>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -127,11 +128,14 @@ get_cuda_device_count() -> int
     return *override_storage;
   }
 
-  const auto raw_count = static_cast<long long>(torch::cuda::device_count());
-  if (raw_count < 0) {
+  const auto device_count = torch::cuda::device_count();
+  if (device_count < 0) {
     throw InvalidGpuDeviceException(
         "torch::cuda::device_count returned a negative value.");
   }
+  using UnsignedDeviceCountType = std::make_unsigned_t<decltype(device_count)>;
+  const auto raw_count = static_cast<long long>(
+      static_cast<UnsignedDeviceCountType>(device_count));
   if (raw_count > std::numeric_limits<int>::max()) {
     throw InvalidGpuDeviceException(std::format(
         "torch::cuda::device_count returned {}, which exceeds int range.",

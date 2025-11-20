@@ -70,7 +70,7 @@ class WorkerLaneManager {
 
 class TraceFileWriter {
  public:
-  bool open(const std::filesystem::path& file_path);
+  auto open(const std::filesystem::path& file_path) -> bool;
   void close();
   void write_header();
   void write_footer();
@@ -124,7 +124,7 @@ class BatchingTraceLogger {
     std::size_t logical_job_count = 0;
     DeviceType worker_type = DeviceType::Unknown;
     int worker_id = -1;
-    std::span<const int> request_ids{};
+    std::span<const int> request_ids;
     bool is_warmup = false;
     int device_id = -1;
   };
@@ -154,7 +154,7 @@ class BatchingTraceLogger {
     std::string_view model_name;
     std::size_t batch_size;
     std::span<const int> request_ids;
-    std::span<const int64_t> request_arrival_us{};
+    std::span<const int64_t> request_arrival_us;
     int worker_id;
     DeviceType worker_type;
     int device_id;
@@ -214,7 +214,8 @@ class BatchingTraceLogger {
       std::string_view model_name, int batch_id, std::size_t batch_size,
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
-  bool configure_summary_writer(const std::filesystem::path& trace_path);
+  auto configure_summary_writer(const std::filesystem::path& trace_path)
+      -> bool;
   void close_summary_writer();
   [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
       -> std::string_view;
