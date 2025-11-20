@@ -1409,16 +1409,51 @@ def main() -> int:
         axes[22].set_xlim(corr_xlim)
         axes[22].set_ylim(corr_ylim)
 
-    axes[23].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
-    if cpu_sizes:
-        axes[23].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
-    if gpu_sizes:
-        axes[23].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
-    axes[23].set_title("Batch size distribution")
-    axes[23].set_xlabel("Batch size")
-    axes[23].set_ylabel("Count")
-    axes[23].legend()
-    axes[23].grid(True, linestyle="--", alpha=0.3)
+    size_counts_all = Counter(all_sizes)
+    size_counts_cpu = Counter(cpu_sizes)
+    size_counts_gpu = Counter(gpu_sizes)
+    unique_sizes = sorted(
+        set(size_counts_all.keys())
+        | set(size_counts_cpu.keys())
+        | set(size_counts_gpu.keys())
+    )
+    if not unique_sizes:
+        axes[23].set_title("Batch size distribution (no data)")
+        axes[23].set_xlabel("Batch size")
+        axes[23].set_ylabel("Count")
+        axes[23].grid(True, linestyle="--", alpha=0.3)
+    else:
+        series = []
+        if size_counts_all:
+            series.append(("All", size_counts_all, "gray", 0.7))
+        if size_counts_cpu:
+            series.append(("CPU", size_counts_cpu, cpu_color, 0.6))
+        if size_counts_gpu:
+            series.append(("GPU", size_counts_gpu, "blue", 0.6))
+        bar_groups = max(1, len(series))
+        width = 0.8 / bar_groups
+        positions = np.arange(len(unique_sizes))
+        handles = []
+        for idx, (label, counts, color, alpha) in enumerate(series):
+            offset = (idx - (bar_groups - 1) / 2) * width
+            heights = [counts.get(size, 0) for size in unique_sizes]
+            bars = axes[23].bar(
+                positions + offset,
+                heights,
+                width=width * 0.9,
+                label=label,
+                color=color,
+                alpha=alpha,
+                edgecolor="black",
+            )
+            handles.append(bars)
+        axes[23].set_xticks(positions, [str(size) for size in unique_sizes])
+        axes[23].set_title("Batch size distribution")
+        axes[23].set_xlabel("Batch size")
+        axes[23].set_ylabel("Count")
+        if handles:
+            axes[23].legend()
+        axes[23].grid(True, linestyle="--", alpha=0.3)
 
     violin_data = []
     labels = []
