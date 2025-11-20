@@ -286,6 +286,7 @@ def scatter_with_size(
     y: Sequence[float],
     sizes: Sequence[int],
     title: str,
+    worker_types: Sequence[str] | None = None,
 ) -> None:
     if not x or not y or not sizes:
         ax.set_title(f"{title} (no data)")
@@ -307,6 +308,43 @@ def scatter_with_size(
         cmap="viridis",
         alpha=0.7,
     )
+    if worker_types and len(worker_types) == len(x):
+        cpu_x: List[int] = []
+        cpu_y: List[float] = []
+        gpu_x: List[int] = []
+        gpu_y: List[float] = []
+        other_x: List[int] = []
+        other_y: List[float] = []
+        for px, py, worker in zip(x, y, worker_types):
+            kind = (worker or "").lower()
+            if kind == "cpu":
+                cpu_x.append(px)
+                cpu_y.append(py)
+            elif kind in ("cuda", "gpu"):
+                gpu_x.append(px)
+                gpu_y.append(py)
+            else:
+                other_x.append(px)
+                other_y.append(py)
+        overlay_kwargs = {"s": 10, "alpha": 0.95, "zorder": 3, "marker": "o"}
+        overlay_handles = []
+        if gpu_x:
+            handle = ax.scatter(
+                gpu_x, gpu_y, color="#1f77b4", label="GPU", **overlay_kwargs
+            )
+            overlay_handles.append(handle)
+        if cpu_x:
+            handle = ax.scatter(
+                cpu_x, cpu_y, color="#d62728", label="CPU", **overlay_kwargs
+            )
+            overlay_handles.append(handle)
+        if other_x:
+            handle = ax.scatter(
+                other_x, other_y, color="#7f7f7f", label="Other", **overlay_kwargs
+            )
+            overlay_handles.append(handle)
+        if overlay_handles:
+            ax.legend(handles=overlay_handles, loc="upper left", fontsize="small")
     ax.set_title(title)
     ax.set_xlabel("Batch ID")
     ax.set_ylabel("Latency (ms)")
@@ -1238,6 +1276,10 @@ def main() -> int:
         gpu_breakdowns,
         gpu_arrivals,
     ) = filter_latencies(data, worker_type="cuda")
+    worker_type_by_id = {batch_id: worker_type for batch_id, _, worker_type, *_ in data}
+    all_worker_types = [
+        worker_type_by_id.get(batch_id, "unknown") for batch_id in all_ids
+    ]
     cpu_color = "#d62728"
     gpu_color = "#1f77b4"
 
@@ -1287,7 +1329,12 @@ def main() -> int:
     all_xlim = axes[0].get_xlim()
     all_ylim = axes[0].get_ylim()
     scatter_with_size(
-        axes[1], all_ids, all_lat, all_sizes, "Latency vs batch size (multidim)"
+        axes[1],
+        all_ids,
+        all_lat,
+        all_sizes,
+        "Latency vs batch size (multidim)",
+        worker_types=all_worker_types,
     )
     if all_ids:
         axes[1].set_xlim(all_xlim)
