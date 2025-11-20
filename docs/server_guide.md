@@ -1,7 +1,7 @@
 # StarPU Inference Server - Server Guide
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) |
-| --- | --- | --- | --- | --- |
+|[Installation](./installation.md)|[Quickstart](./quickstart.md)|[Server Configuration](./server_guide.md)|[Client Guide](./client_guide.md)|[Docker Guide](./docker_guide.md)|
+|---|---|---|---|---|
 
 ## Server Guide
 
@@ -28,15 +28,15 @@ cmake --build . -j"$(nproc)"
 The server loads exactly one TorchScript model per configuration file. The
 configuration is written in YAML and must include the following required keys:
 
-| Key | Description |
-| --- | --- |
-| `name` | Model configuration identifier. |
-| `model` | Absolute or relative path to the TorchScript `.pt`/`.ts` file. |
-| `inputs` | Sequence describing each input tensor, every element must define `name`, `data_type`, and `dims`. |
-| `outputs` | Sequence describing each output tensor, every element must define `name`, `data_type`, and `dims`. |
-| `max_batch_size` | Upper bound for per-request batch size. |
-| `batch_coalesce_timeout_ms` | Milliseconds to wait before flushing a dynamic batch. |
-| `pool_size` | Number of reusable I/O buffer slots to preallocate per GPU. A value of x allocates x I/O slots per device. |
+|Key|Description|
+|---|---|
+|`name`|Model configuration identifier.|
+|`model`|Absolute or relative path to the TorchScript `.pt`/`.ts` file.|
+|`inputs`|Sequence describing each input tensor, every element must define `name`, `data_type`, and `dims`.|
+|`outputs`|Sequence describing each output tensor, every element must define `name`, `data_type`, and `dims`.|
+|`max_batch_size`|Upper bound for per-request batch size.|
+|`batch_coalesce_timeout_ms`|Milliseconds to wait before flushing a dynamic batch.|
+|`pool_size`|Number of reusable I/O buffer slots to preallocate per GPU. A value of x allocates x I/O slots per device.|
 
 Each tensor entry under `inputs` or `outputs` must provide:
 
@@ -52,15 +52,15 @@ Each tensor entry under `inputs` or `outputs` must provide:
 
 Optional keys unlock batching, logging, and runtime controls:
 
-| Key | Description | Default |
-| --- | --- | --- |
-| `scheduler` | StarPU scheduler name (e.g., lws, eager, heft). | `lws` |
-| `starpu_env` |  Lets you pin StarPU-specific environment variables. | unset |
-| `use_cpu` | Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution. | `true` |
-| `group_cpu_by_numa` | Spawn one StarPU CPU worker per NUMA node instead of per core. | `false` |
-| `use_cuda` | Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`. | `false` |
-| `address` | gRPC listen address (host:port). | `127.0.0.1:50051` |
-| `metrics_port` | Port for the Prometheus metrics endpoint. | `9090` |
+|Key|Description|Default|
+|---|---|---|
+|`scheduler`|StarPU scheduler name (e.g., lws, eager, heft).|`lws`|
+|`starpu_env`|Lets you pin StarPU-specific environment variables.|unset|
+|`use_cpu`|Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution.|`true`|
+|`group_cpu_by_numa`|Spawn one StarPU CPU worker per NUMA node instead of per core.|`false`|
+|`use_cuda`|Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`.|`false`|
+|`address`|gRPC listen address (host:port).|`127.0.0.1:50051`|
+|`metrics_port`|Port for the Prometheus metrics endpoint.|`9090`|
 
 Behavior of `use_cpu` and `use_cuda`:
 
@@ -71,14 +71,14 @@ Behavior of `use_cpu` and `use_cuda`:
 
 Optional keys for debugging:
 
-| Key | Description | Default |
-| --- | --- | --- |
-| `verbosity` | Log verbosity level. Supported aliases: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`. | `0` |
-| `dynamic_batching` | Enable dynamic batching (`true`/`false`). | `true` |
-| `sync` | Run the StarPU worker pool in synchronous mode (`true`/`false`). | `false` |
-| `trace_enabled` | Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI plus a CSV summary of each batch. | `false` |
-| `trace_file` | Directory for the batching Perfetto trace (requires `trace_enabled: true`). The server writes `batching_trace.json` and `batching_trace_summary.csv` there (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings), warmup batches are excluded from the CSV and plots. | `.` |
-| `warmup_batches_per_worker` | Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests (set `0` to disable batch-based warmup). | `1` |
+|Key|Description|Default|
+|---|---|---|
+|`verbosity`|Log verbosity level. Supported aliases: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`.|`0`|
+|`dynamic_batching`|Enable dynamic batching (`true`/`false`).|`true`|
+|`sync`|Run the StarPU worker pool in synchronous mode (`true`/`false`).|`false`|
+|`trace_enabled`|Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI plus a CSV summary of each batch.|`false`|
+|`trace_file`|Directory for the batching Perfetto trace (requires `trace_enabled: true`). The server writes `batching_trace.json` and `batching_trace_summary.csv` there (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings), warmup batches are excluded from the CSV and plots.|`.`|
+|`warmup_batches_per_worker`|Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests (set `0` to disable batch-based warmup).|`1`|
 
 Traces use the [Chrome trace-event JSON format](https://perfetto.dev/docs/concepts/trace-formats#json-trace-format), so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [Perfetto trace guide](./perfetto.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, and navigating the Perfetto UI. Enable it only while profiling dynamic batching, for detailed StarPU scheduling instrumentation use `STARPU_FXT_TRACE`, and for GPU-wide timelines rely on NVIDIA `nsys`.
 
