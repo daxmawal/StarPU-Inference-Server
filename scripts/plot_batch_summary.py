@@ -1178,16 +1178,60 @@ def main() -> int:
         gpu_arrivals,
     ) = filter_latencies(data, worker_type="cuda")
     cpu_color = "#d62728"
+    gpu_color = "#1f77b4"
 
     fig, axes_array = plt.subplots(30, 1, figsize=(12, 116), sharex=False)
     axes = list(axes_array)
-    scatter_plot(axes[0], all_ids, all_lat, "All workers (CPU + GPU)")
+    has_worker_data = False
+    if gpu_ids:
+        axes[0].scatter(
+            gpu_ids,
+            gpu_lat,
+            s=14,
+            alpha=0.7,
+            c=gpu_color,
+            label="GPU",
+        )
+        has_worker_data = True
     if cpu_ids:
-        axes[0].scatter(cpu_ids, cpu_lat, s=14, alpha=0.7, c=cpu_color)
+        axes[0].scatter(
+            cpu_ids,
+            cpu_lat,
+            s=14,
+            alpha=0.7,
+            c=cpu_color,
+            label="CPU",
+        )
+        has_worker_data = True
+    if not has_worker_data and all_ids:
+        axes[0].scatter(
+            all_ids,
+            all_lat,
+            s=14,
+            alpha=0.7,
+            c="#7f7f7f",
+            label="All workers",
+        )
+        has_worker_data = True
+    axes[0].set_title(
+        "All workers (CPU + GPU)"
+        if has_worker_data
+        else "All workers (CPU + GPU) (no data)"
+    )
+    axes[0].set_xlabel("Batch ID")
+    axes[0].set_ylabel("Latency (ms)")
+    axes[0].grid(True, linestyle="--", alpha=0.4)
+    if has_worker_data:
+        axes[0].legend(loc="upper right", fontsize="small")
+    all_xlim = axes[0].get_xlim()
+    all_ylim = axes[0].get_ylim()
     scatter_with_size(
         axes[1], all_ids, all_lat, all_sizes, "Latency vs batch size (multidim)"
     )
     scatter_plot(axes[2], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
+    if all_ids:
+        axes[2].set_xlim(all_xlim)
+        axes[2].set_ylim(all_ylim)
     scatter_plot(axes[3], gpu_ids, gpu_lat, "GPU workers only")
     cum_ids, cum_vals = compute_cumulative_latency(all_ids, all_lat)
     if cum_ids:
