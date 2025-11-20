@@ -1125,6 +1125,36 @@ def plot_rolling_percentiles(
     ax.legend(loc="upper right", fontsize="small")
 
 
+def plot_worker_task_distribution(
+    ax,
+    worker_ids: Sequence[int],
+    jobs: Sequence[int],
+) -> None:
+    totals: dict[int, int] = {}
+    for worker, job_count in zip(worker_ids, jobs):
+        if worker < 0:
+            continue
+        totals[worker] = totals.get(worker, 0) + int(job_count)
+    if not totals:
+        ax.set_title("Worker task distribution (no data)")
+        ax.set_xlabel("Worker ID")
+        ax.set_ylabel("Total logical jobs")
+        ax.grid(True, axis="y", linestyle="--", alpha=0.3)
+        return
+    sorted_items = sorted(totals.items(), key=lambda item: item[1], reverse=True)
+    workers = [str(worker) for worker, _ in sorted_items]
+    values = [item[1] for item in sorted_items]
+    bars = ax.bar(workers, values, color="#17becf", edgecolor="black")
+    ax.set_title("Worker task distribution")
+    ax.set_xlabel("Worker ID")
+    ax.set_ylabel("Total logical jobs")
+    ax.grid(True, axis="y", linestyle="--", alpha=0.3)
+    if bars:
+        ax.bar_label(
+            bars, labels=[str(v) for v in values], padding=2, fontsize="x-small"
+        )
+
+
 def main() -> int:
     args = parse_args()
     csv_path = args.summary_csv
@@ -1172,7 +1202,7 @@ def main() -> int:
     cpu_color = "#d62728"
     gpu_color = "#1f77b4"
 
-    fig, axes_array = plt.subplots(34, 1, figsize=(12, 132), sharex=False)
+    fig, axes_array = plt.subplots(35, 1, figsize=(12, 136), sharex=False)
     axes = list(axes_array)
 
     scatter_with_size(
@@ -1442,12 +1472,13 @@ def main() -> int:
 
     plot_worker_phase_utilization(axes[28], all_workers, all_breakdowns)
     plot_worker_boxplots(axes[29], all_workers, all_lat)
-    plot_worker_time_heatmap(axes[30], all_workers, all_ids, all_lat)
-    plot_request_arrival_timeline(axes[31], all_arrivals)
-    plot_request_arrival_rate(axes[32], all_arrivals)
-    axes[33].remove()
-    axes[33] = fig.add_subplot(34, 1, 34, projection="polar")
-    plot_worker_radar(axes[33], all_workers, all_breakdowns)
+    plot_worker_task_distribution(axes[30], all_workers, all_jobs)
+    plot_worker_time_heatmap(axes[31], all_workers, all_ids, all_lat)
+    plot_request_arrival_timeline(axes[32], all_arrivals)
+    plot_request_arrival_rate(axes[33], all_arrivals)
+    axes[34].remove()
+    axes[34] = fig.add_subplot(35, 1, 35, projection="polar")
+    plot_worker_radar(axes[34], all_workers, all_breakdowns)
     fig.subplots_adjust(hspace=0.6, top=0.98, bottom=0.02)
 
     if args.output:
