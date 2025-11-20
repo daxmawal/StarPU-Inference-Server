@@ -1525,6 +1525,20 @@ TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
   EXPECT_FALSE(logger.summary_stream_.is_open());
 }
 
+TEST(BatchingTraceLoggerTest, TraceFileWriterReportsOpenState)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+
+  logger.configure(true, trace_path.string());
+  EXPECT_TRUE(logger.trace_writer_.is_open());
+
+  logger.configure(false, "");
+  EXPECT_FALSE(logger.trace_writer_.is_open());
+
+  remove_trace_outputs(trace_path);
+}
+
 TEST(BatchingTraceLoggerTest, ExposesSummaryFilePathWhenConfigured)
 {
   BatchingTraceLogger logger;
