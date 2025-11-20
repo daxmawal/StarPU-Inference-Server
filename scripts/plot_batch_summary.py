@@ -57,6 +57,12 @@ SLA_THRESHOLDS_MS = (50.0, 100.0, 200.0)
 MAX_WORKER_CDFS = 6
 CPU_COLOR = "#d62728"
 GPU_COLOR = "#1f77b4"
+BATCH_ID_LABEL = "Batch ID"
+BATCH_SIZE_LABEL = "Batch size"
+WORKER_ID_LABEL = "Worker ID"
+LATENCY_MS_LABEL = "Latency (ms)"
+LEGEND_LOC_UPPER_RIGHT = "upper right"
+INSET_LOC_LOWER_LEFT = "lower left"
 
 BatchRow = Tuple[
     int,  # batch_id
@@ -251,7 +257,7 @@ def plot_latency_stack(
 ) -> None:
     if not batch_ids or not breakdowns:
         ax.set_title("Latency composition per batch (no data)")
-        ax.set_xlabel("Batch ID")
+        ax.set_xlabel(BATCH_ID_LABEL)
         ax.set_ylabel("Latency contribution (ms)")
         ax.grid(True, linestyle="--", alpha=0.3)
         return
@@ -263,9 +269,9 @@ def plot_latency_stack(
     for values, label in zip(components, labels):
         ax.bar(batch_ids, values, bottom=bottom, label=label, width=0.6)
         bottom = [b + v for b, v in zip(bottom, values)]
-    ax.set_xlabel("Batch ID")
+    ax.set_xlabel(BATCH_ID_LABEL)
     ax.set_ylabel("Latency contribution (ms)")
-    ax.legend(loc="upper right", fontsize="small")
+    ax.legend(loc=LEGEND_LOC_UPPER_RIGHT, fontsize="small")
     ax.grid(True, linestyle="--", alpha=0.3)
 
 
@@ -274,14 +280,14 @@ def scatter_plot(
 ) -> None:
     if not x:
         ax.set_title(f"{title} (no data)")
-        ax.set_xlabel("Batch ID")
-        ax.set_ylabel("Latency (ms)")
+        ax.set_xlabel(BATCH_ID_LABEL)
+        ax.set_ylabel(LATENCY_MS_LABEL)
         ax.grid(True, linestyle="--", alpha=0.4)
         return
     ax.scatter(x, y, s=14, alpha=0.7, c=color)
     ax.set_title(title)
-    ax.set_xlabel("Batch ID")
-    ax.set_ylabel("Latency (ms)")
+    ax.set_xlabel(BATCH_ID_LABEL)
+    ax.set_ylabel(LATENCY_MS_LABEL)
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
@@ -307,6 +313,65 @@ def plot_violin(
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
+def _normalize_marker_sizes(sizes: Sequence[int]) -> List[float]:
+    if not sizes:
+        return []
+    max_size = max(sizes)
+    if max_size <= 0:
+        return [50.0] * len(sizes)
+    base = 50.0
+    span = 200.0
+    return [base + (value / max_size) * span for value in sizes]
+
+
+def _bucket_points_by_worker(
+    x: Sequence[int],
+    y: Sequence[float],
+    worker_types: Sequence[str],
+) -> dict[str, tuple[List[int], List[float]]]:
+    buckets = {
+        "gpu": ([], []),
+        "cpu": ([], []),
+        "other": ([], []),
+    }
+    for px, py, worker in zip(x, y, worker_types):
+        kind = (worker or "").lower()
+        if kind == "cpu":
+            bucket = "cpu"
+        elif kind in ("cuda", "gpu"):
+            bucket = "gpu"
+        else:
+            bucket = "other"
+        buckets[bucket][0].append(px)
+        buckets[bucket][1].append(py)
+    return buckets
+
+
+def _overlay_worker_types(
+    ax, x: Sequence[int], y: Sequence[float], worker_types: Sequence[str] | None
+) -> None:
+    if not worker_types or len(worker_types) != len(x):
+        return
+    buckets = _bucket_points_by_worker(x, y, worker_types)
+    overlay_kwargs = {"s": 5, "alpha": 0.95, "zorder": 3, "marker": "o"}
+    handles = []
+    for label, key, color in (("GPU", "gpu", "#1f77b4"), ("CPU", "cpu", "#d62728")):
+        xs, ys = buckets[key]
+        if xs:
+            handles.append(
+                ax.scatter(xs, ys, color=color, label=label, **overlay_kwargs)
+            )
+    other_xs, other_ys = buckets["other"]
+    if other_xs:
+        handles.append(
+            ax.scatter(
+                other_xs, other_ys, color="#7f7f7f", label="Other", **overlay_kwargs
+            )
+        )
+    if handles:
+        ax.legend(handles=handles, loc="upper left", fontsize="small")
+
+
 def scatter_with_size(
     ax,
     x: Sequence[int],
@@ -317,15 +382,11 @@ def scatter_with_size(
 ) -> None:
     if not x or not y or not sizes:
         ax.set_title(f"{title} (no data)")
-        ax.set_xlabel("Batch ID")
-        ax.set_ylabel("Latency (ms)")
+        ax.set_xlabel(BATCH_ID_LABEL)
+        ax.set_ylabel(LATENCY_MS_LABEL)
         ax.grid(True, linestyle="--", alpha=0.4)
         return
-    max_size = max(sizes)
-    scale = []
-    for value in sizes:
-        norm = value / max_size if max_size > 0 else 0.0
-        scale.append(50 + norm * 200)
+    scale = _normalize_marker_sizes(sizes)
     scatter = ax.scatter(
         x,
         y,
@@ -334,59 +395,23 @@ def scatter_with_size(
         cmap="viridis",
         alpha=0.7,
     )
-    if worker_types and len(worker_types) == len(x):
-        cpu_x: List[int] = []
-        cpu_y: List[float] = []
-        gpu_x: List[int] = []
-        gpu_y: List[float] = []
-        other_x: List[int] = []
-        other_y: List[float] = []
-        for px, py, worker in zip(x, y, worker_types):
-            kind = (worker or "").lower()
-            if kind == "cpu":
-                cpu_x.append(px)
-                cpu_y.append(py)
-            elif kind in ("cuda", "gpu"):
-                gpu_x.append(px)
-                gpu_y.append(py)
-            else:
-                other_x.append(px)
-                other_y.append(py)
-        overlay_kwargs = {"s": 5, "alpha": 0.95, "zorder": 3, "marker": "o"}
-        overlay_handles = []
-        if gpu_x:
-            handle = ax.scatter(
-                gpu_x, gpu_y, color="#1f77b4", label="GPU", **overlay_kwargs
-            )
-            overlay_handles.append(handle)
-        if cpu_x:
-            handle = ax.scatter(
-                cpu_x, cpu_y, color="#d62728", label="CPU", **overlay_kwargs
-            )
-            overlay_handles.append(handle)
-        if other_x:
-            handle = ax.scatter(
-                other_x, other_y, color="#7f7f7f", label="Other", **overlay_kwargs
-            )
-            overlay_handles.append(handle)
-        if overlay_handles:
-            ax.legend(handles=overlay_handles, loc="upper left", fontsize="small")
+    _overlay_worker_types(ax, x, y, worker_types)
     ax.set_title(title)
-    ax.set_xlabel("Batch ID")
-    ax.set_ylabel("Latency (ms)")
+    ax.set_xlabel(BATCH_ID_LABEL)
+    ax.set_ylabel(LATENCY_MS_LABEL)
     ax.grid(True, linestyle="--", alpha=0.4)
     # Place colorbar outside the axes to avoid shrinking or covering data.
     cax = inset_axes(
         ax,
         width="2%",
         height="70%",
-        loc="lower left",
+        loc=INSET_LOC_LOWER_LEFT,
         bbox_to_anchor=(1.02, 0.15, 1, 1),
         bbox_transform=ax.transAxes,
         borderpad=0.0,
     )
     cbar = plt.colorbar(scatter, cax=cax)
-    cbar.set_label("Batch size")
+    cbar.set_label(BATCH_SIZE_LABEL)
 
 
 def plot_worker_boxplots(
@@ -401,8 +426,8 @@ def plot_worker_boxplots(
         data.setdefault(worker, []).append(latency)
     if not data:
         ax.set_title("Worker latency boxplots (no data)")
-        ax.set_xlabel("Worker ID")
-        ax.set_ylabel("Latency (ms)")
+        ax.set_xlabel(WORKER_ID_LABEL)
+        ax.set_ylabel(LATENCY_MS_LABEL)
         ax.grid(True, linestyle="--", alpha=0.4)
         return
     sorted_items = sorted(data.items(), key=lambda item: item[0])
@@ -412,8 +437,8 @@ def plot_worker_boxplots(
         showmeans=True,
     )
     ax.set_title("Worker latency boxplots")
-    ax.set_xlabel("Worker ID")
-    ax.set_ylabel("Latency (ms)")
+    ax.set_xlabel(WORKER_ID_LABEL)
+    ax.set_ylabel(LATENCY_MS_LABEL)
     ax.grid(True, linestyle="--", alpha=0.4)
 
 
@@ -458,7 +483,7 @@ def plot_worker_radar(
         ax.plot(angles, values, label=f"worker {worker}", color=color)
         ax.fill(angles, values, alpha=0.1, color=color)
 
-    ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1.1), fontsize="small")
+    ax.legend(loc=LEGEND_LOC_UPPER_RIGHT, bbox_to_anchor=(1.2, 1.1), fontsize="small")
 
 
 def plot_worker_phase_utilization(
@@ -475,7 +500,7 @@ def plot_worker_phase_utilization(
     if not contributions:
         ax.set_title("Worker phase utilization (no data)")
         ax.set_xlabel("Total time (ms)")
-        ax.set_ylabel("Worker ID")
+        ax.set_ylabel(WORKER_ID_LABEL)
         ax.grid(True, axis="x", linestyle="--", alpha=0.3)
         return
     sorted_items = sorted(
@@ -499,10 +524,10 @@ def plot_worker_phase_utilization(
         legend_added.add(phase)
     ax.set_yticks(y_pos, worker_labels)
     ax.set_xlabel("Total time (ms)")
-    ax.set_ylabel("Worker ID")
+    ax.set_ylabel(WORKER_ID_LABEL)
     ax.set_title("Worker phase utilization")
     ax.grid(True, axis="x", linestyle="--", alpha=0.3)
-    ax.legend(loc="upper right", fontsize="small")
+    ax.legend(loc=LEGEND_LOC_UPPER_RIGHT, fontsize="small")
 
 
 def plot_worker_time_heatmap(
@@ -516,7 +541,7 @@ def plot_worker_time_heatmap(
     if not worker_ids or not batch_ids or not latencies:
         ax.set_title("Worker-time heatmap (no data)")
         ax.set_xlabel("Batch bucket")
-        ax.set_ylabel("Worker ID")
+        ax.set_ylabel(WORKER_ID_LABEL)
         ax.grid(True, linestyle="--", alpha=0.3)
         return
 
@@ -534,7 +559,7 @@ def plot_worker_time_heatmap(
     if not bucket_map:
         ax.set_title("Worker-time heatmap (no data)")
         ax.set_xlabel("Batch bucket")
-        ax.set_ylabel("Worker ID")
+        ax.set_ylabel(WORKER_ID_LABEL)
         ax.grid(True, linestyle="--", alpha=0.3)
         return
 
@@ -552,19 +577,19 @@ def plot_worker_time_heatmap(
     )
     ax.set_yticks(range(len(sorted_workers)), [str(w) for w in sorted_workers])
     ax.set_xlabel("Batch ID bucket")
-    ax.set_ylabel("Worker ID")
+    ax.set_ylabel(WORKER_ID_LABEL)
     ax.set_title("Worker-time heatmap (avg latency)")
     cax = inset_axes(
         ax,
         width="2%",
         height="70%",
-        loc="lower left",
+        loc=INSET_LOC_LOWER_LEFT,
         bbox_to_anchor=(1.02, 0.15, 1, 1),
         bbox_transform=ax.transAxes,
         borderpad=0.0,
     )
     cbar = plt.colorbar(im, cax=cax)
-    cbar.set_label("Latency (ms)")
+    cbar.set_label(LATENCY_MS_LABEL)
 
 
 def plot_phase_heatmap(
@@ -575,7 +600,7 @@ def plot_phase_heatmap(
 ) -> None:
     if not batch_sizes or not breakdowns:
         ax.set_title("Phase heatmap (no data)")
-        ax.set_xlabel("Batch size")
+        ax.set_xlabel(BATCH_SIZE_LABEL)
         ax.set_ylabel("Phase")
         ax.grid(True, linestyle="--", alpha=0.4)
         return
@@ -585,7 +610,7 @@ def plot_phase_heatmap(
     top_sizes.sort()
     if not top_sizes:
         ax.set_title("Phase heatmap (no data)")
-        ax.set_xlabel("Batch size")
+        ax.set_xlabel(BATCH_SIZE_LABEL)
         ax.set_ylabel("Phase")
         ax.grid(True, linestyle="--", alpha=0.4)
         return
@@ -609,14 +634,14 @@ def plot_phase_heatmap(
     im = ax.imshow(masked, aspect="auto", cmap="magma", origin="lower")
     ax.set_xticks(range(len(top_sizes)), [str(size) for size in top_sizes])
     ax.set_yticks(range(len(PHASE_LABELS)), PHASE_LABELS)
-    ax.set_xlabel("Batch size")
+    ax.set_xlabel(BATCH_SIZE_LABEL)
     ax.set_ylabel("Phase")
     ax.set_title("Phase heatmap (avg ms) - All workers")
     cax = inset_axes(
         ax,
         width="2%",
         height="70%",
-        loc="lower left",
+        loc=INSET_LOC_LOWER_LEFT,
         bbox_to_anchor=(1.02, 0.15, 1, 1),
         bbox_transform=ax.transAxes,
         borderpad=0.0,
@@ -641,7 +666,7 @@ def plot_worker_phase_heatmap(
         counts[worker] = counts.get(worker, 0) + 1
     if not totals:
         ax.set_title("Phase heatmap by worker (no data)")
-        ax.set_xlabel("Worker ID")
+        ax.set_xlabel(WORKER_ID_LABEL)
         ax.set_ylabel("Phase")
         ax.grid(True, linestyle="--", alpha=0.4)
         return
@@ -657,14 +682,14 @@ def plot_worker_phase_heatmap(
         range(len(sorted_workers)), [str(worker) for worker in sorted_workers]
     )
     ax.set_yticks(range(len(PHASE_LABELS)), PHASE_LABELS)
-    ax.set_xlabel("Worker ID")
+    ax.set_xlabel(WORKER_ID_LABEL)
     ax.set_ylabel("Phase")
     ax.set_title("Phase heatmap by worker (avg ms)")
     cax = inset_axes(
         ax,
         width="2%",
         height="70%",
-        loc="lower left",
+        loc=INSET_LOC_LOWER_LEFT,
         bbox_to_anchor=(1.02, 0.15, 1, 1),
         bbox_transform=ax.transAxes,
         borderpad=0.0,
@@ -719,7 +744,7 @@ def plot_phase_correlation(
         ax,
         width="2%",
         height="70%",
-        loc="lower left",
+        loc=INSET_LOC_LOWER_LEFT,
         bbox_to_anchor=(1.02, 0.15, 1, 1),
         bbox_transform=ax.transAxes,
         borderpad=0.0,
@@ -792,7 +817,7 @@ def plot_phase_waterfall(
     ax.set_xlabel("Total time (ms)")
     ax.set_title("Phase waterfall (CPU vs GPU)")
     ax.grid(True, axis="x", linestyle="--", alpha=0.3)
-    ax.legend(loc="upper right", fontsize="small")
+    ax.legend(loc=LEGEND_LOC_UPPER_RIGHT, fontsize="small")
 
 
 def compute_moving_average(
@@ -991,7 +1016,7 @@ def plot_sla_coverage(ax, ids: Sequence[int], latencies: Sequence[float]) -> Non
     has_data = any(series[thr][0] for thr in SLA_THRESHOLDS_MS)
     if not has_data:
         ax.set_title(f"{title} (no data)")
-        ax.set_xlabel("Batch ID")
+        ax.set_xlabel(BATCH_ID_LABEL)
         ax.set_ylabel("Coverage (%)")
         ax.grid(True, linestyle="--", alpha=0.3)
         return
@@ -1001,7 +1026,7 @@ def plot_sla_coverage(ax, ids: Sequence[int], latencies: Sequence[float]) -> Non
         label = f"<= {thr:.0f} ms"
         ax.plot(ids_series, coverage, label=label, color=colors[idx % len(colors)])
     ax.set_title(title)
-    ax.set_xlabel("Batch ID")
+    ax.set_xlabel(BATCH_ID_LABEL)
     ax.set_ylabel("Coverage (%)")
     ax.set_ylim(0, 105)
     ax.grid(True, linestyle="--", alpha=0.3)
@@ -1045,12 +1070,12 @@ def plot_latency_cdf(
         plotted = True
     if not plotted:
         ax.set_title(f"{title} (no data)")
-        ax.set_xlabel("Latency (ms)")
+        ax.set_xlabel(LATENCY_MS_LABEL)
         ax.set_ylabel("Cumulative probability")
         ax.grid(True, linestyle="--", alpha=0.3)
         return
     ax.set_title(title)
-    ax.set_xlabel("Latency (ms)")
+    ax.set_xlabel(LATENCY_MS_LABEL)
     ax.set_ylabel("Cumulative probability")
     ax.set_ylim(0, 1.01)
     ax.grid(True, linestyle="--", alpha=0.3)
@@ -1096,7 +1121,7 @@ def plot_worker_cdf_grid(
         cell.step(xs, ys, where="post", color="#1f77b4")
         cell.set_title(f"worker {worker}")
         if row == rows - 1:
-            cell.set_xlabel("Latency (ms)")
+            cell.set_xlabel(LATENCY_MS_LABEL)
         else:
             cell.set_xticklabels([])
         if col == 0:
@@ -1136,8 +1161,8 @@ def plot_rolling_percentiles(
     title = f"{worker_label} rolling latency percentiles (window={window_size})"
     if not has_data:
         ax.set_title(f"{title} (no data)")
-        ax.set_xlabel("Batch ID")
-        ax.set_ylabel("Latency (ms)")
+        ax.set_xlabel(BATCH_ID_LABEL)
+        ax.set_ylabel(LATENCY_MS_LABEL)
         ax.grid(True, linestyle="--", alpha=0.3)
         return
     colors = {50: "#1f77b4", 95: "#ff7f0e", 99: "#d62728"}
@@ -1145,10 +1170,10 @@ def plot_rolling_percentiles(
         ids_series, values_series = series[perc]
         ax.plot(ids_series, values_series, label=f"P{perc}", color=colors.get(perc))
     ax.set_title(title)
-    ax.set_xlabel("Batch ID")
-    ax.set_ylabel("Latency (ms)")
+    ax.set_xlabel(BATCH_ID_LABEL)
+    ax.set_ylabel(LATENCY_MS_LABEL)
     ax.grid(True, linestyle="--", alpha=0.3)
-    ax.legend(loc="upper right", fontsize="small")
+    ax.legend(loc=LEGEND_LOC_UPPER_RIGHT, fontsize="small")
 
 
 def plot_worker_task_distribution(
@@ -1163,7 +1188,7 @@ def plot_worker_task_distribution(
         totals[worker] = totals.get(worker, 0) + int(job_count)
     if not totals:
         ax.set_title("Worker task distribution (no data)")
-        ax.set_xlabel("Worker ID")
+        ax.set_xlabel(WORKER_ID_LABEL)
         ax.set_ylabel("Total logical jobs")
         ax.grid(True, axis="y", linestyle="--", alpha=0.3)
         return
@@ -1172,7 +1197,7 @@ def plot_worker_task_distribution(
     values = [item[1] for item in sorted_items]
     bars = ax.bar(workers, values, color="#17becf", edgecolor="black")
     ax.set_title("Worker task distribution")
-    ax.set_xlabel("Worker ID")
+    ax.set_xlabel(WORKER_ID_LABEL)
     ax.set_ylabel("Total logical jobs")
     ax.grid(True, axis="y", linestyle="--", alpha=0.3)
     if bars:
@@ -1324,11 +1349,11 @@ def render_plots(
         if has_worker_data
         else "All workers (CPU + GPU) (no data)"
     )
-    axes[1].set_xlabel("Batch ID")
-    axes[1].set_ylabel("Latency (ms)")
+    axes[1].set_xlabel(BATCH_ID_LABEL)
+    axes[1].set_ylabel(LATENCY_MS_LABEL)
     axes[1].grid(True, linestyle="--", alpha=0.4)
     if has_worker_data:
-        axes[1].legend(loc="upper right", fontsize="small")
+        axes[1].legend(loc=LEGEND_LOC_UPPER_RIGHT, fontsize="small")
     all_xlim = axes[1].get_xlim()
     all_ylim = axes[1].get_ylim()
     if all_ids:
@@ -1343,7 +1368,7 @@ def render_plots(
     if cum_ids:
         axes[4].plot(cum_ids, cum_vals, color="teal")
         axes[4].set_title("Cumulative latency vs batch ID")
-        axes[4].set_xlabel("Batch ID")
+        axes[4].set_xlabel(BATCH_ID_LABEL)
         axes[4].set_ylabel("Cumulative latency (ms)")
         axes[4].grid(True, linestyle="--", alpha=0.3)
     else:
@@ -1361,7 +1386,7 @@ def render_plots(
             label=f"window={THROUGHPUT_WINDOW} batches",
         )
         axes[5].set_title("Throughput vs batch ID (requests per window)")
-        axes[5].set_xlabel("Batch ID")
+        axes[5].set_xlabel(BATCH_ID_LABEL)
         axes[5].set_ylabel("Average logical jobs")
         axes[5].grid(True, linestyle="--", alpha=0.3)
         axes[5].legend(loc="lower right", fontsize="small")
@@ -1375,8 +1400,8 @@ def render_plots(
     if avg_ids:
         axes[7].plot(avg_ids, avg_vals, color="purple")
         axes[7].set_title(f"Rolling average latency (window={ROLLING_WINDOW})")
-        axes[7].set_xlabel("Batch ID")
-        axes[7].set_ylabel("Latency (ms)")
+        axes[7].set_xlabel(BATCH_ID_LABEL)
+        axes[7].set_ylabel(LATENCY_MS_LABEL)
         axes[7].grid(True, linestyle="--", alpha=0.3)
     else:
         axes[7].set_title("Rolling average latency (no data)")
@@ -1439,8 +1464,8 @@ def render_plots(
         corr_ylim = axes[20].get_ylim()
     else:
         axes[20].set_title("Latency vs batch size (correlation) (no data)")
-    axes[20].set_xlabel("Batch size")
-    axes[20].set_ylabel("Latency (ms)")
+    axes[20].set_xlabel(BATCH_SIZE_LABEL)
+    axes[20].set_ylabel(LATENCY_MS_LABEL)
     axes[20].grid(True, linestyle="--", alpha=0.3)
 
     if gpu_sizes and gpu_lat:
@@ -1456,8 +1481,8 @@ def render_plots(
         axes[21].set_title("Latency vs batch size (correlation) - GPU")
     else:
         axes[21].set_title("Latency vs batch size (correlation) - GPU (no data)")
-    axes[21].set_xlabel("Batch size")
-    axes[21].set_ylabel("Latency (ms)")
+    axes[21].set_xlabel(BATCH_SIZE_LABEL)
+    axes[21].set_ylabel(LATENCY_MS_LABEL)
     axes[21].grid(True, linestyle="--", alpha=0.3)
     if corr_xlim and corr_ylim:
         axes[21].set_xlim(corr_xlim)
@@ -1476,8 +1501,8 @@ def render_plots(
         axes[22].set_title("Latency vs batch size (correlation) - CPU")
     else:
         axes[22].set_title("Latency vs batch size (correlation) - CPU (no data)")
-    axes[22].set_xlabel("Batch size")
-    axes[22].set_ylabel("Latency (ms)")
+    axes[22].set_xlabel(BATCH_SIZE_LABEL)
+    axes[22].set_ylabel(LATENCY_MS_LABEL)
     axes[22].grid(True, linestyle="--", alpha=0.3)
     if corr_xlim and corr_ylim:
         axes[22].set_xlim(corr_xlim)
@@ -1493,7 +1518,7 @@ def render_plots(
     )
     if not unique_sizes:
         axes[23].set_title("Batch size distribution (no data)")
-        axes[23].set_xlabel("Batch size")
+        axes[23].set_xlabel(BATCH_SIZE_LABEL)
         axes[23].set_ylabel("Count")
         axes[23].grid(True, linestyle="--", alpha=0.3)
     else:
@@ -1523,7 +1548,7 @@ def render_plots(
             handles.append(bars)
         axes[23].set_xticks(positions, [str(size) for size in unique_sizes])
         axes[23].set_title("Batch size distribution")
-        axes[23].set_xlabel("Batch size")
+        axes[23].set_xlabel(BATCH_SIZE_LABEL)
         axes[23].set_ylabel("Count")
         if handles:
             axes[23].legend()
@@ -1541,7 +1566,7 @@ def render_plots(
         axes[24].violinplot(violin_data, showmeans=True, showmedians=False)
         axes[24].set_xticks(range(1, len(labels) + 1), labels)
         axes[24].set_title("Latency distribution (violin plot)")
-        axes[24].set_ylabel("Latency (ms)")
+        axes[24].set_ylabel(LATENCY_MS_LABEL)
         axes[24].grid(True, linestyle="--", alpha=0.3)
     else:
         axes[24].set_title("Latency distribution (no data)")
