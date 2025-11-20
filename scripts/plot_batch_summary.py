@@ -326,7 +326,7 @@ def scatter_with_size(
             else:
                 other_x.append(px)
                 other_y.append(py)
-        overlay_kwargs = {"s": 10, "alpha": 0.95, "zorder": 3, "marker": "o"}
+        overlay_kwargs = {"s": 5, "alpha": 0.95, "zorder": 3, "marker": "o"}
         overlay_handles = []
         if gpu_x:
             handle = ax.scatter(
