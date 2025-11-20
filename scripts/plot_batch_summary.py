@@ -27,6 +27,7 @@ from typing import Iterable, List, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.gridspec import GridSpecFromSubplotSpec
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 PHASE_LABELS = [
     "queue",
@@ -310,7 +311,17 @@ def scatter_with_size(
     ax.set_xlabel("Batch ID")
     ax.set_ylabel("Latency (ms)")
     ax.grid(True, linestyle="--", alpha=0.4)
-    cbar = plt.colorbar(scatter, ax=ax)
+    # Place colorbar outside the axes to avoid shrinking or covering data.
+    cax = inset_axes(
+        ax,
+        width="2%",
+        height="70%",
+        loc="lower left",
+        bbox_to_anchor=(1.02, 0.15, 1, 1),
+        bbox_transform=ax.transAxes,
+        borderpad=0.0,
+    )
+    cbar = plt.colorbar(scatter, cax=cax)
     cbar.set_label("Batch size")
 
 
@@ -1229,6 +1240,9 @@ def main() -> int:
     scatter_with_size(
         axes[1], all_ids, all_lat, all_sizes, "Latency vs batch size (multidim)"
     )
+    if all_ids:
+        axes[1].set_xlim(all_xlim)
+        axes[1].set_ylim(all_ylim)
     scatter_plot(axes[2], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
     if all_ids:
         axes[2].set_xlim(all_xlim)
