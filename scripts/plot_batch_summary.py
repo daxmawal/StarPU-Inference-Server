@@ -1091,63 +1091,6 @@ def plot_worker_cdf_grid(
         )
 
 
-def plot_queue_vs_inference(
-    ax,
-    batch_sizes: Sequence[int],
-    breakdowns: Sequence[Tuple[float, ...]],
-) -> None:
-    queue_idx = PHASE_INDEX["queue"]
-    inference_idx = PHASE_INDEX["inference"]
-    queue_times: List[float] = []
-    inference_times: List[float] = []
-    sizes: List[int] = []
-    for size, phases in zip(batch_sizes, breakdowns):
-        if queue_idx >= len(phases) or inference_idx >= len(phases):
-            continue
-        queue_times.append(phases[queue_idx])
-        inference_times.append(phases[inference_idx])
-        sizes.append(size)
-    title = "Queue vs inference latency (colored by batch size)"
-    if not queue_times:
-        ax.set_title(f"{title} (no data)")
-        ax.set_xlabel("queue_ms")
-        ax.set_ylabel("inference_ms")
-        ax.grid(True, linestyle="--", alpha=0.3)
-        return
-    max_size = max(sizes)
-    min_size = max(1, min(sizes))
-    scale = []
-    for value in sizes:
-        if max_size == min_size:
-            scale.append(120.0)
-        else:
-            norm = (value - min_size) / (max_size - min_size)
-            scale.append(40.0 + norm * 200.0)
-    scatter = ax.scatter(
-        queue_times,
-        inference_times,
-        c=sizes,
-        s=scale,
-        cmap="plasma",
-        alpha=0.75,
-    )
-    ax.set_title(title)
-    ax.set_xlabel("queue_ms")
-    ax.set_ylabel("inference_ms")
-    ax.grid(True, linestyle="--", alpha=0.3)
-    cax = inset_axes(
-        ax,
-        width="2%",
-        height="70%",
-        loc="lower left",
-        bbox_to_anchor=(1.02, 0.15, 1, 1),
-        bbox_transform=ax.transAxes,
-        borderpad=0.0,
-    )
-    cbar = plt.colorbar(scatter, cax=cax)
-    cbar.set_label("Batch size")
-
-
 def plot_rolling_percentiles(
     ax,
     batch_ids: Sequence[int],
@@ -1229,7 +1172,7 @@ def main() -> int:
     cpu_color = "#d62728"
     gpu_color = "#1f77b4"
 
-    fig, axes_array = plt.subplots(33, 1, figsize=(12, 128), sharex=False)
+    fig, axes_array = plt.subplots(34, 1, figsize=(12, 132), sharex=False)
     axes = list(axes_array)
 
     scatter_with_size(
@@ -1375,32 +1318,77 @@ def main() -> int:
     plot_phase_waterfall(axes[18], cpu_breakdowns, gpu_breakdowns)
     plot_phase_pareto(axes[19], all_breakdowns)
 
-    axes[20].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
-    if len(all_sizes) >= 2:
-        sorted_pairs = sorted(zip(all_sizes, all_lat))
-        xs = np.array([p[0] for p in sorted_pairs])
-        ys = np.array([p[1] for p in sorted_pairs])
-        coeffs = np.polyfit(xs, ys, deg=1)
-        fit_x = np.linspace(xs.min(), xs.max(), num=200)
-        fit_y = np.polyval(coeffs, fit_x)
-        axes[20].plot(fit_x, fit_y, color="black", linestyle="--")
-    axes[20].set_title("Latency vs batch size (correlation)")
+    corr_xlim = None
+    corr_ylim = None
+    if all_sizes and all_lat:
+        axes[20].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
+        if len(all_sizes) >= 2:
+            sorted_pairs = sorted(zip(all_sizes, all_lat))
+            xs = np.array([p[0] for p in sorted_pairs])
+            ys = np.array([p[1] for p in sorted_pairs])
+            coeffs = np.polyfit(xs, ys, deg=1)
+            fit_x = np.linspace(xs.min(), xs.max(), num=200)
+            fit_y = np.polyval(coeffs, fit_x)
+            axes[20].plot(fit_x, fit_y, color="black", linestyle="--")
+        axes[20].set_title("Latency vs batch size (correlation)")
+        corr_xlim = axes[20].get_xlim()
+        corr_ylim = axes[20].get_ylim()
+    else:
+        axes[20].set_title("Latency vs batch size (correlation) (no data)")
     axes[20].set_xlabel("Batch size")
     axes[20].set_ylabel("Latency (ms)")
     axes[20].grid(True, linestyle="--", alpha=0.3)
 
-    plot_queue_vs_inference(axes[21], all_sizes, all_breakdowns)
+    if gpu_sizes and gpu_lat:
+        axes[21].scatter(gpu_sizes, gpu_lat, alpha=0.6, color=gpu_color)
+        if len(gpu_sizes) >= 2:
+            sorted_pairs = sorted(zip(gpu_sizes, gpu_lat))
+            xs = np.array([p[0] for p in sorted_pairs])
+            ys = np.array([p[1] for p in sorted_pairs])
+            coeffs = np.polyfit(xs, ys, deg=1)
+            fit_x = np.linspace(xs.min(), xs.max(), num=200)
+            fit_y = np.polyval(coeffs, fit_x)
+            axes[21].plot(fit_x, fit_y, color="black", linestyle="--")
+        axes[21].set_title("Latency vs batch size (correlation) - GPU")
+    else:
+        axes[21].set_title("Latency vs batch size (correlation) - GPU (no data)")
+    axes[21].set_xlabel("Batch size")
+    axes[21].set_ylabel("Latency (ms)")
+    axes[21].grid(True, linestyle="--", alpha=0.3)
+    if corr_xlim and corr_ylim:
+        axes[21].set_xlim(corr_xlim)
+        axes[21].set_ylim(corr_ylim)
 
-    axes[22].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
-    if cpu_sizes:
-        axes[22].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
-    if gpu_sizes:
-        axes[22].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
-    axes[22].set_title("Batch size distribution")
+    if cpu_sizes and cpu_lat:
+        axes[22].scatter(cpu_sizes, cpu_lat, alpha=0.6, color=cpu_color)
+        if len(cpu_sizes) >= 2:
+            sorted_pairs = sorted(zip(cpu_sizes, cpu_lat))
+            xs = np.array([p[0] for p in sorted_pairs])
+            ys = np.array([p[1] for p in sorted_pairs])
+            coeffs = np.polyfit(xs, ys, deg=1)
+            fit_x = np.linspace(xs.min(), xs.max(), num=200)
+            fit_y = np.polyval(coeffs, fit_x)
+            axes[22].plot(fit_x, fit_y, color="black", linestyle="--")
+        axes[22].set_title("Latency vs batch size (correlation) - CPU")
+    else:
+        axes[22].set_title("Latency vs batch size (correlation) - CPU (no data)")
     axes[22].set_xlabel("Batch size")
-    axes[22].set_ylabel("Count")
-    axes[22].legend()
+    axes[22].set_ylabel("Latency (ms)")
     axes[22].grid(True, linestyle="--", alpha=0.3)
+    if corr_xlim and corr_ylim:
+        axes[22].set_xlim(corr_xlim)
+        axes[22].set_ylim(corr_ylim)
+
+    axes[23].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
+    if cpu_sizes:
+        axes[23].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
+    if gpu_sizes:
+        axes[23].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
+    axes[23].set_title("Batch size distribution")
+    axes[23].set_xlabel("Batch size")
+    axes[23].set_ylabel("Count")
+    axes[23].legend()
+    axes[23].grid(True, linestyle="--", alpha=0.3)
 
     violin_data = []
     labels = []
@@ -1411,14 +1399,14 @@ def main() -> int:
         violin_data.append(gpu_lat)
         labels.append("GPU")
     if violin_data:
-        axes[23].violinplot(violin_data, showmeans=True, showmedians=False)
-        axes[23].set_xticks(range(1, len(labels) + 1), labels)
-        axes[23].set_title("Latency distribution (violin plot)")
-        axes[23].set_ylabel("Latency (ms)")
-        axes[23].grid(True, linestyle="--", alpha=0.3)
+        axes[24].violinplot(violin_data, showmeans=True, showmedians=False)
+        axes[24].set_xticks(range(1, len(labels) + 1), labels)
+        axes[24].set_title("Latency distribution (violin plot)")
+        axes[24].set_ylabel("Latency (ms)")
+        axes[24].grid(True, linestyle="--", alpha=0.3)
     else:
-        axes[23].set_title("Latency distribution (no data)")
-        axes[23].grid(True, linestyle="--", alpha=0.3)
+        axes[24].set_title("Latency distribution (no data)")
+        axes[24].grid(True, linestyle="--", alpha=0.3)
 
     worker_cdf_data: List[Sequence[float]] = []
     worker_cdf_labels: List[str] = []
@@ -1429,13 +1417,13 @@ def main() -> int:
         worker_cdf_data.append(gpu_lat)
         worker_cdf_labels.append("GPU")
     plot_latency_cdf(
-        axes[24],
+        axes[25],
         worker_cdf_data,
         worker_cdf_labels,
         "Latency CDF by worker type",
     )
 
-    plot_worker_cdf_grid(axes[25], all_workers, all_lat)
+    plot_worker_cdf_grid(axes[26], all_workers, all_lat)
 
     size_latencies: dict[int, List[float]] = {}
     for size, latency in zip(all_sizes, all_lat):
@@ -1446,20 +1434,20 @@ def main() -> int:
     batch_cdf_data = [item[1] for item in top_sizes]
     batch_cdf_labels = [f"size {item[0]}" for item in top_sizes]
     plot_latency_cdf(
-        axes[26],
+        axes[27],
         batch_cdf_data,
         batch_cdf_labels,
         "Latency CDF by batch size",
     )
 
-    plot_worker_phase_utilization(axes[27], all_workers, all_breakdowns)
-    plot_worker_boxplots(axes[28], all_workers, all_lat)
-    plot_worker_time_heatmap(axes[29], all_workers, all_ids, all_lat)
-    plot_request_arrival_timeline(axes[30], all_arrivals)
-    plot_request_arrival_rate(axes[31], all_arrivals)
-    axes[32].remove()
-    axes[32] = fig.add_subplot(33, 1, 33, projection="polar")
-    plot_worker_radar(axes[32], all_workers, all_breakdowns)
+    plot_worker_phase_utilization(axes[28], all_workers, all_breakdowns)
+    plot_worker_boxplots(axes[29], all_workers, all_lat)
+    plot_worker_time_heatmap(axes[30], all_workers, all_ids, all_lat)
+    plot_request_arrival_timeline(axes[31], all_arrivals)
+    plot_request_arrival_rate(axes[32], all_arrivals)
+    axes[33].remove()
+    axes[33] = fig.add_subplot(34, 1, 34, projection="polar")
+    plot_worker_radar(axes[33], all_workers, all_breakdowns)
     fig.subplots_adjust(hspace=0.6, top=0.98, bottom=0.02)
 
     if args.output:
