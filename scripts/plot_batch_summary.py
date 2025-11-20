@@ -490,7 +490,17 @@ def plot_worker_time_heatmap(
     ax.set_xlabel("Batch ID bucket")
     ax.set_ylabel("Worker ID")
     ax.set_title("Worker-time heatmap (avg latency)")
-    plt.colorbar(im, ax=ax, label="Latency (ms)")
+    cax = inset_axes(
+        ax,
+        width="2%",
+        height="70%",
+        loc="lower left",
+        bbox_to_anchor=(1.02, 0.15, 1, 1),
+        bbox_transform=ax.transAxes,
+        borderpad=0.0,
+    )
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.set_label("Latency (ms)")
 
 
 def plot_phase_heatmap(
@@ -538,7 +548,17 @@ def plot_phase_heatmap(
     ax.set_xlabel("Batch size")
     ax.set_ylabel("Phase")
     ax.set_title("Phase heatmap (avg ms)")
-    plt.colorbar(im, ax=ax, label="Average duration (ms)")
+    cax = inset_axes(
+        ax,
+        width="2%",
+        height="70%",
+        loc="lower left",
+        bbox_to_anchor=(1.02, 0.15, 1, 1),
+        bbox_transform=ax.transAxes,
+        borderpad=0.0,
+    )
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.set_label("Average duration (ms)")
 
 
 def plot_worker_phase_heatmap(
@@ -576,7 +596,17 @@ def plot_worker_phase_heatmap(
     ax.set_xlabel("Worker ID")
     ax.set_ylabel("Phase")
     ax.set_title("Phase heatmap by worker (avg ms)")
-    plt.colorbar(im, ax=ax, label="Average duration (ms)")
+    cax = inset_axes(
+        ax,
+        width="2%",
+        height="70%",
+        loc="lower left",
+        bbox_to_anchor=(1.02, 0.15, 1, 1),
+        bbox_transform=ax.transAxes,
+        borderpad=0.0,
+    )
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.set_label("Average duration (ms)")
 
 
 def plot_phase_correlation(ax, breakdowns: Sequence[Tuple[float, ...]]) -> None:
@@ -616,7 +646,17 @@ def plot_phase_correlation(ax, breakdowns: Sequence[Tuple[float, ...]]) -> None:
     ax.set_xlabel("Phase")
     ax.set_ylabel("Phase")
     ax.set_title(title)
-    plt.colorbar(im, ax=ax, label="Pearson r")
+    cax = inset_axes(
+        ax,
+        width="2%",
+        height="70%",
+        loc="lower left",
+        bbox_to_anchor=(1.02, 0.15, 1, 1),
+        bbox_transform=ax.transAxes,
+        borderpad=0.0,
+    )
+    cbar = plt.colorbar(im, cax=cax)
+    cbar.set_label("Pearson r")
 
 
 def plot_phase_pair_scatter(
