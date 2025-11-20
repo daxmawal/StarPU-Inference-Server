@@ -1525,6 +1525,23 @@ TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
   EXPECT_FALSE(logger.summary_stream_.is_open());
 }
 
+TEST(BatchingTraceLoggerTest, ExposesSummaryFilePathWhenConfigured)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+
+  ASSERT_FALSE(logger.summary_file_path().has_value());
+  logger.configure(true, trace_path.string());
+
+  const auto summary_path = make_summary_path(trace_path);
+  const auto summary = logger.summary_file_path();
+  ASSERT_TRUE(summary.has_value());
+  EXPECT_EQ(summary->string(), summary_path.string());
+
+  logger.configure(false, "");
+  remove_trace_outputs(trace_path);
+}
+
 TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
 {
   const auto trace_path = make_temp_trace_path();
