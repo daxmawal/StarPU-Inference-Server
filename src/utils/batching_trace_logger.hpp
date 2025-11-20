@@ -60,10 +60,14 @@ class WorkerLaneManager {
     int thread_id;
     int64_t last_end_ts;
   };
+  struct LaneIndex {
+    int value;
+  };
 
   static constexpr int kWorkerLaneSortStride = 1000;
-  static auto worker_lane_sort_index(int worker_id, int lane_index) -> int;
-  static auto worker_lane_thread_id(int worker_id, int lane_index) -> int;
+  static auto worker_lane_sort_index(int worker_id, LaneIndex lane_index)
+      -> int;
+  static auto worker_lane_thread_id(int worker_id, LaneIndex lane_index) -> int;
 
   std::unordered_map<int, std::vector<LaneState>> worker_lanes_;
 };

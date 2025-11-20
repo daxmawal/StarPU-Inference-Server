@@ -328,12 +328,12 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
     -> std::vector<int64_t>
 {
   using Clock = std::chrono::high_resolution_clock;
-  const auto to_microseconds = [](Clock::time_point tp) -> int64_t {
-    if (tp == Clock::time_point{}) {
+  const auto to_microseconds = [](Clock::time_point time_point) -> int64_t {
+    if (time_point == Clock::time_point{}) {
       return 0;
     }
     return std::chrono::duration_cast<std::chrono::microseconds>(
-               tp.time_since_epoch())
+               time_point.time_since_epoch())
         .count();
   };
 
@@ -666,11 +666,11 @@ class ResultDispatcher {
       const detail::TimingInfo& timing_info) const;
 
   void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
-  auto resolve_batch_size(
+  static auto resolve_batch_size(
       StarPUTaskRunner& runner,
-      const std::shared_ptr<InferenceJob>& job) const -> std::size_t;
-  void emit_batch_traces(
-      const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner) const;
+      const std::shared_ptr<InferenceJob>& job) -> std::size_t;
+  static void emit_batch_traces(
+      const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner);
   static void invoke_previous_callback(
       const std::function<void(std::vector<torch::Tensor>&&, double)>& previous,
       std::vector<torch::Tensor>& results, double latency_ms);
@@ -796,8 +796,8 @@ ResultDispatcher::prepare_job_completion_callback(
         ResultDispatcher::ensure_callback_timing(job_sptr->timing_info());
         dispatcher->record_job_metrics(
             job_sptr, StarPUTaskRunner::DurationMs{latency_ms},
-            dispatcher->resolve_batch_size(runner, job_sptr));
-        dispatcher->emit_batch_traces(job_sptr, runner);
+            ResultDispatcher::resolve_batch_size(runner, job_sptr));
+        ResultDispatcher::emit_batch_traces(job_sptr, runner);
         ResultDispatcher::invoke_previous_callback(
             prev_callback, results, latency_ms);
         dispatcher->finalize_job_completion(job_sptr);
@@ -2263,7 +2263,7 @@ StarPUTaskRunner::run()
 auto
 ResultDispatcher::resolve_batch_size(
     StarPUTaskRunner& runner,
-    const std::shared_ptr<InferenceJob>& job) const -> std::size_t
+    const std::shared_ptr<InferenceJob>& job) -> std::size_t
 {
   return std::max<std::size_t>(
       std::size_t{1}, static_cast<std::size_t>(runner.resolve_batch_size(job)));
@@ -2271,7 +2271,7 @@ ResultDispatcher::resolve_batch_size(
 
 void
 ResultDispatcher::emit_batch_traces(
-    const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner) const
+    const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner)
 {
   auto& tracer = BatchingTraceLogger::instance();
   if (!tracer.enabled()) {

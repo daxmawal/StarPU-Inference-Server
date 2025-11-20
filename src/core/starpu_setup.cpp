@@ -825,8 +825,8 @@ StarPUSetup::get_worker_ids_by_type(enum starpu_worker_archtype type)
       starpu_worker_get_ids_by_type(type, workerids.data(), workerids.size());
   const auto clipped =
       std::min(static_cast<std::size_t>(count), workerids.size());
-  return std::vector<int>(
+  return {
       workerids.begin(),
-      workerids.begin() + static_cast<std::ptrdiff_t>(clipped));
+      workerids.begin() + static_cast<std::ptrdiff_t>(clipped)};
 }
 }  // namespace starpu_server

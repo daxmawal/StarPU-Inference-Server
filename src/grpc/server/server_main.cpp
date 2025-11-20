@@ -51,11 +51,11 @@ shell_quote(const std::string& value) -> std::string
   std::string quoted;
   quoted.reserve(value.size() + 2);
   quoted.push_back('\'');
-  for (char ch : value) {
-    if (ch == '\'') {
+  for (char character : value) {
+    if (character == '\'') {
       quoted += "'\\''";
     } else {
-      quoted.push_back(ch);
+      quoted.push_back(character);
     }
   }
   quoted.push_back('\'');
@@ -137,9 +137,9 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
     return;
   }
 
-  const auto summary_path = *summary_path_opt;
-  std::error_code ec;
-  if (!std::filesystem::exists(summary_path, ec) || ec) {
+  const auto& summary_path = *summary_path_opt;
+  std::error_code err_code;
+  if (!std::filesystem::exists(summary_path, err_code) || err_code) {
     starpu_server::log_warning(std::format(
         "Tracing summary file '{}' not found; skipping plot generation.",
         summary_path.string()));
@@ -158,12 +158,12 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
   const std::string command = std::format(
       "python3 {} {} --output {}", shell_quote(script_path->string()),
       shell_quote(summary_path.string()), shell_quote(output_path.string()));
-  const int rc = std::system(command.c_str());
-  if (rc != 0) {
+  const int return_code = std::system(command.c_str());
+  if (return_code != 0) {
     starpu_server::log_warning(std::format(
         "Failed to generate batching latency plots; command '{}' exited with "
         "code {}.",
-        command, rc));
+        command, return_code));
   } else {
     starpu_server::log_info(
         opts.verbosity,

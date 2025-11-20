@@ -59,11 +59,11 @@ escape_csv_field(std::string_view value) -> std::string
 {
   std::string escaped;
   escaped.reserve(value.size());
-  for (char ch : value) {
-    if (ch == '"') {
+  for (char character : value) {
+    if (character == '"') {
       escaped.push_back('"');
     }
-    escaped.push_back(ch);
+    escaped.push_back(character);
   }
   return escaped;
 }
@@ -197,7 +197,8 @@ WorkerLaneManager::assign_lane(int worker_id, Span lane_span) -> Assignment
 {
   auto& lanes = worker_lanes_[worker_id];
   if (lanes.empty()) {
-    const int thread_id = worker_lane_thread_id(worker_id, /*lane_index=*/0);
+    const int thread_id =
+        worker_lane_thread_id(worker_id, LaneIndex{/*value=*/0});
     lanes.push_back(LaneState{thread_id, /*last_end_ts=*/0});
   }
 
@@ -206,17 +207,19 @@ WorkerLaneManager::assign_lane(int worker_id, Span lane_span) -> Assignment
     if (lane_span.start_ts >= lane.last_end_ts) {
       lane.last_end_ts = lane_span.end_ts;
       const auto lane_index = static_cast<int>(idx);
+      const LaneIndex lane_id{lane_index};
       return Assignment{
-          lane.thread_id, worker_lane_sort_index(worker_id, lane_index),
+          lane.thread_id, worker_lane_sort_index(worker_id, lane_id),
           lane_index};
     }
   }
 
   const auto lane_index = static_cast<int>(lanes.size());
-  const int thread_id = worker_lane_thread_id(worker_id, lane_index);
+  const LaneIndex lane_id{lane_index};
+  const int thread_id = worker_lane_thread_id(worker_id, lane_id);
   lanes.push_back(LaneState{thread_id, lane_span.end_ts});
   return Assignment{
-      thread_id, worker_lane_sort_index(worker_id, lane_index), lane_index};
+      thread_id, worker_lane_sort_index(worker_id, lane_id), lane_index};
 }
 
 auto
@@ -240,26 +243,30 @@ WorkerLaneManager::reset()
 auto
 WorkerLaneManager::base_thread_id(int worker_id) -> int
 {
-  return worker_lane_thread_id(worker_id, /*lane_index=*/0);
+  return worker_lane_thread_id(worker_id, LaneIndex{/*value=*/0});
 }
 
 auto
 WorkerLaneManager::base_sort_index(int worker_id) -> int
 {
-  return worker_lane_sort_index(worker_id, /*lane_index=*/0);
+  return worker_lane_sort_index(worker_id, LaneIndex{/*value=*/0});
 }
 
 auto
-WorkerLaneManager::worker_lane_sort_index(int worker_id, int lane_index) -> int
+WorkerLaneManager::worker_lane_sort_index(int worker_id, LaneIndex lane_index)
+    -> int
 {
-  const int base_thread_id = worker_lane_thread_id(worker_id, /*lane_index=*/0);
-  return base_thread_id * kWorkerLaneSortStride + lane_index;
+  const int base_thread_id =
+      worker_lane_thread_id(worker_id, LaneIndex{/*value=*/0});
+  return base_thread_id * kWorkerLaneSortStride + lane_index.value;
 }
 
 auto
-WorkerLaneManager::worker_lane_thread_id(int worker_id, int lane_index) -> int
+WorkerLaneManager::worker_lane_thread_id(int worker_id, LaneIndex lane_index)
+    -> int
 {
-  return kWorkerThreadOffset + worker_id * kWorkerLaneThreadStride + lane_index;
+  return kWorkerThreadOffset + worker_id * kWorkerLaneThreadStride +
+         lane_index.value;
 }
 
 auto
