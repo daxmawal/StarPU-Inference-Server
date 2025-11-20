@@ -196,8 +196,9 @@ WarmupRunner::run(int request_nb_per_worker)
 
   std::jthread server(&StarPUTaskRunner::run, &worker);
 
-  std::jthread client(
-      [&]() { client_worker(device_workers, queue, request_nb_per_worker); });
+  std::jthread client([this, &device_workers, &queue, request_nb_per_worker]() {
+    client_worker(device_workers, queue, request_nb_per_worker);
+  });
 
   size_t total_worker_count = 0;
   for (const auto& [device_id, worker_list] : device_workers) {

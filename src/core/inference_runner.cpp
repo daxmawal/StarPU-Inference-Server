@@ -128,14 +128,16 @@ get_cuda_device_count() -> int
     return *override_storage;
   }
 
-  const auto device_count = torch::cuda::device_count();
-  if (device_count < 0) {
+  using DeviceCountSigned = long long;
+  using DeviceCountUnsigned = std::make_unsigned_t<DeviceCountSigned>;
+  const auto device_count_signed =
+      static_cast<DeviceCountSigned>(torch::cuda::device_count());
+  if (device_count_signed < 0) {
     throw InvalidGpuDeviceException(
         "torch::cuda::device_count returned a negative value.");
   }
-  using UnsignedDeviceCountType = std::make_unsigned_t<decltype(device_count)>;
-  const auto raw_count =
-      static_cast<long long>(UnsignedDeviceCountType(device_count));
+  const auto raw_count = static_cast<long long>(
+      static_cast<DeviceCountUnsigned>(device_count_signed));
   if (raw_count > std::numeric_limits<int>::max()) {
     throw InvalidGpuDeviceException(std::format(
         "torch::cuda::device_count returned {}, which exceeds int range.",

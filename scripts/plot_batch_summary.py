@@ -22,7 +22,7 @@ import sys
 from collections import Counter, deque
 from itertools import cycle
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import Iterable, List, NamedTuple, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -55,6 +55,8 @@ MAX_BATCH_CDF_SERIES = 4
 PHASE_INDEX = {label: idx for idx, label in enumerate(PHASE_LABELS)}
 SLA_THRESHOLDS_MS = (50.0, 100.0, 200.0)
 MAX_WORKER_CDFS = 6
+CPU_COLOR = "#d62728"
+GPU_COLOR = "#1f77b4"
 
 BatchRow = Tuple[
     int,  # batch_id
@@ -66,6 +68,31 @@ BatchRow = Tuple[
     Tuple[float, ...],  # phase breakdown
     Tuple[int, ...],  # request arrival timestamps (us)
 ]
+
+
+class PlotInputs(NamedTuple):
+    all_ids: List[int]
+    all_lat: List[float]
+    all_workers: List[int]
+    all_sizes: List[int]
+    all_jobs: List[int]
+    all_breakdowns: List[Tuple[float, ...]]
+    all_arrivals: List[Tuple[int, ...]]
+    cpu_ids: List[int]
+    cpu_lat: List[float]
+    cpu_workers: List[int]
+    cpu_sizes: List[int]
+    cpu_jobs: List[int]
+    cpu_breakdowns: List[Tuple[float, ...]]
+    cpu_arrivals: List[Tuple[int, ...]]
+    gpu_ids: List[int]
+    gpu_lat: List[float]
+    gpu_workers: List[int]
+    gpu_sizes: List[int]
+    gpu_jobs: List[int]
+    gpu_breakdowns: List[Tuple[float, ...]]
+    gpu_arrivals: List[Tuple[int, ...]]
+    all_worker_types: List[str]
 
 
 def parse_args() -> argparse.Namespace:
@@ -1154,18 +1181,17 @@ def plot_worker_task_distribution(
         )
 
 
-def main() -> int:
-    args = parse_args()
+def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
     csv_path = args.summary_csv
     if not csv_path.exists():
         print(f"error: CSV not found: {csv_path}", file=sys.stderr)
-        return 1
+        return None
 
     try:
         data = load_latencies(csv_path)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
-        return 1
+        return None
 
     (
         all_ids,
@@ -1198,11 +1224,60 @@ def main() -> int:
     all_worker_types = [
         worker_type_by_id.get(batch_id, "unknown") for batch_id in all_ids
     ]
-    cpu_color = "#d62728"
-    gpu_color = "#1f77b4"
 
-    fig, axes_array = plt.subplots(35, 1, figsize=(12, 136), sharex=False)
-    axes = list(axes_array)
+    return PlotInputs(
+        all_ids,
+        all_lat,
+        all_workers,
+        all_sizes,
+        all_jobs,
+        all_breakdowns,
+        all_arrivals,
+        cpu_ids,
+        cpu_lat,
+        cpu_workers,
+        cpu_sizes,
+        cpu_jobs,
+        cpu_breakdowns,
+        cpu_arrivals,
+        gpu_ids,
+        gpu_lat,
+        gpu_workers,
+        gpu_sizes,
+        gpu_jobs,
+        gpu_breakdowns,
+        gpu_arrivals,
+        all_worker_types,
+    )
+
+
+def render_plots(
+    fig: plt.Figure, axes: list[plt.Axes], inputs: PlotInputs, output_path: Path | None
+) -> None:
+    (
+        all_ids,
+        all_lat,
+        all_workers,
+        all_sizes,
+        all_jobs,
+        all_breakdowns,
+        all_arrivals,
+        cpu_ids,
+        cpu_lat,
+        cpu_workers,
+        cpu_sizes,
+        cpu_jobs,
+        cpu_breakdowns,
+        cpu_arrivals,
+        gpu_ids,
+        gpu_lat,
+        gpu_workers,
+        gpu_sizes,
+        gpu_jobs,
+        gpu_breakdowns,
+        gpu_arrivals,
+        all_worker_types,
+    ) = inputs
 
     scatter_with_size(
         axes[0],
@@ -1220,7 +1295,7 @@ def main() -> int:
             gpu_lat,
             s=14,
             alpha=0.7,
-            c=gpu_color,
+            c=GPU_COLOR,
             label="GPU",
         )
         has_worker_data = True
@@ -1230,7 +1305,7 @@ def main() -> int:
             cpu_lat,
             s=14,
             alpha=0.7,
-            c=cpu_color,
+            c=CPU_COLOR,
             label="CPU",
         )
         has_worker_data = True
@@ -1259,7 +1334,7 @@ def main() -> int:
     if all_ids:
         axes[0].set_xlim(all_xlim)
         axes[0].set_ylim(all_ylim)
-    scatter_plot(axes[2], cpu_ids, cpu_lat, "CPU workers only", color=cpu_color)
+    scatter_plot(axes[2], cpu_ids, cpu_lat, "CPU workers only", color=CPU_COLOR)
     if all_ids:
         axes[2].set_xlim(all_xlim)
         axes[2].set_ylim(all_ylim)
@@ -1389,7 +1464,7 @@ def main() -> int:
         axes[21].set_ylim(corr_ylim)
 
     if cpu_sizes and cpu_lat:
-        axes[22].scatter(cpu_sizes, cpu_lat, alpha=0.6, color=cpu_color)
+        axes[22].scatter(cpu_sizes, cpu_lat, alpha=0.6, color=CPU_COLOR)
         if len(cpu_sizes) >= 2:
             sorted_pairs = sorted(zip(cpu_sizes, cpu_lat))
             xs = np.array([p[0] for p in sorted_pairs])
@@ -1426,7 +1501,7 @@ def main() -> int:
         if size_counts_all:
             series.append(("All", size_counts_all, "gray", 0.7))
         if size_counts_cpu:
-            series.append(("CPU", size_counts_cpu, cpu_color, 0.6))
+            series.append(("CPU", size_counts_cpu, CPU_COLOR, 0.6))
         if size_counts_gpu:
             series.append(("GPU", size_counts_gpu, "blue", 0.6))
         bar_groups = max(1, len(series))
@@ -1515,13 +1590,27 @@ def main() -> int:
     plot_worker_radar(axes[34], all_workers, all_breakdowns)
     fig.subplots_adjust(hspace=0.6, top=0.98, bottom=0.02)
 
-    if args.output:
-        output_path = args.output
+    if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(output_path, dpi=150)
         print(f"Saved plots to {output_path}")
     else:
         plt.show()
+
+
+def create_figure() -> tuple[plt.Figure, list[plt.Axes]]:
+    fig, axes_array = plt.subplots(35, 1, figsize=(12, 136), sharex=False)
+    return fig, list(axes_array)
+
+
+def main() -> int:
+    args = parse_args()
+    inputs = load_plot_inputs(args)
+    if inputs is None:
+        return 1
+
+    fig, axes = create_figure()
+    render_plots(fig, axes, inputs, args.output)
     return 0
 
 
