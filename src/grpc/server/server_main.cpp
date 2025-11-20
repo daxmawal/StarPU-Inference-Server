@@ -138,8 +138,8 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
   }
 
   const auto& summary_path = *summary_path_opt;
-  std::error_code err_code;
-  if (!std::filesystem::exists(summary_path, err_code) || err_code) {
+  if (std::error_code err_code;
+      !std::filesystem::exists(summary_path, err_code) || err_code) {
     starpu_server::log_warning(std::format(
         "Tracing summary file '{}' not found; skipping plot generation.",
         summary_path.string()));
@@ -402,7 +402,7 @@ describe_cpu_affinity(int worker_id) -> std::string
 void
 log_worker_inventory(const starpu_server::RuntimeConfig& opts)
 {
-  const int total_workers = static_cast<int>(starpu_worker_get_count());
+  const auto total_workers = static_cast<int>(starpu_worker_get_count());
   starpu_server::log_info(
       opts.verbosity,
       std::format("Configured {} StarPU worker(s).", total_workers));

@@ -134,8 +134,8 @@ get_cuda_device_count() -> int
         "torch::cuda::device_count returned a negative value.");
   }
   using UnsignedDeviceCountType = std::make_unsigned_t<decltype(device_count)>;
-  const auto raw_count = static_cast<long long>(
-      static_cast<UnsignedDeviceCountType>(device_count));
+  const auto raw_count =
+      static_cast<long long>(UnsignedDeviceCountType(device_count));
   if (raw_count > std::numeric_limits<int>::max()) {
     throw InvalidGpuDeviceException(std::format(
         "torch::cuda::device_count returned {}, which exceeds int range.",
@@ -282,8 +282,7 @@ client_worker(
     job->timing_info().enqueued_time = enqueued_now;
     job->timing_info().last_enqueued_time = enqueued_now;
 
-    auto& tracer = BatchingTraceLogger::instance();
-    const bool tracer_enabled = tracer.enabled();
+    const bool tracer_enabled = BatchingTraceLogger::instance().enabled();
     std::string model_name;
     if (tracer_enabled) {
       model_name = std::string(job->model_name());
@@ -297,7 +296,7 @@ client_worker(
     }
     client_utils::log_job_enqueued(opts, request_id, request_nb, enqueued_now);
     if (tracer_enabled) {
-      tracer.log_request_enqueued(
+      BatchingTraceLogger::instance().log_request_enqueued(
           request_id, model_name, /*is_warmup=*/false, enqueued_now);
     }
   }
