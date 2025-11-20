@@ -585,7 +585,7 @@ def plot_phase_heatmap(
     ax.set_yticks(range(len(PHASE_LABELS)), PHASE_LABELS)
     ax.set_xlabel("Batch size")
     ax.set_ylabel("Phase")
-    ax.set_title("Phase heatmap (avg ms)")
+    ax.set_title("Phase heatmap (avg ms) - All workers")
     cax = inset_axes(
         ax,
         width="2%",
@@ -647,17 +647,22 @@ def plot_worker_phase_heatmap(
     cbar.set_label("Average duration (ms)")
 
 
-def plot_phase_correlation(ax, breakdowns: Sequence[Tuple[float, ...]]) -> None:
-    title = "Phase correlation heatmap"
+def plot_phase_correlation(
+    ax,
+    breakdowns: Sequence[Tuple[float, ...]],
+    *,
+    title: str | None = None,
+) -> None:
+    base_title = title or "Phase correlation heatmap"
     if not breakdowns:
-        ax.set_title(f"{title} (no data)")
+        ax.set_title(f"{base_title} (no data)")
         ax.set_xlabel("Phase")
         ax.set_ylabel("Phase")
         ax.grid(True, linestyle="--", alpha=0.4)
         return
     matrix = np.array(breakdowns, dtype=float)
     if matrix.ndim != 2 or matrix.shape[0] < 2:
-        ax.set_title(f"{title} (insufficient data)")
+        ax.set_title(f"{base_title} (insufficient data)")
         ax.set_xlabel("Phase")
         ax.set_ylabel("Phase")
         ax.grid(True, linestyle="--", alpha=0.4)
@@ -665,7 +670,7 @@ def plot_phase_correlation(ax, breakdowns: Sequence[Tuple[float, ...]]) -> None:
     with np.errstate(invalid="ignore"):
         corr = np.corrcoef(matrix, rowvar=False)
     if np.all(np.isnan(corr)):
-        ax.set_title(f"{title} (no variation)")
+        ax.set_title(f"{base_title} (no variation)")
         ax.set_xlabel("Phase")
         ax.set_ylabel("Phase")
         ax.grid(True, linestyle="--", alpha=0.4)
@@ -683,7 +688,7 @@ def plot_phase_correlation(ax, breakdowns: Sequence[Tuple[float, ...]]) -> None:
     ax.set_yticks(range(len(PHASE_LABELS)), PHASE_LABELS)
     ax.set_xlabel("Phase")
     ax.set_ylabel("Phase")
-    ax.set_title(title)
+    ax.set_title(base_title)
     cax = inset_axes(
         ax,
         width="2%",
@@ -1224,7 +1229,7 @@ def main() -> int:
     cpu_color = "#d62728"
     gpu_color = "#1f77b4"
 
-    fig, axes_array = plt.subplots(29, 1, figsize=(12, 112), sharex=False)
+    fig, axes_array = plt.subplots(33, 1, figsize=(12, 128), sharex=False)
     axes = list(axes_array)
 
     scatter_with_size(
@@ -1338,13 +1343,39 @@ def main() -> int:
     )
 
     plot_latency_stack(axes[10], all_ids, all_breakdowns)
-    plot_phase_heatmap(axes[11], all_sizes, all_breakdowns)
-    plot_worker_phase_heatmap(axes[12], all_workers, all_breakdowns)
-    plot_phase_correlation(axes[13], all_breakdowns)
-    plot_phase_waterfall(axes[14], cpu_breakdowns, gpu_breakdowns)
-    plot_phase_pareto(axes[15], all_breakdowns)
 
-    axes[16].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
+    plot_phase_heatmap(axes[11], all_sizes, all_breakdowns)
+    plot_phase_heatmap(axes[12], gpu_sizes, gpu_breakdowns)
+    gpu_title = "Phase heatmap (avg ms) - GPU"
+    if not gpu_sizes or not gpu_breakdowns:
+        axes[12].set_title(f"{gpu_title} (no data)")
+    else:
+        axes[12].set_title(gpu_title)
+    plot_phase_heatmap(axes[13], cpu_sizes, cpu_breakdowns)
+    cpu_title = "Phase heatmap (avg ms) - CPU"
+    if not cpu_sizes or not cpu_breakdowns:
+        axes[13].set_title(f"{cpu_title} (no data)")
+    else:
+        axes[13].set_title(cpu_title)
+
+    plot_worker_phase_heatmap(axes[14], all_workers, all_breakdowns)
+
+    plot_phase_correlation(axes[15], all_breakdowns)
+    plot_phase_correlation(
+        axes[16],
+        gpu_breakdowns,
+        title="Phase correlation heatmap - GPU",
+    )
+    plot_phase_correlation(
+        axes[17],
+        cpu_breakdowns,
+        title="Phase correlation heatmap - CPU",
+    )
+
+    plot_phase_waterfall(axes[18], cpu_breakdowns, gpu_breakdowns)
+    plot_phase_pareto(axes[19], all_breakdowns)
+
+    axes[20].scatter(all_sizes, all_lat, alpha=0.6, color="#17becf")
     if len(all_sizes) >= 2:
         sorted_pairs = sorted(zip(all_sizes, all_lat))
         xs = np.array([p[0] for p in sorted_pairs])
@@ -1352,24 +1383,24 @@ def main() -> int:
         coeffs = np.polyfit(xs, ys, deg=1)
         fit_x = np.linspace(xs.min(), xs.max(), num=200)
         fit_y = np.polyval(coeffs, fit_x)
-        axes[16].plot(fit_x, fit_y, color="black", linestyle="--")
-    axes[16].set_title("Latency vs batch size (correlation)")
-    axes[16].set_xlabel("Batch size")
-    axes[16].set_ylabel("Latency (ms)")
-    axes[16].grid(True, linestyle="--", alpha=0.3)
+        axes[20].plot(fit_x, fit_y, color="black", linestyle="--")
+    axes[20].set_title("Latency vs batch size (correlation)")
+    axes[20].set_xlabel("Batch size")
+    axes[20].set_ylabel("Latency (ms)")
+    axes[20].grid(True, linestyle="--", alpha=0.3)
 
-    plot_queue_vs_inference(axes[17], all_sizes, all_breakdowns)
+    plot_queue_vs_inference(axes[21], all_sizes, all_breakdowns)
 
-    axes[18].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
+    axes[22].hist(all_sizes, bins=30, alpha=0.7, label="All", color="gray")
     if cpu_sizes:
-        axes[18].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
+        axes[22].hist(cpu_sizes, bins=30, alpha=0.5, label="CPU", color=cpu_color)
     if gpu_sizes:
-        axes[18].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
-    axes[18].set_title("Batch size distribution")
-    axes[18].set_xlabel("Batch size")
-    axes[18].set_ylabel("Count")
-    axes[18].legend()
-    axes[18].grid(True, linestyle="--", alpha=0.3)
+        axes[22].hist(gpu_sizes, bins=30, alpha=0.5, label="GPU", color="blue")
+    axes[22].set_title("Batch size distribution")
+    axes[22].set_xlabel("Batch size")
+    axes[22].set_ylabel("Count")
+    axes[22].legend()
+    axes[22].grid(True, linestyle="--", alpha=0.3)
 
     violin_data = []
     labels = []
@@ -1380,14 +1411,14 @@ def main() -> int:
         violin_data.append(gpu_lat)
         labels.append("GPU")
     if violin_data:
-        axes[19].violinplot(violin_data, showmeans=True, showmedians=False)
-        axes[19].set_xticks(range(1, len(labels) + 1), labels)
-        axes[19].set_title("Latency distribution (violin plot)")
-        axes[19].set_ylabel("Latency (ms)")
-        axes[19].grid(True, linestyle="--", alpha=0.3)
+        axes[23].violinplot(violin_data, showmeans=True, showmedians=False)
+        axes[23].set_xticks(range(1, len(labels) + 1), labels)
+        axes[23].set_title("Latency distribution (violin plot)")
+        axes[23].set_ylabel("Latency (ms)")
+        axes[23].grid(True, linestyle="--", alpha=0.3)
     else:
-        axes[19].set_title("Latency distribution (no data)")
-        axes[19].grid(True, linestyle="--", alpha=0.3)
+        axes[23].set_title("Latency distribution (no data)")
+        axes[23].grid(True, linestyle="--", alpha=0.3)
 
     worker_cdf_data: List[Sequence[float]] = []
     worker_cdf_labels: List[str] = []
@@ -1398,13 +1429,13 @@ def main() -> int:
         worker_cdf_data.append(gpu_lat)
         worker_cdf_labels.append("GPU")
     plot_latency_cdf(
-        axes[20],
+        axes[24],
         worker_cdf_data,
         worker_cdf_labels,
         "Latency CDF by worker type",
     )
 
-    plot_worker_cdf_grid(axes[21], all_workers, all_lat)
+    plot_worker_cdf_grid(axes[25], all_workers, all_lat)
 
     size_latencies: dict[int, List[float]] = {}
     for size, latency in zip(all_sizes, all_lat):
@@ -1415,20 +1446,20 @@ def main() -> int:
     batch_cdf_data = [item[1] for item in top_sizes]
     batch_cdf_labels = [f"size {item[0]}" for item in top_sizes]
     plot_latency_cdf(
-        axes[22],
+        axes[26],
         batch_cdf_data,
         batch_cdf_labels,
         "Latency CDF by batch size",
     )
 
-    plot_worker_phase_utilization(axes[23], all_workers, all_breakdowns)
-    plot_worker_boxplots(axes[24], all_workers, all_lat)
-    plot_worker_time_heatmap(axes[25], all_workers, all_ids, all_lat)
-    plot_request_arrival_timeline(axes[26], all_arrivals)
-    plot_request_arrival_rate(axes[27], all_arrivals)
-    axes[28].remove()
-    axes[28] = fig.add_subplot(29, 1, 29, projection="polar")
-    plot_worker_radar(axes[28], all_workers, all_breakdowns)
+    plot_worker_phase_utilization(axes[27], all_workers, all_breakdowns)
+    plot_worker_boxplots(axes[28], all_workers, all_lat)
+    plot_worker_time_heatmap(axes[29], all_workers, all_ids, all_lat)
+    plot_request_arrival_timeline(axes[30], all_arrivals)
+    plot_request_arrival_rate(axes[31], all_arrivals)
+    axes[32].remove()
+    axes[32] = fig.add_subplot(33, 1, 33, projection="polar")
+    plot_worker_radar(axes[32], all_workers, all_breakdowns)
     fig.subplots_adjust(hspace=0.6, top=0.98, bottom=0.02)
 
     if args.output:
