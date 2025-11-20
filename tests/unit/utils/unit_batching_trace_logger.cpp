@@ -1511,6 +1511,20 @@ TEST(BatchingTraceLoggerTest, WritesBatchSummaryEntries)
   remove_trace_outputs(trace_path);
 }
 
+TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = std::filesystem::temp_directory_path() /
+                          "batching_trace_missing_dir" / "trace.json";
+  std::error_code ec;
+  std::filesystem::remove_all(trace_path.parent_path(), ec);
+
+  const auto configured = logger.configure_summary_writer(trace_path);
+  EXPECT_FALSE(configured);
+  EXPECT_TRUE(logger.summary_file_path_.empty());
+  EXPECT_FALSE(logger.summary_stream_.is_open());
+}
+
 TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
 {
   const auto trace_path = make_temp_trace_path();
