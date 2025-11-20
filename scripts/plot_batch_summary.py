@@ -49,6 +49,7 @@ PHASE_COLORS = {
 }
 
 ROLLING_WINDOW = 50
+THROUGHPUT_WINDOW = 100
 MAX_BATCH_CDF_SERIES = 4
 PHASE_INDEX = {label: idx for idx, label in enumerate(PHASE_LABELS)}
 SLA_THRESHOLDS_MS = (50.0, 100.0, 200.0)
@@ -802,7 +803,7 @@ def compute_cumulative_latency(
 def compute_throughput(
     ids: Sequence[int],
     jobs: Sequence[int],
-    window_size: int = 100,
+    window_size: int = THROUGHPUT_WINDOW,
 ) -> Tuple[List[int], List[float]]:
     if not ids or not jobs:
         return [], []
@@ -1244,13 +1245,21 @@ def main() -> int:
         axes[4].set_title("Cumulative latency vs batch ID (no data)")
         axes[4].grid(True, linestyle="--", alpha=0.3)
 
-    throughput_ids, throughput_vals = compute_throughput(all_ids, all_jobs)
+    throughput_ids, throughput_vals = compute_throughput(
+        all_ids, all_jobs, window_size=THROUGHPUT_WINDOW
+    )
     if throughput_ids:
-        axes[5].plot(throughput_ids, throughput_vals, color="#9467bd")
+        axes[5].plot(
+            throughput_ids,
+            throughput_vals,
+            color="#9467bd",
+            label=f"window={THROUGHPUT_WINDOW} batches",
+        )
         axes[5].set_title("Throughput vs batch ID (requests per window)")
         axes[5].set_xlabel("Batch ID")
         axes[5].set_ylabel("Average logical jobs")
         axes[5].grid(True, linestyle="--", alpha=0.3)
+        axes[5].legend(loc="lower right", fontsize="small")
     else:
         axes[5].set_title("Throughput vs batch ID (no data)")
         axes[5].grid(True, linestyle="--", alpha=0.3)
