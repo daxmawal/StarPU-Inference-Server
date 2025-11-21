@@ -23,7 +23,8 @@ jobs:
 
       - name: Check CMake formatting
         run: |
-          FILES=$(find . -name 'CMakeLists.txt' -o -name '*.cmake')
+          FILES=$(find . -path './external/*' -prune -o \
+            \( -name 'CMakeLists.txt' -o -name '*.cmake' \) -type f -print)
           echo "Checking format for: $FILES"
 
           fail=0
@@ -48,6 +49,7 @@ jobs:
         run: |
           # Exclut binaires, repo, build, submodules, artifacts courants, images, archives…
           if grep -rI --line-number --exclude-dir=.git --exclude-dir=build \
+              --exclude-dir=external \
               --exclude-dir=.venv --exclude-dir=_deps --exclude-dir=Install \
               --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' \
               --exclude='*.gif' --exclude='*.pdf' --exclude='*.zip' \
@@ -73,7 +75,8 @@ jobs:
                 fail=1
               fi
             fi
-          done < <(find . -type f -not -path "./.git/*" -not -path "./build/*" -print0)
+          done < <(find . -type f -not -path "./.git/*" -not -path "./build/*" \
+            -not -path "./external/*" -print0)
           exit $fail
 
       - name: Check for CRLF line endings
@@ -97,7 +100,8 @@ jobs:
 
       - name: Check formatting
         run: |
-          FILES=$(find . -regex '.*\.\(cpp\|hpp\|c\|h\)' -not -path "./build/*")
+          FILES=$(find . -path './external/*' -prune -o -path './build/*' -prune -o \
+            -regex '.*\.\(cpp\|hpp\|c\|h\)' -type f -print)
           clang-format --dry-run --Werror $FILES
 
   markdownlint:
@@ -113,7 +117,7 @@ jobs:
         run: npm install -g markdownlint-cli
 
       - name: Run markdownlint
-        run: markdownlint '**/*.md'
+        run: markdownlint '**/*.md' --ignore 'external/**'
 
   changes:
     runs-on: ubuntu-latest
