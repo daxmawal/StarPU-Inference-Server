@@ -16,15 +16,30 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - name: Compute excluded paths
+        run: |
+          EXCLUDES="external"
+          if [ -f .gitmodules ]; then
+            while read -r _ path; do
+              EXCLUDES="$EXCLUDES $path"
+            done < <(git config --file .gitmodules --get-regexp path || true)
+          fi
+          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
+          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
 
       - name: Install cmake-format
         run: pip install cmakelang
 
       - name: Check CMake formatting
         run: |
-          FILES=$(find . -path './external/*' -prune -o \
-            \( -name 'CMakeLists.txt' -o -name '*.cmake' \) -type f -print)
+          PRUNE_EXPR=""
+          for path in $EXCLUDED_PATHS; do
+            PRUNE_EXPR="$PRUNE_EXPR -path './${path}/*' -o"
+          done
+
+          FILES=$(eval "find . \\( ${PRUNE_EXPR%-o} \\) -prune -o \
+            \\( -name 'CMakeLists.txt' -o -name '*.cmake' \\) -type f -print")
           echo "Checking format for: $FILES"
 
           fail=0
@@ -42,15 +57,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
+
+      - name: Compute excluded paths
+        run: |
+          EXCLUDES="external"
+          if [ -f .gitmodules ]; then
+            while read -r _ path; do
+              EXCLUDES="$EXCLUDES $path"
+            done < <(git config --file .gitmodules --get-regexp path || true)
+          fi
+          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
+          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
 
       - name: Check trailing whitespace
         run: |
           # Exclut binaires, repo, build, submodules, artifacts courants, images, archives…
-          if grep -rI --line-number --exclude-dir=.git --exclude-dir=build \
-              --exclude-dir=external \
-              --exclude-dir=.venv --exclude-dir=_deps --exclude-dir=Install \
+          EXCLUDE_DIRS="--exclude-dir=.git --exclude-dir=build --exclude-dir=.venv --exclude-dir=_deps --exclude-dir=Install"
+          for path in $EXCLUDED_PATHS; do
+            EXCLUDE_DIRS="$EXCLUDE_DIRS --exclude-dir=$path"
+          done
+
+          if grep -rI --line-number $EXCLUDE_DIRS \
               --exclude='*.png' --exclude='*.jpg' --exclude='*.jpeg' \
               --exclude='*.gif' --exclude='*.pdf' --exclude='*.zip' \
               --exclude='*.tar' --exclude='*.tar.*' --exclude='*.7z' \
@@ -65,6 +93,10 @@ jobs:
         shell: bash
         run: |
           fail=0
+          PRUNE_EXPR="-path './.git/*' -o -path './build/*'"
+          for path in $EXCLUDED_PATHS; do
+            PRUNE_EXPR="$PRUNE_EXPR -o -path './${path}/*'"
+          done
           while IFS= read -r -d '' f; do
             case "$f" in
               *.png|*.jpg|*.jpeg|*.gif|*.pdf|*.zip|*.tar|*.tar.*|*.7z|*.bin|*.exe|*.dll|*.so|*.a|*.o) continue;;
@@ -75,13 +107,17 @@ jobs:
                 fail=1
               fi
             fi
-          done < <(find . -type f -not -path "./.git/*" -not -path "./build/*" \
-            -not -path "./external/*" -print0)
+          done < <(find . \( $PRUNE_EXPR \) -prune -o -type f -print0)
           exit $fail
 
       - name: Check for CRLF line endings
         run: |
-          if git ls-files -z | xargs -0 grep -Il $'\r' | grep .; then
+          EXCLUDE_SPECS=()
+          for path in $EXCLUDED_PATHS; do
+            EXCLUDE_SPECS+=(":!$path/**")
+          done
+
+          if git ls-files -z -- "${EXCLUDE_SPECS[@]}" | xargs -0 grep -Il $'\r' | grep .; then
             echo "CRLF line endings detected (use LF)"
             exit 1
           fi
@@ -92,15 +128,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
+
+      - name: Compute excluded paths
+        run: |
+          EXCLUDES="external"
+          if [ -f .gitmodules ]; then
+            while read -r _ path; do
+              EXCLUDES="$EXCLUDES $path"
+            done < <(git config --file .gitmodules --get-regexp path || true)
+          fi
+          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
+          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
 
       - name: Install clang-format
         run: sudo apt-get install -y clang-format
 
       - name: Check formatting
         run: |
-          FILES=$(find . -path './external/*' -prune -o -path './build/*' -prune -o \
+          PRUNE_EXPR="-path './build/*'"
+          for path in $EXCLUDED_PATHS; do
+            PRUNE_EXPR="$PRUNE_EXPR -o -path './${path}/*'"
+          done
+
+          FILES=$(find . \( $PRUNE_EXPR \) -prune -o \
             -regex '.*\.\(cpp\|hpp\|c\|h\)' -type f -print)
           clang-format --dry-run --Werror $FILES
 
@@ -110,14 +161,29 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
+
+      - name: Compute excluded paths
+        run: |
+          EXCLUDES="external"
+          if [ -f .gitmodules ]; then
+            while read -r _ path; do
+              EXCLUDES="$EXCLUDES $path"
+            done < <(git config --file .gitmodules --get-regexp path || true)
+          fi
+          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
+          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
 
       - name: Install markdownlint
         run: npm install -g markdownlint-cli
 
       - name: Run markdownlint
-        run: markdownlint '**/*.md' --ignore 'external/**'
+        run: |
+          IGNORE_ARGS=()
+          for path in $EXCLUDED_PATHS; do
+            IGNORE_ARGS+=(--ignore "$path/**")
+          done
+          markdownlint '**/*.md' "${IGNORE_ARGS[@]}"
 
   changes:
     runs-on: ubuntu-latest
