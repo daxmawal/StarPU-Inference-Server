@@ -211,11 +211,13 @@ rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
 ## 8. Build StarPU Inference Server
 
-Clone the repository if needed:
+Clone the repository (with submodules) if needed:
 
 ```bash
-git clone https://github.com/daxmawal/StarPU-Inference-Server.git
+git clone --recurse-submodules https://github.com/daxmawal/StarPU-Inference-Server.git
 cd StarPU-Inference-Server
+# If you already cloned without submodules:
+git submodule update --init --recursive
 ```
 
 Configure and compile:
@@ -248,5 +250,5 @@ cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
 
-Tests link against the static `gtest` binaries provided by the system and reuse
-the dependencies you installed above.
+Tests link against the vendored `googletest` submodule and reuse the
+dependencies you installed above.

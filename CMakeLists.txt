@@ -12,6 +12,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # === Source Directories ===
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# === External Submodules ===
+set(EXTERNAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external)
+
+function(require_submodule path pretty_name)
+  if(NOT EXISTS "${EXTERNAL_DIR}/${path}/CMakeLists.txt")
+    message(
+      FATAL_ERROR
+        "${pretty_name} submodule missing at ${EXTERNAL_DIR}/${path}. "
+        "Run `git submodule update --init --recursive` and retry.")
+  endif()
+endfunction()
+
 # === Dependencies ===
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(FindTorchCustom)
@@ -53,33 +65,13 @@ endif()
 
 set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
 
-include(FetchContent)
 if(BUILD_TESTS)
   enable_testing()
-  FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip)
-  FetchContent_MakeAvailable(googletest)
+  set(GTEST_DIR "${EXTERNAL_DIR}/googletest")
+  require_submodule("googletest" "googletest")
+  add_subdirectory(${GTEST_DIR})
 endif()
 
-set(_PC_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
-set(_PC_SRC_DIR "${_PC_BASE_DIR}/prometheus-cpp-src")
-set(_PC_SUBBUILD "${_PC_BASE_DIR}/prometheus-cpp-subbuild")
-set(_PC_BUILD "${_PC_BASE_DIR}/prometheus-cpp-build")
-if(EXISTS "${_PC_SRC_DIR}" AND NOT EXISTS "${_PC_SRC_DIR}/.git")
-  message(
-    WARNING
-      "prometheus-cpp src exists without .git; purging cached _deps to force fresh Git clone."
-  )
-  file(REMOVE_RECURSE "${_PC_SRC_DIR}" "${_PC_SUBBUILD}" "${_PC_BUILD}")
-endif()
-
-FetchContent_Declare(
-  prometheus-cpp
-  GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
-  GIT_TAG v1.1.0
-  GIT_SHALLOW TRUE
-  GIT_SUBMODULES_RECURSE TRUE)
 set(ENABLE_PULL
     ON
     CACHE BOOL "" FORCE)
@@ -92,36 +84,20 @@ set(ENABLE_COMPRESSION
 set(ENABLE_TESTING
     OFF
     CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(prometheus-cpp)
+require_submodule("prometheus-cpp" "prometheus-cpp")
+add_subdirectory(${EXTERNAL_DIR}/prometheus-cpp)
 
 add_subdirectory(${SRC_DIR}/proto)
 
-# === yaml-cpp via FetchContent ===
-include(FetchContent)
-
+# === yaml-cpp via submodule ===
 set(YAML_CPP_BUILD_TESTS
     OFF
     CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_TOOLS
     OFF
     CACHE BOOL "" FORCE)
-
-set(_YC_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
-set(_YC_SRC_DIR "${_YC_BASE_DIR}/yaml-cpp-src")
-set(_YC_SUBBUILD "${_YC_BASE_DIR}/yaml-cpp-subbuild")
-set(_YC_BUILD "${_YC_BASE_DIR}/yaml-cpp-build")
-if(EXISTS "${_YC_SRC_DIR}" AND NOT EXISTS "${_YC_SRC_DIR}/.git")
-  message(
-    WARNING
-      "yaml-cpp src exists without .git; purging cached _deps to force fresh Git clone."
-  )
-  file(REMOVE_RECURSE "${_YC_SRC_DIR}" "${_YC_SUBBUILD}" "${_YC_BUILD}")
-endif()
-
-FetchContent_Declare(yaml-cpp
-                     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git)
-
-FetchContent_MakeAvailable(yaml-cpp)
+require_submodule("yaml-cpp" "yaml-cpp")
+add_subdirectory(${EXTERNAL_DIR}/yaml-cpp)
 
 # Suppress noisy Clang warning from yaml-cpp's dragonbox header Seen as:
 # [-Wconstexpr-not-const] while yaml-cpp builds with older C++ modes
