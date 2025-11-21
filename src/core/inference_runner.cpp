@@ -126,8 +126,8 @@ get_cuda_device_count() -> int
 
   using DeviceCountSigned = long long;
   using DeviceCountUnsigned = std::make_unsigned_t<DeviceCountSigned>;
-  const auto device_count_signed =
-      static_cast<DeviceCountSigned>(torch::cuda::device_count());
+  const auto device_count_signed = static_cast<DeviceCountSigned>(
+      static_cast<int>(torch::cuda::device_count()));
   if (device_count_signed < 0) {
     throw InvalidGpuDeviceException(
         "torch::cuda::device_count returned a negative value.");
