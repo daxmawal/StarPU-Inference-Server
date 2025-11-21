@@ -1,10 +1,3 @@
-if(NOT TARGET protobuf::libprotobuf)
-  find_package(Protobuf REQUIRED)
-endif()
-if(NOT TARGET gRPC::grpc++)
-  find_package(gRPC CONFIG REQUIRED)
-endif()
-
 if(TARGET gRPC::grpc_cpp_plugin)
   set(GRPC_CPP_PLUGIN "$<TARGET_FILE:gRPC::grpc_cpp_plugin>")
 elseif(TARGET grpc_cpp_plugin)
