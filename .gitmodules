@@ -7,3 +7,15 @@
 [submodule "external/yaml-cpp"]
 	path = external/yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp.git
+[submodule "external/abseil-cpp"]
+	path = external/abseil-cpp
+	url = https://github.com/abseil/abseil-cpp.git
+[submodule "external/protobuf"]
+	path = external/protobuf
+	url = https://github.com/protocolbuffers/protobuf.git
+[submodule "external/grpc"]
+	path = external/grpc
+	url = https://github.com/grpc/grpc.git
+[submodule "external/utf8_range"]
+	path = external/utf8_range
+	url = https://github.com/protocolbuffers/utf8_range.git
