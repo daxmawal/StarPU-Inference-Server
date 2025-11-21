@@ -902,6 +902,19 @@ class StarPUTaskRunnerTestAdapter {
 }  // namespace starpu_server
 
 namespace {
+auto
+trace_summary_path(const std::filesystem::path& trace_path)
+    -> std::filesystem::path
+{
+  auto summary = trace_path;
+  auto stem = summary.stem().string();
+  if (stem.empty()) {
+    stem = "batching_trace";
+  }
+  summary.replace_filename(stem + std::string{"_summary.csv"});
+  return summary;
+}
+
 class TraceLoggerSession {
  public:
   TraceLoggerSession()
@@ -923,6 +936,7 @@ class TraceLoggerSession {
     close();
     std::error_code ec;
     std::filesystem::remove(path_, ec);
+    std::filesystem::remove(trace_summary_path(path_), ec);
   }
 
   void close()
@@ -977,6 +991,9 @@ make_aggregated_sub_job(
   aggregated.job = job;
   aggregated.request_id = request_id;
   aggregated.batch_size = 1;
+  if (job) {
+    aggregated.arrival_time = job->timing_info().enqueued_time;
+  }
   return aggregated;
 }
 

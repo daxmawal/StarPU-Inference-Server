@@ -6,7 +6,9 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <exception>
 #include <format>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <numeric>
@@ -26,6 +28,43 @@
 #include "starpu_task_worker.hpp"
 
 namespace starpu_server {
+namespace {
+constexpr int kCpuWarmupDeviceId = std::numeric_limits<int>::min();
+
+auto
+collect_device_workers(const RuntimeConfig& opts)
+    -> std::map<int, std::vector<int32_t>>
+{
+  std::map<int, std::vector<int32_t>> workers;
+
+  if (opts.devices.use_cuda) {
+    const auto device_workers =
+        StarPUSetup::get_cuda_workers_by_device(opts.devices.ids);
+    for (const auto& [device_id, worker_ids] : device_workers) {
+      if (worker_ids.empty()) {
+        continue;
+      }
+      auto& destination = workers[device_id];
+      destination.reserve(destination.size() + worker_ids.size());
+      destination.insert(
+          destination.end(), worker_ids.begin(), worker_ids.end());
+    }
+  }
+
+  if (opts.devices.use_cpu) {
+    const auto cpu_workers =
+        StarPUSetup::get_worker_ids_by_type(STARPU_CPU_WORKER);
+    if (!cpu_workers.empty()) {
+      auto& destination = workers[kCpuWarmupDeviceId];
+      destination.reserve(destination.size() + cpu_workers.size());
+      destination.insert(
+          destination.end(), cpu_workers.begin(), cpu_workers.end());
+    }
+  }
+
+  return workers;
+}
+}  // namespace
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -128,7 +167,11 @@ WarmupRunner::run(int request_nb_per_worker)
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
-  if (!opts_.devices.use_cuda) {
+  auto device_workers = collect_device_workers(opts_);
+  if (device_workers.empty()) {
+    log_info(
+        opts_.verbosity,
+        "Warmup skipped because no eligible workers were detected.");
     return;
   }
 
@@ -151,34 +194,50 @@ WarmupRunner::run(int request_nb_per_worker)
   config.all_done_cv = &dummy_cv;
   StarPUTaskRunner worker(config);
 
-  const std::jthread server(&StarPUTaskRunner::run, &worker);
+  std::jthread server(&StarPUTaskRunner::run, &worker);
 
-  const auto device_workers =
-      StarPUSetup::get_cuda_workers_by_device(opts_.devices.ids);
-
-  const std::jthread client(
-      [&]() { client_worker(device_workers, queue, request_nb_per_worker); });
+  std::jthread client([this, &device_workers, &queue, request_nb_per_worker]() {
+    client_worker(device_workers, queue, request_nb_per_worker);
+  });
 
   size_t total_worker_count = 0;
   for (const auto& [device_id, worker_list] : device_workers) {
     total_worker_count += worker_list.size();
   }
+  const size_t total_jobs =
+      static_cast<size_t>(request_nb_per_worker) * total_worker_count;
 
+  std::exception_ptr wait_exception;
   {
     std::unique_lock lock(dummy_mutex);
-    const size_t total_jobs =
-        static_cast<size_t>(request_nb_per_worker) * total_worker_count;
-    dummy_cv.wait(lock, [this, total_jobs, &dummy_completed_jobs]() {
-      if (completion_observer_) {
-        completion_observer_(dummy_completed_jobs);
-      }
-      int count = dummy_completed_jobs.load();
-      if (count < 0) {
-        throw InferenceExecutionException(
-            "dummy_completed_jobs became negative, which should not happen.");
-      }
-      return static_cast<size_t>(count) >= total_jobs;
-    });
+    try {
+      dummy_cv.wait(lock, [this, total_jobs, &dummy_completed_jobs]() {
+        if (completion_observer_) {
+          completion_observer_(dummy_completed_jobs);
+        }
+        int count = dummy_completed_jobs.load();
+        if (count < 0) {
+          throw InferenceExecutionException(
+              "dummy_completed_jobs became negative, which should not happen.");
+        }
+        return static_cast<size_t>(count) >= total_jobs;
+      });
+    }
+    catch (...) {
+      wait_exception = std::current_exception();
+    }
+  }
+
+  if (wait_exception) {
+    queue.shutdown();
+    if (client.joinable()) {
+      client.join();
+    }
+    if (server.joinable()) {
+      server.join();
+    }
+    starpu_task_wait_for_all();
+    std::rethrow_exception(wait_exception);
   }
 }
 }  // namespace starpu_server

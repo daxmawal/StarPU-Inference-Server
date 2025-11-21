@@ -244,6 +244,7 @@ aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
     entry.callback = job->get_on_complete();
     entry.batch_size = job_batch;
     entry.request_id = job->get_request_id();
+    entry.arrival_time = job->timing_info().enqueued_time;
     info.sub_jobs.push_back(std::move(entry));
   }
 
@@ -320,6 +321,44 @@ build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
   }
 
   return ids;
+}
+
+auto
+build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
+    -> std::vector<int64_t>
+{
+  using Clock = std::chrono::high_resolution_clock;
+  const auto to_microseconds = [](Clock::time_point time_point) -> int64_t {
+    if (time_point == Clock::time_point{}) {
+      return 0;
+    }
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+               time_point.time_since_epoch())
+        .count();
+  };
+
+  if (!job) {
+    return {};
+  }
+
+  if (!job->has_aggregated_sub_jobs()) {
+    return std::vector<int64_t>{
+        to_microseconds(job->timing_info().enqueued_time)};
+  }
+
+  const auto& aggregated = job->aggregated_sub_jobs();
+  std::vector<int64_t> arrivals;
+  arrivals.reserve(aggregated.size());
+  for (const auto& sub_job : aggregated) {
+    auto arrival = sub_job.arrival_time;
+    if (arrival == Clock::time_point{}) {
+      if (auto locked = sub_job.job.lock()) {
+        arrival = locked->timing_info().enqueued_time;
+      }
+    }
+    arrivals.push_back(to_microseconds(arrival));
+  }
+  return arrivals;
 }
 
 inline auto
@@ -627,11 +666,11 @@ class ResultDispatcher {
       const detail::TimingInfo& timing_info) const;
 
   void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
-  auto resolve_batch_size(
+  static auto resolve_batch_size(
       StarPUTaskRunner& runner,
-      const std::shared_ptr<InferenceJob>& job) const -> std::size_t;
-  void emit_batch_traces(
-      const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner) const;
+      const std::shared_ptr<InferenceJob>& job) -> std::size_t;
+  static void emit_batch_traces(
+      const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner);
   static void invoke_previous_callback(
       const std::function<void(std::vector<torch::Tensor>&&, double)>& previous,
       std::vector<torch::Tensor>& results, double latency_ms);
@@ -757,8 +796,8 @@ ResultDispatcher::prepare_job_completion_callback(
         ResultDispatcher::ensure_callback_timing(job_sptr->timing_info());
         dispatcher->record_job_metrics(
             job_sptr, StarPUTaskRunner::DurationMs{latency_ms},
-            dispatcher->resolve_batch_size(runner, job_sptr));
-        dispatcher->emit_batch_traces(job_sptr, runner);
+            ResultDispatcher::resolve_batch_size(runner, job_sptr));
+        ResultDispatcher::emit_batch_traces(job_sptr, runner);
         ResultDispatcher::invoke_previous_callback(
             prev_callback, results, latency_ms);
         dispatcher->finalize_job_completion(job_sptr);
@@ -825,6 +864,33 @@ ResultDispatcher::record_job_metrics(
   timing.submission_id = job->submission_id();
   const int job_id = task_runner_internal::job_identifier(*job);
   log_job_timings(job_id, latency, timing);
+
+  auto& tracer = BatchingTraceLogger::instance();
+  if (tracer.enabled()) {
+    const auto breakdown =
+        detail::compute_latency_breakdown(timing, latency.count());
+    const auto request_ids = build_request_ids_for_trace(job);
+    const auto request_arrivals = build_request_arrival_us_for_trace(job);
+    tracer.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
+        .batch_id = job_id,
+        .model_name = job->model_name(),
+        .batch_size = batch_size,
+        .request_ids = request_ids,
+        .request_arrival_us = request_arrivals,
+        .worker_id = job->get_worker_id(),
+        .worker_type = job->get_executed_on(),
+        .device_id = job->get_device_id(),
+        .queue_ms = breakdown.queue_ms,
+        .batch_ms = breakdown.batch_ms,
+        .submit_ms = breakdown.submit_ms,
+        .scheduling_ms = breakdown.scheduling_ms,
+        .codelet_ms = breakdown.codelet_ms,
+        .inference_ms = breakdown.inference_ms,
+        .callback_ms = breakdown.callback_ms,
+        .total_ms = breakdown.total_ms,
+        .is_warmup = is_warmup_job(job),
+    });
+  }
 }
 
 void
@@ -2197,7 +2263,7 @@ StarPUTaskRunner::run()
 auto
 ResultDispatcher::resolve_batch_size(
     StarPUTaskRunner& runner,
-    const std::shared_ptr<InferenceJob>& job) const -> std::size_t
+    const std::shared_ptr<InferenceJob>& job) -> std::size_t
 {
   return std::max<std::size_t>(
       std::size_t{1}, static_cast<std::size_t>(runner.resolve_batch_size(job)));
@@ -2205,7 +2271,7 @@ ResultDispatcher::resolve_batch_size(
 
 void
 ResultDispatcher::emit_batch_traces(
-    const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner) const
+    const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner)
 {
   auto& tracer = BatchingTraceLogger::instance();
   if (!tracer.enabled()) {

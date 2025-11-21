@@ -7,22 +7,21 @@
 #include <torch/torch.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <format>
 #include <functional>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <random>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -32,7 +31,6 @@
 #include "inference_session.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
-#include "latency_statistics.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
@@ -126,11 +124,16 @@ get_cuda_device_count() -> int
     return *override_storage;
   }
 
-  const auto raw_count = static_cast<long long>(torch::cuda::device_count());
-  if (raw_count < 0) {
+  using DeviceCountSigned = long long;
+  using DeviceCountUnsigned = std::make_unsigned_t<DeviceCountSigned>;
+  const auto device_count_signed = static_cast<DeviceCountSigned>(
+      static_cast<int>(torch::cuda::device_count()));
+  if (device_count_signed < 0) {
     throw InvalidGpuDeviceException(
         "torch::cuda::device_count returned a negative value.");
   }
+  const auto raw_count = static_cast<long long>(
+      static_cast<DeviceCountUnsigned>(device_count_signed));
   if (raw_count > std::numeric_limits<int>::max()) {
     throw InvalidGpuDeviceException(std::format(
         "torch::cuda::device_count returned {}, which exceeds int range.",
@@ -277,8 +280,7 @@ client_worker(
     job->timing_info().enqueued_time = enqueued_now;
     job->timing_info().last_enqueued_time = enqueued_now;
 
-    auto& tracer = BatchingTraceLogger::instance();
-    const bool tracer_enabled = tracer.enabled();
+    const bool tracer_enabled = BatchingTraceLogger::instance().enabled();
     std::string model_name;
     if (tracer_enabled) {
       model_name = std::string(job->model_name());
@@ -292,7 +294,7 @@ client_worker(
     }
     client_utils::log_job_enqueued(opts, request_id, request_nb, enqueued_now);
     if (tracer_enabled) {
-      tracer.log_request_enqueued(
+      BatchingTraceLogger::instance().log_request_enqueued(
           request_id, model_name, /*is_warmup=*/false, enqueued_now);
     }
   }
@@ -488,17 +490,37 @@ run_warmup(
     const std::vector<torch::Tensor>& outputs_ref)
 {
   NvtxRange nvtx_scope("warmup");
-  if (!opts.devices.use_cuda || opts.batching.warmup_request_nb <= 0) {
+  if (!opts.devices.use_cpu && !opts.devices.use_cuda) {
     return;
   }
 
+  const int configured_batches =
+      std::max(0, opts.batching.warmup_batches_per_worker);
+  if (opts.batching.warmup_request_nb <= 0 && configured_batches <= 0) {
+    return;
+  }
+
+  const int max_batch_size = std::max(1, opts.batching.max_batch_size);
+  const int min_requests_for_batches = configured_batches * max_batch_size;
   const int warmup_request_nb =
-      std::max(opts.batching.warmup_request_nb, opts.batching.max_batch_size);
+      std::max(opts.batching.warmup_request_nb, min_requests_for_batches);
+  if (warmup_request_nb <= 0) {
+    return;
+  }
+  const auto target_desc = [&opts]() -> std::string_view {
+    if (opts.devices.use_cpu && opts.devices.use_cuda) {
+      return "CPU and CUDA workers";
+    }
+    if (opts.devices.use_cuda) {
+      return "CUDA workers";
+    }
+    return "CPU workers";
+  }();
   log_info(
       opts.verbosity, std::format(
-                          "Starting warmup with {} request_nb per CUDA device "
-                          "(enforcing max_batch_size)...",
-                          warmup_request_nb));
+                          "Starting warmup with {} request(s) per {} "
+                          "(configured batch runs per worker: {})",
+                          warmup_request_nb, target_desc, configured_batches));
 
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
   warmup_runner.run(warmup_request_nb);

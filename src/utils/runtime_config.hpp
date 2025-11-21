@@ -90,6 +90,7 @@ struct RuntimeConfig {
     size_t pregen_inputs = kDefaultPregenInputs;
     size_t warmup_pregen_inputs = 2;
     int warmup_request_nb = 2;
+    int warmup_batches_per_worker = 1;
     bool synchronous = false;
     bool dynamic_batching = true;
     bool seen_combined_input = false;

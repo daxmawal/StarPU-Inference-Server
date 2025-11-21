@@ -1,14 +1,20 @@
+#include <hwloc.h>
+#include <starpu.h>
+
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
+#include <filesystem>
 #include <format>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
@@ -36,6 +42,133 @@ server_context() -> ServerContext&
 {
   static ServerContext ctx;
   return ctx;
+}
+
+auto
+shell_quote(const std::string& value) -> std::string
+{
+  std::string quoted;
+  quoted.reserve(value.size() + 2);
+  quoted.push_back('\'');
+  for (char character : value) {
+    if (character == '\'') {
+      quoted += "'\\''";
+    } else {
+      quoted.push_back(character);
+    }
+  }
+  quoted.push_back('\'');
+  return quoted;
+}
+
+auto
+candidate_plot_scripts(const starpu_server::RuntimeConfig& opts)
+    -> std::vector<std::filesystem::path>
+{
+  std::vector<std::filesystem::path> candidates;
+  candidates.emplace_back("scripts/plot_batch_summary.py");
+  if (!opts.config_path.empty()) {
+    const auto config_dir =
+        std::filesystem::path(opts.config_path).parent_path();
+    candidates.emplace_back(config_dir / "scripts/plot_batch_summary.py");
+  }
+  std::error_code exe_ec;
+  const auto exe_path = std::filesystem::read_symlink("/proc/self/exe", exe_ec);
+  if (!exe_ec) {
+    candidates.emplace_back(
+        std::filesystem::path(exe_path).parent_path() /
+        "../scripts/plot_batch_summary.py");
+  }
+  return candidates;
+}
+
+auto
+locate_plot_script(const starpu_server::RuntimeConfig& opts)
+    -> std::optional<std::filesystem::path>
+{
+  for (const auto& candidate : candidate_plot_scripts(opts)) {
+    if (candidate.empty()) {
+      continue;
+    }
+    auto resolved = candidate;
+    if (!resolved.is_absolute()) {
+      std::error_code abs_ec;
+      const auto absolute = std::filesystem::absolute(resolved, abs_ec);
+      if (!abs_ec) {
+        resolved = absolute;
+      }
+    }
+    std::error_code exists_ec;
+    if (std::filesystem::exists(resolved, exists_ec) && !exists_ec) {
+      return resolved;
+    }
+  }
+  return std::nullopt;
+}
+
+auto
+plots_output_path(const std::filesystem::path& summary_path)
+    -> std::filesystem::path
+{
+  auto filename = summary_path.stem().string();
+  if (const auto pos = filename.rfind("_summary"); pos != std::string::npos) {
+    filename.erase(pos);
+  }
+  filename += "_plots.png";
+  auto output = summary_path;
+  output.replace_filename(filename);
+  return output;
+}
+
+void
+run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
+{
+  if (!opts.batching.trace_enabled) {
+    return;
+  }
+
+  const auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  const auto summary_path_opt = tracer.summary_file_path();
+  if (!summary_path_opt) {
+    starpu_server::log_warning(
+        "Tracing was enabled but no batching_trace_summary.csv was produced; "
+        "skipping plot generation.");
+    return;
+  }
+
+  const auto& summary_path = *summary_path_opt;
+  if (std::error_code err_code;
+      !std::filesystem::exists(summary_path, err_code) || err_code) {
+    starpu_server::log_warning(std::format(
+        "Tracing summary file '{}' not found; skipping plot generation.",
+        summary_path.string()));
+    return;
+  }
+
+  const auto script_path = locate_plot_script(opts);
+  if (!script_path) {
+    starpu_server::log_warning(
+        "Unable to locate scripts/plot_batch_summary.py; skipping plot "
+        "generation.");
+    return;
+  }
+
+  const auto output_path = plots_output_path(summary_path);
+  const std::string command = std::format(
+      "python3 {} {} --output {}", shell_quote(script_path->string()),
+      shell_quote(summary_path.string()), shell_quote(output_path.string()));
+  const int return_code = std::system(command.c_str());
+  if (return_code != 0) {
+    starpu_server::log_warning(std::format(
+        "Failed to generate batching latency plots; command '{}' exited with "
+        "code {}.",
+        command, return_code));
+  } else {
+    starpu_server::log_info(
+        opts.verbosity,
+        std::format(
+            "Batching latency plots written to '{}'.", output_path.string()));
+  }
 }
 }  // namespace
 
@@ -98,9 +231,6 @@ handle_program_arguments(std::span<char const* const> args)
   if (!cfg.name.empty()) {
     log_info(cfg.verbosity, std::format("Configuration   : {}", cfg.name));
   }
-  log_info(
-      cfg.verbosity,
-      std::format("Request_nb      : {}", cfg.batching.request_nb));
 
   return cfg;
 }
@@ -205,6 +335,98 @@ launch_threads(
 }
 
 auto
+worker_type_label(const enum starpu_worker_archtype type) -> std::string
+{
+  switch (type) {
+    case STARPU_CPU_WORKER:
+      return "CPU";
+    case STARPU_CUDA_WORKER:
+      return "CUDA";
+    default:
+      return std::format("Other({})", static_cast<int>(type));
+  }
+}
+
+auto
+format_cpu_core_ranges(const std::vector<int>& cpus) -> std::string
+{
+  if (cpus.empty()) {
+    return {};
+  }
+
+  std::string result;
+  auto flush_range = [&](int start, int end) {
+    if (!result.empty()) {
+      result.push_back(',');
+    }
+    if (start == end) {
+      result += std::to_string(start);
+    } else {
+      result += std::format("{}-{}", start, end);
+    }
+  };
+
+  int range_start = cpus.front();
+  int previous = range_start;
+  for (std::size_t idx = 1; idx < cpus.size(); ++idx) {
+    const int core = cpus[idx];
+    if (core == previous + 1) {
+      previous = core;
+    } else {
+      flush_range(range_start, previous);
+      range_start = previous = core;
+    }
+  }
+  flush_range(range_start, previous);
+  return result;
+}
+
+auto
+describe_cpu_affinity(int worker_id) -> std::string
+{
+  hwloc_cpuset_t cpuset = starpu_worker_get_hwloc_cpuset(worker_id);
+  if (cpuset == nullptr) {
+    return {};
+  }
+
+  std::vector<int> cores;
+  for (int core = hwloc_bitmap_first(cpuset); core != -1;
+       core = hwloc_bitmap_next(cpuset, core)) {
+    cores.push_back(core);
+  }
+  hwloc_bitmap_free(cpuset);
+  return format_cpu_core_ranges(cores);
+}
+
+void
+log_worker_inventory(const starpu_server::RuntimeConfig& opts)
+{
+  const auto total_workers = static_cast<int>(starpu_worker_get_count());
+  starpu_server::log_info(
+      opts.verbosity,
+      std::format("Configured {} StarPU worker(s).", total_workers));
+
+  for (int worker_id = 0; worker_id < total_workers; ++worker_id) {
+    const auto type = starpu_worker_get_type(worker_id);
+    const int device_id = starpu_worker_get_devid(worker_id);
+    const std::string device_label =
+        device_id >= 0 ? std::to_string(device_id) : "N/A";
+    std::string cpu_affinity;
+    if (type == STARPU_CPU_WORKER) {
+      const std::string affinity = describe_cpu_affinity(worker_id);
+      if (!affinity.empty()) {
+        cpu_affinity = std::format(", cores={}", affinity);
+      }
+    }
+    starpu_server::log_info(
+        opts.verbosity,
+        std::format(
+            "Worker {:2d}: type={}, device id={}{}", worker_id,
+            worker_type_label(type), device_label, cpu_affinity));
+  }
+}
+
+auto
 main(int argc, char* argv[]) -> int
 {
   try {
@@ -217,9 +439,13 @@ main(int argc, char* argv[]) -> int
           "Metrics server failed to start; continuing without metrics.");
     }
     starpu_server::StarPUSetup starpu(opts);
+    log_worker_inventory(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
+    auto& tracer = starpu_server::BatchingTraceLogger::instance();
+    tracer.configure(false, "");
+    run_trace_plots_if_enabled(opts);
     starpu_server::shutdown_metrics();
   }
   catch (const starpu_server::InferenceEngineException& e) {

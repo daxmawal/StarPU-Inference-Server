@@ -815,4 +815,18 @@ StarPUSetup::get_cuda_workers_by_device(const std::vector<int>& device_ids)
 
   return device_to_workers;
 }
+
+auto
+StarPUSetup::get_worker_ids_by_type(enum starpu_worker_archtype type)
+    -> std::vector<int>
+{
+  std::array<int, STARPU_NMAXWORKERS> workerids{};
+  const unsigned count =
+      starpu_worker_get_ids_by_type(type, workerids.data(), workerids.size());
+  const auto clipped =
+      std::min(static_cast<std::size_t>(count), workerids.size());
+  return {
+      workerids.begin(),
+      workerids.begin() + static_cast<std::ptrdiff_t>(clipped)};
+}
 }  // namespace starpu_server

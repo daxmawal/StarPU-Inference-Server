@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -23,6 +24,8 @@ namespace {
 
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
+constexpr std::string_view kDefaultTraceFileName = "batching_trace.json";
+const std::filesystem::path kDefaultTraceFile{kDefaultTraceFileName};
 
 auto
 config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
@@ -76,6 +79,37 @@ parse_config_name(const YAML::Node& root, RuntimeConfig& cfg)
 }
 
 auto
+resolve_trace_file_directory(std::string directory) -> std::string
+{
+  if (directory.empty()) {
+    return directory;
+  }
+
+  std::filesystem::path directory_path(directory);
+  std::error_code status_ec;
+  const bool exists = std::filesystem::exists(directory_path, status_ec);
+  if (status_ec) {
+    throw std::filesystem::filesystem_error(
+        "trace_file", directory_path, status_ec);
+  }
+
+  if (exists) {
+    std::error_code type_ec;
+    if (!std::filesystem::is_directory(directory_path, type_ec)) {
+      throw std::invalid_argument("trace_file must be a directory path");
+    }
+  } else {
+    const auto extension = directory_path.extension();
+    if (!extension.empty() && extension == kDefaultTraceFile.extension()) {
+      throw std::invalid_argument(
+          "trace_file must be a directory path (omit the filename)");
+    }
+  }
+
+  return (directory_path / kDefaultTraceFile).string();
+}
+
+auto
 validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 {
   const std::vector<std::string> required_keys{
@@ -125,6 +159,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
+          "warmup_batches_per_worker",
           "seed",
           "rtol",
           "atol",
@@ -360,7 +395,8 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.batching.trace_enabled = root["trace_enabled"].as<bool>();
   }
   if (root["trace_file"]) {
-    cfg.batching.trace_file_path = root["trace_file"].as<std::string>();
+    cfg.batching.trace_file_path =
+        resolve_trace_file_directory(root["trace_file"].as<std::string>());
     if (cfg.batching.trace_file_path.empty()) {
       throw std::invalid_argument("trace_file must not be empty");
     }
@@ -390,6 +426,13 @@ parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("warmup_request_nb must be >= 0");
     }
     cfg.batching.warmup_request_nb = tmp;
+  }
+  if (root["warmup_batches_per_worker"]) {
+    const int tmp = root["warmup_batches_per_worker"].as<int>();
+    if (tmp < 0) {
+      throw std::invalid_argument("warmup_batches_per_worker must be >= 0");
+    }
+    cfg.batching.warmup_batches_per_worker = tmp;
   }
 }
 

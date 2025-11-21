@@ -87,6 +87,7 @@ class JobBatchState {
     std::function<void(const std::vector<torch::Tensor>&, double)> callback;
     int64_t batch_size = 1;
     int request_id = -1;
+    std::chrono::high_resolution_clock::time_point arrival_time;
   };
 
   void set_logical_job_count(int count) { logical_job_count_ = count; }

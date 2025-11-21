@@ -76,6 +76,8 @@ class StarPUSetup {
 
   static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
       -> std::map<int, std::vector<int>>;
+  static auto get_worker_ids_by_type(enum starpu_worker_archtype type)
+      -> std::vector<int>;
 
   StarPUSetup(const StarPUSetup&) = delete;
   auto operator=(const StarPUSetup&) -> StarPUSetup& = delete;
