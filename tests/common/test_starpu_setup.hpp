@@ -8,7 +8,6 @@
 
 #include <chrono>
 #include <climits>
-#include <functional>
 #include <memory>
 #include <vector>
 

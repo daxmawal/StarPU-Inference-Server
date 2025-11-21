@@ -10,7 +10,6 @@
 #include "test_helpers.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/inference_validator.hpp"
-#include "utils/logger.hpp"
 
 namespace starpu_server {
 

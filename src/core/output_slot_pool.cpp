@@ -8,12 +8,10 @@
 #include <cstddef>
 #include <cstdlib>
 #include <format>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <utility>
 
 #include "utils/datatype_utils.hpp"
 #include "utils/exceptions.hpp"
