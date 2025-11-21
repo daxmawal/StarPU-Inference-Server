@@ -39,7 +39,6 @@ target_link_libraries(
   PRIVATE Torch::Torch
           inference_proto
           Threads::Threads
-          gRPC::grpc++
           StarPU::starpu
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp

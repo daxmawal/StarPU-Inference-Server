@@ -13,7 +13,7 @@ target_compile_definitions(client_example PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 target_include_directories(client_example PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 target_link_libraries(client_example PRIVATE Torch::Torch inference_proto
-                                             Threads::Threads gRPC::grpc++)
+                                             Threads::Threads)
 
 if(TARGET gRPC::grpc++_reflection)
   target_link_libraries(client_example PRIVATE gRPC::grpc++_reflection)
