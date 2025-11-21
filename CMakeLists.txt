@@ -28,39 +28,55 @@ endfunction()
 
 # === Dependencies ===
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(FindTorchCustom)
 find_package(StarPU REQUIRED)
 
 if(USE_BUNDLED_DEPS)
-  find_package(Protobuf REQUIRED) # Needed for protobuf_generate and to avoid
-                                  # alias conflicts
-  set(gRPC_PROTOBUF_PROVIDER
-      package
-      CACHE STRING "" FORCE)
-
-  # utf8_range (not provided by gRPC)
-  require_submodule("utf8_range" "utf8_range")
-  set(utf8_range_ENABLE_TESTS
+  require_submodule("protobuf" "protobuf")
+  # Build protobuf from the external/ submodule (no system install needed)
+  set(PROTOBUF_ROOT_DIR
+      ${EXTERNAL_DIR}/protobuf
+      CACHE PATH "" FORCE)
+  set(protobuf_INSTALL
       OFF
       CACHE BOOL "" FORCE)
-  add_subdirectory(${EXTERNAL_DIR}/utf8_range)
-  if(TARGET utf8_range AND NOT TARGET utf8_range::utf8_range)
-    add_library(utf8_range::utf8_range ALIAS utf8_range)
-  endif()
-  if(TARGET utf8_validity AND NOT TARGET utf8_range::utf8_validity)
-    add_library(utf8_range::utf8_validity ALIAS utf8_validity)
-  endif()
+  set(protobuf_BUILD_TESTS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_CONFORMANCE
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_EXAMPLES
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_SHARED_LIBS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_PROTOC_BINARIES
+      ON
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_PROTOBUF_BINARIES
+      ON
+      CACHE BOOL "" FORCE)
+  set(protobuf_WITH_ZLIB
+      OFF
+      CACHE BOOL "" FORCE)
 
   # gRPC with bundled third_party deps (absl/protobuf/re2/cares/boringssl/zlib)
   require_submodule("grpc" "gRPC")
+  set(gRPC_PROTOBUF_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_INSTALL
+      OFF
+      CACHE BOOL "" FORCE)
   set(gRPC_BUILD_TESTS
       OFF
       CACHE BOOL "" FORCE)
   set(gRPC_BUILD_CODEGEN
-      OFF
+      ON
       CACHE BOOL "" FORCE)
   set(gRPC_BUILD_GRPC_CPP_PLUGIN
-      OFF
+      ON
       CACHE BOOL "" FORCE)
   set(gRPC_BUILD_GRPC_CSHARP_PLUGIN
       OFF
@@ -111,9 +127,22 @@ if(USE_BUNDLED_DEPS)
   if(TARGET grpc_cpp_plugin AND NOT TARGET gRPC::grpc_cpp_plugin)
     add_executable(gRPC::grpc_cpp_plugin ALIAS grpc_cpp_plugin)
   endif()
+  # utf8_range from gRPC's third_party
+  if(TARGET utf8_range AND NOT TARGET utf8_range::utf8_range)
+    add_library(utf8_range::utf8_range ALIAS utf8_range)
+  endif()
+  if(TARGET utf8_validity AND NOT TARGET utf8_range::utf8_validity)
+    add_library(utf8_range::utf8_validity ALIAS utf8_validity)
+  endif()
 
   set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op
                 absl::log_internal_message absl::raw_logging_internal)
+  include(${PROTOBUF_ROOT_DIR}/cmake/protobuf-generate.cmake)
+  set(Protobuf_LIBRARIES protobuf::libprotobuf)
+  set(Protobuf_INCLUDE_DIRS
+      ${PROTOBUF_ROOT_DIR}/src
+      ${CMAKE_BINARY_DIR}/external/grpc/third_party/protobuf)
+  set(Protobuf_PROTOC_EXECUTABLE $<TARGET_FILE:protobuf::protoc>)
 else()
   find_package(Protobuf REQUIRED)
   find_package(gRPC CONFIG REQUIRED)
@@ -208,6 +237,7 @@ else()
 endif()
 
 # === Status Messages ===
+include(FindTorchCustom)
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")
 message(STATUS "StarPU include directory: ${STARPU_DIR}/include/starpu/1.4")
 message(STATUS "StarPU library: ${STARPU_LIBRARY}")
