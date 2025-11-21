@@ -1,6 +1,8 @@
 #include <bit>
 
+#include "test_helpers.hpp"
 #include "test_inference_validator.hpp"
+#include "utils/inference_validator.hpp"
 
 namespace {
 constexpr int kJobIdMismatch = 43;

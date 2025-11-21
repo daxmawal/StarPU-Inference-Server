@@ -1,4 +1,9 @@
+#include <chrono>
+#include <memory>
+
+#include "core/starpu_setup.hpp"
 #include "test_starpu_setup.hpp"
+#include "test_utils.hpp"
 
 class StarPUSetupCodelet_Integration : public ::testing::Test {
  protected:
