@@ -7,15 +7,12 @@
 #include <torch/torch.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstddef>
 #include <format>
 #include <functional>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <random>
 #include <span>
@@ -34,7 +31,6 @@
 #include "inference_session.hpp"
 #include "inference_validator.hpp"
 #include "input_generator.hpp"
-#include "latency_statistics.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
