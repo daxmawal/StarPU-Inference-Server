@@ -33,13 +33,13 @@ jobs:
 
       - name: Check CMake formatting
         run: |
-          PRUNE_EXPR=""
+          PRUNE_ARGS=(-path './.git' -o -path './build')
           for path in $EXCLUDED_PATHS; do
-            PRUNE_EXPR="$PRUNE_EXPR -path './${path}/*' -o"
+            PRUNE_ARGS+=(-o -path "./${path}" -o -path "./${path}/*")
           done
 
-          FILES=$(eval "find . \\( ${PRUNE_EXPR%-o} \\) -prune -o \
-            \\( -name 'CMakeLists.txt' -o -name '*.cmake' \\) -type f -print")
+          FILES=$(find . \( "${PRUNE_ARGS[@]}" \) -prune -o \
+            \( -name 'CMakeLists.txt' -o -name '*.cmake' \) -type f -print)
           echo "Checking format for: $FILES"
 
           fail=0
@@ -93,9 +93,9 @@ jobs:
         shell: bash
         run: |
           fail=0
-          PRUNE_EXPR="-path './.git/*' -o -path './build/*'"
+          PRUNE_ARGS=(-path './.git' -o -path './build')
           for path in $EXCLUDED_PATHS; do
-            PRUNE_EXPR="$PRUNE_EXPR -o -path './${path}/*'"
+            PRUNE_ARGS+=(-o -path "./${path}")
           done
           while IFS= read -r -d '' f; do
             case "$f" in
@@ -107,7 +107,7 @@ jobs:
                 fail=1
               fi
             fi
-          done < <(find . \( $PRUNE_EXPR \) -prune -o -type f -print0)
+          done < <(find . \( "${PRUNE_ARGS[@]}" \) -prune -o -type f -print0)
           exit $fail
 
       - name: Check for CRLF line endings
@@ -146,12 +146,12 @@ jobs:
 
       - name: Check formatting
         run: |
-          PRUNE_EXPR="-path './build/*'"
+          PRUNE_ARGS=(-path './.git' -o -path './build')
           for path in $EXCLUDED_PATHS; do
-            PRUNE_EXPR="$PRUNE_EXPR -o -path './${path}/*'"
+            PRUNE_ARGS+=(-o -path "./${path}" -o -path "./${path}/*")
           done
 
-          FILES=$(find . \( $PRUNE_EXPR \) -prune -o \
+          FILES=$(find . \( "${PRUNE_ARGS[@]}" \) -prune -o \
             -regex '.*\.\(cpp\|hpp\|c\|h\)' -type f -print)
           clang-format --dry-run --Werror $FILES
 
@@ -184,37 +184,6 @@ jobs:
             IGNORE_ARGS+=(--ignore "$path/**")
           done
           markdownlint '**/*.md' "${IGNORE_ARGS[@]}"
-
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      code: ${{ steps.filter.outputs.code }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          submodules: recursive
-
-      - id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            code:
-              - 'src/**'
-              - 'include/**'
-              - 'ops/**'
-              - 'tests/**'
-              - 'CMakeLists.txt'
-              - '**/*.cmake'
-              - '**/*.c'
-              - '**/*.cc'
-              - '**/*.cpp'
-              - '**/*.cxx'
-              - '**/*.h'
-              - '**/*.hh'
-              - '**/*.hpp'
-              - '**/*.hxx'
 
   build:
     needs: [clang-format, cmake-format, whitespace, markdownlint]
@@ -277,8 +246,7 @@ jobs:
           path: build-clang/
 
   clang-analyzer:
-    needs: [build, changes]
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    needs: build
     runs-on: self-hosted
 
     steps:
