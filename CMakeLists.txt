@@ -5,6 +5,8 @@ project(starpu_server LANGUAGES CXX)
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(BUILD_TESTS "Build unit tests" OFF)
+option(USE_BUNDLED_DEPS "Build bundled dependencies from external/ submodules"
+       ON)
 
 # === C++ Settings ===
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -28,10 +30,98 @@ endfunction()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(FindTorchCustom)
 find_package(StarPU REQUIRED)
-find_package(Protobuf REQUIRED)
-find_package(gRPC CONFIG REQUIRED)
-find_package(absl CONFIG REQUIRED)
-find_package(utf8_range CONFIG REQUIRED)
+
+if(USE_BUNDLED_DEPS)
+  find_package(Protobuf REQUIRED) # Needed for protobuf_generate and to avoid
+                                  # alias conflicts
+  set(gRPC_PROTOBUF_PROVIDER
+      package
+      CACHE STRING "" FORCE)
+
+  # utf8_range (not provided by gRPC)
+  require_submodule("utf8_range" "utf8_range")
+  set(utf8_range_ENABLE_TESTS
+      OFF
+      CACHE BOOL "" FORCE)
+  add_subdirectory(${EXTERNAL_DIR}/utf8_range)
+  if(TARGET utf8_range AND NOT TARGET utf8_range::utf8_range)
+    add_library(utf8_range::utf8_range ALIAS utf8_range)
+  endif()
+  if(TARGET utf8_validity AND NOT TARGET utf8_range::utf8_validity)
+    add_library(utf8_range::utf8_validity ALIAS utf8_validity)
+  endif()
+
+  # gRPC with bundled third_party deps (absl/protobuf/re2/cares/boringssl/zlib)
+  require_submodule("grpc" "gRPC")
+  set(gRPC_BUILD_TESTS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_CODEGEN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_CPP_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_CSHARP_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_NODE_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_PHP_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_PYTHON_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_RUBY_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_ABSL_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_RE2_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_CARES_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_SSL_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_ZLIB_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  add_subdirectory(${EXTERNAL_DIR}/grpc)
+
+  # Ensure gRPC namespace aliases exist (some gRPC builds skip alias
+  # definitions)
+  if(TARGET grpc AND NOT TARGET gRPC::grpc)
+    add_library(gRPC::grpc ALIAS grpc)
+  endif()
+  if(TARGET grpc++ AND NOT TARGET gRPC::grpc++)
+    add_library(gRPC::grpc++ ALIAS grpc++)
+  endif()
+  if(TARGET grpc++_reflection AND NOT TARGET gRPC::grpc++_reflection)
+    add_library(gRPC::grpc++_reflection ALIAS grpc++_reflection)
+  endif()
+  if(TARGET grpc_cpp_plugin AND NOT TARGET gRPC::grpc_cpp_plugin)
+    add_executable(gRPC::grpc_cpp_plugin ALIAS grpc_cpp_plugin)
+  endif()
+
+  set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op
+                absl::log_internal_message absl::raw_logging_internal)
+else()
+  find_package(Protobuf REQUIRED)
+  find_package(gRPC CONFIG REQUIRED)
+  find_package(absl CONFIG REQUIRED)
+  find_package(utf8_range CONFIG REQUIRED)
+
+  set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
+endif()
 set(HWLOC_LIBRARY "")
 set(_HWLOC_CANDIDATES /usr/local/lib/libhwloc.so.15
                       /usr/lib/x86_64-linux-gnu/libhwloc.so.15)
@@ -62,8 +152,6 @@ unset(CMAKE_REQUIRED_INCLUDES)
 if(HAVE_NVTX3_HEADER)
   set(HAVE_NVTX ON)
 endif()
-
-set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
 
 if(BUILD_TESTS)
   enable_testing()

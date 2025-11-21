@@ -57,10 +57,24 @@ target_link_libraries(
           ${Protobuf_LIBRARIES}
           Threads::Threads
           ${ABSL_LIBS}
+          absl::log_internal_message
+          absl::log_internal_check_op
+          absl::raw_logging_internal
           StarPU::starpu
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp
           ${HWLOC_LIBRARY})
+
+if(TARGET gRPC::grpc++_reflection)
+  target_link_libraries(all_tests PRIVATE gRPC::grpc++_reflection)
+elseif(TARGET grpc++_reflection)
+  target_link_libraries(all_tests PRIVATE grpc++_reflection)
+else()
+  message(
+    WARNING
+      "gRPC reflection library not found; all_tests will be built without reflection."
+  )
+endif()
 
 if(STARPU_HAVE_NVML)
   target_compile_definitions(all_tests PRIVATE STARPU_HAVE_NVML=1)

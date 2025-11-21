@@ -16,9 +16,22 @@ target_link_libraries(
   client_example
   PRIVATE Torch::Torch
           inference_proto
-          gRPC::grpc++_reflection
           Threads::Threads
           ${Protobuf_LIBRARIES}
           utf8_range::utf8_range
           utf8_range::utf8_validity
-          ${ABSL_LIBS})
+          ${ABSL_LIBS}
+          absl::log_internal_message
+          absl::log_internal_check_op
+          absl::raw_logging_internal)
+
+if(TARGET gRPC::grpc++_reflection)
+  target_link_libraries(client_example PRIVATE gRPC::grpc++_reflection)
+elseif(TARGET grpc++_reflection)
+  target_link_libraries(client_example PRIVATE grpc++_reflection)
+else()
+  message(
+    WARNING
+      "gRPC reflection library not found; client_example will be built without reflection."
+  )
+endif()
