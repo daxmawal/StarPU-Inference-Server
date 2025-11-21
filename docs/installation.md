@@ -28,15 +28,15 @@ on a Linux host.
 
 ## 1. Prepare the environment
 
-Install dependencies into a dedicated prefix to keep the system clean:
+Install dependencies into a dedicated prefix to keep the system clean. If your
+StarPU/LibTorch installs already live in standard prefixes, you can skip these
+exports and just pass their paths via `CMAKE_PREFIX_PATH` at configure time:
 
 ```bash
 export INSTALL_DIR="$HOME/Install"
 export STARPU_DIR="$INSTALL_DIR/starpu"
-export CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/grpc:$INSTALL_DIR/utf8_range:$INSTALL_DIR/libtorch:$STARPU_DIR:$INSTALL_DIR/protobuf"
-export LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export Protobuf_DIR="$INSTALL_DIR/protobuf/lib/cmake/protobuf"
-export Protobuf_PROTOC_EXECUTABLE="$INSTALL_DIR/protobuf/bin/protoc"
+export CMAKE_PREFIX_PATH="$STARPU_DIR:$INSTALL_DIR/libtorch"
+export LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 mkdir -p "$INSTALL_DIR"
 ```
 
@@ -55,18 +55,8 @@ Alternatively, open a new terminal so the variables take effect.
 sudo apt-get update
 sudo apt-get install -y \
   autoconf automake build-essential git pkg-config \
-  libfxt-dev libgtest-dev libhwloc-dev libltdl-dev libssl-dev \
+  libfxt-dev libhwloc-dev libltdl-dev libssl-dev \
   libtool libtool-bin m4 ninja-build unzip zlib1g-dev
-```
-
-Compile the `gtest` static libraries once (the `libgtest-dev` package only ships
-sources):
-
-```bash
-sudo cmake -S /usr/src/googletest -B /usr/src/googletest/build -DCMAKE_BUILD_TYPE=Release
-sudo cmake --build /usr/src/googletest/build -j"$(nproc)"
-sudo cp /usr/src/googletest/build/lib/libgtest*.a /usr/lib/
-sudo rm -rf /usr/src/googletest/build
 ```
 
 For GPU telemetry via NVML, also install:
@@ -107,7 +97,7 @@ rm /tmp/libtorch.zip
 
 Verify that `"$INSTALL_DIR/libtorch/lib"` is present in `LD_LIBRARY_PATH`.
 
-## 6. Bundled C++ dependencies (Protobuf/gRPC/Abseil/utf8_range)
+## 6. Submodule C++ dependencies (Protobuf/gRPC/Abseil/utf8_range)
 
 These dependencies are vendored as git submodules under `external/` and built as
 part of the project when `USE_BUNDLED_DEPS=ON` (default). Make sure submodules
@@ -147,14 +137,7 @@ popd
 rm -rf /tmp/starpu /tmp/starpu.tar.gz
 ```
 
-## 7. Sanity checks
-
-- `nvcc --version` should report CUDA 11.8 or greater.
-- `cmake --version` and `g++ --version` should point to the recent toolchain.
-- Optionally validate CUDA availability through LibTorch with a short Python
-  snippet if you also use the Python stack.
-
-## 8. Build StarPU Inference Server
+## 7. Build StarPU Inference Server
 
 Clone the repository (with submodules) if needed:
 
@@ -183,7 +166,7 @@ The main executables are emitted under `build/`:
 - `starpu_server`: gRPC service combining StarPU and LibTorch.
 - `client_example`: sample CLI client.
 
-## 9. Optional: build and run tests
+## 8. Optional: build and run tests
 
 ```bash
 cmake -S . -B build \
