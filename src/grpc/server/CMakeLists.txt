@@ -39,13 +39,7 @@ target_link_libraries(
   PRIVATE Torch::Torch
           inference_proto
           Threads::Threads
-          ${Protobuf_LIBRARIES}
-          utf8_range::utf8_range
-          utf8_range::utf8_validity
-          ${ABSL_LIBS}
-          absl::log_internal_message
-          absl::log_internal_check_op
-          absl::raw_logging_internal
+          gRPC::grpc++
           StarPU::starpu
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp

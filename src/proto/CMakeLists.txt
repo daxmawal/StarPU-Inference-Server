@@ -37,8 +37,10 @@ protobuf_generate(
   PLUGIN
   "protoc-gen-grpc=${GRPC_CPP_PLUGIN}")
 
-target_include_directories(inference_proto PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
-                                                  ${Protobuf_INCLUDE_DIRS})
+target_include_directories(
+  inference_proto
+  PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
+         $<TARGET_PROPERTY:protobuf::libprotobuf,INTERFACE_INCLUDE_DIRECTORIES>)
 
 target_link_libraries(inference_proto PUBLIC protobuf::libprotobuf gRPC::grpc
-                                             gRPC::grpc++ ${ABSL_LIBS})
+                                             gRPC::grpc++)

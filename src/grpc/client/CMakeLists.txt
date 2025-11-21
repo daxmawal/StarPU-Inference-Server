@@ -12,18 +12,8 @@ target_compile_definitions(client_example PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 target_include_directories(client_example PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-target_link_libraries(
-  client_example
-  PRIVATE Torch::Torch
-          inference_proto
-          Threads::Threads
-          ${Protobuf_LIBRARIES}
-          utf8_range::utf8_range
-          utf8_range::utf8_validity
-          ${ABSL_LIBS}
-          absl::log_internal_message
-          absl::log_internal_check_op
-          absl::raw_logging_internal)
+target_link_libraries(client_example PRIVATE Torch::Torch inference_proto
+                                             Threads::Threads gRPC::grpc++)
 
 if(TARGET gRPC::grpc++_reflection)
   target_link_libraries(client_example PRIVATE gRPC::grpc++_reflection)

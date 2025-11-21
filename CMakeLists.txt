@@ -135,21 +135,12 @@ if(USE_BUNDLED_DEPS)
     add_library(utf8_range::utf8_validity ALIAS utf8_validity)
   endif()
 
-  set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op
-                absl::log_internal_message absl::raw_logging_internal)
   include(${PROTOBUF_ROOT_DIR}/cmake/protobuf-generate.cmake)
-  set(Protobuf_LIBRARIES protobuf::libprotobuf)
-  set(Protobuf_INCLUDE_DIRS
-      ${PROTOBUF_ROOT_DIR}/src
-      ${CMAKE_BINARY_DIR}/external/grpc/third_party/protobuf)
-  set(Protobuf_PROTOC_EXECUTABLE $<TARGET_FILE:protobuf::protoc>)
 else()
   find_package(Protobuf REQUIRED)
   find_package(gRPC CONFIG REQUIRED)
   find_package(absl CONFIG REQUIRED)
   find_package(utf8_range CONFIG REQUIRED)
-
-  set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
 endif()
 set(HWLOC_LIBRARY "")
 set(_HWLOC_CANDIDATES /usr/local/lib/libhwloc.so.15

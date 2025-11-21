@@ -54,12 +54,7 @@ target_link_libraries(
           Torch::Torch
           inference_proto
           gRPC::grpc++
-          ${Protobuf_LIBRARIES}
           Threads::Threads
-          ${ABSL_LIBS}
-          absl::log_internal_message
-          absl::log_internal_check_op
-          absl::raw_logging_internal
           StarPU::starpu
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp
