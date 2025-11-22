@@ -74,9 +74,13 @@ RUN tar -xzf /tmp/starpu.tar.gz --strip-components=1 && \
 WORKDIR /
 RUN rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
-# Copy source code (including bundled submodules)
+# Copy only the build inputs
 WORKDIR /app
-COPY . /app/
+COPY CMakeLists.txt ./
+COPY cmake ./cmake
+COPY external ./external
+COPY src ./src
+COPY tests ./tests
 
 # Build project
 WORKDIR /app/build
