@@ -57,17 +57,10 @@ GPU IDs or a CPU-only setup ([Server Configuration](./server_guide.md)).
 
 ## 4. Launch the client
 
-Open a fresh shell to create a small virtual
-environment for the Python client, install its dependencies, and send a real
-inference request to the running server.
+Follow the [Client Guide](./client_guide.md) to set up the Python virtual
+environment and dependencies. Once ready, send an inference request:
 
 ```bash
-cd /path/to/StarPU-Inference-Server
-python3 -m venv .venv-client
-source .venv-client/bin/activate
-pip install --upgrade pip
-pip install -r client/requirements.txt
-
 python3 client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --text "StarPU orchestrates CPU and GPU to serve this request." \

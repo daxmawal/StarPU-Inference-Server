@@ -9,6 +9,8 @@ This guide explains how to exercise the gRPC inference API. It
 focuses on the BERT example shipped with the repository, but the workflow can be
 adapted to any TorchScript model once the tensor names and shapes are known.
 
+> The Quickstart links here for client setup to avoid duplicating commands.
+
 ---
 
 ## 1. Set up the Python client environment
@@ -32,15 +34,10 @@ pip install -r client/requirements.txt
 
 ## 2. Launch the inference server
 
-Build the project and start the server with the provided configuration (see
-[Quickstart](./quickstart.md) for the full context):
-
-```bash
-./starpu_server --config models/bert.yml
-```
-
-When the logs show that the server is listening on `127.0.0.1:50051`, you can
-drive it with a client.
+Ensure the server is running (see
+[Quickstart](./quickstart.md#3-launch-the-inference-server) for build and launch
+commands). The sample `models/bert.yml` listens on `127.0.0.1:50051` with one
+CPU worker and one CUDA worker (device `0`).
 
 ---
 
