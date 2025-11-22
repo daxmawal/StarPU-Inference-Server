@@ -17,8 +17,7 @@ on a Linux host.
 
 ## Hardware and software requirements
 
-- NVIDIA GPU with a driver that supports CUDA 11.8 (default build targets
-  compute capability 8.0 and 8.6, adjust if needed).
+- NVIDIA GPU with a driver that supports CUDA 11.8.
 - Optional: NVML headers (`libnvidia-ml-dev`) to enable GPU metrics.
 
 > **Note:** the commands below assume Ubuntu 22.04. Adapt package names if you
@@ -40,8 +39,7 @@ export LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:${LD_LIBRARY_PATH:+:$LD_LIBRAR
 mkdir -p "$INSTALL_DIR"
 ```
 
-Append these exports to `~/.bashrc` (or the shell profile you use) so they are
-available in future sessions.
+Append these exports to `~/.bashrc` so they are available in future sessions.
 
 ## 2. Install system packages
 
@@ -158,3 +156,14 @@ cmake -S . -B build \
 cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
+
+## CMake options
+
+Pass options at configure time with `-D<OPTION>=<ON|OFF>`.
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `USE_BUNDLED_DEPS` | Build vendored Protobuf/gRPC/Abseil and friends from `external/` instead of relying on system packages. | ON |
+| `BUILD_TESTS` | Build the unit tests and test helpers. | OFF |
+| `ENABLE_SANITIZERS` | Enable AddressSanitizer and UBSan. | OFF |
+| `ENABLE_COVERAGE` | Enable coverage instrumentation (gcov/lcov). | OFF |
