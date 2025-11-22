@@ -1,13 +1,43 @@
 # Tracing Guide (Perfetto & StarPU FXT)
 
-This guide explains how to generate `batching_trace.json`, understand its
-contents, inspect it with the Perfetto UI, and capture StarPU FXT traces.
-Enable tracing only during benchmarks or local debugging sessions.
+This guide explains how to produce and read the batching JSON trace (Perfetto),
+generate batch summary plots, and capture StarPU FXT traces. Enable tracing only
+for profiling or debugging sessions.
 
-## 1. Enable the batching JSON trace
+## 1. StarPU FXT traces (YAML + viewing)
 
-Tracing is disabled by default. Enable it in the `batching` section of your
-model configuration:
+Enable FXT directly in your config via `starpu_env` (or export the variables in
+the shell):
+
+```yaml
+starpu_env:
+  STARPU_FXT_TRACE: "1"
+  STARPU_FXT_PREFIX: "/tmp/starpu_traces"
+```
+
+Then launch the server:
+
+```bash
+./starpu_server --config models/bert.yml
+```
+
+This produces `prof_<pid>` files under the chosen prefix. Convert them to a
+Paje timeline and open with Vite:
+
+```bash
+cd /tmp/starpu_traces
+starpu_fxt_tool -i prof_<pid>
+vite paje.trace  # or use https://solverstack.gitlabpages.inria.fr/vite/
+```
+
+![Vite preview](images/vite.png)
+
+FXT traces expose low-level StarPU scheduling and CUDA runtime activity.
+
+## 2. Batching JSON trace (enable + read)
+
+Enable the batching trace in your YAML and inspect the Chrome trace-event JSON
+with Perfetto:
 
 ```yaml
 batching:
@@ -15,65 +45,32 @@ batching:
   trace_output: /tmp/  # optional custom path
 ```
 
-- `trace_enabled` flips the instrumentation on as soon as the server starts.
-- `trace_output` is optional and must point to a directory, the server writes
-  `batching_trace.json` inside. When omitted the server writes the file in the
-  working directory. The same directory also receives
-  `batching_trace_summary.csv`, a CSV dump of each batch (worker ID and type,
-  batch size, request IDs, etc). Warmup batches are excluded.
-  The server automatically runs `scripts/plot_batch_summary.py` at shutdown to
+- `trace_enabled` flips instrumentation on as soon as the server starts.
+- `trace_output` must point to a directory; the server writes
+  `batching_trace.json` there. The same directory also receives
+  `batching_trace_summary.csv` (one line per batch). Warmup batches are
+  excluded. The server runs `scripts/plot_batch_summary.py` at shutdown to
   produce plots.
 
-Each server restart truncates the previous file, so copy the trace elsewhere
-before launching another run. Stop the server before opening the trace.
+Each restart truncates the previous JSON, so copy it elsewhere before relaunch.
+Stop the server before opening the file.
 
-## 2. JSON layout
+Drag the JSON into [ui.perfetto.dev](https://ui.perfetto.dev) and look for these
+event types:
 
-The output follows the Chrome trace-event format.
-
-![Aperçu Perfetto](images/perfetto_example.png)
-
-Key event types:
-
-- `request_enqueued` (track request enqueued) records each incoming request.
-- `batch` (track batch) spans the time requests spend waiting for a dynamic
-  batch.
-- `batch_build` (track dynamic batching) covers the time spent assembling the
-  batch before it is handed off to StarPU. Flow arrows link these slices to the
-  worker that eventually executes the batch.
-- `batch_submitted` (track batch submitted) is an instant event that ties a
-  batch to the worker that will execute it.
-- Entries named after correspond to worker lanes.
+- `request_enqueued` records each incoming request.
+- `batch` spans the time requests spend waiting for a dynamic batch.
+- `batch_build` covers the time spent assembling the batch before handing it off
+  to StarPU; flow arrows link to the worker that executes the batch.
+- `batch_submitted` ties a batch to the worker that will execute it.
+- Tracks named after workers correspond to worker lanes.
 
 Warmup requests reuse the same keys with a `warming_` prefix so they can be
 filtered out quickly inside Perfetto.
 
-## 3. StarPU FXT traces
+![Perfetto preview](images/perfetto_example.png)
 
-For detailed StarPU scheduling timelines, enable FXT tracing via environment
-variables (inline in your YAML or in the shell):
-
-```bash
-STARPU_FXT_TRACE=1 \
-STARPU_FXT_PREFIX=/path/to/trace_dir \
-./starpu_server --config models/bert.yml
-```
-
-This produces `prof_<pid>` files under the chosen prefix. Convert them
-to a Paje timeline and open it with Vite:
-
-```bash
-cd /path/to/trace_dir
-starpu_fxt_tool -i prof_<pid>
-vite paje.trace  # open with https://solverstack.gitlabpages.inria.fr/vite/
-```
-
-![Aperçu Vite](images/vite.png)
-
-FXT traces complement the batching JSON trace by exposing low-level worker
-scheduling and CUDA runtime activity.
-
-## 4. Batch summary plots
+## 3. Batch summary plots
 
 The server writes `batching_trace_summary.csv` alongside the JSON trace and
 automatically runs `scripts/plot_batch_summary.py` at shutdown to generate
@@ -83,3 +80,5 @@ point at archived traces:
 ```bash
 ./scripts/plot_batch_summary.py /path/to/batching_trace_summary.csv --output batching_plots.png
 ```
+
+![Plot preview](images/plot.png)
