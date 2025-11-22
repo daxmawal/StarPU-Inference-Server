@@ -2,8 +2,8 @@
 
 This directory collects the documentation needed to install, run, and tune the StarPU Inference Server.
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) |
-| --- | --- | --- | --- | --- |
+|[Installation](./installation.md)|[Quickstart](./quickstart.md)|[Server Configuration](./server_guide.md)|[Client Guide](./client_guide.md)|[Docker Guide](./docker_guide.md)|[Tracing](./tracing.md)|
+|---|---|---|---|---|---|
 
 ## Getting Started
 
@@ -13,7 +13,7 @@ This directory collects the documentation needed to install, run, and tune the S
 ## Configuration Reference
 
 - Use [server configuration](./server_guide.md) to review runtime options, environment variables, and parameters.
-- For instrumentation, the [Perfetto trace guide](./perfetto.md) explains how to emit and visualise batching traces when debugging dynamic batching (use StarPU `starpu_fxt` or NVIDIA `nsys` for deeper scheduling insight).
+- For instrumentation, the [tracing guide](./tracing.md) explains how to emit and visualise batching traces (Perfetto) and StarPU FXT traces when debugging dynamic batching (use NVIDIA `nsys` for GPU-wide timelines).
 
 ## Client Guide: Examples & Custom Implementations
 
@@ -24,5 +24,4 @@ Client examples:
 
 ### Backends
 
-- [StarPU](https://starpu.gitlabpages.inria.fr/) – is an open-source runtime system that schedules and manages data for task-based applications across heterogeneous processors (CPUs and GPUs) to maximize performance and portability.
-- [LibTorch](https://pytorch.org/cppdocs/) – is PyTorch’s official C++ library, providing high-performance tensors, automatic differentiation, and neural-network APIs for training and deploying deep-learning models in C++.
+- [StarPU](https://starpu.gitlabpages.inria.fr/) – is an open-source runtime system that schedules and manages data for task-based applications across heterogeneous processors (CPUs and GPUs) to maximize performance.

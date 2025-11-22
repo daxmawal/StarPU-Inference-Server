@@ -1,10 +1,12 @@
 # StarPU Inference Server — Docker Guide
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) |
-| --- | --- | --- | --- | --- |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) | [Tracing](./tracing.md) |
+| --- | --- | --- | --- | --- | --- |
 
 Run through Docker + NVIDIA setup to build, launch, and validate the StarPU inference server in a reproducible environment.
 
+> **⚠️ Warning:** Prebuilt images are not published yet, you must build the image locally until a release is available.
+>
 > **Tested environment:** Ubuntu 22.04 LTS on an NVIDIA GPU host with local sudo access.
 
 ---

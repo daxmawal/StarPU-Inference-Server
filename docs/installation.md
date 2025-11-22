@@ -1,7 +1,7 @@
 # StarPU Inference Server - Installation Guide
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) |
-| --- | --- | --- | --- | --- |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) | [Tracing](./tracing.md) |
+| --- | --- | --- | --- | --- | --- |
 
 ## Installation Guide
 
@@ -17,8 +17,7 @@ on a Linux host.
 
 ## Hardware and software requirements
 
-- NVIDIA GPU with a driver that supports CUDA 11.8 (default build targets
-  compute capability 8.0 and 8.6, adjust if needed).
+- NVIDIA GPU with a driver that supports CUDA 11.8.
 - Optional: NVML headers (`libnvidia-ml-dev`) to enable GPU metrics.
 
 > **Note:** the commands below assume Ubuntu 22.04. Adapt package names if you
@@ -40,14 +39,7 @@ export LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:${LD_LIBRARY_PATH:+:$LD_LIBRAR
 mkdir -p "$INSTALL_DIR"
 ```
 
-Append these exports to `~/.bashrc` (or the shell profile you use) so they are
-available in future sessions, then run:
-
-```bash
-source ~/.bashrc
-```
-
-Alternatively, open a new terminal so the variables take effect.
+Append these exports to `~/.bashrc` so they are available in future sessions.
 
 ## 2. Install system packages
 
@@ -107,11 +99,6 @@ are present:
 git submodule update --init --recursive
 ```
 
-The CMake configure/build steps below will compile Abseil, Protobuf, gRPC, and
-utf8_range automatically inside the build tree. To use system-installed
-packages instead, pass `-DUSE_BUNDLED_DEPS=OFF` and provide the appropriate
-`CMAKE_PREFIX_PATH`/`Protobuf_DIR` overrides yourself.
-
 ### StarPU 1.4.8
 
 ```bash
@@ -139,7 +126,7 @@ rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
 ## 7. Build StarPU Inference Server
 
-Clone the repository (with submodules) if needed:
+Clone the repository (with submodules) :
 
 ```bash
 git clone --recurse-submodules https://github.com/daxmawal/StarPU-Inference-Server.git
@@ -151,13 +138,7 @@ git submodule update --init --recursive
 Configure and compile:
 
 ```bash
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-  -DCMAKE_CUDA_ARCHITECTURES="80;86" \
-  -DCMAKE_PREFIX_PATH="$STARPU_DIR;$INSTALL_DIR/libtorch" \
-  -DUSE_BUNDLED_DEPS=ON
-
+cmake -S . -B build
 cmake --build build -j"$(nproc)"
 ```
 
@@ -176,5 +157,13 @@ cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
 
-Tests link against the vendored `googletest` submodule and reuse the
-dependencies you installed above.
+## CMake options
+
+Pass options at configure time with `-D<OPTION>=<ON|OFF>`.
+
+| Option | Description | Default |
+| --- | --- | --- |
+| `USE_BUNDLED_DEPS` | Build vendored Protobuf/gRPC/Abseil and friends from `external/` instead of relying on system packages. | ON |
+| `BUILD_TESTS` | Build the unit tests and test helpers. | OFF |
+| `ENABLE_SANITIZERS` | Enable AddressSanitizer and UBSan. | OFF |
+| `ENABLE_COVERAGE` | Enable coverage instrumentation (gcov/lcov). | OFF |

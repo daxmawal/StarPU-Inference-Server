@@ -1,7 +1,7 @@
 # StarPU Inference Server - Quickstart Guide
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) |
-| --- | --- | --- | --- | --- |
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) | [Tracing](./tracing.md) |
+| --- | --- | --- | --- | --- | --- |
 
 ## Quickstart Guide
 
@@ -13,17 +13,7 @@ steps: build the binaries, export the TorchScript model, launch the server with
 
 ## 1. Build the server
 
-Install dependencies following [installation](./installation.md), then compile the
-project:
-
-```bash
-mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-cmake --build . -j"$(nproc)"
-```
-
-The binaries, including `starpu_server`, are produced inside `build/`.
-
+Install dependencies following [installation](./installation.md).
 > Prefer containers? Build the image described in the [docker guide](./docker_guide.md).
 
 ---
@@ -67,17 +57,10 @@ GPU IDs or a CPU-only setup ([Server Configuration](./server_guide.md)).
 
 ## 4. Launch the client
 
-Open a fresh shell to create a small virtual
-environment for the Python client, install its dependencies, and send a real
-inference request to the running server.
+Follow the [Client Guide](./client_guide.md) to set up the Python virtual
+environment and dependencies. Once ready, send an inference request:
 
 ```bash
-cd /path/to/StarPU-Inference-Server
-python3 -m venv .venv-client
-source .venv-client/bin/activate
-pip install --upgrade pip
-pip install -r client/requirements.txt
-
 python3 client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --text "StarPU orchestrates CPU and GPU to serve this request." \
