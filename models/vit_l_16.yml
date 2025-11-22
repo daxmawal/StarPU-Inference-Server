@@ -1,0 +1,29 @@
+name: vit_l_16
+trace_enabled: true
+trace_output: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build/"
+scheduler: eager
+starpu_env:
+  STARPU_FXT_TRACE: "1"
+  STARPU_FXT_PREFIX: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build"
+  STARPU_CUDA_THREAD_PER_WORKER: "1"
+  STARPU_CUDA_PIPELINE: "4"
+  STARPU_NWORKER_PER_CUDA: "4"
+  STARPU_WORKERS_GETBIND: "0"
+model: ../models/resnet152.pt
+inputs:
+  - { name: "input0", data_type: "TYPE_FP32", dims: [1, 3, 384, 384] }
+outputs:
+  - { name: "output0", data_type: "TYPE_FP32", dims: [1, 1000] }
+warmup_batches_per_worker: 2
+verbosity: 1
+address: 127.0.0.1:50051
+metrics_port: 9100
+max_batch_size: 16
+batch_coalesce_timeout_ms: 10
+dynamic_batching: true
+sync: false
+use_cpu: false
+group_cpu_by_numa: true
+use_cuda:
+  - { device_ids: [0] }
+pool_size: 12
