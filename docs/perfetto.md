@@ -12,11 +12,11 @@ model configuration:
 ```yaml
 batching:
   trace_enabled: true
-  trace_file: /tmp/starpu/  # optional custom path
+  trace_output: /tmp/starpu/  # optional custom path
 ```
 
 - `trace_enabled` flips the instrumentation on as soon as the server starts.
-- `trace_file` is optional and must point to a directory; the server writes
+- `trace_output` is optional and must point to a directory; the server writes
   `batching_trace.json` inside. When omitted the server writes the file in the
   working directory. The same directory also receives
   `batching_trace_summary.csv`, a CSV dump of each batch (worker ID and type,

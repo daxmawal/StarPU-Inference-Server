@@ -886,10 +886,10 @@ TEST(ConfigLoader, ParsesTraceEnabledFlag)
   EXPECT_TRUE(cfg.batching.trace_enabled);
 }
 
-TEST(ConfigLoader, ParsesTraceDirectory)
+TEST(ConfigLoader, ParsesTraceOutputDirectory)
 {
-  const auto model_path =
-      WriteTempFile("config_loader_trace_file_model.pt", std::string(1, '\0'));
+  const auto model_path = WriteTempFile(
+      "config_loader_trace_output_model.pt", std::string(1, '\0'));
 
   std::string yaml = base_model_yaml();
   const std::string placeholder = "{{MODEL_PATH}}";
@@ -903,18 +903,18 @@ TEST(ConfigLoader, ParsesTraceDirectory)
   const auto trace_dir =
       std::filesystem::temp_directory_path() / "config_loader_trace_dir";
   std::filesystem::create_directories(trace_dir);
-  yaml += "trace_file: " + trace_dir.string() + "\n";
+  yaml += "trace_output: " + trace_dir.string() + "\n";
 
-  const auto tmp = WriteTempFile("config_loader_trace_file.yaml", yaml);
+  const auto tmp = WriteTempFile("config_loader_trace_output.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const auto expected_path = (trace_dir / "batching_trace.json").string();
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_file_path, expected_path);
+  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
 }
 
-TEST(ConfigLoader, TraceFileRejectsEmptyPath)
+TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
 {
   const auto model_path =
       WriteTempFile("config_loader_empty_trace_model.pt", std::string(1, '\0'));
@@ -927,7 +927,7 @@ TEST(ConfigLoader, TraceFileRejectsEmptyPath)
     yaml.replace(pos, placeholder.size(), replacement);
     pos += replacement.size();
   }
-  yaml += "trace_file: \"\"\n";
+  yaml += "trace_output: \"\"\n";
 
   const auto tmp = WriteTempFile("config_loader_empty_trace.yaml", yaml);
 
@@ -935,12 +935,12 @@ TEST(ConfigLoader, TraceFileRejectsEmptyPath)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_file must not be empty";
+      "Failed to load config: trace_output must not be empty";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }
 
-TEST(ConfigLoader, TraceFileAcceptsExistingDirectoryPath)
+TEST(ConfigLoader, TraceOutputAcceptsExistingDirectoryPath)
 {
   const auto model_path =
       WriteTempFile("config_loader_trace_dir_model.pt", std::string(1, '\0'));
@@ -955,19 +955,19 @@ TEST(ConfigLoader, TraceFileAcceptsExistingDirectoryPath)
   }
 
   const auto trace_dir = MakeUniqueTempDir("config_loader_trace_dir");
-  yaml += "trace_file: " + trace_dir.string() + "\n";
+  yaml += "trace_output: " + trace_dir.string() + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_dir.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_path =
-      (trace_dir / RuntimeConfig{}.batching.trace_file_path).string();
+      (trace_dir / RuntimeConfig{}.batching.trace_output_path).string();
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_file_path, expected_path);
+  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
 }
 
-TEST(ConfigLoader, TraceFileAcceptsDirectoryWithTrailingSeparator)
+TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
 {
   const auto model_path = WriteTempFile(
       "config_loader_trace_dir_sep_model.pt", std::string(1, '\0'));
@@ -989,19 +989,19 @@ TEST(ConfigLoader, TraceFileAcceptsDirectoryWithTrailingSeparator)
     dir_with_separator.push_back(std::filesystem::path::preferred_separator);
   }
 
-  yaml += "trace_file: \"" + dir_with_separator + "\"\n";
+  yaml += "trace_output: \"" + dir_with_separator + "\"\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_dir_sep.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
   const std::string expected_path =
-      (requested_dir / RuntimeConfig{}.batching.trace_file_path).string();
+      (requested_dir / RuntimeConfig{}.batching.trace_output_path).string();
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_file_path, expected_path);
+  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
 }
 
-TEST(ConfigLoader, TraceFileRejectsExplicitJsonFilename)
+TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
 {
   const auto model_path =
       WriteTempFile("config_loader_trace_json_model.pt", std::string(1, '\0'));
@@ -1018,7 +1018,7 @@ TEST(ConfigLoader, TraceFileRejectsExplicitJsonFilename)
   const auto invalid_path =
       (std::filesystem::temp_directory_path() / "config_loader_trace.json")
           .string();
-  yaml += "trace_file: " + invalid_path + "\n";
+  yaml += "trace_output: " + invalid_path + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_json.yaml", yaml);
 
@@ -1026,13 +1026,13 @@ TEST(ConfigLoader, TraceFileRejectsExplicitJsonFilename)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_file must be a directory path (omit the "
+      "Failed to load config: trace_output must be a directory path (omit the "
       "filename)";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }
 
-TEST(ConfigLoader, TraceFileRejectsPathPointingToExistingFile)
+TEST(ConfigLoader, TraceOutputRejectsPathPointingToExistingFile)
 {
   const auto model_path = WriteTempFile(
       "config_loader_trace_file_path_model.pt", std::string(1, '\0'));
@@ -1048,7 +1048,7 @@ TEST(ConfigLoader, TraceFileRejectsPathPointingToExistingFile)
 
   const auto destination =
       WriteTempFile("config_loader_trace_destination", "payload");
-  yaml += "trace_file: " + destination.string() + "\n";
+  yaml += "trace_output: " + destination.string() + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_destination.yaml", yaml);
 
@@ -1056,7 +1056,7 @@ TEST(ConfigLoader, TraceFileRejectsPathPointingToExistingFile)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_file must be a directory path";
+      "Failed to load config: trace_output must be a directory path";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }

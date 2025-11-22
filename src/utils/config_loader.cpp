@@ -24,8 +24,8 @@ namespace {
 
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
-constexpr std::string_view kDefaultTraceFileName = "batching_trace.json";
-const std::filesystem::path kDefaultTraceFile{kDefaultTraceFileName};
+constexpr std::string_view kDefaultTraceOutputName = "batching_trace.json";
+const std::filesystem::path kDefaultTraceOutputFile{kDefaultTraceOutputName};
 
 auto
 config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
@@ -79,7 +79,7 @@ parse_config_name(const YAML::Node& root, RuntimeConfig& cfg)
 }
 
 auto
-resolve_trace_file_directory(std::string directory) -> std::string
+resolve_trace_output_directory(std::string directory) -> std::string
 {
   if (directory.empty()) {
     return directory;
@@ -90,23 +90,24 @@ resolve_trace_file_directory(std::string directory) -> std::string
   const bool exists = std::filesystem::exists(directory_path, status_ec);
   if (status_ec) {
     throw std::filesystem::filesystem_error(
-        "trace_file", directory_path, status_ec);
+        "trace_output", directory_path, status_ec);
   }
 
   if (exists) {
     std::error_code type_ec;
     if (!std::filesystem::is_directory(directory_path, type_ec)) {
-      throw std::invalid_argument("trace_file must be a directory path");
+      throw std::invalid_argument("trace_output must be a directory path");
     }
   } else {
     const auto extension = directory_path.extension();
-    if (!extension.empty() && extension == kDefaultTraceFile.extension()) {
+    if (!extension.empty() &&
+        extension == kDefaultTraceOutputFile.extension()) {
       throw std::invalid_argument(
-          "trace_file must be a directory path (omit the filename)");
+          "trace_output must be a directory path (omit the filename)");
     }
   }
 
-  return (directory_path / kDefaultTraceFile).string();
+  return (directory_path / kDefaultTraceOutputFile).string();
 }
 
 auto
@@ -155,7 +156,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "dynamic_batching",
           "pool_size",
           "trace_enabled",
-          "trace_file",
+          "trace_output",
           "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
@@ -394,11 +395,11 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
   if (root["trace_enabled"]) {
     cfg.batching.trace_enabled = root["trace_enabled"].as<bool>();
   }
-  if (root["trace_file"]) {
-    cfg.batching.trace_file_path =
-        resolve_trace_file_directory(root["trace_file"].as<std::string>());
-    if (cfg.batching.trace_file_path.empty()) {
-      throw std::invalid_argument("trace_file must not be empty");
+  if (root["trace_output"]) {
+    cfg.batching.trace_output_path =
+        resolve_trace_output_directory(root["trace_output"].as<std::string>());
+    if (cfg.batching.trace_output_path.empty()) {
+      throw std::invalid_argument("trace_output must not be empty");
     }
   }
 }
