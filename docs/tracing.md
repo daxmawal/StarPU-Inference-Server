@@ -59,10 +59,19 @@ STARPU_FXT_PREFIX=/path/to/trace_dir \
 ./starpu_server --config models/bert.yml
 ```
 
-This produces `starpu_<pid>.trace` files under the chosen prefix. Inspect them
-with `starpu_fxt_tool` or any StarPU-compatible visualisation tool. FXT traces
-complement the batching JSON trace by exposing low-level worker scheduling and
-CUDA runtime activity.
+This produces `prof_<pid>` files under the chosen prefix. Convert them
+to a Paje timeline and open it with Vite:
+
+```bash
+cd /path/to/trace_dir
+starpu_fxt_tool -i prof_<pid>
+vite paje.trace  # open with https://solverstack.gitlabpages.inria.fr/vite/
+```
+
+![Aperçu Vite](images/vite.png)
+
+FXT traces complement the batching JSON trace by exposing low-level worker
+scheduling and CUDA runtime activity.
 
 ## 4. Batch summary plots
 
