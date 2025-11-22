@@ -1,5 +1,8 @@
 # Tracing Guide (Perfetto & StarPU FXT)
 
+| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) | [Tracing](./tracing.md) |
+| --- | --- | --- | --- | --- | --- |
+
 This guide explains how to produce and read the batching JSON trace (Perfetto),
 generate batch summary plots, and capture StarPU FXT traces. Enable tracing only
 for profiling or debugging sessions.
