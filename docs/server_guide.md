@@ -9,21 +9,7 @@ This guide walks through launching the gRPC inference server and crafting the
 YAML configuration files it consumes. It assumes you already followed
 [installation](./installation.md) to install dependencies and build the project.
 
-## 1. Build the server
-
-From the project root:
-
-```bash
-mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-cmake --build . -j"$(nproc)"
-```
-
-- `starpu_server` is the executable that exposes the gRPC API.
-- `client_example` is an example client useful for smoke tests.
-- To write your own client in C++, Python, etc, see [Client Guide](./client_guide.md).
-
-## 2. Prepare a model configuration
+## 1. Prepare a model configuration
 
 The server loads exactly one TorchScript model per configuration file. The
 configuration is written in YAML and must include the following required keys:

@@ -13,17 +13,7 @@ steps: build the binaries, export the TorchScript model, launch the server with
 
 ## 1. Build the server
 
-Install dependencies following [installation](./installation.md), then compile the
-project:
-
-```bash
-mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-cmake --build . -j"$(nproc)"
-```
-
-The binaries, including `starpu_server`, are produced inside `build/`.
-
+Install dependencies following [installation](./installation.md).
 > Prefer containers? Build the image described in the [docker guide](./docker_guide.md).
 
 ---

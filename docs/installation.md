@@ -41,13 +41,7 @@ mkdir -p "$INSTALL_DIR"
 ```
 
 Append these exports to `~/.bashrc` (or the shell profile you use) so they are
-available in future sessions, then run:
-
-```bash
-source ~/.bashrc
-```
-
-Alternatively, open a new terminal so the variables take effect.
+available in future sessions.
 
 ## 2. Install system packages
 
@@ -107,11 +101,6 @@ are present:
 git submodule update --init --recursive
 ```
 
-The CMake configure/build steps below will compile Abseil, Protobuf, gRPC, and
-utf8_range automatically inside the build tree. To use system-installed
-packages instead, pass `-DUSE_BUNDLED_DEPS=OFF` and provide the appropriate
-`CMAKE_PREFIX_PATH`/`Protobuf_DIR` overrides yourself.
-
 ### StarPU 1.4.8
 
 ```bash
@@ -139,7 +128,7 @@ rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
 ## 7. Build StarPU Inference Server
 
-Clone the repository (with submodules) if needed:
+Clone the repository (with submodules) :
 
 ```bash
 git clone --recurse-submodules https://github.com/daxmawal/StarPU-Inference-Server.git
@@ -151,13 +140,7 @@ git submodule update --init --recursive
 Configure and compile:
 
 ```bash
-cmake -S . -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-  -DCMAKE_CUDA_ARCHITECTURES="80;86" \
-  -DCMAKE_PREFIX_PATH="$STARPU_DIR;$INSTALL_DIR/libtorch" \
-  -DUSE_BUNDLED_DEPS=ON
-
+cmake -S . -B build
 cmake --build build -j"$(nproc)"
 ```
 
@@ -175,6 +158,3 @@ cmake -S . -B build \
 cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
-
-Tests link against the vendored `googletest` submodule and reuse the
-dependencies you installed above.
