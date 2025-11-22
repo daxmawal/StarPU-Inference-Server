@@ -89,17 +89,7 @@ rm /tmp/libtorch.zip
 
 Verify that `"$INSTALL_DIR/libtorch/lib"` is present in `LD_LIBRARY_PATH`.
 
-## 6. Submodule C++ dependencies (Protobuf/gRPC/Abseil/utf8_range)
-
-These dependencies are vendored as git submodules under `external/` and built as
-part of the project when `USE_BUNDLED_DEPS=ON` (default). Make sure submodules
-are present:
-
-```bash
-git submodule update --init --recursive
-```
-
-### StarPU 1.4.8
+## 6. Install StarPU 1.4.8
 
 ```bash
 STARPU_VERSION=1.4.8
@@ -125,6 +115,9 @@ rm -rf /tmp/starpu /tmp/starpu.tar.gz
 ```
 
 ## 7. Build StarPU Inference Server
+
+Submodule C++ dependencies (Protobuf/gRPC/Abseil/utf8_range) are vendored as git submodules under `external/` and built as
+part of the project when `USE_BUNDLED_DEPS=ON` (default).
 
 Clone the repository (with submodules) :
 
