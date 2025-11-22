@@ -64,9 +64,9 @@ Optional keys for debugging:
 |`sync`|Run the StarPU worker pool in synchronous mode (`true`/`false`).|`false`|
 |`trace_enabled`|Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI plus a CSV summary of each batch.|`false`|
 |`trace_output`|Directory for the batching Perfetto trace (requires `trace_enabled: true`). The server writes `batching_trace.json` and `batching_trace_summary.csv` there (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings), warmup batches are excluded from the CSV and plots.|`.`|
-|`warmup_batches_per_worker`|Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests (set `0` to disable batch-based warmup).|`1`|
+|`warmup_batches_per_worker`|Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests.|`1`|
 
-Traces use the [Chrome trace-event JSON format](https://perfetto.dev/docs/concepts/trace-formats#json-trace-format), so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [Perfetto trace guide](./perfetto.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, and navigating the Perfetto UI. Enable it only while profiling dynamic batching, for detailed StarPU scheduling instrumentation use `STARPU_FXT_TRACE`, and for GPU-wide timelines rely on NVIDIA `nsys`.
+Traces use the Chrome trace-event JSON format, so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [Perfetto trace guide](./perfetto.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, and navigating the Perfetto UI. Enable it only while profiling dynamic batching, for detailed StarPU scheduling instrumentation use `STARPU_FXT_TRACE`, and for GPU-wide timelines rely on NVIDIA `nsys`.
 
 During startup the server always schedules a short warmup before accepting real
 traffic. The final number of warmup requests is the maximum between the legacy
@@ -83,18 +83,22 @@ process environment before StarPU initialises, so it has the same effect as
 
 ```yaml
 starpu_env:
+  STARPU_FXT_TRACE: "1"
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"
   STARPU_NWORKER_PER_CUDA: "4"
   STARPU_WORKERS_GETBIND: "0"
 ```
 
+- `STARPU_FXT_TRACE`: enable StarPU FXT tracing (set to `1`) to produce StarPU
+  timeline files, combine with `STARPU_FXT_PREFIX` to control the output
+  directory.
 - `STARPU_CUDA_THREAD_PER_WORKER`: number of CPU helper threads created per CUDA
   worker. A value of `1` keeps one submission thread per StarPU GPU worker.
 - `STARPU_CUDA_PIPELINE`: depth of the CUDA pipeline, i.e., the number of
   asynchronous stages StarPU can queue concurrently on each worker.
 - `STARPU_NWORKER_PER_CUDA`: number of StarPU workers spawned for each physical
-  CUDA device; higher values allow more concurrent CUDA streams per GPU.
+  CUDA device, higher values allow more concurrent CUDA streams per GPU.
 - `STARPU_WORKERS_GETBIND`: when set to `0`, disables StarPU’s attempt to query
   and enforce CPU affinities while initialising workers (can help when bindings
   are managed externally).

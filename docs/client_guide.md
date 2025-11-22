@@ -81,7 +81,7 @@ python3 -m grpc_tools.protoc \
   src/proto/grpc_service.proto
 ```
 
-The same proto files underpin the C++ client; CMake handles codegen through
+The same proto files underpin the C++ client, CMake handles codegen through
 `protobuf_generate` during the normal build.
 
 ---
