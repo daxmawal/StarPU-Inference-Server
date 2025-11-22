@@ -2,9 +2,6 @@
 #include <gtest/gtest.h>
 #include <torch/torch.h>
 
-#include <memory>
-#include <thread>
-
 #include "grpc/server/inference_service.hpp"
 #include "test_helpers.hpp"
 

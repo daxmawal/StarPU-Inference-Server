@@ -8,10 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/root
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV PATH="$INSTALL_DIR/protobuf/bin:$PATH"
-ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
-ARG CMAKE_PREFIX_PATH=""
-ENV CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/utf8_range${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
 
 # Create working directories and install build dependencies
 RUN mkdir -p "$INSTALL_DIR" "$HOME/.cache" && \
@@ -57,72 +54,6 @@ RUN mkdir -p "$INSTALL_DIR/libtorch" && \
     unzip /tmp/libtorch.zip -d "$INSTALL_DIR" && \
     rm /tmp/libtorch.zip
 
-# === Build and install Abseil ===
-RUN git clone --depth 1 --branch 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil && \
-    cmake -S /tmp/abseil -B /tmp/abseil/build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_STANDARD=17 \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/absl" \
-    -DBUILD_SHARED_LIBS=OFF && \
-    cmake --build /tmp/abseil/build -j"$(nproc)" && \
-    cmake --install /tmp/abseil/build && \
-    rm -rf /tmp/abseil
-
-# === Build and install Protobuf 25.3 (static) ===
-RUN git clone --depth 1 --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf && \
-    git -C /tmp/protobuf submodule update --init --recursive && \
-    cmake -S /tmp/protobuf -B /tmp/protobuf/build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/protobuf" \
-    -Dprotobuf_BUILD_SHARED_LIBS=OFF \
-    -Dprotobuf_BUILD_TESTS=OFF \
-    -Dprotobuf_ABSL_PROVIDER=package \
-    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl" && \
-    cmake --build /tmp/protobuf/build -j"$(nproc)" && \
-    cmake --install /tmp/protobuf/build && \
-    rm -rf /tmp/protobuf
-
-# === Compile GTest ===
-RUN cmake -S /usr/src/googletest -B /usr/src/googletest/build -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build /usr/src/googletest/build -j"$(nproc)" && \
-    mv /usr/src/googletest/build/lib/*.a /usr/lib && \
-    rm -rf /usr/src/googletest
-
-# === Build and install utf8_range ===
-RUN git clone --depth 1 --branch main https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range && \
-    cmake -S /tmp/utf8_range -B /tmp/utf8_range/build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_CXX_STANDARD=17 \
-    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/utf8_range" \
-    -DBUILD_SHARED_LIBS=OFF \
-    -Dutf8_range_ENABLE_TESTS=OFF \
-    -DBUILD_TESTING=OFF && \
-    cmake --build /tmp/utf8_range/build -j"$(nproc)" && \
-    cmake --install /tmp/utf8_range/build && \
-    rm -rf /tmp/utf8_range
-
-# === Build and install gRPC ${GRPC_VERSION} in "package" mode for Protobuf/Abseil ===
-ARG GRPC_VERSION=1.59.0
-RUN git clone --depth 1 --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc && \
-    git -C /tmp/grpc submodule update --init --recursive && \
-    cmake -S /tmp/grpc -B /tmp/grpc/cmake/build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/grpc" \
-    -DgRPC_INSTALL=ON \
-    -DgRPC_BUILD_TESTS=OFF \
-    -DgRPC_PROTOBUF_PROVIDER=package \
-    -DgRPC_ABSL_PROVIDER=package \
-    -DgRPC_CARES_PROVIDER=module \
-    -DgRPC_RE2_PROVIDER=module \
-    -DgRPC_SSL_PROVIDER=module \
-    -DgRPC_ZLIB_PROVIDER=module \
-    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl" && \
-    cmake --build /tmp/grpc/cmake/build --target install -j"$(nproc)" && \
-    rm -rf /tmp/grpc
-
 # === Build and install StarPU ${STARPU_VERSION} ===
 ARG STARPU_VERSION=1.4.8
 WORKDIR /tmp/starpu
@@ -143,21 +74,21 @@ RUN tar -xzf /tmp/starpu.tar.gz --strip-components=1 && \
 WORKDIR /
 RUN rm -rf /tmp/starpu /tmp/starpu.tar.gz
 
-# Copy source code
+# Copy only the build inputs
 WORKDIR /app
-COPY CMakeLists.txt /app/
-COPY src/ /app/src/
-COPY cmake/ /app/cmake/
+COPY CMakeLists.txt ./
+COPY cmake ./cmake
+COPY external ./external
+COPY src ./src
+COPY tests ./tests
 
 # Build project
 WORKDIR /app/build
 RUN cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-    -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
-    -DProtobuf_DIR="$INSTALL_DIR/protobuf/lib/cmake/protobuf" \
-    -DProtobuf_PROTOC_EXECUTABLE="$INSTALL_DIR/protobuf/bin/protoc" \
-    -DProtobuf_USE_STATIC_LIBS=ON \
+    -DUSE_BUNDLED_DEPS=ON \
+    -DCMAKE_PREFIX_PATH="$STARPU_DIR;$INSTALL_DIR/libtorch" \
     -DENABLE_COVERAGE=OFF \
     -DENABLE_SANITIZERS=OFF \
     && cmake --build . -j"$(nproc)"
@@ -193,7 +124,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HOME=/home/appuser
 ENV INSTALL_DIR=${HOME}/Install
 ENV STARPU_DIR=${INSTALL_DIR}/starpu
-ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$STARPU_DIR/lib:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:${LD_LIBRARY_PATH}"
 
 # Runtime dependencies
 RUN apt-get update \
@@ -211,7 +142,6 @@ RUN apt-get update \
 
 # Copy artifacts from build stage
 COPY --from=build --chown=appuser:appuser /root/Install/libtorch ${INSTALL_DIR}/libtorch
-COPY --from=build --chown=appuser:appuser /root/Install/grpc ${INSTALL_DIR}/grpc
 COPY --from=build --chown=appuser:appuser /root/Install/starpu ${STARPU_DIR}
 COPY --from=build --chown=appuser:appuser /app/build/starpu_server /usr/local/bin/starpu_server
 COPY --from=build --chown=appuser:appuser /app/build/client_example /usr/local/bin/client_example

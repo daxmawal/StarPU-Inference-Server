@@ -1,7 +1,16 @@
-find_package(Protobuf REQUIRED)
-find_package(gRPC CONFIG REQUIRED)
-
-get_target_property(GRPC_CPP_PLUGIN gRPC::grpc_cpp_plugin LOCATION)
+if(TARGET gRPC::grpc_cpp_plugin)
+  set(GRPC_CPP_PLUGIN "$<TARGET_FILE:gRPC::grpc_cpp_plugin>")
+elseif(TARGET grpc_cpp_plugin)
+  set(GRPC_CPP_PLUGIN "$<TARGET_FILE:grpc_cpp_plugin>")
+else()
+  find_program(GRPC_CPP_PLUGIN grpc_cpp_plugin)
+  if(NOT GRPC_CPP_PLUGIN)
+    message(
+      FATAL_ERROR
+        "grpc_cpp_plugin not found. Install gRPC C++ plugin or build gRPC with codegen enabled."
+    )
+  endif()
+endif()
 
 set(PROTO_FILES ${CMAKE_CURRENT_SOURCE_DIR}/grpc_service.proto
                 ${CMAKE_CURRENT_SOURCE_DIR}/model_config.proto)
@@ -21,8 +30,10 @@ protobuf_generate(
   PLUGIN
   "protoc-gen-grpc=${GRPC_CPP_PLUGIN}")
 
-target_include_directories(inference_proto PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
-                                                  ${Protobuf_INCLUDE_DIRS})
+target_include_directories(
+  inference_proto
+  PUBLIC ${CMAKE_CURRENT_BINARY_DIR}
+         $<TARGET_PROPERTY:protobuf::libprotobuf,INTERFACE_INCLUDE_DIRECTORIES>)
 
-target_link_libraries(inference_proto PRIVATE protobuf::libprotobuf gRPC::grpc
-                                              gRPC::grpc++)
+target_link_libraries(inference_proto PUBLIC protobuf::libprotobuf gRPC::grpc
+                                             gRPC::grpc++)

@@ -5,6 +5,8 @@ project(starpu_server LANGUAGES CXX)
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
 option(BUILD_TESTS "Build unit tests" OFF)
+option(USE_BUNDLED_DEPS "Build bundled dependencies from external/ submodules"
+       ON)
 
 # === C++ Settings ===
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -12,14 +14,134 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # === Source Directories ===
 set(SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# === External Submodules ===
+set(EXTERNAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external)
+
+function(require_submodule path pretty_name)
+  if(NOT EXISTS "${EXTERNAL_DIR}/${path}/CMakeLists.txt")
+    message(
+      FATAL_ERROR
+        "${pretty_name} submodule missing at ${EXTERNAL_DIR}/${path}. "
+        "Run `git submodule update --init --recursive` and retry.")
+  endif()
+endfunction()
+
 # === Dependencies ===
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
-include(FindTorchCustom)
 find_package(StarPU REQUIRED)
-find_package(Protobuf REQUIRED)
-find_package(gRPC CONFIG REQUIRED)
-find_package(absl CONFIG REQUIRED)
-find_package(utf8_range CONFIG REQUIRED)
+
+if(USE_BUNDLED_DEPS)
+  require_submodule("protobuf" "protobuf")
+  # Build protobuf from the external/ submodule (no system install needed)
+  set(PROTOBUF_ROOT_DIR
+      ${EXTERNAL_DIR}/protobuf
+      CACHE PATH "" FORCE)
+  set(protobuf_INSTALL
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_TESTS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_CONFORMANCE
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_EXAMPLES
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_SHARED_LIBS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_PROTOC_BINARIES
+      ON
+      CACHE BOOL "" FORCE)
+  set(protobuf_BUILD_PROTOBUF_BINARIES
+      ON
+      CACHE BOOL "" FORCE)
+  set(protobuf_WITH_ZLIB
+      OFF
+      CACHE BOOL "" FORCE)
+
+  # gRPC with bundled third_party deps (absl/protobuf/re2/cares/boringssl/zlib)
+  require_submodule("grpc" "gRPC")
+  set(gRPC_PROTOBUF_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_INSTALL
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_TESTS
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_CODEGEN
+      ON
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_CPP_PLUGIN
+      ON
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_CSHARP_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_NODE_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_PHP_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_PYTHON_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_BUILD_GRPC_RUBY_PLUGIN
+      OFF
+      CACHE BOOL "" FORCE)
+  set(gRPC_ABSL_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_RE2_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_CARES_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_SSL_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  set(gRPC_ZLIB_PROVIDER
+      module
+      CACHE STRING "" FORCE)
+  add_subdirectory(${EXTERNAL_DIR}/grpc)
+
+  # Ensure gRPC namespace aliases exist (some gRPC builds skip alias
+  # definitions)
+  if(TARGET grpc AND NOT TARGET gRPC::grpc)
+    add_library(gRPC::grpc ALIAS grpc)
+  endif()
+  if(TARGET grpc++ AND NOT TARGET gRPC::grpc++)
+    add_library(gRPC::grpc++ ALIAS grpc++)
+  endif()
+  if(TARGET grpc++_reflection AND NOT TARGET gRPC::grpc++_reflection)
+    add_library(gRPC::grpc++_reflection ALIAS grpc++_reflection)
+  endif()
+  if(TARGET grpc_cpp_plugin AND NOT TARGET gRPC::grpc_cpp_plugin)
+    add_executable(gRPC::grpc_cpp_plugin ALIAS grpc_cpp_plugin)
+  endif()
+  # utf8_range from gRPC's third_party
+  if(TARGET utf8_range AND NOT TARGET utf8_range::utf8_range)
+    add_library(utf8_range::utf8_range ALIAS utf8_range)
+  endif()
+  if(TARGET utf8_validity AND NOT TARGET utf8_range::utf8_validity)
+    add_library(utf8_range::utf8_validity ALIAS utf8_validity)
+  endif()
+
+  include(${PROTOBUF_ROOT_DIR}/cmake/protobuf-generate.cmake)
+else()
+  find_package(Protobuf REQUIRED)
+  find_package(gRPC CONFIG REQUIRED)
+  find_package(absl CONFIG REQUIRED)
+  find_package(utf8_range CONFIG REQUIRED)
+endif()
 set(HWLOC_LIBRARY "")
 set(_HWLOC_CANDIDATES /usr/local/lib/libhwloc.so.15
                       /usr/lib/x86_64-linux-gnu/libhwloc.so.15)
@@ -51,35 +173,13 @@ if(HAVE_NVTX3_HEADER)
   set(HAVE_NVTX ON)
 endif()
 
-set(ABSL_LIBS absl::log absl::strings absl::base absl::log_internal_check_op)
-
-include(FetchContent)
 if(BUILD_TESTS)
   enable_testing()
-  FetchContent_Declare(
-    googletest
-    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip)
-  FetchContent_MakeAvailable(googletest)
+  set(GTEST_DIR "${EXTERNAL_DIR}/googletest")
+  require_submodule("googletest" "googletest")
+  add_subdirectory(${GTEST_DIR})
 endif()
 
-set(_PC_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
-set(_PC_SRC_DIR "${_PC_BASE_DIR}/prometheus-cpp-src")
-set(_PC_SUBBUILD "${_PC_BASE_DIR}/prometheus-cpp-subbuild")
-set(_PC_BUILD "${_PC_BASE_DIR}/prometheus-cpp-build")
-if(EXISTS "${_PC_SRC_DIR}" AND NOT EXISTS "${_PC_SRC_DIR}/.git")
-  message(
-    WARNING
-      "prometheus-cpp src exists without .git; purging cached _deps to force fresh Git clone."
-  )
-  file(REMOVE_RECURSE "${_PC_SRC_DIR}" "${_PC_SUBBUILD}" "${_PC_BUILD}")
-endif()
-
-FetchContent_Declare(
-  prometheus-cpp
-  GIT_REPOSITORY https://github.com/jupp0r/prometheus-cpp.git
-  GIT_TAG v1.1.0
-  GIT_SHALLOW TRUE
-  GIT_SUBMODULES_RECURSE TRUE)
 set(ENABLE_PULL
     ON
     CACHE BOOL "" FORCE)
@@ -92,36 +192,20 @@ set(ENABLE_COMPRESSION
 set(ENABLE_TESTING
     OFF
     CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(prometheus-cpp)
+require_submodule("prometheus-cpp" "prometheus-cpp")
+add_subdirectory(${EXTERNAL_DIR}/prometheus-cpp)
 
 add_subdirectory(${SRC_DIR}/proto)
 
-# === yaml-cpp via FetchContent ===
-include(FetchContent)
-
+# === yaml-cpp via submodule ===
 set(YAML_CPP_BUILD_TESTS
     OFF
     CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_TOOLS
     OFF
     CACHE BOOL "" FORCE)
-
-set(_YC_BASE_DIR "${CMAKE_BINARY_DIR}/_deps")
-set(_YC_SRC_DIR "${_YC_BASE_DIR}/yaml-cpp-src")
-set(_YC_SUBBUILD "${_YC_BASE_DIR}/yaml-cpp-subbuild")
-set(_YC_BUILD "${_YC_BASE_DIR}/yaml-cpp-build")
-if(EXISTS "${_YC_SRC_DIR}" AND NOT EXISTS "${_YC_SRC_DIR}/.git")
-  message(
-    WARNING
-      "yaml-cpp src exists without .git; purging cached _deps to force fresh Git clone."
-  )
-  file(REMOVE_RECURSE "${_YC_SRC_DIR}" "${_YC_SUBBUILD}" "${_YC_BUILD}")
-endif()
-
-FetchContent_Declare(yaml-cpp
-                     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git)
-
-FetchContent_MakeAvailable(yaml-cpp)
+require_submodule("yaml-cpp" "yaml-cpp")
+add_subdirectory(${EXTERNAL_DIR}/yaml-cpp)
 
 # Suppress noisy Clang warning from yaml-cpp's dragonbox header Seen as:
 # [-Wconstexpr-not-const] while yaml-cpp builds with older C++ modes
@@ -144,6 +228,7 @@ else()
 endif()
 
 # === Status Messages ===
+include(FindTorchCustom)
 message(STATUS "libtorch libraries: ${TORCH_LIBRARIES}")
 message(STATUS "StarPU include directory: ${STARPU_DIR}/include/starpu/1.4")
 message(STATUS "StarPU library: ${STARPU_LIBRARY}")

@@ -30,8 +30,7 @@ set_target_properties(all_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                            ${CMAKE_BINARY_DIR})
 
 target_compile_features(all_tests PRIVATE cxx_std_23)
-target_compile_definitions(all_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1
-                                             HAVE_NVTX=1)
+target_compile_definitions(all_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 target_include_directories(
   all_tests
@@ -49,23 +48,34 @@ target_link_libraries(
   PRIVATE unit_tests
           e2e_tests
           integration_tests
-          gtest
           gtest_main
           Torch::Torch
           inference_proto
-          gRPC::grpc++
-          ${Protobuf_LIBRARIES}
           Threads::Threads
-          ${ABSL_LIBS}
           StarPU::starpu
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp
           ${HWLOC_LIBRARY})
 
+if(TARGET gRPC::grpc++_reflection)
+  target_link_libraries(all_tests PRIVATE gRPC::grpc++_reflection)
+elseif(TARGET grpc++_reflection)
+  target_link_libraries(all_tests PRIVATE grpc++_reflection)
+else()
+  message(
+    WARNING
+      "gRPC reflection library not found; all_tests will be built without reflection."
+  )
+endif()
+
 if(STARPU_HAVE_NVML)
   target_compile_definitions(all_tests PRIVATE STARPU_HAVE_NVML=1)
   target_include_directories(all_tests PRIVATE ${NVML_INCLUDE_DIR})
   target_link_libraries(all_tests PRIVATE ${NVML_LIBRARY})
+endif()
+
+if(HAVE_NVTX)
+  target_compile_definitions(all_tests PRIVATE HAVE_NVTX=1)
 endif()
 
 if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

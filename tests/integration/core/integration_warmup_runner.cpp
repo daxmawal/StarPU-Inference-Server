@@ -9,7 +9,6 @@
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <utility>
 #include <vector>
 
 #define private public

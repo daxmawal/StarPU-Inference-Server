@@ -28,15 +28,15 @@ on a Linux host.
 
 ## 1. Prepare the environment
 
-Install dependencies into a dedicated prefix to keep the system clean:
+Install dependencies into a dedicated prefix to keep the system clean. If your
+StarPU/LibTorch installs already live in standard prefixes, you can skip these
+exports and just pass their paths via `CMAKE_PREFIX_PATH` at configure time:
 
 ```bash
 export INSTALL_DIR="$HOME/Install"
 export STARPU_DIR="$INSTALL_DIR/starpu"
-export CMAKE_PREFIX_PATH="$INSTALL_DIR/absl:$INSTALL_DIR/grpc:$INSTALL_DIR/utf8_range:$INSTALL_DIR/libtorch:$STARPU_DIR:$INSTALL_DIR/protobuf"
-export LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:$INSTALL_DIR/grpc/lib:$STARPU_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export Protobuf_DIR="$INSTALL_DIR/protobuf/lib/cmake/protobuf"
-export Protobuf_PROTOC_EXECUTABLE="$INSTALL_DIR/protobuf/bin/protoc"
+export CMAKE_PREFIX_PATH="$STARPU_DIR:$INSTALL_DIR/libtorch"
+export LD_LIBRARY_PATH="$INSTALL_DIR/libtorch/lib:${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 mkdir -p "$INSTALL_DIR"
 ```
 
@@ -55,18 +55,8 @@ Alternatively, open a new terminal so the variables take effect.
 sudo apt-get update
 sudo apt-get install -y \
   autoconf automake build-essential git pkg-config \
-  libfxt-dev libgtest-dev libhwloc-dev libltdl-dev libssl-dev \
-  libtool libtool-bin m4 ninja-build unzip
-```
-
-Compile the `gtest` static libraries once (the `libgtest-dev` package only ships
-sources):
-
-```bash
-sudo cmake -S /usr/src/googletest -B /usr/src/googletest/build -DCMAKE_BUILD_TYPE=Release
-sudo cmake --build /usr/src/googletest/build -j"$(nproc)"
-sudo cp /usr/src/googletest/build/lib/libgtest*.a /usr/lib/
-sudo rm -rf /usr/src/googletest/build
+  libfxt-dev libhwloc-dev libltdl-dev libssl-dev \
+  libtool libtool-bin m4 ninja-build unzip zlib1g-dev
 ```
 
 For GPU telemetry via NVML, also install:
@@ -107,75 +97,20 @@ rm /tmp/libtorch.zip
 
 Verify that `"$INSTALL_DIR/libtorch/lib"` is present in `LD_LIBRARY_PATH`.
 
-## 6. Build C++ dependencies
+## 6. Submodule C++ dependencies (Protobuf/gRPC/Abseil/utf8_range)
 
-The following steps mirror what the Docker image builds. Adjust `-j$(nproc)` if
-you prefer a different level of parallelism.
-
-### Abseil
-
-```bash
-git clone --depth 1 --branch 20230802.1 https://github.com/abseil/abseil-cpp.git /tmp/abseil
-cmake -S /tmp/abseil -B /tmp/abseil/build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CXX_STANDARD=17 \
-  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/absl" \
-  -DBUILD_SHARED_LIBS=OFF
-cmake --build /tmp/abseil/build -j"$(nproc)"
-cmake --install /tmp/abseil/build
-rm -rf /tmp/abseil
-```
-
-### Protobuf 25.3 (static) and utf8_range
+These dependencies are vendored as git submodules under `external/` and built as
+part of the project when `USE_BUNDLED_DEPS=ON` (default). Make sure submodules
+are present:
 
 ```bash
-git clone --depth 1 --branch v25.3 https://github.com/protocolbuffers/protobuf.git /tmp/protobuf
-git -C /tmp/protobuf submodule update --init --recursive
-cmake -S /tmp/protobuf -B /tmp/protobuf/build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/protobuf" \
-  -Dprotobuf_BUILD_SHARED_LIBS=OFF \
-  -Dprotobuf_BUILD_TESTS=OFF \
-  -Dprotobuf_ABSL_PROVIDER=package \
-  -DCMAKE_PREFIX_PATH="$INSTALL_DIR/absl"
-cmake --build /tmp/protobuf/build -j"$(nproc)"
-cmake --install /tmp/protobuf/build
-rm -rf /tmp/protobuf
-
-git clone --depth 1 --branch v1.1 https://github.com/protocolbuffers/utf8_range.git /tmp/utf8_range
-cmake -S /tmp/utf8_range -B /tmp/utf8_range/build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/utf8_range" \
-  -DBUILD_SHARED_LIBS=OFF \
-  -Dutf8_range_ENABLE_TESTS=OFF \
-  -DBUILD_TESTING=OFF
-cmake --build /tmp/utf8_range/build -j"$(nproc)"
-cmake --install /tmp/utf8_range/build
-rm -rf /tmp/utf8_range
+git submodule update --init --recursive
 ```
 
-### gRPC 1.59.0
-
-```bash
-git clone --depth 1 --branch v1.59.0 https://github.com/grpc/grpc.git /tmp/grpc
-git -C /tmp/grpc submodule update --init --recursive
-cmake -S /tmp/grpc -B /tmp/grpc/cmake/build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR/grpc" \
-  -DgRPC_INSTALL=ON \
-  -DgRPC_BUILD_TESTS=OFF \
-  -DgRPC_PROTOBUF_PROVIDER=package \
-  -DgRPC_ABSL_PROVIDER=package \
-  -DgRPC_CARES_PROVIDER=module \
-  -DgRPC_RE2_PROVIDER=module \
-  -DgRPC_SSL_PROVIDER=module \
-  -DgRPC_ZLIB_PROVIDER=module \
-  -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/absl"
-cmake --build /tmp/grpc/cmake/build --target install -j"$(nproc)"
-rm -rf /tmp/grpc
-```
+The CMake configure/build steps below will compile Abseil, Protobuf, gRPC, and
+utf8_range automatically inside the build tree. To use system-installed
+packages instead, pass `-DUSE_BUNDLED_DEPS=OFF` and provide the appropriate
+`CMAKE_PREFIX_PATH`/`Protobuf_DIR` overrides yourself.
 
 ### StarPU 1.4.8
 
@@ -202,20 +137,15 @@ popd
 rm -rf /tmp/starpu /tmp/starpu.tar.gz
 ```
 
-## 7. Sanity checks
+## 7. Build StarPU Inference Server
 
-- `nvcc --version` should report CUDA 11.8 or greater.
-- `cmake --version` and `g++ --version` should point to the recent toolchain.
-- Optionally validate CUDA availability through LibTorch with a short Python
-  snippet if you also use the Python stack.
-
-## 8. Build StarPU Inference Server
-
-Clone the repository if needed:
+Clone the repository (with submodules) if needed:
 
 ```bash
-git clone https://github.com/daxmawal/StarPU-Inference-Server.git
+git clone --recurse-submodules https://github.com/daxmawal/StarPU-Inference-Server.git
 cd StarPU-Inference-Server
+# If you already cloned without submodules:
+git submodule update --init --recursive
 ```
 
 Configure and compile:
@@ -225,10 +155,8 @@ cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
   -DCMAKE_CUDA_ARCHITECTURES="80;86" \
-  -DCMAKE_PREFIX_PATH="$INSTALL_DIR/protobuf;$INSTALL_DIR/grpc;$INSTALL_DIR/utf8_range;$STARPU_DIR;$INSTALL_DIR/libtorch;$INSTALL_DIR/absl" \
-  -DProtobuf_DIR="$Protobuf_DIR" \
-  -DProtobuf_PROTOC_EXECUTABLE="$Protobuf_PROTOC_EXECUTABLE" \
-  -DProtobuf_USE_STATIC_LIBS=ON
+  -DCMAKE_PREFIX_PATH="$STARPU_DIR;$INSTALL_DIR/libtorch" \
+  -DUSE_BUNDLED_DEPS=ON
 
 cmake --build build -j"$(nproc)"
 ```
@@ -238,7 +166,7 @@ The main executables are emitted under `build/`:
 - `starpu_server`: gRPC service combining StarPU and LibTorch.
 - `client_example`: sample CLI client.
 
-## 9. Optional: build and run tests
+## 8. Optional: build and run tests
 
 ```bash
 cmake -S . -B build \
@@ -248,5 +176,5 @@ cmake --build build -j"$(nproc)"
 ctest --test-dir build --output-on-failure
 ```
 
-Tests link against the static `gtest` binaries provided by the system and reuse
-the dependencies you installed above.
+Tests link against the vendored `googletest` submodule and reuse the
+dependencies you installed above.

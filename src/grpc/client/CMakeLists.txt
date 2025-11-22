@@ -12,13 +12,16 @@ target_compile_definitions(client_example PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
 
 target_include_directories(client_example PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
-target_link_libraries(
-  client_example
-  PRIVATE Torch::Torch
-          inference_proto
-          gRPC::grpc++_reflection
-          Threads::Threads
-          ${Protobuf_LIBRARIES}
-          utf8_range::utf8_range
-          utf8_range::utf8_validity
-          ${ABSL_LIBS})
+target_link_libraries(client_example PRIVATE Torch::Torch inference_proto
+                                             Threads::Threads)
+
+if(TARGET gRPC::grpc++_reflection)
+  target_link_libraries(client_example PRIVATE gRPC::grpc++_reflection)
+elseif(TARGET grpc++_reflection)
+  target_link_libraries(client_example PRIVATE grpc++_reflection)
+else()
+  message(
+    WARNING
+      "gRPC reflection library not found; client_example will be built without reflection."
+  )
+endif()

@@ -15,7 +15,6 @@
 #include "device_type.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
-#include "utils/logger.hpp"
 
 namespace starpu_server {
 // =============================================================================
