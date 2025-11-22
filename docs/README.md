@@ -2,8 +2,8 @@
 
 This directory collects the documentation needed to install, run, and tune the StarPU Inference Server.
 
-| [Installation](./installation.md) | [Quickstart](./quickstart.md) | [Server Configuration](./server_guide.md) | [Client Guide](./client_guide.md) | [Docker Guide](./docker_guide.md) |
-| --- | --- | --- | --- | --- |
+|[Installation](./installation.md)|[Quickstart](./quickstart.md)|[Server Configuration](./server_guide.md)|[Client Guide](./client_guide.md)|[Docker Guide](./docker_guide.md)|[Tracing](./tracing.md)|
+|---|---|---|---|---|---|
 
 ## Getting Started
 
