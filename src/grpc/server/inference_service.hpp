@@ -9,7 +9,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -145,6 +144,7 @@ class InferenceServiceImpl final
 
   void record_request_arrival(
       std::chrono::high_resolution_clock::time_point arrival_time);
+  void start_congestion_monitor();
 
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
@@ -154,11 +154,13 @@ class InferenceServiceImpl final
   std::string default_model_name_;
   double measured_throughput_ = 0.0;
   double congestion_threshold_ = 0.0;
+  double congestion_clear_threshold_ = 0.0;
   std::atomic<int> next_request_id_{0};
   std::mutex congestion_mutex_;
   std::deque<std::chrono::high_resolution_clock::time_point> recent_arrivals_;
-  std::optional<std::chrono::high_resolution_clock::time_point>
-      last_congestion_warning_;
+  bool congestion_active_ = false;
+  std::chrono::high_resolution_clock::time_point last_arrival_time_{};
+  std::jthread congestion_monitor_thread_;
 };
 
 class AsyncServerContext {

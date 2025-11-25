@@ -52,9 +52,10 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
 
 namespace {
 
-constexpr double kCongestionThresholdRatio = 0.95;
+constexpr double kCongestionEnterRatio = 0.95;
+constexpr double kCongestionClearRatio = 0.90;
 constexpr auto kArrivalWindow = std::chrono::seconds(1);
-constexpr auto kCongestionWarningCooldown = std::chrono::seconds(5);
+constexpr auto kCongestionMonitorPeriod = std::chrono::milliseconds(200);
 
 using TensorDataByte = std::byte;
 using TensorDataPtr = TensorDataByte*;
@@ -261,8 +262,10 @@ InferenceServiceImpl::InferenceServiceImpl(
       max_batch_size_(max_batch_size),
       default_model_name_(std::move(default_model_name)),
       measured_throughput_(measured_throughput),
-      congestion_threshold_(measured_throughput * kCongestionThresholdRatio)
+      congestion_threshold_(measured_throughput * kCongestionEnterRatio),
+      congestion_clear_threshold_(measured_throughput * kCongestionClearRatio)
 {
+  start_congestion_monitor();
 }
 
 InferenceServiceImpl::InferenceServiceImpl(
@@ -273,8 +276,10 @@ InferenceServiceImpl::InferenceServiceImpl(
       expected_input_types_(std::move(expected_input_types)),
       default_model_name_(std::move(default_model_name)),
       measured_throughput_(measured_throughput),
-      congestion_threshold_(measured_throughput * kCongestionThresholdRatio)
+      congestion_threshold_(measured_throughput * kCongestionEnterRatio),
+      congestion_clear_threshold_(measured_throughput * kCongestionClearRatio)
 {
+  start_congestion_monitor();
 }
 
 auto
@@ -403,6 +408,38 @@ InferenceServiceImpl::resolve_model_name(std::string model_name) const
 }
 
 void
+InferenceServiceImpl::start_congestion_monitor()
+{
+  if (measured_throughput_ <= 0.0) {
+    return;
+  }
+
+  congestion_monitor_thread_ =
+      std::jthread([this](const std::stop_token& stop_token) {
+        while (!stop_token.stop_requested()) {
+          {
+            const auto now = std::chrono::high_resolution_clock::now();
+            std::scoped_lock lock(congestion_mutex_);
+            const bool stale_window =
+                congestion_active_ &&
+                (last_arrival_time_ ==
+                     std::chrono::high_resolution_clock::time_point{} ||
+                 now - last_arrival_time_ > kArrivalWindow);
+            if (stale_window) {
+              congestion_active_ = false;
+              recent_arrivals_.clear();
+              log_warning(std::format(
+                  "[Congestion] GPUs congestion cleared: arrival rate {:.2f} "
+                  "req/s is below {:.2f} infer/s",
+                  0.0, congestion_clear_threshold_));
+            }
+          }
+          std::this_thread::sleep_for(kCongestionMonitorPeriod);
+        }
+      });
+}
+
+void
 InferenceServiceImpl::record_request_arrival(
     std::chrono::high_resolution_clock::time_point arrival_time)
 {
@@ -411,10 +448,20 @@ InferenceServiceImpl::record_request_arrival(
   }
 
   const std::scoped_lock lock(congestion_mutex_);
+  last_arrival_time_ = arrival_time;
   recent_arrivals_.push_back(arrival_time);
   const auto cutoff = arrival_time - kArrivalWindow;
   while (!recent_arrivals_.empty() && recent_arrivals_.front() < cutoff) {
     recent_arrivals_.pop_front();
+  }
+
+  if (congestion_active_ && recent_arrivals_.empty()) {
+    congestion_active_ = false;
+    log_warning(std::format(
+        "[Congestion] GPUs congestion cleared: arrival rate {:.2f} req/s "
+        "is below {:.2f} infer/s",
+        0.0, congestion_clear_threshold_));
+    return;
   }
 
   if (recent_arrivals_.empty()) {
@@ -433,20 +480,22 @@ InferenceServiceImpl::record_request_arrival(
   const double arrival_rate =
       static_cast<double>(recent_arrivals_.size()) / window_seconds;
 
-  if (arrival_rate < congestion_threshold_) {
+  if (!congestion_active_ && arrival_rate >= congestion_threshold_) {
+    congestion_active_ = true;
+    log_warning(std::format(
+        "[Congestion] GPUs congestion detected: arrival rate {:.2f} req/s "
+        "is near measured throughput {:.2f} infer/s",
+        arrival_rate, measured_throughput_));
     return;
   }
 
-  if (last_congestion_warning_.has_value() &&
-      arrival_time - *last_congestion_warning_ < kCongestionWarningCooldown) {
-    return;
+  if (congestion_active_ && arrival_rate < congestion_clear_threshold_) {
+    congestion_active_ = false;
+    log_warning(std::format(
+        "[Congestion] GPUs congestion cleared: arrival rate {:.2f} req/s "
+        "is below {:.2f} infer/s",
+        arrival_rate, congestion_clear_threshold_));
   }
-
-  last_congestion_warning_ = arrival_time;
-  log_warning(std::format(
-      "[Congestion] GPUs congestion detected: arrival rate {:.2f} req/s "
-      "is near measured throughput {:.2f} infer/s",
-      arrival_rate, measured_throughput_));
 }
 
 auto
