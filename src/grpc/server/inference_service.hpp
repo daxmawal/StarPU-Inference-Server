@@ -159,6 +159,7 @@ class InferenceServiceImpl final
   std::mutex congestion_mutex_;
   std::deque<std::chrono::high_resolution_clock::time_point> recent_arrivals_;
   bool congestion_active_ = false;
+  std::chrono::high_resolution_clock::time_point congestion_start_time_{};
   std::chrono::high_resolution_clock::time_point last_arrival_time_{};
   std::jthread congestion_monitor_thread_;
 };

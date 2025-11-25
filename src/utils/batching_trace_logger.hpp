@@ -172,6 +172,13 @@ class BatchingTraceLogger {
     double total_ms;
     bool is_warmup = false;
   };
+  struct CongestionSpanArgs {
+    std::chrono::high_resolution_clock::time_point start_time;
+    std::chrono::high_resolution_clock::time_point end_time;
+    double measured_throughput = 0.0;
+    double enter_threshold = 0.0;
+    double clear_threshold = 0.0;
+  };
 
   static auto instance() -> BatchingTraceLogger&;
   BatchingTraceLogger() = default;
@@ -200,6 +207,7 @@ class BatchingTraceLogger {
       bool is_warmup = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
   void log_batch_summary(const BatchSummaryLogArgs& args);
+  void log_congestion_span(const CongestionSpanArgs& args);
   [[nodiscard]] auto summary_file_path() const
       -> std::optional<std::filesystem::path>;
 

@@ -20,6 +20,7 @@ constexpr int kRequestEnqueuedTrackId = 1;
 constexpr int kBatchEnqueueTrackId = 2;
 constexpr int kBatchBuildTrackId = 3;
 constexpr int kBatchSubmittedTrackId = 4;
+constexpr int kCongestionTrackId = 5;
 constexpr int kWorkerThreadOffset = 10;
 constexpr int kWorkerLaneThreadStride = 1000;
 constexpr unsigned char kAsciiPrintableFloor = 0x20;
@@ -27,11 +28,13 @@ constexpr int kRequestEnqueuedSortIndex = -3;
 constexpr int kBatchEnqueueSortIndex = -2;
 constexpr int kBatchBuildSortIndex = -1;
 constexpr int kBatchSubmittedSortIndex = 0;
+constexpr int kCongestionSortIndex = -4;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
 constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
 constexpr std::string_view kBatchEnqueueTrackName = "batch";
 constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
 constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
+constexpr std::string_view kCongestionTrackName = "congestion";
 constexpr std::string_view kSummarySuffix = "_summary.csv";
 
 enum class FlowDirection : uint8_t {
@@ -895,6 +898,40 @@ BatchingTraceLogger::write_batch_build_span(
   }
   trace_writer_.ensure_thread_metadata(
       kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex);
+  trace_writer_.write_line(line.str());
+}
+
+void
+BatchingTraceLogger::log_congestion_span(const CongestionSpanArgs& args)
+{
+  if (!enabled()) {
+    return;
+  }
+
+  const auto start_ts = relative_timestamp_from_time_point(args.start_time);
+  const auto end_ts = relative_timestamp_from_time_point(args.end_time);
+  if (!start_ts || !end_ts || *end_ts <= *start_ts) {
+    return;
+  }
+
+  const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
+
+  std::ostringstream line;
+  line << R"({"name":"congestion","cat":"congestion","ph":"X","ts":)"
+       << *start_ts << ",\"dur\":" << duration << ",\"pid\":" << kTraceProcessId
+       << ",\"tid\":" << kCongestionTrackId << ",\"args\":{"
+       << "\"enter_threshold\":" << args.enter_threshold << ","
+       << "\"clear_threshold\":" << args.clear_threshold << ","
+       << "\"measured_throughput\":" << args.measured_throughput << ","
+       << "\"start_ts\":" << *start_ts << "," << "\"end_ts\":" << *end_ts
+       << "}}";
+
+  std::lock_guard lock(mutex_);
+  if (!trace_writer_.ready()) {
+    return;
+  }
+  trace_writer_.ensure_thread_metadata(
+      kCongestionTrackId, kCongestionTrackName, kCongestionSortIndex);
   trace_writer_.write_line(line.str());
 }
 

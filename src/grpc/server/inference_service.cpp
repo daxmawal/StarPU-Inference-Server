@@ -417,6 +417,9 @@ InferenceServiceImpl::start_congestion_monitor()
   congestion_monitor_thread_ =
       std::jthread([this](const std::stop_token& stop_token) {
         while (!stop_token.stop_requested()) {
+          std::chrono::high_resolution_clock::time_point start_time{};
+          std::chrono::high_resolution_clock::time_point end_time{};
+          bool cleared = false;
           {
             const auto now = std::chrono::high_resolution_clock::now();
             std::scoped_lock lock(congestion_mutex_);
@@ -427,12 +430,31 @@ InferenceServiceImpl::start_congestion_monitor()
                  now - last_arrival_time_ > kArrivalWindow);
             if (stale_window) {
               congestion_active_ = false;
+              start_time = congestion_start_time_;
+              end_time = now;
+              congestion_start_time_ =
+                  std::chrono::high_resolution_clock::time_point{};
               recent_arrivals_.clear();
               log_warning(std::format(
                   "[Congestion] GPUs congestion cleared: arrival rate {:.2f} "
                   "req/s is below {:.2f} infer/s",
                   0.0, congestion_clear_threshold_));
+              cleared = true;
             }
+          }
+          if (cleared) {
+            if (start_time ==
+                std::chrono::high_resolution_clock::time_point{}) {
+              start_time = end_time - kArrivalWindow;
+            }
+            BatchingTraceLogger::instance().log_congestion_span(
+                BatchingTraceLogger::CongestionSpanArgs{
+                    .start_time = start_time,
+                    .end_time = end_time,
+                    .measured_throughput = measured_throughput_,
+                    .enter_threshold = congestion_threshold_,
+                    .clear_threshold = congestion_clear_threshold_,
+                });
           }
           std::this_thread::sleep_for(kCongestionMonitorPeriod);
         }
@@ -447,41 +469,52 @@ InferenceServiceImpl::record_request_arrival(
     return;
   }
 
-  const std::scoped_lock lock(congestion_mutex_);
-  last_arrival_time_ = arrival_time;
-  recent_arrivals_.push_back(arrival_time);
-  const auto cutoff = arrival_time - kArrivalWindow;
-  while (!recent_arrivals_.empty() && recent_arrivals_.front() < cutoff) {
-    recent_arrivals_.pop_front();
+  bool entered = false;
+  bool cleared = false;
+  double arrival_rate = 0.0;
+  double enter_threshold = congestion_threshold_;
+  double clear_threshold = congestion_clear_threshold_;
+  std::chrono::high_resolution_clock::time_point start_time{};
+
+  {
+    const std::scoped_lock lock(congestion_mutex_);
+    last_arrival_time_ = arrival_time;
+    recent_arrivals_.push_back(arrival_time);
+    const auto cutoff = arrival_time - kArrivalWindow;
+    while (!recent_arrivals_.empty() && recent_arrivals_.front() < cutoff) {
+      recent_arrivals_.pop_front();
+    }
+
+    if (recent_arrivals_.empty()) {
+      return;
+    }
+
+    const double window_seconds = std::max(
+        std::chrono::duration<double>(kArrivalWindow).count(),
+        std::chrono::duration<double>(
+            recent_arrivals_.back() - recent_arrivals_.front())
+            .count());
+    if (window_seconds <= 0.0) {
+      return;
+    }
+
+    arrival_rate =
+        static_cast<double>(recent_arrivals_.size()) / window_seconds;
+
+    if (!congestion_active_ && arrival_rate >= congestion_threshold_) {
+      congestion_active_ = true;
+      congestion_start_time_ = arrival_time;
+      entered = true;
+    } else if (
+        congestion_active_ && arrival_rate < congestion_clear_threshold_) {
+      congestion_active_ = false;
+      start_time = congestion_start_time_;
+      congestion_start_time_ = std::chrono::high_resolution_clock::time_point{};
+      cleared = true;
+    }
   }
 
-  if (congestion_active_ && recent_arrivals_.empty()) {
-    congestion_active_ = false;
-    log_warning(std::format(
-        "[Congestion] GPUs congestion cleared: arrival rate {:.2f} req/s "
-        "is below {:.2f} infer/s",
-        0.0, congestion_clear_threshold_));
-    return;
-  }
-
-  if (recent_arrivals_.empty()) {
-    return;
-  }
-
-  const double window_seconds = std::max(
-      std::chrono::duration<double>(kArrivalWindow).count(),
-      std::chrono::duration<double>(
-          recent_arrivals_.back() - recent_arrivals_.front())
-          .count());
-  if (window_seconds <= 0.0) {
-    return;
-  }
-
-  const double arrival_rate =
-      static_cast<double>(recent_arrivals_.size()) / window_seconds;
-
-  if (!congestion_active_ && arrival_rate >= congestion_threshold_) {
-    congestion_active_ = true;
+  if (entered) {
     log_warning(std::format(
         "[Congestion] GPUs congestion detected: arrival rate {:.2f} req/s "
         "is near measured throughput {:.2f} infer/s",
@@ -489,12 +522,22 @@ InferenceServiceImpl::record_request_arrival(
     return;
   }
 
-  if (congestion_active_ && arrival_rate < congestion_clear_threshold_) {
-    congestion_active_ = false;
+  if (cleared) {
+    if (start_time == std::chrono::high_resolution_clock::time_point{}) {
+      start_time = arrival_time - kArrivalWindow;
+    }
     log_warning(std::format(
         "[Congestion] GPUs congestion cleared: arrival rate {:.2f} req/s "
         "is below {:.2f} infer/s",
-        arrival_rate, congestion_clear_threshold_));
+        arrival_rate, clear_threshold));
+    BatchingTraceLogger::instance().log_congestion_span(
+        BatchingTraceLogger::CongestionSpanArgs{
+            .start_time = start_time,
+            .end_time = arrival_time,
+            .measured_throughput = measured_throughput_,
+            .enter_threshold = enter_threshold,
+            .clear_threshold = clear_threshold,
+        });
   }
 }
 
