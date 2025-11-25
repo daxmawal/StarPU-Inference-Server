@@ -214,7 +214,6 @@ run_startup_throughput_probe(
   const int max_batch_size = std::max(1, opts.batching.max_batch_size);
   const int worker_count = std::max(1, static_cast<int>(cuda_workers.size()));
   constexpr double kMinTargetSeconds = 10.0;
-  constexpr double kMaxTargetSeconds = 20.0;
   constexpr double kTargetSeconds = 15.0;
   constexpr int kCalibrationMultiplier = 10;
   constexpr int kFallbackBatchesPerWorker = 150;
@@ -410,8 +409,6 @@ run_startup_throughput_probe(
     const double estimated_duration = expected_requests / estimated_throughput;
     if (estimated_duration < kMinTargetSeconds) {
       expected_requests = estimated_throughput * kMinTargetSeconds;
-    } else if (estimated_duration > kMaxTargetSeconds) {
-      expected_requests = estimated_throughput * kMaxTargetSeconds;
     }
   }
 
@@ -423,9 +420,9 @@ run_startup_throughput_probe(
   starpu_server::log_info(
       opts.verbosity,
       std::format(
-          "[Throughput] Targeting {:.1f}s–{:.1f}s runtime "
+          "[Throughput] Targeting ≥{:.1f}s runtime "
           "(estimate {:.1f}s @ {:.2f} infer/s) with {} synthetic request(s).",
-          kMinTargetSeconds, kMaxTargetSeconds,
+          kMinTargetSeconds,
           synthetic_requests / std::max(estimated_throughput, 1e-6),
           estimated_throughput, synthetic_requests));
 
