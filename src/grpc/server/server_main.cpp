@@ -207,6 +207,7 @@ run_startup_throughput_probe(
     std::atomic<int> completed_jobs{0};
     std::condition_variable all_done_cv;
     std::mutex all_done_mutex;
+    std::atomic<bool> stop_progress{false};
 
     starpu_server::StarPUTaskRunnerConfig config{};
     config.queue = &queue;
@@ -260,6 +261,30 @@ run_startup_throughput_probe(
       queue.shutdown();
     });
 
+    std::jthread progress_thread([&]() {
+      constexpr int bar_width = 20;
+      int last_step = -1;
+      while (!stop_progress.load(std::memory_order_relaxed)) {
+        const int done = completed_jobs.load(std::memory_order_relaxed);
+        const int pct = std::clamp(done * 100 / kSyntheticRequests, 0, 100);
+        const int step = pct / 5;  // update every 5%
+        if (step != last_step) {
+          last_step = step;
+          const int filled = std::clamp(pct * bar_width / 100, 0, bar_width);
+          std::string bar(bar_width, ' ');
+          std::fill_n(bar.begin(), filled, '#');
+          starpu_server::log_info(
+              opts.verbosity, std::format(
+                                  "[Throughput] Progress [{}] {:3d}% ({}/{})",
+                                  bar, pct, done, kSyntheticRequests));
+        }
+        if (pct >= 100) {
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      }
+    });
+
     const auto deadline = std::chrono::steady_clock::now() + 60s;
     bool completed = false;
     {
@@ -271,6 +296,10 @@ run_startup_throughput_probe(
     }
 
     queue.shutdown();
+    stop_progress.store(true, std::memory_order_relaxed);
+    if (progress_thread.joinable()) {
+      progress_thread.join();
+    }
     if (client_thread.joinable()) {
       client_thread.join();
     }
