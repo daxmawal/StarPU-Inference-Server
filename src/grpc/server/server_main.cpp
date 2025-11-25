@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -217,6 +218,7 @@ run_startup_throughput_probe(
   constexpr double kTargetSeconds = 15.0;
   constexpr int kCalibrationMultiplier = 10;
   constexpr int kFallbackBatchesPerWorker = 150;
+  constexpr std::string_view kThroughputSuffix = "_configuration.txt";
 
   struct ProbeOutcome {
     std::optional<starpu_server::perf_observer::Snapshot> snapshot;
@@ -426,7 +428,43 @@ run_startup_throughput_probe(
           synthetic_requests / std::max(estimated_throughput, 1e-6),
           estimated_throughput, synthetic_requests));
 
-  run_probe_once(synthetic_requests, true);
+  const auto final_outcome = run_probe_once(synthetic_requests, true);
+
+  try {
+    const auto config_suffix = [&]() -> std::string {
+      if (opts.config_path.empty()) {
+        return "unnamed";
+      }
+      const auto path = std::filesystem::path(opts.config_path);
+      auto stem = path.stem().string();
+      if (stem.empty()) {
+        stem = "unnamed";
+      }
+      return stem;
+    }();
+
+    const auto filename =
+        std::filesystem::path(config_suffix + std::string(kThroughputSuffix));
+    if (final_outcome.snapshot) {
+      std::ofstream out(filename, std::ios::trunc);
+      if (out) {
+        out << std::format("{:.6f}\n", final_outcome.snapshot->throughput);
+        starpu_server::log_info(
+            opts.verbosity,
+            std::format(
+                "[Throughput] Wrote measured throughput {:.2f} infer/s to {}",
+                final_outcome.snapshot->throughput, filename.string()));
+      } else {
+        starpu_server::log_warning(std::format(
+            "[Throughput] Unable to write throughput file {}",
+            filename.string()));
+      }
+    }
+  }
+  catch (const std::exception& e) {
+    starpu_server::log_warning(std::format(
+        "[Throughput] Failed to persist throughput measurement: {}", e.what()));
+  }
 }
 }  // namespace
 
