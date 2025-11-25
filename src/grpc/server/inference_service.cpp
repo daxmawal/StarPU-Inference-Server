@@ -52,6 +52,10 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
 
 namespace {
 
+constexpr double kCongestionThresholdRatio = 0.95;
+constexpr auto kArrivalWindow = std::chrono::seconds(1);
+constexpr auto kCongestionWarningCooldown = std::chrono::seconds(5);
+
 using TensorDataByte = std::byte;
 using TensorDataPtr = TensorDataByte*;
 
@@ -250,22 +254,26 @@ InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
     std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-    std::string default_model_name)
+    std::string default_model_name, double measured_throughput)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types)),
       expected_input_dims_(std::move(expected_input_dims)),
       max_batch_size_(max_batch_size),
-      default_model_name_(std::move(default_model_name))
+      default_model_name_(std::move(default_model_name)),
+      measured_throughput_(measured_throughput),
+      congestion_threshold_(measured_throughput * kCongestionThresholdRatio)
 {
 }
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
-    std::string default_model_name)
+    std::string default_model_name, double measured_throughput)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types)),
-      default_model_name_(std::move(default_model_name))
+      default_model_name_(std::move(default_model_name)),
+      measured_throughput_(measured_throughput),
+      congestion_threshold_(measured_throughput * kCongestionThresholdRatio)
 {
 }
 
@@ -392,6 +400,53 @@ InferenceServiceImpl::resolve_model_name(std::string model_name) const
         model_name, default_model_name_));
   }
   return default_model_name_;
+}
+
+void
+InferenceServiceImpl::record_request_arrival(
+    std::chrono::high_resolution_clock::time_point arrival_time)
+{
+  if (measured_throughput_ <= 0.0) {
+    return;
+  }
+
+  const std::scoped_lock lock(congestion_mutex_);
+  recent_arrivals_.push_back(arrival_time);
+  const auto cutoff = arrival_time - kArrivalWindow;
+  while (!recent_arrivals_.empty() && recent_arrivals_.front() < cutoff) {
+    recent_arrivals_.pop_front();
+  }
+
+  if (recent_arrivals_.empty()) {
+    return;
+  }
+
+  const double window_seconds = std::max(
+      std::chrono::duration<double>(kArrivalWindow).count(),
+      std::chrono::duration<double>(
+          recent_arrivals_.back() - recent_arrivals_.front())
+          .count());
+  if (window_seconds <= 0.0) {
+    return;
+  }
+
+  const double arrival_rate =
+      static_cast<double>(recent_arrivals_.size()) / window_seconds;
+
+  if (arrival_rate < congestion_threshold_) {
+    return;
+  }
+
+  if (last_congestion_warning_.has_value() &&
+      arrival_time - *last_congestion_warning_ < kCongestionWarningCooldown) {
+    return;
+  }
+
+  last_congestion_warning_ = arrival_time;
+  log_warning(std::format(
+      "[Congestion] GPUs congestion detected: arrival rate {:.2f} req/s "
+      "is near measured throughput {:.2f} infer/s",
+      arrival_rate, measured_throughput_));
 }
 
 auto
@@ -604,6 +659,7 @@ InferenceServiceImpl::HandleModelInferAsync(
   }
 
   auto recv_tp = std::chrono::high_resolution_clock::now();
+  record_request_arrival(recv_tp);
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         recv_tp.time_since_epoch())
                         .count();
@@ -955,7 +1011,7 @@ RunGrpcServer(
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size, options.default_model_name);
+      max_batch_size, options.default_model_name, options.measured_throughput);
 
   inference::GRPCInferenceService::AsyncService async_service;
   AsyncServerContext async_context(async_service, service);
@@ -996,7 +1052,7 @@ RunGrpcServer(
       &queue, &reference_outputs,
       std::vector<at::ScalarType>(
           expected_input_types.begin(), expected_input_types.end()),
-      options.default_model_name);
+      options.default_model_name, options.measured_throughput);
 
   inference::GRPCInferenceService::AsyncService async_service;
   AsyncServerContext async_context(async_service, service);

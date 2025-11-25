@@ -180,27 +180,29 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
   }
 }
 
-void
+auto
 run_startup_throughput_probe(
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu, torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<torch::Tensor>& reference_outputs)
+    const std::vector<torch::Tensor>& reference_outputs) -> double
 {
   using namespace std::chrono_literals;
+
+  double measured_throughput = 0.0;
 
   if (!opts.devices.use_cuda) {
     starpu_server::log_info(
         opts.verbosity,
         "[Throughput] Startup throughput probe skipped: CUDA is disabled.");
-    return;
+    return measured_throughput;
   }
 
   if (models_gpu.empty()) {
     starpu_server::log_warning(
         "[Throughput] Startup throughput probe skipped: no CUDA model "
         "replicas available.");
-    return;
+    return measured_throughput;
   }
 
   const auto cuda_workers =
@@ -209,7 +211,7 @@ run_startup_throughput_probe(
     starpu_server::log_warning(
         "[Throughput] Startup throughput probe skipped: no CUDA workers "
         "detected.");
-    return;
+    return measured_throughput;
   }
 
   const int max_batch_size = std::max(1, opts.batching.max_batch_size);
@@ -251,7 +253,7 @@ run_startup_throughput_probe(
                 "[Throughput] Cached throughput {:.2f} infer/s from '{}' "
                 "found, skipping startup probe.",
                 cached_throughput, throughput_file.string()));
-        return;
+        return cached_throughput;
       }
       starpu_server::log_warning(
           "[Throughput] Cached throughput file found but unreadable or empty; "
@@ -467,7 +469,7 @@ run_startup_throughput_probe(
           synthetic_requests / std::max(estimated_throughput, 1e-6),
           estimated_throughput, synthetic_requests));
 
-  double measured_throughput = cached_throughput;
+  measured_throughput = cached_throughput;
   const auto final_outcome = measured_throughput > 0.0
                                  ? ProbeOutcome{std::nullopt, 0, true}
                                  : run_probe_once(synthetic_requests, true);
@@ -476,7 +478,7 @@ run_startup_throughput_probe(
     starpu_server::log_warning(
         "[Throughput] Probe did not produce a throughput snapshot; nothing to "
         "write.");
-    return;
+    return measured_throughput;
   }
 
   if (final_outcome.snapshot) {
@@ -502,6 +504,8 @@ run_startup_throughput_probe(
     starpu_server::log_warning(std::format(
         "[Throughput] Failed to persist throughput measurement: {}", e.what()));
   }
+
+  return measured_throughput;
 }
 }  // namespace
 
@@ -592,7 +596,7 @@ launch_threads(
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu, torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    std::vector<torch::Tensor>& reference_outputs)
+    std::vector<torch::Tensor>& reference_outputs, double measured_throughput)
 {
   static starpu_server::InferenceQueue queue;
   auto& server_ctx = server_context();
@@ -646,7 +650,7 @@ launch_threads(
     }
     const auto server_options = starpu_server::GrpcServerOptions{
         opts.server_address, opts.batching.max_message_bytes, opts.verbosity,
-        std::move(default_model_name)};
+        std::move(default_model_name), measured_throughput};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
         opts.batching.max_batch_size, server_options, server_ctx.server);
@@ -775,9 +779,11 @@ main(int argc, char* argv[]) -> int
     log_worker_inventory(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);
-    run_startup_throughput_probe(
+    const double measured_throughput = run_startup_throughput_probe(
         opts, starpu, model_cpu, models_gpu, reference_outputs);
-    launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
+    launch_threads(
+        opts, starpu, model_cpu, models_gpu, reference_outputs,
+        measured_throughput);
     auto& tracer = starpu_server::BatchingTraceLogger::instance();
     tracer.configure(false, "");
     run_trace_plots_if_enabled(opts);
