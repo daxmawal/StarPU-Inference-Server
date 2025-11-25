@@ -461,6 +461,9 @@ InferenceTask::create_task(
   task->cl_arg = ctx->inference_params.get();
   task->priority =
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());
+  if (job_ && job_->is_gpu_only()) {
+    task->where = STARPU_CUDA;
+  }
 
   if (ctx != nullptr && ctx->dependencies == nullptr) {
     ctx->dependencies = dependencies;

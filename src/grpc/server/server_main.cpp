@@ -188,7 +188,26 @@ run_startup_throughput_probe(
   using namespace std::chrono_literals;
   constexpr int kSyntheticRequests = 10000;
 
-  if (!opts.devices.use_cpu && !opts.devices.use_cuda) {
+  if (!opts.devices.use_cuda) {
+    starpu_server::log_info(
+        opts.verbosity,
+        "[Throughput] Startup throughput probe skipped: CUDA is disabled.");
+    return;
+  }
+
+  if (models_gpu.empty()) {
+    starpu_server::log_warning(
+        "[Throughput] Startup throughput probe skipped: no CUDA model "
+        "replicas available.");
+    return;
+  }
+
+  const auto cuda_workers =
+      starpu_server::StarPUSetup::get_worker_ids_by_type(STARPU_CUDA_WORKER);
+  if (cuda_workers.empty()) {
+    starpu_server::log_warning(
+        "[Throughput] Startup throughput probe skipped: no CUDA workers "
+        "detected.");
     return;
   }
 
@@ -245,6 +264,7 @@ run_startup_throughput_probe(
             starpu_server::client_utils::pick_random_input(pregen_inputs, rng);
         auto job = starpu_server::client_utils::create_job(
             inputs, reference_outputs, request_id, {}, {}, default_model_name);
+        job->set_gpu_only(true);
 
         const auto enqueued_now = std::chrono::high_resolution_clock::now();
         job->timing_info().enqueued_time = enqueued_now;
