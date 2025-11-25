@@ -192,6 +192,8 @@ class BatchingTraceLogger {
   void configure_from_runtime(const RuntimeConfig& cfg);
 
   [[nodiscard]] auto enabled() const -> bool;
+  void set_probe_prefix_enabled(bool enabled);
+  [[nodiscard]] auto probe_prefix_enabled() const -> bool;
 
   void log_request_enqueued(
       int request_id, std::string_view model_name, bool is_warmup = false,
@@ -241,9 +243,11 @@ class BatchingTraceLogger {
   [[nodiscard]] static auto now_us() -> int64_t;
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
+  [[nodiscard]] auto make_trace_prefix(bool is_warmup) const -> std::string;
 
   mutable std::mutex mutex_;
   std::atomic<bool> enabled_{false};
+  std::atomic<bool> probe_prefix_enabled_{false};
   std::string file_path_;
   int64_t trace_start_us_{0};
   bool trace_start_initialized_{false};

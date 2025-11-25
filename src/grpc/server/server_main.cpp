@@ -266,6 +266,22 @@ run_startup_throughput_probe(
     int completed_jobs = 0;
     bool completed_all = false;
   };
+  class ProbeTracePrefixGuard {
+   public:
+    explicit ProbeTracePrefixGuard(starpu_server::BatchingTraceLogger& tracer)
+        : tracer_(tracer), previous_(tracer.probe_prefix_enabled())
+    {
+      tracer_.set_probe_prefix_enabled(true);
+    }
+    ProbeTracePrefixGuard(const ProbeTracePrefixGuard&) = delete;
+    auto operator=(const ProbeTracePrefixGuard&) -> ProbeTracePrefixGuard& =
+                                                        delete;
+    ~ProbeTracePrefixGuard() { tracer_.set_probe_prefix_enabled(previous_); }
+
+   private:
+    starpu_server::BatchingTraceLogger& tracer_;
+    bool previous_;
+  };
 
   auto run_probe_once = [&](int request_count,
                             bool show_progress) -> ProbeOutcome {
@@ -429,6 +445,9 @@ run_startup_throughput_probe(
     starpu_server::perf_observer::reset();
     return outcome;
   };
+
+  ProbeTracePrefixGuard probe_prefix_guard(
+      starpu_server::BatchingTraceLogger::instance());
 
   const int calibration_requests =
       std::max(1, worker_count * max_batch_size * kCalibrationMultiplier);

@@ -36,6 +36,8 @@ constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
 constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
 constexpr std::string_view kCongestionTrackName = "congestion";
 constexpr std::string_view kSummarySuffix = "_summary.csv";
+constexpr std::string_view kWarmupPrefix = "warming_";
+constexpr std::string_view kProbePrefix = "prob_";
 
 enum class FlowDirection : uint8_t {
   None,
@@ -454,6 +456,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
   std::lock_guard lock(mutex_);
 
   enabled_.store(false, std::memory_order_release);
+  probe_prefix_enabled_.store(false, std::memory_order_release);
   close_stream_locked();
   file_path_.clear();
 
@@ -504,6 +507,31 @@ auto
 BatchingTraceLogger::enabled() const -> bool
 {
   return enabled_.load(std::memory_order_acquire);
+}
+
+void
+BatchingTraceLogger::set_probe_prefix_enabled(bool enabled)
+{
+  probe_prefix_enabled_.store(enabled, std::memory_order_release);
+}
+
+auto
+BatchingTraceLogger::probe_prefix_enabled() const -> bool
+{
+  return probe_prefix_enabled_.load(std::memory_order_acquire);
+}
+
+auto
+BatchingTraceLogger::make_trace_prefix(bool is_warmup) const -> std::string
+{
+  std::string prefix;
+  if (probe_prefix_enabled_.load(std::memory_order_relaxed)) {
+    prefix.append(kProbePrefix);
+  }
+  if (is_warmup) {
+    prefix.append(kWarmupPrefix);
+  }
+  return prefix;
 }
 
 void
@@ -660,12 +688,12 @@ BatchingTraceLogger::write_record(
     }
   }
 
-  const char* warmup_prefix = is_warmup ? "warming_" : "";
+  const auto prefix = make_trace_prefix(is_warmup);
 
   const bool is_batch_span = event == BatchingTraceEvent::BatchSubmitted;
 
   std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix << event_to_string(event)
+  line << R"({"name":")" << prefix << event_to_string(event)
        << R"(","cat":"batching","ph":")" << (is_batch_span ? 'X' : 'i')
        << R"(","ts":)" << timestamp_us;
   if (is_batch_span) {
@@ -687,11 +715,11 @@ BatchingTraceLogger::write_record(
   };
   const auto append_numeric = [&](std::string_view key, auto value) {
     append_delimiter();
-    line << "\"" << warmup_prefix << key << "\":" << value;
+    line << "\"" << prefix << key << "\":" << value;
   };
   const auto append_string = [&](std::string_view key, std::string_view value) {
     append_delimiter();
-    line << "\"" << warmup_prefix << key << "\":\"" << value << "\"";
+    line << "\"" << prefix << key << "\":\"" << value << "\"";
   };
 
   switch (event) {
@@ -708,7 +736,7 @@ BatchingTraceLogger::write_record(
 
   if (!request_ids.empty()) {
     append_delimiter();
-    line << "\"" << warmup_prefix << "request_ids\":[";
+    line << "\"" << prefix << "request_ids\":[";
     for (size_t idx = 0; idx < request_ids.size(); ++idx) {
       if (idx > 0) {
         line << ',';
@@ -770,7 +798,7 @@ BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
   const auto escaped_model = detail::escape_json_string(args.model_name);
   const auto worker_type_str = device_type_to_string(args.worker_type);
   const int64_t end_ts = args.start_ts + duration_us;
-  const char* warmup_prefix = args.is_warmup ? "warming_" : "";
+  const auto prefix = make_trace_prefix(args.is_warmup);
 
   std::lock_guard lock(mutex_);
   if (!trace_writer_.ready()) {
@@ -784,20 +812,19 @@ BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
       args.worker_id, lane_assignment, worker_type_str, args.device_id);
 
   std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix << escaped_model
+  line << R"({"name":")" << prefix << escaped_model
        << R"(","cat":"batching","ph":"X","ts":)" << args.start_ts
        << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << lane_assignment.thread_id;
   append_flow_annotation(
       line, FlowDirection::Target, args.batch_id, args.is_warmup);
-  line << ",\"args\":{" << "\"" << warmup_prefix
-       << "batch_id\":" << args.batch_id << ",\"" << warmup_prefix
-       << "batch_size\":" << args.batch_size << ",\"" << warmup_prefix
-       << "model_name\":\"" << escaped_model << "\"" << ",\"" << warmup_prefix
-       << "worker_id\":" << args.worker_id << ",\"" << warmup_prefix
-       << "worker_type\":\"" << worker_type_str << "\"" << ",\""
-       << warmup_prefix << "start_ts\":" << args.start_ts << ",\""
-       << warmup_prefix << "end_ts\":" << end_ts << "}}";
+  line << ",\"args\":{" << "\"" << prefix << "batch_id\":" << args.batch_id
+       << ",\"" << prefix << "batch_size\":" << args.batch_size << ",\""
+       << prefix << "model_name\":\"" << escaped_model << "\"" << ",\""
+       << prefix << "worker_id\":" << args.worker_id << ",\"" << prefix
+       << "worker_type\":\"" << worker_type_str << "\"" << ",\"" << prefix
+       << "start_ts\":" << args.start_ts << ",\"" << prefix
+       << "end_ts\":" << end_ts << "}}";
 
   trace_writer_.ensure_thread_metadata(
       lane_assignment.thread_id, worker_label, lane_assignment.sort_index);
@@ -824,18 +851,18 @@ BatchingTraceLogger::write_batch_enqueue_span(
   }
 
   const auto escaped_model = detail::escape_json_string(model_name);
-  const char* warmup_prefix = is_warmup ? "warming_" : "";
+  const auto prefix = make_trace_prefix(is_warmup);
 
   std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix
+  line << R"({"name":")" << prefix
        << R"(batch","cat":"batching","ph":"X","ts":)" << timing.start_ts
        << ",\"dur\":" << adjusted_duration << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << kBatchEnqueueTrackId;
-  line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
-       << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
-       << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
+  line << ",\"args\":{" << "\"" << prefix << "batch_id\":" << batch_id << ",\""
+       << prefix << "batch_size\":" << batch_size << ",\"" << prefix
+       << "model_name\":\"" << escaped_model << "\"";
   if (!request_ids.empty()) {
-    line << ",\"" << warmup_prefix << "request_ids\":[";
+    line << ",\"" << prefix << "request_ids\":[";
     for (size_t idx = 0; idx < request_ids.size(); ++idx) {
       if (idx > 0) {
         line << ',';
@@ -844,9 +871,8 @@ BatchingTraceLogger::write_batch_enqueue_span(
     }
     line << "]";
   }
-  line << ",\"" << warmup_prefix << "start_ts\":" << timing.start_ts << ",\""
-       << warmup_prefix << "end_ts\":" << (timing.start_ts + timing.duration_us)
-       << "}}";
+  line << ",\"" << prefix << "start_ts\":" << timing.start_ts << ",\"" << prefix
+       << "end_ts\":" << (timing.start_ts + timing.duration_us) << "}}";
 
   std::lock_guard lock(mutex_);
   if (!trace_writer_.ready()) {
@@ -867,19 +893,19 @@ BatchingTraceLogger::write_batch_build_span(
   }
 
   const auto escaped_model = detail::escape_json_string(model_name);
-  const char* warmup_prefix = is_warmup ? "warming_" : "";
+  const auto prefix = make_trace_prefix(is_warmup);
 
   std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix
+  line << R"({"name":")" << prefix
        << R"(batch_build","cat":"batching","ph":"X","ts":)" << timing.start_ts
        << ",\"dur\":" << timing.duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << kBatchBuildTrackId;
   append_flow_annotation(line, FlowDirection::Source, batch_id, is_warmup);
-  line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
-       << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
-       << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
+  line << ",\"args\":{" << "\"" << prefix << "batch_id\":" << batch_id << ",\""
+       << prefix << "batch_size\":" << batch_size << ",\"" << prefix
+       << "model_name\":\"" << escaped_model << "\"";
   if (!request_ids.empty()) {
-    line << ",\"" << warmup_prefix << "request_ids\":[";
+    line << ",\"" << prefix << "request_ids\":[";
     for (size_t idx = 0; idx < request_ids.size(); ++idx) {
       if (idx > 0) {
         line << ',';
@@ -888,9 +914,8 @@ BatchingTraceLogger::write_batch_build_span(
     }
     line << "]";
   }
-  line << ",\"" << warmup_prefix << "start_ts\":" << timing.start_ts << ",\""
-       << warmup_prefix << "end_ts\":" << (timing.start_ts + timing.duration_us)
-       << "}}";
+  line << ",\"" << prefix << "start_ts\":" << timing.start_ts << ",\"" << prefix
+       << "end_ts\":" << (timing.start_ts + timing.duration_us) << "}}";
 
   std::lock_guard lock(mutex_);
   if (!trace_writer_.ready()) {
