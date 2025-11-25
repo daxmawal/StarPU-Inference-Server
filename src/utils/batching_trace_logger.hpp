@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iosfwd>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -20,6 +21,11 @@ namespace starpu_server {
 struct RuntimeConfig;
 
 enum class BatchingTraceEvent : uint8_t { RequestQueued, BatchSubmitted };
+enum class ProbeTraceMode : uint8_t {
+  None = 0,
+  Calibration,
+  DurationCalibrated
+};
 
 namespace detail {
 
@@ -192,8 +198,10 @@ class BatchingTraceLogger {
   void configure_from_runtime(const RuntimeConfig& cfg);
 
   [[nodiscard]] auto enabled() const -> bool;
-  void set_probe_prefix_enabled(bool enabled);
-  [[nodiscard]] auto probe_prefix_enabled() const -> bool;
+  void set_probe_mode(ProbeTraceMode mode);
+  [[nodiscard]] auto probe_mode() const -> ProbeTraceMode;
+  [[nodiscard]] auto probe_summary_file_path() const
+      -> std::optional<std::filesystem::path>;
 
   void log_request_enqueued(
       int request_id, std::string_view model_name, bool is_warmup = false,
@@ -228,8 +236,10 @@ class BatchingTraceLogger {
       std::string_view model_name, int batch_id, std::size_t batch_size,
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
-  auto configure_summary_writer(const std::filesystem::path& trace_path)
-      -> bool;
+  void write_summary_line_locked(
+      const BatchSummaryLogArgs& args, std::ostream& stream);
+  auto configure_summary_writer(
+      const std::filesystem::path& trace_path, bool is_probe) -> bool;
   void close_summary_writer();
   [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
       -> std::string_view;
@@ -247,7 +257,7 @@ class BatchingTraceLogger {
 
   mutable std::mutex mutex_;
   std::atomic<bool> enabled_{false};
-  std::atomic<bool> probe_prefix_enabled_{false};
+  std::atomic<ProbeTraceMode> probe_mode_{ProbeTraceMode::None};
   std::string file_path_;
   int64_t trace_start_us_{0};
   bool trace_start_initialized_{false};
@@ -257,6 +267,8 @@ class BatchingTraceLogger {
   detail::WorkerLaneManager worker_lane_manager_;
   std::ofstream summary_stream_;
   std::filesystem::path summary_file_path_;
+  std::ofstream probe_summary_stream_;
+  std::filesystem::path probe_summary_file_path_;
 };
 
 }  // namespace starpu_server

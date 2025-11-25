@@ -37,7 +37,9 @@ constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
 constexpr std::string_view kCongestionTrackName = "congestion";
 constexpr std::string_view kSummarySuffix = "_summary.csv";
 constexpr std::string_view kWarmupPrefix = "warming_";
-constexpr std::string_view kProbePrefix = "prob_";
+constexpr std::string_view kProbeCalibrationPrefix = "prob_cal_";
+constexpr std::string_view kProbeDurationPrefix = "prob_dur_";
+constexpr std::string_view kProbeSummarySuffix = "_probe_summary.csv";
 
 enum class FlowDirection : uint8_t {
   None,
@@ -56,6 +58,19 @@ summary_path_from_trace(const std::filesystem::path& trace_path)
     stem = "batching_trace";
   }
   summary_path.replace_filename(stem + std::string{kSummarySuffix});
+  return summary_path;
+}
+
+auto
+probe_summary_path_from_trace(const std::filesystem::path& trace_path)
+    -> std::filesystem::path
+{
+  auto summary_path = trace_path;
+  auto stem = summary_path.stem().string();
+  if (stem.empty()) {
+    stem = "batching_trace";
+  }
+  summary_path.replace_filename(stem + std::string{kProbeSummarySuffix});
   return summary_path;
 }
 
@@ -456,7 +471,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
   std::lock_guard lock(mutex_);
 
   enabled_.store(false, std::memory_order_release);
-  probe_prefix_enabled_.store(false, std::memory_order_release);
+  probe_mode_.store(ProbeTraceMode::None, std::memory_order_release);
   close_stream_locked();
   file_path_.clear();
 
@@ -488,7 +503,8 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
     file_path_.clear();
     return;
   }
-  configure_summary_writer(path);
+  configure_summary_writer(path, /*is_probe=*/false);
+  configure_summary_writer(path, /*is_probe=*/true);
 
   trace_start_us_ = now_us();
   trace_start_initialized_ = true;
@@ -510,23 +526,43 @@ BatchingTraceLogger::enabled() const -> bool
 }
 
 void
-BatchingTraceLogger::set_probe_prefix_enabled(bool enabled)
+BatchingTraceLogger::set_probe_mode(ProbeTraceMode mode)
 {
-  probe_prefix_enabled_.store(enabled, std::memory_order_release);
+  probe_mode_.store(mode, std::memory_order_release);
 }
 
 auto
-BatchingTraceLogger::probe_prefix_enabled() const -> bool
+BatchingTraceLogger::probe_mode() const -> ProbeTraceMode
 {
-  return probe_prefix_enabled_.load(std::memory_order_acquire);
+  return probe_mode_.load(std::memory_order_acquire);
+}
+
+auto
+BatchingTraceLogger::probe_summary_file_path() const
+    -> std::optional<std::filesystem::path>
+{
+  std::lock_guard lock(mutex_);
+  if (probe_summary_file_path_.empty()) {
+    return std::nullopt;
+  }
+  return probe_summary_file_path_;
 }
 
 auto
 BatchingTraceLogger::make_trace_prefix(bool is_warmup) const -> std::string
 {
   std::string prefix;
-  if (probe_prefix_enabled_.load(std::memory_order_relaxed)) {
-    prefix.append(kProbePrefix);
+  const auto mode = probe_mode_.load(std::memory_order_relaxed);
+  switch (mode) {
+    case ProbeTraceMode::Calibration:
+      prefix.append(kProbeCalibrationPrefix);
+      break;
+    case ProbeTraceMode::DurationCalibrated:
+      prefix.append(kProbeDurationPrefix);
+      break;
+    case ProbeTraceMode::None:
+    default:
+      break;
   }
   if (is_warmup) {
     prefix.append(kWarmupPrefix);
@@ -967,10 +1003,21 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
     return;
   }
   std::lock_guard lock(mutex_);
-  if (!summary_stream_.is_open()) {
+  const auto mode = probe_mode_.load(std::memory_order_relaxed);
+  std::ofstream* stream = nullptr;
+  switch (mode) {
+    case ProbeTraceMode::None:
+      stream = &summary_stream_;
+      break;
+    case ProbeTraceMode::Calibration:
+    case ProbeTraceMode::DurationCalibrated:
+      stream = &probe_summary_stream_;
+      break;
+  }
+  if (stream == nullptr || !stream->is_open()) {
     return;
   }
-  write_summary_line_locked(args);
+  write_summary_line_locked(args, *stream);
 }
 
 auto
@@ -993,6 +1040,8 @@ BatchingTraceLogger::close_stream_locked()
   trace_start_initialized_ = false;
   worker_lane_manager_.reset();
   request_timeline_.reset();
+  // Reset probe mode so subsequent runs don't inherit prior state.
+  probe_mode_.store(ProbeTraceMode::None, std::memory_order_release);
 }
 
 auto
@@ -1034,46 +1083,65 @@ BatchingTraceLogger::relative_timestamp_from_time_point(
 void
 BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
 {
+  write_summary_line_locked(args, summary_stream_);
+}
+
+void
+BatchingTraceLogger::write_summary_line_locked(
+    const BatchSummaryLogArgs& args, std::ostream& stream)
+{
   const auto request_ids_string = format_request_ids(args.request_ids);
   const auto request_arrivals_string =
       format_request_arrivals(args.request_arrival_us);
   const auto escaped_model = escape_csv_field(args.model_name);
   const auto escaped_requests = escape_csv_field(request_ids_string);
   const auto escaped_arrivals = escape_csv_field(request_arrivals_string);
-  summary_stream_ << args.batch_id << ",\"" << escaped_model << "\","
-                  << args.worker_id << ",\""
-                  << device_type_to_string(args.worker_type) << "\","
-                  << args.device_id << ',' << args.batch_size << ",\""
-                  << escaped_requests << "\",\"" << escaped_arrivals << "\","
-                  << std::format("{:.3f}", args.queue_ms) << ','
-                  << std::format("{:.3f}", args.batch_ms) << ','
-                  << std::format("{:.3f}", args.submit_ms) << ','
-                  << std::format("{:.3f}", args.scheduling_ms) << ','
-                  << std::format("{:.3f}", args.codelet_ms) << ','
-                  << std::format("{:.3f}", args.inference_ms) << ','
-                  << std::format("{:.3f}", args.callback_ms) << ','
-                  << std::format("{:.3f}", args.total_ms) << ','
-                  << (args.is_warmup ? "true" : "false") << '\n';
+  stream << args.batch_id << ",\"" << escaped_model << "\"," << args.worker_id
+         << ",\"" << device_type_to_string(args.worker_type) << "\","
+         << args.device_id << ',' << args.batch_size << ",\""
+         << escaped_requests << "\",\"" << escaped_arrivals << "\","
+         << std::format("{:.3f}", args.queue_ms) << ','
+         << std::format("{:.3f}", args.batch_ms) << ','
+         << std::format("{:.3f}", args.submit_ms) << ','
+         << std::format("{:.3f}", args.scheduling_ms) << ','
+         << std::format("{:.3f}", args.codelet_ms) << ','
+         << std::format("{:.3f}", args.inference_ms) << ','
+         << std::format("{:.3f}", args.callback_ms) << ','
+         << std::format("{:.3f}", args.total_ms) << ','
+         << (args.is_warmup ? "true" : "false") << '\n';
 }
 
 auto
 BatchingTraceLogger::configure_summary_writer(
-    const std::filesystem::path& trace_path) -> bool
+    const std::filesystem::path& trace_path, bool is_probe) -> bool
 {
-  close_summary_writer();
-  summary_file_path_ = summary_path_from_trace(trace_path);
-  summary_stream_.open(summary_file_path_, std::ios::out | std::ios::trunc);
-  if (!summary_stream_.is_open()) {
-    log_warning(std::format(
-        "Failed to open batching summary file '{}'; summary export disabled.",
-        summary_file_path_.string()));
+  if (!is_probe) {
     summary_file_path_.clear();
+  } else {
+    probe_summary_file_path_.clear();
+  }
+
+  auto& stream = is_probe ? probe_summary_stream_ : summary_stream_;
+  const auto path = is_probe ? probe_summary_path_from_trace(trace_path)
+                             : summary_path_from_trace(trace_path);
+
+  stream.open(path, std::ios::out | std::ios::trunc);
+  if (!stream.is_open()) {
+    log_warning(std::format(
+        "Failed to open batching {}summary file '{}'; summary export "
+        "disabled.",
+        is_probe ? "probe " : "", path.string()));
     return false;
   }
-  summary_stream_
+  stream
       << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
          "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
          "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,warmup\n";
+  if (!is_probe) {
+    summary_file_path_ = path;
+  } else {
+    probe_summary_file_path_ = path;
+  }
   return true;
 }
 
@@ -1082,6 +1150,9 @@ BatchingTraceLogger::close_summary_writer()
 {
   if (summary_stream_.is_open()) {
     summary_stream_.close();
+  }
+  if (probe_summary_stream_.is_open()) {
+    probe_summary_stream_.close();
   }
 }
 

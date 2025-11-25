@@ -137,20 +137,17 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
   }
 
   const auto& tracer = starpu_server::BatchingTraceLogger::instance();
-  const auto summary_path_opt = tracer.summary_file_path();
-  if (!summary_path_opt) {
-    starpu_server::log_warning(
-        "Tracing was enabled but no batching_trace_summary.csv was produced; "
-        "skipping plot generation.");
-    return;
+  std::vector<std::filesystem::path> summary_paths;
+  if (const auto main_summary = tracer.summary_file_path()) {
+    summary_paths.push_back(*main_summary);
   }
-
-  const auto& summary_path = *summary_path_opt;
-  if (std::error_code err_code;
-      !std::filesystem::exists(summary_path, err_code) || err_code) {
-    starpu_server::log_warning(std::format(
-        "Tracing summary file '{}' not found; skipping plot generation.",
-        summary_path.string()));
+  if (const auto probe_summary = tracer.probe_summary_file_path()) {
+    summary_paths.push_back(*probe_summary);
+  }
+  if (summary_paths.empty()) {
+    starpu_server::log_warning(
+        "Tracing was enabled but no batching_trace_summary.csv files were "
+        "produced; skipping plot generation.");
     return;
   }
 
@@ -162,21 +159,30 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
     return;
   }
 
-  const auto output_path = plots_output_path(summary_path);
-  const std::string command = std::format(
-      "python3 {} {} --output {}", shell_quote(script_path->string()),
-      shell_quote(summary_path.string()), shell_quote(output_path.string()));
-  const int return_code = std::system(command.c_str());
-  if (return_code != 0) {
-    starpu_server::log_warning(std::format(
-        "Failed to generate batching latency plots; command '{}' exited with "
-        "code {}.",
-        command, return_code));
-  } else {
-    starpu_server::log_info(
-        opts.verbosity,
-        std::format(
-            "Batching latency plots written to '{}'.", output_path.string()));
+  for (const auto& summary_path : summary_paths) {
+    if (std::error_code err_code;
+        !std::filesystem::exists(summary_path, err_code) || err_code) {
+      starpu_server::log_warning(std::format(
+          "Tracing summary file '{}' not found; skipping plot generation.",
+          summary_path.string()));
+      continue;
+    }
+    const auto output_path = plots_output_path(summary_path);
+    const std::string command = std::format(
+        "python3 {} {} --output {}", shell_quote(script_path->string()),
+        shell_quote(summary_path.string()), shell_quote(output_path.string()));
+    const int return_code = std::system(command.c_str());
+    if (return_code != 0) {
+      starpu_server::log_warning(std::format(
+          "Failed to generate batching latency plots for '{}'; command '{}' "
+          "exited with code {}.",
+          summary_path.string(), command, return_code));
+    } else {
+      starpu_server::log_info(
+          opts.verbosity,
+          std::format(
+              "Batching latency plots written to '{}'.", output_path.string()));
+    }
   }
 }
 
@@ -268,19 +274,21 @@ run_startup_throughput_probe(
   };
   class ProbeTracePrefixGuard {
    public:
-    explicit ProbeTracePrefixGuard(starpu_server::BatchingTraceLogger& tracer)
-        : tracer_(tracer), previous_(tracer.probe_prefix_enabled())
+    ProbeTracePrefixGuard(
+        starpu_server::BatchingTraceLogger& tracer,
+        starpu_server::ProbeTraceMode mode)
+        : tracer_(tracer), previous_(tracer.probe_mode())
     {
-      tracer_.set_probe_prefix_enabled(true);
+      tracer_.set_probe_mode(mode);
     }
     ProbeTracePrefixGuard(const ProbeTracePrefixGuard&) = delete;
     auto operator=(const ProbeTracePrefixGuard&) -> ProbeTracePrefixGuard& =
                                                         delete;
-    ~ProbeTracePrefixGuard() { tracer_.set_probe_prefix_enabled(previous_); }
+    ~ProbeTracePrefixGuard() { tracer_.set_probe_mode(previous_); }
 
    private:
     starpu_server::BatchingTraceLogger& tracer_;
-    bool previous_;
+    starpu_server::ProbeTraceMode previous_;
   };
 
   auto run_probe_once = [&](int request_count,
@@ -446,12 +454,15 @@ run_startup_throughput_probe(
     return outcome;
   };
 
-  ProbeTracePrefixGuard probe_prefix_guard(
-      starpu_server::BatchingTraceLogger::instance());
-
   const int calibration_requests =
       std::max(1, worker_count * max_batch_size * kCalibrationMultiplier);
-  const auto calibration = run_probe_once(calibration_requests, false);
+  ProbeOutcome calibration{};
+  {
+    ProbeTracePrefixGuard probe_prefix_guard(
+        starpu_server::BatchingTraceLogger::instance(),
+        starpu_server::ProbeTraceMode::Calibration);
+    calibration = run_probe_once(calibration_requests, false);
+  }
 
   double estimated_throughput = 0.0;
   if (calibration.snapshot && calibration.snapshot->throughput > 0.0) {
@@ -489,9 +500,13 @@ run_startup_throughput_probe(
           estimated_throughput, synthetic_requests));
 
   measured_throughput = cached_throughput;
-  const auto final_outcome = measured_throughput > 0.0
-                                 ? ProbeOutcome{std::nullopt, 0, true}
-                                 : run_probe_once(synthetic_requests, true);
+  const auto final_outcome =
+      measured_throughput > 0.0 ? ProbeOutcome{std::nullopt, 0, true} : [&]() {
+        ProbeTracePrefixGuard probe_prefix_guard(
+            starpu_server::BatchingTraceLogger::instance(),
+            starpu_server::ProbeTraceMode::DurationCalibrated);
+        return run_probe_once(synthetic_requests, true);
+      }();
 
   if (!final_outcome.snapshot && measured_throughput <= 0.0) {
     starpu_server::log_warning(
