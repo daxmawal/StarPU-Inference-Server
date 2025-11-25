@@ -1,15 +1,20 @@
 #include <hwloc.h>
 #include <starpu.h>
+#include <torch/torch.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,9 +28,11 @@
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
 #include "utils/batching_trace_logger.hpp"
+#include "utils/client_utils.hpp"
 #include "utils/config_loader.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
+#include "utils/perf_observer.hpp"
 #include "utils/runtime_config.hpp"
 
 namespace {
@@ -169,6 +176,136 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
         std::format(
             "Batching latency plots written to '{}'.", output_path.string()));
   }
+}
+
+void
+run_startup_throughput_probe(
+    const starpu_server::RuntimeConfig& opts,
+    starpu_server::StarPUSetup& starpu, torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<torch::Tensor>& reference_outputs)
+{
+  using namespace std::chrono_literals;
+  constexpr int kSyntheticRequests = 10000;
+
+  if (!opts.devices.use_cpu && !opts.devices.use_cuda) {
+    return;
+  }
+
+  starpu_server::log_info(
+      opts.verbosity,
+      std::format(
+          "Measuring throughput with {} synthetic request(s)...",
+          kSyntheticRequests));
+
+  starpu_server::perf_observer::reset();
+
+  try {
+    starpu_server::InferenceQueue queue;
+    std::vector<starpu_server::InferenceResult> throwaway_results;
+    std::mutex results_mutex;
+    std::atomic<int> completed_jobs{0};
+    std::condition_variable all_done_cv;
+    std::mutex all_done_mutex;
+
+    starpu_server::StarPUTaskRunnerConfig config{};
+    config.queue = &queue;
+    config.model_cpu = &model_cpu;
+    config.models_gpu = &models_gpu;
+    config.starpu = &starpu;
+    config.opts = &opts;
+    config.results = &throwaway_results;
+    config.results_mutex = &results_mutex;
+    config.completed_jobs = &completed_jobs;
+    config.all_done_cv = &all_done_cv;
+
+    std::string default_model_name = opts.name;
+    if (default_model_name.empty() && !opts.models.empty()) {
+      default_model_name = opts.models[0].name;
+    }
+
+    starpu_server::StarPUTaskRunner worker(config);
+    std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
+
+    std::jthread client_thread([&, default_model_name]() {
+      std::mt19937 rng;
+      if (opts.seed.has_value()) {
+        rng.seed(*opts.seed);
+        torch::manual_seed(*opts.seed);
+      } else {
+        rng.seed(std::random_device{}());
+      }
+
+      auto pregen_inputs = starpu_server::client_utils::pre_generate_inputs(
+          opts, std::max<std::size_t>(1, opts.batching.pregen_inputs));
+
+      for (int request_id = 0; request_id < kSyntheticRequests; ++request_id) {
+        const auto& inputs =
+            starpu_server::client_utils::pick_random_input(pregen_inputs, rng);
+        auto job = starpu_server::client_utils::create_job(
+            inputs, reference_outputs, request_id, {}, {}, default_model_name);
+
+        const auto enqueued_now = std::chrono::high_resolution_clock::now();
+        job->timing_info().enqueued_time = enqueued_now;
+        job->timing_info().last_enqueued_time = enqueued_now;
+
+        if (!queue.push(std::move(job))) {
+          starpu_server::log_warning(
+              "[Throughput] Failed to enqueue job: queue shutting "
+              "down");
+          break;
+        }
+      }
+
+      queue.shutdown();
+    });
+
+    const auto deadline = std::chrono::steady_clock::now() + 60s;
+    bool completed = false;
+    {
+      std::unique_lock lock(all_done_mutex);
+      completed = all_done_cv.wait_until(lock, deadline, [&]() {
+        return completed_jobs.load(std::memory_order_acquire) >=
+               kSyntheticRequests;
+      });
+    }
+
+    queue.shutdown();
+    if (client_thread.joinable()) {
+      client_thread.join();
+    }
+    if (worker_thread.joinable()) {
+      worker_thread.join();
+    }
+    starpu_task_wait_for_all();
+
+    const auto snapshot = starpu_server::perf_observer::snapshot();
+    if (snapshot.has_value()) {
+      starpu_server::log_info(
+          opts.verbosity,
+          std::format(
+              "Throughput: {} inference(s) in {:.3f} s -> {:.2f} "
+              "infer/s",
+              snapshot->total_inferences, snapshot->duration_seconds,
+              snapshot->throughput));
+    } else {
+      starpu_server::log_warning(
+          "Throughput probe did not yield a usable snapshot.");
+    }
+
+    if (!completed) {
+      const int finished = completed_jobs.load(std::memory_order_acquire);
+      starpu_server::log_warning(std::format(
+          "Startup throughput probe timed out; completed {} of {} request(s).",
+          finished, kSyntheticRequests));
+    }
+  }
+  catch (const std::exception& e) {
+    starpu_server::log_warning(std::format(
+        "Throughput probe failed (continuing startup): {}", e.what()));
+  }
+
+  starpu_server::perf_observer::reset();
 }
 }  // namespace
 
@@ -442,6 +579,8 @@ main(int argc, char* argv[]) -> int
     log_worker_inventory(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);
+    run_startup_throughput_probe(
+        opts, starpu, model_cpu, models_gpu, reference_outputs);
     launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
     auto& tracer = starpu_server::BatchingTraceLogger::instance();
     tracer.configure(false, "");
