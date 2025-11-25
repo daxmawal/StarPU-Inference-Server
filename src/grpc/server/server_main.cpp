@@ -218,7 +218,46 @@ run_startup_throughput_probe(
   constexpr double kTargetSeconds = 15.0;
   constexpr int kCalibrationMultiplier = 10;
   constexpr int kFallbackBatchesPerWorker = 150;
-  constexpr std::string_view kThroughputSuffix = "_configuration.txt";
+  constexpr std::string_view kThroughputSuffix = "_throughput.txt";
+  const auto config_suffix = [&]() -> std::string {
+    if (opts.config_path.empty()) {
+      return "unnamed";
+    }
+    const auto path = std::filesystem::path(opts.config_path);
+    auto stem = path.stem().string();
+    if (stem.empty()) {
+      stem = "unnamed";
+    }
+    return stem;
+  }();
+  const auto throughput_file =
+      std::filesystem::path(config_suffix + std::string(kThroughputSuffix));
+  double cached_throughput = 0.0;
+  {
+    std::error_code ec;
+    if (std::filesystem::exists(throughput_file, ec) && !ec) {
+      try {
+        std::ifstream in(throughput_file);
+        if (in) {
+          in >> cached_throughput;
+        }
+      }
+      catch (...) {
+      }
+      if (cached_throughput > 0.0) {
+        starpu_server::log_info(
+            opts.verbosity,
+            std::format(
+                "[Throughput] Cached throughput {:.2f} infer/s from '{}' "
+                "found, skipping startup probe.",
+                cached_throughput, throughput_file.string()));
+        return;
+      }
+      starpu_server::log_warning(
+          "[Throughput] Cached throughput file found but unreadable or empty; "
+          "re-running probe.");
+    }
+  }
 
   struct ProbeOutcome {
     std::optional<starpu_server::perf_observer::Snapshot> snapshot;
@@ -428,37 +467,35 @@ run_startup_throughput_probe(
           synthetic_requests / std::max(estimated_throughput, 1e-6),
           estimated_throughput, synthetic_requests));
 
-  const auto final_outcome = run_probe_once(synthetic_requests, true);
+  double measured_throughput = cached_throughput;
+  const auto final_outcome = measured_throughput > 0.0
+                                 ? ProbeOutcome{std::nullopt, 0, true}
+                                 : run_probe_once(synthetic_requests, true);
+
+  if (!final_outcome.snapshot && measured_throughput <= 0.0) {
+    starpu_server::log_warning(
+        "[Throughput] Probe did not produce a throughput snapshot; nothing to "
+        "write.");
+    return;
+  }
+
+  if (final_outcome.snapshot) {
+    measured_throughput = final_outcome.snapshot->throughput;
+  }
 
   try {
-    const auto config_suffix = [&]() -> std::string {
-      if (opts.config_path.empty()) {
-        return "unnamed";
-      }
-      const auto path = std::filesystem::path(opts.config_path);
-      auto stem = path.stem().string();
-      if (stem.empty()) {
-        stem = "unnamed";
-      }
-      return stem;
-    }();
-
-    const auto filename =
-        std::filesystem::path(config_suffix + std::string(kThroughputSuffix));
-    if (final_outcome.snapshot) {
-      std::ofstream out(filename, std::ios::trunc);
-      if (out) {
-        out << std::format("{:.6f}\n", final_outcome.snapshot->throughput);
-        starpu_server::log_info(
-            opts.verbosity,
-            std::format(
-                "[Throughput] Wrote measured throughput {:.2f} infer/s to {}",
-                final_outcome.snapshot->throughput, filename.string()));
-      } else {
-        starpu_server::log_warning(std::format(
-            "[Throughput] Unable to write throughput file {}",
-            filename.string()));
-      }
+    std::ofstream out(throughput_file, std::ios::trunc);
+    if (out) {
+      out << std::format("{:.6f}\n", measured_throughput);
+      starpu_server::log_info(
+          opts.verbosity,
+          std::format(
+              "[Throughput] Wrote measured throughput {:.2f} infer/s to {}",
+              measured_throughput, throughput_file.string()));
+    } else {
+      starpu_server::log_warning(std::format(
+          "[Throughput] Unable to write throughput file {}",
+          throughput_file.string()));
     }
   }
   catch (const std::exception& e) {
