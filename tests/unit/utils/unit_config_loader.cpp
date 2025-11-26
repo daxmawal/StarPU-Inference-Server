@@ -911,7 +911,7 @@ TEST(ConfigLoader, ParsesTraceOutputDirectory)
 
   const auto expected_path = (trace_dir / "batching_trace.json").string();
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.repository_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.file_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
@@ -962,9 +962,9 @@ TEST(ConfigLoader, TraceOutputAcceptsExistingDirectoryPath)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_path =
-      (trace_dir / RuntimeConfig{}.batching.repository_output_path).string();
+      (trace_dir / RuntimeConfig{}.batching.file_output_path).string();
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.repository_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.file_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
@@ -995,11 +995,10 @@ TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
 
   const RuntimeConfig cfg = load_config(tmp.string());
   const std::string expected_path =
-      (requested_dir / RuntimeConfig{}.batching.repository_output_path)
-          .string();
+      (requested_dir / RuntimeConfig{}.batching.file_output_path).string();
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.repository_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.file_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)

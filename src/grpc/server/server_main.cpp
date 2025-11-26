@@ -238,8 +238,20 @@ run_startup_throughput_probe(
     }
     return stem;
   }();
-  const auto throughput_file =
-      std::filesystem::path(config_suffix + std::string(kThroughputSuffix));
+  const auto throughput_filename =
+      config_suffix + std::string(kThroughputSuffix);
+  const auto throughput_file = [&]() -> std::filesystem::path {
+    if (!opts.batching.file_output_path.empty()) {
+      const auto trace_path =
+          std::filesystem::path(opts.batching.file_output_path);
+      auto output_dir = trace_path.parent_path();
+      if (output_dir.empty()) {
+        output_dir = ".";
+      }
+      return output_dir / throughput_filename;
+    }
+    return std::filesystem::path(throughput_filename);
+  }();
   double cached_throughput = 0.0;
   {
     std::error_code ec;
