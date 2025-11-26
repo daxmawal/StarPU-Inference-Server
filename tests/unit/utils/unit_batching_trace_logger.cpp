@@ -124,7 +124,8 @@ TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
 
   const auto invalid_direction = static_cast<FlowDirection>(0xFF);
   append_flow_annotation(
-      line, invalid_direction, /*batch_id=*/42, /*is_warmup=*/false);
+      line, invalid_direction, /*batch_id=*/42, /*is_warmup=*/false,
+      ProbeTraceMode::None);
 
   EXPECT_EQ(line.str(), R"({"prefix":true)");
   EXPECT_EQ(line.str().find("\"flow_"), std::string::npos);
@@ -1428,7 +1429,7 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   ASSERT_NE(warming_build_flow_out, std::string::npos);
   EXPECT_LT(warming_build_flow_out, warming_submit);
   const auto warming_build_bind =
-      content.find("\"bind_id\":\"0x8000000000000000\"", warming_build);
+      content.find("\"bind_id\":\"0x4000000000000000\"", warming_build);
   ASSERT_NE(warming_build_bind, std::string::npos);
   EXPECT_LT(warming_build_bind, warming_submit);
   EXPECT_NE(
@@ -1444,7 +1445,7 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   ASSERT_NE(warming_submit_flow_out, std::string::npos);
   EXPECT_LT(warming_submit_flow_out, warming_compute);
   EXPECT_NE(
-      content.find("\"bind_id\":\"0x8000000000000000\"", warming_submit),
+      content.find("\"bind_id\":\"0x4000000000000000\"", warming_submit),
       std::string::npos);
 
   EXPECT_NE(
@@ -1456,7 +1457,7 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   EXPECT_NE(
       content.find("\"flow_in\":true", warming_compute), std::string::npos);
   EXPECT_NE(
-      content.find("\"bind_id\":\"0x8000000000000000\"", warming_compute),
+      content.find("\"bind_id\":\"0x4000000000000000\"", warming_compute),
       std::string::npos);
 
   EXPECT_EQ(content.find("\"ph\":\"s\""), std::string::npos);

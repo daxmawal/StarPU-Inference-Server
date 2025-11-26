@@ -116,25 +116,36 @@ format_request_arrivals(std::span<const int64_t> request_arrivals)
 }
 
 auto
-make_flow_bind_id(int batch_id, bool is_warmup) -> std::optional<uint64_t>
+make_flow_bind_id(int batch_id, bool is_warmup, ProbeTraceMode probe_mode)
+    -> std::optional<uint64_t>
 {
   if (batch_id < 0) {
     return std::nullopt;
   }
-  const uint64_t scope_bit = is_warmup ? (uint64_t{1} << 63) : 0;
-  return scope_bit | static_cast<uint64_t>(static_cast<uint32_t>(batch_id));
+  // Use bits 62-63 for scope distinction:
+  // 00 = serving, 01 = warming, 10 = probe_calibration, 11 = probe_duration
+  uint64_t scope_bits = 0;
+  if (is_warmup) {
+    scope_bits = uint64_t{1} << 62;  // bit 62 = warmup
+  }
+  if (probe_mode == ProbeTraceMode::Calibration) {
+    scope_bits |= uint64_t{1} << 63;  // bit 63 = calibration
+  } else if (probe_mode == ProbeTraceMode::DurationCalibrated) {
+    scope_bits |= uint64_t{3} << 62;  // bits 62-63 = duration
+  }
+  return scope_bits | static_cast<uint64_t>(static_cast<uint32_t>(batch_id));
 }
 
 void
 append_flow_annotation(
     std::ostringstream& line, FlowDirection direction, int batch_id,
-    bool is_warmup)
+    bool is_warmup, ProbeTraceMode probe_mode)
 {
   using enum FlowDirection;
   if (direction == None) {
     return;
   }
-  const auto bind_id = make_flow_bind_id(batch_id, is_warmup);
+  const auto bind_id = make_flow_bind_id(batch_id, is_warmup, probe_mode);
   if (!bind_id.has_value()) {
     return;
   }
@@ -144,7 +155,14 @@ append_flow_annotation(
   if (!emit_flow_out && !emit_flow_in) {
     return;
   }
-  const std::string_view scope = is_warmup ? "warming" : "serving";
+  std::string_view scope;
+  if (probe_mode == ProbeTraceMode::Calibration) {
+    scope = is_warmup ? "warming_probe_calibration" : "probe_calibration";
+  } else if (probe_mode == ProbeTraceMode::DurationCalibrated) {
+    scope = is_warmup ? "warming_probe_duration" : "probe_duration";
+  } else {
+    scope = is_warmup ? "warming" : "serving";
+  }
   const auto bind_label = std::format("0x{:016X}", *bind_id);
   line << R"(,"id_scope":")" << scope << R"(","id2":{"local":)" << batch_id
        << R"(},"bind_id":")" << bind_label << '"';
@@ -738,8 +756,10 @@ BatchingTraceLogger::write_record(
   line << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id;
   const auto span_flow_direction =
       is_batch_span ? FlowDirection::SourceAndTarget : FlowDirection::None;
+  const auto current_probe_mode = probe_mode_.load(std::memory_order_relaxed);
   append_flow_annotation(
-      line, span_flow_direction, record_context.batch_id, is_warmup);
+      line, span_flow_direction, record_context.batch_id, is_warmup,
+      current_probe_mode);
   line << ",\"args\":{";
 
   bool first_arg = true;
@@ -852,8 +872,10 @@ BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
        << R"(","cat":"batching","ph":"X","ts":)" << args.start_ts
        << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << lane_assignment.thread_id;
+  const auto current_probe_mode = probe_mode_.load(std::memory_order_relaxed);
   append_flow_annotation(
-      line, FlowDirection::Target, args.batch_id, args.is_warmup);
+      line, FlowDirection::Target, args.batch_id, args.is_warmup,
+      current_probe_mode);
   line << ",\"args\":{" << "\"" << prefix << "batch_id\":" << args.batch_id
        << ",\"" << prefix << "batch_size\":" << args.batch_size << ",\""
        << prefix << "model_name\":\"" << escaped_model << "\"" << ",\""
@@ -936,7 +958,9 @@ BatchingTraceLogger::write_batch_build_span(
        << R"(batch_build","cat":"batching","ph":"X","ts":)" << timing.start_ts
        << ",\"dur\":" << timing.duration_us << ",\"pid\":" << kTraceProcessId
        << ",\"tid\":" << kBatchBuildTrackId;
-  append_flow_annotation(line, FlowDirection::Source, batch_id, is_warmup);
+  const auto current_probe_mode = probe_mode_.load(std::memory_order_relaxed);
+  append_flow_annotation(
+      line, FlowDirection::Source, batch_id, is_warmup, current_probe_mode);
   line << ",\"args\":{" << "\"" << prefix << "batch_id\":" << batch_id << ",\""
        << prefix << "batch_size\":" << batch_size << ",\"" << prefix
        << "model_name\":\"" << escaped_model << "\"";
