@@ -24,6 +24,10 @@ target_sources(
           ${STARPU_TASK_WORKER_DIR}/starpu_task_worker.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/inference_service.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/signal_handler.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/startup_probe.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/trace_plotting.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/worker_info.cpp
           ${MONITORING_DIR}/metrics.cpp)
 
 set_target_properties(starpu_server PROPERTIES RUNTIME_OUTPUT_DIRECTORY
