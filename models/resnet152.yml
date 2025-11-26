@@ -1,6 +1,6 @@
 name: resnet152
 trace_enabled: true
-trace_output: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build/"
+repository_output: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build/"
 scheduler: eager
 starpu_env:
   STARPU_FXT_TRACE: "1"

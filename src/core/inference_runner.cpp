@@ -525,7 +525,7 @@ run_warmup(
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
   warmup_runner.run(warmup_request_nb);
 
-  log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
+  log_info(opts.verbosity, "Warmup complete, proceeding to real inference.");
 }
 
 // =============================================================================

@@ -63,7 +63,7 @@ Optional keys for debugging:
 |`dynamic_batching`|Enable dynamic batching (`true`/`false`).|`true`|
 |`sync`|Run the StarPU worker pool in synchronous mode (`true`/`false`).|`false`|
 |`trace_enabled`|Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI plus a CSV summary of each batch.|`false`|
-|`trace_output`|Directory for the batching Perfetto trace (requires `trace_enabled: true`). The server writes `batching_trace.json` and `batching_trace_summary.csv` there (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings), warmup batches are excluded from the CSV and plots.|`.`|
+|`repository_output`|Directory for the batching Perfetto trace (requires `trace_enabled: true`). The server writes `batching_trace.json` and `batching_trace_summary.csv` there (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings), warmup batches are excluded from the CSV and plots.|`.`|
 |`warmup_batches_per_worker`|Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests.|`1`|
 
 Traces use the Chrome trace-event JSON format, so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [tracing guide](./tracing.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, using Perfetto, and capturing StarPU FXT traces. Enable it only while profiling dynamic batching, for GPU-wide timelines rely on NVIDIA `nsys`.

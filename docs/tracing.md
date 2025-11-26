@@ -15,11 +15,11 @@ with Perfetto:
 ```yaml
 batching:
   trace_enabled: true
-  trace_output: /tmp/  # optional custom path
+  repository_output: /tmp/  # optional custom path
 ```
 
 - `trace_enabled` flips instrumentation on as soon as the server starts.
-- `trace_output` must point to a directory, the server writes
+- `repository_output` must point to a directory, the server writes
   `batching_trace.json` there. The same directory also receives
   `batching_trace_summary.csv` (one line per batch). Warmup batches are
   excluded. The server runs `scripts/plot_batch_summary.py` at shutdown to

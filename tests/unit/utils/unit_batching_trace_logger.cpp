@@ -43,7 +43,7 @@ make_summary_path(const std::filesystem::path& trace_path)
 }
 
 void
-remove_trace_outputs(const std::filesystem::path& trace_path)
+remove_repository_outputs(const std::filesystem::path& trace_path)
 {
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
@@ -92,7 +92,7 @@ TEST(BatchingTraceLoggerTest, BatchSubmittedSkipsFlowMetadataForNegativeId)
   EXPECT_EQ(content.find("\"flow_out\":true"), std::string::npos);
   EXPECT_EQ(content.find("\"flow_in\":true"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, RequestQueuedEventsEmitNoFlowAnnotations)
@@ -114,7 +114,7 @@ TEST(BatchingTraceLoggerTest, RequestQueuedEventsEmitNoFlowAnnotations)
   EXPECT_EQ(content.find("\"flow_out\":true"), std::string::npos);
   EXPECT_EQ(content.find("\"flow_in\":true"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
@@ -134,7 +134,7 @@ TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
 TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
 {
   BatchingTraceLogger logger;
-  remove_trace_outputs("batching_trace.json");
+  remove_repository_outputs("batching_trace.json");
 
   logger.configure(true, "");
   EXPECT_TRUE(logger.enabled());
@@ -146,7 +146,7 @@ TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
   }
 
   logger.configure(false, "");
-  remove_trace_outputs("batching_trace.json");
+  remove_repository_outputs("batching_trace.json");
 }
 
 TEST(BatchingTraceLoggerTest, ConfigureHandlesDirectoryCreationFailures)
@@ -214,7 +214,7 @@ TEST(BatchingTraceLoggerTest, WriteLineLockedNoOpsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "trace writer should not emit content before header.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteFooterLockedNoOpsWithoutHeader)
@@ -241,7 +241,7 @@ TEST(BatchingTraceLoggerTest, WriteFooterLockedNoOpsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "trace writer should not emit content before header.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanClampsNonPositiveDuration)
@@ -278,7 +278,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanClampsNonPositiveDuration)
   EXPECT_EQ(duration_value, "1");
   EXPECT_EQ(content.find("\"dur\":0", span_pos), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanClampsNonPositiveDuration)
@@ -314,7 +314,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanClampsNonPositiveDuration)
   EXPECT_EQ(duration_value, "1");
   EXPECT_EQ(content.find("\"dur\":0", span_pos), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
@@ -351,7 +351,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "write_batch_build_span should not emit without an open header.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
@@ -390,7 +390,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "write_batch_enqueue_span should not emit without an open header.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
@@ -430,7 +430,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
   EXPECT_TRUE(content.empty())
       << "log_batch_enqueue_span should not emit when tracing is disabled.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
@@ -471,7 +471,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
       << "log_batch_enqueue_span should not emit when timestamps cannot be "
          "converted.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
@@ -523,7 +523,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
   EXPECT_EQ(duration_value, "1");
   EXPECT_EQ(content.find("\"dur\":0", span_pos), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
@@ -563,7 +563,7 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
   EXPECT_TRUE(content.empty())
       << "log_batch_build_span should not emit when tracing is disabled.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
@@ -604,7 +604,7 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
   EXPECT_TRUE(content.empty())
       << "log_batch_build_span should not emit when timestamps are invalid.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
@@ -633,7 +633,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
       std::istreambuf_iterator<char>());
   EXPECT_EQ(content.find("skip_model"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanClampsNonPositiveDuration)
@@ -674,7 +674,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanClampsNonPositiveDuration)
   EXPECT_EQ(duration_value, "1");
   EXPECT_EQ(content.find("\"dur\":0", event_pos), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
@@ -716,7 +716,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "write_batch_compute_span should not emit without an open header.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
@@ -774,7 +774,7 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWhenDisabled)
   EXPECT_TRUE(content.empty())
       << "write_record should not emit when tracing is disabled.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
@@ -814,7 +814,7 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "write_record should not emit before the trace header is written.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(
@@ -877,7 +877,7 @@ TEST(
   EXPECT_TRUE(content.empty()) << "log_batch_compute_span should not emit when "
                                   "disabled or worker_id < 0.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
@@ -927,7 +927,7 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
   EXPECT_TRUE(content.empty())
       << "log_batch_compute_span should not emit when timestamps are invalid.";
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
@@ -957,7 +957,7 @@ TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
       << "Escaped model name was not serialized as expected. Trace content:\n"
       << content;
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
@@ -1013,7 +1013,7 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
   EXPECT_NE(content.find("\"tid\":10"), std::string::npos);
   EXPECT_NE(content.find("worker-0 (cpu)"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
@@ -1052,7 +1052,7 @@ TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
 
   EXPECT_NE(content.find("device 7 worker 4 (cuda)"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
@@ -1085,7 +1085,7 @@ TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
   EXPECT_EQ(content.find("\"sample_count\":6"), std::string::npos);
   EXPECT_EQ(content.find("\"request_id\":"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
@@ -1115,7 +1115,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
   EXPECT_EQ(content.find("\"logical_jobs\":"), std::string::npos);
   EXPECT_EQ(content.find("\"sample_count\":"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
@@ -1147,7 +1147,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
   EXPECT_NE(content.find("\"end_ts\":"), std::string::npos);
   EXPECT_EQ(content.find("\"logical_jobs\":"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
@@ -1187,7 +1187,7 @@ TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
       std::stoll(content.substr(value_start, value_end - value_start));
   EXPECT_EQ(duration, 25);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
@@ -1243,7 +1243,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
       std::string::npos);
   EXPECT_EQ(content.find("\"warming_sample_count\""), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
@@ -1309,7 +1309,7 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
   EXPECT_NE(tid_one, tid_two);
   EXPECT_NE(content.find("worker-0 (cpu) #2"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
@@ -1463,7 +1463,7 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   EXPECT_EQ(content.find("\"ph\":\"f\""), std::string::npos);
   EXPECT_EQ(content.find(",\"id\":"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WritesBatchSummaryEntries)
@@ -1508,7 +1508,7 @@ TEST(BatchingTraceLoggerTest, WritesBatchSummaryEntries)
   EXPECT_NE(lines[1].find("\"1000;2000\""), std::string::npos);
   EXPECT_NE(lines[1].find(",7.000,"), std::string::npos);
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
@@ -1536,7 +1536,7 @@ TEST(BatchingTraceLoggerTest, TraceFileWriterReportsOpenState)
   logger.configure(false, "");
   EXPECT_FALSE(logger.trace_writer_.is_open());
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, ExposesSummaryFilePathWhenConfigured)
@@ -1553,7 +1553,7 @@ TEST(BatchingTraceLoggerTest, ExposesSummaryFilePathWhenConfigured)
   EXPECT_EQ(summary->string(), summary_path.string());
 
   logger.configure(false, "");
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
@@ -1591,7 +1591,7 @@ TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
   EXPECT_TRUE(lines[0].starts_with("batch_id,model_name,worker_id"))
       << "Unexpected header line for warmup-only export: " << lines[0];
 
-  remove_trace_outputs(trace_path);
+  remove_repository_outputs(trace_path);
 }
 
 }}  // namespace starpu_server

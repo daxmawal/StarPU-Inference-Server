@@ -1,6 +1,6 @@
 name: bert
 trace_enabled: true
-trace_output: /tmp
+repository_output: /tmp
 scheduler: eager
 starpu_env:
   STARPU_CUDA_THREAD_PER_WORKER: "1"

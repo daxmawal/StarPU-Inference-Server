@@ -889,7 +889,7 @@ TEST(ConfigLoader, ParsesTraceEnabledFlag)
 TEST(ConfigLoader, ParsesTraceOutputDirectory)
 {
   const auto model_path = WriteTempFile(
-      "config_loader_trace_output_model.pt", std::string(1, '\0'));
+      "config_loader_repository_output_model.pt", std::string(1, '\0'));
 
   std::string yaml = base_model_yaml();
   const std::string placeholder = "{{MODEL_PATH}}";
@@ -903,15 +903,15 @@ TEST(ConfigLoader, ParsesTraceOutputDirectory)
   const auto trace_dir =
       std::filesystem::temp_directory_path() / "config_loader_trace_dir";
   std::filesystem::create_directories(trace_dir);
-  yaml += "trace_output: " + trace_dir.string() + "\n";
+  yaml += "repository_output: " + trace_dir.string() + "\n";
 
-  const auto tmp = WriteTempFile("config_loader_trace_output.yaml", yaml);
+  const auto tmp = WriteTempFile("config_loader_repository_output.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const auto expected_path = (trace_dir / "batching_trace.json").string();
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.repository_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
@@ -927,7 +927,7 @@ TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
     yaml.replace(pos, placeholder.size(), replacement);
     pos += replacement.size();
   }
-  yaml += "trace_output: \"\"\n";
+  yaml += "repository_output: \"\"\n";
 
   const auto tmp = WriteTempFile("config_loader_empty_trace.yaml", yaml);
 
@@ -935,7 +935,7 @@ TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_output must not be empty";
+      "Failed to load config: repository_output must not be empty";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }
@@ -955,16 +955,16 @@ TEST(ConfigLoader, TraceOutputAcceptsExistingDirectoryPath)
   }
 
   const auto trace_dir = MakeUniqueTempDir("config_loader_trace_dir");
-  yaml += "trace_output: " + trace_dir.string() + "\n";
+  yaml += "repository_output: " + trace_dir.string() + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_dir.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_path =
-      (trace_dir / RuntimeConfig{}.batching.trace_output_path).string();
+      (trace_dir / RuntimeConfig{}.batching.repository_output_path).string();
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.repository_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
@@ -989,16 +989,17 @@ TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
     dir_with_separator.push_back(std::filesystem::path::preferred_separator);
   }
 
-  yaml += "trace_output: \"" + dir_with_separator + "\"\n";
+  yaml += "repository_output: \"" + dir_with_separator + "\"\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_dir_sep.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
   const std::string expected_path =
-      (requested_dir / RuntimeConfig{}.batching.trace_output_path).string();
+      (requested_dir / RuntimeConfig{}.batching.repository_output_path)
+          .string();
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.repository_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
@@ -1018,7 +1019,7 @@ TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
   const auto invalid_path =
       (std::filesystem::temp_directory_path() / "config_loader_trace.json")
           .string();
-  yaml += "trace_output: " + invalid_path + "\n";
+  yaml += "repository_output: " + invalid_path + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_json.yaml", yaml);
 
@@ -1026,7 +1027,8 @@ TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_output must be a directory path (omit the "
+      "Failed to load config: repository_output must be a directory path (omit "
+      "the "
       "filename)";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
@@ -1048,7 +1050,7 @@ TEST(ConfigLoader, TraceOutputRejectsPathPointingToExistingFile)
 
   const auto destination =
       WriteTempFile("config_loader_trace_destination", "payload");
-  yaml += "trace_output: " + destination.string() + "\n";
+  yaml += "repository_output: " + destination.string() + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_destination.yaml", yaml);
 
@@ -1056,7 +1058,7 @@ TEST(ConfigLoader, TraceOutputRejectsPathPointingToExistingFile)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_output must be a directory path";
+      "Failed to load config: repository_output must be a directory path";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }
