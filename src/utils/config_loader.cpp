@@ -396,9 +396,9 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.batching.trace_enabled = root["trace_enabled"].as<bool>();
   }
   if (root["repository_output"]) {
-    cfg.batching.repository_output_path =
+    cfg.batching.file_output_path =
         resolve_output_directory(root["repository_output"].as<std::string>());
-    if (cfg.batching.repository_output_path.empty()) {
+    if (cfg.batching.file_output_path.empty()) {
       throw std::invalid_argument("repository_output must not be empty");
     }
   }

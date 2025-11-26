@@ -516,7 +516,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
 void
 BatchingTraceLogger::configure_from_runtime(const RuntimeConfig& cfg)
 {
-  configure(cfg.batching.trace_enabled, cfg.batching.repository_output_path);
+  configure(cfg.batching.trace_enabled, cfg.batching.file_output_path);
 }
 
 auto
