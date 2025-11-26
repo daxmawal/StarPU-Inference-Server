@@ -1519,7 +1519,7 @@ TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
   std::error_code ec;
   std::filesystem::remove_all(trace_path.parent_path(), ec);
 
-  const auto configured = logger.configure_summary_writer(trace_path);
+  const auto configured = logger.configure_summary_writer(trace_path, false);
   EXPECT_FALSE(configured);
   EXPECT_TRUE(logger.summary_file_path_.empty());
   EXPECT_FALSE(logger.summary_stream_.is_open());
