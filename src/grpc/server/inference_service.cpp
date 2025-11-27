@@ -52,9 +52,22 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
 
 namespace {
 
+// Congestion detection parameters:
+// Congestion is detected when the arrival rate reaches 95% of measured
+// throughput. This allows clients to be aware when the system is near capacity.
 constexpr double kCongestionEnterRatio = 0.95;
+
+// Congestion is cleared when arrival rate falls below 90% of measured
+// throughput. This hysteresis prevents rapid oscillation between
+// detected/cleared states.
 constexpr double kCongestionClearRatio = 0.90;
+
+// Sliding window duration for measuring request arrival rate.
+// Tracks requests arriving within the last 1 second.
 constexpr auto kArrivalWindow = std::chrono::seconds(1);
+
+// How often the congestion monitor thread checks for stale arrival windows
+// and logs congestion state transitions.
 constexpr auto kCongestionMonitorPeriod = std::chrono::milliseconds(200);
 
 using TensorDataByte = std::byte;
@@ -80,29 +93,59 @@ parse_input_dtype(
   return Status::OK;
 }
 
+// Helper: checks if shape tail matches expected tail at given offsets
+auto
+shape_tails_match(
+    const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
+    int64_t shape_offset, int64_t expected_offset) -> bool
+{
+  const auto rank = static_cast<int64_t>(shape.size());
+  const auto expected_rank = static_cast<int64_t>(expected.size());
+
+  if (rank - shape_offset != expected_rank - expected_offset) {
+    return false;
+  }
+  for (int64_t idx = 0; idx < rank - shape_offset; ++idx) {
+    if (shape[static_cast<size_t>(shape_offset + idx)] !=
+        expected[static_cast<size_t>(expected_offset + idx)]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Helper: validates batch size is positive and doesn't exceed configured max
+auto
+validate_batch_size(int64_t batch_size, int max_batch_size) -> Status
+{
+  if (batch_size <= 0) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor shape does not match configured dimensions or batch "
+        "limits (batch size must be positive)"};
+  }
+  if (batch_size > max_batch_size) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format(
+            "Input tensor shape does not match configured "
+            "dimensions or batch limits (batch size {} exceeds "
+            "configured max of {})",
+            batch_size, max_batch_size)};
+  }
+  return Status::OK;
+}
+
 auto
 validate_configured_shape(
     const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
     bool batching_allowed, int max_batch_size) -> Status
 {
   const auto rank = static_cast<int64_t>(shape.size());
-  const auto expected_rank = static_cast<int64_t>(expected.size());
 
-  auto tails_match = [&](int64_t shape_offset, int64_t expected_offset) {
-    if (rank - shape_offset != expected_rank - expected_offset) {
-      return false;
-    }
-    for (int64_t idx = 0; idx < rank - shape_offset; ++idx) {
-      if (shape[static_cast<size_t>(shape_offset + idx)] !=
-          expected[static_cast<size_t>(expected_offset + idx)]) {
-        return false;
-      }
-    }
-    return true;
-  };
-
+  // Case 1: Batching not allowed - shape must exactly match expected
   if (!batching_allowed) {
-    if (tails_match(0, 0)) {
+    if (shape_tails_match(shape, expected, 0, 0)) {
       return Status::OK;
     }
     return {
@@ -111,6 +154,7 @@ validate_configured_shape(
         "limits"};
   }
 
+  // Case 2: Empty shape is invalid
   if (rank == 0) {
     return {
         grpc::StatusCode::INVALID_ARGUMENT,
@@ -118,42 +162,21 @@ validate_configured_shape(
         "limits"};
   }
 
-  if (tails_match(0, 0)) {
+  // Case 3: Shape matches exactly (no batching)
+  if (shape_tails_match(shape, expected, 0, 0)) {
     return Status::OK;
   }
 
-  auto validate_batch_size = [&](int64_t batch_size) -> Status {
-    if (batch_size <= 0) {
-      return {
-          grpc::StatusCode::INVALID_ARGUMENT,
-          "Input tensor shape does not match configured dimensions or batch "
-          "limits (batch size must be positive)"};
-    }
-    if (batch_size > max_batch_size) {
-      return {
-          grpc::StatusCode::INVALID_ARGUMENT,
-          std::format(
-              "Input tensor shape does not match configured dimensions or "
-              "batch limits (batch size {} exceeds configured max of {})",
-              batch_size, max_batch_size)};
-    }
-    return Status::OK;
-  };
-
-  if (rank >= 1 && tails_match(1, 1)) {
+  // Case 4: Shape with batch dimension at front
+  if (rank >= 1 && shape_tails_match(shape, expected, 1, 1)) {
     const int64_t batch_size = shape.front();
-    if (auto status = validate_batch_size(batch_size); !status.ok()) {
-      return status;
-    }
-    return Status::OK;
+    return validate_batch_size(batch_size, max_batch_size);
   }
 
-  if (rank >= 1 && tails_match(1, 0)) {
+  // Case 5: Shape with batch dimension, expected without batch dimension
+  if (rank >= 1 && shape_tails_match(shape, expected, 1, 0)) {
     const int64_t batch_size = shape.front();
-    if (auto status = validate_batch_size(batch_size); !status.ok()) {
-      return status;
-    }
-    return Status::OK;
+    return validate_batch_size(batch_size, max_batch_size);
   }
 
   return {
@@ -171,6 +194,25 @@ checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
   return lhs * rhs;
 }
 
+// Converts gRPC input tensor data to PyTorch tensor, managing data lifetime.
+//
+// This function handles a complex data ownership scenario:
+// - The raw tensor data comes from the gRPC request (managed by request_guard)
+// - We need to create a PyTorch tensor that references this data
+// - The tensor must be valid even after the gRPC processing completes
+//
+// Memory management strategy:
+// 1. Create an alias shared_ptr that points to the raw data but holds a
+// reference
+//    to request_guard (keeping the gRPC request alive while tensor is in use)
+// 2. PyTorch's from_blob requires a custom deleter to notify when tensor is
+// freed
+// 3. The deleter holds a reference to the alias, which keeps request_guard
+// alive
+// 4. When the tensor is destroyed, deleter runs and releases the alias
+//
+// The caller can optionally capture 'keep_alive' to hold an explicit reference
+// to the alias, ensuring the data lives as long as needed.
 auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input, const std::string& raw,
@@ -201,11 +243,16 @@ convert_input_to_tensor(
         "Raw input size does not match tensor size"};
   }
 
+  // Create alias: a shared_ptr that points to the raw data but holds a
+  // reference to request_guard to keep the gRPC message alive
   const auto raw_span = std::span<const char>(raw.data(), raw.size());
   const auto byte_span = std::as_bytes(raw_span);
   const auto* byte_data = byte_span.data();
   auto alias = std::shared_ptr<const TensorDataByte>(request_guard, byte_data);
   auto holder = std::const_pointer_cast<TensorDataByte>(alias);
+
+  // Custom deleter that captures the alias. When PyTorch releases the tensor,
+  // the deleter runs and allows alias (and thus request_guard) to be freed.
   auto deleter = [holder](void* /*unused*/) mutable {
     auto keep = holder;
     keep.reset();
@@ -272,14 +319,10 @@ InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
     std::string default_model_name, double measured_throughput)
-    : queue_(queue), reference_outputs_(reference_outputs),
-      expected_input_types_(std::move(expected_input_types)),
-      default_model_name_(std::move(default_model_name)),
-      measured_throughput_(measured_throughput),
-      congestion_threshold_(measured_throughput * kCongestionEnterRatio),
-      congestion_clear_threshold_(measured_throughput * kCongestionClearRatio)
+    : InferenceServiceImpl(
+          queue, reference_outputs, std::move(expected_input_types), {}, 0,
+          std::move(default_model_name), measured_throughput)
 {
-  start_congestion_monitor();
 }
 
 auto
@@ -1093,6 +1136,22 @@ AsyncServerContext::poll_events()
   }
 }
 
+namespace {
+auto
+configure_server_builder(
+    grpc::ServerBuilder& builder, const GrpcServerOptions& options) -> void
+{
+  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
+  const int grpc_max_message_bytes =
+      options.max_message_bytes >
+              static_cast<std::size_t>(std::numeric_limits<int>::max())
+          ? std::numeric_limits<int>::max()
+          : static_cast<int>(options.max_message_bytes);
+  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
+  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
+}
+}  // namespace
+
 void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
@@ -1109,15 +1168,8 @@ RunGrpcServer(
   AsyncServerContext async_context(async_service, service);
 
   ServerBuilder builder;
-  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
+  configure_server_builder(builder, options);
   async_context.configure(builder);
-  const int grpc_max_message_bytes =
-      options.max_message_bytes >
-              static_cast<std::size_t>(std::numeric_limits<int>::max())
-          ? std::numeric_limits<int>::max()
-          : static_cast<int>(options.max_message_bytes);
-  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
-  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
 
   server = builder.BuildAndStart();
   if (!server) {
@@ -1150,15 +1202,8 @@ RunGrpcServer(
   AsyncServerContext async_context(async_service, service);
 
   ServerBuilder builder;
-  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
+  configure_server_builder(builder, options);
   async_context.configure(builder);
-  const int grpc_max_message_bytes =
-      options.max_message_bytes >
-              static_cast<std::size_t>(std::numeric_limits<int>::max())
-          ? std::numeric_limits<int>::max()
-          : static_cast<int>(options.max_message_bytes);
-  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
-  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
 
   server = builder.BuildAndStart();
   if (!server) {

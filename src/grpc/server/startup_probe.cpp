@@ -132,6 +132,7 @@ run_startup_throughput_probe(
         }
       }
       catch (...) {
+        log_error("Failed to read cached throughput file");
       }
       if (cached_throughput > 0.0) {
         log_info(
