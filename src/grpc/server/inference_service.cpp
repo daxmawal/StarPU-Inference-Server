@@ -40,7 +40,6 @@ using inference::ServerLiveResponse;
 using inference::ServerReadyRequest;
 using inference::ServerReadyResponse;
 
-
 auto
 compute_thread_count_from(unsigned concurrency) -> std::size_t
 {
@@ -869,7 +868,7 @@ namespace {
 
 class AsyncCallDataBase {
  public:
-  explicit AsyncCallDataBase() = default;
+  AsyncCallDataBase() = default;
   AsyncCallDataBase(const AsyncCallDataBase&) = delete;
   auto operator=(const AsyncCallDataBase&) -> AsyncCallDataBase& = delete;
   AsyncCallDataBase(AsyncCallDataBase&&) = default;
