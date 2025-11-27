@@ -70,9 +70,6 @@ constexpr auto kArrivalWindow = std::chrono::seconds(1);
 // and logs congestion state transitions.
 constexpr auto kCongestionMonitorPeriod = std::chrono::milliseconds(200);
 
-using TensorDataByte = std::byte;
-using TensorDataPtr = TensorDataByte*;
-
 auto
 parse_input_dtype(
     const inference::ModelInferRequest::InferInputTensor& input,
@@ -248,8 +245,8 @@ convert_input_to_tensor(
   const auto raw_span = std::span<const char>(raw.data(), raw.size());
   const auto byte_span = std::as_bytes(raw_span);
   const auto* byte_data = byte_span.data();
-  auto alias = std::shared_ptr<const TensorDataByte>(request_guard, byte_data);
-  auto holder = std::const_pointer_cast<TensorDataByte>(alias);
+  auto alias = std::shared_ptr<const std::byte>(request_guard, byte_data);
+  auto holder = std::const_pointer_cast<std::byte>(alias);
 
   // Custom deleter that captures the alias. When PyTorch releases the tensor,
   // the deleter runs and allows alias (and thus request_guard) to be freed.
@@ -258,7 +255,7 @@ convert_input_to_tensor(
     keep.reset();
   };
 
-  TensorDataPtr tensor_data = holder.get();
+  std::byte* tensor_data = holder.get();
   tensor = torch::from_blob(tensor_data, shape, deleter, options);
   if (keep_alive != nullptr) {
     *keep_alive = alias;
@@ -598,22 +595,20 @@ InferenceServiceImpl::submit_job_async(
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
-  job->set_on_complete(
-      [job_ptr = job, callback = std::move(on_complete)](
-          std::vector<torch::Tensor> outs, double latency_ms) mutable {
-        const auto& info = job_ptr->timing_info();
-        auto timing = build_latency_breakdown(info, latency_ms);
-        detail::TimingInfo copied_info = info;
+  job->set_on_complete([job_ptr = job, callback = std::move(on_complete)](
+                           std::vector<torch::Tensor> outs,
+                           double latency_ms) mutable {
+    const auto& info = job_ptr->timing_info();
+    auto timing = build_latency_breakdown(info, latency_ms);
 
-        if (outs.empty()) {
-          callback(
-              {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
-              copied_info);
-          return;
-        }
+    if (outs.empty()) {
+      callback(
+          {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing, info);
+      return;
+    }
 
-        callback(Status::OK, std::move(outs), timing, copied_info);
-      });
+    callback(Status::OK, std::move(outs), timing, info);
+  });
 
   bool pushed = false;
   {
@@ -1150,20 +1145,12 @@ configure_server_builder(
   builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
   builder.SetMaxSendMessageSize(grpc_max_message_bytes);
 }
-}  // namespace
 
 void
-RunGrpcServer(
-    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
-    const std::vector<at::ScalarType>& expected_input_types,
-    const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, const GrpcServerOptions& options,
+run_grpc_server_impl(
+    InferenceServiceImpl& service, const GrpcServerOptions& options,
     std::unique_ptr<Server>& server)
 {
-  InferenceServiceImpl service(
-      &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size, options.default_model_name, options.measured_throughput);
-
   inference::GRPCInferenceService::AsyncService async_service;
   AsyncServerContext async_context(async_service, service);
 
@@ -1185,6 +1172,21 @@ RunGrpcServer(
   async_context.shutdown();
   server.reset();
 }
+}  // namespace
+
+void
+RunGrpcServer(
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<at::ScalarType>& expected_input_types,
+    const std::vector<std::vector<int64_t>>& expected_input_dims,
+    int max_batch_size, const GrpcServerOptions& options,
+    std::unique_ptr<Server>& server)
+{
+  InferenceServiceImpl service(
+      &queue, &reference_outputs, expected_input_types, expected_input_dims,
+      max_batch_size, options.default_model_name, options.measured_throughput);
+  run_grpc_server_impl(service, options, server);
+}
 
 void
 RunGrpcServer(
@@ -1193,31 +1195,9 @@ RunGrpcServer(
     const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
-      &queue, &reference_outputs,
-      std::vector<at::ScalarType>(
-          expected_input_types.begin(), expected_input_types.end()),
+      &queue, &reference_outputs, expected_input_types,
       options.default_model_name, options.measured_throughput);
-
-  inference::GRPCInferenceService::AsyncService async_service;
-  AsyncServerContext async_context(async_service, service);
-
-  ServerBuilder builder;
-  configure_server_builder(builder, options);
-  async_context.configure(builder);
-
-  server = builder.BuildAndStart();
-  if (!server) {
-    log_error(
-        std::format("Failed to start gRPC server on {}", options.address));
-    return;
-  }
-  async_context.start();
-  log_info(
-      options.verbosity,
-      std::format("Server listening on {}", options.address));
-  server->Wait();
-  async_context.shutdown();
-  server.reset();
+  run_grpc_server_impl(service, options, server);
 }
 
 void
