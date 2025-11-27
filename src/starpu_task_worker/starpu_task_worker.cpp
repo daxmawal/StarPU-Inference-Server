@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "exception_logging_utils.hpp"
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
@@ -37,6 +38,17 @@
 
 namespace starpu_server {
 namespace task_runner_internal {
+
+using ExceptionLoggingMessages = starpu_server::ExceptionLoggingMessages;
+
+template <typename Callback>
+void
+run_with_logged_exceptions(
+    Callback&& callback, const ExceptionLoggingMessages& messages)
+{
+  starpu_server::run_with_logged_exceptions(
+      std::forward<Callback>(callback), messages);
+}
 
 template <typename Ptr>
 inline void
@@ -74,11 +86,6 @@ job_identifier(const InferenceJob& job) -> int
   return (submission_id >= 0) ? submission_id : job.get_request_id();
 }
 
-struct ExceptionLoggingMessages {
-  std::string_view context_prefix;
-  std::string_view unknown_message;
-};
-
 namespace {
 auto
 submit_inference_task_hook_storage() -> std::function<void()>&
@@ -106,31 +113,6 @@ invoke_submit_inference_task_hook()
   const auto& hook = submit_inference_task_hook_storage();
   if (hook) {
     hook();
-  }
-}
-
-template <typename Callback>
-void
-run_with_logged_exceptions(
-    Callback&& callback, const ExceptionLoggingMessages& messages)
-{
-  try {
-    std::forward<Callback>(callback)();
-  }
-  catch (const InferenceEngineException& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::runtime_error& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::logic_error& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::bad_alloc& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (...) {
-    log_error(std::string(messages.unknown_message));
   }
 }
 
