@@ -312,6 +312,9 @@ run_startup_throughput_probe(
 
   const int calibration_requests =
       std::max(1, worker_count * max_batch_size * kCalibrationMultiplier);
+
+  BatchingTraceLogger::instance().enable_probe_measurement();
+
   ProbeOutcome calibration{};
   {
     ProbeTracePrefixGuard probe_prefix_guard(

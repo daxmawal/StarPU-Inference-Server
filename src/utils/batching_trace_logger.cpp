@@ -555,6 +555,30 @@ BatchingTraceLogger::probe_mode() const -> ProbeTraceMode
   return probe_mode_.load(std::memory_order_acquire);
 }
 
+void
+BatchingTraceLogger::enable_probe_measurement()
+{
+  probe_measurement_enabled_.store(true, std::memory_order_release);
+  initialize_probe_summary_writer();
+}
+
+auto
+BatchingTraceLogger::probe_measurement_enabled() const -> bool
+{
+  return probe_measurement_enabled_.load(std::memory_order_acquire);
+}
+
+void
+BatchingTraceLogger::initialize_probe_summary_writer()
+{
+  std::lock_guard lock(mutex_);
+  if (file_path_.empty()) {
+    return;
+  }
+  const std::filesystem::path path{file_path_};
+  configure_summary_writer(path, /*is_probe=*/true);
+}
+
 auto
 BatchingTraceLogger::probe_summary_file_path() const
     -> std::optional<std::filesystem::path>
@@ -1143,6 +1167,9 @@ BatchingTraceLogger::configure_summary_writer(
     summary_file_path_.clear();
   } else {
     probe_summary_file_path_.clear();
+    if (!probe_measurement_enabled()) {
+      return false;
+    }
   }
 
   auto& stream = is_probe ? probe_summary_stream_ : summary_stream_;

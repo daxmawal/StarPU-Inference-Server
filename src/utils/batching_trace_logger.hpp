@@ -200,6 +200,9 @@ class BatchingTraceLogger {
   [[nodiscard]] auto enabled() const -> bool;
   void set_probe_mode(ProbeTraceMode mode);
   [[nodiscard]] auto probe_mode() const -> ProbeTraceMode;
+  void enable_probe_measurement();
+  [[nodiscard]] auto probe_measurement_enabled() const -> bool;
+  void initialize_probe_summary_writer();
   [[nodiscard]] auto probe_summary_file_path() const
       -> std::optional<std::filesystem::path>;
 
@@ -258,6 +261,7 @@ class BatchingTraceLogger {
   mutable std::mutex mutex_;
   std::atomic<bool> enabled_{false};
   std::atomic<ProbeTraceMode> probe_mode_{ProbeTraceMode::None};
+  std::atomic<bool> probe_measurement_enabled_{false};
   std::string file_path_;
   int64_t trace_start_us_{0};
   bool trace_start_initialized_{false};
