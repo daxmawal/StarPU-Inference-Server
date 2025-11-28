@@ -9,10 +9,13 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
+#include <iomanip>
 #include <limits>
 #include <mutex>
 #include <optional>
 #include <random>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -35,6 +38,46 @@ struct ProbeOutcome {
   int completed_jobs = 0;
   bool completed_all = false;
 };
+
+auto
+compute_config_signature(const RuntimeConfig& opts) -> std::string
+{
+  std::ostringstream oss;
+
+  oss << "use_cuda=" << opts.devices.use_cuda << "|";
+  oss << "max_batch_size=" << opts.batching.max_batch_size << "|";
+  oss << "batch_coalesce_timeout_ms=" << opts.batching.batch_coalesce_timeout_ms
+      << "|";
+  oss << "pool_size=" << opts.batching.pool_size << "|";
+  oss << "dynamic_batching=" << opts.batching.dynamic_batching << "|";
+  oss << "device_ids=";
+  for (int id : opts.devices.ids) {
+    oss << id << ",";
+  }
+  oss << "|";
+  oss << "gpu_models=";
+  for (const auto& model : opts.models) {
+    oss << model.name << "(";
+    for (const auto& input : model.inputs) {
+      oss << "[";
+      for (int64_t dim : input.dims) {
+        oss << dim << ",";
+      }
+      oss << "]";
+    }
+    oss << "),";
+  }
+  oss << "|";
+  oss << "starpu_env=";
+  for (const auto& [key, value] : opts.starpu_env) {
+    oss << key << "=" << value << ",";
+  }
+  std::hash<std::string> hash_fn;
+  auto hash_value = hash_fn(oss.str());
+  std::ostringstream hex_stream;
+  hex_stream << std::hex << hash_value;
+  return hex_stream.str();
+}
 
 class ProbeTracePrefixGuard {
  public:
@@ -128,24 +171,38 @@ run_startup_throughput_probe(
       try {
         std::ifstream in(throughput_file);
         if (in) {
-          in >> cached_throughput;
+          std::string cached_signature;
+          if (std::getline(in, cached_signature)) {
+            const auto current_signature = compute_config_signature(opts);
+            if (cached_signature == current_signature) {
+              in >> cached_throughput;
+              if (cached_throughput > 0.0) {
+                log_info(
+                    opts.verbosity,
+                    std::format(
+                        "[Throughput] Cached throughput {:.2f} infer/s from "
+                        "'{}' "
+                        "found (config signature matches), skipping startup "
+                        "probe.",
+                        cached_throughput, throughput_file.string()));
+                return cached_throughput;
+              }
+            } else {
+              log_info(
+                  opts.verbosity,
+                  "[Throughput] Configuration has changed (signature "
+                  "mismatch); "
+                  "re-running throughput probe.");
+            }
+          }
         }
       }
       catch (...) {
         log_error("Failed to read cached throughput file");
       }
-      if (cached_throughput > 0.0) {
-        log_info(
-            opts.verbosity,
-            std::format(
-                "[Throughput] Cached throughput {:.2f} infer/s from '{}' "
-                "found, skipping startup probe.",
-                cached_throughput, throughput_file.string()));
-        return cached_throughput;
-      }
       log_warning(
-          "[Throughput] Cached throughput file found but unreadable or empty; "
-          "re-running probe.");
+          "[Throughput] Cached throughput file found but unreadable, signature "
+          "mismatch, re-running probe.");
     }
   }
 
@@ -378,14 +435,17 @@ run_startup_throughput_probe(
   }
 
   try {
+    const auto config_signature = compute_config_signature(opts);
     std::ofstream out(throughput_file, std::ios::trunc);
     if (out) {
+      out << config_signature << "\n";
       out << std::format("{:.6f}\n", measured_throughput);
       log_info(
           opts.verbosity,
           std::format(
-              "[Throughput] Wrote measured throughput {:.2f} infer/s to {}",
-              measured_throughput, throughput_file.string()));
+              "[Throughput] Wrote measured throughput {:.2f} infer/s to {} "
+              "(config signature: {})",
+              measured_throughput, throughput_file.string(), config_signature));
     } else {
       log_warning(std::format(
           "[Throughput] Unable to write throughput file {}",
