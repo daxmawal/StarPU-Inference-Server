@@ -37,9 +37,6 @@ constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
 constexpr std::string_view kCongestionTrackName = "congestion";
 constexpr std::string_view kSummarySuffix = "_summary.csv";
 constexpr std::string_view kWarmupPrefix = "warming_";
-constexpr std::string_view kProbeCalibrationPrefix = "prob_cal_";
-constexpr std::string_view kProbeDurationPrefix = "prob_dur_";
-constexpr std::string_view kProbeSummarySuffix = "_probe_summary.csv";
 
 enum class FlowDirection : uint8_t {
   None,
@@ -58,19 +55,6 @@ summary_path_from_trace(const std::filesystem::path& trace_path)
     stem = "batching_trace";
   }
   summary_path.replace_filename(stem + std::string{kSummarySuffix});
-  return summary_path;
-}
-
-auto
-probe_summary_path_from_trace(const std::filesystem::path& trace_path)
-    -> std::filesystem::path
-{
-  auto summary_path = trace_path;
-  auto stem = summary_path.stem().string();
-  if (stem.empty()) {
-    stem = "batching_trace";
-  }
-  summary_path.replace_filename(stem + std::string{kProbeSummarySuffix});
   return summary_path;
 }
 
@@ -521,8 +505,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
     file_path_.clear();
     return;
   }
-  configure_summary_writer(path, /*is_probe=*/false);
-  configure_summary_writer(path, /*is_probe=*/true);
+  configure_summary_writer(path);
 
   trace_start_us_ = now_us();
   trace_start_initialized_ = true;
@@ -559,7 +542,6 @@ void
 BatchingTraceLogger::enable_probe_measurement()
 {
   probe_measurement_enabled_.store(true, std::memory_order_release);
-  initialize_probe_summary_writer();
 }
 
 auto
@@ -568,44 +550,10 @@ BatchingTraceLogger::probe_measurement_enabled() const -> bool
   return probe_measurement_enabled_.load(std::memory_order_acquire);
 }
 
-void
-BatchingTraceLogger::initialize_probe_summary_writer()
-{
-  std::lock_guard lock(mutex_);
-  if (file_path_.empty()) {
-    return;
-  }
-  const std::filesystem::path path{file_path_};
-  configure_summary_writer(path, /*is_probe=*/true);
-}
-
-auto
-BatchingTraceLogger::probe_summary_file_path() const
-    -> std::optional<std::filesystem::path>
-{
-  std::lock_guard lock(mutex_);
-  if (probe_summary_file_path_.empty()) {
-    return std::nullopt;
-  }
-  return probe_summary_file_path_;
-}
-
 auto
 BatchingTraceLogger::make_trace_prefix(bool is_warmup) const -> std::string
 {
   std::string prefix;
-  const auto mode = probe_mode_.load(std::memory_order_relaxed);
-  switch (mode) {
-    case ProbeTraceMode::Calibration:
-      prefix.append(kProbeCalibrationPrefix);
-      break;
-    case ProbeTraceMode::DurationCalibrated:
-      prefix.append(kProbeDurationPrefix);
-      break;
-    case ProbeTraceMode::None:
-    default:
-      break;
-  }
   if (is_warmup) {
     prefix.append(kWarmupPrefix);
   }
@@ -1051,21 +999,10 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
     return;
   }
   std::lock_guard lock(mutex_);
-  const auto mode = probe_mode_.load(std::memory_order_relaxed);
-  std::ofstream* stream = nullptr;
-  switch (mode) {
-    case ProbeTraceMode::None:
-      stream = &summary_stream_;
-      break;
-    case ProbeTraceMode::Calibration:
-    case ProbeTraceMode::DurationCalibrated:
-      stream = &probe_summary_stream_;
-      break;
-  }
-  if (stream == nullptr || !stream->is_open()) {
+  if (!summary_stream_.is_open()) {
     return;
   }
-  write_summary_line_locked(args, *stream);
+  write_summary_line_locked(args, summary_stream_);
 }
 
 auto
@@ -1161,38 +1098,26 @@ BatchingTraceLogger::write_summary_line_locked(
 
 auto
 BatchingTraceLogger::configure_summary_writer(
-    const std::filesystem::path& trace_path, bool is_probe) -> bool
+    const std::filesystem::path& trace_path) -> bool
 {
-  if (!is_probe) {
-    summary_file_path_.clear();
-  } else {
-    probe_summary_file_path_.clear();
-    if (!probe_measurement_enabled()) {
-      return false;
-    }
-  }
+  summary_file_path_.clear();
 
-  auto& stream = is_probe ? probe_summary_stream_ : summary_stream_;
-  const auto path = is_probe ? probe_summary_path_from_trace(trace_path)
-                             : summary_path_from_trace(trace_path);
+  auto& stream = summary_stream_;
+  const auto path = summary_path_from_trace(trace_path);
 
   stream.open(path, std::ios::out | std::ios::trunc);
   if (!stream.is_open()) {
     log_warning(std::format(
-        "Failed to open batching {}summary file '{}'; summary export "
+        "Failed to open batching summary file '{}'; summary export "
         "disabled.",
-        is_probe ? "probe " : "", path.string()));
+        path.string()));
     return false;
   }
   stream
       << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
          "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
          "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,warmup\n";
-  if (!is_probe) {
-    summary_file_path_ = path;
-  } else {
-    probe_summary_file_path_ = path;
-  }
+  summary_file_path_ = path;
   return true;
 }
 
@@ -1201,9 +1126,6 @@ BatchingTraceLogger::close_summary_writer()
 {
   if (summary_stream_.is_open()) {
     summary_stream_.close();
-  }
-  if (probe_summary_stream_.is_open()) {
-    probe_summary_stream_.close();
   }
 }
 

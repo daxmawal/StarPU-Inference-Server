@@ -202,9 +202,6 @@ class BatchingTraceLogger {
   [[nodiscard]] auto probe_mode() const -> ProbeTraceMode;
   void enable_probe_measurement();
   [[nodiscard]] auto probe_measurement_enabled() const -> bool;
-  void initialize_probe_summary_writer();
-  [[nodiscard]] auto probe_summary_file_path() const
-      -> std::optional<std::filesystem::path>;
 
   void log_request_enqueued(
       int request_id, std::string_view model_name, bool is_warmup = false,
@@ -241,8 +238,8 @@ class BatchingTraceLogger {
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
   void write_summary_line_locked(
       const BatchSummaryLogArgs& args, std::ostream& stream);
-  auto configure_summary_writer(
-      const std::filesystem::path& trace_path, bool is_probe) -> bool;
+  auto configure_summary_writer(const std::filesystem::path& trace_path)
+      -> bool;
   void close_summary_writer();
   [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
       -> std::string_view;
@@ -271,8 +268,6 @@ class BatchingTraceLogger {
   detail::WorkerLaneManager worker_lane_manager_;
   std::ofstream summary_stream_;
   std::filesystem::path summary_file_path_;
-  std::ofstream probe_summary_stream_;
-  std::filesystem::path probe_summary_file_path_;
 };
 
 }  // namespace starpu_server

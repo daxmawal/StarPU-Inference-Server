@@ -105,9 +105,6 @@ run_trace_plots_if_enabled(const RuntimeConfig& opts)
   if (const auto main_summary = tracer.summary_file_path()) {
     summary_paths.push_back(*main_summary);
   }
-  if (const auto probe_summary = tracer.probe_summary_file_path()) {
-    summary_paths.push_back(*probe_summary);
-  }
   if (summary_paths.empty()) {
     log_warning(
         "Tracing was enabled but no batching_trace_summary.csv files were "
