@@ -3,7 +3,7 @@
 
 namespace starpu_server {
 
-enum class SubmissionPhase { Probe, RealInference };
+enum class SubmissionPhase { Probe, Warmup, RealInference };
 
 class SubmissionPhaseContext {
  private:

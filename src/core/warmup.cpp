@@ -26,6 +26,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
+#include "starpu_task_worker/submission_context.hpp"
 
 namespace starpu_server {
 namespace {
@@ -195,7 +196,10 @@ WarmupRunner::run(int request_nb_per_worker)
   config.all_done_cv = &dummy_cv;
   StarPUTaskRunner worker(config);
 
-  std::jthread server(&StarPUTaskRunner::run, &worker);
+  std::jthread server([&worker]() {
+    SubmissionPhaseScopedGuard warmup_phase_guard(SubmissionPhase::Warmup);
+    worker.run();
+  });
 
   std::jthread client([this, &device_workers, &queue, request_nb_per_worker]() {
     client_worker(device_workers, queue, request_nb_per_worker);
