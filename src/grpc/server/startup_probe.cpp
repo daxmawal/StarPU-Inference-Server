@@ -120,8 +120,8 @@ run_startup_throughput_probe_cpu(
 
   const int max_batch_size = std::max(1, opts.batching.max_batch_size);
   const int worker_count = std::max(1, static_cast<int>(cpu_workers.size()));
-  constexpr double kMinTargetSeconds = 3.0;
-  constexpr double kTargetSeconds = 5.0;
+  constexpr double kMinTargetSeconds = 10.0;
+  constexpr double kTargetSeconds = 15.0;
   constexpr int kCalibrationMultiplier = 3;
   constexpr int kFallbackBatchesPerWorker = 20;
   constexpr std::string_view kCpuThroughputSuffix = "_cpu_throughput.txt";
