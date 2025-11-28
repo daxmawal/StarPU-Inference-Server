@@ -139,7 +139,6 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "verbose",
           "verbosity",
           "name",
-          "scheduler",
           "model",
           "starpu_env",
           "request_nb",
@@ -182,18 +181,6 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
     }
   }
   return cfg.valid;
-}
-
-void
-parse_scheduler_node(const YAML::Node& root, RuntimeConfig& cfg)
-{
-  if (root["scheduler"]) {
-    cfg.scheduler = root["scheduler"].as<std::string>();
-    if (!kAllowedSchedulers.contains(cfg.scheduler)) {
-      log_error(std::string("Unknown scheduler: ") + cfg.scheduler);
-      cfg.valid = false;
-    }
-  }
 }
 
 void
@@ -560,7 +547,6 @@ load_config(const std::string& path) -> RuntimeConfig
     if (!validate_required_keys(root, cfg)) {
       return cfg;
     }
-    parse_scheduler_node(root, cfg);
     parse_model_node(root, cfg);
     parse_request_nb_and_devices(root, cfg);
     parse_io_nodes(root, cfg);

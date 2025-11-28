@@ -259,14 +259,6 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt},
     InvalidConfigCase{
-        "InvalidSchedulerSetsValidFalse",
-        [] {
-          auto yaml = std::string{"scheduler: unknown\n"};
-          yaml += base_model_yaml();
-          return yaml;
-        }(),
-        std::nullopt},
-    InvalidConfigCase{
         "NegativeDimensionSetsValidFalse",
         [] {
           std::string yaml;
@@ -656,7 +648,6 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   std::ostringstream yaml;
   yaml << "name: fcfs_config\n";
-  yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "use_cpu: true\n";
   yaml << "use_cuda:\n";
@@ -689,7 +680,6 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.name, "fcfs_config");
-  EXPECT_EQ(cfg.scheduler, "fcfs");
   EXPECT_EQ(cfg.models[0].path, model_path.string());
   EXPECT_EQ(cfg.devices.ids, (std::vector<int>{0, 1}));
   ASSERT_EQ(cfg.models[0].inputs.size(), 1U);

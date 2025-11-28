@@ -1,6 +1,6 @@
 name: bert_docker
-scheduler: eager
 starpu_env:
+  STARPU_SCHED: "eager"
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"
   STARPU_NWORKER_PER_CUDA: "4"

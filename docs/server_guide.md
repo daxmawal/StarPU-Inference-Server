@@ -40,8 +40,7 @@ Optional keys unlock batching, logging, and runtime controls:
 
 |Key|Description|Default|
 |---|---|---|
-|`scheduler`|StarPU scheduler name (e.g., lws, eager, heft).|`lws`|
-|`starpu_env`|Lets you pin StarPU-specific environment variables.|unset|
+|`starpu_env`|Lets you pin StarPU-specific environment variables (e.g., `STARPU_SCHED` to set the scheduler).|unset|
 |`use_cpu`|Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution.|`true`|
 |`group_cpu_by_numa`|Spawn one StarPU CPU worker per NUMA node instead of per core.|`false`|
 |`use_cuda`|Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`.|`false`|
@@ -108,9 +107,10 @@ starpu_env:
 The repository ships a ready-to-run configuration:
 
 ```yaml
-scheduler: lws
 name: bert_local
 model: ../models/bert_libtorch.pt
+starpu_env:
+  STARPU_SCHED: lws
 inputs:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
   - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }

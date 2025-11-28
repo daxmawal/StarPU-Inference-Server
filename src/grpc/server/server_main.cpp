@@ -77,7 +77,6 @@ handle_program_arguments(std::span<char const* const> args) -> RuntimeConfig
 
   log_info(cfg.verbosity, std::format("__cplusplus = {}", __cplusplus));
   log_info(cfg.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
-  log_info(cfg.verbosity, std::format("Scheduler       : {}", cfg.scheduler));
   if (!cfg.name.empty()) {
     log_info(cfg.verbosity, std::format("Configuration   : {}", cfg.name));
   }

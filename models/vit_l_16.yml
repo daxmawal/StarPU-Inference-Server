@@ -1,8 +1,8 @@
 name: vit_l_16
 trace_enabled: true
 repository_output: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build/"
-scheduler: eager
 starpu_env:
+  STARPU_SCHED: "eager"
   STARPU_FXT_TRACE: "1"
   STARPU_FXT_PREFIX: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build"
   STARPU_CUDA_THREAD_PER_WORKER: "1"

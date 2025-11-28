@@ -34,10 +34,6 @@ inline constexpr double kDefaultRelativeTolerance = 1e-3;
 inline constexpr double kDefaultAbsoluteTolerance = 1e-5;
 inline constexpr int kDefaultMetricsPort = 9090;
 
-inline const std::unordered_set<std::string, TransparentHash, std::equal_to<>>
-    kAllowedSchedulers = {"lws",  "dmda",   "dmdas", "ws",   "eager", "random",
-                          "prio", "peager", "pheft", "heft", "fcfs"};
-
 // =============================================================================
 // TensorConfig
 // -----------------------------------------------------------------------------
@@ -110,7 +106,6 @@ struct RuntimeConfig {
     size_t max_models_gpu = kMaxModelsGpu;
   };
 
-  std::string scheduler = "lws";
   std::string name;
   std::string config_path;
   std::string server_address = "127.0.0.1:50051";
