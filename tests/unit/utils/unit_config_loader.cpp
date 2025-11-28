@@ -827,7 +827,6 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 
   std::ostringstream yaml;
   yaml << "name: slots_test\n";
-  yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
