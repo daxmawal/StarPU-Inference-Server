@@ -23,6 +23,7 @@
 #include "core/starpu_setup.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
+#include "starpu_task_worker/submission_context.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/client_utils.hpp"
 #include "utils/logger.hpp"
@@ -238,7 +239,10 @@ run_startup_throughput_probe_cpu(
       }
 
       StarPUTaskRunner worker(config);
-      std::jthread worker_thread(&StarPUTaskRunner::run, &worker);
+      std::jthread worker_thread([&worker]() {
+        SubmissionPhaseScopedGuard probe_phase_guard(SubmissionPhase::Probe);
+        worker.run();
+      });
 
       std::jthread client_thread([&, default_model_name]() {
         std::mt19937 rng;
@@ -611,7 +615,10 @@ run_startup_throughput_probe(
       }
 
       StarPUTaskRunner worker(config);
-      std::jthread worker_thread(&StarPUTaskRunner::run, &worker);
+      std::jthread worker_thread([&worker]() {
+        SubmissionPhaseScopedGuard probe_phase_guard(SubmissionPhase::Probe);
+        worker.run();
+      });
 
       std::jthread client_thread([&, default_model_name]() {
         std::mt19937 rng;

@@ -31,6 +31,7 @@
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
+#include "submission_context.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/nvtx.hpp"
@@ -39,7 +40,18 @@
 namespace starpu_server {
 
 namespace {
-std::atomic<int> g_next_submission_id{0};
+std::atomic<int> g_probe_submission_id{0};
+std::atomic<int> g_real_inference_submission_id{0};
+
+auto
+get_next_submission_id() -> int
+{
+  const auto phase = SubmissionPhaseContext::current_phase();
+  if (phase == SubmissionPhase::Probe) {
+    return g_probe_submission_id.fetch_add(1);
+  }
+  return g_real_inference_submission_id.fetch_add(1);
+}
 }  // namespace
 
 namespace task_runner_internal {
@@ -2218,7 +2230,7 @@ StarPUTaskRunner::run()
       break;
     }
 
-    const auto submission_id = g_next_submission_id.fetch_add(1);
+    const auto submission_id = get_next_submission_id();
     job->set_submission_id(submission_id);
     job->timing_info().submission_id = submission_id;
 
