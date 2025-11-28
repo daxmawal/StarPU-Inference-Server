@@ -346,7 +346,7 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
 inline auto
 is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
 {
-  return job && job->get_fixed_worker_id().has_value();
+  return job && job->is_warmup_job();
 }
 
 struct VectorResizeSpec {

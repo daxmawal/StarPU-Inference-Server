@@ -135,6 +135,7 @@ WarmupRunner::client_worker(
           inputs, outputs_ref_, request_id, {}, {}, opts_.name);
       const int job_request_id = request_id;
       job->set_fixed_worker_id(worker_id);
+      job->set_is_warmup_job(true);
 
       const auto enqueued_now = std::chrono::high_resolution_clock::now();
       job->timing_info().enqueued_time = enqueued_now;

@@ -200,6 +200,9 @@ main(int argc, char* argv[]) -> int
     const double measured_throughput =
         starpu_server::run_startup_throughput_probe(
             opts, starpu, model_cpu, models_gpu, reference_outputs);
+    const double measured_throughput_cpu =
+        starpu_server::run_startup_throughput_probe_cpu(
+            opts, starpu, model_cpu, models_gpu, reference_outputs);
     starpu_server::launch_threads(
         opts, starpu, model_cpu, models_gpu, reference_outputs,
         measured_throughput);

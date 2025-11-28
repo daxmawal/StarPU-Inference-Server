@@ -173,6 +173,7 @@ class InferenceJob : public JobBatchState {
   void set_request_id(int request_id) { request_id_ = request_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_gpu_only(bool enable) { gpu_only_ = enable; }
+  void set_is_warmup_job(bool is_warmup) { is_warmup_job_ = is_warmup; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
     reset_effective_batch_size();
@@ -232,6 +233,7 @@ class InferenceJob : public JobBatchState {
     return input_memory_holders_;
   }
   [[nodiscard]] auto is_gpu_only() const -> bool { return gpu_only_; }
+  [[nodiscard]] auto is_warmup_job() const -> bool { return is_warmup_job_; }
 
   [[nodiscard]] auto get_request_id() const -> int { return request_id_; }
   [[nodiscard]] auto get_input_tensors() const
@@ -296,6 +298,7 @@ class InferenceJob : public JobBatchState {
   int worker_id_ = -1;
 
   bool gpu_only_ = false;
+  bool is_warmup_job_ = false;
   detail::TimingInfo timing_info_;
 
   bool is_shutdown_signal_ = false;
