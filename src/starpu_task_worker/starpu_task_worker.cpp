@@ -37,6 +37,11 @@
 #include "utils/perf_observer.hpp"
 
 namespace starpu_server {
+
+namespace {
+std::atomic<int> g_next_submission_id{0};
+}  // namespace
+
 namespace task_runner_internal {
 
 using ExceptionLoggingMessages = starpu_server::ExceptionLoggingMessages;
@@ -2213,7 +2218,7 @@ StarPUTaskRunner::run()
       break;
     }
 
-    const auto submission_id = next_submission_id_.fetch_add(1);
+    const auto submission_id = g_next_submission_id.fetch_add(1);
     job->set_submission_id(submission_id);
     job->timing_info().submission_id = submission_id;
 

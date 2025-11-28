@@ -167,7 +167,6 @@ class StarPUTaskRunner {
   std::condition_variable* all_done_cv_;
   const InferenceTaskDependencies* dependencies_;
   std::shared_ptr<InferenceJob> pending_job_;
-  std::atomic<int> next_submission_id_{0};
   std::jthread batching_thread_;
   std::mutex prepared_mutex_;
   std::condition_variable prepared_cv_;
