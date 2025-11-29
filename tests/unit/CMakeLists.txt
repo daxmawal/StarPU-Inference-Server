@@ -14,6 +14,7 @@ target_sources(
             core/unit_warmup_runner.cpp
             core/unit_starpu_setup.cpp
             core/unit_input_slot_pool_deleter.cpp
+            core/unit_allocate_and_pin_buffer.cpp
             core/robustness/edgecases_inference_queue.cpp
             core/robustness/edgecases_warmup_runner.cpp
             core/robustness/edgecases_inference_runner.cpp
