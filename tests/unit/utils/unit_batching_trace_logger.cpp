@@ -1900,4 +1900,72 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanWritesValidCongestionEvent)
   remove_repository_outputs(trace_path);
 }
 
+TEST(BatchingTraceLoggerTest, MakeTracePrefixGPUCalibrationMode)
+{
+  BatchingTraceLogger logger;
+  const auto prefix =
+      logger.make_trace_prefix(false, ProbeTraceMode::GPUCalibration);
+  EXPECT_EQ(prefix, "probe_gpu_calibration_");
+}
+
+TEST(BatchingTraceLoggerTest, MakeTracePrefixGPUDurationCalibratedMode)
+{
+  BatchingTraceLogger logger;
+  const auto prefix =
+      logger.make_trace_prefix(false, ProbeTraceMode::GPUDurationCalibrated);
+  EXPECT_EQ(prefix, "probe_gpu_duration_");
+}
+
+TEST(BatchingTraceLoggerTest, MakeTracePrefixCPUCalibrationMode)
+{
+  BatchingTraceLogger logger;
+  const auto prefix =
+      logger.make_trace_prefix(false, ProbeTraceMode::CPUCalibration);
+  EXPECT_EQ(prefix, "probe_cpu_calibration_");
+}
+
+TEST(BatchingTraceLoggerTest, MakeTracePrefixCPUDurationCalibratedMode)
+{
+  BatchingTraceLogger logger;
+  const auto prefix =
+      logger.make_trace_prefix(false, ProbeTraceMode::CPUDurationCalibrated);
+  EXPECT_EQ(prefix, "probe_cpu_duration_");
+}
+
+TEST(BatchingTraceLoggerTest, MakeTracePrefixNoneModeWithWarmup)
+{
+  BatchingTraceLogger logger;
+  const auto prefix = logger.make_trace_prefix(true, ProbeTraceMode::None);
+  EXPECT_EQ(prefix, "warming_");
+}
+
+TEST(BatchingTraceLoggerTest, MakeTracePrefixNoneModeWithoutWarmup)
+{
+  BatchingTraceLogger logger;
+  const auto prefix = logger.make_trace_prefix(false, ProbeTraceMode::None);
+  EXPECT_EQ(prefix, "");
+}
+
+TEST(BatchingTraceLoggerTest, MakeTracePrefixIgnoresIsWarmupForProbeMode)
+{
+  BatchingTraceLogger logger;
+  const auto prefix_warmup =
+      logger.make_trace_prefix(true, ProbeTraceMode::GPUCalibration);
+  const auto prefix_non_warmup =
+      logger.make_trace_prefix(false, ProbeTraceMode::GPUCalibration);
+  EXPECT_EQ(prefix_warmup, "probe_gpu_calibration_");
+  EXPECT_EQ(prefix_non_warmup, "probe_gpu_calibration_");
+  EXPECT_EQ(prefix_warmup, prefix_non_warmup);
+}
+
+TEST(BatchingTraceLoggerTest, MakeTracePrefixDefaultProbeMode)
+{
+  BatchingTraceLogger logger;
+  const auto prefix_without_probe_mode = logger.make_trace_prefix(false);
+  const auto prefix_with_explicit_none =
+      logger.make_trace_prefix(false, ProbeTraceMode::None);
+  EXPECT_EQ(prefix_without_probe_mode, prefix_with_explicit_none);
+  EXPECT_EQ(prefix_without_probe_mode, "");
+}
+
 }}  // namespace starpu_server
