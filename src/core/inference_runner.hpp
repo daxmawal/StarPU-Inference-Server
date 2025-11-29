@@ -234,6 +234,8 @@ class InferenceJob : public JobBatchState {
   }
   [[nodiscard]] auto is_gpu_only() const -> bool { return gpu_only_; }
   [[nodiscard]] auto is_warmup_job() const -> bool { return is_warmup_job_; }
+  [[nodiscard]] auto is_probe_job() const -> bool { return is_probe_job_; }
+  void set_is_probe_job(bool is_probe) { is_probe_job_ = is_probe; }
 
   [[nodiscard]] auto get_request_id() const -> int { return request_id_; }
   [[nodiscard]] auto get_input_tensors() const
@@ -299,6 +301,7 @@ class InferenceJob : public JobBatchState {
 
   bool gpu_only_ = false;
   bool is_warmup_job_ = false;
+  bool is_probe_job_ = false;
   detail::TimingInfo timing_info_;
 
   bool is_shutdown_signal_ = false;

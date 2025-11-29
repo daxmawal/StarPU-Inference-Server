@@ -874,7 +874,6 @@ ResultDispatcher::record_job_metrics(
         detail::compute_latency_breakdown(timing, latency.count());
     const auto request_ids = build_request_ids_for_trace(job);
     const auto request_arrivals = build_request_arrival_us_for_trace(job);
-    const bool is_probe_phase = tracer.probe_mode() != ProbeTraceMode::None;
     tracer.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
         .batch_id = job_id,
         .model_name = job->model_name(),
@@ -893,7 +892,7 @@ ResultDispatcher::record_job_metrics(
         .callback_ms = breakdown.callback_ms,
         .total_ms = breakdown.total_ms,
         .is_warmup = is_warmup_job(job),
-        .is_probe = is_probe_phase,
+        .is_probe = job->is_probe_job(),
     });
   }
 }
@@ -1834,13 +1833,13 @@ StarPUTaskRunner::trace_batch_if_enabled(
   tracer.log_batch_enqueue_span(
       submission_id, job->model_name(), batch_size,
       BatchingTraceLogger::TimeRange{enqueue_start, enqueue_end},
-      request_ids_span, warmup_job);
+      request_ids_span, warmup_job, job->is_probe_job());
   tracer.log_batch_build_span(
       submission_id, job->model_name(), batch_size,
       BatchingTraceLogger::TimeRange{
           job->timing_info().batch_collect_start_time,
           job->timing_info().batch_collect_end_time},
-      request_ids_span, warmup_job);
+      request_ids_span, warmup_job, job->is_probe_job());
 }
 
 void

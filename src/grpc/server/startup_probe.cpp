@@ -248,6 +248,7 @@ run_startup_throughput_probe_cpu(
           auto job = client_utils::create_job(
               inputs, reference_outputs, request_id, {}, {},
               default_model_name);
+          job->set_is_probe_job(true);
           if (!cpu_workers.empty()) {
             static int cpu_worker_index = 0;
             const int worker_id =
@@ -361,7 +362,7 @@ run_startup_throughput_probe_cpu(
   ProbeOutcome calibration{};
   {
     ProbeTracePrefixGuard probe_prefix_guard(
-        BatchingTraceLogger::instance(), ProbeTraceMode::Calibration);
+        BatchingTraceLogger::instance(), ProbeTraceMode::CPUCalibration);
     calibration = run_probe_once(calibration_requests, false);
   }
 
@@ -405,7 +406,7 @@ run_startup_throughput_probe_cpu(
       measured_throughput > 0.0 ? ProbeOutcome{std::nullopt, 0, true} : [&]() {
         ProbeTracePrefixGuard probe_prefix_guard(
             BatchingTraceLogger::instance(),
-            ProbeTraceMode::DurationCalibrated);
+            ProbeTraceMode::CPUDurationCalibrated);
         return run_probe_once(synthetic_requests, true);
       }();
 
@@ -576,6 +577,7 @@ run_startup_throughput_probe(
           auto job = client_utils::create_job(
               inputs, reference_outputs, request_id, {}, {},
               default_model_name);
+          job->set_is_probe_job(true);
           job->set_gpu_only(true);
 
           const auto enqueued_now = std::chrono::high_resolution_clock::now();
@@ -682,7 +684,7 @@ run_startup_throughput_probe(
   ProbeOutcome calibration{};
   {
     ProbeTracePrefixGuard probe_prefix_guard(
-        BatchingTraceLogger::instance(), ProbeTraceMode::Calibration);
+        BatchingTraceLogger::instance(), ProbeTraceMode::GPUCalibration);
     calibration = run_probe_once(calibration_requests, false);
   }
 
@@ -726,7 +728,7 @@ run_startup_throughput_probe(
       measured_throughput > 0.0 ? ProbeOutcome{std::nullopt, 0, true} : [&]() {
         ProbeTracePrefixGuard probe_prefix_guard(
             BatchingTraceLogger::instance(),
-            ProbeTraceMode::DurationCalibrated);
+            ProbeTraceMode::GPUDurationCalibrated);
         return run_probe_once(synthetic_requests, true);
       }();
 

@@ -23,8 +23,10 @@ struct RuntimeConfig;
 enum class BatchingTraceEvent : uint8_t { RequestQueued, BatchSubmitted };
 enum class ProbeTraceMode : uint8_t {
   None = 0,
-  Calibration,
-  DurationCalibrated
+  GPUCalibration,
+  GPUDurationCalibrated,
+  CPUCalibration,
+  CPUDurationCalibrated
 };
 
 namespace detail {
@@ -211,11 +213,11 @@ class BatchingTraceLogger {
   void log_batch_build_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,
       TimeRange schedule, std::span<const int> request_ids = {},
-      bool is_warmup = false);
+      bool is_warmup = false, bool is_probe = false);
   void log_batch_enqueue_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,
       TimeRange queue_times, std::span<const int> request_ids = {},
-      bool is_warmup = false);
+      bool is_warmup = false, bool is_probe = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
   void log_batch_summary(const BatchSummaryLogArgs& args);
   void log_congestion_span(const CongestionSpanArgs& args);
@@ -232,10 +234,12 @@ class BatchingTraceLogger {
   void write_batch_compute_span(const BatchComputeWriteArgs& args);
   void write_batch_enqueue_span(
       std::string_view model_name, int batch_id, std::size_t batch_size,
-      BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
+      BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup,
+      bool is_probe = false);
   void write_batch_build_span(
       std::string_view model_name, int batch_id, std::size_t batch_size,
-      BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
+      BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup,
+      bool is_probe = false);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
   void write_summary_line_locked(
       const BatchSummaryLogArgs& args, std::ostream& stream);
@@ -254,7 +258,9 @@ class BatchingTraceLogger {
   [[nodiscard]] static auto now_us() -> int64_t;
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
-  [[nodiscard]] auto make_trace_prefix(bool is_warmup) const -> std::string;
+  [[nodiscard]] auto make_trace_prefix(
+      bool is_warmup,
+      ProbeTraceMode probe_mode = ProbeTraceMode::None) const -> std::string;
 
   mutable std::mutex mutex_;
   std::atomic<bool> enabled_{false};
