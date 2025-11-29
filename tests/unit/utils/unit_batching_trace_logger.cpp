@@ -2269,4 +2269,196 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedIncludesAllFields)
   EXPECT_NE(output.find(",true\n"), std::string::npos);
 }
 
+TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedWritesToSummaryStream)
+{
+  BatchingTraceLogger logger;
+
+  const std::array<int, 1> request_ids{1};
+  const std::array<int64_t, 1> request_arrivals{100};
+
+  std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
+  std::filesystem::path trace_dir = temp_dir / "test_trace";
+  std::filesystem::create_directories(trace_dir);
+
+  std::filesystem::path trace_file = trace_dir / "test_trace.trace";
+
+  ASSERT_TRUE(logger.configure_summary_writer(trace_file));
+
+  logger.write_summary_line_locked(BatchingTraceLogger::BatchSummaryLogArgs{
+      .batch_id = 100,
+      .model_name = "test_model",
+      .batch_size = 1,
+      .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .device_id = -1,
+      .queue_ms = 1.0,
+      .batch_ms = 2.0,
+      .submit_ms = 3.0,
+      .scheduling_ms = 4.0,
+      .codelet_ms = 5.0,
+      .inference_ms = 6.0,
+      .callback_ms = 7.0,
+      .total_ms = 8.0,
+      .is_warmup = false,
+      .is_probe = false,
+  });
+
+  logger.close_summary_writer();
+
+  std::filesystem::path summary_file_path =
+      trace_dir / "test_trace_summary.csv";
+  std::ifstream summary_file(summary_file_path);
+  ASSERT_TRUE(summary_file.is_open());
+
+  std::string header, line;
+  std::getline(summary_file, header);
+  std::getline(summary_file, line);
+
+  EXPECT_NE(line.find("100,"), std::string::npos);
+  EXPECT_NE(line.find("\"test_model\""), std::string::npos);
+  EXPECT_NE(line.find(",0,"), std::string::npos);
+
+  std::filesystem::remove_all(trace_dir);
+}
+
+TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedWithoutStreamSkipsProbe)
+{
+  BatchingTraceLogger logger;
+
+  const std::array<int, 1> request_ids{2};
+  const std::array<int64_t, 1> request_arrivals{200};
+
+  std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
+  std::filesystem::path trace_dir = temp_dir / "test_trace_probe";
+  std::filesystem::create_directories(trace_dir);
+
+  std::filesystem::path trace_file = trace_dir / "test_probe.trace";
+  ASSERT_TRUE(logger.configure_summary_writer(trace_file));
+
+  logger.write_summary_line_locked(BatchingTraceLogger::BatchSummaryLogArgs{
+      .batch_id = 200,
+      .model_name = "model1",
+      .batch_size = 1,
+      .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .device_id = -1,
+      .queue_ms = 1.0,
+      .batch_ms = 2.0,
+      .submit_ms = 3.0,
+      .scheduling_ms = 4.0,
+      .codelet_ms = 5.0,
+      .inference_ms = 6.0,
+      .callback_ms = 7.0,
+      .total_ms = 8.0,
+      .is_warmup = false,
+      .is_probe = false,
+  });
+
+  logger.write_summary_line_locked(BatchingTraceLogger::BatchSummaryLogArgs{
+      .batch_id = 201,
+      .model_name = "probe_model",
+      .batch_size = 1,
+      .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .device_id = -1,
+      .queue_ms = 1.0,
+      .batch_ms = 2.0,
+      .submit_ms = 3.0,
+      .scheduling_ms = 4.0,
+      .codelet_ms = 5.0,
+      .inference_ms = 6.0,
+      .callback_ms = 7.0,
+      .total_ms = 8.0,
+      .is_warmup = false,
+      .is_probe = true,
+  });
+
+  logger.close_summary_writer();
+
+  std::filesystem::path summary_file_path =
+      trace_dir / "test_probe_summary.csv";
+  std::ifstream summary_file(summary_file_path);
+  ASSERT_TRUE(summary_file.is_open());
+
+  std::string header;
+  std::getline(summary_file, header);
+
+  int line_count = 0;
+  std::string line;
+  while (std::getline(summary_file, line)) {
+    if (!line.empty()) {
+      line_count++;
+      EXPECT_NE(line.find("200,"), std::string::npos);
+      EXPECT_EQ(line.find("201,"), std::string::npos);
+    }
+  }
+  EXPECT_EQ(line_count, 1);
+
+  std::filesystem::remove_all(trace_dir);
+}
+
+TEST(
+    BatchingTraceLoggerTest,
+    WriteSummaryLineLockedWithoutStreamIncludesWarmupFlag)
+{
+  BatchingTraceLogger logger;
+
+  const std::array<int, 1> request_ids{3};
+  const std::array<int64_t, 1> request_arrivals{300};
+
+  std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
+  std::filesystem::path trace_dir = temp_dir / "test_trace_warmup";
+  std::filesystem::create_directories(trace_dir);
+
+  std::filesystem::path trace_file = trace_dir / "test_warmup.trace";
+  ASSERT_TRUE(logger.configure_summary_writer(trace_file));
+
+  logger.write_summary_line_locked(BatchingTraceLogger::BatchSummaryLogArgs{
+      .batch_id = 300,
+      .model_name = "warmup_model",
+      .batch_size = 1,
+      .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .device_id = -1,
+      .queue_ms = 0.5,
+      .batch_ms = 0.6,
+      .submit_ms = 0.7,
+      .scheduling_ms = 0.8,
+      .codelet_ms = 0.9,
+      .inference_ms = 1.0,
+      .callback_ms = 1.1,
+      .total_ms = 1.2,
+      .is_warmup = true,
+      .is_probe = false,
+  });
+
+  logger.close_summary_writer();
+
+  std::filesystem::path summary_file_path =
+      trace_dir / "test_warmup_summary.csv";
+  std::ifstream summary_file(summary_file_path);
+  ASSERT_TRUE(summary_file.is_open());
+
+  std::string header;
+  std::getline(summary_file, header);
+
+  std::string line;
+  std::getline(summary_file, line);
+
+  EXPECT_NE(line.find(",true"), std::string::npos)
+      << "Warmup flag should be 'true'";
+  EXPECT_EQ(line.find(",false"), std::string::npos)
+      << "Warmup flag should not be 'false'";
+
+  std::filesystem::remove_all(trace_dir);
+}
+
 }}  // namespace starpu_server
