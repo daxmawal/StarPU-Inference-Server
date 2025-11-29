@@ -298,15 +298,21 @@ InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
     std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-    std::string default_model_name, double measured_throughput)
+    std::string default_model_name, double measured_throughput, bool use_cuda,
+    double measured_throughput_cpu)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types)),
       expected_input_dims_(std::move(expected_input_dims)),
       max_batch_size_(max_batch_size),
-      default_model_name_(std::move(default_model_name)),
-      measured_throughput_(measured_throughput),
-      congestion_threshold_(measured_throughput * kCongestionEnterRatio),
-      congestion_clear_threshold_(measured_throughput * kCongestionClearRatio)
+      default_model_name_(std::move(default_model_name)), use_cuda_(use_cuda),
+      measured_throughput_(
+          use_cuda ? measured_throughput : measured_throughput_cpu),
+      congestion_threshold_(
+          (use_cuda ? measured_throughput : measured_throughput_cpu) *
+          kCongestionEnterRatio),
+      congestion_clear_threshold_(
+          (use_cuda ? measured_throughput : measured_throughput_cpu) *
+          kCongestionClearRatio)
 {
   start_congestion_monitor();
 }
@@ -314,10 +320,12 @@ InferenceServiceImpl::InferenceServiceImpl(
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
-    std::string default_model_name, double measured_throughput)
+    std::string default_model_name, double measured_throughput, bool use_cuda,
+    double measured_throughput_cpu)
     : InferenceServiceImpl(
           queue, reference_outputs, std::move(expected_input_types), {}, 0,
-          std::move(default_model_name), measured_throughput)
+          std::move(default_model_name), measured_throughput, use_cuda,
+          measured_throughput_cpu)
 {
 }
 
@@ -474,10 +482,11 @@ InferenceServiceImpl::start_congestion_monitor()
               congestion_start_time_ =
                   std::chrono::high_resolution_clock::time_point{};
               recent_arrivals_.clear();
+              const auto device_name = use_cuda_ ? "GPUs" : "CPUs";
               log_warning(std::format(
-                  "[Congestion] GPUs congestion cleared: arrival rate {:.2f} "
+                  "[Congestion] {} congestion cleared: arrival rate {:.2f} "
                   "req/s is below {:.2f} infer/s",
-                  0.0, congestion_clear_threshold_));
+                  device_name, 0.0, congestion_clear_threshold_));
               cleared = true;
             }
           }
@@ -554,10 +563,11 @@ InferenceServiceImpl::record_request_arrival(
   }
 
   if (entered) {
+    const auto device_name = use_cuda_ ? "GPUs" : "CPUs";
     log_warning(std::format(
-        "[Congestion] GPUs congestion detected: arrival rate {:.2f} req/s "
+        "[Congestion] {} congestion detected: arrival rate {:.2f} req/s "
         "is near measured throughput {:.2f} infer/s",
-        arrival_rate, measured_throughput_));
+        device_name, arrival_rate, measured_throughput_));
     return;
   }
 
@@ -565,10 +575,11 @@ InferenceServiceImpl::record_request_arrival(
     if (start_time == std::chrono::high_resolution_clock::time_point{}) {
       start_time = arrival_time - kArrivalWindow;
     }
+    const auto device_name = use_cuda_ ? "GPUs" : "CPUs";
     log_warning(std::format(
-        "[Congestion] GPUs congestion cleared: arrival rate {:.2f} req/s "
+        "[Congestion] {} congestion cleared: arrival rate {:.2f} req/s "
         "is below {:.2f} infer/s",
-        arrival_rate, clear_threshold));
+        device_name, arrival_rate, clear_threshold));
     BatchingTraceLogger::instance().log_congestion_span(
         BatchingTraceLogger::CongestionSpanArgs{
             .start_time = start_time,
@@ -1183,7 +1194,8 @@ RunGrpcServer(
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size, options.default_model_name, options.measured_throughput);
+      max_batch_size, options.default_model_name, options.measured_throughput,
+      options.use_cuda, options.measured_throughput_cpu);
   run_grpc_server_impl(service, options, server);
 }
 
@@ -1195,7 +1207,8 @@ RunGrpcServer(
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs, expected_input_types,
-      options.default_model_name, options.measured_throughput);
+      options.default_model_name, options.measured_throughput, options.use_cuda,
+      options.measured_throughput_cpu);
   run_grpc_server_impl(service, options, server);
 }
 

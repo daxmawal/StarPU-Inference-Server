@@ -33,13 +33,15 @@ class InferenceServiceImpl final
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
       std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-      std::string default_model_name = {}, double measured_throughput = 0.0);
+      std::string default_model_name = {}, double measured_throughput = 0.0,
+      bool use_cuda = false, double measured_throughput_cpu = 0.0);
 
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      std::string default_model_name = {}, double measured_throughput = 0.0);
+      std::string default_model_name = {}, double measured_throughput = 0.0,
+      bool use_cuda = false, double measured_throughput_cpu = 0.0);
 
   auto ServerLive(
       grpc::ServerContext* context, const inference::ServerLiveRequest* request,
@@ -155,6 +157,7 @@ class InferenceServiceImpl final
   double measured_throughput_ = 0.0;
   double congestion_threshold_ = 0.0;
   double congestion_clear_threshold_ = 0.0;
+  bool use_cuda_ = false;
   std::atomic<int> next_request_id_{0};
   std::mutex congestion_mutex_;
   std::deque<std::chrono::high_resolution_clock::time_point> recent_arrivals_;
@@ -199,6 +202,8 @@ struct GrpcServerOptions {
   VerbosityLevel verbosity;
   std::string default_model_name;
   double measured_throughput = 0.0;
+  double measured_throughput_cpu = 0.0;
+  bool use_cuda = false;
 };
 
 void RunGrpcServer(
