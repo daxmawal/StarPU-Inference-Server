@@ -44,38 +44,29 @@ struct ProbeOutcome {
 auto
 compute_config_signature(const RuntimeConfig& opts) -> std::string
 {
-  std::ostringstream oss;
+  std::string config_content;
 
-  oss << "use_cuda=" << opts.devices.use_cuda << "|";
-  oss << "max_batch_size=" << opts.batching.max_batch_size << "|";
-  oss << "batch_coalesce_timeout_ms=" << opts.batching.batch_coalesce_timeout_ms
-      << "|";
-  oss << "pool_size=" << opts.batching.pool_size << "|";
-  oss << "dynamic_batching=" << opts.batching.dynamic_batching << "|";
-  oss << "device_ids=";
-  for (int id : opts.devices.ids) {
-    oss << id << ",";
-  }
-  oss << "|";
-  oss << "gpu_models=";
-  for (const auto& model : opts.models) {
-    oss << model.name << "(";
-    for (const auto& input : model.inputs) {
-      oss << "[";
-      for (int64_t dim : input.dims) {
-        oss << dim << ",";
+  if (!opts.config_path.empty()) {
+    try {
+      std::ifstream config_file(opts.config_path);
+      if (config_file.is_open()) {
+        std::stringstream buffer;
+        buffer << config_file.rdbuf();
+        config_content = buffer.str();
+      } else {
+        config_content = opts.config_path;
       }
-      oss << "]";
     }
-    oss << "),";
+    catch (const std::exception& e) {
+      config_content = opts.config_path;
+    }
+  } else {
+    // No config path provided
+    config_content = "no_config_path";
   }
-  oss << "|";
-  oss << "starpu_env=";
-  for (const auto& [key, value] : opts.starpu_env) {
-    oss << key << "=" << value << ",";
-  }
+
   std::hash<std::string> hash_fn;
-  auto hash_value = hash_fn(oss.str());
+  auto hash_value = hash_fn(config_content);
   std::ostringstream hex_stream;
   hex_stream << std::hex << hash_value;
   return hex_stream.str();
@@ -162,8 +153,8 @@ run_startup_throughput_probe_cpu(
 
   double cached_throughput = 0.0;
   {
+    const auto current_signature = compute_config_signature(opts);
     if (auto cached = load_cached_throughput_measurements(throughput_file)) {
-      const auto current_signature = compute_config_signature(opts);
       if (cached->config_signature == current_signature &&
           cached->throughput_cpu > 0.0) {
         log_info(
@@ -176,9 +167,18 @@ run_startup_throughput_probe_cpu(
       } else if (cached->config_signature != current_signature) {
         log_info(
             opts.verbosity,
-            "[Throughput-CPU] Configuration has changed (signature "
-            "mismatch); re-running CPU throughput probe.");
+            std::format(
+                "[Throughput-CPU] Configuration has changed (signature "
+                "mismatch): old={}, new={}; re-running CPU throughput probe.",
+                cached->config_signature, current_signature));
       }
+    } else {
+      log_info(
+          opts.verbosity,
+          std::format(
+              "[Throughput-CPU] No cached measurements found; "
+              "config signature={}; running CPU throughput probe.",
+              current_signature));
     }
   }
 
@@ -491,8 +491,8 @@ run_startup_throughput_probe(
 
   double cached_throughput = 0.0;
   {
+    const auto current_signature = compute_config_signature(opts);
     if (auto cached = load_cached_throughput_measurements(throughput_file)) {
-      const auto current_signature = compute_config_signature(opts);
       if (cached->config_signature == current_signature &&
           cached->throughput_gpu > 0.0) {
         log_info(
@@ -505,9 +505,18 @@ run_startup_throughput_probe(
       } else if (cached->config_signature != current_signature) {
         log_info(
             opts.verbosity,
-            "[Throughput] Configuration has changed (signature "
-            "mismatch); re-running throughput probe.");
+            std::format(
+                "[Throughput] Configuration has changed (signature "
+                "mismatch): old={}, new={}; re-running GPU throughput probe.",
+                cached->config_signature, current_signature));
       }
+    } else {
+      log_info(
+          opts.verbosity,
+          std::format(
+              "[Throughput] No cached measurements found; "
+              "config signature={}; running GPU throughput probe.",
+              current_signature));
     }
   }
 
