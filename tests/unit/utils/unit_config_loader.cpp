@@ -1545,3 +1545,42 @@ TEST(StringToScalarType, UnknownTypeThrows)
       starpu_server::string_to_scalar_type("unknown_type"),
       std::invalid_argument);
 }
+
+TEST(ConfigLoader, FilesystemErrorInResolveOutputDirectoryMarksConfigInvalid)
+{
+  const auto parent_protected_dir =
+      MakeUniqueTempDir("config_loader_output_parent_no_access");
+  ScopedPermissionRestorer cleanup(parent_protected_dir);
+
+  const auto inaccessible_output_dir = parent_protected_dir / "output";
+  std::filesystem::create_directories(inaccessible_output_dir);
+
+  const auto model_path = WriteTempFile(
+      "config_loader_output_error_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+
+  yaml += "repository_output: " + inaccessible_output_dir.string() + "\n";
+
+  const auto tmp = WriteTempFile("config_loader_output_error.yaml", yaml);
+
+  std::filesystem::permissions(
+      parent_protected_dir, std::filesystem::perms::none,
+      std::filesystem::perm_options::replace);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+
+  const std::string error_output = capture.str();
+  EXPECT_NE(error_output.find("filesystem error"), std::string::npos);
+  EXPECT_NE(error_output.find("Permission denied"), std::string::npos);
+}
