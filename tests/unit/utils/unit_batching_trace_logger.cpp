@@ -1968,4 +1968,305 @@ TEST(BatchingTraceLoggerTest, MakeTracePrefixDefaultProbeMode)
   EXPECT_EQ(prefix_without_probe_mode, "");
 }
 
+TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedSkipsProbeMode)
+{
+  std::ostringstream stream;
+  BatchingTraceLogger logger;
+
+  const std::array<int, 2> request_ids{10, 11};
+  const std::array<int64_t, 2> request_arrivals{1000, 2000};
+
+  logger.write_summary_line_locked(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 50,
+          .model_name = "test_model",
+          .batch_size = 2,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 0,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 1.0,
+          .batch_ms = 2.0,
+          .submit_ms = 3.0,
+          .scheduling_ms = 4.0,
+          .codelet_ms = 5.0,
+          .inference_ms = 6.0,
+          .callback_ms = 7.0,
+          .total_ms = 8.0,
+          .is_warmup = false,
+          .is_probe = true,
+      },
+      stream);
+
+  EXPECT_EQ(stream.str(), "");
+}
+
+TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedIncludesWarmupFlag)
+{
+  std::ostringstream stream;
+  BatchingTraceLogger logger;
+
+  const std::array<int, 1> request_ids{1};
+  const std::array<int64_t, 1> request_arrivals{100};
+
+  logger.write_summary_line_locked(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 5,
+          .model_name = "warmup_model",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 1,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 0.5,
+          .batch_ms = 0.6,
+          .submit_ms = 0.7,
+          .scheduling_ms = 0.8,
+          .codelet_ms = 0.9,
+          .inference_ms = 1.0,
+          .callback_ms = 1.1,
+          .total_ms = 1.2,
+          .is_warmup = true,
+          .is_probe = false,
+      },
+      stream);
+
+  const std::string output = stream.str();
+  EXPECT_NE(output.find(",true\n"), std::string::npos)
+      << "Warmup flag should end with ',true\\n'";
+  EXPECT_EQ(output.find(",false\n"), std::string::npos);
+}
+
+TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedNonWarmup)
+{
+  std::ostringstream stream;
+  BatchingTraceLogger logger;
+
+  const std::array<int, 1> request_ids{2};
+  const std::array<int64_t, 1> request_arrivals{200};
+
+  logger.write_summary_line_locked(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 6,
+          .model_name = "prod_model",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 0,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 0.5,
+          .batch_ms = 0.6,
+          .submit_ms = 0.7,
+          .scheduling_ms = 0.8,
+          .codelet_ms = 0.9,
+          .inference_ms = 1.0,
+          .callback_ms = 1.1,
+          .total_ms = 1.2,
+          .is_warmup = false,
+          .is_probe = false,
+      },
+      stream);
+
+  const std::string output = stream.str();
+  EXPECT_NE(output.find(",false\n"), std::string::npos)
+      << "Non-warmup flag should end with ',false\\n'";
+  EXPECT_EQ(output.find(",true\n"), std::string::npos);
+}
+
+TEST(
+    BatchingTraceLoggerTest,
+    WriteSummaryLineLockedFormatsTimingWithThreeDecimals)
+{
+  std::ostringstream stream;
+  BatchingTraceLogger logger;
+
+  const std::array<int, 1> request_ids{3};
+  const std::array<int64_t, 1> request_arrivals{300};
+
+  logger.write_summary_line_locked(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 7,
+          .model_name = "decimal_model",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 2,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 1.234,
+          .batch_ms = 2.678,
+          .submit_ms = 3.111,
+          .scheduling_ms = 4.567,
+          .codelet_ms = 5.000,
+          .inference_ms = 6.555,
+          .callback_ms = 7.444,
+          .total_ms = 8.888,
+          .is_warmup = false,
+          .is_probe = false,
+      },
+      stream);
+
+  const std::string output = stream.str();
+  EXPECT_NE(output.find("1.234"), std::string::npos);
+  EXPECT_NE(output.find("2.678"), std::string::npos);
+  EXPECT_NE(output.find("3.111"), std::string::npos);
+  EXPECT_NE(output.find("4.567"), std::string::npos);
+  EXPECT_NE(output.find("5.000"), std::string::npos);
+  EXPECT_NE(output.find("6.555"), std::string::npos);
+  EXPECT_NE(output.find("7.444"), std::string::npos);
+  EXPECT_NE(output.find("8.888"), std::string::npos);
+}
+
+TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedEscapesQuotesInModelName)
+{
+  std::ostringstream stream;
+  BatchingTraceLogger logger;
+
+  const std::array<int, 1> request_ids{4};
+  const std::array<int64_t, 1> request_arrivals{400};
+
+  logger.write_summary_line_locked(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 8,
+          .model_name = "model\"with\"quotes",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 0,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 0.5,
+          .batch_ms = 0.6,
+          .submit_ms = 0.7,
+          .scheduling_ms = 0.8,
+          .codelet_ms = 0.9,
+          .inference_ms = 1.0,
+          .callback_ms = 1.1,
+          .total_ms = 1.2,
+          .is_warmup = false,
+          .is_probe = false,
+      },
+      stream);
+
+  const std::string output = stream.str();
+  EXPECT_NE(output.find("\"model\"\"with\"\"quotes\""), std::string::npos)
+      << "Quotes should be escaped by doubling";
+}
+
+TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedFormatsDeviceType)
+{
+  std::ostringstream stream_cpu, stream_cuda;
+  BatchingTraceLogger logger;
+
+  const std::array<int, 1> request_ids{5};
+  const std::array<int64_t, 1> request_arrivals{500};
+
+  logger.write_summary_line_locked(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 9,
+          .model_name = "cpu_model",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 0,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 0.5,
+          .batch_ms = 0.6,
+          .submit_ms = 0.7,
+          .scheduling_ms = 0.8,
+          .codelet_ms = 0.9,
+          .inference_ms = 1.0,
+          .callback_ms = 1.1,
+          .total_ms = 1.2,
+          .is_warmup = false,
+          .is_probe = false,
+      },
+      stream_cpu);
+
+  logger.write_summary_line_locked(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 10,
+          .model_name = "cuda_model",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 1,
+          .worker_type = DeviceType::CUDA,
+          .device_id = 0,
+          .queue_ms = 0.5,
+          .batch_ms = 0.6,
+          .submit_ms = 0.7,
+          .scheduling_ms = 0.8,
+          .codelet_ms = 0.9,
+          .inference_ms = 1.0,
+          .callback_ms = 1.1,
+          .total_ms = 1.2,
+          .is_warmup = false,
+          .is_probe = false,
+      },
+      stream_cuda);
+
+  const std::string cpu_output = stream_cpu.str();
+  const std::string cuda_output = stream_cuda.str();
+
+  EXPECT_NE(cpu_output.find("\"cpu\""), std::string::npos);
+  EXPECT_NE(cuda_output.find("\"cuda\""), std::string::npos);
+}
+
+TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedIncludesAllFields)
+{
+  std::ostringstream stream;
+  BatchingTraceLogger logger;
+
+  const std::array<int, 2> request_ids{100, 101};
+  const std::array<int64_t, 2> request_arrivals{5000, 6000};
+
+  logger.write_summary_line_locked(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 42,
+          .model_name = "full_test",
+          .batch_size = 3,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 7,
+          .worker_type = DeviceType::CUDA,
+          .device_id = 2,
+          .queue_ms = 1.111,
+          .batch_ms = 2.222,
+          .submit_ms = 3.333,
+          .scheduling_ms = 4.444,
+          .codelet_ms = 5.555,
+          .inference_ms = 6.666,
+          .callback_ms = 7.777,
+          .total_ms = 8.888,
+          .is_warmup = true,
+          .is_probe = false,
+      },
+      stream);
+
+  const std::string output = stream.str();
+
+  EXPECT_NE(output.find("42,"), std::string::npos);
+  EXPECT_NE(output.find("\"full_test\""), std::string::npos);
+  EXPECT_NE(output.find(",7,"), std::string::npos);
+  EXPECT_NE(output.find("\"cuda\""), std::string::npos);
+  EXPECT_NE(output.find(",2,"), std::string::npos);
+  EXPECT_NE(output.find(",3,"), std::string::npos);
+  EXPECT_NE(output.find("\"100;101\""), std::string::npos);
+  EXPECT_NE(output.find("\"5000;6000\""), std::string::npos);
+  EXPECT_NE(output.find("1.111"), std::string::npos);
+  EXPECT_NE(output.find("2.222"), std::string::npos);
+  EXPECT_NE(output.find("3.333"), std::string::npos);
+  EXPECT_NE(output.find("4.444"), std::string::npos);
+  EXPECT_NE(output.find("5.555"), std::string::npos);
+  EXPECT_NE(output.find("6.666"), std::string::npos);
+  EXPECT_NE(output.find("7.777"), std::string::npos);
+  EXPECT_NE(output.find("8.888"), std::string::npos);
+  EXPECT_NE(output.find(",true\n"), std::string::npos);
+}
+
 }}  // namespace starpu_server
