@@ -1595,4 +1595,56 @@ TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
   remove_repository_outputs(trace_path);
 }
 
+TEST(BatchingTraceLoggerTest, SetAndGetProbeMode)
+{
+  BatchingTraceLogger logger;
+
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::None);
+
+  logger.set_probe_mode(ProbeTraceMode::GPUCalibration);
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::GPUCalibration);
+
+  logger.set_probe_mode(ProbeTraceMode::GPUDurationCalibrated);
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::GPUDurationCalibrated);
+
+  logger.set_probe_mode(ProbeTraceMode::CPUCalibration);
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::CPUCalibration);
+
+  logger.set_probe_mode(ProbeTraceMode::CPUDurationCalibrated);
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::CPUDurationCalibrated);
+
+  logger.set_probe_mode(ProbeTraceMode::None);
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::None);
+}
+
+TEST(BatchingTraceLoggerTest, EnableAndCheckProbeMeasurement)
+{
+  BatchingTraceLogger logger;
+
+  EXPECT_FALSE(logger.probe_measurement_enabled());
+
+  logger.enable_probe_measurement();
+  EXPECT_TRUE(logger.probe_measurement_enabled());
+}
+
+TEST(BatchingTraceLoggerTest, ProbeModeAndMeasurementAreIndependent)
+{
+  BatchingTraceLogger logger;
+
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::None);
+  EXPECT_FALSE(logger.probe_measurement_enabled());
+
+  logger.set_probe_mode(ProbeTraceMode::GPUCalibration);
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::GPUCalibration);
+  EXPECT_FALSE(logger.probe_measurement_enabled());
+
+  logger.enable_probe_measurement();
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::GPUCalibration);
+  EXPECT_TRUE(logger.probe_measurement_enabled());
+
+  logger.set_probe_mode(ProbeTraceMode::None);
+  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::None);
+  EXPECT_TRUE(logger.probe_measurement_enabled());
+}
+
 }}  // namespace starpu_server
