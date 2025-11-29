@@ -1647,4 +1647,257 @@ TEST(BatchingTraceLoggerTest, ProbeModeAndMeasurementAreIndependent)
   EXPECT_TRUE(logger.probe_measurement_enabled());
 }
 
+TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenDisabled)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(false, std::memory_order_release);
+
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::microseconds(100);
+
+  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
+      .start_time = start,
+      .end_time = end,
+      .measured_throughput = 50.0,
+      .enter_threshold = 40.0,
+      .clear_threshold = 30.0,
+  });
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_congestion_span should not emit when tracing is disabled.";
+
+  remove_repository_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWithInvalidStartTimestamp)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+
+  const auto invalid_start = std::chrono::high_resolution_clock::time_point{};
+  const auto valid_end =
+      std::chrono::high_resolution_clock::now() + std::chrono::microseconds(50);
+
+  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
+      .start_time = invalid_start,
+      .end_time = valid_end,
+      .measured_throughput = 50.0,
+      .enter_threshold = 40.0,
+      .clear_threshold = 30.0,
+  });
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_congestion_span should not emit with invalid start timestamp.";
+
+  remove_repository_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWithInvalidEndTimestamp)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+
+  const auto valid_start = std::chrono::high_resolution_clock::now();
+  const auto invalid_end = std::chrono::high_resolution_clock::time_point{};
+
+  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
+      .start_time = valid_start,
+      .end_time = invalid_end,
+      .measured_throughput = 50.0,
+      .enter_threshold = 40.0,
+      .clear_threshold = 30.0,
+  });
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_congestion_span should not emit with invalid end timestamp.";
+
+  remove_repository_outputs(trace_path);
+}
+
+TEST(
+    BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenEndTimeLessThanStartTime)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{5000}};
+  const auto end = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{3000}};
+
+  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
+      .start_time = start,
+      .end_time = end,
+      .measured_throughput = 50.0,
+      .enter_threshold = 40.0,
+      .clear_threshold = 30.0,
+  });
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_congestion_span should not emit when end_time <= start_time.";
+
+  remove_repository_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenWriterNotReady)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = false;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = std::chrono::high_resolution_clock::time_point{
+      std::chrono::microseconds{1000}};
+  const auto end = start + std::chrono::microseconds(50);
+
+  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
+      .start_time = start,
+      .end_time = end,
+      .measured_throughput = 50.0,
+      .enter_threshold = 40.0,
+      .clear_threshold = 30.0,
+  });
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_congestion_span should not emit when trace_writer is not ready.";
+
+  remove_repository_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, LogCongestionSpanWritesValidCongestionEvent)
+{
+  const auto trace_path = make_temp_trace_path();
+  auto& logger = BatchingTraceLogger::instance();
+
+  logger.configure(true, trace_path.string());
+  const auto start = std::chrono::high_resolution_clock::now();
+  const auto end = start + std::chrono::microseconds(500);
+
+  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
+      .start_time = start,
+      .end_time = end,
+      .measured_throughput = 75.5,
+      .enter_threshold = 60.0,
+      .clear_threshold = 45.0,
+  });
+  logger.configure(false, "");
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+
+  EXPECT_NE(content.find("\"name\":\"congestion\""), std::string::npos);
+  EXPECT_NE(content.find("\"cat\":\"congestion\""), std::string::npos);
+  EXPECT_NE(content.find("\"ph\":\"X\""), std::string::npos);
+  EXPECT_NE(content.find("\"enter_threshold\":60"), std::string::npos);
+  EXPECT_NE(content.find("\"clear_threshold\":45"), std::string::npos);
+  EXPECT_NE(content.find("\"measured_throughput\":75.5"), std::string::npos);
+
+  remove_repository_outputs(trace_path);
+}
+
 }}  // namespace starpu_server
