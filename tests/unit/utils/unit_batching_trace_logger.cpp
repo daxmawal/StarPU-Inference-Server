@@ -2461,4 +2461,20 @@ TEST(
   std::filesystem::remove_all(trace_dir);
 }
 
+TEST(BatchingTraceLoggerTest, WriteHeaderNoOpsWhenStreamNotOpen)
+{
+  BatchingTraceLogger logger;
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    ASSERT_FALSE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.write_header();
+    EXPECT_FALSE(logger.trace_writer_.header_written_)
+        << "header_written_ should remain false when stream is not open";
+    EXPECT_TRUE(logger.trace_writer_.first_record_)
+        << "first_record_ should not be modified when stream is not open";
+    EXPECT_TRUE(logger.trace_writer_.thread_metadata_.empty())
+        << "thread_metadata_ should remain empty when stream is not open";
+  }
+}
+
 }}  // namespace starpu_server
