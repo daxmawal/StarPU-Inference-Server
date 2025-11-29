@@ -1769,6 +1769,47 @@ TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
   remove_repository_outputs(trace_path);
 }
 
+TEST(
+    BatchingTraceLoggerTest,
+    LogBatchSummaryReturnsEarlyWhenSummaryStreamNotOpen)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+
+  logger.configure(true, trace_path.string());
+  ASSERT_TRUE(logger.summary_stream_.is_open());
+
+  logger.close_summary_writer();
+  ASSERT_FALSE(logger.summary_stream_.is_open());
+
+  const std::array<int, 1> request_ids{42};
+  const std::array<int64_t, 1> request_arrivals{1000};
+  logger.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
+      .batch_id = 1,
+      .model_name = "test_model",
+      .batch_size = 1,
+      .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .device_id = -1,
+      .queue_ms = 1.0,
+      .batch_ms = 2.0,
+      .submit_ms = 3.0,
+      .scheduling_ms = 4.0,
+      .codelet_ms = 5.0,
+      .inference_ms = 6.0,
+      .callback_ms = 7.0,
+      .total_ms = 8.0,
+      .is_warmup = false,
+  });
+
+  EXPECT_FALSE(logger.summary_stream_.is_open());
+
+  logger.configure(false, "");
+  remove_repository_outputs(trace_path);
+}
+
 TEST(BatchingTraceLoggerTest, SetAndGetProbeMode)
 {
   BatchingTraceLogger logger;
