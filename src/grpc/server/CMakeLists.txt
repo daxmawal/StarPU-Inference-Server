@@ -21,6 +21,7 @@ target_sources(
           ${UTILS_DIR}/perf_observer.cpp
           ${UTILS_DIR}/time_utils.cpp
           ${UTILS_DIR}/config_loader.cpp
+          ${UTILS_DIR}/throughput_measurement.cpp
           ${STARPU_TASK_WORKER_DIR}/starpu_task_worker.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/inference_service.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp

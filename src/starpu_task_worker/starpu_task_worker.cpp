@@ -874,6 +874,7 @@ ResultDispatcher::record_job_metrics(
         detail::compute_latency_breakdown(timing, latency.count());
     const auto request_ids = build_request_ids_for_trace(job);
     const auto request_arrivals = build_request_arrival_us_for_trace(job);
+    const bool is_probe_phase = tracer.probe_mode() != ProbeTraceMode::None;
     tracer.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
         .batch_id = job_id,
         .model_name = job->model_name(),
@@ -892,6 +893,7 @@ ResultDispatcher::record_job_metrics(
         .callback_ms = breakdown.callback_ms,
         .total_ms = breakdown.total_ms,
         .is_warmup = is_warmup_job(job),
+        .is_probe = is_probe_phase,
     });
   }
 }

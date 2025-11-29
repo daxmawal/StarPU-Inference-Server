@@ -177,6 +177,7 @@ class BatchingTraceLogger {
     double callback_ms;
     double total_ms;
     bool is_warmup = false;
+    bool is_probe = false;
   };
   struct CongestionSpanArgs {
     std::chrono::high_resolution_clock::time_point start_time;

@@ -29,6 +29,7 @@
 #include "utils/logger.hpp"
 #include "utils/perf_observer.hpp"
 #include "utils/runtime_config.hpp"
+#include "utils/throughput_measurement.hpp"
 
 namespace starpu_server {
 
@@ -80,6 +81,37 @@ compute_config_signature(const RuntimeConfig& opts) -> std::string
   return hex_stream.str();
 }
 
+auto
+get_throughput_measurements_file_path(const RuntimeConfig& opts)
+    -> std::filesystem::path
+{
+  constexpr std::string_view kThroughputSuffix = "_throughput.json";
+  const auto config_suffix = [&]() -> std::string {
+    if (opts.config_path.empty()) {
+      return "unnamed";
+    }
+    const auto path = std::filesystem::path(opts.config_path);
+    auto stem = path.stem().string();
+    if (stem.empty()) {
+      stem = "unnamed";
+    }
+    return stem;
+  }();
+  const auto throughput_filename =
+      config_suffix + std::string(kThroughputSuffix);
+
+  if (!opts.batching.file_output_path.empty()) {
+    const auto trace_path =
+        std::filesystem::path(opts.batching.file_output_path);
+    auto output_dir = trace_path.parent_path();
+    if (output_dir.empty()) {
+      output_dir = ".";
+    }
+    return output_dir / throughput_filename;
+  }
+  return std::filesystem::path(throughput_filename);
+}
+
 class ProbeTracePrefixGuard {
  public:
   ProbeTracePrefixGuard(BatchingTraceLogger& tracer, ProbeTraceMode mode)
@@ -125,74 +157,28 @@ run_startup_throughput_probe_cpu(
   constexpr double kTargetSeconds = 15.0;
   constexpr int kCalibrationMultiplier = 3;
   constexpr int kFallbackBatchesPerWorker = 20;
-  constexpr std::string_view kCpuThroughputSuffix = "_cpu_throughput.txt";
-  const auto config_suffix = [&]() -> std::string {
-    if (opts.config_path.empty()) {
-      return "unnamed";
-    }
-    const auto path = std::filesystem::path(opts.config_path);
-    auto stem = path.stem().string();
-    if (stem.empty()) {
-      stem = "unnamed";
-    }
-    return stem;
-  }();
-  const auto cpu_throughput_filename =
-      config_suffix + std::string(kCpuThroughputSuffix);
-  const auto cpu_throughput_file = [&]() -> std::filesystem::path {
-    if (!opts.batching.file_output_path.empty()) {
-      const auto trace_path =
-          std::filesystem::path(opts.batching.file_output_path);
-      auto output_dir = trace_path.parent_path();
-      if (output_dir.empty()) {
-        output_dir = ".";
-      }
-      return output_dir / cpu_throughput_filename;
-    }
-    return std::filesystem::path(cpu_throughput_filename);
-  }();
+
+  const auto throughput_file = get_throughput_measurements_file_path(opts);
 
   double cached_throughput = 0.0;
   {
-    std::error_code ec;
-    if (std::filesystem::exists(cpu_throughput_file, ec) && !ec) {
-      try {
-        std::ifstream in(cpu_throughput_file);
-        if (in) {
-          std::string cached_signature;
-          if (std::getline(in, cached_signature)) {
-            const auto current_signature = compute_config_signature(opts);
-            if (cached_signature == current_signature) {
-              in >> cached_throughput;
-              if (cached_throughput > 0.0) {
-                log_info(
-                    opts.verbosity,
-                    std::format(
-                        "[Throughput-CPU] Cached throughput {:.2f} infer/s "
-                        "from "
-                        "'{}' "
-                        "found (config signature matches), skipping startup "
-                        "probe.",
-                        cached_throughput, cpu_throughput_file.string()));
-                return cached_throughput;
-              }
-            } else {
-              log_info(
-                  opts.verbosity,
-                  "[Throughput-CPU] Configuration has changed (signature "
-                  "mismatch); "
-                  "re-running CPU throughput probe.");
-            }
-          }
-        }
+    if (auto cached = load_cached_throughput_measurements(throughput_file)) {
+      const auto current_signature = compute_config_signature(opts);
+      if (cached->config_signature == current_signature &&
+          cached->throughput_cpu > 0.0) {
+        log_info(
+            opts.verbosity,
+            std::format(
+                "[Throughput-CPU] Cached throughput {:.2f} infer/s from '{}' "
+                "found (config signature matches), skipping startup probe.",
+                cached->throughput_cpu, throughput_file.string()));
+        return cached->throughput_cpu;
+      } else if (cached->config_signature != current_signature) {
+        log_info(
+            opts.verbosity,
+            "[Throughput-CPU] Configuration has changed (signature "
+            "mismatch); re-running CPU throughput probe.");
       }
-      catch (...) {
-        log_error("Failed to read cached CPU throughput file");
-      }
-      log_warning(
-          "[Throughput-CPU] Cached throughput file found but unreadable, "
-          "signature "
-          "mismatch, re-running probe.");
     }
   }
 
@@ -435,30 +421,25 @@ run_startup_throughput_probe_cpu(
     measured_throughput = final_outcome.snapshot->throughput;
   }
 
-  try {
-    const auto config_signature = compute_config_signature(opts);
-    std::ofstream out(cpu_throughput_file, std::ios::trunc);
-    if (out) {
-      out << config_signature << "\n";
-      out << std::format("{:.6f}\n", measured_throughput);
-      log_info(
-          opts.verbosity,
-          std::format(
-              "[Throughput-CPU] Wrote measured throughput {:.2f} infer/s to "
-              "{} "
-              "(config signature: {})",
-              measured_throughput, cpu_throughput_file.string(),
-              config_signature));
-    } else {
-      log_warning(std::format(
-          "[Throughput-CPU] Unable to write throughput file {}",
-          cpu_throughput_file.string()));
-    }
+  ThroughputMeasurement measurements;
+  if (auto cached = load_cached_throughput_measurements(throughput_file)) {
+    measurements = *cached;
   }
-  catch (const std::exception& e) {
+  measurements.config_signature = compute_config_signature(opts);
+  measurements.throughput_cpu = measured_throughput;
+
+  if (save_throughput_measurements(throughput_file, measurements)) {
+    log_info(
+        opts.verbosity,
+        std::format(
+            "[Throughput-CPU] Wrote measured throughput {:.2f} infer/s to {} "
+            "(config signature: {})",
+            measured_throughput, throughput_file.string(),
+            measurements.config_signature));
+  } else {
     log_warning(std::format(
-        "[Throughput-CPU] Failed to persist throughput measurement: {}",
-        e.what()));
+        "[Throughput-CPU] Unable to write throughput file {}",
+        throughput_file.string()));
   }
 
   return measured_throughput;
@@ -504,71 +485,28 @@ run_startup_throughput_probe(
   constexpr double kTargetSeconds = 15.0;
   constexpr int kCalibrationMultiplier = 10;
   constexpr int kFallbackBatchesPerWorker = 150;
-  constexpr std::string_view kThroughputSuffix = "_throughput.txt";
-  const auto config_suffix = [&]() -> std::string {
-    if (opts.config_path.empty()) {
-      return "unnamed";
-    }
-    const auto path = std::filesystem::path(opts.config_path);
-    auto stem = path.stem().string();
-    if (stem.empty()) {
-      stem = "unnamed";
-    }
-    return stem;
-  }();
-  const auto throughput_filename =
-      config_suffix + std::string(kThroughputSuffix);
-  const auto throughput_file = [&]() -> std::filesystem::path {
-    if (!opts.batching.file_output_path.empty()) {
-      const auto trace_path =
-          std::filesystem::path(opts.batching.file_output_path);
-      auto output_dir = trace_path.parent_path();
-      if (output_dir.empty()) {
-        output_dir = ".";
-      }
-      return output_dir / throughput_filename;
-    }
-    return std::filesystem::path(throughput_filename);
-  }();
+
+  const auto throughput_file = get_throughput_measurements_file_path(opts);
+
   double cached_throughput = 0.0;
   {
-    std::error_code ec;
-    if (std::filesystem::exists(throughput_file, ec) && !ec) {
-      try {
-        std::ifstream in(throughput_file);
-        if (in) {
-          std::string cached_signature;
-          if (std::getline(in, cached_signature)) {
-            const auto current_signature = compute_config_signature(opts);
-            if (cached_signature == current_signature) {
-              in >> cached_throughput;
-              if (cached_throughput > 0.0) {
-                log_info(
-                    opts.verbosity,
-                    std::format(
-                        "[Throughput] Cached throughput {:.2f} infer/s from "
-                        "'{}' "
-                        "found (config signature matches), skipping startup "
-                        "probe.",
-                        cached_throughput, throughput_file.string()));
-                return cached_throughput;
-              }
-            } else {
-              log_info(
-                  opts.verbosity,
-                  "[Throughput] Configuration has changed (signature "
-                  "mismatch); "
-                  "re-running throughput probe.");
-            }
-          }
-        }
+    if (auto cached = load_cached_throughput_measurements(throughput_file)) {
+      const auto current_signature = compute_config_signature(opts);
+      if (cached->config_signature == current_signature &&
+          cached->throughput_gpu > 0.0) {
+        log_info(
+            opts.verbosity,
+            std::format(
+                "[Throughput] Cached throughput {:.2f} infer/s from '{}' "
+                "found (config signature matches), skipping startup probe.",
+                cached->throughput_gpu, throughput_file.string()));
+        return cached->throughput_gpu;
+      } else if (cached->config_signature != current_signature) {
+        log_info(
+            opts.verbosity,
+            "[Throughput] Configuration has changed (signature "
+            "mismatch); re-running throughput probe.");
       }
-      catch (...) {
-        log_error("Failed to read cached throughput file");
-      }
-      log_warning(
-          "[Throughput] Cached throughput file found but unreadable, signature "
-          "mismatch, re-running probe.");
     }
   }
 
@@ -803,27 +741,25 @@ run_startup_throughput_probe(
     measured_throughput = final_outcome.snapshot->throughput;
   }
 
-  try {
-    const auto config_signature = compute_config_signature(opts);
-    std::ofstream out(throughput_file, std::ios::trunc);
-    if (out) {
-      out << config_signature << "\n";
-      out << std::format("{:.6f}\n", measured_throughput);
-      log_info(
-          opts.verbosity,
-          std::format(
-              "[Throughput] Wrote measured throughput {:.2f} infer/s to {} "
-              "(config signature: {})",
-              measured_throughput, throughput_file.string(), config_signature));
-    } else {
-      log_warning(std::format(
-          "[Throughput] Unable to write throughput file {}",
-          throughput_file.string()));
-    }
+  ThroughputMeasurement measurements;
+  if (auto cached = load_cached_throughput_measurements(throughput_file)) {
+    measurements = *cached;
   }
-  catch (const std::exception& e) {
+  measurements.config_signature = compute_config_signature(opts);
+  measurements.throughput_gpu = measured_throughput;
+
+  if (save_throughput_measurements(throughput_file, measurements)) {
+    log_info(
+        opts.verbosity,
+        std::format(
+            "[Throughput] Wrote measured throughput {:.2f} infer/s to {} "
+            "(config signature: {})",
+            measured_throughput, throughput_file.string(),
+            measurements.config_signature));
+  } else {
     log_warning(std::format(
-        "[Throughput] Failed to persist throughput measurement: {}", e.what()));
+        "[Throughput] Unable to write throughput file {}",
+        throughput_file.string()));
   }
 
   return measured_throughput;

@@ -1075,6 +1075,10 @@ void
 BatchingTraceLogger::write_summary_line_locked(
     const BatchSummaryLogArgs& args, std::ostream& stream)
 {
+  if (args.is_probe) {
+    return;
+  }
+
   const auto request_ids_string = format_request_ids(args.request_ids);
   const auto request_arrivals_string =
       format_request_arrivals(args.request_arrival_us);
