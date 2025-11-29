@@ -2477,4 +2477,44 @@ TEST(BatchingTraceLoggerTest, WriteHeaderNoOpsWhenStreamNotOpen)
   }
 }
 
+TEST(BatchingTraceLoggerTest, SummaryPathFromTraceWithEmptyStem)
+{
+  const std::filesystem::path trace_path = std::filesystem::path("/tmp") / "";
+  const auto result = summary_path_from_trace(trace_path);
+
+  EXPECT_EQ(result.filename().string(), "batching_trace_summary.csv")
+      << "Should use default 'batching_trace' stem when original stem is empty";
+}
+
+TEST(BatchingTraceLoggerTest, SummaryPathFromTraceWithNormalStem)
+{
+  const std::filesystem::path trace_path("/tmp/my_trace.json");
+  const auto result = summary_path_from_trace(trace_path);
+
+  EXPECT_EQ(result.filename().string(), "my_trace_summary.csv")
+      << "Should preserve the original stem when it's not empty";
+}
+
+TEST(BatchingTraceLoggerTest, SummaryPathFromTracePreservesDirectory)
+{
+  const std::filesystem::path trace_path("/tmp/subdir/trace.json");
+  const auto result = summary_path_from_trace(trace_path);
+
+  EXPECT_EQ(result.parent_path().string(), "/tmp/subdir")
+      << "Should preserve the parent directory path";
+  EXPECT_EQ(result.filename().string(), "trace_summary.csv");
+}
+
+TEST(BatchingTraceLoggerTest, SummaryPathFromTraceWithEmptyStemAndSubdirs)
+{
+  const std::filesystem::path trace_path =
+      std::filesystem::path("/tmp/subdir") / "";
+  const auto result = summary_path_from_trace(trace_path);
+
+  EXPECT_EQ(result.parent_path().string(), "/tmp/subdir")
+      << "Should preserve the parent directory path";
+  EXPECT_EQ(result.filename().string(), "batching_trace_summary.csv")
+      << "Should use default stem when stem is empty, even with subdirectories";
+}
+
 }}  // namespace starpu_server
