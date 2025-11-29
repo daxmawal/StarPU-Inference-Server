@@ -22,6 +22,7 @@ target_sources(
             grpc/async_server_context_test.cpp
             grpc/resolve_model_name_test.cpp
             grpc/start_congestion_monitor_test.cpp
+            grpc/record_request_arrival_test.cpp
             grpc/unary_call_data_guard_test.cpp
             grpc/unit_inference_service.cpp
             grpc/unit_client.cpp
