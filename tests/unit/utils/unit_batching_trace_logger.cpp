@@ -132,6 +132,180 @@ TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
   EXPECT_EQ(line.str().find("\"id_scope\""), std::string::npos);
 }
 
+TEST(BatchingTraceLoggerTest, MakeFlowBindIdReturnsNulloptForNegativeBatchId)
+{
+  const auto result = make_flow_bind_id(-1, false, ProbeTraceMode::None);
+  EXPECT_FALSE(result.has_value());
+}
+
+TEST(BatchingTraceLoggerTest, MakeFlowBindIdForGPUCalibration)
+{
+  const auto result =
+      make_flow_bind_id(42, false, ProbeTraceMode::GPUCalibration);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, 0x8000000000000000ULL | 42);
+
+  const auto result_warmup =
+      make_flow_bind_id(42, true, ProbeTraceMode::GPUCalibration);
+  ASSERT_TRUE(result_warmup.has_value());
+  EXPECT_EQ(*result_warmup, 0xC000000000000000ULL | 42);
+}
+
+TEST(BatchingTraceLoggerTest, MakeFlowBindIdForCPUCalibration)
+{
+  const auto result =
+      make_flow_bind_id(42, false, ProbeTraceMode::CPUCalibration);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, 0x8000000000000000ULL | 42);
+
+  const auto result_warmup =
+      make_flow_bind_id(42, true, ProbeTraceMode::CPUCalibration);
+  ASSERT_TRUE(result_warmup.has_value());
+  EXPECT_EQ(*result_warmup, 0xC000000000000000ULL | 42);
+}
+
+TEST(BatchingTraceLoggerTest, MakeFlowBindIdForGPUDurationCalibrated)
+{
+  const auto result =
+      make_flow_bind_id(42, false, ProbeTraceMode::GPUDurationCalibrated);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, 0xC000000000000000ULL | 42);
+
+  const auto result_warmup =
+      make_flow_bind_id(42, true, ProbeTraceMode::GPUDurationCalibrated);
+  ASSERT_TRUE(result_warmup.has_value());
+  EXPECT_EQ(*result_warmup, 0xC000000000000000ULL | 42);
+}
+
+TEST(BatchingTraceLoggerTest, MakeFlowBindIdForCPUDurationCalibrated)
+{
+  const auto result =
+      make_flow_bind_id(42, false, ProbeTraceMode::CPUDurationCalibrated);
+  ASSERT_TRUE(result.has_value());
+  EXPECT_EQ(*result, 0xC000000000000000ULL | 42);
+
+  const auto result_warmup =
+      make_flow_bind_id(42, true, ProbeTraceMode::CPUDurationCalibrated);
+  ASSERT_TRUE(result_warmup.has_value());
+  EXPECT_EQ(*result_warmup, 0xC000000000000000ULL | 42);
+}
+
+TEST(BatchingTraceLoggerTest, AppendFlowAnnotationWithGPUCalibration)
+{
+  std::ostringstream line;
+  line << R"({"prefix":true)";
+  append_flow_annotation(
+      line, FlowDirection::Source, /*batch_id=*/42, /*is_warmup=*/false,
+      ProbeTraceMode::GPUCalibration);
+
+  EXPECT_NE(
+      line.str().find("\"id_scope\":\"probe_calibration\""), std::string::npos);
+  EXPECT_NE(
+      line.str().find("\"bind_id\":\"0x800000000000002A\""), std::string::npos);
+  EXPECT_NE(line.str().find("\"flow_out\":true"), std::string::npos);
+
+  std::ostringstream line_warmup;
+  line_warmup << R"({"prefix":true)";
+  append_flow_annotation(
+      line_warmup, FlowDirection::Target, /*batch_id=*/42, /*is_warmup=*/true,
+      ProbeTraceMode::GPUCalibration);
+
+  EXPECT_NE(
+      line_warmup.str().find("\"id_scope\":\"warming_probe_calibration\""),
+      std::string::npos);
+  EXPECT_NE(
+      line_warmup.str().find("\"bind_id\":\"0xC00000000000002A\""),
+      std::string::npos);
+  EXPECT_NE(line_warmup.str().find("\"flow_in\":true"), std::string::npos);
+}
+
+TEST(BatchingTraceLoggerTest, AppendFlowAnnotationWithCPUCalibration)
+{
+  std::ostringstream line;
+  line << R"({"prefix":true)";
+  append_flow_annotation(
+      line, FlowDirection::SourceAndTarget, /*batch_id=*/42,
+      /*is_warmup=*/false, ProbeTraceMode::CPUCalibration);
+
+  EXPECT_NE(
+      line.str().find("\"id_scope\":\"probe_calibration\""), std::string::npos);
+  EXPECT_NE(
+      line.str().find("\"bind_id\":\"0x800000000000002A\""), std::string::npos);
+  EXPECT_NE(line.str().find("\"flow_out\":true"), std::string::npos);
+  EXPECT_NE(line.str().find("\"flow_in\":true"), std::string::npos);
+
+  std::ostringstream line_warmup;
+  line_warmup << R"({"prefix":true)";
+  append_flow_annotation(
+      line_warmup, FlowDirection::Source, /*batch_id=*/42, /*is_warmup=*/true,
+      ProbeTraceMode::CPUCalibration);
+
+  EXPECT_NE(
+      line_warmup.str().find("\"id_scope\":\"warming_probe_calibration\""),
+      std::string::npos);
+  EXPECT_NE(
+      line_warmup.str().find("\"bind_id\":\"0xC00000000000002A\""),
+      std::string::npos);
+}
+
+TEST(BatchingTraceLoggerTest, AppendFlowAnnotationWithGPUDurationCalibrated)
+{
+  std::ostringstream line;
+  line << R"({"prefix":true)";
+  append_flow_annotation(
+      line, FlowDirection::Source, /*batch_id=*/42, /*is_warmup=*/false,
+      ProbeTraceMode::GPUDurationCalibrated);
+
+  EXPECT_NE(
+      line.str().find("\"id_scope\":\"probe_duration\""), std::string::npos);
+  EXPECT_NE(
+      line.str().find("\"bind_id\":\"0xC00000000000002A\""), std::string::npos);
+  EXPECT_NE(line.str().find("\"flow_out\":true"), std::string::npos);
+
+  std::ostringstream line_warmup;
+  line_warmup << R"({"prefix":true)";
+  append_flow_annotation(
+      line_warmup, FlowDirection::Target, /*batch_id=*/42, /*is_warmup=*/true,
+      ProbeTraceMode::GPUDurationCalibrated);
+
+  EXPECT_NE(
+      line_warmup.str().find("\"id_scope\":\"warming_probe_duration\""),
+      std::string::npos);
+  EXPECT_NE(
+      line_warmup.str().find("\"bind_id\":\"0xC00000000000002A\""),
+      std::string::npos);
+  EXPECT_NE(line_warmup.str().find("\"flow_in\":true"), std::string::npos);
+}
+
+TEST(BatchingTraceLoggerTest, AppendFlowAnnotationWithCPUDurationCalibrated)
+{
+  std::ostringstream line;
+  line << R"({"prefix":true)";
+  append_flow_annotation(
+      line, FlowDirection::SourceAndTarget, /*batch_id=*/42,
+      /*is_warmup=*/false, ProbeTraceMode::CPUDurationCalibrated);
+
+  EXPECT_NE(
+      line.str().find("\"id_scope\":\"probe_duration\""), std::string::npos);
+  EXPECT_NE(
+      line.str().find("\"bind_id\":\"0xC00000000000002A\""), std::string::npos);
+  EXPECT_NE(line.str().find("\"flow_out\":true"), std::string::npos);
+  EXPECT_NE(line.str().find("\"flow_in\":true"), std::string::npos);
+
+  std::ostringstream line_warmup;
+  line_warmup << R"({"prefix":true)";
+  append_flow_annotation(
+      line_warmup, FlowDirection::Source, /*batch_id=*/42, /*is_warmup=*/true,
+      ProbeTraceMode::CPUDurationCalibrated);
+
+  EXPECT_NE(
+      line_warmup.str().find("\"id_scope\":\"warming_probe_duration\""),
+      std::string::npos);
+  EXPECT_NE(
+      line_warmup.str().find("\"bind_id\":\"0xC00000000000002A\""),
+      std::string::npos);
+}
+
 TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
 {
   BatchingTraceLogger logger;
