@@ -1,4 +1,4 @@
-# Congestion Detection System (Summary)
+# Congestion Detection System
 
 ## Overview
 
@@ -33,20 +33,20 @@ Normal State                    Congested State
 
 ## State Logic
 
-- **Enter** when: `arrival_rate ≥ 0.95 * measured_throughput`  
-- **Clear** when: `arrival_rate < 0.90 * measured_throughput` or no arrivals for 1 second.
+- **Enter** when: `arrival_rate ≥ 0.95 * measured_throughput`
+- **Clear** when: `arrival_rate < 0.90 * measured_throughput` or when more than 1 second has elapsed since the last request arrival.
 
-A background thread (200 ms interval) cleans old timestamps and checks transitions.
+A background thread runs every 200 ms to clean expired timestamps from the arrival window and evaluate state transitions.
 
 ## Throughput Measurement
 
-At startup, the server runs a synthetic probe to estimate:
+At startup, the server runs a synthetic calibration to estimate:
 
 ```
-measured_throughput = total_requests / elapsed_time
+measured_throughput = total_requests_processed / elapsed_time
 ```
 
-The value is cached in `<config>_throughput.txt`.
+This measured throughput is cached in `<config>_throughput.txt` for reuse across server restarts.
 
 ## Key Configuration
 
