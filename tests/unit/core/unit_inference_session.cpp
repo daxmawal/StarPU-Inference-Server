@@ -135,4 +135,134 @@ TEST(InferenceSession, ProcessResultsCallsDetailProcessResults)
   EXPECT_NO_THROW(session.process_results());
 }
 
+TEST(InferenceSession, JoinThreadsNeitherThreadJoinable)
+{
+  RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.models[0].outputs = {{"output0", {1}, at::kFloat}};
+  StarPUSetup starpu(opts);
+  InferenceSession session(opts, starpu);
+  ASSERT_FALSE(session.client_thread_.joinable());
+  ASSERT_FALSE(session.server_thread_.joinable());
+  EXPECT_NO_THROW(session.join_threads());
+  EXPECT_FALSE(session.client_thread_.joinable());
+  EXPECT_FALSE(session.server_thread_.joinable());
+}
+
+TEST(InferenceSession, JoinThreadsOnlyClientThreadJoinable)
+{
+  RuntimeConfig opts;
+  opts.batching.request_nb = 1;
+  opts.models.resize(1);
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.models[0].outputs = {{"output0", {1}, at::kFloat}};
+  StarPUSetup starpu(opts);
+  bool client_routine_called = false;
+  InferenceSession::ClientRoutine client_routine =
+      [&client_routine_called](
+          InferenceQueue&, const RuntimeConfig&,
+          const std::vector<torch::Tensor>&,
+          int) { client_routine_called = true; };
+
+  InferenceSession session(opts, starpu, client_routine);
+  session.launch_client_thread();
+  ASSERT_TRUE(session.client_thread_.joinable());
+  ASSERT_FALSE(session.server_thread_.joinable());
+  EXPECT_NO_THROW(session.join_threads());
+  EXPECT_FALSE(session.client_thread_.joinable());
+  EXPECT_FALSE(session.server_thread_.joinable());
+}
+
+TEST(InferenceSession, JoinThreadsClientThreadJoinableConditionTrueBranch)
+{
+  RuntimeConfig opts;
+  opts.batching.request_nb = 1;
+  opts.models.resize(1);
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.models[0].outputs = {{"output0", {1}, at::kFloat}};
+  StarPUSetup starpu(opts);
+  bool client_routine_called = false;
+  InferenceSession::ClientRoutine client_routine =
+      [&client_routine_called](
+          InferenceQueue&, const RuntimeConfig&,
+          const std::vector<torch::Tensor>&,
+          int) { client_routine_called = true; };
+  InferenceSession session(opts, starpu, client_routine);
+  ASSERT_FALSE(session.client_thread_.joinable());
+  session.launch_client_thread();
+  ASSERT_TRUE(session.client_thread_.joinable());
+  session.join_threads();
+  EXPECT_FALSE(session.client_thread_.joinable());
+}
+
+TEST(InferenceSession, JoinThreadsClientThreadJoinableConditionFalseBranch)
+{
+  RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.models[0].outputs = {{"output0", {1}, at::kFloat}};
+  StarPUSetup starpu(opts);
+  InferenceSession session(opts, starpu);
+  EXPECT_FALSE(session.client_thread_.joinable());
+  EXPECT_NO_THROW(session.join_threads());
+  EXPECT_FALSE(session.client_thread_.joinable());
+}
+
+TEST(InferenceSession, JoinThreadsServerThreadJoinableConditionEval)
+{
+  RuntimeConfig opts;
+  opts.models.resize(1);
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.models[0].outputs = {{"output0", {1}, at::kFloat}};
+  StarPUSetup starpu(opts);
+  InferenceSession session(opts, starpu);
+  ASSERT_FALSE(session.server_thread_.joinable());
+  EXPECT_NO_THROW(session.join_threads());
+  EXPECT_FALSE(session.server_thread_.joinable());
+}
+
+TEST(InferenceSession, JoinThreadsServerThreadJoinableConditionTrueBranch)
+{
+  RuntimeConfig opts;
+  opts.batching.request_nb = 1;
+  opts.models.resize(1);
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.models[0].outputs = {{"output0", {1}, at::kFloat}};
+  StarPUSetup starpu(opts);
+  InferenceSession session(opts, starpu);
+  ASSERT_FALSE(session.server_thread_.joinable());
+  try {
+    session.launch_threads();
+  }
+  catch (const std::logic_error&) {
+  }
+  if (session.server_thread_.joinable()) {
+    EXPECT_NO_THROW(session.join_threads());
+    EXPECT_FALSE(session.server_thread_.joinable());
+  }
+}
+
+TEST(InferenceSession, JoinThreadsNoThrowOnMultipleCalls)
+{
+  RuntimeConfig opts;
+  opts.batching.request_nb = 1;
+  opts.models.resize(1);
+  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+  opts.models[0].outputs = {{"output0", {1}, at::kFloat}};
+  StarPUSetup starpu(opts);
+  bool client_routine_called = false;
+  InferenceSession::ClientRoutine client_routine =
+      [&client_routine_called](
+          InferenceQueue&, const RuntimeConfig&,
+          const std::vector<torch::Tensor>&,
+          int) { client_routine_called = true; };
+  InferenceSession session(opts, starpu, client_routine);
+  session.launch_client_thread();
+  EXPECT_NO_THROW(session.join_threads());
+  EXPECT_FALSE(session.client_thread_.joinable());
+  EXPECT_FALSE(session.server_thread_.joinable());
+  EXPECT_NO_THROW(session.join_threads());
+}
+
 }  // namespace starpu_server
