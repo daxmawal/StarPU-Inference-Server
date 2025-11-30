@@ -36,7 +36,7 @@ Normal State                    Congested State
 - **Enter** when: `arrival_rate ≥ 0.95 * measured_throughput`
 - **Clear** when: `arrival_rate < 0.90 * measured_throughput` or when more than 1 second has elapsed since the last request arrival.
 
-A background thread runs every 200 ms to clean expired timestamps from the arrival window and evaluate state transitions.
+A background thread runs every 200 ms to evaluate state transitions and clear the arrival window when no requests have arrived for more than 1 second.
 
 ## Throughput Measurement
 
