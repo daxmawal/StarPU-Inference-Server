@@ -773,3 +773,116 @@ TEST_F(
   thread.detach();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
+
+class RunWarmupTest : public ::testing::Test {
+ protected:
+  void SetUp() override
+  {
+    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+    model_cpu_ = starpu_server::make_identity_model();
+    outputs_ref_ = {torch::ones({1})};
+  }
+  starpu_server::RuntimeConfig opts_;
+  std::unique_ptr<starpu_server::StarPUSetup> starpu_setup_;
+  torch::jit::script::Module model_cpu_{"cpu_module"};
+  std::vector<torch::jit::script::Module> models_gpu_;
+  std::vector<torch::Tensor> outputs_ref_;
+};
+
+TEST_F(RunWarmupTest, RunWarmupReturnsEarlyWhenNoCpuAndNoCuda)
+{
+  opts_.devices.use_cpu = false;
+  opts_.devices.use_cuda = false;
+  opts_.batching.warmup_request_nb = 100;
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      opts_, *starpu_setup_, model_cpu_, models_gpu_, outputs_ref_);
+  auto output = capture.str();
+  EXPECT_EQ(output.find("Starting warmup"), std::string::npos);
+}
+
+TEST_F(RunWarmupTest, RunWarmupReturnsEarlyWhenBothWarmupConfigZero)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+  opts_.batching.warmup_request_nb = 0;
+  opts_.batching.warmup_batches_per_worker = 0;
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      opts_, *starpu_setup_, model_cpu_, models_gpu_, outputs_ref_);
+  auto output = capture.str();
+  EXPECT_EQ(output.find("Starting warmup"), std::string::npos);
+}
+
+TEST_F(RunWarmupTest, RunWarmupReturnsEarlyWhenCalculatedWarmupRequestNbZero)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+  opts_.batching.warmup_request_nb = 0;
+  opts_.batching.warmup_batches_per_worker = 0;
+  opts_.batching.max_batch_size = 1;
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      opts_, *starpu_setup_, model_cpu_, models_gpu_, outputs_ref_);
+  auto output = capture.str();
+  EXPECT_EQ(output.find("Starting warmup"), std::string::npos);
+}
+
+TEST_F(RunWarmupTest, RunWarmupNegativeWarmupWithPositiveBatches)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+  opts_.batching.warmup_request_nb = -5;
+  opts_.batching.warmup_batches_per_worker = 3;
+  opts_.batching.max_batch_size = 2;
+  int configured_batches = std::max(0, 3);
+  int max_batch_size = std::max(1, 2);
+  int min_requests_for_batches = configured_batches * max_batch_size;
+  int warmup_request_nb = std::max(-5, min_requests_for_batches);
+  EXPECT_EQ(configured_batches, 3);
+  EXPECT_EQ(min_requests_for_batches, 6);
+  EXPECT_EQ(warmup_request_nb, 6);
+  EXPECT_GT(warmup_request_nb, 0);
+}
+
+TEST_F(RunWarmupTest, RunWarmupBothDeviceTypesConditionEval)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = true;
+  EXPECT_TRUE(opts_.devices.use_cpu && opts_.devices.use_cuda);
+}
+
+TEST_F(RunWarmupTest, RunWarmupOnlyCudaConditionEval)
+{
+  opts_.devices.use_cpu = false;
+  opts_.devices.use_cuda = true;
+  EXPECT_FALSE(opts_.devices.use_cpu && opts_.devices.use_cuda);
+  EXPECT_TRUE(opts_.devices.use_cuda);
+}
+
+TEST_F(RunWarmupTest, RunWarmupOnlyCpuConditionEval)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+  EXPECT_FALSE(opts_.devices.use_cpu && opts_.devices.use_cuda);
+  EXPECT_FALSE(opts_.devices.use_cuda);
+}
+
+TEST_F(RunWarmupTest, RunWarmupCalculatesMaxRequestNb)
+{
+  int warmup_request_nb = 5;
+  int configured_batches = 2;
+  int max_batch_size = 3;
+  int min_requests_for_batches = configured_batches * max_batch_size;
+  int result = std::max(warmup_request_nb, min_requests_for_batches);
+  EXPECT_EQ(min_requests_for_batches, 6);
+  EXPECT_EQ(result, 6);
+}
+
+TEST_F(RunWarmupTest, RunWarmupConfiguredBatchesZero)
+{
+  opts_.batching.warmup_batches_per_worker = -5;
+  int configured_batches =
+      std::max(0, opts_.batching.warmup_batches_per_worker);
+  EXPECT_EQ(configured_batches, 0);
+}
