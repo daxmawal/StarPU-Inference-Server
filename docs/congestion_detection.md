@@ -42,7 +42,7 @@ A background thread runs every 200 ms to evaluate state transitions and clear th
 
 At startup, the server runs a synthetic calibration to estimate:
 
-```
+```text
 measured_throughput = total_requests_processed / elapsed_time
 ```
 
@@ -59,7 +59,7 @@ constexpr auto kCongestionMonitorPeriod = std::chrono::milliseconds(200);
 
 ## Logs & Traces
 
-```
+```text
 [Congestion] GPUs congestion detected: ...
 [Congestion] GPUs congestion cleared: ...
 ```
