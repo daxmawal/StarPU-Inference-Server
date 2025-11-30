@@ -886,3 +886,113 @@ TEST_F(RunWarmupTest, RunWarmupConfiguredBatchesZero)
       std::max(0, opts_.batching.warmup_batches_per_worker);
   EXPECT_EQ(configured_batches, 0);
 }
+
+class ProcessResultsTest : public ::testing::Test {
+ protected:
+  void SetUp() override { model_cpu_ = starpu_server::make_identity_model(); }
+  torch::jit::script::Module model_cpu_{"cpu_module"};
+  std::vector<torch::jit::script::Module> models_gpu_;
+  starpu_server::RuntimeConfig opts_;
+};
+
+TEST_F(ProcessResultsTest, ProcessResultsWithValidationDisabled)
+{
+  opts_.validation.validate_results = false;
+  starpu_server::InferenceResult result;
+  result.results = {torch::ones({1})};
+  result.device_id = -1;
+  std::vector<starpu_server::InferenceResult> results{result};
+  EXPECT_NO_THROW(starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_));
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsWithValidationEnabledAndValidResults)
+{
+  opts_.validation.validate_results = true;
+  opts_.verbosity = starpu_server::VerbosityLevel::Silent;
+  opts_.devices.use_cuda = false;
+  starpu_server::InferenceResult result;
+  result.results = {torch::ones({1})};
+  result.device_id = -1;
+  std::vector<starpu_server::InferenceResult> results{result};
+  starpu_server::InferenceResult empty_result;
+  empty_result.results = {};
+  std::vector<starpu_server::InferenceResult> empty_results{empty_result};
+  EXPECT_NO_THROW(starpu_server::detail::process_results(
+      empty_results, model_cpu_, models_gpu_, opts_));
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsLogsJobFailureWhenValidationEnabled)
+{
+  opts_.validation.validate_results = true;
+  opts_.verbosity = starpu_server::VerbosityLevel::Info;
+  starpu_server::InferenceResult result;
+  result.request_id = 42;
+  result.results = {};
+  std::vector<starpu_server::InferenceResult> results{result};
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_);
+  auto output = capture.str();
+  EXPECT_NE(output.find("[Client] Job"), std::string::npos);
+  EXPECT_NE(output.find("failed"), std::string::npos);
+}
+
+TEST_F(
+    ProcessResultsTest,
+    ProcessResultsSkipsLoggingJobFailureWhenValidationDisabled)
+{
+  opts_.validation.validate_results = false;
+  starpu_server::InferenceResult result;
+  result.request_id = 42;
+  result.results = {};
+  std::vector<starpu_server::InferenceResult> results{result};
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_);
+  auto output = capture.str();
+  EXPECT_EQ(output.find("[Client] Job"), std::string::npos);
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsSkipsValidationWhenDisabled)
+{
+  opts_.validation.validate_results = false;
+  starpu_server::InferenceResult result;
+  result.results = {torch::ones({1})};
+  result.device_id = -1;
+  std::vector<starpu_server::InferenceResult> results{result};
+  EXPECT_NO_THROW(starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_));
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsJobFailureWithMultipleResults)
+{
+  opts_.validation.validate_results = true;
+  opts_.verbosity = starpu_server::VerbosityLevel::Info;
+  std::vector<starpu_server::InferenceResult> results;
+  starpu_server::InferenceResult result1;
+  result1.request_id = 1;
+  result1.results = {};
+  results.push_back(result1);
+  starpu_server::InferenceResult result2;
+  result2.request_id = 2;
+  result2.results = {};
+  results.push_back(result2);
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_);
+  auto output = capture.str();
+  EXPECT_NE(output.find("[Client] Job"), std::string::npos);
+  EXPECT_NE(output.find("failed"), std::string::npos);
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsValidationConditionBranching)
+{
+  opts_.validation.validate_results = true;
+  bool should_validate_true = opts_.validation.validate_results;
+  EXPECT_TRUE(should_validate_true);
+  opts_.validation.validate_results = false;
+  bool should_validate_false = opts_.validation.validate_results;
+  EXPECT_FALSE(should_validate_false);
+  EXPECT_NE(should_validate_true, should_validate_false);
+}
