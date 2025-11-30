@@ -79,6 +79,7 @@ if [[ -z "$HEADER_FILTER" ]]; then
   PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
   mapfile -t HEADER_DIRS < <(
     find "$PROJECT_ROOT" -path "$PROJECT_ROOT/build" -prune -o \
+      -path "$PROJECT_ROOT/external" -prune -o \
       -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.hh' \) \
       -printf '%h\n' | sort -u
   )
@@ -91,7 +92,7 @@ if [[ -z "$HEADER_FILTER" ]]; then
     HEADER_FILTER="^($(IFS='|'; echo "${ESCAPED_HEADER_DIRS[*]}"))"
   else
     PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
-    HEADER_FILTER="^${PROJECT_ROOT}/"
+    HEADER_FILTER="^(?!.*external/)${PROJECT_ROOT}/"
   fi
 fi
 
