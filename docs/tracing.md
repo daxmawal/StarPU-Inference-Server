@@ -57,7 +57,7 @@ python3 /scripts/plot_batch_summary.py /path/to/batching_trace_summary.csv --out
 
 ![Plot preview](images/plot.png)
 
-## 3. StarPU FXT traces (YAML + viewing)
+## 3. StarPU FXT traces viewing
 
 Enable FXT directly in your config via `starpu_env` (or export the variables in
 the shell):
