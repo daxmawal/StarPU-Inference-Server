@@ -90,29 +90,38 @@ if [[ -z "$HEADER_FILTER" ]]; then
     done
     HEADER_FILTER="^($(IFS='|'; echo "${ESCAPED_HEADER_DIRS[*]}"))"
   else
+    PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
     HEADER_FILTER="^${PROJECT_ROOT}/"
   fi
 fi
 
+PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
+CLANG_TIDY_CONFIG="$BUILD_DIR/.clang-tidy"
+
+if [[ -f "$CLANG_TIDY_CONFIG" ]]; then
+  cp "$CLANG_TIDY_CONFIG" "$CLANG_TIDY_CONFIG.bak"
+fi
+
+cat > "$CLANG_TIDY_CONFIG" << EOF
+---
+Checks: "performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*,clang-diagnostic-unused-includes"
+HeaderFilterRegex: "$HEADER_FILTER"
+WarningsAsErrors: ""
+ExtraArgs:
+  - "--target=x86_64-pc-linux-gnu"
+  - "--gcc-toolchain=/usr"
+  - "-stdlib=libstdc++"
+  - "-msse"
+  - "-std=c++23"
+  - "-isystem/usr/include/c++/13"
+  - "-isystem/usr/include/x86_64-linux-gnu/c++/13"
+  - "-I$LIBTORCH_DIR/include"
+  - "-I$LIBTORCH_DIR/include/torch/csrc/api/include"
+  - "-I$GRPC_DIR/include"
+EOF
+
 CLANG_TIDY_ARGS=(
   -p "$BUILD_DIR"
-
-  -checks=performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*,clang-diagnostic-unused-includes
-
-  -header-filter="$HEADER_FILTER"
-
-  -extra-arg-before=--target=x86_64-pc-linux-gnu
-  -extra-arg-before=--gcc-toolchain=/usr
-  -extra-arg=-stdlib=libstdc++
-  -extra-arg-before=-msse
-
-  -extra-arg=-std=c++23
-  -extra-arg=-isystem/usr/include/c++/13
-  -extra-arg=-isystem/usr/include/x86_64-linux-gnu/c++/13
-
-  -extra-arg=-I"$LIBTORCH_DIR/include"
-  -extra-arg=-I"$LIBTORCH_DIR/include/torch/csrc/api/include"
-  -extra-arg=-I"$GRPC_DIR/include"
 )
 
 if [[ -n "$TARGET_FILE" ]]; then
@@ -136,3 +145,9 @@ for file in $FILES; do
   clang-tidy "$file" "${CLANG_TIDY_ARGS[@]}"
   echo
 done
+
+if [[ -f "$CLANG_TIDY_CONFIG.bak" ]]; then
+  mv "$CLANG_TIDY_CONFIG.bak" "$CLANG_TIDY_CONFIG"
+else
+  rm -f "$CLANG_TIDY_CONFIG"
+fi

@@ -7,7 +7,7 @@ enum class SubmissionPhase { Probe, Warmup, RealInference };
 
 class SubmissionPhaseContext {
  private:
-  static thread_local SubmissionPhase& get_phase_ref()
+  static SubmissionPhase& get_phase_ref()
   {
     static thread_local SubmissionPhase phase = SubmissionPhase::RealInference;
     return phase;

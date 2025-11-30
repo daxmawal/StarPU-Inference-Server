@@ -37,6 +37,14 @@ constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
 constexpr std::string_view kCongestionTrackName = "congestion";
 constexpr std::string_view kSummarySuffix = "_summary.csv";
 constexpr std::string_view kWarmupPrefix = "warming_";
+constexpr int kFlowBindIdWarmupBitPosition = 62;
+constexpr int kFlowBindIdCalibrationBitPosition = 63;
+constexpr uint64_t kFlowBindIdWarmupBit = uint64_t{1}
+                                          << kFlowBindIdWarmupBitPosition;
+constexpr uint64_t kFlowBindIdCalibrationBit =
+    uint64_t{1} << kFlowBindIdCalibrationBitPosition;
+constexpr uint64_t kFlowBindIdDurationBits = uint64_t{3}
+                                             << kFlowBindIdWarmupBitPosition;
 
 enum class FlowDirection : uint8_t {
   None,
@@ -110,15 +118,15 @@ make_flow_bind_id(int batch_id, bool is_warmup, ProbeTraceMode probe_mode)
   // 00 = serving, 01 = warming, 10 = probe_calibration, 11 = probe_duration
   uint64_t scope_bits = 0;
   if (is_warmup) {
-    scope_bits = uint64_t{1} << 62;  // bit 62 = warmup
+    scope_bits = kFlowBindIdWarmupBit;
   }
   if (probe_mode == ProbeTraceMode::GPUCalibration ||
       probe_mode == ProbeTraceMode::CPUCalibration) {
-    scope_bits |= uint64_t{1} << 63;  // bit 63 = calibration
+    scope_bits |= kFlowBindIdCalibrationBit;
   } else if (
       probe_mode == ProbeTraceMode::GPUDurationCalibrated ||
       probe_mode == ProbeTraceMode::CPUDurationCalibrated) {
-    scope_bits |= uint64_t{3} << 62;  // bits 62-63 = duration
+    scope_bits |= kFlowBindIdDurationBits;
   }
   return scope_bits | static_cast<uint64_t>(static_cast<uint32_t>(batch_id));
 }
@@ -558,7 +566,7 @@ BatchingTraceLogger::probe_measurement_enabled() const -> bool
 
 auto
 BatchingTraceLogger::make_trace_prefix(
-    bool is_warmup, ProbeTraceMode probe_mode) const -> std::string
+    bool is_warmup, ProbeTraceMode probe_mode) -> std::string
 {
   std::string prefix;
   switch (probe_mode) {

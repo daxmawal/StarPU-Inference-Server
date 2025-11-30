@@ -241,7 +241,7 @@ class BatchingTraceLogger {
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup,
       bool is_probe = false);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
-  void write_summary_line_locked(
+  static void write_summary_line_locked(
       const BatchSummaryLogArgs& args, std::ostream& stream);
   auto configure_summary_writer(const std::filesystem::path& trace_path)
       -> bool;
@@ -258,9 +258,9 @@ class BatchingTraceLogger {
   [[nodiscard]] static auto now_us() -> int64_t;
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
-  [[nodiscard]] auto make_trace_prefix(
+  [[nodiscard]] static auto make_trace_prefix(
       bool is_warmup,
-      ProbeTraceMode probe_mode = ProbeTraceMode::None) const -> std::string;
+      ProbeTraceMode probe_mode = ProbeTraceMode::None) -> std::string;
 
   mutable std::mutex mutex_;
   std::atomic<bool> enabled_{false};

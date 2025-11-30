@@ -482,7 +482,7 @@ InferenceServiceImpl::start_congestion_monitor()
               congestion_start_time_ =
                   std::chrono::high_resolution_clock::time_point{};
               recent_arrivals_.clear();
-              const auto device_name = use_cuda_ ? "GPUs" : "CPUs";
+              const auto* const device_name = use_cuda_ ? "GPUs" : "CPUs";
               log_warning(std::format(
                   "[Congestion] {} congestion cleared: arrival rate {:.2f} "
                   "req/s is below {:.2f} infer/s",
@@ -563,7 +563,7 @@ InferenceServiceImpl::record_request_arrival(
   }
 
   if (entered) {
-    const auto device_name = use_cuda_ ? "GPUs" : "CPUs";
+    const auto* const device_name = use_cuda_ ? "GPUs" : "CPUs";
     log_warning(std::format(
         "[Congestion] {} congestion detected: arrival rate {:.2f} req/s "
         "is near measured throughput {:.2f} infer/s",
@@ -575,7 +575,7 @@ InferenceServiceImpl::record_request_arrival(
     if (start_time == std::chrono::high_resolution_clock::time_point{}) {
       start_time = arrival_time - kArrivalWindow;
     }
-    const auto device_name = use_cuda_ ? "GPUs" : "CPUs";
+    const auto* const device_name = use_cuda_ ? "GPUs" : "CPUs";
     log_warning(std::format(
         "[Congestion] {} congestion cleared: arrival rate {:.2f} req/s "
         "is below {:.2f} infer/s",

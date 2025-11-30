@@ -12,17 +12,49 @@ namespace starpu_server {
 
 namespace {
 
+constexpr int kConfigSignatureSearchOffset = 20;
+constexpr int kJsonPrecision = 6;
+
 auto
 parse_json_value(std::string_view value_str) -> std::string
 {
   auto trimmed = value_str;
-  while (!trimmed.empty() && std::isspace(trimmed.front())) {
+  while (!trimmed.empty() && std::isspace(trimmed.front()) != 0) {
     trimmed.remove_prefix(1);
   }
-  while (!trimmed.empty() && std::isspace(trimmed.back())) {
+  while (!trimmed.empty() && std::isspace(trimmed.back()) != 0) {
     trimmed.remove_suffix(1);
   }
   return std::string(trimmed);
+}
+
+auto
+parse_json_throughput(std::string_view content, std::string_view key)
+    -> std::optional<double>
+{
+  size_t pos = content.find(key);
+  if (pos == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t colon = content.find(':', pos);
+  if (colon == std::string::npos) {
+    return std::nullopt;
+  }
+  size_t start = colon + 1;
+  size_t end = content.find(',', start);
+  if (end == std::string::npos) {
+    end = content.find('}', start);
+  }
+  if (end == std::string::npos) {
+    return std::nullopt;
+  }
+  auto value_str = parse_json_value(content.substr(start, end - start));
+  try {
+    return std::stod(value_str);
+  }
+  catch (...) {
+    return std::nullopt;
+  }
 }
 
 auto
@@ -35,7 +67,7 @@ parse_json_file(std::string_view content)
   if (sig_pos == std::string::npos) {
     return std::nullopt;
   }
-  size_t sig_start = content.find('\"', sig_pos + 20);
+  size_t sig_start = content.find('\"', sig_pos + kConfigSignatureSearchOffset);
   if (sig_start == std::string::npos) {
     return std::nullopt;
   }
@@ -46,46 +78,12 @@ parse_json_file(std::string_view content)
   result.config_signature =
       std::string(content.substr(sig_start + 1, sig_end - sig_start - 1));
 
-  size_t gpu_pos = content.find("\"throughput_gpu\"");
-  if (gpu_pos != std::string::npos) {
-    size_t gpu_colon = content.find(':', gpu_pos);
-    if (gpu_colon != std::string::npos) {
-      size_t gpu_start = gpu_colon + 1;
-      size_t gpu_end = content.find(',', gpu_start);
-      if (gpu_end == std::string::npos) {
-        gpu_end = content.find('}', gpu_start);
-      }
-      if (gpu_end != std::string::npos) {
-        auto gpu_str =
-            parse_json_value(content.substr(gpu_start, gpu_end - gpu_start));
-        try {
-          result.throughput_gpu = std::stod(gpu_str);
-        }
-        catch (...) {
-        }
-      }
-    }
+  if (auto gpu_value = parse_json_throughput(content, "\"throughput_gpu\"")) {
+    result.throughput_gpu = *gpu_value;
   }
 
-  size_t cpu_pos = content.find("\"throughput_cpu\"");
-  if (cpu_pos != std::string::npos) {
-    size_t cpu_colon = content.find(':', cpu_pos);
-    if (cpu_colon != std::string::npos) {
-      size_t cpu_start = cpu_colon + 1;
-      size_t cpu_end = content.find(',', cpu_start);
-      if (cpu_end == std::string::npos) {
-        cpu_end = content.find('}', cpu_start);
-      }
-      if (cpu_end != std::string::npos) {
-        auto cpu_str =
-            parse_json_value(content.substr(cpu_start, cpu_end - cpu_start));
-        try {
-          result.throughput_cpu = std::stod(cpu_str);
-        }
-        catch (...) {
-        }
-      }
-    }
+  if (auto cpu_value = parse_json_throughput(content, "\"throughput_cpu\"")) {
+    result.throughput_cpu = *cpu_value;
   }
 
   return result;
@@ -117,8 +115,8 @@ auto
 load_cached_throughput_measurements(const std::filesystem::path& file_path)
     -> std::optional<ThroughputMeasurement>
 {
-  std::error_code ec;
-  if (!std::filesystem::exists(file_path, ec) || ec) {
+  std::error_code error_code;
+  if (!std::filesystem::exists(file_path, error_code) || error_code) {
     return std::nullopt;
   }
 
@@ -164,17 +162,19 @@ save_throughput_measurements(
     }
 
     out << "{\n";
-    out << "  \"config_signature\": \"" << measurements.config_signature
+    out << R"(  "config_signature": ")" << measurements.config_signature
         << "\",\n";
 
     if (measurements.throughput_gpu >= 0.0) {
-      out << "  \"throughput_gpu\": " << std::fixed << std::setprecision(6)
-          << measurements.throughput_gpu << ",\n";
+      out << "  \"throughput_gpu\": " << std::fixed
+          << std::setprecision(kJsonPrecision) << measurements.throughput_gpu
+          << ",\n";
     }
 
     if (measurements.throughput_cpu >= 0.0) {
-      out << "  \"throughput_cpu\": " << std::fixed << std::setprecision(6)
-          << measurements.throughput_cpu << "\n";
+      out << "  \"throughput_cpu\": " << std::fixed
+          << std::setprecision(kJsonPrecision) << measurements.throughput_cpu
+          << "\n";
     } else if (measurements.throughput_gpu >= 0.0) {
       out.seekp(-2, std::ios_base::end);
       out << "\n";
