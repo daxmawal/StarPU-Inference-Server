@@ -15,8 +15,10 @@
 #include <vector>
 
 #include "core/inference_runner.hpp"
+#include "core/inference_task.hpp"
 #include "core/tensor_builder.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "starpu_task_worker/starpu_task_worker.hpp"
 #include "test_constants.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
@@ -666,4 +668,108 @@ TEST(
   EXPECT_NE(
       captured.find("[Client] Skipping validation for job"), std::string::npos);
   EXPECT_EQ(captured.find("[Validator]"), std::string::npos);
+}
+
+class DefaultWorkerThreadLauncherTest : public ::testing::Test {
+ protected:
+  void SetUp() override
+  {
+    completed_jobs_ = 0;
+    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+    config_.queue = &queue_;
+    config_.model_cpu = &model_cpu_;
+    config_.models_gpu = &models_gpu_;
+    config_.starpu = starpu_setup_.get();
+    config_.opts = &opts_;
+    config_.results = &results_;
+    config_.results_mutex = &results_mutex_;
+    config_.completed_jobs = &completed_jobs_;
+    config_.all_done_cv = &cv_;
+    config_.dependencies = &dependencies_;
+  }
+  starpu_server::InferenceQueue queue_;
+  torch::jit::script::Module model_cpu_{"cpu_module"};
+  std::vector<torch::jit::script::Module> models_gpu_;
+  starpu_server::RuntimeConfig opts_;
+  std::vector<starpu_server::InferenceResult> results_;
+  std::mutex results_mutex_;
+  std::atomic<int> completed_jobs_;
+  std::condition_variable cv_;
+  std::unique_ptr<starpu_server::StarPUSetup> starpu_setup_;
+  starpu_server::StarPUTaskRunnerConfig config_;
+  starpu_server::InferenceTaskDependencies dependencies_ =
+      starpu_server::kDefaultInferenceTaskDependencies;
+};
+
+TEST_F(
+    DefaultWorkerThreadLauncherTest,
+    DefaultLauncherCreatesJthreadThatCallsRunMethod)
+{
+  starpu_server::StarPUTaskRunner runner(config_);
+  auto launcher = starpu_server::get_worker_thread_launcher();
+  auto thread = launcher(runner);
+  EXPECT_TRUE(thread.joinable());
+  [[maybe_unused]] auto push_result =
+      queue_.push(starpu_server::InferenceJob::make_shutdown_job());
+  const auto timeout = std::chrono::seconds(5);
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  thread.detach();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+TEST_F(DefaultWorkerThreadLauncherTest, DefaultLauncherReturnsValidJthread)
+{
+  starpu_server::StarPUTaskRunner runner(config_);
+  auto launcher = starpu_server::get_worker_thread_launcher();
+  auto thread = launcher(runner);
+  EXPECT_TRUE(thread.joinable());
+  [[maybe_unused]] auto push_result2 =
+      queue_.push(starpu_server::InferenceJob::make_shutdown_job());
+  thread.detach();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+TEST_F(
+    DefaultWorkerThreadLauncherTest,
+    DefaultLauncherThreadProcessesShutdownSignal)
+{
+  starpu_server::StarPUTaskRunner runner(config_);
+  auto launcher = starpu_server::get_worker_thread_launcher();
+  auto thread = launcher(runner);
+  EXPECT_TRUE(thread.joinable());
+  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
+  EXPECT_TRUE(queue_.push(shutdown_job));
+  thread.detach();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+TEST_F(DefaultWorkerThreadLauncherTest, DefaultLauncherCanBeSwitchedAndRestored)
+{
+  auto original_launcher = starpu_server::get_worker_thread_launcher();
+  std::atomic<bool> custom_called(false);
+  starpu_server::WorkerThreadLauncher custom_launcher =
+      [&custom_called](starpu_server::StarPUTaskRunner&) -> std::jthread {
+    custom_called = true;
+    return std::jthread([] {});
+  };
+  starpu_server::set_worker_thread_launcher(custom_launcher);
+  auto current = starpu_server::get_worker_thread_launcher();
+  EXPECT_TRUE(static_cast<bool>(current));
+  starpu_server::set_worker_thread_launcher(original_launcher);
+  auto restored = starpu_server::get_worker_thread_launcher();
+  EXPECT_TRUE(static_cast<bool>(restored));
+}
+
+TEST_F(
+    DefaultWorkerThreadLauncherTest,
+    DefaultLauncherCreatesThreadWithCorrectSignature)
+{
+  starpu_server::StarPUTaskRunner runner(config_);
+  auto launcher = starpu_server::get_worker_thread_launcher();
+  std::jthread thread = launcher(runner);
+  EXPECT_TRUE(thread.joinable());
+  [[maybe_unused]] auto push_result3 =
+      queue_.push(starpu_server::InferenceJob::make_shutdown_job());
+  thread.detach();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
 }
