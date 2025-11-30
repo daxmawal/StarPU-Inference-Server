@@ -2,18 +2,18 @@
 
 ## Overview
 
-The congestion detection system monitors incoming request rates and warns when the server approaches its maximum measured throughput.  
+The congestion detection system monitors incoming request rates and warns when the server approaches its maximum measured throughput.
 It is **passive only**, it does not throttle, reject, or regulate load.
 
 ## How It Works
 
 The system compares:
 
-- **Arrival rate**: number of requests in a 1-second sliding window  
-- **Measured throughput**: calibrated capacity obtained at startup  
-- **Thresholds**:  
-  - **95%** → enter congestion  
-  - **90%** → clear congestion  
+- **Arrival rate**: number of requests in a 1-second sliding window
+- **Measured throughput**: calibrated capacity obtained at startup
+- **Thresholds**:
+  - **95%** → enter congestion
+  - **90%** → clear congestion
 
 This hysteresis prevents rapid state toggling.
 
