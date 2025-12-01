@@ -232,10 +232,11 @@ InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
     int request_identifier,
     std::function<void(const std::vector<torch::Tensor>&, double)> callback)
-    : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
-      request_id_(request_identifier), on_complete_(std::move(callback)),
+    : request_id_(request_identifier), on_complete_(std::move(callback)),
       start_time_(std::chrono::high_resolution_clock::now())
 {
+  input_tensors_ = std::move(inputs);
+  input_types_ = std::move(types);
 }
 
 auto
