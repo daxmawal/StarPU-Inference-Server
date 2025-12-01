@@ -180,11 +180,7 @@ class InferenceJob : public JobBatchState {
     input_tensors_.clear();
     input_tensors_.reserve(inputs.size());
     for (const auto& tensor : inputs) {
-      if (tensor.is_contiguous()) {
-        input_tensors_.push_back(tensor);
-      } else {
-        input_tensors_.push_back(tensor.contiguous());
-      }
+      input_tensors_.push_back(tensor.contiguous());
     }
   }
   void set_input_types(const std::vector<at::ScalarType>& types)

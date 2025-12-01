@@ -338,7 +338,7 @@ clone_model_to_gpus(
   models_gpu.reserve(device_ids.size());
 
   for (const auto& device_id : device_ids) {
-    torch::jit::script::Module model_gpu = model_cpu.clone();
+    auto model_gpu = model_cpu.clone();
     model_gpu.to(
         torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)));
     models_gpu.emplace_back(std::move(model_gpu));

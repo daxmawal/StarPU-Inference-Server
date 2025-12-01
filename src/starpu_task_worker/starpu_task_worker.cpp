@@ -201,10 +201,7 @@ slice_outputs_for_sub_job(
       determined_length = true;
     }
 
-    auto slice_view = tensor.narrow(0, slice_start, length);
-    if (!slice_view.is_contiguous()) {
-      slice_view = slice_view.contiguous();
-    }
+    auto slice_view = tensor.narrow(0, slice_start, length).contiguous();
     result.outputs.push_back(std::move(slice_view));
   }
 
@@ -1470,11 +1467,6 @@ BatchCollector::merge_input_memory_holders(
     -> std::vector<std::shared_ptr<const void>>
 {
   std::vector<std::shared_ptr<const void>> holders;
-  std::size_t total_holders = 0;
-  for (const auto& job : jobs) {
-    total_holders += job->get_input_memory_holders().size();
-  }
-  holders.reserve(total_holders);
   for (const auto& job : jobs) {
     const auto& job_holders = job->get_input_memory_holders();
     holders.insert(holders.end(), job_holders.begin(), job_holders.end());
