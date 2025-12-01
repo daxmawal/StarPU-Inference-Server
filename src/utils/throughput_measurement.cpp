@@ -117,8 +117,8 @@ auto
 load_cached_throughput_measurements(const std::filesystem::path& file_path)
     -> std::optional<ThroughputMeasurement>
 {
-  std::error_code error_code;
-  if (!std::filesystem::exists(file_path, error_code) || error_code) {
+  if (std::error_code error_code;
+      !std::filesystem::exists(file_path, error_code) || error_code) {
     return std::nullopt;
   }
 

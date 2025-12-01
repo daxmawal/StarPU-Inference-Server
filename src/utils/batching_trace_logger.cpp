@@ -120,12 +120,12 @@ make_flow_bind_id(int batch_id, bool is_warmup, ProbeTraceMode probe_mode)
   if (is_warmup) {
     scope_bits = kFlowBindIdWarmupBit;
   }
-  if (probe_mode == ProbeTraceMode::GPUCalibration ||
-      probe_mode == ProbeTraceMode::CPUCalibration) {
+  using enum ProbeTraceMode;
+  if (probe_mode == GPUCalibration || probe_mode == CPUCalibration) {
     scope_bits |= kFlowBindIdCalibrationBit;
   } else if (
-      probe_mode == ProbeTraceMode::GPUDurationCalibrated ||
-      probe_mode == ProbeTraceMode::CPUDurationCalibrated) {
+      probe_mode == GPUDurationCalibrated ||
+      probe_mode == CPUDurationCalibrated) {
     scope_bits |= kFlowBindIdDurationBits;
   }
   return scope_bits | static_cast<uint64_t>(static_cast<uint32_t>(batch_id));
@@ -569,20 +569,21 @@ BatchingTraceLogger::make_trace_prefix(
     bool is_warmup, ProbeTraceMode probe_mode) -> std::string
 {
   std::string prefix;
+  using enum ProbeTraceMode;
   switch (probe_mode) {
-    case ProbeTraceMode::GPUCalibration:
+    case GPUCalibration:
       prefix = "probe_gpu_calibration_";
       break;
-    case ProbeTraceMode::GPUDurationCalibrated:
+    case GPUDurationCalibrated:
       prefix = "probe_gpu_duration_";
       break;
-    case ProbeTraceMode::CPUCalibration:
+    case CPUCalibration:
       prefix = "probe_cpu_calibration_";
       break;
-    case ProbeTraceMode::CPUDurationCalibrated:
+    case CPUDurationCalibrated:
       prefix = "probe_cpu_duration_";
       break;
-    case ProbeTraceMode::None:
+    case None:
       if (is_warmup) {
         prefix = kWarmupPrefix;
       }
