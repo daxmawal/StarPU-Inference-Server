@@ -13,7 +13,6 @@
 
 namespace starpu_server {
 
-namespace {
 constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
 constexpr int kRequestEnqueuedTrackId = 1;
@@ -52,6 +51,31 @@ enum class FlowDirection : uint8_t {
   Target,
   SourceAndTarget,
 };
+
+auto
+event_to_string(BatchingTraceEvent event) -> std::string_view
+{
+  switch (event) {
+    case BatchingTraceEvent::RequestQueued:
+      return "request_enqueued";
+    case BatchingTraceEvent::BatchSubmitted:
+      return "batch_submitted";
+  }
+  return "unknown";
+}
+
+auto
+device_type_to_string(DeviceType type) -> std::string_view
+{
+  switch (type) {
+    case DeviceType::CPU:
+      return "cpu";
+    case DeviceType::CUDA:
+      return "cuda";
+    default:
+      return "unknown";
+  }
+}
 
 auto
 summary_path_from_trace(const std::filesystem::path& trace_path)
@@ -105,6 +129,35 @@ format_request_arrivals(std::span<const int64_t> request_arrivals)
     oss << request_arrivals[idx];
   }
   return oss.str();
+}
+
+void
+write_summary_line(
+    const BatchingTraceLogger::BatchSummaryLogArgs& args, std::ostream& stream)
+{
+  if (args.is_probe) {
+    return;
+  }
+
+  const auto request_ids_string = format_request_ids(args.request_ids);
+  const auto request_arrivals_string =
+      format_request_arrivals(args.request_arrival_us);
+  const auto escaped_model = escape_csv_field(args.model_name);
+  const auto escaped_requests = escape_csv_field(request_ids_string);
+  const auto escaped_arrivals = escape_csv_field(request_arrivals_string);
+  stream << args.batch_id << ",\"" << escaped_model << "\"," << args.worker_id
+         << ",\"" << device_type_to_string(args.worker_type) << "\","
+         << args.device_id << ',' << args.batch_size << ",\""
+         << escaped_requests << "\",\"" << escaped_arrivals << "\","
+         << std::format("{:.3f}", args.queue_ms) << ','
+         << std::format("{:.3f}", args.batch_ms) << ','
+         << std::format("{:.3f}", args.submit_ms) << ','
+         << std::format("{:.3f}", args.scheduling_ms) << ','
+         << std::format("{:.3f}", args.codelet_ms) << ','
+         << std::format("{:.3f}", args.inference_ms) << ','
+         << std::format("{:.3f}", args.callback_ms) << ','
+         << std::format("{:.3f}", args.total_ms) << ','
+         << (args.is_warmup ? "true" : "false") << '\n';
 }
 
 auto
@@ -183,8 +236,6 @@ format_worker_label(
   }
   return std::format("worker-{} ({})", worker_id, worker_type_str);
 }
-
-}  // namespace
 
 namespace detail {
 
@@ -818,33 +869,6 @@ BatchingTraceLogger::write_record(
   trace_writer_.write_line(line.str());
 }
 
-auto
-BatchingTraceLogger::event_to_string(BatchingTraceEvent event)
-    -> std::string_view
-{
-  switch (event) {
-    case BatchingTraceEvent::RequestQueued:
-      return "request_enqueued";
-    case BatchingTraceEvent::BatchSubmitted:
-      return "batch_submitted";
-  }
-  return "unknown";
-}
-
-auto
-BatchingTraceLogger::device_type_to_string(DeviceType type) -> std::string_view
-{
-  using enum DeviceType;
-  switch (type) {
-    case CPU:
-      return "cpu";
-    case CUDA:
-      return "cuda";
-    case Unknown:
-    default:
-      return "unknown";
-  }
-}
 
 void
 BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
@@ -1041,7 +1065,7 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
   if (!summary_stream_.is_open()) {
     return;
   }
-  write_summary_line_locked(args, summary_stream_);
+  write_summary_line_locked(args);
 }
 
 auto
@@ -1107,36 +1131,7 @@ BatchingTraceLogger::relative_timestamp_from_time_point(
 void
 BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
 {
-  write_summary_line_locked(args, summary_stream_);
-}
-
-void
-BatchingTraceLogger::write_summary_line_locked(
-    const BatchSummaryLogArgs& args, std::ostream& stream)
-{
-  if (args.is_probe) {
-    return;
-  }
-
-  const auto request_ids_string = format_request_ids(args.request_ids);
-  const auto request_arrivals_string =
-      format_request_arrivals(args.request_arrival_us);
-  const auto escaped_model = escape_csv_field(args.model_name);
-  const auto escaped_requests = escape_csv_field(request_ids_string);
-  const auto escaped_arrivals = escape_csv_field(request_arrivals_string);
-  stream << args.batch_id << ",\"" << escaped_model << "\"," << args.worker_id
-         << ",\"" << device_type_to_string(args.worker_type) << "\","
-         << args.device_id << ',' << args.batch_size << ",\""
-         << escaped_requests << "\",\"" << escaped_arrivals << "\","
-         << std::format("{:.3f}", args.queue_ms) << ','
-         << std::format("{:.3f}", args.batch_ms) << ','
-         << std::format("{:.3f}", args.submit_ms) << ','
-         << std::format("{:.3f}", args.scheduling_ms) << ','
-         << std::format("{:.3f}", args.codelet_ms) << ','
-         << std::format("{:.3f}", args.inference_ms) << ','
-         << std::format("{:.3f}", args.callback_ms) << ','
-         << std::format("{:.3f}", args.total_ms) << ','
-         << (args.is_warmup ? "true" : "false") << '\n';
+  write_summary_line(args, summary_stream_);
 }
 
 auto

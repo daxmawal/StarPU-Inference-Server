@@ -896,8 +896,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
 
 TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
 {
-  const auto value = BatchingTraceLogger::event_to_string(
-      static_cast<BatchingTraceEvent>(255));
+  const auto value = event_to_string(static_cast<BatchingTraceEvent>(255));
   EXPECT_EQ(value, "unknown");
 }
 
@@ -2191,7 +2190,7 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedSkipsProbeMode)
   const std::array<int, 2> request_ids{10, 11};
   const std::array<int64_t, 2> request_arrivals{1000, 2000};
 
-  logger.write_summary_line_locked(
+  write_summary_line(
       BatchingTraceLogger::BatchSummaryLogArgs{
           .batch_id = 50,
           .model_name = "test_model",
@@ -2225,7 +2224,7 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedIncludesWarmupFlag)
   const std::array<int, 1> request_ids{1};
   const std::array<int64_t, 1> request_arrivals{100};
 
-  logger.write_summary_line_locked(
+  write_summary_line(
       BatchingTraceLogger::BatchSummaryLogArgs{
           .batch_id = 5,
           .model_name = "warmup_model",
@@ -2262,7 +2261,7 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedNonWarmup)
   const std::array<int, 1> request_ids{2};
   const std::array<int64_t, 1> request_arrivals{200};
 
-  logger.write_summary_line_locked(
+  write_summary_line(
       BatchingTraceLogger::BatchSummaryLogArgs{
           .batch_id = 6,
           .model_name = "prod_model",
@@ -2301,7 +2300,7 @@ TEST(
   const std::array<int, 1> request_ids{3};
   const std::array<int64_t, 1> request_arrivals{300};
 
-  logger.write_summary_line_locked(
+  write_summary_line(
       BatchingTraceLogger::BatchSummaryLogArgs{
           .batch_id = 7,
           .model_name = "decimal_model",
@@ -2343,7 +2342,7 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedEscapesQuotesInModelName)
   const std::array<int, 1> request_ids{4};
   const std::array<int64_t, 1> request_arrivals{400};
 
-  logger.write_summary_line_locked(
+  write_summary_line(
       BatchingTraceLogger::BatchSummaryLogArgs{
           .batch_id = 8,
           .model_name = "model\"with\"quotes",
@@ -2379,7 +2378,7 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedFormatsDeviceType)
   const std::array<int, 1> request_ids{5};
   const std::array<int64_t, 1> request_arrivals{500};
 
-  logger.write_summary_line_locked(
+  write_summary_line(
       BatchingTraceLogger::BatchSummaryLogArgs{
           .batch_id = 9,
           .model_name = "cpu_model",
@@ -2402,7 +2401,7 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedFormatsDeviceType)
       },
       stream_cpu);
 
-  logger.write_summary_line_locked(
+  write_summary_line(
       BatchingTraceLogger::BatchSummaryLogArgs{
           .batch_id = 10,
           .model_name = "cuda_model",
@@ -2440,7 +2439,7 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedIncludesAllFields)
   const std::array<int, 2> request_ids{100, 101};
   const std::array<int64_t, 2> request_arrivals{5000, 6000};
 
-  logger.write_summary_line_locked(
+  write_summary_line(
       BatchingTraceLogger::BatchSummaryLogArgs{
           .batch_id = 42,
           .model_name = "full_test",
@@ -2499,26 +2498,28 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedWritesToSummaryStream)
 
   ASSERT_TRUE(logger.configure_summary_writer(trace_file));
 
-  logger.write_summary_line_locked(BatchingTraceLogger::BatchSummaryLogArgs{
-      .batch_id = 100,
-      .model_name = "test_model",
-      .batch_size = 1,
-      .request_ids = request_ids,
-      .request_arrival_us = request_arrivals,
-      .worker_id = 0,
-      .worker_type = DeviceType::CPU,
-      .device_id = -1,
-      .queue_ms = 1.0,
-      .batch_ms = 2.0,
-      .submit_ms = 3.0,
-      .scheduling_ms = 4.0,
-      .codelet_ms = 5.0,
-      .inference_ms = 6.0,
-      .callback_ms = 7.0,
-      .total_ms = 8.0,
-      .is_warmup = false,
-      .is_probe = false,
-  });
+  write_summary_line(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 100,
+          .model_name = "test_model",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 0,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 1.0,
+          .batch_ms = 2.0,
+          .submit_ms = 3.0,
+          .scheduling_ms = 4.0,
+          .codelet_ms = 5.0,
+          .inference_ms = 6.0,
+          .callback_ms = 7.0,
+          .total_ms = 8.0,
+          .is_warmup = false,
+          .is_probe = false,
+      },
+      logger.summary_stream_);
 
   logger.close_summary_writer();
 
@@ -2552,47 +2553,51 @@ TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedWithoutStreamSkipsProbe)
   std::filesystem::path trace_file = trace_dir / "test_probe.trace";
   ASSERT_TRUE(logger.configure_summary_writer(trace_file));
 
-  logger.write_summary_line_locked(BatchingTraceLogger::BatchSummaryLogArgs{
-      .batch_id = 200,
-      .model_name = "model1",
-      .batch_size = 1,
-      .request_ids = request_ids,
-      .request_arrival_us = request_arrivals,
-      .worker_id = 0,
-      .worker_type = DeviceType::CPU,
-      .device_id = -1,
-      .queue_ms = 1.0,
-      .batch_ms = 2.0,
-      .submit_ms = 3.0,
-      .scheduling_ms = 4.0,
-      .codelet_ms = 5.0,
-      .inference_ms = 6.0,
-      .callback_ms = 7.0,
-      .total_ms = 8.0,
-      .is_warmup = false,
-      .is_probe = false,
-  });
+  write_summary_line(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 200,
+          .model_name = "model1",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 0,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 1.0,
+          .batch_ms = 2.0,
+          .submit_ms = 3.0,
+          .scheduling_ms = 4.0,
+          .codelet_ms = 5.0,
+          .inference_ms = 6.0,
+          .callback_ms = 7.0,
+          .total_ms = 8.0,
+          .is_warmup = false,
+          .is_probe = false,
+      },
+      logger.summary_stream_);
 
-  logger.write_summary_line_locked(BatchingTraceLogger::BatchSummaryLogArgs{
-      .batch_id = 201,
-      .model_name = "probe_model",
-      .batch_size = 1,
-      .request_ids = request_ids,
-      .request_arrival_us = request_arrivals,
-      .worker_id = 0,
-      .worker_type = DeviceType::CPU,
-      .device_id = -1,
-      .queue_ms = 1.0,
-      .batch_ms = 2.0,
-      .submit_ms = 3.0,
-      .scheduling_ms = 4.0,
-      .codelet_ms = 5.0,
-      .inference_ms = 6.0,
-      .callback_ms = 7.0,
-      .total_ms = 8.0,
-      .is_warmup = false,
-      .is_probe = true,
-  });
+  write_summary_line(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 201,
+          .model_name = "probe_model",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 0,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 1.0,
+          .batch_ms = 2.0,
+          .submit_ms = 3.0,
+          .scheduling_ms = 4.0,
+          .codelet_ms = 5.0,
+          .inference_ms = 6.0,
+          .callback_ms = 7.0,
+          .total_ms = 8.0,
+          .is_warmup = false,
+          .is_probe = true,
+      },
+      logger.summary_stream_);
 
   logger.close_summary_writer();
 
@@ -2634,26 +2639,28 @@ TEST(
   std::filesystem::path trace_file = trace_dir / "test_warmup.trace";
   ASSERT_TRUE(logger.configure_summary_writer(trace_file));
 
-  logger.write_summary_line_locked(BatchingTraceLogger::BatchSummaryLogArgs{
-      .batch_id = 300,
-      .model_name = "warmup_model",
-      .batch_size = 1,
-      .request_ids = request_ids,
-      .request_arrival_us = request_arrivals,
-      .worker_id = 0,
-      .worker_type = DeviceType::CPU,
-      .device_id = -1,
-      .queue_ms = 0.5,
-      .batch_ms = 0.6,
-      .submit_ms = 0.7,
-      .scheduling_ms = 0.8,
-      .codelet_ms = 0.9,
-      .inference_ms = 1.0,
-      .callback_ms = 1.1,
-      .total_ms = 1.2,
-      .is_warmup = true,
-      .is_probe = false,
-  });
+  write_summary_line(
+      BatchingTraceLogger::BatchSummaryLogArgs{
+          .batch_id = 300,
+          .model_name = "warmup_model",
+          .batch_size = 1,
+          .request_ids = request_ids,
+          .request_arrival_us = request_arrivals,
+          .worker_id = 0,
+          .worker_type = DeviceType::CPU,
+          .device_id = -1,
+          .queue_ms = 0.5,
+          .batch_ms = 0.6,
+          .submit_ms = 0.7,
+          .scheduling_ms = 0.8,
+          .codelet_ms = 0.9,
+          .inference_ms = 1.0,
+          .callback_ms = 1.1,
+          .total_ms = 1.2,
+          .is_warmup = true,
+          .is_probe = false,
+      },
+      logger.summary_stream_);
 
   logger.close_summary_writer();
 

@@ -21,6 +21,8 @@ namespace starpu_server {
 struct RuntimeConfig;
 
 enum class BatchingTraceEvent : uint8_t { RequestQueued, BatchSubmitted };
+[[nodiscard]] auto event_to_string(BatchingTraceEvent event)
+    -> std::string_view;
 enum class ProbeTraceMode : uint8_t {
   None = 0,
   GPUCalibration,
@@ -28,6 +30,7 @@ enum class ProbeTraceMode : uint8_t {
   CPUCalibration,
   CPUDurationCalibrated
 };
+[[nodiscard]] auto device_type_to_string(DeviceType type) -> std::string_view;
 
 namespace detail {
 
@@ -241,15 +244,9 @@ class BatchingTraceLogger {
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup,
       bool is_probe = false);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
-  static void write_summary_line_locked(
-      const BatchSummaryLogArgs& args, std::ostream& stream);
   auto configure_summary_writer(const std::filesystem::path& trace_path)
       -> bool;
   void close_summary_writer();
-  [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
-      -> std::string_view;
-  [[nodiscard]] static auto device_type_to_string(DeviceType type)
-      -> std::string_view;
   [[nodiscard]] auto relative_timestamp_from_time_point(
       std::chrono::high_resolution_clock::time_point time_point) const
       -> std::optional<int64_t>;
@@ -276,5 +273,8 @@ class BatchingTraceLogger {
   std::ofstream summary_stream_;
   std::filesystem::path summary_file_path_;
 };
+
+void write_summary_line(
+    const BatchingTraceLogger::BatchSummaryLogArgs& args, std::ostream& stream);
 
 }  // namespace starpu_server
