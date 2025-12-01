@@ -1,4 +1,4 @@
-name: resnet152
+name: vit_b_16
 trace_enabled: true
 repository_output: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build/"
 starpu_env:

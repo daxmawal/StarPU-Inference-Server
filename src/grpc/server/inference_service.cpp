@@ -40,7 +40,6 @@ using inference::ServerLiveResponse;
 using inference::ServerReadyRequest;
 using inference::ServerReadyResponse;
 
-
 auto
 compute_thread_count_from(unsigned concurrency) -> std::size_t
 {
@@ -52,8 +51,23 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
 
 namespace {
 
-using TensorDataByte = std::byte;
-using TensorDataPtr = TensorDataByte*;
+// Congestion detection parameters:
+// Congestion is detected when the arrival rate reaches 95% of measured
+// throughput. This allows clients to be aware when the system is near capacity.
+constexpr double kCongestionEnterRatio = 0.95;
+
+// Congestion is cleared when arrival rate falls below 90% of measured
+// throughput. This hysteresis prevents rapid oscillation between
+// detected/cleared states.
+constexpr double kCongestionClearRatio = 0.90;
+
+// Sliding window duration for measuring request arrival rate.
+// Tracks requests arriving within the last 1 second.
+constexpr auto kArrivalWindow = std::chrono::seconds(1);
+
+// How often the congestion monitor thread checks for stale arrival windows
+// and logs congestion state transitions.
+constexpr auto kCongestionMonitorPeriod = std::chrono::milliseconds(200);
 
 auto
 parse_input_dtype(
@@ -75,29 +89,58 @@ parse_input_dtype(
   return Status::OK;
 }
 
+// Helper: checks if shape tail matches expected tail at given offsets
+auto
+shape_tails_match(
+    const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
+    int64_t shape_offset, int64_t expected_offset) -> bool
+{
+  const auto rank = static_cast<int64_t>(shape.size());
+  if (rank - shape_offset !=
+      static_cast<int64_t>(expected.size()) - expected_offset) {
+    return false;
+  }
+  for (int64_t idx = 0; idx < rank - shape_offset; ++idx) {
+    if (shape[static_cast<size_t>(shape_offset + idx)] !=
+        expected[static_cast<size_t>(expected_offset + idx)]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Helper: validates batch size is positive and doesn't exceed configured max
+auto
+validate_batch_size(int64_t batch_size, int max_batch_size) -> Status
+{
+  if (batch_size <= 0) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor shape does not match configured dimensions or batch "
+        "limits (batch size must be positive)"};
+  }
+  if (batch_size > max_batch_size) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format(
+            "Input tensor shape does not match configured "
+            "dimensions or batch limits (batch size {} exceeds "
+            "configured max of {})",
+            batch_size, max_batch_size)};
+  }
+  return Status::OK;
+}
+
 auto
 validate_configured_shape(
     const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
     bool batching_allowed, int max_batch_size) -> Status
 {
   const auto rank = static_cast<int64_t>(shape.size());
-  const auto expected_rank = static_cast<int64_t>(expected.size());
 
-  auto tails_match = [&](int64_t shape_offset, int64_t expected_offset) {
-    if (rank - shape_offset != expected_rank - expected_offset) {
-      return false;
-    }
-    for (int64_t idx = 0; idx < rank - shape_offset; ++idx) {
-      if (shape[static_cast<size_t>(shape_offset + idx)] !=
-          expected[static_cast<size_t>(expected_offset + idx)]) {
-        return false;
-      }
-    }
-    return true;
-  };
-
+  // Case 1: Batching not allowed - shape must exactly match expected
   if (!batching_allowed) {
-    if (tails_match(0, 0)) {
+    if (shape_tails_match(shape, expected, 0, 0)) {
       return Status::OK;
     }
     return {
@@ -106,6 +149,7 @@ validate_configured_shape(
         "limits"};
   }
 
+  // Case 2: Empty shape is invalid
   if (rank == 0) {
     return {
         grpc::StatusCode::INVALID_ARGUMENT,
@@ -113,42 +157,21 @@ validate_configured_shape(
         "limits"};
   }
 
-  if (tails_match(0, 0)) {
+  // Case 3: Shape matches exactly (no batching)
+  if (shape_tails_match(shape, expected, 0, 0)) {
     return Status::OK;
   }
 
-  auto validate_batch_size = [&](int64_t batch_size) -> Status {
-    if (batch_size <= 0) {
-      return {
-          grpc::StatusCode::INVALID_ARGUMENT,
-          "Input tensor shape does not match configured dimensions or batch "
-          "limits (batch size must be positive)"};
-    }
-    if (batch_size > max_batch_size) {
-      return {
-          grpc::StatusCode::INVALID_ARGUMENT,
-          std::format(
-              "Input tensor shape does not match configured dimensions or "
-              "batch limits (batch size {} exceeds configured max of {})",
-              batch_size, max_batch_size)};
-    }
-    return Status::OK;
-  };
-
-  if (rank >= 1 && tails_match(1, 1)) {
+  // Case 4: Shape with batch dimension at front
+  if (rank >= 1 && shape_tails_match(shape, expected, 1, 1)) {
     const int64_t batch_size = shape.front();
-    if (auto status = validate_batch_size(batch_size); !status.ok()) {
-      return status;
-    }
-    return Status::OK;
+    return validate_batch_size(batch_size, max_batch_size);
   }
 
-  if (rank >= 1 && tails_match(1, 0)) {
+  // Case 5: Shape with batch dimension, expected without batch dimension
+  if (rank >= 1 && shape_tails_match(shape, expected, 1, 0)) {
     const int64_t batch_size = shape.front();
-    if (auto status = validate_batch_size(batch_size); !status.ok()) {
-      return status;
-    }
-    return Status::OK;
+    return validate_batch_size(batch_size, max_batch_size);
   }
 
   return {
@@ -166,6 +189,25 @@ checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
   return lhs * rhs;
 }
 
+// Converts gRPC input tensor data to PyTorch tensor, managing data lifetime.
+//
+// This function handles a complex data ownership scenario:
+// - The raw tensor data comes from the gRPC request (managed by request_guard)
+// - We need to create a PyTorch tensor that references this data
+// - The tensor must be valid even after the gRPC processing completes
+//
+// Memory management strategy:
+// 1. Create an alias shared_ptr that points to the raw data but holds a
+// reference
+//    to request_guard (keeping the gRPC request alive while tensor is in use)
+// 2. PyTorch's from_blob requires a custom deleter to notify when tensor is
+// freed
+// 3. The deleter holds a reference to the alias, which keeps request_guard
+// alive
+// 4. When the tensor is destroyed, deleter runs and releases the alias
+//
+// The caller can optionally capture 'keep_alive' to hold an explicit reference
+// to the alias, ensuring the data lives as long as needed.
 auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input, const std::string& raw,
@@ -196,17 +238,22 @@ convert_input_to_tensor(
         "Raw input size does not match tensor size"};
   }
 
+  // Create alias: a shared_ptr that points to the raw data but holds a
+  // reference to request_guard to keep the gRPC message alive
   const auto raw_span = std::span<const char>(raw.data(), raw.size());
   const auto byte_span = std::as_bytes(raw_span);
   const auto* byte_data = byte_span.data();
-  auto alias = std::shared_ptr<const TensorDataByte>(request_guard, byte_data);
-  auto holder = std::const_pointer_cast<TensorDataByte>(alias);
+  auto alias = std::shared_ptr<const std::byte>(request_guard, byte_data);
+  auto holder = std::const_pointer_cast<std::byte>(alias);
+
+  // Custom deleter that captures the alias. When PyTorch releases the tensor,
+  // the deleter runs and allows alias (and thus request_guard) to be freed.
   auto deleter = [holder](void* /*unused*/) mutable {
     auto keep = holder;
     keep.reset();
   };
 
-  TensorDataPtr tensor_data = holder.get();
+  std::byte* tensor_data = holder.get();
   tensor = torch::from_blob(tensor_data, shape, deleter, options);
   if (keep_alive != nullptr) {
     *keep_alive = alias;
@@ -248,24 +295,42 @@ fill_output_tensor(
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
-    std::vector<at::ScalarType> expected_input_types,
-    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-    std::string default_model_name)
+    InferenceServiceConfig config)
     : queue_(queue), reference_outputs_(reference_outputs),
-      expected_input_types_(std::move(expected_input_types)),
-      expected_input_dims_(std::move(expected_input_dims)),
-      max_batch_size_(max_batch_size),
-      default_model_name_(std::move(default_model_name))
+      expected_input_types_(std::move(config.expected_input_types)),
+      expected_input_dims_(config.expected_input_dims.value_or(
+          std::vector<std::vector<int64_t>>{})),
+      max_batch_size_(config.max_batch_size),
+      default_model_name_(std::move(config.default_model_name)),
+      measured_throughput_(
+          config.use_cuda ? config.measured_throughput
+                          : config.measured_throughput_cpu),
+      congestion_threshold_(
+          (config.use_cuda ? config.measured_throughput
+                           : config.measured_throughput_cpu) *
+          kCongestionEnterRatio),
+      congestion_clear_threshold_(
+          (config.use_cuda ? config.measured_throughput
+                           : config.measured_throughput_cpu) *
+          kCongestionClearRatio),
+      use_cuda_(config.use_cuda)
 {
+  start_congestion_monitor();
 }
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
-    std::string default_model_name)
-    : queue_(queue), reference_outputs_(reference_outputs),
-      expected_input_types_(std::move(expected_input_types)),
-      default_model_name_(std::move(default_model_name))
+    std::string default_model_name, double measured_throughput, bool use_cuda,
+    double measured_throughput_cpu)
+    : InferenceServiceImpl(
+          queue, reference_outputs,
+          InferenceServiceConfig{
+              .expected_input_types = std::move(expected_input_types),
+              .default_model_name = std::move(default_model_name),
+              .measured_throughput = measured_throughput,
+              .measured_throughput_cpu = measured_throughput_cpu,
+              .use_cuda = use_cuda})
 {
 }
 
@@ -394,6 +459,148 @@ InferenceServiceImpl::resolve_model_name(std::string model_name) const
   return default_model_name_;
 }
 
+void
+InferenceServiceImpl::start_congestion_monitor()
+{
+  if (measured_throughput_ <= 0.0) {
+    return;
+  }
+
+  congestion_monitor_thread_ =
+      std::jthread([this](const std::stop_token& stop_token) {
+        run_congestion_monitor(stop_token);
+      });
+}
+
+void
+InferenceServiceImpl::run_congestion_monitor(const std::stop_token& stop_token)
+{
+  while (!stop_token.stop_requested()) {
+    std::chrono::high_resolution_clock::time_point start_time{};
+    std::chrono::high_resolution_clock::time_point end_time{};
+    bool cleared = false;
+    {
+      const auto now = std::chrono::high_resolution_clock::now();
+      std::scoped_lock lock(congestion_mutex_);
+      const bool stale_window =
+          congestion_active_ &&
+          (last_arrival_time_ ==
+               std::chrono::high_resolution_clock::time_point{} ||
+           now - last_arrival_time_ > kArrivalWindow);
+      if (stale_window) {
+        congestion_active_ = false;
+        start_time = congestion_start_time_;
+        end_time = now;
+        congestion_start_time_ =
+            std::chrono::high_resolution_clock::time_point{};
+        recent_arrivals_.clear();
+        const auto* const device_name = use_cuda_ ? "GPUs" : "CPUs";
+        log_warning(std::format(
+            "[Congestion] {} congestion cleared: arrival rate {:.2f} "
+            "req/s is below {:.2f} infer/s",
+            device_name, 0.0, congestion_clear_threshold_));
+        cleared = true;
+      }
+    }
+    if (cleared) {
+      if (start_time == std::chrono::high_resolution_clock::time_point{}) {
+        start_time = end_time - kArrivalWindow;
+      }
+      BatchingTraceLogger::instance().log_congestion_span(
+          BatchingTraceLogger::CongestionSpanArgs{
+              .start_time = start_time,
+              .end_time = end_time,
+              .measured_throughput = measured_throughput_,
+              .enter_threshold = congestion_threshold_,
+              .clear_threshold = congestion_clear_threshold_,
+          });
+    }
+    std::this_thread::sleep_for(kCongestionMonitorPeriod);
+  }
+}
+
+void
+InferenceServiceImpl::record_request_arrival(
+    std::chrono::high_resolution_clock::time_point arrival_time)
+{
+  if (measured_throughput_ <= 0.0) {
+    return;
+  }
+
+  bool entered = false;
+  bool cleared = false;
+  double arrival_rate = 0.0;
+  double enter_threshold = congestion_threshold_;
+  double clear_threshold = congestion_clear_threshold_;
+  std::chrono::high_resolution_clock::time_point start_time{};
+
+  {
+    const std::scoped_lock lock(congestion_mutex_);
+    last_arrival_time_ = arrival_time;
+    recent_arrivals_.push_back(arrival_time);
+    const auto cutoff = arrival_time - kArrivalWindow;
+    while (!recent_arrivals_.empty() && recent_arrivals_.front() < cutoff) {
+      recent_arrivals_.pop_front();
+    }
+
+    if (recent_arrivals_.empty()) {
+      return;
+    }
+
+    const double window_seconds = std::max(
+        std::chrono::duration<double>(kArrivalWindow).count(),
+        std::chrono::duration<double>(
+            recent_arrivals_.back() - recent_arrivals_.front())
+            .count());
+    if (window_seconds <= 0.0) {
+      return;
+    }
+
+    arrival_rate =
+        static_cast<double>(recent_arrivals_.size()) / window_seconds;
+
+    if (!congestion_active_ && arrival_rate >= congestion_threshold_) {
+      congestion_active_ = true;
+      congestion_start_time_ = arrival_time;
+      entered = true;
+    } else if (
+        congestion_active_ && arrival_rate < congestion_clear_threshold_) {
+      congestion_active_ = false;
+      start_time = congestion_start_time_;
+      congestion_start_time_ = std::chrono::high_resolution_clock::time_point{};
+      cleared = true;
+    }
+  }
+
+  if (entered) {
+    const auto* const device_name = use_cuda_ ? "GPUs" : "CPUs";
+    log_warning(std::format(
+        "[Congestion] {} congestion detected: arrival rate {:.2f} req/s "
+        "is near measured throughput {:.2f} infer/s",
+        device_name, arrival_rate, measured_throughput_));
+    return;
+  }
+
+  if (cleared) {
+    if (start_time == std::chrono::high_resolution_clock::time_point{}) {
+      start_time = arrival_time - kArrivalWindow;
+    }
+    const auto* const device_name = use_cuda_ ? "GPUs" : "CPUs";
+    log_warning(std::format(
+        "[Congestion] {} congestion cleared: arrival rate {:.2f} req/s "
+        "is below {:.2f} infer/s",
+        device_name, arrival_rate, clear_threshold));
+    BatchingTraceLogger::instance().log_congestion_span(
+        BatchingTraceLogger::CongestionSpanArgs{
+            .start_time = start_time,
+            .end_time = arrival_time,
+            .measured_throughput = measured_throughput_,
+            .enter_threshold = enter_threshold,
+            .clear_threshold = clear_threshold,
+        });
+  }
+}
+
 auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
@@ -408,22 +615,20 @@ InferenceServiceImpl::submit_job_async(
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
-  job->set_on_complete(
-      [job_ptr = job, callback = std::move(on_complete)](
-          std::vector<torch::Tensor> outs, double latency_ms) mutable {
-        const auto& info = job_ptr->timing_info();
-        auto timing = build_latency_breakdown(info, latency_ms);
-        detail::TimingInfo copied_info = info;
+  job->set_on_complete([job_ptr = job, callback = std::move(on_complete)](
+                           std::vector<torch::Tensor> outs,
+                           double latency_ms) mutable {
+    const auto& info = job_ptr->timing_info();
+    auto timing = build_latency_breakdown(info, latency_ms);
 
-        if (outs.empty()) {
-          callback(
-              {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
-              copied_info);
-          return;
-        }
+    if (outs.empty()) {
+      callback(
+          {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing, info);
+      return;
+    }
 
-        callback(Status::OK, std::move(outs), timing, copied_info);
-      });
+    callback(Status::OK, std::move(outs), timing, info);
+  });
 
   bool pushed = false;
   {
@@ -604,6 +809,7 @@ InferenceServiceImpl::HandleModelInferAsync(
   }
 
   auto recv_tp = std::chrono::high_resolution_clock::now();
+  record_request_arrival(recv_tp);
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         recv_tp.time_since_epoch())
                         .count();
@@ -683,7 +889,7 @@ namespace {
 
 class AsyncCallDataBase {
  public:
-  explicit AsyncCallDataBase() = default;
+  AsyncCallDataBase() = default;
   AsyncCallDataBase(const AsyncCallDataBase&) = delete;
   auto operator=(const AsyncCallDataBase&) -> AsyncCallDataBase& = delete;
   AsyncCallDataBase(AsyncCallDataBase&&) = default;
@@ -945,24 +1151,12 @@ AsyncServerContext::poll_events()
   }
 }
 
-void
-RunGrpcServer(
-    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
-    const std::vector<at::ScalarType>& expected_input_types,
-    const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server)
+namespace {
+auto
+configure_server_builder(
+    grpc::ServerBuilder& builder, const GrpcServerOptions& options) -> void
 {
-  InferenceServiceImpl service(
-      &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size, options.default_model_name);
-
-  inference::GRPCInferenceService::AsyncService async_service;
-  AsyncServerContext async_context(async_service, service);
-
-  ServerBuilder builder;
   builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
-  async_context.configure(builder);
   const int grpc_max_message_bytes =
       options.max_message_bytes >
               static_cast<std::size_t>(std::numeric_limits<int>::max())
@@ -970,6 +1164,19 @@ RunGrpcServer(
           : static_cast<int>(options.max_message_bytes);
   builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
   builder.SetMaxSendMessageSize(grpc_max_message_bytes);
+}
+
+void
+run_grpc_server_impl(
+    InferenceServiceImpl& service, const GrpcServerOptions& options,
+    std::unique_ptr<Server>& server)
+{
+  inference::GRPCInferenceService::AsyncService async_service;
+  AsyncServerContext async_context(async_service, service);
+
+  ServerBuilder builder;
+  configure_server_builder(builder, options);
+  async_context.configure(builder);
 
   server = builder.BuildAndStart();
   if (!server) {
@@ -985,6 +1192,28 @@ RunGrpcServer(
   async_context.shutdown();
   server.reset();
 }
+}  // namespace
+
+void
+RunGrpcServer(
+    InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<at::ScalarType>& expected_input_types,
+    const std::vector<std::vector<int64_t>>& expected_input_dims,
+    int max_batch_size, const GrpcServerOptions& options,
+    std::unique_ptr<Server>& server)
+{
+  InferenceServiceConfig config{
+      .expected_input_types = expected_input_types,
+      .expected_input_dims = expected_input_dims,
+      .max_batch_size = max_batch_size,
+      .default_model_name = options.default_model_name,
+      .measured_throughput = options.measured_throughput,
+      .measured_throughput_cpu = options.measured_throughput_cpu,
+      .use_cuda = options.use_cuda,
+  };
+  InferenceServiceImpl service(&queue, &reference_outputs, std::move(config));
+  run_grpc_server_impl(service, options, server);
+}
 
 void
 RunGrpcServer(
@@ -992,39 +1221,15 @@ RunGrpcServer(
     const std::vector<at::ScalarType>& expected_input_types,
     const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
-  InferenceServiceImpl service(
-      &queue, &reference_outputs,
-      std::vector<at::ScalarType>(
-          expected_input_types.begin(), expected_input_types.end()),
-      options.default_model_name);
-
-  inference::GRPCInferenceService::AsyncService async_service;
-  AsyncServerContext async_context(async_service, service);
-
-  ServerBuilder builder;
-  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
-  async_context.configure(builder);
-  const int grpc_max_message_bytes =
-      options.max_message_bytes >
-              static_cast<std::size_t>(std::numeric_limits<int>::max())
-          ? std::numeric_limits<int>::max()
-          : static_cast<int>(options.max_message_bytes);
-  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
-  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
-
-  server = builder.BuildAndStart();
-  if (!server) {
-    log_error(
-        std::format("Failed to start gRPC server on {}", options.address));
-    return;
-  }
-  async_context.start();
-  log_info(
-      options.verbosity,
-      std::format("Server listening on {}", options.address));
-  server->Wait();
-  async_context.shutdown();
-  server.reset();
+  InferenceServiceConfig config{
+      .expected_input_types = expected_input_types,
+      .default_model_name = options.default_model_name,
+      .measured_throughput = options.measured_throughput,
+      .measured_throughput_cpu = options.measured_throughput_cpu,
+      .use_cuda = options.use_cuda,
+  };
+  InferenceServiceImpl service(&queue, &reference_outputs, std::move(config));
+  run_grpc_server_impl(service, options, server);
 }
 
 void

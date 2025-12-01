@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -154,7 +155,86 @@ class JobBatchState {
   std::vector<std::shared_ptr<InferenceJob>> pending_sub_jobs_;
 };
 
-class InferenceJob : public JobBatchState {
+class InferenceJobIO {
+ public:
+  virtual ~InferenceJobIO() = default;
+  virtual void set_input_tensors(const std::vector<torch::Tensor>& inputs)
+  {
+    input_tensors_.clear();
+    input_tensors_.reserve(inputs.size());
+    for (const auto& tensor : inputs) {
+      input_tensors_.push_back(tensor.contiguous());
+    }
+  }
+
+  void set_input_types(const std::vector<at::ScalarType>& types)
+  {
+    input_types_ = types;
+  }
+
+  void set_output_tensors(const std::vector<torch::Tensor>& outputs)
+  {
+    output_tensors_.clear();
+    output_tensors_.reserve(outputs.size());
+    for (const auto& output_tensor : outputs) {
+      output_tensors_.push_back(output_tensor.contiguous());
+    }
+  }
+
+  [[nodiscard]] auto get_input_tensors() const
+      -> const std::vector<torch::Tensor>&
+  {
+    return input_tensors_;
+  }
+
+  [[nodiscard]] auto release_input_tensors() -> std::vector<torch::Tensor>
+  {
+    return std::exchange(input_tensors_, {});
+  }
+
+  [[nodiscard]] auto get_input_types() const
+      -> const std::vector<at::ScalarType>&
+  {
+    return input_types_;
+  }
+
+  [[nodiscard]] auto get_output_tensors() const
+      -> const std::vector<torch::Tensor>&
+  {
+    return output_tensors_;
+  }
+
+  void set_input_memory_holders(
+      std::vector<std::shared_ptr<const void>> holders)
+  {
+    input_memory_holders_ = std::move(holders);
+  }
+
+  [[nodiscard]] auto get_input_memory_holders() const
+      -> const std::vector<std::shared_ptr<const void>>&
+  {
+    return input_memory_holders_;
+  }
+
+ protected:
+  void adopt_input_tensors(std::vector<torch::Tensor> inputs)
+  {
+    input_tensors_ = std::move(inputs);
+  }
+
+  void adopt_input_types(std::vector<at::ScalarType> types)
+  {
+    input_types_ = std::move(types);
+  }
+
+ private:
+  std::vector<torch::Tensor> input_tensors_;
+  std::vector<at::ScalarType> input_types_;
+  std::vector<torch::Tensor> output_tensors_;
+  std::vector<std::shared_ptr<const void>> input_memory_holders_;
+};
+
+class InferenceJob : public JobBatchState, public InferenceJobIO {
  public:
   using AggregatedSubJob = JobBatchState::AggregatedSubJob;
 
@@ -172,30 +252,12 @@ class InferenceJob : public JobBatchState {
 
   void set_request_id(int request_id) { request_id_ = request_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
-  void set_input_tensors(const std::vector<torch::Tensor>& inputs)
+  void set_gpu_only(bool enable) { gpu_only_ = enable; }
+  void set_is_warmup_job(bool is_warmup) { is_warmup_job_ = is_warmup; }
+  void set_input_tensors(const std::vector<torch::Tensor>& inputs) override
   {
     reset_effective_batch_size();
-    input_tensors_.clear();
-    input_tensors_.reserve(inputs.size());
-    for (const auto& tensor : inputs) {
-      if (tensor.is_contiguous()) {
-        input_tensors_.push_back(tensor);
-      } else {
-        input_tensors_.push_back(tensor.contiguous());
-      }
-    }
-  }
-  void set_input_types(const std::vector<at::ScalarType>& types)
-  {
-    input_types_ = types;
-  }
-  void set_output_tensors(const std::vector<torch::Tensor>& outputs)
-  {
-    output_tensors_.clear();
-    output_tensors_.reserve(outputs.size());
-    for (const auto& output_tensor : outputs) {
-      output_tensors_.push_back(output_tensor.contiguous());
-    }
+    InferenceJobIO::set_input_tensors(inputs);
   }
   void set_start_time(std::chrono::high_resolution_clock::time_point time)
   {
@@ -215,42 +277,16 @@ class InferenceJob : public JobBatchState {
     return model_name_;
   }
 
-  void set_input_memory_holders(
-      std::vector<std::shared_ptr<const void>> holders)
-  {
-    input_memory_holders_ = std::move(holders);
-  }
-
   void set_submission_id(int submission_id) { submission_id_ = submission_id; }
 
   [[nodiscard]] auto submission_id() const -> int { return submission_id_; }
 
-  [[nodiscard]] auto get_input_memory_holders() const
-      -> const std::vector<std::shared_ptr<const void>>&
-  {
-    return input_memory_holders_;
-  }
+  [[nodiscard]] auto is_gpu_only() const -> bool { return gpu_only_; }
+  [[nodiscard]] auto is_warmup_job() const -> bool { return is_warmup_job_; }
+  [[nodiscard]] auto is_probe_job() const -> bool { return is_probe_job_; }
+  void set_is_probe_job(bool is_probe) { is_probe_job_ = is_probe; }
 
   [[nodiscard]] auto get_request_id() const -> int { return request_id_; }
-  [[nodiscard]] auto get_input_tensors() const
-      -> const std::vector<torch::Tensor>&
-  {
-    return input_tensors_;
-  }
-  [[nodiscard]] auto release_input_tensors() -> std::vector<torch::Tensor>
-  {
-    return std::exchange(input_tensors_, {});
-  }
-  [[nodiscard]] auto get_input_types() const
-      -> const std::vector<at::ScalarType>&
-  {
-    return input_types_;
-  }
-  [[nodiscard]] auto get_output_tensors() const
-      -> const std::vector<torch::Tensor>&
-  {
-    return output_tensors_;
-  }
   [[nodiscard]] auto get_start_time() const
       -> const std::chrono::high_resolution_clock::time_point&
   {
@@ -277,11 +313,6 @@ class InferenceJob : public JobBatchState {
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }
 
  private:
-  std::vector<torch::Tensor> input_tensors_;
-  std::vector<at::ScalarType> input_types_;
-  std::vector<torch::Tensor> output_tensors_;
-  std::vector<std::shared_ptr<const void>> input_memory_holders_;
-
   int request_id_ = 0;
   int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
@@ -293,6 +324,9 @@ class InferenceJob : public JobBatchState {
   int device_id_ = -1;
   int worker_id_ = -1;
 
+  bool gpu_only_ = false;
+  bool is_warmup_job_ = false;
+  bool is_probe_job_ = false;
   detail::TimingInfo timing_info_;
 
   bool is_shutdown_signal_ = false;
@@ -315,11 +349,11 @@ void client_worker(
 auto build_gpu_model_lookup(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<int>& device_ids)
-    -> std::vector<torch::jit::script::Module*>;
+    -> std::unordered_map<int, torch::jit::script::Module*>;
 
 auto resolve_validation_model(
     const InferenceResult& result, torch::jit::script::Module& cpu_model,
-    std::span<torch::jit::script::Module*> gpu_lookup,
+    const std::unordered_map<int, torch::jit::script::Module*>& gpu_lookup,
     bool validate_results) -> std::optional<torch::jit::script::Module*>;
 
 void process_results(

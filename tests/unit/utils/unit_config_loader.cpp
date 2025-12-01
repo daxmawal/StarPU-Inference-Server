@@ -259,14 +259,6 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt},
     InvalidConfigCase{
-        "InvalidSchedulerSetsValidFalse",
-        [] {
-          auto yaml = std::string{"scheduler: unknown\n"};
-          yaml += base_model_yaml();
-          return yaml;
-        }(),
-        std::nullopt},
-    InvalidConfigCase{
         "NegativeDimensionSetsValidFalse",
         [] {
           std::string yaml;
@@ -656,7 +648,6 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   std::ostringstream yaml;
   yaml << "name: fcfs_config\n";
-  yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "use_cpu: true\n";
   yaml << "use_cuda:\n";
@@ -689,7 +680,6 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.name, "fcfs_config");
-  EXPECT_EQ(cfg.scheduler, "fcfs");
   EXPECT_EQ(cfg.models[0].path, model_path.string());
   EXPECT_EQ(cfg.devices.ids, (std::vector<int>{0, 1}));
   ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
@@ -837,7 +827,6 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 
   std::ostringstream yaml;
   yaml << "name: slots_test\n";
-  yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
@@ -889,7 +878,7 @@ TEST(ConfigLoader, ParsesTraceEnabledFlag)
 TEST(ConfigLoader, ParsesTraceOutputDirectory)
 {
   const auto model_path = WriteTempFile(
-      "config_loader_trace_output_model.pt", std::string(1, '\0'));
+      "config_loader_repository_output_model.pt", std::string(1, '\0'));
 
   std::string yaml = base_model_yaml();
   const std::string placeholder = "{{MODEL_PATH}}";
@@ -903,15 +892,15 @@ TEST(ConfigLoader, ParsesTraceOutputDirectory)
   const auto trace_dir =
       std::filesystem::temp_directory_path() / "config_loader_trace_dir";
   std::filesystem::create_directories(trace_dir);
-  yaml += "trace_output: " + trace_dir.string() + "\n";
+  yaml += "repository_output: " + trace_dir.string() + "\n";
 
-  const auto tmp = WriteTempFile("config_loader_trace_output.yaml", yaml);
+  const auto tmp = WriteTempFile("config_loader_repository_output.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const auto expected_path = (trace_dir / "batching_trace.json").string();
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.file_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
@@ -927,7 +916,7 @@ TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
     yaml.replace(pos, placeholder.size(), replacement);
     pos += replacement.size();
   }
-  yaml += "trace_output: \"\"\n";
+  yaml += "repository_output: \"\"\n";
 
   const auto tmp = WriteTempFile("config_loader_empty_trace.yaml", yaml);
 
@@ -935,7 +924,7 @@ TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_output must not be empty";
+      "Failed to load config: repository_output must not be empty";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }
@@ -955,16 +944,16 @@ TEST(ConfigLoader, TraceOutputAcceptsExistingDirectoryPath)
   }
 
   const auto trace_dir = MakeUniqueTempDir("config_loader_trace_dir");
-  yaml += "trace_output: " + trace_dir.string() + "\n";
+  yaml += "repository_output: " + trace_dir.string() + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_dir.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_path =
-      (trace_dir / RuntimeConfig{}.batching.trace_output_path).string();
+      (trace_dir / RuntimeConfig{}.batching.file_output_path).string();
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.file_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
@@ -989,16 +978,16 @@ TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
     dir_with_separator.push_back(std::filesystem::path::preferred_separator);
   }
 
-  yaml += "trace_output: \"" + dir_with_separator + "\"\n";
+  yaml += "repository_output: \"" + dir_with_separator + "\"\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_dir_sep.yaml", yaml);
 
   const RuntimeConfig cfg = load_config(tmp.string());
   const std::string expected_path =
-      (requested_dir / RuntimeConfig{}.batching.trace_output_path).string();
+      (requested_dir / RuntimeConfig{}.batching.file_output_path).string();
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
+  EXPECT_EQ(cfg.batching.file_output_path, expected_path);
 }
 
 TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
@@ -1018,7 +1007,7 @@ TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
   const auto invalid_path =
       (std::filesystem::temp_directory_path() / "config_loader_trace.json")
           .string();
-  yaml += "trace_output: " + invalid_path + "\n";
+  yaml += "repository_output: " + invalid_path + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_json.yaml", yaml);
 
@@ -1026,7 +1015,8 @@ TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_output must be a directory path (omit the "
+      "Failed to load config: repository_output must be a directory path (omit "
+      "the "
       "filename)";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
@@ -1048,7 +1038,7 @@ TEST(ConfigLoader, TraceOutputRejectsPathPointingToExistingFile)
 
   const auto destination =
       WriteTempFile("config_loader_trace_destination", "payload");
-  yaml += "trace_output: " + destination.string() + "\n";
+  yaml += "repository_output: " + destination.string() + "\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_destination.yaml", yaml);
 
@@ -1056,7 +1046,7 @@ TEST(ConfigLoader, TraceOutputRejectsPathPointingToExistingFile)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: trace_output must be a directory path";
+      "Failed to load config: repository_output must be a directory path";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }
@@ -1554,4 +1544,43 @@ TEST(StringToScalarType, UnknownTypeThrows)
   EXPECT_THROW(
       starpu_server::string_to_scalar_type("unknown_type"),
       std::invalid_argument);
+}
+
+TEST(ConfigLoader, FilesystemErrorInResolveOutputDirectoryMarksConfigInvalid)
+{
+  const auto parent_protected_dir =
+      MakeUniqueTempDir("config_loader_output_parent_no_access");
+  ScopedPermissionRestorer cleanup(parent_protected_dir);
+
+  const auto inaccessible_output_dir = parent_protected_dir / "output";
+  std::filesystem::create_directories(inaccessible_output_dir);
+
+  const auto model_path = WriteTempFile(
+      "config_loader_output_error_model.pt", std::string(1, '\0'));
+
+  std::string yaml = base_model_yaml();
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+
+  yaml += "repository_output: " + inaccessible_output_dir.string() + "\n";
+
+  const auto tmp = WriteTempFile("config_loader_output_error.yaml", yaml);
+
+  std::filesystem::permissions(
+      parent_protected_dir, std::filesystem::perms::none,
+      std::filesystem::perm_options::replace);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+
+  const std::string error_output = capture.str();
+  EXPECT_NE(error_output.find("filesystem error"), std::string::npos);
+  EXPECT_NE(error_output.find("Permission denied"), std::string::npos);
 }

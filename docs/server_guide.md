@@ -40,8 +40,7 @@ Optional keys unlock batching, logging, and runtime controls:
 
 |Key|Description|Default|
 |---|---|---|
-|`scheduler`|StarPU scheduler name (e.g., lws, eager, heft).|`lws`|
-|`starpu_env`|Lets you pin StarPU-specific environment variables.|unset|
+|`starpu_env`|Lets you pin StarPU-specific environment variables (e.g., `STARPU_SCHED` to set the scheduler).|unset|
 |`use_cpu`|Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution.|`true`|
 |`group_cpu_by_numa`|Spawn one StarPU CPU worker per NUMA node instead of per core.|`false`|
 |`use_cuda`|Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`.|`false`|
@@ -63,7 +62,7 @@ Optional keys for debugging:
 |`dynamic_batching`|Enable dynamic batching (`true`/`false`).|`true`|
 |`sync`|Run the StarPU worker pool in synchronous mode (`true`/`false`).|`false`|
 |`trace_enabled`|Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI plus a CSV summary of each batch.|`false`|
-|`trace_output`|Directory for the batching Perfetto trace (requires `trace_enabled: true`). The server writes `batching_trace.json` and `batching_trace_summary.csv` there (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings), warmup batches are excluded from the CSV and plots.|`.`|
+|`repository_output`|Directory for output files. The server writes `batching_trace.json` and `batching_trace_summary.csv` there when `trace_enabled: true`. It also writes `<config_name>_throughput.txt` (cached throughput measurement) to this directory. If not specified, files are written to the current working directory.|`.`|
 |`warmup_batches_per_worker`|Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests.|`1`|
 
 Traces use the Chrome trace-event JSON format, so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [tracing guide](./tracing.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, using Perfetto, and capturing StarPU FXT traces. Enable it only while profiling dynamic batching, for GPU-wide timelines rely on NVIDIA `nsys`.
@@ -108,9 +107,10 @@ starpu_env:
 The repository ships a ready-to-run configuration:
 
 ```yaml
-scheduler: lws
 name: bert_local
 model: ../models/bert_libtorch.pt
+starpu_env:
+  STARPU_SCHED: lws
 inputs:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
   - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }

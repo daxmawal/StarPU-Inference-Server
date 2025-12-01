@@ -27,16 +27,67 @@
 #include <utility>
 #include <vector>
 
+#include "exception_logging_utils.hpp"
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
+#include "submission_context.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/nvtx.hpp"
 #include "utils/perf_observer.hpp"
 
 namespace starpu_server {
+
+namespace {
+
+auto
+probe_submission_counter() -> std::atomic<int>&
+{
+  static std::atomic<int> counter{0};
+  return counter;
+}
+
+auto
+warmup_submission_counter() -> std::atomic<int>&
+{
+  static std::atomic<int> counter{0};
+  return counter;
+}
+
+auto
+real_inference_submission_counter() -> std::atomic<int>&
+{
+  static std::atomic<int> counter{0};
+  return counter;
+}
+
+auto
+get_next_submission_id() -> int
+{
+  const auto phase = SubmissionPhaseContext::current_phase();
+  if (phase == SubmissionPhase::Probe) {
+    return probe_submission_counter().fetch_add(1);
+  }
+  if (phase == SubmissionPhase::Warmup) {
+    return warmup_submission_counter().fetch_add(1);
+  }
+  return real_inference_submission_counter().fetch_add(1);
+}
+}  // namespace
+
 namespace task_runner_internal {
+
+using ExceptionLoggingMessages = starpu_server::ExceptionLoggingMessages;
+
+template <typename Callback>
+void
+run_with_logged_exceptions(
+    Callback&& callback, const ExceptionLoggingMessages& messages)
+{
+  starpu_server::run_with_logged_exceptions(
+      std::forward<Callback>(callback), messages);
+}
 
 template <typename Ptr>
 inline void
@@ -74,11 +125,6 @@ job_identifier(const InferenceJob& job) -> int
   return (submission_id >= 0) ? submission_id : job.get_request_id();
 }
 
-struct ExceptionLoggingMessages {
-  std::string_view context_prefix;
-  std::string_view unknown_message;
-};
-
 namespace {
 auto
 submit_inference_task_hook_storage() -> std::function<void()>&
@@ -106,31 +152,6 @@ invoke_submit_inference_task_hook()
   const auto& hook = submit_inference_task_hook_storage();
   if (hook) {
     hook();
-  }
-}
-
-template <typename Callback>
-void
-run_with_logged_exceptions(
-    Callback&& callback, const ExceptionLoggingMessages& messages)
-{
-  try {
-    std::forward<Callback>(callback)();
-  }
-  catch (const InferenceEngineException& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::runtime_error& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::logic_error& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::bad_alloc& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (...) {
-    log_error(std::string(messages.unknown_message));
   }
 }
 
@@ -198,10 +219,7 @@ slice_outputs_for_sub_job(
       determined_length = true;
     }
 
-    auto slice_view = tensor.narrow(0, slice_start, length);
-    if (!slice_view.is_contiguous()) {
-      slice_view = slice_view.contiguous();
-    }
+    auto slice_view = tensor.narrow(0, slice_start, length).contiguous();
     result.outputs.push_back(std::move(slice_view));
   }
 
@@ -364,7 +382,7 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
 inline auto
 is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
 {
-  return job && job->get_fixed_worker_id().has_value();
+  return job && job->is_warmup_job();
 }
 
 struct VectorResizeSpec {
@@ -889,6 +907,7 @@ ResultDispatcher::record_job_metrics(
         .callback_ms = breakdown.callback_ms,
         .total_ms = breakdown.total_ms,
         .is_warmup = is_warmup_job(job),
+        .is_probe = job->is_probe_job(),
     });
   }
 }
@@ -1466,11 +1485,6 @@ BatchCollector::merge_input_memory_holders(
     -> std::vector<std::shared_ptr<const void>>
 {
   std::vector<std::shared_ptr<const void>> holders;
-  std::size_t total_holders = 0;
-  for (const auto& job : jobs) {
-    total_holders += job->get_input_memory_holders().size();
-  }
-  holders.reserve(total_holders);
   for (const auto& job : jobs) {
     const auto& job_holders = job->get_input_memory_holders();
     holders.insert(holders.end(), job_holders.begin(), job_holders.end());
@@ -1829,13 +1843,13 @@ StarPUTaskRunner::trace_batch_if_enabled(
   tracer.log_batch_enqueue_span(
       submission_id, job->model_name(), batch_size,
       BatchingTraceLogger::TimeRange{enqueue_start, enqueue_end},
-      request_ids_span, warmup_job);
+      request_ids_span, warmup_job, job->is_probe_job());
   tracer.log_batch_build_span(
       submission_id, job->model_name(), batch_size,
       BatchingTraceLogger::TimeRange{
           job->timing_info().batch_collect_start_time,
           job->timing_info().batch_collect_end_time},
-      request_ids_span, warmup_job);
+      request_ids_span, warmup_job, job->is_probe_job());
 }
 
 void
@@ -2231,7 +2245,7 @@ StarPUTaskRunner::run()
       break;
     }
 
-    const auto submission_id = next_submission_id_.fetch_add(1);
+    const auto submission_id = get_next_submission_id();
     job->set_submission_id(submission_id);
     job->timing_info().submission_id = submission_id;
 

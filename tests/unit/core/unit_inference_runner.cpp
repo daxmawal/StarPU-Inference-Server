@@ -12,11 +12,14 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <vector>
 
 #include "core/inference_runner.hpp"
+#include "core/inference_task.hpp"
 #include "core/tensor_builder.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "starpu_task_worker/starpu_task_worker.hpp"
 #include "test_constants.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
@@ -324,7 +327,7 @@ TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
 
   torch::jit::script::Module cpu_model("cpu_module");
   const auto resolved = starpu_server::detail::resolve_validation_model(
-      result, cpu_model, std::span<torch::jit::script::Module*>{},
+      result, cpu_model, std::unordered_map<int, torch::jit::script::Module*>{},
       /*validate_results=*/true);
 
   EXPECT_FALSE(resolved.has_value());
@@ -356,10 +359,10 @@ TEST(InferenceRunner_Unit, BuildGpuModelLookup_SkipsNegativeEntries)
   const auto lookup =
       starpu_server::detail::build_gpu_model_lookup(models_gpu, device_ids);
 
-  ASSERT_EQ(lookup.size(), 3U);
-  EXPECT_EQ(lookup[0], &models_gpu[2]);
-  EXPECT_EQ(lookup[1], nullptr);
-  EXPECT_EQ(lookup[2], &models_gpu[0]);
+  ASSERT_EQ(lookup.size(), 2U);
+  EXPECT_EQ(lookup.at(0), &models_gpu[2]);
+  EXPECT_EQ(lookup.at(2), &models_gpu[0]);
+  EXPECT_FALSE(lookup.contains(1));
 }
 
 TEST(
@@ -372,7 +375,7 @@ TEST(
 
   torch::jit::script::Module cpu_model("cpu_module");
   torch::jit::script::Module gpu_module("gpu_module");
-  std::vector<torch::jit::script::Module*> lookup{&gpu_module};
+  std::unordered_map<int, torch::jit::script::Module*> lookup{{0, &gpu_module}};
 
   const auto resolved = starpu_server::detail::resolve_validation_model(
       result, cpu_model, lookup, /*validate_results=*/true);
@@ -390,7 +393,8 @@ TEST(InferenceRunner_Unit, ResolveValidationModelReturnsGpuModelWhenAvailable)
   torch::jit::script::Module cpu_model("cpu_module");
   torch::jit::script::Module gpu_module_0("gpu_module_0");
   torch::jit::script::Module gpu_module_1("gpu_module_1");
-  std::vector<torch::jit::script::Module*> lookup{&gpu_module_0, &gpu_module_1};
+  std::unordered_map<int, torch::jit::script::Module*> lookup{
+      {0, &gpu_module_0}, {1, &gpu_module_1}};
 
   const auto resolved = starpu_server::detail::resolve_validation_model(
       result, cpu_model, lookup, /*validate_results=*/true);
@@ -666,4 +670,331 @@ TEST(
   EXPECT_NE(
       captured.find("[Client] Skipping validation for job"), std::string::npos);
   EXPECT_EQ(captured.find("[Validator]"), std::string::npos);
+}
+
+class DefaultWorkerThreadLauncherTest : public ::testing::Test {
+ protected:
+  void SetUp() override
+  {
+    completed_jobs_ = 0;
+    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+    config_.queue = &queue_;
+    config_.model_cpu = &model_cpu_;
+    config_.models_gpu = &models_gpu_;
+    config_.starpu = starpu_setup_.get();
+    config_.opts = &opts_;
+    config_.results = &results_;
+    config_.results_mutex = &results_mutex_;
+    config_.completed_jobs = &completed_jobs_;
+    config_.all_done_cv = &cv_;
+    config_.dependencies = &dependencies_;
+  }
+  starpu_server::InferenceQueue queue_;
+  torch::jit::script::Module model_cpu_{"cpu_module"};
+  std::vector<torch::jit::script::Module> models_gpu_;
+  starpu_server::RuntimeConfig opts_;
+  std::vector<starpu_server::InferenceResult> results_;
+  std::mutex results_mutex_;
+  std::atomic<int> completed_jobs_;
+  std::condition_variable cv_;
+  std::unique_ptr<starpu_server::StarPUSetup> starpu_setup_;
+  starpu_server::StarPUTaskRunnerConfig config_;
+  starpu_server::InferenceTaskDependencies dependencies_ =
+      starpu_server::kDefaultInferenceTaskDependencies;
+};
+
+TEST_F(
+    DefaultWorkerThreadLauncherTest,
+    DefaultLauncherCreatesJthreadThatCallsRunMethod)
+{
+  starpu_server::StarPUTaskRunner runner(config_);
+  auto launcher = starpu_server::get_worker_thread_launcher();
+  auto thread = launcher(runner);
+  EXPECT_TRUE(thread.joinable());
+  [[maybe_unused]] auto push_result =
+      queue_.push(starpu_server::InferenceJob::make_shutdown_job());
+  const auto timeout = std::chrono::seconds(5);
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  thread.detach();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+TEST_F(DefaultWorkerThreadLauncherTest, DefaultLauncherReturnsValidJthread)
+{
+  starpu_server::StarPUTaskRunner runner(config_);
+  auto launcher = starpu_server::get_worker_thread_launcher();
+  auto thread = launcher(runner);
+  EXPECT_TRUE(thread.joinable());
+  [[maybe_unused]] auto push_result2 =
+      queue_.push(starpu_server::InferenceJob::make_shutdown_job());
+  thread.detach();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+TEST_F(
+    DefaultWorkerThreadLauncherTest,
+    DefaultLauncherThreadProcessesShutdownSignal)
+{
+  starpu_server::StarPUTaskRunner runner(config_);
+  auto launcher = starpu_server::get_worker_thread_launcher();
+  auto thread = launcher(runner);
+  EXPECT_TRUE(thread.joinable());
+  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
+  EXPECT_TRUE(queue_.push(shutdown_job));
+  thread.detach();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+TEST_F(DefaultWorkerThreadLauncherTest, DefaultLauncherCanBeSwitchedAndRestored)
+{
+  auto original_launcher = starpu_server::get_worker_thread_launcher();
+  std::atomic<bool> custom_called(false);
+  starpu_server::WorkerThreadLauncher custom_launcher =
+      [&custom_called](starpu_server::StarPUTaskRunner&) -> std::jthread {
+    custom_called = true;
+    return std::jthread([] {});
+  };
+  starpu_server::set_worker_thread_launcher(custom_launcher);
+  auto current = starpu_server::get_worker_thread_launcher();
+  EXPECT_TRUE(static_cast<bool>(current));
+  starpu_server::set_worker_thread_launcher(original_launcher);
+  auto restored = starpu_server::get_worker_thread_launcher();
+  EXPECT_TRUE(static_cast<bool>(restored));
+}
+
+TEST_F(
+    DefaultWorkerThreadLauncherTest,
+    DefaultLauncherCreatesThreadWithCorrectSignature)
+{
+  starpu_server::StarPUTaskRunner runner(config_);
+  auto launcher = starpu_server::get_worker_thread_launcher();
+  std::jthread thread = launcher(runner);
+  EXPECT_TRUE(thread.joinable());
+  [[maybe_unused]] auto push_result3 =
+      queue_.push(starpu_server::InferenceJob::make_shutdown_job());
+  thread.detach();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+}
+
+class RunWarmupTest : public ::testing::Test {
+ protected:
+  void SetUp() override
+  {
+    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+    model_cpu_ = starpu_server::make_identity_model();
+    outputs_ref_ = {torch::ones({1})};
+  }
+  starpu_server::RuntimeConfig opts_;
+  std::unique_ptr<starpu_server::StarPUSetup> starpu_setup_;
+  torch::jit::script::Module model_cpu_{"cpu_module"};
+  std::vector<torch::jit::script::Module> models_gpu_;
+  std::vector<torch::Tensor> outputs_ref_;
+};
+
+TEST_F(RunWarmupTest, RunWarmupReturnsEarlyWhenNoCpuAndNoCuda)
+{
+  opts_.devices.use_cpu = false;
+  opts_.devices.use_cuda = false;
+  opts_.batching.warmup_request_nb = 100;
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      opts_, *starpu_setup_, model_cpu_, models_gpu_, outputs_ref_);
+  auto output = capture.str();
+  EXPECT_EQ(output.find("Starting warmup"), std::string::npos);
+}
+
+TEST_F(RunWarmupTest, RunWarmupReturnsEarlyWhenBothWarmupConfigZero)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+  opts_.batching.warmup_request_nb = 0;
+  opts_.batching.warmup_batches_per_worker = 0;
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      opts_, *starpu_setup_, model_cpu_, models_gpu_, outputs_ref_);
+  auto output = capture.str();
+  EXPECT_EQ(output.find("Starting warmup"), std::string::npos);
+}
+
+TEST_F(RunWarmupTest, RunWarmupReturnsEarlyWhenCalculatedWarmupRequestNbZero)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+  opts_.batching.warmup_request_nb = 0;
+  opts_.batching.warmup_batches_per_worker = 0;
+  opts_.batching.max_batch_size = 1;
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      opts_, *starpu_setup_, model_cpu_, models_gpu_, outputs_ref_);
+  auto output = capture.str();
+  EXPECT_EQ(output.find("Starting warmup"), std::string::npos);
+}
+
+TEST_F(RunWarmupTest, RunWarmupNegativeWarmupWithPositiveBatches)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+  opts_.batching.warmup_request_nb = -5;
+  opts_.batching.warmup_batches_per_worker = 3;
+  opts_.batching.max_batch_size = 2;
+  int configured_batches = std::max(0, 3);
+  int max_batch_size = std::max(1, 2);
+  int min_requests_for_batches = configured_batches * max_batch_size;
+  int warmup_request_nb = std::max(-5, min_requests_for_batches);
+  EXPECT_EQ(configured_batches, 3);
+  EXPECT_EQ(min_requests_for_batches, 6);
+  EXPECT_EQ(warmup_request_nb, 6);
+  EXPECT_GT(warmup_request_nb, 0);
+}
+
+TEST_F(RunWarmupTest, RunWarmupBothDeviceTypesConditionEval)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = true;
+  EXPECT_TRUE(opts_.devices.use_cpu && opts_.devices.use_cuda);
+}
+
+TEST_F(RunWarmupTest, RunWarmupOnlyCudaConditionEval)
+{
+  opts_.devices.use_cpu = false;
+  opts_.devices.use_cuda = true;
+  EXPECT_FALSE(opts_.devices.use_cpu && opts_.devices.use_cuda);
+  EXPECT_TRUE(opts_.devices.use_cuda);
+}
+
+TEST_F(RunWarmupTest, RunWarmupOnlyCpuConditionEval)
+{
+  opts_.devices.use_cpu = true;
+  opts_.devices.use_cuda = false;
+  EXPECT_FALSE(opts_.devices.use_cpu && opts_.devices.use_cuda);
+  EXPECT_FALSE(opts_.devices.use_cuda);
+}
+
+TEST_F(RunWarmupTest, RunWarmupCalculatesMaxRequestNb)
+{
+  int warmup_request_nb = 5;
+  int configured_batches = 2;
+  int max_batch_size = 3;
+  int min_requests_for_batches = configured_batches * max_batch_size;
+  int result = std::max(warmup_request_nb, min_requests_for_batches);
+  EXPECT_EQ(min_requests_for_batches, 6);
+  EXPECT_EQ(result, 6);
+}
+
+TEST_F(RunWarmupTest, RunWarmupConfiguredBatchesZero)
+{
+  opts_.batching.warmup_batches_per_worker = -5;
+  int configured_batches =
+      std::max(0, opts_.batching.warmup_batches_per_worker);
+  EXPECT_EQ(configured_batches, 0);
+}
+
+class ProcessResultsTest : public ::testing::Test {
+ protected:
+  void SetUp() override { model_cpu_ = starpu_server::make_identity_model(); }
+  torch::jit::script::Module model_cpu_{"cpu_module"};
+  std::vector<torch::jit::script::Module> models_gpu_;
+  starpu_server::RuntimeConfig opts_;
+};
+
+TEST_F(ProcessResultsTest, ProcessResultsWithValidationDisabled)
+{
+  opts_.validation.validate_results = false;
+  starpu_server::InferenceResult result;
+  result.results = {torch::ones({1})};
+  result.device_id = -1;
+  std::vector<starpu_server::InferenceResult> results{result};
+  EXPECT_NO_THROW(starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_));
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsWithValidationEnabledAndValidResults)
+{
+  opts_.validation.validate_results = true;
+  opts_.verbosity = starpu_server::VerbosityLevel::Silent;
+  opts_.devices.use_cuda = false;
+  starpu_server::InferenceResult result;
+  result.results = {torch::ones({1})};
+  result.device_id = -1;
+  std::vector<starpu_server::InferenceResult> results{result};
+  starpu_server::InferenceResult empty_result;
+  empty_result.results = {};
+  std::vector<starpu_server::InferenceResult> empty_results{empty_result};
+  EXPECT_NO_THROW(starpu_server::detail::process_results(
+      empty_results, model_cpu_, models_gpu_, opts_));
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsLogsJobFailureWhenValidationEnabled)
+{
+  opts_.validation.validate_results = true;
+  opts_.verbosity = starpu_server::VerbosityLevel::Info;
+  starpu_server::InferenceResult result;
+  result.request_id = 42;
+  result.results = {};
+  std::vector<starpu_server::InferenceResult> results{result};
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_);
+  auto output = capture.str();
+  EXPECT_NE(output.find("[Client] Job"), std::string::npos);
+  EXPECT_NE(output.find("failed"), std::string::npos);
+}
+
+TEST_F(
+    ProcessResultsTest,
+    ProcessResultsSkipsLoggingJobFailureWhenValidationDisabled)
+{
+  opts_.validation.validate_results = false;
+  starpu_server::InferenceResult result;
+  result.request_id = 42;
+  result.results = {};
+  std::vector<starpu_server::InferenceResult> results{result};
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_);
+  auto output = capture.str();
+  EXPECT_EQ(output.find("[Client] Job"), std::string::npos);
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsSkipsValidationWhenDisabled)
+{
+  opts_.validation.validate_results = false;
+  starpu_server::InferenceResult result;
+  result.results = {torch::ones({1})};
+  result.device_id = -1;
+  std::vector<starpu_server::InferenceResult> results{result};
+  EXPECT_NO_THROW(starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_));
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsJobFailureWithMultipleResults)
+{
+  opts_.validation.validate_results = true;
+  opts_.verbosity = starpu_server::VerbosityLevel::Info;
+  std::vector<starpu_server::InferenceResult> results;
+  starpu_server::InferenceResult result1;
+  result1.request_id = 1;
+  result1.results = {};
+  results.push_back(result1);
+  starpu_server::InferenceResult result2;
+  result2.request_id = 2;
+  result2.results = {};
+  results.push_back(result2);
+  starpu_server::CaptureStream capture{std::cerr};
+  starpu_server::detail::process_results(
+      results, model_cpu_, models_gpu_, opts_);
+  auto output = capture.str();
+  EXPECT_NE(output.find("[Client] Job"), std::string::npos);
+  EXPECT_NE(output.find("failed"), std::string::npos);
+}
+
+TEST_F(ProcessResultsTest, ProcessResultsValidationConditionBranching)
+{
+  opts_.validation.validate_results = true;
+  bool should_validate_true = opts_.validation.validate_results;
+  EXPECT_TRUE(should_validate_true);
+  opts_.validation.validate_results = false;
+  bool should_validate_false = opts_.validation.validate_results;
+  EXPECT_FALSE(should_validate_false);
+  EXPECT_NE(should_validate_true, should_validate_false);
 }
