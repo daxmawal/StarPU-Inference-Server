@@ -120,6 +120,186 @@ class ProbeTracePrefixGuard {
   ProbeTraceMode previous_;
 };
 
+auto
+run_throughput_probe_cpu_once(
+    const RuntimeConfig& opts, StarPUSetup& starpu,
+    torch::jit::script::Module& model_cpu,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<torch::Tensor>& reference_outputs,
+    const std::vector<int>& cpu_workers, int worker_count, int max_batch_size,
+    int request_count, bool show_progress) -> ProbeOutcome
+{
+  ProbeOutcome outcome{};
+  if (request_count <= 0) {
+    return outcome;
+  }
+
+  using namespace std::chrono_literals;
+
+  log_info(
+      opts.verbosity,
+      std::format(
+          "[Throughput-CPU] Running {} probe with {} synthetic request(s) "
+          "(workers={}, max_batch_size={})...",
+          show_progress ? "duration-calibrated" : "calibration", request_count,
+          worker_count, max_batch_size));
+
+  perf_observer::reset();
+
+  try {
+    InferenceQueue queue;
+    std::vector<InferenceResult> throwaway_results;
+    std::mutex results_mutex;
+    std::atomic<int> completed_jobs{0};
+    std::condition_variable all_done_cv;
+    std::mutex all_done_mutex;
+    std::atomic<bool> stop_progress{false};
+
+    StarPUTaskRunnerConfig config{};
+    config.queue = &queue;
+    config.model_cpu = &model_cpu;
+    config.models_gpu = &models_gpu;
+    config.starpu = &starpu;
+    config.opts = &opts;
+    config.results = &throwaway_results;
+    config.results_mutex = &results_mutex;
+    config.completed_jobs = &completed_jobs;
+    config.all_done_cv = &all_done_cv;
+
+    std::string default_model_name = opts.name;
+    if (default_model_name.empty() && !opts.models.empty()) {
+      default_model_name = opts.models[0].name;
+    }
+
+    StarPUTaskRunner worker(config);
+    std::jthread worker_thread([&worker]() {
+      SubmissionPhaseScopedGuard probe_phase_guard(SubmissionPhase::Probe);
+      worker.run();
+    });
+
+    std::jthread client_thread([&, default_model_name]() {
+      std::mt19937 rng;
+      if (opts.seed.has_value()) {
+        rng.seed(*opts.seed);
+        torch::manual_seed(*opts.seed);
+      } else {
+        rng.seed(std::random_device{}());
+      }
+
+      auto pregen_inputs = client_utils::pre_generate_inputs(
+          opts, std::max<std::size_t>(1, opts.batching.pregen_inputs));
+
+      for (int request_id = 0; request_id < request_count; ++request_id) {
+        const auto& inputs =
+            client_utils::pick_random_input(pregen_inputs, rng);
+        auto job = client_utils::create_job(
+            inputs, reference_outputs, request_id, {}, {}, default_model_name);
+        job->set_is_probe_job(true);
+        if (!cpu_workers.empty()) {
+          static int cpu_worker_index = 0;
+          const int worker_id =
+              cpu_workers[cpu_worker_index % cpu_workers.size()];
+          job->set_fixed_worker_id(worker_id);
+          cpu_worker_index++;
+        }
+
+        const auto enqueued_now = std::chrono::high_resolution_clock::now();
+        job->timing_info().enqueued_time = enqueued_now;
+        job->timing_info().last_enqueued_time = enqueued_now;
+
+        if (!queue.push(std::move(job))) {
+          log_warning(
+              "[Throughput-CPU] Failed to enqueue job: queue shutting down");
+          break;
+        }
+      }
+
+      queue.shutdown();
+    });
+
+    std::jthread progress_thread;
+    if (show_progress) {
+      progress_thread = std::jthread([&stop_progress, &completed_jobs, &opts,
+                                      request_count]() {
+        constexpr int bar_width = 20;
+        int last_step = -1;
+        while (!stop_progress.load(std::memory_order_relaxed)) {
+          const int done = completed_jobs.load(std::memory_order_relaxed);
+          const int pct = std::clamp(done * 100 / request_count, 0, 100);
+          const int step = pct / 5;
+          if (step != last_step) {
+            last_step = step;
+            const int filled = std::clamp(pct * bar_width / 100, 0, bar_width);
+            std::string bar(bar_width, ' ');
+            std::fill_n(bar.begin(), filled, '#');
+            log_info(
+                opts.verbosity,
+                std::format(
+                    "[Throughput-CPU] Progress [{}] {:3d}% ({}/{})", bar, pct,
+                    done, request_count));
+          }
+          if (pct >= 100) {
+            break;
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+      });
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + 60s;
+    {
+      std::unique_lock lock(all_done_mutex);
+      outcome.completed_all = all_done_cv.wait_until(
+          lock, deadline, [&completed_jobs, request_count]() {
+            return completed_jobs.load(std::memory_order_acquire) >=
+                   request_count;
+          });
+    }
+
+    queue.shutdown();
+    stop_progress.store(true, std::memory_order_relaxed);
+    if (progress_thread.joinable()) {
+      progress_thread.join();
+    }
+    if (client_thread.joinable()) {
+      client_thread.join();
+    }
+    if (worker_thread.joinable()) {
+      worker_thread.join();
+    }
+    starpu_task_wait_for_all();
+
+    outcome.completed_jobs = completed_jobs.load(std::memory_order_acquire);
+    outcome.snapshot = perf_observer::snapshot();
+    if (outcome.snapshot.has_value()) {
+      log_info(
+          opts.verbosity,
+          std::format(
+              "[Throughput-CPU] Throughput: {} inference(s) in {:.3f} s "
+              "-> {:.2f} infer/s",
+              outcome.snapshot->total_inferences,
+              outcome.snapshot->duration_seconds,
+              outcome.snapshot->throughput));
+    } else {
+      log_warning("[Throughput-CPU] Probe did not yield a usable snapshot.");
+    }
+
+    if (!outcome.completed_all) {
+      log_warning(std::format(
+          "[Throughput-CPU] Startup throughput probe timed out; completed "
+          "{} of {} request(s).",
+          outcome.completed_jobs, request_count));
+    }
+  }
+  catch (const std::exception& e) {
+    log_warning(std::format(
+        "[Throughput-CPU] Probe failed (continuing startup): {}", e.what()));
+  }
+
+  perf_observer::reset();
+  return outcome;
+}
+
 }  // namespace
 
 auto
@@ -182,178 +362,10 @@ run_startup_throughput_probe_cpu(
     }
   }
 
-  auto run_probe_once = [&](int request_count,
-                            bool show_progress) -> ProbeOutcome {
-    ProbeOutcome outcome{};
-    if (request_count <= 0) {
-      return outcome;
-    }
-
-    log_info(
-        opts.verbosity,
-        std::format(
-            "[Throughput-CPU] Running {} probe with {} synthetic request(s) "
-            "(workers={}, max_batch_size={})...",
-            show_progress ? "duration-calibrated" : "calibration",
-            request_count, worker_count, max_batch_size));
-
-    perf_observer::reset();
-
-    try {
-      InferenceQueue queue;
-      std::vector<InferenceResult> throwaway_results;
-      std::mutex results_mutex;
-      std::atomic<int> completed_jobs{0};
-      std::condition_variable all_done_cv;
-      std::mutex all_done_mutex;
-      std::atomic<bool> stop_progress{false};
-
-      StarPUTaskRunnerConfig config{};
-      config.queue = &queue;
-      config.model_cpu = &model_cpu;
-      config.models_gpu = &models_gpu;
-      config.starpu = &starpu;
-      config.opts = &opts;
-      config.results = &throwaway_results;
-      config.results_mutex = &results_mutex;
-      config.completed_jobs = &completed_jobs;
-      config.all_done_cv = &all_done_cv;
-
-      std::string default_model_name = opts.name;
-      if (default_model_name.empty() && !opts.models.empty()) {
-        default_model_name = opts.models[0].name;
-      }
-
-      StarPUTaskRunner worker(config);
-      std::jthread worker_thread([&worker]() {
-        SubmissionPhaseScopedGuard probe_phase_guard(SubmissionPhase::Probe);
-        worker.run();
-      });
-
-      std::jthread client_thread([&, default_model_name]() {
-        std::mt19937 rng;
-        if (opts.seed.has_value()) {
-          rng.seed(*opts.seed);
-          torch::manual_seed(*opts.seed);
-        } else {
-          rng.seed(std::random_device{}());
-        }
-
-        auto pregen_inputs = client_utils::pre_generate_inputs(
-            opts, std::max<std::size_t>(1, opts.batching.pregen_inputs));
-
-        for (int request_id = 0; request_id < request_count; ++request_id) {
-          const auto& inputs =
-              client_utils::pick_random_input(pregen_inputs, rng);
-          auto job = client_utils::create_job(
-              inputs, reference_outputs, request_id, {}, {},
-              default_model_name);
-          job->set_is_probe_job(true);
-          if (!cpu_workers.empty()) {
-            static int cpu_worker_index = 0;
-            const int worker_id =
-                cpu_workers[cpu_worker_index % cpu_workers.size()];
-            job->set_fixed_worker_id(worker_id);
-            cpu_worker_index++;
-          }
-
-          const auto enqueued_now = std::chrono::high_resolution_clock::now();
-          job->timing_info().enqueued_time = enqueued_now;
-          job->timing_info().last_enqueued_time = enqueued_now;
-
-          if (!queue.push(std::move(job))) {
-            log_warning(
-                "[Throughput-CPU] Failed to enqueue job: queue shutting "
-                "down");
-            break;
-          }
-        }
-
-        queue.shutdown();
-      });
-
-      std::jthread progress_thread;
-      if (show_progress) {
-        progress_thread = std::jthread(
-            [&stop_progress, &completed_jobs, &opts, request_count]() {
-              constexpr int bar_width = 20;
-              int last_step = -1;
-              while (!stop_progress.load(std::memory_order_relaxed)) {
-                const int done = completed_jobs.load(std::memory_order_relaxed);
-                const int pct = std::clamp(done * 100 / request_count, 0, 100);
-                const int step = pct / 5;
-                if (step != last_step) {
-                  last_step = step;
-                  const int filled =
-                      std::clamp(pct * bar_width / 100, 0, bar_width);
-                  std::string bar(bar_width, ' ');
-                  std::fill_n(bar.begin(), filled, '#');
-                  log_info(
-                      opts.verbosity,
-                      std::format(
-                          "[Throughput-CPU] Progress [{}] {:3d}% ({}/{})", bar,
-                          pct, done, request_count));
-                }
-                if (pct >= 100) {
-                  break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
-              }
-            });
-      }
-
-      const auto deadline = std::chrono::steady_clock::now() + 60s;
-      {
-        std::unique_lock lock(all_done_mutex);
-        outcome.completed_all = all_done_cv.wait_until(
-            lock, deadline, [&completed_jobs, request_count]() {
-              return completed_jobs.load(std::memory_order_acquire) >=
-                     request_count;
-            });
-      }
-
-      queue.shutdown();
-      stop_progress.store(true, std::memory_order_relaxed);
-      if (progress_thread.joinable()) {
-        progress_thread.join();
-      }
-      if (client_thread.joinable()) {
-        client_thread.join();
-      }
-      if (worker_thread.joinable()) {
-        worker_thread.join();
-      }
-      starpu_task_wait_for_all();
-
-      outcome.completed_jobs = completed_jobs.load(std::memory_order_acquire);
-      outcome.snapshot = perf_observer::snapshot();
-      if (outcome.snapshot.has_value()) {
-        log_info(
-            opts.verbosity,
-            std::format(
-                "[Throughput-CPU] Throughput: {} inference(s) in {:.3f} s "
-                "-> {:.2f} infer/s",
-                outcome.snapshot->total_inferences,
-                outcome.snapshot->duration_seconds,
-                outcome.snapshot->throughput));
-      } else {
-        log_warning("[Throughput-CPU] Probe did not yield a usable snapshot.");
-      }
-
-      if (!outcome.completed_all) {
-        log_warning(std::format(
-            "[Throughput-CPU] Startup throughput probe timed out; completed "
-            "{} of {} request(s).",
-            outcome.completed_jobs, request_count));
-      }
-    }
-    catch (const std::exception& e) {
-      log_warning(std::format(
-          "[Throughput-CPU] Probe failed (continuing startup): {}", e.what()));
-    }
-
-    perf_observer::reset();
-    return outcome;
+  auto run_probe_once = [&](int request_count, bool show_progress) {
+    return run_throughput_probe_cpu_once(
+        opts, starpu, model_cpu, models_gpu, reference_outputs, cpu_workers,
+        worker_count, max_batch_size, request_count, show_progress);
   };
 
   const int calibration_requests =

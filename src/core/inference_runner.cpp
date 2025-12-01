@@ -235,8 +235,8 @@ InferenceJob::InferenceJob(
     : request_id_(request_identifier), on_complete_(std::move(callback)),
       start_time_(std::chrono::high_resolution_clock::now())
 {
-  input_tensors_ = std::move(inputs);
-  input_types_ = std::move(types);
+  adopt_input_tensors(std::move(inputs));
+  adopt_input_types(std::move(types));
 }
 
 auto

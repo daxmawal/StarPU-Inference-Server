@@ -296,22 +296,23 @@ fill_output_tensor(
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
-    std::vector<at::ScalarType> expected_input_types,
-    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-    std::string default_model_name, double measured_throughput, bool use_cuda,
-    double measured_throughput_cpu)
+    InferenceServiceConfig config)
     : queue_(queue), reference_outputs_(reference_outputs),
-      expected_input_types_(std::move(expected_input_types)),
-      expected_input_dims_(std::move(expected_input_dims)),
-      max_batch_size_(max_batch_size),
-      default_model_name_(std::move(default_model_name)), use_cuda_(use_cuda),
+      expected_input_types_(std::move(config.expected_input_types)),
+      expected_input_dims_(std::move(config.expected_input_dims)),
+      max_batch_size_(config.max_batch_size),
+      default_model_name_(std::move(config.default_model_name)),
+      use_cuda_(config.use_cuda),
       measured_throughput_(
-          use_cuda ? measured_throughput : measured_throughput_cpu),
+          config.use_cuda ? config.measured_throughput
+                          : config.measured_throughput_cpu),
       congestion_threshold_(
-          (use_cuda ? measured_throughput : measured_throughput_cpu) *
+          (config.use_cuda ? config.measured_throughput
+                           : config.measured_throughput_cpu) *
           kCongestionEnterRatio),
       congestion_clear_threshold_(
-          (use_cuda ? measured_throughput : measured_throughput_cpu) *
+          (config.use_cuda ? config.measured_throughput
+                           : config.measured_throughput_cpu) *
           kCongestionClearRatio)
 {
   start_congestion_monitor();
@@ -320,12 +321,36 @@ InferenceServiceImpl::InferenceServiceImpl(
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
+    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
     std::string default_model_name, double measured_throughput, bool use_cuda,
     double measured_throughput_cpu)
     : InferenceServiceImpl(
-          queue, reference_outputs, std::move(expected_input_types), {}, 0,
-          std::move(default_model_name), measured_throughput, use_cuda,
-          measured_throughput_cpu)
+          queue, reference_outputs,
+          InferenceServiceConfig{
+              .expected_input_types = std::move(expected_input_types),
+              .expected_input_dims = std::move(expected_input_dims),
+              .max_batch_size = max_batch_size,
+              .default_model_name = std::move(default_model_name),
+              .measured_throughput = measured_throughput,
+              .measured_throughput_cpu = measured_throughput_cpu,
+              .use_cuda = use_cuda,
+          })
+{
+}
+
+InferenceServiceImpl::InferenceServiceImpl(
+    InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
+    std::vector<at::ScalarType> expected_input_types,
+    std::string default_model_name, double measured_throughput, bool use_cuda,
+    double measured_throughput_cpu)
+    : InferenceServiceImpl(
+          queue, reference_outputs,
+          InferenceServiceConfig{
+              .expected_input_types = std::move(expected_input_types),
+              .default_model_name = std::move(default_model_name),
+              .measured_throughput = measured_throughput,
+              .measured_throughput_cpu = measured_throughput_cpu,
+              .use_cuda = use_cuda})
 {
 }
 
@@ -1192,10 +1217,16 @@ RunGrpcServer(
     int max_batch_size, const GrpcServerOptions& options,
     std::unique_ptr<Server>& server)
 {
-  InferenceServiceImpl service(
-      &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size, options.default_model_name, options.measured_throughput,
-      options.use_cuda, options.measured_throughput_cpu);
+  InferenceServiceConfig config{
+      .expected_input_types = expected_input_types,
+      .expected_input_dims = expected_input_dims,
+      .max_batch_size = max_batch_size,
+      .default_model_name = options.default_model_name,
+      .measured_throughput = options.measured_throughput,
+      .measured_throughput_cpu = options.measured_throughput_cpu,
+      .use_cuda = options.use_cuda,
+  };
+  InferenceServiceImpl service(&queue, &reference_outputs, std::move(config));
   run_grpc_server_impl(service, options, server);
 }
 
@@ -1205,10 +1236,14 @@ RunGrpcServer(
     const std::vector<at::ScalarType>& expected_input_types,
     const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
-  InferenceServiceImpl service(
-      &queue, &reference_outputs, expected_input_types,
-      options.default_model_name, options.measured_throughput, options.use_cuda,
-      options.measured_throughput_cpu);
+  InferenceServiceConfig config{
+      .expected_input_types = expected_input_types,
+      .default_model_name = options.default_model_name,
+      .measured_throughput = options.measured_throughput,
+      .measured_throughput_cpu = options.measured_throughput_cpu,
+      .use_cuda = options.use_cuda,
+  };
+  InferenceServiceImpl service(&queue, &reference_outputs, std::move(config));
   run_grpc_server_impl(service, options, server);
 }
 

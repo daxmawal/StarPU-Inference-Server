@@ -157,7 +157,8 @@ class JobBatchState {
 
 class InferenceJobIO {
  public:
-  void set_input_tensors(const std::vector<torch::Tensor>& inputs)
+  virtual ~InferenceJobIO() = default;
+  virtual void set_input_tensors(const std::vector<torch::Tensor>& inputs)
   {
     input_tensors_.clear();
     input_tensors_.reserve(inputs.size());
@@ -216,6 +217,17 @@ class InferenceJobIO {
   }
 
  protected:
+  void adopt_input_tensors(std::vector<torch::Tensor> inputs)
+  {
+    input_tensors_ = std::move(inputs);
+  }
+
+  void adopt_input_types(std::vector<at::ScalarType> types)
+  {
+    input_types_ = std::move(types);
+  }
+
+ private:
   std::vector<torch::Tensor> input_tensors_;
   std::vector<at::ScalarType> input_types_;
   std::vector<torch::Tensor> output_tensors_;
@@ -242,7 +254,7 @@ class InferenceJob : public JobBatchState, public InferenceJobIO {
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_gpu_only(bool enable) { gpu_only_ = enable; }
   void set_is_warmup_job(bool is_warmup) { is_warmup_job_ = is_warmup; }
-  void set_input_tensors(const std::vector<torch::Tensor>& inputs)
+  void set_input_tensors(const std::vector<torch::Tensor>& inputs) override
   {
     reset_effective_batch_size();
     InferenceJobIO::set_input_tensors(inputs);

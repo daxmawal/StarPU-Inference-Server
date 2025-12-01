@@ -25,9 +25,24 @@ struct TimingInfo;
 
 class MetricsRegistry;
 
+struct InferenceServiceConfig {
+  std::vector<at::ScalarType> expected_input_types;
+  std::vector<std::vector<int64_t>> expected_input_dims;
+  int max_batch_size = 0;
+  std::string default_model_name;
+  double measured_throughput = 0.0;
+  double measured_throughput_cpu = 0.0;
+  bool use_cuda = false;
+};
+
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
  public:
+  InferenceServiceImpl(
+      InferenceQueue* queue,
+      const std::vector<torch::Tensor>* reference_outputs,
+      InferenceServiceConfig config);
+
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
