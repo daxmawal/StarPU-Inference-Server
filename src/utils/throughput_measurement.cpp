@@ -78,11 +78,13 @@ parse_json_file(std::string_view content)
   result.config_signature =
       std::string(content.substr(sig_start + 1, sig_end - sig_start - 1));
 
-  if (auto gpu_value = parse_json_throughput(content, "\"throughput_gpu\"")) {
+  if (auto gpu_value = parse_json_throughput(content, "\"throughput_gpu\"");
+      gpu_value.has_value()) {
     result.throughput_gpu = *gpu_value;
   }
 
-  if (auto cpu_value = parse_json_throughput(content, "\"throughput_cpu\"")) {
+  if (auto cpu_value = parse_json_throughput(content, "\"throughput_cpu\"");
+      cpu_value.has_value()) {
     result.throughput_cpu = *cpu_value;
   }
 

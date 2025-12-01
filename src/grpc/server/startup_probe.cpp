@@ -274,40 +274,42 @@ run_startup_throughput_probe_cpu(
 
       std::jthread progress_thread;
       if (show_progress) {
-        progress_thread = std::jthread([&]() {
-          constexpr int bar_width = 20;
-          int last_step = -1;
-          while (!stop_progress.load(std::memory_order_relaxed)) {
-            const int done = completed_jobs.load(std::memory_order_relaxed);
-            const int pct = std::clamp(done * 100 / request_count, 0, 100);
-            const int step = pct / 5;
-            if (step != last_step) {
-              last_step = step;
-              const int filled =
-                  std::clamp(pct * bar_width / 100, 0, bar_width);
-              std::string bar(bar_width, ' ');
-              std::fill_n(bar.begin(), filled, '#');
-              log_info(
-                  opts.verbosity,
-                  std::format(
-                      "[Throughput-CPU] Progress [{}] {:3d}% ({}/{})", bar, pct,
-                      done, request_count));
-            }
-            if (pct >= 100) {
-              break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-          }
-        });
+        progress_thread = std::jthread(
+            [&stop_progress, &completed_jobs, &opts, request_count]() {
+              constexpr int bar_width = 20;
+              int last_step = -1;
+              while (!stop_progress.load(std::memory_order_relaxed)) {
+                const int done = completed_jobs.load(std::memory_order_relaxed);
+                const int pct = std::clamp(done * 100 / request_count, 0, 100);
+                const int step = pct / 5;
+                if (step != last_step) {
+                  last_step = step;
+                  const int filled =
+                      std::clamp(pct * bar_width / 100, 0, bar_width);
+                  std::string bar(bar_width, ' ');
+                  std::fill_n(bar.begin(), filled, '#');
+                  log_info(
+                      opts.verbosity,
+                      std::format(
+                          "[Throughput-CPU] Progress [{}] {:3d}% ({}/{})", bar,
+                          pct, done, request_count));
+                }
+                if (pct >= 100) {
+                  break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+              }
+            });
       }
 
       const auto deadline = std::chrono::steady_clock::now() + 60s;
       {
         std::unique_lock lock(all_done_mutex);
-        outcome.completed_all = all_done_cv.wait_until(lock, deadline, [&]() {
-          return completed_jobs.load(std::memory_order_acquire) >=
-                 request_count;
-        });
+        outcome.completed_all = all_done_cv.wait_until(
+            lock, deadline, [&completed_jobs, request_count]() {
+              return completed_jobs.load(std::memory_order_acquire) >=
+                     request_count;
+            });
       }
 
       queue.shutdown();
@@ -605,40 +607,42 @@ run_startup_throughput_probe(
 
       std::jthread progress_thread;
       if (show_progress) {
-        progress_thread = std::jthread([&]() {
-          constexpr int bar_width = 20;
-          int last_step = -1;
-          while (!stop_progress.load(std::memory_order_relaxed)) {
-            const int done = completed_jobs.load(std::memory_order_relaxed);
-            const int pct = std::clamp(done * 100 / request_count, 0, 100);
-            const int step = pct / 5;  // update every 5%
-            if (step != last_step) {
-              last_step = step;
-              const int filled =
-                  std::clamp(pct * bar_width / 100, 0, bar_width);
-              std::string bar(bar_width, ' ');
-              std::fill_n(bar.begin(), filled, '#');
-              log_info(
-                  opts.verbosity,
-                  std::format(
-                      "[Throughput] Progress [{}] {:3d}% ({}/{})", bar, pct,
-                      done, request_count));
-            }
-            if (pct >= 100) {
-              break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-          }
-        });
+        progress_thread = std::jthread(
+            [&stop_progress, &completed_jobs, &opts, request_count]() {
+              constexpr int bar_width = 20;
+              int last_step = -1;
+              while (!stop_progress.load(std::memory_order_relaxed)) {
+                const int done = completed_jobs.load(std::memory_order_relaxed);
+                const int pct = std::clamp(done * 100 / request_count, 0, 100);
+                const int step = pct / 5;  // update every 5%
+                if (step != last_step) {
+                  last_step = step;
+                  const int filled =
+                      std::clamp(pct * bar_width / 100, 0, bar_width);
+                  std::string bar(bar_width, ' ');
+                  std::fill_n(bar.begin(), filled, '#');
+                  log_info(
+                      opts.verbosity,
+                      std::format(
+                          "[Throughput] Progress [{}] {:3d}% ({}/{})", bar, pct,
+                          done, request_count));
+                }
+                if (pct >= 100) {
+                  break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+              }
+            });
       }
 
       const auto deadline = std::chrono::steady_clock::now() + 60s;
       {
         std::unique_lock lock(all_done_mutex);
-        outcome.completed_all = all_done_cv.wait_until(lock, deadline, [&]() {
-          return completed_jobs.load(std::memory_order_acquire) >=
-                 request_count;
-        });
+        outcome.completed_all = all_done_cv.wait_until(
+            lock, deadline, [&completed_jobs, request_count]() {
+              return completed_jobs.load(std::memory_order_acquire) >=
+                     request_count;
+            });
       }
 
       queue.shutdown();
