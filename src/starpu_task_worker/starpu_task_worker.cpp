@@ -40,21 +40,39 @@
 namespace starpu_server {
 
 namespace {
-std::atomic g_probe_submission_id{0};
-std::atomic g_warmup_submission_id{0};
-std::atomic g_real_inference_submission_id{0};
+
+auto
+probe_submission_counter() -> std::atomic<int>&
+{
+  static std::atomic<int> counter{0};
+  return counter;
+}
+
+auto
+warmup_submission_counter() -> std::atomic<int>&
+{
+  static std::atomic<int> counter{0};
+  return counter;
+}
+
+auto
+real_inference_submission_counter() -> std::atomic<int>&
+{
+  static std::atomic<int> counter{0};
+  return counter;
+}
 
 auto
 get_next_submission_id() -> int
 {
   const auto phase = SubmissionPhaseContext::current_phase();
   if (phase == SubmissionPhase::Probe) {
-    return g_probe_submission_id.fetch_add(1);
+    return probe_submission_counter().fetch_add(1);
   }
   if (phase == SubmissionPhase::Warmup) {
-    return g_warmup_submission_id.fetch_add(1);
+    return warmup_submission_counter().fetch_add(1);
   }
-  return g_real_inference_submission_id.fetch_add(1);
+  return real_inference_submission_counter().fetch_add(1);
 }
 }  // namespace
 

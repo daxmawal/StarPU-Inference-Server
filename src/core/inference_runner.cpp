@@ -608,8 +608,8 @@ resolve_validation_model(
     return std::nullopt;
   }
 
-  const auto it = gpu_lookup.find(result.device_id);
-  if (it == gpu_lookup.end() || it->second == nullptr) {
+  const auto gpu_entry = gpu_lookup.find(result.device_id);
+  if (gpu_entry == gpu_lookup.end() || gpu_entry->second == nullptr) {
     if (validate_results) {
       log_warning(std::format(
           "[Client] Skipping validation for job {}: no GPU replica for device "
@@ -619,7 +619,7 @@ resolve_validation_model(
     return std::nullopt;
   }
 
-  return it->second;
+  return gpu_entry->second;
 }
 
 void
