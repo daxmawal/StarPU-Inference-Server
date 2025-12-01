@@ -47,14 +47,6 @@ class InferenceServiceImpl final
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-      std::string default_model_name = {}, double measured_throughput = 0.0,
-      bool use_cuda = false, double measured_throughput_cpu = 0.0);
-
-  InferenceServiceImpl(
-      InferenceQueue* queue,
-      const std::vector<torch::Tensor>* reference_outputs,
-      std::vector<at::ScalarType> expected_input_types,
       std::string default_model_name = {}, double measured_throughput = 0.0,
       bool use_cuda = false, double measured_throughput_cpu = 0.0);
 

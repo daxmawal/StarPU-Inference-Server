@@ -96,9 +96,8 @@ shape_tails_match(
     int64_t shape_offset, int64_t expected_offset) -> bool
 {
   const auto rank = static_cast<int64_t>(shape.size());
-  const auto expected_rank = static_cast<int64_t>(expected.size());
-
-  if (rank - shape_offset != expected_rank - expected_offset) {
+  if (rank - shape_offset !=
+      static_cast<int64_t>(expected.size()) - expected_offset) {
     return false;
   }
   for (int64_t idx = 0; idx < rank - shape_offset; ++idx) {
@@ -302,7 +301,6 @@ InferenceServiceImpl::InferenceServiceImpl(
       expected_input_dims_(std::move(config.expected_input_dims)),
       max_batch_size_(config.max_batch_size),
       default_model_name_(std::move(config.default_model_name)),
-      use_cuda_(config.use_cuda),
       measured_throughput_(
           config.use_cuda ? config.measured_throughput
                           : config.measured_throughput_cpu),
@@ -313,29 +311,10 @@ InferenceServiceImpl::InferenceServiceImpl(
       congestion_clear_threshold_(
           (config.use_cuda ? config.measured_throughput
                            : config.measured_throughput_cpu) *
-          kCongestionClearRatio)
+          kCongestionClearRatio),
+      use_cuda_(config.use_cuda)
 {
   start_congestion_monitor();
-}
-
-InferenceServiceImpl::InferenceServiceImpl(
-    InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
-    std::vector<at::ScalarType> expected_input_types,
-    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-    std::string default_model_name, double measured_throughput, bool use_cuda,
-    double measured_throughput_cpu)
-    : InferenceServiceImpl(
-          queue, reference_outputs,
-          InferenceServiceConfig{
-              .expected_input_types = std::move(expected_input_types),
-              .expected_input_dims = std::move(expected_input_dims),
-              .max_batch_size = max_batch_size,
-              .default_model_name = std::move(default_model_name),
-              .measured_throughput = measured_throughput,
-              .measured_throughput_cpu = measured_throughput_cpu,
-              .use_cuda = use_cuda,
-          })
-{
 }
 
 InferenceServiceImpl::InferenceServiceImpl(
