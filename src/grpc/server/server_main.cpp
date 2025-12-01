@@ -99,13 +99,18 @@ prepare_models_and_warmup(const RuntimeConfig& opts, StarPUSetup& starpu)
   return {model_cpu, models_gpu, reference_outputs};
 }
 
+struct LaunchThreadOptions {
+  double measured_throughput = 0.0;
+  double measured_throughput_cpu = 0.0;
+  bool use_cuda = false;
+};
+
 void
 launch_threads(
     const RuntimeConfig& opts, StarPUSetup& starpu,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    std::vector<torch::Tensor>& reference_outputs, double measured_throughput,
-    double measured_throughput_cpu, bool use_cuda)
+    std::vector<torch::Tensor>& reference_outputs, LaunchThreadOptions options)
 {
   static InferenceQueue queue;
   auto& server_ctx = server_context();
@@ -162,9 +167,9 @@ launch_threads(
         opts.batching.max_message_bytes,
         opts.verbosity,
         std::move(default_model_name),
-        measured_throughput,
-        measured_throughput_cpu,
-        use_cuda};
+        options.measured_throughput,
+        options.measured_throughput_cpu,
+        options.use_cuda};
     RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
         opts.batching.max_batch_size, server_options, server_ctx.server);
@@ -211,7 +216,7 @@ main(int argc, char* argv[]) -> int
             opts, starpu, model_cpu, models_gpu, reference_outputs);
     starpu_server::launch_threads(
         opts, starpu, model_cpu, models_gpu, reference_outputs,
-        measured_throughput, measured_throughput_cpu, opts.devices.use_cuda);
+        {measured_throughput, measured_throughput_cpu, opts.devices.use_cuda});
     auto& tracer = starpu_server::BatchingTraceLogger::instance();
     tracer.configure(false, "");
     starpu_server::run_trace_plots_if_enabled(opts);

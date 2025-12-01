@@ -1,15 +1,14 @@
 #include "throughput_measurement.hpp"
 
 #include <filesystem>
+#include <format>
 #include <fstream>
-#include <iomanip>
 #include <sstream>
 #include <string>
 
 #include "logger.hpp"
 
 namespace starpu_server {
-
 namespace {
 
 constexpr int kConfigSignatureSearchOffset = 20;
@@ -100,13 +99,12 @@ parse_old_text_format(std::string_view content)
   std::string signature;
   double throughput = -1.0;
 
-  if (std::getline(iss, signature) && !signature.empty()) {
-    if (iss >> throughput && throughput > 0.0) {
-      ThroughputMeasurement result;
-      result.config_signature = signature;
-      result.throughput_gpu = throughput;
-      return result;
-    }
+  if (std::getline(iss, signature) && !signature.empty() && iss >> throughput &&
+      throughput > 0.0) {
+    ThroughputMeasurement result;
+    result.config_signature = signature;
+    result.throughput_gpu = throughput;
+    return result;
   }
   return std::nullopt;
 }
@@ -168,15 +166,15 @@ save_throughput_measurements(
         << "\",\n";
 
     if (measurements.throughput_gpu >= 0.0) {
-      out << "  \"throughput_gpu\": " << std::fixed
-          << std::setprecision(kJsonPrecision) << measurements.throughput_gpu
-          << ",\n";
+      out << std::format(
+          "  \"throughput_gpu\": {:.{}f},\n", measurements.throughput_gpu,
+          kJsonPrecision);
     }
 
     if (measurements.throughput_cpu >= 0.0) {
-      out << "  \"throughput_cpu\": " << std::fixed
-          << std::setprecision(kJsonPrecision) << measurements.throughput_cpu
-          << "\n";
+      out << std::format(
+          "  \"throughput_cpu\": {:.{}f}\n", measurements.throughput_cpu,
+          kJsonPrecision);
     } else if (measurements.throughput_gpu >= 0.0) {
       out.seekp(-2, std::ios_base::end);
       out << "\n";

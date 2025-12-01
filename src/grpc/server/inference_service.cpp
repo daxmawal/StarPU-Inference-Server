@@ -298,7 +298,8 @@ InferenceServiceImpl::InferenceServiceImpl(
     InferenceServiceConfig config)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(config.expected_input_types)),
-      expected_input_dims_(std::move(config.expected_input_dims)),
+      expected_input_dims_(std::move(config.expected_input_dims.value_or(
+          std::vector<std::vector<int64_t>>{}))),
       max_batch_size_(config.max_batch_size),
       default_model_name_(std::move(config.default_model_name)),
       measured_throughput_(
@@ -467,50 +468,55 @@ InferenceServiceImpl::start_congestion_monitor()
 
   congestion_monitor_thread_ =
       std::jthread([this](const std::stop_token& stop_token) {
-        while (!stop_token.stop_requested()) {
-          std::chrono::high_resolution_clock::time_point start_time{};
-          std::chrono::high_resolution_clock::time_point end_time{};
-          bool cleared = false;
-          {
-            const auto now = std::chrono::high_resolution_clock::now();
-            std::scoped_lock lock(congestion_mutex_);
-            const bool stale_window =
-                congestion_active_ &&
-                (last_arrival_time_ ==
-                     std::chrono::high_resolution_clock::time_point{} ||
-                 now - last_arrival_time_ > kArrivalWindow);
-            if (stale_window) {
-              congestion_active_ = false;
-              start_time = congestion_start_time_;
-              end_time = now;
-              congestion_start_time_ =
-                  std::chrono::high_resolution_clock::time_point{};
-              recent_arrivals_.clear();
-              const auto* const device_name = use_cuda_ ? "GPUs" : "CPUs";
-              log_warning(std::format(
-                  "[Congestion] {} congestion cleared: arrival rate {:.2f} "
-                  "req/s is below {:.2f} infer/s",
-                  device_name, 0.0, congestion_clear_threshold_));
-              cleared = true;
-            }
-          }
-          if (cleared) {
-            if (start_time ==
-                std::chrono::high_resolution_clock::time_point{}) {
-              start_time = end_time - kArrivalWindow;
-            }
-            BatchingTraceLogger::instance().log_congestion_span(
-                BatchingTraceLogger::CongestionSpanArgs{
-                    .start_time = start_time,
-                    .end_time = end_time,
-                    .measured_throughput = measured_throughput_,
-                    .enter_threshold = congestion_threshold_,
-                    .clear_threshold = congestion_clear_threshold_,
-                });
-          }
-          std::this_thread::sleep_for(kCongestionMonitorPeriod);
-        }
+        run_congestion_monitor(stop_token);
       });
+}
+
+void
+InferenceServiceImpl::run_congestion_monitor(const std::stop_token& stop_token)
+{
+  while (!stop_token.stop_requested()) {
+    std::chrono::high_resolution_clock::time_point start_time{};
+    std::chrono::high_resolution_clock::time_point end_time{};
+    bool cleared = false;
+    {
+      const auto now = std::chrono::high_resolution_clock::now();
+      std::scoped_lock lock(congestion_mutex_);
+      const bool stale_window =
+          congestion_active_ &&
+          (last_arrival_time_ ==
+               std::chrono::high_resolution_clock::time_point{} ||
+           now - last_arrival_time_ > kArrivalWindow);
+      if (stale_window) {
+        congestion_active_ = false;
+        start_time = congestion_start_time_;
+        end_time = now;
+        congestion_start_time_ =
+            std::chrono::high_resolution_clock::time_point{};
+        recent_arrivals_.clear();
+        const auto* const device_name = use_cuda_ ? "GPUs" : "CPUs";
+        log_warning(std::format(
+            "[Congestion] {} congestion cleared: arrival rate {:.2f} "
+            "req/s is below {:.2f} infer/s",
+            device_name, 0.0, congestion_clear_threshold_));
+        cleared = true;
+      }
+    }
+    if (cleared) {
+      if (start_time == std::chrono::high_resolution_clock::time_point{}) {
+        start_time = end_time - kArrivalWindow;
+      }
+      BatchingTraceLogger::instance().log_congestion_span(
+          BatchingTraceLogger::CongestionSpanArgs{
+              .start_time = start_time,
+              .end_time = end_time,
+              .measured_throughput = measured_throughput_,
+              .enter_threshold = congestion_threshold_,
+              .clear_threshold = congestion_clear_threshold_,
+          });
+    }
+    std::this_thread::sleep_for(kCongestionMonitorPeriod);
+  }
 }
 
 void

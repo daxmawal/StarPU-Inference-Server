@@ -71,14 +71,9 @@ class InferenceServiceTest : public ::testing::Test {
     auto config = make_service_config();
     auto service_config = starpu_server::InferenceServiceConfig{
         .expected_input_types = std::move(config.expected_input_types),
-        .expected_input_dims = config.expected_input_dims.value_or(
-            std::vector<std::vector<int64_t>>{}),
+        .expected_input_dims = config.expected_input_dims,
         .max_batch_size = config.max_batch_size,
     };
-    if (config.expected_input_dims.has_value()) {
-      ASSERT_GT(config.max_batch_size, 0)
-          << "max_batch_size requires expected_input_dims";
-    }
     service = std::make_unique<starpu_server::InferenceServiceImpl>(
         &queue, &ref_outputs, std::move(service_config));
   }

@@ -27,7 +27,7 @@ class MetricsRegistry;
 
 struct InferenceServiceConfig {
   std::vector<at::ScalarType> expected_input_types;
-  std::vector<std::vector<int64_t>> expected_input_dims;
+  std::optional<std::vector<std::vector<int64_t>>> expected_input_dims;
   int max_batch_size = 0;
   std::string default_model_name;
   double measured_throughput = 0.0;
@@ -154,6 +154,7 @@ class InferenceServiceImpl final
   void record_request_arrival(
       std::chrono::high_resolution_clock::time_point arrival_time);
   void start_congestion_monitor();
+  void run_congestion_monitor(const std::stop_token& stop_token);
 
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
