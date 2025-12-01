@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -320,11 +321,11 @@ void client_worker(
 auto build_gpu_model_lookup(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<int>& device_ids)
-    -> std::vector<torch::jit::script::Module*>;
+    -> std::unordered_map<int, torch::jit::script::Module*>;
 
 auto resolve_validation_model(
     const InferenceResult& result, torch::jit::script::Module& cpu_model,
-    std::span<torch::jit::script::Module*> gpu_lookup,
+    const std::unordered_map<int, torch::jit::script::Module*>& gpu_lookup,
     bool validate_results) -> std::optional<torch::jit::script::Module*>;
 
 void process_results(

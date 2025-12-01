@@ -12,6 +12,7 @@
 #include <span>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 #include <vector>
 
 #include "core/inference_runner.hpp"
@@ -326,7 +327,7 @@ TEST(InferenceRunner_Unit, ResolveValidationModelReturnsNulloptForInvalidDevice)
 
   torch::jit::script::Module cpu_model("cpu_module");
   const auto resolved = starpu_server::detail::resolve_validation_model(
-      result, cpu_model, std::span<torch::jit::script::Module*>{},
+      result, cpu_model, std::unordered_map<int, torch::jit::script::Module*>{},
       /*validate_results=*/true);
 
   EXPECT_FALSE(resolved.has_value());
@@ -358,10 +359,10 @@ TEST(InferenceRunner_Unit, BuildGpuModelLookup_SkipsNegativeEntries)
   const auto lookup =
       starpu_server::detail::build_gpu_model_lookup(models_gpu, device_ids);
 
-  ASSERT_EQ(lookup.size(), 3U);
-  EXPECT_EQ(lookup[0], &models_gpu[2]);
-  EXPECT_EQ(lookup[1], nullptr);
-  EXPECT_EQ(lookup[2], &models_gpu[0]);
+  ASSERT_EQ(lookup.size(), 2U);
+  EXPECT_EQ(lookup.at(0), &models_gpu[2]);
+  EXPECT_EQ(lookup.at(2), &models_gpu[0]);
+  EXPECT_FALSE(lookup.contains(1));
 }
 
 TEST(
@@ -374,7 +375,7 @@ TEST(
 
   torch::jit::script::Module cpu_model("cpu_module");
   torch::jit::script::Module gpu_module("gpu_module");
-  std::vector<torch::jit::script::Module*> lookup{&gpu_module};
+  std::unordered_map<int, torch::jit::script::Module*> lookup{{0, &gpu_module}};
 
   const auto resolved = starpu_server::detail::resolve_validation_model(
       result, cpu_model, lookup, /*validate_results=*/true);
@@ -392,7 +393,8 @@ TEST(InferenceRunner_Unit, ResolveValidationModelReturnsGpuModelWhenAvailable)
   torch::jit::script::Module cpu_model("cpu_module");
   torch::jit::script::Module gpu_module_0("gpu_module_0");
   torch::jit::script::Module gpu_module_1("gpu_module_1");
-  std::vector<torch::jit::script::Module*> lookup{&gpu_module_0, &gpu_module_1};
+  std::unordered_map<int, torch::jit::script::Module*> lookup{
+      {0, &gpu_module_0}, {1, &gpu_module_1}};
 
   const auto resolved = starpu_server::detail::resolve_validation_model(
       result, cpu_model, lookup, /*validate_results=*/true);
