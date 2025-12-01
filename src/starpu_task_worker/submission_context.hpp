@@ -25,8 +25,8 @@ class SubmissionPhaseContext {
 class SubmissionPhaseScopedGuard {
  public:
   explicit SubmissionPhaseScopedGuard(SubmissionPhase phase)
-      : previous_(SubmissionPhaseContext::current_phase())
   {
+    previous_ = SubmissionPhaseContext::current_phase();
     SubmissionPhaseContext::set_phase(phase);
   }
 
@@ -40,7 +40,7 @@ class SubmissionPhaseScopedGuard {
   }
 
  private:
-  SubmissionPhase previous_;
+  SubmissionPhase previous_{SubmissionPhase::RealInference};
 };
 
 }  // namespace starpu_server
