@@ -97,10 +97,9 @@ parse_old_text_format(std::string_view content)
   std::string content_str(content);
   std::istringstream iss(content_str);
   std::string signature;
-  double throughput = -1.0;
-
-  if (std::getline(iss, signature) && !signature.empty() && iss >> throughput &&
-      throughput > 0.0) {
+  if (double throughput = -1.0; std::getline(iss, signature) &&
+                                !signature.empty() && iss >> throughput &&
+                                throughput > 0.0) {
     ThroughputMeasurement result;
     result.config_signature = signature;
     result.throughput_gpu = throughput;

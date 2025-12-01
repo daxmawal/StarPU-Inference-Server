@@ -57,7 +57,7 @@ compute_config_signature(const RuntimeConfig& opts) -> std::string
         config_content = opts.config_path;
       }
     }
-    catch (const std::exception& e) {
+    catch (const std::exception&) {
       config_content = opts.config_path;
     }
   } else {
@@ -106,8 +106,9 @@ get_throughput_measurements_file_path(const RuntimeConfig& opts)
 class ProbeTracePrefixGuard {
  public:
   ProbeTracePrefixGuard(BatchingTraceLogger& tracer, ProbeTraceMode mode)
-      : tracer_(tracer), previous_(tracer.probe_mode())
+      : tracer_(tracer)
   {
+    previous_ = tracer_.probe_mode();
     tracer_.set_probe_mode(mode);
   }
   ProbeTracePrefixGuard(const ProbeTracePrefixGuard&) = delete;
@@ -117,7 +118,7 @@ class ProbeTracePrefixGuard {
 
  private:
   BatchingTraceLogger& tracer_;
-  ProbeTraceMode previous_;
+  ProbeTraceMode previous_{ProbeTraceMode::None};
 };
 
 auto

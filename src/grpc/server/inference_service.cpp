@@ -298,8 +298,8 @@ InferenceServiceImpl::InferenceServiceImpl(
     InferenceServiceConfig config)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(config.expected_input_types)),
-      expected_input_dims_(std::move(config.expected_input_dims.value_or(
-          std::vector<std::vector<int64_t>>{}))),
+      expected_input_dims_(config.expected_input_dims.value_or(
+          std::vector<std::vector<int64_t>>{})),
       max_batch_size_(config.max_batch_size),
       default_model_name_(std::move(config.default_model_name)),
       measured_throughput_(
