@@ -259,13 +259,14 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt},
     InvalidConfigCase{
-        "InvalidSchedulerSetsValidFalse",
+        "DeprecatedSchedulerOptionSetsValidFalse",
         [] {
           auto yaml = std::string{"scheduler: unknown\n"};
           yaml += base_model_yaml();
           return yaml;
         }(),
-        std::nullopt},
+        "Unknown configuration option: scheduler (use starpu_env with "
+        "STARPU_SCHED)"},
     InvalidConfigCase{
         "NegativeDimensionSetsValidFalse",
         [] {
@@ -656,11 +657,12 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   std::ostringstream yaml;
   yaml << "name: fcfs_config\n";
-  yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "use_cpu: true\n";
   yaml << "use_cuda:\n";
   yaml << "  - { device_ids: [0, 1] }\n";
+  yaml << "starpu_env:\n";
+  yaml << "  STARPU_SCHED: pheft\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";
   yaml << "    dims: [1, 3, 224, 224]\n";
@@ -689,9 +691,11 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.name, "fcfs_config");
-  EXPECT_EQ(cfg.scheduler, "fcfs");
   EXPECT_EQ(cfg.models[0].path, model_path.string());
   EXPECT_EQ(cfg.devices.ids, (std::vector<int>{0, 1}));
+  auto scheduler_env = cfg.starpu_env.find("STARPU_SCHED");
+  ASSERT_NE(scheduler_env, cfg.starpu_env.end());
+  EXPECT_EQ(scheduler_env->second, "pheft");
   ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
   EXPECT_EQ(cfg.models[0].inputs[0].name, "in");
   EXPECT_EQ(
@@ -837,7 +841,6 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 
   std::ostringstream yaml;
   yaml << "name: slots_test\n";
-  yaml << "scheduler: fcfs\n";
   yaml << "model: " << model_path.string() << "\n";
   yaml << "inputs:\n";
   yaml << "  - name: in\n";

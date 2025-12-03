@@ -40,7 +40,6 @@ Optional keys unlock batching, logging, and runtime controls:
 
 |Key|Description|Default|
 |---|---|---|
-|`scheduler`|StarPU scheduler name (e.g., lws, eager, heft).|`lws`|
 |`starpu_env`|Lets you pin StarPU-specific environment variables.|unset|
 |`use_cpu`|Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution.|`true`|
 |`group_cpu_by_numa`|Spawn one StarPU CPU worker per NUMA node instead of per core.|`false`|
@@ -83,6 +82,7 @@ process environment before StarPU initialises, so it has the same effect as
 
 ```yaml
 starpu_env:
+  STARPU_SCHED: "lws"
   STARPU_FXT_TRACE: "1"
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"
@@ -90,6 +90,8 @@ starpu_env:
   STARPU_WORKERS_GETBIND: "0"
 ```
 
+- `STARPU_SCHED`: choose the StarPU scheduler policy (e.g., `eager`, `lws`,
+  `heft`). Defaults to `lws` when not set in the YAML or environment.
 - `STARPU_FXT_TRACE`: enable StarPU FXT tracing (set to `1`) to produce StarPU
   timeline files, combine with `STARPU_FXT_PREFIX` to control the output
   directory.
@@ -108,8 +110,9 @@ starpu_env:
 The repository ships a ready-to-run configuration:
 
 ```yaml
-scheduler: lws
 name: bert_local
+starpu_env:
+  STARPU_SCHED: lws
 model: ../models/bert_libtorch.pt
 inputs:
   - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }

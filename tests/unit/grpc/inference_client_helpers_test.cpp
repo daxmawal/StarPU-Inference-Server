@@ -508,7 +508,7 @@ TEST(InferenceClientHelpers, ValidateServerResponseWarnsOnValueMismatch)
 
   const auto err =
       capture_stderr([&] { client.validate_server_response(call); });
-  EXPECT_NE(err.find("value 1 mismatch"), std::string::npos);
+  EXPECT_NE(err.find("max mismatch at value 1"), std::string::npos);
 }
 
 TEST(InferenceClientHelpers, ValidateServerResponseLogsTraceOnSuccess)

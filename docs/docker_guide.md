@@ -155,9 +155,9 @@ chmod 755 models
 > Paths in the YAML refer to container paths. We mount the host directory at `/models`.
 
 ```yaml
-scheduler: eager
 name: bert_docker
 starpu_env:
+  STARPU_SCHED: eager
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"
   STARPU_NWORKER_PER_CUDA: "4"

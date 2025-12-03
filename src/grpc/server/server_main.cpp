@@ -62,6 +62,24 @@ shell_quote(const std::string& value) -> std::string
 }
 
 auto
+resolve_starpu_scheduler(const starpu_server::RuntimeConfig& opts)
+    -> std::string
+{
+  if (const auto scheduler_env_it =
+          opts.starpu_env.find(starpu_server::kStarpuSchedulerEnvVar);
+      scheduler_env_it != opts.starpu_env.end()) {
+    return std::format("{} (from starpu_env)", scheduler_env_it->second);
+  }
+
+  if (const char* env_value =
+          std::getenv(starpu_server::kStarpuSchedulerEnvVar.data())) {
+    return std::format("{} (from environment)", env_value);
+  }
+
+  return std::format("{} (default)", starpu_server::kDefaultStarpuScheduler);
+}
+
+auto
 candidate_plot_scripts(const starpu_server::RuntimeConfig& opts)
     -> std::vector<std::filesystem::path>
 {
@@ -227,7 +245,9 @@ handle_program_arguments(std::span<char const* const> args)
 
   log_info(cfg.verbosity, std::format("__cplusplus = {}", __cplusplus));
   log_info(cfg.verbosity, std::format("LibTorch version: {}", TORCH_VERSION));
-  log_info(cfg.verbosity, std::format("Scheduler       : {}", cfg.scheduler));
+  log_info(
+      cfg.verbosity,
+      std::format("StarPU scheduler: {}", resolve_starpu_scheduler(cfg)));
   if (!cfg.name.empty()) {
     log_info(cfg.verbosity, std::format("Configuration   : {}", cfg.name));
   }

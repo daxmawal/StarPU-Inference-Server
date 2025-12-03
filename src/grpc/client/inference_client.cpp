@@ -463,18 +463,28 @@ InferenceClient::validate_server_response(const AsyncClientCall& call) const
     }
 
     bool mismatch = false;
+    double max_diff = 0.0;
+    std::size_t max_diff_idx = 0;
+    double expected_at_max = 0.0;
+    double decoded_at_max = 0.0;
     for (std::size_t value_idx = 0; value_idx < decoded.size(); ++value_idx) {
       const double diff =
           std::abs(decoded[value_idx] - expected_values[value_idx]);
-      if (diff > kOutputComparisonTolerance) {
-        mismatch = true;
-        log_warning(std::format(
-            "Request {} output {} value {} mismatch: expected {:.6f}, got "
-            "{:.6f} (Δ={:.6f})",
-            call.request_id, idx, value_idx, expected_values[value_idx],
-            decoded[value_idx], diff));
-        break;
+      if (diff > max_diff) {
+        max_diff = diff;
+        max_diff_idx = value_idx;
+        expected_at_max = expected_values[value_idx];
+        decoded_at_max = decoded[value_idx];
       }
+    }
+
+    if (max_diff > kOutputComparisonTolerance) {
+      mismatch = true;
+      log_warning(std::format(
+          "Request {} output {} max mismatch at value {}: expected {:.6f}, got "
+          "{:.6f} (Δ={:.6f})",
+          call.request_id, idx, max_diff_idx, expected_at_max, decoded_at_max,
+          max_diff));
     }
 
     if (!mismatch) {
