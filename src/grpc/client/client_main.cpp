@@ -19,8 +19,6 @@
 #include "utils/logger.hpp"
 
 namespace {
-constexpr std::size_t kSummaryElementCount = 10;
-
 using OutputSummary = std::vector<std::vector<double>>;
 
 void
@@ -67,20 +65,18 @@ extract_tensors_from_output(const c10::IValue& value)
 }
 
 auto
-summarize_tensor(const torch::Tensor& tensor, std::size_t max_values)
-    -> std::vector<double>
+summarize_tensor(const torch::Tensor& tensor) -> std::vector<double>
 {
   auto cpu_tensor = tensor.detach().cpu().contiguous();
   auto as_double = cpu_tensor.to(torch::kDouble);
   auto flattened = as_double.view({-1});
   const auto total = static_cast<std::size_t>(flattened.numel());
-  const auto count = std::min(max_values, total);
 
   std::vector<double> summary;
-  summary.reserve(count);
+  summary.reserve(total);
   const double* data_ptr = flattened.data_ptr<double>();
   const std::span<const double> tensor_values(data_ptr, total);
-  for (const double value : tensor_values.first(count)) {
+  for (const double value : tensor_values) {
     summary.push_back(value);
   }
   return summary;
@@ -92,7 +88,7 @@ summarize_outputs(const std::vector<torch::Tensor>& outputs) -> OutputSummary
   OutputSummary summary;
   summary.reserve(outputs.size());
   for (const auto& tensor : outputs) {
-    summary.emplace_back(summarize_tensor(tensor, kSummaryElementCount));
+    summary.emplace_back(summarize_tensor(tensor));
   }
   return summary;
 }
