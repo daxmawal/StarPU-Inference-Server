@@ -952,6 +952,7 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     if (entry.callback) {
       entry.callback(outputs, latency_ms);
     }
+    job_sp->release_input_memory_holders();
 
     offset += static_cast<std::size_t>(
         std::max<int64_t>(1, slice_result.processed_length));
