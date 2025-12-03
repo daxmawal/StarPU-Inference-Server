@@ -138,8 +138,7 @@
     "numeric": "cpp",
     "*.md": "markdown",
     "any": "cpp",
-    "expected": "cpp",
-    "cinttypes": "cpp"
+    "expected": "cpp"
   },
   "[proto3]": {
     "editor.insertSpaces": true,

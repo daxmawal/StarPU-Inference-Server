@@ -5,7 +5,6 @@
 
 #include <chrono>
 #include <cstddef>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -25,30 +24,21 @@ struct TimingInfo;
 
 class MetricsRegistry;
 
-struct InferenceServiceConfig {
-  std::vector<at::ScalarType> expected_input_types;
-  std::optional<std::vector<std::vector<int64_t>>> expected_input_dims;
-  int max_batch_size = 0;
-  std::string default_model_name;
-  double measured_throughput = 0.0;
-  double measured_throughput_cpu = 0.0;
-  bool use_cuda = false;
-};
-
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
  public:
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
-      InferenceServiceConfig config);
+      std::vector<at::ScalarType> expected_input_types,
+      std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
+      std::string default_model_name = {});
 
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      std::string default_model_name = {}, double measured_throughput = 0.0,
-      bool use_cuda = false, double measured_throughput_cpu = 0.0);
+      std::string default_model_name = {});
 
   auto ServerLive(
       grpc::ServerContext* context, const inference::ServerLiveRequest* request,
@@ -151,28 +141,13 @@ class InferenceServiceImpl final
   [[nodiscard]] auto resolve_model_name(std::string model_name) const
       -> std::string;
 
-  void record_request_arrival(
-      std::chrono::high_resolution_clock::time_point arrival_time);
-  void start_congestion_monitor();
-  void run_congestion_monitor(const std::stop_token& stop_token);
-
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
   std::vector<at::ScalarType> expected_input_types_;
   std::vector<std::vector<int64_t>> expected_input_dims_;
   int max_batch_size_ = 0;
   std::string default_model_name_;
-  double measured_throughput_ = 0.0;
-  double congestion_threshold_ = 0.0;
-  double congestion_clear_threshold_ = 0.0;
-  bool use_cuda_ = false;
   std::atomic<int> next_request_id_{0};
-  std::mutex congestion_mutex_;
-  std::deque<std::chrono::high_resolution_clock::time_point> recent_arrivals_;
-  bool congestion_active_ = false;
-  std::chrono::high_resolution_clock::time_point congestion_start_time_{};
-  std::chrono::high_resolution_clock::time_point last_arrival_time_{};
-  std::jthread congestion_monitor_thread_;
 };
 
 class AsyncServerContext {
@@ -209,9 +184,6 @@ struct GrpcServerOptions {
   std::size_t max_message_bytes;
   VerbosityLevel verbosity;
   std::string default_model_name;
-  double measured_throughput = 0.0;
-  double measured_throughput_cpu = 0.0;
-  bool use_cuda = false;
 };
 
 void RunGrpcServer(

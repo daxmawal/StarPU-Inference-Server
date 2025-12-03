@@ -13,18 +13,17 @@ Enable the batching trace in your YAML and inspect the Chrome trace-event JSON
 with Perfetto:
 
 ```yaml
-trace_enabled: true
-repository_output: /tmp/  # optional custom path
+batching:
+  trace_enabled: true
+  trace_output: /tmp/  # optional custom path
 ```
 
 - `trace_enabled` flips instrumentation on as soon as the server starts.
-- `repository_output` must point to a directory. The server writes
+- `trace_output` must point to a directory, the server writes
   `batching_trace.json` there. The same directory also receives
   `batching_trace_summary.csv` (one line per batch). Warmup batches are
   excluded. The server runs `scripts/plot_batch_summary.py` at shutdown to
-  produce plots. Additionally, the server writes `<config_name>_throughput.txt`
-  (cached throughput measurement) to this directory. If `repository_output` is
-  not specified, all files are written to the current working directory.
+  produce plots.
 
 Each restart truncates the previous JSON, so copy it elsewhere before relaunch.
 Stop the server before opening the file.
@@ -57,7 +56,7 @@ python3 /scripts/plot_batch_summary.py /path/to/batching_trace_summary.csv --out
 
 ![Plot preview](images/plot.png)
 
-## 3. StarPU FXT traces viewing
+## 3. StarPU FXT traces (YAML + viewing)
 
 Enable FXT directly in your config via `starpu_env` (or export the variables in
 the shell):

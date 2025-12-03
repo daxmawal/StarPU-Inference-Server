@@ -14,7 +14,6 @@ target_sources(
             core/unit_warmup_runner.cpp
             core/unit_starpu_setup.cpp
             core/unit_input_slot_pool_deleter.cpp
-            core/unit_allocate_and_pin_buffer.cpp
             core/robustness/edgecases_inference_queue.cpp
             core/robustness/edgecases_warmup_runner.cpp
             core/robustness/edgecases_inference_runner.cpp
@@ -22,8 +21,6 @@ target_sources(
             core/robustness/edgecases_tensor_builder.cpp
             grpc/async_server_context_test.cpp
             grpc/resolve_model_name_test.cpp
-            grpc/start_congestion_monitor_test.cpp
-            grpc/record_request_arrival_test.cpp
             grpc/unary_call_data_guard_test.cpp
             grpc/unit_inference_service.cpp
             grpc/unit_client.cpp

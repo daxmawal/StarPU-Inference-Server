@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iosfwd>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -21,16 +20,6 @@ namespace starpu_server {
 struct RuntimeConfig;
 
 enum class BatchingTraceEvent : uint8_t { RequestQueued, BatchSubmitted };
-[[nodiscard]] auto event_to_string(BatchingTraceEvent event)
-    -> std::string_view;
-enum class ProbeTraceMode : uint8_t {
-  None = 0,
-  GPUCalibration,
-  GPUDurationCalibrated,
-  CPUCalibration,
-  CPUDurationCalibrated
-};
-[[nodiscard]] auto device_type_to_string(DeviceType type) -> std::string_view;
 
 namespace detail {
 
@@ -182,14 +171,6 @@ class BatchingTraceLogger {
     double callback_ms;
     double total_ms;
     bool is_warmup = false;
-    bool is_probe = false;
-  };
-  struct CongestionSpanArgs {
-    std::chrono::high_resolution_clock::time_point start_time;
-    std::chrono::high_resolution_clock::time_point end_time;
-    double measured_throughput = 0.0;
-    double enter_threshold = 0.0;
-    double clear_threshold = 0.0;
   };
 
   static auto instance() -> BatchingTraceLogger&;
@@ -204,10 +185,6 @@ class BatchingTraceLogger {
   void configure_from_runtime(const RuntimeConfig& cfg);
 
   [[nodiscard]] auto enabled() const -> bool;
-  void set_probe_mode(ProbeTraceMode mode);
-  [[nodiscard]] auto probe_mode() const -> ProbeTraceMode;
-  void enable_probe_measurement();
-  [[nodiscard]] auto probe_measurement_enabled() const -> bool;
 
   void log_request_enqueued(
       int request_id, std::string_view model_name, bool is_warmup = false,
@@ -216,14 +193,13 @@ class BatchingTraceLogger {
   void log_batch_build_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,
       TimeRange schedule, std::span<const int> request_ids = {},
-      bool is_warmup = false, bool is_probe = false);
+      bool is_warmup = false);
   void log_batch_enqueue_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,
       TimeRange queue_times, std::span<const int> request_ids = {},
-      bool is_warmup = false, bool is_probe = false);
+      bool is_warmup = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
   void log_batch_summary(const BatchSummaryLogArgs& args);
-  void log_congestion_span(const CongestionSpanArgs& args);
   [[nodiscard]] auto summary_file_path() const
       -> std::optional<std::filesystem::path>;
 
@@ -237,16 +213,18 @@ class BatchingTraceLogger {
   void write_batch_compute_span(const BatchComputeWriteArgs& args);
   void write_batch_enqueue_span(
       std::string_view model_name, int batch_id, std::size_t batch_size,
-      BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup,
-      bool is_probe = false);
+      BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
   void write_batch_build_span(
       std::string_view model_name, int batch_id, std::size_t batch_size,
-      BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup,
-      bool is_probe = false);
+      BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
   auto configure_summary_writer(const std::filesystem::path& trace_path)
       -> bool;
   void close_summary_writer();
+  [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
+      -> std::string_view;
+  [[nodiscard]] static auto device_type_to_string(DeviceType type)
+      -> std::string_view;
   [[nodiscard]] auto relative_timestamp_from_time_point(
       std::chrono::high_resolution_clock::time_point time_point) const
       -> std::optional<int64_t>;
@@ -255,14 +233,9 @@ class BatchingTraceLogger {
   [[nodiscard]] static auto now_us() -> int64_t;
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
-  [[nodiscard]] static auto make_trace_prefix(
-      bool is_warmup,
-      ProbeTraceMode probe_mode = ProbeTraceMode::None) -> std::string;
 
   mutable std::mutex mutex_;
   std::atomic<bool> enabled_{false};
-  std::atomic<ProbeTraceMode> probe_mode_{ProbeTraceMode::None};
-  std::atomic<bool> probe_measurement_enabled_{false};
   std::string file_path_;
   int64_t trace_start_us_{0};
   bool trace_start_initialized_{false};
@@ -273,8 +246,5 @@ class BatchingTraceLogger {
   std::ofstream summary_stream_;
   std::filesystem::path summary_file_path_;
 };
-
-void write_summary_line(
-    const BatchingTraceLogger::BatchSummaryLogArgs& args, std::ostream& stream);
 
 }  // namespace starpu_server

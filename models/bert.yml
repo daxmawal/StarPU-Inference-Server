@@ -1,10 +1,8 @@
 name: bert
 trace_enabled: true
-repository_output: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build/"
+trace_output: /tmp
+scheduler: eager
 starpu_env:
-  STARPU_SCHED: "eager"
-  STARPU_FXT_TRACE: "1"
-  STARPU_FXT_PREFIX: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build"
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"
   STARPU_NWORKER_PER_CUDA: "4"
@@ -15,7 +13,7 @@ inputs:
   - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }
 outputs:
   - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
-verbosity: 1
+verbosity: 2
 address: 127.0.0.1:50051
 metrics_port: 9100
 max_batch_size: 32

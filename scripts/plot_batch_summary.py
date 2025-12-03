@@ -18,9 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import sys
-from bisect import bisect_left
 from collections import Counter, deque
 from itertools import cycle
 from pathlib import Path
@@ -105,8 +103,6 @@ class PlotInputs(NamedTuple):
     gpu_breakdowns: List[Tuple[float, ...]]
     gpu_arrivals: List[Tuple[int, ...]]
     all_worker_types: List[str]
-    batch_times: List[float | None]
-    summary_path: Path
 
 
 def parse_args() -> argparse.Namespace:
@@ -197,26 +193,6 @@ def load_latencies(
                 )
             )
     return batches
-
-
-def _compute_batch_times(arrivals: Sequence[Sequence[int]]) -> List[float | None]:
-    times: List[float | None] = []
-    for sequence in arrivals:
-        if not sequence:
-            times.append(None)
-            continue
-        valid = [value for value in sequence if value > 0]
-        if not valid:
-            times.append(None)
-            continue
-        times.append(float(min(valid)))
-    if not times:
-        return []
-    non_null = [t for t in times if t is not None]
-    if not non_null:
-        return times
-    origin = min(non_null)
-    return [t - origin if t is not None else None for t in times]
 
 
 def filter_latencies(
@@ -398,105 +374,6 @@ def _overlay_worker_types(
         )
     if handles:
         ax.legend(handles=handles, loc="upper left", fontsize="small")
-
-
-def _find_trace_path(summary_path: Path) -> Path | None:
-    stem = summary_path.stem
-    base = stem
-    for suffix in ("_probe_summary", "_summary"):
-        if stem.endswith(suffix):
-            base = stem[: -len(suffix)]
-            break
-    candidate = summary_path.with_name(f"{base}.json")
-    if candidate.exists():
-        return candidate
-    return None
-
-
-def _load_congestion_spans(summary_path: Path) -> list[dict[str, float]]:
-    trace_path = _find_trace_path(summary_path)
-    if trace_path is None:
-        return []
-    spans: list[dict[str, float]] = []
-    try:
-        with trace_path.open() as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if '"congestion"' not in line:
-                    continue
-                try:
-                    event = json.loads(line.rstrip(","))
-                except json.JSONDecodeError:
-                    continue
-                if event.get("name") != "congestion":
-                    continue
-                ts = float(event.get("ts", 0.0))
-                duration = float(event.get("dur", 0.0))
-                args = event.get("args", {}) or {}
-                spans.append(
-                    {
-                        "start": ts,
-                        "end": ts + duration,
-                        "enter": float(args.get("enter_threshold", 0.0)),
-                        "clear": float(args.get("clear_threshold", 0.0)),
-                    }
-                )
-    except OSError:
-        return []
-    return spans
-
-
-def _locate_id_for_time(
-    sorted_times: Sequence[float], sorted_ids: Sequence[int], target: float
-) -> int:
-    if not sorted_times or not sorted_ids:
-        return 0
-    pos = bisect_left(sorted_times, target)
-    if pos <= 0:
-        return sorted_ids[0]
-    if pos >= len(sorted_times):
-        return sorted_ids[-1]
-    before_diff = abs(sorted_times[pos - 1] - target)
-    after_diff = abs(sorted_times[pos] - target)
-    return sorted_ids[pos] if after_diff < before_diff else sorted_ids[pos - 1]
-
-
-def _overlay_congestion_zones(
-    ax: plt.Axes,
-    batch_ids: Sequence[int],
-    batch_times: Sequence[float | None],
-    summary_path: Path,
-) -> None:
-    spans = _load_congestion_spans(summary_path)
-    if not spans or not batch_ids or not batch_times:
-        return
-    pairs = [
-        (time, bid) for time, bid in zip(batch_times, batch_ids) if time is not None
-    ]
-    if not pairs:
-        return
-    pairs.sort(key=lambda pair: pair[0])
-    times = [pair[0] for pair in pairs]
-    ids = [pair[1] for pair in pairs]
-    min_span_start = min(span["start"] for span in spans)
-    time_offset = times[0] - min_span_start
-    label_added = False
-    for span in spans:
-        start_time = span["start"] + time_offset
-        end_time = span["end"] + time_offset
-        start_id = _locate_id_for_time(times, ids, start_time)
-        end_id = _locate_id_for_time(times, ids, end_time)
-        x0, x1 = sorted((start_id, end_id))
-        ax.axvspan(
-            x0,
-            x1,
-            color="#ffe6e6",
-            alpha=0.35,
-            label="Congestion" if not label_added else None,
-        )
-        label_added = True
-    if label_added:
-        ax.legend(loc="upper left", fontsize="small")
 
 
 def scatter_with_size(
@@ -1376,7 +1253,6 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
     all_worker_types = [
         worker_type_by_id.get(batch_id, "unknown") for batch_id in all_ids
     ]
-    batch_times = _compute_batch_times(all_arrivals)
 
     return PlotInputs(
         all_ids,
@@ -1401,8 +1277,6 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         gpu_breakdowns,
         gpu_arrivals,
         all_worker_types,
-        batch_times,
-        csv_path,
     )
 
 
@@ -1416,8 +1290,6 @@ def _plot_latency_overview(
     gpu_ids: Sequence[int],
     gpu_lat: Sequence[float],
     worker_types: Sequence[str],
-    batch_times: Sequence[float | None],
-    summary_path: Path,
 ) -> None:
     scatter_with_size(
         axes[0],
@@ -1427,7 +1299,6 @@ def _plot_latency_overview(
         "Latency vs batch size (multidim)",
         worker_types=worker_types,
     )
-    _overlay_congestion_zones(axes[0], all_ids, batch_times, summary_path)
 
     has_worker_data = False
     if gpu_ids:
@@ -1814,10 +1685,7 @@ def _plot_radar(
 
 
 def render_plots(
-    fig: plt.Figure,
-    axes: list[plt.Axes],
-    inputs: PlotInputs,
-    output_path: Path | None,
+    fig: plt.Figure, axes: list[plt.Axes], inputs: PlotInputs, output_path: Path | None
 ) -> None:
     (
         all_ids,
@@ -1842,8 +1710,6 @@ def render_plots(
         gpu_breakdowns,
         gpu_arrivals,
         all_worker_types,
-        batch_times,
-        summary_path,
     ) = inputs
 
     _plot_latency_overview(
@@ -1856,8 +1722,6 @@ def render_plots(
         gpu_ids,
         gpu_lat,
         all_worker_types,
-        batch_times,
-        summary_path,
     )
 
     _plot_cumulative_and_throughput(axes[4], axes[5], all_ids, all_lat, all_jobs)

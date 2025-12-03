@@ -78,10 +78,6 @@ class InferenceTask {
       const torch::Tensor& tensor,
       const std::string& label) -> starpu_data_handle_t;
 
-  static auto register_tensor_handles(
-      const std::vector<torch::Tensor>& tensors,
-      std::string_view label_prefix) -> std::vector<starpu_data_handle_t>;
-
   static auto register_inputs_handles(
       const std::vector<torch::Tensor>& input_tensors)
       -> std::vector<starpu_data_handle_t>;

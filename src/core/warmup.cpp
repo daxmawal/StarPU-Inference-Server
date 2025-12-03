@@ -26,7 +26,6 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
-#include "starpu_task_worker/submission_context.hpp"
 
 namespace starpu_server {
 namespace {
@@ -136,7 +135,6 @@ WarmupRunner::client_worker(
           inputs, outputs_ref_, request_id, {}, {}, opts_.name);
       const int job_request_id = request_id;
       job->set_fixed_worker_id(worker_id);
-      job->set_is_warmup_job(true);
 
       const auto enqueued_now = std::chrono::high_resolution_clock::now();
       job->timing_info().enqueued_time = enqueued_now;
@@ -196,10 +194,7 @@ WarmupRunner::run(int request_nb_per_worker)
   config.all_done_cv = &dummy_cv;
   StarPUTaskRunner worker(config);
 
-  std::jthread server([&worker]() {
-    SubmissionPhaseScopedGuard warmup_phase_guard(SubmissionPhase::Warmup);
-    worker.run();
-  });
+  std::jthread server(&StarPUTaskRunner::run, &worker);
 
   std::jthread client([this, &device_workers, &queue, request_nb_per_worker]() {
     client_worker(device_workers, queue, request_nb_per_worker);

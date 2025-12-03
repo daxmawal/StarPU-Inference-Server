@@ -20,7 +20,6 @@
 #include <utility>
 #include <vector>
 
-#include "exception_logging_utils.hpp"
 #include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "output_slot_pool.hpp"
@@ -28,6 +27,44 @@
 
 namespace starpu_server {
 namespace {
+
+struct ExceptionLoggingMessages {
+  std::string_view context_prefix;
+  std::string_view unknown_message;
+};
+
+template <typename Callback>
+void
+run_with_logged_exceptions(
+    Callback&& callback,
+    const ExceptionLoggingMessages& messages = ExceptionLoggingMessages{})
+{
+  try {
+    std::forward<Callback>(callback)();
+  }
+  catch (const InferenceEngineException& e) {
+    log_error(std::string(messages.context_prefix) + e.what());
+  }
+  catch (const std::bad_alloc& e) {
+    log_error(std::string(messages.context_prefix) + e.what());
+  }
+  catch (const std::runtime_error& e) {
+    log_error(std::string(messages.context_prefix) + e.what());
+  }
+  catch (const std::logic_error& e) {
+    log_error(std::string(messages.context_prefix) + e.what());
+  }
+  catch (const std::exception& e) {
+    log_error(std::string(messages.context_prefix) + e.what());
+  }
+  catch (...) {
+    if (!messages.unknown_message.empty()) {
+      log_error(std::string(messages.unknown_message));
+    } else {
+      log_error(std::string(messages.context_prefix) + "Unknown exception");
+    }
+  }
+}
 
 class StarpuHandleVectorGuard {
  public:
@@ -131,20 +168,18 @@ InferenceTask::safe_register_tensor_vector(
     const std::string& label) -> starpu_data_handle_t
 {
   if (!tensor.defined()) {
-    throw StarPURegistrationException(
-        std::format("Tensor '{}' is undefined.", label));
+    throw StarPURegistrationException("Tensor '" + label + "' is undefined.");
   }
   if (tensor.data_ptr() == nullptr) {
-    throw StarPURegistrationException(
-        std::format("Tensor '{}' is invalid.", label));
+    throw StarPURegistrationException("Tensor '" + label + "' is invalid.");
   }
   if (!tensor.device().is_cpu()) {
     throw StarPURegistrationException(
-        std::format("Tensor '{}' must reside on CPU", label));
+        "Tensor '" + label + "' must reside on CPU");
   }
   if (!tensor.is_contiguous()) {
     throw StarPURegistrationException(
-        std::format("Tensor '{}' must be contiguous.", label));
+        "Tensor '" + label + "' must be contiguous.");
   }
   starpu_data_handle_t handle = nullptr;
 
@@ -174,17 +209,17 @@ InferenceTask::safe_register_tensor_vector(
 }
 
 auto
-InferenceTask::register_tensor_handles(
-    const std::vector<torch::Tensor>& tensors,
-    std::string_view label_prefix) -> std::vector<starpu_data_handle_t>
+InferenceTask::register_inputs_handles(
+    const std::vector<torch::Tensor>& input_tensors)
+    -> std::vector<starpu_data_handle_t>
 {
   std::vector<starpu_data_handle_t> handles;
-  handles.reserve(tensors.size());
+  handles.reserve(input_tensors.size());
   StarpuHandleVectorGuard unregister_guard(handles);
 
-  for (size_t i = 0; i < tensors.size(); ++i) {
+  for (size_t i = 0; i < input_tensors.size(); ++i) {
     handles.push_back(safe_register_tensor_vector(
-        tensors[i], std::format("{}[{}]", label_prefix, i)));
+        input_tensors[i], std::format("input[{}]", i)));
   }
 
   unregister_guard.dismiss();
@@ -192,19 +227,21 @@ InferenceTask::register_tensor_handles(
 }
 
 auto
-InferenceTask::register_inputs_handles(
-    const std::vector<torch::Tensor>& input_tensors)
-    -> std::vector<starpu_data_handle_t>
-{
-  return register_tensor_handles(input_tensors, "input");
-}
-
-auto
 InferenceTask::register_outputs_handles(
     const std::vector<torch::Tensor>& outputs_tensors)
     -> std::vector<starpu_data_handle_t>
 {
-  return register_tensor_handles(outputs_tensors, "output");
+  std::vector<starpu_data_handle_t> handles;
+  handles.reserve(outputs_tensors.size());
+  StarpuHandleVectorGuard unregister_guard(handles);
+
+  for (size_t i = 0; i < outputs_tensors.size(); ++i) {
+    handles.push_back(safe_register_tensor_vector(
+        outputs_tensors[i], std::format("output[{}]", i)));
+  }
+
+  unregister_guard.dismiss();
+  return handles;
 }
 
 // =============================================================================
@@ -424,9 +461,6 @@ InferenceTask::create_task(
   task->cl_arg = ctx->inference_params.get();
   task->priority =
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());
-  if (job_ && job_->is_gpu_only()) {
-    task->where = STARPU_CUDA;
-  }
 
   if (ctx != nullptr && ctx->dependencies == nullptr) {
     ctx->dependencies = dependencies;
@@ -728,16 +762,13 @@ InferenceTask::log_exception(
 {
   if (const auto* iee =
           dynamic_cast<const InferenceExecutionException*>(&exception)) {
-    log_error(std::format(
-        "InferenceExecutionException in {}: {}", context, iee->what()));
+    log_error("InferenceExecutionException in " + context + ": " + iee->what());
   } else if (
       const auto* spe =
           dynamic_cast<const StarPUTaskSubmissionException*>(&exception)) {
-    log_error(
-        std::format("StarPU submission error in {}: {}", context, spe->what()));
+    log_error("StarPU submission error in " + context + ": " + spe->what());
   } else {
-    log_error(
-        std::format("std::exception in {}: {}", context, exception.what()));
+    log_error("std::exception in " + context + ": " + exception.what());
   }
 }
 
