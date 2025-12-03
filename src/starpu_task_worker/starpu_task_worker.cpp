@@ -960,8 +960,11 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
         std::max<int64_t>(1, slice_result.processed_length));
   }
 
-  const_cast<std::shared_ptr<InferenceJob>&>(aggregated_job)
-      ->set_aggregated_sub_jobs({});
+  auto& mutable_job =
+      const_cast<std::shared_ptr<InferenceJob>&>(aggregated_job);
+  mutable_job->set_aggregated_sub_jobs({});
+
+  mutable_job->set_output_tensors({});
 }
 
 auto
