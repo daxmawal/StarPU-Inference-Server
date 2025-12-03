@@ -640,11 +640,9 @@ using clock = task_runner_internal::Clock;
 class ResultDispatcher {
  public:
   ResultDispatcher(
-      const RuntimeConfig* opts, std::vector<InferenceResult>* results,
-      std::mutex* results_mutex, std::atomic<int>* completed_jobs,
+      const RuntimeConfig* opts, std::atomic<int>* completed_jobs,
       std::condition_variable* all_done_cv)
-      : opts_(opts), results_(results), results_mutex_(results_mutex),
-        completed_jobs_(completed_jobs), all_done_cv_(all_done_cv)
+      : opts_(opts), completed_jobs_(completed_jobs), all_done_cv_(all_done_cv)
   {
   }
 
@@ -681,8 +679,6 @@ class ResultDispatcher {
 
  private:
   const RuntimeConfig* opts_;
-  std::vector<InferenceResult>* results_;
-  std::mutex* results_mutex_;
   std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;
 };
@@ -809,21 +805,9 @@ ResultDispatcher::store_completed_job_result(
     const std::shared_ptr<InferenceJob>& job,
     const std::vector<torch::Tensor>& results, double latency_ms) const
 {
-  auto input_tensors = job->release_input_tensors();
-
-  const std::scoped_lock lock(*results_mutex_);
-  auto& stored_result = results_->emplace_back();
-  if (opts_->validation.validate_results) {
-    stored_result.inputs = std::move(input_tensors);
-    stored_result.results = results;
-  }
-  stored_result.latency_ms = latency_ms;
-  stored_result.timing_info = job->timing_info();
-  stored_result.request_id = job->get_request_id();
-  stored_result.submission_id = job->submission_id();
-  stored_result.device_id = job->get_device_id();
-  stored_result.worker_id = job->get_worker_id();
-  stored_result.executed_on = job->get_executed_on();
+  (void)results;
+  (void)latency_ms;
+  (void)job->release_input_tensors();  // drop inputs once callbacks are done
 }
 
 void
@@ -1701,9 +1685,8 @@ BatchCollector::batching_loop()
 StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
     : queue_(config.queue), model_cpu_(config.model_cpu),
       models_gpu_(config.models_gpu), starpu_(config.starpu),
-      opts_(config.opts), results_(config.results),
-      results_mutex_(config.results_mutex),
-      completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv),
+      opts_(config.opts), completed_jobs_(config.completed_jobs),
+      all_done_cv_(config.all_done_cv),
       dependencies_(
           config.dependencies != nullptr ? config.dependencies
                                          : &kDefaultInferenceTaskDependencies),
@@ -1717,15 +1700,13 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
           })),
       slot_manager_(std::make_unique<SlotManager>(starpu_, opts_)),
       result_dispatcher_(std::make_unique<ResultDispatcher>(
-          opts_, results_, results_mutex_, completed_jobs_, all_done_cv_))
+          opts_, completed_jobs_, all_done_cv_))
 {
   task_runner_internal::validate_not_null(queue_, "queue");
   task_runner_internal::validate_not_null(model_cpu_, "model_cpu");
   task_runner_internal::validate_not_null(models_gpu_, "models_gpu");
   task_runner_internal::validate_not_null(starpu_, "starpu");
   task_runner_internal::validate_not_null(opts_, "opts");
-  task_runner_internal::validate_not_null(results_, "results");
-  task_runner_internal::validate_not_null(results_mutex_, "results_mutex");
   task_runner_internal::validate_not_null(completed_jobs_, "completed_jobs");
   task_runner_internal::validate_not_null(all_done_cv_, "all_done_cv");
 }

@@ -651,6 +651,11 @@ run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu)
 {
   NvtxRange nvtx_scope("inference_loop");
   BatchingTraceLogger::instance().configure_from_runtime(opts);
+  if (!opts.validation.validate_results) {
+    log_info(
+        opts.verbosity,
+        "Result validation disabled; skipping server-side checks.");
+  }
   const c10::InferenceMode inference_guard;
   CuDnnBenchmarkGuard cudnn_benchmark_guard(opts.devices.use_cuda);
   InferenceSession session(opts, starpu, detail::client_worker);

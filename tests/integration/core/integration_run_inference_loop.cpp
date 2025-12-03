@@ -9,12 +9,12 @@
 TEST(RunInferenceLoopIntegration, CpuAddOneModel)
 {
   const auto output = starpu_server::run_add_one_inference_loop(true, false);
-  EXPECT_NE(output.find("Job 0 passed"), std::string::npos);
+  EXPECT_NE(output.find("StarPUTaskRunner stopped"), std::string::npos);
 }
 
 TEST(RunInferenceLoopIntegration, CudaAddOneModel)
 {
   skip_if_no_cuda();
   const auto output = starpu_server::run_add_one_inference_loop(false, true, 0);
-  EXPECT_NE(output.find("Job 0 passed"), std::string::npos);
+  EXPECT_NE(output.find("StarPUTaskRunner stopped"), std::string::npos);
 }

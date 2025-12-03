@@ -1,13 +1,11 @@
 #include "inference_session.hpp"
 
 #include <format>
-#include <span>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
 
 #include "inference_runner.hpp"
-#include "latency_statistics.hpp"
 #include "utils/logger.hpp"
 
 namespace starpu_server {
@@ -32,13 +30,10 @@ InferenceSession::run()
   }
 
   warmup();
-  prepare_results_storage();
   configure_worker();
   launch_threads();
   await_completion();
   join_threads();
-  report_latency_stats();
-  process_results();
 }
 
 auto
@@ -67,14 +62,6 @@ InferenceSession::warmup()
 }
 
 void
-InferenceSession::prepare_results_storage()
-{
-  if (opts_.batching.request_nb > 0) {
-    results_.reserve(static_cast<size_t>(opts_.batching.request_nb));
-  }
-}
-
-void
 InferenceSession::configure_worker()
 {
   config_.queue = &queue_;
@@ -82,8 +69,6 @@ InferenceSession::configure_worker()
   config_.models_gpu = &models_gpu_;
   config_.starpu = &starpu_;
   config_.opts = &opts_;
-  config_.results = &results_;
-  config_.results_mutex = &results_mutex_;
   config_.completed_jobs = &completed_jobs_;
   config_.all_done_cv = &all_done_cv_;
   worker_ = std::make_unique<StarPUTaskRunner>(config_);
@@ -136,29 +121,6 @@ InferenceSession::join_threads()
   if (server_thread_.joinable()) {
     server_thread_.join();
   }
-}
-
-void
-InferenceSession::report_latency_stats() const
-{
-  const std::span<const InferenceResult> results_span(results_);
-  if (auto stats = compute_latency_statistics(
-          results_span, &InferenceResult::latency_ms)) {
-    if (should_log(VerbosityLevel::Stats, opts_.verbosity)) {
-      log_info(
-          opts_.verbosity,
-          std::format(
-              "Latency stats (ms): p50={:.3f}, p85={:.3f}, p95={:.3f}, "
-              "p100={:.3f}, mean={:.3f}",
-              stats->p50, stats->p85, stats->p95, stats->p100, stats->mean));
-    }
-  }
-}
-
-void
-InferenceSession::process_results()
-{
-  detail::process_results(results_, model_cpu_, models_gpu_, opts_);
 }
 
 }  // namespace starpu_server

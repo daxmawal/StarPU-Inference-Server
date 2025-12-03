@@ -293,8 +293,6 @@ launch_threads(
     server_ctx.stop_cv.notify_one();
   });
 
-  std::vector<starpu_server::InferenceResult> results;
-  std::mutex results_mutex;
   std::atomic completed_jobs{0};
   std::condition_variable all_done_cv;
 
@@ -304,8 +302,6 @@ launch_threads(
   config.models_gpu = &models_gpu;
   config.starpu = &starpu;
   config.opts = &opts;
-  config.results = &results;
-  config.results_mutex = &results_mutex;
   config.completed_jobs = &completed_jobs;
   config.all_done_cv = &all_done_cv;
   starpu_server::StarPUTaskRunner worker(config);

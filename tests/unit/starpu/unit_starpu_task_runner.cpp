@@ -1160,14 +1160,8 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   const double latency = 5.0;
   job->get_on_complete()(outputs, latency);
   EXPECT_TRUE(probe.called);
-  auto& results = results_;
   const auto& completed_jobs = completed_jobs_;
-  ASSERT_EQ(results.size(), 1U);
   EXPECT_EQ(completed_jobs.load(), 1);
-  EXPECT_EQ(results[0].request_id, kJobId);
-  EXPECT_EQ(results[0].submission_id, kSubmissionId);
-  ASSERT_EQ(results[0].results.size(), outputs.size());
-  EXPECT_TRUE(torch::equal(results[0].results[0], outputs[0]));
   ASSERT_EQ(probe.results.size(), outputs.size());
   EXPECT_TRUE(torch::equal(probe.results[0], outputs[0]));
   EXPECT_EQ(probe.latency, latency);
@@ -1430,21 +1424,6 @@ TEST_F(StarPUTaskRunnerFixture, StoreCompletedJobResultTracksInputsAndOutputs)
   starpu_server::StarPUTaskRunnerTestAdapter::store_completed_job_result(
       runner_.get(), job, outputs, kLatencyMs);
 
-  ASSERT_EQ(results_.size(), 1U);
-  const auto& stored = results_.front();
-  ASSERT_EQ(stored.inputs.size(), inputs.size());
-  EXPECT_TRUE(torch::equal(stored.inputs[0], inputs[0]));
-  ASSERT_EQ(stored.results.size(), outputs.size());
-  EXPECT_TRUE(torch::equal(stored.results[0], outputs[0]));
-  EXPECT_EQ(stored.latency_ms, kLatencyMs);
-  EXPECT_EQ(stored.request_id, job->get_request_id());
-  EXPECT_EQ(stored.submission_id, job->submission_id());
-  EXPECT_EQ(stored.device_id, job->get_device_id());
-  EXPECT_EQ(stored.worker_id, job->get_worker_id());
-  EXPECT_EQ(stored.executed_on, job->get_executed_on());
-  EXPECT_EQ(
-      stored.timing_info.callback_start_time,
-      job->timing_info().callback_start_time);
   EXPECT_TRUE(job->get_input_tensors().empty());
 }
 
@@ -4614,8 +4593,6 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_EQ(results_[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 }
@@ -4642,8 +4619,6 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_EQ(results_[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 }
@@ -4670,8 +4645,6 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_EQ(results_[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 }
@@ -4698,8 +4671,6 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_EQ(results_[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 }

@@ -43,8 +43,6 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
   torch::jit::script::Module model_cpu_;
   std::vector<torch::jit::script::Module> models_gpu_;
   starpu_server::RuntimeConfig opts_;
-  std::vector<starpu_server::InferenceResult> results_;
-  std::mutex results_mutex_;
   std::atomic<int> completed_jobs_;
   std::condition_variable cv_;
   std::unique_ptr<starpu_server::StarPUSetup> starpu_setup_;
@@ -57,9 +55,6 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     EXPECT_TRUE(probe.results.empty());
     EXPECT_EQ(probe.latency, -1);
 
-    ASSERT_EQ(results_.size(), 1U);
-    EXPECT_TRUE(results_[0].results.empty());
-    EXPECT_EQ(results_[0].latency_ms, -1);
     EXPECT_EQ(completed_jobs_.load(), 1);
   }
   void SetUp() override
@@ -71,8 +66,6 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     config_.models_gpu = &models_gpu_;
     config_.starpu = starpu_setup_.get();
     config_.opts = &opts_;
-    config_.results = &results_;
-    config_.results_mutex = &results_mutex_;
     config_.completed_jobs = &completed_jobs_;
     config_.all_done_cv = &cv_;
     dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;

@@ -178,9 +178,7 @@ WarmupRunner::run(int request_nb_per_worker)
   InferenceQueue queue;
   std::atomic dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
-  std::mutex dummy_results_mutex;
   std::condition_variable dummy_cv;
-  std::vector<InferenceResult> dummy_results;
 
   StarPUTaskRunnerConfig config{};
   config.queue = &queue;
@@ -188,8 +186,6 @@ WarmupRunner::run(int request_nb_per_worker)
   config.models_gpu = &models_gpu_;
   config.starpu = &starpu_;
   config.opts = &opts_;
-  config.results = &dummy_results;
-  config.results_mutex = &dummy_results_mutex;
   config.completed_jobs = &dummy_completed_jobs;
   config.all_done_cv = &dummy_cv;
   StarPUTaskRunner worker(config);
