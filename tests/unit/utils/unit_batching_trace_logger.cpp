@@ -43,7 +43,7 @@ make_summary_path(const std::filesystem::path& trace_path)
 }
 
 void
-remove_repository_outputs(const std::filesystem::path& trace_path)
+remove_trace_outputs(const std::filesystem::path& trace_path)
 {
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
@@ -92,7 +92,7 @@ TEST(BatchingTraceLoggerTest, BatchSubmittedSkipsFlowMetadataForNegativeId)
   EXPECT_EQ(content.find("\"flow_out\":true"), std::string::npos);
   EXPECT_EQ(content.find("\"flow_in\":true"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, RequestQueuedEventsEmitNoFlowAnnotations)
@@ -114,7 +114,7 @@ TEST(BatchingTraceLoggerTest, RequestQueuedEventsEmitNoFlowAnnotations)
   EXPECT_EQ(content.find("\"flow_out\":true"), std::string::npos);
   EXPECT_EQ(content.find("\"flow_in\":true"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
@@ -124,192 +124,17 @@ TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
 
   const auto invalid_direction = static_cast<FlowDirection>(0xFF);
   append_flow_annotation(
-      line, invalid_direction, /*batch_id=*/42, /*is_warmup=*/false,
-      ProbeTraceMode::None);
+      line, invalid_direction, /*batch_id=*/42, /*is_warmup=*/false);
 
   EXPECT_EQ(line.str(), R"({"prefix":true)");
   EXPECT_EQ(line.str().find("\"flow_"), std::string::npos);
   EXPECT_EQ(line.str().find("\"id_scope\""), std::string::npos);
 }
 
-TEST(BatchingTraceLoggerTest, MakeFlowBindIdReturnsNulloptForNegativeBatchId)
-{
-  const auto result = make_flow_bind_id(-1, false, ProbeTraceMode::None);
-  EXPECT_FALSE(result.has_value());
-}
-
-TEST(BatchingTraceLoggerTest, MakeFlowBindIdForGPUCalibration)
-{
-  const auto result =
-      make_flow_bind_id(42, false, ProbeTraceMode::GPUCalibration);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(*result, 0x8000000000000000ULL | 42);
-
-  const auto result_warmup =
-      make_flow_bind_id(42, true, ProbeTraceMode::GPUCalibration);
-  ASSERT_TRUE(result_warmup.has_value());
-  EXPECT_EQ(*result_warmup, 0xC000000000000000ULL | 42);
-}
-
-TEST(BatchingTraceLoggerTest, MakeFlowBindIdForCPUCalibration)
-{
-  const auto result =
-      make_flow_bind_id(42, false, ProbeTraceMode::CPUCalibration);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(*result, 0x8000000000000000ULL | 42);
-
-  const auto result_warmup =
-      make_flow_bind_id(42, true, ProbeTraceMode::CPUCalibration);
-  ASSERT_TRUE(result_warmup.has_value());
-  EXPECT_EQ(*result_warmup, 0xC000000000000000ULL | 42);
-}
-
-TEST(BatchingTraceLoggerTest, MakeFlowBindIdForGPUDurationCalibrated)
-{
-  const auto result =
-      make_flow_bind_id(42, false, ProbeTraceMode::GPUDurationCalibrated);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(*result, 0xC000000000000000ULL | 42);
-
-  const auto result_warmup =
-      make_flow_bind_id(42, true, ProbeTraceMode::GPUDurationCalibrated);
-  ASSERT_TRUE(result_warmup.has_value());
-  EXPECT_EQ(*result_warmup, 0xC000000000000000ULL | 42);
-}
-
-TEST(BatchingTraceLoggerTest, MakeFlowBindIdForCPUDurationCalibrated)
-{
-  const auto result =
-      make_flow_bind_id(42, false, ProbeTraceMode::CPUDurationCalibrated);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(*result, 0xC000000000000000ULL | 42);
-
-  const auto result_warmup =
-      make_flow_bind_id(42, true, ProbeTraceMode::CPUDurationCalibrated);
-  ASSERT_TRUE(result_warmup.has_value());
-  EXPECT_EQ(*result_warmup, 0xC000000000000000ULL | 42);
-}
-
-TEST(BatchingTraceLoggerTest, AppendFlowAnnotationWithGPUCalibration)
-{
-  std::ostringstream line;
-  line << R"({"prefix":true)";
-  append_flow_annotation(
-      line, FlowDirection::Source, /*batch_id=*/42, /*is_warmup=*/false,
-      ProbeTraceMode::GPUCalibration);
-
-  EXPECT_NE(
-      line.str().find("\"id_scope\":\"probe_calibration\""), std::string::npos);
-  EXPECT_NE(
-      line.str().find("\"bind_id\":\"0x800000000000002A\""), std::string::npos);
-  EXPECT_NE(line.str().find("\"flow_out\":true"), std::string::npos);
-
-  std::ostringstream line_warmup;
-  line_warmup << R"({"prefix":true)";
-  append_flow_annotation(
-      line_warmup, FlowDirection::Target, /*batch_id=*/42, /*is_warmup=*/true,
-      ProbeTraceMode::GPUCalibration);
-
-  EXPECT_NE(
-      line_warmup.str().find("\"id_scope\":\"warming_probe_calibration\""),
-      std::string::npos);
-  EXPECT_NE(
-      line_warmup.str().find("\"bind_id\":\"0xC00000000000002A\""),
-      std::string::npos);
-  EXPECT_NE(line_warmup.str().find("\"flow_in\":true"), std::string::npos);
-}
-
-TEST(BatchingTraceLoggerTest, AppendFlowAnnotationWithCPUCalibration)
-{
-  std::ostringstream line;
-  line << R"({"prefix":true)";
-  append_flow_annotation(
-      line, FlowDirection::SourceAndTarget, /*batch_id=*/42,
-      /*is_warmup=*/false, ProbeTraceMode::CPUCalibration);
-
-  EXPECT_NE(
-      line.str().find("\"id_scope\":\"probe_calibration\""), std::string::npos);
-  EXPECT_NE(
-      line.str().find("\"bind_id\":\"0x800000000000002A\""), std::string::npos);
-  EXPECT_NE(line.str().find("\"flow_out\":true"), std::string::npos);
-  EXPECT_NE(line.str().find("\"flow_in\":true"), std::string::npos);
-
-  std::ostringstream line_warmup;
-  line_warmup << R"({"prefix":true)";
-  append_flow_annotation(
-      line_warmup, FlowDirection::Source, /*batch_id=*/42, /*is_warmup=*/true,
-      ProbeTraceMode::CPUCalibration);
-
-  EXPECT_NE(
-      line_warmup.str().find("\"id_scope\":\"warming_probe_calibration\""),
-      std::string::npos);
-  EXPECT_NE(
-      line_warmup.str().find("\"bind_id\":\"0xC00000000000002A\""),
-      std::string::npos);
-}
-
-TEST(BatchingTraceLoggerTest, AppendFlowAnnotationWithGPUDurationCalibrated)
-{
-  std::ostringstream line;
-  line << R"({"prefix":true)";
-  append_flow_annotation(
-      line, FlowDirection::Source, /*batch_id=*/42, /*is_warmup=*/false,
-      ProbeTraceMode::GPUDurationCalibrated);
-
-  EXPECT_NE(
-      line.str().find("\"id_scope\":\"probe_duration\""), std::string::npos);
-  EXPECT_NE(
-      line.str().find("\"bind_id\":\"0xC00000000000002A\""), std::string::npos);
-  EXPECT_NE(line.str().find("\"flow_out\":true"), std::string::npos);
-
-  std::ostringstream line_warmup;
-  line_warmup << R"({"prefix":true)";
-  append_flow_annotation(
-      line_warmup, FlowDirection::Target, /*batch_id=*/42, /*is_warmup=*/true,
-      ProbeTraceMode::GPUDurationCalibrated);
-
-  EXPECT_NE(
-      line_warmup.str().find("\"id_scope\":\"warming_probe_duration\""),
-      std::string::npos);
-  EXPECT_NE(
-      line_warmup.str().find("\"bind_id\":\"0xC00000000000002A\""),
-      std::string::npos);
-  EXPECT_NE(line_warmup.str().find("\"flow_in\":true"), std::string::npos);
-}
-
-TEST(BatchingTraceLoggerTest, AppendFlowAnnotationWithCPUDurationCalibrated)
-{
-  std::ostringstream line;
-  line << R"({"prefix":true)";
-  append_flow_annotation(
-      line, FlowDirection::SourceAndTarget, /*batch_id=*/42,
-      /*is_warmup=*/false, ProbeTraceMode::CPUDurationCalibrated);
-
-  EXPECT_NE(
-      line.str().find("\"id_scope\":\"probe_duration\""), std::string::npos);
-  EXPECT_NE(
-      line.str().find("\"bind_id\":\"0xC00000000000002A\""), std::string::npos);
-  EXPECT_NE(line.str().find("\"flow_out\":true"), std::string::npos);
-  EXPECT_NE(line.str().find("\"flow_in\":true"), std::string::npos);
-
-  std::ostringstream line_warmup;
-  line_warmup << R"({"prefix":true)";
-  append_flow_annotation(
-      line_warmup, FlowDirection::Source, /*batch_id=*/42, /*is_warmup=*/true,
-      ProbeTraceMode::CPUDurationCalibrated);
-
-  EXPECT_NE(
-      line_warmup.str().find("\"id_scope\":\"warming_probe_duration\""),
-      std::string::npos);
-  EXPECT_NE(
-      line_warmup.str().find("\"bind_id\":\"0xC00000000000002A\""),
-      std::string::npos);
-}
-
 TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
 {
   BatchingTraceLogger logger;
-  remove_repository_outputs("batching_trace.json");
+  remove_trace_outputs("batching_trace.json");
 
   logger.configure(true, "");
   EXPECT_TRUE(logger.enabled());
@@ -321,7 +146,7 @@ TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
   }
 
   logger.configure(false, "");
-  remove_repository_outputs("batching_trace.json");
+  remove_trace_outputs("batching_trace.json");
 }
 
 TEST(BatchingTraceLoggerTest, ConfigureHandlesDirectoryCreationFailures)
@@ -389,7 +214,7 @@ TEST(BatchingTraceLoggerTest, WriteLineLockedNoOpsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "trace writer should not emit content before header.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteFooterLockedNoOpsWithoutHeader)
@@ -416,7 +241,7 @@ TEST(BatchingTraceLoggerTest, WriteFooterLockedNoOpsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "trace writer should not emit content before header.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanClampsNonPositiveDuration)
@@ -453,7 +278,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanClampsNonPositiveDuration)
   EXPECT_EQ(duration_value, "1");
   EXPECT_EQ(content.find("\"dur\":0", span_pos), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanClampsNonPositiveDuration)
@@ -489,7 +314,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanClampsNonPositiveDuration)
   EXPECT_EQ(duration_value, "1");
   EXPECT_EQ(content.find("\"dur\":0", span_pos), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
@@ -526,7 +351,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "write_batch_build_span should not emit without an open header.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
@@ -565,7 +390,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "write_batch_enqueue_span should not emit without an open header.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
@@ -605,7 +430,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
   EXPECT_TRUE(content.empty())
       << "log_batch_enqueue_span should not emit when tracing is disabled.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
@@ -646,7 +471,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
       << "log_batch_enqueue_span should not emit when timestamps cannot be "
          "converted.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
@@ -698,7 +523,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
   EXPECT_EQ(duration_value, "1");
   EXPECT_EQ(content.find("\"dur\":0", span_pos), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
@@ -738,7 +563,7 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
   EXPECT_TRUE(content.empty())
       << "log_batch_build_span should not emit when tracing is disabled.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
@@ -779,7 +604,7 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
   EXPECT_TRUE(content.empty())
       << "log_batch_build_span should not emit when timestamps are invalid.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
@@ -808,7 +633,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
       std::istreambuf_iterator<char>());
   EXPECT_EQ(content.find("skip_model"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanClampsNonPositiveDuration)
@@ -849,7 +674,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanClampsNonPositiveDuration)
   EXPECT_EQ(duration_value, "1");
   EXPECT_EQ(content.find("\"dur\":0", event_pos), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
@@ -891,12 +716,13 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "write_batch_compute_span should not emit without an open header.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
 {
-  const auto value = event_to_string(static_cast<BatchingTraceEvent>(255));
+  const auto value = BatchingTraceLogger::event_to_string(
+      static_cast<BatchingTraceEvent>(255));
   EXPECT_EQ(value, "unknown");
 }
 
@@ -948,7 +774,7 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWhenDisabled)
   EXPECT_TRUE(content.empty())
       << "write_record should not emit when tracing is disabled.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
@@ -988,7 +814,7 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
   EXPECT_TRUE(content.empty())
       << "write_record should not emit before the trace header is written.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(
@@ -1051,7 +877,7 @@ TEST(
   EXPECT_TRUE(content.empty()) << "log_batch_compute_span should not emit when "
                                   "disabled or worker_id < 0.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
@@ -1101,7 +927,7 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
   EXPECT_TRUE(content.empty())
       << "log_batch_compute_span should not emit when timestamps are invalid.";
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
@@ -1131,7 +957,7 @@ TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
       << "Escaped model name was not serialized as expected. Trace content:\n"
       << content;
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
@@ -1187,7 +1013,7 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
   EXPECT_NE(content.find("\"tid\":10"), std::string::npos);
   EXPECT_NE(content.find("worker-0 (cpu)"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
@@ -1226,7 +1052,7 @@ TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
 
   EXPECT_NE(content.find("device 7 worker 4 (cuda)"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
@@ -1259,7 +1085,7 @@ TEST(BatchingTraceLoggerTest, RecordsRequestIdsForBatchSubmission)
   EXPECT_EQ(content.find("\"sample_count\":6"), std::string::npos);
   EXPECT_EQ(content.find("\"request_id\":"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
@@ -1289,7 +1115,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
   EXPECT_EQ(content.find("\"logical_jobs\":"), std::string::npos);
   EXPECT_EQ(content.find("\"sample_count\":"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
@@ -1321,7 +1147,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
   EXPECT_NE(content.find("\"end_ts\":"), std::string::npos);
   EXPECT_EQ(content.find("\"logical_jobs\":"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
@@ -1361,7 +1187,7 @@ TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
       std::stoll(content.substr(value_start, value_end - value_start));
   EXPECT_EQ(duration, 25);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
@@ -1417,7 +1243,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
       std::string::npos);
   EXPECT_EQ(content.find("\"warming_sample_count\""), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
@@ -1483,7 +1309,7 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
   EXPECT_NE(tid_one, tid_two);
   EXPECT_NE(content.find("worker-0 (cpu) #2"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
@@ -1602,7 +1428,7 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   ASSERT_NE(warming_build_flow_out, std::string::npos);
   EXPECT_LT(warming_build_flow_out, warming_submit);
   const auto warming_build_bind =
-      content.find("\"bind_id\":\"0x4000000000000000\"", warming_build);
+      content.find("\"bind_id\":\"0x8000000000000000\"", warming_build);
   ASSERT_NE(warming_build_bind, std::string::npos);
   EXPECT_LT(warming_build_bind, warming_submit);
   EXPECT_NE(
@@ -1618,7 +1444,7 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   ASSERT_NE(warming_submit_flow_out, std::string::npos);
   EXPECT_LT(warming_submit_flow_out, warming_compute);
   EXPECT_NE(
-      content.find("\"bind_id\":\"0x4000000000000000\"", warming_submit),
+      content.find("\"bind_id\":\"0x8000000000000000\"", warming_submit),
       std::string::npos);
 
   EXPECT_NE(
@@ -1630,14 +1456,14 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   EXPECT_NE(
       content.find("\"flow_in\":true", warming_compute), std::string::npos);
   EXPECT_NE(
-      content.find("\"bind_id\":\"0x4000000000000000\"", warming_compute),
+      content.find("\"bind_id\":\"0x8000000000000000\"", warming_compute),
       std::string::npos);
 
   EXPECT_EQ(content.find("\"ph\":\"s\""), std::string::npos);
   EXPECT_EQ(content.find("\"ph\":\"f\""), std::string::npos);
   EXPECT_EQ(content.find(",\"id\":"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, WritesBatchSummaryEntries)
@@ -1682,7 +1508,7 @@ TEST(BatchingTraceLoggerTest, WritesBatchSummaryEntries)
   EXPECT_NE(lines[1].find("\"1000;2000\""), std::string::npos);
   EXPECT_NE(lines[1].find(",7.000,"), std::string::npos);
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
@@ -1710,7 +1536,7 @@ TEST(BatchingTraceLoggerTest, TraceFileWriterReportsOpenState)
   logger.configure(false, "");
   EXPECT_FALSE(logger.trace_writer_.is_open());
 
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, ExposesSummaryFilePathWhenConfigured)
@@ -1727,7 +1553,7 @@ TEST(BatchingTraceLoggerTest, ExposesSummaryFilePathWhenConfigured)
   EXPECT_EQ(summary->string(), summary_path.string());
 
   logger.configure(false, "");
-  remove_repository_outputs(trace_path);
+  remove_trace_outputs(trace_path);
 }
 
 TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
@@ -1765,978 +1591,7 @@ TEST(BatchingTraceLoggerTest, SkipsWarmupSummaryEntries)
   EXPECT_TRUE(lines[0].starts_with("batch_id,model_name,worker_id"))
       << "Unexpected header line for warmup-only export: " << lines[0];
 
-  remove_repository_outputs(trace_path);
-}
-
-TEST(
-    BatchingTraceLoggerTest,
-    LogBatchSummaryReturnsEarlyWhenSummaryStreamNotOpen)
-{
-  BatchingTraceLogger logger;
-  const auto trace_path = make_temp_trace_path();
-
-  logger.configure(true, trace_path.string());
-  ASSERT_TRUE(logger.summary_stream_.is_open());
-
-  logger.close_summary_writer();
-  ASSERT_FALSE(logger.summary_stream_.is_open());
-
-  const std::array<int, 1> request_ids{42};
-  const std::array<int64_t, 1> request_arrivals{1000};
-  logger.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
-      .batch_id = 1,
-      .model_name = "test_model",
-      .batch_size = 1,
-      .request_ids = request_ids,
-      .request_arrival_us = request_arrivals,
-      .worker_id = 0,
-      .worker_type = DeviceType::CPU,
-      .device_id = -1,
-      .queue_ms = 1.0,
-      .batch_ms = 2.0,
-      .submit_ms = 3.0,
-      .scheduling_ms = 4.0,
-      .codelet_ms = 5.0,
-      .inference_ms = 6.0,
-      .callback_ms = 7.0,
-      .total_ms = 8.0,
-      .is_warmup = false,
-  });
-
-  EXPECT_FALSE(logger.summary_stream_.is_open());
-
-  logger.configure(false, "");
-  remove_repository_outputs(trace_path);
-}
-
-TEST(BatchingTraceLoggerTest, SetAndGetProbeMode)
-{
-  BatchingTraceLogger logger;
-
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::None);
-
-  logger.set_probe_mode(ProbeTraceMode::GPUCalibration);
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::GPUCalibration);
-
-  logger.set_probe_mode(ProbeTraceMode::GPUDurationCalibrated);
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::GPUDurationCalibrated);
-
-  logger.set_probe_mode(ProbeTraceMode::CPUCalibration);
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::CPUCalibration);
-
-  logger.set_probe_mode(ProbeTraceMode::CPUDurationCalibrated);
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::CPUDurationCalibrated);
-
-  logger.set_probe_mode(ProbeTraceMode::None);
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::None);
-}
-
-TEST(BatchingTraceLoggerTest, EnableAndCheckProbeMeasurement)
-{
-  BatchingTraceLogger logger;
-
-  EXPECT_FALSE(logger.probe_measurement_enabled());
-
-  logger.enable_probe_measurement();
-  EXPECT_TRUE(logger.probe_measurement_enabled());
-}
-
-TEST(BatchingTraceLoggerTest, ProbeModeAndMeasurementAreIndependent)
-{
-  BatchingTraceLogger logger;
-
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::None);
-  EXPECT_FALSE(logger.probe_measurement_enabled());
-
-  logger.set_probe_mode(ProbeTraceMode::GPUCalibration);
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::GPUCalibration);
-  EXPECT_FALSE(logger.probe_measurement_enabled());
-
-  logger.enable_probe_measurement();
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::GPUCalibration);
-  EXPECT_TRUE(logger.probe_measurement_enabled());
-
-  logger.set_probe_mode(ProbeTraceMode::None);
-  EXPECT_EQ(logger.probe_mode(), ProbeTraceMode::None);
-  EXPECT_TRUE(logger.probe_measurement_enabled());
-}
-
-TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenDisabled)
-{
-  const auto trace_path = make_temp_trace_path();
-  BatchingTraceLogger logger;
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
-  }
-  logger.enabled_.store(false, std::memory_order_release);
-
-  const auto start = std::chrono::high_resolution_clock::now();
-  const auto end = start + std::chrono::microseconds(100);
-
-  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
-      .start_time = start,
-      .end_time = end,
-      .measured_throughput = 50.0,
-      .enter_threshold = 40.0,
-      .clear_threshold = 30.0,
-  });
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
-  }
-
-  std::ifstream stream(trace_path);
-  ASSERT_TRUE(stream.is_open());
-  const std::string content(
-      (std::istreambuf_iterator<char>(stream)),
-      std::istreambuf_iterator<char>());
-  EXPECT_TRUE(content.empty())
-      << "log_congestion_span should not emit when tracing is disabled.";
-
-  remove_repository_outputs(trace_path);
-}
-
-TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWithInvalidStartTimestamp)
-{
-  const auto trace_path = make_temp_trace_path();
-  BatchingTraceLogger logger;
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
-  }
-  logger.enabled_.store(true, std::memory_order_release);
-
-  const auto invalid_start = std::chrono::high_resolution_clock::time_point{};
-  const auto valid_end =
-      std::chrono::high_resolution_clock::now() + std::chrono::microseconds(50);
-
-  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
-      .start_time = invalid_start,
-      .end_time = valid_end,
-      .measured_throughput = 50.0,
-      .enter_threshold = 40.0,
-      .clear_threshold = 30.0,
-  });
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
-  }
-
-  std::ifstream stream(trace_path);
-  ASSERT_TRUE(stream.is_open());
-  const std::string content(
-      (std::istreambuf_iterator<char>(stream)),
-      std::istreambuf_iterator<char>());
-  EXPECT_TRUE(content.empty())
-      << "log_congestion_span should not emit with invalid start timestamp.";
-
-  remove_repository_outputs(trace_path);
-}
-
-TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWithInvalidEndTimestamp)
-{
-  const auto trace_path = make_temp_trace_path();
-  BatchingTraceLogger logger;
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
-  }
-  logger.enabled_.store(true, std::memory_order_release);
-
-  const auto valid_start = std::chrono::high_resolution_clock::now();
-  const auto invalid_end = std::chrono::high_resolution_clock::time_point{};
-
-  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
-      .start_time = valid_start,
-      .end_time = invalid_end,
-      .measured_throughput = 50.0,
-      .enter_threshold = 40.0,
-      .clear_threshold = 30.0,
-  });
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
-  }
-
-  std::ifstream stream(trace_path);
-  ASSERT_TRUE(stream.is_open());
-  const std::string content(
-      (std::istreambuf_iterator<char>(stream)),
-      std::istreambuf_iterator<char>());
-  EXPECT_TRUE(content.empty())
-      << "log_congestion_span should not emit with invalid end timestamp.";
-
-  remove_repository_outputs(trace_path);
-}
-
-TEST(
-    BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenEndTimeLessThanStartTime)
-{
-  const auto trace_path = make_temp_trace_path();
-  BatchingTraceLogger logger;
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
-  }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
-
-  const auto start = std::chrono::high_resolution_clock::time_point{
-      std::chrono::microseconds{5000}};
-  const auto end = std::chrono::high_resolution_clock::time_point{
-      std::chrono::microseconds{3000}};
-
-  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
-      .start_time = start,
-      .end_time = end,
-      .measured_throughput = 50.0,
-      .enter_threshold = 40.0,
-      .clear_threshold = 30.0,
-  });
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
-  }
-
-  std::ifstream stream(trace_path);
-  ASSERT_TRUE(stream.is_open());
-  const std::string content(
-      (std::istreambuf_iterator<char>(stream)),
-      std::istreambuf_iterator<char>());
-  EXPECT_TRUE(content.empty())
-      << "log_congestion_span should not emit when end_time <= start_time.";
-
-  remove_repository_outputs(trace_path);
-}
-
-TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenWriterNotReady)
-{
-  const auto trace_path = make_temp_trace_path();
-  BatchingTraceLogger logger;
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = false;
-    logger.trace_writer_.first_record_ = true;
-  }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
-
-  const auto start = std::chrono::high_resolution_clock::time_point{
-      std::chrono::microseconds{1000}};
-  const auto end = start + std::chrono::microseconds(50);
-
-  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
-      .start_time = start,
-      .end_time = end,
-      .measured_throughput = 50.0,
-      .enter_threshold = 40.0,
-      .clear_threshold = 30.0,
-  });
-
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
-  }
-
-  std::ifstream stream(trace_path);
-  ASSERT_TRUE(stream.is_open());
-  const std::string content(
-      (std::istreambuf_iterator<char>(stream)),
-      std::istreambuf_iterator<char>());
-  EXPECT_TRUE(content.empty())
-      << "log_congestion_span should not emit when trace_writer is not ready.";
-
-  remove_repository_outputs(trace_path);
-}
-
-TEST(BatchingTraceLoggerTest, LogCongestionSpanWritesValidCongestionEvent)
-{
-  const auto trace_path = make_temp_trace_path();
-  auto& logger = BatchingTraceLogger::instance();
-
-  logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
-  const auto end = start + std::chrono::microseconds(500);
-
-  logger.log_congestion_span(BatchingTraceLogger::CongestionSpanArgs{
-      .start_time = start,
-      .end_time = end,
-      .measured_throughput = 75.5,
-      .enter_threshold = 60.0,
-      .clear_threshold = 45.0,
-  });
-  logger.configure(false, "");
-
-  std::ifstream stream(trace_path);
-  ASSERT_TRUE(stream.is_open());
-  const std::string content(
-      (std::istreambuf_iterator<char>(stream)),
-      std::istreambuf_iterator<char>());
-
-  EXPECT_NE(content.find("\"name\":\"congestion\""), std::string::npos);
-  EXPECT_NE(content.find("\"cat\":\"congestion\""), std::string::npos);
-  EXPECT_NE(content.find("\"ph\":\"X\""), std::string::npos);
-  EXPECT_NE(content.find("\"enter_threshold\":60"), std::string::npos);
-  EXPECT_NE(content.find("\"clear_threshold\":45"), std::string::npos);
-  EXPECT_NE(content.find("\"measured_throughput\":75.5"), std::string::npos);
-
-  remove_repository_outputs(trace_path);
-}
-
-TEST(BatchingTraceLoggerTest, MakeTracePrefixGPUCalibrationMode)
-{
-  BatchingTraceLogger logger;
-  const auto prefix =
-      logger.make_trace_prefix(false, ProbeTraceMode::GPUCalibration);
-  EXPECT_EQ(prefix, "probe_gpu_calibration_");
-}
-
-TEST(BatchingTraceLoggerTest, MakeTracePrefixGPUDurationCalibratedMode)
-{
-  BatchingTraceLogger logger;
-  const auto prefix =
-      logger.make_trace_prefix(false, ProbeTraceMode::GPUDurationCalibrated);
-  EXPECT_EQ(prefix, "probe_gpu_duration_");
-}
-
-TEST(BatchingTraceLoggerTest, MakeTracePrefixCPUCalibrationMode)
-{
-  BatchingTraceLogger logger;
-  const auto prefix =
-      logger.make_trace_prefix(false, ProbeTraceMode::CPUCalibration);
-  EXPECT_EQ(prefix, "probe_cpu_calibration_");
-}
-
-TEST(BatchingTraceLoggerTest, MakeTracePrefixCPUDurationCalibratedMode)
-{
-  BatchingTraceLogger logger;
-  const auto prefix =
-      logger.make_trace_prefix(false, ProbeTraceMode::CPUDurationCalibrated);
-  EXPECT_EQ(prefix, "probe_cpu_duration_");
-}
-
-TEST(BatchingTraceLoggerTest, MakeTracePrefixNoneModeWithWarmup)
-{
-  BatchingTraceLogger logger;
-  const auto prefix = logger.make_trace_prefix(true, ProbeTraceMode::None);
-  EXPECT_EQ(prefix, "warming_");
-}
-
-TEST(BatchingTraceLoggerTest, MakeTracePrefixNoneModeWithoutWarmup)
-{
-  BatchingTraceLogger logger;
-  const auto prefix = logger.make_trace_prefix(false, ProbeTraceMode::None);
-  EXPECT_EQ(prefix, "");
-}
-
-TEST(BatchingTraceLoggerTest, MakeTracePrefixIgnoresIsWarmupForProbeMode)
-{
-  BatchingTraceLogger logger;
-  const auto prefix_warmup =
-      logger.make_trace_prefix(true, ProbeTraceMode::GPUCalibration);
-  const auto prefix_non_warmup =
-      logger.make_trace_prefix(false, ProbeTraceMode::GPUCalibration);
-  EXPECT_EQ(prefix_warmup, "probe_gpu_calibration_");
-  EXPECT_EQ(prefix_non_warmup, "probe_gpu_calibration_");
-  EXPECT_EQ(prefix_warmup, prefix_non_warmup);
-}
-
-TEST(BatchingTraceLoggerTest, MakeTracePrefixDefaultProbeMode)
-{
-  BatchingTraceLogger logger;
-  const auto prefix_without_probe_mode = logger.make_trace_prefix(false);
-  const auto prefix_with_explicit_none =
-      logger.make_trace_prefix(false, ProbeTraceMode::None);
-  EXPECT_EQ(prefix_without_probe_mode, prefix_with_explicit_none);
-  EXPECT_EQ(prefix_without_probe_mode, "");
-}
-
-TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedSkipsProbeMode)
-{
-  std::ostringstream stream;
-  BatchingTraceLogger logger;
-
-  const std::array<int, 2> request_ids{10, 11};
-  const std::array<int64_t, 2> request_arrivals{1000, 2000};
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 50,
-          .model_name = "test_model",
-          .batch_size = 2,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 0,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 1.0,
-          .batch_ms = 2.0,
-          .submit_ms = 3.0,
-          .scheduling_ms = 4.0,
-          .codelet_ms = 5.0,
-          .inference_ms = 6.0,
-          .callback_ms = 7.0,
-          .total_ms = 8.0,
-          .is_warmup = false,
-          .is_probe = true,
-      },
-      stream);
-
-  EXPECT_EQ(stream.str(), "");
-}
-
-TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedIncludesWarmupFlag)
-{
-  std::ostringstream stream;
-  BatchingTraceLogger logger;
-
-  const std::array<int, 1> request_ids{1};
-  const std::array<int64_t, 1> request_arrivals{100};
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 5,
-          .model_name = "warmup_model",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 1,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 0.5,
-          .batch_ms = 0.6,
-          .submit_ms = 0.7,
-          .scheduling_ms = 0.8,
-          .codelet_ms = 0.9,
-          .inference_ms = 1.0,
-          .callback_ms = 1.1,
-          .total_ms = 1.2,
-          .is_warmup = true,
-          .is_probe = false,
-      },
-      stream);
-
-  const std::string output = stream.str();
-  EXPECT_NE(output.find(",true\n"), std::string::npos)
-      << "Warmup flag should end with ',true\\n'";
-  EXPECT_EQ(output.find(",false\n"), std::string::npos);
-}
-
-TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedNonWarmup)
-{
-  std::ostringstream stream;
-  BatchingTraceLogger logger;
-
-  const std::array<int, 1> request_ids{2};
-  const std::array<int64_t, 1> request_arrivals{200};
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 6,
-          .model_name = "prod_model",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 0,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 0.5,
-          .batch_ms = 0.6,
-          .submit_ms = 0.7,
-          .scheduling_ms = 0.8,
-          .codelet_ms = 0.9,
-          .inference_ms = 1.0,
-          .callback_ms = 1.1,
-          .total_ms = 1.2,
-          .is_warmup = false,
-          .is_probe = false,
-      },
-      stream);
-
-  const std::string output = stream.str();
-  EXPECT_NE(output.find(",false\n"), std::string::npos)
-      << "Non-warmup flag should end with ',false\\n'";
-  EXPECT_EQ(output.find(",true\n"), std::string::npos);
-}
-
-TEST(
-    BatchingTraceLoggerTest,
-    WriteSummaryLineLockedFormatsTimingWithThreeDecimals)
-{
-  std::ostringstream stream;
-  BatchingTraceLogger logger;
-
-  const std::array<int, 1> request_ids{3};
-  const std::array<int64_t, 1> request_arrivals{300};
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 7,
-          .model_name = "decimal_model",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 2,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 1.234,
-          .batch_ms = 2.678,
-          .submit_ms = 3.111,
-          .scheduling_ms = 4.567,
-          .codelet_ms = 5.000,
-          .inference_ms = 6.555,
-          .callback_ms = 7.444,
-          .total_ms = 8.888,
-          .is_warmup = false,
-          .is_probe = false,
-      },
-      stream);
-
-  const std::string output = stream.str();
-  EXPECT_NE(output.find("1.234"), std::string::npos);
-  EXPECT_NE(output.find("2.678"), std::string::npos);
-  EXPECT_NE(output.find("3.111"), std::string::npos);
-  EXPECT_NE(output.find("4.567"), std::string::npos);
-  EXPECT_NE(output.find("5.000"), std::string::npos);
-  EXPECT_NE(output.find("6.555"), std::string::npos);
-  EXPECT_NE(output.find("7.444"), std::string::npos);
-  EXPECT_NE(output.find("8.888"), std::string::npos);
-}
-
-TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedEscapesQuotesInModelName)
-{
-  std::ostringstream stream;
-  BatchingTraceLogger logger;
-
-  const std::array<int, 1> request_ids{4};
-  const std::array<int64_t, 1> request_arrivals{400};
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 8,
-          .model_name = "model\"with\"quotes",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 0,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 0.5,
-          .batch_ms = 0.6,
-          .submit_ms = 0.7,
-          .scheduling_ms = 0.8,
-          .codelet_ms = 0.9,
-          .inference_ms = 1.0,
-          .callback_ms = 1.1,
-          .total_ms = 1.2,
-          .is_warmup = false,
-          .is_probe = false,
-      },
-      stream);
-
-  const std::string output = stream.str();
-  EXPECT_NE(output.find("\"model\"\"with\"\"quotes\""), std::string::npos)
-      << "Quotes should be escaped by doubling";
-}
-
-TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedFormatsDeviceType)
-{
-  std::ostringstream stream_cpu, stream_cuda;
-  BatchingTraceLogger logger;
-
-  const std::array<int, 1> request_ids{5};
-  const std::array<int64_t, 1> request_arrivals{500};
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 9,
-          .model_name = "cpu_model",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 0,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 0.5,
-          .batch_ms = 0.6,
-          .submit_ms = 0.7,
-          .scheduling_ms = 0.8,
-          .codelet_ms = 0.9,
-          .inference_ms = 1.0,
-          .callback_ms = 1.1,
-          .total_ms = 1.2,
-          .is_warmup = false,
-          .is_probe = false,
-      },
-      stream_cpu);
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 10,
-          .model_name = "cuda_model",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 1,
-          .worker_type = DeviceType::CUDA,
-          .device_id = 0,
-          .queue_ms = 0.5,
-          .batch_ms = 0.6,
-          .submit_ms = 0.7,
-          .scheduling_ms = 0.8,
-          .codelet_ms = 0.9,
-          .inference_ms = 1.0,
-          .callback_ms = 1.1,
-          .total_ms = 1.2,
-          .is_warmup = false,
-          .is_probe = false,
-      },
-      stream_cuda);
-
-  const std::string cpu_output = stream_cpu.str();
-  const std::string cuda_output = stream_cuda.str();
-
-  EXPECT_NE(cpu_output.find("\"cpu\""), std::string::npos);
-  EXPECT_NE(cuda_output.find("\"cuda\""), std::string::npos);
-}
-
-TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedIncludesAllFields)
-{
-  std::ostringstream stream;
-  BatchingTraceLogger logger;
-
-  const std::array<int, 2> request_ids{100, 101};
-  const std::array<int64_t, 2> request_arrivals{5000, 6000};
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 42,
-          .model_name = "full_test",
-          .batch_size = 3,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 7,
-          .worker_type = DeviceType::CUDA,
-          .device_id = 2,
-          .queue_ms = 1.111,
-          .batch_ms = 2.222,
-          .submit_ms = 3.333,
-          .scheduling_ms = 4.444,
-          .codelet_ms = 5.555,
-          .inference_ms = 6.666,
-          .callback_ms = 7.777,
-          .total_ms = 8.888,
-          .is_warmup = true,
-          .is_probe = false,
-      },
-      stream);
-
-  const std::string output = stream.str();
-
-  EXPECT_NE(output.find("42,"), std::string::npos);
-  EXPECT_NE(output.find("\"full_test\""), std::string::npos);
-  EXPECT_NE(output.find(",7,"), std::string::npos);
-  EXPECT_NE(output.find("\"cuda\""), std::string::npos);
-  EXPECT_NE(output.find(",2,"), std::string::npos);
-  EXPECT_NE(output.find(",3,"), std::string::npos);
-  EXPECT_NE(output.find("\"100;101\""), std::string::npos);
-  EXPECT_NE(output.find("\"5000;6000\""), std::string::npos);
-  EXPECT_NE(output.find("1.111"), std::string::npos);
-  EXPECT_NE(output.find("2.222"), std::string::npos);
-  EXPECT_NE(output.find("3.333"), std::string::npos);
-  EXPECT_NE(output.find("4.444"), std::string::npos);
-  EXPECT_NE(output.find("5.555"), std::string::npos);
-  EXPECT_NE(output.find("6.666"), std::string::npos);
-  EXPECT_NE(output.find("7.777"), std::string::npos);
-  EXPECT_NE(output.find("8.888"), std::string::npos);
-  EXPECT_NE(output.find(",true\n"), std::string::npos);
-}
-
-TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedWritesToSummaryStream)
-{
-  BatchingTraceLogger logger;
-
-  const std::array<int, 1> request_ids{1};
-  const std::array<int64_t, 1> request_arrivals{100};
-
-  std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
-  std::filesystem::path trace_dir = temp_dir / "test_trace";
-  std::filesystem::create_directories(trace_dir);
-
-  std::filesystem::path trace_file = trace_dir / "test_trace.trace";
-
-  ASSERT_TRUE(logger.configure_summary_writer(trace_file));
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 100,
-          .model_name = "test_model",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 0,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 1.0,
-          .batch_ms = 2.0,
-          .submit_ms = 3.0,
-          .scheduling_ms = 4.0,
-          .codelet_ms = 5.0,
-          .inference_ms = 6.0,
-          .callback_ms = 7.0,
-          .total_ms = 8.0,
-          .is_warmup = false,
-          .is_probe = false,
-      },
-      logger.summary_stream_);
-
-  logger.close_summary_writer();
-
-  std::filesystem::path summary_file_path =
-      trace_dir / "test_trace_summary.csv";
-  std::ifstream summary_file(summary_file_path);
-  ASSERT_TRUE(summary_file.is_open());
-
-  std::string header, line;
-  std::getline(summary_file, header);
-  std::getline(summary_file, line);
-
-  EXPECT_NE(line.find("100,"), std::string::npos);
-  EXPECT_NE(line.find("\"test_model\""), std::string::npos);
-  EXPECT_NE(line.find(",0,"), std::string::npos);
-
-  std::filesystem::remove_all(trace_dir);
-}
-
-TEST(BatchingTraceLoggerTest, WriteSummaryLineLockedWithoutStreamSkipsProbe)
-{
-  BatchingTraceLogger logger;
-
-  const std::array<int, 1> request_ids{2};
-  const std::array<int64_t, 1> request_arrivals{200};
-
-  std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
-  std::filesystem::path trace_dir = temp_dir / "test_trace_probe";
-  std::filesystem::create_directories(trace_dir);
-
-  std::filesystem::path trace_file = trace_dir / "test_probe.trace";
-  ASSERT_TRUE(logger.configure_summary_writer(trace_file));
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 200,
-          .model_name = "model1",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 0,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 1.0,
-          .batch_ms = 2.0,
-          .submit_ms = 3.0,
-          .scheduling_ms = 4.0,
-          .codelet_ms = 5.0,
-          .inference_ms = 6.0,
-          .callback_ms = 7.0,
-          .total_ms = 8.0,
-          .is_warmup = false,
-          .is_probe = false,
-      },
-      logger.summary_stream_);
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 201,
-          .model_name = "probe_model",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 0,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 1.0,
-          .batch_ms = 2.0,
-          .submit_ms = 3.0,
-          .scheduling_ms = 4.0,
-          .codelet_ms = 5.0,
-          .inference_ms = 6.0,
-          .callback_ms = 7.0,
-          .total_ms = 8.0,
-          .is_warmup = false,
-          .is_probe = true,
-      },
-      logger.summary_stream_);
-
-  logger.close_summary_writer();
-
-  std::filesystem::path summary_file_path =
-      trace_dir / "test_probe_summary.csv";
-  std::ifstream summary_file(summary_file_path);
-  ASSERT_TRUE(summary_file.is_open());
-
-  std::string header;
-  std::getline(summary_file, header);
-
-  int line_count = 0;
-  std::string line;
-  while (std::getline(summary_file, line)) {
-    if (!line.empty()) {
-      line_count++;
-      EXPECT_NE(line.find("200,"), std::string::npos);
-      EXPECT_EQ(line.find("201,"), std::string::npos);
-    }
-  }
-  EXPECT_EQ(line_count, 1);
-
-  std::filesystem::remove_all(trace_dir);
-}
-
-TEST(
-    BatchingTraceLoggerTest,
-    WriteSummaryLineLockedWithoutStreamIncludesWarmupFlag)
-{
-  BatchingTraceLogger logger;
-
-  const std::array<int, 1> request_ids{3};
-  const std::array<int64_t, 1> request_arrivals{300};
-
-  std::filesystem::path temp_dir = std::filesystem::temp_directory_path();
-  std::filesystem::path trace_dir = temp_dir / "test_trace_warmup";
-  std::filesystem::create_directories(trace_dir);
-
-  std::filesystem::path trace_file = trace_dir / "test_warmup.trace";
-  ASSERT_TRUE(logger.configure_summary_writer(trace_file));
-
-  write_summary_line(
-      BatchingTraceLogger::BatchSummaryLogArgs{
-          .batch_id = 300,
-          .model_name = "warmup_model",
-          .batch_size = 1,
-          .request_ids = request_ids,
-          .request_arrival_us = request_arrivals,
-          .worker_id = 0,
-          .worker_type = DeviceType::CPU,
-          .device_id = -1,
-          .queue_ms = 0.5,
-          .batch_ms = 0.6,
-          .submit_ms = 0.7,
-          .scheduling_ms = 0.8,
-          .codelet_ms = 0.9,
-          .inference_ms = 1.0,
-          .callback_ms = 1.1,
-          .total_ms = 1.2,
-          .is_warmup = true,
-          .is_probe = false,
-      },
-      logger.summary_stream_);
-
-  logger.close_summary_writer();
-
-  std::filesystem::path summary_file_path =
-      trace_dir / "test_warmup_summary.csv";
-  std::ifstream summary_file(summary_file_path);
-  ASSERT_TRUE(summary_file.is_open());
-
-  std::string header;
-  std::getline(summary_file, header);
-
-  std::string line;
-  std::getline(summary_file, line);
-
-  EXPECT_NE(line.find(",true"), std::string::npos)
-      << "Warmup flag should be 'true'";
-  EXPECT_EQ(line.find(",false"), std::string::npos)
-      << "Warmup flag should not be 'false'";
-
-  std::filesystem::remove_all(trace_dir);
-}
-
-TEST(BatchingTraceLoggerTest, WriteHeaderNoOpsWhenStreamNotOpen)
-{
-  BatchingTraceLogger logger;
-  {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    ASSERT_FALSE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.write_header();
-    EXPECT_FALSE(logger.trace_writer_.header_written_)
-        << "header_written_ should remain false when stream is not open";
-    EXPECT_TRUE(logger.trace_writer_.first_record_)
-        << "first_record_ should not be modified when stream is not open";
-    EXPECT_TRUE(logger.trace_writer_.thread_metadata_.empty())
-        << "thread_metadata_ should remain empty when stream is not open";
-  }
-}
-
-TEST(BatchingTraceLoggerTest, SummaryPathFromTraceWithEmptyStem)
-{
-  const std::filesystem::path trace_path = std::filesystem::path("/tmp") / "";
-  const auto result = summary_path_from_trace(trace_path);
-
-  EXPECT_EQ(result.filename().string(), "batching_trace_summary.csv")
-      << "Should use default 'batching_trace' stem when original stem is empty";
-}
-
-TEST(BatchingTraceLoggerTest, SummaryPathFromTraceWithNormalStem)
-{
-  const std::filesystem::path trace_path("/tmp/my_trace.json");
-  const auto result = summary_path_from_trace(trace_path);
-
-  EXPECT_EQ(result.filename().string(), "my_trace_summary.csv")
-      << "Should preserve the original stem when it's not empty";
-}
-
-TEST(BatchingTraceLoggerTest, SummaryPathFromTracePreservesDirectory)
-{
-  const std::filesystem::path trace_path("/tmp/subdir/trace.json");
-  const auto result = summary_path_from_trace(trace_path);
-
-  EXPECT_EQ(result.parent_path().string(), "/tmp/subdir")
-      << "Should preserve the parent directory path";
-  EXPECT_EQ(result.filename().string(), "trace_summary.csv");
-}
-
-TEST(BatchingTraceLoggerTest, SummaryPathFromTraceWithEmptyStemAndSubdirs)
-{
-  const std::filesystem::path trace_path =
-      std::filesystem::path("/tmp/subdir") / "";
-  const auto result = summary_path_from_trace(trace_path);
-
-  EXPECT_EQ(result.parent_path().string(), "/tmp/subdir")
-      << "Should preserve the parent directory path";
-  EXPECT_EQ(result.filename().string(), "batching_trace_summary.csv")
-      << "Should use default stem when stem is empty, even with subdirectories";
+  remove_trace_outputs(trace_path);
 }
 
 }}  // namespace starpu_server

@@ -85,6 +85,7 @@ class StarPUSetup {
   auto operator=(StarPUSetup&&) -> StarPUSetup& = delete;
 
  private:
+  std::string scheduler_name_;
   struct starpu_conf conf_;
   InferenceCodelet codelet_;
   std::unique_ptr<InputSlotPool> input_pool_;

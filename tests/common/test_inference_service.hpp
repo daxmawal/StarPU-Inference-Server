@@ -69,13 +69,16 @@ class InferenceServiceTest : public ::testing::Test {
   void SetUp() override
   {
     auto config = make_service_config();
-    auto service_config = starpu_server::InferenceServiceConfig{
-        .expected_input_types = std::move(config.expected_input_types),
-        .expected_input_dims = config.expected_input_dims,
-        .max_batch_size = config.max_batch_size,
-    };
-    service = std::make_unique<starpu_server::InferenceServiceImpl>(
-        &queue, &ref_outputs, std::move(service_config));
+    if (config.expected_input_dims.has_value()) {
+      service = std::make_unique<starpu_server::InferenceServiceImpl>(
+          &queue, &ref_outputs, std::move(config.expected_input_types),
+          *config.expected_input_dims, config.max_batch_size);
+    } else {
+      ASSERT_EQ(config.max_batch_size, 0)
+          << "max_batch_size requires expected_input_dims";
+      service = std::make_unique<starpu_server::InferenceServiceImpl>(
+          &queue, &ref_outputs, std::move(config.expected_input_types));
+    }
   }
   auto prepare_job(
       std::vector<torch::Tensor> ref_outs,

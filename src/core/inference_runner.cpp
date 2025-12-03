@@ -22,7 +22,6 @@
 #include <thread>
 #include <tuple>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -232,11 +231,10 @@ InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
     int request_identifier,
     std::function<void(const std::vector<torch::Tensor>&, double)> callback)
-    : request_id_(request_identifier), on_complete_(std::move(callback)),
+    : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
+      request_id_(request_identifier), on_complete_(std::move(callback)),
       start_time_(std::chrono::high_resolution_clock::now())
 {
-  adopt_input_tensors(std::move(inputs));
-  adopt_input_types(std::move(types));
 }
 
 auto
@@ -254,42 +252,18 @@ InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
 // =============================================================================
 
 namespace detail {
-struct ClientRngState {
-  std::mt19937 engine;
-  bool initialized = false;
-  std::optional<int> last_seed;
-};
-
-void
-ensure_client_rng_seeded(const RuntimeConfig& opts, ClientRngState& state)
-{
-  if (opts.seed.has_value()) {
-    if (!state.initialized || state.last_seed != opts.seed) {
-      state.engine.seed(*opts.seed);
-      torch::manual_seed(*opts.seed);
-      state.last_seed = opts.seed;
-      state.initialized = true;
-    }
-    return;
-  }
-
-  if (!state.initialized) {
-    const auto random_seed = static_cast<int>(std::random_device{}());
-    state.engine.seed(random_seed);
-    torch::manual_seed(random_seed);
-    state.last_seed.reset();
-    state.initialized = true;
-  }
-}
-
 void
 client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, const int request_nb)
 {
-  thread_local ClientRngState rng_state;
-  ensure_client_rng_seeded(opts, rng_state);
-  auto& rng = rng_state.engine;
+  thread_local std::mt19937 rng;
+  if (opts.seed.has_value()) {
+    rng.seed(*opts.seed);
+    torch::manual_seed(*opts.seed);
+  } else {
+    rng.seed(std::random_device{}());
+  }
 
   auto pregen_inputs =
       client_utils::pre_generate_inputs(opts, opts.batching.pregen_inputs);
@@ -364,7 +338,7 @@ clone_model_to_gpus(
   models_gpu.reserve(device_ids.size());
 
   for (const auto& device_id : device_ids) {
-    auto model_gpu = model_cpu.clone();
+    torch::jit::script::Module model_gpu = model_cpu.clone();
     model_gpu.to(
         torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)));
     models_gpu.emplace_back(std::move(model_gpu));
@@ -551,7 +525,7 @@ run_warmup(
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
   warmup_runner.run(warmup_request_nb);
 
-  log_info(opts.verbosity, "Warmup complete, proceeding to real inference.");
+  log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
 }
 
 // =============================================================================
@@ -570,20 +544,26 @@ auto
 build_gpu_model_lookup(
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<int>& device_ids)
-    -> std::unordered_map<int, torch::jit::script::Module*>
+    -> std::vector<torch::jit::script::Module*>
 {
-  std::unordered_map<int, torch::jit::script::Module*> lookup;
+  std::vector<torch::jit::script::Module*> lookup;
   if (models_gpu.empty() || device_ids.empty()) {
     return lookup;
   }
 
+  const auto max_it = std::ranges::max_element(device_ids);
+  if (max_it == device_ids.end() || *max_it < 0) {
+    return lookup;
+  }
+
+  lookup.resize(static_cast<size_t>(*max_it) + 1, nullptr);
   const size_t replicas = std::min(models_gpu.size(), device_ids.size());
   for (size_t idx = 0; idx < replicas; ++idx) {
     const int device_id = device_ids[idx];
     if (device_id < 0) {
       continue;
     }
-    lookup[device_id] = &models_gpu[idx];
+    lookup[static_cast<size_t>(device_id)] = &models_gpu[idx];
   }
 
   return lookup;
@@ -592,7 +572,7 @@ build_gpu_model_lookup(
 auto
 resolve_validation_model(
     const InferenceResult& result, torch::jit::script::Module& cpu_model,
-    const std::unordered_map<int, torch::jit::script::Module*>& gpu_lookup,
+    std::span<torch::jit::script::Module*> gpu_lookup,
     bool validate_results) -> std::optional<torch::jit::script::Module*>
 {
   if (result.executed_on != DeviceType::CUDA) {
@@ -608,8 +588,8 @@ resolve_validation_model(
     return std::nullopt;
   }
 
-  const auto gpu_entry = gpu_lookup.find(result.device_id);
-  if (gpu_entry == gpu_lookup.end() || gpu_entry->second == nullptr) {
+  const auto device_id = static_cast<size_t>(result.device_id);
+  if (device_id >= gpu_lookup.size() || gpu_lookup[device_id] == nullptr) {
     if (validate_results) {
       log_warning(std::format(
           "[Client] Skipping validation for job {}: no GPU replica for device "
@@ -619,7 +599,7 @@ resolve_validation_model(
     return std::nullopt;
   }
 
-  return gpu_entry->second;
+  return gpu_lookup[device_id];
 }
 
 void

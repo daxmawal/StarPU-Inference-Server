@@ -719,10 +719,12 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
 // StarPUSetup: constructor and destructor (handles StarPU global state)
 // =============================================================================
 
-StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
+StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
+    : scheduler_name_(opts.scheduler), conf_{}
 {
   apply_starpu_env(opts);
   starpu_conf_init(&conf_);
+  conf_.sched_policy_name = scheduler_name_.c_str();
 
   configure_cpu(conf_, opts);
   configure_gpu(conf_, opts);
