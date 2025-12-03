@@ -750,6 +750,8 @@ InferenceTask::record_and_run_completion_callback(
             "Exception in completion callback: ",
             "Unknown exception in completion callback"});
   }
+
+  ctx->job->release_input_memory_holders();
 }
 
 // =============================================================================

@@ -221,6 +221,8 @@ class InferenceJob : public JobBatchState {
     input_memory_holders_ = std::move(holders);
   }
 
+  void release_input_memory_holders() { input_memory_holders_.clear(); }
+
   void set_submission_id(int submission_id) { submission_id_ = submission_id; }
 
   [[nodiscard]] auto submission_id() const -> int { return submission_id_; }
