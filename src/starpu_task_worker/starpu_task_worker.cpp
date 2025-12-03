@@ -952,6 +952,8 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     if (entry.callback) {
       entry.callback(outputs, latency_ms);
     }
+
+    static_cast<void>(job_sp->release_input_tensors());
     job_sp->release_input_memory_holders();
 
     offset += static_cast<std::size_t>(
