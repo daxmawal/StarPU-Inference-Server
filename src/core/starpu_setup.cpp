@@ -30,6 +30,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
@@ -65,6 +66,20 @@ worker_stream_query_fn_ref() -> StarPUSetup::WorkerStreamQueryFn&
 void
 apply_starpu_env(const RuntimeConfig& opts)
 {
+  const bool scheduler_in_config =
+      opts.starpu_env.find(kStarpuSchedulerEnvVar) != opts.starpu_env.end();
+
+  if (!scheduler_in_config &&
+      std::getenv(kStarpuSchedulerEnvVar.data()) == nullptr) {
+    if (setenv(
+            kStarpuSchedulerEnvVar.data(), kDefaultStarpuScheduler.data(), 0) !=
+        0) {
+      throw StarPUInitializationException(std::format(
+          "Failed to set default StarPU scheduler {}: {}",
+          kDefaultStarpuScheduler, std::strerror(errno)));
+    }
+  }
+
   for (const auto& [name, value] : opts.starpu_env) {
     if (name.empty()) {
       throw StarPUInitializationException(
@@ -719,12 +734,18 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
 // StarPUSetup: constructor and destructor (handles StarPU global state)
 // =============================================================================
 
-StarPUSetup::StarPUSetup(const RuntimeConfig& opts)
-    : scheduler_name_(opts.scheduler), conf_{}
+StarPUSetup::StarPUSetup(const RuntimeConfig& opts) : conf_{}
 {
   apply_starpu_env(opts);
   starpu_conf_init(&conf_);
-  conf_.sched_policy_name = scheduler_name_.c_str();
+
+  if (const char* scheduler_value =
+          std::getenv(kStarpuSchedulerEnvVar.data())) {
+    const std::string_view scheduler_view{scheduler_value};
+    if (!scheduler_view.empty()) {
+      conf_.sched_policy_name = scheduler_view.data();
+    }
+  }
 
   configure_cpu(conf_, opts);
   configure_gpu(conf_, opts);

@@ -4,18 +4,16 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <map>
 #include <optional>
 #include <string>
-#include <unordered_set>
+#include <string_view>
 #include <vector>
 
 #include "datatype_utils.hpp"
 #include "exceptions.hpp"
 #include "logger.hpp"
-#include "transparent_hash.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -33,10 +31,8 @@ inline constexpr std::size_t kDefaultPregenInputs = 10ULL;
 inline constexpr double kDefaultRelativeTolerance = 1e-3;
 inline constexpr double kDefaultAbsoluteTolerance = 1e-5;
 inline constexpr int kDefaultMetricsPort = 9090;
-
-inline const std::unordered_set<std::string, TransparentHash, std::equal_to<>>
-    kAllowedSchedulers = {"lws",  "dmda",   "dmdas", "ws",   "eager", "random",
-                          "prio", "peager", "pheft", "heft", "fcfs"};
+inline constexpr std::string_view kDefaultStarpuScheduler = "lws";
+inline constexpr std::string_view kStarpuSchedulerEnvVar = "STARPU_SCHED";
 
 // =============================================================================
 // TensorConfig
@@ -67,7 +63,7 @@ struct ModelConfig {
 // Global configuration structure for inference runtime.
 //
 // Contains:
-//   - General settings (model, scheduler, etc.)
+//   - General settings (model, logging, etc.)
 //   - Device configuration (CPU, CUDA, GPU IDs)
 //   - Logging level
 //   - Model input/output layout
@@ -110,7 +106,6 @@ struct RuntimeConfig {
     size_t max_models_gpu = kMaxModelsGpu;
   };
 
-  std::string scheduler = "lws";
   std::string name;
   std::string config_path;
   std::string server_address = "127.0.0.1:50051";
