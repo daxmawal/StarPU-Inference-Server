@@ -959,6 +959,9 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     offset += static_cast<std::size_t>(
         std::max<int64_t>(1, slice_result.processed_length));
   }
+
+  const_cast<std::shared_ptr<InferenceJob>&>(aggregated_job)
+      ->set_aggregated_sub_jobs({});
 }
 
 auto
