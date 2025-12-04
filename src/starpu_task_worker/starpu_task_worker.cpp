@@ -953,6 +953,7 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
       entry.callback(outputs, latency_ms);
     }
 
+    outputs.clear();
     static_cast<void>(job_sp->release_input_tensors());
     job_sp->release_input_memory_holders();
 
@@ -962,8 +963,19 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
 
   auto& mutable_job =
       const_cast<std::shared_ptr<InferenceJob>&>(aggregated_job);
-  mutable_job->set_aggregated_sub_jobs({});
 
+  const auto& pending = mutable_job->pending_sub_jobs();
+  for (const auto& sub_job : pending) {
+    if (sub_job && sub_job->has_on_complete()) {
+      sub_job->set_on_complete({});
+    }
+  }
+
+  mutable_job->set_aggregated_sub_jobs({});
+  mutable_job->clear_pending_sub_jobs();
+
+  static_cast<void>(mutable_job->release_input_tensors());
+  mutable_job->release_input_memory_holders();
   mutable_job->set_output_tensors({});
 }
 
@@ -1582,6 +1594,7 @@ BatchCollector::maybe_build_batched_job(
     pending_jobs.reserve(jobs.empty() ? 0 : jobs.size() - 1);
     for (size_t idx = 1; idx < jobs.size(); ++idx) {
       pending_jobs.push_back(jobs[idx]);
+      jobs[idx]->set_output_tensors({});
     }
     master->set_pending_sub_jobs(std::move(pending_jobs));
   }

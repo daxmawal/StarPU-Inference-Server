@@ -408,10 +408,11 @@ InferenceServiceImpl::submit_job_async(
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
+  auto job_keeper = job;
   job->set_on_complete(
-      [job_ptr = job, callback = std::move(on_complete)](
+      [job_keeper, callback = std::move(on_complete)](
           std::vector<torch::Tensor> outs, double latency_ms) mutable {
-        const auto& info = job_ptr->timing_info();
+        const auto& info = job_keeper->timing_info();
         auto timing = build_latency_breakdown(info, latency_ms);
         detail::TimingInfo copied_info = info;
 
