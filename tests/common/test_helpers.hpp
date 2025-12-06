@@ -153,7 +153,6 @@ make_add_one_model() -> torch::jit::script::Module
 inline auto
 run_add_one_inference_loop(
     bool use_cpu, bool use_cuda, std::optional<int> device_id = std::nullopt,
-    bool validate_results = true,
     std::optional<std::vector<int>> device_ids_override = std::nullopt)
     -> std::string
 {
@@ -166,7 +165,6 @@ run_add_one_inference_loop(
   opts.batching.request_nb = 1;
   opts.devices.use_cpu = use_cpu;
   opts.devices.use_cuda = use_cuda;
-  opts.validation.validate_results = validate_results;
   if (device_ids_override && !device_ids_override->empty()) {
     opts.devices.ids = *device_ids_override;
   } else if (device_id) {

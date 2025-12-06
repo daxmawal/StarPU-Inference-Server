@@ -123,7 +123,6 @@ TEST(LoadModelAndReferenceOutput, LogsFallbackWhenSyntheticMissing)
 {
   TemporaryModelFile model_file{"load_model_missing", make_add_one_model()};
   RuntimeConfig opts = make_runtime_config_for_model(model_file.path());
-  opts.validation.validate_results = false;
   opts.verbosity = VerbosityLevel::Debug;
   opts.models[0].outputs = {TensorConfig{
       .name = "bad_output",
@@ -144,7 +143,6 @@ TEST(LoadModelAndReferenceOutput, LogsWhenUsingSyntheticOutputs)
 {
   TemporaryModelFile model_file{"load_model_synthetic", make_add_one_model()};
   RuntimeConfig opts = make_runtime_config_for_model(model_file.path());
-  opts.validation.validate_results = false;
   opts.verbosity = VerbosityLevel::Debug;
   opts.models[0].outputs = {TensorConfig{
       .name = "output0",

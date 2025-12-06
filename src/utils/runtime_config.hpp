@@ -96,7 +96,6 @@ struct RuntimeConfig {
   struct ValidationSettings {
     double rtol = kDefaultRelativeTolerance;
     double atol = kDefaultAbsoluteTolerance;
-    bool validate_results = true;
   };
 
   struct Limits {

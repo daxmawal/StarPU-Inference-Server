@@ -681,7 +681,6 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "warmup_request_nb: 3\n";
   yaml << "warmup_batches_per_worker: 2\n";
   yaml << "seed: 123\n";
-  yaml << "validate_results: false\n";
 
   const auto tmp =
       std::filesystem::temp_directory_path() / "config_loader_valid.yaml";
@@ -717,7 +716,6 @@ TEST(ConfigLoader, LoadsValidConfig)
   ASSERT_TRUE(has_seed);
   const auto seed_value = cfg.seed.value_or(0U);
   EXPECT_EQ(seed_value, 123U);
-  EXPECT_FALSE(cfg.validation.validate_results);
   EXPECT_TRUE(cfg.devices.use_cuda);
   EXPECT_FALSE(cfg.devices.group_cpu_by_numa);
 }

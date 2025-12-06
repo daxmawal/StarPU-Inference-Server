@@ -1404,8 +1404,6 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 
 TEST_F(StarPUTaskRunnerFixture, StoreCompletedJobResultTracksInputsAndOutputs)
 {
-  opts_.validation.validate_results = true;
-
   std::vector<torch::Tensor> inputs{torch::tensor({1.0, 2.0})};
   const std::vector<torch::Tensor> outputs{torch::tensor({5.0})};
   constexpr double kLatencyMs = 7.5;
@@ -1775,7 +1773,6 @@ TEST_F(
 {
   TraceLoggerSession session;
 
-  opts_.validation.validate_results = false;
   opts_.devices.use_cpu = true;
   opts_.devices.use_cuda = false;
 
@@ -1823,7 +1820,6 @@ TEST_F(
 {
   TraceLoggerSession session;
 
-  opts_.validation.validate_results = false;
   opts_.devices.use_cpu = true;
   opts_.devices.use_cuda = false;
 
@@ -1870,8 +1866,6 @@ TEST_F(StarPUTaskRunnerFixture, SubmitInferenceTaskHandlesStarpuSubmitFailures)
       "trace_model", {make_tensor_config("input0", {1}, at::kFloat)},
       {make_tensor_config("output0", {1}, at::kFloat)});
   reset_runner_with_model(model_config, /*pool_size=*/1);
-
-  opts_.validation.validate_results = false;
 
   starpu_test::ScopedStarpuDataAcquireOverride acquire_override(
       &NoOpStarpuDataAcquire);
@@ -3613,8 +3607,6 @@ TEST_F(
     StarPUTaskRunnerFixture,
     MaybeBuildBatchedJobPreservesEffectiveBatchSizeAfterMergingInputs)
 {
-  opts_.validation.validate_results = true;
-
   auto make_input = [](float a, float b) {
     return torch::tensor({{a, b}}, torch::TensorOptions().dtype(torch::kFloat));
   };
@@ -3646,8 +3638,6 @@ TEST_F(
     StarPUTaskRunnerFixture,
     MaybeBuildBatchedJobStoresPendingSubJobsWhenInputPoolAvailable)
 {
-  opts_.validation.validate_results = false;
-
   auto model_config = make_model_config(
       "pending_pool_model", {make_tensor_config("input0", {1, 2}, at::kFloat)},
       {make_tensor_config("output0", {1, 2}, at::kFloat)});

@@ -163,7 +163,6 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "seed",
           "rtol",
           "atol",
-          "validate_results",
           "sync",
           "use_cpu",
           "use_cuda"};
@@ -451,9 +450,6 @@ parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
     if (cfg.validation.atol < 0) {
       throw std::invalid_argument("atol must be >= 0");
     }
-  }
-  if (root["validate_results"]) {
-    cfg.validation.validate_results = root["validate_results"].as<bool>();
   }
   if (root["sync"]) {
     cfg.batching.synchronous = root["sync"].as<bool>();
