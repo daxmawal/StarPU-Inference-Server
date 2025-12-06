@@ -186,6 +186,24 @@ WarmupRunner::run(int request_nb_per_worker)
   std::atomic dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
   std::condition_variable dummy_cv;
+  std::exception_ptr thread_exception;
+  std::mutex thread_exception_mutex;
+
+  const auto store_thread_exception = [&](std::exception_ptr exception) {
+    std::lock_guard lock(thread_exception_mutex);
+    if (!thread_exception) {
+      thread_exception = std::move(exception);
+    }
+  };
+  const auto load_thread_exception = [&]() -> std::exception_ptr {
+    std::lock_guard lock(thread_exception_mutex);
+    return thread_exception;
+  };
+  const auto notify_thread_exception = [&](std::exception_ptr exception) {
+    store_thread_exception(std::move(exception));
+    queue.shutdown();
+    dummy_cv.notify_all();
+  };
 
   StarPUTaskRunnerConfig config{};
   config.queue = &queue;
@@ -197,10 +215,22 @@ WarmupRunner::run(int request_nb_per_worker)
   config.all_done_cv = &dummy_cv;
   StarPUTaskRunner worker(config);
 
-  std::jthread server(&StarPUTaskRunner::run, &worker);
+  std::jthread server([&]() {
+    try {
+      worker.run();
+    }
+    catch (...) {
+      notify_thread_exception(std::current_exception());
+    }
+  });
 
-  std::jthread client([this, &device_workers, &queue, request_nb_per_worker]() {
-    client_worker(device_workers, queue, request_nb_per_worker);
+  std::jthread client([&, request_nb_per_worker]() {
+    try {
+      client_worker(device_workers, queue, request_nb_per_worker);
+    }
+    catch (...) {
+      notify_thread_exception(std::current_exception());
+    }
   });
 
   size_t total_worker_count = 0;
@@ -214,24 +244,32 @@ WarmupRunner::run(int request_nb_per_worker)
   {
     std::unique_lock lock(dummy_mutex);
     try {
-      dummy_cv.wait(lock, [this, total_jobs, &dummy_completed_jobs]() {
-        if (completion_observer_) {
-          completion_observer_(dummy_completed_jobs);
-        }
-        int count = dummy_completed_jobs.load();
-        if (count < 0) {
-          throw InferenceExecutionException(
-              "dummy_completed_jobs became negative, which should not happen.");
-        }
-        return static_cast<size_t>(count) >= total_jobs;
-      });
+      dummy_cv.wait(
+          lock,
+          [this, total_jobs, &dummy_completed_jobs, &load_thread_exception]() {
+            if (completion_observer_) {
+              completion_observer_(dummy_completed_jobs);
+            }
+            if (load_thread_exception()) {
+              return true;
+            }
+            int count = dummy_completed_jobs.load();
+            if (count < 0) {
+              throw InferenceExecutionException(
+                  "dummy_completed_jobs became negative, which should not "
+                  "happen.");
+            }
+            return static_cast<size_t>(count) >= total_jobs;
+          });
     }
     catch (...) {
       wait_exception = std::current_exception();
     }
   }
 
-  if (wait_exception) {
+  auto thread_exception_copy = load_thread_exception();
+
+  if (wait_exception || thread_exception_copy) {
     queue.shutdown();
     if (client.joinable()) {
       client.join();
@@ -240,7 +278,8 @@ WarmupRunner::run(int request_nb_per_worker)
       server.join();
     }
     starpu_task_wait_for_all();
-    std::rethrow_exception(wait_exception);
+    std::rethrow_exception(
+        wait_exception ? wait_exception : thread_exception_copy);
   }
 }
 }  // namespace starpu_server
