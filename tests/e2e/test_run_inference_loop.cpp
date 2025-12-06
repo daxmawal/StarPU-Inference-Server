@@ -38,7 +38,7 @@ TEST(RunInferenceLoopIntegration, DisableValidationSkipsChecks)
   const auto output = starpu_server::run_add_one_inference_loop(
       true, false, std::nullopt, false);
   EXPECT_NE(output.find("StarPUTaskRunner stopped"), std::string::npos);
-  EXPECT_NE(
+  EXPECT_EQ(
       output.find("Result validation disabled; skipping server-side checks."),
       std::string::npos);
 }

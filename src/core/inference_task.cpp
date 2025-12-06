@@ -360,17 +360,46 @@ InferenceTask::fill_input_layout(
   params->layout.dims.resize(num_inputs);
 
   for (size_t i = 0; i < num_inputs; ++i) {
-    const auto& tensor = job_->get_input_tensors()[i];
-    const int64_t dim = tensor.dim();
-    if (dim > static_cast<int64_t>(opts_->limits.max_dims)) {
+    std::vector<int64_t> dims;
+    dims.reserve(opts_->limits.max_dims);
+
+    if (opts_ != nullptr && !opts_->models.empty() &&
+        i < opts_->models[0].inputs.size()) {
+      dims = opts_->models[0].inputs[i].dims;
+      if (!dims.empty()) {
+        const int64_t batch =
+            job_->effective_batch_size().value_or(dims.front());
+        dims.front() = std::max<int64_t>(1, batch);
+      }
+    }
+
+    if (dims.empty()) {
+      const auto& tensor = job_->get_input_tensors()[i];
+      const int64_t dim = tensor.dim();
+      if (dim > static_cast<int64_t>(opts_->limits.max_dims)) {
+        throw InferenceExecutionException(std::format(
+            "Input tensor has too many dimensions: max is {}",
+            opts_->limits.max_dims));
+      }
+      const auto sizes = tensor.sizes();
+      const auto first_dims = std::views::take(sizes, dim);
+      dims.assign(first_dims.begin(), first_dims.end());
+    }
+
+    if (!dims.empty()) {
+      if (const auto effective = job_->effective_batch_size()) {
+        dims.front() = std::max<int64_t>(1, *effective);
+      }
+    }
+
+    if (dims.size() > opts_->limits.max_dims) {
       throw InferenceExecutionException(std::format(
           "Input tensor has too many dimensions: max is {}",
           opts_->limits.max_dims));
     }
-    params->layout.num_dims[i] = dim;
-    const auto sizes = tensor.sizes();
-    const auto first_dims = std::views::take(sizes, dim);
-    params->layout.dims[i].assign(first_dims.begin(), first_dims.end());
+
+    params->layout.num_dims[i] = static_cast<int>(dims.size());
+    params->layout.dims[i] = std::move(dims);
   }
 }
 

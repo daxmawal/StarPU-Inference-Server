@@ -17,7 +17,6 @@ target_sources(
           ${CORE_DIR}/inference_runner.cpp
           ${UTILS_DIR}/client_utils.cpp
           ${UTILS_DIR}/batching_trace_logger.cpp
-          ${UTILS_DIR}/inference_validator.cpp
           ${UTILS_DIR}/perf_observer.cpp
           ${UTILS_DIR}/time_utils.cpp
           ${UTILS_DIR}/config_loader.cpp

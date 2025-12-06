@@ -1582,8 +1582,7 @@ BatchCollector::maybe_build_batched_job(
   master->timing_info().batch_collect_start_time = earliest_batch_collect_start;
 
   if (const bool need_materialized_inputs =
-          (starpu_ == nullptr || !starpu_->has_input_pool()) ||
-          (opts_ != nullptr && opts_->validation.validate_results)) {
+          (starpu_ == nullptr || !starpu_->has_input_pool())) {
     if (auto merged_inputs = merge_input_tensors(jobs, effective_batch);
         !merged_inputs.empty()) {
       master->set_input_tensors(merged_inputs);

@@ -136,8 +136,7 @@ TEST(LoadModelAndReferenceOutput, LogsFallbackWhenSyntheticMissing)
 
   EXPECT_TRUE(result.has_value());
   EXPECT_NE(
-      capture.str().find(
-          "Validation disabled but missing usable output schema"),
+      capture.str().find("No usable output schema provided"),
       std::string::npos);
 }
 
@@ -159,7 +158,8 @@ TEST(LoadModelAndReferenceOutput, LogsWhenUsingSyntheticOutputs)
   ASSERT_TRUE(result.has_value());
   EXPECT_NE(
       capture.str().find(
-          "Validation disabled; using configured output schema instead"),
+          "Using configured output schema instead of running CPU reference "
+          "inference."),
       std::string::npos);
   const auto& outputs = std::get<2>(*result);
   ASSERT_EQ(outputs.size(), 1U);
