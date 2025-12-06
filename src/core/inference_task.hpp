@@ -43,13 +43,16 @@ struct InferenceCallbackContext {
 
 struct InferenceTaskDependencies {
   using AllocationFn = void* (*)(size_t);
+  using DeallocationFn = void (*)(void*);
   using TaskCreateFn = starpu_task* (*)();
   using DataAcquireFn = int (*)(
       starpu_data_handle_t, starpu_data_access_mode, void (*)(void*), void*);
   using OutputCallbackHook = void (*)(InferenceCallbackContext*);
 
   AllocationFn dyn_handles_allocator = nullptr;
+  DeallocationFn dyn_handles_deallocator = nullptr;
   AllocationFn dyn_modes_allocator = nullptr;
+  DeallocationFn dyn_modes_deallocator = nullptr;
   TaskCreateFn task_create_fn = nullptr;
   DataAcquireFn starpu_data_acquire_fn = nullptr;
   std::optional<OutputCallbackHook> starpu_output_callback_hook;

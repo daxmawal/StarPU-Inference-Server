@@ -105,7 +105,9 @@ class StarpuHandleVectorGuard {
 
 const InferenceTaskDependencies kDefaultInferenceTaskDependencies{
     .dyn_handles_allocator = std::malloc,
+    .dyn_handles_deallocator = std::free,
     .dyn_modes_allocator = std::malloc,
+    .dyn_modes_deallocator = std::free,
     .task_create_fn = starpu_task_create,
     .starpu_data_acquire_fn = starpu_data_acquire_cb,
     .starpu_output_callback_hook = std::nullopt,
@@ -521,13 +523,22 @@ InferenceTask::allocate_task_buffers(
       dependencies->dyn_handles_allocator != nullptr
           ? dependencies->dyn_handles_allocator
           : kDefaultInferenceTaskDependencies.dyn_handles_allocator;
+  const auto handles_deallocator =
+      dependencies->dyn_handles_deallocator != nullptr
+          ? dependencies->dyn_handles_deallocator
+          : kDefaultInferenceTaskDependencies.dyn_handles_deallocator;
   const auto modes_allocator =
       dependencies->dyn_modes_allocator != nullptr
           ? dependencies->dyn_modes_allocator
           : kDefaultInferenceTaskDependencies.dyn_modes_allocator;
+  const auto modes_deallocator =
+      dependencies->dyn_modes_deallocator != nullptr
+          ? dependencies->dyn_modes_deallocator
+          : kDefaultInferenceTaskDependencies.dyn_modes_deallocator;
 
   auto handles_owner = std::unique_ptr<void, void (*)(void*)>(
-      handles_allocator(num_buffers * sizeof(starpu_data_handle_t)), std::free);
+      handles_allocator(num_buffers * sizeof(starpu_data_handle_t)),
+      handles_deallocator);
   if (!handles_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;
@@ -538,7 +549,7 @@ InferenceTask::allocate_task_buffers(
 
   auto modes_owner = std::unique_ptr<void, void (*)(void*)>(
       modes_allocator(num_buffers * sizeof(starpu_data_access_mode)),
-      std::free);
+      modes_deallocator);
   if (!modes_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;

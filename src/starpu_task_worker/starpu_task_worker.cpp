@@ -2201,15 +2201,13 @@ StarPUTaskRunner::submit_inference_task(
     release_output_slot_on_exception = false;
   }
   catch (...) {
-    if (!copied_ok) {
+    if (!copied_ok || release_output_slot_on_exception) {
       if (pools.has_input() && pools.input_slot >= 0) {
         pools.input_pool->release(pools.input_slot);
       }
       if (pools.has_output() && pools.output_slot >= 0) {
         pools.output_pool->release(pools.output_slot);
       }
-    } else if (release_output_slot_on_exception) {
-      pools.output_pool->release(pools.output_slot);
     }
     throw;
   }
