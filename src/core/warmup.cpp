@@ -167,6 +167,13 @@ WarmupRunner::run(int request_nb_per_worker)
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
   }
 
+  if (opts_.batching.warmup_pregen_inputs == 0) {
+    log_info(
+        opts_.verbosity,
+        "Warmup skipped because warmup_pregen_inputs is set to 0.");
+    return;
+  }
+
   auto device_workers = collect_device_workers(opts_);
   if (device_workers.empty()) {
     log_info(

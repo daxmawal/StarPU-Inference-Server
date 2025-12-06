@@ -90,3 +90,18 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow_Robustesse)
       runner.client_worker(device_workers, queue, request_nb),
       std::overflow_error);
 }
+
+TEST(WarmupRunnerEdgesTest, WarmupSkippedWhenPregenInputsZero_Robustesse)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.warmup_pregen_inputs = 0;
+
+  std::atomic<bool> observer_called{false};
+  auto runner = fixture.make_runner([&](std::atomic<int>& /*completed_jobs*/) {
+    observer_called.store(true, std::memory_order_relaxed);
+  });
+
+  EXPECT_NO_THROW(runner.run(1));
+  EXPECT_FALSE(observer_called.load(std::memory_order_relaxed));
+}
