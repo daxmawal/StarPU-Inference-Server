@@ -808,6 +808,7 @@ ResultDispatcher::store_completed_job_result(
   (void)results;
   (void)latency_ms;
   (void)job->release_input_tensors();  // drop inputs once callbacks are done
+  job->release_input_memory_holders();
 }
 
 void
@@ -1854,6 +1855,9 @@ StarPUTaskRunner::finalize_job_after_exception(
   const bool completion_done =
       StarPUTaskRunner::handle_job_exception(job, exception);
   if (!completion_done && job) {
+    static_cast<void>(job->release_input_tensors());
+    job->release_input_memory_holders();
+    job->set_output_tensors({});
     finalize_job_completion(job);
   }
 }
