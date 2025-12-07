@@ -15,7 +15,6 @@ outputs:
   - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
 verbosity: 2
 address: 127.0.0.1:50051
-metrics_port: 9100
 max_batch_size: 32
 batch_coalesce_timeout_ms: 1000
 dynamic_batching: true

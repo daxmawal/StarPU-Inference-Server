@@ -29,7 +29,6 @@
 #include "exceptions.hpp"
 #include "inference_queue.hpp"
 #include "inference_session.hpp"
-#include "inference_validator.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
@@ -444,29 +443,24 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     auto models_gpu = opts.devices.use_cuda
                           ? clone_model_to_gpus(model_cpu, opts.devices.ids)
                           : std::vector<torch::jit::script::Module>{};
-    std::optional<std::vector<torch::Tensor>> synthetic_outputs;
-    if (!opts.validation.validate_results) {
-      synthetic_outputs = synthesize_outputs_from_config(opts);
-    }
+    auto synthetic_outputs = synthesize_outputs_from_config(opts);
 
     std::vector<torch::Tensor> output_refs;
-    if (opts.validation.validate_results || !synthetic_outputs.has_value()) {
-      if (!opts.validation.validate_results) {
-        log_debug(
-            opts.verbosity,
-            "Validation disabled but missing usable output schema; running "
-            "reference inference once to infer output sizes.");
-      }
+    if (synthetic_outputs.has_value()) {
+      log_debug(
+          opts.verbosity,
+          "Using configured output schema instead of running CPU reference "
+          "inference.");
+      output_refs = std::move(*synthetic_outputs);
+    } else {
+      log_debug(
+          opts.verbosity,
+          "No usable output schema provided; running reference inference once "
+          "to infer output sizes.");
       auto inputs = generate_inputs(
           opts.models.empty() ? std::vector<TensorConfig>{}
                               : opts.models[0].inputs);
       output_refs = run_reference_inference(model_cpu, inputs);
-    } else {
-      log_debug(
-          opts.verbosity,
-          "Validation disabled; using configured output schema instead of "
-          "running CPU reference inference.");
-      output_refs = std::move(*synthetic_outputs);
     }
 
     return std::tuple{model_cpu, models_gpu, output_refs};
@@ -525,121 +519,8 @@ run_warmup(
   WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
   warmup_runner.run(warmup_request_nb);
 
-  log_info(opts.verbosity, "Warmup complete. Proceeding to real inference.\n");
+  log_info(opts.verbosity, "Warmup complete.");
 }
-
-// =============================================================================
-// Result Processing: Print latency breakdowns and validate results
-// =============================================================================
-
-namespace detail {
-
-inline auto
-result_job_id(const InferenceResult& result) -> int
-{
-  return (result.submission_id >= 0) ? result.submission_id : result.request_id;
-}
-
-auto
-build_gpu_model_lookup(
-    std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<int>& device_ids)
-    -> std::vector<torch::jit::script::Module*>
-{
-  std::vector<torch::jit::script::Module*> lookup;
-  if (models_gpu.empty() || device_ids.empty()) {
-    return lookup;
-  }
-
-  const auto max_it = std::ranges::max_element(device_ids);
-  if (max_it == device_ids.end() || *max_it < 0) {
-    return lookup;
-  }
-
-  lookup.resize(static_cast<size_t>(*max_it) + 1, nullptr);
-  const size_t replicas = std::min(models_gpu.size(), device_ids.size());
-  for (size_t idx = 0; idx < replicas; ++idx) {
-    const int device_id = device_ids[idx];
-    if (device_id < 0) {
-      continue;
-    }
-    lookup[static_cast<size_t>(device_id)] = &models_gpu[idx];
-  }
-
-  return lookup;
-}
-
-auto
-resolve_validation_model(
-    const InferenceResult& result, torch::jit::script::Module& cpu_model,
-    std::span<torch::jit::script::Module*> gpu_lookup,
-    bool validate_results) -> std::optional<torch::jit::script::Module*>
-{
-  if (result.executed_on != DeviceType::CUDA) {
-    return &cpu_model;
-  }
-
-  if (result.device_id < 0) {
-    if (validate_results) {
-      log_warning(std::format(
-          "[Client] Skipping validation for job {}: invalid device id {}",
-          result_job_id(result), result.device_id));
-    }
-    return std::nullopt;
-  }
-
-  const auto device_id = static_cast<size_t>(result.device_id);
-  if (device_id >= gpu_lookup.size() || gpu_lookup[device_id] == nullptr) {
-    if (validate_results) {
-      log_warning(std::format(
-          "[Client] Skipping validation for job {}: no GPU replica for device "
-          "{}",
-          result_job_id(result), result.device_id));
-    }
-    return std::nullopt;
-  }
-
-  return gpu_lookup[device_id];
-}
-
-void
-process_results(
-    const std::vector<InferenceResult>& results,
-    torch::jit::script::Module& model_cpu,
-    std::vector<torch::jit::script::Module>& models_gpu,
-    const RuntimeConfig& opts)
-{
-  if (!opts.validation.validate_results) {
-    log_info(opts.verbosity, "Result validation disabled; skipping checks.");
-  }
-
-  auto gpu_model_lookup = build_gpu_model_lookup(models_gpu, opts.devices.ids);
-  for (const auto& result : results) {
-    if (const bool has_results =
-            !result.results.empty() && result.results[0].defined();
-        !has_results) {
-      if (opts.validation.validate_results) {
-        log_error(
-            std::format("[Client] Job {} failed.", result_job_id(result)));
-      }
-      continue;
-    }
-
-    const auto validation_model = resolve_validation_model(
-        result, model_cpu, gpu_model_lookup, opts.validation.validate_results);
-    if (!validation_model.has_value()) {
-      continue;
-    }
-
-    if (opts.validation.validate_results) {
-      validate_inference_result(
-          result, **validation_model, opts.verbosity, opts.validation.rtol,
-          opts.validation.atol);
-    }
-  }
-}
-
-}  // namespace detail
 
 // =============================================================================
 // Main Inference Loop: Initializes models, runs warmup, starts client/server,

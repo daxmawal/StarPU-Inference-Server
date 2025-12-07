@@ -105,7 +105,9 @@ class StarpuHandleVectorGuard {
 
 const InferenceTaskDependencies kDefaultInferenceTaskDependencies{
     .dyn_handles_allocator = std::malloc,
+    .dyn_handles_deallocator = std::free,
     .dyn_modes_allocator = std::malloc,
+    .dyn_modes_deallocator = std::free,
     .task_create_fn = starpu_task_create,
     .starpu_data_acquire_fn = starpu_data_acquire_cb,
     .starpu_output_callback_hook = std::nullopt,
@@ -360,17 +362,46 @@ InferenceTask::fill_input_layout(
   params->layout.dims.resize(num_inputs);
 
   for (size_t i = 0; i < num_inputs; ++i) {
-    const auto& tensor = job_->get_input_tensors()[i];
-    const int64_t dim = tensor.dim();
-    if (dim > static_cast<int64_t>(opts_->limits.max_dims)) {
+    std::vector<int64_t> dims;
+    dims.reserve(opts_->limits.max_dims);
+
+    if (opts_ != nullptr && !opts_->models.empty() &&
+        i < opts_->models[0].inputs.size()) {
+      dims = opts_->models[0].inputs[i].dims;
+      if (!dims.empty()) {
+        const int64_t batch =
+            job_->effective_batch_size().value_or(dims.front());
+        dims.front() = std::max<int64_t>(1, batch);
+      }
+    }
+
+    if (dims.empty()) {
+      const auto& tensor = job_->get_input_tensors()[i];
+      const int64_t dim = tensor.dim();
+      if (dim > static_cast<int64_t>(opts_->limits.max_dims)) {
+        throw InferenceExecutionException(std::format(
+            "Input tensor has too many dimensions: max is {}",
+            opts_->limits.max_dims));
+      }
+      const auto sizes = tensor.sizes();
+      const auto first_dims = std::views::take(sizes, dim);
+      dims.assign(first_dims.begin(), first_dims.end());
+    }
+
+    if (!dims.empty()) {
+      if (const auto effective = job_->effective_batch_size()) {
+        dims.front() = std::max<int64_t>(1, *effective);
+      }
+    }
+
+    if (dims.size() > opts_->limits.max_dims) {
       throw InferenceExecutionException(std::format(
           "Input tensor has too many dimensions: max is {}",
           opts_->limits.max_dims));
     }
-    params->layout.num_dims[i] = dim;
-    const auto sizes = tensor.sizes();
-    const auto first_dims = std::views::take(sizes, dim);
-    params->layout.dims[i].assign(first_dims.begin(), first_dims.end());
+
+    params->layout.num_dims[i] = static_cast<int>(dims.size());
+    params->layout.dims[i] = std::move(dims);
   }
 }
 
@@ -461,6 +492,7 @@ InferenceTask::create_task(
   task->cl_arg = ctx->inference_params.get();
   task->priority =
       std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());
+  task->destroy = 1;
 
   if (ctx != nullptr && ctx->dependencies == nullptr) {
     ctx->dependencies = dependencies;
@@ -491,13 +523,22 @@ InferenceTask::allocate_task_buffers(
       dependencies->dyn_handles_allocator != nullptr
           ? dependencies->dyn_handles_allocator
           : kDefaultInferenceTaskDependencies.dyn_handles_allocator;
+  const auto handles_deallocator =
+      dependencies->dyn_handles_deallocator != nullptr
+          ? dependencies->dyn_handles_deallocator
+          : kDefaultInferenceTaskDependencies.dyn_handles_deallocator;
   const auto modes_allocator =
       dependencies->dyn_modes_allocator != nullptr
           ? dependencies->dyn_modes_allocator
           : kDefaultInferenceTaskDependencies.dyn_modes_allocator;
+  const auto modes_deallocator =
+      dependencies->dyn_modes_deallocator != nullptr
+          ? dependencies->dyn_modes_deallocator
+          : kDefaultInferenceTaskDependencies.dyn_modes_deallocator;
 
   auto handles_owner = std::unique_ptr<void, void (*)(void*)>(
-      handles_allocator(num_buffers * sizeof(starpu_data_handle_t)), std::free);
+      handles_allocator(num_buffers * sizeof(starpu_data_handle_t)),
+      handles_deallocator);
   if (!handles_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;
@@ -508,7 +549,7 @@ InferenceTask::allocate_task_buffers(
 
   auto modes_owner = std::unique_ptr<void, void (*)(void*)>(
       modes_allocator(num_buffers * sizeof(starpu_data_access_mode)),
-      std::free);
+      modes_deallocator);
   if (!modes_owner) {
     task->dyn_handles = nullptr;
     task->dyn_modes = nullptr;
@@ -748,7 +789,11 @@ InferenceTask::record_and_run_completion_callback(
         ExceptionLoggingMessages{
             "Exception in completion callback: ",
             "Unknown exception in completion callback"});
+
+    ctx->job->set_on_complete({});
   }
+
+  ctx->job->release_input_memory_holders();
 }
 
 // =============================================================================

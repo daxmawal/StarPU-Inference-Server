@@ -38,7 +38,6 @@ target_sources(
             monitoring/unit_metrics.cpp
             utils/unit_client_utils.cpp
             utils/unit_datatype_utils.cpp
-            utils/unit_inference_validator.cpp
             utils/unit_input_generator.cpp
             utils/unit_logger.cpp
             utils/unit_batching_trace_logger.cpp

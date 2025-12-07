@@ -99,6 +99,16 @@ fi
 PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
 CLANG_TIDY_CONFIG="$BUILD_DIR/.clang-tidy"
 
+cleanup_clang_tidy_config() {
+  if [[ -f "$CLANG_TIDY_CONFIG.bak" ]]; then
+    mv "$CLANG_TIDY_CONFIG.bak" "$CLANG_TIDY_CONFIG"
+  else
+    rm -f "$CLANG_TIDY_CONFIG"
+  fi
+}
+
+trap cleanup_clang_tidy_config EXIT INT TERM
+
 if [[ -f "$CLANG_TIDY_CONFIG" ]]; then
   cp "$CLANG_TIDY_CONFIG" "$CLANG_TIDY_CONFIG.bak"
 fi
@@ -146,9 +156,5 @@ for file in $FILES; do
   clang-tidy "$file" "${CLANG_TIDY_ARGS[@]}"
   echo
 done
-
-if [[ -f "$CLANG_TIDY_CONFIG.bak" ]]; then
-  mv "$CLANG_TIDY_CONFIG.bak" "$CLANG_TIDY_CONFIG"
-else
-  rm -f "$CLANG_TIDY_CONFIG"
-fi
+cleanup_clang_tidy_config
+trap - EXIT INT TERM

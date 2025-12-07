@@ -20,7 +20,6 @@ add_executable(
   ${SRC_DIR}/monitoring/metrics.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
   ${GRPC_CLIENT_DIR}/client_args.cpp
-  ${UTILS_DIR}/inference_validator.cpp
   ${UTILS_DIR}/client_utils.cpp
   ${UTILS_DIR}/perf_observer.cpp
   ${UTILS_DIR}/time_utils.cpp

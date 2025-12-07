@@ -221,6 +221,8 @@ class InferenceJob : public JobBatchState {
     input_memory_holders_ = std::move(holders);
   }
 
+  void release_input_memory_holders() { input_memory_holders_.clear(); }
+
   void set_submission_id(int submission_id) { submission_id_ = submission_id; }
 
   [[nodiscard]] auto submission_id() const -> int { return submission_id_; }
@@ -312,21 +314,6 @@ void client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, int request_nb);
 
-auto build_gpu_model_lookup(
-    std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<int>& device_ids)
-    -> std::vector<torch::jit::script::Module*>;
-
-auto resolve_validation_model(
-    const InferenceResult& result, torch::jit::script::Module& cpu_model,
-    std::span<torch::jit::script::Module*> gpu_lookup,
-    bool validate_results) -> std::optional<torch::jit::script::Module*>;
-
-void process_results(
-    const std::vector<InferenceResult>& results,
-    torch::jit::script::Module& model_cpu,
-    std::vector<torch::jit::script::Module>& models_gpu,
-    const RuntimeConfig& opts);
 }  // namespace detail
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)

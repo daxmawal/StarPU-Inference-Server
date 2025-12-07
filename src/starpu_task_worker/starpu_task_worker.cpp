@@ -640,11 +640,9 @@ using clock = task_runner_internal::Clock;
 class ResultDispatcher {
  public:
   ResultDispatcher(
-      const RuntimeConfig* opts, std::vector<InferenceResult>* results,
-      std::mutex* results_mutex, std::atomic<int>* completed_jobs,
+      const RuntimeConfig* opts, std::atomic<int>* completed_jobs,
       std::condition_variable* all_done_cv)
-      : opts_(opts), results_(results), results_mutex_(results_mutex),
-        completed_jobs_(completed_jobs), all_done_cv_(all_done_cv)
+      : opts_(opts), completed_jobs_(completed_jobs), all_done_cv_(all_done_cv)
   {
   }
 
@@ -681,8 +679,6 @@ class ResultDispatcher {
 
  private:
   const RuntimeConfig* opts_;
-  std::vector<InferenceResult>* results_;
-  std::mutex* results_mutex_;
   std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;
 };
@@ -809,21 +805,10 @@ ResultDispatcher::store_completed_job_result(
     const std::shared_ptr<InferenceJob>& job,
     const std::vector<torch::Tensor>& results, double latency_ms) const
 {
-  auto input_tensors = job->release_input_tensors();
-
-  const std::scoped_lock lock(*results_mutex_);
-  auto& stored_result = results_->emplace_back();
-  if (opts_->validation.validate_results) {
-    stored_result.inputs = std::move(input_tensors);
-    stored_result.results = results;
-  }
-  stored_result.latency_ms = latency_ms;
-  stored_result.timing_info = job->timing_info();
-  stored_result.request_id = job->get_request_id();
-  stored_result.submission_id = job->submission_id();
-  stored_result.device_id = job->get_device_id();
-  stored_result.worker_id = job->get_worker_id();
-  stored_result.executed_on = job->get_executed_on();
+  (void)results;
+  (void)latency_ms;
+  (void)job->release_input_tensors();  // drop inputs once callbacks are done
+  job->release_input_memory_holders();
 }
 
 void
@@ -969,9 +954,31 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
       entry.callback(outputs, latency_ms);
     }
 
+    outputs.clear();
+    static_cast<void>(job_sp->release_input_tensors());
+    job_sp->release_input_memory_holders();
+    job_sp->set_output_tensors({});
+
     offset += static_cast<std::size_t>(
         std::max<int64_t>(1, slice_result.processed_length));
   }
+
+  auto& mutable_job =
+      const_cast<std::shared_ptr<InferenceJob>&>(aggregated_job);
+
+  const auto& pending = mutable_job->pending_sub_jobs();
+  for (const auto& sub_job : pending) {
+    if (sub_job && sub_job->has_on_complete()) {
+      sub_job->set_on_complete({});
+    }
+  }
+
+  mutable_job->set_aggregated_sub_jobs({});
+  mutable_job->clear_pending_sub_jobs();
+
+  static_cast<void>(mutable_job->release_input_tensors());
+  mutable_job->release_input_memory_holders();
+  mutable_job->set_output_tensors({});
 }
 
 auto
@@ -1576,8 +1583,7 @@ BatchCollector::maybe_build_batched_job(
   master->timing_info().batch_collect_start_time = earliest_batch_collect_start;
 
   if (const bool need_materialized_inputs =
-          (starpu_ == nullptr || !starpu_->has_input_pool()) ||
-          (opts_ != nullptr && opts_->validation.validate_results)) {
+          (starpu_ == nullptr || !starpu_->has_input_pool())) {
     if (auto merged_inputs = merge_input_tensors(jobs, effective_batch);
         !merged_inputs.empty()) {
       master->set_input_tensors(merged_inputs);
@@ -1589,6 +1595,7 @@ BatchCollector::maybe_build_batched_job(
     pending_jobs.reserve(jobs.empty() ? 0 : jobs.size() - 1);
     for (size_t idx = 1; idx < jobs.size(); ++idx) {
       pending_jobs.push_back(jobs[idx]);
+      jobs[idx]->set_output_tensors({});
     }
     master->set_pending_sub_jobs(std::move(pending_jobs));
   }
@@ -1701,9 +1708,8 @@ BatchCollector::batching_loop()
 StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
     : queue_(config.queue), model_cpu_(config.model_cpu),
       models_gpu_(config.models_gpu), starpu_(config.starpu),
-      opts_(config.opts), results_(config.results),
-      results_mutex_(config.results_mutex),
-      completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv),
+      opts_(config.opts), completed_jobs_(config.completed_jobs),
+      all_done_cv_(config.all_done_cv),
       dependencies_(
           config.dependencies != nullptr ? config.dependencies
                                          : &kDefaultInferenceTaskDependencies),
@@ -1717,15 +1723,13 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
           })),
       slot_manager_(std::make_unique<SlotManager>(starpu_, opts_)),
       result_dispatcher_(std::make_unique<ResultDispatcher>(
-          opts_, results_, results_mutex_, completed_jobs_, all_done_cv_))
+          opts_, completed_jobs_, all_done_cv_))
 {
   task_runner_internal::validate_not_null(queue_, "queue");
   task_runner_internal::validate_not_null(model_cpu_, "model_cpu");
   task_runner_internal::validate_not_null(models_gpu_, "models_gpu");
   task_runner_internal::validate_not_null(starpu_, "starpu");
   task_runner_internal::validate_not_null(opts_, "opts");
-  task_runner_internal::validate_not_null(results_, "results");
-  task_runner_internal::validate_not_null(results_mutex_, "results_mutex");
   task_runner_internal::validate_not_null(completed_jobs_, "completed_jobs");
   task_runner_internal::validate_not_null(all_done_cv_, "all_done_cv");
 }
@@ -1851,6 +1855,9 @@ StarPUTaskRunner::finalize_job_after_exception(
   const bool completion_done =
       StarPUTaskRunner::handle_job_exception(job, exception);
   if (!completion_done && job) {
+    static_cast<void>(job->release_input_tensors());
+    job->release_input_memory_holders();
+    job->set_output_tensors({});
     finalize_job_completion(job);
   }
 }
@@ -2194,15 +2201,13 @@ StarPUTaskRunner::submit_inference_task(
     release_output_slot_on_exception = false;
   }
   catch (...) {
-    if (!copied_ok) {
+    if (!copied_ok || release_output_slot_on_exception) {
       if (pools.has_input() && pools.input_slot >= 0) {
         pools.input_pool->release(pools.input_slot);
       }
       if (pools.has_output() && pools.output_slot >= 0) {
         pools.output_pool->release(pools.output_slot);
       }
-    } else if (release_output_slot_on_exception) {
-      pools.output_pool->release(pools.output_slot);
     }
     throw;
   }

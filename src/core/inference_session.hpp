@@ -39,14 +39,11 @@ class InferenceSession {
  private:
   auto load_models_and_reference() -> bool;
   void warmup();
-  void prepare_results_storage();
   void configure_worker();
   void launch_threads();
   void launch_client_thread();
   void await_completion();
   void join_threads();
-  void report_latency_stats() const;
-  void process_results();
 
   const RuntimeConfig& opts_;
   StarPUSetup& starpu_;
@@ -57,9 +54,6 @@ class InferenceSession {
   std::vector<torch::Tensor> outputs_ref_;
 
   InferenceQueue queue_;
-  std::vector<InferenceResult> results_;
-  std::mutex results_mutex_;
-
   std::atomic<int> completed_jobs_{0};
   std::condition_variable all_done_cv_;
   std::mutex all_done_mutex_;

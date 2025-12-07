@@ -1160,14 +1160,8 @@ TEST_F(StarPUTaskRunnerFixture, PrepareJobCompletionCallback)
   const double latency = 5.0;
   job->get_on_complete()(outputs, latency);
   EXPECT_TRUE(probe.called);
-  auto& results = results_;
   const auto& completed_jobs = completed_jobs_;
-  ASSERT_EQ(results.size(), 1U);
   EXPECT_EQ(completed_jobs.load(), 1);
-  EXPECT_EQ(results[0].request_id, kJobId);
-  EXPECT_EQ(results[0].submission_id, kSubmissionId);
-  ASSERT_EQ(results[0].results.size(), outputs.size());
-  EXPECT_TRUE(torch::equal(results[0].results[0], outputs[0]));
   ASSERT_EQ(probe.results.size(), outputs.size());
   EXPECT_TRUE(torch::equal(probe.results[0], outputs[0]));
   EXPECT_EQ(probe.latency, latency);
@@ -1410,8 +1404,6 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 
 TEST_F(StarPUTaskRunnerFixture, StoreCompletedJobResultTracksInputsAndOutputs)
 {
-  opts_.validation.validate_results = true;
-
   std::vector<torch::Tensor> inputs{torch::tensor({1.0, 2.0})};
   const std::vector<torch::Tensor> outputs{torch::tensor({5.0})};
   constexpr double kLatencyMs = 7.5;
@@ -1430,21 +1422,6 @@ TEST_F(StarPUTaskRunnerFixture, StoreCompletedJobResultTracksInputsAndOutputs)
   starpu_server::StarPUTaskRunnerTestAdapter::store_completed_job_result(
       runner_.get(), job, outputs, kLatencyMs);
 
-  ASSERT_EQ(results_.size(), 1U);
-  const auto& stored = results_.front();
-  ASSERT_EQ(stored.inputs.size(), inputs.size());
-  EXPECT_TRUE(torch::equal(stored.inputs[0], inputs[0]));
-  ASSERT_EQ(stored.results.size(), outputs.size());
-  EXPECT_TRUE(torch::equal(stored.results[0], outputs[0]));
-  EXPECT_EQ(stored.latency_ms, kLatencyMs);
-  EXPECT_EQ(stored.request_id, job->get_request_id());
-  EXPECT_EQ(stored.submission_id, job->submission_id());
-  EXPECT_EQ(stored.device_id, job->get_device_id());
-  EXPECT_EQ(stored.worker_id, job->get_worker_id());
-  EXPECT_EQ(stored.executed_on, job->get_executed_on());
-  EXPECT_EQ(
-      stored.timing_info.callback_start_time,
-      job->timing_info().callback_start_time);
   EXPECT_TRUE(job->get_input_tensors().empty());
 }
 
@@ -1796,7 +1773,6 @@ TEST_F(
 {
   TraceLoggerSession session;
 
-  opts_.validation.validate_results = false;
   opts_.devices.use_cpu = true;
   opts_.devices.use_cuda = false;
 
@@ -1844,7 +1820,6 @@ TEST_F(
 {
   TraceLoggerSession session;
 
-  opts_.validation.validate_results = false;
   opts_.devices.use_cpu = true;
   opts_.devices.use_cuda = false;
 
@@ -1891,8 +1866,6 @@ TEST_F(StarPUTaskRunnerFixture, SubmitInferenceTaskHandlesStarpuSubmitFailures)
       "trace_model", {make_tensor_config("input0", {1}, at::kFloat)},
       {make_tensor_config("output0", {1}, at::kFloat)});
   reset_runner_with_model(model_config, /*pool_size=*/1);
-
-  opts_.validation.validate_results = false;
 
   starpu_test::ScopedStarpuDataAcquireOverride acquire_override(
       &NoOpStarpuDataAcquire);
@@ -3634,8 +3607,6 @@ TEST_F(
     StarPUTaskRunnerFixture,
     MaybeBuildBatchedJobPreservesEffectiveBatchSizeAfterMergingInputs)
 {
-  opts_.validation.validate_results = true;
-
   auto make_input = [](float a, float b) {
     return torch::tensor({{a, b}}, torch::TensorOptions().dtype(torch::kFloat));
   };
@@ -3665,53 +3636,8 @@ TEST_F(
 
 TEST_F(
     StarPUTaskRunnerFixture,
-    MaybeBuildBatchedJobMaterializesInputsWhenValidationEnabled)
-{
-  opts_.validation.validate_results = true;
-
-  auto model_config = make_model_config(
-      "validated_model", {make_tensor_config("input0", {1, 2}, at::kFloat)},
-      {make_tensor_config("output0", {1, 2}, at::kFloat)});
-  reset_runner_with_model(model_config, /*pool_size=*/1);
-
-  auto make_input = [](float first, float second) {
-    return torch::tensor(
-        {{first, second}}, torch::TensorOptions().dtype(torch::kFloat));
-  };
-
-  auto job0 = make_job(0, {make_input(1.0F, 2.0F)});
-  auto job1 = make_job(1, {make_input(3.0F, 4.0F)});
-
-  job0->set_output_tensors(
-      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
-  job1->set_output_tensors(
-      {torch::zeros({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
-
-  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job0, job1};
-
-  auto master =
-      starpu_server::StarPUTaskRunnerTestAdapter::maybe_build_batched_job(
-          runner_.get(), jobs);
-
-  ASSERT_EQ(master, job0);
-  EXPECT_TRUE(master->pending_sub_jobs().empty());
-  ASSERT_EQ(master->get_input_tensors().size(), 1U);
-  const auto& aggregated = master->get_input_tensors()[0];
-  ASSERT_EQ(aggregated.sizes().size(), 2);
-  EXPECT_EQ(aggregated.size(0), 2);
-  EXPECT_TRUE(torch::equal(
-      aggregated,
-      torch::cat({make_input(1.0F, 2.0F), make_input(3.0F, 4.0F)}, 0)));
-
-  EXPECT_TRUE(job1->get_input_tensors().empty());
-}
-
-TEST_F(
-    StarPUTaskRunnerFixture,
     MaybeBuildBatchedJobStoresPendingSubJobsWhenInputPoolAvailable)
 {
-  opts_.validation.validate_results = false;
-
   auto model_config = make_model_config(
       "pending_pool_model", {make_tensor_config("input0", {1, 2}, at::kFloat)},
       {make_tensor_config("output0", {1, 2}, at::kFloat)});
@@ -4614,8 +4540,6 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_EQ(results_[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 }
@@ -4642,8 +4566,6 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_EQ(results_[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 }
@@ -4670,8 +4592,6 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_EQ(results_[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 }
@@ -4698,8 +4618,6 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
-  ASSERT_EQ(results_.size(), 1U);
-  EXPECT_EQ(results_[0].latency_ms, -1);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 }

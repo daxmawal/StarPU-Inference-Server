@@ -123,7 +123,6 @@ TEST(LoadModelAndReferenceOutput, LogsFallbackWhenSyntheticMissing)
 {
   TemporaryModelFile model_file{"load_model_missing", make_add_one_model()};
   RuntimeConfig opts = make_runtime_config_for_model(model_file.path());
-  opts.validation.validate_results = false;
   opts.verbosity = VerbosityLevel::Debug;
   opts.models[0].outputs = {TensorConfig{
       .name = "bad_output",
@@ -136,8 +135,7 @@ TEST(LoadModelAndReferenceOutput, LogsFallbackWhenSyntheticMissing)
 
   EXPECT_TRUE(result.has_value());
   EXPECT_NE(
-      capture.str().find(
-          "Validation disabled but missing usable output schema"),
+      capture.str().find("No usable output schema provided"),
       std::string::npos);
 }
 
@@ -145,7 +143,6 @@ TEST(LoadModelAndReferenceOutput, LogsWhenUsingSyntheticOutputs)
 {
   TemporaryModelFile model_file{"load_model_synthetic", make_add_one_model()};
   RuntimeConfig opts = make_runtime_config_for_model(model_file.path());
-  opts.validation.validate_results = false;
   opts.verbosity = VerbosityLevel::Debug;
   opts.models[0].outputs = {TensorConfig{
       .name = "output0",
@@ -159,7 +156,8 @@ TEST(LoadModelAndReferenceOutput, LogsWhenUsingSyntheticOutputs)
   ASSERT_TRUE(result.has_value());
   EXPECT_NE(
       capture.str().find(
-          "Validation disabled; using configured output schema instead"),
+          "Using configured output schema instead of running CPU reference "
+          "inference."),
       std::string::npos);
   const auto& outputs = std::get<2>(*result);
   ASSERT_EQ(outputs.size(), 1U);

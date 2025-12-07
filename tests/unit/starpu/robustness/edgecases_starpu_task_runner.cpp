@@ -118,8 +118,6 @@ TEST_P(StarPUTaskRunnerConfigInvalidTest, NullPointerThrows)
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   starpu_server::RuntimeConfig opts;
-  std::vector<starpu_server::InferenceResult> results;
-  std::mutex results_mutex;
   std::atomic<int> completed_jobs{0};
   std::condition_variable completion_cv;
   starpu_server::StarPUSetup starpu(opts);
@@ -130,8 +128,6 @@ TEST_P(StarPUTaskRunnerConfigInvalidTest, NullPointerThrows)
   config.models_gpu = &models_gpu;
   config.starpu = &starpu;
   config.opts = &opts;
-  config.results = &results;
-  config.results_mutex = &results_mutex;
   config.completed_jobs = &completed_jobs;
   config.all_done_cv = &completion_cv;
 
@@ -170,11 +166,6 @@ INSTANTIATE_TEST_SUITE_P(
             "Starpu", [](auto& cfg) { cfg.starpu = nullptr; }, "starpu"},
         InvalidConfigParam{
             "Opts", [](auto& cfg) { cfg.opts = nullptr; }, "opts"},
-        InvalidConfigParam{
-            "Results", [](auto& cfg) { cfg.results = nullptr; }, "results"},
-        InvalidConfigParam{
-            "ResultsMutex", [](auto& cfg) { cfg.results_mutex = nullptr; },
-            "results_mutex"},
         InvalidConfigParam{
             "CompletedJobs", [](auto& cfg) { cfg.completed_jobs = nullptr; },
             "completed_jobs"},

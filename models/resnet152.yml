@@ -17,7 +17,6 @@ outputs:
 warmup_batches_per_worker: 2
 verbosity: 1
 address: 127.0.0.1:50051
-metrics_port: 9100
 max_batch_size: 16
 batch_coalesce_timeout_ms: 10
 dynamic_batching: true

@@ -89,7 +89,6 @@ struct RuntimeConfig {
     int warmup_batches_per_worker = 1;
     bool synchronous = false;
     bool dynamic_batching = true;
-    bool seen_combined_input = false;
     bool trace_enabled = false;
     std::string trace_output_path = "batching_trace.json";
   };
@@ -97,7 +96,6 @@ struct RuntimeConfig {
   struct ValidationSettings {
     double rtol = kDefaultRelativeTolerance;
     double atol = kDefaultAbsoluteTolerance;
-    bool validate_results = true;
   };
 
   struct Limits {
