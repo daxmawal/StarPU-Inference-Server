@@ -172,6 +172,11 @@ class BatchingTraceLogger {
     double total_ms;
     bool is_warmup = false;
   };
+  struct QueueMetric {
+    int64_t timestamp_us = 0;
+    std::size_t queue_size = 0;
+    std::size_t rejected_total = 0;
+  };
 
   static auto instance() -> BatchingTraceLogger&;
   BatchingTraceLogger() = default;
@@ -200,6 +205,8 @@ class BatchingTraceLogger {
       bool is_warmup = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
   void log_batch_summary(const BatchSummaryLogArgs& args);
+  void log_queue_size(std::size_t queue_size);
+  void log_request_rejected(std::size_t queue_size = 0);
   [[nodiscard]] auto summary_file_path() const
       -> std::optional<std::filesystem::path>;
 
@@ -218,9 +225,15 @@ class BatchingTraceLogger {
       std::string_view model_name, int batch_id, std::size_t batch_size,
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
+  void write_queue_metric_locked(const QueueMetric& metric);
   auto configure_summary_writer(const std::filesystem::path& trace_path)
       -> bool;
   void close_summary_writer();
+  void close_queue_metrics_writer();
+  [[nodiscard]] auto configure_queue_metrics_writer(
+      const std::filesystem::path& trace_path) -> bool;
+  [[nodiscard]] static auto queue_metrics_path_from_trace(
+      const std::filesystem::path& trace_path) -> std::filesystem::path;
   [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
       -> std::string_view;
   [[nodiscard]] static auto device_type_to_string(DeviceType type)
@@ -245,6 +258,9 @@ class BatchingTraceLogger {
   detail::WorkerLaneManager worker_lane_manager_;
   std::ofstream summary_stream_;
   std::filesystem::path summary_file_path_;
+  std::ofstream queue_metrics_stream_;
+  std::filesystem::path queue_metrics_path_;
+  std::atomic<std::size_t> rejected_total_{0};
 };
 
 }  // namespace starpu_server

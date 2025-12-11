@@ -28,7 +28,7 @@ inline constexpr std::size_t kDefaultMessageSizeMiB = 32ULL;
 inline constexpr std::size_t kDefaultMinMessageBytes =
     kDefaultMessageSizeMiB * kBytesPerMiB;
 inline constexpr std::size_t kDefaultPregenInputs = 10ULL;
-inline constexpr std::size_t kDefaultMaxQueueSize = 1000ULL;
+inline constexpr std::size_t kDefaultMaxQueueSize = 100ULL;
 inline constexpr double kDefaultRelativeTolerance = 1e-3;
 inline constexpr double kDefaultAbsoluteTolerance = 1e-5;
 inline constexpr int kDefaultMetricsPort = 9090;

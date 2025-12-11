@@ -453,6 +453,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
   enabled_.store(false, std::memory_order_release);
   close_stream_locked();
   file_path_.clear();
+  rejected_total_.store(0, std::memory_order_relaxed);
 
   if (!enabled) {
     return;
@@ -911,6 +912,44 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
   write_summary_line_locked(args);
 }
 
+void
+BatchingTraceLogger::log_queue_size(std::size_t queue_size)
+{
+  if (!enabled()) {
+    return;
+  }
+  const auto timestamp = now_us();
+  std::lock_guard lock(mutex_);
+  if (!trace_start_initialized_ || !queue_metrics_stream_.is_open()) {
+    return;
+  }
+  const QueueMetric metric{
+      .timestamp_us = relative_timestamp_us(timestamp),
+      .queue_size = queue_size,
+      .rejected_total = rejected_total_.load(std::memory_order_relaxed)};
+  write_queue_metric_locked(metric);
+}
+
+void
+BatchingTraceLogger::log_request_rejected(std::size_t queue_size)
+{
+  if (!enabled()) {
+    return;
+  }
+  const auto timestamp = now_us();
+  const auto rejected =
+      rejected_total_.fetch_add(1, std::memory_order_relaxed) + 1;
+  std::lock_guard lock(mutex_);
+  if (!trace_start_initialized_ || !queue_metrics_stream_.is_open()) {
+    return;
+  }
+  const QueueMetric metric{
+      .timestamp_us = relative_timestamp_us(timestamp),
+      .queue_size = queue_size,
+      .rejected_total = rejected};
+  write_queue_metric_locked(metric);
+}
+
 auto
 BatchingTraceLogger::summary_file_path() const
     -> std::optional<std::filesystem::path>
@@ -1012,6 +1051,9 @@ BatchingTraceLogger::configure_summary_writer(
       << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
          "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
          "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,warmup\n";
+
+  [[maybe_unused]] const bool queue_writer_ready =
+      configure_queue_metrics_writer(trace_path);
   return true;
 }
 
@@ -1021,6 +1063,54 @@ BatchingTraceLogger::close_summary_writer()
   if (summary_stream_.is_open()) {
     summary_stream_.close();
   }
+  close_queue_metrics_writer();
+}
+
+void
+BatchingTraceLogger::close_queue_metrics_writer()
+{
+  if (queue_metrics_stream_.is_open()) {
+    queue_metrics_stream_.close();
+  }
+}
+
+auto
+BatchingTraceLogger::configure_queue_metrics_writer(
+    const std::filesystem::path& trace_path) -> bool
+{
+  close_queue_metrics_writer();
+  queue_metrics_path_ = queue_metrics_path_from_trace(trace_path);
+  queue_metrics_stream_.open(
+      queue_metrics_path_, std::ios::out | std::ios::trunc);
+  if (!queue_metrics_stream_.is_open()) {
+    log_warning(std::format(
+        "Failed to open queue metrics file '{}'; queue metrics export "
+        "disabled.",
+        queue_metrics_path_.string()));
+    queue_metrics_path_.clear();
+    return false;
+  }
+  queue_metrics_stream_ << "timestamp_us,queue_size,rejected_total\n";
+  return true;
+}
+
+auto
+BatchingTraceLogger::queue_metrics_path_from_trace(
+    const std::filesystem::path& trace_path) -> std::filesystem::path
+{
+  auto path = trace_path;
+  path.replace_filename("batching_queue_metrics.csv");
+  return path;
+}
+
+void
+BatchingTraceLogger::write_queue_metric_locked(const QueueMetric& metric)
+{
+  if (!queue_metrics_stream_.is_open()) {
+    return;
+  }
+  queue_metrics_stream_ << metric.timestamp_us << ',' << metric.queue_size
+                        << ',' << metric.rejected_total << '\n';
 }
 
 }  // namespace starpu_server

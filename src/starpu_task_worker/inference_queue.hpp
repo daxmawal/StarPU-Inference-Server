@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "monitoring/metrics.hpp"
+#include "utils/batching_trace_logger.hpp"
 #include "utils/runtime_config.hpp"
 
 namespace starpu_server {
@@ -50,6 +51,8 @@ class InferenceQueue {
       }
       queue_.push(std::move(job));
       set_queue_size(queue_.size());
+      auto& tracer = BatchingTraceLogger::instance();
+      tracer.log_queue_size(queue_.size());
     }
     cv_.notify_one();
     return true;
@@ -64,6 +67,8 @@ class InferenceQueue {
     job = std::move(queue_.front());
     queue_.pop();
     set_queue_size(queue_.size());
+    auto& tracer = BatchingTraceLogger::instance();
+    tracer.log_queue_size(queue_.size());
     return true;
   }
   [[nodiscard]] auto try_pop(std::shared_ptr<InferenceJob>& job) -> bool
@@ -75,6 +80,8 @@ class InferenceQueue {
     job = std::move(queue_.front());
     queue_.pop();
     set_queue_size(queue_.size());
+    auto& tracer = BatchingTraceLogger::instance();
+    tracer.log_queue_size(queue_.size());
     return true;
   }
   template <typename Rep, typename Period>
@@ -90,6 +97,8 @@ class InferenceQueue {
       job = std::move(queue_.front());
       queue_.pop();
       set_queue_size(queue_.size());
+      auto& tracer = BatchingTraceLogger::instance();
+      tracer.log_queue_size(queue_.size());
       return true;
     }
     return false;
