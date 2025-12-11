@@ -186,8 +186,40 @@ class BatchingTraceLogger {
   BatchingTraceLogger(BatchingTraceLogger&&) = delete;
   auto operator=(BatchingTraceLogger&&) -> BatchingTraceLogger& = delete;
 
+  class SuppressionGuard {
+   public:
+    SuppressionGuard(BatchingTraceLogger* logger, bool previous)
+        : logger_(logger), previous_(previous)
+    {
+    }
+    SuppressionGuard(const SuppressionGuard&) = delete;
+    auto operator=(const SuppressionGuard&) -> SuppressionGuard& = delete;
+    SuppressionGuard(SuppressionGuard&& other) noexcept
+        : logger_(other.logger_), previous_(other.previous_)
+    {
+      other.logger_ = nullptr;
+    }
+    auto operator=(SuppressionGuard&& other) noexcept -> SuppressionGuard&
+    {
+      if (this != &other) {
+        logger_ = other.logger_;
+        previous_ = other.previous_;
+        other.logger_ = nullptr;
+      }
+      return *this;
+    }
+    ~SuppressionGuard();
+
+   private:
+    BatchingTraceLogger* logger_;
+    bool previous_;
+  };
+
   void configure(bool enabled, std::string file_path);
   void configure_from_runtime(const RuntimeConfig& cfg);
+  void set_warmup_suppressed(bool suppressed);
+  [[nodiscard]] auto scoped_warmup_suppression(bool suppressed = true)
+      -> SuppressionGuard;
 
   [[nodiscard]] auto enabled() const -> bool;
 
@@ -241,6 +273,7 @@ class BatchingTraceLogger {
   [[nodiscard]] auto relative_timestamp_from_time_point(
       std::chrono::high_resolution_clock::time_point time_point) const
       -> std::optional<int64_t>;
+  [[nodiscard]] auto logging_enabled() const -> bool;
 
   void close_stream_locked();
   [[nodiscard]] static auto now_us() -> int64_t;
@@ -261,6 +294,7 @@ class BatchingTraceLogger {
   std::ofstream queue_metrics_stream_;
   std::filesystem::path queue_metrics_path_;
   std::atomic<std::size_t> rejected_total_{0};
+  std::atomic<bool> warmup_suppressed_{false};
 };
 
 }  // namespace starpu_server

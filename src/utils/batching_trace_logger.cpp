@@ -445,6 +445,13 @@ BatchingTraceLogger::~BatchingTraceLogger()
   close_stream_locked();
 }
 
+BatchingTraceLogger::SuppressionGuard::~SuppressionGuard()
+{
+  if (logger_ != nullptr) {
+    logger_->set_warmup_suppressed(previous_);
+  }
+}
+
 void
 BatchingTraceLogger::configure(bool enabled, std::string file_path)
 {
@@ -498,6 +505,21 @@ BatchingTraceLogger::configure_from_runtime(const RuntimeConfig& cfg)
   configure(cfg.batching.trace_enabled, cfg.batching.trace_output_path);
 }
 
+void
+BatchingTraceLogger::set_warmup_suppressed(bool suppressed)
+{
+  warmup_suppressed_.store(suppressed, std::memory_order_release);
+}
+
+auto
+BatchingTraceLogger::scoped_warmup_suppression(bool suppressed)
+    -> SuppressionGuard
+{
+  const bool previous =
+      warmup_suppressed_.exchange(suppressed, std::memory_order_acq_rel);
+  return SuppressionGuard{this, previous};
+}
+
 auto
 BatchingTraceLogger::enabled() const -> bool
 {
@@ -509,6 +531,9 @@ BatchingTraceLogger::log_request_enqueued(
     int request_id, std::string_view model_name, bool is_warmup,
     std::chrono::high_resolution_clock::time_point event_time)
 {
+  if (!logging_enabled()) {
+    return;
+  }
   const auto override_timestamp =
       relative_timestamp_from_time_point(event_time);
   const BatchRecordContext record_context{request_id, kInvalidId, 0};
@@ -522,6 +547,9 @@ BatchingTraceLogger::log_request_enqueued(
 void
 BatchingTraceLogger::log_batch_submitted(const BatchSubmittedLogArgs& args)
 {
+  if (!logging_enabled()) {
+    return;
+  }
   const BatchRecordContext record_context{
       kInvalidId, args.batch_id, args.logical_job_count};
   const WorkerThreadInfo worker_info{
@@ -536,7 +564,7 @@ BatchingTraceLogger::log_batch_build_span(
     int batch_id, std::string_view model_name, std::size_t batch_size,
     TimeRange schedule, std::span<const int> request_ids, bool is_warmup)
 {
-  if (!enabled()) {
+  if (!logging_enabled()) {
     return;
   }
 
@@ -558,7 +586,7 @@ BatchingTraceLogger::log_batch_enqueue_span(
     int batch_id, std::string_view model_name, std::size_t batch_size,
     TimeRange queue_times, std::span<const int> request_ids, bool is_warmup)
 {
-  if (!enabled()) {
+  if (!logging_enabled()) {
     return;
   }
 
@@ -583,7 +611,7 @@ BatchingTraceLogger::log_batch_enqueue_span(
 void
 BatchingTraceLogger::log_batch_compute_span(const BatchComputeLogArgs& args)
 {
-  if (!enabled() || args.worker_id < 0) {
+  if (!logging_enabled() || args.worker_id < 0) {
     return;
   }
 
@@ -616,7 +644,7 @@ BatchingTraceLogger::write_record(
     const WorkerThreadInfo& worker_info, std::span<const int> request_ids,
     std::optional<int64_t> override_timestamp, bool is_warmup)
 {
-  if (!enabled()) {
+  if (!logging_enabled()) {
     return;
   }
 
@@ -902,7 +930,7 @@ BatchingTraceLogger::write_batch_build_span(
 void
 BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
 {
-  if (!enabled() || args.is_warmup) {
+  if (!logging_enabled() || args.is_warmup) {
     return;
   }
   std::lock_guard lock(mutex_);
@@ -915,7 +943,7 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
 void
 BatchingTraceLogger::log_queue_size(std::size_t queue_size)
 {
-  if (!enabled()) {
+  if (!logging_enabled()) {
     return;
   }
   const auto timestamp = now_us();
@@ -933,7 +961,7 @@ BatchingTraceLogger::log_queue_size(std::size_t queue_size)
 void
 BatchingTraceLogger::log_request_rejected(std::size_t queue_size)
 {
-  if (!enabled()) {
+  if (!logging_enabled()) {
     return;
   }
   const auto timestamp = now_us();
@@ -1006,6 +1034,12 @@ BatchingTraceLogger::relative_timestamp_from_time_point(
           time_point.time_since_epoch())
           .count();
   return relative_timestamp_us(absolute_us);
+}
+
+auto
+BatchingTraceLogger::logging_enabled() const -> bool
+{
+  return enabled() && !warmup_suppressed_.load(std::memory_order_acquire);
 }
 
 void

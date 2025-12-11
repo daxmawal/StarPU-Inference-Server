@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "batching_trace_logger.hpp"
 #include "client_utils.hpp"
 #include "exceptions.hpp"
 #include "inference_queue.hpp"
@@ -176,6 +177,9 @@ WarmupRunner::run(int request_nb_per_worker)
     return;
   }
 
+  auto& tracer = BatchingTraceLogger::instance();
+  auto suppression_guard = tracer.scoped_warmup_suppression(true);
+
   auto device_workers = collect_device_workers(opts_);
   if (device_workers.empty()) {
     log_info(
@@ -213,6 +217,7 @@ WarmupRunner::run(int request_nb_per_worker)
   config.models_gpu = &models_gpu_;
   config.starpu = &starpu_;
   RuntimeConfig warmup_opts = opts_;
+  warmup_opts.batching.trace_enabled = false;
   warmup_opts.batching.max_inflight_tasks = 0;
   warmup_opts.batching.max_queue_size = std::numeric_limits<std::size_t>::max();
   config.opts = &warmup_opts;
