@@ -140,10 +140,12 @@ WarmupRunner::client_worker(
       job->timing_info().enqueued_time = enqueued_now;
       job->timing_info().last_enqueued_time = enqueued_now;
 
-      if (!queue.push(std::move(job))) {
+      bool queue_full = false;
+      if (!queue.push(std::move(job), &queue_full)) {
+        const auto reason =
+            queue_full ? "queue is full" : "queue shutting down";
         log_warning(std::format(
-            "[Warmup] Failed to enqueue job {}: queue shutting down",
-            job_request_id));
+            "[Warmup] Failed to enqueue job {}: {}", job_request_id, reason));
         queue.shutdown();
         return;
       }
@@ -182,7 +184,7 @@ WarmupRunner::run(int request_nb_per_worker)
     return;
   }
 
-  InferenceQueue queue;
+  InferenceQueue queue(opts_.batching.max_queue_size);
   std::atomic dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
   std::condition_variable dummy_cv;

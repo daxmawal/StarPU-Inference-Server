@@ -46,6 +46,7 @@ Optional keys unlock batching, logging, and runtime controls:
 |`use_cuda`|Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`.|`false`|
 |`address`|gRPC listen address (host:port).|`127.0.0.1:50051`|
 |`metrics_port`|Port for the Prometheus metrics endpoint.|`9090`|
+|`max_queue_size`|Maximum number of pending inference requests; additional requests are rejected immediately with `RESOURCE_EXHAUSTED`.|`100`|
 
 Behavior of `use_cpu` and `use_cuda`:
 
@@ -53,6 +54,10 @@ Behavior of `use_cpu` and `use_cuda`:
 - `use_cuda: false` or omitted → pipeline runs on CPU workers only (unless the CLI overrides the setting).
 - `use_cpu: false`, `use_cuda: [{ ... }]` → pipeline runs on GPU workers only.
 - Setting `group_cpu_by_numa: true` keeps CPU workers enabled but collapses them to one worker per NUMA node so that each inference shares the full socket instead of a single core.
+
+When the queue reaches `max_queue_size`, the server refuses new requests
+immediately and responds with gRPC `RESOURCE_EXHAUSTED` instead of letting the
+queue grow unbounded.
 
 Optional keys for debugging:
 
@@ -123,6 +128,7 @@ verbosity: 4
 address: 127.0.0.1:50051
 metrics_port: 9090
 max_batch_size: 32
+max_queue_size: 100
 batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false

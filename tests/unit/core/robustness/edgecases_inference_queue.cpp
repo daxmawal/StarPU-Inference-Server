@@ -150,3 +150,25 @@ TEST(
       queue.wait_for_and_pop(popped_job, std::chrono::milliseconds(50)));
   EXPECT_EQ(popped_job, nullptr);
 }
+
+TEST(InferenceQueue_Robustesse, RejectsPushWhenFull)
+{
+  starpu_server::InferenceQueue queue(2);
+
+  auto job0 = std::make_shared<starpu_server::InferenceJob>();
+  auto job1 = std::make_shared<starpu_server::InferenceJob>();
+  ASSERT_TRUE(queue.push(job0));
+  ASSERT_TRUE(queue.push(job1));
+
+  auto job2 = std::make_shared<starpu_server::InferenceJob>();
+  bool queue_full = false;
+  EXPECT_FALSE(queue.push(job2, &queue_full));
+  EXPECT_TRUE(queue_full);
+  EXPECT_EQ(queue.size(), 2U);
+
+  std::shared_ptr<starpu_server::InferenceJob> popped_job;
+  ASSERT_TRUE(queue.try_pop(popped_job));
+  queue_full = true;
+  EXPECT_TRUE(queue.push(job2, &queue_full));
+  EXPECT_FALSE(queue_full);
+}

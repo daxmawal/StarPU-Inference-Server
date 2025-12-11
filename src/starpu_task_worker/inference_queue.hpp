@@ -6,9 +6,11 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <stdexcept>
 #include <utility>
 
 #include "monitoring/metrics.hpp"
+#include "utils/runtime_config.hpp"
 
 namespace starpu_server {
 class InferenceJob;
@@ -18,14 +20,32 @@ class InferenceJob;
 
 class InferenceQueue {
  public:
-  [[nodiscard]] auto push(std::shared_ptr<InferenceJob> job) -> bool
+  explicit InferenceQueue(std::size_t max_size = kDefaultMaxQueueSize)
+      : max_size_(max_size)
   {
+    if (max_size_ == 0) {
+      throw std::invalid_argument("max_queue_size must be > 0");
+    }
+  }
+
+  [[nodiscard]] auto push(
+      std::shared_ptr<InferenceJob> job, bool* queue_full = nullptr) -> bool
+  {
+    if (queue_full != nullptr) {
+      *queue_full = false;
+    }
     if (job == nullptr) {
       return false;
     }
     {
       const std::scoped_lock lock(mutex_);
       if (shutdown_) {
+        return false;
+      }
+      if (queue_.size() >= max_size_) {
+        if (queue_full != nullptr) {
+          *queue_full = true;
+        }
         return false;
       }
       queue_.push(std::move(job));
@@ -92,6 +112,7 @@ class InferenceQueue {
   }
 
  private:
+  const std::size_t max_size_;
   mutable std::mutex mutex_;
   std::queue<std::shared_ptr<InferenceJob>> queue_;
   bool shutdown_ = false;

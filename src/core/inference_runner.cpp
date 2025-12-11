@@ -285,10 +285,11 @@ client_worker(
       model_name = std::string(job->model_name());
     }
 
-    if (!queue.push(std::move(job))) {
+    bool queue_full = false;
+    if (!queue.push(std::move(job), &queue_full)) {
+      const auto reason = queue_full ? "queue is full" : "queue shutting down";
       log_warning(std::format(
-          "[Client] Failed to enqueue job {}: queue shutting down",
-          request_id));
+          "[Client] Failed to enqueue job {}: {}", request_id, reason));
       break;
     }
     client_utils::log_job_enqueued(opts, request_id, request_nb, enqueued_now);

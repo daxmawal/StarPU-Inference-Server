@@ -427,9 +427,10 @@ InferenceServiceImpl::submit_job_async(
       });
 
   bool pushed = false;
+  bool queue_full = false;
   {
     NvtxRange queue_scope("grpc_submit_starpu_queue");
-    pushed = queue_->push(job);
+    pushed = queue_->push(job, &queue_full);
     if (pushed) {
       const auto enqueued_now = std::chrono::high_resolution_clock::now();
       job->timing_info().enqueued_time = enqueued_now;
@@ -437,6 +438,9 @@ InferenceServiceImpl::submit_job_async(
     }
   }
   if (!pushed) {
+    if (queue_full) {
+      return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
+    }
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
   if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {

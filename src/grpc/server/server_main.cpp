@@ -281,7 +281,7 @@ launch_threads(
     std::vector<torch::jit::script::Module>& models_gpu,
     std::vector<torch::Tensor>& reference_outputs)
 {
-  static starpu_server::InferenceQueue queue;
+  static starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
   auto& server_ctx = server_context();
   server_ctx.queue_ptr = &queue;
 

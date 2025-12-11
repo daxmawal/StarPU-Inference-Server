@@ -133,6 +133,26 @@ TEST(InferenceService, InvalidDatatypeReturnsInvalidArgument)
   EXPECT_EQ(status.error_message(), "Unsupported tensor datatype: NOT_A_TYPE");
 }
 
+TEST(InferenceService, ModelInferRejectsWhenQueueIsFull)
+{
+  starpu_server::InferenceQueue queue(1);
+  auto filled_job = std::make_shared<starpu_server::InferenceJob>();
+  ASSERT_TRUE(queue.push(filled_job));
+
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, expected_types);
+
+  auto req = starpu_server::make_valid_request();
+  grpc::ServerContext ctx;
+  inference::ModelInferResponse reply;
+  auto status = service.ModelInfer(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
+  expect_empty_infer_response(reply);
+}
+
 TEST(GrpcServer, StopServerNullptr)
 {
   std::unique_ptr<grpc::Server> server;
