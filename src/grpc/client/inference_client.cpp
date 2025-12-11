@@ -340,6 +340,7 @@ InferenceClient::AsyncModelInfer(
   call->inference_count = determine_inference_count(cfg);
   last_batch_size_ = call->inference_count;
   call->expected_outputs = std::move(expected_outputs);
+  ++total_requests_sent_;
 
   if (!first_request_time_) {
     first_request_time_ = call->start_time;
@@ -604,19 +605,34 @@ InferenceClient::AsyncCompleteRpc()
       validate_server_response(*call);
       total_inference_count_ += call->inference_count;
       last_response_time_ = end;
+      ++success_requests_;
     } else {
       log_error(std::format(
           "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
           call->status.error_message()));
+      ++rejected_requests_;
     }
   }
 
   log_latency_summary();
+  log_request_totals();
 }
 
 void
 InferenceClient::Shutdown()
 {
   cq_.Shutdown();
+}
+
+void
+InferenceClient::log_request_totals() const
+{
+  const std::size_t completed = success_requests_ + rejected_requests_;
+  const std::size_t total = std::max(total_requests_sent_, completed);
+  log_info(
+      verbosity_,
+      std::format(
+          "Requests summary: {} handled ({} ok, {} rejected) out of {} sent",
+          completed, success_requests_, rejected_requests_, total));
 }
 }  // namespace starpu_server

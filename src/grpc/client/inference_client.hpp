@@ -88,9 +88,13 @@ class InferenceClient {
       last_response_time_;
   std::optional<std::size_t> last_batch_size_;
   std::size_t total_inference_count_ = 0;
+  std::size_t total_requests_sent_ = 0;
+  std::size_t success_requests_ = 0;
+  std::size_t rejected_requests_ = 0;
 
   void record_latency(const LatencySample& sample);
   void log_latency_summary() const;
+  void log_request_totals() const;
   static auto determine_inference_count(const ClientConfig& cfg) -> std::size_t;
   void validate_server_response(const AsyncClientCall& call) const;
 };
