@@ -152,12 +152,23 @@ class StarPUTaskRunner {
   void finalize_job_after_exception(
       const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
       std::string_view log_prefix, int job_id);
+  void reserve_inflight_slot();
+  void release_inflight_slot();
+  [[nodiscard]] auto has_inflight_limit() const -> bool
+  {
+    return max_inflight_tasks_ > 0;
+  }
 
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
   StarPUSetup* starpu_;
   const RuntimeConfig* opts_;
+
+  std::atomic<std::size_t> inflight_tasks_{0};
+  std::size_t max_inflight_tasks_{0};
+  std::mutex inflight_mutex_;
+  std::condition_variable inflight_cv_;
 
   std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;

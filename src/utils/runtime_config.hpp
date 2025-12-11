@@ -85,6 +85,7 @@ struct RuntimeConfig {
     int pool_size = 0;
     std::size_t max_message_bytes = kDefaultMinMessageBytes;
     std::size_t max_queue_size = kDefaultMaxQueueSize;
+    std::size_t max_inflight_tasks = 0;
     size_t pregen_inputs = kDefaultPregenInputs;
     size_t warmup_pregen_inputs = 2;
     int warmup_request_nb = 2;

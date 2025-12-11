@@ -47,6 +47,7 @@ Optional keys unlock batching, logging, and runtime controls:
 |`address`|gRPC listen address (host:port).|`127.0.0.1:50051`|
 |`metrics_port`|Port for the Prometheus metrics endpoint.|`9090`|
 |`max_queue_size`|Maximum number of pending inference requests; additional requests are rejected immediately with `RESOURCE_EXHAUSTED`.|`100`|
+|`max_inflight_tasks`|Upper bound on StarPU tasks already submitted (backlog inside StarPU). `0` keeps it unbounded, set a value to apply backpressure before submitting new tasks.|`0`|
 
 Behavior of `use_cpu` and `use_cuda`:
 
@@ -58,6 +59,10 @@ Behavior of `use_cpu` and `use_cuda`:
 When the queue reaches `max_queue_size`, the server refuses new requests
 immediately and responds with gRPC `RESOURCE_EXHAUSTED` instead of letting the
 queue grow unbounded.
+
+`max_inflight_tasks` caps the number of StarPU tasks already submitted (in
+flight). When the limit is reached, batch collection pauses until a task
+finishes, preventing unbounded prefetching into StarPU’s internal queues.
 
 Optional keys for debugging:
 
@@ -129,6 +134,7 @@ address: 127.0.0.1:50051
 metrics_port: 9090
 max_batch_size: 32
 max_queue_size: 100
+max_inflight_tasks: 256
 batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false

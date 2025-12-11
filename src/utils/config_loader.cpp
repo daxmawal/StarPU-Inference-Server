@@ -152,6 +152,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "metrics_port",
           "max_message_bytes",
           "max_queue_size",
+          "max_inflight_tasks",
           "max_batch_size",
           "dynamic_batching",
           "pool_size",
@@ -384,6 +385,15 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
     if (cfg.batching.pool_size <= 0) {
       throw std::invalid_argument("pool_size must be > 0");
     }
+  }
+  if (root["max_inflight_tasks"]) {
+    const auto tmp = root["max_inflight_tasks"].as<long long>();
+    if (tmp < 0 || static_cast<unsigned long long>(tmp) >
+                       std::numeric_limits<std::size_t>::max()) {
+      throw std::invalid_argument(
+          "max_inflight_tasks must be >= 0 and fit in size_t");
+    }
+    cfg.batching.max_inflight_tasks = static_cast<std::size_t>(tmp);
   }
   if (root["max_queue_size"]) {
     const auto tmp = root["max_queue_size"].as<long long>();

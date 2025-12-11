@@ -825,20 +825,23 @@ class StarPUTaskRunnerTestAdapter {
 
   static void disable_prepared_job_sync(StarPUTaskRunner* runner)
   {
-    struct BatchCollectorAccessor {
-      InferenceQueue* queue;
-      const RuntimeConfig* opts;
-      StarPUSetup* starpu;
-      std::shared_ptr<InferenceJob>* pending_job;
-      std::mutex* prepared_mutex;
-      std::condition_variable* prepared_cv;
-      std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs;
-      bool* batching_done;
-    };
-
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
+    struct BatchCollectorAccessor {
+      starpu_server::InferenceQueue* queue;
+      const starpu_server::RuntimeConfig* opts;
+      starpu_server::StarPUSetup* starpu;
+      std::shared_ptr<starpu_server::InferenceJob>* pending_job;
+      std::atomic<std::size_t>* inflight_tasks;
+      std::condition_variable* inflight_cv;
+      std::mutex* inflight_mutex;
+      std::size_t max_inflight_tasks;
+      std::mutex* prepared_mutex;
+      std::condition_variable* prepared_cv;
+      std::deque<std::shared_ptr<starpu_server::InferenceJob>>* prepared_jobs;
+      bool* batching_done;
+    };
 
     auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
         runner->batch_collector_.get());
