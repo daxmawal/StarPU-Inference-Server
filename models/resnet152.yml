@@ -19,7 +19,7 @@ verbosity: 1
 address: 127.0.0.1:50051
 max_batch_size: 16
 max_inflight_tasks: 100
-max_queue_size: 200
+max_queue_size: 100
 batch_coalesce_timeout_ms: 10
 dynamic_batching: true
 sync: false

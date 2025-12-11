@@ -184,7 +184,7 @@ WarmupRunner::run(int request_nb_per_worker)
     return;
   }
 
-  InferenceQueue queue(opts_.batching.max_queue_size);
+  InferenceQueue queue(std::numeric_limits<std::size_t>::max());
   std::atomic dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
   std::condition_variable dummy_cv;
@@ -212,7 +212,10 @@ WarmupRunner::run(int request_nb_per_worker)
   config.model_cpu = &model_cpu_;
   config.models_gpu = &models_gpu_;
   config.starpu = &starpu_;
-  config.opts = &opts_;
+  RuntimeConfig warmup_opts = opts_;
+  warmup_opts.batching.max_inflight_tasks = 0;
+  warmup_opts.batching.max_queue_size = std::numeric_limits<std::size_t>::max();
+  config.opts = &warmup_opts;
   config.completed_jobs = &dummy_completed_jobs;
   config.all_done_cv = &dummy_cv;
   StarPUTaskRunner worker(config);
