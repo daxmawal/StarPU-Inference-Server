@@ -24,8 +24,8 @@ namespace {
 
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
-constexpr std::string_view kDefaultTraceOutputName = "batching_trace.json";
-const std::filesystem::path kDefaultTraceOutputFile{kDefaultTraceOutputName};
+const std::filesystem::path kDefaultTraceOutputFile{
+    RuntimeConfig::BatchingSettings{}.trace_output_path};
 
 auto
 config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&

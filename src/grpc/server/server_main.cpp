@@ -149,7 +149,7 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
   const auto summary_path_opt = tracer.summary_file_path();
   if (!summary_path_opt) {
     starpu_server::log_warning(
-        "Tracing was enabled but no batching_trace_summary.csv was produced; "
+        "Tracing was enabled but no trace.csv was produced; "
         "skipping plot generation.");
     return;
   }

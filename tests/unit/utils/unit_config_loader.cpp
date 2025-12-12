@@ -910,7 +910,8 @@ TEST(ConfigLoader, ParsesTraceOutputDirectory)
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
-  const auto expected_path = (trace_dir / "batching_trace.json").string();
+  const auto expected_path =
+      (trace_dir / std::string(kDefaultTraceFileName)).string();
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
 }

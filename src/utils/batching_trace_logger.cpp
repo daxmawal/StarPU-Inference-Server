@@ -32,7 +32,8 @@ constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
 constexpr std::string_view kBatchEnqueueTrackName = "batch";
 constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
 constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
-constexpr std::string_view kSummarySuffix = "_summary.csv";
+constexpr std::string_view kSummaryFilename = "trace.csv";
+constexpr std::string_view kMetricsFilename = "metrics.csv";
 
 enum class FlowDirection : uint8_t {
   None,
@@ -46,11 +47,7 @@ summary_path_from_trace(const std::filesystem::path& trace_path)
     -> std::filesystem::path
 {
   auto summary_path = trace_path;
-  auto stem = summary_path.stem().string();
-  if (stem.empty()) {
-    stem = "batching_trace";
-  }
-  summary_path.replace_filename(stem + std::string{kSummarySuffix});
+  summary_path.replace_filename(kSummaryFilename);
   return summary_path;
 }
 
@@ -467,7 +464,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
   }
 
   if (file_path.empty()) {
-    file_path = "batching_trace.json";
+    file_path = std::string(kDefaultTraceFileName);
   }
 
   file_path_ = std::move(file_path);
@@ -1133,7 +1130,7 @@ BatchingTraceLogger::queue_metrics_path_from_trace(
     const std::filesystem::path& trace_path) -> std::filesystem::path
 {
   auto path = trace_path;
-  path.replace_filename("batching_queue_metrics.csv");
+  path.replace_filename(kMetricsFilename);
   return path;
 }
 
