@@ -15,3 +15,13 @@ TEST(InputSlotPoolHostBufferDeleter, NullptrNoop)
 
   EXPECT_NO_THROW(deleter(nullptr));
 }
+
+TEST(InputSlotPoolFreeHostBuffer, NullptrNoop)
+{
+  input_slot_pool_test_copy::InputSlotPool::HostBufferInfo info{};
+  info.cuda_pinned = true;
+  info.starpu_pinned = true;
+  info.bytes = 1024;
+
+  EXPECT_NO_THROW(input_slot_pool_test_copy::free_host_buffer(nullptr, info));
+}
