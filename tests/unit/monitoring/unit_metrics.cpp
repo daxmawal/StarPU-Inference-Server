@@ -20,10 +20,10 @@ void
 AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
 {
   ASSERT_NE(metrics, nullptr);
-  ASSERT_NE(metrics->registry, nullptr);
-  ASSERT_NE(metrics->requests_total, nullptr);
-  ASSERT_NE(metrics->inference_latency, nullptr);
-  ASSERT_NE(metrics->queue_size_gauge, nullptr);
+  ASSERT_NE(metrics->registry(), nullptr);
+  ASSERT_NE(metrics->requests_total(), nullptr);
+  ASSERT_NE(metrics->inference_latency(), nullptr);
+  ASSERT_NE(metrics->queue_size_gauge(), nullptr);
 }
 
 auto
@@ -45,7 +45,7 @@ TEST(Metrics, InitializesPointersAndRegistry)
   auto metrics = get_metrics();
   AssertMetricsInitialized(metrics);
 
-  const auto families = metrics->registry->Collect();
+  const auto families = metrics->registry()->Collect();
   EXPECT_TRUE(HasMetric(families, "requests_total"));
   EXPECT_TRUE(HasMetric(families, "inference_latency_ms"));
   EXPECT_TRUE(HasMetric(families, "inference_queue_size"));

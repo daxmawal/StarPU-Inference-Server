@@ -60,29 +60,23 @@ class MetricsRegistry {
   MetricsRegistry(MetricsRegistry&&) = delete;
   auto operator=(MetricsRegistry&&) -> MetricsRegistry& = delete;
 
-  std::shared_ptr<prometheus::Registry>
-      registry;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Counter*
-      requests_total;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Histogram*
-      inference_latency;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Gauge*
-      queue_size_gauge;  // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
-
-  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Gauge* system_cpu_usage_percent{nullptr};
-  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Family<prometheus::Gauge>* gpu_utilization_family{nullptr};
-  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family{nullptr};
-  // NOLINTNEXTLINE(cppcoreguidelines-non-private-member-variables-in-classes)
-  prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family{nullptr};
-
   void run_sampling_request_nb();
   void request_stop();
 
   auto has_gpu_stats_provider() const -> bool;
   auto has_cpu_usage_provider() const -> bool;
+
+  [[nodiscard]] auto registry() const -> std::shared_ptr<prometheus::Registry>;
+  [[nodiscard]] auto requests_total() const -> prometheus::Counter*;
+  [[nodiscard]] auto inference_latency() const -> prometheus::Histogram*;
+  [[nodiscard]] auto queue_size_gauge() const -> prometheus::Gauge*;
+  [[nodiscard]] auto system_cpu_usage_percent() const -> prometheus::Gauge*;
+  [[nodiscard]] auto gpu_utilization_family() const
+      -> prometheus::Family<prometheus::Gauge>*;
+  [[nodiscard]] auto gpu_memory_used_bytes_family() const
+      -> prometheus::Family<prometheus::Gauge>*;
+  [[nodiscard]] auto gpu_memory_total_bytes_family() const
+      -> prometheus::Family<prometheus::Gauge>*;
 
  private:
   void initialize(
@@ -90,6 +84,16 @@ class MetricsRegistry {
       std::unique_ptr<ExposerHandle> exposer_handle);
   void perform_sampling_request_nb();
   void sampling_loop(const std::stop_token& stop);
+
+  std::shared_ptr<prometheus::Registry> registry_;
+  prometheus::Counter* requests_total_{nullptr};
+  prometheus::Histogram* inference_latency_{nullptr};
+  prometheus::Gauge* queue_size_gauge_{nullptr};
+  prometheus::Gauge* system_cpu_usage_percent_{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_utilization_family_{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family_{nullptr};
+  prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family_{
+      nullptr};
 
   std::unique_ptr<ExposerHandle> exposer_;
   std::jthread sampler_thread_;

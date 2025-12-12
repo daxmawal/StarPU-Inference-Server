@@ -585,11 +585,11 @@ InferenceServiceImpl::handle_async_infer_completion(
   context.reply->set_server_postprocess_ms(breakdown.postprocess_ms);
   context.reply->set_server_overall_ms(breakdown.overall_ms);
 
-  if (context.metrics && context.metrics->inference_latency != nullptr) {
+  if (context.metrics && context.metrics->inference_latency() != nullptr) {
     const auto latency_ms =
         std::chrono::duration<double, std::milli>(send_tp - context.recv_tp)
             .count();
-    context.metrics->inference_latency->Observe(latency_ms);
+    context.metrics->inference_latency()->Observe(latency_ms);
   }
 
   callback_handle->Invoke(Status::OK);
@@ -604,8 +604,8 @@ InferenceServiceImpl::HandleModelInferAsync(
   NvtxRange request_scope("grpc_handle_infer_request");
 
   auto metrics = get_metrics();
-  if (metrics && metrics->requests_total != nullptr) {
-    metrics->requests_total->Increment();
+  if (metrics && metrics->requests_total() != nullptr) {
+    metrics->requests_total()->Increment();
   }
 
   auto recv_tp = std::chrono::high_resolution_clock::now();
