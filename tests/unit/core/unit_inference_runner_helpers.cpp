@@ -157,6 +157,17 @@ TEST(
       starpu_server::InvalidGpuDeviceException);
 }
 
+TEST(
+    InferenceRunnerDeviceValidationTest,
+    SanitizeCudaDeviceCountThrowsWhenRawCountExceedsIntMax)
+{
+  const long long overflowing_raw_count =
+      static_cast<long long>(std::numeric_limits<int>::max()) + 1;
+  EXPECT_THROW(
+      starpu_server::detail::sanitize_cuda_device_count(overflowing_raw_count),
+      starpu_server::InvalidGpuDeviceException);
+}
+
 TEST(InferenceRunnerHelpers, LoadModelAndReferenceOutputCorruptFile)
 {
   namespace fs = std::filesystem;
