@@ -99,6 +99,8 @@ class TraceFileWriter {
 };
 
 auto escape_json_string(std::string_view value) -> std::string;
+auto event_to_string(BatchingTraceEvent event) -> std::string_view;
+auto device_type_to_string(DeviceType type) -> std::string_view;
 
 }  // namespace detail
 
@@ -264,19 +266,12 @@ class BatchingTraceLogger {
   void close_queue_metrics_writer();
   [[nodiscard]] auto configure_queue_metrics_writer(
       const std::filesystem::path& trace_path) -> bool;
-  [[nodiscard]] static auto queue_metrics_path_from_trace(
-      const std::filesystem::path& trace_path) -> std::filesystem::path;
-  [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
-      -> std::string_view;
-  [[nodiscard]] static auto device_type_to_string(DeviceType type)
-      -> std::string_view;
   [[nodiscard]] auto relative_timestamp_from_time_point(
       std::chrono::high_resolution_clock::time_point time_point) const
       -> std::optional<int64_t>;
   [[nodiscard]] auto logging_enabled() const -> bool;
 
   void close_stream_locked();
-  [[nodiscard]] static auto now_us() -> int64_t;
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
 

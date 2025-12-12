@@ -721,8 +721,8 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
 
 TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
 {
-  const auto value = BatchingTraceLogger::event_to_string(
-      static_cast<BatchingTraceEvent>(255));
+  const auto value =
+      detail::event_to_string(static_cast<BatchingTraceEvent>(255));
   EXPECT_EQ(value, "unknown");
 }
 

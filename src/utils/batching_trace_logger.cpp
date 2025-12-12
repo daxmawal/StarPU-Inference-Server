@@ -52,6 +52,15 @@ summary_path_from_trace(const std::filesystem::path& trace_path)
 }
 
 auto
+metrics_path_from_trace(const std::filesystem::path& trace_path)
+    -> std::filesystem::path
+{
+  auto metrics_path = trace_path;
+  metrics_path.replace_filename(kMetricsFilename);
+  return metrics_path;
+}
+
+auto
 escape_csv_field(std::string_view value) -> std::string
 {
   std::string escaped;
@@ -90,6 +99,14 @@ format_request_arrivals(std::span<const int64_t> request_arrivals)
     oss << request_arrivals[idx];
   }
   return oss.str();
+}
+
+auto
+now_us() -> int64_t
+{
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::high_resolution_clock::now().time_since_epoch())
+      .count();
 }
 
 auto
@@ -427,6 +444,33 @@ escape_json_string(std::string_view value) -> std::string
   return escaped;
 }
 
+auto
+event_to_string(BatchingTraceEvent event) -> std::string_view
+{
+  switch (event) {
+    case BatchingTraceEvent::RequestQueued:
+      return "request_enqueued";
+    case BatchingTraceEvent::BatchSubmitted:
+      return "batch_submitted";
+  }
+  return "unknown";
+}
+
+auto
+device_type_to_string(DeviceType type) -> std::string_view
+{
+  using enum DeviceType;
+  switch (type) {
+    case CPU:
+      return "cpu";
+    case CUDA:
+      return "cuda";
+    case Unknown:
+    default:
+      return "unknown";
+  }
+}
+
 }  // namespace detail
 
 auto
@@ -654,7 +698,8 @@ BatchingTraceLogger::write_record(
   }
 
   const auto escaped_model = detail::escape_json_string(model_name);
-  const auto worker_type_str = device_type_to_string(worker_info.worker_type);
+  const auto worker_type_str =
+      detail::device_type_to_string(worker_info.worker_type);
   const bool is_worker_lane = worker_info.worker_id >= 0;
   std::string worker_label;
   int thread_id = kRequestEnqueuedTrackId;
@@ -688,7 +733,7 @@ BatchingTraceLogger::write_record(
   const bool is_batch_span = event == BatchingTraceEvent::BatchSubmitted;
 
   std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix << event_to_string(event)
+  line << R"({"name":")" << warmup_prefix << detail::event_to_string(event)
        << R"(","cat":"batching","ph":")" << (is_batch_span ? 'X' : 'i')
        << R"(","ts":)" << timestamp_us;
   if (is_batch_span) {
@@ -751,34 +796,6 @@ BatchingTraceLogger::write_record(
   trace_writer_.write_line(line.str());
 }
 
-auto
-BatchingTraceLogger::event_to_string(BatchingTraceEvent event)
-    -> std::string_view
-{
-  switch (event) {
-    case BatchingTraceEvent::RequestQueued:
-      return "request_enqueued";
-    case BatchingTraceEvent::BatchSubmitted:
-      return "batch_submitted";
-  }
-  return "unknown";
-}
-
-auto
-BatchingTraceLogger::device_type_to_string(DeviceType type) -> std::string_view
-{
-  using enum DeviceType;
-  switch (type) {
-    case CPU:
-      return "cpu";
-    case CUDA:
-      return "cuda";
-    case Unknown:
-    default:
-      return "unknown";
-  }
-}
-
 void
 BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
 {
@@ -791,7 +808,7 @@ BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
   }
 
   const auto escaped_model = detail::escape_json_string(args.model_name);
-  const auto worker_type_str = device_type_to_string(args.worker_type);
+  const auto worker_type_str = detail::device_type_to_string(args.worker_type);
   const int64_t end_ts = args.start_ts + duration_us;
   const char* warmup_prefix = args.is_warmup ? "warming_" : "";
 
@@ -998,14 +1015,6 @@ BatchingTraceLogger::close_stream_locked()
 }
 
 auto
-BatchingTraceLogger::now_us() -> int64_t
-{
-  return std::chrono::duration_cast<std::chrono::microseconds>(
-             std::chrono::high_resolution_clock::now().time_since_epoch())
-      .count();
-}
-
-auto
 BatchingTraceLogger::relative_timestamp_us(int64_t absolute_us) const -> int64_t
 {
   if (!trace_start_initialized_) {
@@ -1050,7 +1059,7 @@ BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
   const auto escaped_arrivals = escape_csv_field(request_arrivals_string);
   summary_stream_ << args.batch_id << ",\"" << escaped_model << "\","
                   << args.worker_id << ",\""
-                  << device_type_to_string(args.worker_type) << "\","
+                  << detail::device_type_to_string(args.worker_type) << "\","
                   << args.device_id << ',' << args.batch_size << ",\""
                   << escaped_requests << "\",\"" << escaped_arrivals << "\","
                   << std::format("{:.3f}", args.queue_ms) << ','
@@ -1110,7 +1119,7 @@ BatchingTraceLogger::configure_queue_metrics_writer(
     const std::filesystem::path& trace_path) -> bool
 {
   close_queue_metrics_writer();
-  queue_metrics_path_ = queue_metrics_path_from_trace(trace_path);
+  queue_metrics_path_ = metrics_path_from_trace(trace_path);
   queue_metrics_stream_.open(
       queue_metrics_path_, std::ios::out | std::ios::trunc);
   if (!queue_metrics_stream_.is_open()) {
@@ -1123,15 +1132,6 @@ BatchingTraceLogger::configure_queue_metrics_writer(
   }
   queue_metrics_stream_ << "timestamp_us,queue_size,rejected_total\n";
   return true;
-}
-
-auto
-BatchingTraceLogger::queue_metrics_path_from_trace(
-    const std::filesystem::path& trace_path) -> std::filesystem::path
-{
-  auto path = trace_path;
-  path.replace_filename(kMetricsFilename);
-  return path;
 }
 
 void
