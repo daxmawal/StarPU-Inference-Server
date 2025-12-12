@@ -12,6 +12,7 @@
 
 #include "core/inference_runner.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
 
@@ -91,4 +92,96 @@ TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
 
   std::shared_ptr<starpu_server::InferenceJob> job;
   EXPECT_FALSE(queue.wait_and_pop(job));
+}
+
+TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenNoDevicesConfigured)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
+  fixture.opts.devices.use_cpu = false;
+  fixture.opts.devices.use_cuda = false;
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
+
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      fixture.opts, *fixture.starpu, fixture.model_cpu, fixture.models_gpu,
+      fixture.outputs_ref);
+  EXPECT_TRUE(capture.str().empty());
+}
+
+TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenNoWarmupRequestsConfigured)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
+  fixture.opts.batching.warmup_request_nb = 0;
+  fixture.opts.batching.warmup_batches_per_worker = 0;
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
+
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      fixture.opts, *fixture.starpu, fixture.model_cpu, fixture.models_gpu,
+      fixture.outputs_ref);
+  EXPECT_TRUE(capture.str().empty());
+}
+
+TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenComputedRequestsNonPositive)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
+  fixture.opts.batching.warmup_request_nb = -1;
+  fixture.opts.batching.warmup_batches_per_worker =
+      std::numeric_limits<int>::max();
+  fixture.opts.batching.max_batch_size = std::numeric_limits<int>::max() - 1;
+
+  const int configured_batches =
+      std::max(0, fixture.opts.batching.warmup_batches_per_worker);
+  ASSERT_GT(configured_batches, 0);
+  const int max_batch_size = std::max(1, fixture.opts.batching.max_batch_size);
+  const auto product =
+      static_cast<long long>(configured_batches) * max_batch_size;
+  ASSERT_GT(product, static_cast<long long>(std::numeric_limits<int>::max()));
+
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
+
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      fixture.opts, *fixture.starpu, fixture.model_cpu, fixture.models_gpu,
+      fixture.outputs_ref);
+  EXPECT_TRUE(capture.str().empty());
+}
+
+TEST(WarmupRunnerEdgesTest, RunWarmupLogsCpuAndCudaTargetDescription)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
+  fixture.opts.devices.use_cpu = true;
+  fixture.opts.devices.use_cuda = true;
+  fixture.opts.devices.ids.clear();
+  fixture.opts.batching.warmup_request_nb = 1;
+  fixture.opts.batching.warmup_batches_per_worker = 0;
+  fixture.opts.batching.warmup_pregen_inputs = 0;
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
+
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      fixture.opts, *fixture.starpu, fixture.model_cpu, fixture.models_gpu,
+      fixture.outputs_ref);
+  const std::string log = capture.str();
+  EXPECT_NE(log.find("CPU and CUDA workers"), std::string::npos);
 }
