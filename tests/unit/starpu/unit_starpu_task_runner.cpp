@@ -1419,6 +1419,76 @@ TEST_F(
   starpu_server::perf_observer::reset();
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackReleasesInflightSlotWhenLimitSet)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  reset_runner_with_model(
+      make_model_config(
+          "test_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  runner_->prepare_job_completion_callback(job);
+
+  job->get_on_complete()(
+      std::vector<torch::Tensor>{torch::tensor({2.0F})}, 5.0);
+
+  EXPECT_TRUE(callback_invoked);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackDoesNotReleaseInflightSlotWhenNoLimit)
+{
+  opts_.batching.max_inflight_tasks = 0;
+  reset_runner_with_model(
+      make_model_config(
+          "test_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  ASSERT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::has_inflight_limit(
+      runner_.get()));
+
+  runner_->prepare_job_completion_callback(job);
+
+  job->get_on_complete()(
+      std::vector<torch::Tensor>{torch::tensor({2.0F})}, 5.0);
+
+  EXPECT_TRUE(callback_invoked);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
 TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 {
   opts_.verbosity = starpu_server::VerbosityLevel::Stats;
