@@ -84,3 +84,51 @@ TEST_F(InferenceTaskLimitsTest_Robustesse, FillInputLayoutTooManyDims)
       Task()->fill_input_layout(params, 1),
       starpu_server::InferenceExecutionException);
 }
+
+TEST_F(
+    InferenceTaskLimitsTest_Robustesse,
+    FillInputLayoutUsesEffectiveBatchSizeWhenProvided)
+{
+  auto tensor = torch::ones({2, 3});
+  Job()->set_input_tensors({tensor});
+  Job()->set_input_types({tensor.scalar_type()});
+  Job()->set_effective_batch_size(7);
+
+  starpu_server::TensorConfig tensor_config;
+  tensor_config.dims = {4, 5};
+  tensor_config.type = tensor.scalar_type();
+
+  starpu_server::ModelConfig model_config;
+  model_config.inputs.push_back(tensor_config);
+  Opts().models = {model_config};
+
+  auto params = std::make_shared<starpu_server::InferenceParams>();
+  ASSERT_NO_THROW(Task()->fill_input_layout(params, 1));
+  ASSERT_EQ(params->layout.dims.size(), 1);
+  ASSERT_EQ(params->layout.dims[0].size(), 2);
+  EXPECT_EQ(params->layout.dims[0][0], 7);
+}
+
+TEST_F(
+    InferenceTaskLimitsTest_Robustesse,
+    FillInputLayoutDimsFromConfigRespectLimits)
+{
+  auto tensor = torch::ones({2, 3});
+  Job()->set_input_tensors({tensor});
+  Job()->set_input_types({tensor.scalar_type()});
+
+  starpu_server::TensorConfig tensor_config;
+  tensor_config.dims = {4, 5, 6};
+  tensor_config.type = tensor.scalar_type();
+
+  starpu_server::ModelConfig model_config;
+  model_config.inputs.push_back(tensor_config);
+  auto& opts = Opts();
+  opts.models = {model_config};
+  opts.limits.max_dims = 2;
+
+  auto params = std::make_shared<starpu_server::InferenceParams>();
+  EXPECT_THROW(
+      Task()->fill_input_layout(params, 1),
+      starpu_server::InferenceExecutionException);
+}
