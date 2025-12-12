@@ -287,7 +287,8 @@ client_worker(
 
     bool queue_full = false;
     if (!queue.push(std::move(job), &queue_full)) {
-      const auto reason = queue_full ? "queue is full" : "queue shutting down";
+      const auto* const reason =
+          queue_full ? "queue is full" : "queue shutting down";
       log_warning(std::format(
           "[Client] Failed to enqueue job {}: {}", request_id, reason));
       break;

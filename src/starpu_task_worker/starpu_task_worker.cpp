@@ -649,9 +649,9 @@ class ResultDispatcher {
   void prepare_job_completion_callback(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job) const;
 
-  void store_completed_job_result(
+  static void store_completed_job_result(
       const std::shared_ptr<InferenceJob>& job,
-      const std::vector<torch::Tensor>& results, double latency_ms) const;
+      const std::vector<torch::Tensor>& results, double latency_ms);
 
   static void ensure_callback_timing(detail::TimingInfo& timing);
 
@@ -800,18 +800,26 @@ ResultDispatcher::prepare_job_completion_callback(
       [dispatcher, prev_callback, job_sptr = job, &runner, track_inflight](
           std::vector<torch::Tensor> results, double latency_ms) mutable {
         struct ReleaseGuard {
-          StarPUTaskRunner* runner;
+          explicit ReleaseGuard(StarPUTaskRunner* runner_in) : runner(runner_in)
+          {
+          }
+          ReleaseGuard(const ReleaseGuard&) = delete;
+          auto operator=(const ReleaseGuard&) -> ReleaseGuard& = delete;
+          ReleaseGuard(ReleaseGuard&&) = delete;
+          auto operator=(ReleaseGuard&&) -> ReleaseGuard& = delete;
           ~ReleaseGuard()
           {
             if (runner != nullptr) {
               runner->release_inflight_slot();
             }
           }
+
+          StarPUTaskRunner* runner;
         } guard{track_inflight ? &runner : nullptr};
 
         task_runner_internal::run_with_logged_exceptions(
             [&] {
-              dispatcher->store_completed_job_result(
+              ResultDispatcher::store_completed_job_result(
                   job_sptr, results, latency_ms);
               ResultDispatcher::ensure_callback_timing(job_sptr->timing_info());
               dispatcher->record_job_metrics(
@@ -837,7 +845,7 @@ ResultDispatcher::prepare_job_completion_callback(
 void
 ResultDispatcher::store_completed_job_result(
     const std::shared_ptr<InferenceJob>& job,
-    const std::vector<torch::Tensor>& results, double latency_ms) const
+    const std::vector<torch::Tensor>& results, double latency_ms)
 {
   (void)results;
   (void)latency_ms;
@@ -997,22 +1005,19 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
         std::max<int64_t>(1, slice_result.processed_length));
   }
 
-  auto& mutable_job =
-      const_cast<std::shared_ptr<InferenceJob>&>(aggregated_job);
-
-  const auto& pending = mutable_job->pending_sub_jobs();
+  const auto& pending = aggregated_job->pending_sub_jobs();
   for (const auto& sub_job : pending) {
     if (sub_job && sub_job->has_on_complete()) {
       sub_job->set_on_complete({});
     }
   }
 
-  mutable_job->set_aggregated_sub_jobs({});
-  mutable_job->clear_pending_sub_jobs();
+  aggregated_job->set_aggregated_sub_jobs({});
+  aggregated_job->clear_pending_sub_jobs();
 
-  static_cast<void>(mutable_job->release_input_tensors());
-  mutable_job->release_input_memory_holders();
-  mutable_job->set_output_tensors({});
+  static_cast<void>(aggregated_job->release_input_tensors());
+  aggregated_job->release_input_memory_holders();
+  aggregated_job->set_output_tensors({});
 }
 
 auto
@@ -1838,9 +1843,9 @@ StarPUTaskRunner::prepare_job_completion_callback(
 void
 StarPUTaskRunner::store_completed_job_result(
     const std::shared_ptr<InferenceJob>& job,
-    const std::vector<torch::Tensor>& results, double latency_ms) const
+    const std::vector<torch::Tensor>& results, double latency_ms)
 {
-  result_dispatcher_->store_completed_job_result(job, results, latency_ms);
+  ResultDispatcher::store_completed_job_result(job, results, latency_ms);
 }
 
 void

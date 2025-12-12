@@ -143,7 +143,7 @@ WarmupRunner::client_worker(
 
       bool queue_full = false;
       if (!queue.push(std::move(job), &queue_full)) {
-        const auto reason =
+        const auto* const reason =
             queue_full ? "queue is full" : "queue shutting down";
         log_warning(std::format(
             "[Warmup] Failed to enqueue job {}: {}", job_request_id, reason));

@@ -136,9 +136,9 @@ class StarPUTaskRunner {
   static void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
-  void store_completed_job_result(
+  static void store_completed_job_result(
       const std::shared_ptr<InferenceJob>& job,
-      const std::vector<torch::Tensor>& results, double latency_ms) const;
+      const std::vector<torch::Tensor>& results, double latency_ms);
   static void ensure_callback_timing(detail::TimingInfo& timing);
   void record_job_metrics(
       const std::shared_ptr<InferenceJob>& job, DurationMs latency,
