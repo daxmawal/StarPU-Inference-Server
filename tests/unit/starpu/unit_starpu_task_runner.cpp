@@ -4281,6 +4281,127 @@ TEST(
       aggregated->timing_info().batch_collect_start_time);
 }
 
+TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionClearsPendingSubJobsWithOnComplete)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+
+  auto aggregated_sub_job = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {aggregated_sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  auto pending_job1 = std::make_shared<starpu_server::InferenceJob>();
+  bool callback1_invoked = false;
+  pending_job1->set_on_complete(
+      [&callback1_invoked](const std::vector<torch::Tensor>&, double) {
+        callback1_invoked = true;
+      });
+
+  auto pending_job2 = std::make_shared<starpu_server::InferenceJob>();
+  bool callback2_invoked = false;
+  pending_job2->set_on_complete(
+      [&callback2_invoked](const std::vector<torch::Tensor>&, double) {
+        callback2_invoked = true;
+      });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  pending_jobs.push_back(pending_job1);
+  pending_jobs.push_back(pending_job2);
+  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+
+  ASSERT_TRUE(pending_job1->has_on_complete());
+  ASSERT_TRUE(pending_job2->has_on_complete());
+
+  const auto outputs = std::vector<torch::Tensor>{
+      torch::tensor({1.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 5.0);
+
+  EXPECT_FALSE(pending_job1->has_on_complete());
+  EXPECT_FALSE(pending_job2->has_on_complete());
+  EXPECT_FALSE(callback1_invoked);
+  EXPECT_FALSE(callback2_invoked);
+  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+}
+
+TEST(StarPUTaskRunnerTestAdapter, PropagateCompletionSkipsNullPendingSubJobs)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+
+  auto aggregated_sub_job = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {aggregated_sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  auto valid_pending_job = std::make_shared<starpu_server::InferenceJob>();
+  bool callback_invoked = false;
+  valid_pending_job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  pending_jobs.push_back(nullptr);
+  pending_jobs.push_back(valid_pending_job);
+  pending_jobs.push_back(nullptr);
+  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+
+  ASSERT_TRUE(valid_pending_job->has_on_complete());
+
+  const auto outputs = std::vector<torch::Tensor>{};
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 5.0);
+
+  EXPECT_FALSE(valid_pending_job->has_on_complete());
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+}
+
+TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionSkipsPendingSubJobsWithoutOnComplete)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+
+  auto aggregated_sub_job = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {aggregated_sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  auto job_without_callback = std::make_shared<starpu_server::InferenceJob>();
+  auto job_with_callback = std::make_shared<starpu_server::InferenceJob>();
+  bool callback_invoked = false;
+  job_with_callback->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  pending_jobs.push_back(job_without_callback);
+  pending_jobs.push_back(job_with_callback);
+  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+
+  ASSERT_FALSE(job_without_callback->has_on_complete());
+  ASSERT_TRUE(job_with_callback->has_on_complete());
+
+  const auto outputs = std::vector<torch::Tensor>{};
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 5.0);
+
+  EXPECT_FALSE(job_without_callback->has_on_complete());
+  EXPECT_FALSE(job_with_callback->has_on_complete());
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+}
+
 TEST(TaskRunnerInternal, SliceOutputsForSubJobReturnsDefaultLengthWhenEmpty)
 {
   namespace internal = starpu_server::task_runner_internal;
