@@ -901,6 +901,32 @@ class StarPUTaskRunnerTestAdapter {
         runner->batch_collector_.get(), accumulated_samples, job,
         max_samples_cap);
   }
+
+  static void reserve_inflight_slot(StarPUTaskRunner* runner)
+  {
+    runner->reserve_inflight_slot();
+  }
+
+  static void release_inflight_slot(StarPUTaskRunner* runner)
+  {
+    runner->release_inflight_slot();
+  }
+
+  static auto has_inflight_limit(const StarPUTaskRunner* runner) -> bool
+  {
+    return runner->has_inflight_limit();
+  }
+
+  static auto get_inflight_tasks(const StarPUTaskRunner* runner) -> std::size_t
+  {
+    return runner->inflight_tasks_.load(std::memory_order_acquire);
+  }
+
+  static auto get_max_inflight_tasks(const StarPUTaskRunner* runner)
+      -> std::size_t
+  {
+    return runner->max_inflight_tasks_;
+  }
 };
 }  // namespace starpu_server
 
@@ -4848,4 +4874,157 @@ TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsNonPositiveRankTensors)
 
   EXPECT_FALSE(
       starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ReleaseInflightSlotReturnsImmediatelyWhenNoLimit)
+{
+  ASSERT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::has_inflight_limit(
+      runner_.get()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, ReleaseInflightSlotReturnsWhenCountIsZero)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::has_inflight_limit(
+      runner_.get()));
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_max_inflight_tasks(
+          runner_.get()),
+      10U);
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, ReleaseInflightSlotDecrementsCountWhenNonZero)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ReleaseInflightSlotNotifiesWaitingThreadsWhenDecrementing)
+{
+  opts_.batching.max_inflight_tasks = 1;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  std::atomic<bool> waiting_thread_started{false};
+  std::atomic<bool> waiting_thread_completed{false};
+
+  std::thread waiting_thread([&] {
+    waiting_thread_started.store(true, std::memory_order_release);
+    starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+        runner_.get());
+    waiting_thread_completed.store(true, std::memory_order_release);
+  });
+
+  while (!waiting_thread_started.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  EXPECT_FALSE(waiting_thread_completed.load(std::memory_order_acquire));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  waiting_thread.join();
+  EXPECT_TRUE(waiting_thread_completed.load(std::memory_order_acquire));
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ReserveAndReleaseInflightSlotWorkTogetherWithLimit)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  for (int i = 1; i <= 5; ++i) {
+    starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+        runner_.get());
+    EXPECT_EQ(
+        starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+            runner_.get()),
+        static_cast<std::size_t>(i));
+  }
+
+  for (int i = 4; i >= 0; --i) {
+    starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+        runner_.get());
+    EXPECT_EQ(
+        starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+            runner_.get()),
+        static_cast<std::size_t>(i));
+  }
 }
