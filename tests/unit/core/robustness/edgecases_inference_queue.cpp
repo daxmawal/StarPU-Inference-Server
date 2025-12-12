@@ -172,3 +172,9 @@ TEST(InferenceQueue_Robustesse, RejectsPushWhenFull)
   EXPECT_TRUE(queue.push(job2, &queue_full));
   EXPECT_FALSE(queue_full);
 }
+
+TEST(InferenceQueue_Robustesse, ConstructorThrowsWhenMaxSizeIsZero)
+{
+  EXPECT_THROW(
+      { starpu_server::InferenceQueue queue(0); }, std::invalid_argument);
+}
