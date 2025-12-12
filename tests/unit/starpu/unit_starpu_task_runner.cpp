@@ -872,6 +872,20 @@ class StarPUTaskRunnerTestAdapter {
     return accessor->queue;
   }
 
+  static void set_batch_collector_pending_job(
+      StarPUTaskRunner* runner,
+      const std::shared_ptr<starpu_server::InferenceJob>& job)
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return;
+    }
+    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
+        runner->batch_collector_.get());
+    if (accessor->pending_job != nullptr) {
+      *accessor->pending_job = job;
+    }
+  }
+
   static void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs)
@@ -4746,6 +4760,133 @@ TEST_F(
   ASSERT_EQ(collected.size(), 2U);
   EXPECT_EQ(collected[0], first);
   EXPECT_EQ(collected[1], second);
+}
+
+TEST_F(StarPUTaskRunnerFixture, WaitForNextJobDoesNotBlockWhenNoInflightLimit)
+{
+  ASSERT_EQ(opts_.batching.max_inflight_tasks, 0U);
+
+  auto job = make_job(
+      601, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(job));
+
+  auto retrieved = runner_->wait_for_next_job();
+
+  ASSERT_NE(retrieved, nullptr);
+  EXPECT_EQ(retrieved, job);
+}
+
+TEST_F(StarPUTaskRunnerFixture, WaitForNextJobBlocksWhenInflightLimitReached)
+{
+  opts_.batching.max_inflight_tasks = 1;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto job1 = make_job(
+      602, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto job2 = make_job(
+      603, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job1));
+  ASSERT_TRUE(queue_.push(job2));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  std::atomic<bool> thread_started{false};
+  std::atomic<bool> thread_completed{false};
+  std::shared_ptr<starpu_server::InferenceJob> retrieved_job;
+
+  std::jthread waiter([&] {
+    thread_started.store(true, std::memory_order_release);
+    retrieved_job = runner_->wait_for_next_job();
+    thread_completed.store(true, std::memory_order_release);
+  });
+
+  while (!thread_started.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  EXPECT_FALSE(thread_completed.load(std::memory_order_acquire));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  waiter.join();
+  EXPECT_TRUE(thread_completed.load(std::memory_order_acquire));
+  ASSERT_NE(retrieved_job, nullptr);
+  EXPECT_EQ(retrieved_job, job1);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, WaitForNextJobReturnsImmediatelyWhenSlotsAvailable)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto job = make_job(
+      604, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(job));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      2U);
+
+  auto retrieved = runner_->wait_for_next_job();
+
+  ASSERT_NE(retrieved, nullptr);
+  EXPECT_EQ(retrieved, job);
+}
+
+TEST_F(StarPUTaskRunnerFixture, WaitForNextJobReturnsPendingJobFirst)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto pending_job = make_job(
+      605, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto queued_job = make_job(
+      606, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_batch_collector_pending_job(
+      runner_.get(), pending_job);
+  ASSERT_TRUE(queue_.push(queued_job));
+
+  auto retrieved = runner_->wait_for_next_job();
+
+  ASSERT_NE(retrieved, nullptr);
+  EXPECT_EQ(retrieved, pending_job);
+  EXPECT_EQ(queue_.size(), 1U);
 }
 
 TEST_F(
