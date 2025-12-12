@@ -3765,3 +3765,53 @@ TEST(InferenceCodelet, SelectGpuModuleReturnsMatchingReplica)
 
   EXPECT_EQ(selected, module.get());
 }
+
+TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)
+{
+  using starpu_server::kStarpuSchedulerEnvVar;
+
+  if (std::getenv(kStarpuSchedulerEnvVar.data()) != nullptr) {
+    GTEST_SKIP() << "STARPU_SCHED already set, cannot test default scheduler "
+                    "setenv failure";
+  }
+
+  starpu_server::RuntimeConfig opts;
+  opts.models.push_back({});
+  opts.devices.use_cuda = false;
+  opts.devices.use_cpu = true;
+
+  SetenvOverrideGuard guard(
+      [](const char* name, const char* /*value*/, int /*overwrite*/) -> int {
+        if (std::string_view(name) == starpu_server::kStarpuSchedulerEnvVar) {
+          errno = ENOMEM;
+          return -1;
+        }
+        return resolve_real_setenv()(name, "", 0);
+      });
+
+  EXPECT_THROW(
+      { starpu_server::StarPUSetup setup(opts); },
+      starpu_server::StarPUInitializationException);
+}
+
+TEST(StarPUSetup, ThrowsWhenSetenvFailsForCustomEnvVar_Robustesse)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.models.push_back({});
+  opts.devices.use_cuda = false;
+  opts.devices.use_cpu = true;
+  opts.starpu_env["CUSTOM_VAR"] = "value";
+
+  SetenvOverrideGuard guard(
+      [](const char* name, const char* /*value*/, int /*overwrite*/) -> int {
+        if (std::string_view(name) == "CUSTOM_VAR") {
+          errno = ENOMEM;
+          return -1;
+        }
+        return resolve_real_setenv()(name, "", 1);
+      });
+
+  EXPECT_THROW(
+      { starpu_server::StarPUSetup setup(opts); },
+      starpu_server::StarPUInitializationException);
+}
