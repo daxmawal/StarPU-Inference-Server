@@ -285,9 +285,6 @@ release_inputs_from_additional_jobs(
         std::vector<std::shared_ptr<const void>>{});
   }
 }
-}  // namespace task_runner_internal
-
-namespace {
 
 [[nodiscard]] auto
 request_id_from_sub_job(const InferenceJob::AggregatedSubJob& sub_job) -> int
@@ -360,6 +357,10 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
   }
   return arrivals;
 }
+
+}  // namespace task_runner_internal
+
+namespace {
 
 inline auto
 is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
@@ -896,8 +897,10 @@ ResultDispatcher::record_job_metrics(
   if (tracer.enabled()) {
     const auto breakdown =
         detail::compute_latency_breakdown(timing, latency.count());
-    const auto request_ids = build_request_ids_for_trace(job);
-    const auto request_arrivals = build_request_arrival_us_for_trace(job);
+    const auto request_ids =
+        task_runner_internal::build_request_ids_for_trace(job);
+    const auto request_arrivals =
+        task_runner_internal::build_request_arrival_us_for_trace(job);
     tracer.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
         .batch_id = job_id,
         .model_name = job->model_name(),
@@ -1881,7 +1884,8 @@ StarPUTaskRunner::trace_batch_if_enabled(
 
   const auto batch_size = std::max<std::size_t>(
       std::size_t{1}, static_cast<std::size_t>(resolve_batch_size(job)));
-  const auto request_ids = build_request_ids_for_trace(job);
+  const auto request_ids =
+      task_runner_internal::build_request_ids_for_trace(job);
   const auto request_ids_span = std::span<const int>(request_ids);
   const auto enqueue_start = job->timing_info().enqueued_time;
   auto enqueue_end = job->timing_info().last_enqueued_time;
@@ -2211,7 +2215,8 @@ StarPUTaskRunner::submit_inference_task(
     task.submit();
     auto& tracer = BatchingTraceLogger::instance();
     if (tracer.enabled()) {
-      const auto request_ids = build_request_ids_for_trace(job);
+      const auto request_ids =
+          task_runner_internal::build_request_ids_for_trace(job);
       const std::size_t logical_jobs = std::max(
           static_cast<std::size_t>(std::max(1, job->logical_job_count())),
           request_ids.size());
@@ -2277,7 +2282,8 @@ StarPUTaskRunner::submit_inference_task(
     } else {
       auto& tracer = BatchingTraceLogger::instance();
       if (tracer.enabled()) {
-        const auto request_ids = build_request_ids_for_trace(job);
+        const auto request_ids =
+            task_runner_internal::build_request_ids_for_trace(job);
         const std::size_t logical_jobs = std::max(
             static_cast<std::size_t>(std::max(1, job->logical_job_count())),
             request_ids.size());

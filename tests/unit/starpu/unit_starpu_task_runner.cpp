@@ -2398,11 +2398,10 @@ TEST(SlotHandleLeaseTest, ConstructorPropagatesAcquireFailures)
 
 TEST(BuildRequestIdsForTraceTest, ReturnsEmptyWhenJobMissing)
 {
-  auto fn = resolve_build_request_ids_for_trace_fn();
-  ASSERT_NE(fn, nullptr);
+  namespace internal = starpu_server::task_runner_internal;
 
   std::shared_ptr<starpu_server::InferenceJob> missing_job;
-  const auto ids = fn(missing_job);
+  const auto ids = internal::build_request_ids_for_trace(missing_job);
   EXPECT_TRUE(ids.empty());
 }
 
@@ -4780,6 +4779,137 @@ TEST(TaskRunnerInternal, ReleaseInputsFromAdditionalJobsClearsExtraEntries)
   EXPECT_TRUE(job_one->get_input_memory_holders().empty());
   EXPECT_TRUE(job_two->get_input_memory_holders().empty());
   EXPECT_FALSE(job_zero->get_input_memory_holders().empty());
+}
+
+TEST(TaskRunnerInternal, BuildRequestArrivalUsForTraceReturnsEmptyWhenJobIsNull)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  const auto result = internal::build_request_arrival_us_for_trace(nullptr);
+
+  EXPECT_TRUE(result.empty());
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceReturnsSingleEntryForNonAggregatedJob)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  const auto arrival_time =
+      Clock::time_point{} + std::chrono::microseconds(123456);
+  job->timing_info().enqueued_time = arrival_time;
+
+  const auto result = internal::build_request_arrival_us_for_trace(job);
+
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0], 123456);
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceReturnsZeroForDefaultTimePoint)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->timing_info().enqueued_time = Clock::time_point{};
+
+  const auto result = internal::build_request_arrival_us_for_trace(job);
+
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0], 0);
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceUsesArrivalTimeFromAggregatedSubJobs)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job1 = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job2 = std::make_shared<starpu_server::InferenceJob>();
+
+  const auto arrival1 = Clock::time_point{} + std::chrono::microseconds(100);
+  const auto arrival2 = Clock::time_point{} + std::chrono::microseconds(200);
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {sub_job1,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  sub_jobs.back().arrival_time = arrival1;
+
+  sub_jobs.push_back(
+      {sub_job2,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  sub_jobs.back().arrival_time = arrival2;
+
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto result = internal::build_request_arrival_us_for_trace(aggregated);
+
+  ASSERT_EQ(result.size(), 2U);
+  EXPECT_EQ(result[0], 100);
+  EXPECT_EQ(result[1], 200);
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceFallsBackToJobEnqueuedTimeWhenArrivalIsDefault)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job = std::make_shared<starpu_server::InferenceJob>();
+
+  const auto enqueued_time =
+      Clock::time_point{} + std::chrono::microseconds(300);
+  sub_job->timing_info().enqueued_time = enqueued_time;
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  sub_jobs.back().arrival_time = Clock::time_point{};
+
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto result = internal::build_request_arrival_us_for_trace(aggregated);
+
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0], 300);
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceReturnsZeroWhenSubJobExpiredAndArrivalIsDefault)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  {
+    auto temp_sub_job = std::make_shared<starpu_server::InferenceJob>();
+    sub_jobs.push_back(
+        {temp_sub_job,
+         std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+    sub_jobs.back().arrival_time = Clock::time_point{};
+  }
+
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto result = internal::build_request_arrival_us_for_trace(aggregated);
+
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0], 0);
 }
 
 TEST_F(
