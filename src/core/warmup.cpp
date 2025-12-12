@@ -141,8 +141,7 @@ WarmupRunner::client_worker(
       job->timing_info().enqueued_time = enqueued_now;
       job->timing_info().last_enqueued_time = enqueued_now;
 
-      bool queue_full = false;
-      if (!queue.push(std::move(job), &queue_full)) {
+      if (bool queue_full = false; !queue.push(std::move(job), &queue_full)) {
         const auto* const reason =
             queue_full ? "queue is full" : "queue shutting down";
         log_warning(std::format(
@@ -195,21 +194,25 @@ WarmupRunner::run(int request_nb_per_worker)
   std::exception_ptr thread_exception;
   std::mutex thread_exception_mutex;
 
-  const auto store_thread_exception = [&](std::exception_ptr exception) {
-    std::lock_guard lock(thread_exception_mutex);
-    if (!thread_exception) {
-      thread_exception = std::move(exception);
-    }
-  };
-  const auto load_thread_exception = [&]() -> std::exception_ptr {
+  const auto store_thread_exception =
+      [&thread_exception,
+       &thread_exception_mutex](std::exception_ptr exception) {
+        std::lock_guard lock(thread_exception_mutex);
+        if (!thread_exception) {
+          thread_exception = exception;
+        }
+      };
+  const auto load_thread_exception = [&]() {
     std::lock_guard lock(thread_exception_mutex);
     return thread_exception;
   };
-  const auto notify_thread_exception = [&](std::exception_ptr exception) {
-    store_thread_exception(std::move(exception));
-    queue.shutdown();
-    dummy_cv.notify_all();
-  };
+  const auto notify_thread_exception =
+      [&store_thread_exception, &queue,
+       &dummy_cv](std::exception_ptr exception) {
+        store_thread_exception(exception);
+        queue.shutdown();
+        dummy_cv.notify_all();
+      };
 
   StarPUTaskRunnerConfig config{};
   config.queue = &queue;
@@ -234,7 +237,8 @@ WarmupRunner::run(int request_nb_per_worker)
     }
   });
 
-  std::jthread client([&, request_nb_per_worker]() {
+  std::jthread client([this, &device_workers, &queue, &notify_thread_exception,
+                       request_nb_per_worker]() {
     try {
       client_worker(device_workers, queue, request_nb_per_worker);
     }

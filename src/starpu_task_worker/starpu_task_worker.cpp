@@ -1917,9 +1917,7 @@ StarPUTaskRunner::finalize_job_after_exception(
         std::format("{} for job {}: {}", log_prefix, job_id, exception.what()));
   }
 
-  const bool completion_done =
-      StarPUTaskRunner::handle_job_exception(job, exception);
-  if (!completion_done && job) {
+  if (!StarPUTaskRunner::handle_job_exception(job, exception) && job) {
     static_cast<void>(job->release_input_tensors());
     job->release_input_memory_holders();
     job->set_output_tensors({});
