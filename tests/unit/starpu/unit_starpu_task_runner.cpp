@@ -2945,6 +2945,138 @@ TEST_F(StarPUTaskRunnerFixture, EnqueuePreparedJobDeliversJobToWaiter)
 
 TEST_F(
     StarPUTaskRunnerFixture,
+    EnqueuePreparedJobDoesNotIncrementInflightWhenLimitIsZero)
+{
+  ASSERT_EQ(opts_.batching.max_inflight_tasks, 0U);
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  auto job = make_job(461, {});
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), job);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, EnqueuePreparedJobIncrementsInflightWhenLimitSet)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_max_inflight_tasks(
+          runner_.get()),
+      10U);
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  auto job = make_job(462, {});
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), job);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    EnqueuePreparedJobDoesNotIncrementInflightForShutdownJob)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), shutdown_job);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    EnqueuePreparedJobIncrementsInflightForMultipleJobs)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  for (int i = 0; i < 5; ++i) {
+    auto job = make_job(463 + i, {});
+    starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+        runner_.get(), job);
+  }
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      5U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    EnqueuePreparedJobDoesNotIncrementInflightForNullJob)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), nullptr);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
     ReleasePendingJobsClearsInputsForAdditionalJobsOnly)
 {
   auto master_job = make_job(
