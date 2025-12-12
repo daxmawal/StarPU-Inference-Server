@@ -1183,18 +1183,6 @@ def plot_queue_metrics(
         return
     ax.plot(times_s, sizes, label="queue size", color="#1f77b4")
     if rejected_totals:
-        # Plot rejection increments as bars
-        diffs = [rejected_totals[0]] + [
-            max(b - a, 0) for a, b in zip(rejected_totals[:-1], rejected_totals[1:])
-        ]
-        ax.bar(
-            times_s,
-            diffs,
-            width=0.05 * (max(times_s) / len(times_s) if times_s else 1.0),
-            color="#d62728",
-            alpha=0.5,
-            label="rejections",
-        )
         ax2 = ax.twinx()
         ax2.step(
             times_s,
