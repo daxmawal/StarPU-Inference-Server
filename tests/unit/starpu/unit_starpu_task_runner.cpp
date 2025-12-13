@@ -897,25 +897,30 @@ class StarPUTaskRunnerTestAdapter {
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
       const std::vector<torch::Tensor>& results, double latency_ms)
   {
-    runner->store_completed_job_result(job, results, latency_ms);
+    task_runner_helpers::store_completed_job_result(job, results, latency_ms);
   }
 
   static void ensure_callback_timing(detail::TimingInfo& timing)
   {
-    StarPUTaskRunner::ensure_callback_timing(timing);
+    task_runner_helpers::ensure_callback_timing(timing);
   }
 
   static void record_job_metrics(
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
       StarPUTaskRunner::DurationMs latency, std::size_t batch_size)
   {
-    runner->record_job_metrics(job, latency, batch_size);
+    if (runner != nullptr) {
+      task_runner_helpers::record_job_metrics(
+          *runner, job, latency, batch_size);
+    }
   }
 
   static void finalize_job_completion(
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job)
   {
-    runner->finalize_job_completion(job);
+    if (runner != nullptr) {
+      task_runner_helpers::finalize_job_completion(*runner, job);
+    }
   }
 
   static auto should_hold_job(
@@ -955,13 +960,13 @@ class StarPUTaskRunnerTestAdapter {
 
   static auto get_inflight_tasks(const StarPUTaskRunner* runner) -> std::size_t
   {
-    return runner->inflight_tasks_.load(std::memory_order_acquire);
+    return runner->inflight_state_.tasks.load(std::memory_order_acquire);
   }
 
   static auto get_max_inflight_tasks(const StarPUTaskRunner* runner)
       -> std::size_t
   {
-    return runner->max_inflight_tasks_;
+    return runner->inflight_state_.max_tasks;
   }
 };
 }  // namespace starpu_server
