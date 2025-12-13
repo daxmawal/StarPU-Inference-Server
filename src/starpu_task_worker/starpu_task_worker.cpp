@@ -639,6 +639,23 @@ resize_output_handles_for_job(
 
 using clock = task_runner_internal::Clock;
 
+struct InflightReleaseGuard {
+  explicit InflightReleaseGuard(StarPUTaskRunner* runner_in) : runner(runner_in)
+  {
+  }
+  InflightReleaseGuard(const InflightReleaseGuard&) = delete;
+  auto operator=(const InflightReleaseGuard&) -> InflightReleaseGuard& = delete;
+  InflightReleaseGuard(InflightReleaseGuard&&) = delete;
+  auto operator=(InflightReleaseGuard&&) -> InflightReleaseGuard& = delete;
+  ~InflightReleaseGuard()
+  {
+    if (runner != nullptr) {
+      runner->release_inflight_slot();
+    }
+  }
+  StarPUTaskRunner* runner;
+};
+
 class ResultDispatcher {
  public:
   ResultDispatcher(
@@ -809,31 +826,13 @@ ResultDispatcher::prepare_job_completion_callback(
   auto prev_callback = job->get_on_complete();
   const auto* dispatcher = this;
   const bool track_inflight = runner.has_inflight_limit();
-  job->set_on_complete([dispatcher, prev_callback, job_sptr = job, &runner,
-                        track_inflight](
-                           std::vector<torch::Tensor> results,
-                           double latency_ms) mutable {
-    struct InflightReleaseGuard {
-      explicit InflightReleaseGuard(StarPUTaskRunner* runner_in)
-          : runner(runner_in)
-      {
-      }
-      InflightReleaseGuard(const InflightReleaseGuard&) = delete;
-      auto operator=(const InflightReleaseGuard&) -> InflightReleaseGuard& =
-                                                         delete;
-      InflightReleaseGuard(InflightReleaseGuard&&) = delete;
-      auto operator=(InflightReleaseGuard&&) -> InflightReleaseGuard& = delete;
-      ~InflightReleaseGuard()
-      {
-        if (runner != nullptr) {
-          runner->release_inflight_slot();
-        }
-      }
-      StarPUTaskRunner* runner;
-    } guard(track_inflight ? &runner : nullptr);
-    dispatcher->handle_job_completion(
-        runner, job_sptr, prev_callback, results, latency_ms);
-  });
+  job->set_on_complete(
+      [dispatcher, prev_callback, job_sptr = job, &runner, track_inflight](
+          std::vector<torch::Tensor> results, double latency_ms) mutable {
+        InflightReleaseGuard guard(track_inflight ? &runner : nullptr);
+        dispatcher->handle_job_completion(
+            runner, job_sptr, prev_callback, results, latency_ms);
+      });
 }
 
 void

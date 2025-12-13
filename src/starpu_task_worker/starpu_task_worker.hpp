@@ -93,6 +93,7 @@ class StarPUTaskRunner {
       std::size_t batch_size);
   friend void task_runner_helpers::finalize_job_completion(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
+  friend struct InflightReleaseGuard;
 
   friend class StarPUTaskRunnerTestAdapter;
   friend class SlotManager;
