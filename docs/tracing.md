@@ -20,10 +20,10 @@ batching:
 
 - `trace_enabled` flips instrumentation on as soon as the server starts.
 - `trace_output` must point to a directory, the server writes
-  `batching_trace.json` there. The same directory also receives
-  `batching_trace_summary.csv` (one line per batch). Warmup batches are
-  excluded. The server runs `scripts/plot_batch_summary.py` at shutdown to
-  produce plots.
+  `perfetto_trace.json` there. The same directory also receives
+  `trace.csv` (one line per batch, warmup batches excluded) and `metrics.csv`
+  (queue size and cumulative rejections over time). The server runs
+  `scripts/plot_batch_summary.py` at shutdown to produce plots.
 
 Each restart truncates the previous JSON, so copy it elsewhere before relaunch.
 Stop the server before opening the file.
@@ -45,13 +45,13 @@ filtered out quickly inside Perfetto.
 
 ## 2. Batch summary plots
 
-The server writes `batching_trace_summary.csv` alongside the JSON trace and
-automatically runs `scripts/plot_batch_summary.py` at shutdown to generate
-latency scatter plots for CPU/GPU batches. Run it manually to re-plot or to
-point at archived traces:
+The server writes `trace.csv` alongside the JSON trace and automatically runs
+`scripts/plot_batch_summary.py` at shutdown to generate latency scatter plots
+for CPU/GPU batches plus a queue-size/rejections view (if `metrics.csv` is
+present). Run it manually to re-plot or to point at archived traces:
 
 ```bash
-python3 /scripts/plot_batch_summary.py /path/to/batching_trace_summary.csv --output batching_plots.png
+python3 /scripts/plot_batch_summary.py /path/to/trace.csv --output batching_plots.png
 ```
 
 ![Plot preview](images/plot.png)

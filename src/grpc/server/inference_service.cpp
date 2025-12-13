@@ -408,11 +408,10 @@ InferenceServiceImpl::submit_job_async(
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
-  auto job_keeper = job;
   job->set_on_complete(
-      [job_keeper, callback = std::move(on_complete)](
+      [job, callback = std::move(on_complete)](
           std::vector<torch::Tensor> outs, double latency_ms) mutable {
-        const auto& info = job_keeper->timing_info();
+        const auto& info = job->timing_info();
         auto timing = build_latency_breakdown(info, latency_ms);
         detail::TimingInfo copied_info = info;
 
@@ -427,9 +426,10 @@ InferenceServiceImpl::submit_job_async(
       });
 
   bool pushed = false;
+  bool queue_full = false;
   {
     NvtxRange queue_scope("grpc_submit_starpu_queue");
-    pushed = queue_->push(job);
+    pushed = queue_->push(job, &queue_full);
     if (pushed) {
       const auto enqueued_now = std::chrono::high_resolution_clock::now();
       job->timing_info().enqueued_time = enqueued_now;
@@ -437,6 +437,10 @@ InferenceServiceImpl::submit_job_async(
     }
   }
   if (!pushed) {
+    if (queue_full) {
+      BatchingTraceLogger::instance().log_request_rejected(queue_->size());
+      return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
+    }
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
   if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
@@ -581,11 +585,11 @@ InferenceServiceImpl::handle_async_infer_completion(
   context.reply->set_server_postprocess_ms(breakdown.postprocess_ms);
   context.reply->set_server_overall_ms(breakdown.overall_ms);
 
-  if (context.metrics && context.metrics->inference_latency != nullptr) {
+  if (context.metrics && context.metrics->inference_latency() != nullptr) {
     const auto latency_ms =
         std::chrono::duration<double, std::milli>(send_tp - context.recv_tp)
             .count();
-    context.metrics->inference_latency->Observe(latency_ms);
+    context.metrics->inference_latency()->Observe(latency_ms);
   }
 
   callback_handle->Invoke(Status::OK);
@@ -600,8 +604,8 @@ InferenceServiceImpl::HandleModelInferAsync(
   NvtxRange request_scope("grpc_handle_infer_request");
 
   auto metrics = get_metrics();
-  if (metrics && metrics->requests_total != nullptr) {
-    metrics->requests_total->Increment();
+  if (metrics && metrics->requests_total() != nullptr) {
+    metrics->requests_total()->Increment();
   }
 
   auto recv_tp = std::chrono::high_resolution_clock::now();

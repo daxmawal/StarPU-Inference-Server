@@ -105,6 +105,7 @@ cleanup_clang_tidy_config() {
   else
     rm -f "$CLANG_TIDY_CONFIG"
   fi
+  return 0
 }
 
 trap cleanup_clang_tidy_config EXIT INT TERM

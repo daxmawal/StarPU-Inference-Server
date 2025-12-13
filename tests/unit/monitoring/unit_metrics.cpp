@@ -20,10 +20,10 @@ void
 AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
 {
   ASSERT_NE(metrics, nullptr);
-  ASSERT_NE(metrics->registry, nullptr);
-  ASSERT_NE(metrics->requests_total, nullptr);
-  ASSERT_NE(metrics->inference_latency, nullptr);
-  ASSERT_NE(metrics->queue_size_gauge, nullptr);
+  ASSERT_NE(metrics->registry(), nullptr);
+  ASSERT_NE(metrics->requests_total(), nullptr);
+  ASSERT_NE(metrics->inference_latency(), nullptr);
+  ASSERT_NE(metrics->queue_size_gauge(), nullptr);
 }
 
 auto
@@ -45,7 +45,7 @@ TEST(Metrics, InitializesPointersAndRegistry)
   auto metrics = get_metrics();
   AssertMetricsInitialized(metrics);
 
-  const auto families = metrics->registry->Collect();
+  const auto families = metrics->registry()->Collect();
   EXPECT_TRUE(HasMetric(families, "requests_total"));
   EXPECT_TRUE(HasMetric(families, "inference_latency_ms"));
   EXPECT_TRUE(HasMetric(families, "inference_queue_size"));
@@ -129,4 +129,19 @@ TEST(Metrics, MetricsDestructionLogsRemovalFailure)
   EXPECT_NE(
       log.find("Failed to remove metrics registry collectable"),
       std::string::npos);
+}
+
+TEST(Metrics, AccessorsReturnAllocatedFamiliesAndGauges)
+{
+  ASSERT_TRUE(init_metrics(0));
+
+  auto metrics = get_metrics();
+  AssertMetricsInitialized(metrics);
+
+  EXPECT_NE(metrics->system_cpu_usage_percent(), nullptr);
+  EXPECT_NE(metrics->gpu_utilization_family(), nullptr);
+  EXPECT_NE(metrics->gpu_memory_used_bytes_family(), nullptr);
+  EXPECT_NE(metrics->gpu_memory_total_bytes_family(), nullptr);
+
+  shutdown_metrics();
 }

@@ -13,7 +13,8 @@ namespace starpu_server {
 InferenceSession::InferenceSession(
     const RuntimeConfig& opts, StarPUSetup& starpu,
     ClientRoutine client_routine)
-    : opts_(opts), starpu_(starpu), client_routine_(std::move(client_routine))
+    : opts_(opts), starpu_(starpu), client_routine_(std::move(client_routine)),
+      queue_(opts.batching.max_queue_size)
 {
 }
 

@@ -319,9 +319,7 @@ MetricsRegistry::MetricsRegistry(int port)
 MetricsRegistry::MetricsRegistry(
     int port, GpuStatsProvider gpu_provider, CpuUsageProvider cpu_provider,
     bool start_sampler_thread, std::unique_ptr<ExposerHandle> exposer_handle)
-    : registry(std::make_shared<prometheus::Registry>()),
-      requests_total(nullptr), inference_latency(nullptr),
-      queue_size_gauge(nullptr), exposer_(nullptr),
+    : registry_(std::make_shared<prometheus::Registry>()), exposer_(nullptr),
       gpu_stats_provider_(std::move(gpu_provider)),
       cpu_usage_provider_(std::move(cpu_provider))
 {
@@ -346,7 +344,7 @@ MetricsRegistry::initialize(
       exposer_handle =
           std::make_unique<PrometheusExposerHandle>(std::move(exposer));
     }
-    exposer_handle->RegisterCollectable(registry);
+    exposer_handle->RegisterCollectable(registry_);
     exposer_ = std::move(exposer_handle);
   }
   catch (const std::exception& e) {
@@ -357,41 +355,41 @@ MetricsRegistry::initialize(
   auto& counter_family = prometheus::BuildCounter()
                              .Name("requests_total")
                              .Help("Total requests received")
-                             .Register(*registry);
-  requests_total = &counter_family.Add({});
+                             .Register(*registry_);
+  requests_total_ = &counter_family.Add({});
 
   auto& histogram_family = prometheus::BuildHistogram()
                                .Name("inference_latency_ms")
                                .Help("Inference latency in milliseconds")
-                               .Register(*registry);
-  inference_latency = &histogram_family.Add({}, kInferenceLatencyMsBuckets);
+                               .Register(*registry_);
+  inference_latency_ = &histogram_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& gauge_family = prometheus::BuildGauge()
                            .Name("inference_queue_size")
                            .Help("Number of jobs in the inference queue")
-                           .Register(*registry);
-  queue_size_gauge = &gauge_family.Add({});
+                           .Register(*registry_);
+  queue_size_gauge_ = &gauge_family.Add({});
 
   auto& cpu_family = prometheus::BuildGauge()
                          .Name("system_cpu_usage_percent")
                          .Help("System-wide CPU utilization percentage (0-100)")
-                         .Register(*registry);
-  system_cpu_usage_percent = &cpu_family.Add({});
+                         .Register(*registry_);
+  system_cpu_usage_percent_ = &cpu_family.Add({});
 
-  gpu_utilization_family =
+  gpu_utilization_family_ =
       &prometheus::BuildGauge()
            .Name("gpu_utilization_percent")
            .Help("GPU utilization percentage per GPU (0-100)")
-           .Register(*registry);
-  gpu_memory_used_bytes_family = &prometheus::BuildGauge()
-                                      .Name("gpu_memory_used_bytes")
-                                      .Help("Used GPU memory in bytes per GPU")
-                                      .Register(*registry);
-  gpu_memory_total_bytes_family =
+           .Register(*registry_);
+  gpu_memory_used_bytes_family_ = &prometheus::BuildGauge()
+                                       .Name("gpu_memory_used_bytes")
+                                       .Help("Used GPU memory in bytes per GPU")
+                                       .Register(*registry_);
+  gpu_memory_total_bytes_family_ =
       &prometheus::BuildGauge()
            .Name("gpu_memory_total_bytes")
            .Help("Total GPU memory in bytes per GPU")
-           .Register(*registry);
+           .Register(*registry_);
 
   if (start_sampler_thread) {
     sampler_thread_ = std::jthread(
@@ -402,9 +400,9 @@ MetricsRegistry::initialize(
 MetricsRegistry::~MetricsRegistry() noexcept
 {
   request_stop();
-  if (exposer_ && registry) {
+  if (exposer_ && registry_) {
     try {
-      exposer_->RemoveCollectable(registry);
+      exposer_->RemoveCollectable(registry_);
     }
     catch (const std::exception& e) {
       log_error(
@@ -471,8 +469,8 @@ void
 set_queue_size(std::size_t size)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->queue_size_gauge != nullptr) {
-    metrics_ptr->queue_size_gauge->Set(static_cast<double>(size));
+  if (metrics_ptr && metrics_ptr->queue_size_gauge() != nullptr) {
+    metrics_ptr->queue_size_gauge()->Set(static_cast<double>(size));
   }
 }
 
@@ -496,6 +494,57 @@ MetricsRegistry::has_cpu_usage_provider() const -> bool
   return static_cast<bool>(cpu_usage_provider_);
 }
 
+auto
+MetricsRegistry::registry() const -> std::shared_ptr<prometheus::Registry>
+{
+  return registry_;
+}
+
+auto
+MetricsRegistry::requests_total() const -> prometheus::Counter*
+{
+  return requests_total_;
+}
+
+auto
+MetricsRegistry::inference_latency() const -> prometheus::Histogram*
+{
+  return inference_latency_;
+}
+
+auto
+MetricsRegistry::queue_size_gauge() const -> prometheus::Gauge*
+{
+  return queue_size_gauge_;
+}
+
+auto
+MetricsRegistry::system_cpu_usage_percent() const -> prometheus::Gauge*
+{
+  return system_cpu_usage_percent_;
+}
+
+auto
+MetricsRegistry::gpu_utilization_family() const
+    -> prometheus::Family<prometheus::Gauge>*
+{
+  return gpu_utilization_family_;
+}
+
+auto
+MetricsRegistry::gpu_memory_used_bytes_family() const
+    -> prometheus::Family<prometheus::Gauge>*
+{
+  return gpu_memory_used_bytes_family_;
+}
+
+auto
+MetricsRegistry::gpu_memory_total_bytes_family() const
+    -> prometheus::Family<prometheus::Gauge>*
+{
+  return gpu_memory_total_bytes_family_;
+}
+
 void
 MetricsRegistry::run_sampling_request_nb()
 {
@@ -505,11 +554,11 @@ MetricsRegistry::run_sampling_request_nb()
 void
 MetricsRegistry::perform_sampling_request_nb()
 {
-  if (system_cpu_usage_percent != nullptr && cpu_usage_provider_) {
+  if (system_cpu_usage_percent_ != nullptr && cpu_usage_provider_) {
     try {
       auto usage = cpu_usage_provider_();
       if (usage.has_value()) {
-        system_cpu_usage_percent->Set(*usage);
+        system_cpu_usage_percent_->Set(*usage);
       }
     }
     catch (const std::exception& e) {
@@ -538,11 +587,11 @@ MetricsRegistry::perform_sampling_request_nb()
         return it->second;
       };
 
-      ensure_gauge(gpu_utilization_gauges_, gpu_utilization_family)
+      ensure_gauge(gpu_utilization_gauges_, gpu_utilization_family_)
           ->Set(stats.util_percent);
-      ensure_gauge(gpu_memory_used_gauges_, gpu_memory_used_bytes_family)
+      ensure_gauge(gpu_memory_used_gauges_, gpu_memory_used_bytes_family_)
           ->Set(stats.mem_used_bytes);
-      ensure_gauge(gpu_memory_total_gauges_, gpu_memory_total_bytes_family)
+      ensure_gauge(gpu_memory_total_gauges_, gpu_memory_total_bytes_family_)
           ->Set(stats.mem_total_bytes);
     }
   }

@@ -823,19 +823,23 @@ class StarPUTaskRunnerTestAdapter {
     return runner->wait_for_prepared_job();
   }
 
+  struct BatchCollectorAccessor {
+    starpu_server::InferenceQueue* queue;
+    const starpu_server::RuntimeConfig* opts;
+    starpu_server::StarPUSetup* starpu;
+    std::shared_ptr<starpu_server::InferenceJob>* pending_job;
+    std::atomic<std::size_t>* inflight_tasks;
+    std::condition_variable* inflight_cv;
+    std::mutex* inflight_mutex;
+    std::size_t max_inflight_tasks;
+    std::mutex* prepared_mutex;
+    std::condition_variable* prepared_cv;
+    std::deque<std::shared_ptr<starpu_server::InferenceJob>>* prepared_jobs;
+    bool* batching_done;
+  };
+
   static void disable_prepared_job_sync(StarPUTaskRunner* runner)
   {
-    struct BatchCollectorAccessor {
-      InferenceQueue* queue;
-      const RuntimeConfig* opts;
-      StarPUSetup* starpu;
-      std::shared_ptr<InferenceJob>* pending_job;
-      std::mutex* prepared_mutex;
-      std::condition_variable* prepared_cv;
-      std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs;
-      bool* batching_done;
-    };
-
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
@@ -845,6 +849,41 @@ class StarPUTaskRunnerTestAdapter {
     accessor->prepared_mutex = nullptr;
     accessor->prepared_cv = nullptr;
     accessor->prepared_jobs = nullptr;
+  }
+
+  static void set_batch_collector_queue_to_null(StarPUTaskRunner* runner)
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return;
+    }
+    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
+        runner->batch_collector_.get());
+    accessor->queue = nullptr;
+  }
+
+  static auto get_batch_collector_queue(StarPUTaskRunner* runner)
+      -> starpu_server::InferenceQueue*
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return nullptr;
+    }
+    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
+        runner->batch_collector_.get());
+    return accessor->queue;
+  }
+
+  static void set_batch_collector_pending_job(
+      StarPUTaskRunner* runner,
+      const std::shared_ptr<starpu_server::InferenceJob>& job)
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return;
+    }
+    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
+        runner->batch_collector_.get());
+    if (accessor->pending_job != nullptr) {
+      *accessor->pending_job = job;
+    }
   }
 
   static void release_pending_jobs(
@@ -858,25 +897,30 @@ class StarPUTaskRunnerTestAdapter {
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
       const std::vector<torch::Tensor>& results, double latency_ms)
   {
-    runner->store_completed_job_result(job, results, latency_ms);
+    task_runner_helpers::store_completed_job_result(job, results, latency_ms);
   }
 
   static void ensure_callback_timing(detail::TimingInfo& timing)
   {
-    StarPUTaskRunner::ensure_callback_timing(timing);
+    task_runner_helpers::ensure_callback_timing(timing);
   }
 
   static void record_job_metrics(
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
       StarPUTaskRunner::DurationMs latency, std::size_t batch_size)
   {
-    runner->record_job_metrics(job, latency, batch_size);
+    if (runner != nullptr) {
+      task_runner_helpers::record_job_metrics(
+          *runner, job, latency, batch_size);
+    }
   }
 
   static void finalize_job_completion(
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job)
   {
-    runner->finalize_job_completion(job);
+    if (runner != nullptr) {
+      task_runner_helpers::finalize_job_completion(*runner, job);
+    }
   }
 
   static auto should_hold_job(
@@ -897,6 +941,32 @@ class StarPUTaskRunnerTestAdapter {
     return batch_collector_exceeds_sample_limit(
         runner->batch_collector_.get(), accumulated_samples, job,
         max_samples_cap);
+  }
+
+  static void reserve_inflight_slot(StarPUTaskRunner* runner)
+  {
+    runner->reserve_inflight_slot();
+  }
+
+  static void release_inflight_slot(StarPUTaskRunner* runner)
+  {
+    runner->release_inflight_slot();
+  }
+
+  static auto has_inflight_limit(const StarPUTaskRunner* runner) -> bool
+  {
+    return runner->has_inflight_limit();
+  }
+
+  static auto get_inflight_tasks(const StarPUTaskRunner* runner) -> std::size_t
+  {
+    return runner->inflight_state_.tasks.load(std::memory_order_acquire);
+  }
+
+  static auto get_max_inflight_tasks(const StarPUTaskRunner* runner)
+      -> std::size_t
+  {
+    return runner->inflight_state_.max_tasks;
   }
 };
 }  // namespace starpu_server
@@ -1352,6 +1422,76 @@ TEST_F(
       << trace_content;
 
   starpu_server::perf_observer::reset();
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackReleasesInflightSlotWhenLimitSet)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  reset_runner_with_model(
+      make_model_config(
+          "test_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  runner_->prepare_job_completion_callback(job);
+
+  job->get_on_complete()(
+      std::vector<torch::Tensor>{torch::tensor({2.0F})}, 5.0);
+
+  EXPECT_TRUE(callback_invoked);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackDoesNotReleaseInflightSlotWhenNoLimit)
+{
+  opts_.batching.max_inflight_tasks = 0;
+  reset_runner_with_model(
+      make_model_config(
+          "test_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  ASSERT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::has_inflight_limit(
+      runner_.get()));
+
+  runner_->prepare_job_completion_callback(job);
+
+  job->get_on_complete()(
+      std::vector<torch::Tensor>{torch::tensor({2.0F})}, 5.0);
+
+  EXPECT_TRUE(callback_invoked);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
 }
 
 TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
@@ -2263,11 +2403,10 @@ TEST(SlotHandleLeaseTest, ConstructorPropagatesAcquireFailures)
 
 TEST(BuildRequestIdsForTraceTest, ReturnsEmptyWhenJobMissing)
 {
-  auto fn = resolve_build_request_ids_for_trace_fn();
-  ASSERT_NE(fn, nullptr);
+  namespace internal = starpu_server::task_runner_internal;
 
   std::shared_ptr<starpu_server::InferenceJob> missing_job;
-  const auto ids = fn(missing_job);
+  const auto ids = internal::build_request_ids_for_trace(missing_job);
   EXPECT_TRUE(ids.empty());
 }
 
@@ -2912,6 +3051,138 @@ TEST_F(StarPUTaskRunnerFixture, EnqueuePreparedJobDeliversJobToWaiter)
           runner_.get());
   ASSERT_TRUE(dequeued);
   EXPECT_EQ(dequeued, job);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    EnqueuePreparedJobDoesNotIncrementInflightWhenLimitIsZero)
+{
+  ASSERT_EQ(opts_.batching.max_inflight_tasks, 0U);
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  auto job = make_job(461, {});
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), job);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, EnqueuePreparedJobIncrementsInflightWhenLimitSet)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_max_inflight_tasks(
+          runner_.get()),
+      10U);
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  auto job = make_job(462, {});
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), job);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    EnqueuePreparedJobDoesNotIncrementInflightForShutdownJob)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), shutdown_job);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    EnqueuePreparedJobIncrementsInflightForMultipleJobs)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  for (int i = 0; i < 5; ++i) {
+    auto job = make_job(463 + i, {});
+    starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+        runner_.get(), job);
+  }
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      5U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    EnqueuePreparedJobDoesNotIncrementInflightForNullJob)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
+      runner_.get(), nullptr);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
 }
 
 TEST_F(
@@ -4084,6 +4355,127 @@ TEST(
       aggregated->timing_info().batch_collect_start_time);
 }
 
+TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionClearsPendingSubJobsWithOnComplete)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+
+  auto aggregated_sub_job = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {aggregated_sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  auto pending_job1 = std::make_shared<starpu_server::InferenceJob>();
+  bool callback1_invoked = false;
+  pending_job1->set_on_complete(
+      [&callback1_invoked](const std::vector<torch::Tensor>&, double) {
+        callback1_invoked = true;
+      });
+
+  auto pending_job2 = std::make_shared<starpu_server::InferenceJob>();
+  bool callback2_invoked = false;
+  pending_job2->set_on_complete(
+      [&callback2_invoked](const std::vector<torch::Tensor>&, double) {
+        callback2_invoked = true;
+      });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  pending_jobs.push_back(pending_job1);
+  pending_jobs.push_back(pending_job2);
+  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+
+  ASSERT_TRUE(pending_job1->has_on_complete());
+  ASSERT_TRUE(pending_job2->has_on_complete());
+
+  const auto outputs = std::vector<torch::Tensor>{
+      torch::tensor({1.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 5.0);
+
+  EXPECT_FALSE(pending_job1->has_on_complete());
+  EXPECT_FALSE(pending_job2->has_on_complete());
+  EXPECT_FALSE(callback1_invoked);
+  EXPECT_FALSE(callback2_invoked);
+  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+}
+
+TEST(StarPUTaskRunnerTestAdapter, PropagateCompletionSkipsNullPendingSubJobs)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+
+  auto aggregated_sub_job = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {aggregated_sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  auto valid_pending_job = std::make_shared<starpu_server::InferenceJob>();
+  bool callback_invoked = false;
+  valid_pending_job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  pending_jobs.push_back(nullptr);
+  pending_jobs.push_back(valid_pending_job);
+  pending_jobs.push_back(nullptr);
+  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+
+  ASSERT_TRUE(valid_pending_job->has_on_complete());
+
+  const auto outputs = std::vector<torch::Tensor>{};
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 5.0);
+
+  EXPECT_FALSE(valid_pending_job->has_on_complete());
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+}
+
+TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionSkipsPendingSubJobsWithoutOnComplete)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+
+  auto aggregated_sub_job = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {aggregated_sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  auto job_without_callback = std::make_shared<starpu_server::InferenceJob>();
+  auto job_with_callback = std::make_shared<starpu_server::InferenceJob>();
+  bool callback_invoked = false;
+  job_with_callback->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  pending_jobs.push_back(job_without_callback);
+  pending_jobs.push_back(job_with_callback);
+  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+
+  ASSERT_FALSE(job_without_callback->has_on_complete());
+  ASSERT_TRUE(job_with_callback->has_on_complete());
+
+  const auto outputs = std::vector<torch::Tensor>{};
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 5.0);
+
+  EXPECT_FALSE(job_without_callback->has_on_complete());
+  EXPECT_FALSE(job_with_callback->has_on_complete());
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+}
+
 TEST(TaskRunnerInternal, SliceOutputsForSubJobReturnsDefaultLengthWhenEmpty)
 {
   namespace internal = starpu_server::task_runner_internal;
@@ -4394,6 +4786,137 @@ TEST(TaskRunnerInternal, ReleaseInputsFromAdditionalJobsClearsExtraEntries)
   EXPECT_FALSE(job_zero->get_input_memory_holders().empty());
 }
 
+TEST(TaskRunnerInternal, BuildRequestArrivalUsForTraceReturnsEmptyWhenJobIsNull)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  const auto result = internal::build_request_arrival_us_for_trace(nullptr);
+
+  EXPECT_TRUE(result.empty());
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceReturnsSingleEntryForNonAggregatedJob)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  const auto arrival_time =
+      Clock::time_point{} + std::chrono::microseconds(123456);
+  job->timing_info().enqueued_time = arrival_time;
+
+  const auto result = internal::build_request_arrival_us_for_trace(job);
+
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0], 123456);
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceReturnsZeroForDefaultTimePoint)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->timing_info().enqueued_time = Clock::time_point{};
+
+  const auto result = internal::build_request_arrival_us_for_trace(job);
+
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0], 0);
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceUsesArrivalTimeFromAggregatedSubJobs)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job1 = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job2 = std::make_shared<starpu_server::InferenceJob>();
+
+  const auto arrival1 = Clock::time_point{} + std::chrono::microseconds(100);
+  const auto arrival2 = Clock::time_point{} + std::chrono::microseconds(200);
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {sub_job1,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  sub_jobs.back().arrival_time = arrival1;
+
+  sub_jobs.push_back(
+      {sub_job2,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  sub_jobs.back().arrival_time = arrival2;
+
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto result = internal::build_request_arrival_us_for_trace(aggregated);
+
+  ASSERT_EQ(result.size(), 2U);
+  EXPECT_EQ(result[0], 100);
+  EXPECT_EQ(result[1], 200);
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceFallsBackToJobEnqueuedTimeWhenArrivalIsDefault)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job = std::make_shared<starpu_server::InferenceJob>();
+
+  const auto enqueued_time =
+      Clock::time_point{} + std::chrono::microseconds(300);
+  sub_job->timing_info().enqueued_time = enqueued_time;
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  sub_jobs.back().arrival_time = Clock::time_point{};
+
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto result = internal::build_request_arrival_us_for_trace(aggregated);
+
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0], 300);
+}
+
+TEST(
+    TaskRunnerInternal,
+    BuildRequestArrivalUsForTraceReturnsZeroWhenSubJobExpiredAndArrivalIsDefault)
+{
+  namespace internal = starpu_server::task_runner_internal;
+  using Clock = std::chrono::high_resolution_clock;
+
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  {
+    auto temp_sub_job = std::make_shared<starpu_server::InferenceJob>();
+    sub_jobs.push_back(
+        {temp_sub_job,
+         std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+    sub_jobs.back().arrival_time = Clock::time_point{};
+  }
+
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto result = internal::build_request_arrival_us_for_trace(aggregated);
+
+  ASSERT_EQ(result.size(), 1U);
+  EXPECT_EQ(result[0], 0);
+}
+
 TEST_F(
     StarPUTaskRunnerFixture,
     CollectBatchReturnsOnlyFirstWhenDynamicBatchingDisabled)
@@ -4487,6 +5010,208 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchRespectsConfiguredMaximumBatchSize)
   ASSERT_EQ(collected.size(), 2U);
   EXPECT_EQ(collected[0], first);
   EXPECT_EQ(collected[1], second);
+  EXPECT_EQ(queue_.size(), 1U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, CollectBatchReturnsFirstJobOnlyWhenQueueIsNull)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 3;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(
+      501, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto* original_queue =
+      starpu_server::StarPUTaskRunnerTestAdapter::get_batch_collector_queue(
+          runner_.get());
+  ASSERT_NE(original_queue, nullptr);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_batch_collector_queue_to_null(
+      runner_.get());
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected[0], first);
+}
+
+TEST_F(StarPUTaskRunnerFixture, CollectBatchStopsWhenCoalesceDeadlineExpires)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 5;
+  opts_.batching.batch_coalesce_timeout_ms = 5;
+
+  auto first = make_job(
+      502, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected[0], first);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, CollectBatchWaitsForJobWhenQueueEmptyAndTimeoutSet)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 3;
+  opts_.batching.batch_coalesce_timeout_ms = 100;
+
+  auto first = make_job(
+      503, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto second = make_job(
+      504, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  std::atomic<bool> thread_started{false};
+  std::jthread async_pusher([&] {
+    thread_started.store(true, std::memory_order_release);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    [[maybe_unused]] bool pushed = queue_.push(second);
+  });
+
+  while (!thread_started.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 2U);
+  EXPECT_EQ(collected[0], first);
+  EXPECT_EQ(collected[1], second);
+}
+
+TEST_F(StarPUTaskRunnerFixture, WaitForNextJobDoesNotBlockWhenNoInflightLimit)
+{
+  ASSERT_EQ(opts_.batching.max_inflight_tasks, 0U);
+
+  auto job = make_job(
+      601, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(job));
+
+  auto retrieved = runner_->wait_for_next_job();
+
+  ASSERT_NE(retrieved, nullptr);
+  EXPECT_EQ(retrieved, job);
+}
+
+TEST_F(StarPUTaskRunnerFixture, WaitForNextJobBlocksWhenInflightLimitReached)
+{
+  opts_.batching.max_inflight_tasks = 1;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto job1 = make_job(
+      602, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto job2 = make_job(
+      603, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job1));
+  ASSERT_TRUE(queue_.push(job2));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  std::atomic<bool> thread_started{false};
+  std::atomic<bool> thread_completed{false};
+  std::shared_ptr<starpu_server::InferenceJob> retrieved_job;
+
+  std::jthread waiter([&] {
+    thread_started.store(true, std::memory_order_release);
+    retrieved_job = runner_->wait_for_next_job();
+    thread_completed.store(true, std::memory_order_release);
+  });
+
+  while (!thread_started.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  EXPECT_FALSE(thread_completed.load(std::memory_order_acquire));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  waiter.join();
+  EXPECT_TRUE(thread_completed.load(std::memory_order_acquire));
+  ASSERT_NE(retrieved_job, nullptr);
+  EXPECT_EQ(retrieved_job, job1);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, WaitForNextJobReturnsImmediatelyWhenSlotsAvailable)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto job = make_job(
+      604, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(job));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      2U);
+
+  auto retrieved = runner_->wait_for_next_job();
+
+  ASSERT_NE(retrieved, nullptr);
+  EXPECT_EQ(retrieved, job);
+}
+
+TEST_F(StarPUTaskRunnerFixture, WaitForNextJobReturnsPendingJobFirst)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  auto pending_job = make_job(
+      605, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  auto queued_job = make_job(
+      606, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_batch_collector_pending_job(
+      runner_.get(), pending_job);
+  ASSERT_TRUE(queue_.push(queued_job));
+
+  auto retrieved = runner_->wait_for_next_job();
+
+  ASSERT_NE(retrieved, nullptr);
+  EXPECT_EQ(retrieved, pending_job);
   EXPECT_EQ(queue_.size(), 1U);
 }
 
@@ -4845,4 +5570,157 @@ TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsNonPositiveRankTensors)
 
   EXPECT_FALSE(
       starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ReleaseInflightSlotReturnsImmediatelyWhenNoLimit)
+{
+  ASSERT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::has_inflight_limit(
+      runner_.get()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, ReleaseInflightSlotReturnsWhenCountIsZero)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::has_inflight_limit(
+      runner_.get()));
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_max_inflight_tasks(
+          runner_.get()),
+      10U);
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, ReleaseInflightSlotDecrementsCountWhenNonZero)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ReleaseInflightSlotNotifiesWaitingThreadsWhenDecrementing)
+{
+  opts_.batching.max_inflight_tasks = 1;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  std::atomic<bool> waiting_thread_started{false};
+  std::atomic<bool> waiting_thread_completed{false};
+
+  std::thread waiting_thread([&] {
+    waiting_thread_started.store(true, std::memory_order_release);
+    starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+        runner_.get());
+    waiting_thread_completed.store(true, std::memory_order_release);
+  });
+
+  while (!waiting_thread_started.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  EXPECT_FALSE(waiting_thread_completed.load(std::memory_order_acquire));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+      runner_.get());
+
+  waiting_thread.join();
+  EXPECT_TRUE(waiting_thread_completed.load(std::memory_order_acquire));
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ReserveAndReleaseInflightSlotWorkTogetherWithLimit)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  for (int i = 1; i <= 5; ++i) {
+    starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+        runner_.get());
+    EXPECT_EQ(
+        starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+            runner_.get()),
+        static_cast<std::size_t>(i));
+  }
+
+  for (int i = 4; i >= 0; --i) {
+    starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+        runner_.get());
+    EXPECT_EQ(
+        starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+            runner_.get()),
+        static_cast<std::size_t>(i));
+  }
 }

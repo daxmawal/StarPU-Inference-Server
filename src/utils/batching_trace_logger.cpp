@@ -32,7 +32,8 @@ constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
 constexpr std::string_view kBatchEnqueueTrackName = "batch";
 constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
 constexpr std::string_view kBatchSubmittedTrackName = "batch submitted";
-constexpr std::string_view kSummarySuffix = "_summary.csv";
+constexpr std::string_view kSummaryFilename = "trace.csv";
+constexpr std::string_view kMetricsFilename = "metrics.csv";
 
 enum class FlowDirection : uint8_t {
   None,
@@ -46,12 +47,17 @@ summary_path_from_trace(const std::filesystem::path& trace_path)
     -> std::filesystem::path
 {
   auto summary_path = trace_path;
-  auto stem = summary_path.stem().string();
-  if (stem.empty()) {
-    stem = "batching_trace";
-  }
-  summary_path.replace_filename(stem + std::string{kSummarySuffix});
+  summary_path.replace_filename(kSummaryFilename);
   return summary_path;
+}
+
+auto
+metrics_path_from_trace(const std::filesystem::path& trace_path)
+    -> std::filesystem::path
+{
+  auto metrics_path = trace_path;
+  metrics_path.replace_filename(kMetricsFilename);
+  return metrics_path;
 }
 
 auto
@@ -93,6 +99,14 @@ format_request_arrivals(std::span<const int64_t> request_arrivals)
     oss << request_arrivals[idx];
   }
   return oss.str();
+}
+
+auto
+now_us() -> int64_t
+{
+  return std::chrono::duration_cast<std::chrono::microseconds>(
+             std::chrono::high_resolution_clock::now().time_since_epoch())
+      .count();
 }
 
 auto
@@ -430,6 +444,33 @@ escape_json_string(std::string_view value) -> std::string
   return escaped;
 }
 
+auto
+event_to_string(BatchingTraceEvent event) -> std::string_view
+{
+  switch (event) {
+    case BatchingTraceEvent::RequestQueued:
+      return "request_enqueued";
+    case BatchingTraceEvent::BatchSubmitted:
+      return "batch_submitted";
+  }
+  return "unknown";
+}
+
+auto
+device_type_to_string(DeviceType type) -> std::string_view
+{
+  using enum DeviceType;
+  switch (type) {
+    case CPU:
+      return "cpu";
+    case CUDA:
+      return "cuda";
+    case Unknown:
+    default:
+      return "unknown";
+  }
+}
+
 }  // namespace detail
 
 auto
@@ -445,6 +486,13 @@ BatchingTraceLogger::~BatchingTraceLogger()
   close_stream_locked();
 }
 
+BatchingTraceLogger::SuppressionGuard::~SuppressionGuard()
+{
+  if (logger_ != nullptr) {
+    logger_->set_warmup_suppressed(previous_);
+  }
+}
+
 void
 BatchingTraceLogger::configure(bool enabled, std::string file_path)
 {
@@ -453,13 +501,14 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
   enabled_.store(false, std::memory_order_release);
   close_stream_locked();
   file_path_.clear();
+  rejected_total_.store(0, std::memory_order_relaxed);
 
   if (!enabled) {
     return;
   }
 
   if (file_path.empty()) {
-    file_path = "batching_trace.json";
+    file_path = std::string(kDefaultTraceFileName);
   }
 
   file_path_ = std::move(file_path);
@@ -497,6 +546,21 @@ BatchingTraceLogger::configure_from_runtime(const RuntimeConfig& cfg)
   configure(cfg.batching.trace_enabled, cfg.batching.trace_output_path);
 }
 
+void
+BatchingTraceLogger::set_warmup_suppressed(bool suppressed)
+{
+  warmup_suppressed_.store(suppressed, std::memory_order_release);
+}
+
+auto
+BatchingTraceLogger::scoped_warmup_suppression(bool suppressed)
+    -> SuppressionGuard
+{
+  const bool previous =
+      warmup_suppressed_.exchange(suppressed, std::memory_order_acq_rel);
+  return SuppressionGuard{this, previous};
+}
+
 auto
 BatchingTraceLogger::enabled() const -> bool
 {
@@ -508,6 +572,9 @@ BatchingTraceLogger::log_request_enqueued(
     int request_id, std::string_view model_name, bool is_warmup,
     std::chrono::high_resolution_clock::time_point event_time)
 {
+  if (!logging_enabled()) {
+    return;
+  }
   const auto override_timestamp =
       relative_timestamp_from_time_point(event_time);
   const BatchRecordContext record_context{request_id, kInvalidId, 0};
@@ -521,6 +588,9 @@ BatchingTraceLogger::log_request_enqueued(
 void
 BatchingTraceLogger::log_batch_submitted(const BatchSubmittedLogArgs& args)
 {
+  if (!logging_enabled()) {
+    return;
+  }
   const BatchRecordContext record_context{
       kInvalidId, args.batch_id, args.logical_job_count};
   const WorkerThreadInfo worker_info{
@@ -535,7 +605,7 @@ BatchingTraceLogger::log_batch_build_span(
     int batch_id, std::string_view model_name, std::size_t batch_size,
     TimeRange schedule, std::span<const int> request_ids, bool is_warmup)
 {
-  if (!enabled()) {
+  if (!logging_enabled()) {
     return;
   }
 
@@ -557,7 +627,7 @@ BatchingTraceLogger::log_batch_enqueue_span(
     int batch_id, std::string_view model_name, std::size_t batch_size,
     TimeRange queue_times, std::span<const int> request_ids, bool is_warmup)
 {
-  if (!enabled()) {
+  if (!logging_enabled()) {
     return;
   }
 
@@ -582,7 +652,7 @@ BatchingTraceLogger::log_batch_enqueue_span(
 void
 BatchingTraceLogger::log_batch_compute_span(const BatchComputeLogArgs& args)
 {
-  if (!enabled() || args.worker_id < 0) {
+  if (!logging_enabled() || args.worker_id < 0) {
     return;
   }
 
@@ -615,7 +685,7 @@ BatchingTraceLogger::write_record(
     const WorkerThreadInfo& worker_info, std::span<const int> request_ids,
     std::optional<int64_t> override_timestamp, bool is_warmup)
 {
-  if (!enabled()) {
+  if (!logging_enabled()) {
     return;
   }
 
@@ -628,7 +698,8 @@ BatchingTraceLogger::write_record(
   }
 
   const auto escaped_model = detail::escape_json_string(model_name);
-  const auto worker_type_str = device_type_to_string(worker_info.worker_type);
+  const auto worker_type_str =
+      detail::device_type_to_string(worker_info.worker_type);
   const bool is_worker_lane = worker_info.worker_id >= 0;
   std::string worker_label;
   int thread_id = kRequestEnqueuedTrackId;
@@ -662,7 +733,7 @@ BatchingTraceLogger::write_record(
   const bool is_batch_span = event == BatchingTraceEvent::BatchSubmitted;
 
   std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix << event_to_string(event)
+  line << R"({"name":")" << warmup_prefix << detail::event_to_string(event)
        << R"(","cat":"batching","ph":")" << (is_batch_span ? 'X' : 'i')
        << R"(","ts":)" << timestamp_us;
   if (is_batch_span) {
@@ -725,34 +796,6 @@ BatchingTraceLogger::write_record(
   trace_writer_.write_line(line.str());
 }
 
-auto
-BatchingTraceLogger::event_to_string(BatchingTraceEvent event)
-    -> std::string_view
-{
-  switch (event) {
-    case BatchingTraceEvent::RequestQueued:
-      return "request_enqueued";
-    case BatchingTraceEvent::BatchSubmitted:
-      return "batch_submitted";
-  }
-  return "unknown";
-}
-
-auto
-BatchingTraceLogger::device_type_to_string(DeviceType type) -> std::string_view
-{
-  using enum DeviceType;
-  switch (type) {
-    case CPU:
-      return "cpu";
-    case CUDA:
-      return "cuda";
-    case Unknown:
-    default:
-      return "unknown";
-  }
-}
-
 void
 BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
 {
@@ -765,7 +808,7 @@ BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
   }
 
   const auto escaped_model = detail::escape_json_string(args.model_name);
-  const auto worker_type_str = device_type_to_string(args.worker_type);
+  const auto worker_type_str = detail::device_type_to_string(args.worker_type);
   const int64_t end_ts = args.start_ts + duration_us;
   const char* warmup_prefix = args.is_warmup ? "warming_" : "";
 
@@ -901,7 +944,7 @@ BatchingTraceLogger::write_batch_build_span(
 void
 BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
 {
-  if (!enabled() || args.is_warmup) {
+  if (!logging_enabled() || args.is_warmup) {
     return;
   }
   std::lock_guard lock(mutex_);
@@ -909,6 +952,44 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
     return;
   }
   write_summary_line_locked(args);
+}
+
+void
+BatchingTraceLogger::log_queue_size(std::size_t queue_size)
+{
+  if (!logging_enabled()) {
+    return;
+  }
+  const auto timestamp = now_us();
+  std::lock_guard lock(mutex_);
+  if (!trace_start_initialized_ || !queue_metrics_stream_.is_open()) {
+    return;
+  }
+  const QueueMetric metric{
+      .timestamp_us = relative_timestamp_us(timestamp),
+      .queue_size = queue_size,
+      .rejected_total = rejected_total_.load(std::memory_order_relaxed)};
+  write_queue_metric_locked(metric);
+}
+
+void
+BatchingTraceLogger::log_request_rejected(std::size_t queue_size)
+{
+  if (!logging_enabled()) {
+    return;
+  }
+  const auto timestamp = now_us();
+  const auto rejected =
+      rejected_total_.fetch_add(1, std::memory_order_relaxed) + 1;
+  std::lock_guard lock(mutex_);
+  if (!trace_start_initialized_ || !queue_metrics_stream_.is_open()) {
+    return;
+  }
+  const QueueMetric metric{
+      .timestamp_us = relative_timestamp_us(timestamp),
+      .queue_size = queue_size,
+      .rejected_total = rejected};
+  write_queue_metric_locked(metric);
 }
 
 auto
@@ -931,14 +1012,6 @@ BatchingTraceLogger::close_stream_locked()
   trace_start_initialized_ = false;
   worker_lane_manager_.reset();
   request_timeline_.reset();
-}
-
-auto
-BatchingTraceLogger::now_us() -> int64_t
-{
-  return std::chrono::duration_cast<std::chrono::microseconds>(
-             std::chrono::high_resolution_clock::now().time_since_epoch())
-      .count();
 }
 
 auto
@@ -969,6 +1042,12 @@ BatchingTraceLogger::relative_timestamp_from_time_point(
   return relative_timestamp_us(absolute_us);
 }
 
+auto
+BatchingTraceLogger::logging_enabled() const -> bool
+{
+  return enabled() && !warmup_suppressed_.load(std::memory_order_acquire);
+}
+
 void
 BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
 {
@@ -980,7 +1059,7 @@ BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
   const auto escaped_arrivals = escape_csv_field(request_arrivals_string);
   summary_stream_ << args.batch_id << ",\"" << escaped_model << "\","
                   << args.worker_id << ",\""
-                  << device_type_to_string(args.worker_type) << "\","
+                  << detail::device_type_to_string(args.worker_type) << "\","
                   << args.device_id << ',' << args.batch_size << ",\""
                   << escaped_requests << "\",\"" << escaped_arrivals << "\","
                   << std::format("{:.3f}", args.queue_ms) << ','
@@ -1012,6 +1091,9 @@ BatchingTraceLogger::configure_summary_writer(
       << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
          "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
          "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,warmup\n";
+
+  [[maybe_unused]] const bool queue_writer_ready =
+      configure_queue_metrics_writer(trace_path);
   return true;
 }
 
@@ -1021,6 +1103,45 @@ BatchingTraceLogger::close_summary_writer()
   if (summary_stream_.is_open()) {
     summary_stream_.close();
   }
+  close_queue_metrics_writer();
+}
+
+void
+BatchingTraceLogger::close_queue_metrics_writer()
+{
+  if (queue_metrics_stream_.is_open()) {
+    queue_metrics_stream_.close();
+  }
+}
+
+auto
+BatchingTraceLogger::configure_queue_metrics_writer(
+    const std::filesystem::path& trace_path) -> bool
+{
+  close_queue_metrics_writer();
+  queue_metrics_path_ = metrics_path_from_trace(trace_path);
+  queue_metrics_stream_.open(
+      queue_metrics_path_, std::ios::out | std::ios::trunc);
+  if (!queue_metrics_stream_.is_open()) {
+    log_warning(std::format(
+        "Failed to open queue metrics file '{}'; queue metrics export "
+        "disabled.",
+        queue_metrics_path_.string()));
+    queue_metrics_path_.clear();
+    return false;
+  }
+  queue_metrics_stream_ << "timestamp_us,queue_size,rejected_total\n";
+  return true;
+}
+
+void
+BatchingTraceLogger::write_queue_metric_locked(const QueueMetric& metric)
+{
+  if (!queue_metrics_stream_.is_open()) {
+    return;
+  }
+  queue_metrics_stream_ << metric.timestamp_us << ',' << metric.queue_size
+                        << ',' << metric.rejected_total << '\n';
 }
 
 }  // namespace starpu_server

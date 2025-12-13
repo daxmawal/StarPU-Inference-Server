@@ -910,7 +910,8 @@ TEST(ConfigLoader, ParsesTraceOutputDirectory)
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
-  const auto expected_path = (trace_dir / "batching_trace.json").string();
+  const auto expected_path =
+      (trace_dir / std::string(kDefaultTraceFileName)).string();
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.batching.trace_output_path, expected_path);
 }
@@ -1334,6 +1335,143 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.batching.delay_us, 15);
   EXPECT_EQ(cfg.server_address, "127.0.0.1:50051");
+}
+
+TEST(ConfigLoader, ParsesMaxInflightTasks)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_max_inflight_tasks_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "name: max_inflight_tasks_test\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "pool_size: 1\n";
+  yaml << "max_inflight_tasks: 100\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_max_inflight_tasks.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.batching.max_inflight_tasks, 100U);
+}
+
+TEST(ConfigLoader, MaxInflightTasksRejectsNegative)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_negative_inflight_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "name: negative_inflight\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_inflight_tasks: -1\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_negative_inflight.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: max_inflight_tasks must be >= 0 and fit in "
+      "size_t";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, ParsesMaxQueueSize)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_max_queue_size_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "name: max_queue_size_test\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "pool_size: 1\n";
+  yaml << "max_queue_size: 50\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_max_queue_size.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.batching.max_queue_size, 50U);
+}
+
+TEST(ConfigLoader, MaxQueueSizeRejectsNonPositive)
+{
+  const auto model_path = std::filesystem::temp_directory_path() /
+                          "config_loader_zero_queue_model.pt";
+  std::ofstream(model_path).put('\0');
+
+  std::ostringstream yaml;
+  yaml << "name: zero_queue\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_queue_size: 0\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_zero_queue.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: max_queue_size must be > 0 and fit in size_t";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
 }
 
 TEST(ConfigLoader, MissingModelSkipsParsingOtherKeys)

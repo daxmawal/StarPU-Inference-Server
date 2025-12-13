@@ -95,7 +95,7 @@ TEST(MetricsSampling, UpdatesGpuAndCpuGaugesOnSuccess)
 
   metrics.run_sampling_request_nb();
 
-  const auto families = metrics.registry->Collect();
+  const auto families = metrics.registry()->Collect();
 
   const auto* cpu_family = FindFamily(families, "system_cpu_usage_percent");
   ASSERT_NE(cpu_family, nullptr);

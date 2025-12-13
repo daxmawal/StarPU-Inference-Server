@@ -23,9 +23,23 @@ namespace starpu_server {
 class BatchCollector;
 class SlotManager;
 class ResultDispatcher;
+class StarPUTaskRunner;
+
+namespace task_runner_helpers {
+void store_completed_job_result(
+    const std::shared_ptr<InferenceJob>& job,
+    const std::vector<torch::Tensor>& results, double latency_ms);
+void ensure_callback_timing(detail::TimingInfo& timing);
+void record_job_metrics(
+    StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job,
+    std::chrono::duration<double, std::milli> latency, std::size_t batch_size);
+void finalize_job_completion(
+    StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
+}  // namespace task_runner_helpers
 
 class InferenceTask;
 struct InferenceCallbackContext;
+
 // ============================================================================
 // StarPUTaskRunner
 // ----------------------------------------------------------------------------
@@ -73,6 +87,14 @@ class StarPUTaskRunner {
       const detail::TimingInfo& timing_info) const;
 
  private:
+  friend void task_runner_helpers::record_job_metrics(
+      StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job,
+      std::chrono::duration<double, std::milli> latency,
+      std::size_t batch_size);
+  friend void task_runner_helpers::finalize_job_completion(
+      StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
+  friend struct InflightReleaseGuard;
+
   friend class StarPUTaskRunnerTestAdapter;
   friend class SlotManager;
   friend class ResultDispatcher;
@@ -136,14 +158,6 @@ class StarPUTaskRunner {
   static void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
-  void store_completed_job_result(
-      const std::shared_ptr<InferenceJob>& job,
-      const std::vector<torch::Tensor>& results, double latency_ms) const;
-  static void ensure_callback_timing(detail::TimingInfo& timing);
-  void record_job_metrics(
-      const std::shared_ptr<InferenceJob>& job, DurationMs latency,
-      std::size_t batch_size) const;
-  void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
   void trace_batch_if_enabled(
       const std::shared_ptr<InferenceJob>& job, bool warmup_job,
       int submission_id) const;
@@ -152,6 +166,26 @@ class StarPUTaskRunner {
   void finalize_job_after_exception(
       const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
       std::string_view log_prefix, int job_id);
+  void reserve_inflight_slot();
+  void release_inflight_slot();
+  [[nodiscard]] auto has_inflight_limit() const -> bool
+  {
+    return inflight_state_.max_tasks > 0;
+  }
+
+  struct InflightState {
+    std::atomic<std::size_t> tasks{0};
+    std::size_t max_tasks{0};
+    std::mutex mutex;
+    std::condition_variable cv;
+  };
+
+  struct PreparedState {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::shared_ptr<InferenceJob>> jobs;
+    bool batching_done = false;
+  };
 
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;
@@ -165,10 +199,9 @@ class StarPUTaskRunner {
   std::shared_ptr<InferenceJob> pending_job_;
   std::atomic<int> next_submission_id_{0};
   std::jthread batching_thread_;
-  std::mutex prepared_mutex_;
-  std::condition_variable prepared_cv_;
-  std::deque<std::shared_ptr<InferenceJob>> prepared_jobs_;
-  bool batching_done_ = false;
+
+  InflightState inflight_state_;
+  PreparedState prepared_state_;
 
   std::unique_ptr<BatchCollector> batch_collector_;
   std::unique_ptr<SlotManager> slot_manager_;

@@ -172,6 +172,8 @@ verbosity: 2
 address: 127.0.0.1:50051
 metrics_port: 9100
 max_batch_size: 32
+max_queue_size: 100
+max_inflight_tasks: 256
 batch_coalesce_timeout_ms: 1000
 dynamic_batching: true
 sync: false

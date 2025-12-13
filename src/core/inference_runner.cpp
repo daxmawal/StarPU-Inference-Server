@@ -116,6 +116,22 @@ set_cuda_device_count_override(std::optional<int> override_count)
 }
 
 auto
+sanitize_cuda_device_count(long long raw_count) -> int
+{
+  if (raw_count < 0) {
+    throw InvalidGpuDeviceException(
+        "torch::cuda::device_count returned a negative value.");
+  }
+  if (raw_count > std::numeric_limits<int>::max()) {
+    throw InvalidGpuDeviceException(std::format(
+        "torch::cuda::device_count returned {}, which exceeds int range.",
+        raw_count));
+  }
+
+  return static_cast<int>(raw_count);
+}
+
+auto
 get_cuda_device_count() -> int
 {
   if (const auto& override_storage = cuda_device_count_override_storage();
@@ -124,22 +140,10 @@ get_cuda_device_count() -> int
   }
 
   using DeviceCountSigned = long long;
-  using DeviceCountUnsigned = std::make_unsigned_t<DeviceCountSigned>;
-  const auto device_count_signed = static_cast<DeviceCountSigned>(
-      static_cast<int>(torch::cuda::device_count()));
-  if (device_count_signed < 0) {
-    throw InvalidGpuDeviceException(
-        "torch::cuda::device_count returned a negative value.");
-  }
-  const auto raw_count = static_cast<long long>(
-      static_cast<DeviceCountUnsigned>(device_count_signed));
-  if (raw_count > std::numeric_limits<int>::max()) {
-    throw InvalidGpuDeviceException(std::format(
-        "torch::cuda::device_count returned {}, which exceeds int range.",
-        raw_count));
-  }
+  const auto device_count_signed =
+      static_cast<DeviceCountSigned>(torch::cuda::device_count());
 
-  return static_cast<int>(raw_count);
+  return sanitize_cuda_device_count(device_count_signed);
 }
 
 void
@@ -285,10 +289,12 @@ client_worker(
       model_name = std::string(job->model_name());
     }
 
-    if (!queue.push(std::move(job))) {
+    bool queue_full = false;
+    if (!queue.push(std::move(job), &queue_full)) {
+      const auto* const reason =
+          queue_full ? "queue is full" : "queue shutting down";
       log_warning(std::format(
-          "[Client] Failed to enqueue job {}: queue shutting down",
-          request_id));
+          "[Client] Failed to enqueue job {}: {}", request_id, reason));
       break;
     }
     client_utils::log_job_enqueued(opts, request_id, request_nb, enqueued_now);

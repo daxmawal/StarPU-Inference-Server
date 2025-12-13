@@ -18,6 +18,7 @@
 #undef private
 
 #include "utils/batching_trace_logger.cpp"  // NOLINT(bugprone-suspicious-include)
+#include "utils/runtime_config.hpp"
 
 namespace starpu_server { namespace {
 
@@ -26,7 +27,7 @@ make_temp_trace_path() -> std::filesystem::path
 {
   const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
   return std::filesystem::temp_directory_path() /
-         std::format("batching_trace_test_{}.json", now);
+         std::format("perfetto_trace_test_{}.json", now);
 }
 
 auto
@@ -34,11 +35,7 @@ make_summary_path(const std::filesystem::path& trace_path)
     -> std::filesystem::path
 {
   auto summary = trace_path;
-  auto stem = summary.stem().string();
-  if (stem.empty()) {
-    stem = "batching_trace";
-  }
-  summary.replace_filename(stem + std::string{"_summary.csv"});
+  summary.replace_filename("trace.csv");
   return summary;
 }
 
@@ -48,6 +45,9 @@ remove_trace_outputs(const std::filesystem::path& trace_path)
   std::error_code ec;
   std::filesystem::remove(trace_path, ec);
   std::filesystem::remove(make_summary_path(trace_path), ec);
+  auto metrics = trace_path;
+  metrics.replace_filename("metrics.csv");
+  std::filesystem::remove(metrics, ec);
 }
 
 auto
@@ -134,19 +134,19 @@ TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
 TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
 {
   BatchingTraceLogger logger;
-  remove_trace_outputs("batching_trace.json");
+  remove_trace_outputs(std::string(kDefaultTraceFileName));
 
   logger.configure(true, "");
   EXPECT_TRUE(logger.enabled());
-  EXPECT_EQ(logger.file_path_, "batching_trace.json");
+  EXPECT_EQ(logger.file_path_, std::string(kDefaultTraceFileName));
 
   {
-    std::ifstream stream("batching_trace.json");
+    std::ifstream stream{std::string(kDefaultTraceFileName)};
     EXPECT_TRUE(stream.is_open());
   }
 
   logger.configure(false, "");
-  remove_trace_outputs("batching_trace.json");
+  remove_trace_outputs(std::string(kDefaultTraceFileName));
 }
 
 TEST(BatchingTraceLoggerTest, ConfigureHandlesDirectoryCreationFailures)
@@ -721,8 +721,8 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
 
 TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
 {
-  const auto value = BatchingTraceLogger::event_to_string(
-      static_cast<BatchingTraceEvent>(255));
+  const auto value =
+      detail::event_to_string(static_cast<BatchingTraceEvent>(255));
   EXPECT_EQ(value, "unknown");
 }
 

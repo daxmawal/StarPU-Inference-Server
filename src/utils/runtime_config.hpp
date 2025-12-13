@@ -28,6 +28,8 @@ inline constexpr std::size_t kDefaultMessageSizeMiB = 32ULL;
 inline constexpr std::size_t kDefaultMinMessageBytes =
     kDefaultMessageSizeMiB * kBytesPerMiB;
 inline constexpr std::size_t kDefaultPregenInputs = 10ULL;
+inline constexpr std::size_t kDefaultMaxQueueSize = 100ULL;
+inline constexpr std::string_view kDefaultTraceFileName = "perfetto_trace.json";
 inline constexpr double kDefaultRelativeTolerance = 1e-3;
 inline constexpr double kDefaultAbsoluteTolerance = 1e-5;
 inline constexpr int kDefaultMetricsPort = 9090;
@@ -83,6 +85,8 @@ struct RuntimeConfig {
     int max_batch_size = 1;
     int pool_size = 0;
     std::size_t max_message_bytes = kDefaultMinMessageBytes;
+    std::size_t max_queue_size = kDefaultMaxQueueSize;
+    std::size_t max_inflight_tasks = 0;
     size_t pregen_inputs = kDefaultPregenInputs;
     size_t warmup_pregen_inputs = 2;
     int warmup_request_nb = 2;
@@ -90,7 +94,7 @@ struct RuntimeConfig {
     bool synchronous = false;
     bool dynamic_batching = true;
     bool trace_enabled = false;
-    std::string trace_output_path = "batching_trace.json";
+    std::string trace_output_path = std::string(kDefaultTraceFileName);
   };
 
   struct ValidationSettings {

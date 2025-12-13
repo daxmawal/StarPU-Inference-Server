@@ -310,6 +310,7 @@ auto get_worker_thread_launcher() -> WorkerThreadLauncher;
 void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 
 namespace detail {
+auto sanitize_cuda_device_count(long long raw_count) -> int;
 void client_worker(
     InferenceQueue& queue, const RuntimeConfig& opts,
     const std::vector<torch::Tensor>& outputs_ref, int request_nb);

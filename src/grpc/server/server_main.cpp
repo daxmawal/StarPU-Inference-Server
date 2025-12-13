@@ -149,7 +149,7 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
   const auto summary_path_opt = tracer.summary_file_path();
   if (!summary_path_opt) {
     starpu_server::log_warning(
-        "Tracing was enabled but no batching_trace_summary.csv was produced; "
+        "Tracing was enabled but no trace.csv was produced; "
         "skipping plot generation.");
     return;
   }
@@ -281,7 +281,7 @@ launch_threads(
     std::vector<torch::jit::script::Module>& models_gpu,
     std::vector<torch::Tensor>& reference_outputs)
 {
-  static starpu_server::InferenceQueue queue;
+  static starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
   auto& server_ctx = server_context();
   server_ctx.queue_ptr = &queue;
 

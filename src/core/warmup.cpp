@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 
+#include "batching_trace_logger.hpp"
 #include "client_utils.hpp"
 #include "exceptions.hpp"
 #include "inference_queue.hpp"
@@ -140,10 +141,11 @@ WarmupRunner::client_worker(
       job->timing_info().enqueued_time = enqueued_now;
       job->timing_info().last_enqueued_time = enqueued_now;
 
-      if (!queue.push(std::move(job))) {
+      if (bool queue_full = false; !queue.push(std::move(job), &queue_full)) {
+        const auto* const reason =
+            queue_full ? "queue is full" : "queue shutting down";
         log_warning(std::format(
-            "[Warmup] Failed to enqueue job {}: queue shutting down",
-            job_request_id));
+            "[Warmup] Failed to enqueue job {}: {}", job_request_id, reason));
         queue.shutdown();
         return;
       }
@@ -174,6 +176,9 @@ WarmupRunner::run(int request_nb_per_worker)
     return;
   }
 
+  auto& tracer = BatchingTraceLogger::instance();
+  auto suppression_guard = tracer.scoped_warmup_suppression(true);
+
   auto device_workers = collect_device_workers(opts_);
   if (device_workers.empty()) {
     log_info(
@@ -182,35 +187,43 @@ WarmupRunner::run(int request_nb_per_worker)
     return;
   }
 
-  InferenceQueue queue;
+  InferenceQueue queue(std::numeric_limits<std::size_t>::max());
   std::atomic dummy_completed_jobs = 0;
   std::mutex dummy_mutex;
   std::condition_variable dummy_cv;
   std::exception_ptr thread_exception;
   std::mutex thread_exception_mutex;
 
-  const auto store_thread_exception = [&](std::exception_ptr exception) {
-    std::lock_guard lock(thread_exception_mutex);
-    if (!thread_exception) {
-      thread_exception = std::move(exception);
-    }
-  };
-  const auto load_thread_exception = [&]() -> std::exception_ptr {
+  const auto store_thread_exception =
+      [&thread_exception,
+       &thread_exception_mutex](std::exception_ptr exception) {
+        std::lock_guard lock(thread_exception_mutex);
+        if (!thread_exception) {
+          thread_exception = exception;
+        }
+      };
+  const auto load_thread_exception = [&]() {
     std::lock_guard lock(thread_exception_mutex);
     return thread_exception;
   };
-  const auto notify_thread_exception = [&](std::exception_ptr exception) {
-    store_thread_exception(std::move(exception));
-    queue.shutdown();
-    dummy_cv.notify_all();
-  };
+  const auto notify_thread_exception =
+      [&store_thread_exception, &queue,
+       &dummy_cv](std::exception_ptr exception) {
+        store_thread_exception(exception);
+        queue.shutdown();
+        dummy_cv.notify_all();
+      };
 
   StarPUTaskRunnerConfig config{};
   config.queue = &queue;
   config.model_cpu = &model_cpu_;
   config.models_gpu = &models_gpu_;
   config.starpu = &starpu_;
-  config.opts = &opts_;
+  RuntimeConfig warmup_opts = opts_;
+  warmup_opts.batching.trace_enabled = false;
+  warmup_opts.batching.max_inflight_tasks = 0;
+  warmup_opts.batching.max_queue_size = std::numeric_limits<std::size_t>::max();
+  config.opts = &warmup_opts;
   config.completed_jobs = &dummy_completed_jobs;
   config.all_done_cv = &dummy_cv;
   StarPUTaskRunner worker(config);
@@ -224,7 +237,8 @@ WarmupRunner::run(int request_nb_per_worker)
     }
   });
 
-  std::jthread client([&, request_nb_per_worker]() {
+  std::jthread client([this, &device_workers, &queue, &notify_thread_exception,
+                       request_nb_per_worker]() {
     try {
       client_worker(device_workers, queue, request_nb_per_worker);
     }

@@ -99,6 +99,8 @@ class TraceFileWriter {
 };
 
 auto escape_json_string(std::string_view value) -> std::string;
+auto event_to_string(BatchingTraceEvent event) -> std::string_view;
+auto device_type_to_string(DeviceType type) -> std::string_view;
 
 }  // namespace detail
 
@@ -172,6 +174,11 @@ class BatchingTraceLogger {
     double total_ms;
     bool is_warmup = false;
   };
+  struct QueueMetric {
+    int64_t timestamp_us = 0;
+    std::size_t queue_size = 0;
+    std::size_t rejected_total = 0;
+  };
 
   static auto instance() -> BatchingTraceLogger&;
   BatchingTraceLogger() = default;
@@ -181,8 +188,40 @@ class BatchingTraceLogger {
   BatchingTraceLogger(BatchingTraceLogger&&) = delete;
   auto operator=(BatchingTraceLogger&&) -> BatchingTraceLogger& = delete;
 
+  class SuppressionGuard {
+   public:
+    SuppressionGuard(BatchingTraceLogger* logger, bool previous)
+        : logger_(logger), previous_(previous)
+    {
+    }
+    SuppressionGuard(const SuppressionGuard&) = delete;
+    auto operator=(const SuppressionGuard&) -> SuppressionGuard& = delete;
+    SuppressionGuard(SuppressionGuard&& other) noexcept
+        : logger_(other.logger_), previous_(other.previous_)
+    {
+      other.logger_ = nullptr;
+    }
+    auto operator=(SuppressionGuard&& other) noexcept -> SuppressionGuard&
+    {
+      if (this != &other) {
+        logger_ = other.logger_;
+        previous_ = other.previous_;
+        other.logger_ = nullptr;
+      }
+      return *this;
+    }
+    ~SuppressionGuard();
+
+   private:
+    BatchingTraceLogger* logger_;
+    bool previous_;
+  };
+
   void configure(bool enabled, std::string file_path);
   void configure_from_runtime(const RuntimeConfig& cfg);
+  void set_warmup_suppressed(bool suppressed);
+  [[nodiscard]] auto scoped_warmup_suppression(bool suppressed = true)
+      -> SuppressionGuard;
 
   [[nodiscard]] auto enabled() const -> bool;
 
@@ -200,6 +239,8 @@ class BatchingTraceLogger {
       bool is_warmup = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
   void log_batch_summary(const BatchSummaryLogArgs& args);
+  void log_queue_size(std::size_t queue_size);
+  void log_request_rejected(std::size_t queue_size = 0);
   [[nodiscard]] auto summary_file_path() const
       -> std::optional<std::filesystem::path>;
 
@@ -218,19 +259,19 @@ class BatchingTraceLogger {
       std::string_view model_name, int batch_id, std::size_t batch_size,
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
+  void write_queue_metric_locked(const QueueMetric& metric);
   auto configure_summary_writer(const std::filesystem::path& trace_path)
       -> bool;
   void close_summary_writer();
-  [[nodiscard]] static auto event_to_string(BatchingTraceEvent event)
-      -> std::string_view;
-  [[nodiscard]] static auto device_type_to_string(DeviceType type)
-      -> std::string_view;
+  void close_queue_metrics_writer();
+  [[nodiscard]] auto configure_queue_metrics_writer(
+      const std::filesystem::path& trace_path) -> bool;
   [[nodiscard]] auto relative_timestamp_from_time_point(
       std::chrono::high_resolution_clock::time_point time_point) const
       -> std::optional<int64_t>;
+  [[nodiscard]] auto logging_enabled() const -> bool;
 
   void close_stream_locked();
-  [[nodiscard]] static auto now_us() -> int64_t;
   [[nodiscard]] auto relative_timestamp_us(int64_t absolute_us) const
       -> int64_t;
 
@@ -245,6 +286,10 @@ class BatchingTraceLogger {
   detail::WorkerLaneManager worker_lane_manager_;
   std::ofstream summary_stream_;
   std::filesystem::path summary_file_path_;
+  std::ofstream queue_metrics_stream_;
+  std::filesystem::path queue_metrics_path_;
+  std::atomic<std::size_t> rejected_total_{0};
+  std::atomic<bool> warmup_suppressed_{false};
 };
 
 }  // namespace starpu_server

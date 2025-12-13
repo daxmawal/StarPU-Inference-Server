@@ -49,6 +49,12 @@ auto resize_outputs_for_batch(
 void release_inputs_from_additional_jobs(
     std::vector<std::shared_ptr<InferenceJob>>& jobs);
 
+auto build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
+    -> std::vector<int>;
+
+auto build_request_arrival_us_for_trace(
+    const std::shared_ptr<InferenceJob>& job) -> std::vector<int64_t>;
+
 void set_submit_inference_task_hook(std::function<void()> hook);
 void reset_submit_inference_task_hook();
 
