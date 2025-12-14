@@ -27,6 +27,21 @@ AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
   ASSERT_NE(metrics->queue_size_gauge(), nullptr);
   ASSERT_NE(metrics->inflight_tasks_gauge(), nullptr);
   ASSERT_NE(metrics->max_inflight_tasks_gauge(), nullptr);
+  ASSERT_NE(metrics->server_health_state_gauge(), nullptr);
+  ASSERT_NE(metrics->queue_fill_ratio_gauge(), nullptr);
+  ASSERT_NE(metrics->queue_capacity_gauge(), nullptr);
+  ASSERT_NE(metrics->queue_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->batch_collect_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->submit_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->scheduling_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->codelet_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->inference_compute_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->callback_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->preprocess_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->postprocess_latency_histogram(), nullptr);
+  ASSERT_NE(metrics->batch_size_histogram(), nullptr);
+  ASSERT_NE(metrics->logical_batch_size_histogram(), nullptr);
+  ASSERT_NE(metrics->requests_by_status_family(), nullptr);
 }
 
 auto
@@ -51,10 +66,24 @@ TEST(Metrics, InitializesPointersAndRegistry)
   const auto families = metrics->registry()->Collect();
   EXPECT_TRUE(HasMetric(families, "requests_total"));
   EXPECT_TRUE(HasMetric(families, "requests_rejected_total"));
+  EXPECT_TRUE(HasMetric(families, "requests_by_status_total"));
   EXPECT_TRUE(HasMetric(families, "inference_latency_ms"));
   EXPECT_TRUE(HasMetric(families, "inference_queue_size"));
+  EXPECT_TRUE(HasMetric(families, "inference_max_queue_size"));
+  EXPECT_TRUE(HasMetric(families, "inference_queue_fill_ratio"));
   EXPECT_TRUE(HasMetric(families, "inference_inflight_tasks"));
   EXPECT_TRUE(HasMetric(families, "inference_max_inflight_tasks"));
+  EXPECT_TRUE(HasMetric(families, "server_health_state"));
+  EXPECT_TRUE(HasMetric(families, "inference_batch_size"));
+  EXPECT_TRUE(HasMetric(families, "inference_logical_batch_size"));
+  EXPECT_TRUE(HasMetric(families, "inference_queue_latency_ms"));
+  EXPECT_TRUE(HasMetric(families, "inference_batch_collect_ms"));
+  EXPECT_TRUE(HasMetric(families, "inference_submit_latency_ms"));
+  EXPECT_TRUE(HasMetric(families, "inference_scheduling_latency_ms"));
+  EXPECT_TRUE(HasMetric(families, "inference_compute_latency_ms"));
+  EXPECT_TRUE(HasMetric(families, "inference_callback_latency_ms"));
+  EXPECT_TRUE(HasMetric(families, "inference_preprocess_latency_ms"));
+  EXPECT_TRUE(HasMetric(families, "inference_postprocess_latency_ms"));
 
   shutdown_metrics();
   EXPECT_EQ(get_metrics(), nullptr);

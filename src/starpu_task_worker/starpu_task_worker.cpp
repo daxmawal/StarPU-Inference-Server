@@ -878,6 +878,10 @@ ResultDispatcher::record_job_metrics(
     StarPUTaskRunner::DurationMs latency, std::size_t batch_size) const
 {
   auto& timing = job->timing_info();
+  observe_batch_size(batch_size);
+  const auto logical_jobs =
+      static_cast<std::size_t>(std::max(1, job->logical_job_count()));
+  observe_logical_batch_size(logical_jobs);
   perf_observer::record_job(
       timing.enqueued_time, timing.callback_end_time, batch_size,
       is_warmup_job(job));

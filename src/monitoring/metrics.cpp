@@ -7,12 +7,14 @@
 #include <chrono>
 #include <exception>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -89,6 +91,44 @@ using monitoring::detail::CpuTotals;
 
 const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
     1, 5, 10, 25, 50, 100, 250, 500, 1000};
+const prometheus::Histogram::BucketBoundaries kBatchSizeBuckets{
+    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+
+auto
+status_code_label(int code) -> std::string
+{
+  // Common gRPC status codes; fall back to numeric.
+  switch (code) {
+    case 0:
+      return "OK";
+    case 3:
+      return "INVALID_ARGUMENT";
+    case 4:
+      return "DEADLINE_EXCEEDED";
+    case 5:
+      return "NOT_FOUND";
+    case 7:
+      return "PERMISSION_DENIED";
+    case 8:
+      return "RESOURCE_EXHAUSTED";
+    case 9:
+      return "FAILED_PRECONDITION";
+    case 10:
+      return "ABORTED";
+    case 11:
+      return "OUT_OF_RANGE";
+    case 12:
+      return "UNIMPLEMENTED";
+    case 13:
+      return "INTERNAL";
+    case 14:
+      return "UNAVAILABLE";
+    case 16:
+      return "UNAUTHENTICATED";
+    default:
+      return std::to_string(code);
+  }
+}
 
 #ifndef STARPU_HAVE_NVML
 auto
@@ -358,6 +398,16 @@ MetricsRegistry::initialize(
                              .Register(*registry_);
   requests_total_ = &counter_family.Add({});
 
+  auto& status_family = prometheus::BuildCounter()
+                            .Name("requests_by_status_total")
+                            .Help(
+                                "Total requests grouped by gRPC status code "
+                                "and model name")
+                            .Register(*registry_);
+  requests_by_status_family_ = &status_family;
+  (void)requests_by_status_family_->Add(
+      {{"code", "unlabeled"}, {"model", "unlabeled"}});
+
   auto& rejected_family =
       prometheus::BuildCounter()
           .Name("requests_rejected_total")
@@ -376,6 +426,22 @@ MetricsRegistry::initialize(
                            .Help("Number of jobs in the inference queue")
                            .Register(*registry_);
   queue_size_gauge_ = &gauge_family.Add({});
+
+  auto& queue_capacity_family = prometheus::BuildGauge()
+                                    .Name("inference_max_queue_size")
+                                    .Help(
+                                        "Configured maximum inference queue "
+                                        "capacity")
+                                    .Register(*registry_);
+  queue_capacity_gauge_ = &queue_capacity_family.Add({});
+
+  auto& queue_fill_family = prometheus::BuildGauge()
+                                .Name("inference_queue_fill_ratio")
+                                .Help(
+                                    "Queue occupancy ratio "
+                                    "(queue_size / max_queue_size)")
+                                .Register(*registry_);
+  queue_fill_ratio_gauge_ = &queue_fill_family.Add({});
 
   auto& inflight_family = prometheus::BuildGauge()
                               .Name("inference_inflight_tasks")
@@ -398,6 +464,96 @@ MetricsRegistry::initialize(
                          .Help("System-wide CPU utilization percentage (0-100)")
                          .Register(*registry_);
   system_cpu_usage_percent_ = &cpu_family.Add({});
+
+  auto& health_family = prometheus::BuildGauge()
+                            .Name("server_health_state")
+                            .Help(
+                                "Server health state: 1=ready, 0=not ready or "
+                                "shutting down")
+                            .Register(*registry_);
+  server_health_state_ = &health_family.Add({});
+
+  auto& queue_latency_family = prometheus::BuildHistogram()
+                                   .Name("inference_queue_latency_ms")
+                                   .Help("Time spent waiting in the queue")
+                                   .Register(*registry_);
+  queue_latency_histogram_ =
+      &queue_latency_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& batch_collect_family = prometheus::BuildHistogram()
+                                   .Name("inference_batch_collect_ms")
+                                   .Help("Time spent collecting a batch")
+                                   .Register(*registry_);
+  batch_collect_latency_histogram_ =
+      &batch_collect_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& submit_family = prometheus::BuildHistogram()
+                            .Name("inference_submit_latency_ms")
+                            .Help(
+                                "Time spent between dequeue and submission "
+                                "into StarPU")
+                            .Register(*registry_);
+  submit_latency_histogram_ =
+      &submit_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& scheduling_family = prometheus::BuildHistogram()
+                                .Name("inference_scheduling_latency_ms")
+                                .Help(
+                                    "Time spent waiting for scheduling on a "
+                                    "StarPU worker")
+                                .Register(*registry_);
+  scheduling_latency_histogram_ =
+      &scheduling_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& codelet_family = prometheus::BuildHistogram()
+                             .Name("inference_codelet_latency_ms")
+                             .Help("Duration of the StarPU codelet execution")
+                             .Register(*registry_);
+  codelet_latency_histogram_ =
+      &codelet_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& compute_family = prometheus::BuildHistogram()
+                             .Name("inference_compute_latency_ms")
+                             .Help("Model compute time (inference)")
+                             .Register(*registry_);
+  inference_compute_latency_histogram_ =
+      &compute_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& callback_family = prometheus::BuildHistogram()
+                              .Name("inference_callback_latency_ms")
+                              .Help("Callback/response handling latency")
+                              .Register(*registry_);
+  callback_latency_histogram_ =
+      &callback_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& preprocess_family = prometheus::BuildHistogram()
+                                .Name("inference_preprocess_latency_ms")
+                                .Help("Server-side preprocessing latency")
+                                .Register(*registry_);
+  preprocess_latency_histogram_ =
+      &preprocess_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& postprocess_family = prometheus::BuildHistogram()
+                                 .Name("inference_postprocess_latency_ms")
+                                 .Help("Server-side postprocessing latency")
+                                 .Register(*registry_);
+  postprocess_latency_histogram_ =
+      &postprocess_family.Add({}, kInferenceLatencyMsBuckets);
+
+  auto& batch_size_family = prometheus::BuildHistogram()
+                                .Name("inference_batch_size")
+                                .Help("Effective batch size executed")
+                                .Register(*registry_);
+  batch_size_histogram_ = &batch_size_family.Add({}, kBatchSizeBuckets);
+
+  auto& logical_batch_size_family = prometheus::BuildHistogram()
+                                        .Name("inference_logical_batch_size")
+                                        .Help(
+                                            "Number of logical requests "
+                                            "aggregated into a batch")
+                                        .Register(*registry_);
+  logical_batch_size_histogram_ =
+      &logical_batch_size_family.Add({}, kBatchSizeBuckets);
 
   gpu_utilization_family_ =
       &prometheus::BuildGauge()
@@ -496,6 +652,11 @@ set_queue_size(std::size_t size)
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
   if (metrics_ptr && metrics_ptr->queue_size_gauge() != nullptr) {
     metrics_ptr->queue_size_gauge()->Set(static_cast<double>(size));
+    const auto capacity = metrics_ptr->queue_capacity_value();
+    if (capacity > 0 && metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
+      const double ratio = static_cast<double>(size) / capacity;
+      metrics_ptr->queue_fill_ratio_gauge()->Set(ratio);
+    }
   }
 }
 
@@ -519,12 +680,108 @@ set_max_inflight_tasks(std::size_t max_tasks)
 }
 
 void
+set_queue_capacity(std::size_t capacity)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr == nullptr) {
+    return;
+  }
+  metrics_ptr->set_queue_capacity(capacity);
+  if (metrics_ptr->queue_capacity_gauge() != nullptr) {
+    metrics_ptr->queue_capacity_gauge()->Set(static_cast<double>(capacity));
+  }
+  if (metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
+    metrics_ptr->queue_fill_ratio_gauge()->Set(0.0);
+  }
+}
+
+void
+set_queue_fill_ratio(std::size_t size, std::size_t capacity)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr == nullptr ||
+      metrics_ptr->queue_fill_ratio_gauge() == nullptr || capacity == 0) {
+    return;
+  }
+  metrics_ptr->queue_fill_ratio_gauge()->Set(
+      static_cast<double>(size) / capacity);
+}
+
+void
 increment_rejected_requests()
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
   if (metrics_ptr && metrics_ptr->requests_rejected_total() != nullptr) {
     metrics_ptr->requests_rejected_total()->Increment();
   }
+}
+
+void
+set_server_health(bool ready)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->server_health_state_gauge() != nullptr) {
+    metrics_ptr->server_health_state_gauge()->Set(ready ? 1.0 : 0.0);
+  }
+}
+
+void
+increment_request_status(int status_code, std::string_view model_name)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (!metrics_ptr) {
+    return;
+  }
+  metrics_ptr->increment_status_counter(
+      status_code_label(status_code), model_name);
+}
+
+void
+observe_batch_size(std::size_t batch_size)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->batch_size_histogram() != nullptr) {
+    metrics_ptr->batch_size_histogram()->Observe(
+        static_cast<double>(batch_size));
+  }
+}
+
+void
+observe_logical_batch_size(std::size_t logical_jobs)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->logical_batch_size_histogram() != nullptr) {
+    metrics_ptr->logical_batch_size_histogram()->Observe(
+        static_cast<double>(logical_jobs));
+  }
+}
+
+void
+observe_latency_breakdown(
+    double queue_ms, double batch_ms, double submit_ms, double scheduling_ms,
+    double codelet_ms, double inference_ms, double callback_ms,
+    double preprocess_ms, double postprocess_ms)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (!metrics_ptr) {
+    return;
+  }
+
+  const auto observe_if = [](prometheus::Histogram* hist, double value) {
+    if (hist != nullptr && value >= 0.0) {
+      hist->Observe(value);
+    }
+  };
+
+  observe_if(metrics_ptr->queue_latency_histogram(), queue_ms);
+  observe_if(metrics_ptr->batch_collect_latency_histogram(), batch_ms);
+  observe_if(metrics_ptr->submit_latency_histogram(), submit_ms);
+  observe_if(metrics_ptr->scheduling_latency_histogram(), scheduling_ms);
+  observe_if(metrics_ptr->codelet_latency_histogram(), codelet_ms);
+  observe_if(metrics_ptr->inference_compute_latency_histogram(), inference_ms);
+  observe_if(metrics_ptr->callback_latency_histogram(), callback_ms);
+  observe_if(metrics_ptr->preprocess_latency_histogram(), preprocess_ms);
+  observe_if(metrics_ptr->postprocess_latency_histogram(), postprocess_ms);
 }
 
 void
@@ -596,6 +853,92 @@ MetricsRegistry::system_cpu_usage_percent() const -> prometheus::Gauge*
 }
 
 auto
+MetricsRegistry::server_health_state_gauge() const -> prometheus::Gauge*
+{
+  return server_health_state_;
+}
+
+auto
+MetricsRegistry::queue_fill_ratio_gauge() const -> prometheus::Gauge*
+{
+  return queue_fill_ratio_gauge_;
+}
+
+auto
+MetricsRegistry::queue_capacity_gauge() const -> prometheus::Gauge*
+{
+  return queue_capacity_gauge_;
+}
+
+auto
+MetricsRegistry::queue_latency_histogram() const -> prometheus::Histogram*
+{
+  return queue_latency_histogram_;
+}
+
+auto
+MetricsRegistry::batch_collect_latency_histogram() const
+    -> prometheus::Histogram*
+{
+  return batch_collect_latency_histogram_;
+}
+
+auto
+MetricsRegistry::submit_latency_histogram() const -> prometheus::Histogram*
+{
+  return submit_latency_histogram_;
+}
+
+auto
+MetricsRegistry::scheduling_latency_histogram() const -> prometheus::Histogram*
+{
+  return scheduling_latency_histogram_;
+}
+
+auto
+MetricsRegistry::codelet_latency_histogram() const -> prometheus::Histogram*
+{
+  return codelet_latency_histogram_;
+}
+
+auto
+MetricsRegistry::inference_compute_latency_histogram() const
+    -> prometheus::Histogram*
+{
+  return inference_compute_latency_histogram_;
+}
+
+auto
+MetricsRegistry::callback_latency_histogram() const -> prometheus::Histogram*
+{
+  return callback_latency_histogram_;
+}
+
+auto
+MetricsRegistry::preprocess_latency_histogram() const -> prometheus::Histogram*
+{
+  return preprocess_latency_histogram_;
+}
+
+auto
+MetricsRegistry::postprocess_latency_histogram() const -> prometheus::Histogram*
+{
+  return postprocess_latency_histogram_;
+}
+
+auto
+MetricsRegistry::batch_size_histogram() const -> prometheus::Histogram*
+{
+  return batch_size_histogram_;
+}
+
+auto
+MetricsRegistry::logical_batch_size_histogram() const -> prometheus::Histogram*
+{
+  return logical_batch_size_histogram_;
+}
+
+auto
 MetricsRegistry::gpu_utilization_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
@@ -614,6 +957,46 @@ MetricsRegistry::gpu_memory_total_bytes_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
   return gpu_memory_total_bytes_family_;
+}
+
+auto
+MetricsRegistry::requests_by_status_family() const
+    -> prometheus::Family<prometheus::Counter>*
+{
+  return requests_by_status_family_;
+}
+
+void
+MetricsRegistry::increment_status_counter(
+    std::string_view code_label, std::string_view model_label)
+{
+  if (requests_by_status_family_ == nullptr) {
+    return;
+  }
+
+  const std::string code{code_label};
+  const std::string model{model_label};
+  const std::string key = std::format("{}|{}", code, model);
+
+  std::lock_guard<std::mutex> lock(status_mutex_);
+  auto [it, inserted] = status_counters_.try_emplace(key, nullptr);
+  if (inserted) {
+    it->second =
+        &requests_by_status_family_->Add({{"code", code}, {"model", model}});
+  }
+  it->second->Increment();
+}
+
+void
+MetricsRegistry::set_queue_capacity(std::size_t capacity)
+{
+  queue_capacity_.store(capacity, std::memory_order_release);
+}
+
+auto
+MetricsRegistry::queue_capacity_value() const -> std::size_t
+{
+  return queue_capacity_.load(std::memory_order_acquire);
 }
 
 void

@@ -5,12 +5,16 @@
 #include <prometheus/histogram.h>
 #include <prometheus/registry.h>
 
+#include <atomic>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
 #include <memory>
+#include <mutex>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -74,12 +78,41 @@ class MetricsRegistry {
   [[nodiscard]] auto inflight_tasks_gauge() const -> prometheus::Gauge*;
   [[nodiscard]] auto max_inflight_tasks_gauge() const -> prometheus::Gauge*;
   [[nodiscard]] auto system_cpu_usage_percent() const -> prometheus::Gauge*;
+  [[nodiscard]] auto server_health_state_gauge() const -> prometheus::Gauge*;
+  [[nodiscard]] auto queue_fill_ratio_gauge() const -> prometheus::Gauge*;
+  [[nodiscard]] auto queue_capacity_gauge() const -> prometheus::Gauge*;
+  [[nodiscard]] auto queue_latency_histogram() const -> prometheus::Histogram*;
+  [[nodiscard]] auto batch_collect_latency_histogram() const
+      -> prometheus::Histogram*;
+  [[nodiscard]] auto submit_latency_histogram() const -> prometheus::Histogram*;
+  [[nodiscard]] auto scheduling_latency_histogram() const
+      -> prometheus::Histogram*;
+  [[nodiscard]] auto codelet_latency_histogram() const
+      -> prometheus::Histogram*;
+  [[nodiscard]] auto inference_compute_latency_histogram() const
+      -> prometheus::Histogram*;
+  [[nodiscard]] auto callback_latency_histogram() const
+      -> prometheus::Histogram*;
+  [[nodiscard]] auto preprocess_latency_histogram() const
+      -> prometheus::Histogram*;
+  [[nodiscard]] auto postprocess_latency_histogram() const
+      -> prometheus::Histogram*;
+  [[nodiscard]] auto batch_size_histogram() const -> prometheus::Histogram*;
+  [[nodiscard]] auto logical_batch_size_histogram() const
+      -> prometheus::Histogram*;
   [[nodiscard]] auto gpu_utilization_family() const
       -> prometheus::Family<prometheus::Gauge>*;
   [[nodiscard]] auto gpu_memory_used_bytes_family() const
       -> prometheus::Family<prometheus::Gauge>*;
   [[nodiscard]] auto gpu_memory_total_bytes_family() const
       -> prometheus::Family<prometheus::Gauge>*;
+  [[nodiscard]] auto requests_by_status_family() const
+      -> prometheus::Family<prometheus::Counter>*;
+
+  void increment_status_counter(
+      std::string_view code_label, std::string_view model_label);
+  void set_queue_capacity(std::size_t capacity);
+  [[nodiscard]] auto queue_capacity_value() const -> std::size_t;
 
  private:
   void initialize(
@@ -96,18 +129,36 @@ class MetricsRegistry {
   prometheus::Gauge* inflight_tasks_gauge_{nullptr};
   prometheus::Gauge* max_inflight_tasks_gauge_{nullptr};
   prometheus::Gauge* system_cpu_usage_percent_{nullptr};
+  prometheus::Gauge* server_health_state_{nullptr};
+  prometheus::Gauge* queue_fill_ratio_gauge_{nullptr};
+  prometheus::Gauge* queue_capacity_gauge_{nullptr};
+  prometheus::Histogram* queue_latency_histogram_{nullptr};
+  prometheus::Histogram* batch_collect_latency_histogram_{nullptr};
+  prometheus::Histogram* submit_latency_histogram_{nullptr};
+  prometheus::Histogram* scheduling_latency_histogram_{nullptr};
+  prometheus::Histogram* codelet_latency_histogram_{nullptr};
+  prometheus::Histogram* inference_compute_latency_histogram_{nullptr};
+  prometheus::Histogram* callback_latency_histogram_{nullptr};
+  prometheus::Histogram* preprocess_latency_histogram_{nullptr};
+  prometheus::Histogram* postprocess_latency_histogram_{nullptr};
+  prometheus::Histogram* batch_size_histogram_{nullptr};
+  prometheus::Histogram* logical_batch_size_histogram_{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_utilization_family_{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family_{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family_{
       nullptr};
+  prometheus::Family<prometheus::Counter>* requests_by_status_family_{nullptr};
 
   std::unique_ptr<ExposerHandle> exposer_;
   std::jthread sampler_thread_;
   GpuStatsProvider gpu_stats_provider_;
   CpuUsageProvider cpu_usage_provider_;
+  std::atomic<std::size_t> queue_capacity_{0};
   std::unordered_map<int, prometheus::Gauge*> gpu_utilization_gauges_;
   std::unordered_map<int, prometheus::Gauge*> gpu_memory_used_gauges_;
   std::unordered_map<int, prometheus::Gauge*> gpu_memory_total_gauges_;
+  std::unordered_map<std::string, prometheus::Counter*> status_counters_;
+  std::mutex status_mutex_;
 };
 
 auto init_metrics(int port) -> bool;
@@ -115,6 +166,16 @@ void shutdown_metrics();
 void set_queue_size(std::size_t size);
 void set_inflight_tasks(std::size_t size);
 void set_max_inflight_tasks(std::size_t max_tasks);
+void set_queue_capacity(std::size_t capacity);
+void set_queue_fill_ratio(std::size_t size, std::size_t capacity);
+void set_server_health(bool ready);
+void increment_request_status(int status_code, std::string_view model_name);
+void observe_batch_size(std::size_t batch_size);
+void observe_logical_batch_size(std::size_t logical_jobs);
+void observe_latency_breakdown(
+    double queue_ms, double batch_ms, double submit_ms, double scheduling_ms,
+    double codelet_ms, double inference_ms, double callback_ms,
+    double preprocess_ms, double postprocess_ms);
 void increment_rejected_requests();
 auto get_metrics() -> std::shared_ptr<MetricsRegistry>;
 

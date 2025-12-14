@@ -543,6 +543,8 @@ InferenceServiceImpl::handle_async_infer_completion(
   }
 
   if (!job_status.ok()) {
+    increment_request_status(
+        static_cast<int>(job_status.error_code()), context.resolved_model_name);
     callback_handle->Invoke(job_status);
     return;
   }
@@ -560,6 +562,9 @@ InferenceServiceImpl::handle_async_infer_completion(
       context.request, context.reply, outs, context.recv_ms, breakdown,
       context.resolved_model_name);
   if (!populate_status.ok()) {
+    increment_request_status(
+        static_cast<int>(populate_status.error_code()),
+        context.resolved_model_name);
     callback_handle->Invoke(populate_status);
     return;
   }
@@ -593,6 +598,13 @@ InferenceServiceImpl::handle_async_infer_completion(
     context.metrics->inference_latency()->Observe(latency_ms);
   }
 
+  observe_latency_breakdown(
+      breakdown.queue_ms, breakdown.batch_ms, breakdown.submit_ms,
+      breakdown.scheduling_ms, breakdown.codelet_ms, breakdown.inference_ms,
+      breakdown.callback_ms, breakdown.preprocess_ms, breakdown.postprocess_ms);
+
+  increment_request_status(
+      static_cast<int>(grpc::StatusCode::OK), context.resolved_model_name);
   callback_handle->Invoke(Status::OK);
 }
 
@@ -609,6 +621,7 @@ InferenceServiceImpl::HandleModelInferAsync(
     metrics->requests_total()->Increment();
   }
 
+  const auto resolved_model_name = resolve_model_name(request->model_name());
   auto recv_tp = std::chrono::high_resolution_clock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         recv_tp.time_since_epoch())
@@ -619,11 +632,12 @@ InferenceServiceImpl::HandleModelInferAsync(
   Status status =
       validate_and_convert_inputs(request, inputs, &input_lifetimes);
   if (!status.ok()) {
+    increment_request_status(
+        static_cast<int>(status.error_code()), resolved_model_name);
     callback_handle->Invoke(status);
     return;
   }
 
-  const auto resolved_model_name = resolve_model_name(request->model_name());
   status = submit_job_async(
       inputs,
       [request, reply, recv_tp, recv_ms, metrics, callback_handle,
@@ -639,6 +653,8 @@ InferenceServiceImpl::HandleModelInferAsync(
       std::move(input_lifetimes), recv_tp, resolved_model_name);
 
   if (!status.ok()) {
+    increment_request_status(
+        static_cast<int>(status.error_code()), resolved_model_name);
     callback_handle->Invoke(status);
   }
 }
@@ -981,13 +997,16 @@ RunGrpcServer(
   if (!server) {
     log_error(
         std::format("Failed to start gRPC server on {}", options.address));
+    set_server_health(false);
     return;
   }
+  set_server_health(true);
   async_context.start();
   log_info(
       options.verbosity,
       std::format("Server listening on {}", options.address));
   server->Wait();
+  set_server_health(false);
   async_context.shutdown();
   server.reset();
 }
@@ -1022,13 +1041,16 @@ RunGrpcServer(
   if (!server) {
     log_error(
         std::format("Failed to start gRPC server on {}", options.address));
+    set_server_health(false);
     return;
   }
+  set_server_health(true);
   async_context.start();
   log_info(
       options.verbosity,
       std::format("Server listening on {}", options.address));
   server->Wait();
+  set_server_health(false);
   async_context.shutdown();
   server.reset();
 }

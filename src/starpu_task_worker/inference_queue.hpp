@@ -27,6 +27,7 @@ class InferenceQueue {
     if (max_size_ == 0) {
       throw std::invalid_argument("max_queue_size must be > 0");
     }
+    set_queue_capacity(max_size_);
   }
 
   [[nodiscard]] auto push(
