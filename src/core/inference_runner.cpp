@@ -31,6 +31,7 @@
 #include "inference_session.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
+#include "monitoring/metrics.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
@@ -443,6 +444,26 @@ load_model_and_reference_output(const RuntimeConfig& opts)
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>>
 {
+  const auto load_start = std::chrono::high_resolution_clock::now();
+  const auto model_label = [&opts]() -> std::string {
+    if (opts.models.empty()) {
+      return "default";
+    }
+    if (!opts.models[0].name.empty()) {
+      return opts.models[0].name;
+    }
+    return opts.models[0].path;
+  }();
+  auto mark_failure = [&]() {
+    increment_model_load_failure(model_label);
+    set_model_loaded(model_label, "cpu", false);
+    if (opts.devices.use_cuda) {
+      for (const auto device_id : opts.devices.ids) {
+        set_model_loaded(model_label, std::format("cuda:{}", device_id), false);
+      }
+    }
+  };
+
   try {
     auto model_cpu =
         load_model(opts.models.empty() ? std::string{} : opts.models[0].path);
@@ -469,9 +490,22 @@ load_model_and_reference_output(const RuntimeConfig& opts)
       output_refs = run_reference_inference(model_cpu, inputs);
     }
 
+    const double duration_ms =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::high_resolution_clock::now() - load_start)
+            .count();
+    observe_model_load_duration(duration_ms);
+    set_model_loaded(model_label, "cpu", true);
+    if (opts.devices.use_cuda) {
+      for (const auto device_id : opts.devices.ids) {
+        set_model_loaded(model_label, std::format("cuda:{}", device_id), true);
+      }
+    }
+
     return std::tuple{model_cpu, models_gpu, output_refs};
   }
   catch (const c10::Error& e) {
+    mark_failure();
     log_error(std::format(
         "Failed to load model or run reference inference: {}", e.what()));
     return std::nullopt;

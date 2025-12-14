@@ -878,13 +878,26 @@ ResultDispatcher::record_job_metrics(
     StarPUTaskRunner::DurationMs latency, std::size_t batch_size) const
 {
   auto& timing = job->timing_info();
+  const bool warmup = is_warmup_job(job);
   observe_batch_size(batch_size);
   const auto logical_jobs =
       static_cast<std::size_t>(std::max(1, job->logical_job_count()));
   observe_logical_batch_size(logical_jobs);
+  if (!warmup) {
+    increment_inference_completed(job->model_name(), logical_jobs);
+
+    const auto codelet_start = timing.codelet_start_time;
+    const auto codelet_end = timing.codelet_end_time;
+    if (codelet_end > codelet_start && codelet_start != clock::time_point{} &&
+        codelet_end != clock::time_point{}) {
+      const double task_runtime_ms =
+          std::chrono::duration<double, std::milli>(codelet_end - codelet_start)
+              .count();
+      observe_starpu_task_runtime(task_runtime_ms);
+    }
+  }
   perf_observer::record_job(
-      timing.enqueued_time, timing.callback_end_time, batch_size,
-      is_warmup_job(job));
+      timing.enqueued_time, timing.callback_end_time, batch_size, warmup);
 
   timing.submission_id = job->submission_id();
   const int job_id = task_runner_internal::job_identifier(*job);
@@ -1266,15 +1279,18 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
 {
   std::vector<std::shared_ptr<InferenceJob>> jobs;
   if (first_job == nullptr) {
+    set_batch_pending_jobs(0);
     return jobs;
   }
 
   jobs.push_back(first_job);
   if (!opts_->batching.dynamic_batching) {
+    set_batch_pending_jobs(jobs.size());
     return jobs;
   }
   if (first_job->has_aggregated_sub_jobs() ||
       first_job->logical_job_count() > 1) {
+    set_batch_pending_jobs(jobs.size());
     return jobs;
   }
 
@@ -1308,6 +1324,7 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     jobs.push_back(std::move(next));
   }
 
+  set_batch_pending_jobs(jobs.size());
   return jobs;
 }
 
@@ -1619,6 +1636,8 @@ BatchCollector::maybe_build_batched_job(
 
   auto master = jobs.front();
   if (jobs.size() == 1) {
+    const auto samples = std::max<int64_t>(1, job_sample_size(master));
+    observe_batch_efficiency(static_cast<double>(samples));
     master->set_logical_job_count(1);
     master->set_aggregated_sub_jobs({});
     return master;
@@ -1651,6 +1670,14 @@ BatchCollector::maybe_build_batched_job(
                                       : static_cast<int64_t>(jobs.size());
   master->set_output_tensors(task_runner_internal::resize_outputs_for_batch(
       prototype_outputs, effective_batch));
+
+  const std::size_t logical_jobs =
+      static_cast<std::size_t>(std::max(1, batch_info.logical_jobs));
+  const double efficiency = logical_jobs > 0
+                                ? static_cast<double>(effective_batch) /
+                                      static_cast<double>(logical_jobs)
+                                : 0.0;
+  observe_batch_efficiency(efficiency);
 
   master->set_start_time(earliest_start);
   master->timing_info().enqueued_time = earliest_enqueued;
@@ -1718,10 +1745,16 @@ BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
     const auto current =
         inflight_tasks_->fetch_add(1, std::memory_order_release) + 1;
     set_inflight_tasks(current);
+    if (max_inflight_tasks_ > 0) {
+      const double ratio = static_cast<double>(current) /
+                           static_cast<double>(max_inflight_tasks_);
+      set_starpu_worker_busy_ratio(ratio);
+    }
   }
   {
     const std::scoped_lock lock(*prepared_mutex_);
     prepared_jobs_->push_back(job);
+    set_starpu_prepared_queue_depth(prepared_jobs_->size());
   }
   prepared_cv_->notify_one();
 }
@@ -1743,6 +1776,7 @@ BatchCollector::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
   }
   auto job = prepared_jobs_->front();
   prepared_jobs_->pop_front();
+  set_starpu_prepared_queue_depth(prepared_jobs_->size());
   return job;
 }
 
@@ -1817,6 +1851,9 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       opts_ != nullptr ? opts_->batching.max_inflight_tasks : 0;
   set_max_inflight_tasks(inflight_state_.max_tasks);
   set_inflight_tasks(inflight_state_.tasks.load(std::memory_order_relaxed));
+  if (inflight_state_.max_tasks > 0) {
+    set_starpu_worker_busy_ratio(0.0);
+  }
 
   batch_collector_ = std::make_unique<BatchCollector>(
       queue_, opts_, starpu_, &pending_job_,
@@ -1924,6 +1961,26 @@ StarPUTaskRunner::finalize_job_after_exception(
         std::format("{} for job {}: {}", log_prefix, job_id, exception.what()));
   }
 
+  const std::string model_label =
+      job != nullptr ? std::string{job->model_name()}
+                     : std::string{"<unknown>"};
+  const std::string_view reason = [&exception]() -> std::string_view {
+    if (dynamic_cast<const std::bad_alloc*>(&exception) != nullptr) {
+      return "bad_alloc";
+    }
+    if (dynamic_cast<const InferenceEngineException*>(&exception) != nullptr) {
+      return "engine_exception";
+    }
+    if (dynamic_cast<const std::logic_error*>(&exception) != nullptr) {
+      return "logic_error";
+    }
+    if (dynamic_cast<const std::runtime_error*>(&exception) != nullptr) {
+      return "runtime_error";
+    }
+    return "exception";
+  }();
+  increment_inference_failure("execution", reason, model_label);
+
   if (!StarPUTaskRunner::handle_job_exception(job, exception) && job) {
     static_cast<void>(job->release_input_tensors());
     job->release_input_memory_holders();
@@ -1946,6 +2003,11 @@ StarPUTaskRunner::reserve_inflight_slot()
   const auto current =
       inflight_state_.tasks.fetch_add(1, std::memory_order_release) + 1;
   set_inflight_tasks(current);
+  if (inflight_state_.max_tasks > 0) {
+    const double ratio = static_cast<double>(current) /
+                         static_cast<double>(inflight_state_.max_tasks);
+    set_starpu_worker_busy_ratio(ratio);
+  }
 }
 
 void
@@ -1965,6 +2027,11 @@ StarPUTaskRunner::release_inflight_slot()
     }
   }
   set_inflight_tasks(previous - 1);
+  if (inflight_state_.max_tasks > 0 && previous > 0) {
+    const double ratio = static_cast<double>(previous - 1) /
+                         static_cast<double>(inflight_state_.max_tasks);
+    set_starpu_worker_busy_ratio(ratio);
+  }
   std::scoped_lock lock(inflight_state_.mutex);
   inflight_state_.cv.notify_one();
 }
@@ -2370,6 +2437,8 @@ StarPUTaskRunner::run()
     const std::scoped_lock lock(prepared_state_.mutex);
     prepared_state_.jobs.clear();
     prepared_state_.batching_done = false;
+    set_starpu_prepared_queue_depth(0);
+    set_batch_pending_jobs(0);
   }
 
   batching_thread_ = std::jthread(&StarPUTaskRunner::batching_loop, this);

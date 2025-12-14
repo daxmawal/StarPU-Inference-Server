@@ -40,6 +40,16 @@ using inference::ServerLiveResponse;
 using inference::ServerReadyRequest;
 using inference::ServerReadyResponse;
 
+namespace {
+
+auto
+status_reason(const Status& status) -> std::string
+{
+  return std::to_string(static_cast<int>(status.error_code()));
+}
+
+}  // namespace
+
 
 auto
 compute_thread_count_from(unsigned concurrency) -> std::size_t
@@ -416,6 +426,8 @@ InferenceServiceImpl::submit_job_async(
         detail::TimingInfo copied_info = info;
 
         if (outs.empty()) {
+          increment_inference_failure(
+              "execution", "empty_output", job->model_name());
           callback(
               {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
               copied_info);
@@ -438,10 +450,13 @@ InferenceServiceImpl::submit_job_async(
   }
   if (!pushed) {
     if (queue_full) {
+      increment_inference_failure("enqueue", "queue_full", resolved_model_name);
       increment_rejected_requests();
       BatchingTraceLogger::instance().log_request_rejected(queue_->size());
       return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
     }
+    increment_inference_failure(
+        "enqueue", "queue_unavailable", resolved_model_name);
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
   if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
@@ -545,6 +560,8 @@ InferenceServiceImpl::handle_async_infer_completion(
   if (!job_status.ok()) {
     increment_request_status(
         static_cast<int>(job_status.error_code()), context.resolved_model_name);
+    increment_inference_failure(
+        "execution", status_reason(job_status), context.resolved_model_name);
     callback_handle->Invoke(job_status);
     return;
   }
@@ -564,6 +581,9 @@ InferenceServiceImpl::handle_async_infer_completion(
   if (!populate_status.ok()) {
     increment_request_status(
         static_cast<int>(populate_status.error_code()),
+        context.resolved_model_name);
+    increment_inference_failure(
+        "postprocess", status_reason(populate_status),
         context.resolved_model_name);
     callback_handle->Invoke(populate_status);
     return;
@@ -634,6 +654,8 @@ InferenceServiceImpl::HandleModelInferAsync(
   if (!status.ok()) {
     increment_request_status(
         static_cast<int>(status.error_code()), resolved_model_name);
+    increment_inference_failure(
+        "preprocess", status_reason(status), resolved_model_name);
     callback_handle->Invoke(status);
     return;
   }
