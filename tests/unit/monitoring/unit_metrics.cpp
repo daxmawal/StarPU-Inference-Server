@@ -22,8 +22,11 @@ AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
   ASSERT_NE(metrics, nullptr);
   ASSERT_NE(metrics->registry(), nullptr);
   ASSERT_NE(metrics->requests_total(), nullptr);
+  ASSERT_NE(metrics->requests_rejected_total(), nullptr);
   ASSERT_NE(metrics->inference_latency(), nullptr);
   ASSERT_NE(metrics->queue_size_gauge(), nullptr);
+  ASSERT_NE(metrics->inflight_tasks_gauge(), nullptr);
+  ASSERT_NE(metrics->max_inflight_tasks_gauge(), nullptr);
 }
 
 auto
@@ -47,8 +50,11 @@ TEST(Metrics, InitializesPointersAndRegistry)
 
   const auto families = metrics->registry()->Collect();
   EXPECT_TRUE(HasMetric(families, "requests_total"));
+  EXPECT_TRUE(HasMetric(families, "requests_rejected_total"));
   EXPECT_TRUE(HasMetric(families, "inference_latency_ms"));
   EXPECT_TRUE(HasMetric(families, "inference_queue_size"));
+  EXPECT_TRUE(HasMetric(families, "inference_inflight_tasks"));
+  EXPECT_TRUE(HasMetric(families, "inference_max_inflight_tasks"));
 
   shutdown_metrics();
   EXPECT_EQ(get_metrics(), nullptr);

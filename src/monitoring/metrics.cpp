@@ -358,6 +358,13 @@ MetricsRegistry::initialize(
                              .Register(*registry_);
   requests_total_ = &counter_family.Add({});
 
+  auto& rejected_family =
+      prometheus::BuildCounter()
+          .Name("requests_rejected_total")
+          .Help("Total requests rejected (e.g., queue full)")
+          .Register(*registry_);
+  requests_rejected_total_ = &rejected_family.Add({});
+
   auto& histogram_family = prometheus::BuildHistogram()
                                .Name("inference_latency_ms")
                                .Help("Inference latency in milliseconds")
@@ -369,6 +376,22 @@ MetricsRegistry::initialize(
                            .Help("Number of jobs in the inference queue")
                            .Register(*registry_);
   queue_size_gauge_ = &gauge_family.Add({});
+
+  auto& inflight_family = prometheus::BuildGauge()
+                              .Name("inference_inflight_tasks")
+                              .Help(
+                                  "Number of StarPU tasks currently submitted "
+                                  "and not yet completed")
+                              .Register(*registry_);
+  inflight_tasks_gauge_ = &inflight_family.Add({});
+
+  auto& inflight_cap_family = prometheus::BuildGauge()
+                                  .Name("inference_max_inflight_tasks")
+                                  .Help(
+                                      "Configured cap on inflight StarPU tasks "
+                                      "(0 means unbounded)")
+                                  .Register(*registry_);
+  max_inflight_tasks_gauge_ = &inflight_cap_family.Add({});
 
   auto& cpu_family = prometheus::BuildGauge()
                          .Name("system_cpu_usage_percent")
@@ -445,6 +468,8 @@ init_metrics(int port) -> bool
     }
 
     set_queue_size(0);
+    set_inflight_tasks(0);
+    set_max_inflight_tasks(0);
     return true;
   }
   catch (const std::exception& e) {
@@ -471,6 +496,34 @@ set_queue_size(std::size_t size)
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
   if (metrics_ptr && metrics_ptr->queue_size_gauge() != nullptr) {
     metrics_ptr->queue_size_gauge()->Set(static_cast<double>(size));
+  }
+}
+
+void
+set_inflight_tasks(std::size_t size)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->inflight_tasks_gauge() != nullptr) {
+    metrics_ptr->inflight_tasks_gauge()->Set(static_cast<double>(size));
+  }
+}
+
+void
+set_max_inflight_tasks(std::size_t max_tasks)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->max_inflight_tasks_gauge() != nullptr) {
+    metrics_ptr->max_inflight_tasks_gauge()->Set(
+        static_cast<double>(max_tasks));
+  }
+}
+
+void
+increment_rejected_requests()
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->requests_rejected_total() != nullptr) {
+    metrics_ptr->requests_rejected_total()->Increment();
   }
 }
 
@@ -507,6 +560,12 @@ MetricsRegistry::requests_total() const -> prometheus::Counter*
 }
 
 auto
+MetricsRegistry::requests_rejected_total() const -> prometheus::Counter*
+{
+  return requests_rejected_total_;
+}
+
+auto
 MetricsRegistry::inference_latency() const -> prometheus::Histogram*
 {
   return inference_latency_;
@@ -516,6 +575,18 @@ auto
 MetricsRegistry::queue_size_gauge() const -> prometheus::Gauge*
 {
   return queue_size_gauge_;
+}
+
+auto
+MetricsRegistry::inflight_tasks_gauge() const -> prometheus::Gauge*
+{
+  return inflight_tasks_gauge_;
+}
+
+auto
+MetricsRegistry::max_inflight_tasks_gauge() const -> prometheus::Gauge*
+{
+  return max_inflight_tasks_gauge_;
 }
 
 auto

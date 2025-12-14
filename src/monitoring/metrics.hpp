@@ -68,8 +68,11 @@ class MetricsRegistry {
 
   [[nodiscard]] auto registry() const -> std::shared_ptr<prometheus::Registry>;
   [[nodiscard]] auto requests_total() const -> prometheus::Counter*;
+  [[nodiscard]] auto requests_rejected_total() const -> prometheus::Counter*;
   [[nodiscard]] auto inference_latency() const -> prometheus::Histogram*;
   [[nodiscard]] auto queue_size_gauge() const -> prometheus::Gauge*;
+  [[nodiscard]] auto inflight_tasks_gauge() const -> prometheus::Gauge*;
+  [[nodiscard]] auto max_inflight_tasks_gauge() const -> prometheus::Gauge*;
   [[nodiscard]] auto system_cpu_usage_percent() const -> prometheus::Gauge*;
   [[nodiscard]] auto gpu_utilization_family() const
       -> prometheus::Family<prometheus::Gauge>*;
@@ -87,8 +90,11 @@ class MetricsRegistry {
 
   std::shared_ptr<prometheus::Registry> registry_;
   prometheus::Counter* requests_total_{nullptr};
+  prometheus::Counter* requests_rejected_total_{nullptr};
   prometheus::Histogram* inference_latency_{nullptr};
   prometheus::Gauge* queue_size_gauge_{nullptr};
+  prometheus::Gauge* inflight_tasks_gauge_{nullptr};
+  prometheus::Gauge* max_inflight_tasks_gauge_{nullptr};
   prometheus::Gauge* system_cpu_usage_percent_{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_utilization_family_{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family_{nullptr};
@@ -107,6 +113,9 @@ class MetricsRegistry {
 auto init_metrics(int port) -> bool;
 void shutdown_metrics();
 void set_queue_size(std::size_t size);
+void set_inflight_tasks(std::size_t size);
+void set_max_inflight_tasks(std::size_t max_tasks);
+void increment_rejected_requests();
 auto get_metrics() -> std::shared_ptr<MetricsRegistry>;
 
 }  // namespace starpu_server

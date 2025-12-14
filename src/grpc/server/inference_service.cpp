@@ -438,6 +438,7 @@ InferenceServiceImpl::submit_job_async(
   }
   if (!pushed) {
     if (queue_full) {
+      increment_rejected_requests();
       BatchingTraceLogger::instance().log_request_rejected(queue_->size());
       return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
     }

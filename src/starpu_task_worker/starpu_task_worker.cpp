@@ -30,6 +30,7 @@
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
+#include "monitoring/metrics.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/nvtx.hpp"
@@ -1710,7 +1711,9 @@ BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
   }
   if (max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr && job != nullptr &&
       !job->is_shutdown()) {
-    inflight_tasks_->fetch_add(1, std::memory_order_release);
+    const auto current =
+        inflight_tasks_->fetch_add(1, std::memory_order_release) + 1;
+    set_inflight_tasks(current);
   }
   {
     const std::scoped_lock lock(*prepared_mutex_);
@@ -1808,6 +1811,8 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
 
   inflight_state_.max_tasks =
       opts_ != nullptr ? opts_->batching.max_inflight_tasks : 0;
+  set_max_inflight_tasks(inflight_state_.max_tasks);
+  set_inflight_tasks(inflight_state_.tasks.load(std::memory_order_relaxed));
 
   batch_collector_ = std::make_unique<BatchCollector>(
       queue_, opts_, starpu_, &pending_job_,
@@ -1934,7 +1939,9 @@ StarPUTaskRunner::reserve_inflight_slot()
              inflight_state_.max_tasks;
     });
   }
-  inflight_state_.tasks.fetch_add(1, std::memory_order_release);
+  const auto current =
+      inflight_state_.tasks.fetch_add(1, std::memory_order_release) + 1;
+  set_inflight_tasks(current);
 }
 
 void
@@ -1953,6 +1960,7 @@ StarPUTaskRunner::release_inflight_slot()
       break;
     }
   }
+  set_inflight_tasks(previous - 1);
   std::scoped_lock lock(inflight_state_.mutex);
   inflight_state_.cv.notify_one();
 }
