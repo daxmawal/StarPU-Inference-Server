@@ -208,7 +208,7 @@ jobs:
         shell: bash
 
       - name: Save build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: build-folder
           path: build/
@@ -240,7 +240,7 @@ jobs:
         shell: bash
 
       - name: Save clang build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: build-folder-clang
           path: build-clang/
@@ -271,7 +271,7 @@ jobs:
         shell: bash
 
       - name: Upload analyzer report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: clang-analyzer-report
           path: clang-analyzer
@@ -355,13 +355,13 @@ jobs:
           verbose: true
 
       - name: Upload coverage report artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-report
           path: build/coverage.html
 
       - name: Upload coverage summary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-summary
           path: build/coverage.txt
