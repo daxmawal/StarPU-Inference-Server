@@ -40,6 +40,7 @@
 #include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "logger.hpp"
+#include "monitoring/metrics.hpp"
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
 #include "utils/nvtx.hpp"
@@ -611,6 +612,23 @@ run_codelet_inference(
 
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
+  const auto worker_type_label = std::string_view(to_string(executed_on_type));
+  struct WorkerInflightGuard {
+    int worker;
+    int device;
+    std::string_view worker_type;
+    bool armed{false};
+    ~WorkerInflightGuard()
+    {
+      if (armed) {
+        set_worker_inflight_gauge(worker, device, worker_type, 0);
+      }
+    }
+  };
+  WorkerInflightGuard inflight_guard{
+      worker_id, device_id, worker_type_label, /*armed=*/false};
+  set_worker_inflight_gauge(worker_id, device_id, worker_type_label, 1);
+  inflight_guard.armed = true;
 
   if (should_log(VerbosityLevel::Trace, params->verbosity)) {
     log_trace(

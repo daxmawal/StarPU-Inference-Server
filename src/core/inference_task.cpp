@@ -22,8 +22,10 @@
 
 #include "exceptions.hpp"
 #include "inference_params.hpp"
+#include "monitoring/metrics.hpp"
 #include "output_slot_pool.hpp"
 #include "starpu_setup.hpp"
+#include "utils/device_type.hpp"
 
 namespace starpu_server {
 namespace {
@@ -700,6 +702,8 @@ InferenceTask::finalize_inference_task(void* arg)
   if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 && ctx->job) {
     run_with_logged_exceptions(
         [ctx]() {
+          const auto copy_start = std::chrono::high_resolution_clock::now();
+          std::size_t total_bytes = 0;
           const auto& base_ptrs =
               ctx->output_pool->base_ptrs(ctx->output_slot_id);
           const auto& job_outs = ctx->job->get_output_tensors();
@@ -715,7 +719,20 @@ InferenceTask::finalize_inference_task(void* arg)
             std::memcpy(
                 job_output_tensor.data_ptr(), base_ptrs[i],
                 job_output_tensor.nbytes());
+            total_bytes += job_output_tensor.nbytes();
           }
+          const auto copy_end = std::chrono::high_resolution_clock::now();
+          const double copy_ms =
+              std::chrono::duration<double, std::milli>(copy_end - copy_start)
+                  .count();
+          const auto worker_type_label =
+              std::string_view(to_string(ctx->job->get_executed_on()));
+          observe_io_copy_latency(
+              "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+              worker_type_label, copy_ms);
+          increment_transfer_bytes(
+              "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+              worker_type_label, total_bytes);
         },
         ExceptionLoggingMessages{
             "Output copy from pool failed: ",

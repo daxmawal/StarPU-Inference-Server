@@ -138,6 +138,16 @@ class MetricsRegistry {
       -> prometheus::Histogram*;
   [[nodiscard]] auto starpu_task_runtime_histogram() const
       -> prometheus::Histogram*;
+  [[nodiscard]] auto inference_compute_latency_by_worker_family() const
+      -> prometheus::Family<prometheus::Histogram>*;
+  [[nodiscard]] auto starpu_task_runtime_by_worker_family() const
+      -> prometheus::Family<prometheus::Histogram>*;
+  [[nodiscard]] auto starpu_worker_inflight_family() const
+      -> prometheus::Family<prometheus::Gauge>*;
+  [[nodiscard]] auto io_copy_latency_family() const
+      -> prometheus::Family<prometheus::Histogram>*;
+  [[nodiscard]] auto transfer_bytes_family() const
+      -> prometheus::Family<prometheus::Counter>*;
 
   void increment_status_counter(
       std::string_view code_label, std::string_view model_label);
@@ -151,6 +161,21 @@ class MetricsRegistry {
       std::string_view model_label, std::string_view device_label, bool loaded);
   void set_queue_capacity(std::size_t capacity);
   [[nodiscard]] auto queue_capacity_value() const -> std::size_t;
+  void observe_compute_latency_by_worker(
+      int worker_id, int device_id, std::string_view worker_type,
+      double latency_ms);
+  void observe_task_runtime_by_worker(
+      int worker_id, int device_id, std::string_view worker_type,
+      double latency_ms);
+  void set_worker_inflight_gauge(
+      int worker_id, int device_id, std::string_view worker_type,
+      std::size_t value);
+  void observe_io_copy_latency(
+      std::string_view direction, int worker_id, int device_id,
+      std::string_view worker_type, double duration_ms);
+  void increment_transfer_bytes(
+      std::string_view direction, int worker_id, int device_id,
+      std::string_view worker_type, std::size_t bytes);
 
  private:
   void initialize(
@@ -190,6 +215,14 @@ class MetricsRegistry {
   prometheus::Histogram* logical_batch_size_histogram_{nullptr};
   prometheus::Histogram* model_load_duration_histogram_{nullptr};
   prometheus::Histogram* starpu_task_runtime_histogram_{nullptr};
+  prometheus::Family<prometheus::Histogram>*
+      inference_compute_latency_by_worker_family_{nullptr};
+  prometheus::Family<prometheus::Histogram>*
+      starpu_task_runtime_by_worker_family_{nullptr};
+  prometheus::Family<prometheus::Gauge>* starpu_worker_inflight_family_{
+      nullptr};
+  prometheus::Family<prometheus::Histogram>* io_copy_latency_family_{nullptr};
+  prometheus::Family<prometheus::Counter>* transfer_bytes_family_{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_utilization_family_{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_memory_used_bytes_family_{nullptr};
   prometheus::Family<prometheus::Gauge>* gpu_memory_total_bytes_family_{
@@ -220,6 +253,13 @@ class MetricsRegistry {
   std::unordered_map<std::string, prometheus::Counter*>
       model_load_failure_counters_;
   std::unordered_map<std::string, prometheus::Gauge*> models_loaded_gauges_;
+  std::unordered_map<std::string, prometheus::Histogram*>
+      compute_latency_by_worker_;
+  std::unordered_map<std::string, prometheus::Histogram*>
+      task_runtime_by_worker_;
+  std::unordered_map<std::string, prometheus::Gauge*> worker_inflight_gauges_;
+  std::unordered_map<std::string, prometheus::Histogram*> io_copy_latency_;
+  std::unordered_map<std::string, prometheus::Counter*> transfer_bytes_;
   std::mutex status_mutex_;
 };
 
@@ -253,6 +293,21 @@ void set_model_loaded(
     std::string_view model_name, std::string_view device_label, bool loaded);
 void increment_model_load_failure(std::string_view model_name);
 void increment_rejected_requests();
+void observe_compute_latency_by_worker(
+    int worker_id, int device_id, std::string_view worker_type,
+    double latency_ms);
+void observe_task_runtime_by_worker(
+    int worker_id, int device_id, std::string_view worker_type,
+    double latency_ms);
+void set_worker_inflight_gauge(
+    int worker_id, int device_id, std::string_view worker_type,
+    std::size_t value);
+void observe_io_copy_latency(
+    std::string_view direction, int worker_id, int device_id,
+    std::string_view worker_type, double duration_ms);
+void increment_transfer_bytes(
+    std::string_view direction, int worker_id, int device_id,
+    std::string_view worker_type, std::size_t bytes);
 auto get_metrics() -> std::shared_ptr<MetricsRegistry>;
 
 }  // namespace starpu_server

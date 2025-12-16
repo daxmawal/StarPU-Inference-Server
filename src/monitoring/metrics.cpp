@@ -755,6 +755,44 @@ MetricsRegistry::initialize(
   starpu_task_runtime_histogram_ =
       &starpu_runtime_family.Add({}, kTaskRuntimeMsBuckets);
 
+  auto& compute_latency_by_worker_family =
+      prometheus::BuildHistogram()
+          .Name("inference_compute_latency_ms_by_worker")
+          .Help(
+              "Model compute latency by worker and device "
+              "(callback start - inference start)")
+          .Register(*registry_);
+  inference_compute_latency_by_worker_family_ =
+      &compute_latency_by_worker_family;
+
+  auto& starpu_runtime_by_worker_family =
+      prometheus::BuildHistogram()
+          .Name("starpu_task_runtime_ms_by_worker")
+          .Help("StarPU codelet runtime by worker/device")
+          .Register(*registry_);
+  starpu_task_runtime_by_worker_family_ = &starpu_runtime_by_worker_family;
+
+  auto& worker_inflight_family =
+      prometheus::BuildGauge()
+          .Name("starpu_worker_inflight_tasks")
+          .Help("Inflight StarPU tasks per worker/device")
+          .Register(*registry_);
+  starpu_worker_inflight_family_ = &worker_inflight_family;
+
+  auto& io_copy_latency_family =
+      prometheus::BuildHistogram()
+          .Name("inference_io_copy_ms")
+          .Help("Host/device copy latency by direction/device/worker")
+          .Register(*registry_);
+  io_copy_latency_family_ = &io_copy_latency_family;
+
+  auto& transfer_bytes_family =
+      prometheus::BuildCounter()
+          .Name("inference_transfer_bytes_total")
+          .Help("Total bytes transferred by direction/device/worker")
+          .Register(*registry_);
+  transfer_bytes_family_ = &transfer_bytes_family;
+
   if (start_sampler_thread) {
     sampler_thread_ = std::jthread(
         [this](const std::stop_token& stop) { this->sampling_loop(stop); });
@@ -1051,6 +1089,71 @@ increment_model_load_failure(std::string_view model_name)
 }
 
 void
+observe_compute_latency_by_worker(
+    int worker_id, int device_id, std::string_view worker_type,
+    double latency_ms)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (!metrics_ptr) {
+    return;
+  }
+  metrics_ptr->observe_compute_latency_by_worker(
+      worker_id, device_id, worker_type, latency_ms);
+}
+
+void
+observe_task_runtime_by_worker(
+    int worker_id, int device_id, std::string_view worker_type,
+    double latency_ms)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (!metrics_ptr) {
+    return;
+  }
+  metrics_ptr->observe_task_runtime_by_worker(
+      worker_id, device_id, worker_type, latency_ms);
+}
+
+void
+set_worker_inflight_gauge(
+    int worker_id, int device_id, std::string_view worker_type,
+    std::size_t value)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (!metrics_ptr) {
+    return;
+  }
+  metrics_ptr->set_worker_inflight_gauge(
+      worker_id, device_id, worker_type, value);
+}
+
+void
+observe_io_copy_latency(
+    std::string_view direction, int worker_id, int device_id,
+    std::string_view worker_type, double duration_ms)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (!metrics_ptr) {
+    return;
+  }
+  metrics_ptr->observe_io_copy_latency(
+      direction, worker_id, device_id, worker_type, duration_ms);
+}
+
+void
+increment_transfer_bytes(
+    std::string_view direction, int worker_id, int device_id,
+    std::string_view worker_type, std::size_t bytes)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (!metrics_ptr) {
+    return;
+  }
+  metrics_ptr->increment_transfer_bytes(
+      direction, worker_id, device_id, worker_type, bytes);
+}
+
+void
 MetricsRegistry::request_stop()
 {
   if (sampler_thread_.joinable()) {
@@ -1259,6 +1362,41 @@ MetricsRegistry::starpu_task_runtime_histogram() const -> prometheus::Histogram*
 }
 
 auto
+MetricsRegistry::inference_compute_latency_by_worker_family() const
+    -> prometheus::Family<prometheus::Histogram>*
+{
+  return inference_compute_latency_by_worker_family_;
+}
+
+auto
+MetricsRegistry::starpu_task_runtime_by_worker_family() const
+    -> prometheus::Family<prometheus::Histogram>*
+{
+  return starpu_task_runtime_by_worker_family_;
+}
+
+auto
+MetricsRegistry::starpu_worker_inflight_family() const
+    -> prometheus::Family<prometheus::Gauge>*
+{
+  return starpu_worker_inflight_family_;
+}
+
+auto
+MetricsRegistry::io_copy_latency_family() const
+    -> prometheus::Family<prometheus::Histogram>*
+{
+  return io_copy_latency_family_;
+}
+
+auto
+MetricsRegistry::transfer_bytes_family() const
+    -> prometheus::Family<prometheus::Counter>*
+{
+  return transfer_bytes_family_;
+}
+
+auto
 MetricsRegistry::gpu_utilization_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
@@ -1430,6 +1568,142 @@ MetricsRegistry::set_model_loaded_flag(
   }
   if (it->second != nullptr) {
     it->second->Set(loaded ? 1.0 : 0.0);
+  }
+}
+
+namespace {
+auto
+make_worker_key(int worker_id, int device_id, std::string_view worker_type)
+    -> std::string
+{
+  return std::format("{}|{}|{}", worker_id, device_id, worker_type);
+}
+
+auto
+make_io_key(
+    std::string_view direction, int worker_id, int device_id,
+    std::string_view worker_type) -> std::string
+{
+  return std::format(
+      "{}|{}|{}|{}", direction, worker_id, device_id, worker_type);
+}
+}  // namespace
+
+void
+MetricsRegistry::observe_compute_latency_by_worker(
+    int worker_id, int device_id, std::string_view worker_type,
+    double latency_ms)
+{
+  if (latency_ms < 0.0 ||
+      inference_compute_latency_by_worker_family_ == nullptr) {
+    return;
+  }
+  const std::string key = make_worker_key(worker_id, device_id, worker_type);
+  std::lock_guard<std::mutex> lock(status_mutex_);
+  auto [it, inserted] = compute_latency_by_worker_.try_emplace(key, nullptr);
+  if (inserted) {
+    it->second = &inference_compute_latency_by_worker_family_->Add(
+        {{"worker_id", std::to_string(worker_id)},
+         {"device", std::to_string(device_id)},
+         {"worker_type", std::string(worker_type)}},
+        kInferenceLatencyMsBuckets);
+  }
+  if (it->second != nullptr) {
+    it->second->Observe(latency_ms);
+  }
+}
+
+void
+MetricsRegistry::observe_task_runtime_by_worker(
+    int worker_id, int device_id, std::string_view worker_type,
+    double latency_ms)
+{
+  if (latency_ms < 0.0 || starpu_task_runtime_by_worker_family_ == nullptr) {
+    return;
+  }
+  const std::string key = make_worker_key(worker_id, device_id, worker_type);
+  std::lock_guard<std::mutex> lock(status_mutex_);
+  auto [it, inserted] = task_runtime_by_worker_.try_emplace(key, nullptr);
+  if (inserted) {
+    it->second = &starpu_task_runtime_by_worker_family_->Add(
+        {{"worker_id", std::to_string(worker_id)},
+         {"device", std::to_string(device_id)},
+         {"worker_type", std::string(worker_type)}},
+        kTaskRuntimeMsBuckets);
+  }
+  if (it->second != nullptr) {
+    it->second->Observe(latency_ms);
+  }
+}
+
+void
+MetricsRegistry::set_worker_inflight_gauge(
+    int worker_id, int device_id, std::string_view worker_type,
+    std::size_t value)
+{
+  if (starpu_worker_inflight_family_ == nullptr) {
+    return;
+  }
+  const std::string key = make_worker_key(worker_id, device_id, worker_type);
+  std::lock_guard<std::mutex> lock(status_mutex_);
+  auto [it, inserted] = worker_inflight_gauges_.try_emplace(key, nullptr);
+  if (inserted) {
+    it->second = &starpu_worker_inflight_family_->Add(
+        {{"worker_id", std::to_string(worker_id)},
+         {"device", std::to_string(device_id)},
+         {"worker_type", std::string(worker_type)}});
+  }
+  if (it->second != nullptr) {
+    it->second->Set(static_cast<double>(value));
+  }
+}
+
+void
+MetricsRegistry::observe_io_copy_latency(
+    std::string_view direction, int worker_id, int device_id,
+    std::string_view worker_type, double duration_ms)
+{
+  if (duration_ms < 0.0 || io_copy_latency_family_ == nullptr) {
+    return;
+  }
+  const std::string key =
+      make_io_key(direction, worker_id, device_id, worker_type);
+  std::lock_guard<std::mutex> lock(status_mutex_);
+  auto [it, inserted] = io_copy_latency_.try_emplace(key, nullptr);
+  if (inserted) {
+    it->second = &io_copy_latency_family_->Add(
+        {{"direction", std::string(direction)},
+         {"worker_id", std::to_string(worker_id)},
+         {"device", std::to_string(device_id)},
+         {"worker_type", std::string(worker_type)}},
+        kInferenceLatencyMsBuckets);
+  }
+  if (it->second != nullptr) {
+    it->second->Observe(duration_ms);
+  }
+}
+
+void
+MetricsRegistry::increment_transfer_bytes(
+    std::string_view direction, int worker_id, int device_id,
+    std::string_view worker_type, std::size_t bytes)
+{
+  if (bytes == 0 || transfer_bytes_family_ == nullptr) {
+    return;
+  }
+  const std::string key =
+      make_io_key(direction, worker_id, device_id, worker_type);
+  std::lock_guard<std::mutex> lock(status_mutex_);
+  auto [it, inserted] = transfer_bytes_.try_emplace(key, nullptr);
+  if (inserted) {
+    it->second = &transfer_bytes_family_->Add(
+        {{"direction", std::string(direction)},
+         {"worker_id", std::to_string(worker_id)},
+         {"device", std::to_string(device_id)},
+         {"worker_type", std::string(worker_type)}});
+  }
+  if (it->second != nullptr) {
+    it->second->Increment(static_cast<double>(bytes));
   }
 }
 

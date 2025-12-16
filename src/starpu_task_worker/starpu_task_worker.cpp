@@ -33,6 +33,7 @@
 #include "monitoring/metrics.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/batching_trace_logger.hpp"
+#include "utils/device_type.hpp"
 #include "utils/nvtx.hpp"
 #include "utils/perf_observer.hpp"
 
@@ -722,13 +723,13 @@ class SlotManager {
       const std::shared_ptr<InferenceJob>& job, int64_t batch,
       const StarPUTaskRunner::PoolResources& pools) const -> int64_t;
 
-  static void copy_job_inputs_to_slot(
+  static auto copy_job_inputs_to_slot(
       const std::shared_ptr<InferenceJob>& job,
       std::span<const std::shared_ptr<InferenceJob>> pending_jobs,
       std::span<const starpu_data_handle_t> handles,
       std::span<std::byte* const> base_ptrs,
       std::span<const InputSlotPool::HostBufferInfo> buffer_infos,
-      CudaCopyBatch& copy_batch);
+      CudaCopyBatch& copy_batch) -> std::size_t;
 
   static void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
@@ -878,6 +879,11 @@ ResultDispatcher::record_job_metrics(
     StarPUTaskRunner::DurationMs latency, std::size_t batch_size) const
 {
   auto& timing = job->timing_info();
+  const auto worker_type_label =
+      std::string_view(to_string(job->get_executed_on()));
+  const int worker_id = job->get_worker_id();
+  const int device_id = job->get_device_id();
+  const auto zero_tp = clock::time_point{};
   const bool warmup = is_warmup_job(job);
   observe_batch_size(batch_size);
   const auto logical_jobs =
@@ -894,6 +900,24 @@ ResultDispatcher::record_job_metrics(
           std::chrono::duration<double, std::milli>(codelet_end - codelet_start)
               .count();
       observe_starpu_task_runtime(task_runtime_ms);
+      observe_task_runtime_by_worker(
+          worker_id, device_id, worker_type_label, task_runtime_ms);
+    }
+
+    auto compute_start = timing.inference_start_time;
+    if (compute_start == zero_tp) {
+      compute_start = timing.codelet_start_time;
+    }
+    auto compute_end = timing.callback_start_time;
+    if (compute_end == zero_tp || compute_end < compute_start) {
+      compute_end = timing.codelet_end_time;
+    }
+    if (compute_start != zero_tp && compute_end > compute_start) {
+      const double compute_ms =
+          std::chrono::duration<double, std::milli>(compute_end - compute_start)
+              .count();
+      observe_compute_latency_by_worker(
+          worker_id, device_id, worker_type_label, compute_ms);
     }
   }
   perf_observer::record_job(
@@ -1107,6 +1131,10 @@ SlotManager::validate_batch_and_copy_inputs(
   NvtxRange nvtx_copy_scope("HtoD-staged host copy (pooled inputs)");
   const auto& handles = pools.input_pool->handles(pools.input_slot);
 
+  // Track copy metrics (duration + total bytes).
+  const auto copy_start = clock::now();
+  std::atomic<std::size_t> total_bytes_copied{0};
+
   const std::span<const starpu_data_handle_t> handle_span(
       handles.data(), handles.size());
   SlotHandleLease handle_lease(handle_span, STARPU_W);
@@ -1128,6 +1156,7 @@ SlotManager::validate_batch_and_copy_inputs(
     const VectorResizeSpec spec{
         static_cast<std::size_t>(tensor.numel()), tensor.nbytes()};
     resize_starpu_vector_handle(handles[input_idx], spec, true);
+    total_bytes_copied.fetch_add(spec.byte_count, std::memory_order_relaxed);
 
     const auto& buffer_info = buffer_infos.at(input_idx);
     const bool allow_async =
@@ -1142,8 +1171,10 @@ SlotManager::validate_batch_and_copy_inputs(
 
   if (job->has_pending_sub_jobs()) {
     auto pending_jobs = job->take_pending_sub_jobs();
-    copy_job_inputs_to_slot(
-        job, pending_jobs, handles, base_ptrs, buffer_infos, copy_batch);
+    total_bytes_copied.fetch_add(
+        copy_job_inputs_to_slot(
+            job, pending_jobs, handles, base_ptrs, buffer_infos, copy_batch),
+        std::memory_order_relaxed);
     release_pending_jobs(job, pending_jobs);
   } else if (copy_batch.active()) {
     for (std::size_t idx = 0; idx < inputs.size(); ++idx) {
@@ -1155,22 +1186,39 @@ SlotManager::validate_batch_and_copy_inputs(
 
   copy_batch.finalize();
 
+  const auto copy_end = clock::now();
+  const auto bytes = total_bytes_copied.load(std::memory_order_relaxed);
+  if (bytes > 0) {
+    const double duration_ms =
+        std::chrono::duration<double, std::milli>(copy_end - copy_start)
+            .count();
+    const auto worker_type_label =
+        std::string_view(to_string(job->get_executed_on()));
+    observe_io_copy_latency(
+        "h2d", job->get_worker_id(), job->get_device_id(), worker_type_label,
+        duration_ms);
+    increment_transfer_bytes(
+        "h2d", job->get_worker_id(), job->get_device_id(), worker_type_label,
+        bytes);
+  }
+
   return batch;
 }
 
-void
+auto
 SlotManager::copy_job_inputs_to_slot(
     const std::shared_ptr<InferenceJob>& job,
     std::span<const std::shared_ptr<InferenceJob>> pending_jobs,
     std::span<const starpu_data_handle_t> handles,
     std::span<std::byte* const> base_ptrs,
     std::span<const InputSlotPool::HostBufferInfo> buffer_infos,
-    CudaCopyBatch& copy_batch)
+    CudaCopyBatch& copy_batch) -> std::size_t
 {
   if (!job) {
-    return;
+    return 0;
   }
 
+  std::size_t total_bytes_copied = 0;
   const auto& master_inputs = job->get_input_tensors();
   for (std::size_t input_idx = 0; input_idx < master_inputs.size();
        ++input_idx) {
@@ -1212,6 +1260,7 @@ SlotManager::copy_job_inputs_to_slot(
       offset += bytes;
       total_bytes += bytes;
       total_numel += numel;
+      total_bytes_copied += bytes;
     };
 
     copy_tensor(master_inputs[input_idx]);
@@ -1230,6 +1279,8 @@ SlotManager::copy_job_inputs_to_slot(
     const VectorResizeSpec spec{total_numel, total_bytes};
     resize_starpu_vector_handle(handles[input_idx], spec, true);
   }
+
+  return total_bytes_copied;
 }
 
 void
@@ -1961,9 +2012,9 @@ StarPUTaskRunner::finalize_job_after_exception(
         std::format("{} for job {}: {}", log_prefix, job_id, exception.what()));
   }
 
-  const std::string model_label =
-      job != nullptr ? std::string{job->model_name()}
-                     : std::string{"<unknown>"};
+  const std::string model_label = job != nullptr
+                                      ? std::string{job->model_name()}
+                                      : std::string{"<unknown>"};
   const std::string_view reason = [&exception]() -> std::string_view {
     if (dynamic_cast<const std::bad_alloc*>(&exception) != nullptr) {
       return "bad_alloc";
