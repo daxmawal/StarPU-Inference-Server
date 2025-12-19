@@ -470,6 +470,10 @@ class CudaCopyBatch {
   }
 
   [[nodiscard]] auto active() const -> bool { return enabled_; }
+#if defined(STARPU_TESTING)
+  [[nodiscard]] auto stream() const -> cudaStream_t { return stream_; }
+  [[nodiscard]] auto pending() const -> bool { return pending_; }
+#endif
 
   auto enqueue(
       std::byte* dst, const std::byte* src, std::size_t bytes,
@@ -744,6 +748,13 @@ class SlotManager {
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
 
+#if defined(STARPU_TESTING)
+  static auto validate_batch_and_copy_inputs_for_test(
+      SlotManager* manager, const std::shared_ptr<InferenceJob>& job,
+      int64_t batch, InputSlotPool* input_pool, int input_slot,
+      OutputSlotPool* output_pool, int output_slot) -> int64_t;
+#endif
+
  private:
   StarPUSetup* starpu_;
   const RuntimeConfig* opts_;
@@ -815,6 +826,21 @@ class BatchCollector {
   [[nodiscard]] auto exceeds_sample_limit(
       int64_t accumulated_samples, const std::shared_ptr<InferenceJob>& job,
       int64_t max_samples_cap) const -> bool;
+
+#if defined(STARPU_TESTING)
+  friend auto task_runner_internal::testing::batch_collector_job_sample_size(
+      const BatchCollector* collector,
+      const std::shared_ptr<InferenceJob>& job) -> int64_t;
+  friend auto
+  task_runner_internal::testing::batch_collector_exceeds_sample_limit(
+      const BatchCollector* collector, int64_t accumulated_samples,
+      const std::shared_ptr<InferenceJob>& job,
+      int64_t max_samples_cap) -> bool;
+  friend auto task_runner_internal::testing::batch_collector_should_hold_job(
+      const std::shared_ptr<InferenceJob>& candidate,
+      const std::shared_ptr<InferenceJob>& reference,
+      const std::optional<int>& target_worker) -> bool;
+#endif
 
   InferenceQueue* queue_;
   const RuntimeConfig* opts_;
@@ -1310,6 +1336,25 @@ SlotManager::release_pending_jobs(
   task_runner_internal::release_inputs_from_additional_jobs(release_jobs);
   pending_jobs.clear();
 }
+
+#if defined(STARPU_TESTING)
+auto
+SlotManager::validate_batch_and_copy_inputs_for_test(
+    SlotManager* manager, const std::shared_ptr<InferenceJob>& job,
+    int64_t batch, InputSlotPool* input_pool, int input_slot,
+    OutputSlotPool* output_pool, int output_slot) -> int64_t
+{
+  if (manager == nullptr) {
+    return -1;
+  }
+  StarPUTaskRunner::PoolResources pools{};
+  pools.input_pool = input_pool;
+  pools.input_slot = input_slot;
+  pools.output_pool = output_pool;
+  pools.output_slot = output_slot;
+  return manager->validate_batch_and_copy_inputs(job, batch, pools);
+}
+#endif
 
 auto
 BatchCollector::wait_for_next_job() -> std::shared_ptr<InferenceJob>
@@ -2556,4 +2601,173 @@ ResultDispatcher::invoke_previous_callback(
   }
   previous(std::move(results), latency_ms);
 }
+
+#if defined(STARPU_TESTING)
+namespace task_runner_internal::testing {
+
+void
+validate_tensor_against_prototype(
+    const torch::Tensor& tensor, const torch::Tensor& prototype)
+{
+  starpu_server::validate_tensor_against_prototype(tensor, prototype);
+}
+
+void
+validate_prototype_tensor(const torch::Tensor& tensor)
+{
+  starpu_server::validate_prototype_tensor(tensor);
+}
+
+void
+resize_starpu_vector_interface(
+    starpu_vector_interface* vector_interface, VectorResizeSpecShim spec,
+    bool is_input_handle)
+{
+  VectorResizeSpec internal{spec.element_count, spec.byte_count};
+  starpu_server::resize_starpu_vector_interface(
+      vector_interface, internal, is_input_handle);
+}
+
+auto
+batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
+{
+  return task_runner_internal::batch_size_from_inputs(inputs);
+}
+
+auto
+cuda_copy_batch_create(bool enable) -> void*
+{
+  return new CudaCopyBatch(enable);
+}
+
+void
+cuda_copy_batch_destroy(void* batch)
+{
+  delete static_cast<CudaCopyBatch*>(batch);
+}
+
+auto
+cuda_copy_batch_enqueue(
+    void* batch, std::byte* dst, const std::byte* src, std::size_t bytes,
+    bool allow_async) -> bool
+{
+  if (batch == nullptr) {
+    return false;
+  }
+  return static_cast<CudaCopyBatch*>(batch)->enqueue(
+      dst, src, bytes, allow_async);
+}
+
+void
+cuda_copy_batch_finalize(void* batch)
+{
+  if (batch == nullptr) {
+    return;
+  }
+  static_cast<CudaCopyBatch*>(batch)->finalize();
+}
+
+auto
+cuda_copy_batch_enabled(const void* batch) -> bool
+{
+  return batch != nullptr ? static_cast<const CudaCopyBatch*>(batch)->active()
+                          : false;
+}
+
+auto
+cuda_copy_batch_pending(const void* batch) -> bool
+{
+  return batch != nullptr ? static_cast<const CudaCopyBatch*>(batch)->pending()
+                          : false;
+}
+
+auto
+cuda_copy_batch_stream(const void* batch) -> cudaStream_t
+{
+  return batch != nullptr ? static_cast<const CudaCopyBatch*>(batch)->stream()
+                          : nullptr;
+}
+
+void
+slot_handle_lease_construct(
+    void* storage, std::span<const starpu_data_handle_t> handles,
+    starpu_data_access_mode mode)
+{
+  if (storage == nullptr) {
+    return;
+  }
+  new (storage) SlotHandleLease(handles, mode);
+}
+
+void
+slot_handle_lease_destroy(void* storage)
+{
+  if (storage == nullptr) {
+    return;
+  }
+  std::destroy_at(static_cast<SlotHandleLease*>(storage));
+}
+
+auto
+slot_manager_copy_job_inputs_to_slot(
+    const std::shared_ptr<InferenceJob>& job,
+    std::span<const std::shared_ptr<InferenceJob>> pending_jobs,
+    std::span<const starpu_data_handle_t> handles,
+    std::span<std::byte* const> base_ptrs,
+    std::span<const InputSlotPool::HostBufferInfo> buffer_infos,
+    void* copy_batch) -> std::size_t
+{
+  if (!job) {
+    return 0;
+  }
+  if (copy_batch == nullptr) {
+    CudaCopyBatch fallback(false);
+    return SlotManager::copy_job_inputs_to_slot(
+        job, pending_jobs, handles, base_ptrs, buffer_infos, fallback);
+  }
+  return SlotManager::copy_job_inputs_to_slot(
+      job, pending_jobs, handles, base_ptrs, buffer_infos,
+      *static_cast<CudaCopyBatch*>(copy_batch));
+}
+
+auto
+slot_manager_validate_batch_and_copy_inputs(
+    SlotManager* slot_manager, const std::shared_ptr<InferenceJob>& job,
+    int64_t batch, InputSlotPool* input_pool, int input_slot,
+    OutputSlotPool* output_pool, int output_slot) -> int64_t
+{
+  return SlotManager::validate_batch_and_copy_inputs_for_test(
+      slot_manager, job, batch, input_pool, input_slot, output_pool,
+      output_slot);
+}
+
+auto
+batch_collector_job_sample_size(
+    const BatchCollector* collector,
+    const std::shared_ptr<InferenceJob>& job) -> int64_t
+{
+  return collector != nullptr ? collector->job_sample_size(job) : -1;
+}
+
+auto
+batch_collector_exceeds_sample_limit(
+    const BatchCollector* collector, int64_t accumulated_samples,
+    const std::shared_ptr<InferenceJob>& job, int64_t max_samples_cap) -> bool
+{
+  return collector != nullptr ? collector->exceeds_sample_limit(
+                                    accumulated_samples, job, max_samples_cap)
+                              : false;
+}
+
+auto
+batch_collector_should_hold_job(
+    const std::shared_ptr<InferenceJob>& candidate,
+    const std::shared_ptr<InferenceJob>& reference,
+    const std::optional<int>& target_worker) -> bool
+{
+  return BatchCollector::should_hold_job(candidate, reference, target_worker);
+}
+
+}  // namespace task_runner_internal::testing
+#endif
 }  // namespace starpu_server
