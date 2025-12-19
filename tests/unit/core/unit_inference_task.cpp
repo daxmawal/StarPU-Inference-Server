@@ -175,6 +175,15 @@ MakeCudaTensor() -> torch::Tensor
   return tensor;
 }
 
+template <typename Func>
+auto
+CaptureStderr(Func&& func) -> std::string
+{
+  starpu_server::CaptureStream capture{std::cerr};
+  std::forward<Func>(func)();
+  return capture.str();
+}
+
 }  // namespace
 
 extern "C" void
@@ -653,13 +662,10 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackLogsInferenceEngineException)
   starpu_server::RuntimeConfig opts;
   auto ctx =
       make_callback_context(job, &opts, {}, {MakeHandle(0)}, &dependencies);
-
-  starpu_server::CaptureStream capture{std::cerr};
-
-  EXPECT_NO_THROW(
-      starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
-
-  const auto log = capture.str();
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+  });
   EXPECT_NE(log.find("starpu_output_callback"), std::string::npos);
 }
 
@@ -675,12 +681,11 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
   job->set_start_time(start);
   starpu_server::RuntimeConfig opts;
   auto ctx = make_callback_context(job, &opts);
-  starpu_server::CaptureStream capture{std::cerr};
-
-  EXPECT_NO_THROW(
-      starpu_server::InferenceTask::record_and_run_completion_callback(
-          ctx.get(), end));
-  const auto log = capture.str();
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::record_and_run_completion_callback(
+            ctx.get(), end));
+  });
   EXPECT_NE(
       log.find("Exception in completion callback: callback failure"),
       std::string::npos);
@@ -697,12 +702,11 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
   job->set_start_time(start);
   starpu_server::RuntimeConfig opts;
   auto ctx = make_callback_context(job, &opts);
-  starpu_server::CaptureStream capture{std::cerr};
-
-  EXPECT_NO_THROW(
-      starpu_server::InferenceTask::record_and_run_completion_callback(
-          ctx.get(), end));
-  const auto log = capture.str();
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::record_and_run_completion_callback(
+            ctx.get(), end));
+  });
   EXPECT_NE(
       log.find("Unknown exception in completion callback"), std::string::npos);
 }
@@ -717,13 +721,11 @@ TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
   auto outputs = std::vector<starpu_data_handle_t>{handle};
   auto ctx = make_callback_context(job, &opts_, {}, outputs, &dependencies);
   ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
-  starpu_server::CaptureStream capture{std::cerr};
-
-  EXPECT_THROW(
-      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()),
-      starpu_server::StarPURegistrationException);
-
-  const auto log = capture.str();
+  const auto log = CaptureStderr([&] {
+    EXPECT_THROW(
+        starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()),
+        starpu_server::StarPURegistrationException);
+  });
   const auto expected = starpu_server::expected_log_line(
       starpu_server::ErrorLevel,
       std::format("starpu_data_acquire_cb failed with code {}", -42));
@@ -746,12 +748,10 @@ TEST(InferenceTask, AcquireOutputHandleLogsInferenceEngineException)
       starpu_server::kDefaultInferenceTaskDependencies;
   dependencies.starpu_data_acquire_fn = &ImmediateCallbackAcquire;
   ctx->dependencies = &dependencies;
-  starpu_server::CaptureStream capture{std::cerr};
-
-  EXPECT_NO_THROW(
-      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()));
-
-  const auto log = capture.str();
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()));
+  });
   ctx->self_keep_alive.reset();
   ctx->outputs_handles.clear();
   EXPECT_EQ(data_release_throw_count_ref(), 1);
@@ -771,13 +771,11 @@ TEST(InferenceTask, AcquireOutputHandleThrowsWhenDataAcquireFunctionMissing)
   auto outputs = std::vector<starpu_data_handle_t>{handle};
   auto ctx = make_callback_context(nullptr, &opts, {}, outputs);
   ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
-  starpu_server::CaptureStream capture{std::cerr};
-
-  EXPECT_THROW(
-      starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()),
-      starpu_server::StarPURegistrationException);
-
-  const auto log = capture.str();
+  const auto log = CaptureStderr([&] {
+    EXPECT_THROW(
+        starpu_server::InferenceTask::acquire_output_handle(handle, ctx.get()),
+        starpu_server::StarPURegistrationException);
+  });
   EXPECT_NE(
       log.find("starpu_data_acquire_fn is null; cannot acquire output handle."),
       std::string::npos);
@@ -828,12 +826,10 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesCopyFailure)
   OutputContextFixture fixture({.mutate_job_outputs = [](auto& outputs) {
     outputs[0] = torch::Tensor();
   }});
-
-  starpu_server::CaptureStream capture{std::cerr};
-
-  EXPECT_NO_THROW(
-      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
-  const auto log = capture.str();
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(starpu_server::InferenceTask::finalize_inference_task(
+        fixture.ctx.get()));
+  });
   EXPECT_NE(log.find("Output copy from pool failed"), std::string::npos);
 
   auto reacquired = fixture.pool.try_acquire();
@@ -853,12 +849,10 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesOnFinishedException)
             throw std::runtime_error("boom");
           },
   });
-
-  starpu_server::CaptureStream capture{std::cerr};
-
-  EXPECT_NO_THROW(
-      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
-  const auto log = capture.str();
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(starpu_server::InferenceTask::finalize_inference_task(
+        fixture.ctx.get()));
+  });
   EXPECT_NE(log.find("Exception in on_finished"), std::string::npos);
 
   const auto& job_outputs = fixture.job->get_output_tensors();

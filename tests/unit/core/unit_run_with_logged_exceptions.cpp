@@ -4,37 +4,36 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "../../../src/core/inference_task.cpp"
 #include "test_helpers.hpp"
 
 namespace starpu_server { namespace {
 
-TEST(RunWithLoggedExceptionsStandalone, LogsBadAlloc)
+template <typename Fn>
+void
+ExpectLoggedException(
+    std::string_view prefix, std::string_view expected, Fn&& fn)
 {
   CaptureStream capture{std::cerr};
-  ExceptionLoggingMessages messages{"ctx: ", std::string_view{}};
-
-  EXPECT_NO_THROW(
-      run_with_logged_exceptions([]() { throw std::bad_alloc(); }, messages));
-
-  const auto expected_message =
-      std::string(messages.context_prefix) + std::bad_alloc().what();
-  const auto expected_log = expected_log_line(ErrorLevel, expected_message);
+  ExceptionLoggingMessages messages{prefix, std::string_view{}};
+  EXPECT_NO_THROW(run_with_logged_exceptions(std::forward<Fn>(fn), messages));
+  const auto expected_log = expected_log_line(
+      ErrorLevel, std::string(prefix) + std::string(expected));
   EXPECT_NE(capture.str().find(expected_log), std::string::npos);
+}
+
+TEST(RunWithLoggedExceptionsStandalone, LogsBadAlloc)
+{
+  ExpectLoggedException(
+      "ctx: ", std::bad_alloc().what(), []() { throw std::bad_alloc(); });
 }
 
 TEST(RunWithLoggedExceptionsStandalone, LogsLogicError)
 {
-  CaptureStream capture{std::cerr};
-  ExceptionLoggingMessages messages{"logic: ", std::string_view{}};
-
-  EXPECT_NO_THROW(run_with_logged_exceptions(
-      []() { throw std::logic_error("failure"); }, messages));
-
-  const auto expected_log = expected_log_line(
-      ErrorLevel, std::string(messages.context_prefix) + "failure");
-  EXPECT_NE(capture.str().find(expected_log), std::string::npos);
+  ExpectLoggedException(
+      "logic: ", "failure", []() { throw std::logic_error("failure"); });
 }
 
 TEST(RunWithLoggedExceptionsStandalone, LogsStdException)
@@ -46,28 +45,14 @@ TEST(RunWithLoggedExceptionsStandalone, LogsStdException)
     }
   };
 
-  CaptureStream capture{std::cerr};
-  ExceptionLoggingMessages messages{"std: ", std::string_view{}};
-
-  EXPECT_NO_THROW(run_with_logged_exceptions(
-      []() { throw CustomStdException{}; }, messages));
-
-  const auto expected_log = expected_log_line(
-      ErrorLevel,
-      std::string(messages.context_prefix) + CustomStdException{}.what());
-  EXPECT_NE(capture.str().find(expected_log), std::string::npos);
+  ExpectLoggedException("std: ", CustomStdException{}.what(), []() {
+    throw CustomStdException{};
+  });
 }
 
 TEST(RunWithLoggedExceptionsStandalone, LogsUnknownExceptionFallback)
 {
-  CaptureStream capture{std::cerr};
-  ExceptionLoggingMessages messages{"unknown: ", std::string_view{}};
-
-  EXPECT_NO_THROW(run_with_logged_exceptions([]() { throw 42; }, messages));
-
-  const auto expected_log = expected_log_line(
-      ErrorLevel, std::string(messages.context_prefix) + "Unknown exception");
-  EXPECT_NE(capture.str().find(expected_log), std::string::npos);
+  ExpectLoggedException("unknown: ", "Unknown exception", []() { throw 42; });
 }
 
 }}  // namespace starpu_server
