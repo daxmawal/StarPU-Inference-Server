@@ -376,8 +376,7 @@ TEST_F(
   const std::vector<starpu_data_handle_t> inputs;
   const std::vector<starpu_data_handle_t> outputs;
   auto params = task.create_inference_params();
-  auto ctx =
-      make_callback_context(job, &opts_, inputs, outputs, nullptr, params);
+  auto ctx = make_callback_context(job, inputs, outputs, nullptr, params);
   ASSERT_EQ(ctx->dependencies, nullptr);
 
   auto* created_task = task.create_task(inputs, outputs, ctx);
@@ -534,8 +533,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
-  starpu_server::RuntimeConfig opts;
-  auto ctx = make_callback_context(job, &opts);
+  auto ctx = make_callback_context(job);
   starpu_server::InferenceTask::record_and_run_completion_callback(
       ctx.get(), end);
   EXPECT_TRUE(called);
@@ -554,9 +552,7 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackLogsInferenceEngineException)
   dependencies.starpu_output_callback_hook =
       starpu_server::InferenceTaskDependencies::OutputCallbackHook(
           &ThrowingStarpuOutputCallbackHook);
-  starpu_server::RuntimeConfig opts;
-  auto ctx =
-      make_callback_context(job, &opts, {}, {MakeHandle(0)}, &dependencies);
+  auto ctx = make_callback_context(job, {}, {MakeHandle(0)}, &dependencies);
   const auto log = CaptureStderr([&] {
     EXPECT_NO_THROW(
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
@@ -574,8 +570,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
-  starpu_server::RuntimeConfig opts;
-  auto ctx = make_callback_context(job, &opts);
+  auto ctx = make_callback_context(job);
   const auto log = CaptureStderr([&] {
     EXPECT_NO_THROW(
         starpu_server::InferenceTask::record_and_run_completion_callback(
@@ -595,8 +590,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
   const auto start = std::chrono::high_resolution_clock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
-  starpu_server::RuntimeConfig opts;
-  auto ctx = make_callback_context(job, &opts);
+  auto ctx = make_callback_context(job);
   const auto log = CaptureStderr([&] {
     EXPECT_NO_THROW(
         starpu_server::InferenceTask::record_and_run_completion_callback(
@@ -614,7 +608,7 @@ TEST_F(InferenceTaskTest, AcquireOutputHandleLogsAndThrowsOnFailure)
       starpu_server::kDefaultInferenceTaskDependencies;
   dependencies.starpu_data_acquire_fn = &AlwaysFailingAcquire;
   auto outputs = std::vector<starpu_data_handle_t>{handle};
-  auto ctx = make_callback_context(job, &opts_, {}, outputs, &dependencies);
+  auto ctx = make_callback_context(job, {}, outputs, &dependencies);
   ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
   const auto log = CaptureStderr([&] {
     EXPECT_THROW(
@@ -661,10 +655,9 @@ TEST(InferenceTask, AcquireOutputHandleThrowsWhenDataAcquireFunctionMissing)
   ASSERT_EQ(
       starpu_server::kDefaultInferenceTaskDependencies.starpu_data_acquire_fn,
       nullptr);
-  starpu_server::RuntimeConfig opts;
   auto handle = MakeHandle(1);
   auto outputs = std::vector<starpu_data_handle_t>{handle};
-  auto ctx = make_callback_context(nullptr, &opts, {}, outputs);
+  auto ctx = make_callback_context(nullptr, {}, outputs);
   ctx->remaining_outputs_to_acquire = static_cast<int>(outputs.size());
   const auto log = CaptureStderr([&] {
     EXPECT_THROW(
@@ -685,7 +678,7 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
   auto* const handle_3 = MakeHandle(3);
   std::vector<starpu_data_handle_t> inputs{handle_1};
   std::vector<starpu_data_handle_t> outputs{handle_2, handle_3};
-  auto ctx = make_callback_context(nullptr, nullptr, inputs, outputs);
+  auto ctx = make_callback_context(nullptr, inputs, outputs);
   starpu_server::InferenceTask::cleanup(ctx);
   EXPECT_EQ(unregister_call_count_ref(), 3);
   ASSERT_EQ(unregister_handles_ref().size(), 3U);
@@ -802,7 +795,7 @@ TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenHandleAllocationFails)
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
   dependencies.dyn_handles_allocator = &AlwaysNullAllocator;
-  auto ctx = make_callback_context(nullptr, nullptr, {}, {}, &dependencies);
+  auto ctx = make_callback_context(nullptr, {}, {}, &dependencies);
   starpu_task task{};
   EXPECT_THROW(
       starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),
@@ -816,7 +809,7 @@ TEST(InferenceTaskBuffers, AllocateTaskBuffersThrowsWhenModeAllocationFails)
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
   dependencies.dyn_modes_allocator = &AlwaysNullAllocator;
-  auto ctx = make_callback_context(nullptr, nullptr, {}, {}, &dependencies);
+  auto ctx = make_callback_context(nullptr, {}, {}, &dependencies);
   starpu_task task{};
   EXPECT_THROW(
       starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx),

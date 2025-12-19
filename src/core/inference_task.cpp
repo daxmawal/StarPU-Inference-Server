@@ -160,10 +160,10 @@ InferenceTask::InferenceTask(
 
 InferenceCallbackContext::InferenceCallbackContext(
     std::shared_ptr<InferenceJob> job_,
-    std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
+    std::shared_ptr<InferenceParams> params_,
     std::vector<starpu_data_handle_t> inputs_,
     std::vector<starpu_data_handle_t> outputs_) noexcept
-    : job(std::move(job_)), inference_params(std::move(params_)), opts(opts_),
+    : job(std::move(job_)), inference_params(std::move(params_)),
       inputs_handles(std::move(inputs_)), outputs_handles(std::move(outputs_))
 {
 }
@@ -262,7 +262,7 @@ InferenceTask::create_context(
 {
   auto params = create_inference_params();
   auto ctx = std::make_shared<InferenceCallbackContext>(
-      job_, std::move(params), opts_, std::move(inputs), std::move(outputs));
+      job_, std::move(params), std::move(inputs), std::move(outputs));
   ctx->dependencies_owner = dependencies_;
   ctx->dependencies = dependencies_.get();
   return ctx;

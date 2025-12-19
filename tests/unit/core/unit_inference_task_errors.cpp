@@ -20,8 +20,7 @@ TEST(InferenceTask_Unit, RecordAndRunCompletionCallbackNoCallback)
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
 
-  starpu_server::RuntimeConfig opts;
-  auto ctx = make_callback_context(job, &opts);
+  auto ctx = make_callback_context(job);
 
   ASSERT_NO_THROW(
       starpu_server::InferenceTask::record_and_run_completion_callback(
@@ -33,8 +32,7 @@ TEST(InferenceTask_Unit, RecordAndRunCompletionCallbackNoCallback)
 TEST(InferenceTask_Unit, RecordAndRunCompletionCallbackNullJob)
 {
   std::shared_ptr<starpu_server::InferenceJob> job;
-  starpu_server::RuntimeConfig opts;
-  auto ctx = make_callback_context(job, &opts);
+  auto ctx = make_callback_context(job);
 
   const auto end = std::chrono::high_resolution_clock::now();
 

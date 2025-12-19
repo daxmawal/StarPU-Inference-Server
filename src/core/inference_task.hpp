@@ -19,7 +19,6 @@ struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
   std::shared_ptr<InferenceParams> inference_params;
   std::shared_ptr<void> self_keep_alive;
-  const RuntimeConfig* opts = nullptr;
   std::vector<starpu_data_handle_t> inputs_handles;
   std::vector<starpu_data_handle_t> outputs_handles;
   std::atomic<int> remaining_outputs_to_acquire{0};
@@ -33,7 +32,7 @@ struct InferenceCallbackContext {
 
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
-      std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
+      std::shared_ptr<InferenceParams> params_,
       std::vector<starpu_data_handle_t> inputs_,
       std::vector<starpu_data_handle_t> outputs_) noexcept;
 };
