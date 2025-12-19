@@ -110,14 +110,17 @@ job_identifier(const InferenceJob& job) -> int
 }
 
 namespace {
+#if defined(STARPU_TESTING)
 auto
 submit_inference_task_hook_storage() -> std::function<void()>&
 {
   static std::function<void()> hook;
   return hook;
 }
+#endif
 }  // namespace
 
+#if defined(STARPU_TESTING)
 void
 set_submit_inference_task_hook(std::function<void()> hook)
 {
@@ -129,14 +132,17 @@ reset_submit_inference_task_hook()
 {
   submit_inference_task_hook_storage() = {};
 }
+#endif
 
 static void
 invoke_submit_inference_task_hook()
 {
+#if defined(STARPU_TESTING)
   const auto& hook = submit_inference_task_hook_storage();
   if (hook) {
     hook();
   }
+#endif
 }
 
 inline auto

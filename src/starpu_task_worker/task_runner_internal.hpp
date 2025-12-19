@@ -5,7 +5,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#if defined(STARPU_TESTING)
 #include <functional>
+#endif
 #include <memory>
 #include <vector>
 
@@ -55,7 +57,9 @@ auto build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
 auto build_request_arrival_us_for_trace(
     const std::shared_ptr<InferenceJob>& job) -> std::vector<int64_t>;
 
+#if defined(STARPU_TESTING)
 void set_submit_inference_task_hook(std::function<void()> hook);
 void reset_submit_inference_task_hook();
+#endif
 
 }  // namespace starpu_server::task_runner_internal
