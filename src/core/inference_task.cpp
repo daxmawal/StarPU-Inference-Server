@@ -72,8 +72,13 @@ resolve_dependencies(
     const InferenceTaskDependencies* fallback)
     -> const InferenceTaskDependencies*
 {
-  if (ctx != nullptr && ctx->dependencies != nullptr) {
-    return ctx->dependencies;
+  if (ctx != nullptr) {
+    if (ctx->dependencies != nullptr) {
+      return ctx->dependencies;
+    }
+    if (ctx->dependencies_owner) {
+      return ctx->dependencies_owner.get();
+    }
   }
   return resolve_dependencies(fallback);
 }
@@ -161,7 +166,8 @@ InferenceTask::InferenceTask(
     const RuntimeConfig* opts,
     const InferenceTaskDependencies& dependencies) noexcept
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
-      models_gpu_(models_gpu), opts_(opts), dependencies_(&dependencies)
+      models_gpu_(models_gpu), opts_(opts),
+      dependencies_(std::make_shared<InferenceTaskDependencies>(dependencies))
 {
 }
 
@@ -277,7 +283,8 @@ InferenceTask::create_context(
   auto params = create_inference_params();
   auto ctx = std::make_shared<InferenceCallbackContext>(
       job_, std::move(params), opts_, job_->get_request_id(), inputs, outputs);
-  ctx->dependencies = resolve_dependencies(dependencies_);
+  ctx->dependencies_owner = dependencies_;
+  ctx->dependencies = dependencies_.get();
   return ctx;
 }
 
@@ -492,11 +499,10 @@ InferenceTask::create_task(
   const size_t num_inputs = inputs_handles.size();
   const size_t num_buffers = num_inputs + outputs_handles.size();
 
-  const auto* dependencies = resolve_dependencies(dependencies_);
-  const auto task_create =
-      resolve_dependency_fn(
-          dependencies->task_create_fn,
-          kDefaultInferenceTaskDependencies.task_create_fn);
+  const auto* dependencies = resolve_dependencies(dependencies_.get());
+  const auto task_create = resolve_dependency_fn(
+      dependencies->task_create_fn,
+      kDefaultInferenceTaskDependencies.task_create_fn);
   auto* task = task_create != nullptr ? task_create() : nullptr;
   if (task == nullptr) {
     throw StarPUTaskCreationException("Failed to create StarPU task.");
@@ -511,7 +517,12 @@ InferenceTask::create_task(
   task->destroy = 1;
 
   if (ctx != nullptr && ctx->dependencies == nullptr) {
-    ctx->dependencies = dependencies;
+    if (ctx->dependencies_owner) {
+      ctx->dependencies = ctx->dependencies_owner.get();
+    } else {
+      ctx->dependencies_owner = dependencies_;
+      ctx->dependencies = dependencies_.get();
+    }
   }
 
   InferenceTask::allocate_task_buffers(task, num_buffers, ctx);
@@ -652,10 +663,9 @@ InferenceTask::acquire_output_handle(
     starpu_data_handle_t handle, InferenceCallbackContext* ctx)
 {
   const auto* dependencies = resolve_dependencies(ctx, nullptr);
-  const auto data_acquire_fn =
-      resolve_dependency_fn(
-          dependencies->starpu_data_acquire_fn,
-          kDefaultInferenceTaskDependencies.starpu_data_acquire_fn);
+  const auto data_acquire_fn = resolve_dependency_fn(
+      dependencies->starpu_data_acquire_fn,
+      kDefaultInferenceTaskDependencies.starpu_data_acquire_fn);
 
   if (data_acquire_fn == nullptr) {
     log_error("starpu_data_acquire_fn is null; cannot acquire output handle.");

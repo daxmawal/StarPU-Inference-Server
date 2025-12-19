@@ -1884,8 +1884,8 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       opts_(config.opts), completed_jobs_(config.completed_jobs),
       all_done_cv_(config.all_done_cv),
       dependencies_(
-          config.dependencies != nullptr ? config.dependencies
-                                         : &kDefaultInferenceTaskDependencies),
+          config.dependencies != nullptr ? *config.dependencies
+                                         : kDefaultInferenceTaskDependencies),
       slot_manager_(std::make_unique<SlotManager>(starpu_, opts_)),
       result_dispatcher_(std::make_unique<ResultDispatcher>(
           opts_, completed_jobs_, all_done_cv_))
@@ -2372,7 +2372,7 @@ StarPUTaskRunner::submit_inference_task(
   const bool warmup_job = is_warmup_job(job);
   if (!(starpu_->has_input_pool() || starpu_->has_output_pool())) {
     InferenceTask task(
-        starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
+        starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_);
     task.submit();
     auto& tracer = BatchingTraceLogger::instance();
     if (tracer.enabled()) {
@@ -2407,7 +2407,7 @@ StarPUTaskRunner::submit_inference_task(
     release_output_slot_on_exception = should_release_output_slot;
 
     InferenceTask task(
-        starpu_, job, model_cpu_, models_gpu_, opts_, *dependencies_);
+        starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_);
 
     std::vector<starpu_data_handle_t> input_handles_storage;
     const std::vector<starpu_data_handle_t>* input_handles = nullptr;

@@ -16,6 +16,7 @@
 
 #include "inference_queue.hpp"
 #include "inference_runner.hpp"
+#include "inference_task.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 
@@ -37,9 +38,6 @@ void finalize_job_completion(
     StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
 }  // namespace task_runner_helpers
 
-class InferenceTask;
-struct InferenceCallbackContext;
-
 // ============================================================================
 // StarPUTaskRunner
 // ----------------------------------------------------------------------------
@@ -48,8 +46,6 @@ struct InferenceCallbackContext;
 //  - Submitting them to StarPU
 //  - Collecting and storing results
 // ============================================================================
-struct InferenceTaskDependencies;
-
 struct StarPUTaskRunnerConfig {
   InferenceQueue* queue{};
   torch::jit::script::Module* model_cpu{};
@@ -197,7 +193,7 @@ class StarPUTaskRunner {
 
   std::atomic<int>* completed_jobs_;
   std::condition_variable* all_done_cv_;
-  const InferenceTaskDependencies* dependencies_;
+  InferenceTaskDependencies dependencies_;
   std::shared_ptr<InferenceJob> pending_job_;
   std::atomic<int> next_submission_id_{0};
   std::jthread batching_thread_;

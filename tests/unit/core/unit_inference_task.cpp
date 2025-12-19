@@ -490,7 +490,9 @@ TEST_F(
   auto* created_task = task.create_task(inputs, outputs, ctx);
   ASSERT_NE(created_task, nullptr);
 
-  EXPECT_EQ(ctx->dependencies, &dependencies);
+  EXPECT_NE(ctx->dependencies, nullptr);
+  EXPECT_TRUE(ctx->dependencies_owner);
+  EXPECT_EQ(ctx->dependencies->task_create_fn, dependencies.task_create_fn);
 
   ctx->self_keep_alive.reset();
   auto free_task = [](starpu_task* t) {

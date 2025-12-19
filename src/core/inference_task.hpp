@@ -32,6 +32,7 @@ struct InferenceCallbackContext {
   OutputSlotPool* output_pool = nullptr;
   int output_slot_id = -1;
   std::function<void()> on_finished;
+  std::shared_ptr<const struct InferenceTaskDependencies> dependencies_owner;
   const struct InferenceTaskDependencies* dependencies = nullptr;
 
   InferenceCallbackContext(
@@ -153,6 +154,6 @@ class InferenceTask {
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
   const RuntimeConfig* opts_;
-  const InferenceTaskDependencies* dependencies_;
+  std::shared_ptr<const InferenceTaskDependencies> dependencies_;
 };
 }  // namespace starpu_server
