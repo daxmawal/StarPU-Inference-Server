@@ -379,6 +379,35 @@ is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
   return job && job->get_fixed_worker_id().has_value();
 }
 
+void
+log_batch_submitted_if_enabled(
+    const std::shared_ptr<InferenceJob>& job, bool warmup_job)
+{
+  if (!job) {
+    return;
+  }
+  auto& tracer = BatchingTraceLogger::instance();
+  if (!tracer.enabled()) {
+    return;
+  }
+
+  const auto request_ids =
+      task_runner_internal::build_request_ids_for_trace(job);
+  const std::size_t logical_jobs = std::max(
+      static_cast<std::size_t>(std::max(1, job->logical_job_count())),
+      request_ids.size());
+  tracer.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = job->submission_id(),
+      .model_name = job->model_name(),
+      .logical_job_count = logical_jobs,
+      .worker_type = job->get_executed_on(),
+      .worker_id = job->get_worker_id(),
+      .request_ids = std::span<const int>(request_ids),
+      .is_warmup = warmup_job,
+      .device_id = job->get_device_id(),
+  });
+}
+
 struct VectorResizeSpec {
   std::size_t element_count;
   std::size_t byte_count;
@@ -2392,24 +2421,7 @@ StarPUTaskRunner::submit_inference_task(
     InferenceTask task(
         starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_);
     task.submit();
-    auto& tracer = BatchingTraceLogger::instance();
-    if (tracer.enabled()) {
-      const auto request_ids =
-          task_runner_internal::build_request_ids_for_trace(job);
-      const std::size_t logical_jobs = std::max(
-          static_cast<std::size_t>(std::max(1, job->logical_job_count())),
-          request_ids.size());
-      tracer.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
-          .batch_id = job->submission_id(),
-          .model_name = job->model_name(),
-          .logical_job_count = logical_jobs,
-          .worker_type = job->get_executed_on(),
-          .worker_id = job->get_worker_id(),
-          .request_ids = std::span<const int>(request_ids),
-          .is_warmup = warmup_job,
-          .device_id = job->get_device_id(),
-      });
-    }
+    log_batch_submitted_if_enabled(job, warmup_job);
     return;
   }
 
@@ -2466,24 +2478,7 @@ StarPUTaskRunner::submit_inference_task(
       release_output_slot_on_exception = false;
       handle_submission_failure(pools, ctx, ret);
     } else {
-      auto& tracer = BatchingTraceLogger::instance();
-      if (tracer.enabled()) {
-        const auto request_ids =
-            task_runner_internal::build_request_ids_for_trace(job);
-        const std::size_t logical_jobs = std::max(
-            static_cast<std::size_t>(std::max(1, job->logical_job_count())),
-            request_ids.size());
-        tracer.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
-            .batch_id = job->submission_id(),
-            .model_name = job->model_name(),
-            .logical_job_count = logical_jobs,
-            .worker_type = job->get_executed_on(),
-            .worker_id = job->get_worker_id(),
-            .request_ids = std::span<const int>(request_ids),
-            .is_warmup = warmup_job,
-            .device_id = job->get_device_id(),
-        });
-      }
+      log_batch_submitted_if_enabled(job, warmup_job);
     }
     release_output_slot_on_exception = false;
   }
