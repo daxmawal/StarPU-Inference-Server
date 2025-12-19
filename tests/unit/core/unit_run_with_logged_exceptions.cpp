@@ -6,8 +6,8 @@
 #include <string_view>
 #include <utility>
 
-#include "../../../src/core/inference_task.cpp"
 #include "test_helpers.hpp"
+#include "utils/exception_logging.hpp"
 
 namespace starpu_server { namespace {
 

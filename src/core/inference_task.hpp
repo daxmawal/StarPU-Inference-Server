@@ -55,7 +55,7 @@ struct InferenceTaskDependencies {
   std::optional<OutputCallbackHook> starpu_output_callback_hook;
 };
 
-extern const InferenceTaskDependencies kDefaultInferenceTaskDependencies;
+extern InferenceTaskDependencies kDefaultInferenceTaskDependencies;
 
 // =============================================================================
 // InferenceTask

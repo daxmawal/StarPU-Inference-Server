@@ -34,6 +34,7 @@
 #include "task_runner_internal.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/device_type.hpp"
+#include "utils/exception_logging.hpp"
 #include "utils/nvtx.hpp"
 #include "utils/perf_observer.hpp"
 
@@ -76,11 +77,6 @@ job_identifier(const InferenceJob& job) -> int
   return (submission_id >= 0) ? submission_id : job.get_request_id();
 }
 
-struct ExceptionLoggingMessages {
-  std::string_view context_prefix;
-  std::string_view unknown_message;
-};
-
 namespace {
 auto
 submit_inference_task_hook_storage() -> std::function<void()>&
@@ -108,31 +104,6 @@ invoke_submit_inference_task_hook()
   const auto& hook = submit_inference_task_hook_storage();
   if (hook) {
     hook();
-  }
-}
-
-template <typename Callback>
-void
-run_with_logged_exceptions(
-    Callback&& callback, const ExceptionLoggingMessages& messages)
-{
-  try {
-    std::forward<Callback>(callback)();
-  }
-  catch (const InferenceEngineException& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::runtime_error& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::logic_error& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::bad_alloc& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (...) {
-    log_error(std::string(messages.unknown_message));
   }
 }
 
@@ -1000,7 +971,7 @@ ResultDispatcher::handle_job_completion(
         prev_callback,
     std::vector<torch::Tensor>& results, double latency_ms) const
 {
-  task_runner_internal::run_with_logged_exceptions(
+  run_with_logged_exceptions(
       [this, &runner, prev_callback, job, &results, latency_ms] {
         ResultDispatcher::store_completed_job_result(job, results, latency_ms);
         ResultDispatcher::ensure_callback_timing(job->timing_info());
@@ -1008,17 +979,17 @@ ResultDispatcher::handle_job_completion(
             job, StarPUTaskRunner::DurationMs{latency_ms},
             ResultDispatcher::resolve_batch_size(runner, job));
         ResultDispatcher::emit_batch_traces(job, runner);
-        task_runner_internal::run_with_logged_exceptions(
+        run_with_logged_exceptions(
             [prev_callback, &results, latency_ms] {
               ResultDispatcher::invoke_previous_callback(
                   prev_callback, results, latency_ms);
             },
-            task_runner_internal::ExceptionLoggingMessages{
+            ExceptionLoggingMessages{
                 "Exception in completion callback: ",
                 "Unknown exception in completion callback"});
         finalize_job_completion(job);
       },
-      task_runner_internal::ExceptionLoggingMessages{
+      ExceptionLoggingMessages{
           "Exception while finalizing job completion: ",
           "Unknown exception while finalizing job completion"});
 }
@@ -2170,12 +2141,12 @@ StarPUTaskRunner::handle_job_exception(
   bool completion_invoked = false;
   if (job->has_on_complete()) {
     const auto completion = job->get_on_complete();
-    task_runner_internal::run_with_logged_exceptions(
+    run_with_logged_exceptions(
         [&completion, &completion_invoked]() {
           completion({}, -1);
           completion_invoked = true;
         },
-        task_runner_internal::ExceptionLoggingMessages{
+        ExceptionLoggingMessages{
             "Exception in completion callback: ",
             "Unknown exception in completion callback"});
   }
