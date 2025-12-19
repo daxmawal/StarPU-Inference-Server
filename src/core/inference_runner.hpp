@@ -56,23 +56,6 @@ auto compute_latency_breakdown(
 }  // namespace detail
 
 // =============================================================================
-// InferenceResult: output of a completed job, including diagnostics
-// =============================================================================
-
-struct InferenceResult {
-  InferenceResult() noexcept = default;
-  std::vector<torch::Tensor> inputs;
-  std::vector<torch::Tensor> results;
-  double latency_ms = 0.0;
-  detail::TimingInfo timing_info;
-  int request_id = -1;
-  int submission_id = -1;
-  int device_id = -1;
-  int worker_id = -1;
-  DeviceType executed_on = DeviceType::Unknown;
-};
-
-// =============================================================================
 // InferenceJob: a job submitted to the inference engine
 // =============================================================================
 
