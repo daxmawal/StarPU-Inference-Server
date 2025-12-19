@@ -71,6 +71,38 @@ batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
 }
 
 inline auto
+resolve_batch_size_for_job(
+    const RuntimeConfig* opts,
+    const std::shared_ptr<InferenceJob>& job) -> int64_t
+{
+  if (!job) {
+    return 1;
+  }
+  if (const auto effective = job->effective_batch_size();
+      effective.has_value()) {
+    return std::max<int64_t>(1, *effective);
+  }
+
+  const auto& inputs = job->get_input_tensors();
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  if (opts != nullptr && !opts->models.empty() &&
+      !opts->models[0].inputs.empty()) {
+    const auto per_sample_rank =
+        static_cast<int64_t>(opts->models[0].inputs[0].dims.size());
+    if (const auto rank0 = inputs[0].dim();
+        rank0 == per_sample_rank + 1 && rank0 > 0) {
+      return std::max<int64_t>(1, inputs[0].size(0));
+    }
+    return 1;
+  }
+
+  return static_cast<int64_t>(batch_size_from_inputs(inputs));
+}
+
+inline auto
 job_identifier(const InferenceJob& job) -> int
 {
   const int submission_id = job.submission_id();
@@ -1609,28 +1641,7 @@ BatchCollector::job_sample_size(const std::shared_ptr<InferenceJob>& job) const
   if (!job) {
     return 0;
   }
-  if (const auto effective = job->effective_batch_size();
-      effective.has_value()) {
-    return std::max<int64_t>(1, *effective);
-  }
-
-  const auto& inputs = job->get_input_tensors();
-  if (inputs.empty()) {
-    return 1;
-  }
-
-  if (opts_ != nullptr && !opts_->models.empty() &&
-      !opts_->models[0].inputs.empty()) {
-    const auto per_sample_rank =
-        static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
-    const int64_t rank0 = inputs[0].dim();
-    if (rank0 == per_sample_rank + 1 && rank0 > 0) {
-      return std::max<int64_t>(1, inputs[0].size(0));
-    }
-  }
-
-  return static_cast<int64_t>(
-      task_runner_internal::batch_size_from_inputs(inputs));
+  return task_runner_internal::resolve_batch_size_for_job(opts_, job);
 }
 
 auto
@@ -2183,28 +2194,7 @@ StarPUTaskRunner::resolve_batch_size(
   if (!job) {
     return 1;
   }
-  if (const auto effective = job->effective_batch_size();
-      effective.has_value()) {
-    return std::max<int64_t>(1, *effective);
-  }
-
-  const auto& inputs = job->get_input_tensors();
-  if (inputs.empty()) {
-    return 1;
-  }
-
-  if (!opts_->models.empty() && !opts_->models[0].inputs.empty()) {
-    const auto per_sample_rank =
-        static_cast<int64_t>(opts_->models[0].inputs[0].dims.size());
-    if (const auto rank0 = inputs[0].dim();
-        rank0 == per_sample_rank + 1 && rank0 > 0) {
-      return inputs[0].size(0);
-    }
-    return 1;
-  }
-
-  return static_cast<int64_t>(
-      task_runner_internal::batch_size_from_inputs(inputs));
+  return task_runner_internal::resolve_batch_size_for_job(opts_, job);
 }
 
 void
