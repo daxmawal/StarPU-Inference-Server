@@ -219,8 +219,9 @@ slice_outputs_for_sub_job(
 }
 
 auto
-aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
-    -> BatchAggregationInfo
+aggregate_batch_metadata(
+    const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+    const RuntimeConfig* opts) -> BatchAggregationInfo
 {
   BatchAggregationInfo info;
   if (jobs.empty()) {
@@ -235,8 +236,7 @@ aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>& jobs)
       jobs.front()->timing_info().batch_collect_start_time;
 
   for (const auto& job : jobs) {
-    const auto job_batch =
-        static_cast<int64_t>(batch_size_from_inputs(job->get_input_tensors()));
+    const auto job_batch = resolve_batch_size_for_job(opts, job);
     info.total_samples += job_batch > 0 ? job_batch : 1;
     info.logical_jobs += std::max(1, job->logical_job_count());
     info.earliest_start =
@@ -1747,7 +1747,7 @@ BatchCollector::maybe_build_batched_job(
     return master;
   }
 
-  auto batch_info = task_runner_internal::aggregate_batch_metadata(jobs);
+  auto batch_info = task_runner_internal::aggregate_batch_metadata(jobs, opts_);
   auto earliest_start = batch_info.earliest_start;
   auto earliest_enqueued = batch_info.earliest_enqueued;
   auto earliest_batch_collect_start = batch_info.earliest_batch_collect_start;

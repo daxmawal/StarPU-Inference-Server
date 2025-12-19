@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "core/inference_runner.hpp"
-
+#include "utils/runtime_config.hpp"
 #if defined(STARPU_TESTING)
 struct starpu_vector_interface;
 
@@ -56,8 +56,9 @@ auto slice_outputs_for_sub_job(
     const std::vector<torch::Tensor>& aggregated_outputs,
     SubJobSliceOptions options) -> SubJobSliceResult;
 
-auto aggregate_batch_metadata(const std::vector<std::shared_ptr<InferenceJob>>&
-                                  jobs) -> BatchAggregationInfo;
+auto aggregate_batch_metadata(
+    const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+    const RuntimeConfig* opts = nullptr) -> BatchAggregationInfo;
 
 auto resize_outputs_for_batch(
     const std::vector<torch::Tensor>& prototype_outputs,
