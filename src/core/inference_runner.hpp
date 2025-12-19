@@ -76,7 +76,6 @@ struct InferenceResult {
 // InferenceJob: a job submitted to the inference engine
 // =============================================================================
 
-class InferenceQueue;
 class InferenceJob;
 
 class JobBatchState {
@@ -301,20 +300,11 @@ class InferenceJob : public JobBatchState {
 };
 
 // =============================================================================
-// Entry point: launches warmup and execution loop
+// Entry point: model loading and warmup
 // =============================================================================
-
-class StarPUTaskRunner;
-using WorkerThreadLauncher = std::function<std::jthread(StarPUTaskRunner&)>;
-auto get_worker_thread_launcher() -> WorkerThreadLauncher;
-void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 
 namespace detail {
 auto sanitize_cuda_device_count(long long raw_count) -> int;
-void client_worker(
-    InferenceQueue& queue, const RuntimeConfig& opts,
-    const std::vector<torch::Tensor>& outputs_ref, int request_nb);
-
 }  // namespace detail
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)
@@ -327,6 +317,4 @@ void run_warmup(
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref);
-
-void run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu);
 }  // namespace starpu_server
