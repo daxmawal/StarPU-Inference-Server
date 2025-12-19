@@ -548,13 +548,6 @@ class StarPUTaskRunnerTestAdapter {
     StarPUTaskRunner::release_pending_jobs(job, pending_jobs);
   }
 
-  static void store_completed_job_result(
-      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
-      const std::vector<torch::Tensor>& results, double latency_ms)
-  {
-    task_runner_helpers::store_completed_job_result(job, results, latency_ms);
-  }
-
   static void ensure_callback_timing(detail::TimingInfo& timing)
   {
     task_runner_helpers::ensure_callback_timing(timing);
@@ -1194,29 +1187,6 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   EXPECT_NE(output.find("Codelet = 30.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Inference = 45.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Callback = 15.000 ms"), std::string::npos);
-}
-
-TEST_F(StarPUTaskRunnerFixture, StoreCompletedJobResultTracksInputsAndOutputs)
-{
-  std::vector<torch::Tensor> inputs{torch::tensor({1.0, 2.0})};
-  const std::vector<torch::Tensor> outputs{torch::tensor({5.0})};
-  constexpr double kLatencyMs = 7.5;
-
-  auto job = make_job(77, inputs);
-  job->set_submission_id(11);
-  job->timing_info().submission_id = job->submission_id();
-  job->get_device_id() = 3;
-  job->get_worker_id() = 9;
-  job->get_executed_on() = starpu_server::DeviceType::CUDA;
-  job->timing_info().callback_start_time =
-      starpu_server::task_runner_internal::Clock::now();
-  job->timing_info().callback_end_time =
-      job->timing_info().callback_start_time + std::chrono::milliseconds(1);
-
-  starpu_server::StarPUTaskRunnerTestAdapter::store_completed_job_result(
-      runner_.get(), job, outputs, kLatencyMs);
-
-  EXPECT_TRUE(job->get_input_tensors().empty());
 }
 
 TEST_F(

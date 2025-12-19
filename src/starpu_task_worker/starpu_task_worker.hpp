@@ -28,9 +28,6 @@ class StarPUTaskRunner;
 
 #if defined(STARPU_TESTING)
 namespace task_runner_helpers {
-void store_completed_job_result(
-    const std::shared_ptr<InferenceJob>& job,
-    const std::vector<torch::Tensor>& results, double latency_ms);
 void ensure_callback_timing(detail::TimingInfo& timing);
 void record_job_metrics(
     StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job,

@@ -711,10 +711,6 @@ class ResultDispatcher {
   void prepare_job_completion_callback(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job) const;
 
-  static void store_completed_job_result(
-      const std::shared_ptr<InferenceJob>& job,
-      const std::vector<torch::Tensor>& results, double latency_ms);
-
   static void ensure_callback_timing(detail::TimingInfo& timing);
 
   void record_job_metrics(
@@ -901,17 +897,6 @@ ResultDispatcher::prepare_job_completion_callback(
 }
 
 void
-ResultDispatcher::store_completed_job_result(
-    const std::shared_ptr<InferenceJob>& job,
-    const std::vector<torch::Tensor>& results, double latency_ms)
-{
-  (void)results;
-  (void)latency_ms;
-  (void)job->release_input_tensors();  // drop inputs once callbacks are done
-  job->release_input_memory_holders();
-}
-
-void
 ResultDispatcher::ensure_callback_timing(detail::TimingInfo& timing)
 {
   const auto zero_tp = clock::time_point{};
@@ -1065,7 +1050,10 @@ ResultDispatcher::handle_job_completion(
 {
   run_with_logged_exceptions(
       [this, &runner, prev_callback, job, &results, latency_ms] {
-        ResultDispatcher::store_completed_job_result(job, results, latency_ms);
+        if (job) {
+          static_cast<void>(job->release_input_tensors());
+          job->release_input_memory_holders();
+        }
         ResultDispatcher::ensure_callback_timing(job->timing_info());
         record_job_metrics(
             job, StarPUTaskRunner::DurationMs{latency_ms},
@@ -1145,8 +1133,12 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
   aggregated_job->set_aggregated_sub_jobs({});
   aggregated_job->clear_pending_sub_jobs();
 
-  static_cast<void>(aggregated_job->release_input_tensors());
-  aggregated_job->release_input_memory_holders();
+  if (!aggregated_job->get_input_tensors().empty()) {
+    static_cast<void>(aggregated_job->release_input_tensors());
+  }
+  if (!aggregated_job->get_input_memory_holders().empty()) {
+    aggregated_job->release_input_memory_holders();
+  }
   aggregated_job->set_output_tensors({});
 }
 
@@ -2154,14 +2146,6 @@ StarPUTaskRunner::release_inflight_slot()
 
 #if defined(STARPU_TESTING)
 namespace task_runner_helpers {
-void
-store_completed_job_result(
-    const std::shared_ptr<InferenceJob>& job,
-    const std::vector<torch::Tensor>& results, double latency_ms)
-{
-  ResultDispatcher::store_completed_job_result(job, results, latency_ms);
-}
-
 void
 ensure_callback_timing(detail::TimingInfo& timing)
 {
