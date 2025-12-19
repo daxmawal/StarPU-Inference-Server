@@ -95,7 +95,9 @@ class StarPUTaskRunner {
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
   friend struct InflightReleaseGuard;
 
+#if defined(STARPU_TESTING)
   friend class StarPUTaskRunnerTestAdapter;
+#endif
   friend class SlotManager;
   friend class ResultDispatcher;
   friend class BatchCollector;
