@@ -47,15 +47,6 @@ run_with_logged_exceptions(
   catch (const InferenceEngineException& e) {
     log_error(std::string(messages.context_prefix) + e.what());
   }
-  catch (const std::bad_alloc& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::runtime_error& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
-  catch (const std::logic_error& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
-  }
   catch (const std::exception& e) {
     log_error(std::string(messages.context_prefix) + e.what());
   }
@@ -66,6 +57,32 @@ run_with_logged_exceptions(
       log_error(std::string(messages.context_prefix) + "Unknown exception");
     }
   }
+}
+
+auto
+resolve_dependencies(const InferenceTaskDependencies* deps)
+    -> const InferenceTaskDependencies*
+{
+  return deps != nullptr ? deps : &kDefaultInferenceTaskDependencies;
+}
+
+auto
+resolve_dependencies(
+    const InferenceCallbackContext* ctx,
+    const InferenceTaskDependencies* fallback)
+    -> const InferenceTaskDependencies*
+{
+  if (ctx != nullptr && ctx->dependencies != nullptr) {
+    return ctx->dependencies;
+  }
+  return resolve_dependencies(fallback);
+}
+
+template <typename Fn>
+auto
+resolve_dependency_fn(Fn maybe_fn, Fn fallback) -> Fn
+{
+  return maybe_fn != nullptr ? maybe_fn : fallback;
 }
 
 class StarpuHandleVectorGuard {
@@ -103,6 +120,24 @@ class StarpuHandleVectorGuard {
   std::vector<starpu_data_handle_t>& handles_;
   bool active_ = true;
 };
+
+auto
+register_tensor_handles(
+    const std::vector<torch::Tensor>& tensors,
+    std::string_view label_prefix) -> std::vector<starpu_data_handle_t>
+{
+  std::vector<starpu_data_handle_t> handles;
+  handles.reserve(tensors.size());
+  StarpuHandleVectorGuard unregister_guard(handles);
+
+  for (size_t i = 0; i < tensors.size(); ++i) {
+    handles.push_back(InferenceTask::safe_register_tensor_vector(
+        tensors[i], std::format("{}[{}]", label_prefix, i)));
+  }
+
+  unregister_guard.dismiss();
+  return handles;
+}
 }  // namespace
 
 const InferenceTaskDependencies kDefaultInferenceTaskDependencies{
@@ -217,17 +252,7 @@ InferenceTask::register_inputs_handles(
     const std::vector<torch::Tensor>& input_tensors)
     -> std::vector<starpu_data_handle_t>
 {
-  std::vector<starpu_data_handle_t> handles;
-  handles.reserve(input_tensors.size());
-  StarpuHandleVectorGuard unregister_guard(handles);
-
-  for (size_t i = 0; i < input_tensors.size(); ++i) {
-    handles.push_back(safe_register_tensor_vector(
-        input_tensors[i], std::format("input[{}]", i)));
-  }
-
-  unregister_guard.dismiss();
-  return handles;
+  return register_tensor_handles(input_tensors, "input");
 }
 
 auto
@@ -235,17 +260,7 @@ InferenceTask::register_outputs_handles(
     const std::vector<torch::Tensor>& outputs_tensors)
     -> std::vector<starpu_data_handle_t>
 {
-  std::vector<starpu_data_handle_t> handles;
-  handles.reserve(outputs_tensors.size());
-  StarpuHandleVectorGuard unregister_guard(handles);
-
-  for (size_t i = 0; i < outputs_tensors.size(); ++i) {
-    handles.push_back(safe_register_tensor_vector(
-        outputs_tensors[i], std::format("output[{}]", i)));
-  }
-
-  unregister_guard.dismiss();
-  return handles;
+  return register_tensor_handles(outputs_tensors, "output");
 }
 
 // =============================================================================
@@ -262,9 +277,7 @@ InferenceTask::create_context(
   auto params = create_inference_params();
   auto ctx = std::make_shared<InferenceCallbackContext>(
       job_, std::move(params), opts_, job_->get_request_id(), inputs, outputs);
-  ctx->dependencies = dependencies_ != nullptr
-                          ? dependencies_
-                          : &kDefaultInferenceTaskDependencies;
+  ctx->dependencies = resolve_dependencies(dependencies_);
   return ctx;
 }
 
@@ -364,20 +377,15 @@ InferenceTask::fill_input_layout(
   params->layout.dims.resize(num_inputs);
 
   for (size_t i = 0; i < num_inputs; ++i) {
-    std::vector<int64_t> dims;
-    dims.reserve(opts_->limits.max_dims);
-
-    if (opts_ != nullptr && !opts_->models.empty() &&
-        i < opts_->models[0].inputs.size()) {
-      dims = opts_->models[0].inputs[i].dims;
-      if (!dims.empty()) {
-        const int64_t batch =
-            job_->effective_batch_size().value_or(dims.front());
-        dims.front() = std::max<int64_t>(1, batch);
+    auto dims_from_config = [this, i]() -> std::vector<int64_t> {
+      if (opts_ == nullptr || opts_->models.empty() ||
+          i >= opts_->models[0].inputs.size()) {
+        return {};
       }
-    }
+      return opts_->models[0].inputs[i].dims;
+    };
 
-    if (dims.empty()) {
+    auto dims_from_tensor = [this, i]() -> std::vector<int64_t> {
       const auto& tensor = job_->get_input_tensors()[i];
       const int64_t dim = tensor.dim();
       if (dim > static_cast<int64_t>(opts_->limits.max_dims)) {
@@ -387,12 +395,20 @@ InferenceTask::fill_input_layout(
       }
       const auto sizes = tensor.sizes();
       const auto first_dims = std::views::take(sizes, dim);
-      dims.assign(first_dims.begin(), first_dims.end());
+      return std::vector<int64_t>(first_dims.begin(), first_dims.end());
+    };
+
+    std::vector<int64_t> dims = dims_from_config();
+    const bool used_config_dims = !dims.empty();
+    if (dims.empty()) {
+      dims = dims_from_tensor();
     }
 
     if (!dims.empty()) {
       if (const auto effective = job_->effective_batch_size()) {
         dims.front() = std::max<int64_t>(1, *effective);
+      } else if (used_config_dims) {
+        dims.front() = std::max<int64_t>(1, dims.front());
       }
     }
 
@@ -476,13 +492,11 @@ InferenceTask::create_task(
   const size_t num_inputs = inputs_handles.size();
   const size_t num_buffers = num_inputs + outputs_handles.size();
 
-  const auto* dependencies = dependencies_ != nullptr
-                                 ? dependencies_
-                                 : &kDefaultInferenceTaskDependencies;
+  const auto* dependencies = resolve_dependencies(dependencies_);
   const auto task_create =
-      dependencies->task_create_fn != nullptr
-          ? dependencies->task_create_fn
-          : kDefaultInferenceTaskDependencies.task_create_fn;
+      resolve_dependency_fn(
+          dependencies->task_create_fn,
+          kDefaultInferenceTaskDependencies.task_create_fn);
   auto* task = task_create != nullptr ? task_create() : nullptr;
   if (task == nullptr) {
     throw StarPUTaskCreationException("Failed to create StarPU task.");
@@ -517,26 +531,19 @@ InferenceTask::allocate_task_buffers(
     starpu_task* task, size_t num_buffers,
     const std::shared_ptr<InferenceCallbackContext>& ctx)
 {
-  const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
-                                 ? ctx->dependencies
-                                 : &kDefaultInferenceTaskDependencies;
-
-  const auto handles_allocator =
-      dependencies->dyn_handles_allocator != nullptr
-          ? dependencies->dyn_handles_allocator
-          : kDefaultInferenceTaskDependencies.dyn_handles_allocator;
-  const auto handles_deallocator =
-      dependencies->dyn_handles_deallocator != nullptr
-          ? dependencies->dyn_handles_deallocator
-          : kDefaultInferenceTaskDependencies.dyn_handles_deallocator;
-  const auto modes_allocator =
-      dependencies->dyn_modes_allocator != nullptr
-          ? dependencies->dyn_modes_allocator
-          : kDefaultInferenceTaskDependencies.dyn_modes_allocator;
-  const auto modes_deallocator =
-      dependencies->dyn_modes_deallocator != nullptr
-          ? dependencies->dyn_modes_deallocator
-          : kDefaultInferenceTaskDependencies.dyn_modes_deallocator;
+  const auto* dependencies = resolve_dependencies(ctx.get(), nullptr);
+  const auto handles_allocator = resolve_dependency_fn(
+      dependencies->dyn_handles_allocator,
+      kDefaultInferenceTaskDependencies.dyn_handles_allocator);
+  const auto handles_deallocator = resolve_dependency_fn(
+      dependencies->dyn_handles_deallocator,
+      kDefaultInferenceTaskDependencies.dyn_handles_deallocator);
+  const auto modes_allocator = resolve_dependency_fn(
+      dependencies->dyn_modes_allocator,
+      kDefaultInferenceTaskDependencies.dyn_modes_allocator);
+  const auto modes_deallocator = resolve_dependency_fn(
+      dependencies->dyn_modes_deallocator,
+      kDefaultInferenceTaskDependencies.dyn_modes_deallocator);
 
   auto handles_owner = std::unique_ptr<void, void (*)(void*)>(
       handles_allocator(num_buffers * sizeof(starpu_data_handle_t)),
@@ -625,9 +632,7 @@ InferenceTask::starpu_output_callback(void* arg)
     ctx->remaining_outputs_to_acquire =
         static_cast<int>(ctx->outputs_handles.size());
 
-    const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
-                                   ? ctx->dependencies
-                                   : &kDefaultInferenceTaskDependencies;
+    const auto* dependencies = resolve_dependencies(ctx, nullptr);
 
     for (const auto& handle : ctx->outputs_handles) {
       if (dependencies->starpu_output_callback_hook.has_value()) {
@@ -646,13 +651,11 @@ void
 InferenceTask::acquire_output_handle(
     starpu_data_handle_t handle, InferenceCallbackContext* ctx)
 {
-  const auto* dependencies = (ctx != nullptr && ctx->dependencies != nullptr)
-                                 ? ctx->dependencies
-                                 : &kDefaultInferenceTaskDependencies;
+  const auto* dependencies = resolve_dependencies(ctx, nullptr);
   const auto data_acquire_fn =
-      dependencies->starpu_data_acquire_fn != nullptr
-          ? dependencies->starpu_data_acquire_fn
-          : kDefaultInferenceTaskDependencies.starpu_data_acquire_fn;
+      resolve_dependency_fn(
+          dependencies->starpu_data_acquire_fn,
+          kDefaultInferenceTaskDependencies.starpu_data_acquire_fn);
 
   if (data_acquire_fn == nullptr) {
     log_error("starpu_data_acquire_fn is null; cannot acquire output handle.");
