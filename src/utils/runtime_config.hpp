@@ -27,7 +27,6 @@ inline constexpr std::size_t kBytesPerMiB = kBytesPerKiB * 1024ULL;
 inline constexpr std::size_t kDefaultMessageSizeMiB = 32ULL;
 inline constexpr std::size_t kDefaultMinMessageBytes =
     kDefaultMessageSizeMiB * kBytesPerMiB;
-inline constexpr std::size_t kDefaultPregenInputs = 10ULL;
 inline constexpr std::size_t kDefaultMaxQueueSize = 100ULL;
 inline constexpr std::string_view kDefaultTraceFileName = "perfetto_trace.json";
 inline constexpr double kDefaultRelativeTolerance = 1e-3;
@@ -79,15 +78,12 @@ struct RuntimeConfig {
   };
 
   struct BatchingSettings {
-    int request_nb = 1;
-    int delay_us = 0;
     int batch_coalesce_timeout_ms = 0;
     int max_batch_size = 1;
     int pool_size = 0;
     std::size_t max_message_bytes = kDefaultMinMessageBytes;
     std::size_t max_queue_size = kDefaultMaxQueueSize;
     std::size_t max_inflight_tasks = 0;
-    size_t pregen_inputs = kDefaultPregenInputs;
     size_t warmup_pregen_inputs = 2;
     int warmup_request_nb = 2;
     int warmup_batches_per_worker = 1;

@@ -141,14 +141,6 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt, false, false},
     InvalidConfigCase{
-        "NegativeDelaySetsValidFalse",
-        [] {
-          auto yaml = base_model_yaml();
-          yaml += "delay_us: -10\n";
-          return yaml;
-        }(),
-        std::nullopt},
-    InvalidConfigCase{
         "UseCudaEmptySequenceInvalid",
         [] {
           auto yaml = base_model_yaml();
@@ -239,14 +231,6 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "max_batch_size: 1\n";
           yaml += "pool_size: 1\n";
           yaml += "batch_coalesce_timeout_ms: -5\n";
-          return yaml;
-        }(),
-        std::nullopt},
-    InvalidConfigCase{
-        "NegativeRequestNbSetsValidFalse",
-        [] {
-          auto yaml = base_model_yaml();
-          yaml += "request_nb: -1\n";
           return yaml;
         }(),
         std::nullopt},
@@ -676,7 +660,6 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "pool_size: 2\n";
   yaml << "dynamic_batching: true\n";
   yaml << "batch_coalesce_timeout_ms: 15\n";
-  yaml << "pregen_inputs: 8\n";
   yaml << "warmup_pregen_inputs: 5\n";
   yaml << "warmup_request_nb: 3\n";
   yaml << "warmup_batches_per_worker: 2\n";
@@ -708,7 +691,6 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(cfg.batching.max_batch_size, 4);
   EXPECT_TRUE(cfg.batching.dynamic_batching);
   EXPECT_EQ(cfg.batching.batch_coalesce_timeout_ms, 15);
-  EXPECT_EQ(cfg.batching.pregen_inputs, 8U);
   EXPECT_EQ(cfg.batching.warmup_pregen_inputs, 5U);
   EXPECT_EQ(cfg.batching.warmup_request_nb, 3);
   EXPECT_EQ(cfg.batching.warmup_batches_per_worker, 2);
@@ -1256,7 +1238,6 @@ TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
 INSTANTIATE_TEST_SUITE_P(
     NegativeRuntimeValues, NegativeRuntimeValueCase,
     ::testing::Values(
-        NegativeValueCase{"pregen_inputs", "0", "pregen_inputs must be > 0"},
         NegativeValueCase{
             "warmup_pregen_inputs", "0", "warmup_pregen_inputs must be > 0"},
         NegativeValueCase{
@@ -1303,7 +1284,7 @@ TEST(ConfigLoader, PoolSizeRejectsNonPositive)
   EXPECT_FALSE(cfg.valid);
 }
 
-TEST(ConfigLoader, ParsesDelayAndAddress)
+TEST(ConfigLoader, ParsesAddress)
 {
   const auto model_path = std::filesystem::temp_directory_path() /
                           "config_loader_delay_addr_model.pt";
@@ -1323,7 +1304,6 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   yaml << "max_batch_size: 2\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "pool_size: 2\n";
-  yaml << "delay_us: 15\n";
   yaml << "address: 127.0.0.1:50051\n";
 
   const auto tmp =
@@ -1333,7 +1313,6 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.delay_us, 15);
   EXPECT_EQ(cfg.server_address, "127.0.0.1:50051");
 }
 
@@ -1508,7 +1487,7 @@ outputs:
   - name: out
     dims: [1]
     data_type: float32
-delay_us: -10
+max_queue_size: 0
 max_batch_size: 1
 batch_coalesce_timeout_ms: 1
 pool_size: 1
@@ -1519,7 +1498,7 @@ pool_size: 1
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
-  EXPECT_EQ(cfg.batching.delay_us, 0);
+  EXPECT_EQ(cfg.batching.max_queue_size, kDefaultMaxQueueSize);
 }
 
 TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)

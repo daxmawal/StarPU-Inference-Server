@@ -141,12 +141,10 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "name",
           "model",
           "starpu_env",
-          "request_nb",
           "device_ids",
           "group_cpu_by_numa",
           "inputs",
           "outputs",
-          "delay_us",
           "batch_coalesce_timeout_ms",
           "address",
           "metrics_port",
@@ -158,7 +156,6 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "pool_size",
           "trace_enabled",
           "trace_output",
-          "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
           "warmup_batches_per_worker",
@@ -205,26 +202,14 @@ parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
 }
 
 void
-parse_request_nb_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
+parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["request_nb"]) {
-    cfg.batching.request_nb = root["request_nb"].as<int>();
-    if (cfg.batching.request_nb < 0) {
-      log_error("request_nb must be >= 0");
-      cfg.valid = false;
-    }
-  }
   if (root["device_ids"]) {
     log_error(
         "device_ids must be nested inside the use_cuda block (e.g. "
         "\"use_cuda: [{ device_ids: [0] }]\")");
     cfg.valid = false;
   }
-}
-
-void
-parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
-{
   if (root["use_cpu"]) {
     cfg.devices.use_cpu = root["use_cpu"].as<bool>();
   }
@@ -332,13 +317,6 @@ parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["delay_us"]) {
-    cfg.batching.delay_us = root["delay_us"].as<int>();
-    if (cfg.batching.delay_us < 0) {
-      cfg.valid = false;
-      throw std::invalid_argument("delay_us must be >= 0");
-    }
-  }
   if (root["batch_coalesce_timeout_ms"]) {
     cfg.batching.batch_coalesce_timeout_ms =
         root["batch_coalesce_timeout_ms"].as<int>();
@@ -419,13 +397,6 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
 void
 parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["pregen_inputs"]) {
-    const int tmp = root["pregen_inputs"].as<int>();
-    if (tmp <= 0) {
-      throw std::invalid_argument("pregen_inputs must be > 0");
-    }
-    cfg.batching.pregen_inputs = static_cast<size_t>(tmp);
-  }
   if (root["warmup_pregen_inputs"]) {
     const int tmp = root["warmup_pregen_inputs"].as<int>();
     if (tmp <= 0) {
@@ -570,7 +541,6 @@ load_config(const std::string& path) -> RuntimeConfig
       return cfg;
     }
     parse_model_node(root, cfg);
-    parse_request_nb_and_devices(root, cfg);
     parse_io_nodes(root, cfg);
     parse_network_and_delay(root, cfg);
     parse_message_and_batching(root, cfg);
