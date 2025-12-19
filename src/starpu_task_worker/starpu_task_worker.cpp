@@ -16,7 +16,6 @@
 #include <memory>
 #include <mutex>
 #include <new>
-#include <numeric>
 #include <optional>
 #include <ranges>
 #include <span>
