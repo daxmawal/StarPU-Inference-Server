@@ -5,7 +5,6 @@
 #include <string_view>
 #include <utility>
 
-#include "exceptions.hpp"
 #include "logger.hpp"
 
 namespace starpu_server {
@@ -23,9 +22,6 @@ run_with_logged_exceptions(
 {
   try {
     std::forward<Callback>(callback)();
-  }
-  catch (const InferenceEngineException& e) {
-    log_error(std::string(messages.context_prefix) + e.what());
   }
   catch (const std::exception& e) {
     log_error(std::string(messages.context_prefix) + e.what());

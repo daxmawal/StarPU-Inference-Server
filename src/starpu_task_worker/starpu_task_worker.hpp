@@ -145,8 +145,8 @@ class StarPUTaskRunner {
       const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
   static auto configure_task_context(
       InferenceTask& task, const PoolResources& pools,
-      const std::vector<starpu_data_handle_t>& input_handles,
-      const std::vector<starpu_data_handle_t>& output_handles,
+      std::vector<starpu_data_handle_t> input_handles,
+      std::vector<starpu_data_handle_t> output_handles,
       int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>;
   [[noreturn]] static void handle_submission_failure(
       const PoolResources& pools,

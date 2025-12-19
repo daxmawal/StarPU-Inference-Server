@@ -95,8 +95,8 @@ class InferenceTask {
   auto create_inference_params() -> std::shared_ptr<InferenceParams>;
 
   auto create_context(
-      const std::vector<starpu_data_handle_t>& inputs,
-      const std::vector<starpu_data_handle_t>& outputs)
+      std::vector<starpu_data_handle_t> inputs,
+      std::vector<starpu_data_handle_t> outputs)
       -> std::shared_ptr<InferenceCallbackContext>;
 
   void fill_model_pointers(

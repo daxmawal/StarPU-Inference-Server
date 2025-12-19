@@ -247,13 +247,13 @@ InferenceTask::register_outputs_handles(
 
 auto
 InferenceTask::create_context(
-    const std::vector<starpu_data_handle_t>& inputs,
-    const std::vector<starpu_data_handle_t>& outputs)
+    std::vector<starpu_data_handle_t> inputs,
+    std::vector<starpu_data_handle_t> outputs)
     -> std::shared_ptr<InferenceCallbackContext>
 {
   auto params = create_inference_params();
   auto ctx = std::make_shared<InferenceCallbackContext>(
-      job_, std::move(params), opts_, inputs, outputs);
+      job_, std::move(params), opts_, std::move(inputs), std::move(outputs));
   ctx->dependencies_owner = dependencies_;
   ctx->dependencies = dependencies_.get();
   return ctx;
@@ -441,8 +441,10 @@ InferenceTask::submit()
 
   auto inputs_handles = prepare_input_handles();
   auto outputs_handles = prepare_output_handles();
-  auto ctx = create_context(inputs_handles, outputs_handles);
-  starpu_task* task = create_task(inputs_handles, outputs_handles, ctx);
+  auto ctx =
+      create_context(std::move(inputs_handles), std::move(outputs_handles));
+  starpu_task* task =
+      create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
 
   job_->timing_info().before_starpu_submitted_time =
       std::chrono::high_resolution_clock::now();

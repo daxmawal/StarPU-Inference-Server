@@ -2284,11 +2284,12 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
 auto
 StarPUTaskRunner::configure_task_context(
     InferenceTask& task, const PoolResources& pools,
-    const std::vector<starpu_data_handle_t>& input_handles,
-    const std::vector<starpu_data_handle_t>& output_handles,
+    std::vector<starpu_data_handle_t> input_handles,
+    std::vector<starpu_data_handle_t> output_handles,
     int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>
 {
-  auto ctx = task.create_context(input_handles, output_handles);
+  auto ctx =
+      task.create_context(std::move(input_handles), std::move(output_handles));
   ctx->keep_input_handles = pools.has_input();
   ctx->keep_output_handles = pools.has_output();
   if (pools.has_output()) {
@@ -2307,7 +2308,7 @@ StarPUTaskRunner::configure_task_context(
       };
   if (ctx->job) {
     resize_output_handles_for_job(
-        ctx->job->get_output_tensors(), output_handles);
+        ctx->job->get_output_tensors(), ctx->outputs_handles);
   }
   if (ctx->inference_params) {
     ctx->inference_params->batch_size = batch_size;
@@ -2398,11 +2399,18 @@ StarPUTaskRunner::submit_inference_task(
       output_handles = &output_handles_storage;
     }
 
+    std::vector<starpu_data_handle_t> input_handles_for_ctx =
+        pools.has_input() ? *input_handles : std::move(input_handles_storage);
+    std::vector<starpu_data_handle_t> output_handles_for_ctx =
+        pools.has_output() ? *output_handles
+                           : std::move(output_handles_storage);
+
     auto ctx = configure_task_context(
-        task, pools, *input_handles, *output_handles, batch);
+        task, pools, std::move(input_handles_for_ctx),
+        std::move(output_handles_for_ctx), batch);
 
     starpu_task* task_ptr =
-        task.create_task(*input_handles, *output_handles, ctx);
+        task.create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
 
     job->timing_info().before_starpu_submitted_time =
         std::chrono::high_resolution_clock::now();

@@ -767,8 +767,8 @@ class StarPUTaskRunnerTestAdapter {
   static auto configure_task_context(
       InferenceTask& task, InputSlotPool* input_pool, int input_slot,
       OutputSlotPool* output_pool, int output_slot,
-      const std::vector<starpu_data_handle_t>& input_handles,
-      const std::vector<starpu_data_handle_t>& output_handles,
+      std::vector<starpu_data_handle_t> input_handles,
+      std::vector<starpu_data_handle_t> output_handles,
       int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>
   {
     StarPUTaskRunner::PoolResources pools{};
@@ -777,7 +777,8 @@ class StarPUTaskRunnerTestAdapter {
     pools.output_pool = output_pool;
     pools.output_slot = output_slot;
     return StarPUTaskRunner::configure_task_context(
-        task, pools, input_handles, output_handles, batch_size);
+        task, pools, std::move(input_handles), std::move(output_handles),
+        batch_size);
   }
 
   static void trace_batch_if_enabled(
