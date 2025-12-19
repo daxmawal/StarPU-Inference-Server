@@ -1961,11 +1961,13 @@ StarPUTaskRunner::~StarPUTaskRunner() = default;
 // Job Queue Management
 // =============================================================================
 
+#if defined(STARPU_TESTING)
 auto
 StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
 {
   return batch_collector_->wait_for_next_job();
 }
+#endif
 
 auto
 StarPUTaskRunner::should_shutdown(
@@ -1984,6 +1986,7 @@ StarPUTaskRunner::should_shutdown(
 // Completion Callback Handling
 // =============================================================================
 
+#if defined(STARPU_TESTING)
 void
 StarPUTaskRunner::log_job_timings(
     int request_id, DurationMs latency,
@@ -1991,6 +1994,7 @@ StarPUTaskRunner::log_job_timings(
 {
   result_dispatcher_->log_job_timings(request_id, latency, timing_info);
 }
+#endif
 
 void
 StarPUTaskRunner::prepare_job_completion_callback(
@@ -2119,6 +2123,7 @@ StarPUTaskRunner::release_inflight_slot()
   inflight_state_.cv.notify_one();
 }
 
+#if defined(STARPU_TESTING)
 namespace task_runner_helpers {
 void
 store_completed_job_result(
@@ -2153,6 +2158,7 @@ finalize_job_completion(
   }
 }
 }  // namespace task_runner_helpers
+#endif
 
 void
 StarPUTaskRunner::submit_job_or_handle_failure(

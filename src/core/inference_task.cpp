@@ -11,7 +11,6 @@
 #include <format>
 #include <limits>
 #include <memory>
-#include <new>
 #include <ranges>
 #include <span>
 #include <stdexcept>

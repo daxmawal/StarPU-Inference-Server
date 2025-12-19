@@ -26,6 +26,7 @@ class SlotManager;
 class ResultDispatcher;
 class StarPUTaskRunner;
 
+#if defined(STARPU_TESTING)
 namespace task_runner_helpers {
 void store_completed_job_result(
     const std::shared_ptr<InferenceJob>& job,
@@ -37,6 +38,7 @@ void record_job_metrics(
 void finalize_job_completion(
     StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
 }  // namespace task_runner_helpers
+#endif
 
 // ============================================================================
 // StarPUTaskRunner
@@ -69,7 +71,9 @@ class StarPUTaskRunner {
   using DurationMs = std::chrono::duration<double, std::milli>;
 
   void run();
+#if defined(STARPU_TESTING)
   auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
+#endif
   [[nodiscard]] auto should_shutdown(
       const std::shared_ptr<InferenceJob>& job) const -> bool;
   void prepare_job_completion_callback(
@@ -78,17 +82,21 @@ class StarPUTaskRunner {
   static auto handle_job_exception(
       const std::shared_ptr<InferenceJob>& job,
       const std::exception& exception) -> bool;
+#if defined(STARPU_TESTING)
   void log_job_timings(
       int request_id, DurationMs latency,
       const detail::TimingInfo& timing_info) const;
+#endif
 
  private:
+#if defined(STARPU_TESTING)
   friend void task_runner_helpers::record_job_metrics(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job,
       std::chrono::duration<double, std::milli> latency,
       std::size_t batch_size);
   friend void task_runner_helpers::finalize_job_completion(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
+#endif
   friend struct InflightReleaseGuard;
 
 #if defined(STARPU_TESTING)
