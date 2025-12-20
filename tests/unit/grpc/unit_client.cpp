@@ -257,9 +257,7 @@ INSTANTIATE_TEST_SUITE_P(
         std::pair{"float16", at::kHalf}, std::pair{"bfloat16", at::kBFloat16},
         std::pair{"int32", at::kInt}, std::pair{"int64", at::kLong},
         std::pair{"int16", at::kShort}, std::pair{"int8", at::kChar},
-        std::pair{"uint8", at::kByte}, std::pair{"bool", at::kBool},
-        std::pair{"complex64", at::kComplexFloat},
-        std::pair{"complex128", at::kComplexDouble}));
+        std::pair{"uint8", at::kByte}, std::pair{"bool", at::kBool}));
 
 
 TEST(InferenceClient, ModelIsReadyReturnsTrue)

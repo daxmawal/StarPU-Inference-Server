@@ -89,31 +89,17 @@ string_to_scalar_type(std::string_view type_str) -> at::ScalarType
 
   static const std::unordered_map<
       std::string, at::ScalarType, TransparentHash, std::equal_to<>>
-      type_map = {
-          {"float", at::kFloat},
-          {"float32", at::kFloat},
-          {"fp32", at::kFloat},
-          {"double", at::kDouble},
-          {"float64", at::kDouble},
-          {"fp64", at::kDouble},
-          {"half", at::kHalf},
-          {"float16", at::kHalf},
-          {"fp16", at::kHalf},
-          {"bfloat16", at::kBFloat16},
-          {"bf16", at::kBFloat16},
-          {"int", at::kInt},
-          {"int32", at::kInt},
-          {"long", at::kLong},
-          {"int64", at::kLong},
-          {"short", at::kShort},
-          {"int16", at::kShort},
-          {"char", at::kChar},
-          {"int8", at::kChar},
-          {"byte", at::kByte},
-          {"uint8", at::kByte},
-          {"bool", at::kBool},
-          {"complex64", at::kComplexFloat},
-          {"complex128", at::kComplexDouble}};
+      type_map = {{"float", at::kFloat},    {"float32", at::kFloat},
+                  {"fp32", at::kFloat},     {"double", at::kDouble},
+                  {"float64", at::kDouble}, {"fp64", at::kDouble},
+                  {"half", at::kHalf},      {"float16", at::kHalf},
+                  {"fp16", at::kHalf},      {"bfloat16", at::kBFloat16},
+                  {"bf16", at::kBFloat16},  {"int", at::kInt},
+                  {"int32", at::kInt},      {"long", at::kLong},
+                  {"int64", at::kLong},     {"short", at::kShort},
+                  {"int16", at::kShort},    {"char", at::kChar},
+                  {"int8", at::kChar},      {"byte", at::kByte},
+                  {"uint8", at::kByte},     {"bool", at::kBool}};
 
   const auto iter = type_map.find(key);
   if (iter == type_map.end()) {

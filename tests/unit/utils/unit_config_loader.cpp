@@ -1493,7 +1493,7 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   yaml << "inputs:\n";
   yaml << "  - name: complex_input\n";
   yaml << "    dims: [1, 1]\n";
-  yaml << "    data_type: complex64\n";
+  yaml << "    data_type: float32\n";
   yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
@@ -1506,6 +1506,12 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
                    "config_loader_complex_dtype.yaml";
   std::ofstream(tmp) << yaml.str();
 
+  ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
+    if (!cfg.models.empty() && !cfg.models[0].inputs.empty()) {
+      cfg.models[0].inputs[0].type = at::kComplexFloat;
+    }
+  });
+
   starpu_server::CaptureStream capture{std::cerr};
   const RuntimeConfig cfg = load_config(tmp.string());
 
@@ -1516,9 +1522,7 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   EXPECT_FALSE(cfg.valid);
   ASSERT_EQ(cfg.models.size(), 1U);
   ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
-  EXPECT_EQ(
-      cfg.models[0].inputs[0].type,
-      starpu_server::string_to_scalar_type("complex64"));
+  EXPECT_EQ(cfg.models[0].inputs[0].type, at::kComplexFloat);
   ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
   EXPECT_FALSE(cfg.models[0].outputs.empty());
 }
