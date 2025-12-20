@@ -178,12 +178,12 @@ checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
 
 auto
 convert_input_to_tensor(
-    const ModelInferRequest::InferInputTensor& input, const std::string& raw,
+    const ModelInferRequest::InferInputTensor& input,
+    const std::vector<int64_t>& shape, const std::string& raw,
     at::ScalarType dtype,
     const std::shared_ptr<const ModelInferRequest>& request_guard,
     torch::Tensor& tensor, std::shared_ptr<const void>* keep_alive) -> Status
 {
-  std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
   auto options = torch::TensorOptions().dtype(dtype);
 
   std::optional<size_t> expected = element_size(dtype);
@@ -328,6 +328,7 @@ InferenceServiceImpl::validate_and_convert_inputs(
   auto request_guard = std::shared_ptr<const ModelInferRequest>(
       request, [](const ModelInferRequest*) {});
 
+  inputs.clear();
   inputs.reserve(request->inputs_size());
   if (input_lifetimes != nullptr) {
     input_lifetimes->clear();
@@ -336,6 +337,7 @@ InferenceServiceImpl::validate_and_convert_inputs(
   for (int i = 0; i < request->inputs_size(); ++i) {
     const auto& input = request->inputs(i);
     const auto& raw = request->raw_input_contents(i);
+    std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
 
     at::ScalarType dtype = at::kFloat;
     Status status = parse_input_dtype(input, expected_input_types_[i], dtype);
@@ -346,7 +348,7 @@ InferenceServiceImpl::validate_and_convert_inputs(
     torch::Tensor tensor;
     std::shared_ptr<const void> tensor_guard;
     status = convert_input_to_tensor(
-        input, raw, dtype, request_guard, tensor,
+        input, shape, raw, dtype, request_guard, tensor,
         input_lifetimes != nullptr ? &tensor_guard : nullptr);
     if (!status.ok()) {
       return status;
@@ -354,7 +356,6 @@ InferenceServiceImpl::validate_and_convert_inputs(
 
     if (static_cast<size_t>(i) < expected_input_dims_.size()) {
       const auto& expected_dims = expected_input_dims_[static_cast<size_t>(i)];
-      std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
       const bool batching_allowed = (max_batch_size_ > 0);
       status = validate_configured_shape(
           shape, expected_dims, batching_allowed, max_batch_size_);
