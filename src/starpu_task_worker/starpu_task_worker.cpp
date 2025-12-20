@@ -36,6 +36,7 @@
 #include "utils/exception_logging.hpp"
 #include "utils/nvtx.hpp"
 #include "utils/perf_observer.hpp"
+#include "utils/tensor_validation.hpp"
 
 namespace starpu_server {
 namespace task_runner_internal {
@@ -1213,9 +1214,10 @@ SlotManager::validate_batch_and_copy_inputs(
 
   const auto copy_single_input = [&](std::size_t input_idx) {
     const auto& tensor = inputs[input_idx];
-    if (!tensor.defined() || !tensor.is_cpu() || !tensor.is_contiguous()) {
-      throw InvalidInputTensorException(
-          "Input tensor must be defined, CPU and contiguous");
+    const auto label = std::string("input[") + std::to_string(input_idx) + "]";
+    if (auto error =
+            tensor_validation::validate_cpu_contiguous_tensor(tensor, label)) {
+      throw InvalidInputTensorException(*error);
     }
     const VectorResizeSpec spec{
         static_cast<std::size_t>(tensor.numel()), tensor.nbytes()};
@@ -1295,10 +1297,12 @@ SlotManager::copy_job_inputs_to_slot(
     const bool allow_async =
         buffer_info.cuda_pinned || buffer_info.starpu_pinned;
 
-    const auto validate_tensor = [](const torch::Tensor& tensor) {
-      if (!tensor.defined() || !tensor.is_cpu() || !tensor.is_contiguous()) {
-        throw InvalidInputTensorException(
-            "Input tensor must be defined, CPU and contiguous");
+    const auto input_label =
+        std::string("input[") + std::to_string(input_idx) + "]";
+    const auto validate_tensor = [&input_label](const torch::Tensor& tensor) {
+      if (auto error = tensor_validation::validate_cpu_contiguous_tensor(
+              tensor, input_label)) {
+        throw InvalidInputTensorException(*error);
       }
     };
     auto ensure_capacity = [&](size_t bytes) {

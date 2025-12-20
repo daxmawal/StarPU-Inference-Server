@@ -26,6 +26,7 @@
 #include "starpu_setup.hpp"
 #include "utils/device_type.hpp"
 #include "utils/exception_logging.hpp"
+#include "utils/tensor_validation.hpp"
 
 namespace starpu_server {
 namespace {
@@ -191,19 +192,9 @@ InferenceTask::safe_register_tensor_vector(
     const torch::Tensor& tensor,
     const std::string& label) -> starpu_data_handle_t
 {
-  if (!tensor.defined()) {
-    throw StarPURegistrationException("Tensor '" + label + "' is undefined.");
-  }
-  if (tensor.data_ptr() == nullptr) {
-    throw StarPURegistrationException("Tensor '" + label + "' is invalid.");
-  }
-  if (!tensor.device().is_cpu()) {
-    throw StarPURegistrationException(
-        "Tensor '" + label + "' must reside on CPU");
-  }
-  if (!tensor.is_contiguous()) {
-    throw StarPURegistrationException(
-        "Tensor '" + label + "' must be contiguous.");
+  if (auto error = tensor_validation::validate_cpu_contiguous_tensor(
+          tensor, label, true)) {
+    throw StarPURegistrationException(*error);
   }
   starpu_data_handle_t handle = nullptr;
 
