@@ -478,32 +478,13 @@ class StarPUTaskRunnerTestAdapter {
     return runner->wait_for_prepared_job();
   }
 
-  struct BatchCollectorAccessor {
-    starpu_server::InferenceQueue* queue;
-    const starpu_server::RuntimeConfig* opts;
-    starpu_server::StarPUSetup* starpu;
-    std::shared_ptr<starpu_server::InferenceJob>* pending_job;
-    std::atomic<std::size_t>* inflight_tasks;
-    std::condition_variable* inflight_cv;
-    std::mutex* inflight_mutex;
-    std::size_t max_inflight_tasks;
-    std::mutex* prepared_mutex;
-    std::condition_variable* prepared_cv;
-    std::deque<std::shared_ptr<starpu_server::InferenceJob>>* prepared_jobs;
-    bool* batching_done;
-  };
-
   static void disable_prepared_job_sync(StarPUTaskRunner* runner)
   {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-
-    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
+    test_api::batch_collector_disable_prepared_job_sync(
         runner->batch_collector_.get());
-    accessor->prepared_mutex = nullptr;
-    accessor->prepared_cv = nullptr;
-    accessor->prepared_jobs = nullptr;
   }
 
   static void set_batch_collector_queue_to_null(StarPUTaskRunner* runner)
@@ -511,9 +492,8 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
-        runner->batch_collector_.get());
-    accessor->queue = nullptr;
+    test_api::batch_collector_set_queue(
+        runner->batch_collector_.get(), nullptr);
   }
 
   static auto get_batch_collector_queue(StarPUTaskRunner* runner)
@@ -522,9 +502,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return nullptr;
     }
-    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
-        runner->batch_collector_.get());
-    return accessor->queue;
+    return test_api::batch_collector_get_queue(runner->batch_collector_.get());
   }
 
   static void set_batch_collector_pending_job(
@@ -534,11 +512,8 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
-        runner->batch_collector_.get());
-    if (accessor->pending_job != nullptr) {
-      *accessor->pending_job = job;
-    }
+    test_api::batch_collector_set_pending_job(
+        runner->batch_collector_.get(), job);
   }
 
   static void release_pending_jobs(

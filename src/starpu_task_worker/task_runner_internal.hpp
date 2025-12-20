@@ -24,6 +24,7 @@ struct starpu_vector_interface;
 
 namespace starpu_server {
 class BatchCollector;
+class InferenceQueue;
 class SlotManager;
 }  // namespace starpu_server
 #endif
@@ -128,6 +129,13 @@ auto batch_collector_should_hold_job(
     const std::shared_ptr<InferenceJob>& candidate,
     const std::shared_ptr<InferenceJob>& reference,
     const std::optional<int>& target_worker) -> bool;
+void batch_collector_disable_prepared_job_sync(BatchCollector* collector);
+void batch_collector_set_queue(
+    BatchCollector* collector, InferenceQueue* queue);
+auto batch_collector_get_queue(const BatchCollector* collector)
+    -> InferenceQueue*;
+void batch_collector_set_pending_job(
+    BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
 }  // namespace testing
 #endif
 

@@ -864,6 +864,15 @@ class BatchCollector {
       const std::shared_ptr<InferenceJob>& candidate,
       const std::shared_ptr<InferenceJob>& reference,
       const std::optional<int>& target_worker) -> bool;
+  friend void
+  task_runner_internal::testing::batch_collector_disable_prepared_job_sync(
+      BatchCollector* collector);
+  friend void task_runner_internal::testing::batch_collector_set_queue(
+      BatchCollector* collector, InferenceQueue* queue);
+  friend auto task_runner_internal::testing::batch_collector_get_queue(
+      const BatchCollector* collector) -> InferenceQueue*;
+  friend void task_runner_internal::testing::batch_collector_set_pending_job(
+      BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
 #endif
 
   InferenceQueue* queue_;
@@ -2750,6 +2759,42 @@ batch_collector_should_hold_job(
     const std::optional<int>& target_worker) -> bool
 {
   return BatchCollector::should_hold_job(candidate, reference, target_worker);
+}
+
+void
+batch_collector_disable_prepared_job_sync(BatchCollector* collector)
+{
+  if (collector == nullptr) {
+    return;
+  }
+  collector->prepared_mutex_ = nullptr;
+  collector->prepared_cv_ = nullptr;
+  collector->prepared_jobs_ = nullptr;
+}
+
+void
+batch_collector_set_queue(BatchCollector* collector, InferenceQueue* queue)
+{
+  if (collector == nullptr) {
+    return;
+  }
+  collector->queue_ = queue;
+}
+
+auto
+batch_collector_get_queue(const BatchCollector* collector) -> InferenceQueue*
+{
+  return collector != nullptr ? collector->queue_ : nullptr;
+}
+
+void
+batch_collector_set_pending_job(
+    BatchCollector* collector, const std::shared_ptr<InferenceJob>& job)
+{
+  if (collector == nullptr || collector->pending_job_ == nullptr) {
+    return;
+  }
+  *collector->pending_job_ = job;
 }
 
 }  // namespace task_runner_internal::testing
