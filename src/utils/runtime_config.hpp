@@ -27,8 +27,6 @@ inline constexpr std::size_t kDefaultMinMessageBytes =
     kDefaultMessageSizeMiB * kBytesPerMiB;
 inline constexpr std::size_t kDefaultMaxQueueSize = 100ULL;
 inline constexpr std::string_view kDefaultTraceFileName = "perfetto_trace.json";
-inline constexpr double kDefaultRelativeTolerance = 1e-3;
-inline constexpr double kDefaultAbsoluteTolerance = 1e-5;
 inline constexpr int kDefaultMetricsPort = 9090;
 inline constexpr std::string_view kDefaultStarpuScheduler = "lws";
 inline constexpr std::string_view kStarpuSchedulerEnvVar = "STARPU_SCHED";
@@ -91,11 +89,6 @@ struct RuntimeConfig {
     std::string trace_output_path = std::string(kDefaultTraceFileName);
   };
 
-  struct ValidationSettings {
-    double rtol = kDefaultRelativeTolerance;
-    double atol = kDefaultAbsoluteTolerance;
-  };
-
   struct Limits {
     size_t max_inputs = InferLimits::MaxInputs;
     size_t max_dims = InferLimits::MaxDims;
@@ -112,7 +105,6 @@ struct RuntimeConfig {
   VerbosityLevel verbosity = VerbosityLevel::Silent;
   DeviceSettings devices{};
   BatchingSettings batching{};
-  ValidationSettings validation{};
   Limits limits{};
   std::optional<uint64_t> seed;
   bool valid = true;
