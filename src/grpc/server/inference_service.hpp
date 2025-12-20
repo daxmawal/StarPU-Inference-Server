@@ -89,12 +89,14 @@ class InferenceServiceImpl final
           std::chrono::high_resolution_clock::now(),
       std::string model_name = {}) -> grpc::Status;
 
+#if defined(STARPU_TESTING)
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
       std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
       detail::TimingInfo& timing_info,
       std::vector<std::shared_ptr<const void>> input_lifetimes = {})
       -> grpc::Status;
+#endif
 
   void HandleModelInferAsync(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,

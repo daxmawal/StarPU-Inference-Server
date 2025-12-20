@@ -467,6 +467,7 @@ InferenceServiceImpl::submit_job_async(
   return Status::OK;
 }
 
+#if defined(STARPU_TESTING)
 auto
 InferenceServiceImpl::submit_job_and_wait(
     const std::vector<torch::Tensor>& inputs,
@@ -512,6 +513,7 @@ InferenceServiceImpl::submit_job_and_wait(
   timing_info = result.timing_info;
   return Status::OK;
 }
+#endif
 
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(
@@ -906,6 +908,43 @@ compute_thread_count() -> std::size_t
   return compute_thread_count_from(std::thread::hardware_concurrency());
 }
 
+void
+run_grpc_server_impl(
+    InferenceServiceImpl& service, const GrpcServerOptions& options,
+    std::unique_ptr<Server>& server)
+{
+  inference::GRPCInferenceService::AsyncService async_service;
+  AsyncServerContext async_context(async_service, service);
+
+  ServerBuilder builder;
+  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
+  async_context.configure(builder);
+  const int grpc_max_message_bytes =
+      options.max_message_bytes >
+              static_cast<std::size_t>(std::numeric_limits<int>::max())
+          ? std::numeric_limits<int>::max()
+          : static_cast<int>(options.max_message_bytes);
+  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
+  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
+
+  server = builder.BuildAndStart();
+  if (!server) {
+    log_error(
+        std::format("Failed to start gRPC server on {}", options.address));
+    set_server_health(false);
+    return;
+  }
+  set_server_health(true);
+  async_context.start();
+  log_info(
+      options.verbosity,
+      std::format("Server listening on {}", options.address));
+  server->Wait();
+  set_server_health(false);
+  async_context.shutdown();
+  server.reset();
+}
+
 }  // namespace
 
 AsyncServerContext::AsyncServerContext(
@@ -1000,37 +1039,7 @@ RunGrpcServer(
   InferenceServiceImpl service(
       &queue, &reference_outputs, expected_input_types, expected_input_dims,
       max_batch_size, options.default_model_name);
-
-  inference::GRPCInferenceService::AsyncService async_service;
-  AsyncServerContext async_context(async_service, service);
-
-  ServerBuilder builder;
-  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
-  async_context.configure(builder);
-  const int grpc_max_message_bytes =
-      options.max_message_bytes >
-              static_cast<std::size_t>(std::numeric_limits<int>::max())
-          ? std::numeric_limits<int>::max()
-          : static_cast<int>(options.max_message_bytes);
-  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
-  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
-
-  server = builder.BuildAndStart();
-  if (!server) {
-    log_error(
-        std::format("Failed to start gRPC server on {}", options.address));
-    set_server_health(false);
-    return;
-  }
-  set_server_health(true);
-  async_context.start();
-  log_info(
-      options.verbosity,
-      std::format("Server listening on {}", options.address));
-  server->Wait();
-  set_server_health(false);
-  async_context.shutdown();
-  server.reset();
+  run_grpc_server_impl(service, options, server);
 }
 
 void
@@ -1044,37 +1053,7 @@ RunGrpcServer(
       std::vector<at::ScalarType>(
           expected_input_types.begin(), expected_input_types.end()),
       options.default_model_name);
-
-  inference::GRPCInferenceService::AsyncService async_service;
-  AsyncServerContext async_context(async_service, service);
-
-  ServerBuilder builder;
-  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
-  async_context.configure(builder);
-  const int grpc_max_message_bytes =
-      options.max_message_bytes >
-              static_cast<std::size_t>(std::numeric_limits<int>::max())
-          ? std::numeric_limits<int>::max()
-          : static_cast<int>(options.max_message_bytes);
-  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
-  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
-
-  server = builder.BuildAndStart();
-  if (!server) {
-    log_error(
-        std::format("Failed to start gRPC server on {}", options.address));
-    set_server_health(false);
-    return;
-  }
-  set_server_health(true);
-  async_context.start();
-  log_info(
-      options.verbosity,
-      std::format("Server listening on {}", options.address));
-  server->Wait();
-  set_server_health(false);
-  async_context.shutdown();
-  server.reset();
+  run_grpc_server_impl(service, options, server);
 }
 
 void
