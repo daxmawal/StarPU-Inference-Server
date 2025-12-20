@@ -1117,7 +1117,6 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     job_sp->get_worker_id() = aggregated_job->get_worker_id();
     job_sp->get_executed_on() = aggregated_job->get_executed_on();
     job_sp->set_submission_id(aggregated_job->submission_id());
-    job_sp->timing_info().submission_id = aggregated_job->submission_id();
 
     if (entry.callback) {
       entry.callback(outputs, latency_ms);
