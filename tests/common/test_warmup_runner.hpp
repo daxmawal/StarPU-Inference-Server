@@ -10,7 +10,22 @@
 #include <utility>
 #include <vector>
 
+#include "core/warmup.hpp"
 #include "test_inference_runner.hpp"
+
+#if defined(STARPU_TESTING)
+namespace starpu_server {
+struct WarmupRunnerTestHelper {
+  static void client_worker(
+      WarmupRunner& runner,
+      const std::map<int, std::vector<int32_t>>& device_workers,
+      InferenceQueue& queue, int request_nb_per_worker)
+  {
+    runner.client_worker(device_workers, queue, request_nb_per_worker);
+  }
+};
+}  // namespace starpu_server
+#endif
 
 template <class F>
 auto
@@ -71,12 +86,12 @@ class WarmupRunnerTest : public ::testing::Test,
 
   void SetUp() override
   {
-    init(false);
+    init_runner(false);
     runner = std::make_unique<starpu_server::WarmupRunner>(
         opts, *starpu, model_cpu, models_gpu, outputs_ref);
   }
 
-  void init(
+  void init_runner(
       bool use_cuda,
       starpu_server::WarmupRunner::CompletionObserver completion_observer = {})
   {

@@ -5,24 +5,21 @@
 #include <map>
 #include <vector>
 
-#define private public
 #include "core/warmup.hpp"
-#undef private
-
 #include "exceptions.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_warmup_runner.hpp"
 
 TEST_F(WarmupRunnerTest, WarmupRunnerRunNegativeRequestNbRobustesse)
 {
-  init(true);
+  init_runner(true);
   EXPECT_THROW(runner->run(-1), std::invalid_argument);
 }
 
 TEST_F(
     WarmupRunnerTest, WarmupRunnerRunThrowsOnNegativeCompletedJobs_Robustesse)
 {
-  init(
+  init_runner(
       true, [](std::atomic<int>& completed_jobs) { completed_jobs.store(-1); });
 
   EXPECT_THROW(runner->run(1), starpu_server::InferenceExecutionException);
@@ -40,7 +37,8 @@ ExpectClientWorkerThrows(
     starpu_server::InferenceQueue& queue, int request_nb, bool expect_overflow)
 {
   try {
-    runner.client_worker(device_workers, queue, request_nb);
+    starpu_server::WarmupRunnerTestHelper::client_worker(
+        runner, device_workers, queue, request_nb);
     ADD_FAILURE() << "Expected exception not thrown";
   }
   catch (const std::overflow_error&) {
@@ -87,7 +85,8 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow_Robustesse)
   starpu_server::InferenceQueue queue;
 
   EXPECT_THROW(
-      runner.client_worker(device_workers, queue, request_nb),
+      starpu_server::WarmupRunnerTestHelper::client_worker(
+          runner, device_workers, queue, request_nb),
       std::overflow_error);
 }
 

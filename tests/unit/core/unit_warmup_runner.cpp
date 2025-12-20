@@ -6,11 +6,8 @@
 #include <unordered_set>
 #include <vector>
 
-#define private public
-#include "core/warmup.hpp"
-#undef private
-
 #include "core/inference_runner.hpp"
+#include "core/warmup.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
@@ -21,7 +18,8 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
 
-  runner->client_worker(device_workers, queue, 2);
+  starpu_server::WarmupRunnerTestHelper::client_worker(
+      *runner, device_workers, queue, 2);
 
   std::vector<int> request_ids;
   std::vector<int> worker_ids;
@@ -48,7 +46,8 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   opts.seed = 0;
   opts.batching.warmup_pregen_inputs = 1;
   starpu_server::InferenceQueue queue_single;
-  runner->client_worker(device_workers, queue_single, 1);
+  starpu_server::WarmupRunnerTestHelper::client_worker(
+      *runner, device_workers, queue_single, 1);
 
   std::unordered_set<const void*> unique_single;
   for (;;) {
@@ -64,7 +63,8 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   opts.batching.warmup_pregen_inputs = 2;
   starpu_server::InferenceQueue queue_double;
   constexpr int kDoublerequest_nb = 5;
-  runner->client_worker(device_workers, queue_double, kDoublerequest_nb);
+  starpu_server::WarmupRunnerTestHelper::client_worker(
+      *runner, device_workers, queue_double, kDoublerequest_nb);
 
   std::unordered_set<const void*> unique_double;
   for (;;) {
@@ -85,7 +85,8 @@ TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
 
   testing::internal::CaptureStderr();
   queue.shutdown();
-  runner->client_worker(device_workers, queue, request_nb);
+  starpu_server::WarmupRunnerTestHelper::client_worker(
+      *runner, device_workers, queue, request_nb);
   const std::string captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);

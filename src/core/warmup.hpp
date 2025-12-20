@@ -7,6 +7,9 @@
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+#if defined(STARPU_TESTING)
+struct WarmupRunnerTestHelper;
+#endif
 // =============================================================================
 // Runs a warmup phase by simulating inference jobs across StarPU workers
 // =============================================================================
@@ -31,6 +34,9 @@ class WarmupRunner {
   void run(int request_nb_per_worker);
 
  private:
+#if defined(STARPU_TESTING)
+  friend struct WarmupRunnerTestHelper;
+#endif
   void client_worker(
       const std::map<int, std::vector<int32_t>>& device_workers,
       InferenceQueue& queue, int request_nb_per_worker) const;
