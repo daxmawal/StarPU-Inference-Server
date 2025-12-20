@@ -640,6 +640,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   std::ostringstream yaml;
   yaml << "name: fcfs_config\n";
   yaml << "model: " << model_path.string() << "\n";
+  yaml << "model_name: bert_model\n";
   yaml << "use_cpu: true\n";
   yaml << "use_cuda:\n";
   yaml << "  - { device_ids: [0, 1] }\n";
@@ -672,6 +673,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.name, "fcfs_config");
   EXPECT_EQ(cfg.models[0].path, model_path.string());
+  EXPECT_EQ(cfg.models[0].name, "bert_model");
   EXPECT_EQ(cfg.devices.ids, (std::vector<int>{0, 1}));
   auto scheduler_env = cfg.starpu_env.find("STARPU_SCHED");
   ASSERT_NE(scheduler_env, cfg.starpu_env.end());

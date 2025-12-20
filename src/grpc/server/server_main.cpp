@@ -323,9 +323,11 @@ launch_threads(
   }
 
   std::jthread grpc_thread([&]() {
-    std::string default_model_name = opts.name;
-    if (default_model_name.empty() && !opts.models.empty()) {
+    std::string default_model_name;
+    if (!opts.models.empty() && !opts.models[0].name.empty()) {
       default_model_name = opts.models[0].name;
+    } else {
+      default_model_name = opts.name;
     }
     const auto server_options = starpu_server::GrpcServerOptions{
         opts.server_address, opts.batching.max_message_bytes, opts.verbosity,

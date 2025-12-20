@@ -142,6 +142,7 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "verbosity",
           "name",
           "model",
+          "model_name",
           "starpu_env",
           "device_ids",
           "group_cpu_by_numa",
@@ -198,6 +199,17 @@ parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
           std::string("Model path does not exist: ") + cfg.models[0].path);
       cfg.valid = false;
     }
+  }
+
+  const YAML::Node model_name_node = root["model_name"];
+  if (model_name_node) {
+    if (!model_name_node.IsScalar()) {
+      log_error("model_name must be a scalar string");
+      cfg.valid = false;
+      return;
+    }
+    cfg.models.resize(1);
+    cfg.models[0].name = model_name_node.as<std::string>();
   }
 }
 
