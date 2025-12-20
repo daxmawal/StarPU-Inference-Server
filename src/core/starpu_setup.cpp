@@ -395,6 +395,11 @@ configure_gpu(starpu_conf& conf, const RuntimeConfig& opts)
     return;
   }
 
+  if (opts.devices.ids.empty()) {
+    throw std::invalid_argument(
+        "[ERROR] use_cuda requires explicit device_ids configuration");
+  }
+
   if (opts.devices.ids.size() > STARPU_NMAXWORKERS) {
     throw std::invalid_argument(std::format(
         "[ERROR] Number of CUDA device IDs exceeds maximum of {}",

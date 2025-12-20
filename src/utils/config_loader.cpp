@@ -243,7 +243,16 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   }
 
   if (use_cuda_node.IsScalar()) {
-    cfg.devices.use_cuda = use_cuda_node.as<bool>();
+    const bool enabled = use_cuda_node.as<bool>();
+    if (!enabled) {
+      cfg.devices.use_cuda = false;
+      cfg.devices.ids.clear();
+      return;
+    }
+    log_error(
+        "use_cuda must be a sequence of device mappings when enabled (e.g. "
+        "\"use_cuda: [{ device_ids: [0] }]\")");
+    cfg.valid = false;
     return;
   }
 

@@ -42,6 +42,12 @@ struct WarmupRunnerTestFixture {
     model.inputs = {{"input0", {1}, at::kFloat}};
     opts.model = std::move(model);
     opts.devices.use_cuda = use_cuda;
+    if (use_cuda) {
+      if (!torch::cuda::is_available()) {
+        GTEST_SKIP() << "CUDA is not available";
+      }
+      opts.devices.ids = {0};
+    }
 
     starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
     model_cpu = starpu_server::make_identity_model();

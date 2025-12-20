@@ -164,12 +164,13 @@ TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenComputedRequestsNonPositive)
 
 TEST(WarmupRunnerEdgesTest, RunWarmupLogsCpuAndCudaTargetDescription)
 {
+  skip_if_no_cuda();
   WarmupRunnerTestFixture fixture;
   fixture.init();
   fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
   fixture.opts.devices.use_cpu = true;
   fixture.opts.devices.use_cuda = true;
-  fixture.opts.devices.ids.clear();
+  fixture.opts.devices.ids = {0};
   fixture.opts.batching.warmup_request_nb = 1;
   fixture.opts.batching.warmup_batches_per_worker = 0;
   fixture.opts.batching.warmup_pregen_inputs = 0;

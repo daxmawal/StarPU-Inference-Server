@@ -102,11 +102,12 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers_Integration)
 
 TEST_F(WarmupRunnerTest, WarmupRunnerRunZeroRequestNb_Integration)
 {
-  init(true);
+  std::atomic<int> last_observed{0};
+  init(true, [&](std::atomic<int>& completed_jobs) {
+    last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
+  });
   auto elapsed_ms = measure_ms([&]() { runner->run(0); });
-  auto device_workers =
-      starpu_server::StarPUSetup::get_cuda_workers_by_device(opts.devices.ids);
-  EXPECT_TRUE(device_workers.empty());
+  EXPECT_EQ(last_observed.load(), 0);
   EXPECT_LT(elapsed_ms, 100);
 }
 

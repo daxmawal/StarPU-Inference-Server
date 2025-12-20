@@ -572,7 +572,7 @@ INSTANTIATE_TEST_SUITE_P(
     InvalidConfigs, InvalidConfigTest, ::testing::ValuesIn(kInvalidConfigCases),
     InvalidConfigCaseName);
 
-TEST(ConfigLoader, AllowsBooleanUseCuda)
+TEST(ConfigLoader, RejectsBooleanUseCudaTrue)
 {
   const auto model_path =
       WriteEmptyModelFile("config_loader_scalar_use_cuda_model.pt");
@@ -582,10 +582,13 @@ TEST(ConfigLoader, AllowsBooleanUseCuda)
   const auto config_path =
       WriteTempFile("config_loader_scalar_use_cuda.yaml", yaml);
 
+  starpu_server::CaptureStream capture{std::cerr};
   const RuntimeConfig cfg = load_config(config_path.string());
-  EXPECT_TRUE(cfg.valid);
-  EXPECT_TRUE(cfg.devices.use_cuda);
-  EXPECT_TRUE(cfg.devices.ids.empty());
+  const std::string expected_error =
+      "use_cuda must be a sequence of device mappings when enabled (e.g. "
+      "\"use_cuda: [{ device_ids: [0] }]\")";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
 }
 
 TEST(ConfigLoader, RejectsNonMappingRoot)
