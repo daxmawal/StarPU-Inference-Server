@@ -128,13 +128,10 @@ create_job(
   job->set_model_name(std::move(model_name));
 
   auto start_time = start_time_arg;
-  const auto enqueued_time = std::chrono::high_resolution_clock::now();
   if (start_time == std::chrono::high_resolution_clock::time_point{}) {
-    start_time = enqueued_time;
+    start_time = std::chrono::high_resolution_clock::now();
   }
   job->set_start_time(start_time);
-  job->timing_info().enqueued_time = enqueued_time;
-  job->timing_info().last_enqueued_time = enqueued_time;
 
   return job;
 }

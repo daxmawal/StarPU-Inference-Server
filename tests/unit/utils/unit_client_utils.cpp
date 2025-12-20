@@ -170,7 +170,12 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
   ASSERT_EQ(job->get_request_id(), kJobId);
   EXPECT_TRUE(JobHasExpectedInputs(job, inputs));
   EXPECT_TRUE(JobHasExpectedOutputs(job, outputs_ref));
-  EXPECT_LE(job->get_start_time(), job->timing_info().enqueued_time);
+  EXPECT_EQ(
+      job->timing_info().enqueued_time,
+      std::chrono::high_resolution_clock::time_point{});
+  EXPECT_EQ(
+      job->timing_info().last_enqueued_time,
+      std::chrono::high_resolution_clock::time_point{});
   EXPECT_GT(job->get_start_time().time_since_epoch().count(), 0);
 }
 
