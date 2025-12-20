@@ -117,7 +117,6 @@ struct RuntimeConfig {
   ValidationSettings validation{};
   Limits limits{};
   std::optional<uint64_t> seed;
-  bool show_help = false;
   bool valid = true;
 };
 

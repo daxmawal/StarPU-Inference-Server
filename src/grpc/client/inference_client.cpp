@@ -338,7 +338,6 @@ InferenceClient::AsyncModelInfer(
   call->request_id = current_id;
   call->start_time = std::chrono::high_resolution_clock::now();
   call->inference_count = determine_inference_count(cfg);
-  last_batch_size_ = call->inference_count;
   call->expected_outputs = std::move(expected_outputs);
   ++total_requests_sent_;
 

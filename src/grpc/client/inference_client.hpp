@@ -94,7 +94,6 @@ class InferenceClient {
       first_request_time_;
   std::optional<std::chrono::high_resolution_clock::time_point>
       last_response_time_;
-  std::optional<std::size_t> last_batch_size_;
   std::size_t total_inference_count_ = 0;
   std::size_t total_requests_sent_ = 0;
   std::size_t success_requests_ = 0;
