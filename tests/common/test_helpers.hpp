@@ -187,7 +187,6 @@ make_basic_params(int elements, at::ScalarType type = at::kFloat)
   params.num_outputs = 1;
   params.limits.max_inputs = InferLimits::MaxInputs;
   params.limits.max_dims = InferLimits::MaxDims;
-  params.limits.max_models_gpu = InferLimits::MaxModelsGPU;
   params.layout.num_dims.resize(1);
   params.layout.num_dims[0] = 1;
   params.layout.dims.resize(1);
@@ -207,7 +206,6 @@ make_params_for_inputs(
   params.num_inputs = shapes.size();
   params.limits.max_inputs = InferLimits::MaxInputs;
   params.limits.max_dims = InferLimits::MaxDims;
-  params.limits.max_models_gpu = InferLimits::MaxModelsGPU;
   params.layout.num_dims.resize(shapes.size());
   params.layout.dims.resize(shapes.size());
   params.layout.input_types.resize(shapes.size());

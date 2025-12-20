@@ -39,7 +39,6 @@ struct DeviceInfo {
 struct ModelPointers {
   torch::jit::script::Module* model_cpu = nullptr;
   std::vector<torch::jit::script::Module*> models_gpu;
-  size_t num_models_gpu = 0;
 };
 
 // =============================================================================
@@ -59,7 +58,6 @@ struct TensorLayout {
 struct Limits {
   size_t max_inputs = 0;
   size_t max_dims = 0;
-  size_t max_models_gpu = 0;
 };
 }  // namespace detail
 

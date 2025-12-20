@@ -309,7 +309,6 @@ TEST_F(InferenceTaskTest, FillModelPointersAllNegativeDeviceIds)
   auto params = task.create_inference_params();
 
   EXPECT_TRUE(params->models.models_gpu.empty());
-  EXPECT_EQ(params->models.num_models_gpu, models_gpu_.size());
 }
 
 TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
@@ -322,7 +321,6 @@ TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
 
   ASSERT_EQ(params->models.models_gpu.size(), 1U);
   EXPECT_EQ(params->models.models_gpu.at(0), &models_gpu_.at(0));
-  EXPECT_EQ(params->models.num_models_gpu, models_gpu_.size());
 }
 
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
@@ -505,7 +503,6 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   EXPECT_EQ(params->request_id, 4);
   EXPECT_EQ(params->verbosity, opts_.verbosity);
   EXPECT_EQ(params->models.model_cpu, &model_cpu_);
-  EXPECT_EQ(params->models.num_models_gpu, 0U);
   EXPECT_EQ(params->device.device_id, &job->get_device_id());
   EXPECT_EQ(params->device.worker_id, &job->get_worker_id());
   EXPECT_EQ(params->device.executed_on, &job->get_executed_on());

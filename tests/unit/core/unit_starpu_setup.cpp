@@ -2211,7 +2211,6 @@ TEST(InferenceCodelet, CudaInferenceFuncCopiesResultsToDeviceBuffer)
     )JIT");
   module.to(torch::Device(torch::kCUDA, kDeviceId));
   params.models.models_gpu[kDeviceId] = &module;
-  params.models.num_models_gpu = params.models.models_gpu.size();
 
   int recorded_device_id = -1;
   int recorded_worker_id = -1;
@@ -2288,7 +2287,6 @@ TEST(InferenceCodelet, CudaInferenceFuncThrowsWhenGpuModuleMissing)
   params.num_outputs = 0;
   params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
   params.limits.max_dims = starpu_server::InferLimits::MaxDims;
-  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
 
   auto* cuda_func = codelet.get_codelet()->cuda_funcs[0];
   ASSERT_NE(cuda_func, nullptr);
@@ -3758,7 +3756,6 @@ TEST(InferenceCodelet, SelectGpuModuleReturnsMatchingReplica)
   auto module = std::make_unique<torch::jit::script::Module>("dummy");
   params.models.models_gpu.resize(1);
   params.models.models_gpu[0] = module.get();
-  params.models.num_models_gpu = params.models.models_gpu.size();
 
   torch::jit::script::Module* selected =
       starpu_server::select_gpu_module(params, device_id);

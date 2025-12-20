@@ -284,7 +284,6 @@ InferenceTask::create_inference_params() -> std::shared_ptr<InferenceParams>
 
   params->limits.max_inputs = opts.limits.max_inputs;
   params->limits.max_dims = opts.limits.max_dims;
-  params->limits.max_models_gpu = opts.limits.max_models_gpu;
 
   fill_model_pointers(params);
   bind_runtime_job_info(params);
@@ -303,7 +302,6 @@ InferenceTask::fill_model_pointers(
 {
   const auto& opts = require_runtime_config(opts_);
   params->models.model_cpu = model_cpu_;
-  params->models.num_models_gpu = models_gpu_->size();
   params->models.models_gpu.clear();
 
   if (opts.devices.ids.empty() || models_gpu_->empty()) {

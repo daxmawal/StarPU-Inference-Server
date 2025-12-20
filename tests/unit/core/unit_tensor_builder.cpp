@@ -306,7 +306,6 @@ TEST(TensorBuilder_Unit, FromStarpuBuffersSuccess)
   params.layout.dims = {{2, 2}};
   params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
   params.limits.max_dims = starpu_server::InferLimits::MaxDims;
-  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
 
   const auto device = torch::Device(torch::kCPU);
   auto tensors = starpu_server::TensorBuilder::from_starpu_buffers(
@@ -332,7 +331,6 @@ TEST(TensorBuilderInternals_Unit, UsesNoopDeleterForTensorViews)
   params.layout.dims = {{2, 2}};
   params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
   params.limits.max_dims = starpu_server::InferLimits::MaxDims;
-  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
 
   const auto device = torch::Device(torch::kCPU);
   // First call creates tensors via torch::from_blob (default deleter)
@@ -370,7 +368,6 @@ TEST(TensorBuilderInternals_Unit, RefreshInputCacheNullBufferThrows)
   params.layout.dims = {{2, 2}};
   params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
   params.limits.max_dims = starpu_server::InferLimits::MaxDims;
-  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
 
   const auto device = torch::Device(torch::kCPU);
   EXPECT_THROW(
