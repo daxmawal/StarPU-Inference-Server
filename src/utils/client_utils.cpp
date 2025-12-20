@@ -29,8 +29,9 @@ pre_generate_inputs(const RuntimeConfig& opts, size_t num_inputs)
 {
   std::vector<std::vector<torch::Tensor>> inputs;
   inputs.reserve(num_inputs);
+  static const std::vector<TensorConfig> kEmptyTensors;
   const auto& tensors =
-      opts.models.empty() ? std::vector<TensorConfig>{} : opts.models[0].inputs;
+      opts.model.has_value() ? opts.model->inputs : kEmptyTensors;
   std::generate_n(std::back_inserter(inputs), num_inputs, [&]() {
     return input_generator::generate_random_inputs(tensors);
   });

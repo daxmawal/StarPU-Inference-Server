@@ -88,10 +88,10 @@ resolve_batch_size_for_job(
     return 1;
   }
 
-  if (opts != nullptr && !opts->models.empty() &&
-      !opts->models[0].inputs.empty()) {
+  if (opts != nullptr && opts->model.has_value() &&
+      !opts->model->inputs.empty()) {
     const auto per_sample_rank =
-        static_cast<int64_t>(opts->models[0].inputs[0].dims.size());
+        static_cast<int64_t>(opts->model->inputs[0].dims.size());
     if (const auto rank0 = inputs[0].dim();
         rank0 == per_sample_rank + 1 && rank0 > 0) {
       return std::max<int64_t>(1, inputs[0].size(0));

@@ -101,7 +101,7 @@ struct RuntimeConfig {
   int metrics_port = kDefaultMetricsPort;
 
   std::map<std::string, std::string, std::less<>> starpu_env;
-  std::vector<ModelConfig> models;
+  std::optional<ModelConfig> model;
   VerbosityLevel verbosity = VerbosityLevel::Silent;
   DeviceSettings devices{};
   BatchingSettings batching{};
@@ -180,15 +180,14 @@ compute_model_message_bytes(
 
 inline auto
 compute_max_message_bytes(
-    int max_batch_size, const std::vector<ModelConfig>& models,
+    int max_batch_size, const std::optional<ModelConfig>& model,
     std::size_t min_message_bytes = kDefaultMinMessageBytes) -> std::size_t
 {
-  size_t max_bytes = min_message_bytes;
-  for (const auto& model : models) {
-    const auto bytes = compute_model_message_bytes(
-        max_batch_size, model.inputs, model.outputs, min_message_bytes);
-    max_bytes = std::max(max_bytes, bytes);
+  if (!model.has_value()) {
+    return min_message_bytes;
   }
-  return max_bytes;
+
+  return compute_model_message_bytes(
+      max_batch_size, model->inputs, model->outputs, min_message_bytes);
 }
 }  // namespace starpu_server

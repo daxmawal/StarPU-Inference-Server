@@ -357,10 +357,10 @@ InferenceTask::fill_input_layout(
 
   for (size_t i = 0; i < num_inputs; ++i) {
     auto dims_from_config = [i, &opts]() -> std::vector<int64_t> {
-      if (opts.models.empty() || i >= opts.models[0].inputs.size()) {
+      if (!opts.model.has_value() || i >= opts.model->inputs.size()) {
         return {};
       }
-      return opts.models[0].inputs[i].dims;
+      return opts.model->inputs[i].dims;
     };
 
     auto dims_from_tensor = [this, i, &opts]() -> std::vector<int64_t> {

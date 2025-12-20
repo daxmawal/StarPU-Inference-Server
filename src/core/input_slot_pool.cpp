@@ -214,10 +214,10 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
 {
   bmax_ = std::max(1, opts.batching.max_batch_size);
 
-  if (opts.models.empty()) {
+  if (!opts.model.has_value()) {
     throw std::invalid_argument("No model config provided for InputSlotPool");
   }
-  const auto& inputs = opts.models[0].inputs;
+  const auto& inputs = opts.model->inputs;
   input_types_.reserve(inputs.size());
   per_input_numel_single_.reserve(inputs.size());
   per_input_bytes_single_.reserve(inputs.size());

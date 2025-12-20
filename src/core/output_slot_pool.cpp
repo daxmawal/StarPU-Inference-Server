@@ -218,10 +218,10 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
   bmax_ = std::max(1, opts.batching.max_batch_size);
 
-  if (opts.models.empty()) {
+  if (!opts.model.has_value()) {
     throw std::invalid_argument("No model config provided for OutputSlotPool");
   }
-  const auto& outputs = opts.models[0].outputs;
+  const auto& outputs = opts.model->outputs;
   output_types_.reserve(outputs.size());
   per_output_numel_single_.reserve(outputs.size());
   per_output_bytes_single_.reserve(outputs.size());

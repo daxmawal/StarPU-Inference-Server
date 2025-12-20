@@ -89,11 +89,14 @@ BatchesMatchConfig(
     const std::vector<std::vector<torch::Tensor>>& batches,
     const starpu_server::RuntimeConfig& opts) -> ::testing::AssertionResult
 {
+  if (!opts.model.has_value()) {
+    return ::testing::AssertionFailure() << "Missing model config";
+  }
   for (const auto& tensors : batches) {
-    if (tensors.size() != opts.models[0].inputs.size()) {
+    if (tensors.size() != opts.model->inputs.size()) {
       return ::testing::AssertionFailure()
              << "Batch size mismatch: got " << tensors.size() << " expected "
-             << opts.models[0].inputs.size();
+             << opts.model->inputs.size();
     }
     if (tensors[0].sizes() != torch::IntArrayRef{2, 3} ||
         tensors[0].dtype() != at::kFloat) {
@@ -182,11 +185,12 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
 TEST(ClientUtils, PreGenerateInputsProducesValidTensors)
 {
   starpu_server::RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].inputs = {
+  starpu_server::ModelConfig model{};
+  model.inputs = {
       {"input0", {2, 3}, at::kFloat},
       {"input1", {1}, at::kInt},
   };
+  opts.model = std::move(model);
   const size_t batch_size = 3;
   auto batches =
       starpu_server::client_utils::pre_generate_inputs(opts, batch_size);

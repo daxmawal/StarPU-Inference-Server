@@ -432,7 +432,7 @@ auto
 initialize_input_pool(const RuntimeConfig& opts)
     -> std::unique_ptr<InputSlotPool>
 {
-  if (opts.models.empty() || opts.models[0].inputs.empty()) {
+  if (!opts.model.has_value() || opts.model->inputs.empty()) {
     return nullptr;
   }
 
@@ -449,7 +449,7 @@ auto
 initialize_output_pool(const RuntimeConfig& opts)
     -> std::unique_ptr<OutputSlotPool>
 {
-  if (opts.models.empty() || opts.models[0].outputs.empty()) {
+  if (!opts.model.has_value() || opts.model->outputs.empty()) {
     return nullptr;
   }
 

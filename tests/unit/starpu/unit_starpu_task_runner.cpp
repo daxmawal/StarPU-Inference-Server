@@ -1655,7 +1655,7 @@ TEST_F(
     StarPUTaskRunnerFixture, ValidateBatchAndCopyInputsHandlesJobsWithoutInputs)
 {
   starpu_server::RuntimeConfig pool_config{};
-  pool_config.models = {make_model_config("empty_inputs", {}, {})};
+  pool_config.model = make_model_config("empty_inputs", {}, {});
   pool_config.batching.pool_size = 1;
   pool_config.batching.max_batch_size = 1;
 

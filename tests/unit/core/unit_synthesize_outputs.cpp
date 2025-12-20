@@ -34,13 +34,14 @@ make_runtime_config_for_model(const std::filesystem::path& path)
     -> RuntimeConfig
 {
   RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = path.string();
-  opts.models[0].inputs = {TensorConfig{
+  ModelConfig model{};
+  model.path = path.string();
+  model.inputs = {TensorConfig{
       .name = "input0",
       .dims = {1},
       .type = at::kFloat,
   }};
+  opts.model = std::move(model);
   opts.devices.use_cuda = false;
   return opts;
 }
@@ -56,7 +57,7 @@ TEST(SynthesizeOutputsFromConfig, ReturnsNulloptWhenOutputsMissing)
 {
   RuntimeConfig opts;
   ModelConfig model;
-  opts.models = {model};
+  opts.model = model;
 
   auto outputs = synthesize_outputs_from_config(opts);
   EXPECT_FALSE(outputs.has_value());
@@ -67,7 +68,7 @@ TEST(SynthesizeOutputsFromConfig, ReturnsNulloptWhenTypeMissing)
   RuntimeConfig opts;
   auto model = make_valid_model_config();
   model.outputs[0].type = at::ScalarType::Undefined;
-  opts.models = {model};
+  opts.model = model;
 
   CaptureStream capture{std::cerr};
   auto outputs = synthesize_outputs_from_config(opts);
@@ -81,7 +82,7 @@ TEST(SynthesizeOutputsFromConfig, ReturnsNulloptWhenDimsMissing)
   RuntimeConfig opts;
   auto model = make_valid_model_config();
   model.outputs[0].dims.clear();
-  opts.models = {model};
+  opts.model = model;
 
   CaptureStream capture{std::cerr};
   auto outputs = synthesize_outputs_from_config(opts);
@@ -95,7 +96,7 @@ TEST(SynthesizeOutputsFromConfig, ReturnsNulloptWhenDimNonPositive)
   RuntimeConfig opts;
   auto model = make_valid_model_config();
   model.outputs[0].dims[0] = 0;
-  opts.models = {model};
+  opts.model = model;
 
   CaptureStream capture{std::cerr};
   auto outputs = synthesize_outputs_from_config(opts);
@@ -107,15 +108,15 @@ TEST(SynthesizeOutputsFromConfig, ReturnsNulloptWhenDimNonPositive)
 TEST(SynthesizeOutputsFromConfig, CreatesOutputsWhenConfigValid)
 {
   RuntimeConfig opts;
-  opts.models = {make_valid_model_config()};
+  opts.model = make_valid_model_config();
 
   auto outputs = synthesize_outputs_from_config(opts);
 
   ASSERT_TRUE(outputs.has_value());
   ASSERT_EQ(outputs->size(), 2U);
-  EXPECT_TRUE(outputs->at(0).sizes().vec() == opts.models[0].outputs[0].dims);
+  EXPECT_TRUE(outputs->at(0).sizes().vec() == opts.model->outputs[0].dims);
   EXPECT_EQ(outputs->at(0).dtype(), torch::kFloat32);
-  EXPECT_TRUE(outputs->at(1).sizes().vec() == opts.models[0].outputs[1].dims);
+  EXPECT_TRUE(outputs->at(1).sizes().vec() == opts.model->outputs[1].dims);
   EXPECT_EQ(outputs->at(1).dtype(), torch::kFloat64);
 }
 
@@ -124,7 +125,7 @@ TEST(LoadModelAndReferenceOutput, LogsFallbackWhenSyntheticMissing)
   TemporaryModelFile model_file{"load_model_missing", make_add_one_model()};
   RuntimeConfig opts = make_runtime_config_for_model(model_file.path());
   opts.verbosity = VerbosityLevel::Debug;
-  opts.models[0].outputs = {TensorConfig{
+  opts.model->outputs = {TensorConfig{
       .name = "bad_output",
       .dims = {},
       .type = at::kFloat,
@@ -144,7 +145,7 @@ TEST(LoadModelAndReferenceOutput, LogsWhenUsingSyntheticOutputs)
   TemporaryModelFile model_file{"load_model_synthetic", make_add_one_model()};
   RuntimeConfig opts = make_runtime_config_for_model(model_file.path());
   opts.verbosity = VerbosityLevel::Debug;
-  opts.models[0].outputs = {TensorConfig{
+  opts.model->outputs = {TensorConfig{
       .name = "output0",
       .dims = {1},
       .type = at::kFloat,
@@ -162,7 +163,7 @@ TEST(LoadModelAndReferenceOutput, LogsWhenUsingSyntheticOutputs)
   const auto& outputs = std::get<2>(*result);
   ASSERT_EQ(outputs.size(), 1U);
   EXPECT_TRUE(outputs[0].defined());
-  EXPECT_EQ(outputs[0].sizes().vec(), opts.models[0].outputs[0].dims);
+  EXPECT_EQ(outputs[0].sizes().vec(), opts.model->outputs[0].dims);
 }
 
 TEST(InferenceRunner, LoadModelLoadsTorchScriptModule)

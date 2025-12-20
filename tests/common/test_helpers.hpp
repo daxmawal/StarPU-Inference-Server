@@ -155,9 +155,10 @@ make_single_model_runtime_config(
     at::ScalarType type) -> RuntimeConfig
 {
   RuntimeConfig config{};
-  config.models.resize(1);
-  config.models[0].path = model_path.string();
-  config.models[0].inputs = {{"input0", std::move(dims), type}};
+  ModelConfig model{};
+  model.path = model_path.string();
+  model.inputs = {{"input0", std::move(dims), type}};
+  config.model = std::move(model);
   return config;
 }
 

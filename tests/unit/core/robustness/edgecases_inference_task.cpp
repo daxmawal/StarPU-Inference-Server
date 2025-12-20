@@ -100,7 +100,7 @@ TEST_F(
 
   starpu_server::ModelConfig model_config;
   model_config.inputs.push_back(tensor_config);
-  Opts().models = {model_config};
+  Opts().model = model_config;
 
   auto params = std::make_shared<starpu_server::InferenceParams>();
   ASSERT_NO_THROW(Task()->fill_input_layout(params, 1));
@@ -124,7 +124,7 @@ TEST_F(
   starpu_server::ModelConfig model_config;
   model_config.inputs.push_back(tensor_config);
   auto& opts = Opts();
-  opts.models = {model_config};
+  opts.model = model_config;
   opts.limits.max_dims = 2;
 
   auto params = std::make_shared<starpu_server::InferenceParams>();

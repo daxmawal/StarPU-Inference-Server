@@ -308,24 +308,24 @@ launch_threads(
 
   std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
   std::vector<at::ScalarType> expected_input_types;
-  if (!opts.models.empty()) {
-    expected_input_types.reserve(opts.models[0].inputs.size());
-    for (const auto& input : opts.models[0].inputs) {
+  if (opts.model.has_value()) {
+    expected_input_types.reserve(opts.model->inputs.size());
+    for (const auto& input : opts.model->inputs) {
       expected_input_types.push_back(input.type);
     }
   }
   std::vector<std::vector<int64_t>> expected_input_dims;
-  if (!opts.models.empty()) {
-    expected_input_dims.reserve(opts.models[0].inputs.size());
-    for (const auto& input : opts.models[0].inputs) {
+  if (opts.model.has_value()) {
+    expected_input_dims.reserve(opts.model->inputs.size());
+    for (const auto& input : opts.model->inputs) {
       expected_input_dims.push_back(input.dims);
     }
   }
 
   std::jthread grpc_thread([&]() {
     std::string default_model_name;
-    if (!opts.models.empty() && !opts.models[0].name.empty()) {
-      default_model_name = opts.models[0].name;
+    if (opts.model.has_value() && !opts.model->name.empty()) {
+      default_model_name = opts.model->name;
     } else {
       default_model_name = opts.name;
     }

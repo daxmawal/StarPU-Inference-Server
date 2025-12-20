@@ -2438,7 +2438,7 @@ TEST_F(
   starpu_server::ModelConfig model;
   model.name = "invalid_input_model";
   model.inputs.push_back(invalid_input);
-  opts.models.push_back(model);
+  opts.model = model;
 
   testing::internal::CaptureStderr();
   EXPECT_THROW(
@@ -2471,7 +2471,7 @@ TEST_F(
   starpu_server::ModelConfig model;
   model.name = "invalid_output_model";
   model.outputs.push_back(invalid_output);
-  opts.models.push_back(model);
+  opts.model = model;
 
   testing::internal::CaptureStderr();
   EXPECT_THROW(
@@ -2507,7 +2507,7 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "overflow_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
@@ -2529,7 +2529,7 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersNumelOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "numel_overflow_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
@@ -2560,7 +2560,7 @@ TEST(InputSlotPool_Unit, NonPositiveBatchDimensionThrows)
   starpu_server::ModelConfig model;
   model.name = "invalid_batch_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -2590,7 +2590,7 @@ TEST(InputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
   starpu_server::ModelConfig model;
   model.name = "exceeds_int_max_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -2621,7 +2621,7 @@ TEST(InputSlotPool_Unit, NonPositiveDimensionThrows)
   starpu_server::ModelConfig model;
   model.name = "non_positive_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -2654,7 +2654,7 @@ TEST(InputSlotPool_Unit, DimensionProductOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "product_overflow_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
@@ -2675,7 +2675,7 @@ TEST(InputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
   starpu_server::ModelConfig model;
   model.name = "minimal_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::InputSlotPool pool(opts, 1);
 
@@ -2724,7 +2724,7 @@ TEST(InputSlotPool_Unit, TryAcquireEmptyPoolReturnsNullopt)
   starpu_server::ModelConfig model;
   model.name = "minimal_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::InputSlotPool pool(opts, 1);
 
@@ -2768,7 +2768,7 @@ TEST(InputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   starpu_server::ModelConfig model;
   model.name = "cuda_probe_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::InputSlotPool pool(opts, 1);
 
@@ -2818,7 +2818,7 @@ TEST(OutputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   starpu_server::ModelConfig model;
   model.name = "cuda_probe_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::OutputSlotPool pool(opts, 1);
 
@@ -2858,7 +2858,7 @@ TEST(
   starpu_server::ModelConfig model;
   model.name = "starpu_pin_success_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   const auto previous_cuda_override =
       starpu_server::testing::set_output_cuda_pinned_override_for_tests(
@@ -2914,7 +2914,7 @@ TEST(
   starpu_server::ModelConfig model;
   model.name = "starpu_pin_failure_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   const auto previous_cuda_override =
       starpu_server::testing::set_output_cuda_pinned_override_for_tests(
@@ -2967,7 +2967,7 @@ TEST(OutputSlotPool_Unit, HostAllocatorFailureThrowsBadAlloc)
   starpu_server::ModelConfig model;
   model.name = "host_allocator_failure_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   const auto previous_allocator =
       starpu_server::testing::set_output_host_allocator_for_tests(
@@ -3009,7 +3009,7 @@ TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
   starpu_server::ModelConfig model;
   model.name = "failing_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   g_observed_base_ptrs.clear();
   g_observed_handles.clear();
@@ -3078,7 +3078,7 @@ TEST(InputSlotPool_Unit, PartialRegisterFailureResetsSlotState)
   model.name = "partial_failure_model";
   model.inputs.push_back(first_tensor);
   model.inputs.push_back(second_tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   g_observed_base_ptrs.clear();
   g_observed_handles.clear();
@@ -3160,7 +3160,7 @@ TEST(OutputSlotPool_Unit, RegisterFailureResetsSlotState)
   starpu_server::ModelConfig model;
   model.name = "failing_output_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   g_output_observed_base_ptrs.clear();
   g_output_observed_handles.clear();
@@ -3232,7 +3232,7 @@ TEST(OutputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "overflow_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       { starpu_server::OutputSlotPool pool(opts, 1); }, std::overflow_error);
@@ -3263,7 +3263,7 @@ TEST(OutputSlotPool_Unit, NonPositiveBatchDimensionThrows)
   starpu_server::ModelConfig model;
   model.name = "invalid_batch_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -3293,7 +3293,7 @@ TEST(OutputSlotPool_Unit, NonBatchDimensionNonPositiveThrows)
   starpu_server::ModelConfig model;
   model.name = "non_positive_dims_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -3323,7 +3323,7 @@ TEST(OutputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
   starpu_server::ModelConfig model;
   model.name = "exceeds_int_max_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -3354,7 +3354,7 @@ TEST(OutputSlotPool_Unit, NonBatchDimensionOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "dimension_product_overflow_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -3384,7 +3384,7 @@ TEST(OutputSlotPool_Unit, ReleaseReturnsSlotToPool)
   starpu_server::ModelConfig model;
   model.name = "simple_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::OutputSlotPool pool(opts, 1);
 
@@ -3417,7 +3417,7 @@ TEST(OutputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
   starpu_server::ModelConfig model;
   model.name = "minimal_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::OutputSlotPool pool(opts, 1);
 
@@ -3498,7 +3498,7 @@ TEST(OutputSlotPool_Unit, DefaultSlotCountUsesWorkerCount)
   starpu_server::ModelConfig model;
   model.name = "single_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   const int expected_slots =
       std::max(2, static_cast<int>(starpu_worker_get_count()));
@@ -3773,7 +3773,7 @@ TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)
   }
 
   starpu_server::RuntimeConfig opts;
-  opts.models.push_back({});
+  opts.model = starpu_server::ModelConfig{};
   opts.devices.use_cuda = false;
   opts.devices.use_cpu = true;
 
@@ -3794,7 +3794,7 @@ TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)
 TEST(StarPUSetup, ThrowsWhenSetenvFailsForCustomEnvVar_Robustesse)
 {
   starpu_server::RuntimeConfig opts;
-  opts.models.push_back({});
+  opts.model = starpu_server::ModelConfig{};
   opts.devices.use_cuda = false;
   opts.devices.use_cpu = true;
   opts.starpu_env["CUSTOM_VAR"] = "value";

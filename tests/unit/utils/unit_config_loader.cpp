@@ -670,23 +670,23 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
+  ASSERT_TRUE(cfg.model.has_value());
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.name, "fcfs_config");
-  EXPECT_EQ(cfg.models[0].path, model_path.string());
-  EXPECT_EQ(cfg.models[0].name, "bert_model");
+  EXPECT_EQ(cfg.model->path, model_path.string());
+  EXPECT_EQ(cfg.model->name, "bert_model");
   EXPECT_EQ(cfg.devices.ids, (std::vector<int>{0, 1}));
   auto scheduler_env = cfg.starpu_env.find("STARPU_SCHED");
   ASSERT_NE(scheduler_env, cfg.starpu_env.end());
   EXPECT_EQ(scheduler_env->second, "pheft");
-  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
-  EXPECT_EQ(cfg.models[0].inputs[0].name, "in");
-  EXPECT_EQ(
-      cfg.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
-  EXPECT_EQ(cfg.models[0].inputs[0].type, at::kFloat);
-  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
-  EXPECT_EQ(cfg.models[0].outputs[0].name, "out");
-  EXPECT_EQ(cfg.models[0].outputs[0].dims, (std::vector<int64_t>{1, 1000}));
-  EXPECT_EQ(cfg.models[0].outputs[0].type, at::kFloat);
+  ASSERT_EQ(cfg.model->inputs.size(), 1U);
+  EXPECT_EQ(cfg.model->inputs[0].name, "in");
+  EXPECT_EQ(cfg.model->inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(cfg.model->inputs[0].type, at::kFloat);
+  ASSERT_EQ(cfg.model->outputs.size(), 1U);
+  EXPECT_EQ(cfg.model->outputs[0].name, "out");
+  EXPECT_EQ(cfg.model->outputs[0].dims, (std::vector<int64_t>{1, 1000}));
+  EXPECT_EQ(cfg.model->outputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
   EXPECT_EQ(cfg.batching.max_batch_size, 4);
   EXPECT_TRUE(cfg.batching.dynamic_batching);
@@ -729,12 +729,12 @@ TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  ASSERT_EQ(cfg.models.size(), 1U);
-  EXPECT_TRUE(cfg.models[0].inputs.empty());
-  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
-  EXPECT_EQ(cfg.models[0].outputs[0].name, "out");
-  EXPECT_EQ(cfg.models[0].outputs[0].dims, (std::vector<int64_t>{1}));
-  EXPECT_EQ(cfg.models[0].outputs[0].type, at::kFloat);
+  ASSERT_TRUE(cfg.model.has_value());
+  EXPECT_TRUE(cfg.model->inputs.empty());
+  ASSERT_EQ(cfg.model->outputs.size(), 1U);
+  EXPECT_EQ(cfg.model->outputs[0].name, "out");
+  EXPECT_EQ(cfg.model->outputs[0].dims, (std::vector<int64_t>{1}));
+  EXPECT_EQ(cfg.model->outputs[0].type, at::kFloat);
 }
 
 TEST(ConfigLoader, ParsesRuntimeFlags)
@@ -988,8 +988,8 @@ TEST(
   const auto tmp = WriteTempFile("config_loader_invalid_dim.yaml", yaml);
 
   ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
-    if (!cfg.models.empty() && !cfg.models[0].inputs.empty()) {
-      cfg.models[0].inputs[0].dims[0] = -1;
+    if (cfg.model.has_value() && !cfg.model->inputs.empty()) {
+      cfg.model->inputs[0].dims[0] = -1;
     }
   });
 
@@ -1465,12 +1465,12 @@ TEST(
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);
-  ASSERT_EQ(cfg.models.size(), 1U);
-  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
+  ASSERT_TRUE(cfg.model.has_value());
+  ASSERT_EQ(cfg.model->inputs.size(), 1U);
   EXPECT_EQ(
-      cfg.models[0].inputs[0].dims,
+      cfg.model->inputs[0].dims,
       (std::vector<int64_t>{2147483647, 2147483647, 2147483647}));
-  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
+  ASSERT_EQ(cfg.model->outputs.size(), 1U);
 
   // InvalidDimensionException cannot be triggered via YAML alone because
   // parse_tensor_nodes already rejects non-positive dimensions when reading the
@@ -1503,8 +1503,8 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   std::ofstream(tmp) << yaml.str();
 
   ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
-    if (!cfg.models.empty() && !cfg.models[0].inputs.empty()) {
-      cfg.models[0].inputs[0].type = at::kComplexFloat;
+    if (cfg.model.has_value() && !cfg.model->inputs.empty()) {
+      cfg.model->inputs[0].type = at::kComplexFloat;
     }
   });
 
@@ -1516,11 +1516,11 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);
-  ASSERT_EQ(cfg.models.size(), 1U);
-  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
-  EXPECT_EQ(cfg.models[0].inputs[0].type, at::kComplexFloat);
-  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
-  EXPECT_FALSE(cfg.models[0].outputs.empty());
+  ASSERT_TRUE(cfg.model.has_value());
+  ASSERT_EQ(cfg.model->inputs.size(), 1U);
+  EXPECT_EQ(cfg.model->inputs[0].type, at::kComplexFloat);
+  ASSERT_EQ(cfg.model->outputs.size(), 1U);
+  EXPECT_FALSE(cfg.model->outputs.empty());
 }
 
 using VerbosityCase =

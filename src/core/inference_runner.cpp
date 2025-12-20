@@ -246,11 +246,11 @@ static auto
 synthesize_outputs_from_config(const RuntimeConfig& opts)
     -> std::optional<std::vector<torch::Tensor>>
 {
-  if (opts.models.empty()) {
+  if (!opts.model.has_value()) {
     return std::nullopt;
   }
 
-  const auto& model_cfg = opts.models.front();
+  const auto& model_cfg = *opts.model;
   if (model_cfg.outputs.empty()) {
     return std::nullopt;
   }
@@ -307,13 +307,13 @@ load_model_and_reference_output(const RuntimeConfig& opts)
 {
   const auto load_start = std::chrono::high_resolution_clock::now();
   const auto model_label = [&opts]() -> std::string {
-    if (opts.models.empty()) {
+    if (!opts.model.has_value()) {
       return "default";
     }
-    if (!opts.models[0].name.empty()) {
-      return opts.models[0].name;
+    if (!opts.model->name.empty()) {
+      return opts.model->name;
     }
-    return opts.models[0].path;
+    return opts.model->path;
   }();
   auto mark_failure = [&]() {
     increment_model_load_failure(model_label);
@@ -327,7 +327,7 @@ load_model_and_reference_output(const RuntimeConfig& opts)
 
   try {
     auto model_cpu =
-        load_model(opts.models.empty() ? std::string{} : opts.models[0].path);
+        load_model(opts.model.has_value() ? opts.model->path : std::string{});
     auto models_gpu = opts.devices.use_cuda
                           ? clone_model_to_gpus(model_cpu, opts.devices.ids)
                           : std::vector<torch::jit::script::Module>{};
@@ -346,8 +346,8 @@ load_model_and_reference_output(const RuntimeConfig& opts)
           "No usable output schema provided; running reference inference once "
           "to infer output sizes.");
       auto inputs = generate_inputs(
-          opts.models.empty() ? std::vector<TensorConfig>{}
-                              : opts.models[0].inputs);
+          opts.model.has_value() ? opts.model->inputs
+                                 : std::vector<TensorConfig>{});
       output_refs = run_reference_inference(model_cpu, inputs);
     }
 

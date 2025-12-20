@@ -86,7 +86,7 @@ make_runtime_config_with_single_output() -> starpu_server::RuntimeConfig
   output.dims = {1};
   output.type = at::kFloat;
   model.outputs.push_back(output);
-  opts.models.push_back(std::move(model));
+  opts.model = std::move(model);
   return opts;
 }
 

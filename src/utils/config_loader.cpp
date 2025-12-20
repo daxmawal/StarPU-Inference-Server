@@ -55,6 +55,15 @@ auto parse_tensor_nodes(
     const YAML::Node& nodes, std::size_t max_inputs,
     std::size_t max_dims) -> std::vector<TensorConfig>;
 
+auto
+ensure_model(RuntimeConfig& cfg) -> ModelConfig&
+{
+  if (!cfg.model.has_value()) {
+    cfg.model = ModelConfig{};
+  }
+  return *cfg.model;
+}
+
 void
 parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
 {
@@ -192,11 +201,10 @@ void
 parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["model"]) {
-    cfg.models.resize(1);
-    cfg.models[0].path = root["model"].as<std::string>();
-    if (!std::filesystem::exists(cfg.models[0].path)) {
-      log_error(
-          std::string("Model path does not exist: ") + cfg.models[0].path);
+    auto& model = ensure_model(cfg);
+    model.path = root["model"].as<std::string>();
+    if (!std::filesystem::exists(model.path)) {
+      log_error(std::string("Model path does not exist: ") + model.path);
       cfg.valid = false;
     }
   }
@@ -208,8 +216,8 @@ parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
       cfg.valid = false;
       return;
     }
-    cfg.models.resize(1);
-    cfg.models[0].name = model_name_node.as<std::string>();
+    auto& model = ensure_model(cfg);
+    model.name = model_name_node.as<std::string>();
   }
 }
 
@@ -315,13 +323,13 @@ void
 parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["inputs"]) {
-    cfg.models.resize(1);
-    cfg.models[0].inputs = parse_tensor_nodes(
+    auto& model = ensure_model(cfg);
+    model.inputs = parse_tensor_nodes(
         root["inputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
   if (root["outputs"]) {
-    cfg.models.resize(1);
-    cfg.models[0].outputs = parse_tensor_nodes(
+    auto& model = ensure_model(cfg);
+    model.outputs = parse_tensor_nodes(
         root["outputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
 }
@@ -569,7 +577,7 @@ load_config(const std::string& path) -> RuntimeConfig
   if (cfg.valid) {
     try {
       cfg.batching.max_message_bytes = compute_max_message_bytes(
-          cfg.batching.max_batch_size, cfg.models,
+          cfg.batching.max_batch_size, cfg.model,
           cfg.batching.max_message_bytes);
     }
     catch (const InvalidDimensionException& invalid_dimension) {
