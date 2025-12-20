@@ -2433,7 +2433,9 @@ StarPUTaskRunner::submit_inference_task(
     {
     }
     PoolReleaseGuard(const PoolReleaseGuard&) = delete;
+    PoolReleaseGuard(PoolReleaseGuard&&) = delete;
     auto operator=(const PoolReleaseGuard&) -> PoolReleaseGuard& = delete;
+    auto operator=(PoolReleaseGuard&&) -> PoolReleaseGuard& = delete;
     ~PoolReleaseGuard() noexcept
     {
       if (active) {
@@ -2483,10 +2485,19 @@ StarPUTaskRunner::submit_inference_task(
     output_handles = &output_handles_storage;
   }
 
-  std::vector<starpu_data_handle_t> input_handles_for_ctx =
-      pools.has_input() ? *input_handles : std::move(input_handles_storage);
-  std::vector<starpu_data_handle_t> output_handles_for_ctx =
-      pools.has_output() ? *output_handles : std::move(output_handles_storage);
+  std::vector<starpu_data_handle_t> input_handles_for_ctx;
+  if (pools.has_input()) {
+    input_handles_for_ctx = *input_handles;
+  } else {
+    input_handles_for_ctx = std::move(input_handles_storage);
+  }
+
+  std::vector<starpu_data_handle_t> output_handles_for_ctx;
+  if (pools.has_output()) {
+    output_handles_for_ctx = *output_handles;
+  } else {
+    output_handles_for_ctx = std::move(output_handles_storage);
+  }
 
   auto ctx = configure_task_context(
       task, pools, std::move(input_handles_for_ctx),
@@ -2650,12 +2661,14 @@ batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
 auto
 cuda_copy_batch_create(bool enable) -> void*
 {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   return new CudaCopyBatch(enable);
 }
 
 void
 cuda_copy_batch_destroy(void* batch)
 {
+  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
   delete static_cast<CudaCopyBatch*>(batch);
 }
 
