@@ -76,7 +76,8 @@ class InferenceServiceImpl final
       inference::ModelInferResponse* reply,
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
       const LatencyBreakdown& breakdown,
-      std::string_view model_name_override = {}) -> grpc::Status;
+      std::string_view model_name_override = {},
+      bool set_prepost_overall = true) -> grpc::Status;
 
   using AsyncJobCallback = std::function<void(
       grpc::Status, std::vector<torch::Tensor>, LatencyBreakdown,

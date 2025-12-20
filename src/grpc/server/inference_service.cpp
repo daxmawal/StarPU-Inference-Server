@@ -580,7 +580,7 @@ InferenceServiceImpl::handle_async_infer_completion(
 
   Status populate_status = populate_response(
       context.request, context.reply, outs, context.recv_ms, breakdown,
-      context.resolved_model_name);
+      context.resolved_model_name, /*set_prepost_overall=*/false);
   if (!populate_status.ok()) {
     increment_request_status(
         static_cast<int>(populate_status.error_code()),
@@ -688,8 +688,8 @@ auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
-    const LatencyBreakdown& breakdown,
-    std::string_view model_name_override) -> Status
+    const LatencyBreakdown& breakdown, std::string_view model_name_override,
+    bool set_prepost_overall) -> Status
 {
   if (!model_name_override.empty()) {
     reply->set_model_name(std::string(model_name_override));
@@ -705,9 +705,11 @@ InferenceServiceImpl::populate_response(
   reply->set_server_codelet_ms(breakdown.codelet_ms);
   reply->set_server_inference_ms(breakdown.inference_ms);
   reply->set_server_callback_ms(breakdown.callback_ms);
-  reply->set_server_preprocess_ms(breakdown.preprocess_ms);
-  reply->set_server_postprocess_ms(breakdown.postprocess_ms);
-  reply->set_server_overall_ms(breakdown.overall_ms);
+  if (set_prepost_overall) {
+    reply->set_server_preprocess_ms(breakdown.preprocess_ms);
+    reply->set_server_postprocess_ms(breakdown.postprocess_ms);
+    reply->set_server_overall_ms(breakdown.overall_ms);
+  }
   reply->set_server_total_ms(breakdown.total_ms);
   return fill_output_tensor(reply, outputs);
 }
