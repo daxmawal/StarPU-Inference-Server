@@ -462,8 +462,7 @@ initialize_output_pool(const RuntimeConfig& opts)
     return std::make_unique<OutputSlotPool>(opts, opts.batching.pool_size);
   }
   catch (const std::exception& e) {
-    log_error(
-        std::format("Failed to initialize OutputSlotPool: {}", +e.what()));
+    log_error(std::format("Failed to initialize OutputSlotPool: {}", e.what()));
     throw;
   }
 }
@@ -516,11 +515,6 @@ append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs)
 }
 }  // namespace
 
-void run_inference(
-    InferenceParams* params, const std::vector<StarpuBufferPtr>& buffers,
-    torch::Device device, torch::jit::script::Module* model,
-    const std::function<void(const at::Tensor&, std::span<std::byte>)>&
-        copy_output_fn);
 // =============================================================================
 // InferenceCodelet: constructor and access to codelet
 // =============================================================================
