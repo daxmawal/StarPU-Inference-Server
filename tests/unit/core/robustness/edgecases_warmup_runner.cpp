@@ -33,7 +33,7 @@ namespace {
 void
 ExpectClientWorkerThrows(
     starpu_server::WarmupRunner& runner,
-    const std::map<int, std::vector<int32_t>>& device_workers,
+    const std::map<int, std::vector<int>>& device_workers,
     starpu_server::InferenceQueue& queue, int request_nb, bool expect_overflow)
 {
   try {
@@ -80,8 +80,8 @@ TEST(WarmupRunnerEdgesTest, ClientWorkerThrowsOnWorkerCountOverflow_Robustesse)
           static_cast<size_t>(request_nb) +
       1;
 
-  std::vector<int32_t> many_workers(worker_count, 0);
-  std::map<int, std::vector<int32_t>> device_workers = {{0, many_workers}};
+  std::vector<int> many_workers(worker_count, 0);
+  std::map<int, std::vector<int>> device_workers = {{0, many_workers}};
   starpu_server::InferenceQueue queue;
 
   EXPECT_THROW(

@@ -18,7 +18,7 @@ namespace starpu_server {
 struct WarmupRunnerTestHelper {
   static void client_worker(
       WarmupRunner& runner,
-      const std::map<int, std::vector<int32_t>>& device_workers,
+      const std::map<int, std::vector<int>>& device_workers,
       InferenceQueue& queue, int request_nb_per_worker)
   {
     runner.client_worker(device_workers, queue, request_nb_per_worker);
@@ -39,7 +39,7 @@ measure_ms(F&& function) -> long
 }
 
 inline auto
-make_device_workers() -> std::map<int, std::vector<int32_t>>
+make_device_workers() -> std::map<int, std::vector<int>>
 {
   return {{0, {1, 2}}};
 }

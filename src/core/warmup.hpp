@@ -38,7 +38,7 @@ class WarmupRunner {
   friend struct WarmupRunnerTestHelper;
 #endif
   void client_worker(
-      const std::map<int, std::vector<int32_t>>& device_workers,
+      const std::map<int, std::vector<int>>& device_workers,
       InferenceQueue& queue, int request_nb_per_worker) const;
 
   // *****************************************************************************

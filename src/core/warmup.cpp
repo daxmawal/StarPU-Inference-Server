@@ -34,9 +34,9 @@ constexpr int kCpuWarmupDeviceId = std::numeric_limits<int>::min();
 
 auto
 collect_device_workers(const RuntimeConfig& opts)
-    -> std::map<int, std::vector<int32_t>>
+    -> std::map<int, std::vector<int>>
 {
-  std::map<int, std::vector<int32_t>> workers;
+  std::map<int, std::vector<int>> workers;
 
   if (opts.devices.use_cuda) {
     const auto device_workers =
@@ -88,9 +88,13 @@ WarmupRunner::WarmupRunner(
 
 void
 WarmupRunner::client_worker(
-    const std::map<int, std::vector<int32_t>>& device_workers,
+    const std::map<int, std::vector<int>>& device_workers,
     InferenceQueue& queue, int request_nb_per_worker) const
 {
+  if (request_nb_per_worker < 0) {
+    throw std::invalid_argument("request_nb_per_worker must be non-negative");
+  }
+
   thread_local std::mt19937 rng;
   if (opts_.seed.has_value()) {
     rng.seed(*opts_.seed);
@@ -101,10 +105,6 @@ WarmupRunner::client_worker(
 
   auto pregen_inputs = client_utils::pre_generate_inputs(
       opts_, opts_.batching.warmup_pregen_inputs);
-
-  if (request_nb_per_worker < 0) {
-    throw std::invalid_argument("request_nb_per_worker must be non-negative");
-  }
 
   const size_t worker_count = std::accumulate(
       device_workers.begin(), device_workers.end(), std::size_t{0},
@@ -121,37 +121,34 @@ WarmupRunner::client_worker(
   const auto total = static_cast<int>(total_size_t);
   int request_id = 0;
 
-  std::vector<int> flat_worker_ids;
-  flat_worker_ids.reserve(worker_count);
-  for ([[maybe_unused]] const auto& [device_id, worker_ids] : device_workers) {
-    flat_worker_ids.insert(
-        flat_worker_ids.end(), worker_ids.begin(), worker_ids.end());
-  }
+  for (const auto& entry : device_workers) {
+    const auto& worker_ids = entry.second;
+    for (const int worker_id : worker_ids) {
+      for (auto request_nb = 0; request_nb < request_nb_per_worker;
+           ++request_nb) {
+        const auto& inputs =
+            client_utils::pick_random_input(pregen_inputs, rng);
+        auto job = client_utils::create_job(
+            inputs, outputs_ref_, request_id, {}, {}, opts_.name);
+        const int job_request_id = request_id;
+        job->set_fixed_worker_id(worker_id);
 
-  for (const int worker_id : flat_worker_ids) {
-    for (auto request_nb = 0; request_nb < request_nb_per_worker;
-         ++request_nb) {
-      const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
-      auto job = client_utils::create_job(
-          inputs, outputs_ref_, request_id, {}, {}, opts_.name);
-      const int job_request_id = request_id;
-      job->set_fixed_worker_id(worker_id);
+        const auto enqueued_now = std::chrono::high_resolution_clock::now();
+        job->timing_info().enqueued_time = enqueued_now;
+        job->timing_info().last_enqueued_time = enqueued_now;
 
-      const auto enqueued_now = std::chrono::high_resolution_clock::now();
-      job->timing_info().enqueued_time = enqueued_now;
-      job->timing_info().last_enqueued_time = enqueued_now;
-
-      if (bool queue_full = false; !queue.push(std::move(job), &queue_full)) {
-        const auto* const reason =
-            queue_full ? "queue is full" : "queue shutting down";
-        log_warning(std::format(
-            "[Warmup] Failed to enqueue job {}: {}", job_request_id, reason));
-        queue.shutdown();
-        return;
+        if (bool queue_full = false; !queue.push(std::move(job), &queue_full)) {
+          const auto* const reason =
+              queue_full ? "queue is full" : "queue shutting down";
+          log_warning(std::format(
+              "[Warmup] Failed to enqueue job {}: {}", job_request_id, reason));
+          queue.shutdown();
+          return;
+        }
+        client_utils::log_job_enqueued(
+            opts_, job_request_id, total, enqueued_now);
+        request_id++;
       }
-      client_utils::log_job_enqueued(
-          opts_, job_request_id, total, enqueued_now);
-      request_id++;
     }
   }
 
