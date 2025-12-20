@@ -1433,6 +1433,7 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
 
   const int max_job_count = std::max(1, opts_->batching.max_batch_size);
   if (max_job_count <= 1) {
+    set_batch_pending_jobs(jobs.size());
     return jobs;
   }
 
