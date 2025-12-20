@@ -78,14 +78,14 @@ inline auto
 string_to_scalar_type(std::string_view type_str) -> at::ScalarType
 {
   std::string key(type_str);
-  if (constexpr std::string_view type_prefix = "TYPE_";
-      key.starts_with(type_prefix)) {
-    key.erase(0, type_prefix.size());
-  }
   std::ranges::transform(
       key, key.begin(), [](unsigned char character) noexcept {
         return static_cast<char>(std::tolower(character));
       });
+  if (constexpr std::string_view type_prefix = "type_";
+      key.starts_with(type_prefix)) {
+    key.erase(0, type_prefix.size());
+  }
 
   static const std::unordered_map<
       std::string, at::ScalarType, TransparentHash, std::equal_to<>>
