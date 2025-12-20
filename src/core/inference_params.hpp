@@ -5,18 +5,10 @@
 #include <chrono>
 
 #include "device_type.hpp"
+#include "inference_limits.hpp"
 #include "logger.hpp"
 
 namespace starpu_server {
-// =============================================================================
-// Constants for inference limitations
-// =============================================================================
-
-namespace InferLimits {
-inline constexpr size_t MaxInputs = 16;
-inline constexpr size_t MaxDims = 8;
-inline constexpr size_t MaxModelsGPU = 32;
-}  // namespace InferLimits
 
 namespace detail {
 // =============================================================================

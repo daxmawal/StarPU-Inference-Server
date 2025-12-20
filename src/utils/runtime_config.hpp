@@ -13,15 +13,13 @@
 
 #include "datatype_utils.hpp"
 #include "exceptions.hpp"
+#include "inference_limits.hpp"
 #include "logger.hpp"
 
 namespace starpu_server {
 // =============================================================================
 // Compile-time defaults for inference limits
 // =============================================================================
-inline constexpr std::size_t kMaxInputs = 16;
-inline constexpr std::size_t kMaxDims = 8;
-inline constexpr std::size_t kMaxModelsGpu = 32;
 inline constexpr std::size_t kBytesPerKiB = 1024ULL;
 inline constexpr std::size_t kBytesPerMiB = kBytesPerKiB * 1024ULL;
 inline constexpr std::size_t kDefaultMessageSizeMiB = 32ULL;
@@ -99,9 +97,9 @@ struct RuntimeConfig {
   };
 
   struct Limits {
-    size_t max_inputs = kMaxInputs;
-    size_t max_dims = kMaxDims;
-    size_t max_models_gpu = kMaxModelsGpu;
+    size_t max_inputs = InferLimits::MaxInputs;
+    size_t max_dims = InferLimits::MaxDims;
+    size_t max_models_gpu = InferLimits::MaxModelsGPU;
   };
 
   std::string name;

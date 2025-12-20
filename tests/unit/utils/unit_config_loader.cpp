@@ -482,7 +482,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml << "name: config_loader_test\n";
           yaml << "model: {{MODEL_PATH}}\n";
           yaml << "inputs:\n";
-          for (std::size_t i = 0; i <= kMaxInputs; ++i) {
+          for (std::size_t i = 0; i <= InferLimits::MaxInputs; ++i) {
             yaml << "  - name: in" << i << "\n";
             yaml << "    dims: [1]\n";
             yaml << "    data_type: float32\n";
@@ -506,7 +506,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml << "inputs:\n";
           yaml << "  - name: in\n";
           yaml << "    dims: [";
-          for (std::size_t i = 0; i <= kMaxDims; ++i) {
+          for (std::size_t i = 0; i <= InferLimits::MaxDims; ++i) {
             if (i != 0U) {
               yaml << ", ";
             }
