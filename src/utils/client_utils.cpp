@@ -20,17 +20,6 @@
 namespace starpu_server::client_utils {
 
 // =============================================================================
-// Time Utilities: Format timestamp for logging/debugging
-// =============================================================================
-
-static auto
-current_time_formatted(const std::chrono::high_resolution_clock::time_point&
-                           time_point) -> std::string
-{
-  return time_utils::format_timestamp(time_point);
-}
-
-// =============================================================================
 // Input Preparation: Pre-generate random inputs and select random sample
 // =============================================================================
 
@@ -78,7 +67,7 @@ log_job_enqueued(
         std::format(
             "[Inference] Request ID {} Iteration {}/{} Enqueued at {}",
             request_id, request_id + 1, request_nb,
-            current_time_formatted(now)));
+            time_utils::format_timestamp(now)));
   }
 }
 
