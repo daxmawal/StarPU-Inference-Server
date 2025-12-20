@@ -753,8 +753,6 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "max_batch_size: 1\n";
   yaml << "pool_size: 1\n";
-  yaml << "rtol: 1.0e-4\n";
-  yaml << "atol: 2.0e-5\n";
   yaml << "sync: true\n";
   yaml << "group_cpu_by_numa: true\n";
   yaml << "use_cpu: false\n";
@@ -768,8 +766,6 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_DOUBLE_EQ(cfg.validation.rtol, 1.0e-4);
-  EXPECT_DOUBLE_EQ(cfg.validation.atol, 2.0e-5);
   EXPECT_TRUE(cfg.batching.synchronous);
   EXPECT_TRUE(cfg.devices.group_cpu_by_numa);
   EXPECT_FALSE(cfg.devices.use_cpu);
@@ -1163,9 +1159,7 @@ INSTANTIATE_TEST_SUITE_P(
         NegativeValueCase{
             "warmup_batches_per_worker", "-1",
             "warmup_batches_per_worker must be >= 0"},
-        NegativeValueCase{"seed", "-1", "seed must be >= 0"},
-        NegativeValueCase{"rtol", "-1.0", "rtol must be >= 0"},
-        NegativeValueCase{"atol", "-1.0", "atol must be >= 0"}));
+        NegativeValueCase{"seed", "-1", "seed must be >= 0"}));
 
 TEST(ConfigLoader, PoolSizeRejectsNonPositive)
 {

@@ -162,6 +162,11 @@ class AsyncServerContext {
   void configure(grpc::ServerBuilder& builder);
   void start();
   void shutdown();
+  [[nodiscard]] auto started() const -> bool { return started_; }
+  [[nodiscard]] auto thread_count() const -> std::size_t
+  {
+    return threads_.size();
+  }
 
  private:
   void poll_events();

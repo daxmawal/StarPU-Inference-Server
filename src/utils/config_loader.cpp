@@ -162,8 +162,6 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "warmup_request_nb",
           "warmup_batches_per_worker",
           "seed",
-          "rtol",
-          "atol",
           "sync",
           "use_cpu",
           "use_cuda"};
@@ -431,18 +429,6 @@ parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("seed must be >= 0");
     }
     cfg.seed = static_cast<uint64_t>(tmp);
-  }
-  if (root["rtol"]) {
-    cfg.validation.rtol = root["rtol"].as<double>();
-    if (cfg.validation.rtol < 0) {
-      throw std::invalid_argument("rtol must be >= 0");
-    }
-  }
-  if (root["atol"]) {
-    cfg.validation.atol = root["atol"].as<double>();
-    if (cfg.validation.atol < 0) {
-      throw std::invalid_argument("atol must be >= 0");
-    }
   }
   if (root["sync"]) {
     cfg.batching.synchronous = root["sync"].as<bool>();
