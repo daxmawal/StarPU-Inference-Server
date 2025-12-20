@@ -12,9 +12,7 @@
 #include <vector>
 
 #include "grpc/client/client_args.hpp"
-#define private public
 #include "grpc/client/inference_client.hpp"
-#undef private
 #include "grpc/server/inference_service.hpp"
 #include "test_helpers.hpp"
 
@@ -172,7 +170,8 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
 TEST(InferenceClientDetermineInferenceCount, HandlesEdgeCases)
 {
   const auto determine = [](const starpu_server::ClientConfig& cfg) {
-    return starpu_server::InferenceClient::determine_inference_count(cfg);
+    return starpu_server::InferenceClientTestAccess::determine_inference_count(
+        cfg);
   };
 
   starpu_server::ClientConfig cfg;
@@ -294,12 +293,15 @@ TEST(InferenceClientLatencySummary, SkipsEmptyMetric)
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
 
-  client.verbosity_ = starpu_server::VerbosityLevel::Info;
-  client.latency_records_.roundtrip_ms.push_back(1.23);
-  client.latency_records_.server_queue_ms.push_back(0.45);
+  starpu_server::InferenceClientTestAccess::set_verbosity(
+      client, starpu_server::VerbosityLevel::Info);
+  auto& records =
+      starpu_server::InferenceClientTestAccess::latency_records(client);
+  records.roundtrip_ms.push_back(1.23);
+  records.server_queue_ms.push_back(0.45);
 
   testing::internal::CaptureStdout();
-  client.log_latency_summary();
+  starpu_server::InferenceClientTestAccess::log_latency_summary(client);
   const std::string output = testing::internal::GetCapturedStdout();
 
   EXPECT_NE(output.find("latency"), std::string::npos);
@@ -315,16 +317,17 @@ TEST(InferenceClientLatencySummary, HandlesZeroElapsedTime)
       channel, starpu_server::VerbosityLevel::Stats);
 
   const auto now = std::chrono::high_resolution_clock::now();
-  client.first_request_time_ = now;
-  client.last_response_time_ = now;
-  client.total_inference_count_ = 3;
-  const starpu_server::InferenceClient::LatencySample sample{
+  starpu_server::InferenceClientTestAccess::set_first_request_time(client, now);
+  starpu_server::InferenceClientTestAccess::set_last_response_time(client, now);
+  starpu_server::InferenceClientTestAccess::set_total_inference_count(
+      client, 3);
+  const starpu_server::InferenceClientTestAccess::LatencySample sample{
       1.0, 0.9, 0.8, 0.7,  0.65, 0.6,  0.5, 0.4,
       0.3, 0.2, 0.1, 0.05, 0.04, 0.03, 0.02};
-  client.record_latency(sample);
+  starpu_server::InferenceClientTestAccess::record_latency(client, sample);
 
   starpu_server::CaptureStream capture{std::cout};
-  client.log_latency_summary();
+  starpu_server::InferenceClientTestAccess::log_latency_summary(client);
   const std::string output = capture.str();
 
   EXPECT_NE(

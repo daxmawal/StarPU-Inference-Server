@@ -17,6 +17,10 @@
 namespace starpu_server {
 struct AsyncClientCall;
 
+#if defined(STARPU_TESTING)
+struct InferenceClientTestAccess;
+#endif
+
 struct ModelId {
   std::string name;
   std::string version;
@@ -39,6 +43,10 @@ class InferenceClient {
   void Shutdown();
 
  private:
+#if defined(STARPU_TESTING)
+  friend struct InferenceClientTestAccess;
+#endif
+
   struct LatencySample {
     double roundtrip_ms;
     double server_overall_ms;
@@ -98,4 +106,54 @@ class InferenceClient {
   static auto determine_inference_count(const ClientConfig& cfg) -> std::size_t;
   void validate_server_response(const AsyncClientCall& call) const;
 };
+
+#if defined(STARPU_TESTING)
+struct InferenceClientTestAccess {
+  using LatencySample = InferenceClient::LatencySample;
+  using LatencyRecords = InferenceClient::LatencyRecords;
+  using TimePoint = std::chrono::high_resolution_clock::time_point;
+
+  static auto determine_inference_count(const ClientConfig& cfg) -> std::size_t
+  {
+    return InferenceClient::determine_inference_count(cfg);
+  }
+
+  static void set_verbosity(InferenceClient& client, VerbosityLevel level)
+  {
+    client.verbosity_ = level;
+  }
+
+  static auto latency_records(InferenceClient& client) -> LatencyRecords&
+  {
+    return client.latency_records_;
+  }
+
+  static void set_first_request_time(InferenceClient& client, TimePoint tp)
+  {
+    client.first_request_time_ = tp;
+  }
+
+  static void set_last_response_time(InferenceClient& client, TimePoint tp)
+  {
+    client.last_response_time_ = tp;
+  }
+
+  static void set_total_inference_count(
+      InferenceClient& client, std::size_t count)
+  {
+    client.total_inference_count_ = count;
+  }
+
+  static void record_latency(
+      InferenceClient& client, const LatencySample& sample)
+  {
+    client.record_latency(sample);
+  }
+
+  static void log_latency_summary(const InferenceClient& client)
+  {
+    client.log_latency_summary();
+  }
+};
+#endif
 }  // namespace starpu_server
