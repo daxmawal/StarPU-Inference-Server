@@ -1062,7 +1062,6 @@ ResultDispatcher::handle_job_completion(
       [this, &runner, prev_callback, job, &results, latency_ms] {
         if (job) {
           static_cast<void>(job->release_input_tensors());
-          job->release_input_memory_holders();
         }
         ResultDispatcher::ensure_callback_timing(job->timing_info());
         record_job_metrics(
