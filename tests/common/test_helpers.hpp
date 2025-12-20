@@ -163,19 +163,25 @@ make_single_model_runtime_config(
 }
 
 inline auto
-make_variable_interface(const float* ptr) -> starpu_variable_interface
+make_variable_interface(const float* ptr, std::size_t elem_count = 1)
+    -> starpu_variable_interface
 {
   starpu_variable_interface iface{};
+  iface.id = STARPU_VARIABLE_INTERFACE_ID;
   iface.ptr = std::bit_cast<uintptr_t>(ptr);
+  iface.elemsize = sizeof(float) * elem_count;
   return iface;
 }
 
 template <typename T>
 inline auto
-make_variable_interface(const T* ptr) -> starpu_variable_interface
+make_variable_interface(const T* ptr, std::size_t elem_count = 1)
+    -> starpu_variable_interface
 {
   starpu_variable_interface iface{};
+  iface.id = STARPU_VARIABLE_INTERFACE_ID;
   iface.ptr = std::bit_cast<uintptr_t>(ptr);
+  iface.elemsize = sizeof(T) * elem_count;
   return iface;
 }
 

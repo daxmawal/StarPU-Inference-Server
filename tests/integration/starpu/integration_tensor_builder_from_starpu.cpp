@@ -16,8 +16,10 @@ TEST(TensorBuilderFromStarPU_Integration, BuildsTensors)
   std::array<float, 3> input0{kV0, kV1, kV2};
   std::array<int32_t, 4> input1{1, 2, 3, 4};
   std::array<starpu_variable_interface, 2> buffers_raw{};
-  buffers_raw[0] = starpu_server::make_variable_interface(input0.data());
-  buffers_raw[1] = starpu_server::make_variable_interface(input1.data());
+  buffers_raw[0] =
+      starpu_server::make_variable_interface(input0.data(), input0.size());
+  buffers_raw[1] =
+      starpu_server::make_variable_interface(input1.data(), input1.size());
   auto params = starpu_server::make_params_for_inputs(
       {{3}, {2, 2}}, {at::kFloat, at::kInt});
   std::array<StarpuBufferPtr, 2> buffers{

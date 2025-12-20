@@ -2226,10 +2226,12 @@ TEST(InferenceCodelet, CudaInferenceFuncCopiesResultsToDeviceBuffer)
   params.timing.codelet_start_time = &start_tp;
   params.timing.codelet_end_time = &end_tp;
 
-  starpu_variable_interface input_iface{};
-  input_iface.ptr = reinterpret_cast<uintptr_t>(raw_input);
-  starpu_variable_interface output_iface{};
-  output_iface.ptr = reinterpret_cast<uintptr_t>(raw_output);
+  starpu_variable_interface input_iface =
+      starpu_server::make_variable_interface(
+          reinterpret_cast<const float*>(raw_input), kElementCount);
+  starpu_variable_interface output_iface =
+      starpu_server::make_variable_interface(
+          reinterpret_cast<const float*>(raw_output), kElementCount);
 
   std::array<starpu_server::StarpuBufferPtr, 2> buffers{
       &input_iface, &output_iface};
@@ -3716,8 +3718,8 @@ TEST(InferenceCodelet, RunInferenceExceptionsAreWrapped)
   float dummy_input = 0.0F;
   float dummy_output = 0.0F;
   std::array<starpu_variable_interface, 2> raw_buffers{};
-  raw_buffers[0] = starpu_server::make_variable_interface(&dummy_input);
-  raw_buffers[1] = starpu_server::make_variable_interface(&dummy_output);
+  raw_buffers[0] = starpu_server::make_variable_interface(&dummy_input, 1);
+  raw_buffers[1] = starpu_server::make_variable_interface(&dummy_output, 1);
   std::array<starpu_server::StarpuBufferPtr, 2> buffers{
       &raw_buffers[0], &raw_buffers[1]};
 

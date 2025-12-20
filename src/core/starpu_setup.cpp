@@ -513,6 +513,34 @@ append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs)
     throw UnsupportedModelOutputTypeException("Unsupported model output type");
   }
 }
+
+auto
+buffer_byte_size(const StarpuBufferInterface* buffer_iface) -> size_t
+{
+  if (buffer_iface == nullptr) {
+    throw InferenceExecutionException("[ERROR] StarPU buffer is null");
+  }
+
+  switch (buffer_iface->id) {
+    case STARPU_VARIABLE_INTERFACE_ID:
+      return buffer_iface->elemsize;
+    case STARPU_VECTOR_INTERFACE_ID: {
+      const auto* vec_iface =
+          reinterpret_cast<const starpu_vector_interface*>(buffer_iface);
+      if (vec_iface->elemsize != 0U &&
+          vec_iface->nx >
+              std::numeric_limits<size_t>::max() / vec_iface->elemsize) {
+        throw InferenceExecutionException(
+            "[ERROR] StarPU buffer size exceeds size_t capacity");
+      }
+      return vec_iface->nx * vec_iface->elemsize;
+    }
+    default:
+      throw InferenceExecutionException(std::format(
+          "[ERROR] Unsupported StarPU buffer interface id {}",
+          static_cast<int>(buffer_iface->id)));
+  }
+}
 }  // namespace
 
 // =============================================================================
@@ -579,8 +607,8 @@ run_inference(
   for (size_t i = 0; i < params->num_outputs; ++i) {
     auto* var_iface = buffers[params->num_inputs + i];
     auto* buffer_ptr = std::bit_cast<std::byte*>(var_iface->ptr);
-    const auto byte_size = outputs[i].nbytes();
-    std::span<std::byte> buffer(buffer_ptr, byte_size);
+    const auto buffer_size = buffer_byte_size(var_iface);
+    std::span<std::byte> buffer(buffer_ptr, buffer_size);
     copy_output_fn(outputs[i], buffer);
   }
 }

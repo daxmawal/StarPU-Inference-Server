@@ -98,8 +98,10 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
   std::array<float, 3> input{kF1, kF2, kF3};
   std::array<float, 3> output{0.0F, 0.0F, 0.0F};
 
-  auto input_iface = starpu_server::make_variable_interface(input.data());
-  auto output_iface = starpu_server::make_variable_interface(output.data());
+  auto input_iface =
+      starpu_server::make_variable_interface(input.data(), input.size());
+  auto output_iface =
+      starpu_server::make_variable_interface(output.data(), output.size());
 
   auto params = starpu_server::make_basic_params(3);
   std::chrono::high_resolution_clock::time_point inference_start;
