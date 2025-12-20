@@ -21,8 +21,6 @@
 #include "client_utils.hpp"
 #include "exceptions.hpp"
 #include "inference_queue.hpp"
-#include "inference_runner.hpp"
-#include "input_generator.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
