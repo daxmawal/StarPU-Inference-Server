@@ -163,9 +163,6 @@ class AsyncServerContext {
   void start();
   void shutdown();
 
-  [[nodiscard]] auto started() const -> bool;
-  [[nodiscard]] auto thread_count() const -> std::size_t;
-
  private:
   void poll_events();
 

@@ -1001,18 +1001,6 @@ AsyncServerContext::shutdown()
   completion_queue_.reset();
 }
 
-auto
-AsyncServerContext::started() const -> bool
-{
-  return started_;
-}
-
-auto
-AsyncServerContext::thread_count() const -> std::size_t
-{
-  return threads_.size();
-}
-
 void
 AsyncServerContext::poll_events()
 {
