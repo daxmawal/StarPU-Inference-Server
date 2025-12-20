@@ -39,6 +39,7 @@ class InferenceQueue {
     if (job == nullptr) {
       return false;
     }
+    std::size_t size = 0;
     {
       const std::scoped_lock lock(mutex_);
       if (shutdown_) {
@@ -51,8 +52,9 @@ class InferenceQueue {
         return false;
       }
       queue_.push(std::move(job));
-      update_queue_size_locked();
+      size = queue_.size();
     }
+    update_queue_metrics(size);
     cv_.notify_one();
     return true;
   }
@@ -65,18 +67,22 @@ class InferenceQueue {
     }
     job = std::move(queue_.front());
     queue_.pop();
-    update_queue_size_locked();
+    const auto size = queue_.size();
+    lock.unlock();
+    update_queue_metrics(size);
     return true;
   }
   [[nodiscard]] auto try_pop(std::shared_ptr<InferenceJob>& job) -> bool
   {
-    const std::scoped_lock lock(mutex_);
+    std::unique_lock lock(mutex_);
     if (queue_.empty()) {
       return false;
     }
     job = std::move(queue_.front());
     queue_.pop();
-    update_queue_size_locked();
+    const auto size = queue_.size();
+    lock.unlock();
+    update_queue_metrics(size);
     return true;
   }
   template <typename Rep, typename Period>
@@ -91,7 +97,9 @@ class InferenceQueue {
       }
       job = std::move(queue_.front());
       queue_.pop();
-      update_queue_size_locked();
+      const auto size = queue_.size();
+      lock.unlock();
+      update_queue_metrics(size);
       return true;
     }
     return false;
@@ -114,9 +122,8 @@ class InferenceQueue {
   }
 
  private:
-  void update_queue_size_locked()
+  static void update_queue_metrics(std::size_t size)
   {
-    const auto size = queue_.size();
     set_queue_size(size);
     auto& tracer = BatchingTraceLogger::instance();
     tracer.log_queue_size(size);
