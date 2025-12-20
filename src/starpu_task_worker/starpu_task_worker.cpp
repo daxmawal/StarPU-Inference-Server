@@ -2429,64 +2429,24 @@ StarPUTaskRunner::submit_inference_task(
   }
 
   auto pools = acquire_pools();
-  bool copied_ok = !pools.has_input();
-  const bool should_release_output_slot =
-      pools.has_output() && pools.output_slot >= 0;
-  bool release_output_slot_on_exception = false;
-
-  try {
-    const auto batch = validate_batch_and_copy_inputs(job, pools);
-    copied_ok = true;
-    release_output_slot_on_exception = should_release_output_slot;
-
-    InferenceTask task(
-        starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_);
-
-    std::vector<starpu_data_handle_t> input_handles_storage;
-    const std::vector<starpu_data_handle_t>* input_handles = nullptr;
-    if (pools.has_input()) {
-      input_handles = &pools.input_pool->handles(pools.input_slot);
-    } else {
-      input_handles_storage = task.prepare_input_handles();
-      input_handles = &input_handles_storage;
+  struct PoolReleaseGuard {
+    explicit PoolReleaseGuard(const PoolResources& pools_in) : pools(pools_in)
+    {
+    }
+    PoolReleaseGuard(const PoolReleaseGuard&) = delete;
+    auto operator=(const PoolReleaseGuard&) -> PoolReleaseGuard& = delete;
+    ~PoolReleaseGuard() noexcept
+    {
+      if (active) {
+        release();
+      }
     }
 
-    std::vector<starpu_data_handle_t> output_handles_storage;
-    const std::vector<starpu_data_handle_t>* output_handles = nullptr;
-    if (pools.has_output()) {
-      output_handles = &pools.output_pool->handles(pools.output_slot);
-    } else {
-      output_handles_storage = task.prepare_output_handles();
-      output_handles = &output_handles_storage;
-    }
+    void dismiss() noexcept { active = false; }
 
-    std::vector<starpu_data_handle_t> input_handles_for_ctx =
-        pools.has_input() ? *input_handles : std::move(input_handles_storage);
-    std::vector<starpu_data_handle_t> output_handles_for_ctx =
-        pools.has_output() ? *output_handles
-                           : std::move(output_handles_storage);
-
-    auto ctx = configure_task_context(
-        task, pools, std::move(input_handles_for_ctx),
-        std::move(output_handles_for_ctx), batch);
-
-    starpu_task* task_ptr =
-        task.create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
-
-    job->timing_info().before_starpu_submitted_time =
-        std::chrono::high_resolution_clock::now();
-
-    const int ret = starpu_task_submit(task_ptr);
-    if (ret != 0) {
-      release_output_slot_on_exception = false;
-      handle_submission_failure(pools, ctx, ret);
-    } else {
-      log_batch_submitted_if_enabled(job, warmup_job);
-    }
-    release_output_slot_on_exception = false;
-  }
-  catch (...) {
-    if (!copied_ok || release_output_slot_on_exception) {
+   private:
+    void release() noexcept
+    {
       if (pools.has_input() && pools.input_slot >= 0) {
         pools.input_pool->release(pools.input_slot);
       }
@@ -2494,7 +2454,58 @@ StarPUTaskRunner::submit_inference_task(
         pools.output_pool->release(pools.output_slot);
       }
     }
-    throw;
+
+    const PoolResources& pools;
+    bool active{true};
+  };
+
+  PoolReleaseGuard pool_guard(pools);
+
+  const auto batch = validate_batch_and_copy_inputs(job, pools);
+
+  InferenceTask task(
+      starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_);
+
+  std::vector<starpu_data_handle_t> input_handles_storage;
+  const std::vector<starpu_data_handle_t>* input_handles = nullptr;
+  if (pools.has_input()) {
+    input_handles = &pools.input_pool->handles(pools.input_slot);
+  } else {
+    input_handles_storage = task.prepare_input_handles();
+    input_handles = &input_handles_storage;
+  }
+
+  std::vector<starpu_data_handle_t> output_handles_storage;
+  const std::vector<starpu_data_handle_t>* output_handles = nullptr;
+  if (pools.has_output()) {
+    output_handles = &pools.output_pool->handles(pools.output_slot);
+  } else {
+    output_handles_storage = task.prepare_output_handles();
+    output_handles = &output_handles_storage;
+  }
+
+  std::vector<starpu_data_handle_t> input_handles_for_ctx =
+      pools.has_input() ? *input_handles : std::move(input_handles_storage);
+  std::vector<starpu_data_handle_t> output_handles_for_ctx =
+      pools.has_output() ? *output_handles : std::move(output_handles_storage);
+
+  auto ctx = configure_task_context(
+      task, pools, std::move(input_handles_for_ctx),
+      std::move(output_handles_for_ctx), batch);
+
+  starpu_task* task_ptr =
+      task.create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
+
+  job->timing_info().before_starpu_submitted_time =
+      std::chrono::high_resolution_clock::now();
+
+  const int ret = starpu_task_submit(task_ptr);
+  if (ret != 0) {
+    pool_guard.dismiss();
+    handle_submission_failure(pools, ctx, ret);
+  } else {
+    pool_guard.dismiss();
+    log_batch_submitted_if_enabled(job, warmup_job);
   }
 }
 
