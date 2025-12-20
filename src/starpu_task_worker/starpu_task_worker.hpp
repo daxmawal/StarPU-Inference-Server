@@ -128,14 +128,19 @@ class StarPUTaskRunner {
   auto validate_batch_and_copy_inputs(
       const std::shared_ptr<InferenceJob>& job,
       const PoolResources& pools) -> int64_t;
+#if defined(STARPU_TESTING)
   [[nodiscard]] auto collect_batch(
       const std::shared_ptr<InferenceJob>& first_job)
       -> std::vector<std::shared_ptr<InferenceJob>>;
   auto maybe_build_batched_job(std::vector<std::shared_ptr<InferenceJob>>& jobs)
       -> std::shared_ptr<InferenceJob>;
+#endif
   void batching_loop();
+#if defined(STARPU_TESTING)
   void enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job);
+#endif
   auto wait_for_prepared_job() -> std::shared_ptr<InferenceJob>;
+#if defined(STARPU_TESTING)
   static auto can_merge_jobs(
       const std::shared_ptr<InferenceJob>& lhs,
       const std::shared_ptr<InferenceJob>& rhs) -> bool;
@@ -148,6 +153,7 @@ class StarPUTaskRunner {
   static void propagate_completion_to_sub_jobs(
       const std::shared_ptr<InferenceJob>& aggregated_job,
       const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
+#endif
   static auto configure_task_context(
       InferenceTask& task, const PoolResources& pools,
       std::vector<starpu_data_handle_t> input_handles,
@@ -158,9 +164,11 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
   [[nodiscard]] auto resolve_batch_size(
       const std::shared_ptr<InferenceJob>& job) const -> int64_t;
+#if defined(STARPU_TESTING)
   static void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
+#endif
   void trace_batch_if_enabled(
       const std::shared_ptr<InferenceJob>& job, bool warmup_job,
       int submission_id) const;
@@ -169,7 +177,9 @@ class StarPUTaskRunner {
   void finalize_job_after_exception(
       const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
       std::string_view log_prefix, int job_id);
+#if defined(STARPU_TESTING)
   void reserve_inflight_slot();
+#endif
   void release_inflight_slot();
   [[nodiscard]] auto has_inflight_limit() const -> bool
   {

@@ -2111,6 +2111,7 @@ StarPUTaskRunner::finalize_job_after_exception(
   release_inflight_slot();
 }
 
+#if defined(STARPU_TESTING)
 void
 StarPUTaskRunner::reserve_inflight_slot()
 {
@@ -2130,6 +2131,7 @@ StarPUTaskRunner::reserve_inflight_slot()
     set_starpu_worker_busy_ratio(ratio);
   }
 }
+#endif
 
 void
 StarPUTaskRunner::release_inflight_slot()
@@ -2279,6 +2281,7 @@ StarPUTaskRunner::resolve_batch_size(
   return task_runner_internal::resolve_batch_size_for_job(opts_, job);
 }
 
+#if defined(STARPU_TESTING)
 void
 StarPUTaskRunner::release_pending_jobs(
     const std::shared_ptr<InferenceJob>& job,
@@ -2331,6 +2334,7 @@ StarPUTaskRunner::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
 {
   batch_collector_->enqueue_prepared_job(job);
 }
+#endif
 
 auto
 StarPUTaskRunner::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
@@ -2344,6 +2348,7 @@ StarPUTaskRunner::batching_loop()
   batch_collector_->batching_loop();
 }
 
+#if defined(STARPU_TESTING)
 void
 StarPUTaskRunner::propagate_completion_to_sub_jobs(
     const std::shared_ptr<InferenceJob>& aggregated_job,
@@ -2352,6 +2357,7 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
   ResultDispatcher::propagate_completion_to_sub_jobs(
       aggregated_job, aggregated_outputs, latency_ms);
 }
+#endif
 
 auto
 StarPUTaskRunner::configure_task_context(
