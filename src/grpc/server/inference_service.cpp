@@ -443,13 +443,13 @@ InferenceServiceImpl::submit_job_async(
   }
   if (!pushed) {
     if (queue_full) {
-      increment_inference_failure("enqueue", "queue_full", resolved_model_name);
+      increment_inference_failure("enqueue", "queue_full", job->model_name());
       increment_rejected_requests();
       BatchingTraceLogger::instance().log_request_rejected(queue_->size());
       return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
     }
     increment_inference_failure(
-        "enqueue", "queue_unavailable", resolved_model_name);
+        "enqueue", "queue_unavailable", job->model_name());
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
   if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
