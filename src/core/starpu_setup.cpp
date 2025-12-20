@@ -667,10 +667,25 @@ select_gpu_module(const InferenceParams& params, const int device_id)
     -> torch::jit::script::Module*
 {
   if (device_id >= 0) {
-    const auto module_index = static_cast<size_t>(device_id);
-    if (module_index < params.models.models_gpu.size()) {
-      if (auto* model_instance = params.models.models_gpu[module_index]) {
-        return model_instance;
+    if (!params.models.device_ids.empty()) {
+      const auto it = std::find(
+          params.models.device_ids.begin(), params.models.device_ids.end(),
+          device_id);
+      if (it != params.models.device_ids.end()) {
+        const auto module_index =
+            static_cast<size_t>(it - params.models.device_ids.begin());
+        if (module_index < params.models.models_gpu.size()) {
+          if (auto* model_instance = params.models.models_gpu[module_index]) {
+            return model_instance;
+          }
+        }
+      }
+    } else {
+      const auto module_index = static_cast<size_t>(device_id);
+      if (module_index < params.models.models_gpu.size()) {
+        if (auto* model_instance = params.models.models_gpu[module_index]) {
+          return model_instance;
+        }
       }
     }
   }

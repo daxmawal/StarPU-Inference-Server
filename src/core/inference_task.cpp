@@ -303,28 +303,23 @@ InferenceTask::fill_model_pointers(
   const auto& opts = require_runtime_config(opts_);
   params->models.model_cpu = model_cpu_;
   params->models.models_gpu.clear();
+  params->models.device_ids.clear();
 
   if (opts.devices.ids.empty() || models_gpu_->empty()) {
     return;
   }
 
-  const auto max_device_id = *std::ranges::max_element(opts.devices.ids);
-  if (max_device_id < 0) {
-    return;
-  }
-
-  params->models.models_gpu.resize(
-      static_cast<size_t>(max_device_id) + 1, nullptr);
-
   const size_t replicas =
       std::min(models_gpu_->size(), opts.devices.ids.size());
+  params->models.device_ids.reserve(replicas);
+  params->models.models_gpu.reserve(replicas);
   for (size_t i = 0; i < replicas; ++i) {
     const int device_id = opts.devices.ids[i];
     if (device_id < 0) {
       continue;
     }
-    params->models.models_gpu[static_cast<size_t>(device_id)] =
-        &(models_gpu_->at(i));
+    params->models.device_ids.push_back(device_id);
+    params->models.models_gpu.push_back(&(models_gpu_->at(i)));
   }
 }
 
