@@ -557,7 +557,7 @@ parallel_for_each_index(std::size_t count, Func&& func)
   auto&& task = std::forward<Func>(func);
 
   std::for_each(
-      std::execution::par_unseq, indices.begin(), indices.end(),
+      std::execution::par, indices.begin(), indices.end(),
       [&](std::size_t idx) {
         if (abort.load(std::memory_order_acquire)) {
           return;
