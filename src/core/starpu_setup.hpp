@@ -90,4 +90,11 @@ class StarPUSetup {
   std::unique_ptr<InputSlotPool> input_pool_;
   std::unique_ptr<OutputSlotPool> output_pool_;
 };
+
+#if defined(STARPU_TESTING)
+namespace testing {
+auto buffer_byte_size_for_tests(const StarpuBufferInterface* buffer_iface)
+    -> size_t;
+}  // namespace testing
+#endif
 }  // namespace starpu_server

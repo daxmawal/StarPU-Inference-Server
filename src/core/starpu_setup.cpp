@@ -544,6 +544,16 @@ buffer_byte_size(const StarpuBufferInterface* buffer_iface) -> size_t
 }
 }  // namespace
 
+#if defined(STARPU_TESTING)
+namespace testing {
+auto
+buffer_byte_size_for_tests(const StarpuBufferInterface* buffer_iface) -> size_t
+{
+  return buffer_byte_size(buffer_iface);
+}
+}  // namespace testing
+#endif
+
 // =============================================================================
 // InferenceCodelet: constructor and access to codelet
 // =============================================================================

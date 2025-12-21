@@ -2054,6 +2054,56 @@ TEST(ApplyStarpuEnv, SetenvFailureThrowsInitializationException)
   }
 }
 
+TEST(BufferByteSize, ThrowsWhenBufferNull)
+{
+  EXPECT_THROW(
+      {
+        std::ignore =
+            starpu_server::testing::buffer_byte_size_for_tests(nullptr);
+      },
+      starpu_server::InferenceExecutionException);
+}
+
+TEST(BufferByteSize, ThrowsWhenVectorSizeOverflows)
+{
+  starpu_vector_interface vec_iface{};
+  vec_iface.id = STARPU_VECTOR_INTERFACE_ID;
+  vec_iface.elemsize = std::numeric_limits<size_t>::max();
+  vec_iface.nx = 2;
+
+  try {
+    std::ignore = starpu_server::testing::buffer_byte_size_for_tests(
+        reinterpret_cast<const starpu_server::StarpuBufferInterface*>(
+            &vec_iface));
+    FAIL() << "Expected InferenceExecutionException";
+  }
+  catch (const starpu_server::InferenceExecutionException& ex) {
+    const std::string_view message(ex.what());
+    EXPECT_NE(
+        message.find("StarPU buffer size exceeds size_t capacity"),
+        std::string::npos);
+  }
+}
+
+TEST(BufferByteSize, ThrowsWhenInterfaceIdUnsupported)
+{
+  starpu_server::StarpuBufferInterface buffer_iface{};
+  buffer_iface.id = static_cast<starpu_data_interface_id>(-1);
+  buffer_iface.elemsize = 4;
+
+  try {
+    std::ignore =
+        starpu_server::testing::buffer_byte_size_for_tests(&buffer_iface);
+    FAIL() << "Expected InferenceExecutionException";
+  }
+  catch (const starpu_server::InferenceExecutionException& ex) {
+    const std::string_view message(ex.what());
+    EXPECT_NE(
+        message.find("Unsupported StarPU buffer interface id"),
+        std::string::npos);
+  }
+}
+
 TEST(EstimateNonCpuWorkers, ReturnsMaxUnsignedOnOverflow)
 {
   EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
