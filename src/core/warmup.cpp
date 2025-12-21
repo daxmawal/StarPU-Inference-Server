@@ -30,6 +30,12 @@ namespace starpu_server {
 namespace {
 constexpr int kCpuWarmupDeviceId = std::numeric_limits<int>::min();
 
+#if defined(STARPU_TESTING)
+std::mutex warmup_hook_mutex;
+std::function<void()> warmup_server_thread_hook;
+std::function<void()> warmup_client_thread_hook;
+#endif
+
 auto
 collect_device_workers(const RuntimeConfig& opts)
     -> std::map<int, std::vector<int>>
@@ -76,6 +82,40 @@ collect_device_workers_for_test(const RuntimeConfig& opts)
     -> std::map<int, std::vector<int>>
 {
   return collect_device_workers(opts);
+}
+
+auto
+set_warmup_server_thread_hook(std::function<void()> hook)
+    -> std::function<void()>
+{
+  std::lock_guard lock(warmup_hook_mutex);
+  auto previous = std::move(warmup_server_thread_hook);
+  warmup_server_thread_hook = std::move(hook);
+  return previous;
+}
+
+auto
+set_warmup_client_thread_hook(std::function<void()> hook)
+    -> std::function<void()>
+{
+  std::lock_guard lock(warmup_hook_mutex);
+  auto previous = std::move(warmup_client_thread_hook);
+  warmup_client_thread_hook = std::move(hook);
+  return previous;
+}
+
+auto
+take_warmup_server_thread_hook() -> std::function<void()>
+{
+  std::lock_guard lock(warmup_hook_mutex);
+  return std::exchange(warmup_server_thread_hook, {});
+}
+
+auto
+take_warmup_client_thread_hook() -> std::function<void()>
+{
+  std::lock_guard lock(warmup_hook_mutex);
+  return std::exchange(warmup_client_thread_hook, {});
 }
 }  // namespace testing
 #endif
@@ -237,6 +277,11 @@ WarmupRunner::run(int request_nb_per_worker)
 
   std::jthread server([&]() {
     try {
+#if defined(STARPU_TESTING)
+      if (auto hook = testing::take_warmup_server_thread_hook()) {
+        hook();
+      }
+#endif
       worker.run();
     }
     catch (...) {
@@ -247,6 +292,11 @@ WarmupRunner::run(int request_nb_per_worker)
   std::jthread client([this, &device_workers, &queue, &notify_thread_exception,
                        request_nb_per_worker]() {
     try {
+#if defined(STARPU_TESTING)
+      if (auto hook = testing::take_warmup_client_thread_hook()) {
+        hook();
+      }
+#endif
       client_worker(device_workers, queue, request_nb_per_worker);
     }
     catch (...) {

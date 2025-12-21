@@ -1,9 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <functional>
 #include <limits>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "core/inference_runner.hpp"
@@ -16,6 +20,9 @@
 namespace starpu_server::testing {
 auto collect_device_workers_for_test(const RuntimeConfig& opts)
     -> std::map<int, std::vector<int>>;
+using WarmupThreadHook = std::function<void()>;
+auto set_warmup_server_thread_hook(WarmupThreadHook hook) -> WarmupThreadHook;
+auto set_warmup_client_thread_hook(WarmupThreadHook hook) -> WarmupThreadHook;
 }  // namespace starpu_server::testing
 
 namespace {
@@ -49,6 +56,33 @@ class WorkerStreamQueryGuard {
   WorkerStreamQueryGuard(const WorkerStreamQueryGuard&) = delete;
   auto operator=(const WorkerStreamQueryGuard&) -> WorkerStreamQueryGuard& =
                                                        delete;
+};
+
+class WarmupThreadHookGuard {
+ public:
+  WarmupThreadHookGuard(
+      starpu_server::testing::WarmupThreadHook server_hook,
+      starpu_server::testing::WarmupThreadHook client_hook)
+      : server_prev_(starpu_server::testing::set_warmup_server_thread_hook(
+            std::move(server_hook))),
+        client_prev_(starpu_server::testing::set_warmup_client_thread_hook(
+            std::move(client_hook)))
+  {
+  }
+  ~WarmupThreadHookGuard()
+  {
+    starpu_server::testing::set_warmup_server_thread_hook(
+        std::move(server_prev_));
+    starpu_server::testing::set_warmup_client_thread_hook(
+        std::move(client_prev_));
+  }
+  WarmupThreadHookGuard(const WarmupThreadHookGuard&) = delete;
+  auto operator=(const WarmupThreadHookGuard&) -> WarmupThreadHookGuard& =
+                                                      delete;
+
+ private:
+  starpu_server::testing::WarmupThreadHook server_prev_;
+  starpu_server::testing::WarmupThreadHook client_prev_;
 };
 }  // namespace
 
@@ -148,6 +182,43 @@ TEST(WarmupRunnerEdgesTest, CollectDeviceWorkersAddsCudaWorkers)
   const auto it = workers.find(0);
   ASSERT_NE(it, workers.end());
   EXPECT_EQ(it->second, (std::vector<int>{7, 9}));
+}
+
+TEST(WarmupRunnerEdgesTest, RunCapturesClientThreadException)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.warmup_pregen_inputs = 1;
+  auto runner = fixture.make_runner();
+
+  std::atomic<bool> hook_called{false};
+  WarmupThreadHookGuard guard(
+      starpu_server::testing::WarmupThreadHook{}, [&hook_called]() {
+        hook_called.store(true, std::memory_order_relaxed);
+        throw std::runtime_error("client hook failure");
+      });
+
+  EXPECT_THROW(runner.run(1), std::runtime_error);
+  EXPECT_TRUE(hook_called.load(std::memory_order_relaxed));
+}
+
+TEST(WarmupRunnerEdgesTest, RunCapturesServerThreadException)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.warmup_pregen_inputs = 1;
+  auto runner = fixture.make_runner();
+
+  std::atomic<bool> hook_called{false};
+  WarmupThreadHookGuard guard(
+      [&hook_called]() {
+        hook_called.store(true, std::memory_order_relaxed);
+        throw std::runtime_error("server hook failure");
+      },
+      starpu_server::testing::WarmupThreadHook{});
+
+  EXPECT_THROW(runner.run(1), std::runtime_error);
+  EXPECT_TRUE(hook_called.load(std::memory_order_relaxed));
 }
 
 TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenNoDevicesConfigured)
