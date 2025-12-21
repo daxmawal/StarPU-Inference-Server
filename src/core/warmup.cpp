@@ -63,10 +63,22 @@ collect_device_workers(const RuntimeConfig& opts)
 
   return workers;
 }
+
 }  // namespace
 // =============================================================================
 // Constructor
 // =============================================================================
+
+#if defined(STARPU_TESTING)
+namespace testing {
+auto
+collect_device_workers_for_test(const RuntimeConfig& opts)
+    -> std::map<int, std::vector<int>>
+{
+  return collect_device_workers(opts);
+}
+}  // namespace testing
+#endif
 
 WarmupRunner::WarmupRunner(
     const RuntimeConfig& opts, StarPUSetup& starpu,

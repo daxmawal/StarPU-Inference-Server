@@ -13,6 +13,45 @@
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
 
+namespace starpu_server::testing {
+auto collect_device_workers_for_test(const RuntimeConfig& opts)
+    -> std::map<int, std::vector<int>>;
+}  // namespace starpu_server::testing
+
+namespace {
+auto
+test_worker_stream_query(
+    unsigned int device_id, int* worker_ids,
+    enum starpu_worker_archtype type) -> int
+{
+  if (type != STARPU_CUDA_WORKER || device_id != 0U) {
+    return 0;
+  }
+  if (worker_ids == nullptr) {
+    return 0;
+  }
+  worker_ids[0] = 7;
+  worker_ids[1] = 9;
+  return 2;
+}
+
+class WorkerStreamQueryGuard {
+ public:
+  WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::set_worker_stream_query_fn(
+        &test_worker_stream_query);
+  }
+  ~WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::reset_worker_stream_query_fn();
+  }
+  WorkerStreamQueryGuard(const WorkerStreamQueryGuard&) = delete;
+  auto operator=(const WorkerStreamQueryGuard&) -> WorkerStreamQueryGuard& =
+                                                       delete;
+};
+}  // namespace
+
 TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
 {
   auto device_workers = make_device_workers();
@@ -93,6 +132,22 @@ TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
 
   std::shared_ptr<starpu_server::InferenceJob> job;
   EXPECT_FALSE(queue.wait_and_pop(job));
+}
+
+TEST(WarmupRunnerEdgesTest, CollectDeviceWorkersAddsCudaWorkers)
+{
+  WorkerStreamQueryGuard guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cpu = false;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+
+  const auto workers =
+      starpu_server::testing::collect_device_workers_for_test(opts);
+
+  const auto it = workers.find(0);
+  ASSERT_NE(it, workers.end());
+  EXPECT_EQ(it->second, (std::vector<int>{7, 9}));
 }
 
 TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenNoDevicesConfigured)
