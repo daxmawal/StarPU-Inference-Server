@@ -180,6 +180,29 @@ AlwaysNullAllocator(size_t) -> void*
   return nullptr;
 }
 
+int g_owner_handles_alloc_calls = 0;
+int g_owner_modes_alloc_calls = 0;
+
+auto
+OwnerHandlesAllocator(size_t size) -> void*
+{
+  ++g_owner_handles_alloc_calls;
+  return std::malloc(size);
+}
+
+auto
+OwnerModesAllocator(size_t size) -> void*
+{
+  ++g_owner_modes_alloc_calls;
+  return std::malloc(size);
+}
+
+void
+OwnerAllocatorFree(void* ptr)
+{
+  std::free(ptr);
+}
+
 void
 ThrowingStarpuOutputCallbackHook(starpu_server::InferenceCallbackContext*)
 {
@@ -396,6 +419,74 @@ TEST_F(
   free_task(created_task);
 }
 
+TEST_F(InferenceTaskTest, CreateTaskUsesDependenciesOwnerWhenProvided)
+{
+  auto job = make_job(7, 0);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.task_create_fn = []() -> starpu_task* {
+    return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
+  };
+  auto task = make_task(job, 0, &dependencies);
+
+  auto owner = std::make_shared<starpu_server::InferenceTaskDependencies>(
+      starpu_server::kDefaultInferenceTaskDependencies);
+
+  const std::vector<starpu_data_handle_t> inputs;
+  const std::vector<starpu_data_handle_t> outputs;
+  auto params = task.create_inference_params();
+  auto ctx = make_callback_context(job, inputs, outputs, nullptr, params);
+  ctx->dependencies_owner = owner;
+  ASSERT_EQ(ctx->dependencies, nullptr);
+
+  auto* created_task = task.create_task(inputs, outputs, ctx);
+  ASSERT_NE(created_task, nullptr);
+
+  EXPECT_EQ(ctx->dependencies, owner.get());
+  EXPECT_EQ(ctx->dependencies_owner.get(), owner.get());
+
+  ctx->self_keep_alive.reset();
+  auto free_task = [](starpu_task* t) {
+    if (t == nullptr) {
+      return;
+    }
+    std::free(t->dyn_handles);
+    std::free(t->dyn_modes);
+    std::free(t);
+  };
+  free_task(created_task);
+}
+
+TEST_F(InferenceTaskTest, AllocateTaskBuffersUsesDependenciesOwner)
+{
+  auto job = make_job(8, 0);
+  auto ctx = make_callback_context(job);
+
+  g_owner_handles_alloc_calls = 0;
+  g_owner_modes_alloc_calls = 0;
+
+  auto owner = std::make_shared<starpu_server::InferenceTaskDependencies>(
+      starpu_server::kDefaultInferenceTaskDependencies);
+  owner->dyn_handles_allocator = &OwnerHandlesAllocator;
+  owner->dyn_handles_deallocator = &OwnerAllocatorFree;
+  owner->dyn_modes_allocator = &OwnerModesAllocator;
+  owner->dyn_modes_deallocator = &OwnerAllocatorFree;
+
+  ctx->dependencies_owner = owner;
+  ctx->dependencies = nullptr;
+
+  starpu_task task{};
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::allocate_task_buffers(&task, 2, ctx));
+  EXPECT_EQ(g_owner_handles_alloc_calls, 1);
+  EXPECT_EQ(g_owner_modes_alloc_calls, 1);
+  ASSERT_NE(task.dyn_handles, nullptr);
+  ASSERT_NE(task.dyn_modes, nullptr);
+
+  std::free(task.dyn_handles);
+  std::free(task.dyn_modes);
+}
+
 TEST(InferenceTask, RegisterInputsHandlesUnregistersHandlesOnFailure)
 {
   StarpuRuntimeGuard starpu_guard;
@@ -510,6 +601,20 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   EXPECT_EQ(params->layout.dims[0][0], 2);
   EXPECT_EQ(params->layout.dims[0][1], 3);
   EXPECT_EQ(params->layout.input_types[0], at::kFloat);
+}
+
+TEST_F(InferenceTaskTest, CreateInferenceParamsThrowsWhenRuntimeConfigNull)
+{
+  auto job = make_job(9, 1);
+  model_cpu_ = starpu_server::make_add_one_model();
+  models_gpu_.clear();
+  starpu_server::InferenceTask task(
+      nullptr, job, &model_cpu_, &models_gpu_, nullptr,
+      starpu_server::kDefaultInferenceTaskDependencies);
+
+  EXPECT_THROW(
+      task.create_inference_params(),
+      starpu_server::InferenceExecutionException);
 }
 
 TEST(InferenceTask, RecordAndRunCompletionCallback)
