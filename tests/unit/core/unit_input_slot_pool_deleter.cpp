@@ -2,9 +2,32 @@
 #include <gtest/gtest.h>
 
 #include <cstddef>
+#include <iostream>
+#include <new>
+#include <sstream>
+#include <string>
 
 static int g_starpu_memory_pin_rc = 0;
 static int g_starpu_memory_pin_calls = 0;
+static int g_starpu_memory_unpin_rc = 0;
+static int g_starpu_memory_unpin_calls = 0;
+
+namespace {
+class StreamCapture {
+ public:
+  explicit StreamCapture(std::ostream& stream)
+      : stream_{stream}, old_buf_{stream.rdbuf(buffer_.rdbuf())}
+  {
+  }
+  ~StreamCapture() { stream_.rdbuf(old_buf_); }
+  [[nodiscard]] auto str() const -> std::string { return buffer_.str(); }
+
+ private:
+  std::ostream& stream_;
+  std::ostringstream buffer_;
+  std::streambuf* old_buf_;
+};
+}  // namespace
 
 extern "C" cudaError_t
 cudaHostAlloc_test(void** ptr, size_t /*size*/, unsigned int /*flags*/)
@@ -25,7 +48,8 @@ starpu_memory_pin_test(void* /*ptr*/, size_t /*bytes*/)
 extern "C" int
 starpu_memory_unpin_test(void* /*ptr*/, size_t /*bytes*/)
 {
-  return 0;
+  ++g_starpu_memory_unpin_calls;
+  return g_starpu_memory_unpin_rc;
 }
 
 #define cudaHostAlloc cudaHostAlloc_test
@@ -58,6 +82,31 @@ TEST(InputSlotPoolFreeHostBuffer, NullptrNoop)
   info.bytes = 1024;
 
   EXPECT_NO_THROW(input_slot_pool_test_copy::free_host_buffer(nullptr, info));
+}
+
+TEST(InputSlotPoolHostBufferDeleter, LogsWarningOnUnpinFailure)
+{
+  g_starpu_memory_unpin_rc = -42;
+  g_starpu_memory_unpin_calls = 0;
+
+  input_slot_pool_test_copy::InputSlotPool::HostBufferInfo info{};
+  info.starpu_pinned = true;
+  info.bytes = 64;
+
+  auto* ptr =
+      static_cast<std::byte*>(::operator new(info.bytes, std::align_val_t{64}));
+
+  std::string log;
+  {
+    StreamCapture capture{std::cerr};
+    input_slot_pool_test_copy::free_host_buffer(ptr, info);
+    log = capture.str();
+  }
+
+  EXPECT_EQ(g_starpu_memory_unpin_calls, 1);
+  EXPECT_NE(
+      log.find("starpu_memory_unpin failed for input buffer"),
+      std::string::npos);
 }
 
 TEST(AllocateAndPinBuffer, MarksStarpuPinnedOnSuccess)
