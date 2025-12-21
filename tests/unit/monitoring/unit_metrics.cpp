@@ -1,6 +1,8 @@
 #include <arpa/inet.h>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <prometheus/client_metric.h>
+#include <prometheus/metric_family.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -8,7 +10,9 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "monitoring/metrics.hpp"
@@ -27,7 +31,20 @@ AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
   ASSERT_NE(metrics->queue_size_gauge(), nullptr);
   ASSERT_NE(metrics->inflight_tasks_gauge(), nullptr);
   ASSERT_NE(metrics->max_inflight_tasks_gauge(), nullptr);
+  ASSERT_NE(metrics->starpu_worker_busy_ratio_gauge(), nullptr);
+  ASSERT_NE(metrics->starpu_prepared_queue_depth_gauge(), nullptr);
+  ASSERT_NE(metrics->batch_pending_jobs_gauge(), nullptr);
+  ASSERT_NE(metrics->batch_efficiency_histogram(), nullptr);
+  ASSERT_NE(metrics->starpu_task_runtime_histogram(), nullptr);
+  ASSERT_NE(metrics->inference_compute_latency_by_worker_family(), nullptr);
+  ASSERT_NE(metrics->starpu_task_runtime_by_worker_family(), nullptr);
+  ASSERT_NE(metrics->starpu_worker_inflight_family(), nullptr);
+  ASSERT_NE(metrics->io_copy_latency_family(), nullptr);
+  ASSERT_NE(metrics->transfer_bytes_family(), nullptr);
   ASSERT_NE(metrics->server_health_state_gauge(), nullptr);
+  ASSERT_NE(metrics->inference_throughput_gauge(), nullptr);
+  ASSERT_NE(metrics->process_resident_memory_gauge(), nullptr);
+  ASSERT_NE(metrics->process_open_fds_gauge(), nullptr);
   ASSERT_NE(metrics->queue_fill_ratio_gauge(), nullptr);
   ASSERT_NE(metrics->queue_capacity_gauge(), nullptr);
   ASSERT_NE(metrics->queue_latency_histogram(), nullptr);
@@ -42,6 +59,12 @@ AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
   ASSERT_NE(metrics->batch_size_histogram(), nullptr);
   ASSERT_NE(metrics->logical_batch_size_histogram(), nullptr);
   ASSERT_NE(metrics->requests_by_status_family(), nullptr);
+  ASSERT_NE(metrics->inference_completed_family(), nullptr);
+  ASSERT_NE(metrics->inference_failures_family(), nullptr);
+  ASSERT_NE(metrics->model_load_failures_family(), nullptr);
+  ASSERT_NE(metrics->models_loaded_family(), nullptr);
+  ASSERT_NE(metrics->gpu_temperature_family(), nullptr);
+  ASSERT_NE(metrics->gpu_power_family(), nullptr);
 }
 
 auto
@@ -53,6 +76,104 @@ HasMetric(
       families, [name](const prometheus::MetricFamily& family) {
         return family.name == name;
       });
+}
+
+auto
+FindFamily(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view name) -> const prometheus::MetricFamily*
+{
+  for (const auto& family : families) {
+    if (family.name == name) {
+      return &family;
+    }
+  }
+  return nullptr;
+}
+
+auto
+MetricMatchesLabels(
+    const prometheus::ClientMetric& metric,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> bool
+{
+  for (const auto& [label_name, label_value] : labels) {
+    bool matched = false;
+    for (const auto& label : metric.label) {
+      if (label.name == label_name && label.value == label_value) {
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      return false;
+    }
+  }
+  return true;
+}
+
+auto
+FindMetric(
+    const prometheus::MetricFamily& family,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> const prometheus::ClientMetric*
+{
+  for (const auto& metric : family.metric) {
+    if (MetricMatchesLabels(metric, labels)) {
+      return &metric;
+    }
+  }
+  return nullptr;
+}
+
+auto
+FindGaugeValue(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> std::optional<double>
+{
+  const auto* family = FindFamily(families, family_name);
+  if (family == nullptr) {
+    return std::nullopt;
+  }
+  const auto* metric = FindMetric(*family, labels);
+  if (metric == nullptr) {
+    return std::nullopt;
+  }
+  return metric->gauge.value;
+}
+
+auto
+FindCounterValue(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> std::optional<double>
+{
+  const auto* family = FindFamily(families, family_name);
+  if (family == nullptr) {
+    return std::nullopt;
+  }
+  const auto* metric = FindMetric(*family, labels);
+  if (metric == nullptr) {
+    return std::nullopt;
+  }
+  return metric->counter.value;
+}
+
+auto
+FindHistogramMetric(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> const prometheus::ClientMetric*
+{
+  const auto* family = FindFamily(families, family_name);
+  if (family == nullptr) {
+    return nullptr;
+  }
+  return FindMetric(*family, labels);
 }
 }  // namespace
 
@@ -179,4 +300,81 @@ TEST(Metrics, AccessorsReturnAllocatedFamiliesAndGauges)
   EXPECT_NE(metrics->gpu_memory_total_bytes_family(), nullptr);
 
   shutdown_metrics();
+}
+
+TEST(MetricsRegistry, RecordsWorkerAndTransferMetrics)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  metrics.observe_compute_latency_by_worker(3, 1, "cpu", 12.5);
+  metrics.observe_task_runtime_by_worker(3, 1, "cpu", 4.0);
+  metrics.set_worker_inflight_gauge(3, 1, "cpu", 2);
+  metrics.observe_io_copy_latency("h2d", 3, 1, "cpu", 7.0);
+  metrics.increment_transfer_bytes("h2d", 3, 1, "cpu", 1024);
+  metrics.increment_completed_counter("model-x", 5);
+
+  const auto families = metrics.registry()->Collect();
+
+  const auto* compute_metric = FindHistogramMetric(
+      families, "inference_compute_latency_ms_by_worker",
+      {{"worker_id", "3"}, {"device", "1"}, {"worker_type", "cpu"}});
+  ASSERT_NE(compute_metric, nullptr);
+  EXPECT_EQ(compute_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(compute_metric->histogram.sample_sum, 12.5);
+
+  const auto* runtime_metric = FindHistogramMetric(
+      families, "starpu_task_runtime_ms_by_worker",
+      {{"worker_id", "3"}, {"device", "1"}, {"worker_type", "cpu"}});
+  ASSERT_NE(runtime_metric, nullptr);
+  EXPECT_EQ(runtime_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(runtime_metric->histogram.sample_sum, 4.0);
+
+  const auto inflight_value = FindGaugeValue(
+      families, "starpu_worker_inflight_tasks",
+      {{"worker_id", "3"}, {"device", "1"}, {"worker_type", "cpu"}});
+  ASSERT_TRUE(inflight_value.has_value());
+  EXPECT_DOUBLE_EQ(*inflight_value, 2.0);
+
+  const auto* io_metric = FindHistogramMetric(
+      families, "inference_io_copy_ms",
+      {{"direction", "h2d"},
+       {"worker_id", "3"},
+       {"device", "1"},
+       {"worker_type", "cpu"}});
+  ASSERT_NE(io_metric, nullptr);
+  EXPECT_EQ(io_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(io_metric->histogram.sample_sum, 7.0);
+
+  const auto transfer_value = FindCounterValue(
+      families, "inference_transfer_bytes_total",
+      {{"direction", "h2d"},
+       {"worker_id", "3"},
+       {"device", "1"},
+       {"worker_type", "cpu"}});
+  ASSERT_TRUE(transfer_value.has_value());
+  EXPECT_DOUBLE_EQ(*transfer_value, 1024.0);
+
+  const auto completed_value = FindCounterValue(
+      families, "inference_completed_total", {{"model", "model-x"}});
+  ASSERT_TRUE(completed_value.has_value());
+  EXPECT_DOUBLE_EQ(*completed_value, 5.0);
+}
+
+TEST(Metrics, SetQueueFillRatioUpdatesGauge)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  set_queue_fill_ratio(3, 10);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+  const auto ratio = FindGaugeValue(families, "inference_queue_fill_ratio", {});
+  ASSERT_TRUE(ratio.has_value());
+  EXPECT_DOUBLE_EQ(*ratio, 0.3);
 }
