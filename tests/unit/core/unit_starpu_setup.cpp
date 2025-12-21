@@ -680,6 +680,39 @@ class EnvVarGuard {
   std::optional<std::string> previous_;
 };
 
+class EnvVarUnsetGuard {
+ public:
+  explicit EnvVarUnsetGuard(std::string name) : name_{std::move(name)}
+  {
+    if (const char* current = std::getenv(name_.c_str()); current != nullptr) {
+      previous_ = std::string(current);
+    }
+    if (unsetenv(name_.c_str()) != 0) {
+      ADD_FAILURE() << "Failed to unset environment variable " << name_;
+    }
+  }
+
+  ~EnvVarUnsetGuard()
+  {
+    if (previous_) {
+      if (setenv(name_.c_str(), previous_->c_str(), 1) != 0) {
+        ADD_FAILURE() << "Failed to restore environment variable " << name_;
+      }
+    } else if (unsetenv(name_.c_str()) != 0) {
+      ADD_FAILURE() << "Failed to unset environment variable " << name_;
+    }
+  }
+
+  EnvVarUnsetGuard(const EnvVarUnsetGuard&) = delete;
+  auto operator=(const EnvVarUnsetGuard&) -> EnvVarUnsetGuard& = delete;
+  EnvVarUnsetGuard(EnvVarUnsetGuard&&) = delete;
+  auto operator=(EnvVarUnsetGuard&&) -> EnvVarUnsetGuard& = delete;
+
+ private:
+  std::string name_;
+  std::optional<std::string> previous_;
+};
+
 class SetenvOverrideGuard {
  public:
   explicit SetenvOverrideGuard(SetenvFn override_fn)
@@ -3787,10 +3820,8 @@ TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)
 {
   using starpu_server::kStarpuSchedulerEnvVar;
 
-  if (std::getenv(kStarpuSchedulerEnvVar.data()) != nullptr) {
-    GTEST_SKIP() << "STARPU_SCHED already set, cannot test default scheduler "
-                    "setenv failure";
-  }
+  EnvVarUnsetGuard unset_guard{std::string(kStarpuSchedulerEnvVar)};
+  ASSERT_EQ(std::getenv(kStarpuSchedulerEnvVar.data()), nullptr);
 
   starpu_server::RuntimeConfig opts;
   opts.model = starpu_server::ModelConfig{};
