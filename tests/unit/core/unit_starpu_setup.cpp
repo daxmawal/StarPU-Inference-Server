@@ -2149,6 +2149,32 @@ TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
       { starpu_server::StarPUSetup setup(opts); }, std::invalid_argument);
 }
 
+TEST(StarPUSetup_Unit, IgnoresNegativeDeviceIds)
+{
+  StarpuInitCaptureStubGuard capture_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {-1, 2};
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  EXPECT_NE(
+      log.find("Invalid CUDA device ID -1: must be non-negative"),
+      std::string::npos);
+  EXPECT_EQ(1, capture_guard.conf().ncuda);
+  EXPECT_EQ(1U, capture_guard.conf().use_explicit_workers_cuda_gpuid);
+  EXPECT_EQ(2U, capture_guard.conf().workers_cuda_gpuid[0]);
+}
+
 TEST(InferenceCodelet, RunCodeletInferenceLogsTraceMessage)
 {
   const StarpuRuntimeGuard guard;
