@@ -4040,6 +4040,35 @@ TEST(
 }
 
 TEST(
+    StarPUTaskRunnerTestAdapter, PropagateCompletionReleasesAggregatedJobInputs)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job = std::make_shared<starpu_server::InferenceJob>();
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  aggregated->set_input_tensors({torch::tensor({1})});
+  auto holder = std::make_shared<int>(12);
+  aggregated->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder, holder.get())});
+
+  ASSERT_FALSE(aggregated->get_input_tensors().empty());
+  ASSERT_FALSE(aggregated->get_input_memory_holders().empty());
+
+  const auto outputs = std::vector<torch::Tensor>{
+      torch::tensor({2.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 5.0);
+
+  EXPECT_TRUE(aggregated->get_input_tensors().empty());
+  EXPECT_TRUE(aggregated->get_input_memory_holders().empty());
+}
+
+TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionClearsPendingSubJobsWithOnComplete)
 {
