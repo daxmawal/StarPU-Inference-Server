@@ -26,6 +26,7 @@ class SlotManager;
 class ResultDispatcher;
 class StarPUTaskRunner;
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 namespace task_runner_helpers {
 void ensure_callback_timing(detail::TimingInfo& timing);
@@ -36,6 +37,7 @@ void finalize_job_completion(
     StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
 }  // namespace task_runner_helpers
 #endif
+// GCOVR_EXCL_STOP
 
 // ============================================================================
 // StarPUTaskRunner
@@ -68,9 +70,11 @@ class StarPUTaskRunner {
   using DurationMs = std::chrono::duration<double, std::milli>;
 
   void run();
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
 #endif
+  // GCOVR_EXCL_STOP
   [[nodiscard]] auto should_shutdown(
       const std::shared_ptr<InferenceJob>& job) const -> bool;
   void prepare_job_completion_callback(
@@ -79,13 +83,16 @@ class StarPUTaskRunner {
   static auto handle_job_exception(
       const std::shared_ptr<InferenceJob>& job,
       const std::exception& exception) -> bool;
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   void log_job_timings(
       int request_id, DurationMs latency,
       const detail::TimingInfo& timing_info) const;
 #endif
+  // GCOVR_EXCL_STOP
 
  private:
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   friend void task_runner_helpers::record_job_metrics(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job,
@@ -94,11 +101,14 @@ class StarPUTaskRunner {
   friend void task_runner_helpers::finalize_job_completion(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
 #endif
+  // GCOVR_EXCL_STOP
   friend struct InflightReleaseGuard;
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   friend class StarPUTaskRunnerTestAdapter;
 #endif
+  // GCOVR_EXCL_STOP
   friend class SlotManager;
   friend class ResultDispatcher;
   friend class BatchCollector;
@@ -128,6 +138,7 @@ class StarPUTaskRunner {
   auto validate_batch_and_copy_inputs(
       const std::shared_ptr<InferenceJob>& job,
       const PoolResources& pools) -> int64_t;
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   [[nodiscard]] auto collect_batch(
       const std::shared_ptr<InferenceJob>& first_job)
@@ -135,11 +146,15 @@ class StarPUTaskRunner {
   auto maybe_build_batched_job(std::vector<std::shared_ptr<InferenceJob>>& jobs)
       -> std::shared_ptr<InferenceJob>;
 #endif
+  // GCOVR_EXCL_STOP
   void batching_loop();
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   void enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job);
 #endif
+  // GCOVR_EXCL_STOP
   auto wait_for_prepared_job() -> std::shared_ptr<InferenceJob>;
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   static auto can_merge_jobs(
       const std::shared_ptr<InferenceJob>& lhs,
@@ -154,6 +169,7 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceJob>& aggregated_job,
       const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
 #endif
+  // GCOVR_EXCL_STOP
   static auto configure_task_context(
       InferenceTask& task, const PoolResources& pools,
       std::vector<starpu_data_handle_t> input_handles,
@@ -164,11 +180,13 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
   [[nodiscard]] auto resolve_batch_size(
       const std::shared_ptr<InferenceJob>& job) const -> int64_t;
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   static void release_pending_jobs(
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
 #endif
+  // GCOVR_EXCL_STOP
   void trace_batch_if_enabled(
       const std::shared_ptr<InferenceJob>& job, bool warmup_job,
       int submission_id) const;
@@ -177,9 +195,11 @@ class StarPUTaskRunner {
   void finalize_job_after_exception(
       const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
       std::string_view log_prefix, int job_id);
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   void reserve_inflight_slot();
 #endif
+  // GCOVR_EXCL_STOP
   void release_inflight_slot();
   [[nodiscard]] auto has_inflight_limit() const -> bool
   {

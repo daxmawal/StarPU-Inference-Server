@@ -460,6 +460,7 @@ InferenceServiceImpl::submit_job_async(
   return Status::OK;
 }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 auto
 InferenceServiceImpl::submit_job_and_wait(
@@ -507,6 +508,7 @@ InferenceServiceImpl::submit_job_and_wait(
   return Status::OK;
 }
 #endif
+// GCOVR_EXCL_STOP
 
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(

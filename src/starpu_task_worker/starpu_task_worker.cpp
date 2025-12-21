@@ -110,6 +110,7 @@ job_identifier(const InferenceJob& job) -> int
 }
 
 namespace {
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 auto
 submit_inference_task_hook_storage() -> std::function<void()>&
@@ -118,8 +119,10 @@ submit_inference_task_hook_storage() -> std::function<void()>&
   return hook;
 }
 #endif
+// GCOVR_EXCL_STOP
 }  // namespace
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void
 set_submit_inference_task_hook(std::function<void()> hook)
@@ -133,16 +136,19 @@ reset_submit_inference_task_hook()
   submit_inference_task_hook_storage() = {};
 }
 #endif
+// GCOVR_EXCL_STOP
 
 static void
 invoke_submit_inference_task_hook()
 {
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   const auto& hook = submit_inference_task_hook_storage();
   if (hook) {
     hook();
   }
 #endif
+  // GCOVR_EXCL_STOP
 }
 
 inline auto
@@ -499,10 +505,12 @@ class CudaCopyBatch {
   }
 
   [[nodiscard]] auto active() const -> bool { return enabled_; }
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   [[nodiscard]] auto stream() const -> cudaStream_t { return stream_; }
   [[nodiscard]] auto pending() const -> bool { return pending_; }
 #endif
+  // GCOVR_EXCL_STOP
 
   auto enqueue(
       std::byte* dst, const std::byte* src, std::size_t bytes,
@@ -773,12 +781,14 @@ class SlotManager {
       const std::shared_ptr<InferenceJob>& job,
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   static auto validate_batch_and_copy_inputs_for_test(
       SlotManager* manager, const std::shared_ptr<InferenceJob>& job,
       int64_t batch, InputSlotPool* input_pool, int input_slot,
       OutputSlotPool* output_pool, int output_slot) -> int64_t;
 #endif
+  // GCOVR_EXCL_STOP
 
  private:
   StarPUSetup* starpu_;
@@ -852,6 +862,7 @@ class BatchCollector {
       int64_t accumulated_samples, const std::shared_ptr<InferenceJob>& job,
       int64_t max_samples_cap) const -> bool;
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   friend auto task_runner_internal::testing::batch_collector_job_sample_size(
       const BatchCollector* collector,
@@ -875,6 +886,7 @@ class BatchCollector {
   friend void task_runner_internal::testing::batch_collector_set_pending_job(
       BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
 #endif
+  // GCOVR_EXCL_STOP
 
   InferenceQueue* queue_;
   const RuntimeConfig* opts_;
@@ -1368,6 +1380,7 @@ SlotManager::release_pending_jobs(
   pending_jobs.clear();
 }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 auto
 SlotManager::validate_batch_and_copy_inputs_for_test(
@@ -1386,6 +1399,7 @@ SlotManager::validate_batch_and_copy_inputs_for_test(
   return manager->validate_batch_and_copy_inputs(job, batch, pools);
 }
 #endif
+// GCOVR_EXCL_STOP
 
 auto
 BatchCollector::wait_for_next_job() -> std::shared_ptr<InferenceJob>
@@ -1994,6 +2008,7 @@ StarPUTaskRunner::~StarPUTaskRunner() = default;
 // Job Queue Management
 // =============================================================================
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 auto
 StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
@@ -2001,6 +2016,7 @@ StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
   return batch_collector_->wait_for_next_job();
 }
 #endif
+// GCOVR_EXCL_STOP
 
 auto
 StarPUTaskRunner::should_shutdown(
@@ -2019,6 +2035,7 @@ StarPUTaskRunner::should_shutdown(
 // Completion Callback Handling
 // =============================================================================
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void
 StarPUTaskRunner::log_job_timings(
@@ -2028,6 +2045,7 @@ StarPUTaskRunner::log_job_timings(
   result_dispatcher_->log_job_timings(request_id, latency, timing_info);
 }
 #endif
+// GCOVR_EXCL_STOP
 
 void
 StarPUTaskRunner::prepare_job_completion_callback(
@@ -2110,6 +2128,7 @@ StarPUTaskRunner::finalize_job_after_exception(
   release_inflight_slot();
 }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void
 StarPUTaskRunner::reserve_inflight_slot()
@@ -2131,6 +2150,7 @@ StarPUTaskRunner::reserve_inflight_slot()
   }
 }
 #endif
+// GCOVR_EXCL_STOP
 
 void
 StarPUTaskRunner::release_inflight_slot()
@@ -2158,6 +2178,7 @@ StarPUTaskRunner::release_inflight_slot()
   inflight_state_.cv.notify_one();
 }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 namespace task_runner_helpers {
 void
@@ -2186,6 +2207,7 @@ finalize_job_completion(
 }
 }  // namespace task_runner_helpers
 #endif
+// GCOVR_EXCL_STOP
 
 void
 StarPUTaskRunner::submit_job_or_handle_failure(
@@ -2280,6 +2302,7 @@ StarPUTaskRunner::resolve_batch_size(
   return task_runner_internal::resolve_batch_size_for_job(opts_, job);
 }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void
 StarPUTaskRunner::release_pending_jobs(
@@ -2334,6 +2357,7 @@ StarPUTaskRunner::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
   batch_collector_->enqueue_prepared_job(job);
 }
 #endif
+// GCOVR_EXCL_STOP
 
 auto
 StarPUTaskRunner::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
@@ -2347,6 +2371,7 @@ StarPUTaskRunner::batching_loop()
   batch_collector_->batching_loop();
 }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void
 StarPUTaskRunner::propagate_completion_to_sub_jobs(
@@ -2357,6 +2382,7 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
       aggregated_job, aggregated_outputs, latency_ms);
 }
 #endif
+// GCOVR_EXCL_STOP
 
 auto
 StarPUTaskRunner::configure_task_context(
@@ -2626,6 +2652,7 @@ ResultDispatcher::invoke_previous_callback(
   previous(std::move(results), latency_ms);
 }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 namespace task_runner_internal::testing {
 
@@ -2832,4 +2859,5 @@ batch_collector_set_pending_job(
 
 }  // namespace task_runner_internal::testing
 #endif
+// GCOVR_EXCL_STOP
 }  // namespace starpu_server

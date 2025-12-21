@@ -48,9 +48,11 @@ struct BaseLatencyBreakdown {
   double total_ms = 0.0;
 };
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void set_cuda_device_count_override(std::optional<int> override_count);
 #endif
+// GCOVR_EXCL_STOP
 auto get_cuda_device_count() -> int;
 void validate_device_ids(std::span<const int> device_ids, int device_count);
 auto compute_latency_breakdown(

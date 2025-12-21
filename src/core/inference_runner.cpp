@@ -44,6 +44,7 @@ cuda_device_count_override_storage() -> std::optional<int>&
 
 namespace detail {
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void
 set_cuda_device_count_override(std::optional<int> override_count)
@@ -55,6 +56,7 @@ set_cuda_device_count_override(std::optional<int> override_count)
   cuda_device_count_override_storage() = override_count;
 }
 #endif
+// GCOVR_EXCL_STOP
 
 auto
 sanitize_cuda_device_count(long long raw_count) -> int

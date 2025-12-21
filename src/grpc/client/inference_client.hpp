@@ -17,9 +17,11 @@
 namespace starpu_server {
 struct AsyncClientCall;
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 struct InferenceClientTestAccess;
 #endif
+// GCOVR_EXCL_STOP
 
 struct ModelId {
   std::string name;
@@ -43,9 +45,11 @@ class InferenceClient {
   void Shutdown();
 
  private:
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   friend struct InferenceClientTestAccess;
 #endif
+  // GCOVR_EXCL_STOP
 
   struct LatencySample {
     double roundtrip_ms;
@@ -106,6 +110,7 @@ class InferenceClient {
   void validate_server_response(const AsyncClientCall& call) const;
 };
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 struct InferenceClientTestAccess {
   using LatencySample = InferenceClient::LatencySample;
@@ -155,4 +160,5 @@ struct InferenceClientTestAccess {
   }
 };
 #endif
+// GCOVR_EXCL_STOP
 }  // namespace starpu_server

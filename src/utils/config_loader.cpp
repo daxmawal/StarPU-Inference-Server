@@ -26,6 +26,7 @@ constexpr int kMaxPort = 65535;
 const std::filesystem::path kDefaultTraceOutputFile{
     RuntimeConfig::BatchingSettings{}.trace_output_path};
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 auto
 config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
@@ -34,6 +35,7 @@ config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
   return hook;
 }
 #endif
+// GCOVR_EXCL_STOP
 
 auto parse_tensor_nodes(
     const YAML::Node& nodes, std::size_t max_inputs,
@@ -503,6 +505,7 @@ parse_tensor_nodes(
 
 }  // namespace
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void
 set_config_loader_post_parse_hook(ConfigLoaderPostParseHook hook)
@@ -516,6 +519,7 @@ reset_config_loader_post_parse_hook()
   config_loader_post_parse_hook() = {};
 }
 #endif
+// GCOVR_EXCL_STOP
 
 auto
 load_config(const std::string& path) -> RuntimeConfig
@@ -549,11 +553,13 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_device_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
     parse_starpu_env(root, cfg);
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
     if (const auto& hook = config_loader_post_parse_hook(); hook) {
       hook(cfg);
     }
 #endif
+    // GCOVR_EXCL_STOP
   }
   catch (const YAML::Exception& exception) {
     mark_invalid(exception.what());

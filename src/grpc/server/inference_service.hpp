@@ -90,6 +90,7 @@ class InferenceServiceImpl final
           std::chrono::high_resolution_clock::now(),
       std::string model_name = {}) -> grpc::Status;
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
@@ -98,6 +99,7 @@ class InferenceServiceImpl final
       std::vector<std::shared_ptr<const void>> input_lifetimes = {})
       -> grpc::Status;
 #endif
+  // GCOVR_EXCL_STOP
 
   void HandleModelInferAsync(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
