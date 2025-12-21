@@ -2900,9 +2900,10 @@ TEST(SlotManagerCopyJobInputsToSlotTest, ReturnsImmediatelyWhenJobNull)
   const std::span<const starpu_server::InputSlotPool::HostBufferInfo>
       buffer_info_span(buffer_infos);
 
-  EXPECT_NO_THROW(test_api::slot_manager_copy_job_inputs_to_slot(
+  const auto bytes = test_api::slot_manager_copy_job_inputs_to_slot(
       missing_job, pending_span, handle_span, base_ptrs_span, buffer_info_span,
-      nullptr));
+      nullptr);
+  EXPECT_EQ(bytes, 0U);
 }
 
 TEST_F(

@@ -2774,9 +2774,6 @@ slot_manager_copy_job_inputs_to_slot(
     std::span<const InputSlotPool::HostBufferInfo> buffer_infos,
     void* copy_batch) -> std::size_t
 {
-  if (!job) {
-    return 0;
-  }
   if (copy_batch == nullptr) {
     CudaCopyBatch fallback(false);
     return SlotManager::copy_job_inputs_to_slot(
