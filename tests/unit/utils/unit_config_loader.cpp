@@ -403,6 +403,14 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "Configuration option 'name' must be a scalar string"},
     InvalidConfigCase{
+        "NonScalarModelNameSetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "model_name: [invalid, name]\n";
+          return yaml;
+        }(),
+        "model_name must be a scalar string"},
+    InvalidConfigCase{
         "MissingNameSetsValidFalse",
         [] {
           std::string yaml;
@@ -571,6 +579,23 @@ TEST_P(InvalidConfigTest, MarksConfigInvalid)
 INSTANTIATE_TEST_SUITE_P(
     InvalidConfigs, InvalidConfigTest, ::testing::ValuesIn(kInvalidConfigCases),
     InvalidConfigCaseName);
+
+TEST(ConfigLoader, AcceptsBooleanUseCudaFalse)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_scalar_use_cuda_false_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "use_cuda: false\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_scalar_use_cuda_false.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_FALSE(cfg.devices.use_cuda);
+  EXPECT_TRUE(cfg.devices.ids.empty());
+}
 
 TEST(ConfigLoader, RejectsBooleanUseCudaTrue)
 {
@@ -979,6 +1004,41 @@ TEST(ConfigLoader, TraceOutputRejectsPathPointingToExistingFile)
       "Failed to load config: trace_output must be a directory path";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, TraceOutputFilesystemErrorMarksConfigInvalid)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_trace_error_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+
+  const auto protected_dir = MakeUniqueTempDir("config_loader_trace_no_access");
+  ScopedPermissionRestorer cleanup(protected_dir);
+
+  std::filesystem::permissions(
+      protected_dir, std::filesystem::perms::none,
+      std::filesystem::perm_options::replace);
+
+  const auto protected_child = protected_dir / "trace_output";
+  std::error_code status_ec;
+  [[maybe_unused]] const bool exists_result =
+      std::filesystem::exists(protected_child, status_ec);
+  ASSERT_TRUE(status_ec);
+
+  const std::filesystem::filesystem_error fs_error(
+      "trace_output", protected_child, status_ec);
+  const std::string expected_error =
+      std::string{"Failed to load config: "} + fs_error.what();
+
+  yaml += "trace_output: " + protected_child.string() + "\n";
+
+  const auto tmp = WriteTempFile("config_loader_trace_error.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 }
 
 TEST(

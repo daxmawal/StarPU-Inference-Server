@@ -1,5 +1,7 @@
 #include <cuda_runtime_api.h>
 #include <dlfcn.h>
+#include <prometheus/client_metric.h>
+#include <prometheus/metric_family.h>
 #include <starpu.h>
 
 #include <array>
@@ -22,6 +24,7 @@
 
 #include "core/inference_task.hpp"
 #include "exceptions.hpp"
+#include "monitoring/metrics.hpp"
 #include "starpu_task_worker/task_runner_internal.hpp"
 #include "support/starpu_data_interface_override.hpp"
 #include "support/starpu_task_submit_override.hpp"
@@ -1258,6 +1261,63 @@ TEST_F(
       runner_.get(), job, error, "runtime failure", job->get_request_id());
 
   EXPECT_EQ(completed_jobs_.load(), 1);
+}
+
+TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionUsesGenericReason)
+{
+  starpu_server::shutdown_metrics();
+  ASSERT_TRUE(starpu_server::init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { starpu_server::shutdown_metrics(); }
+  } guard;
+
+  auto job = make_job(89, {});
+  job->set_model_name("demo_model");
+
+  struct CustomException final : std::exception {
+    const char* what() const noexcept override { return "custom failure"; }
+  };
+  const CustomException error;
+
+  starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
+      runner_.get(), job, error, "", job->get_request_id());
+
+  const auto metrics = starpu_server::get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+  auto find_failure_value =
+      [](const std::vector<prometheus::MetricFamily>& items,
+         std::string_view stage, std::string_view reason,
+         std::string_view model) -> std::optional<double> {
+    for (const auto& family : items) {
+      if (family.name != "inference_failures_total") {
+        continue;
+      }
+      for (const auto& metric : family.metric) {
+        bool stage_match = false;
+        bool reason_match = false;
+        bool model_match = false;
+        for (const auto& label : metric.label) {
+          if (label.name == "stage" && label.value == stage) {
+            stage_match = true;
+          } else if (label.name == "reason" && label.value == reason) {
+            reason_match = true;
+          } else if (label.name == "model" && label.value == model) {
+            model_match = true;
+          }
+        }
+        if (stage_match && reason_match && model_match) {
+          return metric.counter.value;
+        }
+      }
+    }
+    return std::nullopt;
+  };
+
+  const auto value =
+      find_failure_value(families, "execution", "exception", "demo_model");
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 1.0);
 }
 
 TEST_F(StarPUTaskRunnerFixture, TraceBatchIfEnabledLogsAggregatedRequestIds)
