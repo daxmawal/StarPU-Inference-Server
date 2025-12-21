@@ -187,3 +187,51 @@ TEST(WarmupRunnerEdgesTest, RunWarmupLogsCpuAndCudaTargetDescription)
   const std::string log = capture.str();
   EXPECT_NE(log.find("CPU and CUDA workers"), std::string::npos);
 }
+
+TEST(WarmupRunnerEdgesTest, RunWarmupLogsCudaTargetDescription)
+{
+  skip_if_no_cuda();
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
+  fixture.opts.devices.use_cpu = false;
+  fixture.opts.devices.use_cuda = true;
+  fixture.opts.devices.ids = {0};
+  fixture.opts.batching.warmup_request_nb = 1;
+  fixture.opts.batching.warmup_batches_per_worker = 0;
+  fixture.opts.batching.warmup_pregen_inputs = 0;
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
+
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      fixture.opts, *fixture.starpu, fixture.model_cpu, fixture.models_gpu,
+      fixture.outputs_ref);
+  const std::string log = capture.str();
+  EXPECT_NE(log.find("per CUDA workers"), std::string::npos);
+}
+
+TEST(WarmupRunnerEdgesTest, RunWarmupLogsCpuTargetDescription)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
+  fixture.opts.devices.use_cpu = true;
+  fixture.opts.devices.use_cuda = false;
+  fixture.opts.batching.warmup_request_nb = 1;
+  fixture.opts.batching.warmup_batches_per_worker = 0;
+  fixture.opts.batching.warmup_pregen_inputs = 0;
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
+
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      fixture.opts, *fixture.starpu, fixture.model_cpu, fixture.models_gpu,
+      fixture.outputs_ref);
+  const std::string log = capture.str();
+  EXPECT_NE(log.find("per CPU workers"), std::string::npos);
+}
