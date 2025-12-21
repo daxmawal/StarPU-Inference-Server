@@ -526,6 +526,7 @@ buffer_byte_size(const StarpuBufferInterface* buffer_iface) -> size_t
       return buffer_iface->elemsize;
     case STARPU_VECTOR_INTERFACE_ID: {
       const auto* vec_iface =
+          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
           reinterpret_cast<const starpu_vector_interface*>(buffer_iface);
       if (vec_iface->elemsize != 0U &&
           vec_iface->nx >
@@ -641,10 +642,25 @@ run_codelet_inference(
   const int device_id = starpu_worker_get_devid(worker_id);
   const auto worker_type_label = std::string_view(to_string(executed_on_type));
   struct WorkerInflightGuard {
-    int worker;
-    int device;
+    int worker{};
+    int device{};
     std::string_view worker_type;
     bool armed{false};
+
+    WorkerInflightGuard(
+        int worker_id,
+        int device_id,  // NOLINT(bugprone-easily-swappable-parameters)
+        std::string_view worker_type_label, bool armed_flag)
+        : worker(worker_id), device(device_id), worker_type(worker_type_label),
+          armed(armed_flag)
+    {
+    }
+
+    WorkerInflightGuard(const WorkerInflightGuard&) = delete;
+    WorkerInflightGuard(WorkerInflightGuard&&) = delete;
+    auto operator=(const WorkerInflightGuard&) -> WorkerInflightGuard& = delete;
+    auto operator=(WorkerInflightGuard&&) -> WorkerInflightGuard& = delete;
+
     ~WorkerInflightGuard()
     {
       if (armed) {
@@ -653,7 +669,7 @@ run_codelet_inference(
     }
   };
   WorkerInflightGuard inflight_guard{
-      worker_id, device_id, worker_type_label, /*armed=*/false};
+      worker_id, device_id, worker_type_label, /*armed_flag=*/false};
   set_worker_inflight_gauge(worker_id, device_id, worker_type_label, 1);
   inflight_guard.armed = true;
 
@@ -696,12 +712,12 @@ select_gpu_module(const InferenceParams& params, const int device_id)
 {
   if (device_id >= 0) {
     if (!params.models.device_ids.empty()) {
-      const auto it = std::find(
+      const auto found_device = std::find(
           params.models.device_ids.begin(), params.models.device_ids.end(),
           device_id);
-      if (it != params.models.device_ids.end()) {
-        const auto module_index =
-            static_cast<size_t>(it - params.models.device_ids.begin());
+      if (found_device != params.models.device_ids.end()) {
+        const auto module_index = static_cast<size_t>(
+            found_device - params.models.device_ids.begin());
         if (module_index < params.models.models_gpu.size()) {
           if (auto* model_instance = params.models.models_gpu[module_index]) {
             return model_instance;

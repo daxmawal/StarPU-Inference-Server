@@ -109,6 +109,7 @@ auto
 status_code_label(int code) -> std::string
 {
   // Common gRPC status codes; fall back to numeric.
+  // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
   switch (code) {
     case 0:
       return "OK";
@@ -139,6 +140,7 @@ status_code_label(int code) -> std::string
     default:
       return std::to_string(code);
   }
+  // NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 }
 
 #ifndef STARPU_HAVE_NVML
@@ -238,17 +240,19 @@ class NvmlWrapper {
 
   auto query_stats() -> std::vector<GpuSample>;
 
+  NvmlWrapper(const NvmlWrapper&) = delete;
+  NvmlWrapper(NvmlWrapper&&) = delete;
+  auto operator=(const NvmlWrapper&) -> NvmlWrapper& = delete;
+  auto operator=(NvmlWrapper&&) -> NvmlWrapper& = delete;
+
  private:
   NvmlWrapper();
   ~NvmlWrapper();
 
-  NvmlWrapper(const NvmlWrapper&) = delete;
-  NvmlWrapper& operator=(const NvmlWrapper&) = delete;
-
-  static auto error_string(nvmlReturn_t rc) -> const char*;
+  static auto error_string(nvmlReturn_t status) -> const char*;
 
   bool initialized_{false};
-  std::mutex mutex_{};
+  std::mutex mutex_;
 };
 
 auto
@@ -349,7 +353,8 @@ NvmlWrapper::query_stats() -> std::vector<GpuSample>
     unsigned int power_mw = 0;
     status = nvmlDeviceGetPowerUsage(device, &power_mw);
     if (status == NVML_SUCCESS) {
-      stat.power_watts = static_cast<double>(power_mw) / 1000.0;
+      constexpr double milliwatts_per_watt = 1000.0;
+      stat.power_watts = static_cast<double>(power_mw) / milliwatts_per_watt;
     } else {
       log_warning(std::format(
           "nvmlDeviceGetPowerUsage failed for GPU {}: {} (code {})", idx,
@@ -877,7 +882,8 @@ set_queue_size(std::size_t size)
     metrics_ptr->queue_size_gauge()->Set(static_cast<double>(size));
     const auto capacity = metrics_ptr->queue_capacity_value();
     if (capacity > 0 && metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
-      const double ratio = static_cast<double>(size) / capacity;
+      const double ratio =
+          static_cast<double>(size) / static_cast<double>(capacity);
       metrics_ptr->queue_fill_ratio_gauge()->Set(ratio);
     }
   }
@@ -937,7 +943,7 @@ set_queue_fill_ratio(std::size_t size, std::size_t capacity)
     return;
   }
   metrics_ptr->queue_fill_ratio_gauge()->Set(
-      static_cast<double>(size) / capacity);
+      static_cast<double>(size) / static_cast<double>(capacity));
 }
 
 void
@@ -1468,6 +1474,7 @@ MetricsRegistry::models_loaded_family() const
 
 void
 MetricsRegistry::increment_status_counter(
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     std::string_view code_label, std::string_view model_label)
 {
   if (requests_by_status_family_ == nullptr) {
@@ -1495,7 +1502,7 @@ MetricsRegistry::increment_completed_counter(
     return;
   }
   const std::string model{model_label};
-  const std::string key = model;
+  const std::string& key = model;
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto [it, inserted] = inference_completed_counters_.try_emplace(key, nullptr);
   if (inserted) {
@@ -1508,6 +1515,7 @@ MetricsRegistry::increment_completed_counter(
 
 void
 MetricsRegistry::increment_failure_counter(
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     std::string_view stage_label, std::string_view reason_label,
     std::string_view model_label, std::size_t count)
 {
@@ -1551,6 +1559,7 @@ MetricsRegistry::increment_model_load_failure_counter(
 
 void
 MetricsRegistry::set_model_loaded_flag(
+    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
     std::string_view model_label, std::string_view device_label, bool loaded)
 {
   if (models_loaded_family_ == nullptr) {
@@ -1749,6 +1758,7 @@ MetricsRegistry::run_sampling_request_nb()
 }
 
 void
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 MetricsRegistry::perform_sampling_request_nb()
 {
   if (system_cpu_usage_percent_ != nullptr && cpu_usage_provider_) {

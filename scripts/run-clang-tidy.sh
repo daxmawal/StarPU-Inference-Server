@@ -10,7 +10,7 @@
 #
 # Optionally, LIBTORCH_DIR and GRPC_DIR can be provided as the first and
 # second positional arguments of this script. BUILD_DIR may be overridden via
-# the BUILD_DIR environment variable (defaults to '../build').
+# the BUILD_DIR environment variable (defaults to '<repo>/build').
 #
 # Additional options:
 #   --file <path>  - analyze only the specified file
@@ -23,7 +23,8 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-BUILD_DIR=${BUILD_DIR:-../build}
+PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
+BUILD_DIR=${BUILD_DIR:-"$PROJECT_ROOT/build"}
 
 if [[ ! -f "$BUILD_DIR/compile_commands.json" ]]; then
   echo "Error: $BUILD_DIR/compile_commands.json not found." >&2
@@ -76,27 +77,10 @@ if [[ -z "$LIBTORCH_DIR" ]] || [[ -z "$GRPC_DIR" ]]; then
 fi
 
 if [[ -z "$HEADER_FILTER" ]]; then
-  PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
-  mapfile -t HEADER_DIRS < <(
-    find "$PROJECT_ROOT" -path "$PROJECT_ROOT/build" -prune -o \
-      -path "$PROJECT_ROOT/external" -prune -o \
-      -type f \( -name '*.h' -o -name '*.hpp' -o -name '*.hh' \) \
-      -printf '%h\n' | sort -u
-  )
-
-  if [[ ${#HEADER_DIRS[@]} -gt 0 ]]; then
-    ESCAPED_HEADER_DIRS=()
-    for dir in "${HEADER_DIRS[@]}"; do
-      ESCAPED_HEADER_DIRS+=("$(printf '%s' "$dir" | sed 's#[.[\]{}()*+?^$|]#\\&#g')")
-    done
-    HEADER_FILTER="^($(IFS='|'; echo "${ESCAPED_HEADER_DIRS[*]}"))"
-  else
-    PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
-    HEADER_FILTER="^(?!.*external/)${PROJECT_ROOT}/"
-  fi
+  # Only include project headers in src/ and tests/, exclude build/ and external/
+  HEADER_FILTER="^${PROJECT_ROOT}/(src|tests)/"
 fi
 
-PROJECT_ROOT=$(realpath "$(dirname "$0")/..")
 CLANG_TIDY_CONFIG="$BUILD_DIR/.clang-tidy"
 
 cleanup_clang_tidy_config() {
@@ -134,7 +118,13 @@ EOF
 
 CLANG_TIDY_ARGS=(
   -p "$BUILD_DIR"
+  --config-file "$CLANG_TIDY_CONFIG"
 )
+if [[ -n "$HEADER_FILTER" ]]; then
+  CLANG_TIDY_ARGS+=(
+    --header-filter "$HEADER_FILTER"
+  )
+fi
 
 if [[ -n "$TARGET_FILE" ]]; then
   FILES="$TARGET_FILE"

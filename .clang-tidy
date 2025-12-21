@@ -1,5 +1,5 @@
 Checks: "performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*,clang-diagnostic-unused-includes"
-HeaderFilterRegex: "^(?!.*external/).*"
+HeaderFilterRegex: "^(?!.*/build/).*/(src|tests)/.*\\.(h|hpp)$"
 WarningsAsErrors: ""
 ExtraArgs:
   - "--target=x86_64-pc-linux-gnu"

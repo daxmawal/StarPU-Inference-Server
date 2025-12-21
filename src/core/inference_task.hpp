@@ -54,6 +54,7 @@ struct InferenceTaskDependencies {
   std::optional<OutputCallbackHook> starpu_output_callback_hook;
 };
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 extern InferenceTaskDependencies kDefaultInferenceTaskDependencies;
 
 // =============================================================================

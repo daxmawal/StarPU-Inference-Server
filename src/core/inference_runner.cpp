@@ -82,7 +82,8 @@ get_cuda_device_count() -> int
 
   using DeviceCountSigned = long long;
   const auto device_count_signed =
-      static_cast<DeviceCountSigned>(torch::cuda::device_count());
+      static_cast<DeviceCountSigned>(  // NOLINT(bugprone-signed-char-misuse)
+          torch::cuda::device_count());
 
   return sanitize_cuda_device_count(device_count_signed);
 }

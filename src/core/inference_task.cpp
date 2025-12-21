@@ -126,6 +126,7 @@ register_tensor_handles(
 }
 }  // namespace
 
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 InferenceTaskDependencies kDefaultInferenceTaskDependencies{
     .dyn_handles_allocator = std::malloc,
     .dyn_handles_deallocator = std::free,
@@ -368,7 +369,7 @@ InferenceTask::fill_input_layout(
       }
       const auto sizes = tensor.sizes();
       const auto first_dims = std::views::take(sizes, dim);
-      return std::vector<int64_t>(first_dims.begin(), first_dims.end());
+      return {first_dims.begin(), first_dims.end()};
     };
 
     std::vector<int64_t> dims = dims_from_config();

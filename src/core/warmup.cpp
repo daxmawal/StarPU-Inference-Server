@@ -194,7 +194,7 @@ WarmupRunner::run(int request_nb_per_worker)
        &thread_exception_mutex](std::exception_ptr exception) {
         std::lock_guard lock(thread_exception_mutex);
         if (!thread_exception) {
-          thread_exception = exception;
+          thread_exception = std::move(exception);
         }
       };
   const auto load_thread_exception = [&]() {
@@ -204,7 +204,7 @@ WarmupRunner::run(int request_nb_per_worker)
   const auto notify_thread_exception =
       [&store_thread_exception, &queue,
        &dummy_cv](std::exception_ptr exception) {
-        store_thread_exception(exception);
+        store_thread_exception(std::move(exception));
         queue.shutdown();
         dummy_cv.notify_all();
       };

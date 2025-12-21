@@ -8,7 +8,7 @@
 
 namespace starpu_server::tensor_validation {
 
-enum class Failure {
+enum class Failure : std::uint8_t {
   Undefined,
   NullData,
   NotCpu,
