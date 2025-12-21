@@ -872,6 +872,10 @@ class BatchCollector {
       const BatchCollector* collector, int64_t accumulated_samples,
       const std::shared_ptr<InferenceJob>& job,
       int64_t max_samples_cap) -> bool;
+  friend auto
+  task_runner_internal::testing::batch_collector_try_acquire_next_job(
+      BatchCollector* collector, bool enable_wait,
+      clock::time_point coalesce_deadline) -> std::shared_ptr<InferenceJob>;
   friend auto task_runner_internal::testing::batch_collector_should_hold_job(
       const std::shared_ptr<InferenceJob>& candidate,
       const std::shared_ptr<InferenceJob>& reference,
@@ -2810,6 +2814,17 @@ batch_collector_exceeds_sample_limit(
   return collector != nullptr ? collector->exceeds_sample_limit(
                                     accumulated_samples, job, max_samples_cap)
                               : false;
+}
+
+auto
+batch_collector_try_acquire_next_job(
+    BatchCollector* collector, bool enable_wait,
+    Clock::time_point coalesce_deadline) -> std::shared_ptr<InferenceJob>
+{
+  if (collector == nullptr) {
+    return nullptr;
+  }
+  return collector->try_acquire_next_job(enable_wait, coalesce_deadline);
 }
 
 auto

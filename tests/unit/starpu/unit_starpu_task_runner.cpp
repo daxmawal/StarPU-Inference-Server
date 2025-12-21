@@ -481,6 +481,23 @@ class StarPUTaskRunnerTestAdapter {
     return runner->wait_for_prepared_job();
   }
 
+  static void run_batching_loop(StarPUTaskRunner* runner)
+  {
+    if (runner != nullptr) {
+      runner->batching_loop();
+    }
+  }
+
+  static auto batching_done(StarPUTaskRunner* runner) -> bool
+  {
+    if (runner == nullptr) {
+      return false;
+    }
+    auto& state = runner->prepared_state_;
+    const std::scoped_lock lock(state.mutex);
+    return state.batching_done;
+  }
+
   static void disable_prepared_job_sync(StarPUTaskRunner* runner)
   {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
@@ -517,6 +534,18 @@ class StarPUTaskRunnerTestAdapter {
     }
     test_api::batch_collector_set_pending_job(
         runner->batch_collector_.get(), job);
+  }
+
+  static auto try_acquire_next_job(
+      StarPUTaskRunner* runner, bool enable_wait,
+      task_runner_internal::Clock::time_point coalesce_deadline)
+      -> std::shared_ptr<InferenceJob>
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return nullptr;
+    }
+    return test_api::batch_collector_try_acquire_next_job(
+        runner->batch_collector_.get(), enable_wait, coalesce_deadline);
   }
 
   static void release_pending_jobs(
@@ -4859,6 +4888,32 @@ TEST_F(
       starpu_server::StarPUTaskRunnerTestAdapter::wait_for_prepared_job(
           runner_.get());
   EXPECT_EQ(dequeued, nullptr);
+}
+
+TEST_F(StarPUTaskRunnerFixture, BatchingLoopStopsWhenNoJobAvailable)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::set_batch_collector_queue_to_null(
+      runner_.get());
+
+  starpu_server::StarPUTaskRunnerTestAdapter::run_batching_loop(runner_.get());
+
+  EXPECT_TRUE(
+      starpu_server::StarPUTaskRunnerTestAdapter::batching_done(runner_.get()));
+  auto dequeued =
+      starpu_server::StarPUTaskRunnerTestAdapter::wait_for_prepared_job(
+          runner_.get());
+  EXPECT_EQ(dequeued, nullptr);
+}
+
+TEST_F(StarPUTaskRunnerFixture, TryAcquireNextJobReturnsNullWhenDeadlinePassed)
+{
+  const auto deadline = starpu_server::task_runner_internal::Clock::now() -
+                        std::chrono::milliseconds(1);
+
+  auto job = starpu_server::StarPUTaskRunnerTestAdapter::try_acquire_next_job(
+      runner_.get(), true, deadline);
+
+  EXPECT_EQ(job, nullptr);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)

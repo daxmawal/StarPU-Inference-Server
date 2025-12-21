@@ -130,6 +130,9 @@ auto batch_collector_job_sample_size(
 auto batch_collector_exceeds_sample_limit(
     const BatchCollector* collector, int64_t accumulated_samples,
     const std::shared_ptr<InferenceJob>& job, int64_t max_samples_cap) -> bool;
+auto batch_collector_try_acquire_next_job(
+    BatchCollector* collector, bool enable_wait,
+    Clock::time_point coalesce_deadline) -> std::shared_ptr<InferenceJob>;
 auto batch_collector_should_hold_job(
     const std::shared_ptr<InferenceJob>& candidate,
     const std::shared_ptr<InferenceJob>& reference,
