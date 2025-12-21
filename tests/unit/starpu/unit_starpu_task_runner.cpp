@@ -2124,6 +2124,21 @@ TEST(BatchSizeFromInputsTest, ReturnsOneWhenInputsEmpty)
   EXPECT_EQ(test_api::batch_size_from_inputs(empty_inputs), 1U);
 }
 
+TEST(BatchSizeFromInputsTest, ReturnsOneWhenFirstInputIsScalar)
+{
+  auto scalar = torch::tensor(1);
+  ASSERT_EQ(scalar.dim(), 0);
+
+  const std::vector<torch::Tensor> inputs{scalar};
+  EXPECT_EQ(test_api::batch_size_from_inputs(inputs), 1U);
+}
+
+TEST(ResolveBatchSizeForJobTest, ReturnsOneWhenJobMissing)
+{
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+  EXPECT_EQ(test_api::resolve_batch_size_for_job(nullptr, missing_job), 1);
+}
+
 TEST(CudaCopyBatchTest, FinalizeDisablesAsyncCopyWhenStreamSyncFails)
 {
   if (!torch::cuda::is_available()) {

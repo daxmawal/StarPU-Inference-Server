@@ -97,6 +97,9 @@ void resize_starpu_vector_interface(
     bool is_input_handle);
 auto batch_size_from_inputs(const std::vector<torch::Tensor>& inputs)
     -> std::size_t;
+auto resolve_batch_size_for_job(
+    const RuntimeConfig* opts,
+    const std::shared_ptr<InferenceJob>& job) -> int64_t;
 
 auto cuda_copy_batch_create(bool enable) -> void*;
 void cuda_copy_batch_destroy(void* batch);

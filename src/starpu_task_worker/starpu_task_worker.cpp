@@ -2690,6 +2690,14 @@ batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
 }
 
 auto
+resolve_batch_size_for_job(
+    const RuntimeConfig* opts,
+    const std::shared_ptr<InferenceJob>& job) -> int64_t
+{
+  return task_runner_internal::resolve_batch_size_for_job(opts, job);
+}
+
+auto
 cuda_copy_batch_create(bool enable) -> void*
 {
   // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
