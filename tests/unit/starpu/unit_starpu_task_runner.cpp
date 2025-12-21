@@ -2090,6 +2090,27 @@ TEST(BuildRequestIdsForTraceTest, ReturnsEmptyWhenJobMissing)
   EXPECT_TRUE(ids.empty());
 }
 
+TEST(BuildRequestIdsForTraceTest, ReturnsStoredRequestIdWhenSubJobExpired)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  {
+    auto expired = std::make_shared<starpu_server::InferenceJob>();
+    starpu_server::InferenceJob::AggregatedSubJob entry{};
+    entry.job = expired;
+    entry.request_id = -7;
+    sub_jobs.push_back(entry);
+  }
+
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto ids = internal::build_request_ids_for_trace(aggregated);
+  ASSERT_EQ(ids.size(), 1U);
+  EXPECT_EQ(ids[0], -7);
+}
+
 TEST(SliceOutputsForSubJobTest, MakesSlicesContiguousWhenSourceIsNot)
 {
   using starpu_server::task_runner_internal::slice_outputs_for_sub_job;
