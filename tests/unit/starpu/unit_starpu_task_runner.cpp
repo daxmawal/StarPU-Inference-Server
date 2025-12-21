@@ -5398,3 +5398,211 @@ TEST_F(
         static_cast<std::size_t>(i));
   }
 }
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsWithActiveCudaCopyBatchCopiesInputsSequentially)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA runtime unavailable, skipping pinned buffer test";
+  }
+
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  auto model_config = make_model_config(
+      "multi_input",
+      {make_tensor_config("input0", {3}, at::kFloat),
+       make_tensor_config("input1", {2}, at::kFloat)},
+      {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto input0 =
+      torch::tensor(std::vector<float>{1.0F, 2.0F, 3.0F}, tensor_opts);
+  auto input1 = torch::tensor(std::vector<float>{4.0F, 5.0F}, tensor_opts);
+
+  auto job = make_job(800, {input0, input1}, {at::kFloat, at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& buffer_infos = input_pool.host_buffer_infos(slot);
+
+  const bool has_pinned = std::ranges::any_of(
+      buffer_infos,
+      [](const starpu_server::InputSlotPool::HostBufferInfo& info) {
+        return info.cuda_pinned || info.starpu_pinned;
+      });
+  if (!has_pinned) {
+    input_pool.release(slot);
+    GTEST_SKIP() << "No pinned buffers allocated, cannot test CUDA copy batch";
+  }
+
+  const int64_t batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+
+  const auto& base_ptrs = input_pool.base_ptrs(slot);
+  ASSERT_GE(base_ptrs.size(), 2U);
+  const std::vector<float> expected_input0{1.0F, 2.0F, 3.0F};
+  std::vector<float> actual_input0(expected_input0.size());
+  std::memcpy(
+      actual_input0.data(), base_ptrs[0],
+      expected_input0.size() * sizeof(float));
+  for (size_t idx = 0; idx < expected_input0.size(); ++idx) {
+    EXPECT_FLOAT_EQ(actual_input0[idx], expected_input0[idx]);
+  }
+
+  const std::vector<float> expected_input1{4.0F, 5.0F};
+  std::vector<float> actual_input1(expected_input1.size());
+  std::memcpy(
+      actual_input1.data(), base_ptrs[1],
+      expected_input1.size() * sizeof(float));
+  for (size_t idx = 0; idx < expected_input1.size(); ++idx) {
+    EXPECT_FLOAT_EQ(actual_input1[idx], expected_input1[idx]);
+  }
+
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsWithActiveCudaCopyBatchAbortsOnError)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA runtime unavailable, skipping pinned buffer test";
+  }
+
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  auto model_config = make_model_config(
+      "multi_input",
+      {make_tensor_config("input0", {3}, at::kFloat),
+       make_tensor_config("input1", {3}, at::kFloat),
+       make_tensor_config("input2", {3}, at::kFloat)},
+      {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto valid_a =
+      torch::tensor(std::vector<float>{1.0F, 2.0F, 3.0F}, tensor_opts);
+  torch::Tensor undefined_tensor;
+  ASSERT_FALSE(undefined_tensor.defined());
+  auto valid_b =
+      torch::tensor(std::vector<float>{4.0F, 5.0F, 6.0F}, tensor_opts);
+
+  auto job = make_job(
+      801, {valid_a, undefined_tensor, valid_b},
+      {at::kFloat, at::kFloat, at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& buffer_infos = input_pool.host_buffer_infos(slot);
+
+  const bool has_pinned = std::ranges::any_of(
+      buffer_infos,
+      [](const starpu_server::InputSlotPool::HostBufferInfo& info) {
+        return info.cuda_pinned || info.starpu_pinned;
+      });
+  if (!has_pinned) {
+    input_pool.release(slot);
+    GTEST_SKIP() << "No pinned buffers allocated, cannot test CUDA copy batch";
+  }
+
+  const auto& base_ptrs = input_pool.base_ptrs(slot);
+  constexpr unsigned char kSentinel = 0x7F;
+  std::memset(base_ptrs.back(), kSentinel, buffer_infos.back().bytes);
+
+  const auto last_tensor_bytes = static_cast<std::size_t>(valid_b.nbytes());
+  std::vector<std::byte> sentinel_pattern(
+      last_tensor_bytes, static_cast<std::byte>(kSentinel));
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
+      starpu_server::InvalidInputTensorException);
+
+  auto* last_destination = base_ptrs.back();
+  ASSERT_NE(last_destination, nullptr);
+  EXPECT_TRUE(std::equal(
+      last_destination, last_destination + last_tensor_bytes,
+      sentinel_pattern.begin(), sentinel_pattern.end()));
+
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsWithActiveCudaCopyBatchHandlesMultipleInputs)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA runtime unavailable, skipping pinned buffer test";
+  }
+
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  auto model_config = make_model_config(
+      "multi_input",
+      {make_tensor_config("input0", {4}, at::kFloat),
+       make_tensor_config("input1", {3}, at::kFloat),
+       make_tensor_config("input2", {2}, at::kFloat),
+       make_tensor_config("input3", {5}, at::kFloat)},
+      {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto input0 =
+      torch::tensor(std::vector<float>{1.0F, 2.0F, 3.0F, 4.0F}, tensor_opts);
+  auto input1 =
+      torch::tensor(std::vector<float>{5.0F, 6.0F, 7.0F}, tensor_opts);
+  auto input2 = torch::tensor(std::vector<float>{8.0F, 9.0F}, tensor_opts);
+  auto input3 = torch::tensor(
+      std::vector<float>{10.0F, 11.0F, 12.0F, 13.0F, 14.0F}, tensor_opts);
+
+  auto job = make_job(
+      802, {input0, input1, input2, input3},
+      {at::kFloat, at::kFloat, at::kFloat, at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& buffer_infos = input_pool.host_buffer_infos(slot);
+
+  const bool has_pinned = std::ranges::any_of(
+      buffer_infos,
+      [](const starpu_server::InputSlotPool::HostBufferInfo& info) {
+        return info.cuda_pinned || info.starpu_pinned;
+      });
+  if (!has_pinned) {
+    input_pool.release(slot);
+    GTEST_SKIP() << "No pinned buffers allocated, cannot test CUDA copy batch";
+  }
+
+  const int64_t batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+
+  const auto& base_ptrs = input_pool.base_ptrs(slot);
+  ASSERT_GE(base_ptrs.size(), 4U);
+
+  const std::vector<std::vector<float>> expected{
+      {1.0F, 2.0F, 3.0F, 4.0F},
+      {5.0F, 6.0F, 7.0F},
+      {8.0F, 9.0F},
+      {10.0F, 11.0F, 12.0F, 13.0F, 14.0F}};
+
+  for (size_t input_idx = 0; input_idx < expected.size(); ++input_idx) {
+    const auto& expected_data = expected[input_idx];
+    std::vector<float> actual_data(expected_data.size());
+    std::memcpy(
+        actual_data.data(), base_ptrs[input_idx],
+        expected_data.size() * sizeof(float));
+    for (size_t elem_idx = 0; elem_idx < expected_data.size(); ++elem_idx) {
+      EXPECT_FLOAT_EQ(actual_data[elem_idx], expected_data[elem_idx])
+          << "Input " << input_idx << ", element " << elem_idx;
+    }
+  }
+
+  input_pool.release(slot);
+}
