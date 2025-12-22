@@ -113,6 +113,8 @@ auto make_default_cpu_usage_provider(
 namespace {
 using monitoring::detail::CpuTotals;
 
+const std::filesystem::path kProcStatm{"/proc/self/statm"};
+
 const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
     1, 5, 10, 25, 50, 100, 250, 500, 1000};
 const prometheus::Histogram::BucketBoundaries kBatchSizeBuckets{
@@ -189,34 +191,6 @@ read_total_cpu_times(CpuTotals& out) -> bool
   return monitoring::detail::read_total_cpu_times(kProcStat, out);
 }
 
-auto
-cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr) -> double
-{
-  const unsigned long long prev_idle = prev.idle + prev.iowait;
-  const unsigned long long curr_idle = curr.idle + curr.iowait;
-  const unsigned long long prev_non_idle = prev.user + prev.nice + prev.system +
-                                           prev.irq + prev.softirq + prev.steal;
-  const unsigned long long curr_non_idle = curr.user + curr.nice + curr.system +
-                                           curr.irq + curr.softirq + curr.steal;
-
-  const unsigned long long prev_total = prev_idle + prev_non_idle;
-  const unsigned long long curr_total = curr_idle + curr_non_idle;
-
-  const auto totald = static_cast<double>(curr_total - prev_total);
-  const auto idled = static_cast<double>(curr_idle - prev_idle);
-  if (totald <= 0.0) {
-    return 0.0;
-  }
-  const double usage = (totald - idled) / totald * 100.0;
-  if (usage < 0.0) {
-    return 0.0;
-  }
-  if (usage > 100.0) {
-    return 100.0;
-  }
-  return usage;
-}
-
 #if defined(STARPU_TESTING)
 using ProcessSampleReader = std::function<std::optional<double>()>;
 ProcessSampleReader process_open_fds_reader_override;
@@ -230,9 +204,12 @@ read_process_rss_bytes() -> std::optional<double>
   if (process_rss_bytes_reader_override) {
     return process_rss_bytes_reader_override();
   }
+  const std::filesystem::path& path =
+      monitoring::detail::process_rss_bytes_path_for_test();
+#else
+  const std::filesystem::path& path = kProcStatm;
 #endif
-  static const std::filesystem::path kProcStatm{"/proc/self/statm"};
-  std::ifstream statm{kProcStatm};
+  std::ifstream statm{path};
   if (!statm.is_open()) {
     return std::nullopt;
   }
@@ -242,7 +219,14 @@ read_process_rss_bytes() -> std::optional<double>
   if (resident == 0) {
     return std::nullopt;
   }
+#if defined(STARPU_TESTING)
+  const long page_size =
+      monitoring::detail::process_page_size_provider_for_test()
+          ? monitoring::detail::process_page_size_provider_for_test()()
+          : sysconf(_SC_PAGESIZE);
+#else
   const long page_size = sysconf(_SC_PAGESIZE);
+#endif
   if (page_size <= 0) {
     return std::nullopt;
   }
@@ -446,6 +430,42 @@ query_gpu_stats_nvml() -> std::vector<GpuSample>
 namespace monitoring::detail {
 
 auto
+cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr) -> double
+{
+  const unsigned long long prev_idle = prev.idle + prev.iowait;
+  const unsigned long long curr_idle = curr.idle + curr.iowait;
+  const unsigned long long prev_non_idle = prev.user + prev.nice + prev.system +
+                                           prev.irq + prev.softirq + prev.steal;
+  const unsigned long long curr_non_idle = curr.user + curr.nice + curr.system +
+                                           curr.irq + curr.softirq + curr.steal;
+
+  const unsigned long long prev_total = prev_idle + prev_non_idle;
+  const unsigned long long curr_total = curr_idle + curr_non_idle;
+
+  const long long totald_signed =
+      curr_total >= prev_total
+          ? static_cast<long long>(curr_total - prev_total)
+          : -static_cast<long long>(prev_total - curr_total);
+  const long long idled_signed =
+      curr_idle >= prev_idle ? static_cast<long long>(curr_idle - prev_idle)
+                             : -static_cast<long long>(prev_idle - curr_idle);
+
+  const auto totald = static_cast<double>(totald_signed);
+  const auto idled = static_cast<double>(idled_signed);
+  if (totald <= 0.0) {
+    return 0.0;
+  }
+  const double usage = (totald - idled) / totald * 100.0;
+  if (usage < 0.0) {
+    return 0.0;
+  }
+  if (usage > 100.0) {
+    return 100.0;
+  }
+  return usage;
+}
+
+auto
 make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
     -> MetricsRegistry::CpuUsageProvider
 {
@@ -527,12 +547,60 @@ process_fd_directory_iterator_for_test() -> ProcessFdDirectoryIteratorFactory
 {
   return g_process_fd_directory_iterator_factory;
 }
+
+static std::optional<std::filesystem::path> g_process_rss_bytes_path_override;
+static ProcessPageSizeProvider g_process_page_size_provider;
+
+void
+set_process_rss_bytes_path_for_test(std::filesystem::path path)
+{
+  g_process_rss_bytes_path_override = std::move(path);
+}
+
+void
+reset_process_rss_bytes_path_for_test()
+{
+  g_process_rss_bytes_path_override.reset();
+}
+
+auto
+process_rss_bytes_path_for_test() -> const std::filesystem::path&
+{
+  if (g_process_rss_bytes_path_override.has_value()) {
+    return *g_process_rss_bytes_path_override;
+  }
+  return kProcStatm;
+}
+
+void
+set_process_page_size_provider_for_test(ProcessPageSizeProvider provider)
+{
+  g_process_page_size_provider = std::move(provider);
+}
+
+void
+reset_process_page_size_provider_for_test()
+{
+  g_process_page_size_provider = nullptr;
+}
+
+auto
+process_page_size_provider_for_test() -> const ProcessPageSizeProvider&
+{
+  return g_process_page_size_provider;
+}
 #endif
 
 auto
 read_process_open_fds() -> std::optional<double>
 {
   return read_process_open_fds_impl();
+}
+
+auto
+read_process_rss_bytes() -> std::optional<double>
+{
+  return starpu_server::read_process_rss_bytes();
 }
 
 #if defined(STARPU_TESTING)

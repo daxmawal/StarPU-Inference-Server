@@ -7,12 +7,16 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -21,6 +25,58 @@
 using namespace starpu_server;
 
 namespace {
+class TemporaryStatmFile {
+ public:
+  explicit TemporaryStatmFile(std::string_view contents)
+  {
+    const auto timestamp =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    path_ = std::filesystem::temp_directory_path() /
+            std::filesystem::path(
+                "starpu_rss_statm_" + std::to_string(timestamp) + ".test");
+    std::ofstream out{path_};
+    out << contents;
+  }
+
+  ~TemporaryStatmFile()
+  {
+    std::error_code ec;
+    std::filesystem::remove(path_, ec);
+  }
+
+  auto path() const -> const std::filesystem::path& { return path_; }
+
+ private:
+  std::filesystem::path path_;
+};
+
+class StatmPathGuard {
+ public:
+  explicit StatmPathGuard(std::filesystem::path path)
+  {
+    monitoring::detail::set_process_rss_bytes_path_for_test(std::move(path));
+  }
+
+  ~StatmPathGuard()
+  {
+    monitoring::detail::reset_process_rss_bytes_path_for_test();
+  }
+};
+
+class PageSizeProviderGuard {
+ public:
+  explicit PageSizeProviderGuard(std::function<long()> provider)
+  {
+    monitoring::detail::set_process_page_size_provider_for_test(
+        std::move(provider));
+  }
+
+  ~PageSizeProviderGuard()
+  {
+    monitoring::detail::reset_process_page_size_provider_for_test();
+  }
+};
+
 void
 AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
 {
@@ -689,6 +745,60 @@ TEST(MetricsDetail, ReadProcessOpenFdsCatchesDirectoryIteratorExceptions)
 
   const auto value = monitoring::detail::read_process_open_fds();
   EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsDetail, ReadProcessRssBytesHandlesMissingStatm)
+{
+  const auto missing_path =
+      std::filesystem::temp_directory_path() / "starpu_metrics_missing_statm";
+  StatmPathGuard guard(missing_path);
+
+  const auto value = monitoring::detail::read_process_rss_bytes();
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsDetail, ReadProcessRssBytesHandlesZeroResident)
+{
+  TemporaryStatmFile statm("256 0");
+  StatmPathGuard guard(statm.path());
+
+  const auto value = monitoring::detail::read_process_rss_bytes();
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsDetail, ReadProcessRssBytesHandlesNonPositivePageSize)
+{
+  TemporaryStatmFile statm("256 64");
+  StatmPathGuard guard(statm.path());
+  PageSizeProviderGuard page_guard([] { return 0L; });
+
+  const auto value = monitoring::detail::read_process_rss_bytes();
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsDetail, CpuUsagePercentClampsAboveOneHundred)
+{
+  const auto prev = monitoring::detail::CpuTotals{
+      /*user=*/10,
+      /*nice=*/0,
+      /*system=*/0,
+      /*idle=*/20,
+      /*iowait=*/30,
+      /*irq=*/0,
+      /*softirq=*/0,
+      /*steal=*/0};
+  const auto curr = monitoring::detail::CpuTotals{
+      /*user=*/20,
+      /*nice=*/0,
+      /*system=*/0,
+      /*idle=*/10,
+      /*iowait=*/10,
+      /*irq=*/10,
+      /*softirq=*/10,
+      /*steal=*/10};
+
+  const auto usage = monitoring::detail::cpu_usage_percent(prev, curr);
+  EXPECT_DOUBLE_EQ(usage, 100.0);
 }
 
 TEST(MetricsRegistry, RunSamplingSkipsCpuUsageWhenProviderMissing)
