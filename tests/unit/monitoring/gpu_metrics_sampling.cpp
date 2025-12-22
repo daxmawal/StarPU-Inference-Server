@@ -3,6 +3,7 @@
 #include <prometheus/metric_family.h>
 
 #include <algorithm>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <ranges>
@@ -32,6 +33,24 @@ struct CerrCapture {
 
   std::stringstream stream;
   std::streambuf* old_buf;
+};
+
+struct ProcessMetricOverrideGuard {
+  ProcessMetricOverrideGuard(
+      std::function<std::optional<double>()> open_fds_override,
+      std::function<std::optional<double>()> rss_override)
+  {
+    monitoring::detail::set_process_open_fds_reader_override(
+        std::move(open_fds_override));
+    monitoring::detail::set_process_rss_bytes_reader_override(
+        std::move(rss_override));
+  }
+
+  ~ProcessMetricOverrideGuard()
+  {
+    monitoring::detail::set_process_open_fds_reader_override({});
+    monitoring::detail::set_process_rss_bytes_reader_override({});
+  }
 };
 
 auto
@@ -130,6 +149,95 @@ TEST(MetricsSampling, UpdatesGpuAndCpuGaugesOnSuccess)
   const auto total1 = FindGaugeValue(*total_family, "1");
   ASSERT_TRUE(total1.has_value());
   EXPECT_DOUBLE_EQ(*total1, samples[1].mem_total_bytes);
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, RecordsGpuTemperatureAndPower)
+{
+  const std::vector<MetricsRegistry::GpuSample> samples{
+      MetricsRegistry::GpuSample{
+          .index = 0,
+          .util_percent = 50.0,
+          .mem_used_bytes = 123.0,
+          .mem_total_bytes = 456.0,
+          .temperature_celsius = 70.5,
+          .power_watts = 120.0}};
+
+  auto gpu_provider = [samples]() { return samples; };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  metrics.run_sampling_request_nb();
+
+  const auto families = metrics.registry()->Collect();
+
+  const auto* temp_family = FindFamily(families, "gpu_temperature_celsius");
+  ASSERT_NE(temp_family, nullptr);
+  const auto temp0 = FindGaugeValue(*temp_family, "0");
+  ASSERT_TRUE(temp0.has_value());
+  EXPECT_DOUBLE_EQ(*temp0, samples[0].temperature_celsius);
+
+  const auto* power_family = FindFamily(families, "gpu_power_watts");
+  ASSERT_NE(power_family, nullptr);
+  const auto power0 = FindGaugeValue(*power_family, "0");
+  ASSERT_TRUE(power0.has_value());
+  EXPECT_DOUBLE_EQ(*power0, samples[0].power_watts);
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, SkipsProcessSamplingWhenGaugesNull)
+{
+  auto gpu_provider = []() {
+    return std::vector<MetricsRegistry::GpuSample>{};
+  };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  metrics.process_open_fds_ = nullptr;
+  metrics.process_resident_memory_bytes_ = nullptr;
+  metrics.inference_throughput_gauge_ = nullptr;
+
+  EXPECT_NO_THROW(metrics.sample_process_open_fds());
+  EXPECT_NO_THROW(metrics.sample_process_resident_memory());
+  EXPECT_NO_THROW(metrics.sample_inference_throughput());
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, SetsZeroWhenProcessSamplingFails)
+{
+  auto gpu_provider = []() {
+    return std::vector<MetricsRegistry::GpuSample>{};
+  };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  ProcessMetricOverrideGuard guard(
+      []() { return std::optional<double>{}; },
+      []() { return std::optional<double>{}; });
+
+  ASSERT_NE(metrics.process_open_fds_, nullptr);
+  ASSERT_NE(metrics.process_resident_memory_bytes_, nullptr);
+
+  metrics.process_open_fds_->Set(42.0);
+  metrics.process_resident_memory_bytes_->Set(84.0);
+
+  metrics.sample_process_open_fds();
+  metrics.sample_process_resident_memory();
+
+  EXPECT_DOUBLE_EQ(metrics.process_open_fds_->Value(), 0.0);
+  EXPECT_DOUBLE_EQ(metrics.process_resident_memory_bytes_->Value(), 0.0);
 
   metrics.request_stop();
 }

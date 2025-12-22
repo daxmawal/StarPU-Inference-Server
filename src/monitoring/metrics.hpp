@@ -355,5 +355,11 @@ auto read_total_cpu_times(const std::filesystem::path& path, CpuTotals& out)
     -> bool;
 auto make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
     -> starpu_server::MetricsRegistry::CpuUsageProvider;
+#if defined(STARPU_TESTING)
+void set_process_open_fds_reader_override(
+    std::function<std::optional<double>()> reader);
+void set_process_rss_bytes_reader_override(
+    std::function<std::optional<double>()> reader);
+#endif
 
 }  // namespace starpu_server::monitoring::detail

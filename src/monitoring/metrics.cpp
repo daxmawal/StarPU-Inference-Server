@@ -198,9 +198,20 @@ cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr) -> double
   return usage;
 }
 
+#if defined(STARPU_TESTING)
+using ProcessSampleReader = std::function<std::optional<double>()>;
+ProcessSampleReader process_open_fds_reader_override;
+ProcessSampleReader process_rss_bytes_reader_override;
+#endif
+
 auto
 read_process_rss_bytes() -> std::optional<double>
 {
+#if defined(STARPU_TESTING)
+  if (process_rss_bytes_reader_override) {
+    return process_rss_bytes_reader_override();
+  }
+#endif
   static const std::filesystem::path kProcStatm{"/proc/self/statm"};
   std::ifstream statm{kProcStatm};
   if (!statm.is_open()) {
@@ -222,6 +233,11 @@ read_process_rss_bytes() -> std::optional<double>
 auto
 read_process_open_fds() -> std::optional<double>
 {
+#if defined(STARPU_TESTING)
+  if (process_open_fds_reader_override) {
+    return process_open_fds_reader_override();
+  }
+#endif
   static const std::filesystem::path kProcFd{"/proc/self/fd"};
   try {
     if (!std::filesystem::exists(kProcFd)) {
@@ -418,6 +434,22 @@ make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
     return usage;
   };
 }
+
+#if defined(STARPU_TESTING)
+void
+set_process_open_fds_reader_override(
+    std::function<std::optional<double>()> reader)
+{
+  process_open_fds_reader_override = std::move(reader);
+}
+
+void
+set_process_rss_bytes_reader_override(
+    std::function<std::optional<double>()> reader)
+{
+  process_rss_bytes_reader_override = std::move(reader);
+}
+#endif
 
 }  // namespace monitoring::detail
 
