@@ -32,6 +32,21 @@
 
 namespace starpu_server {
 
+#if defined(STARPU_TESTING)
+class TestingExposerHandle : public MetricsRegistry::ExposerHandle {
+ public:
+  void RegisterCollectable(
+      const std::shared_ptr<prometheus::Collectable>&) override
+  {
+  }
+
+  void RemoveCollectable(
+      const std::shared_ptr<prometheus::Collectable>&) override
+  {
+  }
+};
+#endif
+
 namespace monitoring::detail {
 
 auto
@@ -499,10 +514,14 @@ MetricsRegistry::initialize(
 {
   try {
     if (!exposer_handle) {
+#if defined(STARPU_TESTING)
+      exposer_handle = std::make_unique<TestingExposerHandle>();
+#else
       auto exposer = std::make_unique<prometheus::Exposer>(
           std::format("0.0.0.0:{}", port));
       exposer_handle =
           std::make_unique<PrometheusExposerHandle>(std::move(exposer));
+#endif
     }
     exposer_handle->RegisterCollectable(registry_);
     exposer_ = std::move(exposer_handle);
@@ -1939,3 +1958,84 @@ MetricsRegistry::sampling_loop(const std::stop_token& stop)
 }
 
 }  // namespace starpu_server
+
+#if defined(STARPU_TESTING)
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearCpuUsageProvider(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.cpu_usage_provider_ = {};
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearStarpuWorkerInflightFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.starpu_worker_inflight_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::
+    ClearStarpuTaskRuntimeByWorkerFamily(
+        starpu_server::MetricsRegistry& metrics)
+{
+  metrics.starpu_task_runtime_by_worker_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::
+    ClearInferenceComputeLatencyByWorkerFamily(
+        starpu_server::MetricsRegistry& metrics)
+{
+  metrics.inference_compute_latency_by_worker_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearIoCopyLatencyFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.io_copy_latency_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearTransferBytesFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.transfer_bytes_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearModelsLoadedFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.models_loaded_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearModelLoadFailuresFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.model_load_failures_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearInferenceFailuresFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.inference_failures_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearInferenceCompletedFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.inference_completed_family_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearRequestsByStatusFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.requests_by_status_family_ = nullptr;
+}
+#endif

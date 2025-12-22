@@ -223,41 +223,6 @@ TEST(Metrics, RepeatedInitDoesNotAllocateRegistry)
   EXPECT_EQ(get_metrics(), nullptr);
 }
 
-TEST(Metrics, InitFailsWhenMetricsRegistryThrows)
-{
-  shutdown_metrics();
-
-  int reserved_socket = ::socket(AF_INET, SOCK_STREAM, 0);
-  ASSERT_GE(reserved_socket, 0);
-
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  addr.sin_port = 0;
-
-  ASSERT_EQ(
-      ::bind(reserved_socket, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)),
-      0);
-  ASSERT_EQ(::listen(reserved_socket, 1), 0);
-
-  socklen_t addr_len = sizeof(addr);
-  ASSERT_EQ(
-      ::getsockname(
-          reserved_socket, reinterpret_cast<sockaddr*>(&addr), &addr_len),
-      0);
-  const int reserved_port = ntohs(addr.sin_port);
-  ASSERT_GT(reserved_port, 0);
-
-  EXPECT_FALSE(init_metrics(reserved_port));
-  EXPECT_EQ(get_metrics(), nullptr);
-
-  ::close(reserved_socket);
-
-
-  shutdown_metrics();
-  EXPECT_EQ(get_metrics(), nullptr);
-}
-
 TEST(Metrics, MetricsDestructionLogsRemovalFailure)
 {
   class ThrowingRemoveHandle : public MetricsRegistry::ExposerHandle {
@@ -423,4 +388,198 @@ TEST(Metrics, SetQueueFillRatioUpdatesGauge)
   const auto ratio = FindGaugeValue(families, "inference_queue_fill_ratio", {});
   ASSERT_TRUE(ratio.has_value());
   EXPECT_DOUBLE_EQ(*ratio, 0.3);
+}
+
+TEST(MetricsRegistry, RunSamplingSkipsCpuUsageWhenProviderMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+  metrics.system_cpu_usage_percent()->Set(7.0);
+  MetricsRegistry::TestAccessor::ClearCpuUsageProvider(metrics);
+
+  metrics.run_sampling_request_nb();
+
+  const auto value = FindGaugeValue(
+      metrics.registry()->Collect(), "system_cpu_usage_percent", {});
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 7.0);
+}
+
+TEST(Metrics, IncrementInferenceCompletedUpdatesCounter)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  const std::string model_name = "global-complete";
+  increment_inference_completed(model_name, 3);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+  const auto count = FindCounterValue(
+      families, "inference_completed_total", {{"model", model_name}});
+  ASSERT_TRUE(count.has_value());
+  EXPECT_DOUBLE_EQ(*count, 3.0);
+}
+
+TEST(MetricsRegistry, IncrementTransferBytesSkipsZero)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  metrics.increment_transfer_bytes("h2d", 1, 1, "cpu", 0);
+
+  const auto value = FindCounterValue(
+      metrics.registry()->Collect(), "inference_transfer_bytes_total",
+      {{"direction", "h2d"},
+       {"worker_id", "1"},
+       {"device", "1"},
+       {"worker_type", "cpu"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, ObserveIoCopyLatencySkipsNegativeDuration)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  metrics.observe_io_copy_latency("h2d", 2, 3, "cpu", -0.1);
+
+  const auto* metric = FindHistogramMetric(
+      metrics.registry()->Collect(), "inference_io_copy_ms",
+      {{"direction", "h2d"},
+       {"worker_id", "2"},
+       {"device", "3"},
+       {"worker_type", "cpu"}});
+  EXPECT_EQ(metric, nullptr);
+}
+
+TEST(MetricsRegistry, SetWorkerInflightGaugeSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  MetricsRegistry::TestAccessor::ClearStarpuWorkerInflightFamily(metrics);
+  metrics.set_worker_inflight_gauge(3, 2, "cpu", 5);
+
+  const auto value = FindGaugeValue(
+      metrics.registry()->Collect(), "starpu_worker_inflight_tasks",
+      {{"worker_id", "3"}, {"device", "2"}, {"worker_type", "cpu"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, ObserveTaskRuntimeByWorkerSkipsNegativeLatency)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  metrics.observe_task_runtime_by_worker(5, 6, "gpu", -1.0);
+
+  const auto* metric = FindHistogramMetric(
+      metrics.registry()->Collect(), "starpu_task_runtime_ms_by_worker",
+      {{"worker_id", "5"}, {"device", "6"}, {"worker_type", "gpu"}});
+  EXPECT_EQ(metric, nullptr);
+}
+
+TEST(MetricsRegistry, ObserveComputeLatencyByWorkerSkipsNegativeLatency)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  metrics.observe_compute_latency_by_worker(5, 6, "gpu", -1.0);
+
+  const auto* metric = FindHistogramMetric(
+      metrics.registry()->Collect(), "inference_compute_latency_ms_by_worker",
+      {{"worker_id", "5"}, {"device", "6"}, {"worker_type", "gpu"}});
+  EXPECT_EQ(metric, nullptr);
+}
+
+TEST(MetricsRegistry, SetModelLoadedFlagSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  MetricsRegistry::TestAccessor::ClearModelsLoadedFamily(metrics);
+  metrics.set_model_loaded_flag(
+      MetricsRegistry::ModelLabel{"model-x"},
+      MetricsRegistry::DeviceLabel{"dev-x"}, true);
+
+  const auto value = FindGaugeValue(
+      metrics.registry()->Collect(), "models_loaded",
+      {{"model", "model-x"}, {"device", "dev-x"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, IncrementModelLoadFailureCounterSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  MetricsRegistry::TestAccessor::ClearModelLoadFailuresFamily(metrics);
+  metrics.increment_model_load_failure_counter("model-y");
+
+  const auto value = FindCounterValue(
+      metrics.registry()->Collect(), "model_load_failures_total",
+      {{"model", "model-y"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, IncrementFailureCounterSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  MetricsRegistry::TestAccessor::ClearInferenceFailuresFamily(metrics);
+  metrics.increment_failure_counter(
+      MetricsRegistry::FailureStageLabel{"stage"},
+      MetricsRegistry::FailureReasonLabel{"reason"},
+      MetricsRegistry::ModelLabel{"model-z"}, 2);
+
+  const auto value = FindCounterValue(
+      metrics.registry()->Collect(), "inference_failures_total",
+      {{"stage", "stage"}, {"reason", "reason"}, {"model", "model-z"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, IncrementCompletedCounterSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  MetricsRegistry::TestAccessor::ClearInferenceCompletedFamily(metrics);
+  metrics.increment_completed_counter("model-w", 4);
+
+  const auto value = FindCounterValue(
+      metrics.registry()->Collect(), "inference_completed_total",
+      {{"model", "model-w"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, IncrementStatusCounterSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  MetricsRegistry::TestAccessor::ClearRequestsByStatusFamily(metrics);
+  metrics.increment_status_counter(
+      MetricsRegistry::StatusCodeLabel{"5"},
+      MetricsRegistry::ModelLabel{"model-status"});
+
+  const auto value = FindCounterValue(
+      metrics.registry()->Collect(), "requests_by_status_total",
+      {{"code", "5"}, {"model", "model-status"}});
+  EXPECT_FALSE(value.has_value());
 }

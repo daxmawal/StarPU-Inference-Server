@@ -197,6 +197,22 @@ class MetricsRegistry {
       std::string_view direction, int worker_id, int device_id,
       std::string_view worker_type, std::size_t bytes);
 
+#if defined(STARPU_TESTING)
+  struct TestAccessor {
+    static void ClearCpuUsageProvider(MetricsRegistry&);
+    static void ClearStarpuWorkerInflightFamily(MetricsRegistry&);
+    static void ClearStarpuTaskRuntimeByWorkerFamily(MetricsRegistry&);
+    static void ClearInferenceComputeLatencyByWorkerFamily(MetricsRegistry&);
+    static void ClearIoCopyLatencyFamily(MetricsRegistry&);
+    static void ClearTransferBytesFamily(MetricsRegistry&);
+    static void ClearModelsLoadedFamily(MetricsRegistry&);
+    static void ClearModelLoadFailuresFamily(MetricsRegistry&);
+    static void ClearInferenceFailuresFamily(MetricsRegistry&);
+    static void ClearInferenceCompletedFamily(MetricsRegistry&);
+    static void ClearRequestsByStatusFamily(MetricsRegistry&);
+  };
+#endif
+
  private:
   void initialize(
       int port, bool start_sampler_thread,
