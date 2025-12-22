@@ -658,9 +658,8 @@ run_codelet_inference(
     bool armed{false};
 
     WorkerInflightGuard(
-        int worker_id,
-        int device_id,  // NOLINT(bugprone-easily-swappable-parameters)
-        std::string_view worker_type_label, bool armed_flag)
+        int worker_id, int device_id, std::string_view worker_type_label,
+        bool armed_flag)
         : worker(worker_id), device(device_id), worker_type(worker_type_label),
           armed(armed_flag)
     {

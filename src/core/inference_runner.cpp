@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -83,9 +84,17 @@ get_cuda_device_count() -> int
   }
 
   using DeviceCountSigned = long long;
-  const auto device_count_signed =
-      static_cast<DeviceCountSigned>(  // NOLINT(bugprone-signed-char-misuse)
-          torch::cuda::device_count());
+  using RawDeviceCount = decltype(torch::cuda::device_count());
+  const auto device_count_raw = torch::cuda::device_count();
+  if constexpr (std::is_signed_v<RawDeviceCount>) {
+    if (device_count_raw < 0) {
+      throw InvalidGpuDeviceException(
+          "torch::cuda::device_count returned a negative value.");
+    }
+  }
+  using DeviceCountUnsigned = std::make_unsigned_t<RawDeviceCount>;
+  const auto device_count_signed = static_cast<DeviceCountSigned>(
+      static_cast<DeviceCountUnsigned>(device_count_raw));
 
   return sanitize_cuda_device_count(device_count_signed);
 }

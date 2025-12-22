@@ -53,6 +53,26 @@ class MetricsRegistry {
     double power_watts{std::numeric_limits<double>::quiet_NaN()};
   };
 
+  struct StatusCodeLabel {
+    std::string_view value;
+  };
+
+  struct FailureStageLabel {
+    std::string_view value;
+  };
+
+  struct FailureReasonLabel {
+    std::string_view value;
+  };
+
+  struct ModelLabel {
+    std::string_view value;
+  };
+
+  struct DeviceLabel {
+    std::string_view value;
+  };
+
   using GpuStatsProvider = std::function<std::vector<GpuSample>()>;
   using CpuUsageProvider = std::function<std::optional<double>()>;
 
@@ -150,15 +170,15 @@ class MetricsRegistry {
       -> prometheus::Family<prometheus::Counter>*;
 
   void increment_status_counter(
-      std::string_view code_label, std::string_view model_label);
+      StatusCodeLabel code_label, ModelLabel model_label);
   void increment_completed_counter(
       std::string_view model_label, std::size_t logical_jobs);
   void increment_failure_counter(
-      std::string_view stage_label, std::string_view reason_label,
-      std::string_view model_label, std::size_t count);
+      FailureStageLabel stage_label, FailureReasonLabel reason_label,
+      ModelLabel model_label, std::size_t count);
   void increment_model_load_failure_counter(std::string_view model_label);
   void set_model_loaded_flag(
-      std::string_view model_label, std::string_view device_label, bool loaded);
+      ModelLabel model_label, DeviceLabel device_label, bool loaded);
   void set_queue_capacity(std::size_t capacity);
   [[nodiscard]] auto queue_capacity_value() const -> std::size_t;
   void observe_compute_latency_by_worker(
@@ -181,6 +201,11 @@ class MetricsRegistry {
   void initialize(
       int port, bool start_sampler_thread,
       std::unique_ptr<ExposerHandle> exposer_handle);
+  void sample_cpu_usage();
+  void sample_inference_throughput();
+  void sample_process_resident_memory();
+  void sample_process_open_fds();
+  void sample_gpu_stats();
   void perform_sampling_request_nb();
   void sampling_loop(const std::stop_token& stop);
 

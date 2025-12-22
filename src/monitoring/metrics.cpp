@@ -105,42 +105,53 @@ const prometheus::Histogram::BucketBoundaries kModelLoadDurationMsBuckets{
 const prometheus::Histogram::BucketBoundaries kTaskRuntimeMsBuckets{
     1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000};
 
+constexpr int kStatusOk = 0;
+constexpr int kStatusInvalidArgument = 3;
+constexpr int kStatusDeadlineExceeded = 4;
+constexpr int kStatusNotFound = 5;
+constexpr int kStatusPermissionDenied = 7;
+constexpr int kStatusResourceExhausted = 8;
+constexpr int kStatusFailedPrecondition = 9;
+constexpr int kStatusAborted = 10;
+constexpr int kStatusOutOfRange = 11;
+constexpr int kStatusUnimplemented = 12;
+constexpr int kStatusInternal = 13;
+constexpr int kStatusUnavailable = 14;
+constexpr int kStatusUnauthenticated = 16;
+
 auto
 status_code_label(int code) -> std::string
 {
-  // Common gRPC status codes; fall back to numeric.
-  // NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
   switch (code) {
-    case 0:
+    case kStatusOk:
       return "OK";
-    case 3:
+    case kStatusInvalidArgument:
       return "INVALID_ARGUMENT";
-    case 4:
+    case kStatusDeadlineExceeded:
       return "DEADLINE_EXCEEDED";
-    case 5:
+    case kStatusNotFound:
       return "NOT_FOUND";
-    case 7:
+    case kStatusPermissionDenied:
       return "PERMISSION_DENIED";
-    case 8:
+    case kStatusResourceExhausted:
       return "RESOURCE_EXHAUSTED";
-    case 9:
+    case kStatusFailedPrecondition:
       return "FAILED_PRECONDITION";
-    case 10:
+    case kStatusAborted:
       return "ABORTED";
-    case 11:
+    case kStatusOutOfRange:
       return "OUT_OF_RANGE";
-    case 12:
+    case kStatusUnimplemented:
       return "UNIMPLEMENTED";
-    case 13:
+    case kStatusInternal:
       return "INTERNAL";
-    case 14:
+    case kStatusUnavailable:
       return "UNAVAILABLE";
-    case 16:
+    case kStatusUnauthenticated:
       return "UNAUTHENTICATED";
     default:
       return std::to_string(code);
   }
-  // NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
 }
 
 #ifndef STARPU_HAVE_NVML
@@ -992,7 +1003,8 @@ increment_request_status(int status_code, std::string_view model_name)
     return;
   }
   metrics_ptr->increment_status_counter(
-      status_code_label(status_code), model_name);
+      MetricsRegistry::StatusCodeLabel{status_code_label(status_code)},
+      MetricsRegistry::ModelLabel{model_name});
 }
 
 void
@@ -1081,7 +1093,9 @@ set_model_loaded(
   if (metrics_ptr == nullptr) {
     return;
   }
-  metrics_ptr->set_model_loaded_flag(model_name, device_label, loaded);
+  metrics_ptr->set_model_loaded_flag(
+      MetricsRegistry::ModelLabel{model_name},
+      MetricsRegistry::DeviceLabel{device_label}, loaded);
 }
 
 void
@@ -1474,15 +1488,15 @@ MetricsRegistry::models_loaded_family() const
 
 void
 MetricsRegistry::increment_status_counter(
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    std::string_view code_label, std::string_view model_label)
+    MetricsRegistry::StatusCodeLabel code_label,
+    MetricsRegistry::ModelLabel model_label)
 {
   if (requests_by_status_family_ == nullptr) {
     return;
   }
 
-  const std::string code{code_label};
-  const std::string model{model_label};
+  const std::string code{code_label.value};
+  const std::string model{model_label.value};
   const std::string key = std::format("{}|{}", code, model);
 
   std::lock_guard<std::mutex> lock(status_mutex_);
@@ -1515,16 +1529,16 @@ MetricsRegistry::increment_completed_counter(
 
 void
 MetricsRegistry::increment_failure_counter(
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    std::string_view stage_label, std::string_view reason_label,
-    std::string_view model_label, std::size_t count)
+    MetricsRegistry::FailureStageLabel stage_label,
+    MetricsRegistry::FailureReasonLabel reason_label,
+    MetricsRegistry::ModelLabel model_label, std::size_t count)
 {
   if (inference_failures_family_ == nullptr) {
     return;
   }
-  const std::string stage{stage_label};
-  const std::string reason{reason_label};
-  const std::string model{model_label};
+  const std::string stage{stage_label.value};
+  const std::string reason{reason_label.value};
+  const std::string model{model_label.value};
   const std::string key = std::format("{}|{}|{}", stage, reason, model);
 
   std::lock_guard<std::mutex> lock(status_mutex_);
@@ -1559,14 +1573,14 @@ MetricsRegistry::increment_model_load_failure_counter(
 
 void
 MetricsRegistry::set_model_loaded_flag(
-    // NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
-    std::string_view model_label, std::string_view device_label, bool loaded)
+    MetricsRegistry::ModelLabel model_label,
+    MetricsRegistry::DeviceLabel device_label, bool loaded)
 {
   if (models_loaded_family_ == nullptr) {
     return;
   }
-  const std::string model{model_label};
-  const std::string device{device_label};
+  const std::string model{model_label.value};
+  const std::string device{device_label.value};
   const std::string key = std::format("{}|{}", model, device);
 
   std::lock_guard<std::mutex> lock(status_mutex_);
@@ -1736,7 +1750,10 @@ increment_inference_failure(
   if (metrics_ptr == nullptr) {
     return;
   }
-  metrics_ptr->increment_failure_counter(stage, reason, model_name, count);
+  metrics_ptr->increment_failure_counter(
+      MetricsRegistry::FailureStageLabel{stage},
+      MetricsRegistry::FailureReasonLabel{reason},
+      MetricsRegistry::ModelLabel{model_name}, count);
 }
 
 void
@@ -1758,48 +1775,71 @@ MetricsRegistry::run_sampling_request_nb()
 }
 
 void
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
-MetricsRegistry::perform_sampling_request_nb()
+MetricsRegistry::sample_cpu_usage()
 {
-  if (system_cpu_usage_percent_ != nullptr && cpu_usage_provider_) {
-    try {
-      auto usage = cpu_usage_provider_();
-      if (usage.has_value()) {
-        system_cpu_usage_percent_->Set(*usage);
-      }
-    }
-    catch (const std::exception& e) {
-      log_error(std::format("CPU metrics sampling failed: {}", e.what()));
-    }
-    catch (...) {
-      log_error("CPU metrics sampling failed due to an unknown error");
-    }
+  if (system_cpu_usage_percent_ == nullptr || !cpu_usage_provider_) {
+    return;
   }
 
-  if (inference_throughput_gauge_ != nullptr) {
-    if (auto snap = perf_observer::snapshot()) {
-      inference_throughput_gauge_->Set(snap->throughput);
-    } else {
-      inference_throughput_gauge_->Set(0.0);
+  try {
+    auto usage = cpu_usage_provider_();
+    if (usage.has_value()) {
+      system_cpu_usage_percent_->Set(*usage);
     }
   }
+  catch (const std::exception& e) {
+    log_error(std::format("CPU metrics sampling failed: {}", e.what()));
+  }
+  catch (...) {
+    log_error("CPU metrics sampling failed due to an unknown error");
+  }
+}
 
-  if (process_resident_memory_bytes_ != nullptr) {
-    if (auto rss_bytes = read_process_rss_bytes()) {
-      process_resident_memory_bytes_->Set(*rss_bytes);
-    } else {
-      process_resident_memory_bytes_->Set(0.0);
-    }
+void
+MetricsRegistry::sample_inference_throughput()
+{
+  if (inference_throughput_gauge_ == nullptr) {
+    return;
   }
 
-  if (process_open_fds_ != nullptr) {
-    if (auto fds = read_process_open_fds()) {
-      process_open_fds_->Set(*fds);
-    } else {
-      process_open_fds_->Set(0.0);
-    }
+  if (auto snap = perf_observer::snapshot()) {
+    inference_throughput_gauge_->Set(snap->throughput);
+  } else {
+    inference_throughput_gauge_->Set(0.0);
+  }
+}
+
+void
+MetricsRegistry::sample_process_resident_memory()
+{
+  if (process_resident_memory_bytes_ == nullptr) {
+    return;
   }
 
+  if (auto rss_bytes = read_process_rss_bytes()) {
+    process_resident_memory_bytes_->Set(*rss_bytes);
+  } else {
+    process_resident_memory_bytes_->Set(0.0);
+  }
+}
+
+void
+MetricsRegistry::sample_process_open_fds()
+{
+  if (process_open_fds_ == nullptr) {
+    return;
+  }
+
+  if (auto fds = read_process_open_fds()) {
+    process_open_fds_->Set(*fds);
+  } else {
+    process_open_fds_->Set(0.0);
+  }
+}
+
+void
+MetricsRegistry::sample_gpu_stats()
+{
   if (!gpu_stats_provider_) {
     return;
   }
@@ -1840,6 +1880,16 @@ MetricsRegistry::perform_sampling_request_nb()
   catch (...) {
     log_error("GPU metrics sampling failed due to an unknown error");
   }
+}
+
+void
+MetricsRegistry::perform_sampling_request_nb()
+{
+  sample_cpu_usage();
+  sample_inference_throughput();
+  sample_process_resident_memory();
+  sample_process_open_fds();
+  sample_gpu_stats();
 }
 
 void

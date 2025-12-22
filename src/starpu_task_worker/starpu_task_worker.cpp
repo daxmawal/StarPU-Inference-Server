@@ -2700,15 +2700,16 @@ resolve_batch_size_for_job(
 auto
 cuda_copy_batch_create(bool enable) -> void*
 {
-  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  return new CudaCopyBatch(enable);
+  auto batch = std::make_unique<CudaCopyBatch>(enable);
+  return batch.release();
 }
 
 void
 cuda_copy_batch_destroy(void* batch)
 {
-  // NOLINTNEXTLINE(cppcoreguidelines-owning-memory)
-  delete static_cast<CudaCopyBatch*>(batch);
+  std::unique_ptr<CudaCopyBatch> batch_owner(
+      static_cast<CudaCopyBatch*>(batch));
+  static_cast<void>(batch_owner);
 }
 
 auto
