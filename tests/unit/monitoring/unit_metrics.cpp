@@ -390,6 +390,73 @@ TEST(Metrics, SetQueueFillRatioUpdatesGauge)
   EXPECT_DOUBLE_EQ(*ratio, 0.3);
 }
 
+TEST(Metrics, WorkersMetricsViaGlobalWrappers)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  const int worker_id = 5;
+  const int device_id = 1;
+  const std::string worker_type = "cpu";
+
+  observe_compute_latency_by_worker(worker_id, device_id, worker_type, 8.5);
+  observe_task_runtime_by_worker(worker_id, device_id, worker_type, 3.75);
+  set_worker_inflight_gauge(worker_id, device_id, worker_type, 4);
+  observe_io_copy_latency("d2h", worker_id, device_id, worker_type, 2.25);
+  increment_transfer_bytes("d2h", worker_id, device_id, worker_type, 128);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+
+  const auto* compute_metric = FindHistogramMetric(
+      families, "inference_compute_latency_ms_by_worker",
+      {{"worker_id", std::to_string(worker_id)},
+       {"device", std::to_string(device_id)},
+       {"worker_type", worker_type}});
+  ASSERT_NE(compute_metric, nullptr);
+  EXPECT_EQ(compute_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(compute_metric->histogram.sample_sum, 8.5);
+
+  const auto* runtime_metric = FindHistogramMetric(
+      families, "starpu_task_runtime_ms_by_worker",
+      {{"worker_id", std::to_string(worker_id)},
+       {"device", std::to_string(device_id)},
+       {"worker_type", worker_type}});
+  ASSERT_NE(runtime_metric, nullptr);
+  EXPECT_EQ(runtime_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(runtime_metric->histogram.sample_sum, 3.75);
+
+  const auto inflight_value = FindGaugeValue(
+      families, "starpu_worker_inflight_tasks",
+      {{"worker_id", std::to_string(worker_id)},
+       {"device", std::to_string(device_id)},
+       {"worker_type", worker_type}});
+  ASSERT_TRUE(inflight_value.has_value());
+  EXPECT_DOUBLE_EQ(*inflight_value, 4.0);
+
+  const auto* io_metric = FindHistogramMetric(
+      families, "inference_io_copy_ms",
+      {{"direction", "d2h"},
+       {"worker_id", std::to_string(worker_id)},
+       {"device", std::to_string(device_id)},
+       {"worker_type", worker_type}});
+  ASSERT_NE(io_metric, nullptr);
+  EXPECT_EQ(io_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(io_metric->histogram.sample_sum, 2.25);
+
+  const auto transfer_value = FindCounterValue(
+      families, "inference_transfer_bytes_total",
+      {{"direction", "d2h"},
+       {"worker_id", std::to_string(worker_id)},
+       {"device", std::to_string(device_id)},
+       {"worker_type", worker_type}});
+  ASSERT_TRUE(transfer_value.has_value());
+  EXPECT_DOUBLE_EQ(*transfer_value, 128.0);
+}
+
 TEST(MetricsRegistry, RunSamplingSkipsCpuUsageWhenProviderMissing)
 {
   MetricsRegistry metrics(
