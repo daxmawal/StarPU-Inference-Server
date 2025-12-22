@@ -390,6 +390,93 @@ TEST(Metrics, SetQueueFillRatioUpdatesGauge)
   EXPECT_DOUBLE_EQ(*ratio, 0.3);
 }
 
+TEST(Metrics, ObserveBatchAndHealthMetrics)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  set_server_health(true);
+  observe_batch_size(12);
+  observe_logical_batch_size(24);
+  observe_batch_efficiency(0.85);
+  observe_starpu_task_runtime(5.5);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+
+  const auto health = FindGaugeValue(families, "server_health_state", {});
+  ASSERT_TRUE(health.has_value());
+  EXPECT_DOUBLE_EQ(*health, 1.0);
+
+  const auto* batch_metric =
+      FindHistogramMetric(families, "inference_batch_size", {});
+  ASSERT_NE(batch_metric, nullptr);
+  EXPECT_EQ(batch_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(batch_metric->histogram.sample_sum, 12.0);
+
+  const auto* logical_metric =
+      FindHistogramMetric(families, "inference_logical_batch_size", {});
+  ASSERT_NE(logical_metric, nullptr);
+  EXPECT_EQ(logical_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(logical_metric->histogram.sample_sum, 24.0);
+
+  const auto* efficiency_metric =
+      FindHistogramMetric(families, "inference_batch_efficiency_ratio", {});
+  ASSERT_NE(efficiency_metric, nullptr);
+  EXPECT_EQ(efficiency_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(efficiency_metric->histogram.sample_sum, 0.85);
+
+  const auto* runtime_metric =
+      FindHistogramMetric(families, "starpu_task_runtime_ms", {});
+  ASSERT_NE(runtime_metric, nullptr);
+  EXPECT_EQ(runtime_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(runtime_metric->histogram.sample_sum, 5.5);
+}
+
+TEST(Metrics, SetQueueFillAndStarpuGauges)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  // trigger zero-capacity guard; gauge should remain at default (0)
+  set_queue_fill_ratio(4, 0);
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+  const auto ratio_zero =
+      FindGaugeValue(families, "inference_queue_fill_ratio", {});
+  ASSERT_TRUE(ratio_zero.has_value());
+  EXPECT_DOUBLE_EQ(*ratio_zero, 0.0);
+
+  set_queue_fill_ratio(2, 4);
+  const auto ratio_half = FindGaugeValue(
+      metrics->registry()->Collect(), "inference_queue_fill_ratio", {});
+  ASSERT_TRUE(ratio_half.has_value());
+  EXPECT_DOUBLE_EQ(*ratio_half, 0.5);
+
+  set_starpu_worker_busy_ratio(0.4);
+  const auto busy_value = FindGaugeValue(
+      metrics->registry()->Collect(), "starpu_worker_busy_ratio", {});
+  ASSERT_TRUE(busy_value.has_value());
+  EXPECT_DOUBLE_EQ(*busy_value, 0.4);
+
+  set_starpu_prepared_queue_depth(7);
+  const auto pending_depth = FindGaugeValue(
+      metrics->registry()->Collect(), "starpu_prepared_queue_depth", {});
+  ASSERT_TRUE(pending_depth.has_value());
+  EXPECT_DOUBLE_EQ(*pending_depth, 7.0);
+
+  set_batch_pending_jobs(13);
+  const auto pending_gauge = metrics->batch_pending_jobs_gauge();
+  ASSERT_NE(pending_gauge, nullptr);
+  EXPECT_DOUBLE_EQ(pending_gauge->Value(), 13.0);
+}
+
 TEST(Metrics, WorkersMetricsViaGlobalWrappers)
 {
   ASSERT_TRUE(init_metrics(0));
