@@ -101,6 +101,10 @@ class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
   std::unique_ptr<prometheus::Exposer> exposer_;
 };
 
+#if defined(STARPU_TESTING)
+static std::atomic<bool> g_force_metrics_init_failure{false};
+#endif
+
 auto make_default_cpu_usage_provider() -> MetricsRegistry::CpuUsageProvider;
 auto make_default_cpu_usage_provider(
     std::function<bool(monitoring::detail::CpuTotals&)> reader)
@@ -245,8 +249,8 @@ read_process_rss_bytes() -> std::optional<double>
   return static_cast<double>(resident) * static_cast<double>(page_size);
 }
 
-auto
-read_process_open_fds() -> std::optional<double>
+static auto
+read_process_open_fds_impl() -> std::optional<double>
 {
 #if defined(STARPU_TESTING)
   if (process_open_fds_reader_override) {
@@ -254,13 +258,27 @@ read_process_open_fds() -> std::optional<double>
   }
 #endif
   static const std::filesystem::path kProcFd{"/proc/self/fd"};
+#if defined(STARPU_TESTING)
+  const std::filesystem::path& path =
+      monitoring::detail::process_fd_path_for_test();
+#else
+  const std::filesystem::path& path = kProcFd;
+#endif
   try {
-    if (!std::filesystem::exists(kProcFd)) {
+    if (!std::filesystem::exists(path)) {
       return std::nullopt;
     }
+#if defined(STARPU_TESTING)
+    const auto factory =
+        monitoring::detail::process_fd_directory_iterator_for_test();
+    std::filesystem::directory_iterator iter =
+        factory ? factory(path) : std::filesystem::directory_iterator(path);
+#else
+    std::filesystem::directory_iterator iter(path);
+#endif
+    const std::filesystem::directory_iterator end{};
     std::size_t count = 0;
-    for (auto const& entry : std::filesystem::directory_iterator(kProcFd)) {
-      (void)entry;
+    for (; iter != end; ++iter) {
       ++count;
     }
     return static_cast<double>(count);
@@ -464,6 +482,71 @@ set_process_rss_bytes_reader_override(
 {
   process_rss_bytes_reader_override = std::move(reader);
 }
+
+static std::optional<std::filesystem::path> g_process_fd_path_override;
+static ProcessFdDirectoryIteratorFactory
+    g_process_fd_directory_iterator_factory;
+
+void
+set_process_fd_path_for_test(std::filesystem::path path)
+{
+  g_process_fd_path_override = std::move(path);
+}
+
+void
+reset_process_fd_path_for_test()
+{
+  g_process_fd_path_override.reset();
+}
+
+auto
+process_fd_path_for_test() -> const std::filesystem::path&
+{
+  static const std::filesystem::path kDefaultProcFd{"/proc/self/fd"};
+  if (g_process_fd_path_override.has_value()) {
+    return *g_process_fd_path_override;
+  }
+  return kDefaultProcFd;
+}
+
+void
+set_process_fd_directory_iterator_for_test(
+    ProcessFdDirectoryIteratorFactory factory)
+{
+  g_process_fd_directory_iterator_factory = std::move(factory);
+}
+
+void
+reset_process_fd_directory_iterator_for_test()
+{
+  g_process_fd_directory_iterator_factory = nullptr;
+}
+
+auto
+process_fd_directory_iterator_for_test() -> ProcessFdDirectoryIteratorFactory
+{
+  return g_process_fd_directory_iterator_factory;
+}
+#endif
+
+auto
+read_process_open_fds() -> std::optional<double>
+{
+  return read_process_open_fds_impl();
+}
+
+#if defined(STARPU_TESTING)
+void
+set_metrics_init_failure_for_test(bool fail)
+{
+  g_force_metrics_init_failure.store(fail, std::memory_order_release);
+}
+
+auto
+metrics_init_failure_for_test() -> bool
+{
+  return g_force_metrics_init_failure.load(std::memory_order_acquire);
+}
 #endif
 
 }  // namespace monitoring::detail
@@ -498,6 +581,11 @@ MetricsRegistry::MetricsRegistry(
       gpu_stats_provider_(std::move(gpu_provider)),
       cpu_usage_provider_(std::move(cpu_provider))
 {
+#if defined(STARPU_TESTING)
+  if (monitoring::detail::metrics_init_failure_for_test()) {
+    throw std::runtime_error("forced metrics initialization failure");
+  }
+#endif
   if (!gpu_stats_provider_) {
     gpu_stats_provider_ = query_gpu_stats_nvml;
   }
@@ -1881,7 +1969,7 @@ MetricsRegistry::sample_process_open_fds()
     return;
   }
 
-  if (auto fds = read_process_open_fds()) {
+  if (auto fds = monitoring::detail::read_process_open_fds()) {
     process_open_fds_->Set(*fds);
   } else {
     process_open_fds_->Set(0.0);

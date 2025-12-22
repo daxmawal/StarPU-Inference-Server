@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -220,6 +221,24 @@ TEST(Metrics, RepeatedInitDoesNotAllocateRegistry)
   EXPECT_EQ(first, second);
 
   shutdown_metrics();
+  EXPECT_EQ(get_metrics(), nullptr);
+}
+
+TEST(Metrics, InitFailsWhenMetricsRegistryThrows)
+{
+  struct FailureGuard {
+    FailureGuard()
+    {
+      monitoring::detail::set_metrics_init_failure_for_test(true);
+    }
+
+    ~FailureGuard()
+    {
+      monitoring::detail::set_metrics_init_failure_for_test(false);
+    }
+  } guard;
+
+  EXPECT_FALSE(init_metrics(0));
   EXPECT_EQ(get_metrics(), nullptr);
 }
 
@@ -477,6 +496,30 @@ TEST(Metrics, SetQueueFillAndStarpuGauges)
   EXPECT_DOUBLE_EQ(pending_gauge->Value(), 13.0);
 }
 
+TEST(Metrics, InitializeThrowsWhenExposerRegisterFails)
+{
+  class ThrowingHandle : public MetricsRegistry::ExposerHandle {
+   public:
+    void RegisterCollectable(
+        const std::shared_ptr<prometheus::Collectable>&) override
+    {
+      throw std::runtime_error("register failure");
+    }
+
+    void RemoveCollectable(
+        const std::shared_ptr<prometheus::Collectable>&) override
+    {
+    }
+  };
+
+  EXPECT_THROW(
+      MetricsRegistry registry(
+          0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+          [] { return std::optional<double>{}; }, false,
+          std::make_unique<ThrowingHandle>()),
+      std::runtime_error);
+}
+
 TEST(Metrics, WorkersMetricsViaGlobalWrappers)
 {
   ASSERT_TRUE(init_metrics(0));
@@ -542,6 +585,110 @@ TEST(Metrics, WorkersMetricsViaGlobalWrappers)
        {"worker_type", worker_type}});
   ASSERT_TRUE(transfer_value.has_value());
   EXPECT_DOUBLE_EQ(*transfer_value, 128.0);
+}
+
+TEST(MetricsRegistry, ClearStarpuTaskRuntimeFamilySkipsObservation)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+  MetricsRegistry::TestAccessor::ClearStarpuTaskRuntimeByWorkerFamily(metrics);
+
+  metrics.observe_task_runtime_by_worker(2, 1, "cpu", 2.5);
+
+  const auto* runtime_metric = FindHistogramMetric(
+      metrics.registry()->Collect(), "starpu_task_runtime_ms_by_worker",
+      {{"worker_id", "2"}, {"device", "1"}, {"worker_type", "cpu"}});
+  EXPECT_EQ(runtime_metric, nullptr);
+}
+
+TEST(MetricsRegistry, ClearInferenceComputeLatencyFamilySkipsObservation)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+  MetricsRegistry::TestAccessor::ClearInferenceComputeLatencyByWorkerFamily(
+      metrics);
+
+  metrics.observe_compute_latency_by_worker(2, 1, "cpu", 5.1);
+
+  const auto* compute_metric = FindHistogramMetric(
+      metrics.registry()->Collect(), "inference_compute_latency_ms_by_worker",
+      {{"worker_id", "2"}, {"device", "1"}, {"worker_type", "cpu"}});
+  EXPECT_EQ(compute_metric, nullptr);
+}
+
+TEST(MetricsRegistry, ClearIoCopyLatencyFamilySkipsObservation)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+  MetricsRegistry::TestAccessor::ClearIoCopyLatencyFamily(metrics);
+
+  metrics.observe_io_copy_latency("h2d", 2, 1, "cpu", 3.0);
+
+  const auto* io_metric = FindHistogramMetric(
+      metrics.registry()->Collect(), "inference_io_copy_ms",
+      {{"direction", "h2d"},
+       {"worker_id", "2"},
+       {"device", "1"},
+       {"worker_type", "cpu"}});
+  EXPECT_EQ(io_metric, nullptr);
+}
+
+TEST(MetricsRegistry, ClearTransferBytesFamilySkipsIncrement)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+  MetricsRegistry::TestAccessor::ClearTransferBytesFamily(metrics);
+
+  metrics.increment_transfer_bytes("h2d", 2, 1, "cpu", 256);
+
+  const auto value = FindCounterValue(
+      metrics.registry()->Collect(), "inference_transfer_bytes_total",
+      {{"direction", "h2d"},
+       {"worker_id", "2"},
+       {"device", "1"},
+       {"worker_type", "cpu"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsDetail, ReadProcessOpenFdsHandlesMissingDirectory)
+{
+  struct PathGuard {
+    PathGuard()
+    {
+      monitoring::detail::set_process_fd_path_for_test("/does/not/exist");
+    }
+
+    ~PathGuard() { monitoring::detail::reset_process_fd_path_for_test(); }
+  } guard;
+
+  const auto value = monitoring::detail::read_process_open_fds();
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsDetail, ReadProcessOpenFdsCatchesDirectoryIteratorExceptions)
+{
+  struct FactoryGuard {
+    FactoryGuard()
+    {
+      monitoring::detail::set_process_fd_directory_iterator_for_test(
+          [](const std::filesystem::path&)
+              -> std::filesystem::directory_iterator {
+            throw std::runtime_error("iter failure");
+          });
+    }
+
+    ~FactoryGuard()
+    {
+      monitoring::detail::reset_process_fd_directory_iterator_for_test();
+    }
+  } guard;
+
+  const auto value = monitoring::detail::read_process_open_fds();
+  EXPECT_FALSE(value.has_value());
 }
 
 TEST(MetricsRegistry, RunSamplingSkipsCpuUsageWhenProviderMissing)

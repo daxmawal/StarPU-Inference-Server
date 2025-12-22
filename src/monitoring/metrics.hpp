@@ -371,11 +371,25 @@ auto read_total_cpu_times(const std::filesystem::path& path, CpuTotals& out)
     -> bool;
 auto make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
     -> starpu_server::MetricsRegistry::CpuUsageProvider;
+auto read_process_open_fds() -> std::optional<double>;
 #if defined(STARPU_TESTING)
 void set_process_open_fds_reader_override(
     std::function<std::optional<double>()> reader);
 void set_process_rss_bytes_reader_override(
     std::function<std::optional<double>()> reader);
+void set_metrics_init_failure_for_test(bool fail);
+auto metrics_init_failure_for_test() -> bool;
+void set_process_fd_path_for_test(std::filesystem::path path);
+void reset_process_fd_path_for_test();
+auto process_fd_path_for_test() -> const std::filesystem::path&;
+using ProcessFdDirectoryIteratorFactory =
+    std::function<std::filesystem::directory_iterator(
+        const std::filesystem::path&)>;
+void set_process_fd_directory_iterator_for_test(
+    ProcessFdDirectoryIteratorFactory factory);
+void reset_process_fd_directory_iterator_for_test();
+auto process_fd_directory_iterator_for_test()
+    -> ProcessFdDirectoryIteratorFactory;
 #endif
 
 }  // namespace starpu_server::monitoring::detail
