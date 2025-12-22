@@ -199,17 +199,18 @@ class MetricsRegistry {
 
 #if defined(STARPU_TESTING)
   struct TestAccessor {
-    static void ClearCpuUsageProvider(MetricsRegistry&);
-    static void ClearStarpuWorkerInflightFamily(MetricsRegistry&);
-    static void ClearStarpuTaskRuntimeByWorkerFamily(MetricsRegistry&);
-    static void ClearInferenceComputeLatencyByWorkerFamily(MetricsRegistry&);
-    static void ClearIoCopyLatencyFamily(MetricsRegistry&);
-    static void ClearTransferBytesFamily(MetricsRegistry&);
-    static void ClearModelsLoadedFamily(MetricsRegistry&);
-    static void ClearModelLoadFailuresFamily(MetricsRegistry&);
-    static void ClearInferenceFailuresFamily(MetricsRegistry&);
-    static void ClearInferenceCompletedFamily(MetricsRegistry&);
-    static void ClearRequestsByStatusFamily(MetricsRegistry&);
+    static void ClearCpuUsageProvider(MetricsRegistry& metrics);
+    static void ClearStarpuWorkerInflightFamily(MetricsRegistry& metrics);
+    static void ClearStarpuTaskRuntimeByWorkerFamily(MetricsRegistry& metrics);
+    static void ClearInferenceComputeLatencyByWorkerFamily(
+        MetricsRegistry& metrics);
+    static void ClearIoCopyLatencyFamily(MetricsRegistry& metrics);
+    static void ClearTransferBytesFamily(MetricsRegistry& metrics);
+    static void ClearModelsLoadedFamily(MetricsRegistry& metrics);
+    static void ClearModelLoadFailuresFamily(MetricsRegistry& metrics);
+    static void ClearInferenceFailuresFamily(MetricsRegistry& metrics);
+    static void ClearInferenceCompletedFamily(MetricsRegistry& metrics);
+    static void ClearRequestsByStatusFamily(MetricsRegistry& metrics);
   };
 #endif
 

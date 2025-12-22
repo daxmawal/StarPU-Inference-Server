@@ -36,12 +36,12 @@ namespace starpu_server {
 class TestingExposerHandle : public MetricsRegistry::ExposerHandle {
  public:
   void RegisterCollectable(
-      const std::shared_ptr<prometheus::Collectable>&) override
+      const std::shared_ptr<prometheus::Collectable>& collectable) override
   {
   }
 
   void RemoveCollectable(
-      const std::shared_ptr<prometheus::Collectable>&) override
+      const std::shared_ptr<prometheus::Collectable>& collectable) override
   {
   }
 };
@@ -100,10 +100,6 @@ class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
  private:
   std::unique_ptr<prometheus::Exposer> exposer_;
 };
-
-#if defined(STARPU_TESTING)
-static std::atomic<bool> g_force_metrics_init_failure{false};
-#endif
 
 auto make_default_cpu_usage_provider() -> MetricsRegistry::CpuUsageProvider;
 auto make_default_cpu_usage_provider(
@@ -193,16 +189,28 @@ read_total_cpu_times(CpuTotals& out) -> bool
 
 #if defined(STARPU_TESTING)
 using ProcessSampleReader = std::function<std::optional<double>()>;
-ProcessSampleReader process_open_fds_reader_override;
-ProcessSampleReader process_rss_bytes_reader_override;
+auto
+process_open_fds_reader_override_storage() -> ProcessSampleReader&
+{
+  static ProcessSampleReader reader;
+  return reader;
+}
+
+auto
+process_rss_bytes_reader_override_storage() -> ProcessSampleReader&
+{
+  static ProcessSampleReader reader;
+  return reader;
+}
 #endif
 
 auto
 read_process_rss_bytes() -> std::optional<double>
 {
 #if defined(STARPU_TESTING)
-  if (process_rss_bytes_reader_override) {
-    return process_rss_bytes_reader_override();
+  auto& override_reader = process_rss_bytes_reader_override_storage();
+  if (override_reader) {
+    return override_reader();
   }
   const std::filesystem::path& path =
       monitoring::detail::process_rss_bytes_path_for_test();
@@ -233,12 +241,13 @@ read_process_rss_bytes() -> std::optional<double>
   return static_cast<double>(resident) * static_cast<double>(page_size);
 }
 
-static auto
+auto
 read_process_open_fds_impl() -> std::optional<double>
 {
 #if defined(STARPU_TESTING)
-  if (process_open_fds_reader_override) {
-    return process_open_fds_reader_override();
+  auto& override_reader = process_open_fds_reader_override_storage();
+  if (override_reader) {
+    return override_reader();
   }
 #endif
   static const std::filesystem::path kProcFd{"/proc/self/fd"};
@@ -493,38 +502,50 @@ void
 set_process_open_fds_reader_override(
     std::function<std::optional<double>()> reader)
 {
-  process_open_fds_reader_override = std::move(reader);
+  process_open_fds_reader_override_storage() = std::move(reader);
 }
 
 void
 set_process_rss_bytes_reader_override(
     std::function<std::optional<double>()> reader)
 {
-  process_rss_bytes_reader_override = std::move(reader);
+  process_rss_bytes_reader_override_storage() = std::move(reader);
 }
 
-static std::optional<std::filesystem::path> g_process_fd_path_override;
-static ProcessFdDirectoryIteratorFactory
-    g_process_fd_directory_iterator_factory;
+auto
+process_fd_path_override_storage() -> std::optional<std::filesystem::path>&
+{
+  static std::optional<std::filesystem::path> path;
+  return path;
+}
+
+auto
+process_fd_directory_iterator_factory_storage()
+    -> ProcessFdDirectoryIteratorFactory&
+{
+  static ProcessFdDirectoryIteratorFactory factory;
+  return factory;
+}
 
 void
 set_process_fd_path_for_test(std::filesystem::path path)
 {
-  g_process_fd_path_override = std::move(path);
+  process_fd_path_override_storage() = std::move(path);
 }
 
 void
 reset_process_fd_path_for_test()
 {
-  g_process_fd_path_override.reset();
+  process_fd_path_override_storage().reset();
 }
 
 auto
 process_fd_path_for_test() -> const std::filesystem::path&
 {
   static const std::filesystem::path kDefaultProcFd{"/proc/self/fd"};
-  if (g_process_fd_path_override.has_value()) {
-    return *g_process_fd_path_override;
+  auto& override_path = process_fd_path_override_storage();
+  if (override_path.has_value()) {
+    return *override_path;
   }
   return kDefaultProcFd;
 }
@@ -533,41 +554,54 @@ void
 set_process_fd_directory_iterator_for_test(
     ProcessFdDirectoryIteratorFactory factory)
 {
-  g_process_fd_directory_iterator_factory = std::move(factory);
+  process_fd_directory_iterator_factory_storage() = std::move(factory);
 }
 
 void
 reset_process_fd_directory_iterator_for_test()
 {
-  g_process_fd_directory_iterator_factory = nullptr;
+  process_fd_directory_iterator_factory_storage() = nullptr;
 }
 
 auto
 process_fd_directory_iterator_for_test() -> ProcessFdDirectoryIteratorFactory
 {
-  return g_process_fd_directory_iterator_factory;
+  return process_fd_directory_iterator_factory_storage();
 }
 
-static std::optional<std::filesystem::path> g_process_rss_bytes_path_override;
-static ProcessPageSizeProvider g_process_page_size_provider;
+auto
+process_rss_bytes_path_override_storage()
+    -> std::optional<std::filesystem::path>&
+{
+  static std::optional<std::filesystem::path> path;
+  return path;
+}
+
+auto
+process_page_size_provider_storage() -> ProcessPageSizeProvider&
+{
+  static ProcessPageSizeProvider provider;
+  return provider;
+}
 
 void
 set_process_rss_bytes_path_for_test(std::filesystem::path path)
 {
-  g_process_rss_bytes_path_override = std::move(path);
+  process_rss_bytes_path_override_storage() = std::move(path);
 }
 
 void
 reset_process_rss_bytes_path_for_test()
 {
-  g_process_rss_bytes_path_override.reset();
+  process_rss_bytes_path_override_storage().reset();
 }
 
 auto
 process_rss_bytes_path_for_test() -> const std::filesystem::path&
 {
-  if (g_process_rss_bytes_path_override.has_value()) {
-    return *g_process_rss_bytes_path_override;
+  auto& override_path = process_rss_bytes_path_override_storage();
+  if (override_path.has_value()) {
+    return *override_path;
   }
   return kProcStatm;
 }
@@ -575,19 +609,19 @@ process_rss_bytes_path_for_test() -> const std::filesystem::path&
 void
 set_process_page_size_provider_for_test(ProcessPageSizeProvider provider)
 {
-  g_process_page_size_provider = std::move(provider);
+  process_page_size_provider_storage() = std::move(provider);
 }
 
 void
 reset_process_page_size_provider_for_test()
 {
-  g_process_page_size_provider = nullptr;
+  process_page_size_provider_storage() = nullptr;
 }
 
 auto
 process_page_size_provider_for_test() -> const ProcessPageSizeProvider&
 {
-  return g_process_page_size_provider;
+  return process_page_size_provider_storage();
 }
 #endif
 
@@ -604,16 +638,23 @@ read_process_rss_bytes() -> std::optional<double>
 }
 
 #if defined(STARPU_TESTING)
+auto
+metrics_init_failure_flag() -> std::atomic<bool>&
+{
+  static std::atomic<bool> flag{false};
+  return flag;
+}
+
 void
 set_metrics_init_failure_for_test(bool fail)
 {
-  g_force_metrics_init_failure.store(fail, std::memory_order_release);
+  metrics_init_failure_flag().store(fail, std::memory_order_release);
 }
 
 auto
 metrics_init_failure_for_test() -> bool
 {
-  return g_force_metrics_init_failure.load(std::memory_order_acquire);
+  return metrics_init_failure_flag().load(std::memory_order_acquire);
 }
 #endif
 
