@@ -362,6 +362,52 @@ TEST(MetricsRegistry, RecordsWorkerAndTransferMetrics)
   EXPECT_DOUBLE_EQ(*completed_value, 5.0);
 }
 
+TEST(Metrics, IncrementRequestStatusUsesExpectedLabels)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  const std::string model_name = "status-model";
+  struct StatusCase {
+    int code;
+    std::string_view label;
+  };
+  const std::vector<StatusCase> cases{
+      {3, "INVALID_ARGUMENT"},
+      {4, "DEADLINE_EXCEEDED"},
+      {5, "NOT_FOUND"},
+      {7, "PERMISSION_DENIED"},
+      {8, "RESOURCE_EXHAUSTED"},
+      {9, "FAILED_PRECONDITION"},
+      {10, "ABORTED"},
+      {11, "OUT_OF_RANGE"},
+      {12, "UNIMPLEMENTED"},
+      {13, "INTERNAL"},
+      {14, "UNAVAILABLE"},
+      {16, "UNAUTHENTICATED"},
+      {42, "42"},
+  };
+
+  for (const auto& entry : cases) {
+    increment_request_status(entry.code, model_name);
+  }
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+
+  for (const auto& entry : cases) {
+    SCOPED_TRACE(std::to_string(entry.code));
+    const auto value = FindCounterValue(
+        families, "requests_by_status_total",
+        {{"code", entry.label}, {"model", model_name}});
+    ASSERT_TRUE(value.has_value());
+    EXPECT_DOUBLE_EQ(*value, 1.0);
+  }
+}
+
 TEST(Metrics, SetQueueFillRatioUpdatesGauge)
 {
   ASSERT_TRUE(init_metrics(0));
