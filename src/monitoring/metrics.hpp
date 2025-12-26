@@ -87,11 +87,13 @@ class MetricsRegistry {
   MetricsRegistry(MetricsRegistry&&) = delete;
   auto operator=(MetricsRegistry&&) -> MetricsRegistry& = delete;
 
-  void run_sampling_request_nb();
   void request_stop();
 
+#if defined(STARPU_TESTING)
+  void run_sampling_request_nb();
   auto has_gpu_stats_provider() const -> bool;
   auto has_cpu_usage_provider() const -> bool;
+#endif
 
   [[nodiscard]] auto registry() const -> std::shared_ptr<prometheus::Registry>;
   [[nodiscard]] auto requests_total() const -> prometheus::Counter*;
@@ -200,6 +202,25 @@ class MetricsRegistry {
 #if defined(STARPU_TESTING)
   struct TestAccessor {
     static void ClearCpuUsageProvider(MetricsRegistry& metrics);
+    static void ClearProcessOpenFdsGauge(MetricsRegistry& metrics);
+    static void ClearProcessResidentMemoryGauge(MetricsRegistry& metrics);
+    static void ClearInferenceThroughputGauge(MetricsRegistry& metrics);
+    static void ClearGpuStatsProvider(MetricsRegistry& metrics);
+    static auto ProcessOpenFdsGauge(MetricsRegistry& metrics)
+        -> prometheus::Gauge*;
+    static auto ProcessResidentMemoryGauge(MetricsRegistry& metrics)
+        -> prometheus::Gauge*;
+    static auto InferenceThroughputGauge(MetricsRegistry& metrics)
+        -> prometheus::Gauge*;
+    static auto GpuUtilizationGaugeCount(const MetricsRegistry& metrics)
+        -> std::size_t;
+    static auto GpuMemoryUsedGaugeCount(const MetricsRegistry& metrics)
+        -> std::size_t;
+    static auto GpuMemoryTotalGaugeCount(const MetricsRegistry& metrics)
+        -> std::size_t;
+    static void SampleProcessOpenFds(MetricsRegistry& metrics);
+    static void SampleProcessResidentMemory(MetricsRegistry& metrics);
+    static void SampleInferenceThroughput(MetricsRegistry& metrics);
     static void ClearStarpuWorkerInflightFamily(MetricsRegistry& metrics);
     static void ClearStarpuTaskRuntimeByWorkerFamily(MetricsRegistry& metrics);
     static void ClearInferenceComputeLatencyByWorkerFamily(
@@ -313,7 +334,9 @@ void set_inflight_tasks(std::size_t size);
 void set_starpu_worker_busy_ratio(double ratio);
 void set_max_inflight_tasks(std::size_t max_tasks);
 void set_queue_capacity(std::size_t capacity);
+#if defined(STARPU_TESTING)
 void set_queue_fill_ratio(std::size_t size, std::size_t capacity);
+#endif
 void set_server_health(bool ready);
 void set_starpu_prepared_queue_depth(std::size_t depth);
 void set_batch_pending_jobs(std::size_t pending);

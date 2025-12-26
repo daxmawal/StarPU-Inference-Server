@@ -1197,6 +1197,7 @@ set_queue_capacity(std::size_t capacity)
   }
 }
 
+#if defined(STARPU_TESTING)
 void
 set_queue_fill_ratio(std::size_t size, std::size_t capacity)
 {
@@ -1208,6 +1209,7 @@ set_queue_fill_ratio(std::size_t size, std::size_t capacity)
   metrics_ptr->queue_fill_ratio_gauge()->Set(
       static_cast<double>(size) / static_cast<double>(capacity));
 }
+#endif
 
 void
 set_starpu_prepared_queue_depth(std::size_t depth)
@@ -1433,6 +1435,7 @@ MetricsRegistry::request_stop()
   }
 }
 
+#if defined(STARPU_TESTING)
 auto
 MetricsRegistry::has_gpu_stats_provider() const -> bool
 {
@@ -1444,6 +1447,7 @@ MetricsRegistry::has_cpu_usage_provider() const -> bool
 {
   return static_cast<bool>(cpu_usage_provider_);
 }
+#endif
 
 auto
 MetricsRegistry::registry() const -> std::shared_ptr<prometheus::Registry>
@@ -2137,12 +2141,14 @@ MetricsRegistry::queue_capacity_value() const -> std::size_t
   return queue_capacity_.load(std::memory_order_acquire);
 }
 
+#if defined(STARPU_TESTING)
 void
 MetricsRegistry::run_sampling_request_nb()
 {
   std::scoped_lock<std::mutex> lock(sampling_mutex_);
   perform_sampling_request_nb();
 }
+#endif
 
 void
 MetricsRegistry::sample_cpu_usage()
@@ -2287,6 +2293,97 @@ starpu_server::MetricsRegistry::TestAccessor::ClearCpuUsageProvider(
     starpu_server::MetricsRegistry& metrics)
 {
   metrics.cpu_usage_provider_ = {};
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearProcessOpenFdsGauge(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.process_open_fds_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearProcessResidentMemoryGauge(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.process_resident_memory_bytes_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearInferenceThroughputGauge(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.inference_throughput_gauge_ = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearGpuStatsProvider(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.gpu_stats_provider_ = {};
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::ProcessOpenFdsGauge(
+    starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
+{
+  return metrics.process_open_fds_;
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::ProcessResidentMemoryGauge(
+    starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
+{
+  return metrics.process_resident_memory_bytes_;
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::InferenceThroughputGauge(
+    starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
+{
+  return metrics.inference_throughput_gauge_;
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::GpuUtilizationGaugeCount(
+    const starpu_server::MetricsRegistry& metrics) -> std::size_t
+{
+  return metrics.gpu_utilization_gauges_.size();
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::GpuMemoryUsedGaugeCount(
+    const starpu_server::MetricsRegistry& metrics) -> std::size_t
+{
+  return metrics.gpu_memory_used_gauges_.size();
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::GpuMemoryTotalGaugeCount(
+    const starpu_server::MetricsRegistry& metrics) -> std::size_t
+{
+  return metrics.gpu_memory_total_gauges_.size();
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::SampleProcessOpenFds(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.sample_process_open_fds();
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::SampleProcessResidentMemory(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.sample_process_resident_memory();
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::SampleInferenceThroughput(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.sample_inference_throughput();
 }
 
 void

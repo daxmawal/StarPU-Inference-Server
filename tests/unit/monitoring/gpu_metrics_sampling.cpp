@@ -14,11 +14,7 @@
 #include <utility>
 #include <vector>
 
-#define private public
-#define protected public
 #include "monitoring/metrics.hpp"
-#undef protected
-#undef private
 
 using namespace starpu_server;
 
@@ -201,13 +197,15 @@ TEST(MetricsSampling, SkipsProcessSamplingWhenGaugesNull)
       0, std::move(gpu_provider), std::move(cpu_provider),
       /*start_sampler_thread=*/false);
 
-  metrics.process_open_fds_ = nullptr;
-  metrics.process_resident_memory_bytes_ = nullptr;
-  metrics.inference_throughput_gauge_ = nullptr;
+  MetricsRegistry::TestAccessor::ClearProcessOpenFdsGauge(metrics);
+  MetricsRegistry::TestAccessor::ClearProcessResidentMemoryGauge(metrics);
+  MetricsRegistry::TestAccessor::ClearInferenceThroughputGauge(metrics);
 
-  EXPECT_NO_THROW(metrics.sample_process_open_fds());
-  EXPECT_NO_THROW(metrics.sample_process_resident_memory());
-  EXPECT_NO_THROW(metrics.sample_inference_throughput());
+  EXPECT_NO_THROW(MetricsRegistry::TestAccessor::SampleProcessOpenFds(metrics));
+  EXPECT_NO_THROW(
+      MetricsRegistry::TestAccessor::SampleProcessResidentMemory(metrics));
+  EXPECT_NO_THROW(
+      MetricsRegistry::TestAccessor::SampleInferenceThroughput(metrics));
 
   metrics.request_stop();
 }
@@ -227,17 +225,21 @@ TEST(MetricsSampling, SetsZeroWhenProcessSamplingFails)
       []() { return std::optional<double>{}; },
       []() { return std::optional<double>{}; });
 
-  ASSERT_NE(metrics.process_open_fds_, nullptr);
-  ASSERT_NE(metrics.process_resident_memory_bytes_, nullptr);
+  auto* open_fds_gauge =
+      MetricsRegistry::TestAccessor::ProcessOpenFdsGauge(metrics);
+  auto* rss_gauge =
+      MetricsRegistry::TestAccessor::ProcessResidentMemoryGauge(metrics);
+  ASSERT_NE(open_fds_gauge, nullptr);
+  ASSERT_NE(rss_gauge, nullptr);
 
-  metrics.process_open_fds_->Set(42.0);
-  metrics.process_resident_memory_bytes_->Set(84.0);
+  open_fds_gauge->Set(42.0);
+  rss_gauge->Set(84.0);
 
-  metrics.sample_process_open_fds();
-  metrics.sample_process_resident_memory();
+  MetricsRegistry::TestAccessor::SampleProcessOpenFds(metrics);
+  MetricsRegistry::TestAccessor::SampleProcessResidentMemory(metrics);
 
-  EXPECT_DOUBLE_EQ(metrics.process_open_fds_->Value(), 0.0);
-  EXPECT_DOUBLE_EQ(metrics.process_resident_memory_bytes_->Value(), 0.0);
+  EXPECT_DOUBLE_EQ(open_fds_gauge->Value(), 0.0);
+  EXPECT_DOUBLE_EQ(rss_gauge->Value(), 0.0);
 
   metrics.request_stop();
 }
@@ -264,15 +266,18 @@ TEST(MetricsSampling, SkipsGpuMetricsWhenProviderMissing)
       MetricsRegistry::CpuUsageProvider{},
       /*start_sampler_thread=*/false);
 
-  metrics.gpu_stats_provider_ = {};
+  MetricsRegistry::TestAccessor::ClearGpuStatsProvider(metrics);
 
   ASSERT_FALSE(metrics.has_gpu_stats_provider());
 
   EXPECT_NO_THROW(metrics.run_sampling_request_nb());
 
-  EXPECT_TRUE(metrics.gpu_utilization_gauges_.empty());
-  EXPECT_TRUE(metrics.gpu_memory_used_gauges_.empty());
-  EXPECT_TRUE(metrics.gpu_memory_total_gauges_.empty());
+  EXPECT_EQ(
+      MetricsRegistry::TestAccessor::GpuUtilizationGaugeCount(metrics), 0U);
+  EXPECT_EQ(
+      MetricsRegistry::TestAccessor::GpuMemoryUsedGaugeCount(metrics), 0U);
+  EXPECT_EQ(
+      MetricsRegistry::TestAccessor::GpuMemoryTotalGaugeCount(metrics), 0U);
 
   metrics.request_stop();
 }
