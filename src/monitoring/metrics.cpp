@@ -127,9 +127,12 @@ const std::string kOverflowLabel{"__overflow__"};
 const std::string kOverflowKey{"__overflow_key__"};
 
 constexpr int kStatusOk = 0;
+constexpr int kStatusCancelled = 1;
+constexpr int kStatusUnknown = 2;
 constexpr int kStatusInvalidArgument = 3;
 constexpr int kStatusDeadlineExceeded = 4;
 constexpr int kStatusNotFound = 5;
+constexpr int kStatusAlreadyExists = 6;
 constexpr int kStatusPermissionDenied = 7;
 constexpr int kStatusResourceExhausted = 8;
 constexpr int kStatusFailedPrecondition = 9;
@@ -138,6 +141,7 @@ constexpr int kStatusOutOfRange = 11;
 constexpr int kStatusUnimplemented = 12;
 constexpr int kStatusInternal = 13;
 constexpr int kStatusUnavailable = 14;
+constexpr int kStatusDataLoss = 15;
 constexpr int kStatusUnauthenticated = 16;
 
 auto
@@ -146,12 +150,18 @@ status_code_label(int code) -> std::string
   switch (code) {
     case kStatusOk:
       return "OK";
+    case kStatusCancelled:
+      return "CANCELLED";
+    case kStatusUnknown:
+      return "UNKNOWN";
     case kStatusInvalidArgument:
       return "INVALID_ARGUMENT";
     case kStatusDeadlineExceeded:
       return "DEADLINE_EXCEEDED";
     case kStatusNotFound:
       return "NOT_FOUND";
+    case kStatusAlreadyExists:
+      return "ALREADY_EXISTS";
     case kStatusPermissionDenied:
       return "PERMISSION_DENIED";
     case kStatusResourceExhausted:
@@ -168,6 +178,8 @@ status_code_label(int code) -> std::string
       return "INTERNAL";
     case kStatusUnavailable:
       return "UNAVAILABLE";
+    case kStatusDataLoss:
+      return "DATA_LOSS";
     case kStatusUnauthenticated:
       return "UNAUTHENTICATED";
     default:
@@ -1070,6 +1082,9 @@ MetricsRegistry::initialize(
 MetricsRegistry::~MetricsRegistry() noexcept
 {
   request_stop();
+  if (sampler_thread_.joinable()) {
+    sampler_thread_.join();
+  }
   if (exposer_ && registry_) {
     try {
       exposer_->RemoveCollectable(registry_);
@@ -1192,7 +1207,12 @@ set_queue_capacity(std::size_t capacity)
   if (metrics_ptr->queue_capacity_gauge() != nullptr) {
     metrics_ptr->queue_capacity_gauge()->Set(static_cast<double>(capacity));
   }
-  if (metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
+  if (capacity > 0 && metrics_ptr->queue_fill_ratio_gauge() != nullptr &&
+      metrics_ptr->queue_size_gauge() != nullptr) {
+    const double size = metrics_ptr->queue_size_gauge()->Value();
+    metrics_ptr->queue_fill_ratio_gauge()->Set(
+        size / static_cast<double>(capacity));
+  } else if (metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
     metrics_ptr->queue_fill_ratio_gauge()->Set(0.0);
   }
 }
@@ -1886,15 +1906,16 @@ MetricsRegistry::set_model_loaded_flag(
   auto it = models_loaded_gauges_.find(key);
   if (it == models_loaded_gauges_.end()) {
     const bool overflow = models_loaded_gauges_.size() >= kMaxLabelSeries;
-    if (overflow) {
-      return;
-    }
+    const std::string& map_key = overflow ? kOverflowKey : key;
     auto [inserted_it, inserted] =
-        models_loaded_gauges_.try_emplace(key, nullptr);
+        models_loaded_gauges_.try_emplace(map_key, nullptr);
     it = inserted_it;
     if (inserted) {
-      it->second =
-          &models_loaded_family_->Add({{"model", model}, {"device", device}});
+      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      const std::string& device_label_value =
+          overflow ? kOverflowLabel : device;
+      it->second = &models_loaded_family_->Add(
+          {{"model", model_label_value}, {"device", device_label_value}});
     }
   }
   if (it->second != nullptr) {
@@ -2006,17 +2027,21 @@ MetricsRegistry::set_worker_inflight_gauge(
   auto it = worker_inflight_gauges_.find(key);
   if (it == worker_inflight_gauges_.end()) {
     const bool overflow = worker_inflight_gauges_.size() >= kMaxLabelSeries;
-    if (overflow) {
-      return;
-    }
+    const std::string& map_key = overflow ? kOverflowKey : key;
     auto [inserted_it, inserted] =
-        worker_inflight_gauges_.try_emplace(key, nullptr);
+        worker_inflight_gauges_.try_emplace(map_key, nullptr);
     it = inserted_it;
     if (inserted) {
+      const std::string worker_id_label =
+          overflow ? kOverflowLabel : std::to_string(worker_id);
+      const std::string device_label =
+          overflow ? kOverflowLabel : std::to_string(device_id);
+      const std::string worker_type_label =
+          overflow ? kOverflowLabel : std::string(worker_type);
       it->second = &starpu_worker_inflight_family_->Add(
-          {{"worker_id", std::to_string(worker_id)},
-           {"device", std::to_string(device_id)},
-           {"worker_type", std::string(worker_type)}});
+          {{"worker_id", worker_id_label},
+           {"device", device_label},
+           {"worker_type", worker_type_label}});
     }
   }
   if (it->second != nullptr) {
@@ -2180,8 +2205,6 @@ MetricsRegistry::sample_inference_throughput()
 
   if (auto snap = perf_observer::snapshot()) {
     inference_throughput_gauge_->Set(snap->throughput);
-  } else {
-    inference_throughput_gauge_->Set(0.0);
   }
 }
 
@@ -2194,8 +2217,6 @@ MetricsRegistry::sample_process_resident_memory()
 
   if (auto rss_bytes = read_process_rss_bytes()) {
     process_resident_memory_bytes_->Set(*rss_bytes);
-  } else {
-    process_resident_memory_bytes_->Set(0.0);
   }
 }
 
@@ -2208,8 +2229,6 @@ MetricsRegistry::sample_process_open_fds()
 
   if (auto fds = monitoring::detail::read_process_open_fds()) {
     process_open_fds_->Set(*fds);
-  } else {
-    process_open_fds_->Set(0.0);
   }
 }
 
