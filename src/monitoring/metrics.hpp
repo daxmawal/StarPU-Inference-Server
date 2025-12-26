@@ -302,6 +302,7 @@ class MetricsRegistry {
   std::unordered_map<std::string, prometheus::Gauge*> worker_inflight_gauges_;
   std::unordered_map<std::string, prometheus::Histogram*> io_copy_latency_;
   std::unordered_map<std::string, prometheus::Counter*> transfer_bytes_;
+  std::mutex sampling_mutex_;
   std::mutex status_mutex_;
 };
 

@@ -122,6 +122,10 @@ const prometheus::Histogram::BucketBoundaries kModelLoadDurationMsBuckets{
 const prometheus::Histogram::BucketBoundaries kTaskRuntimeMsBuckets{
     1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000};
 
+constexpr std::size_t kMaxLabelSeries = 10000;
+const std::string kOverflowLabel{"__overflow__"};
+const std::string kOverflowKey{"__overflow_key__"};
+
 constexpr int kStatusOk = 0;
 constexpr int kStatusInvalidArgument = 3;
 constexpr int kStatusDeadlineExceeded = 4;
@@ -1748,12 +1752,23 @@ MetricsRegistry::increment_status_counter(
   const std::string key = std::format("{}|{}", code, model);
 
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = status_counters_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second =
-        &requests_by_status_family_->Add({{"code", code}, {"model", model}});
+  auto it = status_counters_.find(key);
+  if (it == status_counters_.end()) {
+    const bool overflow = status_counters_.size() >= kMaxLabelSeries;
+    const std::string& map_key = overflow ? kOverflowKey : key;
+    auto [inserted_it, inserted] =
+        status_counters_.try_emplace(map_key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      const std::string& code_label_value = overflow ? kOverflowLabel : code;
+      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      it->second = &requests_by_status_family_->Add(
+          {{"code", code_label_value}, {"model", model_label_value}});
+    }
   }
-  it->second->Increment();
+  if (it->second != nullptr) {
+    it->second->Increment();
+  }
 }
 
 void
@@ -1766,9 +1781,19 @@ MetricsRegistry::increment_completed_counter(
   const std::string model{model_label};
   const std::string& key = model;
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = inference_completed_counters_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second = &inference_completed_family_->Add({{"model", model}});
+  auto it = inference_completed_counters_.find(key);
+  if (it == inference_completed_counters_.end()) {
+    const bool overflow =
+        inference_completed_counters_.size() >= kMaxLabelSeries;
+    const std::string& map_key = overflow ? kOverflowKey : key;
+    auto [inserted_it, inserted] =
+        inference_completed_counters_.try_emplace(map_key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      it->second =
+          &inference_completed_family_->Add({{"model", model_label_value}});
+    }
   }
   if (it->second != nullptr) {
     it->second->Increment(static_cast<double>(logical_jobs));
@@ -1790,10 +1815,23 @@ MetricsRegistry::increment_failure_counter(
   const std::string key = std::format("{}|{}|{}", stage, reason, model);
 
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = inference_failure_counters_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second = &inference_failures_family_->Add(
-        {{"stage", stage}, {"reason", reason}, {"model", model}});
+  auto it = inference_failure_counters_.find(key);
+  if (it == inference_failure_counters_.end()) {
+    const bool overflow = inference_failure_counters_.size() >= kMaxLabelSeries;
+    const std::string& map_key = overflow ? kOverflowKey : key;
+    auto [inserted_it, inserted] =
+        inference_failure_counters_.try_emplace(map_key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      const std::string& stage_label_value = overflow ? kOverflowLabel : stage;
+      const std::string& reason_label_value =
+          overflow ? kOverflowLabel : reason;
+      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      it->second = &inference_failures_family_->Add(
+          {{"stage", stage_label_value},
+           {"reason", reason_label_value},
+           {"model", model_label_value}});
+    }
   }
   if (it->second != nullptr) {
     it->second->Increment(static_cast<double>(count));
@@ -1809,10 +1847,19 @@ MetricsRegistry::increment_model_load_failure_counter(
   }
   const std::string model{model_label};
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] =
-      model_load_failure_counters_.try_emplace(model, nullptr);
-  if (inserted) {
-    it->second = &model_load_failures_family_->Add({{"model", model}});
+  auto it = model_load_failure_counters_.find(model);
+  if (it == model_load_failure_counters_.end()) {
+    const bool overflow =
+        model_load_failure_counters_.size() >= kMaxLabelSeries;
+    const std::string& map_key = overflow ? kOverflowKey : model;
+    auto [inserted_it, inserted] =
+        model_load_failure_counters_.try_emplace(map_key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      it->second =
+          &model_load_failures_family_->Add({{"model", model_label_value}});
+    }
   }
   if (it->second != nullptr) {
     it->second->Increment();
@@ -1832,10 +1879,19 @@ MetricsRegistry::set_model_loaded_flag(
   const std::string key = std::format("{}|{}", model, device);
 
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = models_loaded_gauges_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second =
-        &models_loaded_family_->Add({{"model", model}, {"device", device}});
+  auto it = models_loaded_gauges_.find(key);
+  if (it == models_loaded_gauges_.end()) {
+    const bool overflow = models_loaded_gauges_.size() >= kMaxLabelSeries;
+    if (overflow) {
+      return;
+    }
+    auto [inserted_it, inserted] =
+        models_loaded_gauges_.try_emplace(key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      it->second =
+          &models_loaded_family_->Add({{"model", model}, {"device", device}});
+    }
   }
   if (it->second != nullptr) {
     it->second->Set(loaded ? 1.0 : 0.0);
@@ -1871,13 +1927,26 @@ MetricsRegistry::observe_compute_latency_by_worker(
   }
   const std::string key = make_worker_key(worker_id, device_id, worker_type);
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = compute_latency_by_worker_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second = &inference_compute_latency_by_worker_family_->Add(
-        {{"worker_id", std::to_string(worker_id)},
-         {"device", std::to_string(device_id)},
-         {"worker_type", std::string(worker_type)}},
-        kInferenceLatencyMsBuckets);
+  auto it = compute_latency_by_worker_.find(key);
+  if (it == compute_latency_by_worker_.end()) {
+    const bool overflow = compute_latency_by_worker_.size() >= kMaxLabelSeries;
+    const std::string& map_key = overflow ? kOverflowKey : key;
+    auto [inserted_it, inserted] =
+        compute_latency_by_worker_.try_emplace(map_key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      const std::string worker_id_label =
+          overflow ? kOverflowLabel : std::to_string(worker_id);
+      const std::string device_label =
+          overflow ? kOverflowLabel : std::to_string(device_id);
+      const std::string worker_type_label =
+          overflow ? kOverflowLabel : std::string(worker_type);
+      it->second = &inference_compute_latency_by_worker_family_->Add(
+          {{"worker_id", worker_id_label},
+           {"device", device_label},
+           {"worker_type", worker_type_label}},
+          kInferenceLatencyMsBuckets);
+    }
   }
   if (it->second != nullptr) {
     it->second->Observe(latency_ms);
@@ -1894,13 +1963,26 @@ MetricsRegistry::observe_task_runtime_by_worker(
   }
   const std::string key = make_worker_key(worker_id, device_id, worker_type);
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = task_runtime_by_worker_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second = &starpu_task_runtime_by_worker_family_->Add(
-        {{"worker_id", std::to_string(worker_id)},
-         {"device", std::to_string(device_id)},
-         {"worker_type", std::string(worker_type)}},
-        kTaskRuntimeMsBuckets);
+  auto it = task_runtime_by_worker_.find(key);
+  if (it == task_runtime_by_worker_.end()) {
+    const bool overflow = task_runtime_by_worker_.size() >= kMaxLabelSeries;
+    const std::string& map_key = overflow ? kOverflowKey : key;
+    auto [inserted_it, inserted] =
+        task_runtime_by_worker_.try_emplace(map_key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      const std::string worker_id_label =
+          overflow ? kOverflowLabel : std::to_string(worker_id);
+      const std::string device_label =
+          overflow ? kOverflowLabel : std::to_string(device_id);
+      const std::string worker_type_label =
+          overflow ? kOverflowLabel : std::string(worker_type);
+      it->second = &starpu_task_runtime_by_worker_family_->Add(
+          {{"worker_id", worker_id_label},
+           {"device", device_label},
+           {"worker_type", worker_type_label}},
+          kTaskRuntimeMsBuckets);
+    }
   }
   if (it->second != nullptr) {
     it->second->Observe(latency_ms);
@@ -1917,12 +1999,21 @@ MetricsRegistry::set_worker_inflight_gauge(
   }
   const std::string key = make_worker_key(worker_id, device_id, worker_type);
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = worker_inflight_gauges_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second = &starpu_worker_inflight_family_->Add(
-        {{"worker_id", std::to_string(worker_id)},
-         {"device", std::to_string(device_id)},
-         {"worker_type", std::string(worker_type)}});
+  auto it = worker_inflight_gauges_.find(key);
+  if (it == worker_inflight_gauges_.end()) {
+    const bool overflow = worker_inflight_gauges_.size() >= kMaxLabelSeries;
+    if (overflow) {
+      return;
+    }
+    auto [inserted_it, inserted] =
+        worker_inflight_gauges_.try_emplace(key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      it->second = &starpu_worker_inflight_family_->Add(
+          {{"worker_id", std::to_string(worker_id)},
+           {"device", std::to_string(device_id)},
+           {"worker_type", std::string(worker_type)}});
+    }
   }
   if (it->second != nullptr) {
     it->second->Set(static_cast<double>(value));
@@ -1940,14 +2031,29 @@ MetricsRegistry::observe_io_copy_latency(
   const std::string key =
       make_io_key(direction, worker_id, device_id, worker_type);
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = io_copy_latency_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second = &io_copy_latency_family_->Add(
-        {{"direction", std::string(direction)},
-         {"worker_id", std::to_string(worker_id)},
-         {"device", std::to_string(device_id)},
-         {"worker_type", std::string(worker_type)}},
-        kInferenceLatencyMsBuckets);
+  auto it = io_copy_latency_.find(key);
+  if (it == io_copy_latency_.end()) {
+    const bool overflow = io_copy_latency_.size() >= kMaxLabelSeries;
+    const std::string& map_key = overflow ? kOverflowKey : key;
+    auto [inserted_it, inserted] =
+        io_copy_latency_.try_emplace(map_key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      const std::string direction_label =
+          overflow ? kOverflowLabel : std::string(direction);
+      const std::string worker_id_label =
+          overflow ? kOverflowLabel : std::to_string(worker_id);
+      const std::string device_label =
+          overflow ? kOverflowLabel : std::to_string(device_id);
+      const std::string worker_type_label =
+          overflow ? kOverflowLabel : std::string(worker_type);
+      it->second = &io_copy_latency_family_->Add(
+          {{"direction", direction_label},
+           {"worker_id", worker_id_label},
+           {"device", device_label},
+           {"worker_type", worker_type_label}},
+          kInferenceLatencyMsBuckets);
+    }
   }
   if (it->second != nullptr) {
     it->second->Observe(duration_ms);
@@ -1965,13 +2071,28 @@ MetricsRegistry::increment_transfer_bytes(
   const std::string key =
       make_io_key(direction, worker_id, device_id, worker_type);
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto [it, inserted] = transfer_bytes_.try_emplace(key, nullptr);
-  if (inserted) {
-    it->second = &transfer_bytes_family_->Add(
-        {{"direction", std::string(direction)},
-         {"worker_id", std::to_string(worker_id)},
-         {"device", std::to_string(device_id)},
-         {"worker_type", std::string(worker_type)}});
+  auto it = transfer_bytes_.find(key);
+  if (it == transfer_bytes_.end()) {
+    const bool overflow = transfer_bytes_.size() >= kMaxLabelSeries;
+    const std::string& map_key = overflow ? kOverflowKey : key;
+    auto [inserted_it, inserted] =
+        transfer_bytes_.try_emplace(map_key, nullptr);
+    it = inserted_it;
+    if (inserted) {
+      const std::string direction_label =
+          overflow ? kOverflowLabel : std::string(direction);
+      const std::string worker_id_label =
+          overflow ? kOverflowLabel : std::to_string(worker_id);
+      const std::string device_label =
+          overflow ? kOverflowLabel : std::to_string(device_id);
+      const std::string worker_type_label =
+          overflow ? kOverflowLabel : std::string(worker_type);
+      it->second = &transfer_bytes_family_->Add(
+          {{"direction", direction_label},
+           {"worker_id", worker_id_label},
+           {"device", device_label},
+           {"worker_type", worker_type_label}});
+    }
   }
   if (it->second != nullptr) {
     it->second->Increment(static_cast<double>(bytes));
@@ -2019,6 +2140,7 @@ MetricsRegistry::queue_capacity_value() const -> std::size_t
 void
 MetricsRegistry::run_sampling_request_nb()
 {
+  std::scoped_lock<std::mutex> lock(sampling_mutex_);
   perform_sampling_request_nb();
 }
 
@@ -2146,7 +2268,10 @@ MetricsRegistry::sampling_loop(const std::stop_token& stop)
   using namespace std::chrono_literals;
   auto next_sleep = 1000ms;
   while (!stop.stop_requested()) {
-    perform_sampling_request_nb();
+    {
+      std::scoped_lock<std::mutex> lock(sampling_mutex_);
+      perform_sampling_request_nb();
+    }
     for (auto slept = 0ms; slept < next_sleep && !stop.stop_requested();
          slept += 50ms) {
       std::this_thread::sleep_for(50ms);
