@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <format>
@@ -1104,6 +1105,13 @@ metrics_atomic() -> std::atomic<std::shared_ptr<MetricsRegistry>>&
   static std::atomic<std::shared_ptr<MetricsRegistry>> instance{nullptr};
   return instance;
 }
+
+auto
+metrics_shutdown_once_flag() -> std::once_flag&
+{
+  static std::once_flag flag;
+  return flag;
+}
 }  // namespace
 
 auto
@@ -1113,6 +1121,8 @@ init_metrics(int port) -> bool
 
   try {
     auto new_metrics = std::make_shared<MetricsRegistry>(port);
+    std::call_once(
+        metrics_shutdown_once_flag(), [] { std::atexit(shutdown_metrics); });
 
 #ifndef STARPU_HAVE_NVML
     std::call_once(nvml_warning_flag(), [] {
@@ -1143,6 +1153,10 @@ init_metrics(int port) -> bool
 void
 shutdown_metrics()
 {
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr) {
+    metrics_ptr->request_stop();
+  }
   metrics_atomic().store(nullptr, std::memory_order_release);
 }
 
