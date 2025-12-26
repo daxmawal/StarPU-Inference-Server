@@ -21,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -222,7 +223,7 @@ process_rss_bytes_reader_override_storage() -> ProcessSampleReader&
 #endif
 
 auto
-read_process_rss_bytes() -> std::optional<double>
+read_process_rss_bytes_impl() -> std::optional<double>
 {
 #if defined(STARPU_TESTING)
   auto& override_reader = process_rss_bytes_reader_override_storage();
@@ -651,7 +652,7 @@ read_process_open_fds() -> std::optional<double>
 auto
 read_process_rss_bytes() -> std::optional<double>
 {
-  return starpu_server::read_process_rss_bytes();
+  return read_process_rss_bytes_impl();
 }
 
 #if defined(STARPU_TESTING)
@@ -2229,7 +2230,7 @@ MetricsRegistry::sample_process_resident_memory()
     return;
   }
 
-  if (auto rss_bytes = read_process_rss_bytes()) {
+  if (auto rss_bytes = monitoring::detail::read_process_rss_bytes()) {
     process_resident_memory_bytes_->Set(*rss_bytes);
   }
 }
@@ -2255,7 +2256,10 @@ MetricsRegistry::sample_gpu_stats()
 
   try {
     auto gstats = gpu_stats_provider_();
+    std::unordered_set<int> seen_indices;
+    seen_indices.reserve(gstats.size());
     for (const auto& stats : gstats) {
+      seen_indices.insert(stats.index);
       const std::string label = std::to_string(stats.index);
 
       const auto ensure_gauge = [&](auto& gauges,
@@ -2282,6 +2286,25 @@ MetricsRegistry::sample_gpu_stats()
             ->Set(stats.power_watts);
       }
     }
+
+    const auto clear_missing = [&](auto& gauges, auto* family) {
+      for (auto it = gauges.begin(); it != gauges.end();) {
+        if (!seen_indices.contains(it->first)) {
+          if (family != nullptr) {
+            family->Remove(it->second);
+          }
+          it = gauges.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    };
+
+    clear_missing(gpu_utilization_gauges_, gpu_utilization_family_);
+    clear_missing(gpu_memory_used_gauges_, gpu_memory_used_bytes_family_);
+    clear_missing(gpu_memory_total_gauges_, gpu_memory_total_bytes_family_);
+    clear_missing(gpu_temperature_gauges_, gpu_temperature_family_);
+    clear_missing(gpu_power_gauges_, gpu_power_family_);
   }
   catch (const std::exception& e) {
     log_error(std::format("GPU metrics sampling failed: {}", e.what()));
