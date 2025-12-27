@@ -171,6 +171,7 @@ WarmupRunner::client_worker(
 
   const auto total = static_cast<int>(total_size_t);
   int request_id = 0;
+  const auto& model_name = opts_.model ? opts_.model->name : opts_.name;
 
   for (const auto& entry : device_workers) {
     const auto& worker_ids = entry.second;
@@ -180,7 +181,7 @@ WarmupRunner::client_worker(
         const auto& inputs =
             client_utils::pick_random_input(pregen_inputs, rng);
         auto job = client_utils::create_job(
-            inputs, outputs_ref_, request_id, {}, {}, opts_.name);
+            inputs, outputs_ref_, request_id, {}, {}, model_name);
         const int job_request_id = request_id;
         job->set_fixed_worker_id(worker_id);
 
