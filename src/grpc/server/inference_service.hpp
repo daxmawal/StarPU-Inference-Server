@@ -54,6 +54,8 @@ class InferenceServiceImpl final
       grpc::ServerContext* context, const inference::ModelReadyRequest* request,
       inference::ModelReadyResponse* reply) -> grpc::Status override;
 
+  // Sync wrapper used by in-process tests; async server uses
+  // HandleModelInferAsync.
   auto ModelInfer(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply) -> grpc::Status override;
