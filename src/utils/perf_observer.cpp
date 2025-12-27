@@ -6,8 +6,8 @@ namespace starpu_server::perf_observer {
 namespace {
 struct State {
   std::mutex mutex;
-  std::optional<std::chrono::high_resolution_clock::time_point> first_enqueue;
-  std::optional<std::chrono::high_resolution_clock::time_point> last_completion;
+  std::optional<MonotonicClock::time_point> first_enqueue;
+  std::optional<MonotonicClock::time_point> last_completion;
   std::size_t total_inferences = 0;
 };
 
@@ -31,8 +31,8 @@ reset()
 
 void
 record_job(
-    const std::chrono::high_resolution_clock::time_point enqueue_time,
-    const std::chrono::high_resolution_clock::time_point completion_time,
+    const MonotonicClock::time_point enqueue_time,
+    const MonotonicClock::time_point completion_time,
     const std::size_t batch_size, const bool is_warmup_job)
 {
   if (is_warmup_job) {

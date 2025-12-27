@@ -104,20 +104,20 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
       starpu_server::make_variable_interface(output.data(), output.size());
 
   auto params = starpu_server::make_basic_params(3);
-  std::chrono::high_resolution_clock::time_point inference_start;
+  starpu_server::MonotonicClock::time_point inference_start;
   params.timing.inference_start_time = &inference_start;
 
   std::vector<StarpuBufferPtr> buffers = {&input_iface, &output_iface};
   auto model = starpu_server::make_add_one_model();
 
-  auto before = std::chrono::high_resolution_clock::now();
+  auto before = starpu_server::MonotonicClock::now();
   starpu_server::run_inference(
       &params, buffers, torch::Device(torch::kCPU), &model,
       [](const at::Tensor& out, std::span<std::byte> buffer) {
         starpu_server::TensorBuilder::copy_output_to_buffer(
             out, buffer, out.numel(), out.scalar_type());
       });
-  auto after = std::chrono::high_resolution_clock::now();
+  auto after = starpu_server::MonotonicClock::now();
 
   EXPECT_FLOAT_EQ(output[0], 2.0F);
   EXPECT_FLOAT_EQ(output[1], 3.0F);

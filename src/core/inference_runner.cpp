@@ -133,7 +133,7 @@ compute_latency_breakdown(const TimingInfo& timing, double total_latency_ms)
                .count());
 
   auto submit_start = timing.batch_collect_start_time;
-  if (submit_start == std::chrono::high_resolution_clock::time_point{}) {
+  if (submit_start == MonotonicClock::time_point{}) {
     submit_start = timing.dequeued_time;
   }
   breakdown.submit_ms = std::max(
@@ -168,7 +168,7 @@ InferenceJob::InferenceJob(
     std::function<void(const std::vector<torch::Tensor>&, double)> callback)
     : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
       request_id_(request_identifier), on_complete_(std::move(callback)),
-      start_time_(std::chrono::high_resolution_clock::now())
+      start_time_(MonotonicClock::now())
 {
 }
 
@@ -317,7 +317,7 @@ load_model_and_reference_output(const RuntimeConfig& opts)
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>>
 {
-  const auto load_start = std::chrono::high_resolution_clock::now();
+  const auto load_start = MonotonicClock::now();
   const auto model_label = [&opts]() -> std::string {
     if (!opts.model.has_value()) {
       return "default";
@@ -363,10 +363,9 @@ load_model_and_reference_output(const RuntimeConfig& opts)
       output_refs = run_reference_inference(model_cpu, inputs);
     }
 
-    const double duration_ms =
-        std::chrono::duration<double, std::milli>(
-            std::chrono::high_resolution_clock::now() - load_start)
-            .count();
+    const double duration_ms = std::chrono::duration<double, std::milli>(
+                                   MonotonicClock::now() - load_start)
+                                   .count();
     observe_model_load_duration(duration_ms);
     set_model_loaded(model_label, "cpu", true);
     if (opts.devices.use_cuda) {

@@ -412,8 +412,8 @@ parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["warmup_pregen_inputs"]) {
     const int tmp = root["warmup_pregen_inputs"].as<int>();
-    if (tmp <= 0) {
-      throw std::invalid_argument("warmup_pregen_inputs must be > 0");
+    if (tmp < 0) {
+      throw std::invalid_argument("warmup_pregen_inputs must be >= 0");
     }
     cfg.batching.warmup_pregen_inputs = static_cast<size_t>(tmp);
   }

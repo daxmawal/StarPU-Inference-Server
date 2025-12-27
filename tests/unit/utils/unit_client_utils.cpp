@@ -175,10 +175,10 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
   EXPECT_TRUE(JobHasExpectedOutputs(job, outputs_ref));
   EXPECT_EQ(
       job->timing_info().enqueued_time,
-      std::chrono::high_resolution_clock::time_point{});
+      starpu_server::MonotonicClock::time_point{});
   EXPECT_EQ(
       job->timing_info().last_enqueued_time,
-      std::chrono::high_resolution_clock::time_point{});
+      starpu_server::MonotonicClock::time_point{});
   EXPECT_GT(job->get_start_time().time_since_epoch().count(), 0);
 }
 

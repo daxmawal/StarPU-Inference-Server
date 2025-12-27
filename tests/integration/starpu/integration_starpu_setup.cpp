@@ -1,9 +1,9 @@
-#include <chrono>
 #include <memory>
 
 #include "core/starpu_setup.hpp"
 #include "test_starpu_setup.hpp"
 #include "test_utils.hpp"
+#include "utils/monotonic_clock.hpp"
 
 class StarPUSetupCodelet_Integration : public ::testing::Test {
  protected:
@@ -45,10 +45,10 @@ TEST(InferenceCodelet_Integration, CpuInferenceFuncExecutesAndSetsMetadata)
   auto timing = setup_timing_params(3);
   starpu_server::InferenceCodelet inf_cl;
   auto* codelet = inf_cl.get_codelet();
-  auto before = std::chrono::high_resolution_clock::now();
+  auto before = starpu_server::MonotonicClock::now();
   codelet->cpu_funcs[0](
       reinterpret_cast<void**>(buffers.buffers.data()), &timing.params);
-  auto after = std::chrono::high_resolution_clock::now();
+  auto after = starpu_server::MonotonicClock::now();
   EXPECT_FLOAT_EQ(buffers.output_data[0], 2.0F);
   EXPECT_FLOAT_EQ(buffers.output_data[1], 3.0F);
   EXPECT_FLOAT_EQ(buffers.output_data[2], 4.0F);

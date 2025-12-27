@@ -15,6 +15,7 @@
 #include "device_type.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -23,17 +24,17 @@ namespace starpu_server {
 
 namespace detail {
 struct TimingInfo {
-  std::chrono::high_resolution_clock::time_point enqueued_time;
-  std::chrono::high_resolution_clock::time_point last_enqueued_time;
-  std::chrono::high_resolution_clock::time_point dequeued_time;
-  std::chrono::high_resolution_clock::time_point batch_collect_start_time;
-  std::chrono::high_resolution_clock::time_point batch_collect_end_time;
-  std::chrono::high_resolution_clock::time_point before_starpu_submitted_time;
-  std::chrono::high_resolution_clock::time_point codelet_start_time;
-  std::chrono::high_resolution_clock::time_point codelet_end_time;
-  std::chrono::high_resolution_clock::time_point inference_start_time;
-  std::chrono::high_resolution_clock::time_point callback_start_time;
-  std::chrono::high_resolution_clock::time_point callback_end_time;
+  MonotonicClock::time_point enqueued_time;
+  MonotonicClock::time_point last_enqueued_time;
+  MonotonicClock::time_point dequeued_time;
+  MonotonicClock::time_point batch_collect_start_time;
+  MonotonicClock::time_point batch_collect_end_time;
+  MonotonicClock::time_point before_starpu_submitted_time;
+  MonotonicClock::time_point codelet_start_time;
+  MonotonicClock::time_point codelet_end_time;
+  MonotonicClock::time_point inference_start_time;
+  MonotonicClock::time_point callback_start_time;
+  MonotonicClock::time_point callback_end_time;
   int submission_id = -1;
 };
 
@@ -72,7 +73,7 @@ class JobBatchState {
     std::function<void(const std::vector<torch::Tensor>&, double)> callback;
     int64_t batch_size = 1;
     int request_id = -1;
-    std::chrono::high_resolution_clock::time_point arrival_time;
+    MonotonicClock::time_point arrival_time;
   };
 
   void set_logical_job_count(int count) { logical_job_count_ = count; }
@@ -183,10 +184,7 @@ class InferenceJob : public JobBatchState {
       output_tensors_.push_back(output_tensor.contiguous());
     }
   }
-  void set_start_time(std::chrono::high_resolution_clock::time_point time)
-  {
-    start_time_ = time;
-  }
+  void set_start_time(MonotonicClock::time_point time) { start_time_ = time; }
   void set_on_complete(
       std::function<void(std::vector<torch::Tensor>, double)> call_back)
   {
@@ -239,8 +237,7 @@ class InferenceJob : public JobBatchState {
   {
     return output_tensors_;
   }
-  [[nodiscard]] auto get_start_time() const
-      -> const std::chrono::high_resolution_clock::time_point&
+  [[nodiscard]] auto get_start_time() const -> const MonotonicClock::time_point&
   {
     return start_time_;
   }
@@ -274,7 +271,7 @@ class InferenceJob : public JobBatchState {
   int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
   std::function<void(std::vector<torch::Tensor>, double)> on_complete_;
-  std::chrono::high_resolution_clock::time_point start_time_;
+  MonotonicClock::time_point start_time_;
   std::string model_name_;
 
   DeviceType executed_on_ = DeviceType::Unknown;

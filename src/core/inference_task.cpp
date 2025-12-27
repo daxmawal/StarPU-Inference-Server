@@ -442,8 +442,7 @@ InferenceTask::submit()
   starpu_task* task =
       create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
 
-  job_->timing_info().before_starpu_submitted_time =
-      std::chrono::high_resolution_clock::now();
+  job_->timing_info().before_starpu_submitted_time = MonotonicClock::now();
 
   const int ret = starpu_task_submit(task);
   if (ret != 0) {
@@ -607,8 +606,7 @@ InferenceTask::starpu_output_callback(void* arg)
 {
   try {
     auto* ctx = static_cast<InferenceCallbackContext*>(arg);
-    ctx->job->timing_info().callback_start_time =
-        std::chrono::high_resolution_clock::now();
+    ctx->job->timing_info().callback_start_time = MonotonicClock::now();
 
     ctx->remaining_outputs_to_acquire =
         static_cast<int>(ctx->outputs_handles.size());
@@ -685,7 +683,7 @@ InferenceTask::finalize_inference_task(void* arg)
   if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 && ctx->job) {
     run_with_logged_exceptions(
         [ctx]() {
-          const auto copy_start = std::chrono::high_resolution_clock::now();
+          const auto copy_start = MonotonicClock::now();
           std::size_t total_bytes = 0;
           const auto& base_ptrs =
               ctx->output_pool->base_ptrs(ctx->output_slot_id);
@@ -704,7 +702,7 @@ InferenceTask::finalize_inference_task(void* arg)
                 job_output_tensor.nbytes());
             total_bytes += job_output_tensor.nbytes();
           }
-          const auto copy_end = std::chrono::high_resolution_clock::now();
+          const auto copy_end = MonotonicClock::now();
           const double copy_ms =
               std::chrono::duration<double, std::milli>(copy_end - copy_start)
                   .count();
@@ -738,7 +736,7 @@ InferenceTask::finalize_inference_task(void* arg)
 
   InferenceTask::finalize_context(ctx_sptr);
 
-  const auto end_time = std::chrono::high_resolution_clock::now();
+  const auto end_time = MonotonicClock::now();
 
   InferenceTask::record_and_run_completion_callback(ctx, end_time);
 
@@ -767,8 +765,7 @@ InferenceTask::release_output_data(
 
 void
 InferenceTask::record_and_run_completion_callback(
-    InferenceCallbackContext* ctx,
-    std::chrono::high_resolution_clock::time_point end_time)
+    InferenceCallbackContext* ctx, MonotonicClock::time_point end_time)
 {
   if (!ctx->job) {
     return;

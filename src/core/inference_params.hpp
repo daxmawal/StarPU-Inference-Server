@@ -7,6 +7,7 @@
 #include "device_type.hpp"
 #include "inference_limits.hpp"
 #include "logger.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
 
@@ -16,10 +17,9 @@ namespace detail {
 // =============================================================================
 
 struct Timing {
-  std::chrono::high_resolution_clock::time_point* codelet_start_time = nullptr;
-  std::chrono::high_resolution_clock::time_point* codelet_end_time = nullptr;
-  std::chrono::high_resolution_clock::time_point* inference_start_time =
-      nullptr;
+  MonotonicClock::time_point* codelet_start_time = nullptr;
+  MonotonicClock::time_point* codelet_end_time = nullptr;
+  MonotonicClock::time_point* inference_start_time = nullptr;
 };
 
 // =============================================================================

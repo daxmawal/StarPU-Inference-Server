@@ -7,6 +7,7 @@
 #include "inference_runner.hpp"
 #include "input_generator.hpp"
 #include "runtime_config.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server::client_utils {
 
@@ -29,7 +30,7 @@ auto create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref, int request_id,
     std::vector<std::shared_ptr<const void>> input_lifetimes = {},
-    std::chrono::high_resolution_clock::time_point start_time = {},
+    MonotonicClock::time_point start_time = {},
     std::string model_name = {}) -> std::shared_ptr<InferenceJob>;
 
 }  // namespace starpu_server::client_utils

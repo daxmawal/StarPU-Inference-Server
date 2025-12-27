@@ -435,7 +435,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1000}};
   const auto end = start + std::chrono::microseconds{10};
   const BatchingTraceLogger::TimeRange queue_times{start, end};
@@ -476,8 +476,8 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto invalid_start = std::chrono::high_resolution_clock::time_point{};
-  const auto valid_end = std::chrono::high_resolution_clock::time_point{
+  const auto invalid_start = starpu_server::MonotonicClock::time_point{};
+  const auto valid_end = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{5000}};
   const BatchingTraceLogger::TimeRange queue_times{invalid_start, valid_end};
 
@@ -517,9 +517,9 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{5000}};
-  const auto end = std::chrono::high_resolution_clock::time_point{
+  const auto end = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{3000}};
   const BatchingTraceLogger::TimeRange queue_times{start, end};
 
@@ -568,7 +568,7 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1500}};
   const auto end = start + std::chrono::microseconds{20};
   const BatchingTraceLogger::TimeRange schedule{start, end};
@@ -609,9 +609,9 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{7000}};
-  const auto end = std::chrono::high_resolution_clock::time_point{
+  const auto end = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{6500}};
   const BatchingTraceLogger::TimeRange schedule{start, end};
 
@@ -861,7 +861,7 @@ TEST(
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1000}};
   const auto end = start + std::chrono::microseconds{10};
   const BatchingTraceLogger::TimeRange codelet_times{start, end};
@@ -923,9 +923,9 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{2000}};
-  const auto end = std::chrono::high_resolution_clock::time_point{
+  const auto end = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1500}};
   const BatchingTraceLogger::TimeRange codelet_times{start, end};
 
@@ -962,7 +962,7 @@ TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(10);
   std::string model_name = "\"\\\b\f\n\r\tA";
   model_name.push_back(static_cast<char>(0x01));
@@ -993,7 +993,7 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
 
   logger.configure(true, trace_path.string());
   logger.log_request_enqueued(1, "demo_model");
-  const auto enqueue_start = std::chrono::high_resolution_clock::now();
+  const auto enqueue_start = starpu_server::MonotonicClock::now();
   const auto enqueue_end = enqueue_start + std::chrono::microseconds(10);
   const std::array<int, 2> request_ids{0, 1};
   logger.log_batch_enqueue_span(
@@ -1048,7 +1048,7 @@ TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(50);
   logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
       .batch_id = 3,
@@ -1120,7 +1120,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(150);
   const std::array<int, 2> request_ids{7, 8};
   logger.log_batch_build_span(
@@ -1150,7 +1150,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(60);
   const std::array<int, 3> request_ids{4, 5, 6};
   logger.log_batch_enqueue_span(
@@ -1182,7 +1182,7 @@ TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto base = std::chrono::high_resolution_clock::now();
+  const auto base = starpu_server::MonotonicClock::now();
   const auto first = base + std::chrono::microseconds(10);
   const auto second = first + std::chrono::microseconds(5);
   const auto last = first + std::chrono::microseconds(25);
@@ -1222,7 +1222,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(100);
   const std::array<int, 2> request_ids{1, 2};
   logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
@@ -1278,7 +1278,7 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto base = std::chrono::high_resolution_clock::now();
+  const auto base = starpu_server::MonotonicClock::now();
   const auto overlapping_start = base + std::chrono::microseconds(50);
   const auto overlapping_end =
       overlapping_start + std::chrono::microseconds(40);
@@ -1344,7 +1344,7 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(75);
   const auto build_start = start - std::chrono::microseconds(50);
   const auto build_end = build_start + std::chrono::microseconds(20);

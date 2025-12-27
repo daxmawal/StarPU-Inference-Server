@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "test_helpers.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
 inline auto
@@ -110,8 +111,8 @@ make_test_buffers() -> TestBuffers
 struct TimingParams {
   starpu_server::InferenceParams params;
   starpu_server::DeviceType executed_on = starpu_server::DeviceType::Unknown;
-  std::chrono::high_resolution_clock::time_point start_time;
-  std::chrono::high_resolution_clock::time_point end_time;
+  starpu_server::MonotonicClock::time_point start_time;
+  starpu_server::MonotonicClock::time_point end_time;
   torch::jit::script::Module model;
 };
 

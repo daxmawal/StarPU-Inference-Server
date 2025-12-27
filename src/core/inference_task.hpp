@@ -136,8 +136,7 @@ class InferenceTask {
       const std::shared_ptr<InferenceCallbackContext>& ctx_sptr);
 
   static void record_and_run_completion_callback(
-      InferenceCallbackContext* ctx,
-      std::chrono::high_resolution_clock::time_point end_time);
+      InferenceCallbackContext* ctx, MonotonicClock::time_point end_time);
 
   static void finalize_inference_task(void* arg);
 

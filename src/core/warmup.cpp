@@ -25,6 +25,7 @@
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
 namespace {
@@ -183,7 +184,7 @@ WarmupRunner::client_worker(
         const int job_request_id = request_id;
         job->set_fixed_worker_id(worker_id);
 
-        const auto enqueued_now = std::chrono::high_resolution_clock::now();
+        const auto enqueued_now = MonotonicClock::now();
         job->timing_info().enqueued_time = enqueued_now;
         job->timing_info().last_enqueued_time = enqueued_now;
 
@@ -195,8 +196,8 @@ WarmupRunner::client_worker(
           queue.shutdown();
           return;
         }
-        client_utils::log_job_enqueued(
-            opts_, job_request_id, total, enqueued_now);
+        const auto log_now = std::chrono::high_resolution_clock::now();
+        client_utils::log_job_enqueued(opts_, job_request_id, total, log_now);
         request_id++;
       }
     }

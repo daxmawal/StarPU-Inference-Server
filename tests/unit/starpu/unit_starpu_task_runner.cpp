@@ -699,7 +699,7 @@ read_trace_file(const std::filesystem::path& path) -> std::string
 void
 populate_trace_timing(starpu_server::InferenceJob& job)
 {
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   const auto now = clock::now();
   job.timing_info().enqueued_time = now - std::chrono::milliseconds(3);
   job.timing_info().last_enqueued_time = now - std::chrono::milliseconds(2);
@@ -953,7 +953,7 @@ TEST_F(
   job->get_executed_on() = starpu_server::DeviceType::CPU;
   populate_trace_timing(*job);
 
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   const auto base = clock::now();
   auto& timing = job->timing_info();
   timing.codelet_start_time = base - std::chrono::microseconds(400);
@@ -1002,7 +1002,7 @@ TEST_F(
   job->get_executed_on() = starpu_server::DeviceType::CPU;
   populate_trace_timing(*job);
 
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   const auto base = clock::now();
   auto& timing = job->timing_info();
   timing.codelet_start_time = base - std::chrono::microseconds(500);
@@ -1049,7 +1049,7 @@ TEST_F(
   job->get_executed_on() = starpu_server::DeviceType::CPU;
   populate_trace_timing(*job);
 
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   const auto base = clock::now();
   auto& timing = job->timing_info();
   timing.inference_start_time = clock::time_point{};
@@ -1152,7 +1152,7 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 {
   opts_.verbosity = starpu_server::VerbosityLevel::Stats;
   starpu_server::detail::TimingInfo time;
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   auto base = clock::now();
   time.enqueued_time = base;
   time.last_enqueued_time = base;
@@ -1446,7 +1446,7 @@ TEST_F(
   populate_trace_timing(*job);
   job->timing_info().submission_id = job->submission_id();
   job->timing_info().last_enqueued_time =
-      std::chrono::high_resolution_clock::time_point{};
+      starpu_server::MonotonicClock::time_point{};
 
   starpu_server::StarPUTaskRunnerTestAdapter::trace_batch_if_enabled(
       runner_.get(), job, /*warmup_job=*/false, job->submission_id());
@@ -1466,7 +1466,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     TraceBatchIfEnabledClampsLastEnqueuedTimestampBeforeStart)
 {
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   using namespace std::chrono_literals;
 
   TraceLoggerSession session;
@@ -1624,7 +1624,7 @@ TEST_F(
   job->set_output_tensors({torch::zeros({1}, tensor_opts)});
   job->set_submission_id(kSubmissionId);
   job->timing_info().submission_id = kSubmissionId;
-  job->set_start_time(std::chrono::high_resolution_clock::now());
+  job->set_start_time(starpu_server::MonotonicClock::now());
 
   ASSERT_TRUE(starpu_setup_->has_input_pool());
   ASSERT_TRUE(starpu_setup_->has_output_pool());
@@ -1669,7 +1669,7 @@ TEST_F(
   job->set_output_tensors({torch::zeros({1}, tensor_opts)});
   job->set_submission_id(kSubmissionId);
   job->timing_info().submission_id = kSubmissionId;
-  job->set_start_time(std::chrono::high_resolution_clock::now());
+  job->set_start_time(starpu_server::MonotonicClock::now());
   populate_trace_timing(*job);
 
   ASSERT_FALSE(starpu_setup_->has_input_pool());
@@ -4513,7 +4513,7 @@ TEST(
     BuildRequestArrivalUsForTraceReturnsSingleEntryForNonAggregatedJob)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
   const auto arrival_time =
@@ -4531,7 +4531,7 @@ TEST(
     BuildRequestArrivalUsForTraceReturnsZeroForDefaultTimePoint)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->timing_info().enqueued_time = Clock::time_point{};
@@ -4547,7 +4547,7 @@ TEST(
     BuildRequestArrivalUsForTraceUsesArrivalTimeFromAggregatedSubJobs)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
   auto sub_job1 = std::make_shared<starpu_server::InferenceJob>();
@@ -4581,7 +4581,7 @@ TEST(
     BuildRequestArrivalUsForTraceFallsBackToJobEnqueuedTimeWhenArrivalIsDefault)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
   auto sub_job = std::make_shared<starpu_server::InferenceJob>();
@@ -4609,7 +4609,7 @@ TEST(
     BuildRequestArrivalUsForTraceReturnsZeroWhenSubJobExpiredAndArrivalIsDefault)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
 

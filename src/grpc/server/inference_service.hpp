@@ -16,6 +16,7 @@
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "utils/logger.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
 namespace detail {
@@ -86,8 +87,7 @@ class InferenceServiceImpl final
   auto submit_job_async(
       const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
       std::vector<std::shared_ptr<const void>> input_lifetimes = {},
-      std::chrono::high_resolution_clock::time_point receive_time =
-          std::chrono::high_resolution_clock::now(),
+      MonotonicClock::time_point receive_time = MonotonicClock::now(),
       std::string model_name = {}) -> grpc::Status;
 
 // GCOVR_EXCL_START
@@ -130,7 +130,7 @@ class InferenceServiceImpl final
     inference::ModelInferResponse* reply;
     std::shared_ptr<CallbackHandle> callback_handle;
     std::shared_ptr<MetricsRegistry> metrics;
-    std::chrono::high_resolution_clock::time_point recv_tp;
+    MonotonicClock::time_point recv_tp;
     int64_t recv_ms;
     std::string resolved_model_name;
   };

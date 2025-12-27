@@ -1218,7 +1218,7 @@ INSTANTIATE_TEST_SUITE_P(
     NegativeRuntimeValues, NegativeRuntimeValueCase,
     ::testing::Values(
         NegativeValueCase{
-            "warmup_pregen_inputs", "0", "warmup_pregen_inputs must be > 0"},
+            "warmup_pregen_inputs", "-1", "warmup_pregen_inputs must be >= 0"},
         NegativeValueCase{
             "warmup_request_nb", "-1", "warmup_request_nb must be >= 0"},
         NegativeValueCase{

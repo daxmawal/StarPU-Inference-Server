@@ -341,10 +341,9 @@ auto
 build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
     -> std::vector<int64_t>
 {
-  using HighResClock = std::chrono::high_resolution_clock;
-  const auto to_microseconds =
-      [](HighResClock::time_point time_point) -> int64_t {
-    if (time_point == HighResClock::time_point{}) {
+  using Clock = MonotonicClock;
+  const auto to_microseconds = [](Clock::time_point time_point) -> int64_t {
+    if (time_point == Clock::time_point{}) {
       return 0;
     }
     return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -366,7 +365,7 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
   arrivals.reserve(aggregated.size());
   for (const auto& sub_job : aggregated) {
     auto arrival = sub_job.arrival_time;
-    if (arrival == HighResClock::time_point{}) {
+    if (arrival == Clock::time_point{}) {
       if (auto locked = sub_job.job.lock()) {
         arrival = locked->timing_info().enqueued_time;
       }
@@ -1931,7 +1930,7 @@ BatchCollector::batching_loop()
       continue;
     }
 
-    const auto dequeue_time = std::chrono::high_resolution_clock::now();
+    const auto dequeue_time = MonotonicClock::now();
     job->timing_info().dequeued_time = dequeue_time;
     job->timing_info().batch_collect_start_time = dequeue_time;
     job->timing_info().batch_collect_end_time = dequeue_time;
@@ -1942,8 +1941,7 @@ BatchCollector::batching_loop()
       continue;
     }
 
-    job->timing_info().batch_collect_end_time =
-        std::chrono::high_resolution_clock::now();
+    job->timing_info().batch_collect_end_time = MonotonicClock::now();
 
     enqueue_prepared_job(job);
   }
@@ -2536,8 +2534,7 @@ StarPUTaskRunner::submit_inference_task(
   starpu_task* task_ptr =
       task.create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
 
-  job->timing_info().before_starpu_submitted_time =
-      std::chrono::high_resolution_clock::now();
+  job->timing_info().before_starpu_submitted_time = MonotonicClock::now();
 
   const int ret = starpu_task_submit(task_ptr);
   if (ret != 0) {

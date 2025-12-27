@@ -58,7 +58,7 @@ JobStateMatches(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<at::ScalarType>& types,
     const std::vector<torch::Tensor>& outputs,
-    std::chrono::high_resolution_clock::time_point start,
+    starpu_server::MonotonicClock::time_point start,
     const ExpectedJobInfo& expected) -> ::testing::AssertionResult
 {
   if (job->get_request_id() != expected.request_id) {
@@ -138,7 +138,7 @@ TEST(InferenceJobTest, ConstructorInitializesState)
   std::vector<torch::Tensor> callback_tensors;
   double callback_latency = 0.0;
 
-  const auto before = std::chrono::high_resolution_clock::now();
+  const auto before = starpu_server::MonotonicClock::now();
   auto job = std::make_shared<starpu_server::InferenceJob>(
       inputs, types, kJobId,
       [&](std::vector<torch::Tensor> tensors, double latency) {
@@ -146,7 +146,7 @@ TEST(InferenceJobTest, ConstructorInitializesState)
         callback_tensors = std::move(tensors);
         callback_latency = latency;
       });
-  const auto after = std::chrono::high_resolution_clock::now();
+  const auto after = starpu_server::MonotonicClock::now();
 
   ASSERT_NE(job, nullptr);
   EXPECT_EQ(job->get_request_id(), kJobId);
@@ -212,7 +212,7 @@ TEST(InferenceJobTest, SettersGettersAndCallback)
   job->set_output_tensors(outputs);
   job->set_fixed_worker_id(kWorkerId);
 
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   job->set_start_time(start);
 
   bool callback_called = false;

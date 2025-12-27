@@ -105,7 +105,7 @@ auto
 now_us() -> int64_t
 {
   return std::chrono::duration_cast<std::chrono::microseconds>(
-             std::chrono::high_resolution_clock::now().time_since_epoch())
+             MonotonicClock::now().time_since_epoch())
       .count();
 }
 
@@ -570,7 +570,7 @@ BatchingTraceLogger::enabled() const -> bool
 void
 BatchingTraceLogger::log_request_enqueued(
     int request_id, std::string_view model_name, bool is_warmup,
-    std::chrono::high_resolution_clock::time_point event_time)
+    MonotonicClock::time_point event_time)
 {
   if (!logging_enabled()) {
     return;
@@ -1028,11 +1028,9 @@ BatchingTraceLogger::relative_timestamp_us(int64_t absolute_us) const -> int64_t
 
 auto
 BatchingTraceLogger::relative_timestamp_from_time_point(
-    std::chrono::high_resolution_clock::time_point time_point) const
-    -> std::optional<int64_t>
+    MonotonicClock::time_point time_point) const -> std::optional<int64_t>
 {
-  if (!trace_start_initialized_ ||
-      time_point == std::chrono::high_resolution_clock::time_point{}) {
+  if (!trace_start_initialized_ || time_point == MonotonicClock::time_point{}) {
     return std::nullopt;
   }
   const auto absolute_us =

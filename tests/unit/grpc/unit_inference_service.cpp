@@ -625,11 +625,10 @@ TEST_F(
   auto worker = prepare_job(
       expected_outputs, worker_outputs, [](starpu_server::InferenceJob& job) {
         job.timing_info().enqueued_time =
-            std::chrono::high_resolution_clock::time_point{};
+            starpu_server::MonotonicClock::time_point{};
         job.timing_info().last_enqueued_time = job.timing_info().enqueued_time;
         job.timing_info().callback_end_time =
-            std::chrono::high_resolution_clock::now() -
-            std::chrono::milliseconds(1);
+            starpu_server::MonotonicClock::now() - std::chrono::milliseconds(1);
       });
 
   auto metrics = starpu_server::get_metrics();

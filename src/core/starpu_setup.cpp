@@ -43,6 +43,7 @@
 #include "monitoring/metrics.hpp"
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
+#include "utils/monotonic_clock.hpp"
 #include "utils/nvtx.hpp"
 
 namespace starpu_server {
@@ -604,8 +605,7 @@ run_inference(
       TensorBuilder::prepare_input_ivalues(params, buffers, device);
 
   if (params->timing.inference_start_time != nullptr) {
-    *params->timing.inference_start_time =
-        std::chrono::high_resolution_clock::now();
+    *params->timing.inference_start_time = MonotonicClock::now();
   }
 
   auto result = model->forward(ivalue_inputs);
@@ -644,8 +644,7 @@ run_codelet_inference(
     CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
   if (params->timing.codelet_start_time) {
-    *params->timing.codelet_start_time =
-        std::chrono::high_resolution_clock::now();
+    *params->timing.codelet_start_time = MonotonicClock::now();
   }
 
   const int worker_id = starpu_worker_get_id();
@@ -710,8 +709,7 @@ run_codelet_inference(
   }
 
   if (params->timing.codelet_end_time) {
-    *params->timing.codelet_end_time =
-        std::chrono::high_resolution_clock::now();
+    *params->timing.codelet_end_time = MonotonicClock::now();
   }
 }
 

@@ -632,7 +632,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
         results_arg = results;
         latency_ms = latency;
       });
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
   auto ctx = make_callback_context(job);
@@ -669,7 +669,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
   job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
     throw std::runtime_error("callback failure");
   });
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
   auto ctx = make_callback_context(job);
@@ -689,7 +689,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
   job->set_output_tensors({torch::tensor({1})});
   job->set_on_complete(
       [](const std::vector<torch::Tensor>&, double) { throw 42; });
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
   auto ctx = make_callback_context(job);

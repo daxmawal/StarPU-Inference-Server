@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "core/inference_runner.hpp"
+#include "utils/monotonic_clock.hpp"
 #include "utils/runtime_config.hpp"
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
@@ -35,7 +36,7 @@ class SlotManager;
 
 namespace starpu_server::task_runner_internal {
 
-using Clock = std::chrono::high_resolution_clock;
+using Clock = MonotonicClock;
 
 struct BatchAggregationInfo {
   std::vector<InferenceJob::AggregatedSubJob> sub_jobs;

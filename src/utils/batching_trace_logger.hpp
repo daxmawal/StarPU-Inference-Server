@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "device_type.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
 
@@ -107,8 +108,8 @@ auto device_type_to_string(DeviceType type) -> std::string_view;
 class BatchingTraceLogger {
  public:
   struct TimeRange {
-    std::chrono::high_resolution_clock::time_point start;
-    std::chrono::high_resolution_clock::time_point end;
+    MonotonicClock::time_point start;
+    MonotonicClock::time_point end;
   };
   struct BatchSpanTiming {
     int64_t start_ts;
@@ -227,7 +228,7 @@ class BatchingTraceLogger {
 
   void log_request_enqueued(
       int request_id, std::string_view model_name, bool is_warmup = false,
-      std::chrono::high_resolution_clock::time_point event_time = {});
+      MonotonicClock::time_point event_time = {});
   void log_batch_submitted(const BatchSubmittedLogArgs& args);
   void log_batch_build_span(
       int batch_id, std::string_view model_name, std::size_t batch_size,
@@ -267,8 +268,7 @@ class BatchingTraceLogger {
   [[nodiscard]] auto configure_queue_metrics_writer(
       const std::filesystem::path& trace_path) -> bool;
   [[nodiscard]] auto relative_timestamp_from_time_point(
-      std::chrono::high_resolution_clock::time_point time_point) const
-      -> std::optional<int64_t>;
+      MonotonicClock::time_point time_point) const -> std::optional<int64_t>;
   [[nodiscard]] auto logging_enabled() const -> bool;
 
   void close_stream_locked();

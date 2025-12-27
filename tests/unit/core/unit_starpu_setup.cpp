@@ -29,6 +29,7 @@
 #include "support/output_slot_pool_test_hooks.hpp"
 #include "test_starpu_setup.hpp"
 #include "test_utils.hpp"
+#include "utils/monotonic_clock.hpp"
 #include "utils/runtime_config.hpp"
 
 namespace {
@@ -2329,7 +2330,7 @@ TEST(InferenceCodelet, CudaInferenceFuncCopiesResultsToDeviceBuffer)
   params.device.worker_id = &recorded_worker_id;
   params.device.executed_on = &executed_on;
 
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
   Clock::time_point start_tp{};
   Clock::time_point end_tp{};
   params.timing.codelet_start_time = &start_tp;

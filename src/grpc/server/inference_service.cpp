@@ -401,8 +401,7 @@ auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
-    std::chrono::high_resolution_clock::time_point receive_time,
-    std::string model_name) -> Status
+    MonotonicClock::time_point receive_time, std::string model_name) -> Status
 {
   auto resolved_model_name = resolve_model_name(std::move(model_name));
   auto job = client_utils::create_job(
@@ -436,7 +435,7 @@ InferenceServiceImpl::submit_job_async(
     NvtxRange queue_scope("grpc_submit_starpu_queue");
     pushed = queue_->push(job, &queue_full);
     if (pushed) {
-      const auto enqueued_now = std::chrono::high_resolution_clock::now();
+      const auto enqueued_now = MonotonicClock::now();
       job->timing_info().enqueued_time = enqueued_now;
       job->timing_info().last_enqueued_time = enqueued_now;
     }
@@ -479,7 +478,7 @@ InferenceServiceImpl::submit_job_and_wait(
   auto result_promise = std::make_shared<std::promise<JobResult>>();
   auto result_future = result_promise->get_future();
 
-  const auto receive_time = std::chrono::high_resolution_clock::now();
+  const auto receive_time = MonotonicClock::now();
   if (Status submit_status = submit_job_async(
           inputs,
           [result_promise](
@@ -563,7 +562,7 @@ InferenceServiceImpl::handle_async_infer_completion(
     return;
   }
 
-  const auto zero_tp = std::chrono::high_resolution_clock::time_point{};
+  const auto zero_tp = MonotonicClock::time_point{};
   if (timing_info.enqueued_time > zero_tp) {
     const auto preprocess_duration = std::chrono::duration<double, std::milli>(
         timing_info.enqueued_time - context.recv_tp);
@@ -586,10 +585,11 @@ InferenceServiceImpl::handle_async_infer_completion(
     return;
   }
 
-  const auto send_tp = std::chrono::high_resolution_clock::now();
-  const int64_t send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              send_tp.time_since_epoch())
-                              .count();
+  const auto send_tp = MonotonicClock::now();
+  const int64_t send_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count();
   context.reply->set_server_send_ms(send_ms);
 
   if (timing_info.callback_end_time > zero_tp) {
@@ -639,9 +639,9 @@ InferenceServiceImpl::HandleModelInferAsync(
   }
 
   const auto resolved_model_name = resolve_model_name(request->model_name());
-  auto recv_tp = std::chrono::high_resolution_clock::now();
+  auto recv_tp = MonotonicClock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        recv_tp.time_since_epoch())
+                        std::chrono::system_clock::now().time_since_epoch())
                         .count();
 
   std::vector<torch::Tensor> inputs;
