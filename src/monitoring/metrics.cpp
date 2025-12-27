@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -126,7 +127,12 @@ const prometheus::Histogram::BucketBoundaries kTaskRuntimeMsBuckets{
 
 constexpr std::size_t kMaxLabelSeries = 10000;
 const std::string kOverflowLabel{"__overflow__"};
-const std::string kOverflowKey{"__overflow_key__"};
+constexpr std::string_view kLabelEscapePrefix{"__label__"};
+#if defined(STARPU_TESTING)
+constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(0);
+#else
+constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(60);
+#endif
 
 constexpr int kStatusOk = 0;
 constexpr int kStatusCancelled = 1;
@@ -187,6 +193,46 @@ status_code_label(int code) -> std::string
     default:
       return std::to_string(code);
   }
+}
+
+auto
+escape_label_value(std::string_view value) -> std::string
+{
+  if (value == kOverflowLabel || value.starts_with(kLabelEscapePrefix)) {
+    std::string escaped;
+    escaped.reserve(kLabelEscapePrefix.size() + value.size());
+    escaped.append(kLabelEscapePrefix);
+    escaped.append(value);
+    return escaped;
+  }
+  return std::string(value);
+}
+
+auto
+cpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
+{
+  static std::atomic<std::int64_t> ts{0};
+  return ts;
+}
+
+auto
+gpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
+{
+  static std::atomic<std::int64_t> ts{0};
+  return ts;
+}
+
+auto
+should_log_sampling_error(std::atomic<std::int64_t>& last_log) -> bool
+{
+  const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::steady_clock::now().time_since_epoch())
+                       .count();
+  auto prev = last_log.load(std::memory_order_relaxed);
+  if (now - prev < kSamplingErrorLogThrottle.count()) {
+    return false;
+  }
+  return last_log.compare_exchange_strong(prev, now, std::memory_order_relaxed);
 }
 
 #ifndef STARPU_HAVE_NVML
@@ -1177,7 +1223,7 @@ set_queue_size(std::size_t size)
     if (capacity > 0 && metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
       const double ratio =
           static_cast<double>(size) / static_cast<double>(capacity);
-      metrics_ptr->queue_fill_ratio_gauge()->Set(ratio);
+      metrics_ptr->queue_fill_ratio_gauge()->Set(std::clamp(ratio, 0.0, 1.0));
     }
   }
 }
@@ -1226,7 +1272,7 @@ set_queue_capacity(std::size_t capacity)
       metrics_ptr->queue_size_gauge() != nullptr) {
     const double size = metrics_ptr->queue_size_gauge()->Value();
     metrics_ptr->queue_fill_ratio_gauge()->Set(
-        size / static_cast<double>(capacity));
+        std::clamp(size / static_cast<double>(capacity), 0.0, 1.0));
   } else if (metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
     metrics_ptr->queue_fill_ratio_gauge()->Set(0.0);
   }
@@ -1786,21 +1832,21 @@ MetricsRegistry::increment_status_counter(
     return;
   }
 
-  const std::string code{code_label.value};
-  const std::string model{model_label.value};
-  const std::string key = std::format("{}|{}", code, model);
+  StatusKey key{std::string(code_label.value), std::string(model_label.value)};
 
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = status_counters_.find(key);
   if (it == status_counters_.end()) {
     const bool overflow = status_counters_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    StatusKey map_key = overflow ? StatusKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        status_counters_.try_emplace(map_key, nullptr);
+        status_counters_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
-      const std::string& code_label_value = overflow ? kOverflowLabel : code;
-      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      const std::string code_label_value =
+          overflow ? kOverflowLabel : escape_label_value(code_label.value);
+      const std::string model_label_value =
+          overflow ? kOverflowLabel : escape_label_value(model_label.value);
       it->second = &requests_by_status_family_->Add(
           {{"code", code_label_value}, {"model", model_label_value}});
     }
@@ -1817,19 +1863,19 @@ MetricsRegistry::increment_completed_counter(
   if (inference_completed_family_ == nullptr) {
     return;
   }
-  const std::string model{model_label};
-  const std::string& key = model;
+  ModelKey key{std::string(model_label)};
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = inference_completed_counters_.find(key);
   if (it == inference_completed_counters_.end()) {
     const bool overflow =
         inference_completed_counters_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    ModelKey map_key = overflow ? ModelKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        inference_completed_counters_.try_emplace(map_key, nullptr);
+        inference_completed_counters_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
-      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      const std::string model_label_value =
+          overflow ? kOverflowLabel : escape_label_value(model_label);
       it->second =
           &inference_completed_family_->Add({{"model", model_label_value}});
     }
@@ -1848,24 +1894,25 @@ MetricsRegistry::increment_failure_counter(
   if (inference_failures_family_ == nullptr) {
     return;
   }
-  const std::string stage{stage_label.value};
-  const std::string reason{reason_label.value};
-  const std::string model{model_label.value};
-  const std::string key = std::format("{}|{}|{}", stage, reason, model);
+  FailureKey key{
+      std::string(stage_label.value), std::string(reason_label.value),
+      std::string(model_label.value)};
 
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = inference_failure_counters_.find(key);
   if (it == inference_failure_counters_.end()) {
     const bool overflow = inference_failure_counters_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    FailureKey map_key = overflow ? FailureKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        inference_failure_counters_.try_emplace(map_key, nullptr);
+        inference_failure_counters_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
-      const std::string& stage_label_value = overflow ? kOverflowLabel : stage;
-      const std::string& reason_label_value =
-          overflow ? kOverflowLabel : reason;
-      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      const std::string stage_label_value =
+          overflow ? kOverflowLabel : escape_label_value(stage_label.value);
+      const std::string reason_label_value =
+          overflow ? kOverflowLabel : escape_label_value(reason_label.value);
+      const std::string model_label_value =
+          overflow ? kOverflowLabel : escape_label_value(model_label.value);
       it->second = &inference_failures_family_->Add(
           {{"stage", stage_label_value},
            {"reason", reason_label_value},
@@ -1884,18 +1931,19 @@ MetricsRegistry::increment_model_load_failure_counter(
   if (model_load_failures_family_ == nullptr) {
     return;
   }
-  const std::string model{model_label};
+  ModelKey key{std::string(model_label)};
   std::lock_guard<std::mutex> lock(status_mutex_);
-  auto it = model_load_failure_counters_.find(model);
+  auto it = model_load_failure_counters_.find(key);
   if (it == model_load_failure_counters_.end()) {
     const bool overflow =
         model_load_failure_counters_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : model;
+    ModelKey map_key = overflow ? ModelKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        model_load_failure_counters_.try_emplace(map_key, nullptr);
+        model_load_failure_counters_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
-      const std::string& model_label_value = overflow ? kOverflowLabel : model;
+      const std::string model_label_value =
+          overflow ? kOverflowLabel : escape_label_value(model_label);
       it->second =
           &model_load_failures_family_->Add({{"model", model_label_value}});
     }
@@ -1913,22 +1961,23 @@ MetricsRegistry::set_model_loaded_flag(
   if (models_loaded_family_ == nullptr) {
     return;
   }
-  const std::string model{model_label.value};
-  const std::string device{device_label.value};
-  const std::string key = std::format("{}|{}", model, device);
+  ModelDeviceKey key{
+      std::string(model_label.value), std::string(device_label.value)};
 
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = models_loaded_gauges_.find(key);
   if (it == models_loaded_gauges_.end()) {
     const bool overflow = models_loaded_gauges_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    ModelDeviceKey map_key =
+        overflow ? ModelDeviceKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        models_loaded_gauges_.try_emplace(map_key, nullptr);
+        models_loaded_gauges_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
-      const std::string& model_label_value = overflow ? kOverflowLabel : model;
-      const std::string& device_label_value =
-          overflow ? kOverflowLabel : device;
+      const std::string model_label_value =
+          overflow ? kOverflowLabel : escape_label_value(model_label.value);
+      const std::string device_label_value =
+          overflow ? kOverflowLabel : escape_label_value(device_label.value);
       it->second = &models_loaded_family_->Add(
           {{"model", model_label_value}, {"device", device_label_value}});
     }
@@ -1937,24 +1986,6 @@ MetricsRegistry::set_model_loaded_flag(
     it->second->Set(loaded ? 1.0 : 0.0);
   }
 }
-
-namespace {
-auto
-make_worker_key(int worker_id, int device_id, std::string_view worker_type)
-    -> std::string
-{
-  return std::format("{}|{}|{}", worker_id, device_id, worker_type);
-}
-
-auto
-make_io_key(
-    std::string_view direction, int worker_id, int device_id,
-    std::string_view worker_type) -> std::string
-{
-  return std::format(
-      "{}|{}|{}|{}", direction, worker_id, device_id, worker_type);
-}
-}  // namespace
 
 void
 MetricsRegistry::observe_compute_latency_by_worker(
@@ -1965,14 +1996,14 @@ MetricsRegistry::observe_compute_latency_by_worker(
       inference_compute_latency_by_worker_family_ == nullptr) {
     return;
   }
-  const std::string key = make_worker_key(worker_id, device_id, worker_type);
+  WorkerKey key{worker_id, device_id, std::string(worker_type)};
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = compute_latency_by_worker_.find(key);
   if (it == compute_latency_by_worker_.end()) {
     const bool overflow = compute_latency_by_worker_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    WorkerKey map_key = overflow ? WorkerKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        compute_latency_by_worker_.try_emplace(map_key, nullptr);
+        compute_latency_by_worker_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
       const std::string worker_id_label =
@@ -1980,7 +2011,7 @@ MetricsRegistry::observe_compute_latency_by_worker(
       const std::string device_label =
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
-          overflow ? kOverflowLabel : std::string(worker_type);
+          overflow ? kOverflowLabel : escape_label_value(worker_type);
       it->second = &inference_compute_latency_by_worker_family_->Add(
           {{"worker_id", worker_id_label},
            {"device", device_label},
@@ -2001,14 +2032,14 @@ MetricsRegistry::observe_task_runtime_by_worker(
   if (latency_ms < 0.0 || starpu_task_runtime_by_worker_family_ == nullptr) {
     return;
   }
-  const std::string key = make_worker_key(worker_id, device_id, worker_type);
+  WorkerKey key{worker_id, device_id, std::string(worker_type)};
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = task_runtime_by_worker_.find(key);
   if (it == task_runtime_by_worker_.end()) {
     const bool overflow = task_runtime_by_worker_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    WorkerKey map_key = overflow ? WorkerKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        task_runtime_by_worker_.try_emplace(map_key, nullptr);
+        task_runtime_by_worker_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
       const std::string worker_id_label =
@@ -2016,7 +2047,7 @@ MetricsRegistry::observe_task_runtime_by_worker(
       const std::string device_label =
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
-          overflow ? kOverflowLabel : std::string(worker_type);
+          overflow ? kOverflowLabel : escape_label_value(worker_type);
       it->second = &starpu_task_runtime_by_worker_family_->Add(
           {{"worker_id", worker_id_label},
            {"device", device_label},
@@ -2037,14 +2068,14 @@ MetricsRegistry::set_worker_inflight_gauge(
   if (starpu_worker_inflight_family_ == nullptr) {
     return;
   }
-  const std::string key = make_worker_key(worker_id, device_id, worker_type);
+  WorkerKey key{worker_id, device_id, std::string(worker_type)};
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = worker_inflight_gauges_.find(key);
   if (it == worker_inflight_gauges_.end()) {
     const bool overflow = worker_inflight_gauges_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    WorkerKey map_key = overflow ? WorkerKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        worker_inflight_gauges_.try_emplace(map_key, nullptr);
+        worker_inflight_gauges_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
       const std::string worker_id_label =
@@ -2052,7 +2083,7 @@ MetricsRegistry::set_worker_inflight_gauge(
       const std::string device_label =
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
-          overflow ? kOverflowLabel : std::string(worker_type);
+          overflow ? kOverflowLabel : escape_label_value(worker_type);
       it->second = &starpu_worker_inflight_family_->Add(
           {{"worker_id", worker_id_label},
            {"device", device_label},
@@ -2072,25 +2103,25 @@ MetricsRegistry::observe_io_copy_latency(
   if (duration_ms < 0.0 || io_copy_latency_family_ == nullptr) {
     return;
   }
-  const std::string key =
-      make_io_key(direction, worker_id, device_id, worker_type);
+  IoKey key{
+      std::string(direction), worker_id, device_id, std::string(worker_type)};
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = io_copy_latency_.find(key);
   if (it == io_copy_latency_.end()) {
     const bool overflow = io_copy_latency_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    IoKey map_key = overflow ? IoKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        io_copy_latency_.try_emplace(map_key, nullptr);
+        io_copy_latency_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
       const std::string direction_label =
-          overflow ? kOverflowLabel : std::string(direction);
+          overflow ? kOverflowLabel : escape_label_value(direction);
       const std::string worker_id_label =
           overflow ? kOverflowLabel : std::to_string(worker_id);
       const std::string device_label =
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
-          overflow ? kOverflowLabel : std::string(worker_type);
+          overflow ? kOverflowLabel : escape_label_value(worker_type);
       it->second = &io_copy_latency_family_->Add(
           {{"direction", direction_label},
            {"worker_id", worker_id_label},
@@ -2112,25 +2143,25 @@ MetricsRegistry::increment_transfer_bytes(
   if (bytes == 0 || transfer_bytes_family_ == nullptr) {
     return;
   }
-  const std::string key =
-      make_io_key(direction, worker_id, device_id, worker_type);
+  IoKey key{
+      std::string(direction), worker_id, device_id, std::string(worker_type)};
   std::lock_guard<std::mutex> lock(status_mutex_);
   auto it = transfer_bytes_.find(key);
   if (it == transfer_bytes_.end()) {
     const bool overflow = transfer_bytes_.size() >= kMaxLabelSeries;
-    const std::string& map_key = overflow ? kOverflowKey : key;
+    IoKey map_key = overflow ? IoKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        transfer_bytes_.try_emplace(map_key, nullptr);
+        transfer_bytes_.try_emplace(std::move(map_key), nullptr);
     it = inserted_it;
     if (inserted) {
       const std::string direction_label =
-          overflow ? kOverflowLabel : std::string(direction);
+          overflow ? kOverflowLabel : escape_label_value(direction);
       const std::string worker_id_label =
           overflow ? kOverflowLabel : std::to_string(worker_id);
       const std::string device_label =
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
-          overflow ? kOverflowLabel : std::string(worker_type);
+          overflow ? kOverflowLabel : escape_label_value(worker_type);
       it->second = &transfer_bytes_family_->Add(
           {{"direction", direction_label},
            {"worker_id", worker_id_label},
@@ -2204,10 +2235,14 @@ MetricsRegistry::sample_cpu_usage()
     }
   }
   catch (const std::exception& e) {
-    log_error(std::format("CPU metrics sampling failed: {}", e.what()));
+    if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
+      log_error(std::format("CPU metrics sampling failed: {}", e.what()));
+    }
   }
   catch (...) {
-    log_error("CPU metrics sampling failed due to an unknown error");
+    if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
+      log_error("CPU metrics sampling failed due to an unknown error");
+    }
   }
 }
 
@@ -2277,14 +2312,25 @@ MetricsRegistry::sample_gpu_stats()
           ->Set(stats.mem_used_bytes);
       ensure_gauge(gpu_memory_total_gauges_, gpu_memory_total_bytes_family_)
           ->Set(stats.mem_total_bytes);
-      if (!std::isnan(stats.temperature_celsius)) {
-        ensure_gauge(gpu_temperature_gauges_, gpu_temperature_family_)
-            ->Set(stats.temperature_celsius);
-      }
-      if (!std::isnan(stats.power_watts)) {
-        ensure_gauge(gpu_power_gauges_, gpu_power_family_)
-            ->Set(stats.power_watts);
-      }
+      const auto set_or_clear_nan = [&](auto& gauges, auto* family,
+                                        double value) {
+        if (std::isnan(value)) {
+          auto it = gauges.find(stats.index);
+          if (it != gauges.end()) {
+            if (family != nullptr) {
+              family->Remove(it->second);
+            }
+            gauges.erase(it);
+          }
+          return;
+        }
+        ensure_gauge(gauges, family)->Set(value);
+      };
+
+      set_or_clear_nan(
+          gpu_temperature_gauges_, gpu_temperature_family_,
+          stats.temperature_celsius);
+      set_or_clear_nan(gpu_power_gauges_, gpu_power_family_, stats.power_watts);
     }
 
     const auto clear_missing = [&](auto& gauges, auto* family) {
@@ -2307,10 +2353,14 @@ MetricsRegistry::sample_gpu_stats()
     clear_missing(gpu_power_gauges_, gpu_power_family_);
   }
   catch (const std::exception& e) {
-    log_error(std::format("GPU metrics sampling failed: {}", e.what()));
+    if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
+      log_error(std::format("GPU metrics sampling failed: {}", e.what()));
+    }
   }
   catch (...) {
-    log_error("GPU metrics sampling failed due to an unknown error");
+    if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
+      log_error("GPU metrics sampling failed due to an unknown error");
+    }
   }
 }
 

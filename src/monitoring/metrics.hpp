@@ -247,6 +247,219 @@ class MetricsRegistry {
   void perform_sampling_request_nb();
   void sampling_loop(const std::stop_token& stop);
 
+  static auto HashCombine(std::size_t seed, std::size_t value) noexcept
+      -> std::size_t
+  {
+    return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+  }
+
+  struct StatusKey {
+    std::string code;
+    std::string model;
+    bool overflow{false};
+
+    static auto Overflow() -> StatusKey
+    {
+      StatusKey key;
+      key.overflow = true;
+      return key;
+    }
+
+    auto operator==(const StatusKey& other) const noexcept -> bool
+    {
+      return overflow == other.overflow && code == other.code &&
+             model == other.model;
+    }
+  };
+
+  struct StatusKeyHash {
+    auto operator()(const StatusKey& key) const noexcept -> std::size_t
+    {
+      std::size_t seed = 0;
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.code));
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.model));
+      seed = MetricsRegistry::HashCombine(
+          seed, static_cast<std::size_t>(key.overflow));
+      return seed;
+    }
+  };
+
+  struct FailureKey {
+    std::string stage;
+    std::string reason;
+    std::string model;
+    bool overflow{false};
+
+    static auto Overflow() -> FailureKey
+    {
+      FailureKey key;
+      key.overflow = true;
+      return key;
+    }
+
+    auto operator==(const FailureKey& other) const noexcept -> bool
+    {
+      return overflow == other.overflow && stage == other.stage &&
+             reason == other.reason && model == other.model;
+    }
+  };
+
+  struct FailureKeyHash {
+    auto operator()(const FailureKey& key) const noexcept -> std::size_t
+    {
+      std::size_t seed = 0;
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.stage));
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.reason));
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.model));
+      seed = MetricsRegistry::HashCombine(
+          seed, static_cast<std::size_t>(key.overflow));
+      return seed;
+    }
+  };
+
+  struct ModelKey {
+    std::string model;
+    bool overflow{false};
+
+    static auto Overflow() -> ModelKey
+    {
+      ModelKey key;
+      key.overflow = true;
+      return key;
+    }
+
+    auto operator==(const ModelKey& other) const noexcept -> bool
+    {
+      return overflow == other.overflow && model == other.model;
+    }
+  };
+
+  struct ModelKeyHash {
+    auto operator()(const ModelKey& key) const noexcept -> std::size_t
+    {
+      std::size_t seed = 0;
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.model));
+      seed = MetricsRegistry::HashCombine(
+          seed, static_cast<std::size_t>(key.overflow));
+      return seed;
+    }
+  };
+
+  struct ModelDeviceKey {
+    std::string model;
+    std::string device;
+    bool overflow{false};
+
+    static auto Overflow() -> ModelDeviceKey
+    {
+      ModelDeviceKey key;
+      key.overflow = true;
+      return key;
+    }
+
+    auto operator==(const ModelDeviceKey& other) const noexcept -> bool
+    {
+      return overflow == other.overflow && model == other.model &&
+             device == other.device;
+    }
+  };
+
+  struct ModelDeviceKeyHash {
+    auto operator()(const ModelDeviceKey& key) const noexcept -> std::size_t
+    {
+      std::size_t seed = 0;
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.model));
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.device));
+      seed = MetricsRegistry::HashCombine(
+          seed, static_cast<std::size_t>(key.overflow));
+      return seed;
+    }
+  };
+
+  struct WorkerKey {
+    int worker_id{0};
+    int device_id{0};
+    std::string worker_type;
+    bool overflow{false};
+
+    static auto Overflow() -> WorkerKey
+    {
+      WorkerKey key;
+      key.overflow = true;
+      return key;
+    }
+
+    auto operator==(const WorkerKey& other) const noexcept -> bool
+    {
+      return overflow == other.overflow && worker_id == other.worker_id &&
+             device_id == other.device_id && worker_type == other.worker_type;
+    }
+  };
+
+  struct WorkerKeyHash {
+    auto operator()(const WorkerKey& key) const noexcept -> std::size_t
+    {
+      std::size_t seed = 0;
+      seed =
+          MetricsRegistry::HashCombine(seed, std::hash<int>{}(key.worker_id));
+      seed =
+          MetricsRegistry::HashCombine(seed, std::hash<int>{}(key.device_id));
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.worker_type));
+      seed = MetricsRegistry::HashCombine(
+          seed, static_cast<std::size_t>(key.overflow));
+      return seed;
+    }
+  };
+
+  struct IoKey {
+    std::string direction;
+    int worker_id{0};
+    int device_id{0};
+    std::string worker_type;
+    bool overflow{false};
+
+    static auto Overflow() -> IoKey
+    {
+      IoKey key;
+      key.overflow = true;
+      return key;
+    }
+
+    auto operator==(const IoKey& other) const noexcept -> bool
+    {
+      return overflow == other.overflow && direction == other.direction &&
+             worker_id == other.worker_id && device_id == other.device_id &&
+             worker_type == other.worker_type;
+    }
+  };
+
+  struct IoKeyHash {
+    auto operator()(const IoKey& key) const noexcept -> std::size_t
+    {
+      std::size_t seed = 0;
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.direction));
+      seed =
+          MetricsRegistry::HashCombine(seed, std::hash<int>{}(key.worker_id));
+      seed =
+          MetricsRegistry::HashCombine(seed, std::hash<int>{}(key.device_id));
+      seed = MetricsRegistry::HashCombine(
+          seed, std::hash<std::string>{}(key.worker_type));
+      seed = MetricsRegistry::HashCombine(
+          seed, static_cast<std::size_t>(key.overflow));
+      return seed;
+    }
+  };
+
   std::shared_ptr<prometheus::Registry> registry_;
   prometheus::Counter* requests_total_{nullptr};
   prometheus::Counter* requests_rejected_total_{nullptr};
@@ -308,21 +521,24 @@ class MetricsRegistry {
   std::unordered_map<int, prometheus::Gauge*> gpu_memory_total_gauges_;
   std::unordered_map<int, prometheus::Gauge*> gpu_temperature_gauges_;
   std::unordered_map<int, prometheus::Gauge*> gpu_power_gauges_;
-  std::unordered_map<std::string, prometheus::Counter*> status_counters_;
-  std::unordered_map<std::string, prometheus::Counter*>
+  std::unordered_map<StatusKey, prometheus::Counter*, StatusKeyHash>
+      status_counters_;
+  std::unordered_map<ModelKey, prometheus::Counter*, ModelKeyHash>
       inference_completed_counters_;
-  std::unordered_map<std::string, prometheus::Counter*>
+  std::unordered_map<FailureKey, prometheus::Counter*, FailureKeyHash>
       inference_failure_counters_;
-  std::unordered_map<std::string, prometheus::Counter*>
+  std::unordered_map<ModelKey, prometheus::Counter*, ModelKeyHash>
       model_load_failure_counters_;
-  std::unordered_map<std::string, prometheus::Gauge*> models_loaded_gauges_;
-  std::unordered_map<std::string, prometheus::Histogram*>
+  std::unordered_map<ModelDeviceKey, prometheus::Gauge*, ModelDeviceKeyHash>
+      models_loaded_gauges_;
+  std::unordered_map<WorkerKey, prometheus::Histogram*, WorkerKeyHash>
       compute_latency_by_worker_;
-  std::unordered_map<std::string, prometheus::Histogram*>
+  std::unordered_map<WorkerKey, prometheus::Histogram*, WorkerKeyHash>
       task_runtime_by_worker_;
-  std::unordered_map<std::string, prometheus::Gauge*> worker_inflight_gauges_;
-  std::unordered_map<std::string, prometheus::Histogram*> io_copy_latency_;
-  std::unordered_map<std::string, prometheus::Counter*> transfer_bytes_;
+  std::unordered_map<WorkerKey, prometheus::Gauge*, WorkerKeyHash>
+      worker_inflight_gauges_;
+  std::unordered_map<IoKey, prometheus::Histogram*, IoKeyHash> io_copy_latency_;
+  std::unordered_map<IoKey, prometheus::Counter*, IoKeyHash> transfer_bytes_;
   std::mutex sampling_mutex_;
   std::mutex status_mutex_;
 };
