@@ -287,15 +287,14 @@ read_process_rss_bytes_impl() -> std::optional<double>
   }
   unsigned long size = 0;
   unsigned long resident = 0;
-  statm >> size >> resident;
-  if (resident == 0) {
+  if (!(statm >> size >> resident)) {
     return std::nullopt;
   }
 #if defined(STARPU_TESTING)
+  const auto& page_size_provider =
+      monitoring::detail::process_page_size_provider_for_test();
   const long page_size =
-      monitoring::detail::process_page_size_provider_for_test()
-          ? monitoring::detail::process_page_size_provider_for_test()()
-          : sysconf(_SC_PAGESIZE);
+      page_size_provider ? page_size_provider() : sysconf(_SC_PAGESIZE);
 #else
   const long page_size = sysconf(_SC_PAGESIZE);
 #endif
@@ -337,6 +336,9 @@ read_process_open_fds_impl() -> std::optional<double>
     std::size_t count = 0;
     for (; iter != end; ++iter) {
       ++count;
+    }
+    if (count > 0 && path == kProcFd) {
+      --count;
     }
     return static_cast<double>(count);
   }
@@ -1871,7 +1873,7 @@ MetricsRegistry::increment_completed_counter(
     return;
   }
   ModelKey key{std::string(model_label)};
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(model_metrics_mutex_);
   auto it = inference_completed_counters_.find(key);
   if (it == inference_completed_counters_.end()) {
     const bool overflow =
@@ -1905,7 +1907,7 @@ MetricsRegistry::increment_failure_counter(
       std::string(stage_label.value), std::string(reason_label.value),
       std::string(model_label.value)};
 
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(model_metrics_mutex_);
   auto it = inference_failure_counters_.find(key);
   if (it == inference_failure_counters_.end()) {
     const bool overflow = inference_failure_counters_.size() >= kMaxLabelSeries;
@@ -1939,7 +1941,7 @@ MetricsRegistry::increment_model_load_failure_counter(
     return;
   }
   ModelKey key{std::string(model_label)};
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(model_metrics_mutex_);
   auto it = model_load_failure_counters_.find(key);
   if (it == model_load_failure_counters_.end()) {
     const bool overflow =
@@ -1971,7 +1973,7 @@ MetricsRegistry::set_model_loaded_flag(
   ModelDeviceKey key{
       std::string(model_label.value), std::string(device_label.value)};
 
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(model_metrics_mutex_);
   auto it = models_loaded_gauges_.find(key);
   if (it == models_loaded_gauges_.end()) {
     const bool overflow = models_loaded_gauges_.size() >= kMaxLabelSeries;
@@ -2004,7 +2006,7 @@ MetricsRegistry::observe_compute_latency_by_worker(
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(worker_metrics_mutex_);
   auto it = compute_latency_by_worker_.find(key);
   if (it == compute_latency_by_worker_.end()) {
     const bool overflow = compute_latency_by_worker_.size() >= kMaxLabelSeries;
@@ -2040,7 +2042,7 @@ MetricsRegistry::observe_task_runtime_by_worker(
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(worker_metrics_mutex_);
   auto it = task_runtime_by_worker_.find(key);
   if (it == task_runtime_by_worker_.end()) {
     const bool overflow = task_runtime_by_worker_.size() >= kMaxLabelSeries;
@@ -2076,7 +2078,7 @@ MetricsRegistry::set_worker_inflight_gauge(
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(worker_metrics_mutex_);
   auto it = worker_inflight_gauges_.find(key);
   if (it == worker_inflight_gauges_.end()) {
     const bool overflow = worker_inflight_gauges_.size() >= kMaxLabelSeries;
@@ -2112,7 +2114,7 @@ MetricsRegistry::observe_io_copy_latency(
   }
   IoKey key{
       std::string(direction), worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(io_metrics_mutex_);
   auto it = io_copy_latency_.find(key);
   if (it == io_copy_latency_.end()) {
     const bool overflow = io_copy_latency_.size() >= kMaxLabelSeries;
@@ -2152,7 +2154,7 @@ MetricsRegistry::increment_transfer_bytes(
   }
   IoKey key{
       std::string(direction), worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> lock(io_metrics_mutex_);
   auto it = transfer_bytes_.find(key);
   if (it == transfer_bytes_.end()) {
     const bool overflow = transfer_bytes_.size() >= kMaxLabelSeries;
@@ -2231,7 +2233,11 @@ MetricsRegistry::run_sampling_request_nb()
 void
 MetricsRegistry::sample_cpu_usage()
 {
-  if (system_cpu_usage_percent_ == nullptr || !cpu_usage_provider_) {
+  if (system_cpu_usage_percent_ == nullptr) {
+    return;
+  }
+  if (!cpu_usage_provider_) {
+    system_cpu_usage_percent_->Set(std::numeric_limits<double>::quiet_NaN());
     return;
   }
 
@@ -2239,17 +2245,21 @@ MetricsRegistry::sample_cpu_usage()
     auto usage = cpu_usage_provider_();
     if (usage.has_value()) {
       system_cpu_usage_percent_->Set(*usage);
+    } else {
+      system_cpu_usage_percent_->Set(std::numeric_limits<double>::quiet_NaN());
     }
   }
   catch (const std::exception& e) {
     if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
       log_error(std::format("CPU metrics sampling failed: {}", e.what()));
     }
+    system_cpu_usage_percent_->Set(std::numeric_limits<double>::quiet_NaN());
   }
   catch (...) {
     if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
       log_error("CPU metrics sampling failed due to an unknown error");
     }
+    system_cpu_usage_percent_->Set(std::numeric_limits<double>::quiet_NaN());
   }
 }
 
@@ -2274,6 +2284,9 @@ MetricsRegistry::sample_process_resident_memory()
 
   if (auto rss_bytes = monitoring::detail::read_process_rss_bytes()) {
     process_resident_memory_bytes_->Set(*rss_bytes);
+  } else {
+    process_resident_memory_bytes_->Set(
+        std::numeric_limits<double>::quiet_NaN());
   }
 }
 
@@ -2286,6 +2299,8 @@ MetricsRegistry::sample_process_open_fds()
 
   if (auto fds = monitoring::detail::read_process_open_fds()) {
     process_open_fds_->Set(*fds);
+  } else {
+    process_open_fds_->Set(std::numeric_limits<double>::quiet_NaN());
   }
 }
 

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -506,7 +507,8 @@ TEST(Metrics, SetQueueFillRatioUpdatesGauge)
     ~MetricsGuard() { shutdown_metrics(); }
   } guard;
 
-  set_queue_fill_ratio(3, 10);
+  set_queue_capacity(10);
+  set_queue_size(3);
 
   const auto metrics = get_metrics();
   ASSERT_NE(metrics, nullptr);
@@ -562,6 +564,74 @@ TEST(Metrics, ObserveBatchAndHealthMetrics)
   EXPECT_DOUBLE_EQ(runtime_metric->histogram.sample_sum, 5.5);
 }
 
+TEST(Metrics, ObserveLatencyBreakdownUpdatesHistograms)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  observe_latency_breakdown(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+
+  const auto* queue_metric =
+      FindHistogramMetric(families, "inference_queue_latency_ms", {});
+  ASSERT_NE(queue_metric, nullptr);
+  EXPECT_EQ(queue_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(queue_metric->histogram.sample_sum, 1.0);
+
+  const auto* batch_metric =
+      FindHistogramMetric(families, "inference_batch_collect_ms", {});
+  ASSERT_NE(batch_metric, nullptr);
+  EXPECT_EQ(batch_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(batch_metric->histogram.sample_sum, 2.0);
+
+  const auto* submit_metric =
+      FindHistogramMetric(families, "inference_submit_latency_ms", {});
+  ASSERT_NE(submit_metric, nullptr);
+  EXPECT_EQ(submit_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(submit_metric->histogram.sample_sum, 3.0);
+
+  const auto* scheduling_metric =
+      FindHistogramMetric(families, "inference_scheduling_latency_ms", {});
+  ASSERT_NE(scheduling_metric, nullptr);
+  EXPECT_EQ(scheduling_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(scheduling_metric->histogram.sample_sum, 4.0);
+
+  const auto* codelet_metric =
+      FindHistogramMetric(families, "inference_codelet_latency_ms", {});
+  ASSERT_NE(codelet_metric, nullptr);
+  EXPECT_EQ(codelet_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(codelet_metric->histogram.sample_sum, 5.0);
+
+  const auto* inference_metric =
+      FindHistogramMetric(families, "inference_compute_latency_ms", {});
+  ASSERT_NE(inference_metric, nullptr);
+  EXPECT_EQ(inference_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(inference_metric->histogram.sample_sum, 6.0);
+
+  const auto* callback_metric =
+      FindHistogramMetric(families, "inference_callback_latency_ms", {});
+  ASSERT_NE(callback_metric, nullptr);
+  EXPECT_EQ(callback_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(callback_metric->histogram.sample_sum, 7.0);
+
+  const auto* preprocess_metric =
+      FindHistogramMetric(families, "inference_preprocess_latency_ms", {});
+  ASSERT_NE(preprocess_metric, nullptr);
+  EXPECT_EQ(preprocess_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(preprocess_metric->histogram.sample_sum, 8.0);
+
+  const auto* postprocess_metric =
+      FindHistogramMetric(families, "inference_postprocess_latency_ms", {});
+  ASSERT_NE(postprocess_metric, nullptr);
+  EXPECT_EQ(postprocess_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(postprocess_metric->histogram.sample_sum, 9.0);
+}
+
 TEST(Metrics, SetQueueFillAndStarpuGauges)
 {
   ASSERT_TRUE(init_metrics(0));
@@ -570,7 +640,8 @@ TEST(Metrics, SetQueueFillAndStarpuGauges)
   } guard;
 
   // trigger zero-capacity guard; gauge should remain at default (0)
-  set_queue_fill_ratio(4, 0);
+  set_queue_capacity(0);
+  set_queue_size(4);
   const auto metrics = get_metrics();
   ASSERT_NE(metrics, nullptr);
   const auto families = metrics->registry()->Collect();
@@ -579,7 +650,8 @@ TEST(Metrics, SetQueueFillAndStarpuGauges)
   ASSERT_TRUE(ratio_zero.has_value());
   EXPECT_DOUBLE_EQ(*ratio_zero, 0.0);
 
-  set_queue_fill_ratio(2, 4);
+  set_queue_capacity(4);
+  set_queue_size(2);
   const auto ratio_half = FindGaugeValue(
       metrics->registry()->Collect(), "inference_queue_fill_ratio", {});
   ASSERT_TRUE(ratio_half.has_value());
@@ -808,13 +880,14 @@ TEST(MetricsDetail, ReadProcessRssBytesHandlesMissingStatm)
   EXPECT_FALSE(value.has_value());
 }
 
-TEST(MetricsDetail, ReadProcessRssBytesHandlesZeroResident)
+TEST(MetricsDetail, ReadProcessRssBytesAllowsZeroResident)
 {
   TemporaryStatmFile statm("256 0");
   StatmPathGuard guard(statm.path());
 
   const auto value = monitoring::detail::read_process_rss_bytes();
-  EXPECT_FALSE(value.has_value());
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 0.0);
 }
 
 TEST(MetricsDetail, ReadProcessRssBytesHandlesNonPositivePageSize)
@@ -852,7 +925,7 @@ TEST(MetricsDetail, CpuUsagePercentClampsAboveOneHundred)
   EXPECT_DOUBLE_EQ(usage, 100.0);
 }
 
-TEST(MetricsRegistry, RunSamplingSkipsCpuUsageWhenProviderMissing)
+TEST(MetricsRegistry, RunSamplingMarksCpuUsageUnknownWhenProviderMissing)
 {
   MetricsRegistry metrics(
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
@@ -865,7 +938,7 @@ TEST(MetricsRegistry, RunSamplingSkipsCpuUsageWhenProviderMissing)
   const auto value = FindGaugeValue(
       metrics.registry()->Collect(), "system_cpu_usage_percent", {});
   ASSERT_TRUE(value.has_value());
-  EXPECT_DOUBLE_EQ(*value, 7.0);
+  EXPECT_TRUE(std::isnan(*value));
 }
 
 TEST(Metrics, IncrementInferenceCompletedUpdatesCounter)

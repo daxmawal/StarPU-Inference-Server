@@ -3,6 +3,7 @@
 #include <prometheus/metric_family.h>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <iostream>
 #include <optional>
@@ -209,7 +210,7 @@ TEST(MetricsSampling, SkipsProcessSamplingWhenGaugesNull)
   metrics.request_stop();
 }
 
-TEST(MetricsSampling, KeepsLastValueWhenProcessSamplingFails)
+TEST(MetricsSampling, MarksProcessGaugesUnknownWhenSamplingFails)
 {
   auto gpu_provider = []() {
     return std::vector<MetricsRegistry::GpuSample>{};
@@ -237,8 +238,8 @@ TEST(MetricsSampling, KeepsLastValueWhenProcessSamplingFails)
   MetricsRegistry::TestAccessor::SampleProcessOpenFds(metrics);
   MetricsRegistry::TestAccessor::SampleProcessResidentMemory(metrics);
 
-  EXPECT_DOUBLE_EQ(open_fds_gauge->Value(), 42.0);
-  EXPECT_DOUBLE_EQ(rss_gauge->Value(), 84.0);
+  EXPECT_TRUE(std::isnan(open_fds_gauge->Value()));
+  EXPECT_TRUE(std::isnan(rss_gauge->Value()));
 
   metrics.request_stop();
 }

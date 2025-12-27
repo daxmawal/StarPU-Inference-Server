@@ -541,6 +541,9 @@ class MetricsRegistry {
   std::unordered_map<IoKey, prometheus::Counter*, IoKeyHash> transfer_bytes_;
   mutable std::mutex sampling_mutex_;
   std::mutex status_mutex_;
+  std::mutex model_metrics_mutex_;
+  std::mutex worker_metrics_mutex_;
+  std::mutex io_metrics_mutex_;
 };
 
 auto init_metrics(int port) -> bool;
