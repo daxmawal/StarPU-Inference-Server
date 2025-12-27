@@ -59,7 +59,7 @@ read_total_cpu_times(std::istream& input, CpuTotals& out) -> bool
   if (!(input >> cpu)) {
     return false;
   }
-  if (!cpu.starts_with("cpu")) {
+  if (cpu != "cpu") {
     return false;
   }
   if (!(input >> out.user >> out.nice >> out.system >> out.idle >> out.iowait >>
@@ -1154,6 +1154,13 @@ metrics_atomic() -> std::atomic<std::shared_ptr<MetricsRegistry>>&
 }
 
 auto
+metrics_init_mutex() -> std::mutex&
+{
+  static std::mutex mutex;
+  return mutex;
+}
+
+auto
 metrics_shutdown_once_flag() -> std::once_flag&
 {
   static std::once_flag flag;
@@ -1164,7 +1171,11 @@ metrics_shutdown_once_flag() -> std::once_flag&
 auto
 init_metrics(int port) -> bool
 {
-  std::shared_ptr<MetricsRegistry> expected{nullptr};
+  std::scoped_lock<std::mutex> lock(metrics_init_mutex());
+  if (metrics_atomic().load(std::memory_order_acquire) != nullptr) {
+    log_warning("Metrics were previously initialized");
+    return false;
+  }
 
   try {
     auto new_metrics = std::make_shared<MetricsRegistry>(port);
@@ -1179,12 +1190,7 @@ init_metrics(int port) -> bool
     });
 #endif
 
-    if (!metrics_atomic().compare_exchange_strong(
-            expected, new_metrics, std::memory_order_acq_rel,
-            std::memory_order_acquire)) {
-      log_warning("Metrics were previously initialized");
-      return false;
-    }
+    metrics_atomic().store(new_metrics, std::memory_order_release);
 
     set_queue_size(0);
     set_inflight_tasks(0);
@@ -1200,6 +1206,7 @@ init_metrics(int port) -> bool
 void
 shutdown_metrics()
 {
+  std::scoped_lock<std::mutex> lock(metrics_init_mutex());
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
   if (metrics_ptr) {
     metrics_ptr->request_stop();
@@ -2454,6 +2461,7 @@ auto
 starpu_server::MetricsRegistry::TestAccessor::GpuUtilizationGaugeCount(
     const starpu_server::MetricsRegistry& metrics) -> std::size_t
 {
+  std::scoped_lock<std::mutex> lock(metrics.sampling_mutex_);
   return metrics.gpu_utilization_gauges_.size();
 }
 
@@ -2461,6 +2469,7 @@ auto
 starpu_server::MetricsRegistry::TestAccessor::GpuMemoryUsedGaugeCount(
     const starpu_server::MetricsRegistry& metrics) -> std::size_t
 {
+  std::scoped_lock<std::mutex> lock(metrics.sampling_mutex_);
   return metrics.gpu_memory_used_gauges_.size();
 }
 
@@ -2468,6 +2477,7 @@ auto
 starpu_server::MetricsRegistry::TestAccessor::GpuMemoryTotalGaugeCount(
     const starpu_server::MetricsRegistry& metrics) -> std::size_t
 {
+  std::scoped_lock<std::mutex> lock(metrics.sampling_mutex_);
   return metrics.gpu_memory_total_gauges_.size();
 }
 

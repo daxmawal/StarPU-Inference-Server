@@ -448,6 +448,57 @@ TEST(Metrics, IncrementRequestStatusUsesExpectedLabels)
   }
 }
 
+TEST(MetricsRegistry, EscapesReservedStatusLabels)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; },
+      /*start_sampler_thread=*/false);
+
+  metrics.increment_status_counter(
+      MetricsRegistry::StatusCodeLabel{"__overflow__"},
+      MetricsRegistry::ModelLabel{"__label__model"});
+
+  const auto families = metrics.registry()->Collect();
+  const auto value = FindCounterValue(
+      families, "requests_by_status_total",
+      {{"code", "__label____overflow__"},
+       {"model", "__label____label__model"}});
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 1.0);
+}
+
+TEST(MetricsRegistry, StatusLabelOverflowUsesReservedBucket)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; },
+      /*start_sampler_thread=*/false);
+
+  constexpr std::size_t kMaxLabelSeriesForTest = 10000;
+  constexpr std::size_t kOverflowSamples = 2;
+  for (std::size_t i = 0; i < kMaxLabelSeriesForTest + kOverflowSamples; ++i) {
+    const std::string model_label = "model-" + std::to_string(i);
+    metrics.increment_status_counter(
+        MetricsRegistry::StatusCodeLabel{"OK"},
+        MetricsRegistry::ModelLabel{model_label});
+  }
+
+  const auto families = metrics.registry()->Collect();
+  const auto overflow_value = FindCounterValue(
+      families, "requests_by_status_total",
+      {{"code", "__overflow__"}, {"model", "__overflow__"}});
+  ASSERT_TRUE(overflow_value.has_value());
+  EXPECT_DOUBLE_EQ(*overflow_value, static_cast<double>(kOverflowSamples));
+
+  const std::string overflowed_label =
+      "model-" + std::to_string(kMaxLabelSeriesForTest);
+  const auto unexpected_value = FindCounterValue(
+      families, "requests_by_status_total",
+      {{"code", "OK"}, {"model", overflowed_label}});
+  EXPECT_FALSE(unexpected_value.has_value());
+}
+
 TEST(Metrics, SetQueueFillRatioUpdatesGauge)
 {
   ASSERT_TRUE(init_metrics(0));
