@@ -494,14 +494,21 @@ InferenceTask::create_task(
     }
   }
 
+  try {
+    assign_fixed_worker_if_needed(task);
+  }
+  catch (...) {
+    starpu_task_destroy(task);
+    cleanup(ctx);
+    throw;
+  }
+
   InferenceTask::allocate_task_buffers(task, num_buffers, ctx);
   InferenceTask::fill_task_buffers(task, inputs_handles, outputs_handles);
 
   task->callback_func = InferenceTask::starpu_output_callback;
   ctx->self_keep_alive = ctx;
   task->callback_arg = ctx.get();
-
-  assign_fixed_worker_if_needed(task);
 
   return task;
 }
