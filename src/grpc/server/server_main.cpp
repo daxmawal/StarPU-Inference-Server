@@ -1,8 +1,10 @@
 #include <hwloc.h>
+#include <signal.h>
 #include <starpu.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -56,9 +58,120 @@ run_plot_script(
     const std::filesystem::path& summary_path,
     const std::filesystem::path& output_path) -> std::optional<int>
 {
+  constexpr auto kPlotScriptTimeout = std::chrono::seconds(30);
+  constexpr auto kPlotScriptPollInterval = std::chrono::milliseconds(50);
+  constexpr auto kPlotScriptTerminateTimeout = std::chrono::seconds(1);
+
+  auto resolve_python_executable =
+      []() -> std::optional<std::filesystem::path> {
+    static const std::array<std::filesystem::path, 3> kCandidates = {
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "/bin/python3",
+    };
+    for (const auto& candidate : kCandidates) {
+      std::error_code status_ec;
+      if (!std::filesystem::is_regular_file(candidate, status_ec) ||
+          status_ec) {
+        continue;
+      }
+      if (::access(candidate.c_str(), X_OK) == 0) {
+        return candidate;
+      }
+    }
+    return std::nullopt;
+  };
+
+  auto wait_status_to_exit_code = [](int status) -> std::optional<int> {
+    if (WIFEXITED(status)) {
+      return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+      return 128 + WTERMSIG(status);
+    }
+    return std::nullopt;
+  };
+
+  auto wait_for_child =
+      [&](pid_t pid,
+          std::chrono::steady_clock::duration timeout) -> std::optional<int> {
+    int status = 0;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (true) {
+      const pid_t result = waitpid(pid, &status, WNOHANG);
+      if (result == pid) {
+        return wait_status_to_exit_code(status);
+      }
+      if (result == 0) {
+        if (timeout != std::chrono::steady_clock::duration::zero() &&
+            std::chrono::steady_clock::now() >= deadline) {
+          break;
+        }
+        std::this_thread::sleep_for(kPlotScriptPollInterval);
+        continue;
+      }
+      if (result < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        starpu_server::log_warning(std::format(
+            "Failed to wait for plot generation process: {}",
+            std::strerror(errno)));
+        return std::nullopt;
+      }
+    }
+
+    starpu_server::log_warning(
+        "Plot generation timed out; terminating python3.");
+    (void)::kill(pid, SIGTERM);
+    const auto term_deadline =
+        std::chrono::steady_clock::now() + kPlotScriptTerminateTimeout;
+    while (std::chrono::steady_clock::now() < term_deadline) {
+      const pid_t result = waitpid(pid, &status, WNOHANG);
+      if (result == pid) {
+        return wait_status_to_exit_code(status);
+      }
+      if (result < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        starpu_server::log_warning(std::format(
+            "Failed to wait for plot generation process: {}",
+            std::strerror(errno)));
+        return std::nullopt;
+      }
+      std::this_thread::sleep_for(kPlotScriptPollInterval);
+    }
+
+    (void)::kill(pid, SIGKILL);
+    while (true) {
+      const pid_t result = waitpid(pid, &status, 0);
+      if (result == pid) {
+        return wait_status_to_exit_code(status);
+      }
+      if (result < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        starpu_server::log_warning(std::format(
+            "Failed to wait for plot generation process: {}",
+            std::strerror(errno)));
+        return std::nullopt;
+      }
+    }
+  };
+
+  const auto python_path = resolve_python_executable();
+  if (!python_path) {
+    starpu_server::log_warning(
+        "python3 was not found in the allowlist; skipping plot generation.");
+    return std::nullopt;
+  }
+
   std::vector<std::string> args{
-      "python3",  script_path.string(), summary_path.string(),
-      "--output", output_path.string(),
+      python_path->string(), script_path.string(),
+      summary_path.string(), "--output",
+      output_path.string(),
   };
   std::vector<char*> argv;
   argv.reserve(args.size() + 1);
@@ -75,24 +188,11 @@ run_plot_script(
     return std::nullopt;
   }
   if (pid == 0) {
-    execvp(argv[0], argv.data());
+    execv(argv[0], argv.data());
     _exit(127);
   }
 
-  int status = 0;
-  if (waitpid(pid, &status, 0) < 0) {
-    starpu_server::log_warning(std::format(
-        "Failed to wait for plot generation process: {}",
-        std::strerror(errno)));
-    return std::nullopt;
-  }
-  if (WIFEXITED(status)) {
-    return WEXITSTATUS(status);
-  }
-  if (WIFSIGNALED(status)) {
-    return 128 + WTERMSIG(status);
-  }
-  return std::nullopt;
+  return wait_for_child(pid, kPlotScriptTimeout);
 }
 
 auto
@@ -114,31 +214,30 @@ resolve_starpu_scheduler(const starpu_server::RuntimeConfig& opts)
 }
 
 auto
-candidate_plot_scripts(const starpu_server::RuntimeConfig& opts)
-    -> std::vector<std::filesystem::path>
+candidate_plot_scripts() -> std::vector<std::filesystem::path>
 {
   std::vector<std::filesystem::path> candidates;
-  candidates.emplace_back("scripts/plot_batch_summary.py");
-  if (!opts.config_path.empty()) {
-    const auto config_dir =
-        std::filesystem::path(opts.config_path).parent_path();
-    candidates.emplace_back(config_dir / "scripts/plot_batch_summary.py");
-  }
   std::error_code exe_ec;
   const auto exe_path = std::filesystem::read_symlink("/proc/self/exe", exe_ec);
-  if (!exe_ec) {
-    candidates.emplace_back(
-        std::filesystem::path(exe_path).parent_path() /
-        "../scripts/plot_batch_summary.py");
+  if (exe_ec) {
+    return candidates;
+  }
+  auto base_dir = std::filesystem::path(exe_path).parent_path();
+  for (int depth = 0; depth < 6; ++depth) {
+    candidates.emplace_back(base_dir / "scripts/plot_batch_summary.py");
+    if (!base_dir.has_parent_path()) {
+      break;
+    }
+    base_dir = base_dir.parent_path();
   }
   return candidates;
 }
 
 auto
-locate_plot_script(const starpu_server::RuntimeConfig& opts)
+locate_plot_script(const starpu_server::RuntimeConfig& /*opts*/)
     -> std::optional<std::filesystem::path>
 {
-  for (const auto& candidate : candidate_plot_scripts(opts)) {
+  for (const auto& candidate : candidate_plot_scripts()) {
     if (candidate.empty()) {
       continue;
     }
@@ -152,6 +251,10 @@ locate_plot_script(const starpu_server::RuntimeConfig& opts)
     }
     std::error_code exists_ec;
     if (std::filesystem::exists(resolved, exists_ec) && !exists_ec) {
+      std::error_code type_ec;
+      if (!std::filesystem::is_regular_file(resolved, type_ec) || type_ec) {
+        continue;
+      }
       return resolved;
     }
   }
@@ -210,7 +313,8 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
       run_plot_script(*script_path, summary_path, output_path);
   if (!exit_code.has_value()) {
     starpu_server::log_warning(
-        "Failed to generate batching latency plots; unable to run python3.");
+        "Failed to generate batching latency plots; plot script did not "
+        "complete.");
   } else if (*exit_code != 0) {
     starpu_server::log_warning(std::format(
         "Failed to generate batching latency plots; python3 {} {} --output {} "
