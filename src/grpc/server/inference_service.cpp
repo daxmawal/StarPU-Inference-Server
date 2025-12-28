@@ -708,6 +708,7 @@ InferenceServiceImpl::populate_response(
   return fill_output_tensor(reply, outputs);
 }
 
+#if defined(STARPU_TESTING)
 auto
 InferenceServiceImpl::ModelInfer(
     ServerContext* context, const ModelInferRequest* request,
@@ -721,6 +722,7 @@ InferenceServiceImpl::ModelInfer(
       });
   return status_future.get();
 }
+#endif
 
 namespace {
 
