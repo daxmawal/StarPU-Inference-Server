@@ -3,6 +3,7 @@
 #include <grpcpp/grpcpp.h>
 #include <torch/torch.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -91,6 +92,7 @@ class InferenceServiceImpl final
   auto submit_job_async(
       const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
       std::vector<std::shared_ptr<const void>> input_lifetimes = {},
+      std::shared_ptr<std::atomic<bool>> cancel_flag = {},
       MonotonicClock::time_point receive_time = MonotonicClock::now(),
       std::string model_name = {}) -> grpc::Status;
 
@@ -108,7 +110,8 @@ class InferenceServiceImpl final
   void HandleModelInferAsync(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
-      std::function<void(grpc::Status)> on_done);
+      std::function<void(grpc::Status)> on_done,
+      std::shared_ptr<void> call_guard = {});
 
   auto validate_and_convert_inputs(
       const inference::ModelInferRequest* request,
@@ -121,7 +124,7 @@ class InferenceServiceImpl final
    public:
     explicit CallbackHandle(std::function<void(grpc::Status)> callback);
     auto TryAcquire() -> bool;
-    void Invoke(grpc::Status status);
+    auto Invoke(grpc::Status status) -> bool;
 
    private:
     std::mutex mutex_;
@@ -137,6 +140,7 @@ class InferenceServiceImpl final
     MonotonicClock::time_point recv_tp;
     int64_t recv_ms;
     std::string resolved_model_name;
+    std::shared_ptr<std::atomic<bool>> cancel_flag;
   };
 
   static void handle_async_infer_completion(

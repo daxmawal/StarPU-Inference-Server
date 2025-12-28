@@ -51,6 +51,63 @@ status_reason(const Status& status) -> std::string
 
 }  // namespace
 
+namespace {
+
+class AsyncCallDataBase {
+ public:
+  explicit AsyncCallDataBase() = default;
+  AsyncCallDataBase(const AsyncCallDataBase&) = delete;
+  auto operator=(const AsyncCallDataBase&) -> AsyncCallDataBase& = delete;
+  AsyncCallDataBase(AsyncCallDataBase&&) = default;
+  auto operator=(AsyncCallDataBase&&) -> AsyncCallDataBase& = default;
+  virtual ~AsyncCallDataBase() = default;
+  virtual void Proceed(bool is_ok) = 0;
+};
+
+class RpcDoneTag final : public AsyncCallDataBase,
+                         public std::enable_shared_from_this<RpcDoneTag> {
+ public:
+  using OnDone = std::function<void()>;
+
+  static auto Create(OnDone on_done, std::shared_ptr<void> call_guard)
+      -> std::shared_ptr<RpcDoneTag>
+  {
+    return std::shared_ptr<RpcDoneTag>(
+        new RpcDoneTag(std::move(on_done), std::move(call_guard)));
+  }
+
+  void Arm(grpc::ServerContext* context)
+  {
+    if (context == nullptr) {
+      return;
+    }
+    self_ref_ = this->shared_from_this();
+    context->AsyncNotifyWhenDone(this);
+  }
+
+  void Proceed(bool is_ok) override
+  {
+    if (is_ok && on_done_) {
+      on_done_();
+    }
+    on_done_ = {};
+    call_guard_.reset();
+    self_ref_.reset();
+  }
+
+ private:
+  RpcDoneTag(OnDone on_done, std::shared_ptr<void> call_guard)
+      : on_done_(std::move(on_done)), call_guard_(std::move(call_guard))
+  {
+  }
+
+  OnDone on_done_;
+  std::shared_ptr<void> call_guard_;
+  std::shared_ptr<RpcDoneTag> self_ref_;
+};
+
+}  // namespace
+
 
 auto
 compute_thread_count_from(unsigned concurrency) -> std::size_t
@@ -394,12 +451,14 @@ auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
+    std::shared_ptr<std::atomic<bool>> cancel_flag,
     MonotonicClock::time_point receive_time, std::string model_name) -> Status
 {
   auto resolved_model_name = resolve_model_name(std::move(model_name));
   auto job = client_utils::create_job(
       inputs, *reference_outputs_, next_request_id_++,
       std::move(input_lifetimes), receive_time, std::move(resolved_model_name));
+  job->set_cancelled_flag(std::move(cancel_flag));
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
@@ -482,7 +541,8 @@ InferenceServiceImpl::submit_job_and_wait(
                 std::move(status), std::move(outs), cb_breakdown,
                 cb_timing_info});
           },
-          std::move(input_lifetimes), receive_time);
+          std::move(input_lifetimes), std::shared_ptr<std::atomic<bool>>{},
+          receive_time);
       !submit_status.ok()) {
     outputs.clear();
     return submit_status;
@@ -520,19 +580,20 @@ InferenceServiceImpl::CallbackHandle::TryAcquire() -> bool
   return true;
 }
 
-void
-InferenceServiceImpl::CallbackHandle::Invoke(Status status)
+auto
+InferenceServiceImpl::CallbackHandle::Invoke(Status status) -> bool
 {
   std::function<void(Status)> callback;
   {
     std::scoped_lock lock(mutex_);
     if (!callback_) {
-      return;
+      return false;
     }
     consumed_ = true;
     callback = std::move(callback_);
   }
   callback(std::move(status));
+  return true;
 }
 
 void
@@ -542,7 +603,15 @@ InferenceServiceImpl::handle_async_infer_completion(
     detail::TimingInfo timing_info)
 {
   const auto& callback_handle = context.callback_handle;
+  if (context.cancel_flag != nullptr &&
+      context.cancel_flag->load(std::memory_order_acquire)) {
+    return;
+  }
   if (!callback_handle->TryAcquire()) {
+    return;
+  }
+  if (context.cancel_flag != nullptr &&
+      context.cancel_flag->load(std::memory_order_acquire)) {
     return;
   }
 
@@ -613,6 +682,11 @@ InferenceServiceImpl::handle_async_infer_completion(
       breakdown.scheduling_ms, breakdown.codelet_ms, breakdown.inference_ms,
       breakdown.callback_ms, breakdown.preprocess_ms, breakdown.postprocess_ms);
 
+  if (context.cancel_flag != nullptr &&
+      context.cancel_flag->load(std::memory_order_acquire)) {
+    return;
+  }
+
   increment_request_status(
       static_cast<int>(grpc::StatusCode::OK), context.resolved_model_name);
   callback_handle->Invoke(Status::OK);
@@ -620,10 +694,12 @@ InferenceServiceImpl::handle_async_infer_completion(
 
 void
 InferenceServiceImpl::HandleModelInferAsync(
-    ServerContext* /*context*/, const ModelInferRequest* request,
-    ModelInferResponse* reply, std::function<void(Status)> on_done)
+    ServerContext* context, const ModelInferRequest* request,
+    ModelInferResponse* reply, std::function<void(Status)> on_done,
+    std::shared_ptr<void> call_guard)
 {
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
   NvtxRange request_scope("grpc_handle_infer_request");
 
   auto metrics = get_metrics();
@@ -632,6 +708,31 @@ InferenceServiceImpl::HandleModelInferAsync(
   }
 
   const auto resolved_model_name = resolve_model_name(request->model_name());
+  if (context != nullptr && call_guard) {
+    auto on_cancel = [context, cancel_flag, callback_handle,
+                      resolved_model_name]() {
+      if (context == nullptr || !context->IsCancelled()) {
+        return;
+      }
+      if (cancel_flag->exchange(true, std::memory_order_acq_rel)) {
+        return;
+      }
+      const bool invoked = callback_handle->Invoke(
+          {grpc::StatusCode::CANCELLED, "Request cancelled"});
+      if (invoked) {
+        increment_request_status(
+            static_cast<int>(grpc::StatusCode::CANCELLED), resolved_model_name);
+        increment_inference_failure(
+            "cancel", "client_cancelled", resolved_model_name);
+      }
+    };
+    auto done_tag = RpcDoneTag::Create(on_cancel, std::move(call_guard));
+    done_tag->Arm(context);
+    if (context->IsCancelled()) {
+      on_cancel();
+      return;
+    }
+  }
   auto recv_tp = MonotonicClock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch())
@@ -642,6 +743,9 @@ InferenceServiceImpl::HandleModelInferAsync(
   Status status =
       validate_and_convert_inputs(request, inputs, &input_lifetimes);
   if (!status.ok()) {
+    if (cancel_flag->load(std::memory_order_acquire)) {
+      return;
+    }
     increment_request_status(
         static_cast<int>(status.error_code()), resolved_model_name);
     increment_inference_failure(
@@ -650,21 +754,28 @@ InferenceServiceImpl::HandleModelInferAsync(
     return;
   }
 
+  if (cancel_flag->load(std::memory_order_acquire)) {
+    return;
+  }
+
   status = submit_job_async(
       inputs,
       [request, reply, recv_tp, recv_ms, metrics, callback_handle,
-       resolved_model_name](
+       resolved_model_name, cancel_flag](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
         handle_async_infer_completion(
             AsyncInferCompletionContext{
                 request, reply, callback_handle, metrics, recv_tp, recv_ms,
-                resolved_model_name},
+                resolved_model_name, cancel_flag},
             job_status, outs, breakdown, timing_info);
       },
-      std::move(input_lifetimes), recv_tp, resolved_model_name);
+      std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name);
 
   if (!status.ok()) {
+    if (cancel_flag->load(std::memory_order_acquire)) {
+      return;
+    }
     increment_request_status(
         static_cast<int>(status.error_code()), resolved_model_name);
     callback_handle->Invoke(status);
@@ -718,17 +829,6 @@ InferenceServiceImpl::ModelInfer(
 #endif
 
 namespace {
-
-class AsyncCallDataBase {
- public:
-  explicit AsyncCallDataBase() = default;
-  AsyncCallDataBase(const AsyncCallDataBase&) = delete;
-  auto operator=(const AsyncCallDataBase&) -> AsyncCallDataBase& = delete;
-  AsyncCallDataBase(AsyncCallDataBase&&) = default;
-  auto operator=(AsyncCallDataBase&&) -> AsyncCallDataBase& = default;
-  virtual ~AsyncCallDataBase() = default;
-  virtual void Proceed(bool is_ok) = 0;
-};
 
 template <typename Request, typename Response>
 class UnaryCallData final
@@ -861,11 +961,13 @@ class ModelInferCallData final
         }
         Start(service_, cq_, impl_);
         auto self = this->shared_from_this();
+        auto call_guard = self;
         impl_->HandleModelInferAsync(
             &ctx_, &request_, &response_,
             [self = std::move(self)](const Status& status) {
               self->OnInferenceComplete(status);
-            });
+            },
+            std::move(call_guard));
         break;
       }
       case Finish:

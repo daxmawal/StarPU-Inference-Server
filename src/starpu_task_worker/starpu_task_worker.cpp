@@ -2571,6 +2571,29 @@ StarPUTaskRunner::run()
       break;
     }
 
+    if (job->is_cancelled()) {
+      if (job->has_on_complete()) {
+        job->set_on_complete({});
+      }
+      job->set_aggregated_sub_jobs({});
+      if (job->has_pending_sub_jobs()) {
+        auto pending_jobs = job->take_pending_sub_jobs();
+        std::vector<std::shared_ptr<InferenceJob>> release_jobs;
+        release_jobs.reserve(pending_jobs.size() + 1);
+        release_jobs.push_back(job);
+        for (auto& pending : pending_jobs) {
+          release_jobs.push_back(std::move(pending));
+        }
+        task_runner_internal::release_inputs_from_additional_jobs(release_jobs);
+      }
+      static_cast<void>(job->release_input_tensors());
+      job->release_input_memory_holders();
+      job->set_output_tensors({});
+      result_dispatcher_->finalize_job_completion(job);
+      release_inflight_slot();
+      continue;
+    }
+
     const auto submission_id = next_submission_id_.fetch_add(1);
     job->set_submission_id(submission_id);
     job->timing_info().submission_id = submission_id;

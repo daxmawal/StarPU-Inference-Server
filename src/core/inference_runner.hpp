@@ -2,6 +2,7 @@
 
 #include <torch/script.h>
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -207,6 +208,17 @@ class InferenceJob : public JobBatchState {
 
   void release_input_memory_holders() { input_memory_holders_.clear(); }
 
+  void set_cancelled_flag(std::shared_ptr<std::atomic<bool>> flag)
+  {
+    cancelled_flag_ = std::move(flag);
+  }
+
+  [[nodiscard]] auto is_cancelled() const -> bool
+  {
+    return cancelled_flag_ != nullptr &&
+           cancelled_flag_->load(std::memory_order_acquire);
+  }
+
   void set_submission_id(int submission_id) { submission_id_ = submission_id; }
 
   [[nodiscard]] auto submission_id() const -> int { return submission_id_; }
@@ -266,6 +278,7 @@ class InferenceJob : public JobBatchState {
   std::vector<at::ScalarType> input_types_;
   std::vector<torch::Tensor> output_tensors_;
   std::vector<std::shared_ptr<const void>> input_memory_holders_;
+  std::shared_ptr<std::atomic<bool>> cancelled_flag_;
 
   int request_id_ = 0;
   int submission_id_ = -1;
