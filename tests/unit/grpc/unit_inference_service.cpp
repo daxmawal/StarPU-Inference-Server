@@ -149,7 +149,7 @@ TEST_F(InferenceServiceTest, ValidateInputsSuccess)
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
 }
 
-TEST_F(InferenceServiceTest, ValidateInputsZeroCopyUsesRequestBuffer)
+TEST_F(InferenceServiceTest, ValidateInputsCopiesRequestBuffer)
 {
   constexpr size_t kElements = 1U << 10;
   std::vector<float> data(kElements, kF1);
@@ -166,7 +166,8 @@ TEST_F(InferenceServiceTest, ValidateInputsZeroCopyUsesRequestBuffer)
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
   ASSERT_EQ(keep_alive.size(), 1U);
-  EXPECT_EQ(
+  EXPECT_EQ(inputs[0].data_ptr(), const_cast<void*>(keep_alive[0].get()));
+  EXPECT_NE(
       inputs[0].data_ptr(), const_cast<void*>(static_cast<const void*>(
                                 req.raw_input_contents(0).data())));
   EXPECT_EQ(
@@ -174,7 +175,7 @@ TEST_F(InferenceServiceTest, ValidateInputsZeroCopyUsesRequestBuffer)
       static_cast<int64_t>(req.raw_input_contents(0).size()));
 }
 
-TEST_F(InferenceServiceTest, ValidateInputsKeepAliveSharesAlias)
+TEST_F(InferenceServiceTest, ValidateInputsKeepAliveSharesOwnedBuffer)
 {
   std::vector<float> data = {kF1, kF2, kF3, kF4};
   auto req = starpu_server::make_model_infer_request({
@@ -189,7 +190,7 @@ TEST_F(InferenceServiceTest, ValidateInputsKeepAliveSharesAlias)
   ASSERT_EQ(inputs.size(), 1U);
   ASSERT_EQ(keep_alive.size(), 1U);
   EXPECT_EQ(inputs[0].data_ptr(), const_cast<void*>(keep_alive[0].get()));
-  EXPECT_EQ(
+  EXPECT_NE(
       keep_alive[0].get(),
       static_cast<const void*>(req.raw_input_contents(0).data()));
 }

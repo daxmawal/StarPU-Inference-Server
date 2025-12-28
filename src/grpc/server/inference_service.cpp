@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <functional>
 #include <future>
@@ -172,9 +173,8 @@ auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input,
     const std::vector<int64_t>& shape, const std::string& raw,
-    at::ScalarType dtype,
-    const std::shared_ptr<const ModelInferRequest>& request_guard,
-    torch::Tensor& tensor, std::shared_ptr<const void>* keep_alive) -> Status
+    at::ScalarType dtype, torch::Tensor& tensor,
+    std::shared_ptr<const void>* keep_alive) -> Status
 {
   auto options = torch::TensorOptions().dtype(dtype);
 
@@ -198,20 +198,16 @@ convert_input_to_tensor(
         "Raw input size does not match tensor size"};
   }
 
-  const auto raw_span = std::span<const char>(raw.data(), raw.size());
-  const auto byte_span = std::as_bytes(raw_span);
-  const auto* byte_data = byte_span.data();
-  auto alias = std::shared_ptr<const TensorDataByte>(request_guard, byte_data);
-  auto holder = std::const_pointer_cast<TensorDataByte>(alias);
-  auto deleter = [holder](void* /*unused*/) mutable {
-    auto keep = holder;
-    keep.reset();
-  };
+  auto buffer = std::make_shared<std::vector<TensorDataByte>>(raw.size());
+  if (!raw.empty()) {
+    std::memcpy(buffer->data(), raw.data(), raw.size());
+  }
+  auto deleter = [buffer](void* /*unused*/) mutable { buffer.reset(); };
 
-  TensorDataPtr tensor_data = holder.get();
+  TensorDataPtr tensor_data = buffer->data();
   tensor = torch::from_blob(tensor_data, shape, deleter, options);
   if (keep_alive != nullptr) {
-    *keep_alive = alias;
+    *keep_alive = std::shared_ptr<const void>(buffer, buffer->data());
   }
   return Status::OK;
 }
@@ -317,9 +313,6 @@ InferenceServiceImpl::validate_and_convert_inputs(
         "Number of raw inputs does not match number of input tensors"};
   }
 
-  auto request_guard = std::shared_ptr<const ModelInferRequest>(
-      request, [](const ModelInferRequest*) {});
-
   inputs.clear();
   inputs.reserve(request->inputs_size());
   if (input_lifetimes != nullptr) {
@@ -340,7 +333,7 @@ InferenceServiceImpl::validate_and_convert_inputs(
     torch::Tensor tensor;
     std::shared_ptr<const void> tensor_guard;
     status = convert_input_to_tensor(
-        input, shape, raw, dtype, request_guard, tensor,
+        input, shape, raw, dtype, tensor,
         input_lifetimes != nullptr ? &tensor_guard : nullptr);
     if (!status.ok()) {
       return status;
