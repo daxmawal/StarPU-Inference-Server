@@ -448,6 +448,26 @@ InferenceServiceImpl::resolve_model_name(std::string model_name) const
 }
 
 auto
+InferenceServiceImpl::next_request_id() -> int
+{
+  constexpr int kMaxRequestId = std::numeric_limits<int>::max();
+  int current = next_request_id_.load(std::memory_order_relaxed);
+  while (true) {
+    int issued = 0;
+    int next = 1;
+    if (current >= 0 && current < kMaxRequestId) {
+      issued = current;
+      next = current + 1;
+    }
+    if (next_request_id_.compare_exchange_weak(
+            current, next, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
+      return issued;
+    }
+  }
+}
+
+auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
@@ -456,7 +476,7 @@ InferenceServiceImpl::submit_job_async(
 {
   auto resolved_model_name = resolve_model_name(std::move(model_name));
   auto job = client_utils::create_job(
-      inputs, *reference_outputs_, next_request_id_++,
+      inputs, *reference_outputs_, next_request_id(),
       std::move(input_lifetimes), receive_time, std::move(resolved_model_name));
   job->set_cancelled_flag(std::move(cancel_flag));
 

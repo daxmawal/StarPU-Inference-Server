@@ -153,6 +153,7 @@ class InferenceServiceImpl final
 
   [[nodiscard]] auto resolve_model_name(std::string model_name) const
       -> std::string;
+  auto next_request_id() -> int;
 
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
