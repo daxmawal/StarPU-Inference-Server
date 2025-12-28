@@ -154,8 +154,6 @@ class InferenceJob : public JobBatchState {
       std::function<void(const std::vector<torch::Tensor>&, double)> callback =
           nullptr);
 
-  [[nodiscard]] auto is_shutdown() const -> bool { return is_shutdown_signal_; }
-
   void set_request_id(int request_id) { request_id_ = request_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
   void set_input_tensors(const std::vector<torch::Tensor>& inputs)
@@ -290,8 +288,6 @@ class InferenceJob : public JobBatchState {
   int worker_id_ = -1;
 
   detail::TimingInfo timing_info_;
-
-  bool is_shutdown_signal_ = false;
 };
 
 // =============================================================================

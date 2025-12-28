@@ -75,8 +75,6 @@ class StarPUTaskRunner {
   auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
 #endif
   // GCOVR_EXCL_STOP
-  [[nodiscard]] auto should_shutdown(
-      const std::shared_ptr<InferenceJob>& job) const -> bool;
   void prepare_job_completion_callback(
       const std::shared_ptr<InferenceJob>& job);
   void submit_inference_task(const std::shared_ptr<InferenceJob>& job);

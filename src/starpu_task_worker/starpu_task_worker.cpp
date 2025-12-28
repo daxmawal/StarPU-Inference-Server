@@ -1527,7 +1527,7 @@ BatchCollector::should_hold_job(
   if (!candidate) {
     return false;
   }
-  if (candidate->is_shutdown() || candidate->has_aggregated_sub_jobs() ||
+  if (candidate->has_aggregated_sub_jobs() ||
       candidate->logical_job_count() > 1) {
     return true;
   }
@@ -1873,8 +1873,7 @@ BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
       prepared_cv_ == nullptr) {
     return;
   }
-  if (max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr && job != nullptr &&
-      !job->is_shutdown()) {
+  if (max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr && job != nullptr) {
     const auto current =
         inflight_tasks_->fetch_add(1, std::memory_order_release) + 1;
     set_inflight_tasks(current);
@@ -1920,12 +1919,6 @@ BatchCollector::batching_loop()
   while (!should_stop) {
     auto job = wait_for_next_job();
     if (!job) {
-      should_stop = true;
-      continue;
-    }
-
-    if (job->is_shutdown()) {
-      enqueue_prepared_job(job);
       should_stop = true;
       continue;
     }
@@ -2019,19 +2012,6 @@ StarPUTaskRunner::wait_for_next_job() -> std::shared_ptr<InferenceJob>
 }
 #endif
 // GCOVR_EXCL_STOP
-
-auto
-StarPUTaskRunner::should_shutdown(
-    const std::shared_ptr<InferenceJob>& job) const -> bool
-{
-  if (job->is_shutdown()) {
-    log_info(
-        opts_->verbosity,
-        "Received shutdown signal. Exiting StarPUTaskRunner loop.");
-    return true;
-  }
-  return false;
-}
 
 // =============================================================================
 // Completion Callback Handling
@@ -2567,7 +2547,7 @@ StarPUTaskRunner::run()
 
   while (true) {
     auto job = wait_for_prepared_job();
-    if (!job || should_shutdown(job)) {
+    if (!job) {
       break;
     }
 
