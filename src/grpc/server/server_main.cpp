@@ -15,6 +15,7 @@
 #include <format>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -422,6 +423,7 @@ launch_threads(
     std::vector<torch::Tensor>& reference_outputs)
 {
   static starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+  queue.reset_counters();
   auto& server_ctx = server_context();
   server_ctx.queue_ptr = &queue;
 
@@ -436,6 +438,7 @@ launch_threads(
 
   std::atomic completed_jobs{0};
   std::condition_variable all_done_cv;
+  std::mutex all_done_mutex;
 
   starpu_server::StarPUTaskRunnerConfig config{};
   config.queue = &queue;
@@ -490,6 +493,17 @@ launch_threads(
   starpu_server::StopServer(server_ctx.server.get());
   if (server_ctx.queue_ptr != nullptr) {
     server_ctx.queue_ptr->shutdown();
+  }
+  const auto total_jobs = queue.total_pushed();
+  if (total_jobs > 0) {
+    std::unique_lock lock(all_done_mutex);
+    all_done_cv.wait(lock, [&completed_jobs, total_jobs]() {
+      const int completed = completed_jobs.load(std::memory_order_acquire);
+      if (completed < 0) {
+        return true;
+      }
+      return static_cast<std::size_t>(completed) >= total_jobs;
+    });
   }
   server_ctx.stop_cv.notify_one();
 }

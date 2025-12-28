@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -52,6 +53,7 @@ class InferenceQueue {
         return false;
       }
       queue_.push(std::move(job));
+      total_pushed_.fetch_add(1, std::memory_order_release);
       size = queue_.size();
     }
     update_queue_metrics(size);
@@ -115,6 +117,13 @@ class InferenceQueue {
     cv_.notify_all();
   }
 
+  [[nodiscard]] auto total_pushed() const -> std::size_t
+  {
+    return total_pushed_.load(std::memory_order_acquire);
+  }
+
+  void reset_counters() { total_pushed_.store(0, std::memory_order_release); }
+
   [[nodiscard]] auto size() const -> std::size_t
   {
     const std::scoped_lock lock(mutex_);
@@ -134,5 +143,6 @@ class InferenceQueue {
   std::queue<std::shared_ptr<InferenceJob>> queue_;
   bool shutdown_ = false;
   std::condition_variable cv_;
+  std::atomic<std::size_t> total_pushed_{0};
 };
 }  // namespace starpu_server
