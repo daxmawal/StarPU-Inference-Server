@@ -222,7 +222,8 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
   per_input_numel_single_.reserve(inputs.size());
   per_input_bytes_single_.reserve(inputs.size());
 
-  for (const auto& input_spec : inputs) {
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    const auto& input_spec = inputs[i];
     input_types_.push_back(input_spec.type);
     if (input_spec.dims.size() >= 2) {
       const int64_t batch_dim = input_spec.dims[0];
@@ -238,6 +239,10 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
     const size_t numel = product_dims(input_spec.dims);
     per_input_numel_single_.push_back(numel);
     const size_t elsize = element_size(input_spec.type);
+    if (elsize != 0 && numel > std::numeric_limits<size_t>::max() / elsize) {
+      throw std::overflow_error(std::format(
+          "InputSlotPool: per-sample bytes overflow for input {}", i));
+    }
     per_input_bytes_single_.push_back(numel * elsize);
   }
 

@@ -226,7 +226,8 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
   per_output_numel_single_.reserve(outputs.size());
   per_output_bytes_single_.reserve(outputs.size());
 
-  for (const auto& output_desc : outputs) {
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    const auto& output_desc = outputs[i];
     output_types_.push_back(output_desc.type);
     if (output_desc.dims.size() >= 2) {
       const int64_t batch_dim = output_desc.dims[0];
@@ -242,6 +243,10 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
     const size_t numel = product_dims(output_desc.dims);
     per_output_numel_single_.push_back(numel);
     const size_t elsize = element_size(output_desc.type);
+    if (elsize != 0 && numel > std::numeric_limits<size_t>::max() / elsize) {
+      throw std::overflow_error(std::format(
+          "OutputSlotPool: per-sample bytes overflow for output {}", i));
+    }
     per_output_bytes_single_.push_back(numel * elsize);
   }
 
