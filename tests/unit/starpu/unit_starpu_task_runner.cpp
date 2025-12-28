@@ -850,14 +850,6 @@ TEST(
       test_api::resize_starpu_vector_interface(nullptr, spec, true));
 }
 
-TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
-{
-  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
-  auto normal_job = make_job(0, {});
-  EXPECT_TRUE(runner_->should_shutdown(shutdown_job));
-  EXPECT_FALSE(runner_->should_shutdown(normal_job));
-}
-
 TEST_F(
     StarPUTaskRunnerFixture, ResolveBatchSizeWithoutJobDefaultsToSingleSample)
 {
@@ -2788,33 +2780,6 @@ TEST_F(
       starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
           runner_.get()),
       1U);
-}
-
-TEST_F(
-    StarPUTaskRunnerFixture,
-    EnqueuePreparedJobDoesNotIncrementInflightForShutdownJob)
-{
-  opts_.batching.max_inflight_tasks = 10;
-  runner_.reset();
-  starpu_setup_.reset();
-  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
-  config_.starpu = starpu_setup_.get();
-  config_.opts = &opts_;
-  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
-
-  ASSERT_EQ(
-      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
-          runner_.get()),
-      0U);
-
-  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
-  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
-      runner_.get(), shutdown_job);
-
-  EXPECT_EQ(
-      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
-          runner_.get()),
-      0U);
 }
 
 TEST_F(
@@ -4993,7 +4958,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5019,7 +4984,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5045,7 +5010,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5071,7 +5036,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5100,7 +5065,7 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5128,15 +5093,6 @@ TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsFalseWhenCandidateMissing)
 
   EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
       empty_candidate, reference, std::nullopt));
-}
-
-TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsTrueForShutdownCandidate)
-{
-  auto reference = std::make_shared<starpu_server::InferenceJob>();
-  auto shutdown_candidate = starpu_server::InferenceJob::make_shutdown_job();
-
-  EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
-      shutdown_candidate, reference, std::nullopt));
 }
 
 TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsTrueForAggregatedSubJobs)

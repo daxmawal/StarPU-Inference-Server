@@ -172,16 +172,6 @@ InferenceJob::InferenceJob(
 {
 }
 
-auto
-InferenceJob::make_shutdown_job() -> std::shared_ptr<InferenceJob>
-{
-  auto job = std::make_shared<InferenceJob>();
-  job->is_shutdown_signal_ = true;
-  job->set_logical_job_count(0);
-  job->set_aggregated_sub_jobs({});
-  return job;
-}
-
 // =============================================================================
 // Model Loading and Cloning to GPU
 // =============================================================================

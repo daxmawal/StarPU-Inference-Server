@@ -154,8 +154,6 @@ class InferenceJob : public JobBatchState {
       std::function<void(const std::vector<torch::Tensor>&, double)> callback =
           nullptr);
 
-  static auto make_shutdown_job() -> std::shared_ptr<InferenceJob>;
-
   [[nodiscard]] auto is_shutdown() const -> bool { return is_shutdown_signal_; }
 
   void set_request_id(int request_id) { request_id_ = request_id; }

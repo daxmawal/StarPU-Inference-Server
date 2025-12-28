@@ -6,7 +6,6 @@ target_sources(
             grpc/integration_inference_service.cpp
             grpc/integration_grpc_client_server.cpp
             starpu/integration_starpu_setup.cpp
-            starpu/integration_starpu_task_runner.cpp
             starpu/integration_tensor_builder_from_starpu.cpp
             utils/integration_skipped_modules.cpp
             core/integration_inference_queue.cpp

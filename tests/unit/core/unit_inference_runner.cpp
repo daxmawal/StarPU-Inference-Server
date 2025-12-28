@@ -120,14 +120,6 @@ CallbackResultsMatch(
 }
 }  // namespace
 
-TEST(InferenceJobTest, MakeShutdownJobCreatesShutdownSignal)
-{
-  auto job = starpu_server::InferenceJob::make_shutdown_job();
-  ASSERT_NE(job, nullptr);
-  EXPECT_TRUE(job->is_shutdown());
-  EXPECT_EQ(job->get_request_id(), 0);
-}
-
 TEST(InferenceJobTest, ConstructorInitializesState)
 {
   const std::vector<torch::Tensor> inputs{torch::ones(kShape2x2)};
