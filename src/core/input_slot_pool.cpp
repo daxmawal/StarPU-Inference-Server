@@ -303,17 +303,24 @@ InputSlotPool::allocate_slot_buffers_and_register(
   const bool want_pinned = opts.devices.use_cuda;
   const auto batch_size = static_cast<size_t>(bmax_);
 
-  for (size_t i = 0; i < n_in; ++i) {
-    const auto sizes = compute_input_sizes(
-        per_input_bytes_single_[i], per_input_numel_single_[i], batch_size, i);
+  try {
+    for (size_t i = 0; i < n_in; ++i) {
+      const auto sizes = compute_input_sizes(
+          per_input_bytes_single_[i], per_input_numel_single_[i], batch_size,
+          i);
 
-    auto allocation =
-        allocate_and_pin_buffer(sizes.total_bytes, want_pinned, slot_id, i);
-    slot.base_ptrs[i] = allocation.ptr;
-    buffer_infos[i] = allocation.info;
+      auto allocation =
+          allocate_and_pin_buffer(sizes.total_bytes, want_pinned, slot_id, i);
+      slot.base_ptrs[i] = allocation.ptr;
+      buffer_infos[i] = allocation.info;
 
-    slot.handles[i] = register_starpu_handle_or_throw(
-        allocation.ptr, sizes, input_types_[i], i, slot, buffer_infos);
+      slot.handles[i] = register_starpu_handle_or_throw(
+          allocation.ptr, sizes, input_types_[i], i, slot, buffer_infos);
+    }
+  }
+  catch (...) {
+    cleanup_slot_allocations(slot, buffer_infos, n_in);
+    throw;
   }
 }
 

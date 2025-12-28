@@ -308,27 +308,34 @@ OutputSlotPool::allocate_slot_buffers_and_register(
 
   const auto batch_size = static_cast<size_t>(bmax_);
 
-  for (size_t i = 0; i < num_outputs; ++i) {
-    const auto prepared_buffer = prepare_host_buffer(
-        per_output_bytes_single_[i], batch_size, want_pinned, slot_id, i);
-    slot.base_ptrs[i] = prepared_buffer.ptr;
-    buffer_infos[i] = prepared_buffer.info;
+  try {
+    for (size_t i = 0; i < num_outputs; ++i) {
+      const auto prepared_buffer = prepare_host_buffer(
+          per_output_bytes_single_[i], batch_size, want_pinned, slot_id, i);
+      slot.base_ptrs[i] = prepared_buffer.ptr;
+      buffer_infos[i] = prepared_buffer.info;
 
-    const size_t total_numel =
-        checked_total_numel(per_output_numel_single_[i], batch_size);
-    starpu_data_handle_t handle = nullptr;
-    starpu_vector_register_hook()(
-        &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(prepared_buffer.ptr),
-        total_numel, element_size(output_types_[i]));
-    if (handle == nullptr) {
-      cleanup_slot_buffers(slot, buffer_infos, i + 1);
-      if (starpu_register_failure_observer() != nullptr) {
-        starpu_register_failure_observer()(slot, buffer_infos);
+      const size_t total_numel =
+          checked_total_numel(per_output_numel_single_[i], batch_size);
+      starpu_data_handle_t handle = nullptr;
+      starpu_vector_register_hook()(
+          &handle, STARPU_MAIN_RAM,
+          std::bit_cast<uintptr_t>(prepared_buffer.ptr), total_numel,
+          element_size(output_types_[i]));
+      if (handle == nullptr) {
+        cleanup_slot_buffers(slot, buffer_infos, i + 1);
+        if (starpu_register_failure_observer() != nullptr) {
+          starpu_register_failure_observer()(slot, buffer_infos);
+        }
+        throw OutputSlotRegistrationError(
+            "Failed to register StarPU vector handle for output");
       }
-      throw OutputSlotRegistrationError(
-          "Failed to register StarPU vector handle for output");
+      slot.handles[i] = handle;
     }
-    slot.handles[i] = handle;
+  }
+  catch (...) {
+    cleanup_slot_buffers(slot, buffer_infos, num_outputs);
+    throw;
   }
 }
 

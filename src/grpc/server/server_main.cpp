@@ -41,6 +41,8 @@ struct ServerContext {
   std::atomic<bool> stop_requested{false};
 };
 
+std::sig_atomic_t signal_stop_requested = 0;
+
 auto
 server_context() -> ServerContext&
 {
@@ -227,7 +229,7 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
 void
 signal_handler(int /*signal*/)
 {
-  server_context().stop_requested.store(true);
+  signal_stop_requested = 1;
 }
 
 auto
@@ -321,9 +323,10 @@ launch_threads(
 
   std::jthread notifier_thread([&server_ctx]() {
     constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
-    while (!server_ctx.stop_requested.load(std::memory_order_relaxed)) {
+    while (signal_stop_requested == 0) {
       std::this_thread::sleep_for(kNotifierSleep);
     }
+    server_ctx.stop_requested.store(true, std::memory_order_relaxed);
     server_ctx.stop_cv.notify_one();
   });
 
@@ -376,8 +379,9 @@ launch_threads(
 
   {
     std::unique_lock lock(server_ctx.stop_mutex);
-    server_ctx.stop_cv.wait(
-        lock, [] { return server_context().stop_requested.load(); });
+    server_ctx.stop_cv.wait(lock, [&server_ctx] {
+      return server_ctx.stop_requested.load(std::memory_order_relaxed);
+    });
   }
   starpu_server::StopServer(server_ctx.server.get());
   if (server_ctx.queue_ptr != nullptr) {
