@@ -1,10 +1,14 @@
 #include <hwloc.h>
 #include <starpu.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <format>
 #include <iostream>
@@ -45,20 +49,48 @@ server_context() -> ServerContext&
 }
 
 auto
-shell_quote(const std::string& value) -> std::string
+run_plot_script(
+    const std::filesystem::path& script_path,
+    const std::filesystem::path& summary_path,
+    const std::filesystem::path& output_path) -> std::optional<int>
 {
-  std::string quoted;
-  quoted.reserve(value.size() + 2);
-  quoted.push_back('\'');
-  for (char character : value) {
-    if (character == '\'') {
-      quoted += "'\\''";
-    } else {
-      quoted.push_back(character);
-    }
+  std::vector<std::string> args{
+      "python3",  script_path.string(), summary_path.string(),
+      "--output", output_path.string(),
+  };
+  std::vector<char*> argv;
+  argv.reserve(args.size() + 1);
+  for (auto& arg : args) {
+    argv.push_back(arg.data());
   }
-  quoted.push_back('\'');
-  return quoted;
+  argv.push_back(nullptr);
+
+  const pid_t pid = fork();
+  if (pid < 0) {
+    starpu_server::log_warning(std::format(
+        "Failed to launch python3 for plot generation: {}",
+        std::strerror(errno)));
+    return std::nullopt;
+  }
+  if (pid == 0) {
+    execvp(argv[0], argv.data());
+    _exit(127);
+  }
+
+  int status = 0;
+  if (waitpid(pid, &status, 0) < 0) {
+    starpu_server::log_warning(std::format(
+        "Failed to wait for plot generation process: {}",
+        std::strerror(errno)));
+    return std::nullopt;
+  }
+  if (WIFEXITED(status)) {
+    return WEXITSTATUS(status);
+  }
+  if (WIFSIGNALED(status)) {
+    return 128 + WTERMSIG(status);
+  }
+  return std::nullopt;
 }
 
 auto
@@ -172,15 +204,17 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
   }
 
   const auto output_path = plots_output_path(summary_path);
-  const std::string command = std::format(
-      "python3 {} {} --output {}", shell_quote(script_path->string()),
-      shell_quote(summary_path.string()), shell_quote(output_path.string()));
-  const int return_code = std::system(command.c_str());
-  if (return_code != 0) {
+  const auto exit_code =
+      run_plot_script(*script_path, summary_path, output_path);
+  if (!exit_code.has_value()) {
+    starpu_server::log_warning(
+        "Failed to generate batching latency plots; unable to run python3.");
+  } else if (*exit_code != 0) {
     starpu_server::log_warning(std::format(
-        "Failed to generate batching latency plots; command '{}' exited with "
-        "code {}.",
-        command, return_code));
+        "Failed to generate batching latency plots; python3 {} {} --output {} "
+        "exited with code {}.",
+        script_path->string(), summary_path.string(), output_path.string(),
+        *exit_code));
   } else {
     starpu_server::log_info(
         opts.verbosity,
