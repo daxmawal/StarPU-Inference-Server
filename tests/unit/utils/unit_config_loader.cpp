@@ -1136,6 +1136,41 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, MaxMessageBytesRejectsTooSmallForModel)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_small_cap_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: small_cap\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1, 4]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1, 4]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_message_bytes: 16\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_small_cap.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: max_message_bytes (16) is too small for "
+      "configured model (requires at least 32 bytes)";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
 {
   const auto model_path =

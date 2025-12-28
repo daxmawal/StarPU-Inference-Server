@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <functional>
 #include <limits>
 #include <sstream>
@@ -525,6 +526,7 @@ auto
 load_config(const std::string& path) -> RuntimeConfig
 {
   RuntimeConfig cfg;
+  bool max_message_bytes_configured = false;
   const auto mark_invalid = [&cfg](const std::string& message) {
     log_error(std::string("Failed to load config: ") + message);
     cfg.valid = false;
@@ -537,6 +539,7 @@ load_config(const std::string& path) -> RuntimeConfig
       return cfg;
     }
 
+    max_message_bytes_configured = static_cast<bool>(root["max_message_bytes"]);
     parse_verbosity(root, cfg);
     parse_config_name(root, cfg);
     if (!validate_allowed_keys(root, cfg)) {
@@ -573,9 +576,23 @@ load_config(const std::string& path) -> RuntimeConfig
 
   if (cfg.valid) {
     try {
-      cfg.batching.max_message_bytes = compute_max_message_bytes(
-          cfg.batching.max_batch_size, cfg.model,
-          cfg.batching.max_message_bytes);
+      if (max_message_bytes_configured) {
+        if (cfg.model.has_value()) {
+          const auto required_bytes = compute_model_message_bytes(
+              cfg.batching.max_batch_size, cfg.model->inputs,
+              cfg.model->outputs, 0);
+          if (required_bytes > cfg.batching.max_message_bytes) {
+            mark_invalid(std::format(
+                "max_message_bytes ({}) is too small for configured model "
+                "(requires at least {} bytes)",
+                cfg.batching.max_message_bytes, required_bytes));
+          }
+        }
+      } else {
+        cfg.batching.max_message_bytes = compute_max_message_bytes(
+            cfg.batching.max_batch_size, cfg.model,
+            cfg.batching.max_message_bytes);
+      }
     }
     catch (const InvalidDimensionException& invalid_dimension) {
       log_error(
