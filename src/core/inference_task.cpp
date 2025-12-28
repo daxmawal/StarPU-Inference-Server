@@ -343,10 +343,24 @@ InferenceTask::fill_input_layout(
     const std::shared_ptr<InferenceParams>& params, size_t num_inputs) const
 {
   const auto& opts = require_runtime_config(opts_);
-  params->layout.input_types.resize(num_inputs);
-  std::copy_n(
-      job_->get_input_types().begin(), num_inputs,
-      params->layout.input_types.begin());
+  params->layout.input_types.clear();
+  params->layout.input_types.reserve(num_inputs);
+  const auto& job_types = job_->get_input_types();
+  if (job_types.size() >= num_inputs) {
+    params->layout.input_types.insert(
+        params->layout.input_types.end(), job_types.begin(),
+        job_types.begin() + static_cast<std::ptrdiff_t>(num_inputs));
+  } else {
+    const auto& inputs = job_->get_input_tensors();
+    for (size_t i = 0; i < num_inputs; ++i) {
+      const auto& tensor = inputs[i];
+      if (!tensor.defined()) {
+        throw InferenceExecutionException(
+            "Input tensor is undefined; cannot infer input type.");
+      }
+      params->layout.input_types.push_back(tensor.scalar_type());
+    }
+  }
 
   params->layout.num_dims.resize(num_inputs);
   params->layout.dims.resize(num_inputs);
