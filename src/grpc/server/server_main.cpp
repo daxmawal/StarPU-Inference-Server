@@ -59,7 +59,8 @@ run_plot_script(
     const std::filesystem::path& summary_path,
     const std::filesystem::path& output_path) -> std::optional<int>
 {
-  constexpr auto kPlotScriptTimeout = std::chrono::seconds(30);
+  constexpr auto kPlotScriptTimeout =
+      std::chrono::steady_clock::duration::zero();  // Disable timeout.
   constexpr auto kPlotScriptPollInterval = std::chrono::milliseconds(50);
   constexpr auto kPlotScriptTerminateTimeout = std::chrono::seconds(1);
 
