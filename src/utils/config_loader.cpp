@@ -610,6 +610,16 @@ load_config(const std::string& path) -> RuntimeConfig
           std::string("Failed to load config: ") + unsupported_dtype.what());
       cfg.valid = false;
     }
+    if (cfg.valid) {
+      const auto grpc_limit =
+          static_cast<std::size_t>(std::numeric_limits<int>::max());
+      if (cfg.batching.max_message_bytes > grpc_limit) {
+        log_warning(std::format(
+            "max_message_bytes ({}) exceeds gRPC limit ({}); gRPC will clamp "
+            "to {}. Consider reducing max_message_bytes.",
+            cfg.batching.max_message_bytes, grpc_limit, grpc_limit));
+      }
+    }
   }
   return cfg;
 }
