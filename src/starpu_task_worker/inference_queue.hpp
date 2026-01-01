@@ -130,6 +130,12 @@ class InferenceQueue {
     return queue_.size();
   }
 
+  [[nodiscard]] auto is_shutdown() const -> bool
+  {
+    const std::scoped_lock lock(mutex_);
+    return shutdown_;
+  }
+
  private:
   static void update_queue_metrics(std::size_t size)
   {

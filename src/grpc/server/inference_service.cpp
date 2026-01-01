@@ -338,16 +338,24 @@ InferenceServiceImpl::ServerReady(
     ServerContext* /*context*/, const ServerReadyRequest* /*request*/,
     ServerReadyResponse* reply) -> Status
 {
-  reply->set_ready(true);
+  const bool ready = queue_ != nullptr && !queue_->is_shutdown();
+  reply->set_ready(ready);
   return Status::OK;
 }
 
 auto
 InferenceServiceImpl::ModelReady(
-    ServerContext* /*context*/, const ModelReadyRequest* /*request*/,
+    ServerContext* /*context*/, const ModelReadyRequest* request,
     ModelReadyResponse* reply) -> Status
 {
-  reply->set_ready(true);
+  bool ready = queue_ != nullptr && !queue_->is_shutdown();
+  if (ready && !default_model_name_.empty()) {
+    const auto& requested_name = request->name();
+    if (!requested_name.empty() && requested_name != default_model_name_) {
+      ready = false;
+    }
+  }
+  reply->set_ready(ready);
   return Status::OK;
 }
 
