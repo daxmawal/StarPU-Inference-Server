@@ -146,6 +146,13 @@ class InferenceJob : public JobBatchState {
  public:
   using AggregatedSubJob = JobBatchState::AggregatedSubJob;
 
+  struct FailureInfo {
+    std::string stage;
+    std::string reason;
+    std::string message;
+    bool metrics_reported = false;
+  };
+
   InferenceJob() noexcept = default;
 
   InferenceJob(
@@ -190,6 +197,16 @@ class InferenceJob : public JobBatchState {
   void set_model_name(std::string model_name)
   {
     model_name_ = std::move(model_name);
+  }
+  void set_failure_info(FailureInfo info) { failure_info_ = std::move(info); }
+  void clear_failure_info() { failure_info_.reset(); }
+  [[nodiscard]] auto failure_info() const -> const std::optional<FailureInfo>&
+  {
+    return failure_info_;
+  }
+  [[nodiscard]] auto take_failure_info() -> std::optional<FailureInfo>
+  {
+    return std::exchange(failure_info_, std::nullopt);
   }
   [[nodiscard]] auto model_name() const -> std::string_view
   {
@@ -282,6 +299,7 @@ class InferenceJob : public JobBatchState {
   std::function<void(std::vector<torch::Tensor>, double)> on_complete_;
   MonotonicClock::time_point start_time_;
   std::string model_name_;
+  std::optional<FailureInfo> failure_info_;
 
   DeviceType executed_on_ = DeviceType::Unknown;
   int device_id_ = -1;

@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -77,6 +78,12 @@ class InferenceServiceImpl final
     double overall_ms = 0.0;
   };
 
+  struct AsyncFailureInfo {
+    std::string stage;
+    std::string reason;
+    bool metrics_reported = false;
+  };
+
   static auto populate_response(
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
@@ -87,7 +94,7 @@ class InferenceServiceImpl final
 
   using AsyncJobCallback = std::function<void(
       grpc::Status, std::vector<torch::Tensor>, LatencyBreakdown,
-      detail::TimingInfo)>;
+      detail::TimingInfo, std::optional<AsyncFailureInfo>)>;
 
   auto submit_job_async(
       const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
@@ -141,6 +148,7 @@ class InferenceServiceImpl final
     int64_t recv_ms;
     std::string resolved_model_name;
     std::shared_ptr<std::atomic<bool>> cancel_flag;
+    std::optional<AsyncFailureInfo> failure_info;
   };
 
   static void handle_async_infer_completion(

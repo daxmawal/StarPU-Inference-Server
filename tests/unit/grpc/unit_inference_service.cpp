@@ -574,9 +574,12 @@ TEST_F(
       torch::tensor({kF1, kF2}, torch::TensorOptions().dtype(at::kFloat))};
 
   auto status = service->submit_job_async(
-      inputs, [](grpc::Status, std::vector<torch::Tensor>,
-                 starpu_server::InferenceServiceImpl::LatencyBreakdown,
-                 starpu_server::detail::TimingInfo) {});
+      inputs,
+      [](grpc::Status, std::vector<torch::Tensor>,
+         starpu_server::InferenceServiceImpl::LatencyBreakdown,
+         starpu_server::detail::TimingInfo,
+         std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>) {
+      });
   ASSERT_TRUE(status.ok());
 
   std::shared_ptr<starpu_server::InferenceJob> enqueued_job;

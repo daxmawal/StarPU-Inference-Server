@@ -490,24 +490,49 @@ InferenceServiceImpl::submit_job_async(
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
-  job->set_on_complete(
-      [job, callback = std::move(on_complete)](
-          std::vector<torch::Tensor> outs, double latency_ms) mutable {
-        const auto& info = job->timing_info();
-        auto timing = build_latency_breakdown(info, latency_ms);
-        detail::TimingInfo copied_info = info;
+  job->set_on_complete([job, callback = std::move(on_complete)](
+                           std::vector<torch::Tensor> outs,
+                           double latency_ms) mutable {
+    const auto& info = job->timing_info();
+    auto timing = build_latency_breakdown(info, latency_ms);
+    detail::TimingInfo copied_info = info;
 
-        if (outs.empty()) {
-          increment_inference_failure(
-              "execution", "empty_output", job->model_name());
-          callback(
-              {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
-              copied_info);
-          return;
+    if (outs.empty()) {
+      std::optional<InferenceServiceImpl::AsyncFailureInfo> failure_info;
+      Status status = Status::OK;
+      if (auto job_failure = job->take_failure_info()) {
+        const std::string reason = job_failure->reason;
+        const std::string detail_message = job_failure->message;
+        std::string message;
+        if (!reason.empty() && !detail_message.empty()) {
+          message =
+              std::format("Inference failed ({}): {}", reason, detail_message);
+        } else if (!reason.empty()) {
+          message = std::format("Inference failed ({})", reason);
+        } else if (!detail_message.empty()) {
+          message = std::format("Inference failed: {}", detail_message);
+        } else {
+          message = "Inference failed";
         }
+        status = {grpc::StatusCode::INTERNAL, message};
+        AsyncFailureInfo info{};
+        info.stage = std::move(job_failure->stage);
+        info.reason = std::move(job_failure->reason);
+        info.metrics_reported = job_failure->metrics_reported;
+        failure_info = std::move(info);
+      } else {
+        AsyncFailureInfo info{};
+        info.stage = "execution";
+        info.reason = "empty_output";
+        failure_info = std::move(info);
+        status = {grpc::StatusCode::INTERNAL, "Inference failed"};
+      }
+      callback(status, {}, timing, copied_info, std::move(failure_info));
+      return;
+    }
 
-        callback(Status::OK, std::move(outs), timing, copied_info);
-      });
+    callback(Status::OK, std::move(outs), timing, copied_info, std::nullopt);
+  });
 
   bool pushed = false;
   bool queue_full = false;
@@ -564,7 +589,8 @@ InferenceServiceImpl::submit_job_and_wait(
           [result_promise](
               Status status, std::vector<torch::Tensor> outs,
               const LatencyBreakdown& cb_breakdown,
-              const detail::TimingInfo& cb_timing_info) {
+              const detail::TimingInfo& cb_timing_info,
+              std::optional<AsyncFailureInfo> /*failure_info*/) {
             result_promise->set_value(JobResult{
                 std::move(status), std::move(outs), cb_breakdown,
                 cb_timing_info});
@@ -646,8 +672,21 @@ InferenceServiceImpl::handle_async_infer_completion(
   if (!job_status.ok()) {
     increment_request_status(
         static_cast<int>(job_status.error_code()), context.resolved_model_name);
-    increment_inference_failure(
-        "execution", status_reason(job_status), context.resolved_model_name);
+    const bool metrics_reported =
+        context.failure_info && context.failure_info->metrics_reported;
+    if (!metrics_reported) {
+      std::string stage = "execution";
+      std::string reason = status_reason(job_status);
+      if (context.failure_info) {
+        if (!context.failure_info->stage.empty()) {
+          stage = context.failure_info->stage;
+        }
+        if (!context.failure_info->reason.empty()) {
+          reason = context.failure_info->reason;
+        }
+      }
+      increment_inference_failure(stage, reason, context.resolved_model_name);
+    }
     callback_handle->Invoke(job_status);
     return;
   }
@@ -791,11 +830,12 @@ InferenceServiceImpl::HandleModelInferAsync(
       [request, reply, recv_tp, recv_ms, metrics, callback_handle,
        resolved_model_name, cancel_flag](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
-          LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
+          LatencyBreakdown breakdown, detail::TimingInfo timing_info,
+          std::optional<AsyncFailureInfo> failure_info) mutable {
         handle_async_infer_completion(
             AsyncInferCompletionContext{
                 request, reply, callback_handle, metrics, recv_tp, recv_ms,
-                resolved_model_name, cancel_flag},
+                resolved_model_name, cancel_flag, std::move(failure_info)},
             job_status, outs, breakdown, timing_info);
       },
       std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name);

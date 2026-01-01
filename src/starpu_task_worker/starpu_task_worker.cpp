@@ -2101,6 +2101,20 @@ StarPUTaskRunner::finalize_job_after_exception(
   }();
   increment_inference_failure("execution", reason, model_label);
 
+  if (job) {
+    InferenceJob::FailureInfo failure_info{};
+    failure_info.stage = "execution";
+    failure_info.reason = std::string(reason);
+    if (!log_prefix.empty()) {
+      failure_info.message =
+          std::format("{}: {}", log_prefix, exception.what());
+    } else {
+      failure_info.message = exception.what();
+    }
+    failure_info.metrics_reported = true;
+    job->set_failure_info(std::move(failure_info));
+  }
+
   if (!StarPUTaskRunner::handle_job_exception(job, exception) && job) {
     static_cast<void>(job->release_input_tensors());
     job->release_input_memory_holders();
