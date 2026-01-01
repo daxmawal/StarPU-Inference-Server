@@ -387,7 +387,7 @@ InferenceClient::AsyncModelInfer(
     auto* input = request.add_inputs();
     input->set_name(in_cfg.name);
     input->set_datatype(scalar_type_to_string(in_cfg.type));
-    for (auto dim : in_cfg.shape) {
+    for (auto dim : tensor.sizes()) {
       input->add_shape(dim);
     }
     auto flat = tensor.view({-1});

@@ -60,6 +60,7 @@ display_client_help(const char* prog_name)
       << "  --input NAME:SHAPE:TYPE  Specify an input (may be repeated)\n"
       << "  --server ADDR     gRPC server address (default: localhost:50051)\n"
       << "  --model NAME      Model name (default: example)\n"
+      << "  --model-version VERSION  Model version (default: 1)\n"
       << "  --client-model PATH  Optional TorchScript model to validate "
          "responses\n"
       << "  --verbose [0-4]   Verbosity level: 0=silent to 4=trace\n"
@@ -186,6 +187,14 @@ parse_model(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 }
 
 auto
+parse_model_version(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
+    -> bool
+{
+  return expect_and_parse(
+      idx, args, [&cfg](const char* val) { cfg.model_version = val; });
+}
+
+auto
 parse_client_model_path(
     ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
 {
@@ -219,6 +228,7 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
           {"--input", parse_input},
           {"--server", parse_server},
           {"--model", parse_model},
+          {"--model-version", parse_model_version},
           {"--client-model", parse_client_model_path},
           {"--verbose", parse_verbose},
       };

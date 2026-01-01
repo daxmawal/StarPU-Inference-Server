@@ -159,12 +159,12 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
   EXPECT_NE(out.find("--input"), std::string::npos);
   EXPECT_NE(out.find("--server"), std::string::npos);
   EXPECT_NE(out.find("--model"), std::string::npos);
+  EXPECT_NE(out.find("--model-version"), std::string::npos);
   EXPECT_NE(out.find("--client-model"), std::string::npos);
   EXPECT_NE(out.find("--verbose"), std::string::npos);
   EXPECT_NE(out.find("--help"), std::string::npos);
   EXPECT_EQ(out.find("--shape"), std::string::npos);
   EXPECT_EQ(out.find("--type"), std::string::npos);
-  EXPECT_EQ(out.find("--version"), std::string::npos);
 }
 
 TEST(InferenceClientDetermineInferenceCount, HandlesEdgeCases)
