@@ -509,14 +509,22 @@ InferenceClient::AsyncCompleteRpc()
   void* got_tag = nullptr;
   bool call_ctx = false;
   while (cq_.Next(&got_tag, &call_ctx)) {
-    if (!call_ctx) {
-      log_warning("Received invalid RPC completion, exiting CQ loop");
-      break;
+    if (got_tag == nullptr) {
+      log_warning("Received null RPC completion tag; skipping");
+      continue;
     }
 
     auto call = std::unique_ptr<AsyncClientCall>(
         static_cast<AsyncClientCall*>(got_tag));
     auto end = std::chrono::system_clock::now();
+    if (!call_ctx) {
+      auto recv_time_str = time_utils::format_timestamp(end);
+      log_warning(std::format(
+          "Request ID {} completion not ok at {}; treating as failure",
+          call->request_id, recv_time_str));
+      ++rejected_requests_;
+      continue;
+    }
     auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                        end - call->start_time)
                        .count();
