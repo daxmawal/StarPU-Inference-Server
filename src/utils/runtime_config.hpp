@@ -96,7 +96,6 @@ struct RuntimeConfig {
   };
 
   std::string name;
-  std::string config_path;
   std::string server_address = "127.0.0.1:50051";
   int metrics_port = kDefaultMetricsPort;
 

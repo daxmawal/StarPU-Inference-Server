@@ -379,7 +379,6 @@ handle_program_arguments(std::span<char const* const> args)
   }
 
   starpu_server::RuntimeConfig cfg = starpu_server::load_config(config_path);
-  cfg.config_path = config_path;
 
   if (!cfg.valid) {
     starpu_server::log_fatal("Invalid configuration file.\n");
