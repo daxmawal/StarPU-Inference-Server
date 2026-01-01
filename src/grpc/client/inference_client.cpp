@@ -345,7 +345,9 @@ InferenceClient::AsyncModelInfer(
     first_request_time_ = call->start_time;
   }
 
-  log_stats(verbosity_, std::format("Sending request ID: {}", current_id));
+  if (should_log(VerbosityLevel::Stats, verbosity_)) {
+    log_stats(verbosity_, std::format("Sending request ID: {}", current_id));
+  }
 
   inference::ModelInferRequest request;
   request.set_model_name(cfg.model_name);
