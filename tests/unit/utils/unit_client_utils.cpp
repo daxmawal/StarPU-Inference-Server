@@ -204,7 +204,7 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
   opts.verbosity = starpu_server::VerbosityLevel::Trace;
   const int request_id = 2;
   const int request_nb = 5;
-  auto now = std::chrono::high_resolution_clock::now();
+  auto now = std::chrono::system_clock::now();
   starpu_server::CaptureStream capture{std::cout};
   starpu_server::client_utils::log_job_enqueued(
       opts, request_id, request_nb, now);
@@ -219,7 +219,7 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
 
 TEST(TimeUtils, FormatTimestamp_FormatRegex)
 {
-  auto now = std::chrono::high_resolution_clock::now();
+  auto now = std::chrono::system_clock::now();
   std::string time = starpu_server::time_utils::format_timestamp(now);
   EXPECT_TRUE(std::regex_match(
       time, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$")));
@@ -246,9 +246,7 @@ TEST(TimeUtils, FormatTimestamp_KnownTime)
 
   sys_time<seconds> base_time = current_zone()->to_sys(local_time);
 
-  auto time_point =
-      time_point_cast<std::chrono::high_resolution_clock::duration>(base_time) +
-      std::chrono::milliseconds(kMillis789);
+  auto time_point = base_time + std::chrono::milliseconds(kMillis789);
 
   std::string time_stamp =
       starpu_server::time_utils::format_timestamp(time_point);
@@ -259,9 +257,7 @@ TEST(TimeUtils, FormatTimestamp_MillisecondBoundaries)
 {
   auto base_time = std::chrono::time_point_cast<std::chrono::seconds>(
       std::chrono::system_clock::now());
-  auto tp000 =
-      time_point_cast<std::chrono::high_resolution_clock::duration>(base_time) +
-      std::chrono::milliseconds(0);
+  auto tp000 = base_time + std::chrono::milliseconds(0);
   auto tp999 = tp000 + std::chrono::milliseconds(kMillis999);
   std::string ts000 = starpu_server::time_utils::format_timestamp(tp000);
   std::string ts999 = starpu_server::time_utils::format_timestamp(tp999);

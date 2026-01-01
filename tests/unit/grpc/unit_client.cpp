@@ -316,7 +316,7 @@ TEST(InferenceClientLatencySummary, HandlesZeroElapsedTime)
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Stats);
 
-  const auto now = std::chrono::high_resolution_clock::now();
+  const auto now = std::chrono::system_clock::now();
   starpu_server::InferenceClientTestAccess::set_first_request_time(client, now);
   starpu_server::InferenceClientTestAccess::set_last_response_time(client, now);
   starpu_server::InferenceClientTestAccess::set_total_inference_count(

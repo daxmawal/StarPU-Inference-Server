@@ -347,7 +347,7 @@ TEST(InferenceClientHelpers, AsyncCompleteRpcClampsNegativeLatencies)
   call->request_id = 501;
   call->inference_count = 1;
   call->status = grpc::Status::OK;
-  call->start_time = std::chrono::high_resolution_clock::now();
+  call->start_time = std::chrono::system_clock::now();
   const auto start_ms = static_cast<int64_t>(
       std::chrono::duration_cast<std::chrono::milliseconds>(
           call->start_time.time_since_epoch())

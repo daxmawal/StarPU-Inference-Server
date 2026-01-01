@@ -26,7 +26,7 @@ struct AsyncClientCall {
   std::unique_ptr<
       grpc::ClientAsyncResponseReader<inference::ModelInferResponse>>
       response_reader = nullptr;
-  std::chrono::high_resolution_clock::time_point start_time;
+  std::chrono::system_clock::time_point start_time;
   int request_id = 0;
   std::size_t inference_count = 1;
   std::optional<InferenceClient::OutputSummary> expected_outputs;
@@ -336,7 +336,7 @@ InferenceClient::AsyncModelInfer(
 
   auto call = std::make_unique<AsyncClientCall>();
   call->request_id = current_id;
-  call->start_time = std::chrono::high_resolution_clock::now();
+  call->start_time = std::chrono::system_clock::now();
   call->inference_count = determine_inference_count(cfg);
   call->expected_outputs = std::move(expected_outputs);
   ++total_requests_sent_;
@@ -516,7 +516,7 @@ InferenceClient::AsyncCompleteRpc()
 
     auto call = std::unique_ptr<AsyncClientCall>(
         static_cast<AsyncClientCall*>(got_tag));
-    auto end = std::chrono::high_resolution_clock::now();
+    auto end = std::chrono::system_clock::now();
     auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                        end - call->start_time)
                        .count();

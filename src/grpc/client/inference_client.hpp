@@ -94,10 +94,8 @@ class InferenceClient {
   std::atomic<int> next_request_id_{0};
   VerbosityLevel verbosity_;
   LatencyRecords latency_records_;
-  std::optional<std::chrono::high_resolution_clock::time_point>
-      first_request_time_;
-  std::optional<std::chrono::high_resolution_clock::time_point>
-      last_response_time_;
+  std::optional<std::chrono::system_clock::time_point> first_request_time_;
+  std::optional<std::chrono::system_clock::time_point> last_response_time_;
   std::size_t total_inference_count_ = 0;
   std::size_t total_requests_sent_ = 0;
   std::size_t success_requests_ = 0;
@@ -115,7 +113,7 @@ class InferenceClient {
 struct InferenceClientTestAccess {
   using LatencySample = InferenceClient::LatencySample;
   using LatencyRecords = InferenceClient::LatencyRecords;
-  using TimePoint = std::chrono::high_resolution_clock::time_point;
+  using TimePoint = std::chrono::system_clock::time_point;
 
   static auto determine_inference_count(const ClientConfig& cfg) -> std::size_t
   {

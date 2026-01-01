@@ -197,7 +197,7 @@ WarmupRunner::client_worker(
           queue.shutdown();
           return;
         }
-        const auto log_now = std::chrono::high_resolution_clock::now();
+        const auto log_now = std::chrono::system_clock::now();
         client_utils::log_job_enqueued(opts_, job_request_id, total, log_now);
         request_id++;
       }

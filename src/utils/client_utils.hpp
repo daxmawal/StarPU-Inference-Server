@@ -24,7 +24,7 @@ auto pick_random_input(
 
 void log_job_enqueued(
     const RuntimeConfig& opts, int request_id, int request_nb,
-    std::chrono::high_resolution_clock::time_point now);
+    std::chrono::system_clock::time_point now);
 
 auto create_job(
     const std::vector<torch::Tensor>& inputs,
