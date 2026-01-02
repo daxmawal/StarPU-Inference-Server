@@ -512,8 +512,8 @@ InferenceClient::AsyncCompleteRpc()
   bool call_ctx = false;
   while (cq_.Next(&got_tag, &call_ctx)) {
     if (got_tag == nullptr) {
-      log_warning("Received null RPC completion tag; skipping");
-      continue;
+      log_warning("Received invalid RPC completion, exiting CQ loop");
+      break;
     }
 
     auto call = std::unique_ptr<AsyncClientCall>(
