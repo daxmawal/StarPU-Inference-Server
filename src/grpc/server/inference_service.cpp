@@ -239,7 +239,7 @@ validate_configured_shape(
     return Status::OK;
   };
 
-  if (rank >= 1 && (tails_match(1, 1) || tails_match(1, 0))) {
+  if (rank >= 1 && tails_match(1, 1)) {
     const int64_t batch_size = shape.front();
     if (auto status = validate_batch_size(batch_size); !status.ok()) {
       return status;

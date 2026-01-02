@@ -278,9 +278,8 @@ TEST_F(
   auto explicit_batch_req = starpu_server::make_shape_request({3, 2, 2});
   inputs.clear();
   status = service->validate_and_convert_inputs(&explicit_batch_req, inputs);
-  ASSERT_TRUE(status.ok());
-  ASSERT_EQ(inputs.size(), 1U);
-  EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{3, 2, 2}));
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 
   auto exceeding_batch_req = starpu_server::make_shape_request({5, 2, 2});
   inputs.clear();
