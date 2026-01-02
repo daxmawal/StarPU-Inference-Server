@@ -10,6 +10,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -35,13 +36,17 @@ class InferenceServiceImpl final
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
       std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-      std::string default_model_name = {});
+      std::string default_model_name = {},
+      std::vector<std::string> expected_input_names = {},
+      std::vector<std::string> expected_output_names = {});
 
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      std::string default_model_name = {});
+      std::string default_model_name = {},
+      std::vector<std::string> expected_input_names = {},
+      std::vector<std::string> expected_output_names = {});
 
   auto ServerLive(
       grpc::ServerContext* context, const inference::ServerLiveRequest* request,
@@ -90,7 +95,8 @@ class InferenceServiceImpl final
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
       const LatencyBreakdown& breakdown,
       std::string_view model_name_override = {},
-      bool set_prepost_overall = true) -> grpc::Status;
+      bool set_prepost_overall = true,
+      std::span<const std::string> output_names = {}) -> grpc::Status;
 
   using AsyncJobCallback = std::function<void(
       grpc::Status, std::vector<torch::Tensor>, LatencyBreakdown,
@@ -147,6 +153,7 @@ class InferenceServiceImpl final
     MonotonicClock::time_point recv_tp;
     int64_t recv_ms;
     std::string resolved_model_name;
+    const std::vector<std::string>* output_names = nullptr;
     std::shared_ptr<std::atomic<bool>> cancel_flag;
     std::optional<AsyncFailureInfo> failure_info;
   };
@@ -167,6 +174,8 @@ class InferenceServiceImpl final
   const std::vector<torch::Tensor>* reference_outputs_;
   std::vector<at::ScalarType> expected_input_types_;
   std::vector<std::vector<int64_t>> expected_input_dims_;
+  std::vector<std::string> expected_input_names_;
+  std::vector<std::string> expected_output_names_;
   int max_batch_size_ = 0;
   std::string default_model_name_;
   std::atomic<int> next_request_id_{0};
@@ -214,12 +223,15 @@ void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, const GrpcServerOptions& options,
-    std::unique_ptr<grpc::Server>& server);
+    const std::vector<std::string>& expected_input_names,
+    const std::vector<std::string>& expected_output_names, int max_batch_size,
+    const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
+    const std::vector<std::string>& expected_input_names,
+    const std::vector<std::string>& expected_output_names,
     const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
 
 void StopServer(grpc::Server* server);

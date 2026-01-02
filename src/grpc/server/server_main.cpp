@@ -458,11 +458,25 @@ launch_threads(
       expected_input_types.push_back(input.type);
     }
   }
+  std::vector<std::string> expected_input_names;
+  if (opts.model.has_value()) {
+    expected_input_names.reserve(opts.model->inputs.size());
+    for (const auto& input : opts.model->inputs) {
+      expected_input_names.push_back(input.name);
+    }
+  }
   std::vector<std::vector<int64_t>> expected_input_dims;
   if (opts.model.has_value()) {
     expected_input_dims.reserve(opts.model->inputs.size());
     for (const auto& input : opts.model->inputs) {
       expected_input_dims.push_back(input.dims);
+    }
+  }
+  std::vector<std::string> expected_output_names;
+  if (opts.model.has_value()) {
+    expected_output_names.reserve(opts.model->outputs.size());
+    for (const auto& output : opts.model->outputs) {
+      expected_output_names.push_back(output.name);
     }
   }
 
@@ -478,6 +492,7 @@ launch_threads(
         std::move(default_model_name)};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
+        expected_input_names, expected_output_names,
         opts.batching.max_batch_size, server_options, server_ctx.server);
   });
 

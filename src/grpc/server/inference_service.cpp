@@ -16,6 +16,8 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -47,6 +49,40 @@ auto
 status_reason(const Status& status) -> std::string
 {
   return std::to_string(static_cast<int>(status.error_code()));
+}
+
+auto
+normalize_names(
+    std::vector<std::string> names, std::size_t expected_size,
+    std::string_view fallback_prefix,
+    std::string_view kind) -> std::vector<std::string>
+{
+  if (names.empty()) {
+    return names;
+  }
+
+  const bool any_named = std::any_of(
+      names.begin(), names.end(),
+      [](const auto& name) { return !name.empty(); });
+  if (!any_named) {
+    return {};
+  }
+
+  if (names.size() != expected_size || expected_size == 0) {
+    log_warning(std::format(
+        "Configured {} names count ({}) does not match expected count ({}); "
+        "ignoring names.",
+        kind, names.size(), expected_size));
+    return {};
+  }
+
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    if (names[i].empty()) {
+      names[i] = std::format("{}{}", fallback_prefix, i);
+    }
+  }
+
+  return names;
 }
 
 }  // namespace
@@ -227,6 +263,23 @@ checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
 }
 
 auto
+resolve_output_names(
+    std::span<const std::string> output_names,
+    std::size_t output_count) -> std::vector<std::string>
+{
+  std::vector<std::string> resolved;
+  resolved.reserve(output_count);
+  for (std::size_t i = 0; i < output_count; ++i) {
+    if (i < output_names.size() && !output_names[i].empty()) {
+      resolved.push_back(output_names[i]);
+    } else {
+      resolved.push_back(std::format("output{}", i));
+    }
+  }
+  return resolved;
+}
+
+auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input,
     const std::vector<int64_t>& shape, const std::string& raw,
@@ -271,17 +324,28 @@ convert_input_to_tensor(
 
 auto
 fill_output_tensor(
-    ModelInferResponse* reply,
-    const std::vector<torch::Tensor>& outputs) -> Status
+    ModelInferResponse* reply, const std::vector<torch::Tensor>& outputs,
+    std::span<const std::size_t> output_indices,
+    std::span<const std::string> output_names) -> Status
 {
-  for (size_t idx = 0; idx < outputs.size(); ++idx) {
-    const auto& original = outputs[idx];
+  for (std::size_t pos = 0; pos < output_indices.size(); ++pos) {
+    const std::size_t output_index = output_indices[pos];
+    if (output_index >= outputs.size()) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Requested output index out of range"};
+    }
+    const auto& original = outputs[output_index];
     torch::Tensor out = original;
     if (!original.device().is_cpu()) {
       out = original.to(torch::kCPU);
     }
     auto* out_tensor = reply->add_outputs();
-    out_tensor->set_name(std::format("output{}", idx));
+    if (output_index < output_names.size()) {
+      out_tensor->set_name(output_names[output_index]);
+    } else {
+      out_tensor->set_name(std::format("output{}", output_index));
+    }
     out_tensor->set_datatype(scalar_type_to_datatype(out.scalar_type()));
     for (const auto dim : out.sizes()) {
       out_tensor->add_shape(dim);
@@ -305,22 +369,34 @@ InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
     std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-    std::string default_model_name)
+    std::string default_model_name,
+    std::vector<std::string> expected_input_names,
+    std::vector<std::string> expected_output_names)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types)),
       expected_input_dims_(std::move(expected_input_dims)),
       max_batch_size_(max_batch_size),
       default_model_name_(std::move(default_model_name))
 {
+  expected_input_names_ = normalize_names(
+      std::move(expected_input_names), expected_input_types_.size(), "input",
+      "input");
+  const std::size_t output_count =
+      reference_outputs_ != nullptr ? reference_outputs_->size() : 0U;
+  expected_output_names_ = normalize_names(
+      std::move(expected_output_names), output_count, "output", "output");
 }
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
-    std::string default_model_name)
-    : queue_(queue), reference_outputs_(reference_outputs),
-      expected_input_types_(std::move(expected_input_types)),
-      default_model_name_(std::move(default_model_name))
+    std::string default_model_name,
+    std::vector<std::string> expected_input_names,
+    std::vector<std::string> expected_output_names)
+    : InferenceServiceImpl(
+          queue, reference_outputs, std::move(expected_input_types), {}, 0,
+          std::move(default_model_name), std::move(expected_input_names),
+          std::move(expected_output_names))
 {
 }
 
@@ -378,19 +454,80 @@ InferenceServiceImpl::validate_and_convert_inputs(
         "Number of raw inputs does not match number of input tensors"};
   }
 
-  inputs.clear();
-  inputs.reserve(request->inputs_size());
-  if (input_lifetimes != nullptr) {
-    input_lifetimes->clear();
-    input_lifetimes->reserve(request->inputs_size());
+  bool any_named = false;
+  bool any_unnamed = false;
+  for (const auto& input : request->inputs()) {
+    if (input.name().empty()) {
+      any_unnamed = true;
+    } else {
+      any_named = true;
+    }
   }
+  if (any_named && any_unnamed) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "All input tensors must include a name when using named inputs"};
+  }
+
+  const bool has_expected_names = !expected_input_names_.empty();
+  if (has_expected_names && !any_named) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor names must be provided"};
+  }
+  const bool use_name_mapping = has_expected_names;
+
+  std::unordered_map<std::string_view, std::size_t> expected_index_by_name;
+  if (use_name_mapping) {
+    expected_index_by_name.reserve(expected_input_names_.size());
+    for (std::size_t i = 0; i < expected_input_names_.size(); ++i) {
+      const auto& name = expected_input_names_[i];
+      if (name.empty()) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format("Configured input name missing at index {}", i)};
+      }
+      const auto [it, inserted] = expected_index_by_name.emplace(name, i);
+      if (!inserted) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format("Configured input name '{}' is duplicated", name)};
+      }
+    }
+  }
+
+  const std::size_t expected_count = expected_input_types_.size();
+  std::vector<torch::Tensor> ordered_inputs(expected_count);
+  std::vector<std::shared_ptr<const void>> ordered_lifetimes;
+  if (input_lifetimes != nullptr) {
+    ordered_lifetimes.resize(expected_count);
+  }
+  std::vector<bool> filled(expected_count, false);
+
   for (int i = 0; i < request->inputs_size(); ++i) {
     const auto& input = request->inputs(i);
     const auto& raw = request->raw_input_contents(i);
     std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
 
+    std::size_t expected_index = static_cast<std::size_t>(i);
+    if (use_name_mapping) {
+      const auto it = expected_index_by_name.find(input.name());
+      if (it == expected_index_by_name.end()) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format("Unexpected input tensor name '{}'", input.name())};
+      }
+      expected_index = it->second;
+      if (filled[expected_index]) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format("Input tensor name '{}' is duplicated", input.name())};
+      }
+    }
+
     at::ScalarType dtype = at::kFloat;
-    Status status = parse_input_dtype(input, expected_input_types_[i], dtype);
+    Status status =
+        parse_input_dtype(input, expected_input_types_[expected_index], dtype);
     if (!status.ok()) {
       return status;
     }
@@ -404,8 +541,8 @@ InferenceServiceImpl::validate_and_convert_inputs(
       return status;
     }
 
-    if (static_cast<size_t>(i) < expected_input_dims_.size()) {
-      const auto& expected_dims = expected_input_dims_[static_cast<size_t>(i)];
+    if (expected_index < expected_input_dims_.size()) {
+      const auto& expected_dims = expected_input_dims_[expected_index];
       const bool batching_allowed = (max_batch_size_ > 0);
       status = validate_configured_shape(
           shape, expected_dims, batching_allowed, max_batch_size_);
@@ -414,10 +551,26 @@ InferenceServiceImpl::validate_and_convert_inputs(
       }
     }
 
-    inputs.push_back(std::move(tensor));
+    ordered_inputs[expected_index] = std::move(tensor);
     if (input_lifetimes != nullptr) {
-      input_lifetimes->push_back(std::move(tensor_guard));
+      ordered_lifetimes[expected_index] = std::move(tensor_guard);
     }
+    filled[expected_index] = true;
+  }
+
+  if (use_name_mapping) {
+    for (std::size_t i = 0; i < filled.size(); ++i) {
+      if (!filled[i]) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format("Missing input tensor '{}'", expected_input_names_[i])};
+      }
+    }
+  }
+
+  inputs = std::move(ordered_inputs);
+  if (input_lifetimes != nullptr) {
+    *input_lifetimes = std::move(ordered_lifetimes);
   }
   return Status::OK;
 }
@@ -700,9 +853,13 @@ InferenceServiceImpl::handle_async_infer_completion(
     breakdown.preprocess_ms = 0.0;
   }
 
+  const auto output_names =
+      context.output_names != nullptr
+          ? std::span<const std::string>(*context.output_names)
+          : std::span<const std::string>{};
   Status populate_status = populate_response(
       context.request, context.reply, outs, context.recv_ms, breakdown,
-      context.resolved_model_name, /*set_prepost_overall=*/false);
+      context.resolved_model_name, /*set_prepost_overall=*/false, output_names);
   if (!populate_status.ok()) {
     increment_request_status(
         static_cast<int>(populate_status.error_code()),
@@ -825,17 +982,19 @@ InferenceServiceImpl::HandleModelInferAsync(
     return;
   }
 
+  const auto* output_names = &expected_output_names_;
   status = submit_job_async(
       inputs,
       [request, reply, recv_tp, recv_ms, metrics, callback_handle,
-       resolved_model_name, cancel_flag](
+       resolved_model_name, cancel_flag, output_names](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info,
           std::optional<AsyncFailureInfo> failure_info) mutable {
         handle_async_infer_completion(
             AsyncInferCompletionContext{
                 request, reply, callback_handle, metrics, recv_tp, recv_ms,
-                resolved_model_name, cancel_flag, std::move(failure_info)},
+                resolved_model_name, output_names, cancel_flag,
+                std::move(failure_info)},
             job_status, outs, breakdown, timing_info);
       },
       std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name);
@@ -855,7 +1014,8 @@ InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
     const LatencyBreakdown& breakdown, std::string_view model_name_override,
-    bool set_prepost_overall) -> Status
+    bool set_prepost_overall,
+    std::span<const std::string> output_names) -> Status
 {
   if (!model_name_override.empty()) {
     reply->set_model_name(std::string(model_name_override));
@@ -877,7 +1037,55 @@ InferenceServiceImpl::populate_response(
     reply->set_server_overall_ms(breakdown.overall_ms);
   }
   reply->set_server_total_ms(breakdown.total_ms);
-  return fill_output_tensor(reply, outputs);
+
+  const auto resolved_names =
+      resolve_output_names(output_names, outputs.size());
+  std::vector<std::size_t> output_indices;
+  if (request->outputs_size() > 0) {
+    std::unordered_map<std::string_view, std::size_t> index_by_name;
+    index_by_name.reserve(resolved_names.size());
+    for (std::size_t i = 0; i < resolved_names.size(); ++i) {
+      const auto [it, inserted] = index_by_name.emplace(resolved_names[i], i);
+      if (!inserted) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format(
+                "Configured output name '{}' is duplicated",
+                resolved_names[i])};
+      }
+    }
+
+    std::unordered_set<std::string_view> seen;
+    output_indices.reserve(request->outputs_size());
+    for (const auto& requested : request->outputs()) {
+      if (requested.name().empty()) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            "Requested output name must be non-empty"};
+      }
+      const auto it = index_by_name.find(requested.name());
+      if (it == index_by_name.end()) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format(
+                "Requested output '{}' is not available", requested.name())};
+      }
+      if (!seen.insert(it->first).second) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format(
+                "Requested output '{}' is duplicated", requested.name())};
+      }
+      output_indices.push_back(it->second);
+    }
+  } else {
+    output_indices.reserve(outputs.size());
+    for (std::size_t i = 0; i < outputs.size(); ++i) {
+      output_indices.push_back(i);
+    }
+  }
+
+  return fill_output_tensor(reply, outputs, output_indices, resolved_names);
 }
 
 #if defined(STARPU_TESTING)
@@ -1183,12 +1391,17 @@ RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server)
+    const std::vector<std::string>& expected_input_names,
+    const std::vector<std::string>& expected_output_names, int max_batch_size,
+    const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size, options.default_model_name);
+      max_batch_size, options.default_model_name,
+      std::vector<std::string>(
+          expected_input_names.begin(), expected_input_names.end()),
+      std::vector<std::string>(
+          expected_output_names.begin(), expected_output_names.end()));
   run_grpc_server_impl(service, options, server);
 }
 
@@ -1196,13 +1409,19 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
+    const std::vector<std::string>& expected_input_names,
+    const std::vector<std::string>& expected_output_names,
     const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs,
       std::vector<at::ScalarType>(
           expected_input_types.begin(), expected_input_types.end()),
-      options.default_model_name);
+      options.default_model_name,
+      std::vector<std::string>(
+          expected_input_names.begin(), expected_input_names.end()),
+      std::vector<std::string>(
+          expected_output_names.begin(), expected_output_names.end()));
   run_grpc_server_impl(service, options, server);
 }
 
