@@ -247,6 +247,17 @@ validate_configured_shape(
     return Status::OK;
   }
 
+  if (rank >= 1 && tails_match(1, 0)) {
+    const int64_t batch_size = shape.front();
+    if (auto status = validate_batch_size(batch_size); !status.ok()) {
+      return status;
+    }
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor shape does not match configured dimensions or batch "
+        "limits"};
+  }
+
   return {
       grpc::StatusCode::INVALID_ARGUMENT,
       "Input tensor shape does not match configured dimensions or batch "
