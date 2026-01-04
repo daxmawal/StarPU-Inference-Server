@@ -336,6 +336,40 @@ TEST(InferenceClientHelpers, AsyncCompleteRpcLogsInvalidCompletion)
   client.cq_.Shutdown();
 }
 
+TEST(InferenceClientHelpers, AsyncCompleteRpcRejectsCompletionWhenNotOk)
+{
+  auto channel = make_test_channel();
+  InferenceClient client(channel, VerbosityLevel::Silent);
+
+  bool rejected_ready = false;
+  const auto err = capture_stderr([&] {
+    std::thread runner([&] { client.AsyncCompleteRpc(); });
+
+    auto* call = new AsyncClientCall();
+    call->request_id = 404;
+    call->inference_count = 1;
+    call->status = grpc::Status::OK;
+    call->start_time = std::chrono::system_clock::now();
+
+    grpc::Alarm alarm;
+    alarm.Set(&client.cq_, gpr_inf_future(GPR_CLOCK_REALTIME), call);
+    alarm.Cancel();
+
+    rejected_ready = wait_until(
+        [&client] { return client.rejected_requests_ > 0; },
+        std::chrono::milliseconds(200));
+
+    client.cq_.Shutdown();
+    runner.join();
+  });
+
+  ASSERT_TRUE(rejected_ready) << "Timed out waiting for rejected request";
+  EXPECT_NE(err.find("completion not ok"), std::string::npos);
+  EXPECT_EQ(client.rejected_requests_, 1U);
+  EXPECT_EQ(client.success_requests_, 0U);
+  EXPECT_TRUE(client.latency_records_.roundtrip_ms.empty());
+}
+
 TEST(InferenceClientHelpers, AsyncCompleteRpcClampsNegativeLatencies)
 {
   auto channel = make_test_channel();
