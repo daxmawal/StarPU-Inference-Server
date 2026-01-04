@@ -2648,6 +2648,31 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersNumelOverflowThrows)
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
 }
 
+TEST(InputSlotPool_Unit, ComputeInputSizesNumelOverflowThrows)
+{
+  constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
+  const size_t per_sample_numel = kMaxSizeT / 2;
+  const size_t per_sample_bytes = 1;
+  const size_t batch_size = (kMaxSizeT / per_sample_numel) + 1;
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::testing::compute_input_sizes_for_tests(
+              per_sample_bytes, per_sample_numel, batch_size, 0);
+        }
+        catch (const std::overflow_error& ex) {
+          const std::string expected = std::format(
+              "InputSlotPool: per-sample numel ({}) times batch size ({}) "
+              "exceeds size_t range for input {}",
+              per_sample_numel, batch_size, 0);
+          EXPECT_EQ(ex.what(), expected);
+          throw;
+        }
+      },
+      std::overflow_error);
+}
+
 TEST(InputSlotPool_Unit, ConstructionWithoutModelsThrows)
 {
   StarpuRuntimeGuard starpu_guard;

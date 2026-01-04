@@ -350,4 +350,17 @@ InputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
   return prod;
 }
 
+#if defined(STARPU_TESTING)
+namespace testing {
+void
+compute_input_sizes_for_tests(
+    std::size_t per_sample_bytes, std::size_t per_sample_numel,
+    std::size_t batch_size, std::size_t input_index)
+{
+  [[maybe_unused]] const auto sizes = compute_input_sizes(
+      per_sample_bytes, per_sample_numel, batch_size, input_index);
+}
+}  // namespace testing
+#endif
+
 }  // namespace starpu_server
