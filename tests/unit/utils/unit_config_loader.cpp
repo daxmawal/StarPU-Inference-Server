@@ -1171,6 +1171,30 @@ TEST(ConfigLoader, MaxMessageBytesRejectsTooSmallForModel)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, MaxMessageBytesWarnsWhenExceedingGrpcLimit)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_grpc_limit_model.pt");
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  const auto grpc_limit =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  const auto max_message_bytes = grpc_limit + 1U;
+  yaml += std::format("max_message_bytes: {}\n", max_message_bytes);
+
+  const auto tmp = WriteTempFile("config_loader_grpc_limit.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  const std::string expected_warning = std::format(
+      "max_message_bytes ({}) exceeds gRPC limit ({}); gRPC will clamp "
+      "to {}. Consider reducing max_message_bytes.",
+      max_message_bytes, grpc_limit, grpc_limit);
+  EXPECT_EQ(capture.str(), expected_log_line(WarningLevel, expected_warning));
+}
+
 TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
 {
   const auto model_path =
