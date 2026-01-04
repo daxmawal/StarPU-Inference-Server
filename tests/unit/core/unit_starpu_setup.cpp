@@ -3482,6 +3482,45 @@ TEST(OutputSlotPool_Unit, NonBatchDimensionOverflowThrows)
       std::overflow_error);
 }
 
+TEST(OutputSlotPool_Unit, PerSampleBytesOverflowThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.max_batch_size = 1;
+  opts.batching.pool_size = 1;
+
+  const size_t elsize = sizeof(float);
+  const size_t max_numel = std::numeric_limits<size_t>::max() / elsize;
+  const size_t overflow_numel = max_numel + 1;
+  ASSERT_LE(
+      overflow_numel, static_cast<size_t>(std::numeric_limits<int64_t>::max()));
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "bytes_overflow_output";
+  tensor.dims = {1, static_cast<int64_t>(overflow_numel)};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "bytes_overflow_model";
+  model.outputs.push_back(tensor);
+  opts.model = model;
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::OutputSlotPool pool(opts, 1);
+        }
+        catch (const std::overflow_error& ex) {
+          EXPECT_STREQ(
+              "OutputSlotPool: per-sample bytes overflow for output 0",
+              ex.what());
+          throw;
+        }
+      },
+      std::overflow_error);
+}
+
 TEST(OutputSlotPool_Unit, ReleaseReturnsSlotToPool)
 {
   StarpuRuntimeGuard starpu_guard;

@@ -89,6 +89,15 @@ TEST(ClientArgs, ParsesClientModelPathWhenProvided)
   EXPECT_EQ(cfg.client_model_path, "/tmp/model.pt");
 }
 
+TEST(ClientArgs, ParsesModelVersionWhenProvided)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--model-version", "42"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.model_version, "42");
+}
+
 TEST(ClientArgs, MissingClientModelPathValueFailsParsing)
 {
   auto argv = std::to_array<const char*>(
@@ -96,6 +105,15 @@ TEST(ClientArgs, MissingClientModelPathValueFailsParsing)
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_FALSE(cfg.valid);
   EXPECT_TRUE(cfg.client_model_path.empty());
+}
+
+TEST(ClientArgs, MissingModelVersionValueFailsParsing)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--model-version"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(cfg.model_version, "1");
 }
 
 TEST(ClientArgs, RejectsNegativeDelay)
