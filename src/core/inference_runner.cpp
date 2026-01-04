@@ -181,15 +181,9 @@ InferenceJob::InferenceJob(
 static auto
 load_model(const std::string& model_path) -> torch::jit::script::Module
 {
-  try {
-    auto model = torch::jit::load(model_path);
-    model.eval();
-    return model;
-  }
-  catch (const c10::Error& e) {
-    log_error(std::format("Failed to load model: {}", e.what()));
-    throw;
-  }
+  auto model = torch::jit::load(model_path);
+  model.eval();
+  return model;
 }
 
 static auto
