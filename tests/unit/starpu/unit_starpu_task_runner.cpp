@@ -5086,6 +5086,75 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
   EXPECT_EQ(queue_.size(), 0U);
 }
 
+TEST_F(StarPUTaskRunnerFixture, RunClearsOnCompleteWhenJobCancelled)
+{
+  opts_.batching.dynamic_batching = false;
+
+  bool callback_invoked = false;
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(true);
+  job->set_cancelled_flag(cancel_flag);
+
+  auto holder = std::make_shared<int>(5);
+  job->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder, holder.get())});
+  job->set_output_tensors({torch::tensor({2.0F})});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  runner_->run();
+
+  EXPECT_FALSE(job->has_on_complete());
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  EXPECT_TRUE(job->get_input_memory_holders().empty());
+  EXPECT_TRUE(job->get_output_tensors().empty());
+  EXPECT_EQ(completed_jobs_.load(), 1);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunReleasesPendingSubJobsWhenJobCancelled)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(true);
+  job->set_cancelled_flag(cancel_flag);
+
+  auto pending_a = make_job(2, {torch::tensor({2.0F})});
+  auto pending_b = make_job(3, {torch::tensor({3.0F})});
+
+  auto holder_a = std::make_shared<int>(7);
+  pending_a->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder_a, holder_a.get())});
+  auto holder_b = std::make_shared<int>(9);
+  pending_b->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder_b, holder_b.get())});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  pending_jobs.push_back(pending_a);
+  pending_jobs.push_back(pending_b);
+  job->set_pending_sub_jobs(std::move(pending_jobs));
+
+  ASSERT_TRUE(job->has_pending_sub_jobs());
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  runner_->run();
+
+  EXPECT_FALSE(job->has_pending_sub_jobs());
+  EXPECT_TRUE(pending_a->get_input_tensors().empty());
+  EXPECT_TRUE(pending_a->get_input_memory_holders().empty());
+  EXPECT_TRUE(pending_b->get_input_tensors().empty());
+  EXPECT_TRUE(pending_b->get_input_memory_holders().empty());
+  EXPECT_EQ(completed_jobs_.load(), 1);
+}
+
 TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsFalseWhenCandidateMissing)
 {
   auto reference = std::make_shared<starpu_server::InferenceJob>();
