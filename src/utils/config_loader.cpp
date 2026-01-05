@@ -522,31 +522,36 @@ reset_config_loader_post_parse_hook()
 #endif
 // GCOVR_EXCL_STOP
 
-auto
-load_config(const std::string& path) -> RuntimeConfig
+namespace {
+
+void
+mark_config_invalid(RuntimeConfig& cfg, const std::string& message)
 {
-  RuntimeConfig cfg;
-  bool max_message_bytes_configured = false;
-  const auto mark_invalid = [&cfg](const std::string& message) {
-    log_error(std::string("Failed to load config: ") + message);
-    cfg.valid = false;
-  };
+  log_error(std::string("Failed to load config: ") + message);
+  cfg.valid = false;
+}
+
+void
+parse_config_file(
+    const std::string& path, RuntimeConfig& cfg,
+    bool& max_message_bytes_configured)
+{
   try {
     YAML::Node root = YAML::LoadFile(path);
     if (!root || !root.IsMap()) {
       log_error("Config root must be a mapping");
       cfg.valid = false;
-      return cfg;
+      return;
     }
 
     max_message_bytes_configured = static_cast<bool>(root["max_message_bytes"]);
     parse_verbosity(root, cfg);
     parse_config_name(root, cfg);
     if (!validate_allowed_keys(root, cfg)) {
-      return cfg;
+      return;
     }
     if (!validate_required_keys(root, cfg)) {
-      return cfg;
+      return;
     }
     parse_model_node(root, cfg);
     parse_io_nodes(root, cfg);
@@ -565,62 +570,77 @@ load_config(const std::string& path) -> RuntimeConfig
     // GCOVR_EXCL_STOP
   }
   catch (const YAML::Exception& exception) {
-    mark_invalid(exception.what());
+    mark_config_invalid(cfg, exception.what());
   }
   catch (const std::invalid_argument& exception) {
-    mark_invalid(exception.what());
+    mark_config_invalid(cfg, exception.what());
   }
   catch (const std::filesystem::filesystem_error& exception) {
-    mark_invalid(exception.what());
+    mark_config_invalid(cfg, exception.what());
+  }
+}
+
+void
+finalize_config(RuntimeConfig& cfg, bool max_message_bytes_configured)
+{
+  if (!cfg.valid) {
+    return;
   }
 
-  if (cfg.valid) {
-    try {
-      if (max_message_bytes_configured) {
-        if (cfg.model.has_value()) {
-          const auto required_bytes = compute_model_message_bytes(
-              cfg.batching.max_batch_size, cfg.model->inputs,
-              cfg.model->outputs, 0);
-          if (required_bytes > cfg.batching.max_message_bytes) {
-            mark_invalid(std::format(
-                "max_message_bytes ({}) is too small for configured model "
-                "(requires at least {} bytes)",
-                cfg.batching.max_message_bytes, required_bytes));
-          }
+  try {
+    if (max_message_bytes_configured) {
+      if (cfg.model.has_value()) {
+        const auto required_bytes = compute_model_message_bytes(
+            cfg.batching.max_batch_size, cfg.model->inputs, cfg.model->outputs,
+            0);
+        if (required_bytes > cfg.batching.max_message_bytes) {
+          mark_config_invalid(
+              cfg,
+              std::format(
+                  "max_message_bytes ({}) is too small for configured model "
+                  "(requires at least {} bytes)",
+                  cfg.batching.max_message_bytes, required_bytes));
         }
-      } else {
-        cfg.batching.max_message_bytes = compute_max_message_bytes(
-            cfg.batching.max_batch_size, cfg.model,
-            cfg.batching.max_message_bytes);
       }
-    }
-    catch (const InvalidDimensionException& invalid_dimension) {
-      log_error(
-          std::string("Failed to load config: ") + invalid_dimension.what());
-      cfg.valid = false;
-    }
-    catch (const MessageSizeOverflowException& message_size_overflow) {
-      log_error(
-          std::string("Failed to load config: ") +
-          message_size_overflow.what());
-      cfg.valid = false;
-    }
-    catch (const UnsupportedDtypeException& unsupported_dtype) {
-      log_error(
-          std::string("Failed to load config: ") + unsupported_dtype.what());
-      cfg.valid = false;
-    }
-    if (cfg.valid) {
-      const auto grpc_limit =
-          static_cast<std::size_t>(std::numeric_limits<int>::max());
-      if (cfg.batching.max_message_bytes > grpc_limit) {
-        log_warning(std::format(
-            "max_message_bytes ({}) exceeds gRPC limit ({}); gRPC will clamp "
-            "to {}. Consider reducing max_message_bytes.",
-            cfg.batching.max_message_bytes, grpc_limit, grpc_limit));
-      }
+    } else {
+      cfg.batching.max_message_bytes = compute_max_message_bytes(
+          cfg.batching.max_batch_size, cfg.model,
+          cfg.batching.max_message_bytes);
     }
   }
+  catch (const InvalidDimensionException& invalid_dimension) {
+    mark_config_invalid(cfg, invalid_dimension.what());
+  }
+  catch (const MessageSizeOverflowException& message_size_overflow) {
+    mark_config_invalid(cfg, message_size_overflow.what());
+  }
+  catch (const UnsupportedDtypeException& unsupported_dtype) {
+    mark_config_invalid(cfg, unsupported_dtype.what());
+  }
+
+  if (!cfg.valid) {
+    return;
+  }
+
+  const auto grpc_limit =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  if (cfg.batching.max_message_bytes > grpc_limit) {
+    log_warning(std::format(
+        "max_message_bytes ({}) exceeds gRPC limit ({}); gRPC will clamp "
+        "to {}. Consider reducing max_message_bytes.",
+        cfg.batching.max_message_bytes, grpc_limit, grpc_limit));
+  }
+}
+
+}  // namespace
+
+auto
+load_config(const std::string& path) -> RuntimeConfig
+{
+  RuntimeConfig cfg;
+  bool max_message_bytes_configured = false;
+  parse_config_file(path, cfg, max_message_bytes_configured);
+  finalize_config(cfg, max_message_bytes_configured);
   return cfg;
 }
 
