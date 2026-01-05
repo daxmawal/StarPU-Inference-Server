@@ -788,10 +788,7 @@ InferenceServiceImpl::submit_job_and_wait(
   timing_info = result.timing_info;
   return Status::OK;
 }
-#endif
-// GCOVR_EXCL_STOP
 
-#if defined(STARPU_TESTING)
 void
 InferenceServiceImpl::TestAccessor::SetHandleModelInferAsyncTestHooks(
     HandleModelInferAsyncTestHooks hooks)
@@ -804,8 +801,18 @@ InferenceServiceImpl::TestAccessor::ClearHandleModelInferAsyncTestHooks()
 {
   handle_model_infer_async_test_hooks() = HandleModelInferAsyncTestHooks{};
 }
-#endif
 
+auto
+InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+    std::vector<std::string> names, std::size_t expected_size,
+    std::string_view fallback_prefix,
+    std::string_view kind) -> std::vector<std::string>
+{
+  return normalize_names(
+      std::move(names), expected_size, fallback_prefix, kind);
+}
+#endif
+// GCOVR_EXCL_STOP
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(
     std::function<void(Status)> callback)

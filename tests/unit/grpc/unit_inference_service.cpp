@@ -607,6 +607,40 @@ TEST(InferenceServiceImpl, PopulateResponseDetectsOverflow)
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
+TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyWhenAllUnnamed)
+{
+  auto names =
+      starpu_server::InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+          std::vector<std::string>{"", ""}, 2, "input", "input");
+  EXPECT_TRUE(names.empty());
+}
+
+TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyOnSizeMismatch)
+{
+  auto names =
+      starpu_server::InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+          std::vector<std::string>{"input0"}, 2, "input", "input");
+  EXPECT_TRUE(names.empty());
+}
+
+TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyWhenExpectedSizeZero)
+{
+  auto names =
+      starpu_server::InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+          std::vector<std::string>{"input0"}, 0, "input", "input");
+  EXPECT_TRUE(names.empty());
+}
+
+TEST(InferenceServiceImpl, NormalizeNamesFillsMissingEntries)
+{
+  auto names =
+      starpu_server::InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+          std::vector<std::string>{"", "out1"}, 2, "output", "output");
+  ASSERT_EQ(names.size(), 2U);
+  EXPECT_EQ(names[0], "output0");
+  EXPECT_EQ(names[1], "out1");
+}
+
 TEST_F(InferenceServiceTest, ValidateInputsMismatchedRawContents)
 {
   auto req = starpu_server::make_valid_request();

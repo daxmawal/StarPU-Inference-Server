@@ -103,6 +103,10 @@ class InferenceServiceImpl final
     static void SetHandleModelInferAsyncTestHooks(
         HandleModelInferAsyncTestHooks hooks);
     static void ClearHandleModelInferAsyncTestHooks();
+    static auto NormalizeNamesForTest(
+        std::vector<std::string> names, std::size_t expected_size,
+        std::string_view fallback_prefix,
+        std::string_view kind) -> std::vector<std::string>;
   };
 #endif
   // GCOVR_EXCL_STOP
