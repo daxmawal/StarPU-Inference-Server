@@ -382,6 +382,43 @@ TEST_F(InferenceTaskTest, CreateTaskThrowsWhenStarpuTaskCreateFails)
       starpu_server::StarPUTaskCreationException);
 }
 
+TEST_F(InferenceTaskTest, CreateTaskCleansUpWhenAssignFixedWorkerThrows)
+{
+  unregister_call_count_ref() = 0;
+  unregister_handles_ref().clear();
+  task_destroy_call_count_ref() = 0;
+  last_destroyed_task_ref() = nullptr;
+
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.task_create_fn = []() -> starpu_task* {
+    return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
+  };
+
+  auto job = make_job(6, 2);
+  job->set_fixed_worker_id(-1);
+  auto task = make_task(job, 0, &dependencies);
+
+  const std::vector<starpu_data_handle_t> inputs{MakeHandle(1), MakeHandle(2)};
+  const std::vector<starpu_data_handle_t> outputs{MakeHandle(3)};
+  auto ctx = task.create_context(inputs, outputs);
+
+  EXPECT_THROW(task.create_task(inputs, outputs, ctx), std::invalid_argument);
+
+  EXPECT_EQ(task_destroy_call_count_ref(), 1);
+  ASSERT_NE(last_destroyed_task_ref(), nullptr);
+  EXPECT_EQ(unregister_call_count_ref(), 3);
+  ASSERT_EQ(unregister_handles_ref().size(), 3U);
+  EXPECT_EQ(unregister_handles_ref()[0], inputs[0]);
+  EXPECT_EQ(unregister_handles_ref()[1], inputs[1]);
+  EXPECT_EQ(unregister_handles_ref()[2], outputs[0]);
+  EXPECT_EQ(ctx->inputs_handles[0], nullptr);
+  EXPECT_EQ(ctx->inputs_handles[1], nullptr);
+  EXPECT_EQ(ctx->outputs_handles[0], nullptr);
+
+  std::free(last_destroyed_task_ref());
+}
+
 TEST_F(
     InferenceTaskTest,
     CreateTaskAssignsDependenciesToContextWhenMissingDependenciesPointer)
@@ -601,6 +638,48 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   EXPECT_EQ(params->layout.dims[0][0], 2);
   EXPECT_EQ(params->layout.dims[0][1], 3);
   EXPECT_EQ(params->layout.input_types[0], at::kFloat);
+}
+
+TEST_F(InferenceTaskTest, CreateInferenceParamsInfersInputTypesFromTensors)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_request_id(8);
+  job->set_input_tensors(
+      {torch::ones({2}, torch::TensorOptions().dtype(at::kDouble)),
+       torch::ones({3}, torch::TensorOptions().dtype(at::kInt))});
+  job->set_input_types({});
+  job->set_output_tensors({torch::zeros({2})});
+
+  auto task = make_task(job);
+
+  auto params = task.create_inference_params();
+
+  ASSERT_EQ(params->layout.input_types.size(), 2U);
+  EXPECT_EQ(params->layout.input_types[0], at::kDouble);
+  EXPECT_EQ(params->layout.input_types[1], at::kInt);
+}
+
+TEST_F(InferenceTaskTest, CreateInferenceParamsThrowsWhenInputTensorUndefined)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_request_id(10);
+  job->set_input_tensors({torch::Tensor()});
+  job->set_input_types({});
+
+  auto task = make_task(job);
+
+  EXPECT_THROW(
+      {
+        try {
+          task.create_inference_params();
+        }
+        catch (const starpu_server::InferenceExecutionException& ex) {
+          EXPECT_STREQ(
+              "Input tensor is undefined; cannot infer input type.", ex.what());
+          throw;
+        }
+      },
+      starpu_server::InferenceExecutionException);
 }
 
 TEST_F(InferenceTaskTest, CreateInferenceParamsThrowsWhenRuntimeConfigNull)
