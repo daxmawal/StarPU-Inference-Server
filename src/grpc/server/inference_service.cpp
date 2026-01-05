@@ -830,6 +830,16 @@ InferenceServiceImpl::TestAccessor::RpcDoneTagProceedForTest(
   tag->Proceed(is_ok);
   return called;
 }
+
+auto
+InferenceServiceImpl::TestAccessor::FillOutputTensorForTest(
+    inference::ModelInferResponse* reply,
+    const std::vector<torch::Tensor>& outputs,
+    const std::vector<std::size_t>& output_indices,
+    const std::vector<std::string>& output_names) -> grpc::Status
+{
+  return fill_output_tensor(reply, outputs, output_indices, output_names);
+}
 #endif
 // GCOVR_EXCL_STOP
 

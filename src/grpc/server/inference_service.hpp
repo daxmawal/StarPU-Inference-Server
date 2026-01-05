@@ -109,6 +109,11 @@ class InferenceServiceImpl final
         std::string_view kind) -> std::vector<std::string>;
     static void ArmRpcDoneTagWithNullContextForTest();
     static auto RpcDoneTagProceedForTest(bool is_ok, bool with_on_done) -> bool;
+    static auto FillOutputTensorForTest(
+        inference::ModelInferResponse* reply,
+        const std::vector<torch::Tensor>& outputs,
+        const std::vector<std::size_t>& output_indices,
+        const std::vector<std::string>& output_names) -> grpc::Status;
   };
 #endif
   // GCOVR_EXCL_STOP

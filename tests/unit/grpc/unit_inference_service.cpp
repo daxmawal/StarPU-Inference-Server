@@ -668,6 +668,39 @@ TEST(InferenceServiceImpl, RpcDoneTagProceedSkipsWhenNoOnDone)
   EXPECT_FALSE(called);
 }
 
+TEST(InferenceServiceImpl, FillOutputTensorRejectsOutOfRangeIndex)
+{
+  inference::ModelInferResponse reply;
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1.0F}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<std::size_t> output_indices = {1U};
+  std::vector<std::string> output_names = {"out0"};
+
+  auto status = starpu_server::InferenceServiceImpl::TestAccessor::
+      FillOutputTensorForTest(&reply, outputs, output_indices, output_names);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(reply.outputs_size(), 0);
+  EXPECT_EQ(reply.raw_output_contents_size(), 0);
+}
+
+TEST(InferenceServiceImpl, FillOutputTensorUsesFallbackName)
+{
+  inference::ModelInferResponse reply;
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1.0F, 2.0F}, torch::TensorOptions().dtype(at::kFloat)),
+      torch::tensor({3.0F, 4.0F}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<std::size_t> output_indices = {1U};
+  std::vector<std::string> output_names = {"named0"};
+
+  auto status = starpu_server::InferenceServiceImpl::TestAccessor::
+      FillOutputTensorForTest(&reply, outputs, output_indices, output_names);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(reply.outputs_size(), 1);
+  EXPECT_EQ(reply.outputs(0).name(), "output1");
+}
+
 TEST_F(InferenceServiceTest, ValidateInputsMismatchedRawContents)
 {
   auto req = starpu_server::make_valid_request();
