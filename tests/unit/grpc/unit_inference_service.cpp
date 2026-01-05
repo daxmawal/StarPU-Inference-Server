@@ -412,6 +412,90 @@ TEST(InferenceServiceImpl, PopulateResponseUsesOverrideModelName)
       req, reply, outputs, recv_ms, send_ms, breakdown, server_model);
 }
 
+TEST(InferenceServiceImpl, PopulateResponseRejectsEmptyRequestedOutputName)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  req.add_outputs();
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  std::vector<std::string> output_names = {"out0"};
+
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, {}, true, output_names);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_NE(
+      status.error_message().find("Requested output name must be non-empty"),
+      std::string::npos);
+}
+
+TEST(InferenceServiceImpl, PopulateResponseRejectsUnknownRequestedOutputName)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  req.add_outputs()->set_name("missing");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  std::vector<std::string> output_names = {"known"};
+
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, {}, true, output_names);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_NE(
+      status.error_message().find(
+          "Requested output 'missing' is not available"),
+      std::string::npos);
+}
+
+TEST(InferenceServiceImpl, PopulateResponseRejectsDuplicateRequestedOutputName)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  req.add_outputs()->set_name("dup");
+  req.add_outputs()->set_name("dup");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  std::vector<std::string> output_names = {"dup"};
+
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, {}, true, output_names);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_NE(
+      status.error_message().find("Requested output 'dup' is duplicated"),
+      std::string::npos);
+}
+
+TEST(
+    InferenceServiceImpl, PopulateResponseRejectsDuplicateConfiguredOutputNames)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  req.add_outputs()->set_name("dup");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt)),
+      torch::tensor({3, 4}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  std::vector<std::string> output_names = {"dup", "dup"};
+
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, {}, true, output_names);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_NE(
+      status.error_message().find("Configured output name 'dup' is duplicated"),
+      std::string::npos);
+}
+
 TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
 {
   auto req = starpu_server::make_model_request("model", "1");
