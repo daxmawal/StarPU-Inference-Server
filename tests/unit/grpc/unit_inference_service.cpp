@@ -701,6 +701,23 @@ TEST(InferenceServiceImpl, FillOutputTensorUsesFallbackName)
   EXPECT_EQ(reply.outputs(0).name(), "output1");
 }
 
+TEST(InferenceServiceImpl, ModelReadyRejectsMismatchedName)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat}, "default-model");
+  grpc::ServerContext context;
+  inference::ModelReadyRequest request;
+  inference::ModelReadyResponse response;
+
+  request.set_name("other-model");
+
+  auto status = service.ModelReady(&context, &request, &response);
+  ASSERT_TRUE(status.ok());
+  EXPECT_FALSE(response.ready());
+}
+
 TEST_F(InferenceServiceTest, ValidateInputsMismatchedRawContents)
 {
   auto req = starpu_server::make_valid_request();
