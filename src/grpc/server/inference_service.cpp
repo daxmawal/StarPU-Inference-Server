@@ -142,6 +142,17 @@ class RpcDoneTag final : public AsyncCallDataBase,
   std::shared_ptr<RpcDoneTag> self_ref_;
 };
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)
+auto
+handle_model_infer_async_test_hooks()
+    -> InferenceServiceImpl::HandleModelInferAsyncTestHooks&
+{
+  static InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks{};
+  return hooks;
+}
+#endif
+// GCOVR_EXCL_STOP
 }  // namespace
 
 
@@ -780,6 +791,21 @@ InferenceServiceImpl::submit_job_and_wait(
 #endif
 // GCOVR_EXCL_STOP
 
+#if defined(STARPU_TESTING)
+void
+InferenceServiceImpl::TestAccessor::SetHandleModelInferAsyncTestHooks(
+    HandleModelInferAsyncTestHooks hooks)
+{
+  handle_model_infer_async_test_hooks() = std::move(hooks);
+}
+
+void
+InferenceServiceImpl::TestAccessor::ClearHandleModelInferAsyncTestHooks()
+{
+  handle_model_infer_async_test_hooks() = HandleModelInferAsyncTestHooks{};
+}
+#endif
+
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(
     std::function<void(Status)> callback)
@@ -935,6 +961,12 @@ InferenceServiceImpl::HandleModelInferAsync(
 {
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
   auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
+#if defined(STARPU_TESTING)
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.on_cancel_flag_created) {
+    test_hooks.on_cancel_flag_created(cancel_flag);
+  }
+#endif
   NvtxRange request_scope("grpc_handle_infer_request");
 
   auto metrics = get_metrics();
@@ -944,9 +976,28 @@ InferenceServiceImpl::HandleModelInferAsync(
 
   const auto resolved_model_name = resolve_model_name(request->model_name());
   if (context != nullptr && call_guard) {
+    auto is_context_cancelled = [context
+#if defined(STARPU_TESTING)
+                                 ,
+                                 cancel_override =
+                                     test_hooks.is_cancelled_override
+#endif
+    ]() -> bool {
+      if (context == nullptr) {
+        return false;
+      }
+#if defined(STARPU_TESTING)
+      if (cancel_override) {
+        if (auto override = cancel_override(context); override.has_value()) {
+          return *override;
+        }
+      }
+#endif
+      return context->IsCancelled();
+    };
     auto on_cancel = [context, cancel_flag, callback_handle,
-                      resolved_model_name]() {
-      if (context == nullptr || !context->IsCancelled()) {
+                      resolved_model_name, is_context_cancelled]() {
+      if (context == nullptr || !is_context_cancelled()) {
         return;
       }
       if (cancel_flag->exchange(true, std::memory_order_acq_rel)) {
@@ -961,9 +1012,14 @@ InferenceServiceImpl::HandleModelInferAsync(
             "cancel", "client_cancelled", resolved_model_name);
       }
     };
+#if defined(STARPU_TESTING)
+    if (test_hooks.on_cancel_ready) {
+      test_hooks.on_cancel_ready(on_cancel);
+    }
+#endif
     auto done_tag = RpcDoneTag::Create(on_cancel, std::move(call_guard));
     done_tag->Arm(context);
-    if (context->IsCancelled()) {
+    if (is_context_cancelled()) {
       on_cancel();
       return;
     }

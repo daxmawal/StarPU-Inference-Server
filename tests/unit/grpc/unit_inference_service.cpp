@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <iterator>
 #include <limits>
@@ -44,6 +45,21 @@ struct TraceFileGuard {
     tracer.configure(false, "");
     std::error_code ec;
     std::filesystem::remove(path, ec);
+  }
+};
+
+struct HandleModelInferAsyncHooksGuard {
+  explicit HandleModelInferAsyncHooksGuard(
+      starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks)
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        SetHandleModelInferAsyncTestHooks(std::move(hooks));
+  }
+
+  ~HandleModelInferAsyncHooksGuard()
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        ClearHandleModelInferAsyncTestHooks();
   }
 };
 }  // namespace
@@ -699,6 +715,108 @@ TEST_F(
   EXPECT_FALSE(callback_status.ok());
   EXPECT_EQ(callback_status.error_code(), grpc::StatusCode::UNAVAILABLE);
   expect_empty_infer_response(reply);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncCancelsImmediatelyWithContextGuard)
+{
+  auto request = starpu_server::make_valid_request();
+  std::atomic<int> callback_count{0};
+  grpc::Status callback_status;
+  std::function<void()> on_cancel;
+  bool force_cancelled = true;
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.is_cancelled_override =
+      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+    return force_cancelled;
+  };
+  hooks.on_cancel_ready =
+      [&on_cancel](const std::function<void()>& cancel_handler) {
+        on_cancel = cancel_handler;
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  auto call_guard = std::make_shared<int>(1);
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&](grpc::Status status) {
+        callback_status = std::move(status);
+        callback_count.fetch_add(1);
+      },
+      call_guard);
+
+  EXPECT_EQ(callback_count.load(), 1);
+  EXPECT_EQ(callback_status.error_code(), grpc::StatusCode::CANCELLED);
+  expect_empty_infer_response(reply);
+
+  ASSERT_TRUE(static_cast<bool>(on_cancel));
+  on_cancel();
+  EXPECT_EQ(callback_count.load(), 1);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncCancelHandlerNoOpWhenNotCancelled)
+{
+  auto request = starpu_server::make_valid_request();
+  request.clear_raw_input_contents();
+  std::atomic<int> callback_count{0};
+  grpc::Status callback_status;
+  std::function<void()> on_cancel;
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.is_cancelled_override =
+      [](grpc::ServerContext*) -> std::optional<bool> { return false; };
+  hooks.on_cancel_ready =
+      [&on_cancel](const std::function<void()>& cancel_handler) {
+        on_cancel = cancel_handler;
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  auto call_guard = std::make_shared<int>(1);
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&](grpc::Status status) {
+        callback_status = std::move(status);
+        callback_count.fetch_add(1);
+      },
+      call_guard);
+
+  EXPECT_EQ(callback_count.load(), 1);
+  EXPECT_EQ(callback_status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  expect_empty_infer_response(reply);
+
+  ASSERT_TRUE(static_cast<bool>(on_cancel));
+  on_cancel();
+  EXPECT_EQ(callback_count.load(), 1);
+}
+
+TEST_F(
+    InferenceServiceTest, HandleModelInferAsyncSkipsCallbackWhenCancelFlagSet)
+{
+  auto request = starpu_server::make_valid_request();
+  std::atomic<bool> callback_called{false};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_cancel_flag_created =
+      [](const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
+        cancel_flag->store(true, std::memory_order_release);
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  service->HandleModelInferAsync(&ctx, &request, &reply, [&](grpc::Status) {
+    callback_called.store(true);
+  });
+
+  EXPECT_FALSE(callback_called.load());
+  expect_empty_infer_response(reply);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.try_pop(job));
 }
 
 TEST_F(

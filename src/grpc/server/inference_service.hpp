@@ -89,6 +89,24 @@ class InferenceServiceImpl final
     bool metrics_reported = false;
   };
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)
+  struct HandleModelInferAsyncTestHooks {
+    std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+        on_cancel_flag_created;
+    std::function<void(const std::function<void()>&)> on_cancel_ready;
+    std::function<std::optional<bool>(grpc::ServerContext*)>
+        is_cancelled_override;
+  };
+
+  struct TestAccessor {
+    static void SetHandleModelInferAsyncTestHooks(
+        HandleModelInferAsyncTestHooks hooks);
+    static void ClearHandleModelInferAsyncTestHooks();
+  };
+#endif
+  // GCOVR_EXCL_STOP
+
   static auto populate_response(
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
