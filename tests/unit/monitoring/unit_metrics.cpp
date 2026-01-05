@@ -502,6 +502,122 @@ TEST(MetricsRegistry, StatusLabelOverflowUsesReservedBucket)
   EXPECT_FALSE(unexpected_value.has_value());
 }
 
+TEST(MetricsRegistry, FailureKeyOverflowSetsFlag)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::FailureKeyOverflowIsEmpty());
+}
+
+TEST(MetricsRegistry, FailureKeyEqualityComparesAllFields)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::FailureKeyEquals(
+      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
+      "reason-a", "model-a", /*overflow_rhs=*/false));
+
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::FailureKeyEquals(
+      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-b",
+      "reason-a", "model-a", /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::FailureKeyEquals(
+      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
+      "reason-b", "model-a", /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::FailureKeyEquals(
+      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
+      "reason-a", "model-b", /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::FailureKeyEquals(
+      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
+      "reason-a", "model-a", /*overflow_rhs=*/true));
+}
+
+TEST(MetricsRegistry, ModelKeyOverflowSetsFlag)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::ModelKeyOverflowIsEmpty());
+}
+
+TEST(MetricsRegistry, ModelKeyEqualityComparesAllFields)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::ModelKeyEquals(
+      "model-a", /*overflow_lhs=*/false, "model-a", /*overflow_rhs=*/false));
+
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelKeyEquals(
+      "model-a", /*overflow_lhs=*/false, "model-b", /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelKeyEquals(
+      "model-a", /*overflow_lhs=*/false, "model-a", /*overflow_rhs=*/true));
+}
+
+TEST(MetricsRegistry, ModelDeviceKeyOverflowSetsFlag)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::ModelDeviceKeyOverflowIsEmpty());
+}
+
+TEST(MetricsRegistry, ModelDeviceKeyEqualityComparesAllFields)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
+      "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu0",
+      /*overflow_rhs=*/false));
+
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
+      "model-a", "gpu0", /*overflow_lhs=*/false, "model-b", "gpu0",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
+      "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu1",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
+      "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu0",
+      /*overflow_rhs=*/true));
+}
+
+TEST(MetricsRegistry, IoKeyOverflowSetsFlag)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::IoKeyOverflowIsEmpty());
+}
+
+TEST(MetricsRegistry, IoKeyEqualityComparesAllFields)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::IoKeyEquals(
+      "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 1, 2, "cpu",
+      /*overflow_rhs=*/false));
+
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+      "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "d2h", 1, 2, "cpu",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+      "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 3, 2, "cpu",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+      "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 1, 4, "cpu",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+      "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 1, 2, "gpu",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+      "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 1, 2, "cpu",
+      /*overflow_rhs=*/true));
+}
+
+TEST(MetricsRegistry, WorkerKeyOverflowSetsFlag)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::WorkerKeyOverflowIsEmpty());
+}
+
+TEST(MetricsRegistry, WorkerKeyEqualityComparesAllFields)
+{
+  EXPECT_TRUE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
+      1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "cpu",
+      /*overflow_rhs=*/false));
+
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
+      1, 2, "cpu", /*overflow_lhs=*/false, 3, 2, "cpu",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
+      1, 2, "cpu", /*overflow_lhs=*/false, 1, 4, "cpu",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
+      1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "gpu",
+      /*overflow_rhs=*/false));
+  EXPECT_FALSE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
+      1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "cpu",
+      /*overflow_rhs=*/true));
+}
+
 TEST(Metrics, SetQueueFillRatioUpdatesGauge)
 {
   ASSERT_TRUE(init_metrics(0));

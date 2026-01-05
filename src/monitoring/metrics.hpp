@@ -234,6 +234,32 @@ class MetricsRegistry {
     static void ClearInferenceFailuresFamily(MetricsRegistry& metrics);
     static void ClearInferenceCompletedFamily(MetricsRegistry& metrics);
     static void ClearRequestsByStatusFamily(MetricsRegistry& metrics);
+    static auto FailureKeyOverflowIsEmpty() -> bool;
+    static auto FailureKeyEquals(
+        std::string_view stage_lhs, std::string_view reason_lhs,
+        std::string_view model_lhs, bool overflow_lhs,
+        std::string_view stage_rhs, std::string_view reason_rhs,
+        std::string_view model_rhs, bool overflow_rhs) -> bool;
+    static auto ModelKeyOverflowIsEmpty() -> bool;
+    static auto ModelKeyEquals(
+        std::string_view model_lhs, bool overflow_lhs,
+        std::string_view model_rhs, bool overflow_rhs) -> bool;
+    static auto ModelDeviceKeyOverflowIsEmpty() -> bool;
+    static auto ModelDeviceKeyEquals(
+        std::string_view model_lhs, std::string_view device_lhs,
+        bool overflow_lhs, std::string_view model_rhs,
+        std::string_view device_rhs, bool overflow_rhs) -> bool;
+    static auto IoKeyOverflowIsEmpty() -> bool;
+    static auto IoKeyEquals(
+        std::string_view direction_lhs, int worker_id_lhs, int device_id_lhs,
+        std::string_view worker_type_lhs, bool overflow_lhs,
+        std::string_view direction_rhs, int worker_id_rhs, int device_id_rhs,
+        std::string_view worker_type_rhs, bool overflow_rhs) -> bool;
+    static auto WorkerKeyOverflowIsEmpty() -> bool;
+    static auto WorkerKeyEquals(
+        int worker_id_lhs, int device_id_lhs, std::string_view worker_type_lhs,
+        bool overflow_lhs, int worker_id_rhs, int device_id_rhs,
+        std::string_view worker_type_rhs, bool overflow_rhs) -> bool;
   };
 #endif
 

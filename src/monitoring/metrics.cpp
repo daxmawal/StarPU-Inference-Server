@@ -2609,4 +2609,112 @@ starpu_server::MetricsRegistry::TestAccessor::ClearRequestsByStatusFamily(
 {
   metrics.requests_by_status_family_ = nullptr;
 }
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::FailureKeyOverflowIsEmpty()
+    -> bool
+{
+  const auto key = FailureKey::Overflow();
+  return key.overflow && key.stage.empty() && key.reason.empty() &&
+         key.model.empty();
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::FailureKeyEquals(
+    std::string_view stage_lhs, std::string_view reason_lhs,
+    std::string_view model_lhs, bool overflow_lhs, std::string_view stage_rhs,
+    std::string_view reason_rhs, std::string_view model_rhs,
+    bool overflow_rhs) -> bool
+{
+  FailureKey lhs{
+      std::string(stage_lhs), std::string(reason_lhs), std::string(model_lhs),
+      overflow_lhs};
+  FailureKey rhs{
+      std::string(stage_rhs), std::string(reason_rhs), std::string(model_rhs),
+      overflow_rhs};
+  return lhs == rhs;
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::ModelKeyOverflowIsEmpty() -> bool
+{
+  const auto key = ModelKey::Overflow();
+  return key.overflow && key.model.empty();
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::ModelKeyEquals(
+    std::string_view model_lhs, bool overflow_lhs, std::string_view model_rhs,
+    bool overflow_rhs) -> bool
+{
+  ModelKey lhs{std::string(model_lhs), overflow_lhs};
+  ModelKey rhs{std::string(model_rhs), overflow_rhs};
+  return lhs == rhs;
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::ModelDeviceKeyOverflowIsEmpty()
+    -> bool
+{
+  const auto key = ModelDeviceKey::Overflow();
+  return key.overflow && key.model.empty() && key.device.empty();
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
+    std::string_view model_lhs, std::string_view device_lhs, bool overflow_lhs,
+    std::string_view model_rhs, std::string_view device_rhs,
+    bool overflow_rhs) -> bool
+{
+  ModelDeviceKey lhs{
+      std::string(model_lhs), std::string(device_lhs), overflow_lhs};
+  ModelDeviceKey rhs{
+      std::string(model_rhs), std::string(device_rhs), overflow_rhs};
+  return lhs == rhs;
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::IoKeyOverflowIsEmpty() -> bool
+{
+  const auto key = IoKey::Overflow();
+  return key.overflow && key.direction.empty() && key.worker_id == 0 &&
+         key.device_id == 0 && key.worker_type.empty();
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::IoKeyEquals(
+    std::string_view direction_lhs, int worker_id_lhs, int device_id_lhs,
+    std::string_view worker_type_lhs, bool overflow_lhs,
+    std::string_view direction_rhs, int worker_id_rhs, int device_id_rhs,
+    std::string_view worker_type_rhs, bool overflow_rhs) -> bool
+{
+  IoKey lhs{
+      std::string(direction_lhs), worker_id_lhs, device_id_lhs,
+      std::string(worker_type_lhs), overflow_lhs};
+  IoKey rhs{
+      std::string(direction_rhs), worker_id_rhs, device_id_rhs,
+      std::string(worker_type_rhs), overflow_rhs};
+  return lhs == rhs;
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::WorkerKeyOverflowIsEmpty() -> bool
+{
+  const auto key = WorkerKey::Overflow();
+  return key.overflow && key.worker_id == 0 && key.device_id == 0 &&
+         key.worker_type.empty();
+}
+
+auto
+starpu_server::MetricsRegistry::TestAccessor::WorkerKeyEquals(
+    int worker_id_lhs, int device_id_lhs, std::string_view worker_type_lhs,
+    bool overflow_lhs, int worker_id_rhs, int device_id_rhs,
+    std::string_view worker_type_rhs, bool overflow_rhs) -> bool
+{
+  WorkerKey lhs{
+      worker_id_lhs, device_id_lhs, std::string(worker_type_lhs), overflow_lhs};
+  WorkerKey rhs{
+      worker_id_rhs, device_id_rhs, std::string(worker_type_rhs), overflow_rhs};
+  return lhs == rhs;
+}
 #endif
