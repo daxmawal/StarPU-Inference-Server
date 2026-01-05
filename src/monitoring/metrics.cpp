@@ -209,6 +209,56 @@ escape_label_value(std::string_view value) -> std::string
 }
 
 auto
+ensure_gpu_gauge(
+    std::unordered_map<int, prometheus::Gauge*>& gauges,
+    prometheus::Family<prometheus::Gauge>* family, int gpu_index,
+    const std::string& label) -> prometheus::Gauge*
+{
+  auto [entry, inserted] = gauges.try_emplace(gpu_index, nullptr);
+  if (inserted) {
+    entry->second = &family->Add({{"gpu", label}});
+  }
+  return entry->second;
+}
+
+void
+set_or_clear_nan(
+    std::unordered_map<int, prometheus::Gauge*>& gauges,
+    prometheus::Family<prometheus::Gauge>* family, int gpu_index,
+    const std::string& label, double value)
+{
+  if (std::isnan(value)) {
+    auto entry = gauges.find(gpu_index);
+    if (entry != gauges.end()) {
+      if (family != nullptr) {
+        family->Remove(entry->second);
+      }
+      gauges.erase(entry);
+    }
+    return;
+  }
+  ensure_gpu_gauge(gauges, family, gpu_index, label)->Set(value);
+}
+
+void
+clear_missing_gauges(
+    std::unordered_map<int, prometheus::Gauge*>& gauges,
+    prometheus::Family<prometheus::Gauge>* family,
+    const std::unordered_set<int>& seen_indices)
+{
+  for (auto iter = gauges.begin(); iter != gauges.end();) {
+    if (!seen_indices.contains(iter->first)) {
+      if (family != nullptr) {
+        family->Remove(iter->second);
+      }
+      iter = gauges.erase(iter);
+    } else {
+      ++iter;
+    }
+  }
+}
+
+auto
 cpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
 {
   static std::atomic<std::int64_t> last_log_ts{0};
@@ -2333,60 +2383,35 @@ MetricsRegistry::sample_gpu_stats()
       seen_indices.insert(stats.index);
       const std::string label = std::to_string(stats.index);
 
-      const auto ensure_gauge = [&](auto& gauges,
-                                    auto* family) -> prometheus::Gauge* {
-        auto [entry, inserted] = gauges.try_emplace(stats.index, nullptr);
-        if (inserted) {
-          entry->second = &family->Add({{"gpu", label}});
-        }
-        return entry->second;
-      };
-
-      ensure_gauge(gpu_utilization_gauges_, gpu_utilization_family_)
+      ensure_gpu_gauge(
+          gpu_utilization_gauges_, gpu_utilization_family_, stats.index, label)
           ->Set(stats.util_percent);
-      ensure_gauge(gpu_memory_used_gauges_, gpu_memory_used_bytes_family_)
+      ensure_gpu_gauge(
+          gpu_memory_used_gauges_, gpu_memory_used_bytes_family_, stats.index,
+          label)
           ->Set(stats.mem_used_bytes);
-      ensure_gauge(gpu_memory_total_gauges_, gpu_memory_total_bytes_family_)
+      ensure_gpu_gauge(
+          gpu_memory_total_gauges_, gpu_memory_total_bytes_family_, stats.index,
+          label)
           ->Set(stats.mem_total_bytes);
-      const auto set_or_clear_nan = [&](auto& gauges, auto* family,
-                                        double value) {
-        if (std::isnan(value)) {
-          auto entry = gauges.find(stats.index);
-          if (entry != gauges.end()) {
-            if (family != nullptr) {
-              family->Remove(entry->second);
-            }
-            gauges.erase(entry);
-          }
-          return;
-        }
-        ensure_gauge(gauges, family)->Set(value);
-      };
 
       set_or_clear_nan(
-          gpu_temperature_gauges_, gpu_temperature_family_,
+          gpu_temperature_gauges_, gpu_temperature_family_, stats.index, label,
           stats.temperature_celsius);
-      set_or_clear_nan(gpu_power_gauges_, gpu_power_family_, stats.power_watts);
+      set_or_clear_nan(
+          gpu_power_gauges_, gpu_power_family_, stats.index, label,
+          stats.power_watts);
     }
 
-    const auto clear_missing = [&](auto& gauges, auto* family) {
-      for (auto iter = gauges.begin(); iter != gauges.end();) {
-        if (!seen_indices.contains(iter->first)) {
-          if (family != nullptr) {
-            family->Remove(iter->second);
-          }
-          iter = gauges.erase(iter);
-        } else {
-          ++iter;
-        }
-      }
-    };
-
-    clear_missing(gpu_utilization_gauges_, gpu_utilization_family_);
-    clear_missing(gpu_memory_used_gauges_, gpu_memory_used_bytes_family_);
-    clear_missing(gpu_memory_total_gauges_, gpu_memory_total_bytes_family_);
-    clear_missing(gpu_temperature_gauges_, gpu_temperature_family_);
-    clear_missing(gpu_power_gauges_, gpu_power_family_);
+    clear_missing_gauges(
+        gpu_utilization_gauges_, gpu_utilization_family_, seen_indices);
+    clear_missing_gauges(
+        gpu_memory_used_gauges_, gpu_memory_used_bytes_family_, seen_indices);
+    clear_missing_gauges(
+        gpu_memory_total_gauges_, gpu_memory_total_bytes_family_, seen_indices);
+    clear_missing_gauges(
+        gpu_temperature_gauges_, gpu_temperature_family_, seen_indices);
+    clear_missing_gauges(gpu_power_gauges_, gpu_power_family_, seen_indices);
   }
   catch (const std::exception& e) {
     if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
