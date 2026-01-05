@@ -275,10 +275,15 @@ class MetricsRegistry {
   void perform_sampling_request_nb();
   void sampling_loop(const std::stop_token& stop);
 
+  static constexpr std::size_t kHashCombineMagic = 0x9e3779b97f4a7c15ULL;
+  static constexpr std::size_t kHashCombineShiftLeft = 6U;
+  static constexpr std::size_t kHashCombineShiftRight = 2U;
+
   static auto HashCombine(std::size_t seed, std::size_t value) noexcept
       -> std::size_t
   {
-    return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+    return seed ^ (value + kHashCombineMagic + (seed << kHashCombineShiftLeft) +
+                   (seed >> kHashCombineShiftRight));
   }
 
   struct StatusKey {
