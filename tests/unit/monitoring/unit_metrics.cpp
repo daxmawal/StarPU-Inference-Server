@@ -925,6 +925,31 @@ TEST(MetricsDetail, CpuUsagePercentClampsAboveOneHundred)
   EXPECT_DOUBLE_EQ(usage, 100.0);
 }
 
+TEST(MetricsDetail, CpuUsagePercentReturnsZeroWhenTotalDeltaNonPositive)
+{
+  const auto prev = monitoring::detail::CpuTotals{
+      /*user=*/100,
+      /*nice=*/10,
+      /*system=*/5,
+      /*idle=*/200,
+      /*iowait=*/20,
+      /*irq=*/1,
+      /*softirq=*/2,
+      /*steal=*/3};
+  const auto curr = monitoring::detail::CpuTotals{
+      /*user=*/50,
+      /*nice=*/5,
+      /*system=*/2,
+      /*idle=*/100,
+      /*iowait=*/10,
+      /*irq=*/1,
+      /*softirq=*/1,
+      /*steal=*/1};
+
+  const auto usage = monitoring::detail::cpu_usage_percent(prev, curr);
+  EXPECT_DOUBLE_EQ(usage, 0.0);
+}
+
 TEST(MetricsRegistry, RunSamplingMarksCpuUsageUnknownWhenProviderMissing)
 {
   MetricsRegistry metrics(
