@@ -319,6 +319,93 @@ TEST_F(
   EXPECT_EQ(status.error_message(), "Input tensor names must be provided");
 }
 
+TEST_F(NamedInputInferenceServiceTest, ValidateInputsRejectsEmptyConfiguredName)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->set_name("first");
+  req.mutable_inputs(1)->set_name("second");
+
+  starpu_server::InferenceServiceImpl::TestAccessor::
+      SetExpectedInputNamesForTest(service.get(), {"", "second"});
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Configured input name missing at index 0");
+}
+
+TEST_F(NamedInputInferenceServiceTest, ValidateInputsRejectsUnexpectedName)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->set_name("first");
+  req.mutable_inputs(1)->set_name("unknown");
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Unexpected input tensor name 'unknown'");
+}
+
+TEST_F(
+    NamedInputInferenceServiceTest, ValidateInputsRejectsDuplicateRequestName)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->set_name("first");
+  req.mutable_inputs(1)->set_name("first");
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Input tensor name 'first' is duplicated");
+}
+
+TEST(InferenceServiceImpl, ValidateInputsRejectsDuplicateConfiguredNames)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat, at::kLong};
+  std::vector<std::string> expected_names = {"dup", "dup"};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, std::move(expected_types), "",
+      std::move(expected_names));
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(
+      status.error_message(), "Configured input name 'dup' is duplicated");
+}
+
 TEST_F(NamedInputInferenceServiceTest, ValidateInputsReordersByNameMapping)
 {
   std::vector<int64_t> data1 = {kI10, kI20, kI30};
@@ -732,6 +819,18 @@ TEST(InferenceServiceImpl, NormalizeNamesFillsMissingEntries)
   ASSERT_EQ(names.size(), 2U);
   EXPECT_EQ(names[0], "output0");
   EXPECT_EQ(names[1], "out1");
+}
+
+TEST(InferenceServiceImpl, MissingNamedInputReportsError)
+{
+  std::vector<bool> filled = {true, false};
+  std::vector<std::string> names = {"first", "second"};
+
+  auto status = starpu_server::InferenceServiceImpl::TestAccessor::
+      CheckMissingInputsForTest(filled, std::span<const std::string>(names));
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Missing input tensor 'second'");
 }
 
 TEST(InferenceServiceImpl, RpcDoneTagArmHandlesNullContext)

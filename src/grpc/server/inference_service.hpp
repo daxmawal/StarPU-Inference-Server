@@ -120,6 +120,11 @@ class InferenceServiceImpl final
         std::vector<std::string> names, std::size_t expected_size,
         std::string_view fallback_prefix,
         std::string_view kind) -> std::vector<std::string>;
+    static void SetExpectedInputNamesForTest(
+        InferenceServiceImpl* service, std::vector<std::string> names);
+    static auto CheckMissingInputsForTest(
+        const std::vector<bool>& filled,
+        std::span<const std::string> expected_names) -> grpc::Status;
     static void ArmRpcDoneTagWithNullContextForTest();
     static auto RpcDoneTagProceedForTest(bool is_ok, bool with_on_done) -> bool;
     static auto FillOutputTensorForTest(

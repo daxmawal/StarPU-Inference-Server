@@ -85,6 +85,21 @@ normalize_names(
   return names;
 }
 
+auto
+check_missing_named_inputs(
+    const std::vector<bool>& filled,
+    std::span<const std::string> expected_names) -> Status
+{
+  for (std::size_t i = 0; i < filled.size(); ++i) {
+    if (!filled[i]) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          std::format("Missing input tensor '{}'", expected_names[i])};
+    }
+  }
+  return Status::OK;
+}
+
 }  // namespace
 
 namespace {
@@ -589,12 +604,9 @@ InferenceServiceImpl::validate_and_convert_inputs(
   }
 
   if (use_name_mapping) {
-    for (std::size_t i = 0; i < filled.size(); ++i) {
-      if (!filled[i]) {
-        return {
-            grpc::StatusCode::INVALID_ARGUMENT,
-            std::format("Missing input tensor '{}'", expected_input_names_[i])};
-      }
+    Status status = check_missing_named_inputs(filled, expected_input_names_);
+    if (!status.ok()) {
+      return status;
     }
   }
 
@@ -832,6 +844,21 @@ InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
 {
   return normalize_names(
       std::move(names), expected_size, fallback_prefix, kind);
+}
+
+void
+InferenceServiceImpl::TestAccessor::SetExpectedInputNamesForTest(
+    InferenceServiceImpl* service, std::vector<std::string> names)
+{
+  service->expected_input_names_ = std::move(names);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::CheckMissingInputsForTest(
+    const std::vector<bool>& filled,
+    std::span<const std::string> expected_names) -> grpc::Status
+{
+  return check_missing_named_inputs(filled, expected_names);
 }
 
 void
