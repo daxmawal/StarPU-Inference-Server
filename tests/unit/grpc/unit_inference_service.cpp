@@ -641,6 +641,33 @@ TEST(InferenceServiceImpl, NormalizeNamesFillsMissingEntries)
   EXPECT_EQ(names[1], "out1");
 }
 
+TEST(InferenceServiceImpl, RpcDoneTagArmHandlesNullContext)
+{
+  EXPECT_NO_THROW(starpu_server::InferenceServiceImpl::TestAccessor::
+                      ArmRpcDoneTagWithNullContextForTest());
+}
+
+TEST(InferenceServiceImpl, RpcDoneTagProceedInvokesOnDoneWhenOk)
+{
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      RpcDoneTagProceedForTest(true, true);
+  EXPECT_TRUE(called);
+}
+
+TEST(InferenceServiceImpl, RpcDoneTagProceedSkipsOnDoneWhenNotOk)
+{
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      RpcDoneTagProceedForTest(false, true);
+  EXPECT_FALSE(called);
+}
+
+TEST(InferenceServiceImpl, RpcDoneTagProceedSkipsWhenNoOnDone)
+{
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      RpcDoneTagProceedForTest(true, false);
+  EXPECT_FALSE(called);
+}
+
 TEST_F(InferenceServiceTest, ValidateInputsMismatchedRawContents)
 {
   auto req = starpu_server::make_valid_request();

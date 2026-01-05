@@ -811,6 +811,25 @@ InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
   return normalize_names(
       std::move(names), expected_size, fallback_prefix, kind);
 }
+
+void
+InferenceServiceImpl::TestAccessor::ArmRpcDoneTagWithNullContextForTest()
+{
+  auto tag = RpcDoneTag::Create([] {}, std::make_shared<int>(0));
+  tag->Arm(nullptr);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::RpcDoneTagProceedForTest(
+    bool is_ok, bool with_on_done) -> bool
+{
+  bool called = false;
+  RpcDoneTag::OnDone on_done =
+      with_on_done ? [&called]() { called = true; } : RpcDoneTag::OnDone{};
+  auto tag = RpcDoneTag::Create(std::move(on_done), std::make_shared<int>(0));
+  tag->Proceed(is_ok);
+  return called;
+}
 #endif
 // GCOVR_EXCL_STOP
 
