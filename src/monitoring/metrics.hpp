@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
@@ -644,6 +645,9 @@ using ProcessPageSizeProvider = std::function<long()>;
 void set_process_page_size_provider_for_test(ProcessPageSizeProvider provider);
 void reset_process_page_size_provider_for_test();
 auto process_page_size_provider_for_test() -> const ProcessPageSizeProvider&;
+auto should_log_sampling_error_for_test(std::atomic<std::int64_t>& last_log)
+    -> bool;
+auto status_code_label_for_test(int code) -> std::string;
 #endif
 
 }  // namespace starpu_server::monitoring::detail

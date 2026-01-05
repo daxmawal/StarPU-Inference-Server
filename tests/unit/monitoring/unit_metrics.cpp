@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <grpcpp/support/status_code_enum.h>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
 #include <prometheus/client_metric.h>
@@ -7,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -880,6 +882,15 @@ TEST(MetricsDetail, ReadProcessRssBytesHandlesMissingStatm)
   EXPECT_FALSE(value.has_value());
 }
 
+TEST(MetricsDetail, ReadProcessRssBytesHandlesMalformedStatm)
+{
+  TemporaryStatmFile statm("256");
+  StatmPathGuard guard(statm.path());
+
+  const auto value = monitoring::detail::read_process_rss_bytes();
+  EXPECT_FALSE(value.has_value());
+}
+
 TEST(MetricsDetail, ReadProcessRssBytesAllowsZeroResident)
 {
   TemporaryStatmFile statm("256 0");
@@ -948,6 +959,41 @@ TEST(MetricsDetail, CpuUsagePercentReturnsZeroWhenTotalDeltaNonPositive)
 
   const auto usage = monitoring::detail::cpu_usage_percent(prev, curr);
   EXPECT_DOUBLE_EQ(usage, 0.0);
+}
+
+TEST(MetricsDetail, StatusCodeLabelMapsAdditionalStatuses)
+{
+  EXPECT_EQ(
+      monitoring::detail::status_code_label_for_test(
+          static_cast<int>(grpc::StatusCode::CANCELLED)),
+      "CANCELLED");
+  EXPECT_EQ(
+      monitoring::detail::status_code_label_for_test(
+          static_cast<int>(grpc::StatusCode::UNKNOWN)),
+      "UNKNOWN");
+  EXPECT_EQ(
+      monitoring::detail::status_code_label_for_test(
+          static_cast<int>(grpc::StatusCode::ALREADY_EXISTS)),
+      "ALREADY_EXISTS");
+  EXPECT_EQ(
+      monitoring::detail::status_code_label_for_test(
+          static_cast<int>(grpc::StatusCode::DATA_LOSS)),
+      "DATA_LOSS");
+}
+
+TEST(MetricsDetail, ShouldLogSamplingErrorSkipsWhenThrottleNotElapsed)
+{
+  const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                       std::chrono::steady_clock::now().time_since_epoch())
+                       .count();
+  const auto future = now + 3600;
+  std::atomic<std::int64_t> last_log{future};
+
+  const auto should_log =
+      monitoring::detail::should_log_sampling_error_for_test(last_log);
+
+  EXPECT_FALSE(should_log);
+  EXPECT_EQ(last_log.load(std::memory_order_relaxed), future);
 }
 
 TEST(MetricsRegistry, RunSamplingMarksCpuUsageUnknownWhenProviderMissing)

@@ -689,6 +689,18 @@ process_page_size_provider_for_test() -> const ProcessPageSizeProvider&
 {
   return process_page_size_provider_storage();
 }
+
+auto
+should_log_sampling_error_for_test(std::atomic<std::int64_t>& last_log) -> bool
+{
+  return should_log_sampling_error(last_log);
+}
+
+auto
+status_code_label_for_test(int code) -> std::string
+{
+  return status_code_label(code);
+}
 #endif
 
 auto
