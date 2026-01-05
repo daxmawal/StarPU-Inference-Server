@@ -62,6 +62,22 @@ struct HandleModelInferAsyncHooksGuard {
         ClearHandleModelInferAsyncTestHooks();
   }
 };
+
+struct HandleAsyncInferCompletionHooksGuard {
+  explicit HandleAsyncInferCompletionHooksGuard(
+      starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+          hooks)
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        SetHandleAsyncInferCompletionTestHooks(std::move(hooks));
+  }
+
+  ~HandleAsyncInferCompletionHooksGuard()
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        ClearHandleAsyncInferCompletionTestHooks();
+  }
+};
 }  // namespace
 
 class MetricsInferenceServiceTest : public InferenceServiceTest {
@@ -699,6 +715,48 @@ TEST(InferenceServiceImpl, FillOutputTensorUsesFallbackName)
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(reply.outputs_size(), 1);
   EXPECT_EQ(reply.outputs(0).name(), "output1");
+}
+
+TEST(
+    InferenceServiceImpl,
+    HandleAsyncInferCompletionReturnsWhenCancelledInitially)
+{
+  starpu_server::InferenceServiceImpl::TestAccessor::
+      ClearHandleAsyncInferCompletionTestHooks();
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      HandleAsyncInferCompletionForTest(true);
+  EXPECT_FALSE(called);
+}
+
+TEST(
+    InferenceServiceImpl,
+    HandleAsyncInferCompletionReturnsWhenCancelledAfterTryAcquire)
+{
+  starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+      hooks;
+  hooks.after_try_acquire = [](const std::shared_ptr<std::atomic<bool>>& flag) {
+    flag->store(true, std::memory_order_release);
+  };
+  HandleAsyncInferCompletionHooksGuard guard{std::move(hooks)};
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      HandleAsyncInferCompletionForTest(false);
+  EXPECT_FALSE(called);
+}
+
+TEST(
+    InferenceServiceImpl,
+    HandleAsyncInferCompletionReturnsWhenCancelledBeforeFinalCallback)
+{
+  starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+      hooks;
+  hooks.before_final_cancel_check =
+      [](const std::shared_ptr<std::atomic<bool>>& flag) {
+        flag->store(true, std::memory_order_release);
+      };
+  HandleAsyncInferCompletionHooksGuard guard{std::move(hooks)};
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      HandleAsyncInferCompletionForTest(false);
+  EXPECT_FALSE(called);
 }
 
 TEST(InferenceServiceImpl, ModelReadyRejectsMismatchedName)

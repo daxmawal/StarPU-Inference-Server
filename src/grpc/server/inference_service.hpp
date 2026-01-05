@@ -99,10 +99,20 @@ class InferenceServiceImpl final
         is_cancelled_override;
   };
 
+  struct HandleAsyncInferCompletionTestHooks {
+    std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+        after_try_acquire;
+    std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+        before_final_cancel_check;
+  };
+
   struct TestAccessor {
     static void SetHandleModelInferAsyncTestHooks(
         HandleModelInferAsyncTestHooks hooks);
     static void ClearHandleModelInferAsyncTestHooks();
+    static void SetHandleAsyncInferCompletionTestHooks(
+        HandleAsyncInferCompletionTestHooks hooks);
+    static void ClearHandleAsyncInferCompletionTestHooks();
     static auto NormalizeNamesForTest(
         std::vector<std::string> names, std::size_t expected_size,
         std::string_view fallback_prefix,
@@ -114,6 +124,7 @@ class InferenceServiceImpl final
         const std::vector<torch::Tensor>& outputs,
         const std::vector<std::size_t>& output_indices,
         const std::vector<std::string>& output_names) -> grpc::Status;
+    static auto HandleAsyncInferCompletionForTest(bool cancelled) -> bool;
   };
 #endif
   // GCOVR_EXCL_STOP

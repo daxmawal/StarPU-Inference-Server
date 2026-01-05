@@ -151,6 +151,14 @@ handle_model_infer_async_test_hooks()
   static InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks{};
   return hooks;
 }
+
+auto
+handle_async_infer_completion_test_hooks()
+    -> InferenceServiceImpl::HandleAsyncInferCompletionTestHooks&
+{
+  static InferenceServiceImpl::HandleAsyncInferCompletionTestHooks hooks{};
+  return hooks;
+}
 #endif
 // GCOVR_EXCL_STOP
 }  // namespace
@@ -802,6 +810,20 @@ InferenceServiceImpl::TestAccessor::ClearHandleModelInferAsyncTestHooks()
   handle_model_infer_async_test_hooks() = HandleModelInferAsyncTestHooks{};
 }
 
+void
+InferenceServiceImpl::TestAccessor::SetHandleAsyncInferCompletionTestHooks(
+    HandleAsyncInferCompletionTestHooks hooks)
+{
+  handle_async_infer_completion_test_hooks() = std::move(hooks);
+}
+
+void
+InferenceServiceImpl::TestAccessor::ClearHandleAsyncInferCompletionTestHooks()
+{
+  handle_async_infer_completion_test_hooks() =
+      HandleAsyncInferCompletionTestHooks{};
+}
+
 auto
 InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
     std::vector<std::string> names, std::size_t expected_size,
@@ -839,6 +861,28 @@ InferenceServiceImpl::TestAccessor::FillOutputTensorForTest(
     const std::vector<std::string>& output_names) -> grpc::Status
 {
   return fill_output_tensor(reply, outputs, output_indices, output_names);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::HandleAsyncInferCompletionForTest(
+    bool cancelled) -> bool
+{
+  inference::ModelInferRequest request;
+  inference::ModelInferResponse reply;
+  std::vector<torch::Tensor> outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
+  bool called = false;
+  auto callback_handle = std::make_shared<CallbackHandle>(
+      [&called](Status /*unused*/) { called = true; });
+  LatencyBreakdown breakdown{};
+  detail::TimingInfo timing_info{};
+  AsyncInferCompletionContext context{
+      &request, &reply,  callback_handle, nullptr,     MonotonicClock::now(),
+      0,        "model", nullptr,         cancel_flag, std::nullopt};
+  handle_async_infer_completion(
+      context, Status::OK, outputs, breakdown, timing_info);
+  return called;
 }
 #endif
 // GCOVR_EXCL_STOP
@@ -883,6 +927,9 @@ InferenceServiceImpl::handle_async_infer_completion(
     detail::TimingInfo timing_info)
 {
   const auto& callback_handle = context.callback_handle;
+#if defined(STARPU_TESTING)
+  auto& async_hooks = handle_async_infer_completion_test_hooks();
+#endif
   if (context.cancel_flag != nullptr &&
       context.cancel_flag->load(std::memory_order_acquire)) {
     return;
@@ -890,6 +937,11 @@ InferenceServiceImpl::handle_async_infer_completion(
   if (!callback_handle->TryAcquire()) {
     return;
   }
+#if defined(STARPU_TESTING)
+  if (async_hooks.after_try_acquire && context.cancel_flag != nullptr) {
+    async_hooks.after_try_acquire(context.cancel_flag);
+  }
+#endif
   if (context.cancel_flag != nullptr &&
       context.cancel_flag->load(std::memory_order_acquire)) {
     return;
@@ -979,6 +1031,11 @@ InferenceServiceImpl::handle_async_infer_completion(
       breakdown.scheduling_ms, breakdown.codelet_ms, breakdown.inference_ms,
       breakdown.callback_ms, breakdown.preprocess_ms, breakdown.postprocess_ms);
 
+#if defined(STARPU_TESTING)
+  if (async_hooks.before_final_cancel_check && context.cancel_flag != nullptr) {
+    async_hooks.before_final_cancel_check(context.cancel_flag);
+  }
+#endif
   if (context.cancel_flag != nullptr &&
       context.cancel_flag->load(std::memory_order_acquire)) {
     return;
