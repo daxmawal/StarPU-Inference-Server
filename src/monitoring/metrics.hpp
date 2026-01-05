@@ -202,6 +202,7 @@ class MetricsRegistry {
 #if defined(STARPU_TESTING)
   struct TestAccessor {
     static void ClearCpuUsageProvider(MetricsRegistry& metrics);
+    static void ClearSystemCpuUsageGauge(MetricsRegistry& metrics);
     static void ClearProcessOpenFdsGauge(MetricsRegistry& metrics);
     static void ClearProcessResidentMemoryGauge(MetricsRegistry& metrics);
     static void ClearInferenceThroughputGauge(MetricsRegistry& metrics);

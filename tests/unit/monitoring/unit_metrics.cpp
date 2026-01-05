@@ -941,6 +941,29 @@ TEST(MetricsRegistry, RunSamplingMarksCpuUsageUnknownWhenProviderMissing)
   EXPECT_TRUE(std::isnan(*value));
 }
 
+TEST(MetricsRegistry, RunSamplingSkipsCpuProviderWhenGaugeMissing)
+{
+  auto gpu_provider = []() {
+    return std::vector<MetricsRegistry::GpuSample>{};
+  };
+  bool cpu_called = false;
+  auto cpu_provider = [&cpu_called]() {
+    cpu_called = true;
+    return std::optional<double>{50.0};
+  };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  MetricsRegistry::TestAccessor::ClearSystemCpuUsageGauge(metrics);
+  EXPECT_EQ(metrics.system_cpu_usage_percent(), nullptr);
+
+  metrics.run_sampling_request_nb();
+
+  EXPECT_FALSE(cpu_called);
+}
+
 TEST(Metrics, IncrementInferenceCompletedUpdatesCounter)
 {
   ASSERT_TRUE(init_metrics(0));

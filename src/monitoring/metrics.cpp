@@ -1287,6 +1287,7 @@ set_queue_capacity(std::size_t capacity)
   }
 }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)
 void
 set_queue_fill_ratio(std::size_t size, std::size_t capacity)
@@ -1300,6 +1301,7 @@ set_queue_fill_ratio(std::size_t size, std::size_t capacity)
       static_cast<double>(size) / static_cast<double>(capacity));
 }
 #endif
+// GCOVR_EXCL_STOP
 
 void
 set_starpu_prepared_queue_depth(std::size_t depth)
@@ -2421,6 +2423,13 @@ starpu_server::MetricsRegistry::TestAccessor::ClearCpuUsageProvider(
     starpu_server::MetricsRegistry& metrics)
 {
   metrics.cpu_usage_provider_ = {};
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearSystemCpuUsageGauge(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.system_cpu_usage_percent_ = nullptr;
 }
 
 void
