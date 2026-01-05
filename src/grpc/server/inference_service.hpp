@@ -97,6 +97,9 @@ class InferenceServiceImpl final
     std::function<void(const std::function<void()>&)> on_cancel_ready;
     std::function<std::optional<bool>(grpc::ServerContext*)>
         is_cancelled_override;
+    std::function<void(
+        const std::shared_ptr<std::atomic<bool>>&, const grpc::Status&)>
+        on_submit_job_async_done;
   };
 
   struct HandleAsyncInferCompletionTestHooks {

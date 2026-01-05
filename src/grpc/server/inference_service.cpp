@@ -1159,6 +1159,11 @@ InferenceServiceImpl::HandleModelInferAsync(
       },
       std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name);
 
+#if defined(STARPU_TESTING)
+  if (test_hooks.on_submit_job_async_done) {
+    test_hooks.on_submit_job_async_done(cancel_flag, status);
+  }
+#endif
   if (!status.ok()) {
     if (cancel_flag->load(std::memory_order_acquire)) {
       return;

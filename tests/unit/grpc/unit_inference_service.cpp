@@ -776,6 +776,53 @@ TEST(InferenceServiceImpl, ModelReadyRejectsMismatchedName)
   EXPECT_FALSE(response.ready());
 }
 
+TEST_F(InferenceServiceTest, HandleModelInferAsyncWorksWithNullContext)
+{
+  auto request = starpu_server::make_valid_request();
+  auto expected_outputs = std::vector<torch::Tensor>{
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+  auto worker = prepare_job(expected_outputs, expected_outputs);
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  service->HandleModelInferAsync(
+      nullptr, &request, &reply, [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      });
+
+  grpc::Status status = status_future.get();
+  worker.join();
+
+  EXPECT_TRUE(status.ok());
+  ASSERT_EQ(reply.outputs_size(), 1);
+}
+
+TEST_F(
+    InferenceServiceTest, HandleModelInferAsyncSkipsErrorCallbackWhenCancelled)
+{
+  auto request = starpu_server::make_valid_request();
+  request.add_raw_input_contents("extra");
+  std::atomic<bool> callback_called{false};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_cancel_flag_created =
+      [](const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
+        cancel_flag->store(true, std::memory_order_release);
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  service->HandleModelInferAsync(&ctx, &request, &reply, [&](grpc::Status) {
+    callback_called.store(true);
+  });
+
+  EXPECT_FALSE(callback_called.load());
+  expect_empty_infer_response(reply);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.try_pop(job));
+}
+
 TEST_F(InferenceServiceTest, ValidateInputsMismatchedRawContents)
 {
   auto req = starpu_server::make_valid_request();
@@ -883,6 +930,32 @@ TEST_F(
   EXPECT_TRUE(callback_called);
   EXPECT_FALSE(callback_status.ok());
   EXPECT_EQ(callback_status.error_code(), grpc::StatusCode::UNAVAILABLE);
+  expect_empty_infer_response(reply);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncSkipsCallbackWhenCancelledAfterSubmitFailure)
+{
+  auto request = starpu_server::make_valid_request();
+  queue.shutdown();
+  std::atomic<bool> callback_called{false};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_submit_job_async_done =
+      [](const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+         const grpc::Status& status) {
+        if (!status.ok()) {
+          cancel_flag->store(true, std::memory_order_release);
+        }
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  service->HandleModelInferAsync(&ctx, &request, &reply, [&](grpc::Status) {
+    callback_called.store(true);
+  });
+
+  EXPECT_FALSE(callback_called.load());
   expect_empty_infer_response(reply);
 }
 
