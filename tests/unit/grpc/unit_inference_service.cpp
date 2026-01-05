@@ -106,6 +106,18 @@ class MultiTypeInferenceServiceTest : public InferenceServiceTest {
   }
 };
 
+class NamedInputInferenceServiceTest : public InferenceServiceTest {
+ protected:
+  void SetUp() override
+  {
+    std::vector<at::ScalarType> expected_types = {at::kFloat, at::kLong};
+    std::vector<std::string> expected_names = {"first", "second"};
+    service = std::make_unique<starpu_server::InferenceServiceImpl>(
+        &queue, &ref_outputs, std::move(expected_types), "",
+        std::move(expected_names));
+  }
+};
+
 class LongInputInferenceServiceTest : public InferenceServiceTest {
  protected:
   [[nodiscard]] auto make_service_config() const -> ServiceConfig override
@@ -263,6 +275,71 @@ TEST_F(MultiTypeInferenceServiceTest, ValidateInputsMultipleDtypes)
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
   EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
   EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
+  EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
+}
+
+TEST_F(MultiTypeInferenceServiceTest, ValidateInputsRejectsMixedNamedAndUnnamed)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(1)->clear_name();
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(
+      status.error_message(),
+      "All input tensors must include a name when using named inputs");
+}
+
+TEST_F(
+    NamedInputInferenceServiceTest,
+    ValidateInputsRejectsUnnamedWhenNamesExpected)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->clear_name();
+  req.mutable_inputs(1)->clear_name();
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Input tensor names must be provided");
+}
+
+TEST_F(NamedInputInferenceServiceTest, ValidateInputsReordersByNameMapping)
+{
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  auto req = starpu_server::make_model_infer_request({
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+  });
+  req.mutable_inputs(0)->set_name("second");
+  req.mutable_inputs(1)->set_name("first");
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 2U);
+  EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
+  EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
+  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
+  EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
+  EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
   EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
 }
 
@@ -909,6 +986,124 @@ TEST_F(
       std::istreambuf_iterator<char>());
   EXPECT_NE(content.find("\"name\":\"request_enqueued\""), std::string::npos);
   EXPECT_NE(content.find("\"request_id\":0"), std::string::npos);
+}
+
+TEST_F(InferenceServiceTest, SubmitJobAsyncReportsFailureInfoWhenJobFailed)
+{
+  starpu_server::InferenceJob::FailureInfo failure_info{};
+  failure_info.stage = "execution";
+  failure_info.reason = "bad_input";
+  failure_info.message = "invalid";
+  failure_info.metrics_reported = true;
+
+  auto worker = prepare_job(
+      {}, {}, [failure_info](starpu_server::InferenceJob& job) mutable {
+        job.set_failure_info(std::move(failure_info));
+      });
+
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1}, torch::TensorOptions().dtype(at::kFloat))};
+
+  struct CallbackResult {
+    grpc::Status status;
+    std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>
+        failure_info;
+  };
+
+  auto promise = std::make_shared<std::promise<CallbackResult>>();
+  auto future = promise->get_future();
+
+  auto submit_status = service->submit_job_async(
+      inputs,
+      [promise](
+          grpc::Status status, std::vector<torch::Tensor>,
+          starpu_server::InferenceServiceImpl::LatencyBreakdown,
+          starpu_server::detail::TimingInfo,
+          std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>
+              failure_info) {
+        promise->set_value(
+            CallbackResult{std::move(status), std::move(failure_info)});
+      });
+  ASSERT_TRUE(submit_status.ok());
+
+  CallbackResult result = future.get();
+  worker.join();
+
+  EXPECT_FALSE(result.status.ok());
+  EXPECT_EQ(result.status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_NE(result.status.error_message().find("bad_input"), std::string::npos);
+  EXPECT_NE(result.status.error_message().find("invalid"), std::string::npos);
+  ASSERT_TRUE(result.failure_info.has_value());
+  EXPECT_EQ(result.failure_info->stage, "execution");
+  EXPECT_EQ(result.failure_info->reason, "bad_input");
+  EXPECT_TRUE(result.failure_info->metrics_reported);
+}
+
+TEST_F(
+    InferenceServiceTest, SubmitJobAsyncFormatsFailureMessageForMissingFields)
+{
+  struct Case {
+    std::string stage;
+    std::string reason;
+    std::string message;
+    std::string expected_error;
+  };
+
+  const std::vector<Case> cases = {
+      {"execution", "bad_input", "", "Inference failed (bad_input)"},
+      {"preprocess", "", "invalid", "Inference failed: invalid"},
+      {"postprocess", "", "", "Inference failed"},
+  };
+
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1}, torch::TensorOptions().dtype(at::kFloat))};
+
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.expected_error);
+    starpu_server::InferenceJob::FailureInfo failure_info{};
+    failure_info.stage = test_case.stage;
+    failure_info.reason = test_case.reason;
+    failure_info.message = test_case.message;
+    failure_info.metrics_reported = true;
+
+    auto worker = prepare_job(
+        {}, {}, [failure_info](starpu_server::InferenceJob& job) mutable {
+          job.set_failure_info(std::move(failure_info));
+        });
+
+    struct CallbackResult {
+      grpc::Status status;
+      std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>
+          failure_info;
+    };
+
+    auto promise = std::make_shared<std::promise<CallbackResult>>();
+    auto future = promise->get_future();
+
+    auto submit_status = service->submit_job_async(
+        inputs,
+        [promise](
+            grpc::Status status, std::vector<torch::Tensor>,
+            starpu_server::InferenceServiceImpl::LatencyBreakdown,
+            starpu_server::detail::TimingInfo,
+            std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>
+                failure_info) {
+          promise->set_value(
+              CallbackResult{std::move(status), std::move(failure_info)});
+        });
+    ASSERT_TRUE(submit_status.ok());
+
+    CallbackResult result = future.get();
+    worker.join();
+
+    EXPECT_FALSE(result.status.ok());
+    EXPECT_EQ(result.status.error_code(), grpc::StatusCode::INTERNAL);
+    EXPECT_EQ(result.status.error_message(), test_case.expected_error);
+    ASSERT_TRUE(result.failure_info.has_value());
+    EXPECT_EQ(result.failure_info->stage, test_case.stage);
+    EXPECT_EQ(result.failure_info->reason, test_case.reason);
+    EXPECT_TRUE(result.failure_info->metrics_reported);
+  }
 }
 
 TEST_F(
