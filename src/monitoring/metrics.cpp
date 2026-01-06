@@ -1907,7 +1907,7 @@ MetricsRegistry::increment_status_counter(
 
   StatusKey key{std::string(code_label.value), std::string(model_label.value)};
 
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::scoped_lock lock(status_mutex_);
   auto entry = status_counters_.find(key);
   if (entry == status_counters_.end()) {
     const bool overflow = status_counters_.size() >= kMaxLabelSeries;
@@ -1937,7 +1937,7 @@ MetricsRegistry::increment_completed_counter(
     return;
   }
   ModelKey key{std::string(model_label)};
-  std::lock_guard<std::mutex> lock(model_metrics_mutex_);
+  std::scoped_lock lock(model_metrics_mutex_);
   auto entry = inference_completed_counters_.find(key);
   if (entry == inference_completed_counters_.end()) {
     const bool overflow =
@@ -1971,7 +1971,7 @@ MetricsRegistry::increment_failure_counter(
       std::string(stage_label.value), std::string(reason_label.value),
       std::string(model_label.value)};
 
-  std::lock_guard<std::mutex> lock(model_metrics_mutex_);
+  std::scoped_lock lock(model_metrics_mutex_);
   auto entry = inference_failure_counters_.find(key);
   if (entry == inference_failure_counters_.end()) {
     const bool overflow = inference_failure_counters_.size() >= kMaxLabelSeries;
@@ -2005,7 +2005,7 @@ MetricsRegistry::increment_model_load_failure_counter(
     return;
   }
   ModelKey key{std::string(model_label)};
-  std::lock_guard<std::mutex> lock(model_metrics_mutex_);
+  std::scoped_lock lock(model_metrics_mutex_);
   auto entry = model_load_failure_counters_.find(key);
   if (entry == model_load_failure_counters_.end()) {
     const bool overflow =
@@ -2037,7 +2037,7 @@ MetricsRegistry::set_model_loaded_flag(
   ModelDeviceKey key{
       std::string(model_label.value), std::string(device_label.value)};
 
-  std::lock_guard<std::mutex> lock(model_metrics_mutex_);
+  std::scoped_lock lock(model_metrics_mutex_);
   auto entry = models_loaded_gauges_.find(key);
   if (entry == models_loaded_gauges_.end()) {
     const bool overflow = models_loaded_gauges_.size() >= kMaxLabelSeries;
@@ -2070,7 +2070,7 @@ MetricsRegistry::observe_compute_latency_by_worker(
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(worker_metrics_mutex_);
+  std::scoped_lock lock(worker_metrics_mutex_);
   auto entry = compute_latency_by_worker_.find(key);
   if (entry == compute_latency_by_worker_.end()) {
     const bool overflow = compute_latency_by_worker_.size() >= kMaxLabelSeries;
@@ -2106,7 +2106,7 @@ MetricsRegistry::observe_task_runtime_by_worker(
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(worker_metrics_mutex_);
+  std::scoped_lock lock(worker_metrics_mutex_);
   auto entry = task_runtime_by_worker_.find(key);
   if (entry == task_runtime_by_worker_.end()) {
     const bool overflow = task_runtime_by_worker_.size() >= kMaxLabelSeries;
@@ -2142,7 +2142,7 @@ MetricsRegistry::set_worker_inflight_gauge(
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(worker_metrics_mutex_);
+  std::scoped_lock lock(worker_metrics_mutex_);
   auto entry = worker_inflight_gauges_.find(key);
   if (entry == worker_inflight_gauges_.end()) {
     const bool overflow = worker_inflight_gauges_.size() >= kMaxLabelSeries;
@@ -2178,7 +2178,7 @@ MetricsRegistry::observe_io_copy_latency(
   }
   IoKey key{
       std::string(direction), worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(io_metrics_mutex_);
+  std::scoped_lock lock(io_metrics_mutex_);
   auto entry = io_copy_latency_.find(key);
   if (entry == io_copy_latency_.end()) {
     const bool overflow = io_copy_latency_.size() >= kMaxLabelSeries;
@@ -2218,7 +2218,7 @@ MetricsRegistry::increment_transfer_bytes(
   }
   IoKey key{
       std::string(direction), worker_id, device_id, std::string(worker_type)};
-  std::lock_guard<std::mutex> lock(io_metrics_mutex_);
+  std::scoped_lock lock(io_metrics_mutex_);
   auto entry = transfer_bytes_.find(key);
   if (entry == transfer_bytes_.end()) {
     const bool overflow = transfer_bytes_.size() >= kMaxLabelSeries;
