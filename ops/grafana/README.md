@@ -43,4 +43,4 @@ docker run -d --name grafana -p 3000:3000 \
 
 ## Manual import
 
-If you prefer manual import, open Grafana → **Dashboards** → **Import** and upload the JSON from `ops/grafana/dashboards/`.
+If you prefer manual import, open Grafana -> **Dashboards** -> **Import** and upload the JSON from `ops/grafana/dashboards/`.
