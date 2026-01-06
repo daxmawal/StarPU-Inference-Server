@@ -24,6 +24,7 @@ docker run -d --name dcgm-exporter --net=host --gpus all nvidia/dcgm-exporter:la
 ```
 
 Prometheus scrape jobs to add (already present in `ops/prometheus/prometheus.yml`):
+
 - `node_exporter` on `localhost:9100`
 - `nvml_exporter` on `localhost:9400`
 
