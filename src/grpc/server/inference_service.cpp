@@ -61,10 +61,9 @@ normalize_names(
     return names;
   }
 
-  const bool any_named = std::any_of(
-      names.begin(), names.end(),
-      [](const auto& name) { return !name.empty(); });
-  if (!any_named) {
+  if (const bool any_named = std::ranges::any_of(
+          names, [](const auto& name) { return !name.empty(); });
+      !any_named) {
     return {};
   }
 
@@ -1102,7 +1101,7 @@ InferenceServiceImpl::HandleModelInferAsync(
                                  cancel_override =
                                      test_hooks.is_cancelled_override
 #endif  // SONAR_IGNORE_END
-    ]() -> bool {
+    ]() {
       if (context == nullptr) {
         return false;
       }

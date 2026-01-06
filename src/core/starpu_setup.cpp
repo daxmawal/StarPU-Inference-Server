@@ -68,10 +68,9 @@ worker_stream_query_fn_ref() -> StarPUSetup::WorkerStreamQueryFn&
 void
 apply_starpu_env(const RuntimeConfig& opts)
 {
-  const bool scheduler_in_config =
-      opts.starpu_env.find(kStarpuSchedulerEnvVar) != opts.starpu_env.end();
-
-  if (!scheduler_in_config &&
+  if (const bool scheduler_in_config =
+          opts.starpu_env.contains(kStarpuSchedulerEnvVar);
+      !scheduler_in_config &&
       std::getenv(kStarpuSchedulerEnvVar.data()) == nullptr) {
     if (setenv(
             kStarpuSchedulerEnvVar.data(), kDefaultStarpuScheduler.data(), 0) !=
@@ -372,8 +371,7 @@ configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
     worker_bindid[idx] = candidate_gpu_bind_ids[idx % candidate_count];
   }
 
-  std::ranges::copy(
-      cpu_bind_ids.begin(), cpu_bind_ids.end(), worker_bindid.begin());
+  std::ranges::copy(cpu_bind_ids, worker_bindid.begin());
 
   std::string bind_list;
   for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
@@ -718,8 +716,7 @@ select_gpu_module(const InferenceParams& params, const int device_id)
     -> torch::jit::script::Module*
 {
   const auto invalid_index = std::numeric_limits<size_t>::max();
-  const auto fetch_model =
-      [&](size_t index) -> torch::jit::script::Module* {
+  const auto fetch_model = [&](size_t index) -> torch::jit::script::Module* {
     if (index >= params.models.models_gpu.size()) {
       return nullptr;
     }
@@ -729,9 +726,8 @@ select_gpu_module(const InferenceParams& params, const int device_id)
   size_t module_index = invalid_index;
   if (device_id >= 0) {
     if (!params.models.device_ids.empty()) {
-      const auto found_device = std::find(
-          params.models.device_ids.begin(), params.models.device_ids.end(),
-          device_id);
+      const auto found_device =
+          std::ranges::find(params.models.device_ids, device_id);
       if (found_device != params.models.device_ids.end()) {
         module_index = static_cast<size_t>(
             found_device - params.models.device_ids.begin());

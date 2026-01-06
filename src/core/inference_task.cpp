@@ -345,8 +345,8 @@ InferenceTask::fill_input_layout(
   const auto& opts = require_runtime_config(opts_);
   params->layout.input_types.clear();
   params->layout.input_types.reserve(num_inputs);
-  const auto& job_types = job_->get_input_types();
-  if (job_types.size() >= num_inputs) {
+  if (const auto& job_types = job_->get_input_types();
+      job_types.size() >= num_inputs) {
     params->layout.input_types.insert(
         params->layout.input_types.end(), job_types.begin(),
         job_types.begin() + static_cast<std::ptrdiff_t>(num_inputs));

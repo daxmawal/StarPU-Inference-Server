@@ -72,8 +72,8 @@ resolve_python_executable() -> std::optional<std::filesystem::path>
       "/bin/python3",
   };
   for (const auto& candidate : kCandidates) {
-    std::error_code status_ec;
-    if (!std::filesystem::is_regular_file(candidate, status_ec) || status_ec) {
+    if (std::error_code status_ec;
+        !std::filesystem::is_regular_file(candidate, status_ec) || status_ec) {
       continue;
     }
     if (::access(candidate.c_str(), X_OK) == 0) {
@@ -112,19 +112,20 @@ struct WaitPidResult {
 auto
 waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
 {
+  using enum WaitPidState;
   while (true) {
     const pid_t result = waitpid(pid, &status, WNOHANG);
     if (result == pid) {
-      return {WaitPidState::Exited, wait_status_to_exit_code(status)};
+      return {Exited, wait_status_to_exit_code(status)};
     }
     if (result == 0) {
-      return {WaitPidState::StillRunning, std::nullopt};
+      return {StillRunning, std::nullopt};
     }
     if (errno == EINTR) {
       continue;
     }
     log_waitpid_error();
-    return {WaitPidState::Error, std::nullopt};
+    return {Error, std::nullopt};
   }
 }
 
@@ -303,8 +304,8 @@ locate_plot_script(const starpu_server::RuntimeConfig& /*opts*/)
     }
     std::error_code exists_ec;
     if (std::filesystem::exists(resolved, exists_ec) && !exists_ec) {
-      std::error_code type_ec;
-      if (!std::filesystem::is_regular_file(resolved, type_ec) || type_ec) {
+      if (std::error_code type_ec;
+          !std::filesystem::is_regular_file(resolved, type_ec) || type_ec) {
         continue;
       }
       return resolved;

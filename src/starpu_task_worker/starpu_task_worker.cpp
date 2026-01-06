@@ -964,10 +964,9 @@ ResultDispatcher::record_job_metrics(
   observe_logical_batch_size(logical_jobs);
   if (!warmup) {
     increment_inference_completed(job->model_name(), logical_jobs);
-
-    const auto codelet_start = timing.codelet_start_time;
     const auto codelet_end = timing.codelet_end_time;
-    if (codelet_end > codelet_start && codelet_start != clock::time_point{} &&
+    if (const auto codelet_start = timing.codelet_start_time;
+        codelet_end > codelet_start && codelet_start != clock::time_point{} &&
         codelet_end != clock::time_point{}) {
       const double task_runtime_ms =
           std::chrono::duration<double, std::milli>(codelet_end - codelet_start)

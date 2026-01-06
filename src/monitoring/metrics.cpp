@@ -228,8 +228,7 @@ set_or_clear_nan(
     const std::string& label, double value)
 {
   if (std::isnan(value)) {
-    auto entry = gauges.find(gpu_index);
-    if (entry != gauges.end()) {
+    if (auto entry = gauges.find(gpu_index); entry != gauges.end()) {
       if (family != nullptr) {
         family->Remove(entry->second);
       }

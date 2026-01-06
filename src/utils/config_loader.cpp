@@ -240,8 +240,7 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   }
 
   if (use_cuda_node.IsScalar()) {
-    const bool enabled = use_cuda_node.as<bool>();
-    if (!enabled) {
+    if (const bool enabled = use_cuda_node.as<bool>(); !enabled) {
       cfg.devices.use_cuda = false;
       cfg.devices.ids.clear();
       return;
