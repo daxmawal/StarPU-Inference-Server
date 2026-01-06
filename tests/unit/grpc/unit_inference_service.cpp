@@ -1374,7 +1374,7 @@ TEST_F(
 
   auto metrics = starpu_server::get_metrics();
   ASSERT_NE(metrics, nullptr);
-  EXPECT_DOUBLE_EQ(metrics->requests_total()->Value(), 0.0);
+  EXPECT_DOUBLE_EQ(metrics->counters().requests_total->Value(), 0.0);
 
   std::promise<grpc::Status> status_promise;
   auto status_future = status_promise.get_future();
@@ -1387,7 +1387,7 @@ TEST_F(
   worker.join();
 
   EXPECT_TRUE(status.ok());
-  EXPECT_DOUBLE_EQ(metrics->requests_total()->Value(), 1.0);
+  EXPECT_DOUBLE_EQ(metrics->counters().requests_total->Value(), 1.0);
   EXPECT_DOUBLE_EQ(reply.server_preprocess_ms(), 0.0);
   EXPECT_GT(reply.server_postprocess_ms(), 0.0);
   EXPECT_GE(reply.server_overall_ms(), 0.0);

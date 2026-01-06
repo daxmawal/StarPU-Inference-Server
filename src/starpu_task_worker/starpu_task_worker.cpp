@@ -341,9 +341,9 @@ auto
 build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
     -> std::vector<int64_t>
 {
-  using Clock = MonotonicClock;
-  const auto to_microseconds = [](Clock::time_point time_point) -> int64_t {
-    if (time_point == Clock::time_point{}) {
+  const auto to_microseconds =
+      [](MonotonicClock::time_point time_point) -> int64_t {
+    if (time_point == MonotonicClock::time_point{}) {
       return 0;
     }
     return std::chrono::duration_cast<std::chrono::microseconds>(
@@ -365,7 +365,7 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
   arrivals.reserve(aggregated.size());
   for (const auto& sub_job : aggregated) {
     auto arrival = sub_job.arrival_time;
-    if (arrival == Clock::time_point{}) {
+    if (arrival == MonotonicClock::time_point{}) {
       if (auto locked = sub_job.job.lock()) {
         arrival = locked->timing_info().enqueued_time;
       }
@@ -1224,8 +1224,7 @@ SlotManager::validate_batch_and_copy_inputs(
       });
   CudaCopyBatch copy_batch(want_cuda_copy && slot_has_pinned_buffers);
 
-  const auto prepare_input_for_copy =
-      [&](std::size_t input_idx) -> VectorResizeSpec {
+  const auto prepare_input_for_copy = [&](std::size_t input_idx) {
     const auto& tensor = inputs[input_idx];
     const auto label = std::format("input[{}]", input_idx);
     if (auto error =

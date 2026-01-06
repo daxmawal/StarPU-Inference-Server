@@ -1288,13 +1288,13 @@ void
 set_queue_size(std::size_t size)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->queue_size_gauge() != nullptr) {
-    metrics_ptr->queue_size_gauge()->Set(static_cast<double>(size));
+  if (metrics_ptr && metrics_ptr->gauges().queue_size != nullptr) {
+    metrics_ptr->gauges().queue_size->Set(static_cast<double>(size));
     const auto capacity = metrics_ptr->queue_capacity_value();
-    if (capacity > 0 && metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
+    if (capacity > 0 && metrics_ptr->gauges().queue_fill_ratio != nullptr) {
       const double ratio =
           static_cast<double>(size) / static_cast<double>(capacity);
-      metrics_ptr->queue_fill_ratio_gauge()->Set(std::clamp(ratio, 0.0, 1.0));
+      metrics_ptr->gauges().queue_fill_ratio->Set(std::clamp(ratio, 0.0, 1.0));
     }
   }
 }
@@ -1303,8 +1303,8 @@ void
 set_inflight_tasks(std::size_t size)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->inflight_tasks_gauge() != nullptr) {
-    metrics_ptr->inflight_tasks_gauge()->Set(static_cast<double>(size));
+  if (metrics_ptr && metrics_ptr->gauges().inflight_tasks != nullptr) {
+    metrics_ptr->gauges().inflight_tasks->Set(static_cast<double>(size));
   }
 }
 
@@ -1312,8 +1312,9 @@ void
 set_starpu_worker_busy_ratio(double ratio)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->starpu_worker_busy_ratio_gauge() != nullptr) {
-    metrics_ptr->starpu_worker_busy_ratio_gauge()->Set(
+  if (metrics_ptr &&
+      metrics_ptr->gauges().starpu_worker_busy_ratio != nullptr) {
+    metrics_ptr->gauges().starpu_worker_busy_ratio->Set(
         std::clamp(ratio, 0.0, 1.0));
   }
 }
@@ -1322,8 +1323,8 @@ void
 set_max_inflight_tasks(std::size_t max_tasks)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->max_inflight_tasks_gauge() != nullptr) {
-    metrics_ptr->max_inflight_tasks_gauge()->Set(
+  if (metrics_ptr && metrics_ptr->gauges().max_inflight_tasks != nullptr) {
+    metrics_ptr->gauges().max_inflight_tasks->Set(
         static_cast<double>(max_tasks));
   }
 }
@@ -1336,16 +1337,16 @@ set_queue_capacity(std::size_t capacity)
     return;
   }
   metrics_ptr->set_queue_capacity(capacity);
-  if (metrics_ptr->queue_capacity_gauge() != nullptr) {
-    metrics_ptr->queue_capacity_gauge()->Set(static_cast<double>(capacity));
+  if (metrics_ptr->gauges().queue_capacity != nullptr) {
+    metrics_ptr->gauges().queue_capacity->Set(static_cast<double>(capacity));
   }
-  if (capacity > 0 && metrics_ptr->queue_fill_ratio_gauge() != nullptr &&
-      metrics_ptr->queue_size_gauge() != nullptr) {
-    const double size = metrics_ptr->queue_size_gauge()->Value();
-    metrics_ptr->queue_fill_ratio_gauge()->Set(
+  if (capacity > 0 && metrics_ptr->gauges().queue_fill_ratio != nullptr &&
+      metrics_ptr->gauges().queue_size != nullptr) {
+    const double size = metrics_ptr->gauges().queue_size->Value();
+    metrics_ptr->gauges().queue_fill_ratio->Set(
         std::clamp(size / static_cast<double>(capacity), 0.0, 1.0));
-  } else if (metrics_ptr->queue_fill_ratio_gauge() != nullptr) {
-    metrics_ptr->queue_fill_ratio_gauge()->Set(0.0);
+  } else if (metrics_ptr->gauges().queue_fill_ratio != nullptr) {
+    metrics_ptr->gauges().queue_fill_ratio->Set(0.0);
   }
 }
 
@@ -1356,10 +1357,10 @@ set_queue_fill_ratio(std::size_t size, std::size_t capacity)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
   if (metrics_ptr == nullptr ||
-      metrics_ptr->queue_fill_ratio_gauge() == nullptr || capacity == 0) {
+      metrics_ptr->gauges().queue_fill_ratio == nullptr || capacity == 0) {
     return;
   }
-  metrics_ptr->queue_fill_ratio_gauge()->Set(
+  metrics_ptr->gauges().queue_fill_ratio->Set(
       static_cast<double>(size) / static_cast<double>(capacity));
 }
 #endif  // SONAR_IGNORE_END
@@ -1370,8 +1371,8 @@ set_starpu_prepared_queue_depth(std::size_t depth)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
   if (metrics_ptr &&
-      metrics_ptr->starpu_prepared_queue_depth_gauge() != nullptr) {
-    metrics_ptr->starpu_prepared_queue_depth_gauge()->Set(
+      metrics_ptr->gauges().starpu_prepared_queue_depth != nullptr) {
+    metrics_ptr->gauges().starpu_prepared_queue_depth->Set(
         static_cast<double>(depth));
   }
 }
@@ -1380,8 +1381,8 @@ void
 set_batch_pending_jobs(std::size_t pending)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->batch_pending_jobs_gauge() != nullptr) {
-    metrics_ptr->batch_pending_jobs_gauge()->Set(static_cast<double>(pending));
+  if (metrics_ptr && metrics_ptr->gauges().batch_pending_jobs != nullptr) {
+    metrics_ptr->gauges().batch_pending_jobs->Set(static_cast<double>(pending));
   }
 }
 
@@ -1389,8 +1390,9 @@ void
 increment_rejected_requests()
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->requests_rejected_total() != nullptr) {
-    metrics_ptr->requests_rejected_total()->Increment();
+  if (metrics_ptr &&
+      metrics_ptr->counters().requests_rejected_total != nullptr) {
+    metrics_ptr->counters().requests_rejected_total->Increment();
   }
 }
 
@@ -1398,8 +1400,8 @@ void
 set_server_health(bool ready)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->server_health_state_gauge() != nullptr) {
-    metrics_ptr->server_health_state_gauge()->Set(ready ? 1.0 : 0.0);
+  if (metrics_ptr && metrics_ptr->gauges().server_health_state != nullptr) {
+    metrics_ptr->gauges().server_health_state->Set(ready ? 1.0 : 0.0);
   }
 }
 
@@ -1419,8 +1421,8 @@ void
 observe_batch_size(std::size_t batch_size)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->batch_size_histogram() != nullptr) {
-    metrics_ptr->batch_size_histogram()->Observe(
+  if (metrics_ptr && metrics_ptr->histograms().batch_size != nullptr) {
+    metrics_ptr->histograms().batch_size->Observe(
         static_cast<double>(batch_size));
   }
 }
@@ -1429,8 +1431,8 @@ void
 observe_logical_batch_size(std::size_t logical_jobs)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->logical_batch_size_histogram() != nullptr) {
-    metrics_ptr->logical_batch_size_histogram()->Observe(
+  if (metrics_ptr && metrics_ptr->histograms().logical_batch_size != nullptr) {
+    metrics_ptr->histograms().logical_batch_size->Observe(
         static_cast<double>(logical_jobs));
   }
 }
@@ -1439,9 +1441,9 @@ void
 observe_batch_efficiency(double ratio)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->batch_efficiency_histogram() != nullptr &&
+  if (metrics_ptr && metrics_ptr->histograms().batch_efficiency != nullptr &&
       ratio >= 0.0) {
-    metrics_ptr->batch_efficiency_histogram()->Observe(ratio);
+    metrics_ptr->histograms().batch_efficiency->Observe(ratio);
   }
 }
 
@@ -1462,24 +1464,24 @@ observe_latency_breakdown(
     }
   };
 
-  observe_if(metrics_ptr->queue_latency_histogram(), queue_ms);
-  observe_if(metrics_ptr->batch_collect_latency_histogram(), batch_ms);
-  observe_if(metrics_ptr->submit_latency_histogram(), submit_ms);
-  observe_if(metrics_ptr->scheduling_latency_histogram(), scheduling_ms);
-  observe_if(metrics_ptr->codelet_latency_histogram(), codelet_ms);
-  observe_if(metrics_ptr->inference_compute_latency_histogram(), inference_ms);
-  observe_if(metrics_ptr->callback_latency_histogram(), callback_ms);
-  observe_if(metrics_ptr->preprocess_latency_histogram(), preprocess_ms);
-  observe_if(metrics_ptr->postprocess_latency_histogram(), postprocess_ms);
+  observe_if(metrics_ptr->histograms().queue_latency, queue_ms);
+  observe_if(metrics_ptr->histograms().batch_collect_latency, batch_ms);
+  observe_if(metrics_ptr->histograms().submit_latency, submit_ms);
+  observe_if(metrics_ptr->histograms().scheduling_latency, scheduling_ms);
+  observe_if(metrics_ptr->histograms().codelet_latency, codelet_ms);
+  observe_if(metrics_ptr->histograms().inference_compute_latency, inference_ms);
+  observe_if(metrics_ptr->histograms().callback_latency, callback_ms);
+  observe_if(metrics_ptr->histograms().preprocess_latency, preprocess_ms);
+  observe_if(metrics_ptr->histograms().postprocess_latency, postprocess_ms);
 }
 
 void
 observe_starpu_task_runtime(double runtime_ms)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->starpu_task_runtime_histogram() != nullptr &&
+  if (metrics_ptr && metrics_ptr->histograms().starpu_task_runtime != nullptr &&
       runtime_ms >= 0.0) {
-    metrics_ptr->starpu_task_runtime_histogram()->Observe(runtime_ms);
+    metrics_ptr->histograms().starpu_task_runtime->Observe(runtime_ms);
   }
 }
 
@@ -1487,9 +1489,9 @@ void
 observe_model_load_duration(double duration_ms)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
-  if (metrics_ptr && metrics_ptr->model_load_duration_histogram() != nullptr &&
+  if (metrics_ptr && metrics_ptr->histograms().model_load_duration != nullptr &&
       duration_ms >= 0.0) {
-    metrics_ptr->model_load_duration_histogram()->Observe(duration_ms);
+    metrics_ptr->histograms().model_load_duration->Observe(duration_ms);
   }
 }
 
@@ -1607,293 +1609,6 @@ auto
 MetricsRegistry::registry() const -> std::shared_ptr<prometheus::Registry>
 {
   return registry_state_.registry;
-}
-
-auto
-MetricsRegistry::requests_total() const -> prometheus::Counter*
-{
-  return counters_.requests_total;
-}
-
-auto
-MetricsRegistry::requests_rejected_total() const -> prometheus::Counter*
-{
-  return counters_.requests_rejected_total;
-}
-
-auto
-MetricsRegistry::inference_latency() const -> prometheus::Histogram*
-{
-  return histograms_.inference_latency;
-}
-
-auto
-MetricsRegistry::queue_size_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.queue_size;
-}
-
-auto
-MetricsRegistry::inflight_tasks_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.inflight_tasks;
-}
-
-auto
-MetricsRegistry::max_inflight_tasks_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.max_inflight_tasks;
-}
-
-auto
-MetricsRegistry::starpu_worker_busy_ratio_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.starpu_worker_busy_ratio;
-}
-
-auto
-MetricsRegistry::starpu_prepared_queue_depth_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.starpu_prepared_queue_depth;
-}
-
-auto
-MetricsRegistry::system_cpu_usage_percent() const -> prometheus::Gauge*
-{
-  return gauges_.system_cpu_usage_percent;
-}
-
-auto
-MetricsRegistry::inference_throughput_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.inference_throughput;
-}
-
-auto
-MetricsRegistry::process_resident_memory_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.process_resident_memory_bytes;
-}
-
-auto
-MetricsRegistry::process_open_fds_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.process_open_fds;
-}
-
-auto
-MetricsRegistry::server_health_state_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.server_health_state;
-}
-
-auto
-MetricsRegistry::queue_fill_ratio_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.queue_fill_ratio;
-}
-
-auto
-MetricsRegistry::queue_capacity_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.queue_capacity;
-}
-
-auto
-MetricsRegistry::queue_latency_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.queue_latency;
-}
-
-auto
-MetricsRegistry::batch_collect_latency_histogram() const
-    -> prometheus::Histogram*
-{
-  return histograms_.batch_collect_latency;
-}
-
-auto
-MetricsRegistry::batch_efficiency_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.batch_efficiency;
-}
-
-auto
-MetricsRegistry::batch_pending_jobs_gauge() const -> prometheus::Gauge*
-{
-  return gauges_.batch_pending_jobs;
-}
-
-auto
-MetricsRegistry::submit_latency_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.submit_latency;
-}
-
-auto
-MetricsRegistry::scheduling_latency_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.scheduling_latency;
-}
-
-auto
-MetricsRegistry::codelet_latency_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.codelet_latency;
-}
-
-auto
-MetricsRegistry::inference_compute_latency_histogram() const
-    -> prometheus::Histogram*
-{
-  return histograms_.inference_compute_latency;
-}
-
-auto
-MetricsRegistry::callback_latency_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.callback_latency;
-}
-
-auto
-MetricsRegistry::preprocess_latency_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.preprocess_latency;
-}
-
-auto
-MetricsRegistry::postprocess_latency_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.postprocess_latency;
-}
-
-auto
-MetricsRegistry::batch_size_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.batch_size;
-}
-
-auto
-MetricsRegistry::logical_batch_size_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.logical_batch_size;
-}
-
-auto
-MetricsRegistry::model_load_duration_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.model_load_duration;
-}
-
-auto
-MetricsRegistry::starpu_task_runtime_histogram() const -> prometheus::Histogram*
-{
-  return histograms_.starpu_task_runtime;
-}
-
-auto
-MetricsRegistry::inference_compute_latency_by_worker_family() const
-    -> prometheus::Family<prometheus::Histogram>*
-{
-  return families_.inference_compute_latency_by_worker;
-}
-
-auto
-MetricsRegistry::starpu_task_runtime_by_worker_family() const
-    -> prometheus::Family<prometheus::Histogram>*
-{
-  return families_.starpu_task_runtime_by_worker;
-}
-
-auto
-MetricsRegistry::starpu_worker_inflight_family() const
-    -> prometheus::Family<prometheus::Gauge>*
-{
-  return families_.starpu_worker_inflight;
-}
-
-auto
-MetricsRegistry::io_copy_latency_family() const
-    -> prometheus::Family<prometheus::Histogram>*
-{
-  return families_.io_copy_latency;
-}
-
-auto
-MetricsRegistry::transfer_bytes_family() const
-    -> prometheus::Family<prometheus::Counter>*
-{
-  return families_.transfer_bytes;
-}
-
-auto
-MetricsRegistry::gpu_utilization_family() const
-    -> prometheus::Family<prometheus::Gauge>*
-{
-  return families_.gpu_utilization;
-}
-
-auto
-MetricsRegistry::gpu_memory_used_bytes_family() const
-    -> prometheus::Family<prometheus::Gauge>*
-{
-  return families_.gpu_memory_used_bytes;
-}
-
-auto
-MetricsRegistry::gpu_memory_total_bytes_family() const
-    -> prometheus::Family<prometheus::Gauge>*
-{
-  return families_.gpu_memory_total_bytes;
-}
-
-auto
-MetricsRegistry::gpu_temperature_family() const
-    -> prometheus::Family<prometheus::Gauge>*
-{
-  return families_.gpu_temperature;
-}
-
-auto
-MetricsRegistry::gpu_power_family() const
-    -> prometheus::Family<prometheus::Gauge>*
-{
-  return families_.gpu_power;
-}
-
-auto
-MetricsRegistry::requests_by_status_family() const
-    -> prometheus::Family<prometheus::Counter>*
-{
-  return families_.requests_by_status;
-}
-
-auto
-MetricsRegistry::inference_completed_family() const
-    -> prometheus::Family<prometheus::Counter>*
-{
-  return families_.inference_completed;
-}
-
-auto
-MetricsRegistry::inference_failures_family() const
-    -> prometheus::Family<prometheus::Counter>*
-{
-  return families_.inference_failures;
-}
-
-auto
-MetricsRegistry::model_load_failures_family() const
-    -> prometheus::Family<prometheus::Counter>*
-{
-  return families_.model_load_failures;
-}
-
-auto
-MetricsRegistry::models_loaded_family() const
-    -> prometheus::Family<prometheus::Gauge>*
-{
-  return families_.models_loaded;
 }
 
 void
