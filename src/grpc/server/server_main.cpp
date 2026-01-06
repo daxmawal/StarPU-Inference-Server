@@ -44,7 +44,12 @@ struct ServerContext {
   std::atomic<bool> stop_requested{false};
 };
 
-std::sig_atomic_t signal_stop_requested = 0;
+auto
+signal_stop_requested_flag() -> volatile std::sig_atomic_t&
+{
+  static volatile std::sig_atomic_t value = 0;
+  return value;
+}
 
 auto
 server_context() -> ServerContext&
@@ -53,116 +58,161 @@ server_context() -> ServerContext&
   return ctx;
 }
 
+constexpr auto kPlotScriptTimeout =
+    std::chrono::steady_clock::duration::zero();  // Disable timeout.
+constexpr auto kPlotScriptPollInterval = std::chrono::milliseconds(50);
+constexpr auto kPlotScriptTerminateTimeout = std::chrono::seconds(1);
+
+auto
+resolve_python_executable() -> std::optional<std::filesystem::path>
+{
+  static const std::array<std::filesystem::path, 3> kCandidates = {
+      "/usr/bin/python3",
+      "/usr/local/bin/python3",
+      "/bin/python3",
+  };
+  for (const auto& candidate : kCandidates) {
+    std::error_code status_ec;
+    if (!std::filesystem::is_regular_file(candidate, status_ec) || status_ec) {
+      continue;
+    }
+    if (::access(candidate.c_str(), X_OK) == 0) {
+      return candidate;
+    }
+  }
+  return std::nullopt;
+}
+
+auto
+wait_status_to_exit_code(int status) -> std::optional<int>
+{
+  if (WIFEXITED(status)) {
+    return WEXITSTATUS(status);
+  }
+  if (WIFSIGNALED(status)) {
+    return 128 + WTERMSIG(status);
+  }
+  return std::nullopt;
+}
+
+void
+log_waitpid_error()
+{
+  starpu_server::log_warning(std::format(
+      "Failed to wait for plot generation process: {}", std::strerror(errno)));
+}
+
+enum class WaitPidState { Exited, StillRunning, Error };
+
+struct WaitPidResult {
+  WaitPidState state;
+  std::optional<int> exit_code;
+};
+
+auto
+waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
+{
+  while (true) {
+    const pid_t result = waitpid(pid, &status, WNOHANG);
+    if (result == pid) {
+      return {WaitPidState::Exited, wait_status_to_exit_code(status)};
+    }
+    if (result == 0) {
+      return {WaitPidState::StillRunning, std::nullopt};
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    log_waitpid_error();
+    return {WaitPidState::Error, std::nullopt};
+  }
+}
+
+enum class WaitOutcome { Exited, TimedOut, Error };
+
+struct WaitOutcomeResult {
+  WaitOutcome outcome;
+  std::optional<int> exit_code;
+};
+
+auto
+wait_for_exit_with_timeout(
+    pid_t pid, std::chrono::steady_clock::duration timeout) -> WaitOutcomeResult
+{
+  const auto deadline = (timeout == std::chrono::steady_clock::duration::zero())
+                            ? std::chrono::steady_clock::time_point::max()
+                            : std::chrono::steady_clock::now() + timeout;
+  int status = 0;
+  while (true) {
+    const auto wait_result = waitpid_nohang(pid, status);
+    if (wait_result.state == WaitPidState::Exited) {
+      return {WaitOutcome::Exited, wait_result.exit_code};
+    }
+    if (wait_result.state == WaitPidState::Error) {
+      return {WaitOutcome::Error, std::nullopt};
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return {WaitOutcome::TimedOut, std::nullopt};
+    }
+    std::this_thread::sleep_for(kPlotScriptPollInterval);
+  }
+}
+
+auto
+wait_for_exit_blocking(pid_t pid) -> std::optional<int>
+{
+  int status = 0;
+  while (true) {
+    const pid_t result = waitpid(pid, &status, 0);
+    if (result == pid) {
+      return wait_status_to_exit_code(status);
+    }
+    if (result < 0 && errno == EINTR) {
+      continue;
+    }
+    if (result < 0) {
+      log_waitpid_error();
+      return std::nullopt;
+    }
+  }
+}
+
+auto
+terminate_and_wait(pid_t pid) -> std::optional<int>
+{
+  starpu_server::log_warning("Plot generation timed out; terminating python3.");
+  (void)::kill(pid, SIGTERM);
+  const auto term_result =
+      wait_for_exit_with_timeout(pid, kPlotScriptTerminateTimeout);
+  if (term_result.outcome == WaitOutcome::Exited) {
+    return term_result.exit_code;
+  }
+  if (term_result.outcome == WaitOutcome::Error) {
+    return std::nullopt;
+  }
+  (void)::kill(pid, SIGKILL);
+  return wait_for_exit_blocking(pid);
+}
+
+auto
+wait_for_plot_process(pid_t pid) -> std::optional<int>
+{
+  const auto result = wait_for_exit_with_timeout(pid, kPlotScriptTimeout);
+  if (result.outcome == WaitOutcome::Exited) {
+    return result.exit_code;
+  }
+  if (result.outcome == WaitOutcome::Error) {
+    return std::nullopt;
+  }
+  return terminate_and_wait(pid);
+}
+
 auto
 run_plot_script(
     const std::filesystem::path& script_path,
     const std::filesystem::path& summary_path,
     const std::filesystem::path& output_path) -> std::optional<int>
 {
-  constexpr auto kPlotScriptTimeout =
-      std::chrono::steady_clock::duration::zero();  // Disable timeout.
-  constexpr auto kPlotScriptPollInterval = std::chrono::milliseconds(50);
-  constexpr auto kPlotScriptTerminateTimeout = std::chrono::seconds(1);
-
-  auto resolve_python_executable =
-      []() -> std::optional<std::filesystem::path> {
-    static const std::array<std::filesystem::path, 3> kCandidates = {
-        "/usr/bin/python3",
-        "/usr/local/bin/python3",
-        "/bin/python3",
-    };
-    for (const auto& candidate : kCandidates) {
-      std::error_code status_ec;
-      if (!std::filesystem::is_regular_file(candidate, status_ec) ||
-          status_ec) {
-        continue;
-      }
-      if (::access(candidate.c_str(), X_OK) == 0) {
-        return candidate;
-      }
-    }
-    return std::nullopt;
-  };
-
-  auto wait_status_to_exit_code = [](int status) -> std::optional<int> {
-    if (WIFEXITED(status)) {
-      return WEXITSTATUS(status);
-    }
-    if (WIFSIGNALED(status)) {
-      return 128 + WTERMSIG(status);
-    }
-    return std::nullopt;
-  };
-
-  auto wait_for_child =
-      [&](pid_t pid,
-          std::chrono::steady_clock::duration timeout) -> std::optional<int> {
-    int status = 0;
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (true) {
-      const pid_t result = waitpid(pid, &status, WNOHANG);
-      if (result == pid) {
-        return wait_status_to_exit_code(status);
-      }
-      if (result == 0) {
-        if (timeout != std::chrono::steady_clock::duration::zero() &&
-            std::chrono::steady_clock::now() >= deadline) {
-          break;
-        }
-        std::this_thread::sleep_for(kPlotScriptPollInterval);
-        continue;
-      }
-      if (result < 0) {
-        if (errno == EINTR) {
-          continue;
-        }
-        starpu_server::log_warning(std::format(
-            "Failed to wait for plot generation process: {}",
-            std::strerror(errno)));
-        return std::nullopt;
-      }
-    }
-
-    starpu_server::log_warning(
-        "Plot generation timed out; terminating python3.");
-    (void)::kill(pid, SIGTERM);
-    const auto term_deadline =
-        std::chrono::steady_clock::now() + kPlotScriptTerminateTimeout;
-    while (std::chrono::steady_clock::now() < term_deadline) {
-      const pid_t result = waitpid(pid, &status, WNOHANG);
-      if (result == pid) {
-        return wait_status_to_exit_code(status);
-      }
-      if (result < 0) {
-        if (errno == EINTR) {
-          continue;
-        }
-        starpu_server::log_warning(std::format(
-            "Failed to wait for plot generation process: {}",
-            std::strerror(errno)));
-        return std::nullopt;
-      }
-      std::this_thread::sleep_for(kPlotScriptPollInterval);
-    }
-
-    (void)::kill(pid, SIGKILL);
-    while (true) {
-      const pid_t result = waitpid(pid, &status, 0);
-      if (result == pid) {
-        return wait_status_to_exit_code(status);
-      }
-      if (result < 0) {
-        if (errno == EINTR) {
-          continue;
-        }
-        starpu_server::log_warning(std::format(
-            "Failed to wait for plot generation process: {}",
-            std::strerror(errno)));
-        return std::nullopt;
-      }
-    }
-  };
-
   const auto python_path = resolve_python_executable();
   if (!python_path) {
     starpu_server::log_warning(
@@ -194,7 +244,7 @@ run_plot_script(
     _exit(127);
   }
 
-  return wait_for_child(pid, kPlotScriptTimeout);
+  return wait_for_plot_process(pid);
 }
 
 auto
@@ -335,7 +385,7 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
 void
 signal_handler(int /*signal*/)
 {
-  signal_stop_requested = 1;
+  signal_stop_requested_flag() = 1;
 }
 
 auto
@@ -429,7 +479,7 @@ launch_threads(
 
   std::jthread notifier_thread([&server_ctx]() {
     constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
-    while (signal_stop_requested == 0) {
+    while (signal_stop_requested_flag() == 0) {
       std::this_thread::sleep_for(kNotifierSleep);
     }
     server_ctx.stop_requested.store(true, std::memory_order_relaxed);
