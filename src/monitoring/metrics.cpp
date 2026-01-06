@@ -813,20 +813,19 @@ MetricsRegistry::MetricsRegistry(int port)
 MetricsRegistry::MetricsRegistry(
     int port, GpuStatsProvider gpu_provider, CpuUsageProvider cpu_provider,
     bool start_sampler_thread, std::unique_ptr<ExposerHandle> exposer_handle)
-    : registry_(std::make_shared<prometheus::Registry>()), exposer_(nullptr),
-      gpu_stats_provider_(std::move(gpu_provider)),
-      cpu_usage_provider_(std::move(cpu_provider))
+    : registry_state_{std::make_shared<prometheus::Registry>()},
+      providers_{std::move(gpu_provider), std::move(cpu_provider)}
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (monitoring::detail::metrics_init_failure_for_test()) {
     throw std::runtime_error("forced metrics initialization failure");
   }
 #endif  // SONAR_IGNORE_END
-  if (!gpu_stats_provider_) {
-    gpu_stats_provider_ = query_gpu_stats_nvml;
+  if (!providers_.gpu_stats_provider) {
+    providers_.gpu_stats_provider = query_gpu_stats_nvml;
   }
-  if (!cpu_usage_provider_) {
-    cpu_usage_provider_ = make_default_cpu_usage_provider();
+  if (!providers_.cpu_usage_provider) {
+    providers_.cpu_usage_provider = make_default_cpu_usage_provider();
   }
   initialize(port, start_sampler_thread, std::move(exposer_handle));
 }
@@ -847,8 +846,8 @@ MetricsRegistry::initialize(
           std::make_unique<PrometheusExposerHandle>(std::move(exposer));
 #endif  // SONAR_IGNORE_END
     }
-    exposer_handle->RegisterCollectable(registry_);
-    exposer_ = std::move(exposer_handle);
+    exposer_handle->RegisterCollectable(registry_state_.registry);
+    registry_state_.exposer = std::move(exposer_handle);
   }
   catch (const std::exception& e) {
     log_error(std::string("Failed to initialize metrics exposer: ") + e.what());
@@ -858,34 +857,34 @@ MetricsRegistry::initialize(
   auto& counter_family = prometheus::BuildCounter()
                              .Name("requests_total")
                              .Help("Total requests received")
-                             .Register(*registry_);
-  requests_total_ = &counter_family.Add({});
+                             .Register(*registry_state_.registry);
+  counters_.requests_total = &counter_family.Add({});
 
   auto& status_family = prometheus::BuildCounter()
                             .Name("requests_by_status_total")
                             .Help(
                                 "Total requests grouped by gRPC status code "
                                 "and model name")
-                            .Register(*registry_);
-  requests_by_status_family_ = &status_family;
-  (void)requests_by_status_family_->Add(
+                            .Register(*registry_state_.registry);
+  families_.requests_by_status = &status_family;
+  (void)families_.requests_by_status->Add(
       {{"code", "unlabeled"}, {"model", "unlabeled"}});
 
   auto& completed_family = prometheus::BuildCounter()
                                .Name("inference_completed_total")
                                .Help("Total logical inferences completed")
-                               .Register(*registry_);
-  inference_completed_family_ = &completed_family;
-  (void)inference_completed_family_->Add({{"model", "unlabeled"}});
+                               .Register(*registry_state_.registry);
+  families_.inference_completed = &completed_family;
+  (void)families_.inference_completed->Add({{"model", "unlabeled"}});
 
   auto& failures_family = prometheus::BuildCounter()
                               .Name("inference_failures_total")
                               .Help(
                                   "Inference failures grouped by stage and "
                                   "reason")
-                              .Register(*registry_);
-  inference_failures_family_ = &failures_family;
-  (void)inference_failures_family_->Add(
+                              .Register(*registry_state_.registry);
+  families_.inference_failures = &failures_family;
+  (void)families_.inference_failures->Add(
       {{"stage", "unlabeled"},
        {"reason", "unlabeled"},
        {"model", "unlabeled"}});
@@ -894,52 +893,53 @@ MetricsRegistry::initialize(
       prometheus::BuildCounter()
           .Name("requests_rejected_total")
           .Help("Total requests rejected (e.g., queue full)")
-          .Register(*registry_);
-  requests_rejected_total_ = &rejected_family.Add({});
+          .Register(*registry_state_.registry);
+  counters_.requests_rejected_total = &rejected_family.Add({});
 
   auto& histogram_family = prometheus::BuildHistogram()
                                .Name("inference_latency_ms")
                                .Help("Inference latency in milliseconds")
-                               .Register(*registry_);
-  inference_latency_ = &histogram_family.Add({}, kInferenceLatencyMsBuckets);
+                               .Register(*registry_state_.registry);
+  histograms_.inference_latency =
+      &histogram_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& gauge_family = prometheus::BuildGauge()
                            .Name("inference_queue_size")
                            .Help("Number of jobs in the inference queue")
-                           .Register(*registry_);
-  queue_size_gauge_ = &gauge_family.Add({});
+                           .Register(*registry_state_.registry);
+  gauges_.queue_size = &gauge_family.Add({});
 
   auto& queue_capacity_family = prometheus::BuildGauge()
                                     .Name("inference_max_queue_size")
                                     .Help(
                                         "Configured maximum inference queue "
                                         "capacity")
-                                    .Register(*registry_);
-  queue_capacity_gauge_ = &queue_capacity_family.Add({});
+                                    .Register(*registry_state_.registry);
+  gauges_.queue_capacity = &queue_capacity_family.Add({});
 
   auto& queue_fill_family = prometheus::BuildGauge()
                                 .Name("inference_queue_fill_ratio")
                                 .Help(
                                     "Queue occupancy ratio "
                                     "(queue_size / max_queue_size)")
-                                .Register(*registry_);
-  queue_fill_ratio_gauge_ = &queue_fill_family.Add({});
+                                .Register(*registry_state_.registry);
+  gauges_.queue_fill_ratio = &queue_fill_family.Add({});
 
   auto& inflight_family = prometheus::BuildGauge()
                               .Name("inference_inflight_tasks")
                               .Help(
                                   "Number of StarPU tasks currently submitted "
                                   "and not yet completed")
-                              .Register(*registry_);
-  inflight_tasks_gauge_ = &inflight_family.Add({});
+                              .Register(*registry_state_.registry);
+  gauges_.inflight_tasks = &inflight_family.Add({});
 
   auto& inflight_cap_family = prometheus::BuildGauge()
                                   .Name("inference_max_inflight_tasks")
                                   .Help(
                                       "Configured cap on inflight StarPU tasks "
                                       "(0 means unbounded)")
-                                  .Register(*registry_);
-  max_inflight_tasks_gauge_ = &inflight_cap_family.Add({});
+                                  .Register(*registry_state_.registry);
+  gauges_.max_inflight_tasks = &inflight_cap_family.Add({});
 
   auto& worker_busy_family = prometheus::BuildGauge()
                                  .Name("starpu_worker_busy_ratio")
@@ -947,56 +947,56 @@ MetricsRegistry::initialize(
                                      "Approximate ratio of inflight tasks to "
                                      "max inflight limit (0-1, 0 when "
                                      "unbounded)")
-                                 .Register(*registry_);
-  starpu_worker_busy_ratio_ = &worker_busy_family.Add({});
+                                 .Register(*registry_state_.registry);
+  gauges_.starpu_worker_busy_ratio = &worker_busy_family.Add({});
 
   auto& prepared_queue_family = prometheus::BuildGauge()
                                     .Name("starpu_prepared_queue_depth")
                                     .Help(
                                         "Number of batched jobs waiting for "
                                         "StarPU submission")
-                                    .Register(*registry_);
-  starpu_prepared_queue_depth_ = &prepared_queue_family.Add({});
+                                    .Register(*registry_state_.registry);
+  gauges_.starpu_prepared_queue_depth = &prepared_queue_family.Add({});
 
   auto& cpu_family = prometheus::BuildGauge()
                          .Name("system_cpu_usage_percent")
                          .Help("System-wide CPU utilization percentage (0-100)")
-                         .Register(*registry_);
-  system_cpu_usage_percent_ = &cpu_family.Add({});
+                         .Register(*registry_state_.registry);
+  gauges_.system_cpu_usage_percent = &cpu_family.Add({});
 
   auto& throughput_family = prometheus::BuildGauge()
                                 .Name("inference_throughput_rps")
                                 .Help(
                                     "Rolling throughput of logical "
                                     "inferences/s based on completed jobs")
-                                .Register(*registry_);
-  inference_throughput_gauge_ = &throughput_family.Add({});
+                                .Register(*registry_state_.registry);
+  gauges_.inference_throughput = &throughput_family.Add({});
 
   auto& rss_family = prometheus::BuildGauge()
                          .Name("process_resident_memory_bytes")
                          .Help("Resident Set Size of the server process")
-                         .Register(*registry_);
-  process_resident_memory_bytes_ = &rss_family.Add({});
+                         .Register(*registry_state_.registry);
+  gauges_.process_resident_memory_bytes = &rss_family.Add({});
 
   auto& fds_family = prometheus::BuildGauge()
                          .Name("process_open_fds")
                          .Help("Number of open file descriptors")
-                         .Register(*registry_);
-  process_open_fds_ = &fds_family.Add({});
+                         .Register(*registry_state_.registry);
+  gauges_.process_open_fds = &fds_family.Add({});
 
   auto& health_family = prometheus::BuildGauge()
                             .Name("server_health_state")
                             .Help(
                                 "Server health state: 1=ready, 0=not ready or "
                                 "shutting down")
-                            .Register(*registry_);
-  server_health_state_ = &health_family.Add({});
+                            .Register(*registry_state_.registry);
+  gauges_.server_health_state = &health_family.Add({});
 
   auto& queue_latency_family = prometheus::BuildHistogram()
                                    .Name("inference_queue_latency_ms")
                                    .Help("Time spent waiting in the queue")
-                                   .Register(*registry_);
-  queue_latency_histogram_ =
+                                   .Register(*registry_state_.registry);
+  histograms_.queue_latency =
       &queue_latency_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& batch_efficiency_family = prometheus::BuildHistogram()
@@ -1004,8 +1004,8 @@ MetricsRegistry::initialize(
                                       .Help(
                                           "Ratio of effective batch size to "
                                           "logical request count")
-                                      .Register(*registry_);
-  batch_efficiency_histogram_ =
+                                      .Register(*registry_state_.registry);
+  histograms_.batch_efficiency =
       &batch_efficiency_family.Add({}, kBatchEfficiencyBuckets);
 
   auto& batch_pending_family = prometheus::BuildGauge()
@@ -1013,14 +1013,14 @@ MetricsRegistry::initialize(
                                    .Help(
                                        "Number of requests aggregated in the "
                                        "current batch collection")
-                                   .Register(*registry_);
-  batch_pending_jobs_gauge_ = &batch_pending_family.Add({});
+                                   .Register(*registry_state_.registry);
+  gauges_.batch_pending_jobs = &batch_pending_family.Add({});
 
   auto& batch_collect_family = prometheus::BuildHistogram()
                                    .Name("inference_batch_collect_ms")
                                    .Help("Time spent collecting a batch")
-                                   .Register(*registry_);
-  batch_collect_latency_histogram_ =
+                                   .Register(*registry_state_.registry);
+  histograms_.batch_collect_latency =
       &batch_collect_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& submit_family = prometheus::BuildHistogram()
@@ -1028,8 +1028,8 @@ MetricsRegistry::initialize(
                             .Help(
                                 "Time spent between dequeue and submission "
                                 "into StarPU")
-                            .Register(*registry_);
-  submit_latency_histogram_ =
+                            .Register(*registry_state_.registry);
+  histograms_.submit_latency =
       &submit_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& scheduling_family = prometheus::BuildHistogram()
@@ -1037,113 +1037,114 @@ MetricsRegistry::initialize(
                                 .Help(
                                     "Time spent waiting for scheduling on a "
                                     "StarPU worker")
-                                .Register(*registry_);
-  scheduling_latency_histogram_ =
+                                .Register(*registry_state_.registry);
+  histograms_.scheduling_latency =
       &scheduling_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& codelet_family = prometheus::BuildHistogram()
                              .Name("inference_codelet_latency_ms")
                              .Help("Duration of the StarPU codelet execution")
-                             .Register(*registry_);
-  codelet_latency_histogram_ =
+                             .Register(*registry_state_.registry);
+  histograms_.codelet_latency =
       &codelet_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& compute_family = prometheus::BuildHistogram()
                              .Name("inference_compute_latency_ms")
                              .Help("Model compute time (inference)")
-                             .Register(*registry_);
-  inference_compute_latency_histogram_ =
+                             .Register(*registry_state_.registry);
+  histograms_.inference_compute_latency =
       &compute_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& callback_family = prometheus::BuildHistogram()
                               .Name("inference_callback_latency_ms")
                               .Help("Callback/response handling latency")
-                              .Register(*registry_);
-  callback_latency_histogram_ =
+                              .Register(*registry_state_.registry);
+  histograms_.callback_latency =
       &callback_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& preprocess_family = prometheus::BuildHistogram()
                                 .Name("inference_preprocess_latency_ms")
                                 .Help("Server-side preprocessing latency")
-                                .Register(*registry_);
-  preprocess_latency_histogram_ =
+                                .Register(*registry_state_.registry);
+  histograms_.preprocess_latency =
       &preprocess_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& postprocess_family = prometheus::BuildHistogram()
                                  .Name("inference_postprocess_latency_ms")
                                  .Help("Server-side postprocessing latency")
-                                 .Register(*registry_);
-  postprocess_latency_histogram_ =
+                                 .Register(*registry_state_.registry);
+  histograms_.postprocess_latency =
       &postprocess_family.Add({}, kInferenceLatencyMsBuckets);
 
   auto& batch_size_family = prometheus::BuildHistogram()
                                 .Name("inference_batch_size")
                                 .Help("Effective batch size executed")
-                                .Register(*registry_);
-  batch_size_histogram_ = &batch_size_family.Add({}, kBatchSizeBuckets);
+                                .Register(*registry_state_.registry);
+  histograms_.batch_size = &batch_size_family.Add({}, kBatchSizeBuckets);
 
   auto& logical_batch_size_family = prometheus::BuildHistogram()
                                         .Name("inference_logical_batch_size")
                                         .Help(
                                             "Number of logical requests "
                                             "aggregated into a batch")
-                                        .Register(*registry_);
-  logical_batch_size_histogram_ =
+                                        .Register(*registry_state_.registry);
+  histograms_.logical_batch_size =
       &logical_batch_size_family.Add({}, kBatchSizeBuckets);
 
   auto& model_load_hist_family = prometheus::BuildHistogram()
                                      .Name("model_load_duration_ms")
                                      .Help("Duration of model load and wiring")
-                                     .Register(*registry_);
-  model_load_duration_histogram_ =
+                                     .Register(*registry_state_.registry);
+  histograms_.model_load_duration =
       &model_load_hist_family.Add({}, kModelLoadDurationMsBuckets);
 
   auto& model_load_fail_family = prometheus::BuildCounter()
                                      .Name("model_load_failures_total")
                                      .Help("Total failed model load attempts")
-                                     .Register(*registry_);
-  model_load_failures_family_ = &model_load_fail_family;
-  (void)model_load_failures_family_->Add({{"model", "unlabeled"}});
+                                     .Register(*registry_state_.registry);
+  families_.model_load_failures = &model_load_fail_family;
+  (void)families_.model_load_failures->Add({{"model", "unlabeled"}});
 
   auto& models_loaded_family =
       prometheus::BuildGauge()
           .Name("models_loaded")
           .Help("Flag indicating a model is loaded on a device")
-          .Register(*registry_);
-  models_loaded_family_ = &models_loaded_family;
-  (void)models_loaded_family_->Add(
+          .Register(*registry_state_.registry);
+  families_.models_loaded = &models_loaded_family;
+  (void)families_.models_loaded->Add(
       {{"model", "unlabeled"}, {"device", "unknown"}});
 
-  gpu_utilization_family_ =
+  families_.gpu_utilization =
       &prometheus::BuildGauge()
            .Name("gpu_utilization_percent")
            .Help("GPU utilization percentage per GPU (0-100)")
-           .Register(*registry_);
-  gpu_memory_used_bytes_family_ = &prometheus::BuildGauge()
-                                       .Name("gpu_memory_used_bytes")
-                                       .Help("Used GPU memory in bytes per GPU")
-                                       .Register(*registry_);
-  gpu_memory_total_bytes_family_ =
+           .Register(*registry_state_.registry);
+  families_.gpu_memory_used_bytes =
+      &prometheus::BuildGauge()
+           .Name("gpu_memory_used_bytes")
+           .Help("Used GPU memory in bytes per GPU")
+           .Register(*registry_state_.registry);
+  families_.gpu_memory_total_bytes =
       &prometheus::BuildGauge()
            .Name("gpu_memory_total_bytes")
            .Help("Total GPU memory in bytes per GPU")
-           .Register(*registry_);
+           .Register(*registry_state_.registry);
 
-  gpu_temperature_family_ = &prometheus::BuildGauge()
-                                 .Name("gpu_temperature_celsius")
-                                 .Help("Reported GPU temperature in Celsius")
-                                 .Register(*registry_);
+  families_.gpu_temperature = &prometheus::BuildGauge()
+                                   .Name("gpu_temperature_celsius")
+                                   .Help("Reported GPU temperature in Celsius")
+                                   .Register(*registry_state_.registry);
 
-  gpu_power_family_ = &prometheus::BuildGauge()
-                           .Name("gpu_power_watts")
-                           .Help("Reported GPU power draw in Watts")
-                           .Register(*registry_);
+  families_.gpu_power = &prometheus::BuildGauge()
+                             .Name("gpu_power_watts")
+                             .Help("Reported GPU power draw in Watts")
+                             .Register(*registry_state_.registry);
 
   auto& starpu_runtime_family = prometheus::BuildHistogram()
                                     .Name("starpu_task_runtime_ms")
                                     .Help("Wall-clock runtime of a StarPU task")
-                                    .Register(*registry_);
-  starpu_task_runtime_histogram_ =
+                                    .Register(*registry_state_.registry);
+  histograms_.starpu_task_runtime =
       &starpu_runtime_family.Add({}, kTaskRuntimeMsBuckets);
 
   auto& compute_latency_by_worker_family =
@@ -1152,40 +1153,40 @@ MetricsRegistry::initialize(
           .Help(
               "Model compute latency by worker and device "
               "(callback start - inference start)")
-          .Register(*registry_);
-  inference_compute_latency_by_worker_family_ =
+          .Register(*registry_state_.registry);
+  families_.inference_compute_latency_by_worker =
       &compute_latency_by_worker_family;
 
   auto& starpu_runtime_by_worker_family =
       prometheus::BuildHistogram()
           .Name("starpu_task_runtime_ms_by_worker")
           .Help("StarPU codelet runtime by worker/device")
-          .Register(*registry_);
-  starpu_task_runtime_by_worker_family_ = &starpu_runtime_by_worker_family;
+          .Register(*registry_state_.registry);
+  families_.starpu_task_runtime_by_worker = &starpu_runtime_by_worker_family;
 
   auto& worker_inflight_family =
       prometheus::BuildGauge()
           .Name("starpu_worker_inflight_tasks")
           .Help("Inflight StarPU tasks per worker/device")
-          .Register(*registry_);
-  starpu_worker_inflight_family_ = &worker_inflight_family;
+          .Register(*registry_state_.registry);
+  families_.starpu_worker_inflight = &worker_inflight_family;
 
   auto& io_copy_latency_family =
       prometheus::BuildHistogram()
           .Name("inference_io_copy_ms")
           .Help("Host/device copy latency by direction/device/worker")
-          .Register(*registry_);
-  io_copy_latency_family_ = &io_copy_latency_family;
+          .Register(*registry_state_.registry);
+  families_.io_copy_latency = &io_copy_latency_family;
 
   auto& transfer_bytes_family =
       prometheus::BuildCounter()
           .Name("inference_transfer_bytes_total")
           .Help("Total bytes transferred by direction/device/worker")
-          .Register(*registry_);
-  transfer_bytes_family_ = &transfer_bytes_family;
+          .Register(*registry_state_.registry);
+  families_.transfer_bytes = &transfer_bytes_family;
 
   if (start_sampler_thread) {
-    sampler_thread_ = std::jthread(
+    registry_state_.sampler_thread = std::jthread(
         [this](const std::stop_token& stop) { this->sampling_loop(stop); });
   }
 }
@@ -1193,12 +1194,12 @@ MetricsRegistry::initialize(
 MetricsRegistry::~MetricsRegistry() noexcept
 {
   request_stop();
-  if (sampler_thread_.joinable()) {
-    sampler_thread_.join();
+  if (registry_state_.sampler_thread.joinable()) {
+    registry_state_.sampler_thread.join();
   }
-  if (exposer_ && registry_) {
+  if (registry_state_.exposer && registry_state_.registry) {
     try {
-      exposer_->RemoveCollectable(registry_);
+      registry_state_.exposer->RemoveCollectable(registry_state_.registry);
     }
     catch (const std::exception& e) {
       log_error(
@@ -1583,8 +1584,8 @@ increment_transfer_bytes(
 void
 MetricsRegistry::request_stop()
 {
-  if (sampler_thread_.joinable()) {
-    sampler_thread_.request_stop();
+  if (registry_state_.sampler_thread.joinable()) {
+    registry_state_.sampler_thread.request_stop();
   }
 }
 
@@ -1592,307 +1593,307 @@ MetricsRegistry::request_stop()
 auto
 MetricsRegistry::has_gpu_stats_provider() const -> bool
 {
-  return static_cast<bool>(gpu_stats_provider_);
+  return static_cast<bool>(providers_.gpu_stats_provider);
 }
 
 auto
 MetricsRegistry::has_cpu_usage_provider() const -> bool
 {
-  return static_cast<bool>(cpu_usage_provider_);
+  return static_cast<bool>(providers_.cpu_usage_provider);
 }
 #endif  // SONAR_IGNORE_END
 
 auto
 MetricsRegistry::registry() const -> std::shared_ptr<prometheus::Registry>
 {
-  return registry_;
+  return registry_state_.registry;
 }
 
 auto
 MetricsRegistry::requests_total() const -> prometheus::Counter*
 {
-  return requests_total_;
+  return counters_.requests_total;
 }
 
 auto
 MetricsRegistry::requests_rejected_total() const -> prometheus::Counter*
 {
-  return requests_rejected_total_;
+  return counters_.requests_rejected_total;
 }
 
 auto
 MetricsRegistry::inference_latency() const -> prometheus::Histogram*
 {
-  return inference_latency_;
+  return histograms_.inference_latency;
 }
 
 auto
 MetricsRegistry::queue_size_gauge() const -> prometheus::Gauge*
 {
-  return queue_size_gauge_;
+  return gauges_.queue_size;
 }
 
 auto
 MetricsRegistry::inflight_tasks_gauge() const -> prometheus::Gauge*
 {
-  return inflight_tasks_gauge_;
+  return gauges_.inflight_tasks;
 }
 
 auto
 MetricsRegistry::max_inflight_tasks_gauge() const -> prometheus::Gauge*
 {
-  return max_inflight_tasks_gauge_;
+  return gauges_.max_inflight_tasks;
 }
 
 auto
 MetricsRegistry::starpu_worker_busy_ratio_gauge() const -> prometheus::Gauge*
 {
-  return starpu_worker_busy_ratio_;
+  return gauges_.starpu_worker_busy_ratio;
 }
 
 auto
 MetricsRegistry::starpu_prepared_queue_depth_gauge() const -> prometheus::Gauge*
 {
-  return starpu_prepared_queue_depth_;
+  return gauges_.starpu_prepared_queue_depth;
 }
 
 auto
 MetricsRegistry::system_cpu_usage_percent() const -> prometheus::Gauge*
 {
-  return system_cpu_usage_percent_;
+  return gauges_.system_cpu_usage_percent;
 }
 
 auto
 MetricsRegistry::inference_throughput_gauge() const -> prometheus::Gauge*
 {
-  return inference_throughput_gauge_;
+  return gauges_.inference_throughput;
 }
 
 auto
 MetricsRegistry::process_resident_memory_gauge() const -> prometheus::Gauge*
 {
-  return process_resident_memory_bytes_;
+  return gauges_.process_resident_memory_bytes;
 }
 
 auto
 MetricsRegistry::process_open_fds_gauge() const -> prometheus::Gauge*
 {
-  return process_open_fds_;
+  return gauges_.process_open_fds;
 }
 
 auto
 MetricsRegistry::server_health_state_gauge() const -> prometheus::Gauge*
 {
-  return server_health_state_;
+  return gauges_.server_health_state;
 }
 
 auto
 MetricsRegistry::queue_fill_ratio_gauge() const -> prometheus::Gauge*
 {
-  return queue_fill_ratio_gauge_;
+  return gauges_.queue_fill_ratio;
 }
 
 auto
 MetricsRegistry::queue_capacity_gauge() const -> prometheus::Gauge*
 {
-  return queue_capacity_gauge_;
+  return gauges_.queue_capacity;
 }
 
 auto
 MetricsRegistry::queue_latency_histogram() const -> prometheus::Histogram*
 {
-  return queue_latency_histogram_;
+  return histograms_.queue_latency;
 }
 
 auto
 MetricsRegistry::batch_collect_latency_histogram() const
     -> prometheus::Histogram*
 {
-  return batch_collect_latency_histogram_;
+  return histograms_.batch_collect_latency;
 }
 
 auto
 MetricsRegistry::batch_efficiency_histogram() const -> prometheus::Histogram*
 {
-  return batch_efficiency_histogram_;
+  return histograms_.batch_efficiency;
 }
 
 auto
 MetricsRegistry::batch_pending_jobs_gauge() const -> prometheus::Gauge*
 {
-  return batch_pending_jobs_gauge_;
+  return gauges_.batch_pending_jobs;
 }
 
 auto
 MetricsRegistry::submit_latency_histogram() const -> prometheus::Histogram*
 {
-  return submit_latency_histogram_;
+  return histograms_.submit_latency;
 }
 
 auto
 MetricsRegistry::scheduling_latency_histogram() const -> prometheus::Histogram*
 {
-  return scheduling_latency_histogram_;
+  return histograms_.scheduling_latency;
 }
 
 auto
 MetricsRegistry::codelet_latency_histogram() const -> prometheus::Histogram*
 {
-  return codelet_latency_histogram_;
+  return histograms_.codelet_latency;
 }
 
 auto
 MetricsRegistry::inference_compute_latency_histogram() const
     -> prometheus::Histogram*
 {
-  return inference_compute_latency_histogram_;
+  return histograms_.inference_compute_latency;
 }
 
 auto
 MetricsRegistry::callback_latency_histogram() const -> prometheus::Histogram*
 {
-  return callback_latency_histogram_;
+  return histograms_.callback_latency;
 }
 
 auto
 MetricsRegistry::preprocess_latency_histogram() const -> prometheus::Histogram*
 {
-  return preprocess_latency_histogram_;
+  return histograms_.preprocess_latency;
 }
 
 auto
 MetricsRegistry::postprocess_latency_histogram() const -> prometheus::Histogram*
 {
-  return postprocess_latency_histogram_;
+  return histograms_.postprocess_latency;
 }
 
 auto
 MetricsRegistry::batch_size_histogram() const -> prometheus::Histogram*
 {
-  return batch_size_histogram_;
+  return histograms_.batch_size;
 }
 
 auto
 MetricsRegistry::logical_batch_size_histogram() const -> prometheus::Histogram*
 {
-  return logical_batch_size_histogram_;
+  return histograms_.logical_batch_size;
 }
 
 auto
 MetricsRegistry::model_load_duration_histogram() const -> prometheus::Histogram*
 {
-  return model_load_duration_histogram_;
+  return histograms_.model_load_duration;
 }
 
 auto
 MetricsRegistry::starpu_task_runtime_histogram() const -> prometheus::Histogram*
 {
-  return starpu_task_runtime_histogram_;
+  return histograms_.starpu_task_runtime;
 }
 
 auto
 MetricsRegistry::inference_compute_latency_by_worker_family() const
     -> prometheus::Family<prometheus::Histogram>*
 {
-  return inference_compute_latency_by_worker_family_;
+  return families_.inference_compute_latency_by_worker;
 }
 
 auto
 MetricsRegistry::starpu_task_runtime_by_worker_family() const
     -> prometheus::Family<prometheus::Histogram>*
 {
-  return starpu_task_runtime_by_worker_family_;
+  return families_.starpu_task_runtime_by_worker;
 }
 
 auto
 MetricsRegistry::starpu_worker_inflight_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
-  return starpu_worker_inflight_family_;
+  return families_.starpu_worker_inflight;
 }
 
 auto
 MetricsRegistry::io_copy_latency_family() const
     -> prometheus::Family<prometheus::Histogram>*
 {
-  return io_copy_latency_family_;
+  return families_.io_copy_latency;
 }
 
 auto
 MetricsRegistry::transfer_bytes_family() const
     -> prometheus::Family<prometheus::Counter>*
 {
-  return transfer_bytes_family_;
+  return families_.transfer_bytes;
 }
 
 auto
 MetricsRegistry::gpu_utilization_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
-  return gpu_utilization_family_;
+  return families_.gpu_utilization;
 }
 
 auto
 MetricsRegistry::gpu_memory_used_bytes_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
-  return gpu_memory_used_bytes_family_;
+  return families_.gpu_memory_used_bytes;
 }
 
 auto
 MetricsRegistry::gpu_memory_total_bytes_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
-  return gpu_memory_total_bytes_family_;
+  return families_.gpu_memory_total_bytes;
 }
 
 auto
 MetricsRegistry::gpu_temperature_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
-  return gpu_temperature_family_;
+  return families_.gpu_temperature;
 }
 
 auto
 MetricsRegistry::gpu_power_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
-  return gpu_power_family_;
+  return families_.gpu_power;
 }
 
 auto
 MetricsRegistry::requests_by_status_family() const
     -> prometheus::Family<prometheus::Counter>*
 {
-  return requests_by_status_family_;
+  return families_.requests_by_status;
 }
 
 auto
 MetricsRegistry::inference_completed_family() const
     -> prometheus::Family<prometheus::Counter>*
 {
-  return inference_completed_family_;
+  return families_.inference_completed;
 }
 
 auto
 MetricsRegistry::inference_failures_family() const
     -> prometheus::Family<prometheus::Counter>*
 {
-  return inference_failures_family_;
+  return families_.inference_failures;
 }
 
 auto
 MetricsRegistry::model_load_failures_family() const
     -> prometheus::Family<prometheus::Counter>*
 {
-  return model_load_failures_family_;
+  return families_.model_load_failures;
 }
 
 auto
 MetricsRegistry::models_loaded_family() const
     -> prometheus::Family<prometheus::Gauge>*
 {
-  return models_loaded_family_;
+  return families_.models_loaded;
 }
 
 void
@@ -1900,26 +1901,26 @@ MetricsRegistry::increment_status_counter(
     MetricsRegistry::StatusCodeLabel code_label,
     MetricsRegistry::ModelLabel model_label)
 {
-  if (requests_by_status_family_ == nullptr) {
+  if (families_.requests_by_status == nullptr) {
     return;
   }
 
   StatusKey key{std::string(code_label.value), std::string(model_label.value)};
 
-  std::scoped_lock lock(status_mutex_);
-  auto entry = status_counters_.find(key);
-  if (entry == status_counters_.end()) {
-    const bool overflow = status_counters_.size() >= kMaxLabelSeries;
+  std::scoped_lock lock(mutexes_.status);
+  auto entry = caches_.status.counters.find(key);
+  if (entry == caches_.status.counters.end()) {
+    const bool overflow = caches_.status.counters.size() >= kMaxLabelSeries;
     StatusKey map_key = overflow ? StatusKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        status_counters_.try_emplace(std::move(map_key), nullptr);
+        caches_.status.counters.try_emplace(std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string code_label_value =
           overflow ? kOverflowLabel : escape_label_value(code_label.value);
       const std::string model_label_value =
           overflow ? kOverflowLabel : escape_label_value(model_label.value);
-      entry->second = &requests_by_status_family_->Add(
+      entry->second = &families_.requests_by_status->Add(
           {{"code", code_label_value}, {"model", model_label_value}});
     }
   }
@@ -1932,24 +1933,25 @@ void
 MetricsRegistry::increment_completed_counter(
     std::string_view model_label, std::size_t logical_jobs)
 {
-  if (inference_completed_family_ == nullptr) {
+  if (families_.inference_completed == nullptr) {
     return;
   }
   ModelKey key{std::string(model_label)};
-  std::scoped_lock lock(model_metrics_mutex_);
-  auto entry = inference_completed_counters_.find(key);
-  if (entry == inference_completed_counters_.end()) {
+  std::scoped_lock lock(mutexes_.model_metrics);
+  auto entry = caches_.model.inference_completed.find(key);
+  if (entry == caches_.model.inference_completed.end()) {
     const bool overflow =
-        inference_completed_counters_.size() >= kMaxLabelSeries;
+        caches_.model.inference_completed.size() >= kMaxLabelSeries;
     ModelKey map_key = overflow ? ModelKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        inference_completed_counters_.try_emplace(std::move(map_key), nullptr);
+        caches_.model.inference_completed.try_emplace(
+            std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string model_label_value =
           overflow ? kOverflowLabel : escape_label_value(model_label);
       entry->second =
-          &inference_completed_family_->Add({{"model", model_label_value}});
+          &families_.inference_completed->Add({{"model", model_label_value}});
     }
   }
   if (entry->second != nullptr) {
@@ -1963,20 +1965,21 @@ MetricsRegistry::increment_failure_counter(
     MetricsRegistry::FailureReasonLabel reason_label,
     MetricsRegistry::ModelLabel model_label, std::size_t count)
 {
-  if (inference_failures_family_ == nullptr) {
+  if (families_.inference_failures == nullptr) {
     return;
   }
   FailureKey key{
       std::string(stage_label.value), std::string(reason_label.value),
       std::string(model_label.value)};
 
-  std::scoped_lock lock(model_metrics_mutex_);
-  auto entry = inference_failure_counters_.find(key);
-  if (entry == inference_failure_counters_.end()) {
-    const bool overflow = inference_failure_counters_.size() >= kMaxLabelSeries;
+  std::scoped_lock lock(mutexes_.model_metrics);
+  auto entry = caches_.model.inference_failures.find(key);
+  if (entry == caches_.model.inference_failures.end()) {
+    const bool overflow =
+        caches_.model.inference_failures.size() >= kMaxLabelSeries;
     FailureKey map_key = overflow ? FailureKey::Overflow() : std::move(key);
-    auto [inserted_it, inserted] =
-        inference_failure_counters_.try_emplace(std::move(map_key), nullptr);
+    auto [inserted_it, inserted] = caches_.model.inference_failures.try_emplace(
+        std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string stage_label_value =
@@ -1985,7 +1988,7 @@ MetricsRegistry::increment_failure_counter(
           overflow ? kOverflowLabel : escape_label_value(reason_label.value);
       const std::string model_label_value =
           overflow ? kOverflowLabel : escape_label_value(model_label.value);
-      entry->second = &inference_failures_family_->Add(
+      entry->second = &families_.inference_failures->Add(
           {{"stage", stage_label_value},
            {"reason", reason_label_value},
            {"model", model_label_value}});
@@ -2000,24 +2003,25 @@ void
 MetricsRegistry::increment_model_load_failure_counter(
     std::string_view model_label)
 {
-  if (model_load_failures_family_ == nullptr) {
+  if (families_.model_load_failures == nullptr) {
     return;
   }
   ModelKey key{std::string(model_label)};
-  std::scoped_lock lock(model_metrics_mutex_);
-  auto entry = model_load_failure_counters_.find(key);
-  if (entry == model_load_failure_counters_.end()) {
+  std::scoped_lock lock(mutexes_.model_metrics);
+  auto entry = caches_.model.model_load_failures.find(key);
+  if (entry == caches_.model.model_load_failures.end()) {
     const bool overflow =
-        model_load_failure_counters_.size() >= kMaxLabelSeries;
+        caches_.model.model_load_failures.size() >= kMaxLabelSeries;
     ModelKey map_key = overflow ? ModelKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        model_load_failure_counters_.try_emplace(std::move(map_key), nullptr);
+        caches_.model.model_load_failures.try_emplace(
+            std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string model_label_value =
           overflow ? kOverflowLabel : escape_label_value(model_label);
       entry->second =
-          &model_load_failures_family_->Add({{"model", model_label_value}});
+          &families_.model_load_failures->Add({{"model", model_label_value}});
     }
   }
   if (entry->second != nullptr) {
@@ -2030,27 +2034,27 @@ MetricsRegistry::set_model_loaded_flag(
     MetricsRegistry::ModelLabel model_label,
     MetricsRegistry::DeviceLabel device_label, bool loaded)
 {
-  if (models_loaded_family_ == nullptr) {
+  if (families_.models_loaded == nullptr) {
     return;
   }
   ModelDeviceKey key{
       std::string(model_label.value), std::string(device_label.value)};
 
-  std::scoped_lock lock(model_metrics_mutex_);
-  auto entry = models_loaded_gauges_.find(key);
-  if (entry == models_loaded_gauges_.end()) {
-    const bool overflow = models_loaded_gauges_.size() >= kMaxLabelSeries;
+  std::scoped_lock lock(mutexes_.model_metrics);
+  auto entry = caches_.model.models_loaded.find(key);
+  if (entry == caches_.model.models_loaded.end()) {
+    const bool overflow = caches_.model.models_loaded.size() >= kMaxLabelSeries;
     ModelDeviceKey map_key =
         overflow ? ModelDeviceKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        models_loaded_gauges_.try_emplace(std::move(map_key), nullptr);
+        caches_.model.models_loaded.try_emplace(std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string model_label_value =
           overflow ? kOverflowLabel : escape_label_value(model_label.value);
       const std::string device_label_value =
           overflow ? kOverflowLabel : escape_label_value(device_label.value);
-      entry->second = &models_loaded_family_->Add(
+      entry->second = &families_.models_loaded->Add(
           {{"model", model_label_value}, {"device", device_label_value}});
     }
   }
@@ -2065,17 +2069,18 @@ MetricsRegistry::observe_compute_latency_by_worker(
     double latency_ms)
 {
   if (latency_ms < 0.0 ||
-      inference_compute_latency_by_worker_family_ == nullptr) {
+      families_.inference_compute_latency_by_worker == nullptr) {
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::scoped_lock lock(worker_metrics_mutex_);
-  auto entry = compute_latency_by_worker_.find(key);
-  if (entry == compute_latency_by_worker_.end()) {
-    const bool overflow = compute_latency_by_worker_.size() >= kMaxLabelSeries;
+  std::scoped_lock lock(mutexes_.worker_metrics);
+  auto entry = caches_.worker.compute_latency.find(key);
+  if (entry == caches_.worker.compute_latency.end()) {
+    const bool overflow =
+        caches_.worker.compute_latency.size() >= kMaxLabelSeries;
     WorkerKey map_key = overflow ? WorkerKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        compute_latency_by_worker_.try_emplace(std::move(map_key), nullptr);
+        caches_.worker.compute_latency.try_emplace(std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string worker_id_label =
@@ -2084,7 +2089,7 @@ MetricsRegistry::observe_compute_latency_by_worker(
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
           overflow ? kOverflowLabel : escape_label_value(worker_type);
-      entry->second = &inference_compute_latency_by_worker_family_->Add(
+      entry->second = &families_.inference_compute_latency_by_worker->Add(
           {{"worker_id", worker_id_label},
            {"device", device_label},
            {"worker_type", worker_type_label}},
@@ -2101,17 +2106,17 @@ MetricsRegistry::observe_task_runtime_by_worker(
     int worker_id, int device_id, std::string_view worker_type,
     double latency_ms)
 {
-  if (latency_ms < 0.0 || starpu_task_runtime_by_worker_family_ == nullptr) {
+  if (latency_ms < 0.0 || families_.starpu_task_runtime_by_worker == nullptr) {
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::scoped_lock lock(worker_metrics_mutex_);
-  auto entry = task_runtime_by_worker_.find(key);
-  if (entry == task_runtime_by_worker_.end()) {
-    const bool overflow = task_runtime_by_worker_.size() >= kMaxLabelSeries;
+  std::scoped_lock lock(mutexes_.worker_metrics);
+  auto entry = caches_.worker.task_runtime.find(key);
+  if (entry == caches_.worker.task_runtime.end()) {
+    const bool overflow = caches_.worker.task_runtime.size() >= kMaxLabelSeries;
     WorkerKey map_key = overflow ? WorkerKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        task_runtime_by_worker_.try_emplace(std::move(map_key), nullptr);
+        caches_.worker.task_runtime.try_emplace(std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string worker_id_label =
@@ -2120,7 +2125,7 @@ MetricsRegistry::observe_task_runtime_by_worker(
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
           overflow ? kOverflowLabel : escape_label_value(worker_type);
-      entry->second = &starpu_task_runtime_by_worker_family_->Add(
+      entry->second = &families_.starpu_task_runtime_by_worker->Add(
           {{"worker_id", worker_id_label},
            {"device", device_label},
            {"worker_type", worker_type_label}},
@@ -2137,17 +2142,17 @@ MetricsRegistry::set_worker_inflight_gauge(
     int worker_id, int device_id, std::string_view worker_type,
     std::size_t value)
 {
-  if (starpu_worker_inflight_family_ == nullptr) {
+  if (families_.starpu_worker_inflight == nullptr) {
     return;
   }
   WorkerKey key{worker_id, device_id, std::string(worker_type)};
-  std::scoped_lock lock(worker_metrics_mutex_);
-  auto entry = worker_inflight_gauges_.find(key);
-  if (entry == worker_inflight_gauges_.end()) {
-    const bool overflow = worker_inflight_gauges_.size() >= kMaxLabelSeries;
+  std::scoped_lock lock(mutexes_.worker_metrics);
+  auto entry = caches_.worker.inflight.find(key);
+  if (entry == caches_.worker.inflight.end()) {
+    const bool overflow = caches_.worker.inflight.size() >= kMaxLabelSeries;
     WorkerKey map_key = overflow ? WorkerKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        worker_inflight_gauges_.try_emplace(std::move(map_key), nullptr);
+        caches_.worker.inflight.try_emplace(std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string worker_id_label =
@@ -2156,7 +2161,7 @@ MetricsRegistry::set_worker_inflight_gauge(
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
           overflow ? kOverflowLabel : escape_label_value(worker_type);
-      entry->second = &starpu_worker_inflight_family_->Add(
+      entry->second = &families_.starpu_worker_inflight->Add(
           {{"worker_id", worker_id_label},
            {"device", device_label},
            {"worker_type", worker_type_label}});
@@ -2172,18 +2177,18 @@ MetricsRegistry::observe_io_copy_latency(
     std::string_view direction, int worker_id, int device_id,
     std::string_view worker_type, double duration_ms)
 {
-  if (duration_ms < 0.0 || io_copy_latency_family_ == nullptr) {
+  if (duration_ms < 0.0 || families_.io_copy_latency == nullptr) {
     return;
   }
   IoKey key{
       std::string(direction), worker_id, device_id, std::string(worker_type)};
-  std::scoped_lock lock(io_metrics_mutex_);
-  auto entry = io_copy_latency_.find(key);
-  if (entry == io_copy_latency_.end()) {
-    const bool overflow = io_copy_latency_.size() >= kMaxLabelSeries;
+  std::scoped_lock lock(mutexes_.io_metrics);
+  auto entry = caches_.io.copy_latency.find(key);
+  if (entry == caches_.io.copy_latency.end()) {
+    const bool overflow = caches_.io.copy_latency.size() >= kMaxLabelSeries;
     IoKey map_key = overflow ? IoKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        io_copy_latency_.try_emplace(std::move(map_key), nullptr);
+        caches_.io.copy_latency.try_emplace(std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string direction_label =
@@ -2194,7 +2199,7 @@ MetricsRegistry::observe_io_copy_latency(
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
           overflow ? kOverflowLabel : escape_label_value(worker_type);
-      entry->second = &io_copy_latency_family_->Add(
+      entry->second = &families_.io_copy_latency->Add(
           {{"direction", direction_label},
            {"worker_id", worker_id_label},
            {"device", device_label},
@@ -2212,18 +2217,18 @@ MetricsRegistry::increment_transfer_bytes(
     std::string_view direction, int worker_id, int device_id,
     std::string_view worker_type, std::size_t bytes)
 {
-  if (bytes == 0 || transfer_bytes_family_ == nullptr) {
+  if (bytes == 0 || families_.transfer_bytes == nullptr) {
     return;
   }
   IoKey key{
       std::string(direction), worker_id, device_id, std::string(worker_type)};
-  std::scoped_lock lock(io_metrics_mutex_);
-  auto entry = transfer_bytes_.find(key);
-  if (entry == transfer_bytes_.end()) {
-    const bool overflow = transfer_bytes_.size() >= kMaxLabelSeries;
+  std::scoped_lock lock(mutexes_.io_metrics);
+  auto entry = caches_.io.transfer_bytes.find(key);
+  if (entry == caches_.io.transfer_bytes.end()) {
+    const bool overflow = caches_.io.transfer_bytes.size() >= kMaxLabelSeries;
     IoKey map_key = overflow ? IoKey::Overflow() : std::move(key);
     auto [inserted_it, inserted] =
-        transfer_bytes_.try_emplace(std::move(map_key), nullptr);
+        caches_.io.transfer_bytes.try_emplace(std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
       const std::string direction_label =
@@ -2234,7 +2239,7 @@ MetricsRegistry::increment_transfer_bytes(
           overflow ? kOverflowLabel : std::to_string(device_id);
       const std::string worker_type_label =
           overflow ? kOverflowLabel : escape_label_value(worker_type);
-      entry->second = &transfer_bytes_family_->Add(
+      entry->second = &families_.transfer_bytes->Add(
           {{"direction", direction_label},
            {"worker_id", worker_id_label},
            {"device", device_label},
@@ -2275,20 +2280,20 @@ increment_inference_failure(
 void
 MetricsRegistry::set_queue_capacity(std::size_t capacity)
 {
-  queue_capacity_.store(capacity, std::memory_order_release);
+  registry_state_.queue_capacity.store(capacity, std::memory_order_release);
 }
 
 auto
 MetricsRegistry::queue_capacity_value() const -> std::size_t
 {
-  return queue_capacity_.load(std::memory_order_acquire);
+  return registry_state_.queue_capacity.load(std::memory_order_acquire);
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 MetricsRegistry::run_sampling_request_nb()
 {
-  std::scoped_lock<std::mutex> lock(sampling_mutex_);
+  std::scoped_lock<std::mutex> lock(mutexes_.sampling);
   perform_sampling_request_nb();
 }
 #endif  // SONAR_IGNORE_END
@@ -2296,60 +2301,64 @@ MetricsRegistry::run_sampling_request_nb()
 void
 MetricsRegistry::sample_cpu_usage()
 {
-  if (system_cpu_usage_percent_ == nullptr) {
+  if (gauges_.system_cpu_usage_percent == nullptr) {
     return;
   }
-  if (!cpu_usage_provider_) {
-    system_cpu_usage_percent_->Set(std::numeric_limits<double>::quiet_NaN());
+  if (!providers_.cpu_usage_provider) {
+    gauges_.system_cpu_usage_percent->Set(
+        std::numeric_limits<double>::quiet_NaN());
     return;
   }
 
   try {
-    auto usage = cpu_usage_provider_();
+    auto usage = providers_.cpu_usage_provider();
     if (usage.has_value()) {
-      system_cpu_usage_percent_->Set(*usage);
+      gauges_.system_cpu_usage_percent->Set(*usage);
     } else {
-      system_cpu_usage_percent_->Set(std::numeric_limits<double>::quiet_NaN());
+      gauges_.system_cpu_usage_percent->Set(
+          std::numeric_limits<double>::quiet_NaN());
     }
   }
   catch (const std::exception& e) {
     if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
       log_error(std::format("CPU metrics sampling failed: {}", e.what()));
     }
-    system_cpu_usage_percent_->Set(std::numeric_limits<double>::quiet_NaN());
+    gauges_.system_cpu_usage_percent->Set(
+        std::numeric_limits<double>::quiet_NaN());
   }
   catch (...) {
     if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
       log_error("CPU metrics sampling failed due to an unknown error");
     }
-    system_cpu_usage_percent_->Set(std::numeric_limits<double>::quiet_NaN());
+    gauges_.system_cpu_usage_percent->Set(
+        std::numeric_limits<double>::quiet_NaN());
   }
 }
 
 void
 MetricsRegistry::sample_inference_throughput()
 {
-  if (inference_throughput_gauge_ == nullptr) {
+  if (gauges_.inference_throughput == nullptr) {
     return;
   }
 
   if (auto snap = perf_observer::snapshot()) {
-    inference_throughput_gauge_->Set(snap->throughput);
+    gauges_.inference_throughput->Set(snap->throughput);
   }
 }
 
 void
 MetricsRegistry::sample_process_resident_memory()
 {
-  if (process_resident_memory_bytes_ == nullptr) {
+  if (gauges_.process_resident_memory_bytes == nullptr) {
     return;
   }
 
   if (auto rss_bytes = monitoring::detail::read_process_rss_bytes();
       rss_bytes.has_value()) {
-    process_resident_memory_bytes_->Set(*rss_bytes);
+    gauges_.process_resident_memory_bytes->Set(*rss_bytes);
   } else {
-    process_resident_memory_bytes_->Set(
+    gauges_.process_resident_memory_bytes->Set(
         std::numeric_limits<double>::quiet_NaN());
   }
 }
@@ -2357,26 +2366,26 @@ MetricsRegistry::sample_process_resident_memory()
 void
 MetricsRegistry::sample_process_open_fds()
 {
-  if (process_open_fds_ == nullptr) {
+  if (gauges_.process_open_fds == nullptr) {
     return;
   }
 
   if (auto fds = monitoring::detail::read_process_open_fds(); fds.has_value()) {
-    process_open_fds_->Set(*fds);
+    gauges_.process_open_fds->Set(*fds);
   } else {
-    process_open_fds_->Set(std::numeric_limits<double>::quiet_NaN());
+    gauges_.process_open_fds->Set(std::numeric_limits<double>::quiet_NaN());
   }
 }
 
 void
 MetricsRegistry::sample_gpu_stats()
 {
-  if (!gpu_stats_provider_) {
+  if (!providers_.gpu_stats_provider) {
     return;
   }
 
   try {
-    auto gstats = gpu_stats_provider_();
+    auto gstats = providers_.gpu_stats_provider();
     std::unordered_set<int> seen_indices;
     seen_indices.reserve(gstats.size());
     for (const auto& stats : gstats) {
@@ -2384,34 +2393,36 @@ MetricsRegistry::sample_gpu_stats()
       const std::string label = std::to_string(stats.index);
 
       ensure_gpu_gauge(
-          gpu_utilization_gauges_, gpu_utilization_family_, stats.index, label)
+          caches_.gpu.utilization, families_.gpu_utilization, stats.index,
+          label)
           ->Set(stats.util_percent);
       ensure_gpu_gauge(
-          gpu_memory_used_gauges_, gpu_memory_used_bytes_family_, stats.index,
+          caches_.gpu.memory_used, families_.gpu_memory_used_bytes, stats.index,
           label)
           ->Set(stats.mem_used_bytes);
       ensure_gpu_gauge(
-          gpu_memory_total_gauges_, gpu_memory_total_bytes_family_, stats.index,
-          label)
+          caches_.gpu.memory_total, families_.gpu_memory_total_bytes,
+          stats.index, label)
           ->Set(stats.mem_total_bytes);
 
       set_or_clear_nan(
-          gpu_temperature_gauges_, gpu_temperature_family_, stats.index, label,
-          stats.temperature_celsius);
+          caches_.gpu.temperature, families_.gpu_temperature, stats.index,
+          label, stats.temperature_celsius);
       set_or_clear_nan(
-          gpu_power_gauges_, gpu_power_family_, stats.index, label,
+          caches_.gpu.power, families_.gpu_power, stats.index, label,
           stats.power_watts);
     }
 
     clear_missing_gauges(
-        gpu_utilization_gauges_, gpu_utilization_family_, seen_indices);
+        caches_.gpu.utilization, families_.gpu_utilization, seen_indices);
     clear_missing_gauges(
-        gpu_memory_used_gauges_, gpu_memory_used_bytes_family_, seen_indices);
+        caches_.gpu.memory_used, families_.gpu_memory_used_bytes, seen_indices);
     clear_missing_gauges(
-        gpu_memory_total_gauges_, gpu_memory_total_bytes_family_, seen_indices);
+        caches_.gpu.memory_total, families_.gpu_memory_total_bytes,
+        seen_indices);
     clear_missing_gauges(
-        gpu_temperature_gauges_, gpu_temperature_family_, seen_indices);
-    clear_missing_gauges(gpu_power_gauges_, gpu_power_family_, seen_indices);
+        caches_.gpu.temperature, families_.gpu_temperature, seen_indices);
+    clear_missing_gauges(caches_.gpu.power, families_.gpu_power, seen_indices);
   }
   catch (const std::exception& e) {
     if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
@@ -2442,7 +2453,7 @@ MetricsRegistry::sampling_loop(const std::stop_token& stop)
   auto next_sleep = 1000ms;
   while (!stop.stop_requested()) {
     {
-      std::scoped_lock<std::mutex> lock(sampling_mutex_);
+      std::scoped_lock<std::mutex> lock(mutexes_.sampling);
       perform_sampling_request_nb();
     }
     for (auto slept = 0ms; slept < next_sleep && !stop.stop_requested();
@@ -2459,87 +2470,87 @@ void
 starpu_server::MetricsRegistry::TestAccessor::ClearCpuUsageProvider(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.cpu_usage_provider_ = {};
+  metrics.providers_.cpu_usage_provider = {};
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearSystemCpuUsageGauge(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.system_cpu_usage_percent_ = nullptr;
+  metrics.gauges_.system_cpu_usage_percent = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearProcessOpenFdsGauge(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.process_open_fds_ = nullptr;
+  metrics.gauges_.process_open_fds = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearProcessResidentMemoryGauge(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.process_resident_memory_bytes_ = nullptr;
+  metrics.gauges_.process_resident_memory_bytes = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearInferenceThroughputGauge(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.inference_throughput_gauge_ = nullptr;
+  metrics.gauges_.inference_throughput = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearGpuStatsProvider(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.gpu_stats_provider_ = {};
+  metrics.providers_.gpu_stats_provider = {};
 }
 
 auto
 starpu_server::MetricsRegistry::TestAccessor::ProcessOpenFdsGauge(
     starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
 {
-  return metrics.process_open_fds_;
+  return metrics.gauges_.process_open_fds;
 }
 
 auto
 starpu_server::MetricsRegistry::TestAccessor::ProcessResidentMemoryGauge(
     starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
 {
-  return metrics.process_resident_memory_bytes_;
+  return metrics.gauges_.process_resident_memory_bytes;
 }
 
 auto
 starpu_server::MetricsRegistry::TestAccessor::InferenceThroughputGauge(
     starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
 {
-  return metrics.inference_throughput_gauge_;
+  return metrics.gauges_.inference_throughput;
 }
 
 auto
 starpu_server::MetricsRegistry::TestAccessor::GpuUtilizationGaugeCount(
     const starpu_server::MetricsRegistry& metrics) -> std::size_t
 {
-  std::scoped_lock<std::mutex> lock(metrics.sampling_mutex_);
-  return metrics.gpu_utilization_gauges_.size();
+  std::scoped_lock<std::mutex> lock(metrics.mutexes_.sampling);
+  return metrics.caches_.gpu.utilization.size();
 }
 
 auto
 starpu_server::MetricsRegistry::TestAccessor::GpuMemoryUsedGaugeCount(
     const starpu_server::MetricsRegistry& metrics) -> std::size_t
 {
-  std::scoped_lock<std::mutex> lock(metrics.sampling_mutex_);
-  return metrics.gpu_memory_used_gauges_.size();
+  std::scoped_lock<std::mutex> lock(metrics.mutexes_.sampling);
+  return metrics.caches_.gpu.memory_used.size();
 }
 
 auto
 starpu_server::MetricsRegistry::TestAccessor::GpuMemoryTotalGaugeCount(
     const starpu_server::MetricsRegistry& metrics) -> std::size_t
 {
-  std::scoped_lock<std::mutex> lock(metrics.sampling_mutex_);
-  return metrics.gpu_memory_total_gauges_.size();
+  std::scoped_lock<std::mutex> lock(metrics.mutexes_.sampling);
+  return metrics.caches_.gpu.memory_total.size();
 }
 
 void
@@ -2567,7 +2578,7 @@ void
 starpu_server::MetricsRegistry::TestAccessor::ClearStarpuWorkerInflightFamily(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.starpu_worker_inflight_family_ = nullptr;
+  metrics.families_.starpu_worker_inflight = nullptr;
 }
 
 void
@@ -2575,7 +2586,7 @@ starpu_server::MetricsRegistry::TestAccessor::
     ClearStarpuTaskRuntimeByWorkerFamily(
         starpu_server::MetricsRegistry& metrics)
 {
-  metrics.starpu_task_runtime_by_worker_family_ = nullptr;
+  metrics.families_.starpu_task_runtime_by_worker = nullptr;
 }
 
 void
@@ -2583,56 +2594,56 @@ starpu_server::MetricsRegistry::TestAccessor::
     ClearInferenceComputeLatencyByWorkerFamily(
         starpu_server::MetricsRegistry& metrics)
 {
-  metrics.inference_compute_latency_by_worker_family_ = nullptr;
+  metrics.families_.inference_compute_latency_by_worker = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearIoCopyLatencyFamily(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.io_copy_latency_family_ = nullptr;
+  metrics.families_.io_copy_latency = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearTransferBytesFamily(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.transfer_bytes_family_ = nullptr;
+  metrics.families_.transfer_bytes = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearModelsLoadedFamily(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.models_loaded_family_ = nullptr;
+  metrics.families_.models_loaded = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearModelLoadFailuresFamily(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.model_load_failures_family_ = nullptr;
+  metrics.families_.model_load_failures = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearInferenceFailuresFamily(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.inference_failures_family_ = nullptr;
+  metrics.families_.inference_failures = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearInferenceCompletedFamily(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.inference_completed_family_ = nullptr;
+  metrics.families_.inference_completed = nullptr;
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearRequestsByStatusFamily(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.requests_by_status_family_ = nullptr;
+  metrics.families_.requests_by_status = nullptr;
 }
 
 auto

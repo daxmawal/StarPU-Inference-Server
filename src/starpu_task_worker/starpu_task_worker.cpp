@@ -1224,9 +1224,10 @@ SlotManager::validate_batch_and_copy_inputs(
       });
   CudaCopyBatch copy_batch(want_cuda_copy && slot_has_pinned_buffers);
 
-  const auto copy_single_input = [&](std::size_t input_idx) {
+  const auto prepare_input_for_copy =
+      [&](std::size_t input_idx) -> VectorResizeSpec {
     const auto& tensor = inputs[input_idx];
-    const auto label = std::string("input[") + std::to_string(input_idx) + "]";
+    const auto label = std::format("input[{}]", input_idx);
     if (auto error =
             tensor_validation::validate_cpu_contiguous_tensor(tensor, label)) {
       throw InvalidInputTensorException(*error);
@@ -1235,7 +1236,12 @@ SlotManager::validate_batch_and_copy_inputs(
         static_cast<std::size_t>(tensor.numel()), tensor.nbytes()};
     resize_starpu_vector_handle(handles[input_idx], spec, true);
     total_bytes_copied.fetch_add(spec.byte_count, std::memory_order_relaxed);
+    return spec;
+  };
 
+  const auto copy_input_data = [&](std::size_t input_idx,
+                                   const torch::Tensor& tensor,
+                                   const VectorResizeSpec& spec) {
     const auto& buffer_info = buffer_infos.at(input_idx);
     const bool allow_async =
         buffer_info.cuda_pinned || buffer_info.starpu_pinned;
@@ -1245,6 +1251,12 @@ SlotManager::validate_batch_and_copy_inputs(
             allow_async)) {
       std::memcpy(base_ptrs[input_idx], tensor.data_ptr(), spec.byte_count);
     }
+  };
+
+  const auto copy_single_input = [&](std::size_t input_idx) {
+    const auto& tensor = inputs[input_idx];
+    const auto spec = prepare_input_for_copy(input_idx);
+    copy_input_data(input_idx, tensor, spec);
   };
 
   if (job->has_pending_sub_jobs()) {
@@ -1309,8 +1321,7 @@ SlotManager::copy_job_inputs_to_slot(
     const bool allow_async =
         buffer_info.cuda_pinned || buffer_info.starpu_pinned;
 
-    const auto input_label =
-        std::string("input[") + std::to_string(input_idx) + "]";
+    const auto input_label = std::format("input[{}]", input_idx);
     const auto validate_tensor = [&input_label](const torch::Tensor& tensor) {
       if (auto error = tensor_validation::validate_cpu_contiguous_tensor(
               tensor, input_label)) {
