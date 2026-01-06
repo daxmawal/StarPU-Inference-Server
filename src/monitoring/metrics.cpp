@@ -2346,7 +2346,8 @@ MetricsRegistry::sample_process_resident_memory()
     return;
   }
 
-  if (auto rss_bytes = monitoring::detail::read_process_rss_bytes()) {
+  if (auto rss_bytes = monitoring::detail::read_process_rss_bytes();
+      rss_bytes.has_value()) {
     process_resident_memory_bytes_->Set(*rss_bytes);
   } else {
     process_resident_memory_bytes_->Set(
@@ -2361,7 +2362,7 @@ MetricsRegistry::sample_process_open_fds()
     return;
   }
 
-  if (auto fds = monitoring::detail::read_process_open_fds()) {
+  if (auto fds = monitoring::detail::read_process_open_fds(); fds.has_value()) {
     process_open_fds_->Set(*fds);
   } else {
     process_open_fds_->Set(std::numeric_limits<double>::quiet_NaN());

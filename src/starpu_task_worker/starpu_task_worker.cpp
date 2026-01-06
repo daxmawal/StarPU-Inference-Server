@@ -1804,7 +1804,7 @@ BatchCollector::maybe_build_batched_job(
   master->set_output_tensors(task_runner_internal::resize_outputs_for_batch(
       prototype_outputs, effective_batch));
 
-  const std::size_t logical_jobs =
+  const auto logical_jobs =
       static_cast<std::size_t>(std::max(1, batch_info.logical_jobs));
   const double efficiency = logical_jobs > 0
                                 ? static_cast<double>(effective_batch) /

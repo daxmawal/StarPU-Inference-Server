@@ -10,6 +10,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <unordered_set>
 #include <utility>
@@ -26,6 +27,15 @@ constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
 const std::filesystem::path kDefaultTraceOutputFile{
     RuntimeConfig::BatchingSettings{}.trace_output_path};
+
+struct TransparentStringHash {
+  using is_transparent = void;
+
+  [[nodiscard]] std::size_t operator()(std::string_view value) const noexcept
+  {
+    return std::hash<std::string_view>{}(value);
+  }
+};
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -131,35 +141,37 @@ validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 auto
 validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 {
-  static const std::unordered_set<std::string> kAllowedKeys{
-      "verbose",
-      "verbosity",
-      "name",
-      "model",
-      "model_name",
-      "starpu_env",
-      "device_ids",
-      "group_cpu_by_numa",
-      "inputs",
-      "outputs",
-      "batch_coalesce_timeout_ms",
-      "address",
-      "metrics_port",
-      "max_message_bytes",
-      "max_queue_size",
-      "max_inflight_tasks",
-      "max_batch_size",
-      "dynamic_batching",
-      "pool_size",
-      "trace_enabled",
-      "trace_output",
-      "warmup_pregen_inputs",
-      "warmup_request_nb",
-      "warmup_batches_per_worker",
-      "seed",
-      "sync",
-      "use_cpu",
-      "use_cuda"};
+  static const std::unordered_set<
+      std::string, TransparentStringHash, std::equal_to<>>
+      kAllowedKeys{
+          "verbose",
+          "verbosity",
+          "name",
+          "model",
+          "model_name",
+          "starpu_env",
+          "device_ids",
+          "group_cpu_by_numa",
+          "inputs",
+          "outputs",
+          "batch_coalesce_timeout_ms",
+          "address",
+          "metrics_port",
+          "max_message_bytes",
+          "max_queue_size",
+          "max_inflight_tasks",
+          "max_batch_size",
+          "dynamic_batching",
+          "pool_size",
+          "trace_enabled",
+          "trace_output",
+          "warmup_pregen_inputs",
+          "warmup_request_nb",
+          "warmup_batches_per_worker",
+          "seed",
+          "sync",
+          "use_cpu",
+          "use_cuda"};
 
   for (const auto& kvalue : root) {
     if (!kvalue.first.IsScalar()) {
