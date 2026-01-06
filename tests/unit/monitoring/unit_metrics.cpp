@@ -341,10 +341,10 @@ TEST(Metrics, AccessorsReturnAllocatedFamiliesAndGauges)
   auto metrics = get_metrics();
   AssertMetricsInitialized(metrics);
 
-  EXPECT_NE(metrics->system_cpu_usage_percent(), nullptr);
-  EXPECT_NE(metrics->gpu_utilization_family(), nullptr);
-  EXPECT_NE(metrics->gpu_memory_used_bytes_family(), nullptr);
-  EXPECT_NE(metrics->gpu_memory_total_bytes_family(), nullptr);
+  EXPECT_NE(metrics->gauges().system_cpu_usage_percent, nullptr);
+  EXPECT_NE(metrics->families().gpu_utilization, nullptr);
+  EXPECT_NE(metrics->families().gpu_memory_used_bytes, nullptr);
+  EXPECT_NE(metrics->families().gpu_memory_total_bytes, nullptr);
 
   shutdown_metrics();
 }
@@ -1121,7 +1121,7 @@ TEST(MetricsRegistry, RunSamplingMarksCpuUsageUnknownWhenProviderMissing)
   MetricsRegistry metrics(
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
-  metrics.system_cpu_usage_percent()->Set(7.0);
+  metrics.gauges().system_cpu_usage_percent->Set(7.0);
   MetricsRegistry::TestAccessor::ClearCpuUsageProvider(metrics);
 
   metrics.run_sampling_request_nb();
@@ -1148,7 +1148,7 @@ TEST(MetricsRegistry, RunSamplingSkipsCpuProviderWhenGaugeMissing)
       /*start_sampler_thread=*/false);
 
   MetricsRegistry::TestAccessor::ClearSystemCpuUsageGauge(metrics);
-  EXPECT_EQ(metrics.system_cpu_usage_percent(), nullptr);
+  EXPECT_EQ(metrics.gauges().system_cpu_usage_percent, nullptr);
 
   metrics.run_sampling_request_nb();
 
