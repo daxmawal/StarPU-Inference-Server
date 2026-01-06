@@ -46,7 +46,7 @@ cuda_device_count_override_storage() -> std::optional<int>&
 namespace detail {
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 set_cuda_device_count_override(std::optional<int> override_count)
 {
@@ -56,7 +56,7 @@ set_cuda_device_count_override(std::optional<int> override_count)
   }
   cuda_device_count_override_storage() = override_count;
 }
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
 auto

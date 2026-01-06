@@ -91,10 +91,10 @@ class StarPUSetup {
   std::unique_ptr<OutputSlotPool> output_pool_;
 };
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace testing {
 auto buffer_byte_size_for_tests(const StarpuBufferInterface* buffer_iface)
     -> size_t;
 }  // namespace testing
-#endif
+#endif  // SONAR_IGNORE_END
 }  // namespace starpu_server

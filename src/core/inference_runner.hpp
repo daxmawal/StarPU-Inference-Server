@@ -51,9 +51,9 @@ struct BaseLatencyBreakdown {
 };
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void set_cuda_device_count_override(std::optional<int> override_count);
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 auto get_cuda_device_count() -> int;
 void validate_device_ids(std::span<const int> device_ids, int device_count);

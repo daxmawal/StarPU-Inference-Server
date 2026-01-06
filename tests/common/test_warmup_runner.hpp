@@ -13,7 +13,7 @@
 #include "core/warmup.hpp"
 #include "test_inference_runner.hpp"
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace starpu_server {
 struct WarmupRunnerTestHelper {
   static void client_worker(
@@ -25,7 +25,7 @@ struct WarmupRunnerTestHelper {
   }
 };
 }  // namespace starpu_server
-#endif
+#endif  // SONAR_IGNORE_END
 
 template <class F>
 auto

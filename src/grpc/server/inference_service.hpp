@@ -63,11 +63,11 @@ class InferenceServiceImpl final
 
 // Sync wrapper used by in-process tests; async server uses
 // HandleModelInferAsync.
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto ModelInfer(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply) -> grpc::Status override;
-#endif
+#endif  // SONAR_IGNORE_END
 
   struct LatencyBreakdown {
     double preprocess_ms = 0.0;
@@ -90,7 +90,7 @@ class InferenceServiceImpl final
   };
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   struct HandleModelInferAsyncTestHooks {
     std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
         on_cancel_flag_created;
@@ -134,7 +134,7 @@ class InferenceServiceImpl final
         const std::vector<std::string>& output_names) -> grpc::Status;
     static auto HandleAsyncInferCompletionForTest(bool cancelled) -> bool;
   };
-#endif
+#endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
 
   static auto populate_response(
@@ -158,14 +158,14 @@ class InferenceServiceImpl final
       std::string model_name = {}) -> grpc::Status;
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto submit_job_and_wait(
       const std::vector<torch::Tensor>& inputs,
       std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
       detail::TimingInfo& timing_info,
       std::vector<std::shared_ptr<const void>> input_lifetimes = {})
       -> grpc::Status;
-#endif
+#endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
 
   void HandleModelInferAsync(

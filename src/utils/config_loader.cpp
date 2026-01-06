@@ -28,14 +28,14 @@ const std::filesystem::path kDefaultTraceOutputFile{
     RuntimeConfig::BatchingSettings{}.trace_output_path};
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
 {
   static ConfigLoaderPostParseHook hook;
   return hook;
 }
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
 auto parse_tensor_nodes(
@@ -507,7 +507,7 @@ parse_tensor_nodes(
 }  // namespace
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 set_config_loader_post_parse_hook(ConfigLoaderPostParseHook hook)
 {
@@ -519,7 +519,7 @@ reset_config_loader_post_parse_hook()
 {
   config_loader_post_parse_hook() = {};
 }
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
 namespace {
@@ -562,11 +562,11 @@ parse_config_file(
     parse_seed_tolerances_and_flags(root, cfg);
     parse_starpu_env(root, cfg);
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
     if (const auto& hook = config_loader_post_parse_hook(); hook) {
       hook(cfg);
     }
-#endif
+#endif  // SONAR_IGNORE_END
     // GCOVR_EXCL_STOP
   }
   catch (const YAML::Exception& exception) {

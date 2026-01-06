@@ -18,9 +18,9 @@ namespace starpu_server {
 struct AsyncClientCall;
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 struct InferenceClientTestAccess;
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
 struct ModelId {
@@ -46,9 +46,9 @@ class InferenceClient {
 
  private:
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   friend struct InferenceClientTestAccess;
-#endif
+#endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
 
   struct LatencySample {
@@ -109,7 +109,7 @@ class InferenceClient {
 };
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 struct InferenceClientTestAccess {
   using LatencySample = InferenceClient::LatencySample;
   using LatencyRecords = InferenceClient::LatencyRecords;
@@ -157,6 +157,6 @@ struct InferenceClientTestAccess {
     client.log_latency_summary();
   }
 };
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 }  // namespace starpu_server

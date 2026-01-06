@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 #include <cuda_runtime_api.h>
 
 #include <functional>
@@ -14,7 +14,7 @@
 
 #include "core/input_slot_pool.hpp"
 #include "core/output_slot_pool.hpp"
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 #include <memory>
 #include <vector>
@@ -23,7 +23,7 @@
 #include "utils/monotonic_clock.hpp"
 #include "utils/runtime_config.hpp"
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 struct starpu_vector_interface;
 
 namespace starpu_server {
@@ -31,7 +31,7 @@ class BatchCollector;
 class InferenceQueue;
 class SlotManager;
 }  // namespace starpu_server
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
 namespace starpu_server::task_runner_internal {
@@ -80,7 +80,7 @@ auto build_request_arrival_us_for_trace(
     const std::shared_ptr<InferenceJob>& job) -> std::vector<int64_t>;
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void set_submit_inference_task_hook(std::function<void()> hook);
 void reset_submit_inference_task_hook();
 
@@ -149,7 +149,7 @@ auto batch_collector_get_queue(const BatchCollector* collector)
 void batch_collector_set_pending_job(
     BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
 }  // namespace testing
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
 }  // namespace starpu_server::task_runner_internal

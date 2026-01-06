@@ -90,11 +90,11 @@ class MetricsRegistry {
 
   void request_stop();
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   void run_sampling_request_nb();
   auto has_gpu_stats_provider() const -> bool;
   auto has_cpu_usage_provider() const -> bool;
-#endif
+#endif  // SONAR_IGNORE_END
 
   [[nodiscard]] auto registry() const -> std::shared_ptr<prometheus::Registry>;
   [[nodiscard]] auto requests_total() const -> prometheus::Counter*;
@@ -200,7 +200,7 @@ class MetricsRegistry {
       std::string_view direction, int worker_id, int device_id,
       std::string_view worker_type, std::size_t bytes);
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   struct TestAccessor {
     static void ClearCpuUsageProvider(MetricsRegistry& metrics);
     static void ClearSystemCpuUsageGauge(MetricsRegistry& metrics);
@@ -261,7 +261,7 @@ class MetricsRegistry {
         bool overflow_lhs, int worker_id_rhs, int device_id_rhs,
         std::string_view worker_type_rhs, bool overflow_rhs) -> bool;
   };
-#endif
+#endif  // SONAR_IGNORE_END
 
  private:
   void initialize(
@@ -586,9 +586,9 @@ void set_inflight_tasks(std::size_t size);
 void set_starpu_worker_busy_ratio(double ratio);
 void set_max_inflight_tasks(std::size_t max_tasks);
 void set_queue_capacity(std::size_t capacity);
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void set_queue_fill_ratio(std::size_t size, std::size_t capacity);
-#endif
+#endif  // SONAR_IGNORE_END
 void set_server_health(bool ready);
 void set_starpu_prepared_queue_depth(std::size_t depth);
 void set_batch_pending_jobs(std::size_t pending);
@@ -651,7 +651,7 @@ auto make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
 auto cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr) -> double;
 auto read_process_open_fds() -> std::optional<double>;
 auto read_process_rss_bytes() -> std::optional<double>;
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void set_process_open_fds_reader_override(
     std::function<std::optional<double>()> reader);
 void set_process_rss_bytes_reader_override(
@@ -679,6 +679,6 @@ auto process_page_size_provider_for_test() -> const ProcessPageSizeProvider&;
 auto should_log_sampling_error_for_test(std::atomic<std::int64_t>& last_log)
     -> bool;
 auto status_code_label_for_test(int code) -> std::string;
-#endif
+#endif  // SONAR_IGNORE_END
 
 }  // namespace starpu_server::monitoring::detail

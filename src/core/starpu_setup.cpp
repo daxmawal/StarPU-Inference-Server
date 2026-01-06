@@ -545,7 +545,7 @@ buffer_byte_size(const StarpuBufferInterface* buffer_iface) -> size_t
 }
 }  // namespace
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace testing {
 auto
 buffer_byte_size_for_tests(const StarpuBufferInterface* buffer_iface) -> size_t
@@ -553,7 +553,7 @@ buffer_byte_size_for_tests(const StarpuBufferInterface* buffer_iface) -> size_t
   return buffer_byte_size(buffer_iface);
 }
 }  // namespace testing
-#endif
+#endif  // SONAR_IGNORE_END
 
 // =============================================================================
 // InferenceCodelet: constructor and access to codelet

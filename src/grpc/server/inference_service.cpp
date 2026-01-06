@@ -158,7 +158,7 @@ class RpcDoneTag final : public AsyncCallDataBase,
 };
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 handle_model_infer_async_test_hooks()
     -> InferenceServiceImpl::HandleModelInferAsyncTestHooks&
@@ -174,7 +174,7 @@ handle_async_infer_completion_test_hooks()
   static InferenceServiceImpl::HandleAsyncInferCompletionTestHooks hooks{};
   return hooks;
 }
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 }  // namespace
 
@@ -760,7 +760,7 @@ InferenceServiceImpl::submit_job_async(
 }
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 InferenceServiceImpl::submit_job_and_wait(
     const std::vector<torch::Tensor>& inputs,
@@ -911,7 +911,7 @@ InferenceServiceImpl::TestAccessor::HandleAsyncInferCompletionForTest(
       context, Status::OK, outputs, breakdown, timing_info);
   return called;
 }
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(
@@ -954,9 +954,9 @@ InferenceServiceImpl::handle_async_infer_completion(
     detail::TimingInfo timing_info)
 {
   const auto& callback_handle = context.callback_handle;
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto& async_hooks = handle_async_infer_completion_test_hooks();
-#endif
+#endif  // SONAR_IGNORE_END
   if (context.cancel_flag != nullptr &&
       context.cancel_flag->load(std::memory_order_acquire)) {
     return;
@@ -964,11 +964,11 @@ InferenceServiceImpl::handle_async_infer_completion(
   if (!callback_handle->TryAcquire()) {
     return;
   }
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (async_hooks.after_try_acquire && context.cancel_flag != nullptr) {
     async_hooks.after_try_acquire(context.cancel_flag);
   }
-#endif
+#endif  // SONAR_IGNORE_END
   if (context.cancel_flag != nullptr &&
       context.cancel_flag->load(std::memory_order_acquire)) {
     return;
@@ -1058,11 +1058,11 @@ InferenceServiceImpl::handle_async_infer_completion(
       breakdown.scheduling_ms, breakdown.codelet_ms, breakdown.inference_ms,
       breakdown.callback_ms, breakdown.preprocess_ms, breakdown.postprocess_ms);
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (async_hooks.before_final_cancel_check && context.cancel_flag != nullptr) {
     async_hooks.before_final_cancel_check(context.cancel_flag);
   }
-#endif
+#endif  // SONAR_IGNORE_END
   if (context.cancel_flag != nullptr &&
       context.cancel_flag->load(std::memory_order_acquire)) {
     return;
@@ -1081,12 +1081,12 @@ InferenceServiceImpl::HandleModelInferAsync(
 {
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
   auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto& test_hooks = handle_model_infer_async_test_hooks();
   if (test_hooks.on_cancel_flag_created) {
     test_hooks.on_cancel_flag_created(cancel_flag);
   }
-#endif
+#endif  // SONAR_IGNORE_END
   NvtxRange request_scope("grpc_handle_infer_request");
 
   auto metrics = get_metrics();
@@ -1097,22 +1097,22 @@ InferenceServiceImpl::HandleModelInferAsync(
   const auto resolved_model_name = resolve_model_name(request->model_name());
   if (context != nullptr && call_guard) {
     auto is_context_cancelled = [context
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
                                  ,
                                  cancel_override =
                                      test_hooks.is_cancelled_override
-#endif
+#endif  // SONAR_IGNORE_END
     ]() -> bool {
       if (context == nullptr) {
         return false;
       }
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
       if (cancel_override) {
-        if (auto override = cancel_override(context); override.has_value()) {
-          return *override;
+        if (auto decision = cancel_override(context); decision.has_value()) {
+          return *decision;
         }
       }
-#endif
+#endif  // SONAR_IGNORE_END
       return context->IsCancelled();
     };
     auto on_cancel = [context, cancel_flag, callback_handle,
@@ -1132,11 +1132,11 @@ InferenceServiceImpl::HandleModelInferAsync(
             "cancel", "client_cancelled", resolved_model_name);
       }
     };
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
     if (test_hooks.on_cancel_ready) {
       test_hooks.on_cancel_ready(on_cancel);
     }
-#endif
+#endif  // SONAR_IGNORE_END
     auto done_tag = RpcDoneTag::Create(on_cancel, std::move(call_guard));
     done_tag->Arm(context);
     if (is_context_cancelled()) {
@@ -1186,11 +1186,11 @@ InferenceServiceImpl::HandleModelInferAsync(
       },
       std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name);
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (test_hooks.on_submit_job_async_done) {
     test_hooks.on_submit_job_async_done(cancel_flag, status);
   }
-#endif
+#endif  // SONAR_IGNORE_END
   if (!status.ok()) {
     if (cancel_flag->load(std::memory_order_acquire)) {
       return;
@@ -1280,7 +1280,7 @@ InferenceServiceImpl::populate_response(
   return fill_output_tensor(reply, outputs, output_indices, resolved_names);
 }
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 InferenceServiceImpl::ModelInfer(
     ServerContext* context, const ModelInferRequest* request,
@@ -1294,7 +1294,7 @@ InferenceServiceImpl::ModelInfer(
       });
   return status_future.get();
 }
-#endif
+#endif  // SONAR_IGNORE_END
 
 namespace {
 

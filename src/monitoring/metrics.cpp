@@ -35,7 +35,7 @@
 
 namespace starpu_server {
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 class TestingExposerHandle : public MetricsRegistry::ExposerHandle {
  public:
   void RegisterCollectable(
@@ -48,7 +48,7 @@ class TestingExposerHandle : public MetricsRegistry::ExposerHandle {
   {
   }
 };
-#endif
+#endif  // SONAR_IGNORE_END
 
 namespace monitoring::detail {
 
@@ -128,11 +128,11 @@ const prometheus::Histogram::BucketBoundaries kTaskRuntimeMsBuckets{
 constexpr std::size_t kMaxLabelSeries = 10000;
 const std::string kOverflowLabel{"__overflow__"};
 constexpr std::string_view kLabelEscapePrefix{"__label__"};
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(0);
 #else
 constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(60);
-#endif
+#endif  // SONAR_IGNORE_END
 
 constexpr int kStatusOk = 0;
 constexpr int kStatusCancelled = 1;
@@ -301,7 +301,7 @@ read_total_cpu_times(CpuTotals& out) -> bool
   return monitoring::detail::read_total_cpu_times(kProcStat, out);
 }
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using ProcessSampleReader = std::function<std::optional<double>()>;
 auto
 process_open_fds_reader_override_storage() -> ProcessSampleReader&
@@ -316,12 +316,12 @@ process_rss_bytes_reader_override_storage() -> ProcessSampleReader&
   static ProcessSampleReader reader;
   return reader;
 }
-#endif
+#endif  // SONAR_IGNORE_END
 
 auto
 read_process_rss_bytes_impl() -> std::optional<double>
 {
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto& override_reader = process_rss_bytes_reader_override_storage();
   if (override_reader) {
     return override_reader();
@@ -330,7 +330,7 @@ read_process_rss_bytes_impl() -> std::optional<double>
       monitoring::detail::process_rss_bytes_path_for_test();
 #else
   const std::filesystem::path& path = kProcStatm;
-#endif
+#endif  // SONAR_IGNORE_END
   std::ifstream statm{path};
   if (!statm.is_open()) {
     return std::nullopt;
@@ -340,14 +340,14 @@ read_process_rss_bytes_impl() -> std::optional<double>
   if (!(statm >> size >> resident)) {
     return std::nullopt;
   }
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   const auto& page_size_provider =
       monitoring::detail::process_page_size_provider_for_test();
   const long page_size =
       page_size_provider ? page_size_provider() : sysconf(_SC_PAGESIZE);
 #else
   const long page_size = sysconf(_SC_PAGESIZE);
-#endif
+#endif  // SONAR_IGNORE_END
   if (page_size <= 0) {
     return std::nullopt;
   }
@@ -357,31 +357,31 @@ read_process_rss_bytes_impl() -> std::optional<double>
 auto
 read_process_open_fds_impl() -> std::optional<double>
 {
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto& override_reader = process_open_fds_reader_override_storage();
   if (override_reader) {
     return override_reader();
   }
-#endif
+#endif  // SONAR_IGNORE_END
   static const std::filesystem::path kProcFd{"/proc/self/fd"};
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   const std::filesystem::path& path =
       monitoring::detail::process_fd_path_for_test();
 #else
   const std::filesystem::path& path = kProcFd;
-#endif
+#endif  // SONAR_IGNORE_END
   try {
     if (!std::filesystem::exists(path)) {
       return std::nullopt;
     }
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
     const auto factory =
         monitoring::detail::process_fd_directory_iterator_for_test();
     std::filesystem::directory_iterator iter =
         factory ? factory(path) : std::filesystem::directory_iterator(path);
 #else
     std::filesystem::directory_iterator iter(path);
-#endif
+#endif  // SONAR_IGNORE_END
     const std::filesystem::directory_iterator end{};
     std::size_t count = 0;
     for (; iter != end; ++iter) {
@@ -613,7 +613,7 @@ make_cpu_usage_provider(std::function<bool(CpuTotals&)> reader)
   };
 }
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 set_process_open_fds_reader_override(
     std::function<std::optional<double>()> reader)
@@ -751,7 +751,7 @@ status_code_label_for_test(int code) -> std::string
 {
   return status_code_label(code);
 }
-#endif
+#endif  // SONAR_IGNORE_END
 
 auto
 read_process_open_fds() -> std::optional<double>
@@ -765,7 +765,7 @@ read_process_rss_bytes() -> std::optional<double>
   return read_process_rss_bytes_impl();
 }
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 metrics_init_failure_flag() -> std::atomic<bool>&
 {
@@ -784,7 +784,7 @@ metrics_init_failure_for_test() -> bool
 {
   return metrics_init_failure_flag().load(std::memory_order_acquire);
 }
-#endif
+#endif  // SONAR_IGNORE_END
 
 }  // namespace monitoring::detail
 
@@ -818,11 +818,11 @@ MetricsRegistry::MetricsRegistry(
       gpu_stats_provider_(std::move(gpu_provider)),
       cpu_usage_provider_(std::move(cpu_provider))
 {
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (monitoring::detail::metrics_init_failure_for_test()) {
     throw std::runtime_error("forced metrics initialization failure");
   }
-#endif
+#endif  // SONAR_IGNORE_END
   if (!gpu_stats_provider_) {
     gpu_stats_provider_ = query_gpu_stats_nvml;
   }
@@ -839,14 +839,14 @@ MetricsRegistry::initialize(
 {
   try {
     if (!exposer_handle) {
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
       exposer_handle = std::make_unique<TestingExposerHandle>();
 #else
       auto exposer = std::make_unique<prometheus::Exposer>(
           std::format("0.0.0.0:{}", port));
       exposer_handle =
           std::make_unique<PrometheusExposerHandle>(std::move(exposer));
-#endif
+#endif  // SONAR_IGNORE_END
     }
     exposer_handle->RegisterCollectable(registry_);
     exposer_ = std::move(exposer_handle);
@@ -1350,7 +1350,7 @@ set_queue_capacity(std::size_t capacity)
 }
 
 // GCOVR_EXCL_START
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 set_queue_fill_ratio(std::size_t size, std::size_t capacity)
 {
@@ -1362,7 +1362,7 @@ set_queue_fill_ratio(std::size_t size, std::size_t capacity)
   metrics_ptr->queue_fill_ratio_gauge()->Set(
       static_cast<double>(size) / static_cast<double>(capacity));
 }
-#endif
+#endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
 void
@@ -1589,7 +1589,7 @@ MetricsRegistry::request_stop()
   }
 }
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 MetricsRegistry::has_gpu_stats_provider() const -> bool
 {
@@ -1601,7 +1601,7 @@ MetricsRegistry::has_cpu_usage_provider() const -> bool
 {
   return static_cast<bool>(cpu_usage_provider_);
 }
-#endif
+#endif  // SONAR_IGNORE_END
 
 auto
 MetricsRegistry::registry() const -> std::shared_ptr<prometheus::Registry>
@@ -2285,14 +2285,14 @@ MetricsRegistry::queue_capacity_value() const -> std::size_t
   return queue_capacity_.load(std::memory_order_acquire);
 }
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 MetricsRegistry::run_sampling_request_nb()
 {
   std::scoped_lock<std::mutex> lock(sampling_mutex_);
   perform_sampling_request_nb();
 }
-#endif
+#endif  // SONAR_IGNORE_END
 
 void
 MetricsRegistry::sample_cpu_usage()
@@ -2454,7 +2454,7 @@ MetricsRegistry::sampling_loop(const std::stop_token& stop)
 
 }  // namespace starpu_server
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 starpu_server::MetricsRegistry::TestAccessor::ClearCpuUsageProvider(
     starpu_server::MetricsRegistry& metrics)
@@ -2742,4 +2742,4 @@ starpu_server::MetricsRegistry::TestAccessor::WorkerKeyEquals(
       worker_id_rhs, device_id_rhs, std::string(worker_type_rhs), overflow_rhs};
   return lhs == rhs;
 }
-#endif
+#endif  // SONAR_IGNORE_END

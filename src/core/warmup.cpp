@@ -31,11 +31,11 @@ namespace starpu_server {
 namespace {
 constexpr int kCpuWarmupDeviceId = std::numeric_limits<int>::min();
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 std::mutex warmup_hook_mutex;
 std::function<void()> warmup_server_thread_hook;
 std::function<void()> warmup_client_thread_hook;
-#endif
+#endif  // SONAR_IGNORE_END
 
 auto
 collect_device_workers(const RuntimeConfig& opts)
@@ -76,7 +76,7 @@ collect_device_workers(const RuntimeConfig& opts)
 // Constructor
 // =============================================================================
 
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace testing {
 auto
 collect_device_workers_for_test(const RuntimeConfig& opts)
@@ -119,7 +119,7 @@ take_warmup_client_thread_hook() -> std::function<void()>
   return std::exchange(warmup_client_thread_hook, {});
 }
 }  // namespace testing
-#endif
+#endif  // SONAR_IGNORE_END
 
 WarmupRunner::WarmupRunner(
     const RuntimeConfig& opts, StarPUSetup& starpu,
@@ -279,11 +279,11 @@ WarmupRunner::run(int request_nb_per_worker)
 
   std::jthread server([&]() {
     try {
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
       if (auto hook = testing::take_warmup_server_thread_hook()) {
         hook();
       }
-#endif
+#endif  // SONAR_IGNORE_END
       worker.run();
     }
     catch (...) {
@@ -294,11 +294,11 @@ WarmupRunner::run(int request_nb_per_worker)
   std::jthread client([this, &device_workers, &queue, &notify_thread_exception,
                        request_nb_per_worker]() {
     try {
-#if defined(STARPU_TESTING)
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
       if (auto hook = testing::take_warmup_client_thread_hook()) {
         hook();
       }
-#endif
+#endif  // SONAR_IGNORE_END
       client_worker(device_workers, queue, request_nb_per_worker);
     }
     catch (...) {
