@@ -152,6 +152,7 @@ class StarPUTaskRunner {
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
   auto wait_for_prepared_job() -> std::shared_ptr<InferenceJob>;
+  void handle_cancelled_job(const std::shared_ptr<InferenceJob>& job);
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   static auto can_merge_jobs(

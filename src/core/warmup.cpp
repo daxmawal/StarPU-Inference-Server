@@ -173,34 +173,39 @@ WarmupRunner::client_worker(
   int request_id = 0;
   const auto& model_name = opts_.model ? opts_.model->name : opts_.name;
 
+  std::vector<int> worker_ids_flat;
+  worker_ids_flat.reserve(worker_count);
   for (const auto& entry : device_workers) {
-    const auto& worker_ids = entry.second;
-    for (const int worker_id : worker_ids) {
-      for (auto request_nb = 0; request_nb < request_nb_per_worker;
-           ++request_nb) {
-        const auto& inputs =
-            client_utils::pick_random_input(pregen_inputs, rng);
-        auto job = client_utils::create_job(
-            inputs, outputs_ref_, request_id, {}, {}, model_name);
-        const int job_request_id = request_id;
-        job->set_fixed_worker_id(worker_id);
+    const auto& device_worker_ids = entry.second;
+    worker_ids_flat.insert(
+        worker_ids_flat.end(), device_worker_ids.begin(),
+        device_worker_ids.end());
+  }
 
-        const auto enqueued_now = MonotonicClock::now();
-        job->timing_info().enqueued_time = enqueued_now;
-        job->timing_info().last_enqueued_time = enqueued_now;
+  for (const int worker_id : worker_ids_flat) {
+    for (auto request_nb = 0; request_nb < request_nb_per_worker;
+         ++request_nb) {
+      const auto& inputs = client_utils::pick_random_input(pregen_inputs, rng);
+      auto job = client_utils::create_job(
+          inputs, outputs_ref_, request_id, {}, {}, model_name);
+      const int job_request_id = request_id;
+      job->set_fixed_worker_id(worker_id);
 
-        if (bool queue_full = false; !queue.push(std::move(job), &queue_full)) {
-          const auto* const reason =
-              queue_full ? "queue is full" : "queue shutting down";
-          log_warning(std::format(
-              "[Warmup] Failed to enqueue job {}: {}", job_request_id, reason));
-          queue.shutdown();
-          return;
-        }
-        const auto log_now = std::chrono::system_clock::now();
-        client_utils::log_job_enqueued(opts_, job_request_id, total, log_now);
-        request_id++;
+      const auto enqueued_now = MonotonicClock::now();
+      job->timing_info().enqueued_time = enqueued_now;
+      job->timing_info().last_enqueued_time = enqueued_now;
+
+      if (bool queue_full = false; !queue.push(std::move(job), &queue_full)) {
+        const auto* const reason =
+            queue_full ? "queue is full" : "queue shutting down";
+        log_warning(std::format(
+            "[Warmup] Failed to enqueue job {}: {}", job_request_id, reason));
+        queue.shutdown();
+        return;
       }
+      const auto log_now = std::chrono::system_clock::now();
+      client_utils::log_job_enqueued(opts_, job_request_id, total, log_now);
+      request_id++;
     }
   }
 
