@@ -92,10 +92,7 @@ class InferenceServiceImpl final
     bool set_prepost_overall = true;
     std::span<const std::string> output_names;
 
-    PopulateResponseOptions()
-        : model_name_override(), set_prepost_overall(true), output_names()
-    {
-    }
+    PopulateResponseOptions() {}
   };
 
   struct AsyncFailureInfo {
