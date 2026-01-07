@@ -1138,10 +1138,17 @@ InferenceServiceImpl::handle_async_infer_completion(
     context.metrics->histograms().inference_latency->Observe(latency_ms);
   }
 
-  observe_latency_breakdown(
-      breakdown.queue_ms, breakdown.batch_ms, breakdown.submit_ms,
-      breakdown.scheduling_ms, breakdown.codelet_ms, breakdown.inference_ms,
-      breakdown.callback_ms, breakdown.preprocess_ms, breakdown.postprocess_ms);
+  observe_latency_breakdown(LatencyBreakdownMetrics{
+      breakdown.queue_ms,
+      breakdown.batch_ms,
+      breakdown.submit_ms,
+      breakdown.scheduling_ms,
+      breakdown.codelet_ms,
+      breakdown.inference_ms,
+      breakdown.callback_ms,
+      breakdown.preprocess_ms,
+      breakdown.postprocess_ms,
+  });
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (async_hooks.before_final_cancel_check && context.cancel_flag != nullptr) {

@@ -253,16 +253,11 @@ class MetricsRegistry {
 #endif  // SONAR_IGNORE_END
 
  private:
+  class Sampler;
+
   void initialize(
       int port, bool start_sampler_thread,
       std::unique_ptr<ExposerHandle> exposer_handle);
-  void sample_cpu_usage();
-  void sample_inference_throughput();
-  void sample_process_resident_memory();
-  void sample_process_open_fds();
-  void sample_gpu_stats();
-  void perform_sampling_request_nb();
-  void sampling_loop(const std::stop_token& stop);
 
   static constexpr std::size_t kHashCombineMagic = 0x9e3779b97f4a7c15ULL;
   static constexpr std::size_t kHashCombineShiftLeft = 6U;
@@ -554,6 +549,19 @@ class MetricsRegistry {
   Providers providers_;
   MetricCaches caches_;
   MetricMutexes mutexes_;
+  std::unique_ptr<Sampler> sampler_;
+};
+
+struct LatencyBreakdownMetrics {
+  double queue_ms{0.0};
+  double batch_ms{0.0};
+  double submit_ms{0.0};
+  double scheduling_ms{0.0};
+  double codelet_ms{0.0};
+  double inference_ms{0.0};
+  double callback_ms{0.0};
+  double preprocess_ms{0.0};
+  double postprocess_ms{0.0};
 };
 
 auto init_metrics(int port) -> bool;
@@ -578,10 +586,7 @@ void increment_inference_failure(
 void observe_batch_size(std::size_t batch_size);
 void observe_logical_batch_size(std::size_t logical_jobs);
 void observe_batch_efficiency(double ratio);
-void observe_latency_breakdown(
-    double queue_ms, double batch_ms, double submit_ms, double scheduling_ms,
-    double codelet_ms, double inference_ms, double callback_ms,
-    double preprocess_ms, double postprocess_ms);
+void observe_latency_breakdown(const LatencyBreakdownMetrics& breakdown);
 void observe_starpu_task_runtime(double runtime_ms);
 void observe_model_load_duration(double duration_ms);
 void set_model_loaded(

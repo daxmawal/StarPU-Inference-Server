@@ -804,6 +804,24 @@ make_default_cpu_usage_provider() -> CpuUsageProvider
       });
 }
 
+class MetricsRegistry::Sampler {
+ public:
+  explicit Sampler(MetricsRegistry& registry) : registry_(registry) {}
+
+  void run_sampling_request_nb();
+  void sampling_loop(const std::stop_token& stop);
+  void sample_process_open_fds();
+  void sample_process_resident_memory();
+  void sample_inference_throughput();
+
+ private:
+  void sample_cpu_usage();
+  void sample_gpu_stats();
+  void perform_sampling_request_nb();
+
+  MetricsRegistry& registry_;
+};
+
 MetricsRegistry::MetricsRegistry(int port)
     : MetricsRegistry(
           port, query_gpu_stats_nvml, make_default_cpu_usage_provider())
@@ -827,6 +845,7 @@ MetricsRegistry::MetricsRegistry(
   if (!providers_.cpu_usage_provider) {
     providers_.cpu_usage_provider = make_default_cpu_usage_provider();
   }
+  sampler_ = std::make_unique<Sampler>(*this);
   initialize(port, start_sampler_thread, std::move(exposer_handle));
 }
 
@@ -1187,7 +1206,7 @@ MetricsRegistry::initialize(
 
   if (start_sampler_thread) {
     registry_state_.sampler_thread = std::jthread(
-        [this](const std::stop_token& stop) { this->sampling_loop(stop); });
+        [this](const std::stop_token& stop) { sampler_->sampling_loop(stop); });
   }
 }
 
@@ -1448,10 +1467,7 @@ observe_batch_efficiency(double ratio)
 }
 
 void
-observe_latency_breakdown(
-    double queue_ms, double batch_ms, double submit_ms, double scheduling_ms,
-    double codelet_ms, double inference_ms, double callback_ms,
-    double preprocess_ms, double postprocess_ms)
+observe_latency_breakdown(const LatencyBreakdownMetrics& breakdown)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
   if (!metrics_ptr) {
@@ -1464,15 +1480,21 @@ observe_latency_breakdown(
     }
   };
 
-  observe_if(metrics_ptr->histograms().queue_latency, queue_ms);
-  observe_if(metrics_ptr->histograms().batch_collect_latency, batch_ms);
-  observe_if(metrics_ptr->histograms().submit_latency, submit_ms);
-  observe_if(metrics_ptr->histograms().scheduling_latency, scheduling_ms);
-  observe_if(metrics_ptr->histograms().codelet_latency, codelet_ms);
-  observe_if(metrics_ptr->histograms().inference_compute_latency, inference_ms);
-  observe_if(metrics_ptr->histograms().callback_latency, callback_ms);
-  observe_if(metrics_ptr->histograms().preprocess_latency, preprocess_ms);
-  observe_if(metrics_ptr->histograms().postprocess_latency, postprocess_ms);
+  observe_if(metrics_ptr->histograms().queue_latency, breakdown.queue_ms);
+  observe_if(
+      metrics_ptr->histograms().batch_collect_latency, breakdown.batch_ms);
+  observe_if(metrics_ptr->histograms().submit_latency, breakdown.submit_ms);
+  observe_if(
+      metrics_ptr->histograms().scheduling_latency, breakdown.scheduling_ms);
+  observe_if(metrics_ptr->histograms().codelet_latency, breakdown.codelet_ms);
+  observe_if(
+      metrics_ptr->histograms().inference_compute_latency,
+      breakdown.inference_ms);
+  observe_if(metrics_ptr->histograms().callback_latency, breakdown.callback_ms);
+  observe_if(
+      metrics_ptr->histograms().preprocess_latency, breakdown.preprocess_ms);
+  observe_if(
+      metrics_ptr->histograms().postprocess_latency, breakdown.postprocess_ms);
 }
 
 void
@@ -2008,29 +2030,39 @@ MetricsRegistry::queue_capacity_value() const -> std::size_t
 void
 MetricsRegistry::run_sampling_request_nb()
 {
-  std::scoped_lock<std::mutex> lock(mutexes_.sampling);
-  perform_sampling_request_nb();
+  if (sampler_ != nullptr) {
+    sampler_->run_sampling_request_nb();
+  }
 }
 #endif  // SONAR_IGNORE_END
 
 void
-MetricsRegistry::sample_cpu_usage()
+MetricsRegistry::Sampler::run_sampling_request_nb()
 {
-  if (gauges_.system_cpu_usage_percent == nullptr) {
+  std::scoped_lock<std::mutex> lock(registry_.mutexes_.sampling);
+  perform_sampling_request_nb();
+}
+
+void
+MetricsRegistry::Sampler::sample_cpu_usage()
+{
+  auto& gauges = registry_.gauges_;
+  auto& providers = registry_.providers_;
+  if (gauges.system_cpu_usage_percent == nullptr) {
     return;
   }
-  if (!providers_.cpu_usage_provider) {
-    gauges_.system_cpu_usage_percent->Set(
+  if (!providers.cpu_usage_provider) {
+    gauges.system_cpu_usage_percent->Set(
         std::numeric_limits<double>::quiet_NaN());
     return;
   }
 
   try {
-    auto usage = providers_.cpu_usage_provider();
+    auto usage = providers.cpu_usage_provider();
     if (usage.has_value()) {
-      gauges_.system_cpu_usage_percent->Set(*usage);
+      gauges.system_cpu_usage_percent->Set(*usage);
     } else {
-      gauges_.system_cpu_usage_percent->Set(
+      gauges.system_cpu_usage_percent->Set(
           std::numeric_limits<double>::quiet_NaN());
     }
   }
@@ -2038,69 +2070,75 @@ MetricsRegistry::sample_cpu_usage()
     if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
       log_error(std::format("CPU metrics sampling failed: {}", e.what()));
     }
-    gauges_.system_cpu_usage_percent->Set(
+    gauges.system_cpu_usage_percent->Set(
         std::numeric_limits<double>::quiet_NaN());
   }
   catch (...) {
     if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
       log_error("CPU metrics sampling failed due to an unknown error");
     }
-    gauges_.system_cpu_usage_percent->Set(
+    gauges.system_cpu_usage_percent->Set(
         std::numeric_limits<double>::quiet_NaN());
   }
 }
 
 void
-MetricsRegistry::sample_inference_throughput()
+MetricsRegistry::Sampler::sample_inference_throughput()
 {
-  if (gauges_.inference_throughput == nullptr) {
+  auto& gauges = registry_.gauges_;
+  if (gauges.inference_throughput == nullptr) {
     return;
   }
 
   if (auto snap = perf_observer::snapshot()) {
-    gauges_.inference_throughput->Set(snap->throughput);
+    gauges.inference_throughput->Set(snap->throughput);
   }
 }
 
 void
-MetricsRegistry::sample_process_resident_memory()
+MetricsRegistry::Sampler::sample_process_resident_memory()
 {
-  if (gauges_.process_resident_memory_bytes == nullptr) {
+  auto& gauges = registry_.gauges_;
+  if (gauges.process_resident_memory_bytes == nullptr) {
     return;
   }
 
   if (auto rss_bytes = monitoring::detail::read_process_rss_bytes();
       rss_bytes.has_value()) {
-    gauges_.process_resident_memory_bytes->Set(*rss_bytes);
+    gauges.process_resident_memory_bytes->Set(*rss_bytes);
   } else {
-    gauges_.process_resident_memory_bytes->Set(
+    gauges.process_resident_memory_bytes->Set(
         std::numeric_limits<double>::quiet_NaN());
   }
 }
 
 void
-MetricsRegistry::sample_process_open_fds()
+MetricsRegistry::Sampler::sample_process_open_fds()
 {
-  if (gauges_.process_open_fds == nullptr) {
+  auto& gauges = registry_.gauges_;
+  if (gauges.process_open_fds == nullptr) {
     return;
   }
 
   if (auto fds = monitoring::detail::read_process_open_fds(); fds.has_value()) {
-    gauges_.process_open_fds->Set(*fds);
+    gauges.process_open_fds->Set(*fds);
   } else {
-    gauges_.process_open_fds->Set(std::numeric_limits<double>::quiet_NaN());
+    gauges.process_open_fds->Set(std::numeric_limits<double>::quiet_NaN());
   }
 }
 
 void
-MetricsRegistry::sample_gpu_stats()
+MetricsRegistry::Sampler::sample_gpu_stats()
 {
-  if (!providers_.gpu_stats_provider) {
+  auto& providers = registry_.providers_;
+  auto& caches = registry_.caches_;
+  auto& families = registry_.families_;
+  if (!providers.gpu_stats_provider) {
     return;
   }
 
   try {
-    auto gstats = providers_.gpu_stats_provider();
+    auto gstats = providers.gpu_stats_provider();
     std::unordered_set<int> seen_indices;
     seen_indices.reserve(gstats.size());
     for (const auto& stats : gstats) {
@@ -2108,36 +2146,34 @@ MetricsRegistry::sample_gpu_stats()
       const std::string label = std::to_string(stats.index);
 
       ensure_gpu_gauge(
-          caches_.gpu.utilization, families_.gpu_utilization, stats.index,
-          label)
+          caches.gpu.utilization, families.gpu_utilization, stats.index, label)
           ->Set(stats.util_percent);
       ensure_gpu_gauge(
-          caches_.gpu.memory_used, families_.gpu_memory_used_bytes, stats.index,
+          caches.gpu.memory_used, families.gpu_memory_used_bytes, stats.index,
           label)
           ->Set(stats.mem_used_bytes);
       ensure_gpu_gauge(
-          caches_.gpu.memory_total, families_.gpu_memory_total_bytes,
-          stats.index, label)
+          caches.gpu.memory_total, families.gpu_memory_total_bytes, stats.index,
+          label)
           ->Set(stats.mem_total_bytes);
 
       set_or_clear_nan(
-          caches_.gpu.temperature, families_.gpu_temperature, stats.index,
-          label, stats.temperature_celsius);
+          caches.gpu.temperature, families.gpu_temperature, stats.index, label,
+          stats.temperature_celsius);
       set_or_clear_nan(
-          caches_.gpu.power, families_.gpu_power, stats.index, label,
+          caches.gpu.power, families.gpu_power, stats.index, label,
           stats.power_watts);
     }
 
     clear_missing_gauges(
-        caches_.gpu.utilization, families_.gpu_utilization, seen_indices);
+        caches.gpu.utilization, families.gpu_utilization, seen_indices);
     clear_missing_gauges(
-        caches_.gpu.memory_used, families_.gpu_memory_used_bytes, seen_indices);
+        caches.gpu.memory_used, families.gpu_memory_used_bytes, seen_indices);
     clear_missing_gauges(
-        caches_.gpu.memory_total, families_.gpu_memory_total_bytes,
-        seen_indices);
+        caches.gpu.memory_total, families.gpu_memory_total_bytes, seen_indices);
     clear_missing_gauges(
-        caches_.gpu.temperature, families_.gpu_temperature, seen_indices);
-    clear_missing_gauges(caches_.gpu.power, families_.gpu_power, seen_indices);
+        caches.gpu.temperature, families.gpu_temperature, seen_indices);
+    clear_missing_gauges(caches.gpu.power, families.gpu_power, seen_indices);
   }
   catch (const std::exception& e) {
     if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
@@ -2152,7 +2188,7 @@ MetricsRegistry::sample_gpu_stats()
 }
 
 void
-MetricsRegistry::perform_sampling_request_nb()
+MetricsRegistry::Sampler::perform_sampling_request_nb()
 {
   sample_cpu_usage();
   sample_inference_throughput();
@@ -2162,13 +2198,13 @@ MetricsRegistry::perform_sampling_request_nb()
 }
 
 void
-MetricsRegistry::sampling_loop(const std::stop_token& stop)
+MetricsRegistry::Sampler::sampling_loop(const std::stop_token& stop)
 {
   using namespace std::chrono_literals;
   auto next_sleep = 1000ms;
   while (!stop.stop_requested()) {
     {
-      std::scoped_lock<std::mutex> lock(mutexes_.sampling);
+      std::scoped_lock<std::mutex> lock(registry_.mutexes_.sampling);
       perform_sampling_request_nb();
     }
     for (auto slept = 0ms; slept < next_sleep && !stop.stop_requested();
@@ -2272,21 +2308,27 @@ void
 starpu_server::MetricsRegistry::TestAccessor::SampleProcessOpenFds(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.sample_process_open_fds();
+  if (metrics.sampler_ != nullptr) {
+    metrics.sampler_->sample_process_open_fds();
+  }
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::SampleProcessResidentMemory(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.sample_process_resident_memory();
+  if (metrics.sampler_ != nullptr) {
+    metrics.sampler_->sample_process_resident_memory();
+  }
 }
 
 void
 starpu_server::MetricsRegistry::TestAccessor::SampleInferenceThroughput(
     starpu_server::MetricsRegistry& metrics)
 {
-  metrics.sample_inference_throughput();
+  if (metrics.sampler_ != nullptr) {
+    metrics.sampler_->sample_inference_throughput();
+  }
 }
 
 void

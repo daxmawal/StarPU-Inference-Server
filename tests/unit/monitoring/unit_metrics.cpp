@@ -693,7 +693,17 @@ TEST(Metrics, ObserveLatencyBreakdownUpdatesHistograms)
     ~MetricsGuard() { shutdown_metrics(); }
   } guard;
 
-  observe_latency_breakdown(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+  observe_latency_breakdown(LatencyBreakdownMetrics{
+      1.0,
+      2.0,
+      3.0,
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+  });
 
   const auto metrics = get_metrics();
   ASSERT_NE(metrics, nullptr);
