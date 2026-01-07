@@ -903,6 +903,65 @@ TEST(InferenceServiceImpl, FillOutputTensorUsesFallbackName)
   EXPECT_EQ(reply.outputs(0).name(), "output1");
 }
 
+TEST(InferenceServiceImpl, BuildLatencyBreakdownMapsTimingFields)
+{
+  const auto base = starpu_server::MonotonicClock::time_point{};
+  starpu_server::detail::TimingInfo info{};
+  info.enqueued_time = base;
+  info.dequeued_time = base + std::chrono::milliseconds(10);
+  info.batch_collect_start_time = base + std::chrono::milliseconds(12);
+  info.batch_collect_end_time = base + std::chrono::milliseconds(20);
+  info.before_starpu_submitted_time = base + std::chrono::milliseconds(30);
+  info.codelet_start_time = base + std::chrono::milliseconds(45);
+  info.codelet_end_time = base + std::chrono::milliseconds(60);
+  info.inference_start_time = base + std::chrono::milliseconds(70);
+  info.callback_start_time = base + std::chrono::milliseconds(85);
+  info.callback_end_time = base + std::chrono::milliseconds(100);
+
+  auto breakdown = starpu_server::InferenceServiceImpl::TestAccessor::
+      BuildLatencyBreakdownForTest(info, 123.0);
+
+  EXPECT_DOUBLE_EQ(breakdown.queue_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.batch_ms, 8.0);
+  EXPECT_DOUBLE_EQ(breakdown.submit_ms, 18.0);
+  EXPECT_DOUBLE_EQ(breakdown.scheduling_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.codelet_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.inference_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.callback_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.total_ms, 123.0);
+  EXPECT_DOUBLE_EQ(breakdown.preprocess_ms, 0.0);
+  EXPECT_DOUBLE_EQ(breakdown.postprocess_ms, 0.0);
+  EXPECT_DOUBLE_EQ(breakdown.overall_ms, 0.0);
+}
+
+TEST(InferenceServiceImpl, BuildLatencyBreakdownUsesDequeuedFallback)
+{
+  const auto base = starpu_server::MonotonicClock::time_point{};
+  starpu_server::detail::TimingInfo info{};
+  info.enqueued_time = base + std::chrono::milliseconds(5);
+  info.dequeued_time = base + std::chrono::milliseconds(15);
+  info.batch_collect_start_time = starpu_server::MonotonicClock::time_point{};
+  info.batch_collect_end_time = starpu_server::MonotonicClock::time_point{};
+  info.before_starpu_submitted_time = base + std::chrono::milliseconds(25);
+  info.codelet_start_time = base + std::chrono::milliseconds(35);
+  info.codelet_end_time = base + std::chrono::milliseconds(45);
+  info.inference_start_time = base + std::chrono::milliseconds(55);
+  info.callback_start_time = base + std::chrono::milliseconds(70);
+  info.callback_end_time = base + std::chrono::milliseconds(80);
+
+  auto breakdown = starpu_server::InferenceServiceImpl::TestAccessor::
+      BuildLatencyBreakdownForTest(info, 80.5);
+
+  EXPECT_DOUBLE_EQ(breakdown.queue_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.batch_ms, 0.0);
+  EXPECT_DOUBLE_EQ(breakdown.submit_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.scheduling_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.codelet_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.inference_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.callback_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.total_ms, 80.5);
+}
+
 TEST(
     InferenceServiceImpl,
     HandleAsyncInferCompletionReturnsWhenCancelledInitially)

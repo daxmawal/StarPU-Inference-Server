@@ -1009,6 +1009,13 @@ InferenceServiceImpl::TestAccessor::FillOutputTensorForTest(
 }
 
 auto
+InferenceServiceImpl::TestAccessor::BuildLatencyBreakdownForTest(
+    const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown
+{
+  return build_latency_breakdown(info, latency_ms);
+}
+
+auto
 InferenceServiceImpl::TestAccessor::HandleAsyncInferCompletionForTest(
     bool cancelled) -> bool
 {

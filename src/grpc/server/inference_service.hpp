@@ -144,6 +144,8 @@ class InferenceServiceImpl final
         const std::vector<torch::Tensor>& outputs,
         const std::vector<std::size_t>& output_indices,
         const std::vector<std::string>& output_names) -> grpc::Status;
+    static auto BuildLatencyBreakdownForTest(
+        const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
     static auto HandleAsyncInferCompletionForTest(bool cancelled) -> bool;
   };
 #endif  // SONAR_IGNORE_END
