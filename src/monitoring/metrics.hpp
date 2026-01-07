@@ -256,7 +256,7 @@ class MetricsRegistry {
   class Sampler;
 
   void initialize(
-      int port, bool start_sampler_thread,
+      [[maybe_unused]] int port, bool start_sampler_thread,
       std::unique_ptr<ExposerHandle> exposer_handle);
 
   static constexpr std::size_t kHashCombineMagic = 0x9e3779b97f4a7c15ULL;

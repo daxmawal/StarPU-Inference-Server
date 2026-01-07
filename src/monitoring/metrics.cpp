@@ -245,16 +245,15 @@ clear_missing_gauges(
     prometheus::Family<prometheus::Gauge>* family,
     const std::unordered_set<int>& seen_indices)
 {
-  for (auto iter = gauges.begin(); iter != gauges.end();) {
-    if (!seen_indices.contains(iter->first)) {
-      if (family != nullptr) {
-        family->Remove(iter->second);
-      }
-      iter = gauges.erase(iter);
-    } else {
-      ++iter;
+  std::erase_if(gauges, [family, &seen_indices](const auto& entry) {
+    if (seen_indices.contains(entry.first)) {
+      return false;
     }
-  }
+    if (family != nullptr) {
+      family->Remove(entry.second);
+    }
+    return true;
+  });
 }
 
 auto
@@ -851,7 +850,7 @@ MetricsRegistry::MetricsRegistry(
 
 void
 MetricsRegistry::initialize(
-    int port, bool start_sampler_thread,
+    [[maybe_unused]] int port, bool start_sampler_thread,
     std::unique_ptr<ExposerHandle> exposer_handle)
 {
   try {
