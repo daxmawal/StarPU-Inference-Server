@@ -31,12 +31,16 @@ class MetricsRegistry;
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
  public:
+  struct InputShapeConfig {
+    std::vector<std::vector<int64_t>> expected_input_dims;
+    int max_batch_size = 0;
+  };
+
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-      std::string default_model_name = {},
+      InputShapeConfig input_shape_config, std::string default_model_name = {},
       std::vector<std::string> expected_input_names = {},
       std::vector<std::string> expected_output_names = {});
 
@@ -81,6 +85,17 @@ class InferenceServiceImpl final
     double postprocess_ms = 0.0;
     double total_ms = 0.0;
     double overall_ms = 0.0;
+  };
+
+  struct PopulateResponseOptions {
+    std::string_view model_name_override;
+    bool set_prepost_overall = true;
+    std::span<const std::string> output_names;
+
+    PopulateResponseOptions()
+        : model_name_override(), set_prepost_overall(true), output_names()
+    {
+    }
   };
 
   struct AsyncFailureInfo {
@@ -142,9 +157,7 @@ class InferenceServiceImpl final
       inference::ModelInferResponse* reply,
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
       const LatencyBreakdown& breakdown,
-      std::string_view model_name_override = {},
-      bool set_prepost_overall = true,
-      std::span<const std::string> output_names = {}) -> grpc::Status;
+      PopulateResponseOptions options = {}) -> grpc::Status;
 
   using AsyncJobCallback = std::function<void(
       grpc::Status, std::vector<torch::Tensor>, LatencyBreakdown,

@@ -122,8 +122,8 @@ class RpcDoneTag final : public AsyncCallDataBase,
   static auto Create(OnDone on_done, std::shared_ptr<void> call_guard)
       -> std::shared_ptr<RpcDoneTag>
   {
-    return std::shared_ptr<RpcDoneTag>(
-        new RpcDoneTag(std::move(on_done), std::move(call_guard)));
+    return std::make_shared<RpcDoneTag>(
+        std::move(on_done), std::move(call_guard));
   }
 
   void Arm(grpc::ServerContext* context)
@@ -145,12 +145,12 @@ class RpcDoneTag final : public AsyncCallDataBase,
     self_ref_.reset();
   }
 
- private:
   RpcDoneTag(OnDone on_done, std::shared_ptr<void> call_guard)
       : on_done_(std::move(on_done)), call_guard_(std::move(call_guard))
   {
   }
 
+ private:
   OnDone on_done_;
   std::shared_ptr<void> call_guard_;
   std::shared_ptr<RpcDoneTag> self_ref_;
@@ -435,7 +435,7 @@ build_expected_index_by_name(
           grpc::StatusCode::INVALID_ARGUMENT,
           std::format("Configured input name missing at index {}", i)};
     }
-    const auto [it, inserted] = expected_index_by_name.emplace(name, i);
+    const auto [it, inserted] = expected_index_by_name.try_emplace(name, i);
     if (!inserted) {
       return {
           grpc::StatusCode::INVALID_ARGUMENT,
@@ -471,16 +471,21 @@ resolve_expected_index(
   return Status::OK;
 }
 
+struct ProcessInputContext {
+  const std::unordered_map<std::string_view, std::size_t>*
+      expected_index_by_name;
+  const std::vector<at::ScalarType>& expected_input_types;
+  const std::vector<std::vector<int64_t>>& expected_input_dims;
+  int max_batch_size;
+  std::vector<torch::Tensor>& ordered_inputs;
+  std::vector<std::shared_ptr<const void>>* ordered_lifetimes;
+  std::vector<bool>& filled;
+};
+
 auto
 process_input(
     const ModelInferRequest* request, int input_index,
-    const std::unordered_map<std::string_view, std::size_t>*
-        expected_index_by_name,
-    const std::vector<at::ScalarType>& expected_input_types,
-    const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, std::vector<torch::Tensor>& ordered_inputs,
-    std::vector<std::shared_ptr<const void>>* ordered_lifetimes,
-    std::vector<bool>& filled) -> Status
+    const ProcessInputContext& context) -> Status
 {
   const auto& input = request->inputs(input_index);
   const auto& raw = request->raw_input_contents(input_index);
@@ -488,14 +493,15 @@ process_input(
 
   std::size_t expected_index = 0;
   Status status = resolve_expected_index(
-      input, input_index, expected_index_by_name, filled, expected_index);
+      input, input_index, context.expected_index_by_name, context.filled,
+      expected_index);
   if (!status.ok()) {
     return status;
   }
 
   at::ScalarType dtype = at::kFloat;
-  status =
-      parse_input_dtype(input, expected_input_types[expected_index], dtype);
+  status = parse_input_dtype(
+      input, context.expected_input_types[expected_index], dtype);
   if (!status.ok()) {
     return status;
   }
@@ -504,26 +510,26 @@ process_input(
   std::shared_ptr<const void> tensor_guard;
   status = convert_input_to_tensor(
       input, shape, raw, dtype, tensor,
-      ordered_lifetimes != nullptr ? &tensor_guard : nullptr);
+      context.ordered_lifetimes != nullptr ? &tensor_guard : nullptr);
   if (!status.ok()) {
     return status;
   }
 
-  if (expected_index < expected_input_dims.size()) {
-    const auto& expected_dims = expected_input_dims[expected_index];
-    const bool batching_allowed = (max_batch_size > 0);
+  if (expected_index < context.expected_input_dims.size()) {
+    const auto& expected_dims = context.expected_input_dims[expected_index];
+    const bool batching_allowed = (context.max_batch_size > 0);
     status = validate_configured_shape(
-        shape, expected_dims, batching_allowed, max_batch_size);
+        shape, expected_dims, batching_allowed, context.max_batch_size);
     if (!status.ok()) {
       return status;
     }
   }
 
-  ordered_inputs[expected_index] = std::move(tensor);
-  if (ordered_lifetimes != nullptr) {
-    (*ordered_lifetimes)[expected_index] = std::move(tensor_guard);
+  context.ordered_inputs[expected_index] = std::move(tensor);
+  if (context.ordered_lifetimes != nullptr) {
+    (*context.ordered_lifetimes)[expected_index] = std::move(tensor_guard);
   }
-  filled[expected_index] = true;
+  context.filled[expected_index] = true;
   return Status::OK;
 }
 
@@ -568,19 +574,81 @@ fill_output_tensor(
   }
   return Status::OK;
 }
+
+auto
+build_job_failure_result(InferenceJob& job)
+    -> std::pair<Status, std::optional<InferenceServiceImpl::AsyncFailureInfo>>
+{
+  std::optional<InferenceServiceImpl::AsyncFailureInfo> failure_info;
+  Status status = Status::OK;
+  if (auto job_failure = job.take_failure_info()) {
+    const std::string reason = job_failure->reason;
+    const std::string detail_message = job_failure->message;
+    std::string message;
+    if (!reason.empty() && !detail_message.empty()) {
+      message =
+          std::format("Inference failed ({}): {}", reason, detail_message);
+    } else if (!reason.empty()) {
+      message = std::format("Inference failed ({})", reason);
+    } else if (!detail_message.empty()) {
+      message = std::format("Inference failed: {}", detail_message);
+    } else {
+      message = "Inference failed";
+    }
+    status = {grpc::StatusCode::INTERNAL, message};
+    InferenceServiceImpl::AsyncFailureInfo info{};
+    info.stage = std::move(job_failure->stage);
+    info.reason = std::move(job_failure->reason);
+    info.metrics_reported = job_failure->metrics_reported;
+    failure_info = std::move(info);
+  } else {
+    InferenceServiceImpl::AsyncFailureInfo info{};
+    info.stage = "execution";
+    info.reason = "empty_output";
+    failure_info = std::move(info);
+    status = {grpc::StatusCode::INTERNAL, "Inference failed"};
+  }
+  return {status, std::move(failure_info)};
+}
+
+void
+handle_async_job_completion(
+    InferenceJob& job, InferenceServiceImpl::AsyncJobCallback& callback,
+    std::vector<torch::Tensor> outs, double latency_ms)
+{
+  const auto& info = job.timing_info();
+  const auto base = detail::compute_latency_breakdown(info, latency_ms);
+  InferenceServiceImpl::LatencyBreakdown timing{};
+  timing.queue_ms = base.queue_ms;
+  timing.batch_ms = base.batch_ms;
+  timing.submit_ms = base.submit_ms;
+  timing.scheduling_ms = base.scheduling_ms;
+  timing.codelet_ms = base.codelet_ms;
+  timing.inference_ms = base.inference_ms;
+  timing.callback_ms = base.callback_ms;
+  timing.total_ms = base.total_ms;
+  detail::TimingInfo copied_info = info;
+
+  if (outs.empty()) {
+    auto [status, failure_info] = build_job_failure_result(job);
+    callback(status, {}, timing, copied_info, std::move(failure_info));
+    return;
+  }
+
+  callback(Status::OK, std::move(outs), timing, copied_info, std::nullopt);
+}
 }  // namespace
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
-    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-    std::string default_model_name,
+    InputShapeConfig input_shape_config, std::string default_model_name,
     std::vector<std::string> expected_input_names,
     std::vector<std::string> expected_output_names)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types)),
-      expected_input_dims_(std::move(expected_input_dims)),
-      max_batch_size_(max_batch_size),
+      expected_input_dims_(std::move(input_shape_config.expected_input_dims)),
+      max_batch_size_(input_shape_config.max_batch_size),
       default_model_name_(std::move(default_model_name))
 {
   expected_input_names_ = normalize_names(
@@ -599,9 +667,9 @@ InferenceServiceImpl::InferenceServiceImpl(
     std::vector<std::string> expected_input_names,
     std::vector<std::string> expected_output_names)
     : InferenceServiceImpl(
-          queue, reference_outputs, std::move(expected_input_types), {}, 0,
-          std::move(default_model_name), std::move(expected_input_names),
-          std::move(expected_output_names))
+          queue, reference_outputs, std::move(expected_input_types),
+          InputShapeConfig{}, std::move(default_model_name),
+          std::move(expected_input_names), std::move(expected_output_names))
 {
 }
 
@@ -675,13 +743,17 @@ InferenceServiceImpl::validate_and_convert_inputs(
     ordered_lifetimes.resize(expected_count);
   }
   std::vector<bool> filled(expected_count, false);
+  const ProcessInputContext process_context{
+      use_name_mapping ? &expected_index_by_name : nullptr,
+      expected_input_types_,
+      expected_input_dims_,
+      max_batch_size_,
+      ordered_inputs,
+      input_lifetimes != nullptr ? &ordered_lifetimes : nullptr,
+      filled};
 
   for (int i = 0; i < request->inputs_size(); ++i) {
-    Status status = process_input(
-        request, i, use_name_mapping ? &expected_index_by_name : nullptr,
-        expected_input_types_, expected_input_dims_, max_batch_size_,
-        ordered_inputs,
-        input_lifetimes != nullptr ? &ordered_lifetimes : nullptr, filled);
+    Status status = process_input(request, i, process_context);
     if (!status.ok()) {
       return status;
     }
@@ -772,45 +844,7 @@ InferenceServiceImpl::submit_job_async(
   job->set_on_complete([job, callback = std::move(on_complete)](
                            std::vector<torch::Tensor> outs,
                            double latency_ms) mutable {
-    const auto& info = job->timing_info();
-    auto timing = build_latency_breakdown(info, latency_ms);
-    detail::TimingInfo copied_info = info;
-
-    if (outs.empty()) {
-      std::optional<InferenceServiceImpl::AsyncFailureInfo> failure_info;
-      Status status = Status::OK;
-      if (auto job_failure = job->take_failure_info()) {
-        const std::string reason = job_failure->reason;
-        const std::string detail_message = job_failure->message;
-        std::string message;
-        if (!reason.empty() && !detail_message.empty()) {
-          message =
-              std::format("Inference failed ({}): {}", reason, detail_message);
-        } else if (!reason.empty()) {
-          message = std::format("Inference failed ({})", reason);
-        } else if (!detail_message.empty()) {
-          message = std::format("Inference failed: {}", detail_message);
-        } else {
-          message = "Inference failed";
-        }
-        status = {grpc::StatusCode::INTERNAL, message};
-        AsyncFailureInfo info{};
-        info.stage = std::move(job_failure->stage);
-        info.reason = std::move(job_failure->reason);
-        info.metrics_reported = job_failure->metrics_reported;
-        failure_info = std::move(info);
-      } else {
-        AsyncFailureInfo info{};
-        info.stage = "execution";
-        info.reason = "empty_output";
-        failure_info = std::move(info);
-        status = {grpc::StatusCode::INTERNAL, "Inference failed"};
-      }
-      callback(status, {}, timing, copied_info, std::move(failure_info));
-      return;
-    }
-
-    callback(Status::OK, std::move(outs), timing, copied_info, std::nullopt);
+    handle_async_job_completion(*job, callback, std::move(outs), latency_ms);
   });
 
   bool pushed = false;
@@ -1115,9 +1149,13 @@ InferenceServiceImpl::finalize_successful_completion(
       context.output_names != nullptr
           ? std::span<const std::string>(*context.output_names)
           : std::span<const std::string>{};
+  InferenceServiceImpl::PopulateResponseOptions response_options;
+  response_options.model_name_override = context.resolved_model_name;
+  response_options.set_prepost_overall = false;
+  response_options.output_names = output_names;
   Status populate_status = populate_response(
       context.request, context.reply, outs, context.recv_ms, breakdown,
-      context.resolved_model_name, /*set_prepost_overall=*/false, output_names);
+      response_options);
   if (!populate_status.ok()) {
     increment_request_status(
         static_cast<int>(populate_status.error_code()),
@@ -1403,12 +1441,11 @@ auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
-    const LatencyBreakdown& breakdown, std::string_view model_name_override,
-    bool set_prepost_overall,
-    std::span<const std::string> output_names) -> Status
+    const LatencyBreakdown& breakdown,
+    PopulateResponseOptions options) -> Status
 {
-  if (!model_name_override.empty()) {
-    reply->set_model_name(std::string(model_name_override));
+  if (!options.model_name_override.empty()) {
+    reply->set_model_name(std::string(options.model_name_override));
   } else {
     reply->set_model_name(request->model_name());
   }
@@ -1421,7 +1458,7 @@ InferenceServiceImpl::populate_response(
   reply->set_server_codelet_ms(breakdown.codelet_ms);
   reply->set_server_inference_ms(breakdown.inference_ms);
   reply->set_server_callback_ms(breakdown.callback_ms);
-  if (set_prepost_overall) {
+  if (options.set_prepost_overall) {
     reply->set_server_preprocess_ms(breakdown.preprocess_ms);
     reply->set_server_postprocess_ms(breakdown.postprocess_ms);
     reply->set_server_overall_ms(breakdown.overall_ms);
@@ -1429,13 +1466,14 @@ InferenceServiceImpl::populate_response(
   reply->set_server_total_ms(breakdown.total_ms);
 
   const auto resolved_names =
-      resolve_output_names(output_names, outputs.size());
+      resolve_output_names(options.output_names, outputs.size());
   std::vector<std::size_t> output_indices;
   if (request->outputs_size() > 0) {
     std::unordered_map<std::string_view, std::size_t> index_by_name;
     index_by_name.reserve(resolved_names.size());
     for (std::size_t i = 0; i < resolved_names.size(); ++i) {
-      const auto [it, inserted] = index_by_name.emplace(resolved_names[i], i);
+      const auto [it, inserted] =
+          index_by_name.try_emplace(resolved_names[i], i);
       if (!inserted) {
         return {
             grpc::StatusCode::INVALID_ARGUMENT,
@@ -1786,8 +1824,10 @@ RunGrpcServer(
     const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
-      &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size, options.default_model_name,
+      &queue, &reference_outputs, expected_input_types,
+      InferenceServiceImpl::InputShapeConfig{
+          expected_input_dims, max_batch_size},
+      options.default_model_name,
       std::vector<std::string>(
           expected_input_names.begin(), expected_input_names.end()),
       std::vector<std::string>(

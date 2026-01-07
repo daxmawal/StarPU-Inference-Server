@@ -600,8 +600,10 @@ TEST(InferenceServiceImpl, PopulateResponseUsesOverrideModelName)
   breakdown.overall_ms = 2.0;
 
   const std::string server_model = "server_model";
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.model_name_override = server_model;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, breakdown, server_model);
+      &req, &reply, outputs, recv_ms, breakdown, options);
   ASSERT_TRUE(status.ok());
   reply.set_server_send_ms(send_ms);
   starpu_server::verify_populate_response(
@@ -619,8 +621,10 @@ TEST(InferenceServiceImpl, PopulateResponseRejectsEmptyRequestedOutputName)
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   std::vector<std::string> output_names = {"out0"};
 
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.output_names = output_names;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, breakdown, {}, true, output_names);
+      &req, &reply, outputs, recv_ms, breakdown, options);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   EXPECT_NE(
@@ -639,8 +643,10 @@ TEST(InferenceServiceImpl, PopulateResponseRejectsUnknownRequestedOutputName)
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   std::vector<std::string> output_names = {"known"};
 
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.output_names = output_names;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, breakdown, {}, true, output_names);
+      &req, &reply, outputs, recv_ms, breakdown, options);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   EXPECT_NE(
@@ -661,8 +667,10 @@ TEST(InferenceServiceImpl, PopulateResponseRejectsDuplicateRequestedOutputName)
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   std::vector<std::string> output_names = {"dup"};
 
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.output_names = output_names;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, breakdown, {}, true, output_names);
+      &req, &reply, outputs, recv_ms, breakdown, options);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   EXPECT_NE(
@@ -683,8 +691,10 @@ TEST(
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   std::vector<std::string> output_names = {"dup", "dup"};
 
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.output_names = output_names;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, breakdown, {}, true, output_names);
+      &req, &reply, outputs, recv_ms, breakdown, options);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   EXPECT_NE(
