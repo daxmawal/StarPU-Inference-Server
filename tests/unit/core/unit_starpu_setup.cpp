@@ -2191,6 +2191,26 @@ TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
       starpu_server::StarPUInitializationException);
 }
 
+TEST(StarPUSetup_Unit, EmptyDeviceIdsThrows)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::StarPUSetup setup(opts);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ(
+              "[ERROR] use_cuda requires explicit device_ids configuration",
+              ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
 TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
 {
   starpu_server::RuntimeConfig opts;
