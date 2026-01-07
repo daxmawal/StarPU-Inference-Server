@@ -256,19 +256,8 @@ clear_missing_gauges(
   });
 }
 
-auto
-cpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
-{
-  static std::atomic<std::int64_t> last_log_ts{0};
-  return last_log_ts;
-}
-
-auto
-gpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
-{
-  static std::atomic<std::int64_t> last_log_ts{0};
-  return last_log_ts;
-}
+inline std::atomic<std::int64_t> cpu_sampling_error_log_ts{0};
+inline std::atomic<std::int64_t> gpu_sampling_error_log_ts{0};
 
 auto
 should_log_sampling_error(std::atomic<std::int64_t>& last_log) -> bool
@@ -2046,7 +2035,7 @@ void
 MetricsRegistry::Sampler::sample_cpu_usage()
 {
   auto& gauges = registry_.gauges_;
-  auto& providers = registry_.providers_;
+  const auto& providers = registry_.providers_;
   if (gauges.system_cpu_usage_percent == nullptr) {
     return;
   }
@@ -2066,14 +2055,14 @@ MetricsRegistry::Sampler::sample_cpu_usage()
     }
   }
   catch (const std::exception& e) {
-    if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
+    if (should_log_sampling_error(cpu_sampling_error_log_ts)) {
       log_error(std::format("CPU metrics sampling failed: {}", e.what()));
     }
     gauges.system_cpu_usage_percent->Set(
         std::numeric_limits<double>::quiet_NaN());
   }
   catch (...) {
-    if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
+    if (should_log_sampling_error(cpu_sampling_error_log_ts)) {
       log_error("CPU metrics sampling failed due to an unknown error");
     }
     gauges.system_cpu_usage_percent->Set(
@@ -2129,7 +2118,7 @@ MetricsRegistry::Sampler::sample_process_open_fds()
 void
 MetricsRegistry::Sampler::sample_gpu_stats()
 {
-  auto& providers = registry_.providers_;
+  const auto& providers = registry_.providers_;
   auto& caches = registry_.caches_;
   auto& families = registry_.families_;
   if (!providers.gpu_stats_provider) {
@@ -2175,12 +2164,12 @@ MetricsRegistry::Sampler::sample_gpu_stats()
     clear_missing_gauges(caches.gpu.power, families.gpu_power, seen_indices);
   }
   catch (const std::exception& e) {
-    if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
+    if (should_log_sampling_error(gpu_sampling_error_log_ts)) {
       log_error(std::format("GPU metrics sampling failed: {}", e.what()));
     }
   }
   catch (...) {
-    if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
+    if (should_log_sampling_error(gpu_sampling_error_log_ts)) {
       log_error("GPU metrics sampling failed due to an unknown error");
     }
   }
