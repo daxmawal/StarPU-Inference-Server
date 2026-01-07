@@ -1031,54 +1031,76 @@ InferenceServiceImpl::CallbackHandle::Invoke(Status status) -> bool
   return true;
 }
 
-void
-InferenceServiceImpl::handle_async_infer_completion(
+auto
+InferenceServiceImpl::is_async_cancelled(
+    const AsyncInferCompletionContext& context) -> bool
+{
+  return context.cancel_flag != nullptr &&
+         context.cancel_flag->load(std::memory_order_acquire);
+}
+
+auto
+InferenceServiceImpl::prepare_async_completion(
+    const AsyncInferCompletionContext& context,
+    const std::shared_ptr<CallbackHandle>& callback_handle) -> bool
+{
+  if (is_async_cancelled(context)) {
+    return false;
+  }
+  if (!callback_handle->TryAcquire()) {
+    return false;
+  }
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& async_hooks = handle_async_infer_completion_test_hooks();
+  if (async_hooks.after_try_acquire && context.cancel_flag != nullptr) {
+    async_hooks.after_try_acquire(context.cancel_flag);
+  }
+#endif  // SONAR_IGNORE_END
+  if (is_async_cancelled(context)) {
+    return false;
+  }
+  return true;
+}
+
+auto
+InferenceServiceImpl::handle_job_failure(
     const AsyncInferCompletionContext& context, const Status& job_status,
+    const std::shared_ptr<CallbackHandle>& callback_handle) -> bool
+{
+  if (job_status.ok()) {
+    return false;
+  }
+  increment_request_status(
+      static_cast<int>(job_status.error_code()), context.resolved_model_name);
+  const bool metrics_reported =
+      context.failure_info && context.failure_info->metrics_reported;
+  if (!metrics_reported) {
+    std::string stage = "execution";
+    std::string reason = status_reason(job_status);
+    if (context.failure_info) {
+      if (!context.failure_info->stage.empty()) {
+        stage = context.failure_info->stage;
+      }
+      if (!context.failure_info->reason.empty()) {
+        reason = context.failure_info->reason;
+      }
+    }
+    increment_inference_failure(stage, reason, context.resolved_model_name);
+  }
+  callback_handle->Invoke(job_status);
+  return true;
+}
+
+void
+InferenceServiceImpl::finalize_successful_completion(
+    const AsyncInferCompletionContext& context,
     const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
-    detail::TimingInfo timing_info)
+    const detail::TimingInfo& timing_info)
 {
   const auto& callback_handle = context.callback_handle;
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto& async_hooks = handle_async_infer_completion_test_hooks();
 #endif  // SONAR_IGNORE_END
-  if (context.cancel_flag != nullptr &&
-      context.cancel_flag->load(std::memory_order_acquire)) {
-    return;
-  }
-  if (!callback_handle->TryAcquire()) {
-    return;
-  }
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (async_hooks.after_try_acquire && context.cancel_flag != nullptr) {
-    async_hooks.after_try_acquire(context.cancel_flag);
-  }
-#endif  // SONAR_IGNORE_END
-  if (context.cancel_flag != nullptr &&
-      context.cancel_flag->load(std::memory_order_acquire)) {
-    return;
-  }
-
-  if (!job_status.ok()) {
-    increment_request_status(
-        static_cast<int>(job_status.error_code()), context.resolved_model_name);
-    const bool metrics_reported =
-        context.failure_info && context.failure_info->metrics_reported;
-    if (!metrics_reported) {
-      std::string stage = "execution";
-      std::string reason = status_reason(job_status);
-      if (context.failure_info) {
-        if (!context.failure_info->stage.empty()) {
-          stage = context.failure_info->stage;
-        }
-        if (!context.failure_info->reason.empty()) {
-          reason = context.failure_info->reason;
-        }
-      }
-      increment_inference_failure(stage, reason, context.resolved_model_name);
-    }
-    callback_handle->Invoke(job_status);
-    return;
-  }
 
   const auto zero_tp = MonotonicClock::time_point{};
   if (timing_info.enqueued_time > zero_tp) {
@@ -1155,14 +1177,29 @@ InferenceServiceImpl::handle_async_infer_completion(
     async_hooks.before_final_cancel_check(context.cancel_flag);
   }
 #endif  // SONAR_IGNORE_END
-  if (context.cancel_flag != nullptr &&
-      context.cancel_flag->load(std::memory_order_acquire)) {
+  if (is_async_cancelled(context)) {
     return;
   }
 
   increment_request_status(
       static_cast<int>(grpc::StatusCode::OK), context.resolved_model_name);
   callback_handle->Invoke(Status::OK);
+}
+
+void
+InferenceServiceImpl::handle_async_infer_completion(
+    const AsyncInferCompletionContext& context, const Status& job_status,
+    const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
+    detail::TimingInfo timing_info)
+{
+  const auto& callback_handle = context.callback_handle;
+  if (!prepare_async_completion(context, callback_handle)) {
+    return;
+  }
+  if (handle_job_failure(context, job_status, callback_handle)) {
+    return;
+  }
+  finalize_successful_completion(context, outs, breakdown, timing_info);
 }
 
 namespace {

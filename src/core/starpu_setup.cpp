@@ -71,14 +71,13 @@ apply_starpu_env(const RuntimeConfig& opts)
   if (const bool scheduler_in_config =
           opts.starpu_env.contains(kStarpuSchedulerEnvVar);
       !scheduler_in_config &&
-      std::getenv(kStarpuSchedulerEnvVar.data()) == nullptr) {
-    if (setenv(
-            kStarpuSchedulerEnvVar.data(), kDefaultStarpuScheduler.data(), 0) !=
-        0) {
-      throw StarPUInitializationException(std::format(
-          "Failed to set default StarPU scheduler {}: {}",
-          kDefaultStarpuScheduler, std::strerror(errno)));
-    }
+      std::getenv(kStarpuSchedulerEnvVar.data()) == nullptr &&
+      setenv(
+          kStarpuSchedulerEnvVar.data(), kDefaultStarpuScheduler.data(), 0) !=
+          0) {
+    throw StarPUInitializationException(std::format(
+        "Failed to set default StarPU scheduler {}: {}",
+        kDefaultStarpuScheduler, std::strerror(errno)));
   }
 
   for (const auto& [name, value] : opts.starpu_env) {
@@ -246,7 +245,7 @@ get_env_unsigned(const RuntimeConfig& opts, const char* key)
 {
   if (const auto env_it = opts.starpu_env.find(key);
       env_it != opts.starpu_env.end()) {
-    if (auto parsed = parse_unsigned(env_it->second)) {
+    if (auto parsed = parse_unsigned(env_it->second); parsed.has_value()) {
       return parsed;
     }
     log_warning(std::format(
@@ -256,7 +255,7 @@ get_env_unsigned(const RuntimeConfig& opts, const char* key)
   }
 
   if (const char* env_value = std::getenv(key); env_value != nullptr) {
-    if (auto parsed = parse_unsigned(env_value)) {
+    if (auto parsed = parse_unsigned(env_value); parsed.has_value()) {
       return parsed;
     }
     log_warning(std::format(

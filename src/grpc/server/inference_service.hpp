@@ -206,6 +206,20 @@ class InferenceServiceImpl final
     std::optional<AsyncFailureInfo> failure_info;
   };
 
+  static auto is_async_cancelled(const AsyncInferCompletionContext& context)
+      -> bool;
+  static auto prepare_async_completion(
+      const AsyncInferCompletionContext& context,
+      const std::shared_ptr<CallbackHandle>& callback_handle) -> bool;
+  static auto handle_job_failure(
+      const AsyncInferCompletionContext& context,
+      const grpc::Status& job_status,
+      const std::shared_ptr<CallbackHandle>& callback_handle) -> bool;
+  static void finalize_successful_completion(
+      const AsyncInferCompletionContext& context,
+      const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
+      const detail::TimingInfo& timing_info);
+
   static void handle_async_infer_completion(
       const AsyncInferCompletionContext& context,
       const grpc::Status& job_status, const std::vector<torch::Tensor>& outs,
