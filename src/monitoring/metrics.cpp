@@ -256,8 +256,19 @@ clear_missing_gauges(
   });
 }
 
-inline std::atomic<std::int64_t> cpu_sampling_error_log_ts{0};
-inline std::atomic<std::int64_t> gpu_sampling_error_log_ts{0};
+auto
+cpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
+{
+  static std::atomic<std::int64_t> ts{0};
+  return ts;
+}
+
+auto
+gpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
+{
+  static std::atomic<std::int64_t> ts{0};
+  return ts;
+}
 
 auto
 should_log_sampling_error(std::atomic<std::int64_t>& last_log) -> bool
@@ -794,7 +805,7 @@ make_default_cpu_usage_provider() -> CpuUsageProvider
 
 class MetricsRegistry::Sampler {
  public:
-  explicit Sampler(MetricsRegistry& registry) : registry_(registry) {}
+  explicit Sampler(MetricsRegistry& registry) : registry_(&registry) {}
 
   void run_sampling_request_nb();
   void sampling_loop(const std::stop_token& stop);
@@ -807,7 +818,7 @@ class MetricsRegistry::Sampler {
   void sample_gpu_stats();
   void perform_sampling_request_nb();
 
-  MetricsRegistry& registry_;
+  MetricsRegistry* registry_;
 };
 
 MetricsRegistry::MetricsRegistry(int port)
@@ -2027,15 +2038,15 @@ MetricsRegistry::run_sampling_request_nb()
 void
 MetricsRegistry::Sampler::run_sampling_request_nb()
 {
-  std::scoped_lock<std::mutex> lock(registry_.mutexes_.sampling);
+  std::scoped_lock<std::mutex> lock(registry_->mutexes_.sampling);
   perform_sampling_request_nb();
 }
 
 void
 MetricsRegistry::Sampler::sample_cpu_usage()
 {
-  auto& gauges = registry_.gauges_;
-  const auto& providers = registry_.providers_;
+  auto& gauges = registry_->gauges_;
+  const auto& providers = registry_->providers_;
   if (gauges.system_cpu_usage_percent == nullptr) {
     return;
   }
@@ -2055,14 +2066,14 @@ MetricsRegistry::Sampler::sample_cpu_usage()
     }
   }
   catch (const std::exception& e) {
-    if (should_log_sampling_error(cpu_sampling_error_log_ts)) {
+    if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
       log_error(std::format("CPU metrics sampling failed: {}", e.what()));
     }
     gauges.system_cpu_usage_percent->Set(
         std::numeric_limits<double>::quiet_NaN());
   }
   catch (...) {
-    if (should_log_sampling_error(cpu_sampling_error_log_ts)) {
+    if (should_log_sampling_error(cpu_sampling_error_log_ts())) {
       log_error("CPU metrics sampling failed due to an unknown error");
     }
     gauges.system_cpu_usage_percent->Set(
@@ -2073,7 +2084,7 @@ MetricsRegistry::Sampler::sample_cpu_usage()
 void
 MetricsRegistry::Sampler::sample_inference_throughput()
 {
-  auto& gauges = registry_.gauges_;
+  auto& gauges = registry_->gauges_;
   if (gauges.inference_throughput == nullptr) {
     return;
   }
@@ -2086,7 +2097,7 @@ MetricsRegistry::Sampler::sample_inference_throughput()
 void
 MetricsRegistry::Sampler::sample_process_resident_memory()
 {
-  auto& gauges = registry_.gauges_;
+  auto& gauges = registry_->gauges_;
   if (gauges.process_resident_memory_bytes == nullptr) {
     return;
   }
@@ -2103,7 +2114,7 @@ MetricsRegistry::Sampler::sample_process_resident_memory()
 void
 MetricsRegistry::Sampler::sample_process_open_fds()
 {
-  auto& gauges = registry_.gauges_;
+  auto& gauges = registry_->gauges_;
   if (gauges.process_open_fds == nullptr) {
     return;
   }
@@ -2118,9 +2129,9 @@ MetricsRegistry::Sampler::sample_process_open_fds()
 void
 MetricsRegistry::Sampler::sample_gpu_stats()
 {
-  const auto& providers = registry_.providers_;
-  auto& caches = registry_.caches_;
-  auto& families = registry_.families_;
+  const auto& providers = registry_->providers_;
+  auto& caches = registry_->caches_;
+  auto& families = registry_->families_;
   if (!providers.gpu_stats_provider) {
     return;
   }
@@ -2164,12 +2175,12 @@ MetricsRegistry::Sampler::sample_gpu_stats()
     clear_missing_gauges(caches.gpu.power, families.gpu_power, seen_indices);
   }
   catch (const std::exception& e) {
-    if (should_log_sampling_error(gpu_sampling_error_log_ts)) {
+    if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
       log_error(std::format("GPU metrics sampling failed: {}", e.what()));
     }
   }
   catch (...) {
-    if (should_log_sampling_error(gpu_sampling_error_log_ts)) {
+    if (should_log_sampling_error(gpu_sampling_error_log_ts())) {
       log_error("GPU metrics sampling failed due to an unknown error");
     }
   }
@@ -2192,7 +2203,7 @@ MetricsRegistry::Sampler::sampling_loop(const std::stop_token& stop)
   auto next_sleep = 1000ms;
   while (!stop.stop_requested()) {
     {
-      std::scoped_lock<std::mutex> lock(registry_.mutexes_.sampling);
+      std::scoped_lock<std::mutex> lock(registry_->mutexes_.sampling);
       perform_sampling_request_nb();
     }
     for (auto slept = 0ms; slept < next_sleep && !stop.stop_requested();

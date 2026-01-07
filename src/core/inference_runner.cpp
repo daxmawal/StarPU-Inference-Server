@@ -91,8 +91,8 @@ get_cuda_device_count() -> int
         "torch::cuda::device_count returned a negative value.");
   }
   using DeviceCountUnsigned = std::make_unsigned_t<RawDeviceCount>;
-  const auto device_count_signed =
-      static_cast<DeviceCountSigned>(device_count_raw);
+  const auto device_count_signed = static_cast<DeviceCountSigned>(
+      static_cast<DeviceCountUnsigned>(device_count_raw));
 
   return sanitize_cuda_device_count(device_count_signed);
 }

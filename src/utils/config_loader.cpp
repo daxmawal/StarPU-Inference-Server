@@ -31,7 +31,8 @@ const std::filesystem::path kDefaultTraceOutputFile{
 struct TransparentStringHash {
   using is_transparent = void;
 
-  [[nodiscard]] std::size_t operator()(std::string_view value) const noexcept
+  [[nodiscard]] auto operator()(std::string_view value) const noexcept
+      -> std::size_t
   {
     return std::hash<std::string_view>{}(value);
   }
