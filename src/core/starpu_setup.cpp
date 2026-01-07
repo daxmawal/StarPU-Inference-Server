@@ -40,8 +40,10 @@
 #include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "logger.hpp"
+#include "monitoring/metrics.hpp"
 #include "runtime_config.hpp"
 #include "tensor_builder.hpp"
+#include "utils/monotonic_clock.hpp"
 #include "utils/nvtx.hpp"
 
 namespace starpu_server {
@@ -66,18 +68,16 @@ worker_stream_query_fn_ref() -> StarPUSetup::WorkerStreamQueryFn&
 void
 apply_starpu_env(const RuntimeConfig& opts)
 {
-  const bool scheduler_in_config =
-      opts.starpu_env.find(kStarpuSchedulerEnvVar) != opts.starpu_env.end();
-
-  if (!scheduler_in_config &&
-      std::getenv(kStarpuSchedulerEnvVar.data()) == nullptr) {
-    if (setenv(
-            kStarpuSchedulerEnvVar.data(), kDefaultStarpuScheduler.data(), 0) !=
-        0) {
-      throw StarPUInitializationException(std::format(
-          "Failed to set default StarPU scheduler {}: {}",
-          kDefaultStarpuScheduler, std::strerror(errno)));
-    }
+  if (const bool scheduler_in_config =
+          opts.starpu_env.contains(kStarpuSchedulerEnvVar);
+      !scheduler_in_config &&
+      std::getenv(kStarpuSchedulerEnvVar.data()) == nullptr &&
+      setenv(
+          kStarpuSchedulerEnvVar.data(), kDefaultStarpuScheduler.data(), 0) !=
+          0) {
+    throw StarPUInitializationException(std::format(
+        "Failed to set default StarPU scheduler {}: {}",
+        kDefaultStarpuScheduler, std::strerror(errno)));
   }
 
   for (const auto& [name, value] : opts.starpu_env) {
@@ -245,7 +245,7 @@ get_env_unsigned(const RuntimeConfig& opts, const char* key)
 {
   if (const auto env_it = opts.starpu_env.find(key);
       env_it != opts.starpu_env.end()) {
-    if (auto parsed = parse_unsigned(env_it->second)) {
+    if (auto parsed = parse_unsigned(env_it->second); parsed.has_value()) {
       return parsed;
     }
     log_warning(std::format(
@@ -255,7 +255,7 @@ get_env_unsigned(const RuntimeConfig& opts, const char* key)
   }
 
   if (const char* env_value = std::getenv(key); env_value != nullptr) {
-    if (auto parsed = parse_unsigned(env_value)) {
+    if (auto parsed = parse_unsigned(env_value); parsed.has_value()) {
       return parsed;
     }
     log_warning(std::format(
@@ -370,8 +370,7 @@ configure_cpu(starpu_conf& conf, const RuntimeConfig& opts)
     worker_bindid[idx] = candidate_gpu_bind_ids[idx % candidate_count];
   }
 
-  std::ranges::copy(
-      cpu_bind_ids.begin(), cpu_bind_ids.end(), worker_bindid.begin());
+  std::ranges::copy(cpu_bind_ids, worker_bindid.begin());
 
   std::string bind_list;
   for (size_t idx = 0; idx < cpu_bind_ids.size(); ++idx) {
@@ -392,6 +391,11 @@ configure_gpu(starpu_conf& conf, const RuntimeConfig& opts)
   if (!opts.devices.use_cuda) {
     conf.ncuda = 0;
     return;
+  }
+
+  if (opts.devices.ids.empty()) {
+    throw std::invalid_argument(
+        "[ERROR] use_cuda requires explicit device_ids configuration");
   }
 
   if (opts.devices.ids.size() > STARPU_NMAXWORKERS) {
@@ -431,7 +435,7 @@ auto
 initialize_input_pool(const RuntimeConfig& opts)
     -> std::unique_ptr<InputSlotPool>
 {
-  if (opts.models.empty() || opts.models[0].inputs.empty()) {
+  if (!opts.model.has_value() || opts.model->inputs.empty()) {
     return nullptr;
   }
 
@@ -448,7 +452,7 @@ auto
 initialize_output_pool(const RuntimeConfig& opts)
     -> std::unique_ptr<OutputSlotPool>
 {
-  if (opts.models.empty() || opts.models[0].outputs.empty()) {
+  if (!opts.model.has_value() || opts.model->outputs.empty()) {
     return nullptr;
   }
 
@@ -456,8 +460,7 @@ initialize_output_pool(const RuntimeConfig& opts)
     return std::make_unique<OutputSlotPool>(opts, opts.batching.pool_size);
   }
   catch (const std::exception& e) {
-    log_error(
-        std::format("Failed to initialize OutputSlotPool: {}", +e.what()));
+    log_error(std::format("Failed to initialize OutputSlotPool: {}", e.what()));
     throw;
   }
 }
@@ -508,13 +511,47 @@ append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs)
     throw UnsupportedModelOutputTypeException("Unsupported model output type");
   }
 }
+
+auto
+buffer_byte_size(const StarpuBufferInterface* buffer_iface) -> size_t
+{
+  if (buffer_iface == nullptr) {
+    throw InferenceExecutionException("[ERROR] StarPU buffer is null");
+  }
+
+  switch (buffer_iface->id) {
+    case STARPU_VARIABLE_INTERFACE_ID:
+      return buffer_iface->elemsize;
+    case STARPU_VECTOR_INTERFACE_ID: {
+      const auto* vec_iface =
+          // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+          reinterpret_cast<const starpu_vector_interface*>(buffer_iface);
+      if (vec_iface->elemsize != 0U &&
+          vec_iface->nx >
+              std::numeric_limits<size_t>::max() / vec_iface->elemsize) {
+        throw InferenceExecutionException(
+            "[ERROR] StarPU buffer size exceeds size_t capacity");
+      }
+      return vec_iface->nx * vec_iface->elemsize;
+    }
+    default:
+      throw InferenceExecutionException(std::format(
+          "[ERROR] Unsupported StarPU buffer interface id {}",
+          static_cast<int>(buffer_iface->id)));
+  }
+}
 }  // namespace
 
-void run_inference(
-    InferenceParams* params, const std::vector<StarpuBufferPtr>& buffers,
-    torch::Device device, torch::jit::script::Module* model,
-    const std::function<void(const at::Tensor&, std::span<std::byte>)>&
-        copy_output_fn);
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+auto
+buffer_byte_size_for_tests(const StarpuBufferInterface* buffer_iface) -> size_t
+{
+  return buffer_byte_size(buffer_iface);
+}
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
+
 // =============================================================================
 // InferenceCodelet: constructor and access to codelet
 // =============================================================================
@@ -565,8 +602,7 @@ run_inference(
       TensorBuilder::prepare_input_ivalues(params, buffers, device);
 
   if (params->timing.inference_start_time != nullptr) {
-    *params->timing.inference_start_time =
-        std::chrono::high_resolution_clock::now();
+    *params->timing.inference_start_time = MonotonicClock::now();
   }
 
   auto result = model->forward(ivalue_inputs);
@@ -579,8 +615,8 @@ run_inference(
   for (size_t i = 0; i < params->num_outputs; ++i) {
     auto* var_iface = buffers[params->num_inputs + i];
     auto* buffer_ptr = std::bit_cast<std::byte*>(var_iface->ptr);
-    const auto byte_size = outputs[i].nbytes();
-    std::span<std::byte> buffer(buffer_ptr, byte_size);
+    const auto buffer_size = buffer_byte_size(var_iface);
+    std::span<std::byte> buffer(buffer_ptr, buffer_size);
     copy_output_fn(outputs[i], buffer);
   }
 }
@@ -605,12 +641,42 @@ run_codelet_inference(
     CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
   if (params->timing.codelet_start_time) {
-    *params->timing.codelet_start_time =
-        std::chrono::high_resolution_clock::now();
+    *params->timing.codelet_start_time = MonotonicClock::now();
   }
 
   const int worker_id = starpu_worker_get_id();
   const int device_id = starpu_worker_get_devid(worker_id);
+  const auto worker_type_label = std::string_view(to_string(executed_on_type));
+  struct WorkerInflightGuard {
+    int worker{};
+    int device{};
+    std::string_view worker_type;
+    bool armed{false};
+
+    WorkerInflightGuard(
+        int worker_id, int device_id, std::string_view worker_type_label,
+        bool armed_flag)
+        : worker(worker_id), device(device_id), worker_type(worker_type_label),
+          armed(armed_flag)
+    {
+    }
+
+    WorkerInflightGuard(const WorkerInflightGuard&) = delete;
+    WorkerInflightGuard(WorkerInflightGuard&&) = delete;
+    auto operator=(const WorkerInflightGuard&) -> WorkerInflightGuard& = delete;
+    auto operator=(WorkerInflightGuard&&) -> WorkerInflightGuard& = delete;
+
+    ~WorkerInflightGuard()
+    {
+      if (armed) {
+        set_worker_inflight_gauge(worker, device, worker_type, 0);
+      }
+    }
+  };
+  WorkerInflightGuard inflight_guard{
+      worker_id, device_id, worker_type_label, /*armed_flag=*/false};
+  set_worker_inflight_gauge(worker_id, device_id, worker_type_label, 1);
+  inflight_guard.armed = true;
 
   if (should_log(VerbosityLevel::Trace, params->verbosity)) {
     log_trace(
@@ -640,8 +706,7 @@ run_codelet_inference(
   }
 
   if (params->timing.codelet_end_time) {
-    *params->timing.codelet_end_time =
-        std::chrono::high_resolution_clock::now();
+    *params->timing.codelet_end_time = MonotonicClock::now();
   }
 }
 
@@ -649,12 +714,31 @@ auto
 select_gpu_module(const InferenceParams& params, const int device_id)
     -> torch::jit::script::Module*
 {
+  const auto invalid_index = std::numeric_limits<size_t>::max();
+  const auto fetch_model = [&](size_t index) -> torch::jit::script::Module* {
+    if (index >= params.models.models_gpu.size()) {
+      return nullptr;
+    }
+    return params.models.models_gpu[index];
+  };
+
+  size_t module_index = invalid_index;
   if (device_id >= 0) {
-    const auto module_index = static_cast<size_t>(device_id);
-    if (module_index < params.models.models_gpu.size()) {
-      if (auto* model_instance = params.models.models_gpu[module_index]) {
-        return model_instance;
+    if (!params.models.device_ids.empty()) {
+      const auto found_device =
+          std::ranges::find(params.models.device_ids, device_id);
+      if (found_device != params.models.device_ids.end()) {
+        module_index = static_cast<size_t>(
+            found_device - params.models.device_ids.begin());
       }
+    } else {
+      module_index = static_cast<size_t>(device_id);
+    }
+  }
+
+  if (module_index != invalid_index) {
+    if (auto* model_instance = fetch_model(module_index)) {
+      return model_instance;
     }
   }
 

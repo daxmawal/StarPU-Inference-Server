@@ -10,5 +10,13 @@ scrape_configs:
         labels:
           instance: "local"
 
+  - job_name: "node_exporter"
+    static_configs:
+      - targets: ["localhost:9100"]
+
+  - job_name: "nvml_exporter"
+    static_configs:
+      - targets: ["localhost:9400"]
+
 rule_files:
   - alerts.yml

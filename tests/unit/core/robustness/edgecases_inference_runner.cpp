@@ -62,40 +62,6 @@ class ConstantModelConfigTest : public ::testing::Test {
   std::optional<starpu_server::TemporaryModelFile> model_file_;
 };
 
-struct WorkerFailOutcome {
-  bool threw_runtime_error;
-  std::string log;
-};
-
-inline auto
-RunWorkerThreadFailureCase(const std::filesystem::path& path)
-    -> WorkerFailOutcome
-{
-  using namespace starpu_server;
-
-  auto opts = make_single_model_runtime_config(path, {1}, at::kFloat);
-  opts.batching.request_nb = 1;
-  opts.devices.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-
-  auto original_launcher = get_worker_thread_launcher();
-  set_worker_thread_launcher([](StarPUTaskRunner&) -> std::jthread {
-    throw std::runtime_error("boom");
-  });
-
-  CaptureStream capture{std::cerr};
-  bool threw = false;
-  try {
-    run_inference_loop(opts, starpu);
-  }
-  catch (const std::runtime_error&) {
-    threw = true;
-  }
-  auto log = capture.str();
-  set_worker_thread_launcher(original_launcher);
-  return WorkerFailOutcome{threw, std::move(log)};
-}
 }  // namespace
 
 TEST_F(ConstantModelConfigTest, LoadModelAndReferenceOutputUnsupported)
@@ -132,24 +98,26 @@ TEST(StarPUSetupRunInference_Integration, BuildsExecutesCopiesAndTimes)
   std::array<float, 3> input{kF1, kF2, kF3};
   std::array<float, 3> output{0.0F, 0.0F, 0.0F};
 
-  auto input_iface = starpu_server::make_variable_interface(input.data());
-  auto output_iface = starpu_server::make_variable_interface(output.data());
+  auto input_iface =
+      starpu_server::make_variable_interface(input.data(), input.size());
+  auto output_iface =
+      starpu_server::make_variable_interface(output.data(), output.size());
 
   auto params = starpu_server::make_basic_params(3);
-  std::chrono::high_resolution_clock::time_point inference_start;
+  starpu_server::MonotonicClock::time_point inference_start;
   params.timing.inference_start_time = &inference_start;
 
   std::vector<StarpuBufferPtr> buffers = {&input_iface, &output_iface};
   auto model = starpu_server::make_add_one_model();
 
-  auto before = std::chrono::high_resolution_clock::now();
+  auto before = starpu_server::MonotonicClock::now();
   starpu_server::run_inference(
       &params, buffers, torch::Device(torch::kCPU), &model,
       [](const at::Tensor& out, std::span<std::byte> buffer) {
         starpu_server::TensorBuilder::copy_output_to_buffer(
             out, buffer, out.numel(), out.scalar_type());
       });
-  auto after = std::chrono::high_resolution_clock::now();
+  auto after = starpu_server::MonotonicClock::now();
 
   EXPECT_FLOAT_EQ(output[0], 2.0F);
   EXPECT_FLOAT_EQ(output[1], 3.0F);
@@ -170,52 +138,4 @@ TEST(InferenceRunner_Robustesse, LoadModelMissingFile)
   catch (const std::exception&) {
     SUCCEED();
   }
-}
-
-TEST(RunInferenceLoop_Robustesse, LoadModelFailureHandledGracefully)
-{
-  using namespace starpu_server;
-
-  auto opts = make_single_model_runtime_config(
-      "nonexistent_model.pt", std::vector<int64_t>{1}, at::kFloat);
-  opts.batching.request_nb = 1;
-  opts.devices.use_cuda = false;
-
-  StarPUSetup starpu(opts);
-
-  CaptureStream capture{std::cerr};
-  run_inference_loop(opts, starpu);
-  EXPECT_NE(capture.str().find("Failed to load model"), std::string::npos);
-}
-
-TEST(RunInferenceLoop_Robustesse, WorkerThreadExceptionTriggersShutdown)
-{
-  using namespace starpu_server;
-
-  starpu_server::TemporaryModelFile model_file(
-      "worker_fail", starpu_server::make_identity_model());
-
-  const auto outcome = RunWorkerThreadFailureCase(model_file.path());
-  EXPECT_TRUE(outcome.threw_runtime_error);
-  EXPECT_NE(
-      outcome.log.find("Failed to start worker thread: boom"),
-      std::string::npos);
-}
-
-TEST_F(ConstantModelConfigTest, InvalidCudaDeviceLogsError)
-{
-  using namespace starpu_server;
-
-  auto opts = cuda_config(std::vector<int>{-1});
-  opts.batching.request_nb = 1;
-  opts.batching.warmup_request_nb = 0;
-
-  StarPUSetup starpu(opts);
-
-  CaptureStream capture{std::cerr};
-  EXPECT_NO_THROW(run_inference_loop(opts, starpu));
-  const auto log = capture.str();
-  EXPECT_NE(
-      log.find("Failed to load model or reference outputs:"),
-      std::string::npos);
 }

@@ -20,6 +20,10 @@ namespace starpu_server::testing {
 using StarpuVectorRegisterFn = detail::StarpuVectorRegisterFn;
 using RegisterFailureObserverFn = detail::RegisterFailureObserverFn;
 
+void compute_input_sizes_for_tests(
+    std::size_t per_sample_bytes, std::size_t per_sample_numel,
+    std::size_t batch_size, std::size_t input_index);
+
 inline auto
 set_starpu_vector_register_hook_for_tests(StarpuVectorRegisterFn hook_fn)
     -> StarpuVectorRegisterFn

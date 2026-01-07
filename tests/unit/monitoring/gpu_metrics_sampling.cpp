@@ -3,21 +3,22 @@
 #include <prometheus/metric_family.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <functional>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <ranges>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
-#define private public
-#define protected public
 #include "monitoring/metrics.hpp"
-#undef protected
-#undef private
+#include "utils/monotonic_clock.hpp"
+#include "utils/perf_observer.hpp"
 
 using namespace starpu_server;
 
@@ -32,6 +33,30 @@ struct CerrCapture {
 
   std::stringstream stream;
   std::streambuf* old_buf;
+};
+
+struct ProcessMetricOverrideGuard {
+  ProcessMetricOverrideGuard(
+      std::function<std::optional<double>()> open_fds_override,
+      std::function<std::optional<double>()> rss_override)
+  {
+    monitoring::detail::set_process_open_fds_reader_override(
+        std::move(open_fds_override));
+    monitoring::detail::set_process_rss_bytes_reader_override(
+        std::move(rss_override));
+  }
+
+  ~ProcessMetricOverrideGuard()
+  {
+    monitoring::detail::set_process_open_fds_reader_override({});
+    monitoring::detail::set_process_rss_bytes_reader_override({});
+  }
+};
+
+struct PerfObserverGuard {
+  PerfObserverGuard() { perf_observer::reset(); }
+
+  ~PerfObserverGuard() { perf_observer::reset(); }
 };
 
 auto
@@ -134,6 +159,238 @@ TEST(MetricsSampling, UpdatesGpuAndCpuGaugesOnSuccess)
   metrics.request_stop();
 }
 
+TEST(MetricsSampling, RecordsGpuTemperatureAndPower)
+{
+  const std::vector<MetricsRegistry::GpuSample> samples{
+      MetricsRegistry::GpuSample{
+          .index = 0,
+          .util_percent = 50.0,
+          .mem_used_bytes = 123.0,
+          .mem_total_bytes = 456.0,
+          .temperature_celsius = 70.5,
+          .power_watts = 120.0}};
+
+  auto gpu_provider = [samples]() { return samples; };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  metrics.run_sampling_request_nb();
+
+  const auto families = metrics.registry()->Collect();
+
+  const auto* temp_family = FindFamily(families, "gpu_temperature_celsius");
+  ASSERT_NE(temp_family, nullptr);
+  const auto temp0 = FindGaugeValue(*temp_family, "0");
+  ASSERT_TRUE(temp0.has_value());
+  EXPECT_DOUBLE_EQ(*temp0, samples[0].temperature_celsius);
+
+  const auto* power_family = FindFamily(families, "gpu_power_watts");
+  ASSERT_NE(power_family, nullptr);
+  const auto power0 = FindGaugeValue(*power_family, "0");
+  ASSERT_TRUE(power0.has_value());
+  EXPECT_DOUBLE_EQ(*power0, samples[0].power_watts);
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, RemovesGpuTemperatureGaugeWhenValueIsNaN)
+{
+  const std::vector<MetricsRegistry::GpuSample> initial_samples{
+      MetricsRegistry::GpuSample{
+          .index = 0,
+          .util_percent = 50.0,
+          .mem_used_bytes = 123.0,
+          .mem_total_bytes = 456.0,
+          .temperature_celsius = 70.5,
+          .power_watts = 120.0}};
+  const std::vector<MetricsRegistry::GpuSample> nan_samples{
+      MetricsRegistry::GpuSample{
+          .index = 0,
+          .util_percent = 51.0,
+          .mem_used_bytes = 124.0,
+          .mem_total_bytes = 456.0,
+          .temperature_celsius = std::numeric_limits<double>::quiet_NaN(),
+          .power_watts = 120.0}};
+
+  int calls = 0;
+  auto gpu_provider = [initial_samples, nan_samples, &calls]() mutable {
+    ++calls;
+    return calls == 1 ? initial_samples : nan_samples;
+  };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  metrics.run_sampling_request_nb();
+
+  auto families = metrics.registry()->Collect();
+  const auto* temp_family = FindFamily(families, "gpu_temperature_celsius");
+  ASSERT_NE(temp_family, nullptr);
+  const auto temp0 = FindGaugeValue(*temp_family, "0");
+  ASSERT_TRUE(temp0.has_value());
+
+  metrics.run_sampling_request_nb();
+
+  families = metrics.registry()->Collect();
+  temp_family = FindFamily(families, "gpu_temperature_celsius");
+  // Collect omits empty families, so null means the gauge was removed.
+  if (temp_family != nullptr) {
+    const auto temp0_after = FindGaugeValue(*temp_family, "0");
+    EXPECT_FALSE(temp0_after.has_value());
+  }
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, RemovesMissingGpuGauges)
+{
+  const std::vector<MetricsRegistry::GpuSample> initial_samples{
+      MetricsRegistry::GpuSample{
+          .index = 0,
+          .util_percent = 42.0,
+          .mem_used_bytes = 1024.0,
+          .mem_total_bytes = 2048.0},
+      MetricsRegistry::GpuSample{
+          .index = 1,
+          .util_percent = 13.0,
+          .mem_used_bytes = 512.0,
+          .mem_total_bytes = 1024.0}};
+  const std::vector<MetricsRegistry::GpuSample> reduced_samples{
+      MetricsRegistry::GpuSample{
+          .index = 0,
+          .util_percent = 12.0,
+          .mem_used_bytes = 900.0,
+          .mem_total_bytes = 2048.0}};
+
+  int calls = 0;
+  auto gpu_provider = [initial_samples, reduced_samples, &calls]() mutable {
+    ++calls;
+    return calls == 1 ? initial_samples : reduced_samples;
+  };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  metrics.run_sampling_request_nb();
+
+  auto families = metrics.registry()->Collect();
+  const auto* util_family = FindFamily(families, "gpu_utilization_percent");
+  ASSERT_NE(util_family, nullptr);
+  EXPECT_TRUE(FindGaugeValue(*util_family, "1").has_value());
+
+  metrics.run_sampling_request_nb();
+
+  families = metrics.registry()->Collect();
+  util_family = FindFamily(families, "gpu_utilization_percent");
+  ASSERT_NE(util_family, nullptr);
+  EXPECT_TRUE(FindGaugeValue(*util_family, "0").has_value());
+  EXPECT_FALSE(FindGaugeValue(*util_family, "1").has_value());
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, SkipsProcessSamplingWhenGaugesNull)
+{
+  auto gpu_provider = []() {
+    return std::vector<MetricsRegistry::GpuSample>{};
+  };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  MetricsRegistry::TestAccessor::ClearProcessOpenFdsGauge(metrics);
+  MetricsRegistry::TestAccessor::ClearProcessResidentMemoryGauge(metrics);
+  MetricsRegistry::TestAccessor::ClearInferenceThroughputGauge(metrics);
+
+  EXPECT_NO_THROW(MetricsRegistry::TestAccessor::SampleProcessOpenFds(metrics));
+  EXPECT_NO_THROW(
+      MetricsRegistry::TestAccessor::SampleProcessResidentMemory(metrics));
+  EXPECT_NO_THROW(
+      MetricsRegistry::TestAccessor::SampleInferenceThroughput(metrics));
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, MarksProcessGaugesUnknownWhenSamplingFails)
+{
+  auto gpu_provider = []() {
+    return std::vector<MetricsRegistry::GpuSample>{};
+  };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  ProcessMetricOverrideGuard guard(
+      []() { return std::optional<double>{}; },
+      []() { return std::optional<double>{}; });
+
+  auto* open_fds_gauge =
+      MetricsRegistry::TestAccessor::ProcessOpenFdsGauge(metrics);
+  auto* rss_gauge =
+      MetricsRegistry::TestAccessor::ProcessResidentMemoryGauge(metrics);
+  ASSERT_NE(open_fds_gauge, nullptr);
+  ASSERT_NE(rss_gauge, nullptr);
+
+  open_fds_gauge->Set(42.0);
+  rss_gauge->Set(84.0);
+
+  MetricsRegistry::TestAccessor::SampleProcessOpenFds(metrics);
+  MetricsRegistry::TestAccessor::SampleProcessResidentMemory(metrics);
+
+  EXPECT_TRUE(std::isnan(open_fds_gauge->Value()));
+  EXPECT_TRUE(std::isnan(rss_gauge->Value()));
+
+  metrics.request_stop();
+}
+
+TEST(MetricsSampling, UpdatesInferenceThroughputGaugeFromPerfObserver)
+{
+  using namespace std::chrono_literals;
+  PerfObserverGuard guard;
+
+  auto gpu_provider = []() {
+    return std::vector<MetricsRegistry::GpuSample>{};
+  };
+  auto cpu_provider = []() { return std::optional<double>{}; };
+
+  MetricsRegistry metrics(
+      0, std::move(gpu_provider), std::move(cpu_provider),
+      /*start_sampler_thread=*/false);
+
+  const auto base = MonotonicClock::time_point{};
+  const auto enqueue_time = base + 10ms;
+  const auto completion_time = base + 210ms;
+  constexpr std::size_t kBatchSize = 8;
+
+  perf_observer::record_job(
+      enqueue_time, completion_time, kBatchSize, /*is_warmup_job=*/false);
+
+  MetricsRegistry::TestAccessor::SampleInferenceThroughput(metrics);
+
+  auto* gauge =
+      MetricsRegistry::TestAccessor::InferenceThroughputGauge(metrics);
+  ASSERT_NE(gauge, nullptr);
+
+  const double expected_duration =
+      std::chrono::duration<double>(completion_time - enqueue_time).count();
+  const double expected_throughput =
+      static_cast<double>(kBatchSize) / expected_duration;
+  EXPECT_DOUBLE_EQ(gauge->Value(), expected_throughput);
+
+  metrics.request_stop();
+}
+
 TEST(MetricsSampling, UsesDefaultProvidersWhenMissing)
 {
   MetricsRegistry metrics(
@@ -156,15 +413,18 @@ TEST(MetricsSampling, SkipsGpuMetricsWhenProviderMissing)
       MetricsRegistry::CpuUsageProvider{},
       /*start_sampler_thread=*/false);
 
-  metrics.gpu_stats_provider_ = {};
+  MetricsRegistry::TestAccessor::ClearGpuStatsProvider(metrics);
 
   ASSERT_FALSE(metrics.has_gpu_stats_provider());
 
   EXPECT_NO_THROW(metrics.run_sampling_request_nb());
 
-  EXPECT_TRUE(metrics.gpu_utilization_gauges_.empty());
-  EXPECT_TRUE(metrics.gpu_memory_used_gauges_.empty());
-  EXPECT_TRUE(metrics.gpu_memory_total_gauges_.empty());
+  EXPECT_EQ(
+      MetricsRegistry::TestAccessor::GpuUtilizationGaugeCount(metrics), 0U);
+  EXPECT_EQ(
+      MetricsRegistry::TestAccessor::GpuMemoryUsedGaugeCount(metrics), 0U);
+  EXPECT_EQ(
+      MetricsRegistry::TestAccessor::GpuMemoryTotalGaugeCount(metrics), 0U);
 
   metrics.request_stop();
 }

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <functional>
 #include <future>
@@ -15,6 +16,8 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -39,6 +42,140 @@ using inference::ServerLiveRequest;
 using inference::ServerLiveResponse;
 using inference::ServerReadyRequest;
 using inference::ServerReadyResponse;
+
+namespace {
+
+auto
+status_reason(const Status& status) -> std::string
+{
+  return std::to_string(static_cast<int>(status.error_code()));
+}
+
+auto
+normalize_names(
+    std::vector<std::string> names, std::size_t expected_size,
+    std::string_view fallback_prefix,
+    std::string_view kind) -> std::vector<std::string>
+{
+  if (names.empty()) {
+    return names;
+  }
+
+  if (const bool any_named = std::ranges::any_of(
+          names, [](const auto& name) { return !name.empty(); });
+      !any_named) {
+    return {};
+  }
+
+  if (names.size() != expected_size || expected_size == 0) {
+    log_warning(std::format(
+        "Configured {} names count ({}) does not match expected count ({}); "
+        "ignoring names.",
+        kind, names.size(), expected_size));
+    return {};
+  }
+
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    if (names[i].empty()) {
+      names[i] = std::format("{}{}", fallback_prefix, i);
+    }
+  }
+
+  return names;
+}
+
+auto
+check_missing_named_inputs(
+    const std::vector<bool>& filled,
+    std::span<const std::string> expected_names) -> Status
+{
+  for (std::size_t i = 0; i < filled.size(); ++i) {
+    if (!filled[i]) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          std::format("Missing input tensor '{}'", expected_names[i])};
+    }
+  }
+  return Status::OK;
+}
+
+}  // namespace
+
+namespace {
+
+class AsyncCallDataBase {
+ public:
+  explicit AsyncCallDataBase() = default;
+  AsyncCallDataBase(const AsyncCallDataBase&) = delete;
+  auto operator=(const AsyncCallDataBase&) -> AsyncCallDataBase& = delete;
+  AsyncCallDataBase(AsyncCallDataBase&&) = default;
+  auto operator=(AsyncCallDataBase&&) -> AsyncCallDataBase& = default;
+  virtual ~AsyncCallDataBase() = default;
+  virtual void Proceed(bool is_ok) = 0;
+};
+
+class RpcDoneTag final : public AsyncCallDataBase,
+                         public std::enable_shared_from_this<RpcDoneTag> {
+ public:
+  using OnDone = std::function<void()>;
+
+  static auto Create(OnDone on_done, std::shared_ptr<void> call_guard)
+      -> std::shared_ptr<RpcDoneTag>
+  {
+    return std::make_shared<RpcDoneTag>(
+        std::move(on_done), std::move(call_guard));
+  }
+
+  void Arm(grpc::ServerContext* context)
+  {
+    if (context == nullptr) {
+      return;
+    }
+    self_ref_ = this->shared_from_this();
+    context->AsyncNotifyWhenDone(this);
+  }
+
+  void Proceed(bool is_ok) override
+  {
+    if (is_ok && on_done_) {
+      on_done_();
+    }
+    on_done_ = {};
+    call_guard_.reset();
+    self_ref_.reset();
+  }
+
+  RpcDoneTag(OnDone on_done, std::shared_ptr<void> call_guard)
+      : on_done_(std::move(on_done)), call_guard_(std::move(call_guard))
+  {
+  }
+
+ private:
+  OnDone on_done_;
+  std::shared_ptr<void> call_guard_;
+  std::shared_ptr<RpcDoneTag> self_ref_;
+};
+
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+handle_model_infer_async_test_hooks()
+    -> InferenceServiceImpl::HandleModelInferAsyncTestHooks&
+{
+  static InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks{};
+  return hooks;
+}
+
+auto
+handle_async_infer_completion_test_hooks()
+    -> InferenceServiceImpl::HandleAsyncInferCompletionTestHooks&
+{
+  static InferenceServiceImpl::HandleAsyncInferCompletionTestHooks hooks{};
+  return hooks;
+}
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
+}  // namespace
 
 
 auto
@@ -148,7 +285,10 @@ validate_configured_shape(
     if (auto status = validate_batch_size(batch_size); !status.ok()) {
       return status;
     }
-    return Status::OK;
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor shape does not match configured dimensions or batch "
+        "limits"};
   }
 
   return {
@@ -167,13 +307,29 @@ checked_mul(size_t lhs, size_t rhs) -> std::optional<size_t>
 }
 
 auto
-convert_input_to_tensor(
-    const ModelInferRequest::InferInputTensor& input, const std::string& raw,
-    at::ScalarType dtype,
-    const std::shared_ptr<const ModelInferRequest>& request_guard,
-    torch::Tensor& tensor, std::shared_ptr<const void>* keep_alive) -> Status
+resolve_output_names(
+    std::span<const std::string> output_names,
+    std::size_t output_count) -> std::vector<std::string>
 {
-  std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
+  std::vector<std::string> resolved;
+  resolved.reserve(output_count);
+  for (std::size_t i = 0; i < output_count; ++i) {
+    if (i < output_names.size() && !output_names[i].empty()) {
+      resolved.push_back(output_names[i]);
+    } else {
+      resolved.push_back(std::format("output{}", i));
+    }
+  }
+  return resolved;
+}
+
+auto
+convert_input_to_tensor(
+    const ModelInferRequest::InferInputTensor& input,
+    const std::vector<int64_t>& shape, const std::string& raw,
+    at::ScalarType dtype, torch::Tensor& tensor,
+    std::shared_ptr<const void>* keep_alive) -> Status
+{
   auto options = torch::TensorOptions().dtype(dtype);
 
   std::optional<size_t> expected = element_size(dtype);
@@ -196,37 +352,211 @@ convert_input_to_tensor(
         "Raw input size does not match tensor size"};
   }
 
-  const auto raw_span = std::span<const char>(raw.data(), raw.size());
-  const auto byte_span = std::as_bytes(raw_span);
-  const auto* byte_data = byte_span.data();
-  auto alias = std::shared_ptr<const TensorDataByte>(request_guard, byte_data);
-  auto holder = std::const_pointer_cast<TensorDataByte>(alias);
-  auto deleter = [holder](void* /*unused*/) mutable {
-    auto keep = holder;
-    keep.reset();
-  };
+  auto buffer = std::make_shared<std::vector<TensorDataByte>>(raw.size());
+  if (!raw.empty()) {
+    std::memcpy(buffer->data(), raw.data(), raw.size());
+  }
+  auto deleter = [buffer](void* /*unused*/) mutable { buffer.reset(); };
 
-  TensorDataPtr tensor_data = holder.get();
+  TensorDataPtr tensor_data = buffer->data();
   tensor = torch::from_blob(tensor_data, shape, deleter, options);
   if (keep_alive != nullptr) {
-    *keep_alive = alias;
+    *keep_alive = std::shared_ptr<const void>(buffer, buffer->data());
+  }
+  return Status::OK;
+}
+
+struct InputNameState {
+  bool any_named = false;
+  bool any_unnamed = false;
+};
+
+auto
+validate_input_counts(
+    const ModelInferRequest* request, std::size_t expected_count) -> Status
+{
+  if (request->inputs_size() != static_cast<int>(expected_count)) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format(
+            "Expected {} input tensors but received {}", expected_count,
+            request->inputs_size())};
+  }
+  if (request->raw_input_contents_size() != request->inputs_size()) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Number of raw inputs does not match number of input tensors"};
   }
   return Status::OK;
 }
 
 auto
-fill_output_tensor(
-    ModelInferResponse* reply,
-    const std::vector<torch::Tensor>& outputs) -> Status
+collect_input_name_state(const ModelInferRequest* request) -> InputNameState
 {
-  for (size_t idx = 0; idx < outputs.size(); ++idx) {
-    const auto& original = outputs[idx];
+  InputNameState state{};
+  for (const auto& input : request->inputs()) {
+    if (input.name().empty()) {
+      state.any_unnamed = true;
+    } else {
+      state.any_named = true;
+    }
+  }
+  return state;
+}
+
+auto
+validate_input_names(const InputNameState& state, bool has_expected_names)
+    -> Status
+{
+  if (state.any_named && state.any_unnamed) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "All input tensors must include a name when using named inputs"};
+  }
+  if (has_expected_names && !state.any_named) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor names must be provided"};
+  }
+  return Status::OK;
+}
+
+auto
+build_expected_index_by_name(
+    const std::vector<std::string>& expected_input_names,
+    std::unordered_map<std::string_view, std::size_t>& expected_index_by_name)
+    -> Status
+{
+  expected_index_by_name.reserve(expected_input_names.size());
+  for (std::size_t i = 0; i < expected_input_names.size(); ++i) {
+    const auto& name = expected_input_names[i];
+    if (name.empty()) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          std::format("Configured input name missing at index {}", i)};
+    }
+    const auto [it, inserted] = expected_index_by_name.try_emplace(name, i);
+    if (!inserted) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          std::format("Configured input name '{}' is duplicated", name)};
+    }
+  }
+  return Status::OK;
+}
+
+auto
+resolve_expected_index(
+    const ModelInferRequest::InferInputTensor& input, int input_index,
+    const std::unordered_map<std::string_view, std::size_t>*
+        expected_index_by_name,
+    std::vector<bool>& filled, std::size_t& expected_index) -> Status
+{
+  expected_index = static_cast<std::size_t>(input_index);
+  if (expected_index_by_name == nullptr) {
+    return Status::OK;
+  }
+  const auto it = expected_index_by_name->find(input.name());
+  if (it == expected_index_by_name->end()) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format("Unexpected input tensor name '{}'", input.name())};
+  }
+  expected_index = it->second;
+  if (filled[expected_index]) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format("Input tensor name '{}' is duplicated", input.name())};
+  }
+  return Status::OK;
+}
+
+struct ProcessInputContext {
+  const std::unordered_map<std::string_view, std::size_t>*
+      expected_index_by_name;
+  const std::vector<at::ScalarType>& expected_input_types;
+  const std::vector<std::vector<int64_t>>& expected_input_dims;
+  int max_batch_size;
+  std::vector<torch::Tensor>& ordered_inputs;
+  std::vector<std::shared_ptr<const void>>* ordered_lifetimes;
+  std::vector<bool>& filled;
+};
+
+auto
+process_input(
+    const ModelInferRequest* request, int input_index,
+    const ProcessInputContext& context) -> Status
+{
+  const auto& input = request->inputs(input_index);
+  const auto& raw = request->raw_input_contents(input_index);
+  std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
+
+  std::size_t expected_index = 0;
+  Status status = resolve_expected_index(
+      input, input_index, context.expected_index_by_name, context.filled,
+      expected_index);
+  if (!status.ok()) {
+    return status;
+  }
+
+  at::ScalarType dtype = at::kFloat;
+  status = parse_input_dtype(
+      input, context.expected_input_types[expected_index], dtype);
+  if (!status.ok()) {
+    return status;
+  }
+
+  torch::Tensor tensor;
+  std::shared_ptr<const void> tensor_guard;
+  status = convert_input_to_tensor(
+      input, shape, raw, dtype, tensor,
+      context.ordered_lifetimes != nullptr ? &tensor_guard : nullptr);
+  if (!status.ok()) {
+    return status;
+  }
+
+  if (expected_index < context.expected_input_dims.size()) {
+    const auto& expected_dims = context.expected_input_dims[expected_index];
+    const bool batching_allowed = (context.max_batch_size > 0);
+    status = validate_configured_shape(
+        shape, expected_dims, batching_allowed, context.max_batch_size);
+    if (!status.ok()) {
+      return status;
+    }
+  }
+
+  context.ordered_inputs[expected_index] = std::move(tensor);
+  if (context.ordered_lifetimes != nullptr) {
+    (*context.ordered_lifetimes)[expected_index] = std::move(tensor_guard);
+  }
+  context.filled[expected_index] = true;
+  return Status::OK;
+}
+
+auto
+fill_output_tensor(
+    ModelInferResponse* reply, const std::vector<torch::Tensor>& outputs,
+    std::span<const std::size_t> output_indices,
+    std::span<const std::string> output_names) -> Status
+{
+  for (std::size_t pos = 0; pos < output_indices.size(); ++pos) {
+    const std::size_t output_index = output_indices[pos];
+    if (output_index >= outputs.size()) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          "Requested output index out of range"};
+    }
+    const auto& original = outputs[output_index];
     torch::Tensor out = original;
     if (!original.device().is_cpu()) {
       out = original.to(torch::kCPU);
     }
     auto* out_tensor = reply->add_outputs();
-    out_tensor->set_name(std::format("output{}", idx));
+    if (output_index < output_names.size()) {
+      out_tensor->set_name(output_names[output_index]);
+    } else {
+      out_tensor->set_name(std::format("output{}", output_index));
+    }
     out_tensor->set_datatype(scalar_type_to_datatype(out.scalar_type()));
     for (const auto dim : out.sizes()) {
       out_tensor->add_shape(dim);
@@ -244,28 +574,102 @@ fill_output_tensor(
   }
   return Status::OK;
 }
+
+auto
+build_job_failure_result(InferenceJob& job)
+    -> std::pair<Status, std::optional<InferenceServiceImpl::AsyncFailureInfo>>
+{
+  std::optional<InferenceServiceImpl::AsyncFailureInfo> failure_info;
+  Status status = Status::OK;
+  if (auto job_failure = job.take_failure_info()) {
+    const std::string reason = job_failure->reason;
+    const std::string detail_message = job_failure->message;
+    std::string message;
+    if (!reason.empty() && !detail_message.empty()) {
+      message =
+          std::format("Inference failed ({}): {}", reason, detail_message);
+    } else if (!reason.empty()) {
+      message = std::format("Inference failed ({})", reason);
+    } else if (!detail_message.empty()) {
+      message = std::format("Inference failed: {}", detail_message);
+    } else {
+      message = "Inference failed";
+    }
+    status = {grpc::StatusCode::INTERNAL, message};
+    InferenceServiceImpl::AsyncFailureInfo info{};
+    info.stage = std::move(job_failure->stage);
+    info.reason = std::move(job_failure->reason);
+    info.metrics_reported = job_failure->metrics_reported;
+    failure_info = std::move(info);
+  } else {
+    InferenceServiceImpl::AsyncFailureInfo info{};
+    info.stage = "execution";
+    info.reason = "empty_output";
+    failure_info = std::move(info);
+    status = {grpc::StatusCode::INTERNAL, "Inference failed"};
+  }
+  return {status, std::move(failure_info)};
+}
+
+void
+handle_async_job_completion(
+    InferenceJob& job, InferenceServiceImpl::AsyncJobCallback& callback,
+    std::vector<torch::Tensor> outs, double latency_ms)
+{
+  const auto& info = job.timing_info();
+  const auto base = detail::compute_latency_breakdown(info, latency_ms);
+  InferenceServiceImpl::LatencyBreakdown timing{};
+  timing.queue_ms = base.queue_ms;
+  timing.batch_ms = base.batch_ms;
+  timing.submit_ms = base.submit_ms;
+  timing.scheduling_ms = base.scheduling_ms;
+  timing.codelet_ms = base.codelet_ms;
+  timing.inference_ms = base.inference_ms;
+  timing.callback_ms = base.callback_ms;
+  timing.total_ms = base.total_ms;
+  detail::TimingInfo copied_info = info;
+
+  if (outs.empty()) {
+    auto [status, failure_info] = build_job_failure_result(job);
+    callback(status, {}, timing, copied_info, std::move(failure_info));
+    return;
+  }
+
+  callback(Status::OK, std::move(outs), timing, copied_info, std::nullopt);
+}
 }  // namespace
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
-    std::vector<std::vector<int64_t>> expected_input_dims, int max_batch_size,
-    std::string default_model_name)
+    InputShapeConfig input_shape_config, std::string default_model_name,
+    std::vector<std::string> expected_input_names,
+    std::vector<std::string> expected_output_names)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types)),
-      expected_input_dims_(std::move(expected_input_dims)),
-      max_batch_size_(max_batch_size),
+      expected_input_dims_(std::move(input_shape_config.expected_input_dims)),
+      max_batch_size_(input_shape_config.max_batch_size),
       default_model_name_(std::move(default_model_name))
 {
+  expected_input_names_ = normalize_names(
+      std::move(expected_input_names), expected_input_types_.size(), "input",
+      "input");
+  const std::size_t output_count =
+      reference_outputs_ != nullptr ? reference_outputs_->size() : 0U;
+  expected_output_names_ = normalize_names(
+      std::move(expected_output_names), output_count, "output", "output");
 }
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
     std::vector<at::ScalarType> expected_input_types,
-    std::string default_model_name)
-    : queue_(queue), reference_outputs_(reference_outputs),
-      expected_input_types_(std::move(expected_input_types)),
-      default_model_name_(std::move(default_model_name))
+    std::string default_model_name,
+    std::vector<std::string> expected_input_names,
+    std::vector<std::string> expected_output_names)
+    : InferenceServiceImpl(
+          queue, reference_outputs, std::move(expected_input_types),
+          InputShapeConfig{}, std::move(default_model_name),
+          std::move(expected_input_names), std::move(expected_output_names))
 {
 }
 
@@ -283,16 +687,24 @@ InferenceServiceImpl::ServerReady(
     ServerContext* /*context*/, const ServerReadyRequest* /*request*/,
     ServerReadyResponse* reply) -> Status
 {
-  reply->set_ready(true);
+  const bool ready = queue_ != nullptr && !queue_->is_shutdown();
+  reply->set_ready(ready);
   return Status::OK;
 }
 
 auto
 InferenceServiceImpl::ModelReady(
-    ServerContext* /*context*/, const ModelReadyRequest* /*request*/,
+    ServerContext* /*context*/, const ModelReadyRequest* request,
     ModelReadyResponse* reply) -> Status
 {
-  reply->set_ready(true);
+  bool ready = queue_ != nullptr && !queue_->is_shutdown();
+  if (ready && !default_model_name_.empty()) {
+    const auto& requested_name = request->name();
+    if (!requested_name.empty() && requested_name != default_model_name_) {
+      ready = false;
+    }
+  }
+  reply->set_ready(ready);
   return Status::OK;
 }
 
@@ -301,62 +713,62 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const ModelInferRequest* request, std::vector<torch::Tensor>& inputs,
     std::vector<std::shared_ptr<const void>>* input_lifetimes) -> Status
 {
-  if (request->inputs_size() !=
-      static_cast<int>(expected_input_types_.size())) {
-    return {
-        grpc::StatusCode::INVALID_ARGUMENT,
-        std::format(
-            "Expected {} input tensors but received {}",
-            expected_input_types_.size(), request->inputs_size())};
-  }
-  if (request->raw_input_contents_size() != request->inputs_size()) {
-    return {
-        grpc::StatusCode::INVALID_ARGUMENT,
-        "Number of raw inputs does not match number of input tensors"};
+  if (auto status =
+          validate_input_counts(request, expected_input_types_.size());
+      !status.ok()) {
+    return status;
   }
 
-  auto request_guard = std::shared_ptr<const ModelInferRequest>(
-      request, [](const ModelInferRequest*) {});
+  const auto name_state = collect_input_name_state(request);
+  const bool has_expected_names = !expected_input_names_.empty();
+  if (auto status = validate_input_names(name_state, has_expected_names);
+      !status.ok()) {
+    return status;
+  }
+  const bool use_name_mapping = has_expected_names;
 
-  inputs.reserve(request->inputs_size());
+  std::unordered_map<std::string_view, std::size_t> expected_index_by_name;
+  if (use_name_mapping) {
+    if (auto status = build_expected_index_by_name(
+            expected_input_names_, expected_index_by_name);
+        !status.ok()) {
+      return status;
+    }
+  }
+
+  const std::size_t expected_count = expected_input_types_.size();
+  std::vector<torch::Tensor> ordered_inputs(expected_count);
+  std::vector<std::shared_ptr<const void>> ordered_lifetimes;
   if (input_lifetimes != nullptr) {
-    input_lifetimes->clear();
-    input_lifetimes->reserve(request->inputs_size());
+    ordered_lifetimes.resize(expected_count);
   }
+  std::vector<bool> filled(expected_count, false);
+  const ProcessInputContext process_context{
+      use_name_mapping ? &expected_index_by_name : nullptr,
+      expected_input_types_,
+      expected_input_dims_,
+      max_batch_size_,
+      ordered_inputs,
+      input_lifetimes != nullptr ? &ordered_lifetimes : nullptr,
+      filled};
+
   for (int i = 0; i < request->inputs_size(); ++i) {
-    const auto& input = request->inputs(i);
-    const auto& raw = request->raw_input_contents(i);
-
-    at::ScalarType dtype = at::kFloat;
-    Status status = parse_input_dtype(input, expected_input_types_[i], dtype);
+    Status status = process_input(request, i, process_context);
     if (!status.ok()) {
       return status;
     }
+  }
 
-    torch::Tensor tensor;
-    std::shared_ptr<const void> tensor_guard;
-    status = convert_input_to_tensor(
-        input, raw, dtype, request_guard, tensor,
-        input_lifetimes != nullptr ? &tensor_guard : nullptr);
+  if (use_name_mapping) {
+    Status status = check_missing_named_inputs(filled, expected_input_names_);
     if (!status.ok()) {
       return status;
     }
+  }
 
-    if (static_cast<size_t>(i) < expected_input_dims_.size()) {
-      const auto& expected_dims = expected_input_dims_[static_cast<size_t>(i)];
-      std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
-      const bool batching_allowed = (max_batch_size_ > 0);
-      status = validate_configured_shape(
-          shape, expected_dims, batching_allowed, max_batch_size_);
-      if (!status.ok()) {
-        return status;
-      }
-    }
-
-    inputs.push_back(std::move(tensor));
-    if (input_lifetimes != nullptr) {
-      input_lifetimes->push_back(std::move(tensor_guard));
-    }
+  inputs = std::move(ordered_inputs);
+  if (input_lifetimes != nullptr) {
+    *input_lifetimes = std::move(ordered_lifetimes);
   }
   return Status::OK;
 }
@@ -395,35 +807,45 @@ InferenceServiceImpl::resolve_model_name(std::string model_name) const
 }
 
 auto
+InferenceServiceImpl::next_request_id() -> int
+{
+  constexpr int kMaxRequestId = std::numeric_limits<int>::max();
+  int current = next_request_id_.load(std::memory_order_relaxed);
+  while (true) {
+    int issued = 0;
+    int next = 1;
+    if (current >= 0 && current < kMaxRequestId) {
+      issued = current;
+      next = current + 1;
+    }
+    if (next_request_id_.compare_exchange_weak(
+            current, next, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
+      return issued;
+    }
+  }
+}
+
+auto
 InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
-    std::chrono::high_resolution_clock::time_point receive_time,
-    std::string model_name) -> Status
+    std::shared_ptr<std::atomic<bool>> cancel_flag,
+    MonotonicClock::time_point receive_time, std::string model_name) -> Status
 {
   auto resolved_model_name = resolve_model_name(std::move(model_name));
   auto job = client_utils::create_job(
-      inputs, *reference_outputs_, next_request_id_++,
+      inputs, *reference_outputs_, next_request_id(),
       std::move(input_lifetimes), receive_time, std::move(resolved_model_name));
+  job->set_cancelled_flag(std::move(cancel_flag));
 
   NvtxRange submit_scope("grpc_submit_starpu");
 
-  job->set_on_complete(
-      [job, callback = std::move(on_complete)](
-          std::vector<torch::Tensor> outs, double latency_ms) mutable {
-        const auto& info = job->timing_info();
-        auto timing = build_latency_breakdown(info, latency_ms);
-        detail::TimingInfo copied_info = info;
-
-        if (outs.empty()) {
-          callback(
-              {grpc::StatusCode::INTERNAL, "Inference failed"}, {}, timing,
-              copied_info);
-          return;
-        }
-
-        callback(Status::OK, std::move(outs), timing, copied_info);
-      });
+  job->set_on_complete([job, callback = std::move(on_complete)](
+                           std::vector<torch::Tensor> outs,
+                           double latency_ms) mutable {
+    handle_async_job_completion(*job, callback, std::move(outs), latency_ms);
+  });
 
   bool pushed = false;
   bool queue_full = false;
@@ -431,16 +853,20 @@ InferenceServiceImpl::submit_job_async(
     NvtxRange queue_scope("grpc_submit_starpu_queue");
     pushed = queue_->push(job, &queue_full);
     if (pushed) {
-      const auto enqueued_now = std::chrono::high_resolution_clock::now();
+      const auto enqueued_now = MonotonicClock::now();
       job->timing_info().enqueued_time = enqueued_now;
       job->timing_info().last_enqueued_time = enqueued_now;
     }
   }
   if (!pushed) {
     if (queue_full) {
+      increment_inference_failure("enqueue", "queue_full", job->model_name());
+      increment_rejected_requests();
       BatchingTraceLogger::instance().log_request_rejected(queue_->size());
       return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
     }
+    increment_inference_failure(
+        "enqueue", "queue_unavailable", job->model_name());
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
   if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
@@ -451,6 +877,8 @@ InferenceServiceImpl::submit_job_async(
   return Status::OK;
 }
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 InferenceServiceImpl::submit_job_and_wait(
     const std::vector<torch::Tensor>& inputs,
@@ -468,18 +896,20 @@ InferenceServiceImpl::submit_job_and_wait(
   auto result_promise = std::make_shared<std::promise<JobResult>>();
   auto result_future = result_promise->get_future();
 
-  const auto receive_time = std::chrono::high_resolution_clock::now();
+  const auto receive_time = MonotonicClock::now();
   if (Status submit_status = submit_job_async(
           inputs,
           [result_promise](
               Status status, std::vector<torch::Tensor> outs,
               const LatencyBreakdown& cb_breakdown,
-              const detail::TimingInfo& cb_timing_info) {
+              const detail::TimingInfo& cb_timing_info,
+              std::optional<AsyncFailureInfo> /*failure_info*/) {
             result_promise->set_value(JobResult{
                 std::move(status), std::move(outs), cb_breakdown,
                 cb_timing_info});
           },
-          std::move(input_lifetimes), receive_time);
+          std::move(input_lifetimes), std::shared_ptr<std::atomic<bool>>{},
+          receive_time);
       !submit_status.ok()) {
     outputs.clear();
     return submit_status;
@@ -497,6 +927,117 @@ InferenceServiceImpl::submit_job_and_wait(
   return Status::OK;
 }
 
+void
+InferenceServiceImpl::TestAccessor::SetHandleModelInferAsyncTestHooks(
+    HandleModelInferAsyncTestHooks hooks)
+{
+  handle_model_infer_async_test_hooks() = std::move(hooks);
+}
+
+void
+InferenceServiceImpl::TestAccessor::ClearHandleModelInferAsyncTestHooks()
+{
+  handle_model_infer_async_test_hooks() = HandleModelInferAsyncTestHooks{};
+}
+
+void
+InferenceServiceImpl::TestAccessor::SetHandleAsyncInferCompletionTestHooks(
+    HandleAsyncInferCompletionTestHooks hooks)
+{
+  handle_async_infer_completion_test_hooks() = std::move(hooks);
+}
+
+void
+InferenceServiceImpl::TestAccessor::ClearHandleAsyncInferCompletionTestHooks()
+{
+  handle_async_infer_completion_test_hooks() =
+      HandleAsyncInferCompletionTestHooks{};
+}
+
+auto
+InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+    std::vector<std::string> names, std::size_t expected_size,
+    std::string_view fallback_prefix,
+    std::string_view kind) -> std::vector<std::string>
+{
+  return normalize_names(
+      std::move(names), expected_size, fallback_prefix, kind);
+}
+
+void
+InferenceServiceImpl::TestAccessor::SetExpectedInputNamesForTest(
+    InferenceServiceImpl* service, std::vector<std::string> names)
+{
+  service->expected_input_names_ = std::move(names);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::CheckMissingInputsForTest(
+    const std::vector<bool>& filled,
+    std::span<const std::string> expected_names) -> grpc::Status
+{
+  return check_missing_named_inputs(filled, expected_names);
+}
+
+void
+InferenceServiceImpl::TestAccessor::ArmRpcDoneTagWithNullContextForTest()
+{
+  auto tag = RpcDoneTag::Create([] {}, std::make_shared<int>(0));
+  tag->Arm(nullptr);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::RpcDoneTagProceedForTest(
+    bool is_ok, bool with_on_done) -> bool
+{
+  bool called = false;
+  RpcDoneTag::OnDone on_done =
+      with_on_done ? [&called]() { called = true; } : RpcDoneTag::OnDone{};
+  auto tag = RpcDoneTag::Create(std::move(on_done), std::make_shared<int>(0));
+  tag->Proceed(is_ok);
+  return called;
+}
+
+auto
+InferenceServiceImpl::TestAccessor::FillOutputTensorForTest(
+    inference::ModelInferResponse* reply,
+    const std::vector<torch::Tensor>& outputs,
+    const std::vector<std::size_t>& output_indices,
+    const std::vector<std::string>& output_names) -> grpc::Status
+{
+  return fill_output_tensor(reply, outputs, output_indices, output_names);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::BuildLatencyBreakdownForTest(
+    const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown
+{
+  return build_latency_breakdown(info, latency_ms);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::HandleAsyncInferCompletionForTest(
+    bool cancelled) -> bool
+{
+  inference::ModelInferRequest request;
+  inference::ModelInferResponse reply;
+  std::vector<torch::Tensor> outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
+  bool called = false;
+  auto callback_handle = std::make_shared<CallbackHandle>(
+      [&called](Status /*unused*/) { called = true; });
+  LatencyBreakdown breakdown{};
+  detail::TimingInfo timing_info{};
+  AsyncInferCompletionContext context{
+      &request, &reply,  callback_handle, nullptr,     MonotonicClock::now(),
+      0,        "model", nullptr,         cancel_flag, std::nullopt};
+  handle_async_infer_completion(
+      context, Status::OK, outputs, breakdown, timing_info);
+  return called;
+}
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(
     std::function<void(Status)> callback)
@@ -515,38 +1056,94 @@ InferenceServiceImpl::CallbackHandle::TryAcquire() -> bool
   return true;
 }
 
-void
-InferenceServiceImpl::CallbackHandle::Invoke(Status status)
+auto
+InferenceServiceImpl::CallbackHandle::Invoke(Status status) -> bool
 {
   std::function<void(Status)> callback;
   {
     std::scoped_lock lock(mutex_);
     if (!callback_) {
-      return;
+      return false;
     }
     consumed_ = true;
     callback = std::move(callback_);
   }
   callback(std::move(status));
+  return true;
+}
+
+auto
+InferenceServiceImpl::is_async_cancelled(
+    const AsyncInferCompletionContext& context) -> bool
+{
+  return context.cancel_flag != nullptr &&
+         context.cancel_flag->load(std::memory_order_acquire);
+}
+
+auto
+InferenceServiceImpl::prepare_async_completion(
+    const AsyncInferCompletionContext& context,
+    const std::shared_ptr<CallbackHandle>& callback_handle) -> bool
+{
+  if (is_async_cancelled(context)) {
+    return false;
+  }
+  if (!callback_handle->TryAcquire()) {
+    return false;
+  }
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& async_hooks = handle_async_infer_completion_test_hooks();
+  if (async_hooks.after_try_acquire && context.cancel_flag != nullptr) {
+    async_hooks.after_try_acquire(context.cancel_flag);
+  }
+#endif  // SONAR_IGNORE_END
+  if (is_async_cancelled(context)) {
+    return false;
+  }
+  return true;
+}
+
+auto
+InferenceServiceImpl::handle_job_failure(
+    const AsyncInferCompletionContext& context, const Status& job_status,
+    const std::shared_ptr<CallbackHandle>& callback_handle) -> bool
+{
+  if (job_status.ok()) {
+    return false;
+  }
+  increment_request_status(
+      static_cast<int>(job_status.error_code()), context.resolved_model_name);
+  const bool metrics_reported =
+      context.failure_info && context.failure_info->metrics_reported;
+  if (!metrics_reported) {
+    std::string stage = "execution";
+    std::string reason = status_reason(job_status);
+    if (context.failure_info) {
+      if (!context.failure_info->stage.empty()) {
+        stage = context.failure_info->stage;
+      }
+      if (!context.failure_info->reason.empty()) {
+        reason = context.failure_info->reason;
+      }
+    }
+    increment_inference_failure(stage, reason, context.resolved_model_name);
+  }
+  callback_handle->Invoke(job_status);
+  return true;
 }
 
 void
-InferenceServiceImpl::handle_async_infer_completion(
-    const AsyncInferCompletionContext& context, const Status& job_status,
+InferenceServiceImpl::finalize_successful_completion(
+    const AsyncInferCompletionContext& context,
     const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
-    detail::TimingInfo timing_info)
+    const detail::TimingInfo& timing_info)
 {
   const auto& callback_handle = context.callback_handle;
-  if (!callback_handle->TryAcquire()) {
-    return;
-  }
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& async_hooks = handle_async_infer_completion_test_hooks();
+#endif  // SONAR_IGNORE_END
 
-  if (!job_status.ok()) {
-    callback_handle->Invoke(job_status);
-    return;
-  }
-
-  const auto zero_tp = std::chrono::high_resolution_clock::time_point{};
+  const auto zero_tp = MonotonicClock::time_point{};
   if (timing_info.enqueued_time > zero_tp) {
     const auto preprocess_duration = std::chrono::duration<double, std::milli>(
         timing_info.enqueued_time - context.recv_tp);
@@ -555,18 +1152,33 @@ InferenceServiceImpl::handle_async_infer_completion(
     breakdown.preprocess_ms = 0.0;
   }
 
+  const auto output_names =
+      context.output_names != nullptr
+          ? std::span<const std::string>(*context.output_names)
+          : std::span<const std::string>{};
+  InferenceServiceImpl::PopulateResponseOptions response_options;
+  response_options.model_name_override = context.resolved_model_name;
+  response_options.set_prepost_overall = false;
+  response_options.output_names = output_names;
   Status populate_status = populate_response(
       context.request, context.reply, outs, context.recv_ms, breakdown,
-      context.resolved_model_name);
+      response_options);
   if (!populate_status.ok()) {
+    increment_request_status(
+        static_cast<int>(populate_status.error_code()),
+        context.resolved_model_name);
+    increment_inference_failure(
+        "postprocess", status_reason(populate_status),
+        context.resolved_model_name);
     callback_handle->Invoke(populate_status);
     return;
   }
 
-  const auto send_tp = std::chrono::high_resolution_clock::now();
-  const int64_t send_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                              send_tp.time_since_epoch())
-                              .count();
+  const auto send_tp = MonotonicClock::now();
+  const int64_t send_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count();
   context.reply->set_server_send_ms(send_ms);
 
   if (timing_info.callback_end_time > zero_tp) {
@@ -585,60 +1197,250 @@ InferenceServiceImpl::handle_async_infer_completion(
   context.reply->set_server_postprocess_ms(breakdown.postprocess_ms);
   context.reply->set_server_overall_ms(breakdown.overall_ms);
 
-  if (context.metrics && context.metrics->inference_latency() != nullptr) {
+  if (context.metrics &&
+      context.metrics->histograms().inference_latency != nullptr) {
     const auto latency_ms =
         std::chrono::duration<double, std::milli>(send_tp - context.recv_tp)
             .count();
-    context.metrics->inference_latency()->Observe(latency_ms);
+    context.metrics->histograms().inference_latency->Observe(latency_ms);
   }
 
+  observe_latency_breakdown(LatencyBreakdownMetrics{
+      breakdown.queue_ms,
+      breakdown.batch_ms,
+      breakdown.submit_ms,
+      breakdown.scheduling_ms,
+      breakdown.codelet_ms,
+      breakdown.inference_ms,
+      breakdown.callback_ms,
+      breakdown.preprocess_ms,
+      breakdown.postprocess_ms,
+  });
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (async_hooks.before_final_cancel_check && context.cancel_flag != nullptr) {
+    async_hooks.before_final_cancel_check(context.cancel_flag);
+  }
+#endif  // SONAR_IGNORE_END
+  if (is_async_cancelled(context)) {
+    return;
+  }
+
+  increment_request_status(
+      static_cast<int>(grpc::StatusCode::OK), context.resolved_model_name);
   callback_handle->Invoke(Status::OK);
 }
 
 void
+InferenceServiceImpl::handle_async_infer_completion(
+    const AsyncInferCompletionContext& context, const Status& job_status,
+    const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
+    detail::TimingInfo timing_info)
+{
+  const auto& callback_handle = context.callback_handle;
+  if (!prepare_async_completion(context, callback_handle)) {
+    return;
+  }
+  if (handle_job_failure(context, job_status, callback_handle)) {
+    return;
+  }
+  finalize_successful_completion(context, outs, breakdown, timing_info);
+}
+
+namespace {
+
+auto
+is_context_cancelled(ServerContext* context) -> bool
+{
+  if (context == nullptr) {
+    return false;
+  }
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.is_cancelled_override) {
+    if (auto decision = test_hooks.is_cancelled_override(context);
+        decision.has_value()) {
+      return *decision;
+    }
+  }
+#endif  // SONAR_IGNORE_END
+  return context->IsCancelled();
+}
+
+}  // namespace
+
+void
+InferenceServiceImpl::notify_cancel_flag_created(
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag)
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.on_cancel_flag_created) {
+    test_hooks.on_cancel_flag_created(cancel_flag);
+  }
+#else
+  (void)cancel_flag;
+#endif  // SONAR_IGNORE_END
+}
+
+void
+InferenceServiceImpl::notify_submit_job_async_done(
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag, const Status& status)
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.on_submit_job_async_done) {
+    test_hooks.on_submit_job_async_done(cancel_flag, status);
+  }
+#else
+  (void)cancel_flag;
+  (void)status;
+#endif  // SONAR_IGNORE_END
+}
+
+auto
+InferenceServiceImpl::setup_async_cancellation(
+    ServerContext* context, std::shared_ptr<void>& call_guard,
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    std::string_view resolved_model_name) -> bool
+{
+  if (context == nullptr || !call_guard) {
+    return false;
+  }
+
+  auto on_cancel = [context, cancel_flag, callback_handle,
+                    model_name = std::string(resolved_model_name)]() {
+    if (!is_context_cancelled(context)) {
+      return;
+    }
+    if (cancel_flag->exchange(true, std::memory_order_acq_rel)) {
+      return;
+    }
+    const bool invoked = callback_handle->Invoke(
+        {grpc::StatusCode::CANCELLED, "Request cancelled"});
+    if (invoked) {
+      increment_request_status(
+          static_cast<int>(grpc::StatusCode::CANCELLED), model_name);
+      increment_inference_failure("cancel", "client_cancelled", model_name);
+    }
+  };
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.on_cancel_ready) {
+    test_hooks.on_cancel_ready(on_cancel);
+  }
+#endif  // SONAR_IGNORE_END
+
+  auto done_tag = RpcDoneTag::Create(on_cancel, std::move(call_guard));
+  done_tag->Arm(context);
+  if (is_context_cancelled(context)) {
+    on_cancel();
+    return true;
+  }
+  return false;
+}
+
+auto
+InferenceServiceImpl::handle_input_validation_failure(
+    const Status& status, const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    std::string_view resolved_model_name) -> bool
+{
+  if (status.ok()) {
+    return false;
+  }
+  if (cancel_flag->load(std::memory_order_acquire)) {
+    return true;
+  }
+  increment_request_status(
+      static_cast<int>(status.error_code()), resolved_model_name);
+  increment_inference_failure(
+      "preprocess", status_reason(status), resolved_model_name);
+  callback_handle->Invoke(status);
+  return true;
+}
+
+auto
+InferenceServiceImpl::handle_submit_failure(
+    const Status& status, const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    std::string_view resolved_model_name) -> bool
+{
+  if (status.ok()) {
+    return false;
+  }
+  if (cancel_flag->load(std::memory_order_acquire)) {
+    return true;
+  }
+  increment_request_status(
+      static_cast<int>(status.error_code()), resolved_model_name);
+  callback_handle->Invoke(status);
+  return true;
+}
+
+void
 InferenceServiceImpl::HandleModelInferAsync(
-    ServerContext* /*context*/, const ModelInferRequest* request,
-    ModelInferResponse* reply, std::function<void(Status)> on_done)
+    ServerContext* context, const ModelInferRequest* request,
+    ModelInferResponse* reply, std::function<void(Status)> on_done,
+    std::shared_ptr<void> call_guard)
 {
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
+  notify_cancel_flag_created(cancel_flag);
   NvtxRange request_scope("grpc_handle_infer_request");
 
   auto metrics = get_metrics();
-  if (metrics && metrics->requests_total() != nullptr) {
-    metrics->requests_total()->Increment();
+  if (metrics && metrics->counters().requests_total != nullptr) {
+    metrics->counters().requests_total->Increment();
   }
 
-  auto recv_tp = std::chrono::high_resolution_clock::now();
+  const auto resolved_model_name = resolve_model_name(request->model_name());
+  if (setup_async_cancellation(
+          context, call_guard, cancel_flag, callback_handle,
+          resolved_model_name)) {
+    return;
+  }
+  auto recv_tp = MonotonicClock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        recv_tp.time_since_epoch())
+                        std::chrono::system_clock::now().time_since_epoch())
                         .count();
 
   std::vector<torch::Tensor> inputs;
   std::vector<std::shared_ptr<const void>> input_lifetimes;
   Status status =
       validate_and_convert_inputs(request, inputs, &input_lifetimes);
-  if (!status.ok()) {
-    callback_handle->Invoke(status);
+  if (handle_input_validation_failure(
+          status, cancel_flag, callback_handle, resolved_model_name)) {
     return;
   }
 
-  const auto resolved_model_name = resolve_model_name(request->model_name());
+  if (cancel_flag->load(std::memory_order_acquire)) {
+    return;
+  }
+
+  const auto* output_names = &expected_output_names_;
   status = submit_job_async(
       inputs,
       [request, reply, recv_tp, recv_ms, metrics, callback_handle,
-       resolved_model_name](
+       resolved_model_name, cancel_flag, output_names](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
-          LatencyBreakdown breakdown, detail::TimingInfo timing_info) mutable {
+          LatencyBreakdown breakdown, detail::TimingInfo timing_info,
+          std::optional<AsyncFailureInfo> failure_info) mutable {
         handle_async_infer_completion(
             AsyncInferCompletionContext{
                 request, reply, callback_handle, metrics, recv_tp, recv_ms,
-                resolved_model_name},
+                resolved_model_name, output_names, cancel_flag,
+                std::move(failure_info)},
             job_status, outs, breakdown, timing_info);
       },
-      std::move(input_lifetimes), recv_tp, resolved_model_name);
+      std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name);
 
-  if (!status.ok()) {
-    callback_handle->Invoke(status);
+  notify_submit_job_async_done(cancel_flag, status);
+  if (handle_submit_failure(
+          status, cancel_flag, callback_handle, resolved_model_name)) {
+    return;
   }
 }
 
@@ -647,10 +1449,10 @@ InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
     const LatencyBreakdown& breakdown,
-    std::string_view model_name_override) -> Status
+    PopulateResponseOptions options) -> Status
 {
-  if (!model_name_override.empty()) {
-    reply->set_model_name(std::string(model_name_override));
+  if (!options.model_name_override.empty()) {
+    reply->set_model_name(std::string(options.model_name_override));
   } else {
     reply->set_model_name(request->model_name());
   }
@@ -663,13 +1465,65 @@ InferenceServiceImpl::populate_response(
   reply->set_server_codelet_ms(breakdown.codelet_ms);
   reply->set_server_inference_ms(breakdown.inference_ms);
   reply->set_server_callback_ms(breakdown.callback_ms);
-  reply->set_server_preprocess_ms(breakdown.preprocess_ms);
-  reply->set_server_postprocess_ms(breakdown.postprocess_ms);
-  reply->set_server_overall_ms(breakdown.overall_ms);
+  if (options.set_prepost_overall) {
+    reply->set_server_preprocess_ms(breakdown.preprocess_ms);
+    reply->set_server_postprocess_ms(breakdown.postprocess_ms);
+    reply->set_server_overall_ms(breakdown.overall_ms);
+  }
   reply->set_server_total_ms(breakdown.total_ms);
-  return fill_output_tensor(reply, outputs);
+
+  const auto resolved_names =
+      resolve_output_names(options.output_names, outputs.size());
+  std::vector<std::size_t> output_indices;
+  if (request->outputs_size() > 0) {
+    std::unordered_map<std::string_view, std::size_t> index_by_name;
+    index_by_name.reserve(resolved_names.size());
+    for (std::size_t i = 0; i < resolved_names.size(); ++i) {
+      const auto [it, inserted] =
+          index_by_name.try_emplace(resolved_names[i], i);
+      if (!inserted) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format(
+                "Configured output name '{}' is duplicated",
+                resolved_names[i])};
+      }
+    }
+
+    std::unordered_set<std::string_view> seen;
+    output_indices.reserve(request->outputs_size());
+    for (const auto& requested : request->outputs()) {
+      if (requested.name().empty()) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            "Requested output name must be non-empty"};
+      }
+      const auto it = index_by_name.find(requested.name());
+      if (it == index_by_name.end()) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format(
+                "Requested output '{}' is not available", requested.name())};
+      }
+      if (!seen.insert(it->first).second) {
+        return {
+            grpc::StatusCode::INVALID_ARGUMENT,
+            std::format(
+                "Requested output '{}' is duplicated", requested.name())};
+      }
+      output_indices.push_back(it->second);
+    }
+  } else {
+    output_indices.reserve(outputs.size());
+    for (std::size_t i = 0; i < outputs.size(); ++i) {
+      output_indices.push_back(i);
+    }
+  }
+
+  return fill_output_tensor(reply, outputs, output_indices, resolved_names);
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 InferenceServiceImpl::ModelInfer(
     ServerContext* context, const ModelInferRequest* request,
@@ -683,19 +1537,9 @@ InferenceServiceImpl::ModelInfer(
       });
   return status_future.get();
 }
+#endif  // SONAR_IGNORE_END
 
 namespace {
-
-class AsyncCallDataBase {
- public:
-  explicit AsyncCallDataBase() = default;
-  AsyncCallDataBase(const AsyncCallDataBase&) = delete;
-  auto operator=(const AsyncCallDataBase&) -> AsyncCallDataBase& = delete;
-  AsyncCallDataBase(AsyncCallDataBase&&) = default;
-  auto operator=(AsyncCallDataBase&&) -> AsyncCallDataBase& = default;
-  virtual ~AsyncCallDataBase() = default;
-  virtual void Proceed(bool is_ok) = 0;
-};
 
 template <typename Request, typename Response>
 class UnaryCallData final
@@ -828,11 +1672,13 @@ class ModelInferCallData final
         }
         Start(service_, cq_, impl_);
         auto self = this->shared_from_this();
+        auto call_guard = self;
         impl_->HandleModelInferAsync(
             &ctx_, &request_, &response_,
             [self = std::move(self)](const Status& status) {
               self->OnInferenceComplete(status);
-            });
+            },
+            std::move(call_guard));
         break;
       }
       case Finish:
@@ -865,6 +1711,43 @@ auto
 compute_thread_count() -> std::size_t
 {
   return compute_thread_count_from(std::thread::hardware_concurrency());
+}
+
+void
+run_grpc_server_impl(
+    InferenceServiceImpl& service, const GrpcServerOptions& options,
+    std::unique_ptr<Server>& server)
+{
+  inference::GRPCInferenceService::AsyncService async_service;
+  AsyncServerContext async_context(async_service, service);
+
+  ServerBuilder builder;
+  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
+  async_context.configure(builder);
+  const int grpc_max_message_bytes =
+      options.max_message_bytes >
+              static_cast<std::size_t>(std::numeric_limits<int>::max())
+          ? std::numeric_limits<int>::max()
+          : static_cast<int>(options.max_message_bytes);
+  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
+  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
+
+  server = builder.BuildAndStart();
+  if (!server) {
+    log_error(
+        std::format("Failed to start gRPC server on {}", options.address));
+    set_server_health(false);
+    return;
+  }
+  set_server_health(true);
+  async_context.start();
+  log_info(
+      options.verbosity,
+      std::format("Server listening on {}", options.address));
+  server->Wait();
+  set_server_health(false);
+  async_context.shutdown();
+  server.reset();
 }
 
 }  // namespace
@@ -928,18 +1811,6 @@ AsyncServerContext::shutdown()
   completion_queue_.reset();
 }
 
-auto
-AsyncServerContext::started() const -> bool
-{
-  return started_;
-}
-
-auto
-AsyncServerContext::thread_count() const -> std::size_t
-{
-  return threads_.size();
-}
-
 void
 AsyncServerContext::poll_events()
 {
@@ -955,81 +1826,40 @@ RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     const std::vector<std::vector<int64_t>>& expected_input_dims,
-    int max_batch_size, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server)
+    const std::vector<std::string>& expected_input_names,
+    const std::vector<std::string>& expected_output_names, int max_batch_size,
+    const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
-      &queue, &reference_outputs, expected_input_types, expected_input_dims,
-      max_batch_size, options.default_model_name);
-
-  inference::GRPCInferenceService::AsyncService async_service;
-  AsyncServerContext async_context(async_service, service);
-
-  ServerBuilder builder;
-  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
-  async_context.configure(builder);
-  const int grpc_max_message_bytes =
-      options.max_message_bytes >
-              static_cast<std::size_t>(std::numeric_limits<int>::max())
-          ? std::numeric_limits<int>::max()
-          : static_cast<int>(options.max_message_bytes);
-  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
-  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
-
-  server = builder.BuildAndStart();
-  if (!server) {
-    log_error(
-        std::format("Failed to start gRPC server on {}", options.address));
-    return;
-  }
-  async_context.start();
-  log_info(
-      options.verbosity,
-      std::format("Server listening on {}", options.address));
-  server->Wait();
-  async_context.shutdown();
-  server.reset();
+      &queue, &reference_outputs, expected_input_types,
+      InferenceServiceImpl::InputShapeConfig{
+          expected_input_dims, max_batch_size},
+      options.default_model_name,
+      std::vector<std::string>(
+          expected_input_names.begin(), expected_input_names.end()),
+      std::vector<std::string>(
+          expected_output_names.begin(), expected_output_names.end()));
+  run_grpc_server_impl(service, options, server);
 }
 
 void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
+    const std::vector<std::string>& expected_input_names,
+    const std::vector<std::string>& expected_output_names,
     const GrpcServerOptions& options, std::unique_ptr<Server>& server)
 {
   InferenceServiceImpl service(
       &queue, &reference_outputs,
       std::vector<at::ScalarType>(
           expected_input_types.begin(), expected_input_types.end()),
-      options.default_model_name);
-
-  inference::GRPCInferenceService::AsyncService async_service;
-  AsyncServerContext async_context(async_service, service);
-
-  ServerBuilder builder;
-  builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
-  async_context.configure(builder);
-  const int grpc_max_message_bytes =
-      options.max_message_bytes >
-              static_cast<std::size_t>(std::numeric_limits<int>::max())
-          ? std::numeric_limits<int>::max()
-          : static_cast<int>(options.max_message_bytes);
-  builder.SetMaxReceiveMessageSize(grpc_max_message_bytes);
-  builder.SetMaxSendMessageSize(grpc_max_message_bytes);
-
-  server = builder.BuildAndStart();
-  if (!server) {
-    log_error(
-        std::format("Failed to start gRPC server on {}", options.address));
-    return;
-  }
-  async_context.start();
-  log_info(
-      options.verbosity,
-      std::format("Server listening on {}", options.address));
-  server->Wait();
-  async_context.shutdown();
-  server.reset();
+      options.default_model_name,
+      std::vector<std::string>(
+          expected_input_names.begin(), expected_input_names.end()),
+      std::vector<std::string>(
+          expected_output_names.begin(), expected_output_names.end()));
+  run_grpc_server_impl(service, options, server);
 }
 
 void

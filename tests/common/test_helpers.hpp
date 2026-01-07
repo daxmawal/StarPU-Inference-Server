@@ -27,7 +27,6 @@
 
 #include "core/inference_params.hpp"
 #include "core/inference_runner.hpp"
-#include "core/starpu_setup.hpp"
 #include "grpc/server/inference_service.hpp"
 #include "grpc_service.grpc.pb.h"
 #include "starpu_task_worker/inference_queue.hpp"
@@ -151,60 +150,38 @@ make_add_one_model() -> torch::jit::script::Module
 }
 
 inline auto
-run_add_one_inference_loop(
-    bool use_cpu, bool use_cuda, std::optional<int> device_id = std::nullopt,
-    std::optional<std::vector<int>> device_ids_override = std::nullopt)
-    -> std::string
-{
-  TemporaryModelFile model_file{"add_one", make_add_one_model()};
-
-  RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].path = model_file.path().string();
-  opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
-  opts.batching.request_nb = 1;
-  opts.devices.use_cpu = use_cpu;
-  opts.devices.use_cuda = use_cuda;
-  if (device_ids_override && !device_ids_override->empty()) {
-    opts.devices.ids = *device_ids_override;
-  } else if (device_id) {
-    opts.devices.ids = {*device_id};
-  }
-  opts.verbosity = VerbosityLevel::Info;
-
-  StarPUSetup starpu(opts);
-  CaptureStream capture{std::cout};
-  run_inference_loop(opts, starpu);
-  const std::string output = capture.str();
-  return output;
-}
-
-inline auto
 make_single_model_runtime_config(
     const std::filesystem::path& model_path, std::vector<int64_t> dims,
     at::ScalarType type) -> RuntimeConfig
 {
   RuntimeConfig config{};
-  config.models.resize(1);
-  config.models[0].path = model_path.string();
-  config.models[0].inputs = {{"input0", std::move(dims), type}};
+  ModelConfig model{};
+  model.path = model_path.string();
+  model.inputs = {{"input0", std::move(dims), type}};
+  config.model = std::move(model);
   return config;
 }
 
 inline auto
-make_variable_interface(const float* ptr) -> starpu_variable_interface
+make_variable_interface(const float* ptr, std::size_t elem_count = 1)
+    -> starpu_variable_interface
 {
   starpu_variable_interface iface{};
+  iface.id = STARPU_VARIABLE_INTERFACE_ID;
   iface.ptr = std::bit_cast<uintptr_t>(ptr);
+  iface.elemsize = sizeof(float) * elem_count;
   return iface;
 }
 
 template <typename T>
 inline auto
-make_variable_interface(const T* ptr) -> starpu_variable_interface
+make_variable_interface(const T* ptr, std::size_t elem_count = 1)
+    -> starpu_variable_interface
 {
   starpu_variable_interface iface{};
+  iface.id = STARPU_VARIABLE_INTERFACE_ID;
   iface.ptr = std::bit_cast<uintptr_t>(ptr);
+  iface.elemsize = sizeof(T) * elem_count;
   return iface;
 }
 
@@ -217,7 +194,6 @@ make_basic_params(int elements, at::ScalarType type = at::kFloat)
   params.num_outputs = 1;
   params.limits.max_inputs = InferLimits::MaxInputs;
   params.limits.max_dims = InferLimits::MaxDims;
-  params.limits.max_models_gpu = InferLimits::MaxModelsGPU;
   params.layout.num_dims.resize(1);
   params.layout.num_dims[0] = 1;
   params.layout.dims.resize(1);
@@ -237,7 +213,6 @@ make_params_for_inputs(
   params.num_inputs = shapes.size();
   params.limits.max_inputs = InferLimits::MaxInputs;
   params.limits.max_dims = InferLimits::MaxDims;
-  params.limits.max_models_gpu = InferLimits::MaxModelsGPU;
   params.layout.num_dims.resize(shapes.size());
   params.layout.dims.resize(shapes.size());
   params.layout.input_types.resize(shapes.size());

@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 
+#include "utils/monotonic_clock.hpp"
 #include "utils/perf_observer.hpp"
 
 using starpu_server::perf_observer::record_job;
@@ -27,7 +28,7 @@ TEST_F(PerfObserverTest, SnapshotWithoutDataReturnsNullopt)
 TEST_F(PerfObserverTest, SnapshotAfterRecordingJobReturnsMetrics)
 {
   using namespace std::chrono_literals;
-  const auto base = std::chrono::high_resolution_clock::time_point{};
+  const auto base = starpu_server::MonotonicClock::time_point{};
   const auto enqueue_time = base + 1ms;
   const auto completion_time = base + 101ms;
   constexpr std::size_t kBatchSize = 10;
@@ -51,7 +52,7 @@ TEST_F(PerfObserverTest, SnapshotAfterRecordingJobReturnsMetrics)
 
 TEST_F(PerfObserverTest, SnapshotWithNonIncreasingDurationReturnsNullopt)
 {
-  const auto time_point = std::chrono::high_resolution_clock::time_point{};
+  const auto time_point = starpu_server::MonotonicClock::time_point{};
   constexpr std::size_t kBatchSize = 5;
 
   record_job(time_point, time_point, kBatchSize, /*is_warmup_job=*/false);
@@ -63,7 +64,7 @@ TEST_F(PerfObserverTest, SnapshotWithNonIncreasingDurationReturnsNullopt)
 TEST_F(PerfObserverTest, SnapshotIgnoresZeroBatchJob)
 {
   using namespace std::chrono_literals;
-  const auto base = std::chrono::high_resolution_clock::time_point{};
+  const auto base = starpu_server::MonotonicClock::time_point{};
   const auto enqueue_time = base + 1ms;
   const auto completion_time = base + 2ms;
 

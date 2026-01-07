@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -27,6 +28,7 @@ class InferenceQueue {
     if (max_size_ == 0) {
       throw std::invalid_argument("max_queue_size must be > 0");
     }
+    set_queue_capacity(max_size_);
   }
 
   [[nodiscard]] auto push(
@@ -38,6 +40,7 @@ class InferenceQueue {
     if (job == nullptr) {
       return false;
     }
+    std::size_t size = 0;
     {
       const std::scoped_lock lock(mutex_);
       if (shutdown_) {
@@ -50,10 +53,10 @@ class InferenceQueue {
         return false;
       }
       queue_.push(std::move(job));
-      set_queue_size(queue_.size());
-      auto& tracer = BatchingTraceLogger::instance();
-      tracer.log_queue_size(queue_.size());
+      total_pushed_.fetch_add(1, std::memory_order_release);
+      size = queue_.size();
     }
+    update_queue_metrics(size);
     cv_.notify_one();
     return true;
   }
@@ -66,22 +69,22 @@ class InferenceQueue {
     }
     job = std::move(queue_.front());
     queue_.pop();
-    set_queue_size(queue_.size());
-    auto& tracer = BatchingTraceLogger::instance();
-    tracer.log_queue_size(queue_.size());
+    const auto size = queue_.size();
+    lock.unlock();
+    update_queue_metrics(size);
     return true;
   }
   [[nodiscard]] auto try_pop(std::shared_ptr<InferenceJob>& job) -> bool
   {
-    const std::scoped_lock lock(mutex_);
+    std::unique_lock lock(mutex_);
     if (queue_.empty()) {
       return false;
     }
     job = std::move(queue_.front());
     queue_.pop();
-    set_queue_size(queue_.size());
-    auto& tracer = BatchingTraceLogger::instance();
-    tracer.log_queue_size(queue_.size());
+    const auto size = queue_.size();
+    lock.unlock();
+    update_queue_metrics(size);
     return true;
   }
   template <typename Rep, typename Period>
@@ -96,9 +99,9 @@ class InferenceQueue {
       }
       job = std::move(queue_.front());
       queue_.pop();
-      set_queue_size(queue_.size());
-      auto& tracer = BatchingTraceLogger::instance();
-      tracer.log_queue_size(queue_.size());
+      const auto size = queue_.size();
+      lock.unlock();
+      update_queue_metrics(size);
       return true;
     }
     return false;
@@ -114,17 +117,38 @@ class InferenceQueue {
     cv_.notify_all();
   }
 
+  [[nodiscard]] auto total_pushed() const -> std::size_t
+  {
+    return total_pushed_.load(std::memory_order_acquire);
+  }
+
+  void reset_counters() { total_pushed_.store(0, std::memory_order_release); }
+
   [[nodiscard]] auto size() const -> std::size_t
   {
     const std::scoped_lock lock(mutex_);
     return queue_.size();
   }
 
+  [[nodiscard]] auto is_shutdown() const -> bool
+  {
+    const std::scoped_lock lock(mutex_);
+    return shutdown_;
+  }
+
  private:
+  static void update_queue_metrics(std::size_t size)
+  {
+    set_queue_size(size);
+    auto& tracer = BatchingTraceLogger::instance();
+    tracer.log_queue_size(size);
+  }
+
   const std::size_t max_size_;
   mutable std::mutex mutex_;
   std::queue<std::shared_ptr<InferenceJob>> queue_;
   bool shutdown_ = false;
   std::condition_variable cv_;
+  std::atomic<std::size_t> total_pushed_{0};
 };
 }  // namespace starpu_server

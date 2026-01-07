@@ -10,7 +10,22 @@
 #include <utility>
 #include <vector>
 
+#include "core/warmup.hpp"
 #include "test_inference_runner.hpp"
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace starpu_server {
+struct WarmupRunnerTestHelper {
+  static void client_worker(
+      WarmupRunner& runner,
+      const std::map<int, std::vector<int>>& device_workers,
+      InferenceQueue& queue, int request_nb_per_worker)
+  {
+    runner.client_worker(device_workers, queue, request_nb_per_worker);
+  }
+};
+}  // namespace starpu_server
+#endif  // SONAR_IGNORE_END
 
 template <class F>
 auto
@@ -24,7 +39,7 @@ measure_ms(F&& function) -> long
 }
 
 inline auto
-make_device_workers() -> std::map<int, std::vector<int32_t>>
+make_device_workers() -> std::map<int, std::vector<int>>
 {
   return {{0, {1, 2}}};
 }
@@ -38,9 +53,16 @@ struct WarmupRunnerTestFixture {
   void init(bool use_cuda = false)
   {
     opts = starpu_server::RuntimeConfig{};
-    opts.models.resize(1);
-    opts.models[0].inputs = {{"input0", {1}, at::kFloat}};
+    starpu_server::ModelConfig model{};
+    model.inputs = {{"input0", {1}, at::kFloat}};
+    opts.model = std::move(model);
     opts.devices.use_cuda = use_cuda;
+    if (use_cuda) {
+      if (!torch::cuda::is_available()) {
+        GTEST_SKIP() << "CUDA is not available";
+      }
+      opts.devices.ids = {0};
+    }
 
     starpu = std::make_unique<starpu_server::StarPUSetup>(opts);
     model_cpu = starpu_server::make_identity_model();
@@ -64,12 +86,12 @@ class WarmupRunnerTest : public ::testing::Test,
 
   void SetUp() override
   {
-    init(false);
+    init_runner(false);
     runner = std::make_unique<starpu_server::WarmupRunner>(
         opts, *starpu, model_cpu, models_gpu, outputs_ref);
   }
 
-  void init(
+  void init_runner(
       bool use_cuda,
       starpu_server::WarmupRunner::CompletionObserver completion_observer = {})
   {

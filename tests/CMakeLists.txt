@@ -12,11 +12,11 @@ add_subdirectory(integration)
 
 add_executable(
   all_tests
+  ${CORE_DIR}/inference_task.cpp
   ${CORE_DIR}/input_slot_pool.cpp
   ${CORE_DIR}/output_slot_pool.cpp
   ${CORE_DIR}/warmup.cpp
   ${CORE_DIR}/starpu_setup.cpp
-  ${CORE_DIR}/inference_session.cpp
   ${SRC_DIR}/monitoring/metrics.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
   ${GRPC_CLIENT_DIR}/client_args.cpp
@@ -29,7 +29,8 @@ set_target_properties(all_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY
                                            ${CMAKE_BINARY_DIR})
 
 target_compile_features(all_tests PRIVATE cxx_std_23)
-target_compile_definitions(all_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1)
+target_compile_definitions(all_tests PRIVATE _GLIBCXX_USE_CXX11_ABI=1
+                                             STARPU_TESTING=1)
 
 target_include_directories(
   all_tests

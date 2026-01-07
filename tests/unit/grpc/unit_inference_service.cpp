@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <iterator>
 #include <limits>
@@ -46,6 +47,37 @@ struct TraceFileGuard {
     std::filesystem::remove(path, ec);
   }
 };
+
+struct HandleModelInferAsyncHooksGuard {
+  explicit HandleModelInferAsyncHooksGuard(
+      starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks)
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        SetHandleModelInferAsyncTestHooks(std::move(hooks));
+  }
+
+  ~HandleModelInferAsyncHooksGuard()
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        ClearHandleModelInferAsyncTestHooks();
+  }
+};
+
+struct HandleAsyncInferCompletionHooksGuard {
+  explicit HandleAsyncInferCompletionHooksGuard(
+      starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+          hooks)
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        SetHandleAsyncInferCompletionTestHooks(std::move(hooks));
+  }
+
+  ~HandleAsyncInferCompletionHooksGuard()
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        ClearHandleAsyncInferCompletionTestHooks();
+  }
+};
 }  // namespace
 
 class MetricsInferenceServiceTest : public InferenceServiceTest {
@@ -71,6 +103,18 @@ class MultiTypeInferenceServiceTest : public InferenceServiceTest {
     ServiceConfig config;
     config.expected_input_types = {at::kFloat, at::kLong};
     return config;
+  }
+};
+
+class NamedInputInferenceServiceTest : public InferenceServiceTest {
+ protected:
+  void SetUp() override
+  {
+    std::vector<at::ScalarType> expected_types = {at::kFloat, at::kLong};
+    std::vector<std::string> expected_names = {"first", "second"};
+    service = std::make_unique<starpu_server::InferenceServiceImpl>(
+        &queue, &ref_outputs, std::move(expected_types), "",
+        std::move(expected_names));
   }
 };
 
@@ -149,7 +193,7 @@ TEST_F(InferenceServiceTest, ValidateInputsSuccess)
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
 }
 
-TEST_F(InferenceServiceTest, ValidateInputsZeroCopyUsesRequestBuffer)
+TEST_F(InferenceServiceTest, ValidateInputsCopiesRequestBuffer)
 {
   constexpr size_t kElements = 1U << 10;
   std::vector<float> data(kElements, kF1);
@@ -166,7 +210,8 @@ TEST_F(InferenceServiceTest, ValidateInputsZeroCopyUsesRequestBuffer)
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
   ASSERT_EQ(keep_alive.size(), 1U);
-  EXPECT_EQ(
+  EXPECT_EQ(inputs[0].data_ptr(), const_cast<void*>(keep_alive[0].get()));
+  EXPECT_NE(
       inputs[0].data_ptr(), const_cast<void*>(static_cast<const void*>(
                                 req.raw_input_contents(0).data())));
   EXPECT_EQ(
@@ -174,7 +219,7 @@ TEST_F(InferenceServiceTest, ValidateInputsZeroCopyUsesRequestBuffer)
       static_cast<int64_t>(req.raw_input_contents(0).size()));
 }
 
-TEST_F(InferenceServiceTest, ValidateInputsKeepAliveSharesAlias)
+TEST_F(InferenceServiceTest, ValidateInputsKeepAliveSharesOwnedBuffer)
 {
   std::vector<float> data = {kF1, kF2, kF3, kF4};
   auto req = starpu_server::make_model_infer_request({
@@ -189,7 +234,7 @@ TEST_F(InferenceServiceTest, ValidateInputsKeepAliveSharesAlias)
   ASSERT_EQ(inputs.size(), 1U);
   ASSERT_EQ(keep_alive.size(), 1U);
   EXPECT_EQ(inputs[0].data_ptr(), const_cast<void*>(keep_alive[0].get()));
-  EXPECT_EQ(
+  EXPECT_NE(
       keep_alive[0].get(),
       static_cast<const void*>(req.raw_input_contents(0).data()));
 }
@@ -230,6 +275,158 @@ TEST_F(MultiTypeInferenceServiceTest, ValidateInputsMultipleDtypes)
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
   EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
   EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
+  EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
+}
+
+TEST_F(MultiTypeInferenceServiceTest, ValidateInputsRejectsMixedNamedAndUnnamed)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(1)->clear_name();
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(
+      status.error_message(),
+      "All input tensors must include a name when using named inputs");
+}
+
+TEST_F(
+    NamedInputInferenceServiceTest,
+    ValidateInputsRejectsUnnamedWhenNamesExpected)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->clear_name();
+  req.mutable_inputs(1)->clear_name();
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Input tensor names must be provided");
+}
+
+TEST_F(NamedInputInferenceServiceTest, ValidateInputsRejectsEmptyConfiguredName)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->set_name("first");
+  req.mutable_inputs(1)->set_name("second");
+
+  starpu_server::InferenceServiceImpl::TestAccessor::
+      SetExpectedInputNamesForTest(service.get(), {"", "second"});
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Configured input name missing at index 0");
+}
+
+TEST_F(NamedInputInferenceServiceTest, ValidateInputsRejectsUnexpectedName)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->set_name("first");
+  req.mutable_inputs(1)->set_name("unknown");
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Unexpected input tensor name 'unknown'");
+}
+
+TEST_F(
+    NamedInputInferenceServiceTest, ValidateInputsRejectsDuplicateRequestName)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->set_name("first");
+  req.mutable_inputs(1)->set_name("first");
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Input tensor name 'first' is duplicated");
+}
+
+TEST(InferenceServiceImpl, ValidateInputsRejectsDuplicateConfiguredNames)
+{
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  std::vector<at::ScalarType> expected_types = {at::kFloat, at::kLong};
+  std::vector<std::string> expected_names = {"dup", "dup"};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, std::move(expected_types), "",
+      std::move(expected_names));
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service.validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(
+      status.error_message(), "Configured input name 'dup' is duplicated");
+}
+
+TEST_F(NamedInputInferenceServiceTest, ValidateInputsReordersByNameMapping)
+{
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  auto req = starpu_server::make_model_infer_request({
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+  });
+  req.mutable_inputs(0)->set_name("second");
+  req.mutable_inputs(1)->set_name("first");
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 2U);
+  EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
+  EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
+  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
+  EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
+  EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
   EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
 }
 
@@ -277,9 +474,8 @@ TEST_F(
   auto explicit_batch_req = starpu_server::make_shape_request({3, 2, 2});
   inputs.clear();
   status = service->validate_and_convert_inputs(&explicit_batch_req, inputs);
-  ASSERT_TRUE(status.ok());
-  ASSERT_EQ(inputs.size(), 1U);
-  EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{3, 2, 2}));
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 
   auto exceeding_batch_req = starpu_server::make_shape_request({5, 2, 2});
   inputs.clear();
@@ -404,12 +600,106 @@ TEST(InferenceServiceImpl, PopulateResponseUsesOverrideModelName)
   breakdown.overall_ms = 2.0;
 
   const std::string server_model = "server_model";
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.model_name_override = server_model;
   auto status = starpu_server::InferenceServiceImpl::populate_response(
-      &req, &reply, outputs, recv_ms, breakdown, server_model);
+      &req, &reply, outputs, recv_ms, breakdown, options);
   ASSERT_TRUE(status.ok());
   reply.set_server_send_ms(send_ms);
   starpu_server::verify_populate_response(
       req, reply, outputs, recv_ms, send_ms, breakdown, server_model);
+}
+
+TEST(InferenceServiceImpl, PopulateResponseRejectsEmptyRequestedOutputName)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  req.add_outputs();
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  std::vector<std::string> output_names = {"out0"};
+
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.output_names = output_names;
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, options);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_NE(
+      status.error_message().find("Requested output name must be non-empty"),
+      std::string::npos);
+}
+
+TEST(InferenceServiceImpl, PopulateResponseRejectsUnknownRequestedOutputName)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  req.add_outputs()->set_name("missing");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  std::vector<std::string> output_names = {"known"};
+
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.output_names = output_names;
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, options);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_NE(
+      status.error_message().find(
+          "Requested output 'missing' is not available"),
+      std::string::npos);
+}
+
+TEST(InferenceServiceImpl, PopulateResponseRejectsDuplicateRequestedOutputName)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  req.add_outputs()->set_name("dup");
+  req.add_outputs()->set_name("dup");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  std::vector<std::string> output_names = {"dup"};
+
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.output_names = output_names;
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, options);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_NE(
+      status.error_message().find("Requested output 'dup' is duplicated"),
+      std::string::npos);
+}
+
+TEST(
+    InferenceServiceImpl, PopulateResponseRejectsDuplicateConfiguredOutputNames)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  req.add_outputs()->set_name("dup");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1, 2}, torch::TensorOptions().dtype(at::kInt)),
+      torch::tensor({3, 4}, torch::TensorOptions().dtype(at::kInt))};
+  inference::ModelInferResponse reply;
+  int64_t recv_ms = 0;
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+  std::vector<std::string> output_names = {"dup", "dup"};
+
+  starpu_server::InferenceServiceImpl::PopulateResponseOptions options;
+  options.output_names = output_names;
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, &reply, outputs, recv_ms, breakdown, options);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_NE(
+      status.error_message().find("Configured output name 'dup' is duplicated"),
+      std::string::npos);
 }
 
 TEST(InferenceServiceImpl, PopulateResponseHandlesNonContiguousOutputs)
@@ -507,6 +797,277 @@ TEST(InferenceServiceImpl, PopulateResponseDetectsOverflow)
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
+TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyWhenAllUnnamed)
+{
+  auto names =
+      starpu_server::InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+          std::vector<std::string>{"", ""}, 2, "input", "input");
+  EXPECT_TRUE(names.empty());
+}
+
+TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyOnSizeMismatch)
+{
+  auto names =
+      starpu_server::InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+          std::vector<std::string>{"input0"}, 2, "input", "input");
+  EXPECT_TRUE(names.empty());
+}
+
+TEST(InferenceServiceImpl, NormalizeNamesReturnsEmptyWhenExpectedSizeZero)
+{
+  auto names =
+      starpu_server::InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+          std::vector<std::string>{"input0"}, 0, "input", "input");
+  EXPECT_TRUE(names.empty());
+}
+
+TEST(InferenceServiceImpl, NormalizeNamesFillsMissingEntries)
+{
+  auto names =
+      starpu_server::InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+          std::vector<std::string>{"", "out1"}, 2, "output", "output");
+  ASSERT_EQ(names.size(), 2U);
+  EXPECT_EQ(names[0], "output0");
+  EXPECT_EQ(names[1], "out1");
+}
+
+TEST(InferenceServiceImpl, MissingNamedInputReportsError)
+{
+  std::vector<bool> filled = {true, false};
+  std::vector<std::string> names = {"first", "second"};
+
+  auto status = starpu_server::InferenceServiceImpl::TestAccessor::
+      CheckMissingInputsForTest(filled, std::span<const std::string>(names));
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Missing input tensor 'second'");
+}
+
+TEST(InferenceServiceImpl, RpcDoneTagArmHandlesNullContext)
+{
+  EXPECT_NO_THROW(starpu_server::InferenceServiceImpl::TestAccessor::
+                      ArmRpcDoneTagWithNullContextForTest());
+}
+
+TEST(InferenceServiceImpl, RpcDoneTagProceedInvokesOnDoneWhenOk)
+{
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      RpcDoneTagProceedForTest(true, true);
+  EXPECT_TRUE(called);
+}
+
+TEST(InferenceServiceImpl, RpcDoneTagProceedSkipsOnDoneWhenNotOk)
+{
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      RpcDoneTagProceedForTest(false, true);
+  EXPECT_FALSE(called);
+}
+
+TEST(InferenceServiceImpl, RpcDoneTagProceedSkipsWhenNoOnDone)
+{
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      RpcDoneTagProceedForTest(true, false);
+  EXPECT_FALSE(called);
+}
+
+TEST(InferenceServiceImpl, FillOutputTensorRejectsOutOfRangeIndex)
+{
+  inference::ModelInferResponse reply;
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1.0F}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<std::size_t> output_indices = {1U};
+  std::vector<std::string> output_names = {"out0"};
+
+  auto status = starpu_server::InferenceServiceImpl::TestAccessor::
+      FillOutputTensorForTest(&reply, outputs, output_indices, output_names);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(reply.outputs_size(), 0);
+  EXPECT_EQ(reply.raw_output_contents_size(), 0);
+}
+
+TEST(InferenceServiceImpl, FillOutputTensorUsesFallbackName)
+{
+  inference::ModelInferResponse reply;
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1.0F, 2.0F}, torch::TensorOptions().dtype(at::kFloat)),
+      torch::tensor({3.0F, 4.0F}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<std::size_t> output_indices = {1U};
+  std::vector<std::string> output_names = {"named0"};
+
+  auto status = starpu_server::InferenceServiceImpl::TestAccessor::
+      FillOutputTensorForTest(&reply, outputs, output_indices, output_names);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(reply.outputs_size(), 1);
+  EXPECT_EQ(reply.outputs(0).name(), "output1");
+}
+
+TEST(InferenceServiceImpl, BuildLatencyBreakdownMapsTimingFields)
+{
+  const auto base = starpu_server::MonotonicClock::time_point{};
+  starpu_server::detail::TimingInfo info{};
+  info.enqueued_time = base;
+  info.dequeued_time = base + std::chrono::milliseconds(10);
+  info.batch_collect_start_time = base + std::chrono::milliseconds(12);
+  info.batch_collect_end_time = base + std::chrono::milliseconds(20);
+  info.before_starpu_submitted_time = base + std::chrono::milliseconds(30);
+  info.codelet_start_time = base + std::chrono::milliseconds(45);
+  info.codelet_end_time = base + std::chrono::milliseconds(60);
+  info.inference_start_time = base + std::chrono::milliseconds(70);
+  info.callback_start_time = base + std::chrono::milliseconds(85);
+  info.callback_end_time = base + std::chrono::milliseconds(100);
+
+  auto breakdown = starpu_server::InferenceServiceImpl::TestAccessor::
+      BuildLatencyBreakdownForTest(info, 123.0);
+
+  EXPECT_DOUBLE_EQ(breakdown.queue_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.batch_ms, 8.0);
+  EXPECT_DOUBLE_EQ(breakdown.submit_ms, 18.0);
+  EXPECT_DOUBLE_EQ(breakdown.scheduling_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.codelet_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.inference_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.callback_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.total_ms, 123.0);
+  EXPECT_DOUBLE_EQ(breakdown.preprocess_ms, 0.0);
+  EXPECT_DOUBLE_EQ(breakdown.postprocess_ms, 0.0);
+  EXPECT_DOUBLE_EQ(breakdown.overall_ms, 0.0);
+}
+
+TEST(InferenceServiceImpl, BuildLatencyBreakdownUsesDequeuedFallback)
+{
+  const auto base = starpu_server::MonotonicClock::time_point{};
+  starpu_server::detail::TimingInfo info{};
+  info.enqueued_time = base + std::chrono::milliseconds(5);
+  info.dequeued_time = base + std::chrono::milliseconds(15);
+  info.batch_collect_start_time = starpu_server::MonotonicClock::time_point{};
+  info.batch_collect_end_time = starpu_server::MonotonicClock::time_point{};
+  info.before_starpu_submitted_time = base + std::chrono::milliseconds(25);
+  info.codelet_start_time = base + std::chrono::milliseconds(35);
+  info.codelet_end_time = base + std::chrono::milliseconds(45);
+  info.inference_start_time = base + std::chrono::milliseconds(55);
+  info.callback_start_time = base + std::chrono::milliseconds(70);
+  info.callback_end_time = base + std::chrono::milliseconds(80);
+
+  auto breakdown = starpu_server::InferenceServiceImpl::TestAccessor::
+      BuildLatencyBreakdownForTest(info, 80.5);
+
+  EXPECT_DOUBLE_EQ(breakdown.queue_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.batch_ms, 0.0);
+  EXPECT_DOUBLE_EQ(breakdown.submit_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.scheduling_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.codelet_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.inference_ms, 15.0);
+  EXPECT_DOUBLE_EQ(breakdown.callback_ms, 10.0);
+  EXPECT_DOUBLE_EQ(breakdown.total_ms, 80.5);
+}
+
+TEST(
+    InferenceServiceImpl,
+    HandleAsyncInferCompletionReturnsWhenCancelledInitially)
+{
+  starpu_server::InferenceServiceImpl::TestAccessor::
+      ClearHandleAsyncInferCompletionTestHooks();
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      HandleAsyncInferCompletionForTest(true);
+  EXPECT_FALSE(called);
+}
+
+TEST(
+    InferenceServiceImpl,
+    HandleAsyncInferCompletionReturnsWhenCancelledAfterTryAcquire)
+{
+  starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+      hooks;
+  hooks.after_try_acquire = [](const std::shared_ptr<std::atomic<bool>>& flag) {
+    flag->store(true, std::memory_order_release);
+  };
+  HandleAsyncInferCompletionHooksGuard guard{std::move(hooks)};
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      HandleAsyncInferCompletionForTest(false);
+  EXPECT_FALSE(called);
+}
+
+TEST(
+    InferenceServiceImpl,
+    HandleAsyncInferCompletionReturnsWhenCancelledBeforeFinalCallback)
+{
+  starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+      hooks;
+  hooks.before_final_cancel_check =
+      [](const std::shared_ptr<std::atomic<bool>>& flag) {
+        flag->store(true, std::memory_order_release);
+      };
+  HandleAsyncInferCompletionHooksGuard guard{std::move(hooks)};
+  const bool called = starpu_server::InferenceServiceImpl::TestAccessor::
+      HandleAsyncInferCompletionForTest(false);
+  EXPECT_FALSE(called);
+}
+
+TEST(InferenceServiceImpl, ModelReadyRejectsMismatchedName)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat}, "default-model");
+  grpc::ServerContext context;
+  inference::ModelReadyRequest request;
+  inference::ModelReadyResponse response;
+
+  request.set_name("other-model");
+
+  auto status = service.ModelReady(&context, &request, &response);
+  ASSERT_TRUE(status.ok());
+  EXPECT_FALSE(response.ready());
+}
+
+TEST_F(InferenceServiceTest, HandleModelInferAsyncWorksWithNullContext)
+{
+  auto request = starpu_server::make_valid_request();
+  auto expected_outputs = std::vector<torch::Tensor>{
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+  auto worker = prepare_job(expected_outputs, expected_outputs);
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  service->HandleModelInferAsync(
+      nullptr, &request, &reply, [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      });
+
+  grpc::Status status = status_future.get();
+  worker.join();
+
+  EXPECT_TRUE(status.ok());
+  ASSERT_EQ(reply.outputs_size(), 1);
+}
+
+TEST_F(
+    InferenceServiceTest, HandleModelInferAsyncSkipsErrorCallbackWhenCancelled)
+{
+  auto request = starpu_server::make_valid_request();
+  request.add_raw_input_contents("extra");
+  std::atomic<bool> callback_called{false};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_cancel_flag_created =
+      [](const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
+        cancel_flag->store(true, std::memory_order_release);
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  service->HandleModelInferAsync(&ctx, &request, &reply, [&](grpc::Status) {
+    callback_called.store(true);
+  });
+
+  EXPECT_FALSE(callback_called.load());
+  expect_empty_infer_response(reply);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.try_pop(job));
+}
+
 TEST_F(InferenceServiceTest, ValidateInputsMismatchedRawContents)
 {
   auto req = starpu_server::make_valid_request();
@@ -573,9 +1134,12 @@ TEST_F(
       torch::tensor({kF1, kF2}, torch::TensorOptions().dtype(at::kFloat))};
 
   auto status = service->submit_job_async(
-      inputs, [](grpc::Status, std::vector<torch::Tensor>,
-                 starpu_server::InferenceServiceImpl::LatencyBreakdown,
-                 starpu_server::detail::TimingInfo) {});
+      inputs,
+      [](grpc::Status, std::vector<torch::Tensor>,
+         starpu_server::InferenceServiceImpl::LatencyBreakdown,
+         starpu_server::detail::TimingInfo,
+         std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>) {
+      });
   ASSERT_TRUE(status.ok());
 
   std::shared_ptr<starpu_server::InferenceJob> enqueued_job;
@@ -590,6 +1154,124 @@ TEST_F(
       std::istreambuf_iterator<char>());
   EXPECT_NE(content.find("\"name\":\"request_enqueued\""), std::string::npos);
   EXPECT_NE(content.find("\"request_id\":0"), std::string::npos);
+}
+
+TEST_F(InferenceServiceTest, SubmitJobAsyncReportsFailureInfoWhenJobFailed)
+{
+  starpu_server::InferenceJob::FailureInfo failure_info{};
+  failure_info.stage = "execution";
+  failure_info.reason = "bad_input";
+  failure_info.message = "invalid";
+  failure_info.metrics_reported = true;
+
+  auto worker = prepare_job(
+      {}, {}, [failure_info](starpu_server::InferenceJob& job) mutable {
+        job.set_failure_info(std::move(failure_info));
+      });
+
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1}, torch::TensorOptions().dtype(at::kFloat))};
+
+  struct CallbackResult {
+    grpc::Status status;
+    std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>
+        failure_info;
+  };
+
+  auto promise = std::make_shared<std::promise<CallbackResult>>();
+  auto future = promise->get_future();
+
+  auto submit_status = service->submit_job_async(
+      inputs,
+      [promise](
+          grpc::Status status, std::vector<torch::Tensor>,
+          starpu_server::InferenceServiceImpl::LatencyBreakdown,
+          starpu_server::detail::TimingInfo,
+          std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>
+              failure_info) {
+        promise->set_value(
+            CallbackResult{std::move(status), std::move(failure_info)});
+      });
+  ASSERT_TRUE(submit_status.ok());
+
+  CallbackResult result = future.get();
+  worker.join();
+
+  EXPECT_FALSE(result.status.ok());
+  EXPECT_EQ(result.status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_NE(result.status.error_message().find("bad_input"), std::string::npos);
+  EXPECT_NE(result.status.error_message().find("invalid"), std::string::npos);
+  ASSERT_TRUE(result.failure_info.has_value());
+  EXPECT_EQ(result.failure_info->stage, "execution");
+  EXPECT_EQ(result.failure_info->reason, "bad_input");
+  EXPECT_TRUE(result.failure_info->metrics_reported);
+}
+
+TEST_F(
+    InferenceServiceTest, SubmitJobAsyncFormatsFailureMessageForMissingFields)
+{
+  struct Case {
+    std::string stage;
+    std::string reason;
+    std::string message;
+    std::string expected_error;
+  };
+
+  const std::vector<Case> cases = {
+      {"execution", "bad_input", "", "Inference failed (bad_input)"},
+      {"preprocess", "", "invalid", "Inference failed: invalid"},
+      {"postprocess", "", "", "Inference failed"},
+  };
+
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1}, torch::TensorOptions().dtype(at::kFloat))};
+
+  for (const auto& test_case : cases) {
+    SCOPED_TRACE(test_case.expected_error);
+    starpu_server::InferenceJob::FailureInfo failure_info{};
+    failure_info.stage = test_case.stage;
+    failure_info.reason = test_case.reason;
+    failure_info.message = test_case.message;
+    failure_info.metrics_reported = true;
+
+    auto worker = prepare_job(
+        {}, {}, [failure_info](starpu_server::InferenceJob& job) mutable {
+          job.set_failure_info(std::move(failure_info));
+        });
+
+    struct CallbackResult {
+      grpc::Status status;
+      std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>
+          failure_info;
+    };
+
+    auto promise = std::make_shared<std::promise<CallbackResult>>();
+    auto future = promise->get_future();
+
+    auto submit_status = service->submit_job_async(
+        inputs,
+        [promise](
+            grpc::Status status, std::vector<torch::Tensor>,
+            starpu_server::InferenceServiceImpl::LatencyBreakdown,
+            starpu_server::detail::TimingInfo,
+            std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>
+                failure_info) {
+          promise->set_value(
+              CallbackResult{std::move(status), std::move(failure_info)});
+        });
+    ASSERT_TRUE(submit_status.ok());
+
+    CallbackResult result = future.get();
+    worker.join();
+
+    EXPECT_FALSE(result.status.ok());
+    EXPECT_EQ(result.status.error_code(), grpc::StatusCode::INTERNAL);
+    EXPECT_EQ(result.status.error_message(), test_case.expected_error);
+    ASSERT_TRUE(result.failure_info.has_value());
+    EXPECT_EQ(result.failure_info->stage, test_case.stage);
+    EXPECT_EQ(result.failure_info->reason, test_case.reason);
+    EXPECT_TRUE(result.failure_info->metrics_reported);
+  }
 }
 
 TEST_F(
@@ -615,6 +1297,134 @@ TEST_F(
 }
 
 TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncSkipsCallbackWhenCancelledAfterSubmitFailure)
+{
+  auto request = starpu_server::make_valid_request();
+  queue.shutdown();
+  std::atomic<bool> callback_called{false};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_submit_job_async_done =
+      [](const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+         const grpc::Status& status) {
+        if (!status.ok()) {
+          cancel_flag->store(true, std::memory_order_release);
+        }
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  service->HandleModelInferAsync(&ctx, &request, &reply, [&](grpc::Status) {
+    callback_called.store(true);
+  });
+
+  EXPECT_FALSE(callback_called.load());
+  expect_empty_infer_response(reply);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncCancelsImmediatelyWithContextGuard)
+{
+  auto request = starpu_server::make_valid_request();
+  std::atomic<int> callback_count{0};
+  grpc::Status callback_status;
+  std::function<void()> on_cancel;
+  bool force_cancelled = true;
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.is_cancelled_override =
+      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+    return force_cancelled;
+  };
+  hooks.on_cancel_ready =
+      [&on_cancel](const std::function<void()>& cancel_handler) {
+        on_cancel = cancel_handler;
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  auto call_guard = std::make_shared<int>(1);
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&](grpc::Status status) {
+        callback_status = std::move(status);
+        callback_count.fetch_add(1);
+      },
+      call_guard);
+
+  EXPECT_EQ(callback_count.load(), 1);
+  EXPECT_EQ(callback_status.error_code(), grpc::StatusCode::CANCELLED);
+  expect_empty_infer_response(reply);
+
+  ASSERT_TRUE(static_cast<bool>(on_cancel));
+  on_cancel();
+  EXPECT_EQ(callback_count.load(), 1);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncCancelHandlerNoOpWhenNotCancelled)
+{
+  auto request = starpu_server::make_valid_request();
+  request.clear_raw_input_contents();
+  std::atomic<int> callback_count{0};
+  grpc::Status callback_status;
+  std::function<void()> on_cancel;
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.is_cancelled_override =
+      [](grpc::ServerContext*) -> std::optional<bool> { return false; };
+  hooks.on_cancel_ready =
+      [&on_cancel](const std::function<void()>& cancel_handler) {
+        on_cancel = cancel_handler;
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  auto call_guard = std::make_shared<int>(1);
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&](grpc::Status status) {
+        callback_status = std::move(status);
+        callback_count.fetch_add(1);
+      },
+      call_guard);
+
+  EXPECT_EQ(callback_count.load(), 1);
+  EXPECT_EQ(callback_status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  expect_empty_infer_response(reply);
+
+  ASSERT_TRUE(static_cast<bool>(on_cancel));
+  on_cancel();
+  EXPECT_EQ(callback_count.load(), 1);
+}
+
+TEST_F(
+    InferenceServiceTest, HandleModelInferAsyncSkipsCallbackWhenCancelFlagSet)
+{
+  auto request = starpu_server::make_valid_request();
+  std::atomic<bool> callback_called{false};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_cancel_flag_created =
+      [](const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
+        cancel_flag->store(true, std::memory_order_release);
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  service->HandleModelInferAsync(&ctx, &request, &reply, [&](grpc::Status) {
+    callback_called.store(true);
+  });
+
+  EXPECT_FALSE(callback_called.load());
+  expect_empty_infer_response(reply);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.try_pop(job));
+}
+
+TEST_F(
     MetricsInferenceServiceTest,
     HandleModelInferAsyncUpdatesMetricsAndLatencyBreakdown)
 {
@@ -625,16 +1435,15 @@ TEST_F(
   auto worker = prepare_job(
       expected_outputs, worker_outputs, [](starpu_server::InferenceJob& job) {
         job.timing_info().enqueued_time =
-            std::chrono::high_resolution_clock::time_point{};
+            starpu_server::MonotonicClock::time_point{};
         job.timing_info().last_enqueued_time = job.timing_info().enqueued_time;
         job.timing_info().callback_end_time =
-            std::chrono::high_resolution_clock::now() -
-            std::chrono::milliseconds(1);
+            starpu_server::MonotonicClock::now() - std::chrono::milliseconds(1);
       });
 
   auto metrics = starpu_server::get_metrics();
   ASSERT_NE(metrics, nullptr);
-  EXPECT_DOUBLE_EQ(metrics->requests_total()->Value(), 0.0);
+  EXPECT_DOUBLE_EQ(metrics->counters().requests_total->Value(), 0.0);
 
   std::promise<grpc::Status> status_promise;
   auto status_future = status_promise.get_future();
@@ -647,7 +1456,7 @@ TEST_F(
   worker.join();
 
   EXPECT_TRUE(status.ok());
-  EXPECT_DOUBLE_EQ(metrics->requests_total()->Value(), 1.0);
+  EXPECT_DOUBLE_EQ(metrics->counters().requests_total->Value(), 1.0);
   EXPECT_DOUBLE_EQ(reply.server_preprocess_ms(), 0.0);
   EXPECT_GT(reply.server_postprocess_ms(), 0.0);
   EXPECT_GE(reply.server_overall_ms(), 0.0);

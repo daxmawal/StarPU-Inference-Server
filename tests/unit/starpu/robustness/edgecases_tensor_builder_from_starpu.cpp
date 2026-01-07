@@ -46,8 +46,8 @@ TEST(TensorBuilderFromStarPU, FewerBuffersThanInputsThrows)
   std::array<float, 1> input0{0.0F};
   std::array<float, 1> input1{1.0F};
   std::array<starpu_variable_interface, 2> buffers_raw{
-      starpu_server::make_variable_interface(input0.data()),
-      starpu_server::make_variable_interface(input1.data())};
+      starpu_server::make_variable_interface(input0.data(), input0.size()),
+      starpu_server::make_variable_interface(input1.data(), input1.size())};
   std::array<StarpuBufferPtr, 1> buffers{buffers_raw.data()};
   EXPECT_THROW(
       [[maybe_unused]] auto _ =
@@ -60,7 +60,7 @@ TEST(TensorBuilderFromStarPU, DimsSizeMismatchThrows)
 {
   std::array<float, 4> input0{0.0F, 1.0F, 2.0F, 3.0F};
   starpu_variable_interface buf =
-      starpu_server::make_variable_interface(input0.data());
+      starpu_server::make_variable_interface(input0.data(), input0.size());
   auto params = starpu_server::make_params_for_inputs({{2, 2}}, {at::kFloat});
   params.layout.dims[0].push_back(1);
   std::array<StarpuBufferPtr, 1> buffers{&buf};

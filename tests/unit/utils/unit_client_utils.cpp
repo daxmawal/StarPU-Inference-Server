@@ -89,11 +89,14 @@ BatchesMatchConfig(
     const std::vector<std::vector<torch::Tensor>>& batches,
     const starpu_server::RuntimeConfig& opts) -> ::testing::AssertionResult
 {
+  if (!opts.model.has_value()) {
+    return ::testing::AssertionFailure() << "Missing model config";
+  }
   for (const auto& tensors : batches) {
-    if (tensors.size() != opts.models[0].inputs.size()) {
+    if (tensors.size() != opts.model->inputs.size()) {
       return ::testing::AssertionFailure()
              << "Batch size mismatch: got " << tensors.size() << " expected "
-             << opts.models[0].inputs.size();
+             << opts.model->inputs.size();
     }
     if (tensors[0].sizes() != torch::IntArrayRef{2, 3} ||
         tensors[0].dtype() != at::kFloat) {
@@ -170,18 +173,24 @@ TEST(ClientUtils, CreateJobProducesExpectedFields)
   ASSERT_EQ(job->get_request_id(), kJobId);
   EXPECT_TRUE(JobHasExpectedInputs(job, inputs));
   EXPECT_TRUE(JobHasExpectedOutputs(job, outputs_ref));
-  EXPECT_LE(job->get_start_time(), job->timing_info().enqueued_time);
+  EXPECT_EQ(
+      job->timing_info().enqueued_time,
+      starpu_server::MonotonicClock::time_point{});
+  EXPECT_EQ(
+      job->timing_info().last_enqueued_time,
+      starpu_server::MonotonicClock::time_point{});
   EXPECT_GT(job->get_start_time().time_since_epoch().count(), 0);
 }
 
 TEST(ClientUtils, PreGenerateInputsProducesValidTensors)
 {
   starpu_server::RuntimeConfig opts;
-  opts.models.resize(1);
-  opts.models[0].inputs = {
+  starpu_server::ModelConfig model{};
+  model.inputs = {
       {"input0", {2, 3}, at::kFloat},
       {"input1", {1}, at::kInt},
   };
+  opts.model = std::move(model);
   const size_t batch_size = 3;
   auto batches =
       starpu_server::client_utils::pre_generate_inputs(opts, batch_size);
@@ -195,7 +204,7 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
   opts.verbosity = starpu_server::VerbosityLevel::Trace;
   const int request_id = 2;
   const int request_nb = 5;
-  auto now = std::chrono::high_resolution_clock::now();
+  auto now = std::chrono::system_clock::now();
   starpu_server::CaptureStream capture{std::cout};
   starpu_server::client_utils::log_job_enqueued(
       opts, request_id, request_nb, now);
@@ -210,7 +219,7 @@ TEST(ClientUtils, LogJobEnqueuedPrintsTraceMessage)
 
 TEST(TimeUtils, FormatTimestamp_FormatRegex)
 {
-  auto now = std::chrono::high_resolution_clock::now();
+  auto now = std::chrono::system_clock::now();
   std::string time = starpu_server::time_utils::format_timestamp(now);
   EXPECT_TRUE(std::regex_match(
       time, std::regex("^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$")));
@@ -237,9 +246,7 @@ TEST(TimeUtils, FormatTimestamp_KnownTime)
 
   sys_time<seconds> base_time = current_zone()->to_sys(local_time);
 
-  auto time_point =
-      time_point_cast<std::chrono::high_resolution_clock::duration>(base_time) +
-      std::chrono::milliseconds(kMillis789);
+  auto time_point = base_time + std::chrono::milliseconds(kMillis789);
 
   std::string time_stamp =
       starpu_server::time_utils::format_timestamp(time_point);
@@ -250,9 +257,7 @@ TEST(TimeUtils, FormatTimestamp_MillisecondBoundaries)
 {
   auto base_time = std::chrono::time_point_cast<std::chrono::seconds>(
       std::chrono::system_clock::now());
-  auto tp000 =
-      time_point_cast<std::chrono::high_resolution_clock::duration>(base_time) +
-      std::chrono::milliseconds(0);
+  auto tp000 = base_time + std::chrono::milliseconds(0);
   auto tp999 = tp000 + std::chrono::milliseconds(kMillis999);
   std::string ts000 = starpu_server::time_utils::format_timestamp(tp000);
   std::string ts999 = starpu_server::time_utils::format_timestamp(tp999);

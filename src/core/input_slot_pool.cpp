@@ -214,15 +214,16 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
 {
   bmax_ = std::max(1, opts.batching.max_batch_size);
 
-  if (opts.models.empty()) {
+  if (!opts.model.has_value()) {
     throw std::invalid_argument("No model config provided for InputSlotPool");
   }
-  const auto& inputs = opts.models[0].inputs;
+  const auto& inputs = opts.model->inputs;
   input_types_.reserve(inputs.size());
   per_input_numel_single_.reserve(inputs.size());
   per_input_bytes_single_.reserve(inputs.size());
 
-  for (const auto& input_spec : inputs) {
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    const auto& input_spec = inputs[i];
     input_types_.push_back(input_spec.type);
     if (input_spec.dims.size() >= 2) {
       const int64_t batch_dim = input_spec.dims[0];
@@ -238,6 +239,10 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
     const size_t numel = product_dims(input_spec.dims);
     per_input_numel_single_.push_back(numel);
     const size_t elsize = element_size(input_spec.type);
+    if (elsize != 0 && numel > std::numeric_limits<size_t>::max() / elsize) {
+      throw std::overflow_error(std::format(
+          "InputSlotPool: per-sample bytes overflow for input {}", i));
+    }
     per_input_bytes_single_.push_back(numel * elsize);
   }
 
@@ -298,17 +303,24 @@ InputSlotPool::allocate_slot_buffers_and_register(
   const bool want_pinned = opts.devices.use_cuda;
   const auto batch_size = static_cast<size_t>(bmax_);
 
-  for (size_t i = 0; i < n_in; ++i) {
-    const auto sizes = compute_input_sizes(
-        per_input_bytes_single_[i], per_input_numel_single_[i], batch_size, i);
+  try {
+    for (size_t i = 0; i < n_in; ++i) {
+      const auto sizes = compute_input_sizes(
+          per_input_bytes_single_[i], per_input_numel_single_[i], batch_size,
+          i);
 
-    auto allocation =
-        allocate_and_pin_buffer(sizes.total_bytes, want_pinned, slot_id, i);
-    slot.base_ptrs[i] = allocation.ptr;
-    buffer_infos[i] = allocation.info;
+      auto allocation =
+          allocate_and_pin_buffer(sizes.total_bytes, want_pinned, slot_id, i);
+      slot.base_ptrs[i] = allocation.ptr;
+      buffer_infos[i] = allocation.info;
 
-    slot.handles[i] = register_starpu_handle_or_throw(
-        allocation.ptr, sizes, input_types_[i], i, slot, buffer_infos);
+      slot.handles[i] = register_starpu_handle_or_throw(
+          allocation.ptr, sizes, input_types_[i], i, slot, buffer_infos);
+    }
+  }
+  catch (...) {
+    cleanup_slot_allocations(slot, buffer_infos, n_in);
+    throw;
   }
 }
 
@@ -337,5 +349,18 @@ InputSlotPool::product_dims(const std::vector<int64_t>& dims) -> size_t
   }
   return prod;
 }
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+void
+compute_input_sizes_for_tests(
+    std::size_t per_sample_bytes, std::size_t per_sample_numel,
+    std::size_t batch_size, std::size_t input_index)
+{
+  [[maybe_unused]] const auto sizes = compute_input_sizes(
+      per_sample_bytes, per_sample_numel, batch_size, input_index);
+}
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
 
 }  // namespace starpu_server

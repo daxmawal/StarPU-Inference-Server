@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "test_helpers.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
 inline auto
@@ -98,10 +99,10 @@ make_test_buffers() -> TestBuffers
   buf.input_data[1] = 2.0F;
   buf.input_data[2] = 3.0F;
   buf.output_data[0] = buf.output_data[1] = buf.output_data[2] = 0.0F;
-  buf.input_iface =
-      starpu_server::make_variable_interface(buf.input_data.data());
-  buf.output_iface =
-      starpu_server::make_variable_interface(buf.output_data.data());
+  buf.input_iface = starpu_server::make_variable_interface(
+      buf.input_data.data(), buf.input_data.size());
+  buf.output_iface = starpu_server::make_variable_interface(
+      buf.output_data.data(), buf.output_data.size());
   buf.buffers[0] = &buf.input_iface;
   buf.buffers[1] = &buf.output_iface;
   return buf;
@@ -110,8 +111,8 @@ make_test_buffers() -> TestBuffers
 struct TimingParams {
   starpu_server::InferenceParams params;
   starpu_server::DeviceType executed_on = starpu_server::DeviceType::Unknown;
-  std::chrono::high_resolution_clock::time_point start_time;
-  std::chrono::high_resolution_clock::time_point end_time;
+  starpu_server::MonotonicClock::time_point start_time;
+  starpu_server::MonotonicClock::time_point end_time;
   torch::jit::script::Module model;
 };
 

@@ -43,9 +43,10 @@ class LoadModelAndReferenceOutputTest
         param.name.c_str(), param.save_module);
 
     starpu_server::RuntimeConfig opts;
-    opts.models.resize(1);
-    opts.models[0].path = file.path().string();
-    opts.models[0].inputs = param.inputs;
+    starpu_server::ModelConfig model{};
+    model.path = file.path().string();
+    model.inputs = param.inputs;
+    opts.model = std::move(model);
     opts.devices.ids = {kDeviceId0};
     opts.devices.use_cuda = false;
 
@@ -57,7 +58,7 @@ class LoadModelAndReferenceOutputTest
     EXPECT_TRUE(gpu_models.empty());
 
     torch::manual_seed(param.seed);
-    auto inputs = starpu_server::generate_inputs(opts.models[0].inputs);
+    auto inputs = starpu_server::generate_inputs(opts.model->inputs);
     ASSERT_EQ(refs.size(), param.expected_outputs);
     param.verify(refs, inputs);
   }

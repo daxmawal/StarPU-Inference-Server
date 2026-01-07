@@ -72,7 +72,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   });
   probe.job = job;
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
   runner_->run();
   assert_failure_result(probe);
 }
@@ -96,7 +96,7 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
   probe.job = job;
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   runner_->run();
 

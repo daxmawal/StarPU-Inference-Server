@@ -218,15 +218,16 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 {
   bmax_ = std::max(1, opts.batching.max_batch_size);
 
-  if (opts.models.empty()) {
+  if (!opts.model.has_value()) {
     throw std::invalid_argument("No model config provided for OutputSlotPool");
   }
-  const auto& outputs = opts.models[0].outputs;
+  const auto& outputs = opts.model->outputs;
   output_types_.reserve(outputs.size());
   per_output_numel_single_.reserve(outputs.size());
   per_output_bytes_single_.reserve(outputs.size());
 
-  for (const auto& output_desc : outputs) {
+  for (size_t i = 0; i < outputs.size(); ++i) {
+    const auto& output_desc = outputs[i];
     output_types_.push_back(output_desc.type);
     if (output_desc.dims.size() >= 2) {
       const int64_t batch_dim = output_desc.dims[0];
@@ -242,6 +243,10 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
     const size_t numel = product_dims(output_desc.dims);
     per_output_numel_single_.push_back(numel);
     const size_t elsize = element_size(output_desc.type);
+    if (elsize != 0 && numel > std::numeric_limits<size_t>::max() / elsize) {
+      throw std::overflow_error(std::format(
+          "OutputSlotPool: per-sample bytes overflow for output {}", i));
+    }
     per_output_bytes_single_.push_back(numel * elsize);
   }
 
@@ -303,27 +308,34 @@ OutputSlotPool::allocate_slot_buffers_and_register(
 
   const auto batch_size = static_cast<size_t>(bmax_);
 
-  for (size_t i = 0; i < num_outputs; ++i) {
-    const auto prepared_buffer = prepare_host_buffer(
-        per_output_bytes_single_[i], batch_size, want_pinned, slot_id, i);
-    slot.base_ptrs[i] = prepared_buffer.ptr;
-    buffer_infos[i] = prepared_buffer.info;
+  try {
+    for (size_t i = 0; i < num_outputs; ++i) {
+      const auto prepared_buffer = prepare_host_buffer(
+          per_output_bytes_single_[i], batch_size, want_pinned, slot_id, i);
+      slot.base_ptrs[i] = prepared_buffer.ptr;
+      buffer_infos[i] = prepared_buffer.info;
 
-    const size_t total_numel =
-        checked_total_numel(per_output_numel_single_[i], batch_size);
-    starpu_data_handle_t handle = nullptr;
-    starpu_vector_register_hook()(
-        &handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(prepared_buffer.ptr),
-        total_numel, element_size(output_types_[i]));
-    if (handle == nullptr) {
-      cleanup_slot_buffers(slot, buffer_infos, i + 1);
-      if (starpu_register_failure_observer() != nullptr) {
-        starpu_register_failure_observer()(slot, buffer_infos);
+      const size_t total_numel =
+          checked_total_numel(per_output_numel_single_[i], batch_size);
+      starpu_data_handle_t handle = nullptr;
+      starpu_vector_register_hook()(
+          &handle, STARPU_MAIN_RAM,
+          std::bit_cast<uintptr_t>(prepared_buffer.ptr), total_numel,
+          element_size(output_types_[i]));
+      if (handle == nullptr) {
+        cleanup_slot_buffers(slot, buffer_infos, i + 1);
+        if (starpu_register_failure_observer() != nullptr) {
+          starpu_register_failure_observer()(slot, buffer_infos);
+        }
+        throw OutputSlotRegistrationError(
+            "Failed to register StarPU vector handle for output");
       }
-      throw OutputSlotRegistrationError(
-          "Failed to register StarPU vector handle for output");
+      slot.handles[i] = handle;
     }
-    slot.handles[i] = handle;
+  }
+  catch (...) {
+    cleanup_slot_buffers(slot, buffer_infos, num_outputs);
+    throw;
   }
 }
 

@@ -63,16 +63,14 @@ class InferenceTaskTest : public ::testing::Test {
 inline auto
 make_callback_context(
     std::shared_ptr<starpu_server::InferenceJob> job = nullptr,
-    const starpu_server::RuntimeConfig* opts = nullptr,
     std::vector<starpu_data_handle_t> inputs = {},
     std::vector<starpu_data_handle_t> outputs = {},
     const starpu_server::InferenceTaskDependencies* dependencies = nullptr,
-    std::shared_ptr<starpu_server::InferenceParams> params = nullptr,
-    int id = 0) -> std::shared_ptr<starpu_server::InferenceCallbackContext>
+    std::shared_ptr<starpu_server::InferenceParams> params = nullptr)
+    -> std::shared_ptr<starpu_server::InferenceCallbackContext>
 {
   auto ctx = std::make_shared<starpu_server::InferenceCallbackContext>(
-      std::move(job), std::move(params), opts, id, std::move(inputs),
-      std::move(outputs));
+      std::move(job), std::move(params), std::move(inputs), std::move(outputs));
   ctx->dependencies = dependencies;
   return ctx;
 }
@@ -88,7 +86,7 @@ make_runtime_config_with_single_output() -> starpu_server::RuntimeConfig
   output.dims = {1};
   output.type = at::kFloat;
   model.outputs.push_back(output);
-  opts.models.push_back(std::move(model));
+  opts.model = std::move(model);
   return opts;
 }
 
@@ -103,7 +101,7 @@ struct OutputContextFixture {
       : starpu_guard(), opts(make_runtime_config_with_single_output()),
         pool(opts, 1), slot_id(pool.acquire()),
         job(std::make_shared<starpu_server::InferenceJob>()),
-        ctx(make_callback_context(job, &opts))
+        ctx(make_callback_context(job))
   {
     std::vector<torch::Tensor> outputs{
         torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};

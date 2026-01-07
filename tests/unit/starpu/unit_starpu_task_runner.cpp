@@ -1,7 +1,7 @@
 #include <cuda_runtime_api.h>
 #include <dlfcn.h>
-#include <elf.h>
-#include <link.h>
+#include <prometheus/client_metric.h>
+#include <prometheus/metric_family.h>
 #include <starpu.h>
 
 #include <array>
@@ -20,9 +20,11 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 #include "core/inference_task.hpp"
 #include "exceptions.hpp"
+#include "monitoring/metrics.hpp"
 #include "starpu_task_worker/task_runner_internal.hpp"
 #include "support/starpu_data_interface_override.hpp"
 #include "support/starpu_task_submit_override.hpp"
@@ -33,6 +35,7 @@
 using starpu_server::CaptureStream;
 using starpu_server::ErrorLevel;
 using starpu_server::expected_log_line;
+namespace test_api = starpu_server::task_runner_internal::testing;
 
 namespace {
 using CudaStreamSynchronizeFn = cudaError_t (*)(cudaStream_t);
@@ -315,345 +318,6 @@ cudaMemcpyAsync(
   return real_fn(dst, src, count, kind, stream);
 }
 
-namespace {
-
-struct VectorResizeSpecShim {
-  std::size_t element_count;
-  std::size_t byte_count;
-};
-
-using ValidateTensorFn = void (*)(const torch::Tensor&, const torch::Tensor&);
-using ValidatePrototypeFn = void (*)(const torch::Tensor&);
-using ResizeStarpuVectorInterfaceFn =
-    void (*)(starpu_vector_interface*, VectorResizeSpecShim, bool);
-
-constexpr std::string_view kValidateTensorSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_133validate_tensor_against_"
-    "prototypeERKN2at6TensorES4_";
-constexpr std::string_view kValidatePrototypeSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_125validate_prototype_"
-    "tensorERKN2at6TensorE";
-constexpr std::string_view kSlotManagerCopyJobInputsSymbolName =
-    "_ZN13starpu_server11SlotManager23copy_job_inputs_to_slotERKSt10shared_ptr"
-    "INS_12InferenceJobEESt4spanIS4_Lm18446744073709551615EES6_IKP18_starpu_"
-    "data_stateLm18446744073709551615EES6_IKPSt4byteLm18446744073709551615EE"
-    "S6_IKNS_13InputSlotPool14HostBufferInfoELm18446744073709551615EERNS_12_"
-    "GLOBAL__N_113CudaCopyBatchE";
-constexpr std::string_view kSlotManagerValidateBatchSymbolName =
-    "_ZNK13starpu_server11SlotManager30validate_batch_and_copy_"
-    "inputsERKSt10shared_ptr"
-    "INS_12InferenceJobEElRKNS_16StarPUTaskRunner13PoolResourcesE";
-constexpr std::string_view kResizeStarpuVectorInterfaceSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_130resize_starpu_vector_"
-    "interfaceEP23starpu_"
-    "vector_interfaceNS0_16VectorResizeSpecEb";
-constexpr std::string_view kCudaCopyBatchFinalizeSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatch8finalizeEv";
-constexpr std::string_view kCudaCopyBatchCtorSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatchC2Eb";
-constexpr std::string_view kCudaCopyBatchDestructorSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatchD2Ev";
-constexpr std::string_view kSlotHandleLeaseCtorSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_115SlotHandleLeaseC2ESt4spanIKP18_starpu_"
-    "data_stateLm18446744073709551615EE23starpu_data_access_mode";
-constexpr std::string_view kSlotHandleLeaseDtorSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_115SlotHandleLeaseD2Ev";
-constexpr std::string_view kBuildRequestIdsForTraceSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_127build_request_ids_for_"
-    "traceERKSt10shared_"
-    "ptrINS_12InferenceJobEE";
-constexpr std::string_view kBatchSizeFromInputsSymbolName =
-    "_ZN13starpu_server20task_runner_internal22batch_size_from_"
-    "inputsERKSt6vectorIN2at6TensorESaIS3_EE";
-constexpr std::string_view kCudaCopyBatchEnqueueSymbolName =
-    "_ZN13starpu_server12_GLOBAL__N_113CudaCopyBatch7enqueueEPSt4bytePKS2_mb";
-
-auto
-map_self_executable() -> const std::vector<char>&
-{
-  static const std::vector<char> image = [] {
-    std::ifstream exe("/proc/self/exe", std::ios::binary);
-    if (!exe) {
-      return std::vector<char>{};
-    }
-    exe.seekg(0, std::ios::end);
-    const auto size = exe.tellg();
-    if (size <= 0) {
-      return std::vector<char>{};
-    }
-    std::vector<char> buffer(static_cast<std::size_t>(size));
-    exe.seekg(0, std::ios::beg);
-    exe.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    return buffer;
-  }();
-  return image;
-}
-
-auto
-locate_symbol_offset(std::string_view name) -> std::optional<std::uint64_t>
-{
-  const auto& image = map_self_executable();
-  if (image.size() < sizeof(Elf64_Ehdr)) {
-    return std::nullopt;
-  }
-
-  const auto* ehdr = reinterpret_cast<const Elf64_Ehdr*>(image.data());
-  if (std::memcmp(ehdr->e_ident, ELFMAG, SELFMAG) != 0) {
-    return std::nullopt;
-  }
-  if (ehdr->e_shoff == 0 || ehdr->e_shnum == 0) {
-    return std::nullopt;
-  }
-
-  const auto* shdrs =
-      reinterpret_cast<const Elf64_Shdr*>(image.data() + ehdr->e_shoff);
-  if (ehdr->e_shstrndx == SHN_UNDEF || ehdr->e_shstrndx >= ehdr->e_shnum) {
-    return std::nullopt;
-  }
-
-  const Elf64_Shdr* symtab = nullptr;
-  const Elf64_Shdr* strtab = nullptr;
-  for (int idx = 0; idx < ehdr->e_shnum; ++idx) {
-    if (shdrs[idx].sh_type == SHT_SYMTAB) {
-      symtab = &shdrs[idx];
-      if (symtab->sh_link < ehdr->e_shnum) {
-        strtab = &shdrs[symtab->sh_link];
-      }
-      break;
-    }
-  }
-  if (symtab == nullptr || strtab == nullptr) {
-    return std::nullopt;
-  }
-
-  const auto* symbols =
-      reinterpret_cast<const Elf64_Sym*>(image.data() + symtab->sh_offset);
-  const char* names =
-      reinterpret_cast<const char*>(image.data() + strtab->sh_offset);
-  const std::size_t symbol_count =
-      symtab->sh_size / std::max<std::size_t>(symtab->sh_entsize, 1U);
-
-  for (std::size_t idx = 0; idx < symbol_count; ++idx) {
-    const auto& sym = symbols[idx];
-    const char* sym_name = names + sym.st_name;
-    if (sym_name != nullptr && std::strcmp(sym_name, name.data()) == 0) {
-      return sym.st_value;
-    }
-  }
-  return std::nullopt;
-}
-
-auto
-executable_base_address() -> std::uintptr_t
-{
-  std::uintptr_t base = 0;
-  dl_iterate_phdr(
-      [](dl_phdr_info* info, size_t, void* data) -> int {
-        if (info->dlpi_name == nullptr || info->dlpi_name[0] == '\0') {
-          *static_cast<std::uintptr_t*>(data) =
-              static_cast<std::uintptr_t>(info->dlpi_addr);
-          return 1;
-        }
-        return 0;
-      },
-      &base);
-  return base;
-}
-
-auto
-resolve_symbol_address(std::string_view name) -> std::uintptr_t
-{
-  const auto offset = locate_symbol_offset(name);
-  if (!offset.has_value()) {
-    return 0;
-  }
-  return executable_base_address() + *offset;
-}
-
-auto
-resolve_validate_tensor_against_prototype_fn() -> ValidateTensorFn
-{
-  static ValidateTensorFn fn = [] {
-    const auto address = resolve_symbol_address(kValidateTensorSymbolName);
-    return address != 0 ? reinterpret_cast<ValidateTensorFn>(address) : nullptr;
-  }();
-  return fn;
-}
-
-auto
-resolve_validate_prototype_tensor_fn() -> ValidatePrototypeFn
-{
-  static ValidatePrototypeFn fn = [] {
-    const auto address = resolve_symbol_address(kValidatePrototypeSymbolName);
-    return address != 0 ? reinterpret_cast<ValidatePrototypeFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-using CopyJobInputsFn = void (*)(
-    const std::shared_ptr<starpu_server::InferenceJob>&,
-    std::span<const std::shared_ptr<starpu_server::InferenceJob>>,
-    std::span<const starpu_data_handle_t>, std::span<std::byte* const>,
-    std::span<const starpu_server::InputSlotPool::HostBufferInfo>, void*);
-
-auto
-resolve_copy_job_inputs_fn() -> CopyJobInputsFn
-{
-  static CopyJobInputsFn fn = [] {
-    const auto address =
-        resolve_symbol_address(kSlotManagerCopyJobInputsSymbolName);
-    return address != 0 ? reinterpret_cast<CopyJobInputsFn>(address) : nullptr;
-  }();
-  return fn;
-}
-
-auto
-resolve_resize_starpu_vector_interface_fn() -> ResizeStarpuVectorInterfaceFn
-{
-  static ResizeStarpuVectorInterfaceFn fn = [] {
-    const auto address =
-        resolve_symbol_address(kResizeStarpuVectorInterfaceSymbolName);
-    return address != 0
-               ? reinterpret_cast<ResizeStarpuVectorInterfaceFn>(address)
-               : nullptr;
-  }();
-  return fn;
-}
-
-using CudaCopyBatchFinalizeFn = void (*)(void*);
-
-auto
-resolve_cuda_copy_batch_finalize_fn() -> CudaCopyBatchFinalizeFn
-{
-  static CudaCopyBatchFinalizeFn fn = [] {
-    const auto address =
-        resolve_symbol_address(kCudaCopyBatchFinalizeSymbolName);
-    return address != 0 ? reinterpret_cast<CudaCopyBatchFinalizeFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-using CudaCopyBatchCtorFn = void (*)(void*, bool);
-using CudaCopyBatchDestructorFn = void (*)(void*);
-using CudaCopyBatchEnqueueFn =
-    bool (*)(void*, std::byte*, const std::byte*, std::size_t, bool);
-
-auto
-resolve_cuda_copy_batch_ctor_fn() -> CudaCopyBatchCtorFn
-{
-  static CudaCopyBatchCtorFn fn = [] {
-    const auto address = resolve_symbol_address(kCudaCopyBatchCtorSymbolName);
-    return address != 0 ? reinterpret_cast<CudaCopyBatchCtorFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-auto
-resolve_cuda_copy_batch_enqueue_fn() -> CudaCopyBatchEnqueueFn
-{
-  static CudaCopyBatchEnqueueFn fn = [] {
-    const auto address =
-        resolve_symbol_address(kCudaCopyBatchEnqueueSymbolName);
-    return address != 0 ? reinterpret_cast<CudaCopyBatchEnqueueFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-auto
-resolve_cuda_copy_batch_destructor_fn() -> CudaCopyBatchDestructorFn
-{
-  static CudaCopyBatchDestructorFn fn = [] {
-    const auto address =
-        resolve_symbol_address(kCudaCopyBatchDestructorSymbolName);
-    return address != 0 ? reinterpret_cast<CudaCopyBatchDestructorFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-using SlotHandleLeaseCtorFn = void (*)(
-    void*, std::span<const starpu_data_handle_t>, starpu_data_access_mode);
-using SlotHandleLeaseDtorFn = void (*)(void*);
-
-auto
-resolve_slot_handle_lease_ctor_fn() -> SlotHandleLeaseCtorFn
-{
-  static SlotHandleLeaseCtorFn fn = [] {
-    const auto address = resolve_symbol_address(kSlotHandleLeaseCtorSymbolName);
-    return address != 0 ? reinterpret_cast<SlotHandleLeaseCtorFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-auto
-resolve_slot_handle_lease_dtor_fn() -> SlotHandleLeaseDtorFn
-{
-  static SlotHandleLeaseDtorFn fn = [] {
-    const auto address = resolve_symbol_address(kSlotHandleLeaseDtorSymbolName);
-    return address != 0 ? reinterpret_cast<SlotHandleLeaseDtorFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-using BuildRequestIdsForTraceFn =
-    std::vector<int> (*)(const std::shared_ptr<starpu_server::InferenceJob>&);
-
-auto
-resolve_build_request_ids_for_trace_fn() -> BuildRequestIdsForTraceFn
-{
-  static BuildRequestIdsForTraceFn fn = [] {
-    const auto address =
-        resolve_symbol_address(kBuildRequestIdsForTraceSymbolName);
-    return address != 0 ? reinterpret_cast<BuildRequestIdsForTraceFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-using BatchSizeFromInputsFn =
-    std::size_t (*)(const std::vector<torch::Tensor>&);
-
-auto
-resolve_batch_size_from_inputs_fn() -> BatchSizeFromInputsFn
-{
-  static BatchSizeFromInputsFn fn = [] {
-    const auto address = resolve_symbol_address(kBatchSizeFromInputsSymbolName);
-    return address != 0 ? reinterpret_cast<BatchSizeFromInputsFn>(address)
-                        : nullptr;
-  }();
-  return fn;
-}
-
-}  // namespace
-
-extern "C" int64_t
-batch_collector_job_sample_size(const starpu_server::BatchCollector* collector, const std::shared_ptr<starpu_server::InferenceJob>& job) __asm__(
-    "_ZNK13starpu_server14BatchCollector15job_sample_sizeERKSt10shared_ptrINS_"
-    "12InferenceJobEE");
-
-extern "C" bool
-batch_collector_exceeds_sample_limit(const starpu_server::BatchCollector* collector, int64_t accumulated_samples, const std::shared_ptr<starpu_server::InferenceJob>& job, int64_t max_samples_cap) __asm__(
-    "_ZNK13starpu_server14BatchCollector20exceeds_sample_limitElRKSt10shared_"
-    "ptr"
-    "INS_12InferenceJobEEl");
-
-extern "C" bool
-batch_collector_should_hold_job(const std::shared_ptr<starpu_server::InferenceJob>& candidate, const std::shared_ptr<starpu_server::InferenceJob>& reference, const std::optional<int>& target_worker) __asm__(
-    "_ZN13starpu_server14BatchCollector15should_hold_jobERKSt10shared_ptrINS_"
-    "12InferenceJobEES5_RKSt8optionalIiE");
-
-namespace starpu_server::testing_slot_manager {
-struct CopyBatchStub {
-  alignas(void*) unsigned char storage[sizeof(void*)];
-};
-}  // namespace starpu_server::testing_slot_manager
-
 namespace starpu_server {
 class StarPUTaskRunnerTestAdapter {
  public:
@@ -738,20 +402,12 @@ class StarPUTaskRunnerTestAdapter {
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
       int64_t batch, const StarPUTaskRunner::PoolResources& pools) -> int64_t
   {
-    using SlotManagerValidateFn = int64_t (*)(
-        const SlotManager*, const std::shared_ptr<InferenceJob>&, int64_t,
-        const StarPUTaskRunner::PoolResources&);
-    static SlotManagerValidateFn validate_fn = [] {
-      const auto address =
-          resolve_symbol_address(kSlotManagerValidateBatchSymbolName);
-      return address != 0 ? reinterpret_cast<SlotManagerValidateFn>(address)
-                          : nullptr;
-    }();
-    if (runner == nullptr || runner->slot_manager_ == nullptr ||
-        validate_fn == nullptr) {
+    if (runner == nullptr || runner->slot_manager_ == nullptr) {
       return -1;
     }
-    return validate_fn(runner->slot_manager_.get(), job, batch, pools);
+    return test_api::slot_manager_validate_batch_and_copy_inputs(
+        runner->slot_manager_.get(), job, batch, pools.input_pool,
+        pools.input_slot, pools.output_pool, pools.output_slot);
   }
 
   static auto validate_batch_and_copy_inputs_custom(
@@ -767,8 +423,8 @@ class StarPUTaskRunnerTestAdapter {
   static auto configure_task_context(
       InferenceTask& task, InputSlotPool* input_pool, int input_slot,
       OutputSlotPool* output_pool, int output_slot,
-      const std::vector<starpu_data_handle_t>& input_handles,
-      const std::vector<starpu_data_handle_t>& output_handles,
+      std::vector<starpu_data_handle_t> input_handles,
+      std::vector<starpu_data_handle_t> output_handles,
       int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>
   {
     StarPUTaskRunner::PoolResources pools{};
@@ -777,7 +433,8 @@ class StarPUTaskRunnerTestAdapter {
     pools.output_pool = output_pool;
     pools.output_slot = output_slot;
     return StarPUTaskRunner::configure_task_context(
-        task, pools, input_handles, output_handles, batch_size);
+        task, pools, std::move(input_handles), std::move(output_handles),
+        batch_size);
   }
 
   static void trace_batch_if_enabled(
@@ -794,7 +451,8 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return -1;
     }
-    return batch_collector_job_sample_size(runner->batch_collector_.get(), job);
+    return test_api::batch_collector_job_sample_size(
+        runner->batch_collector_.get(), job);
   }
 
   static void enqueue_prepared_job(
@@ -823,32 +481,30 @@ class StarPUTaskRunnerTestAdapter {
     return runner->wait_for_prepared_job();
   }
 
-  struct BatchCollectorAccessor {
-    starpu_server::InferenceQueue* queue;
-    const starpu_server::RuntimeConfig* opts;
-    starpu_server::StarPUSetup* starpu;
-    std::shared_ptr<starpu_server::InferenceJob>* pending_job;
-    std::atomic<std::size_t>* inflight_tasks;
-    std::condition_variable* inflight_cv;
-    std::mutex* inflight_mutex;
-    std::size_t max_inflight_tasks;
-    std::mutex* prepared_mutex;
-    std::condition_variable* prepared_cv;
-    std::deque<std::shared_ptr<starpu_server::InferenceJob>>* prepared_jobs;
-    bool* batching_done;
-  };
+  static void run_batching_loop(StarPUTaskRunner* runner)
+  {
+    if (runner != nullptr) {
+      runner->batching_loop();
+    }
+  }
+
+  static auto batching_done(StarPUTaskRunner* runner) -> bool
+  {
+    if (runner == nullptr) {
+      return false;
+    }
+    auto& state = runner->prepared_state_;
+    const std::scoped_lock lock(state.mutex);
+    return state.batching_done;
+  }
 
   static void disable_prepared_job_sync(StarPUTaskRunner* runner)
   {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-
-    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
+    test_api::batch_collector_disable_prepared_job_sync(
         runner->batch_collector_.get());
-    accessor->prepared_mutex = nullptr;
-    accessor->prepared_cv = nullptr;
-    accessor->prepared_jobs = nullptr;
   }
 
   static void set_batch_collector_queue_to_null(StarPUTaskRunner* runner)
@@ -856,9 +512,8 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
-        runner->batch_collector_.get());
-    accessor->queue = nullptr;
+    test_api::batch_collector_set_queue(
+        runner->batch_collector_.get(), nullptr);
   }
 
   static auto get_batch_collector_queue(StarPUTaskRunner* runner)
@@ -867,9 +522,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return nullptr;
     }
-    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
-        runner->batch_collector_.get());
-    return accessor->queue;
+    return test_api::batch_collector_get_queue(runner->batch_collector_.get());
   }
 
   static void set_batch_collector_pending_job(
@@ -879,11 +532,20 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    auto* accessor = reinterpret_cast<BatchCollectorAccessor*>(
-        runner->batch_collector_.get());
-    if (accessor->pending_job != nullptr) {
-      *accessor->pending_job = job;
+    test_api::batch_collector_set_pending_job(
+        runner->batch_collector_.get(), job);
+  }
+
+  static auto try_acquire_next_job(
+      StarPUTaskRunner* runner, bool enable_wait,
+      task_runner_internal::Clock::time_point coalesce_deadline)
+      -> std::shared_ptr<InferenceJob>
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return nullptr;
     }
+    return test_api::batch_collector_try_acquire_next_job(
+        runner->batch_collector_.get(), enable_wait, coalesce_deadline);
   }
 
   static void release_pending_jobs(
@@ -891,13 +553,6 @@ class StarPUTaskRunnerTestAdapter {
       std::vector<std::shared_ptr<InferenceJob>>& pending_jobs)
   {
     StarPUTaskRunner::release_pending_jobs(job, pending_jobs);
-  }
-
-  static void store_completed_job_result(
-      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
-      const std::vector<torch::Tensor>& results, double latency_ms)
-  {
-    task_runner_helpers::store_completed_job_result(job, results, latency_ms);
   }
 
   static void ensure_callback_timing(detail::TimingInfo& timing)
@@ -928,7 +583,8 @@ class StarPUTaskRunnerTestAdapter {
       const std::shared_ptr<InferenceJob>& reference,
       const std::optional<int>& target_worker) -> bool
   {
-    return batch_collector_should_hold_job(candidate, reference, target_worker);
+    return test_api::batch_collector_should_hold_job(
+        candidate, reference, target_worker);
   }
 
   static auto exceeds_sample_limit(
@@ -938,7 +594,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return false;
     }
-    return batch_collector_exceeds_sample_limit(
+    return test_api::batch_collector_exceeds_sample_limit(
         runner->batch_collector_.get(), accumulated_samples, job,
         max_samples_cap);
   }
@@ -1043,7 +699,7 @@ read_trace_file(const std::filesystem::path& path) -> std::string
 void
 populate_trace_timing(starpu_server::InferenceJob& job)
 {
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   const auto now = clock::now();
   job.timing_info().enqueued_time = now - std::chrono::milliseconds(3);
   job.timing_info().last_enqueued_time = now - std::chrono::milliseconds(2);
@@ -1188,20 +844,10 @@ TEST(
     StarPUTaskWorkerInternals,
     ResizeVectorInterfaceReturnsEarlyWhenInterfaceMissing)
 {
-  const auto resize_fn = resolve_resize_starpu_vector_interface_fn();
-  ASSERT_NE(resize_fn, nullptr);
+  constexpr test_api::VectorResizeSpecShim spec{5, 20};
 
-  constexpr VectorResizeSpecShim spec{5, 20};
-
-  EXPECT_NO_THROW(resize_fn(nullptr, spec, true));
-}
-
-TEST_F(StarPUTaskRunnerFixture, ShouldShutdown)
-{
-  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
-  auto normal_job = make_job(0, {});
-  EXPECT_TRUE(runner_->should_shutdown(shutdown_job));
-  EXPECT_FALSE(runner_->should_shutdown(normal_job));
+  EXPECT_NO_THROW(
+      test_api::resize_starpu_vector_interface(nullptr, spec, true));
 }
 
 TEST_F(
@@ -1299,7 +945,7 @@ TEST_F(
   job->get_executed_on() = starpu_server::DeviceType::CPU;
   populate_trace_timing(*job);
 
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   const auto base = clock::now();
   auto& timing = job->timing_info();
   timing.codelet_start_time = base - std::chrono::microseconds(400);
@@ -1348,7 +994,7 @@ TEST_F(
   job->get_executed_on() = starpu_server::DeviceType::CPU;
   populate_trace_timing(*job);
 
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   const auto base = clock::now();
   auto& timing = job->timing_info();
   timing.codelet_start_time = base - std::chrono::microseconds(500);
@@ -1395,7 +1041,7 @@ TEST_F(
   job->get_executed_on() = starpu_server::DeviceType::CPU;
   populate_trace_timing(*job);
 
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   const auto base = clock::now();
   auto& timing = job->timing_info();
   timing.inference_start_time = clock::time_point{};
@@ -1498,7 +1144,7 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
 {
   opts_.verbosity = starpu_server::VerbosityLevel::Stats;
   starpu_server::detail::TimingInfo time;
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   auto base = clock::now();
   time.enqueued_time = base;
   time.last_enqueued_time = base;
@@ -1540,29 +1186,6 @@ TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)
   EXPECT_NE(output.find("Codelet = 30.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Inference = 45.000 ms"), std::string::npos);
   EXPECT_NE(output.find("Callback = 15.000 ms"), std::string::npos);
-}
-
-TEST_F(StarPUTaskRunnerFixture, StoreCompletedJobResultTracksInputsAndOutputs)
-{
-  std::vector<torch::Tensor> inputs{torch::tensor({1.0, 2.0})};
-  const std::vector<torch::Tensor> outputs{torch::tensor({5.0})};
-  constexpr double kLatencyMs = 7.5;
-
-  auto job = make_job(77, inputs);
-  job->set_submission_id(11);
-  job->timing_info().submission_id = job->submission_id();
-  job->get_device_id() = 3;
-  job->get_worker_id() = 9;
-  job->get_executed_on() = starpu_server::DeviceType::CUDA;
-  job->timing_info().callback_start_time =
-      starpu_server::task_runner_internal::Clock::now();
-  job->timing_info().callback_end_time =
-      job->timing_info().callback_start_time + std::chrono::milliseconds(1);
-
-  starpu_server::StarPUTaskRunnerTestAdapter::store_completed_job_result(
-      runner_.get(), job, outputs, kLatencyMs);
-
-  EXPECT_TRUE(job->get_input_tensors().empty());
 }
 
 TEST_F(
@@ -1659,6 +1282,63 @@ TEST_F(
       runner_.get(), job, error, "runtime failure", job->get_request_id());
 
   EXPECT_EQ(completed_jobs_.load(), 1);
+}
+
+TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionUsesGenericReason)
+{
+  starpu_server::shutdown_metrics();
+  ASSERT_TRUE(starpu_server::init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { starpu_server::shutdown_metrics(); }
+  } guard;
+
+  auto job = make_job(89, {});
+  job->set_model_name("demo_model");
+
+  struct CustomException final : std::exception {
+    const char* what() const noexcept override { return "custom failure"; }
+  };
+  const CustomException error;
+
+  starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
+      runner_.get(), job, error, "", job->get_request_id());
+
+  const auto metrics = starpu_server::get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+  auto find_failure_value =
+      [](const std::vector<prometheus::MetricFamily>& items,
+         std::string_view stage, std::string_view reason,
+         std::string_view model) -> std::optional<double> {
+    for (const auto& family : items) {
+      if (family.name != "inference_failures_total") {
+        continue;
+      }
+      for (const auto& metric : family.metric) {
+        bool stage_match = false;
+        bool reason_match = false;
+        bool model_match = false;
+        for (const auto& label : metric.label) {
+          if (label.name == "stage" && label.value == stage) {
+            stage_match = true;
+          } else if (label.name == "reason" && label.value == reason) {
+            reason_match = true;
+          } else if (label.name == "model" && label.value == model) {
+            model_match = true;
+          }
+        }
+        if (stage_match && reason_match && model_match) {
+          return metric.counter.value;
+        }
+      }
+    }
+    return std::nullopt;
+  };
+
+  const auto value =
+      find_failure_value(families, "execution", "exception", "demo_model");
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 1.0);
 }
 
 TEST_F(StarPUTaskRunnerFixture, TraceBatchIfEnabledLogsAggregatedRequestIds)
@@ -1758,7 +1438,7 @@ TEST_F(
   populate_trace_timing(*job);
   job->timing_info().submission_id = job->submission_id();
   job->timing_info().last_enqueued_time =
-      std::chrono::high_resolution_clock::time_point{};
+      starpu_server::MonotonicClock::time_point{};
 
   starpu_server::StarPUTaskRunnerTestAdapter::trace_batch_if_enabled(
       runner_.get(), job, /*warmup_job=*/false, job->submission_id());
@@ -1778,7 +1458,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     TraceBatchIfEnabledClampsLastEnqueuedTimestampBeforeStart)
 {
-  using clock = std::chrono::high_resolution_clock;
+  using clock = starpu_server::MonotonicClock;
   using namespace std::chrono_literals;
 
   TraceLoggerSession session;
@@ -1936,7 +1616,7 @@ TEST_F(
   job->set_output_tensors({torch::zeros({1}, tensor_opts)});
   job->set_submission_id(kSubmissionId);
   job->timing_info().submission_id = kSubmissionId;
-  job->set_start_time(std::chrono::high_resolution_clock::now());
+  job->set_start_time(starpu_server::MonotonicClock::now());
 
   ASSERT_TRUE(starpu_setup_->has_input_pool());
   ASSERT_TRUE(starpu_setup_->has_output_pool());
@@ -1981,7 +1661,7 @@ TEST_F(
   job->set_output_tensors({torch::zeros({1}, tensor_opts)});
   job->set_submission_id(kSubmissionId);
   job->timing_info().submission_id = kSubmissionId;
-  job->set_start_time(std::chrono::high_resolution_clock::now());
+  job->set_start_time(starpu_server::MonotonicClock::now());
   populate_trace_timing(*job);
 
   ASSERT_FALSE(starpu_setup_->has_input_pool());
@@ -2056,7 +1736,7 @@ TEST_F(
     StarPUTaskRunnerFixture, ValidateBatchAndCopyInputsHandlesJobsWithoutInputs)
 {
   starpu_server::RuntimeConfig pool_config{};
-  pool_config.models = {make_model_config("empty_inputs", {}, {})};
+  pool_config.model = make_model_config("empty_inputs", {}, {});
   pool_config.batching.pool_size = 1;
   pool_config.batching.max_batch_size = 1;
 
@@ -2331,11 +2011,6 @@ TEST_F(
 
 TEST(SlotHandleLeaseTest, ConstructorSkipsNullHandles)
 {
-  auto ctor_fn = resolve_slot_handle_lease_ctor_fn();
-  auto dtor_fn = resolve_slot_handle_lease_dtor_fn();
-  ASSERT_NE(ctor_fn, nullptr);
-  ASSERT_NE(dtor_fn, nullptr);
-
   const auto valid_handle =
       reinterpret_cast<starpu_data_handle_t>(static_cast<uintptr_t>(0x1));
   std::array<starpu_data_handle_t, 2> handles{nullptr, valid_handle};
@@ -2351,22 +2026,19 @@ TEST(SlotHandleLeaseTest, ConstructorSkipsNullHandles)
   ScopedSlotHandleLeaseReleaseContext release_scope(release_ctx);
 
   alignas(std::max_align_t) std::array<std::byte, 256> storage{};
-  ctor_fn(
+  test_api::slot_handle_lease_construct(
       storage.data(), std::span<const starpu_data_handle_t>(handles), STARPU_W);
 
   ASSERT_EQ(acquired.size(), 1U);
   EXPECT_EQ(acquired[0], valid_handle);
 
-  dtor_fn(storage.data());
+  test_api::slot_handle_lease_destroy(storage.data());
   ASSERT_EQ(released.size(), 1U);
   EXPECT_EQ(released[0], valid_handle);
 }
 
 TEST(SlotHandleLeaseTest, ConstructorPropagatesAcquireFailures)
 {
-  auto ctor_fn = resolve_slot_handle_lease_ctor_fn();
-  ASSERT_NE(ctor_fn, nullptr);
-
   const auto handle_ok =
       reinterpret_cast<starpu_data_handle_t>(static_cast<uintptr_t>(0x10));
   const auto handle_fail =
@@ -2388,7 +2060,7 @@ TEST(SlotHandleLeaseTest, ConstructorPropagatesAcquireFailures)
 
   alignas(std::max_align_t) std::array<std::byte, 256> storage{};
   EXPECT_THROW(
-      ctor_fn(
+      test_api::slot_handle_lease_construct(
           storage.data(), std::span<const starpu_data_handle_t>(handles),
           STARPU_W),
       starpu_server::StarPUDataAcquireException);
@@ -2408,6 +2080,27 @@ TEST(BuildRequestIdsForTraceTest, ReturnsEmptyWhenJobMissing)
   std::shared_ptr<starpu_server::InferenceJob> missing_job;
   const auto ids = internal::build_request_ids_for_trace(missing_job);
   EXPECT_TRUE(ids.empty());
+}
+
+TEST(BuildRequestIdsForTraceTest, ReturnsStoredRequestIdWhenSubJobExpired)
+{
+  namespace internal = starpu_server::task_runner_internal;
+
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  {
+    auto expired = std::make_shared<starpu_server::InferenceJob>();
+    starpu_server::InferenceJob::AggregatedSubJob entry{};
+    entry.job = expired;
+    entry.request_id = -7;
+    sub_jobs.push_back(entry);
+  }
+
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto ids = internal::build_request_ids_for_trace(aggregated);
+  ASSERT_EQ(ids.size(), 1U);
+  EXPECT_EQ(ids[0], -7);
 }
 
 TEST(SliceOutputsForSubJobTest, MakesSlicesContiguousWhenSourceIsNot)
@@ -2440,17 +2133,24 @@ TEST(SliceOutputsForSubJobTest, MakesSlicesContiguousWhenSourceIsNot)
 
 TEST(BatchSizeFromInputsTest, ReturnsOneWhenInputsEmpty)
 {
-  auto fn = resolve_batch_size_from_inputs_fn();
-  ASSERT_NE(fn, nullptr);
   const std::vector<torch::Tensor> empty_inputs;
-  EXPECT_EQ(fn(empty_inputs), 1U);
+  EXPECT_EQ(test_api::batch_size_from_inputs(empty_inputs), 1U);
 }
 
-struct CudaCopyBatchMirror {
-  cudaStream_t stream;
-  bool enabled;
-  bool pending;
-};
+TEST(BatchSizeFromInputsTest, ReturnsOneWhenFirstInputIsScalar)
+{
+  auto scalar = torch::tensor(1);
+  ASSERT_EQ(scalar.dim(), 0);
+
+  const std::vector<torch::Tensor> inputs{scalar};
+  EXPECT_EQ(test_api::batch_size_from_inputs(inputs), 1U);
+}
+
+TEST(ResolveBatchSizeForJobTest, ReturnsOneWhenJobMissing)
+{
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+  EXPECT_EQ(test_api::resolve_batch_size_for_job(nullptr, missing_job), 1);
+}
 
 TEST(CudaCopyBatchTest, FinalizeDisablesAsyncCopyWhenStreamSyncFails)
 {
@@ -2458,25 +2158,30 @@ TEST(CudaCopyBatchTest, FinalizeDisablesAsyncCopyWhenStreamSyncFails)
     GTEST_SKIP() << "CUDA runtime unavailable for finalize test";
   }
 
-  auto finalize_fn = resolve_cuda_copy_batch_finalize_fn();
-  ASSERT_NE(finalize_fn, nullptr);
+  auto* batch = test_api::cuda_copy_batch_create(true);
+  ASSERT_NE(batch, nullptr);
 
-  cudaStream_t stream = nullptr;
-  ASSERT_EQ(
-      cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking), cudaSuccess);
+  int src = 1;
+  int dst = 0;
+  const bool enqueued = test_api::cuda_copy_batch_enqueue(
+      batch, reinterpret_cast<std::byte*>(&dst),
+      reinterpret_cast<const std::byte*>(&src), sizeof(src),
+      /*allow_async=*/true);
+  ASSERT_TRUE(enqueued);
+  ASSERT_TRUE(test_api::cuda_copy_batch_pending(batch));
 
-  CudaCopyBatchMirror batch{stream, true, true};
+  const auto stream = test_api::cuda_copy_batch_stream(batch);
+  ASSERT_NE(stream, nullptr);
 
   {
     ScopedCudaStreamSyncFailure guard(stream);
-    finalize_fn(&batch);
+    test_api::cuda_copy_batch_finalize(batch);
   }
 
-  EXPECT_FALSE(batch.enabled);
-  EXPECT_FALSE(batch.pending);
+  EXPECT_FALSE(test_api::cuda_copy_batch_enabled(batch));
+  EXPECT_FALSE(test_api::cuda_copy_batch_pending(batch));
   EXPECT_GE(cuda_stream_sync_failure_count(), 1);
-
-  EXPECT_EQ(cudaStreamDestroy(stream), cudaSuccess);
+  test_api::cuda_copy_batch_destroy(batch);
 }
 
 TEST(CudaCopyBatchTest, ConstructorHandlesStreamCreationFailure)
@@ -2485,22 +2190,16 @@ TEST(CudaCopyBatchTest, ConstructorHandlesStreamCreationFailure)
     GTEST_SKIP() << "CUDA runtime unavailable for constructor test";
   }
 
-  auto ctor_fn = resolve_cuda_copy_batch_ctor_fn();
-  ASSERT_NE(ctor_fn, nullptr);
-
-  alignas(CudaCopyBatchMirror) std::byte storage[sizeof(CudaCopyBatchMirror)];
-  auto* batch = reinterpret_cast<CudaCopyBatchMirror*>(storage);
-  std::memset(batch, 0xAB, sizeof(CudaCopyBatchMirror));
-
   {
     ScopedCudaStreamCreateFailure guard;
-    ctor_fn(batch, true);
+    auto* batch = test_api::cuda_copy_batch_create(true);
+    ASSERT_NE(batch, nullptr);
+    EXPECT_TRUE(cuda_stream_create_failure_count() >= 1);
+    EXPECT_EQ(test_api::cuda_copy_batch_stream(batch), nullptr);
+    EXPECT_FALSE(test_api::cuda_copy_batch_enabled(batch));
+    EXPECT_FALSE(test_api::cuda_copy_batch_pending(batch));
+    test_api::cuda_copy_batch_destroy(batch);
   }
-
-  EXPECT_TRUE(cuda_stream_create_failure_count() >= 1);
-  EXPECT_EQ(batch->stream, nullptr);
-  EXPECT_FALSE(batch->enabled);
-  EXPECT_FALSE(batch->pending);
 }
 
 TEST(CudaCopyBatchTest, EnqueueDisablesAsyncCopyWhenMemcpyFails)
@@ -2509,38 +2208,30 @@ TEST(CudaCopyBatchTest, EnqueueDisablesAsyncCopyWhenMemcpyFails)
     GTEST_SKIP() << "CUDA runtime unavailable for enqueue test";
   }
 
-  auto ctor_fn = resolve_cuda_copy_batch_ctor_fn();
-  auto enqueue_fn = resolve_cuda_copy_batch_enqueue_fn();
-  auto dtor_fn = resolve_cuda_copy_batch_destructor_fn();
-  ASSERT_NE(ctor_fn, nullptr);
-  ASSERT_NE(enqueue_fn, nullptr);
-  ASSERT_NE(dtor_fn, nullptr);
-
-  alignas(CudaCopyBatchMirror) std::byte storage[sizeof(CudaCopyBatchMirror)];
-  auto* batch = reinterpret_cast<CudaCopyBatchMirror*>(storage);
-  std::memset(storage, 0, sizeof(storage));
-  ctor_fn(batch, true);
-  ASSERT_TRUE(batch->enabled);
-  ASSERT_NE(batch->stream, nullptr);
+  auto* batch = test_api::cuda_copy_batch_create(true);
+  ASSERT_NE(batch, nullptr);
+  ASSERT_TRUE(test_api::cuda_copy_batch_enabled(batch));
+  const auto stream = test_api::cuda_copy_batch_stream(batch);
+  ASSERT_NE(stream, nullptr);
 
   int src = 42;
   int dst = 0;
 
   {
-    ScopedCudaMemcpyAsyncFailure guard(batch->stream);
-    const bool ok = enqueue_fn(
+    ScopedCudaMemcpyAsyncFailure guard(stream);
+    const bool ok = test_api::cuda_copy_batch_enqueue(
         batch, reinterpret_cast<std::byte*>(&dst),
         reinterpret_cast<const std::byte*>(&src), sizeof(src),
         /*allow_async=*/true);
     EXPECT_FALSE(ok);
   }
 
-  EXPECT_FALSE(batch->enabled);
-  EXPECT_FALSE(batch->pending);
+  EXPECT_FALSE(test_api::cuda_copy_batch_enabled(batch));
+  EXPECT_FALSE(test_api::cuda_copy_batch_pending(batch));
   EXPECT_GE(cuda_memcpy_failure_count(), 1);
   EXPECT_EQ(dst, 0);
 
-  dtor_fn(batch);
+  test_api::cuda_copy_batch_destroy(batch);
 }
 
 TEST_F(
@@ -2939,78 +2630,66 @@ TEST_F(
 
 TEST(ValidateTensorAgainstPrototype, RejectsUndefinedTensorBeforeBatching)
 {
-  auto fn = resolve_validate_tensor_against_prototype_fn();
-  ASSERT_NE(fn, nullptr);
-
   torch::Tensor undefined_tensor;
   auto prototype =
       torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat));
 
   EXPECT_THROW(
-      fn(undefined_tensor, prototype),
+      test_api::validate_tensor_against_prototype(undefined_tensor, prototype),
       starpu_server::InvalidInputTensorException);
 }
 
 TEST(ValidateTensorAgainstPrototype, RejectsRankMismatchDuringBatching)
 {
-  auto fn = resolve_validate_tensor_against_prototype_fn();
-  ASSERT_NE(fn, nullptr);
-
   auto tensor =
       torch::ones({1, 2, 3}, torch::TensorOptions().dtype(torch::kFloat));
   auto prototype =
       torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat));
 
   EXPECT_THROW(
-      fn(tensor, prototype), starpu_server::InvalidInputTensorException);
+      test_api::validate_tensor_against_prototype(tensor, prototype),
+      starpu_server::InvalidInputTensorException);
 }
 
 TEST(ValidateTensorAgainstPrototype, RejectsNonPositiveRankTensors)
 {
-  auto fn = resolve_validate_tensor_against_prototype_fn();
-  ASSERT_NE(fn, nullptr);
-
   auto tensor =
       torch::tensor(1.0F, torch::TensorOptions().dtype(torch::kFloat));
   auto prototype =
       torch::tensor(0.0F, torch::TensorOptions().dtype(torch::kFloat));
 
   EXPECT_THROW(
-      fn(tensor, prototype), starpu_server::InvalidInputTensorException);
+      test_api::validate_tensor_against_prototype(tensor, prototype),
+      starpu_server::InvalidInputTensorException);
 }
 
 TEST(ValidateTensorAgainstPrototype, RejectsShapeMismatchBeyondBatchDimension)
 {
-  auto fn = resolve_validate_tensor_against_prototype_fn();
-  ASSERT_NE(fn, nullptr);
-
   auto tensor =
       torch::ones({2, 3}, torch::TensorOptions().dtype(torch::kFloat));
   auto prototype =
       torch::ones({2, 4}, torch::TensorOptions().dtype(torch::kFloat));
 
   EXPECT_THROW(
-      fn(tensor, prototype), starpu_server::InvalidInputTensorException);
+      test_api::validate_tensor_against_prototype(tensor, prototype),
+      starpu_server::InvalidInputTensorException);
 }
 
 TEST(ValidatePrototypeTensor, RejectsUndefinedTensorBeforeBatching)
 {
-  auto fn = resolve_validate_prototype_tensor_fn();
-  ASSERT_NE(fn, nullptr);
-
   torch::Tensor undefined_tensor;
   EXPECT_THROW(
-      fn(undefined_tensor), starpu_server::InvalidInputTensorException);
+      test_api::validate_prototype_tensor(undefined_tensor),
+      starpu_server::InvalidInputTensorException);
 }
 
 TEST(ValidatePrototypeTensor, RejectsNonPositiveRankTensors)
 {
-  auto fn = resolve_validate_prototype_tensor_fn();
-  ASSERT_NE(fn, nullptr);
-
   auto scalar =
       torch::tensor(1.0F, torch::TensorOptions().dtype(torch::kFloat));
-  EXPECT_THROW(fn(scalar), starpu_server::InvalidInputTensorException);
+  EXPECT_THROW(
+      test_api::validate_prototype_tensor(scalar),
+      starpu_server::InvalidInputTensorException);
 }
 
 TEST_F(
@@ -3101,33 +2780,6 @@ TEST_F(
       starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
           runner_.get()),
       1U);
-}
-
-TEST_F(
-    StarPUTaskRunnerFixture,
-    EnqueuePreparedJobDoesNotIncrementInflightForShutdownJob)
-{
-  opts_.batching.max_inflight_tasks = 10;
-  runner_.reset();
-  starpu_setup_.reset();
-  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
-  config_.starpu = starpu_setup_.get();
-  config_.opts = &opts_;
-  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
-
-  ASSERT_EQ(
-      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
-          runner_.get()),
-      0U);
-
-  auto shutdown_job = starpu_server::InferenceJob::make_shutdown_job();
-  starpu_server::StarPUTaskRunnerTestAdapter::enqueue_prepared_job(
-      runner_.get(), shutdown_job);
-
-  EXPECT_EQ(
-      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
-          runner_.get()),
-      0U);
 }
 
 TEST_F(
@@ -3241,10 +2893,6 @@ TEST(SlotManagerCopyJobInputsToSlotTest, ReturnsImmediatelyWhenJobNull)
   std::vector<starpu_data_handle_t> handles;
   std::vector<std::byte*> base_ptrs;
   std::vector<starpu_server::InputSlotPool::HostBufferInfo> buffer_infos;
-  starpu_server::testing_slot_manager::CopyBatchStub copy_batch{};
-
-  auto copy_inputs = resolve_copy_job_inputs_fn();
-  ASSERT_NE(copy_inputs, nullptr);
 
   const std::span<const std::shared_ptr<starpu_server::InferenceJob>>
       pending_span(pending_jobs);
@@ -3253,9 +2901,10 @@ TEST(SlotManagerCopyJobInputsToSlotTest, ReturnsImmediatelyWhenJobNull)
   const std::span<const starpu_server::InputSlotPool::HostBufferInfo>
       buffer_info_span(buffer_infos);
 
-  EXPECT_NO_THROW(copy_inputs(
+  const auto bytes = test_api::slot_manager_copy_job_inputs_to_slot(
       missing_job, pending_span, handle_span, base_ptrs_span, buffer_info_span,
-      &copy_batch));
+      nullptr);
+  EXPECT_EQ(bytes, 0U);
 }
 
 TEST_F(
@@ -4356,6 +4005,35 @@ TEST(
 }
 
 TEST(
+    StarPUTaskRunnerTestAdapter, PropagateCompletionReleasesAggregatedJobInputs)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job = std::make_shared<starpu_server::InferenceJob>();
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {sub_job,
+       std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  aggregated->set_input_tensors({torch::tensor({1})});
+  auto holder = std::make_shared<int>(12);
+  aggregated->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder, holder.get())});
+
+  ASSERT_FALSE(aggregated->get_input_tensors().empty());
+  ASSERT_FALSE(aggregated->get_input_memory_holders().empty());
+
+  const auto outputs = std::vector<torch::Tensor>{
+      torch::tensor({2.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, outputs, 5.0);
+
+  EXPECT_TRUE(aggregated->get_input_tensors().empty());
+  EXPECT_TRUE(aggregated->get_input_memory_holders().empty());
+}
+
+TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionClearsPendingSubJobsWithOnComplete)
 {
@@ -4800,7 +4478,7 @@ TEST(
     BuildRequestArrivalUsForTraceReturnsSingleEntryForNonAggregatedJob)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
   const auto arrival_time =
@@ -4818,7 +4496,7 @@ TEST(
     BuildRequestArrivalUsForTraceReturnsZeroForDefaultTimePoint)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->timing_info().enqueued_time = Clock::time_point{};
@@ -4834,7 +4512,7 @@ TEST(
     BuildRequestArrivalUsForTraceUsesArrivalTimeFromAggregatedSubJobs)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
   auto sub_job1 = std::make_shared<starpu_server::InferenceJob>();
@@ -4868,7 +4546,7 @@ TEST(
     BuildRequestArrivalUsForTraceFallsBackToJobEnqueuedTimeWhenArrivalIsDefault)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
   auto sub_job = std::make_shared<starpu_server::InferenceJob>();
@@ -4896,7 +4574,7 @@ TEST(
     BuildRequestArrivalUsForTraceReturnsZeroWhenSubJobExpiredAndArrivalIsDefault)
 {
   namespace internal = starpu_server::task_runner_internal;
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
 
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
 
@@ -5243,6 +4921,32 @@ TEST_F(
   EXPECT_EQ(dequeued, nullptr);
 }
 
+TEST_F(StarPUTaskRunnerFixture, BatchingLoopStopsWhenNoJobAvailable)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::set_batch_collector_queue_to_null(
+      runner_.get());
+
+  starpu_server::StarPUTaskRunnerTestAdapter::run_batching_loop(runner_.get());
+
+  EXPECT_TRUE(
+      starpu_server::StarPUTaskRunnerTestAdapter::batching_done(runner_.get()));
+  auto dequeued =
+      starpu_server::StarPUTaskRunnerTestAdapter::wait_for_prepared_job(
+          runner_.get());
+  EXPECT_EQ(dequeued, nullptr);
+}
+
+TEST_F(StarPUTaskRunnerFixture, TryAcquireNextJobReturnsNullWhenDeadlinePassed)
+{
+  const auto deadline = starpu_server::task_runner_internal::Clock::now() -
+                        std::chrono::milliseconds(1);
+
+  auto job = starpu_server::StarPUTaskRunnerTestAdapter::try_acquire_next_job(
+      runner_.get(), true, deadline);
+
+  EXPECT_EQ(job, nullptr);
+}
+
 TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
 {
   opts_.batching.dynamic_batching = false;
@@ -5254,7 +4958,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5280,7 +4984,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5306,7 +5010,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5332,7 +5036,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5361,7 +5065,7 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
   job->set_input_types({at::kFloat});
 
   ASSERT_TRUE(queue_.push(job));
-  ASSERT_TRUE(queue_.push(starpu_server::InferenceJob::make_shutdown_job()));
+  queue_.shutdown();
 
   starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
     starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -5382,6 +5086,75 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
   EXPECT_EQ(queue_.size(), 0U);
 }
 
+TEST_F(StarPUTaskRunnerFixture, RunClearsOnCompleteWhenJobCancelled)
+{
+  opts_.batching.dynamic_batching = false;
+
+  bool callback_invoked = false;
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(true);
+  job->set_cancelled_flag(cancel_flag);
+
+  auto holder = std::make_shared<int>(5);
+  job->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder, holder.get())});
+  job->set_output_tensors({torch::tensor({2.0F})});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  runner_->run();
+
+  EXPECT_FALSE(job->has_on_complete());
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  EXPECT_TRUE(job->get_input_memory_holders().empty());
+  EXPECT_TRUE(job->get_output_tensors().empty());
+  EXPECT_EQ(completed_jobs_.load(), 1);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunReleasesPendingSubJobsWhenJobCancelled)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(true);
+  job->set_cancelled_flag(cancel_flag);
+
+  auto pending_a = make_job(2, {torch::tensor({2.0F})});
+  auto pending_b = make_job(3, {torch::tensor({3.0F})});
+
+  auto holder_a = std::make_shared<int>(7);
+  pending_a->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder_a, holder_a.get())});
+  auto holder_b = std::make_shared<int>(9);
+  pending_b->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder_b, holder_b.get())});
+
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
+  pending_jobs.push_back(pending_a);
+  pending_jobs.push_back(pending_b);
+  job->set_pending_sub_jobs(std::move(pending_jobs));
+
+  ASSERT_TRUE(job->has_pending_sub_jobs());
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  runner_->run();
+
+  EXPECT_FALSE(job->has_pending_sub_jobs());
+  EXPECT_TRUE(pending_a->get_input_tensors().empty());
+  EXPECT_TRUE(pending_a->get_input_memory_holders().empty());
+  EXPECT_TRUE(pending_b->get_input_tensors().empty());
+  EXPECT_TRUE(pending_b->get_input_memory_holders().empty());
+  EXPECT_EQ(completed_jobs_.load(), 1);
+}
+
 TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsFalseWhenCandidateMissing)
 {
   auto reference = std::make_shared<starpu_server::InferenceJob>();
@@ -5389,15 +5162,6 @@ TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsFalseWhenCandidateMissing)
 
   EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
       empty_candidate, reference, std::nullopt));
-}
-
-TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsTrueForShutdownCandidate)
-{
-  auto reference = std::make_shared<starpu_server::InferenceJob>();
-  auto shutdown_candidate = starpu_server::InferenceJob::make_shutdown_job();
-
-  EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
-      shutdown_candidate, reference, std::nullopt));
 }
 
 TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsTrueForAggregatedSubJobs)
@@ -5723,4 +5487,212 @@ TEST_F(
             runner_.get()),
         static_cast<std::size_t>(i));
   }
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsWithActiveCudaCopyBatchCopiesInputsSequentially)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA runtime unavailable, skipping pinned buffer test";
+  }
+
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  auto model_config = make_model_config(
+      "multi_input",
+      {make_tensor_config("input0", {3}, at::kFloat),
+       make_tensor_config("input1", {2}, at::kFloat)},
+      {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto input0 =
+      torch::tensor(std::vector<float>{1.0F, 2.0F, 3.0F}, tensor_opts);
+  auto input1 = torch::tensor(std::vector<float>{4.0F, 5.0F}, tensor_opts);
+
+  auto job = make_job(800, {input0, input1}, {at::kFloat, at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& buffer_infos = input_pool.host_buffer_infos(slot);
+
+  const bool has_pinned = std::ranges::any_of(
+      buffer_infos,
+      [](const starpu_server::InputSlotPool::HostBufferInfo& info) {
+        return info.cuda_pinned || info.starpu_pinned;
+      });
+  if (!has_pinned) {
+    input_pool.release(slot);
+    GTEST_SKIP() << "No pinned buffers allocated, cannot test CUDA copy batch";
+  }
+
+  const int64_t batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+
+  const auto& base_ptrs = input_pool.base_ptrs(slot);
+  ASSERT_GE(base_ptrs.size(), 2U);
+  const std::vector<float> expected_input0{1.0F, 2.0F, 3.0F};
+  std::vector<float> actual_input0(expected_input0.size());
+  std::memcpy(
+      actual_input0.data(), base_ptrs[0],
+      expected_input0.size() * sizeof(float));
+  for (size_t idx = 0; idx < expected_input0.size(); ++idx) {
+    EXPECT_FLOAT_EQ(actual_input0[idx], expected_input0[idx]);
+  }
+
+  const std::vector<float> expected_input1{4.0F, 5.0F};
+  std::vector<float> actual_input1(expected_input1.size());
+  std::memcpy(
+      actual_input1.data(), base_ptrs[1],
+      expected_input1.size() * sizeof(float));
+  for (size_t idx = 0; idx < expected_input1.size(); ++idx) {
+    EXPECT_FLOAT_EQ(actual_input1[idx], expected_input1[idx]);
+  }
+
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsWithActiveCudaCopyBatchAbortsOnError)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA runtime unavailable, skipping pinned buffer test";
+  }
+
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  auto model_config = make_model_config(
+      "multi_input",
+      {make_tensor_config("input0", {3}, at::kFloat),
+       make_tensor_config("input1", {3}, at::kFloat),
+       make_tensor_config("input2", {3}, at::kFloat)},
+      {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto valid_a =
+      torch::tensor(std::vector<float>{1.0F, 2.0F, 3.0F}, tensor_opts);
+  torch::Tensor undefined_tensor;
+  ASSERT_FALSE(undefined_tensor.defined());
+  auto valid_b =
+      torch::tensor(std::vector<float>{4.0F, 5.0F, 6.0F}, tensor_opts);
+
+  auto job = make_job(
+      801, {valid_a, undefined_tensor, valid_b},
+      {at::kFloat, at::kFloat, at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& buffer_infos = input_pool.host_buffer_infos(slot);
+
+  const bool has_pinned = std::ranges::any_of(
+      buffer_infos,
+      [](const starpu_server::InputSlotPool::HostBufferInfo& info) {
+        return info.cuda_pinned || info.starpu_pinned;
+      });
+  if (!has_pinned) {
+    input_pool.release(slot);
+    GTEST_SKIP() << "No pinned buffers allocated, cannot test CUDA copy batch";
+  }
+
+  const auto& base_ptrs = input_pool.base_ptrs(slot);
+  constexpr unsigned char kSentinel = 0x7F;
+  std::memset(base_ptrs.back(), kSentinel, buffer_infos.back().bytes);
+
+  const auto last_tensor_bytes = static_cast<std::size_t>(valid_b.nbytes());
+  std::vector<std::byte> sentinel_pattern(
+      last_tensor_bytes, static_cast<std::byte>(kSentinel));
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::
+          validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot),
+      starpu_server::InvalidInputTensorException);
+
+  auto* last_destination = base_ptrs.back();
+  ASSERT_NE(last_destination, nullptr);
+  EXPECT_TRUE(std::equal(
+      last_destination, last_destination + last_tensor_bytes,
+      sentinel_pattern.begin(), sentinel_pattern.end()));
+
+  input_pool.release(slot);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsWithActiveCudaCopyBatchHandlesMultipleInputs)
+{
+  if (!torch::cuda::is_available()) {
+    GTEST_SKIP() << "CUDA runtime unavailable, skipping pinned buffer test";
+  }
+
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  auto model_config = make_model_config(
+      "multi_input",
+      {make_tensor_config("input0", {4}, at::kFloat),
+       make_tensor_config("input1", {3}, at::kFloat),
+       make_tensor_config("input2", {2}, at::kFloat),
+       make_tensor_config("input3", {5}, at::kFloat)},
+      {});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+
+  const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
+  auto input0 =
+      torch::tensor(std::vector<float>{1.0F, 2.0F, 3.0F, 4.0F}, tensor_opts);
+  auto input1 =
+      torch::tensor(std::vector<float>{5.0F, 6.0F, 7.0F}, tensor_opts);
+  auto input2 = torch::tensor(std::vector<float>{8.0F, 9.0F}, tensor_opts);
+  auto input3 = torch::tensor(
+      std::vector<float>{10.0F, 11.0F, 12.0F, 13.0F, 14.0F}, tensor_opts);
+
+  auto job = make_job(
+      802, {input0, input1, input2, input3},
+      {at::kFloat, at::kFloat, at::kFloat, at::kFloat});
+
+  auto& input_pool = starpu_setup_->input_pool();
+  const int slot = input_pool.acquire();
+  const auto& buffer_infos = input_pool.host_buffer_infos(slot);
+
+  const bool has_pinned = std::ranges::any_of(
+      buffer_infos,
+      [](const starpu_server::InputSlotPool::HostBufferInfo& info) {
+        return info.cuda_pinned || info.starpu_pinned;
+      });
+  if (!has_pinned) {
+    input_pool.release(slot);
+    GTEST_SKIP() << "No pinned buffers allocated, cannot test CUDA copy batch";
+  }
+
+  const int64_t batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs(runner_.get(), job, &input_pool, slot);
+  EXPECT_EQ(batch, 1);
+
+  const auto& base_ptrs = input_pool.base_ptrs(slot);
+  ASSERT_GE(base_ptrs.size(), 4U);
+
+  const std::vector<std::vector<float>> expected{
+      {1.0F, 2.0F, 3.0F, 4.0F},
+      {5.0F, 6.0F, 7.0F},
+      {8.0F, 9.0F},
+      {10.0F, 11.0F, 12.0F, 13.0F, 14.0F}};
+
+  for (size_t input_idx = 0; input_idx < expected.size(); ++input_idx) {
+    const auto& expected_data = expected[input_idx];
+    std::vector<float> actual_data(expected_data.size());
+    std::memcpy(
+        actual_data.data(), base_ptrs[input_idx],
+        expected_data.size() * sizeof(float));
+    for (size_t elem_idx = 0; elem_idx < expected_data.size(); ++elem_idx) {
+      EXPECT_FLOAT_EQ(actual_data[elem_idx], expected_data[elem_idx])
+          << "Input " << input_idx << ", element " << elem_idx;
+    }
+  }
+
+  input_pool.release(slot);
 }

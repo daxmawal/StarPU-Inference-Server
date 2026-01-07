@@ -20,17 +20,6 @@
 namespace starpu_server::client_utils {
 
 // =============================================================================
-// Time Utilities: Format timestamp for logging/debugging
-// =============================================================================
-
-static auto
-current_time_formatted(const std::chrono::high_resolution_clock::time_point&
-                           time_point) -> std::string
-{
-  return time_utils::format_timestamp(time_point);
-}
-
-// =============================================================================
 // Input Preparation: Pre-generate random inputs and select random sample
 // =============================================================================
 
@@ -40,8 +29,9 @@ pre_generate_inputs(const RuntimeConfig& opts, size_t num_inputs)
 {
   std::vector<std::vector<torch::Tensor>> inputs;
   inputs.reserve(num_inputs);
+  static const std::vector<TensorConfig> kEmptyTensors;
   const auto& tensors =
-      opts.models.empty() ? std::vector<TensorConfig>{} : opts.models[0].inputs;
+      opts.model.has_value() ? opts.model->inputs : kEmptyTensors;
   std::generate_n(std::back_inserter(inputs), num_inputs, [&]() {
     return input_generator::generate_random_inputs(tensors);
   });
@@ -70,7 +60,7 @@ pick_random_input(
 void
 log_job_enqueued(
     const RuntimeConfig& opts, int request_id, int request_nb,
-    std::chrono::high_resolution_clock::time_point now)
+    std::chrono::system_clock::time_point now)
 {
   if (should_log(VerbosityLevel::Trace, opts.verbosity)) {
     log_trace(
@@ -78,7 +68,7 @@ log_job_enqueued(
         std::format(
             "[Inference] Request ID {} Iteration {}/{} Enqueued at {}",
             request_id, request_id + 1, request_nb,
-            current_time_formatted(now)));
+            time_utils::format_timestamp(now)));
   }
 }
 
@@ -91,7 +81,7 @@ create_job(
     const std::vector<torch::Tensor>& inputs,
     const std::vector<torch::Tensor>& outputs_ref, int request_id,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
-    std::chrono::high_resolution_clock::time_point start_time_arg,
+    MonotonicClock::time_point start_time_arg,
     std::string model_name) -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
@@ -128,13 +118,10 @@ create_job(
   job->set_model_name(std::move(model_name));
 
   auto start_time = start_time_arg;
-  const auto enqueued_time = std::chrono::high_resolution_clock::now();
-  if (start_time == std::chrono::high_resolution_clock::time_point{}) {
-    start_time = enqueued_time;
+  if (start_time == MonotonicClock::time_point{}) {
+    start_time = MonotonicClock::now();
   }
   job->set_start_time(start_time);
-  job->timing_info().enqueued_time = enqueued_time;
-  job->timing_info().last_enqueued_time = enqueued_time;
 
   return job;
 }

@@ -38,6 +38,19 @@ TEST(CpuUsageProvider, ReturnsFalseWhenFirstTokenIsNotCpu)
   EXPECT_EQ(provider(), std::nullopt);
 }
 
+TEST(CpuUsageProvider, ReturnsFalseWhenTokenIsCpuWithSuffix)
+{
+  CpuTotals totals{};
+  std::istringstream input{"cpu0 1 2 3 4 5 6 7 8"};
+  EXPECT_FALSE(read_total_cpu_times(input, totals));
+
+  auto provider = make_cpu_usage_provider([](CpuTotals& out) {
+    std::istringstream failing{"cpu0 1 2 3 4 5 6 7 8"};
+    return read_total_cpu_times(failing, out);
+  });
+  EXPECT_EQ(provider(), std::nullopt);
+}
+
 TEST(CpuUsageProvider, ReturnsFalseWhenStreamIsEmpty)
 {
   CpuTotals totals{};

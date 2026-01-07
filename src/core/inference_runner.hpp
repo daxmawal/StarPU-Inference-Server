@@ -2,6 +2,7 @@
 
 #include <torch/script.h>
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -15,6 +16,7 @@
 #include "device_type.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
 // =============================================================================
@@ -23,17 +25,17 @@ namespace starpu_server {
 
 namespace detail {
 struct TimingInfo {
-  std::chrono::high_resolution_clock::time_point enqueued_time;
-  std::chrono::high_resolution_clock::time_point last_enqueued_time;
-  std::chrono::high_resolution_clock::time_point dequeued_time;
-  std::chrono::high_resolution_clock::time_point batch_collect_start_time;
-  std::chrono::high_resolution_clock::time_point batch_collect_end_time;
-  std::chrono::high_resolution_clock::time_point before_starpu_submitted_time;
-  std::chrono::high_resolution_clock::time_point codelet_start_time;
-  std::chrono::high_resolution_clock::time_point codelet_end_time;
-  std::chrono::high_resolution_clock::time_point inference_start_time;
-  std::chrono::high_resolution_clock::time_point callback_start_time;
-  std::chrono::high_resolution_clock::time_point callback_end_time;
+  MonotonicClock::time_point enqueued_time;
+  MonotonicClock::time_point last_enqueued_time;
+  MonotonicClock::time_point dequeued_time;
+  MonotonicClock::time_point batch_collect_start_time;
+  MonotonicClock::time_point batch_collect_end_time;
+  MonotonicClock::time_point before_starpu_submitted_time;
+  MonotonicClock::time_point codelet_start_time;
+  MonotonicClock::time_point codelet_end_time;
+  MonotonicClock::time_point inference_start_time;
+  MonotonicClock::time_point callback_start_time;
+  MonotonicClock::time_point callback_end_time;
   int submission_id = -1;
 };
 
@@ -48,7 +50,11 @@ struct BaseLatencyBreakdown {
   double total_ms = 0.0;
 };
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void set_cuda_device_count_override(std::optional<int> override_count);
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
 auto get_cuda_device_count() -> int;
 void validate_device_ids(std::span<const int> device_ids, int device_count);
 auto compute_latency_breakdown(
@@ -56,27 +62,9 @@ auto compute_latency_breakdown(
 }  // namespace detail
 
 // =============================================================================
-// InferenceResult: output of a completed job, including diagnostics
-// =============================================================================
-
-struct InferenceResult {
-  InferenceResult() noexcept = default;
-  std::vector<torch::Tensor> inputs;
-  std::vector<torch::Tensor> results;
-  double latency_ms = 0.0;
-  detail::TimingInfo timing_info;
-  int request_id = -1;
-  int submission_id = -1;
-  int device_id = -1;
-  int worker_id = -1;
-  DeviceType executed_on = DeviceType::Unknown;
-};
-
-// =============================================================================
 // InferenceJob: a job submitted to the inference engine
 // =============================================================================
 
-class InferenceQueue;
 class InferenceJob;
 
 class JobBatchState {
@@ -86,7 +74,7 @@ class JobBatchState {
     std::function<void(const std::vector<torch::Tensor>&, double)> callback;
     int64_t batch_size = 1;
     int request_id = -1;
-    std::chrono::high_resolution_clock::time_point arrival_time;
+    MonotonicClock::time_point arrival_time;
   };
 
   void set_logical_job_count(int count) { logical_job_count_ = count; }
@@ -158,6 +146,13 @@ class InferenceJob : public JobBatchState {
  public:
   using AggregatedSubJob = JobBatchState::AggregatedSubJob;
 
+  struct FailureInfo {
+    std::string stage;
+    std::string reason;
+    std::string message;
+    bool metrics_reported = false;
+  };
+
   InferenceJob() noexcept = default;
 
   InferenceJob(
@@ -165,10 +160,6 @@ class InferenceJob : public JobBatchState {
       int request_identifier,
       std::function<void(const std::vector<torch::Tensor>&, double)> callback =
           nullptr);
-
-  static auto make_shutdown_job() -> std::shared_ptr<InferenceJob>;
-
-  [[nodiscard]] auto is_shutdown() const -> bool { return is_shutdown_signal_; }
 
   void set_request_id(int request_id) { request_id_ = request_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
@@ -197,10 +188,7 @@ class InferenceJob : public JobBatchState {
       output_tensors_.push_back(output_tensor.contiguous());
     }
   }
-  void set_start_time(std::chrono::high_resolution_clock::time_point time)
-  {
-    start_time_ = time;
-  }
+  void set_start_time(MonotonicClock::time_point time) { start_time_ = time; }
   void set_on_complete(
       std::function<void(std::vector<torch::Tensor>, double)> call_back)
   {
@@ -209,6 +197,16 @@ class InferenceJob : public JobBatchState {
   void set_model_name(std::string model_name)
   {
     model_name_ = std::move(model_name);
+  }
+  void set_failure_info(FailureInfo info) { failure_info_ = std::move(info); }
+  void clear_failure_info() { failure_info_.reset(); }
+  [[nodiscard]] auto failure_info() const -> const std::optional<FailureInfo>&
+  {
+    return failure_info_;
+  }
+  [[nodiscard]] auto take_failure_info() -> std::optional<FailureInfo>
+  {
+    return std::exchange(failure_info_, std::nullopt);
   }
   [[nodiscard]] auto model_name() const -> std::string_view
   {
@@ -222,6 +220,17 @@ class InferenceJob : public JobBatchState {
   }
 
   void release_input_memory_holders() { input_memory_holders_.clear(); }
+
+  void set_cancelled_flag(std::shared_ptr<std::atomic<bool>> flag)
+  {
+    cancelled_flag_ = std::move(flag);
+  }
+
+  [[nodiscard]] auto is_cancelled() const -> bool
+  {
+    return cancelled_flag_ != nullptr &&
+           cancelled_flag_->load(std::memory_order_acquire);
+  }
 
   void set_submission_id(int submission_id) { submission_id_ = submission_id; }
 
@@ -253,8 +262,7 @@ class InferenceJob : public JobBatchState {
   {
     return output_tensors_;
   }
-  [[nodiscard]] auto get_start_time() const
-      -> const std::chrono::high_resolution_clock::time_point&
+  [[nodiscard]] auto get_start_time() const -> const MonotonicClock::time_point&
   {
     return start_time_;
   }
@@ -283,38 +291,29 @@ class InferenceJob : public JobBatchState {
   std::vector<at::ScalarType> input_types_;
   std::vector<torch::Tensor> output_tensors_;
   std::vector<std::shared_ptr<const void>> input_memory_holders_;
+  std::shared_ptr<std::atomic<bool>> cancelled_flag_;
 
   int request_id_ = 0;
   int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
   std::function<void(std::vector<torch::Tensor>, double)> on_complete_;
-  std::chrono::high_resolution_clock::time_point start_time_;
+  MonotonicClock::time_point start_time_;
   std::string model_name_;
+  std::optional<FailureInfo> failure_info_;
 
   DeviceType executed_on_ = DeviceType::Unknown;
   int device_id_ = -1;
   int worker_id_ = -1;
 
   detail::TimingInfo timing_info_;
-
-  bool is_shutdown_signal_ = false;
 };
 
 // =============================================================================
-// Entry point: launches warmup and execution loop
+// Entry point: model loading and warmup
 // =============================================================================
-
-class StarPUTaskRunner;
-using WorkerThreadLauncher = std::function<std::jthread(StarPUTaskRunner&)>;
-auto get_worker_thread_launcher() -> WorkerThreadLauncher;
-void set_worker_thread_launcher(WorkerThreadLauncher launcher);
 
 namespace detail {
 auto sanitize_cuda_device_count(long long raw_count) -> int;
-void client_worker(
-    InferenceQueue& queue, const RuntimeConfig& opts,
-    const std::vector<torch::Tensor>& outputs_ref, int request_nb);
-
 }  // namespace detail
 
 auto load_model_and_reference_output(const RuntimeConfig& opts)
@@ -327,6 +326,4 @@ void run_warmup(
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref);
-
-void run_inference_loop(const RuntimeConfig& opts, StarPUSetup& starpu);
 }  // namespace starpu_server

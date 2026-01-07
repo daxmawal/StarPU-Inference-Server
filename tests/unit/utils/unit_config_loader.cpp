@@ -31,6 +31,28 @@ WriteTempFile(const std::string& name, const std::string& contents)
   return path;
 }
 
+auto
+WriteEmptyModelFile(const std::string& name) -> std::filesystem::path
+{
+  const auto path = std::filesystem::temp_directory_path() / name;
+  std::ofstream(path).put('\0');
+  return path;
+}
+
+auto
+ReplaceModelPath(std::string yaml, const std::filesystem::path& model_path)
+    -> std::string
+{
+  const std::string placeholder = "{{MODEL_PATH}}";
+  const std::string replacement = model_path.string();
+  std::size_t pos = 0;
+  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
+    yaml.replace(pos, placeholder.size(), replacement);
+    pos += replacement.size();
+  }
+  return yaml;
+}
+
 struct ScopedPermissionRestorer {
   explicit ScopedPermissionRestorer(std::filesystem::path p)
       : path(std::move(p))
@@ -141,14 +163,6 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt, false, false},
     InvalidConfigCase{
-        "NegativeDelaySetsValidFalse",
-        [] {
-          auto yaml = base_model_yaml();
-          yaml += "delay_us: -10\n";
-          return yaml;
-        }(),
-        std::nullopt},
-    InvalidConfigCase{
         "UseCudaEmptySequenceInvalid",
         [] {
           auto yaml = base_model_yaml();
@@ -239,14 +253,6 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "max_batch_size: 1\n";
           yaml += "pool_size: 1\n";
           yaml += "batch_coalesce_timeout_ms: -5\n";
-          return yaml;
-        }(),
-        std::nullopt},
-    InvalidConfigCase{
-        "NegativeRequestNbSetsValidFalse",
-        [] {
-          auto yaml = base_model_yaml();
-          yaml += "request_nb: -1\n";
           return yaml;
         }(),
         std::nullopt},
@@ -397,6 +403,14 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "Configuration option 'name' must be a scalar string"},
     InvalidConfigCase{
+        "NonScalarModelNameSetsValidFalse",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "model_name: [invalid, name]\n";
+          return yaml;
+        }(),
+        "model_name must be a scalar string"},
+    InvalidConfigCase{
         "MissingNameSetsValidFalse",
         [] {
           std::string yaml;
@@ -476,7 +490,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml << "name: config_loader_test\n";
           yaml << "model: {{MODEL_PATH}}\n";
           yaml << "inputs:\n";
-          for (std::size_t i = 0; i <= kMaxInputs; ++i) {
+          for (std::size_t i = 0; i <= InferLimits::MaxInputs; ++i) {
             yaml << "  - name: in" << i << "\n";
             yaml << "    dims: [1]\n";
             yaml << "    data_type: float32\n";
@@ -500,7 +514,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml << "inputs:\n";
           yaml << "  - name: in\n";
           yaml << "    dims: [";
-          for (std::size_t i = 0; i <= kMaxDims; ++i) {
+          for (std::size_t i = 0; i <= InferLimits::MaxDims; ++i) {
             if (i != 0U) {
               yaml << ", ";
             }
@@ -531,7 +545,7 @@ TEST_P(InvalidConfigTest, MarksConfigInvalid)
     const auto model_name =
         std::string{"config_loader_model_"} + test_case.name + ".pt";
     if (test_case.create_model_file) {
-      model_path = WriteTempFile(model_name, std::string(1, '\0'));
+      model_path = WriteEmptyModelFile(model_name);
     } else {
       model_path = std::filesystem::temp_directory_path() / model_name;
       std::filesystem::remove(*model_path);
@@ -540,13 +554,7 @@ TEST_P(InvalidConfigTest, MarksConfigInvalid)
 
   std::string yaml = test_case.yaml;
   if (test_case.needs_model_path && model_path.has_value()) {
-    const std::string placeholder = "{{MODEL_PATH}}";
-    const std::string replacement = model_path->string();
-    std::size_t pos = 0;
-    while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-      yaml.replace(pos, placeholder.size(), replacement);
-      pos += replacement.size();
-    }
+    yaml = ReplaceModelPath(std::move(yaml), *model_path);
   }
 
   const auto config_path = WriteTempFile(
@@ -572,28 +580,40 @@ INSTANTIATE_TEST_SUITE_P(
     InvalidConfigs, InvalidConfigTest, ::testing::ValuesIn(kInvalidConfigCases),
     InvalidConfigCaseName);
 
-TEST(ConfigLoader, AllowsBooleanUseCuda)
+TEST(ConfigLoader, AcceptsBooleanUseCudaFalse)
 {
-  const auto model_path = WriteTempFile(
-      "config_loader_scalar_use_cuda_model.pt", std::string(1, '\0'));
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_scalar_use_cuda_false_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "use_cuda: false\n";
 
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+  const auto config_path =
+      WriteTempFile("config_loader_scalar_use_cuda_false.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_FALSE(cfg.devices.use_cuda);
+  EXPECT_TRUE(cfg.devices.ids.empty());
+}
+
+TEST(ConfigLoader, RejectsBooleanUseCudaTrue)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_scalar_use_cuda_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
   yaml += "use_cuda: true\n";
 
   const auto config_path =
       WriteTempFile("config_loader_scalar_use_cuda.yaml", yaml);
 
+  starpu_server::CaptureStream capture{std::cerr};
   const RuntimeConfig cfg = load_config(config_path.string());
-  EXPECT_TRUE(cfg.valid);
-  EXPECT_TRUE(cfg.devices.use_cuda);
-  EXPECT_TRUE(cfg.devices.ids.empty());
+  const std::string expected_error =
+      "use_cuda must be a sequence of device mappings when enabled (e.g. "
+      "\"use_cuda: [{ device_ids: [0] }]\")";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
 }
 
 TEST(ConfigLoader, RejectsNonMappingRoot)
@@ -623,16 +643,8 @@ TEST(ConfigLoader, RejectsEmptyConfig)
 TEST(ConfigLoader, LoadsStarpuEnvVariables)
 {
   const auto model_path =
-      WriteTempFile("config_loader_starpu_env_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+      WriteEmptyModelFile("config_loader_starpu_env_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
   yaml += "starpu_env:\n";
   yaml += "  VAR_ONE: VALUE1\n";
   yaml += "  VAR_TWO: VALUE2\n";
@@ -651,13 +663,12 @@ TEST(ConfigLoader, LoadsStarpuEnvVariables)
 
 TEST(ConfigLoader, LoadsValidConfig)
 {
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "config_loader_valid_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path = WriteEmptyModelFile("config_loader_valid_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: fcfs_config\n";
   yaml << "model: " << model_path.string() << "\n";
+  yaml << "model_name: bert_model\n";
   yaml << "use_cpu: true\n";
   yaml << "use_cuda:\n";
   yaml << "  - { device_ids: [0, 1] }\n";
@@ -676,7 +687,6 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "pool_size: 2\n";
   yaml << "dynamic_batching: true\n";
   yaml << "batch_coalesce_timeout_ms: 15\n";
-  yaml << "pregen_inputs: 8\n";
   yaml << "warmup_pregen_inputs: 5\n";
   yaml << "warmup_request_nb: 3\n";
   yaml << "warmup_batches_per_worker: 2\n";
@@ -688,27 +698,27 @@ TEST(ConfigLoader, LoadsValidConfig)
 
   const RuntimeConfig cfg = load_config(tmp.string());
 
+  ASSERT_TRUE(cfg.model.has_value());
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.name, "fcfs_config");
-  EXPECT_EQ(cfg.models[0].path, model_path.string());
+  EXPECT_EQ(cfg.model->path, model_path.string());
+  EXPECT_EQ(cfg.model->name, "bert_model");
   EXPECT_EQ(cfg.devices.ids, (std::vector<int>{0, 1}));
   auto scheduler_env = cfg.starpu_env.find("STARPU_SCHED");
   ASSERT_NE(scheduler_env, cfg.starpu_env.end());
   EXPECT_EQ(scheduler_env->second, "pheft");
-  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
-  EXPECT_EQ(cfg.models[0].inputs[0].name, "in");
-  EXPECT_EQ(
-      cfg.models[0].inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
-  EXPECT_EQ(cfg.models[0].inputs[0].type, at::kFloat);
-  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
-  EXPECT_EQ(cfg.models[0].outputs[0].name, "out");
-  EXPECT_EQ(cfg.models[0].outputs[0].dims, (std::vector<int64_t>{1, 1000}));
-  EXPECT_EQ(cfg.models[0].outputs[0].type, at::kFloat);
+  ASSERT_EQ(cfg.model->inputs.size(), 1U);
+  EXPECT_EQ(cfg.model->inputs[0].name, "in");
+  EXPECT_EQ(cfg.model->inputs[0].dims, (std::vector<int64_t>{1, 3, 224, 224}));
+  EXPECT_EQ(cfg.model->inputs[0].type, at::kFloat);
+  ASSERT_EQ(cfg.model->outputs.size(), 1U);
+  EXPECT_EQ(cfg.model->outputs[0].name, "out");
+  EXPECT_EQ(cfg.model->outputs[0].dims, (std::vector<int64_t>{1, 1000}));
+  EXPECT_EQ(cfg.model->outputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
   EXPECT_EQ(cfg.batching.max_batch_size, 4);
   EXPECT_TRUE(cfg.batching.dynamic_batching);
   EXPECT_EQ(cfg.batching.batch_coalesce_timeout_ms, 15);
-  EXPECT_EQ(cfg.batching.pregen_inputs, 8U);
   EXPECT_EQ(cfg.batching.warmup_pregen_inputs, 5U);
   EXPECT_EQ(cfg.batching.warmup_request_nb, 3);
   EXPECT_EQ(cfg.batching.warmup_batches_per_worker, 2);
@@ -722,9 +732,8 @@ TEST(ConfigLoader, LoadsValidConfig)
 
 TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_non_sequence_input_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_non_sequence_input_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: config_loader_test\n";
@@ -748,19 +757,17 @@ TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  ASSERT_EQ(cfg.models.size(), 1U);
-  EXPECT_TRUE(cfg.models[0].inputs.empty());
-  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
-  EXPECT_EQ(cfg.models[0].outputs[0].name, "out");
-  EXPECT_EQ(cfg.models[0].outputs[0].dims, (std::vector<int64_t>{1}));
-  EXPECT_EQ(cfg.models[0].outputs[0].type, at::kFloat);
+  ASSERT_TRUE(cfg.model.has_value());
+  EXPECT_TRUE(cfg.model->inputs.empty());
+  ASSERT_EQ(cfg.model->outputs.size(), 1U);
+  EXPECT_EQ(cfg.model->outputs[0].name, "out");
+  EXPECT_EQ(cfg.model->outputs[0].dims, (std::vector<int64_t>{1}));
+  EXPECT_EQ(cfg.model->outputs[0].type, at::kFloat);
 }
 
 TEST(ConfigLoader, ParsesRuntimeFlags)
 {
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "config_loader_flags_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path = WriteEmptyModelFile("config_loader_flags_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: runtime_flags\n";
@@ -776,8 +783,6 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "max_batch_size: 1\n";
   yaml << "pool_size: 1\n";
-  yaml << "rtol: 1.0e-4\n";
-  yaml << "atol: 2.0e-5\n";
   yaml << "sync: true\n";
   yaml << "group_cpu_by_numa: true\n";
   yaml << "use_cpu: false\n";
@@ -791,8 +796,6 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_DOUBLE_EQ(cfg.validation.rtol, 1.0e-4);
-  EXPECT_DOUBLE_EQ(cfg.validation.atol, 2.0e-5);
   EXPECT_TRUE(cfg.batching.synchronous);
   EXPECT_TRUE(cfg.devices.group_cpu_by_numa);
   EXPECT_FALSE(cfg.devices.use_cpu);
@@ -801,9 +804,7 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
 
 TEST(ConfigLoader, ParsesVerboseAlias)
 {
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "config_loader_verbose_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path = WriteEmptyModelFile("config_loader_verbose_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: verbose_alias\n";
@@ -833,9 +834,7 @@ TEST(ConfigLoader, ParsesVerboseAlias)
 
 TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 {
-  const auto model_path =
-      std::filesystem::temp_directory_path() / "config_loader_slots_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path = WriteEmptyModelFile("config_loader_slots_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: slots_test\n";
@@ -866,17 +865,9 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
 
 TEST(ConfigLoader, ParsesTraceEnabledFlag)
 {
-  const auto model_path = WriteTempFile(
-      "config_loader_trace_enabled_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_trace_enabled_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
   yaml += "trace_enabled: true\n";
 
   const auto tmp = WriteTempFile("config_loader_trace_enabled.yaml", yaml);
@@ -889,17 +880,9 @@ TEST(ConfigLoader, ParsesTraceEnabledFlag)
 
 TEST(ConfigLoader, ParsesTraceOutputDirectory)
 {
-  const auto model_path = WriteTempFile(
-      "config_loader_trace_output_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_trace_output_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
 
   const auto trace_dir =
       std::filesystem::temp_directory_path() / "config_loader_trace_dir";
@@ -919,16 +902,8 @@ TEST(ConfigLoader, ParsesTraceOutputDirectory)
 TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
 {
   const auto model_path =
-      WriteTempFile("config_loader_empty_trace_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+      WriteEmptyModelFile("config_loader_empty_trace_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
   yaml += "trace_output: \"\"\n";
 
   const auto tmp = WriteTempFile("config_loader_empty_trace.yaml", yaml);
@@ -945,16 +920,8 @@ TEST(ConfigLoader, TraceOutputRejectsEmptyPath)
 TEST(ConfigLoader, TraceOutputAcceptsExistingDirectoryPath)
 {
   const auto model_path =
-      WriteTempFile("config_loader_trace_dir_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+      WriteEmptyModelFile("config_loader_trace_dir_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
 
   const auto trace_dir = MakeUniqueTempDir("config_loader_trace_dir");
   yaml += "trace_output: " + trace_dir.string() + "\n";
@@ -971,17 +938,9 @@ TEST(ConfigLoader, TraceOutputAcceptsExistingDirectoryPath)
 
 TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
 {
-  const auto model_path = WriteTempFile(
-      "config_loader_trace_dir_sep_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_trace_dir_sep_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
 
   const auto parent = MakeUniqueTempDir("config_loader_trace_dir_sep");
   const auto requested_dir = parent / "nested_dir";
@@ -1006,16 +965,8 @@ TEST(ConfigLoader, TraceOutputAcceptsDirectoryWithTrailingSeparator)
 TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
 {
   const auto model_path =
-      WriteTempFile("config_loader_trace_json_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+      WriteEmptyModelFile("config_loader_trace_json_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
 
   const auto invalid_path =
       (std::filesystem::temp_directory_path() / "config_loader_trace.json")
@@ -1036,17 +987,9 @@ TEST(ConfigLoader, TraceOutputRejectsExplicitJsonFilename)
 
 TEST(ConfigLoader, TraceOutputRejectsPathPointingToExistingFile)
 {
-  const auto model_path = WriteTempFile(
-      "config_loader_trace_file_path_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_trace_file_path_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
 
   const auto destination =
       WriteTempFile("config_loader_trace_destination", "payload");
@@ -1063,26 +1006,53 @@ TEST(ConfigLoader, TraceOutputRejectsPathPointingToExistingFile)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, TraceOutputFilesystemErrorMarksConfigInvalid)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_trace_error_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+
+  const auto protected_dir = MakeUniqueTempDir("config_loader_trace_no_access");
+  ScopedPermissionRestorer cleanup(protected_dir);
+
+  std::filesystem::permissions(
+      protected_dir, std::filesystem::perms::none,
+      std::filesystem::perm_options::replace);
+
+  const auto protected_child = protected_dir / "trace_output";
+  std::error_code status_ec;
+  [[maybe_unused]] const bool exists_result =
+      std::filesystem::exists(protected_child, status_ec);
+  ASSERT_TRUE(status_ec);
+
+  const std::filesystem::filesystem_error fs_error(
+      "trace_output", protected_child, status_ec);
+  const std::string expected_error =
+      std::string{"Failed to load config: "} + fs_error.what();
+
+  yaml += "trace_output: " + protected_child.string() + "\n";
+
+  const auto tmp = WriteTempFile("config_loader_trace_error.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+}
+
 TEST(
     ConfigLoader, InvalidDimensionDuringMaxMessageComputationMarksConfigInvalid)
 {
   const auto model_path =
-      WriteTempFile("config_loader_invalid_dim_model.pt", std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+      WriteEmptyModelFile("config_loader_invalid_dim_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
 
   const auto tmp = WriteTempFile("config_loader_invalid_dim.yaml", yaml);
 
   ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
-    if (!cfg.models.empty() && !cfg.models[0].inputs.empty()) {
-      cfg.models[0].inputs[0].dims[0] = -1;
+    if (cfg.model.has_value() && !cfg.model->inputs.empty()) {
+      cfg.model->inputs[0].dims[0] = -1;
     }
   });
 
@@ -1119,13 +1089,7 @@ TEST(ConfigLoader, FilesystemErrorsMarkConfigInvalid)
   ASSERT_FALSE(expected_error_message.empty());
 
   std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = protected_model.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+  yaml = ReplaceModelPath(std::move(yaml), protected_model);
 
   const auto tmp = WriteTempFile("config_loader_filesystem_error.yaml", yaml);
 
@@ -1139,9 +1103,8 @@ TEST(ConfigLoader, FilesystemErrorsMarkConfigInvalid)
 
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_negative_bytes_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_negative_bytes_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: negative_bytes\n";
@@ -1173,11 +1136,69 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, MaxMessageBytesRejectsTooSmallForModel)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_small_cap_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: small_cap\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1, 4]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1, 4]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_message_bytes: 16\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_small_cap.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: max_message_bytes (16) is too small for "
+      "configured model (requires at least 32 bytes)";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, MaxMessageBytesWarnsWhenExceedingGrpcLimit)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_grpc_limit_model.pt");
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  const auto grpc_limit =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  const auto max_message_bytes = grpc_limit + 1U;
+  yaml += std::format("max_message_bytes: {}\n", max_message_bytes);
+
+  const auto tmp = WriteTempFile("config_loader_grpc_limit.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  const std::string expected_warning = std::format(
+      "max_message_bytes ({}) exceeds gRPC limit ({}); gRPC will clamp "
+      "to {}. Consider reducing max_message_bytes.",
+      max_message_bytes, grpc_limit, grpc_limit);
+  EXPECT_EQ(capture.str(), expected_log_line(WarningLevel, expected_warning));
+}
+
 TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_zero_batch_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_zero_batch_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: negative_value\n";
@@ -1220,9 +1241,8 @@ class NegativeRuntimeValueCase
 TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
 {
   const auto [key, value, error] = GetParam();
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_negative_value.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_negative_value.pt");
 
   std::ostringstream yaml;
   yaml << "name: zero_pool\n";
@@ -1256,23 +1276,19 @@ TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
 INSTANTIATE_TEST_SUITE_P(
     NegativeRuntimeValues, NegativeRuntimeValueCase,
     ::testing::Values(
-        NegativeValueCase{"pregen_inputs", "0", "pregen_inputs must be > 0"},
         NegativeValueCase{
-            "warmup_pregen_inputs", "0", "warmup_pregen_inputs must be > 0"},
+            "warmup_pregen_inputs", "-1", "warmup_pregen_inputs must be >= 0"},
         NegativeValueCase{
             "warmup_request_nb", "-1", "warmup_request_nb must be >= 0"},
         NegativeValueCase{
             "warmup_batches_per_worker", "-1",
             "warmup_batches_per_worker must be >= 0"},
-        NegativeValueCase{"seed", "-1", "seed must be >= 0"},
-        NegativeValueCase{"rtol", "-1.0", "rtol must be >= 0"},
-        NegativeValueCase{"atol", "-1.0", "atol must be >= 0"}));
+        NegativeValueCase{"seed", "-1", "seed must be >= 0"}));
 
 TEST(ConfigLoader, PoolSizeRejectsNonPositive)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_zero_slots_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_zero_slots_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: delay_addr\n";
@@ -1303,11 +1319,10 @@ TEST(ConfigLoader, PoolSizeRejectsNonPositive)
   EXPECT_FALSE(cfg.valid);
 }
 
-TEST(ConfigLoader, ParsesDelayAndAddress)
+TEST(ConfigLoader, ParsesAddress)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_delay_addr_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_delay_addr_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: overflow_dims\n";
@@ -1323,7 +1338,6 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   yaml << "max_batch_size: 2\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "pool_size: 2\n";
-  yaml << "delay_us: 15\n";
   yaml << "address: 127.0.0.1:50051\n";
 
   const auto tmp =
@@ -1333,15 +1347,13 @@ TEST(ConfigLoader, ParsesDelayAndAddress)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.delay_us, 15);
   EXPECT_EQ(cfg.server_address, "127.0.0.1:50051");
 }
 
 TEST(ConfigLoader, ParsesMaxInflightTasks)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_max_inflight_tasks_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_max_inflight_tasks_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: max_inflight_tasks_test\n";
@@ -1371,9 +1383,8 @@ TEST(ConfigLoader, ParsesMaxInflightTasks)
 
 TEST(ConfigLoader, MaxInflightTasksRejectsNegative)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_negative_inflight_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_negative_inflight_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: negative_inflight\n";
@@ -1408,9 +1419,8 @@ TEST(ConfigLoader, MaxInflightTasksRejectsNegative)
 
 TEST(ConfigLoader, ParsesMaxQueueSize)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_max_queue_size_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_max_queue_size_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: max_queue_size_test\n";
@@ -1440,9 +1450,8 @@ TEST(ConfigLoader, ParsesMaxQueueSize)
 
 TEST(ConfigLoader, MaxQueueSizeRejectsNonPositive)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_zero_queue_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_zero_queue_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: zero_queue\n";
@@ -1508,7 +1517,7 @@ outputs:
   - name: out
     dims: [1]
     data_type: float32
-delay_us: -10
+max_queue_size: 0
 max_batch_size: 1
 batch_coalesce_timeout_ms: 1
 pool_size: 1
@@ -1519,7 +1528,7 @@ pool_size: 1
 
   const RuntimeConfig cfg = load_config(tmp.string());
   EXPECT_FALSE(cfg.valid);
-  EXPECT_EQ(cfg.batching.delay_us, 0);
+  EXPECT_EQ(cfg.batching.max_queue_size, kDefaultMaxQueueSize);
 }
 
 TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)
@@ -1548,9 +1557,8 @@ TEST(
     ConfigLoader,
     MessageSizeOverflowDuringMaxMessageComputationMarksConfigInvalid)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_overflow_dims_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_overflow_dims_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: overflow_dims\n";
@@ -1579,12 +1587,12 @@ TEST(
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);
-  ASSERT_EQ(cfg.models.size(), 1U);
-  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
+  ASSERT_TRUE(cfg.model.has_value());
+  ASSERT_EQ(cfg.model->inputs.size(), 1U);
   EXPECT_EQ(
-      cfg.models[0].inputs[0].dims,
+      cfg.model->inputs[0].dims,
       (std::vector<int64_t>{2147483647, 2147483647, 2147483647}));
-  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
+  ASSERT_EQ(cfg.model->outputs.size(), 1U);
 
   // InvalidDimensionException cannot be triggered via YAML alone because
   // parse_tensor_nodes already rejects non-positive dimensions when reading the
@@ -1594,9 +1602,8 @@ TEST(
 
 TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
 {
-  const auto model_path = std::filesystem::temp_directory_path() /
-                          "config_loader_complex_dtype_model.pt";
-  std::ofstream(model_path).put('\0');
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_complex_dtype_model.pt");
 
   std::ostringstream yaml;
   yaml << "name: complex_dtype\n";
@@ -1604,7 +1611,7 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   yaml << "inputs:\n";
   yaml << "  - name: complex_input\n";
   yaml << "    dims: [1, 1]\n";
-  yaml << "    data_type: complex64\n";
+  yaml << "    data_type: float32\n";
   yaml << "outputs:\n";
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
@@ -1617,6 +1624,12 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
                    "config_loader_complex_dtype.yaml";
   std::ofstream(tmp) << yaml.str();
 
+  ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
+    if (cfg.model.has_value() && !cfg.model->inputs.empty()) {
+      cfg.model->inputs[0].type = at::kComplexFloat;
+    }
+  });
+
   starpu_server::CaptureStream capture{std::cerr};
   const RuntimeConfig cfg = load_config(tmp.string());
 
@@ -1625,13 +1638,11 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);
-  ASSERT_EQ(cfg.models.size(), 1U);
-  ASSERT_EQ(cfg.models[0].inputs.size(), 1U);
-  EXPECT_EQ(
-      cfg.models[0].inputs[0].type,
-      starpu_server::string_to_scalar_type("complex64"));
-  ASSERT_EQ(cfg.models[0].outputs.size(), 1U);
-  EXPECT_FALSE(cfg.models[0].outputs.empty());
+  ASSERT_TRUE(cfg.model.has_value());
+  ASSERT_EQ(cfg.model->inputs.size(), 1U);
+  EXPECT_EQ(cfg.model->inputs[0].type, at::kComplexFloat);
+  ASSERT_EQ(cfg.model->outputs.size(), 1U);
+  EXPECT_FALSE(cfg.model->outputs.empty());
 }
 
 using VerbosityCase =
@@ -1640,18 +1651,9 @@ using VerbosityCase =
 TEST_P(VerbosityCase, ParsesVerbosityStrings)
 {
   const auto& [value, expected] = GetParam();
-  const auto model_path = WriteTempFile(
-      std::format("config_loader_verbosity_{}.pt", value),
-      std::string(1, '\0'));
-
-  std::string yaml = base_model_yaml();
-  const std::string placeholder = "{{MODEL_PATH}}";
-  const std::string replacement = model_path.string();
-  std::size_t pos = 0;
-  while ((pos = yaml.find(placeholder, pos)) != std::string::npos) {
-    yaml.replace(pos, placeholder.size(), replacement);
-    pos += replacement.size();
-  }
+  const auto model_path =
+      WriteEmptyModelFile(std::format("config_loader_verbosity_{}.pt", value));
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
   yaml += std::format("verbosity: {}\n", value);
 
   const auto tmp = WriteTempFile(

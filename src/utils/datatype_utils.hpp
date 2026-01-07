@@ -2,16 +2,64 @@
 #include <ATen/core/ScalarType.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unordered_map>
-
-#include "transparent_hash.hpp"
 
 namespace starpu_server {
+namespace detail {
+struct ScalarTypeAlias {
+  std::string_view name;
+  at::ScalarType type;
+};
+
+inline constexpr std::array<ScalarTypeAlias, 10> kDatatypeAliases = {{
+    {"fp32", at::kFloat},
+    {"fp64", at::kDouble},
+    {"fp16", at::kHalf},
+    {"bf16", at::kBFloat16},
+    {"int32", at::kInt},
+    {"int64", at::kLong},
+    {"int16", at::kShort},
+    {"int8", at::kChar},
+    {"uint8", at::kByte},
+    {"bool", at::kBool},
+}};
+
+inline constexpr std::array<ScalarTypeAlias, 12> kTypeAliases = {{
+    {"float", at::kFloat},
+    {"float32", at::kFloat},
+    {"double", at::kDouble},
+    {"float64", at::kDouble},
+    {"half", at::kHalf},
+    {"float16", at::kHalf},
+    {"bfloat16", at::kBFloat16},
+    {"int", at::kInt},
+    {"long", at::kLong},
+    {"short", at::kShort},
+    {"char", at::kChar},
+    {"byte", at::kByte},
+}};
+
+template <std::size_t N>
+inline auto
+lookup_scalar_type(
+    std::string_view key, const std::array<ScalarTypeAlias, N>& aliases)
+    -> std::optional<at::ScalarType>
+{
+  for (const auto& alias : aliases) {
+    if (alias.name == key) {
+      return alias.type;
+    }
+  }
+  return std::nullopt;
+}
+}  // namespace detail
+
 // =============================================================================
 // datatype_utils
 // -----------------------------------------------------------------------------
@@ -51,75 +99,41 @@ scalar_type_to_datatype(at::ScalarType type) -> std::string
 inline auto
 datatype_to_scalar_type(std::string_view dtype) -> at::ScalarType
 {
-  std::string dtype_upper(dtype);
+  std::string dtype_lower(dtype);
   std::ranges::transform(
-      dtype_upper, dtype_upper.begin(), [](unsigned char character) noexcept {
-        return static_cast<char>(std::toupper(character));
+      dtype_lower, dtype_lower.begin(), [](unsigned char character) noexcept {
+        return static_cast<char>(std::tolower(character));
       });
 
-  static const std::unordered_map<
-      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
-      type_map = {{"FP32", at::kFloat},  {"FP64", at::kDouble},
-                  {"FP16", at::kHalf},   {"BF16", at::kBFloat16},
-                  {"INT32", at::kInt},   {"INT64", at::kLong},
-                  {"INT16", at::kShort}, {"INT8", at::kChar},
-                  {"UINT8", at::kByte},  {"BOOL", at::kBool}};
-
-  const auto iter = type_map.find(dtype_upper);
-  if (iter == type_map.end()) {
-    throw std::invalid_argument(
-        "Unsupported tensor datatype: " + std::string(dtype));
+  if (const auto type =
+          detail::lookup_scalar_type(dtype_lower, detail::kDatatypeAliases)) {
+    return *type;
   }
-  return iter->second;
+  throw std::invalid_argument(
+      "Unsupported tensor datatype: " + std::string(dtype));
 }
-
 
 inline auto
 string_to_scalar_type(std::string_view type_str) -> at::ScalarType
 {
   std::string key(type_str);
-  if (constexpr std::string_view type_prefix = "TYPE_";
-      key.starts_with(type_prefix)) {
-    key.erase(0, type_prefix.size());
-  }
   std::ranges::transform(
       key, key.begin(), [](unsigned char character) noexcept {
         return static_cast<char>(std::tolower(character));
       });
-
-  static const std::unordered_map<
-      std::string, at::ScalarType, TransparentHash, std::equal_to<>>
-      type_map = {
-          {"float", at::kFloat},
-          {"float32", at::kFloat},
-          {"fp32", at::kFloat},
-          {"double", at::kDouble},
-          {"float64", at::kDouble},
-          {"fp64", at::kDouble},
-          {"half", at::kHalf},
-          {"float16", at::kHalf},
-          {"fp16", at::kHalf},
-          {"bfloat16", at::kBFloat16},
-          {"bf16", at::kBFloat16},
-          {"int", at::kInt},
-          {"int32", at::kInt},
-          {"long", at::kLong},
-          {"int64", at::kLong},
-          {"short", at::kShort},
-          {"int16", at::kShort},
-          {"char", at::kChar},
-          {"int8", at::kChar},
-          {"byte", at::kByte},
-          {"uint8", at::kByte},
-          {"bool", at::kBool},
-          {"complex64", at::kComplexFloat},
-          {"complex128", at::kComplexDouble}};
-
-  const auto iter = type_map.find(key);
-  if (iter == type_map.end()) {
-    throw std::invalid_argument("Unsupported type: " + std::string(type_str));
+  if (constexpr std::string_view type_prefix = "type_";
+      key.starts_with(type_prefix)) {
+    key.erase(0, type_prefix.size());
   }
-  return iter->second;
+
+  if (const auto type = detail::lookup_scalar_type(key, detail::kTypeAliases)) {
+    return *type;
+  }
+  if (const auto type =
+          detail::lookup_scalar_type(key, detail::kDatatypeAliases)) {
+    return *type;
+  }
+  throw std::invalid_argument("Unsupported type: " + std::string(type_str));
 }
 
 inline auto

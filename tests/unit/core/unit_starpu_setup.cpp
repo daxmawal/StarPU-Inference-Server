@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <format>
 #include <limits>
+#include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -28,6 +29,7 @@
 #include "support/output_slot_pool_test_hooks.hpp"
 #include "test_starpu_setup.hpp"
 #include "test_utils.hpp"
+#include "utils/monotonic_clock.hpp"
 #include "utils/runtime_config.hpp"
 
 namespace {
@@ -673,6 +675,39 @@ class EnvVarGuard {
   auto operator=(const EnvVarGuard&) -> EnvVarGuard& = delete;
   EnvVarGuard(EnvVarGuard&&) = delete;
   auto operator=(EnvVarGuard&&) -> EnvVarGuard& = delete;
+
+ private:
+  std::string name_;
+  std::optional<std::string> previous_;
+};
+
+class EnvVarUnsetGuard {
+ public:
+  explicit EnvVarUnsetGuard(std::string name) : name_{std::move(name)}
+  {
+    if (const char* current = std::getenv(name_.c_str()); current != nullptr) {
+      previous_ = std::string(current);
+    }
+    if (unsetenv(name_.c_str()) != 0) {
+      ADD_FAILURE() << "Failed to unset environment variable " << name_;
+    }
+  }
+
+  ~EnvVarUnsetGuard()
+  {
+    if (previous_) {
+      if (setenv(name_.c_str(), previous_->c_str(), 1) != 0) {
+        ADD_FAILURE() << "Failed to restore environment variable " << name_;
+      }
+    } else if (unsetenv(name_.c_str()) != 0) {
+      ADD_FAILURE() << "Failed to unset environment variable " << name_;
+    }
+  }
+
+  EnvVarUnsetGuard(const EnvVarUnsetGuard&) = delete;
+  auto operator=(const EnvVarUnsetGuard&) -> EnvVarUnsetGuard& = delete;
+  EnvVarUnsetGuard(EnvVarUnsetGuard&&) = delete;
+  auto operator=(EnvVarUnsetGuard&&) -> EnvVarUnsetGuard& = delete;
 
  private:
   std::string name_;
@@ -2020,6 +2055,56 @@ TEST(ApplyStarpuEnv, SetenvFailureThrowsInitializationException)
   }
 }
 
+TEST(BufferByteSize, ThrowsWhenBufferNull)
+{
+  EXPECT_THROW(
+      {
+        std::ignore =
+            starpu_server::testing::buffer_byte_size_for_tests(nullptr);
+      },
+      starpu_server::InferenceExecutionException);
+}
+
+TEST(BufferByteSize, ThrowsWhenVectorSizeOverflows)
+{
+  starpu_vector_interface vec_iface{};
+  vec_iface.id = STARPU_VECTOR_INTERFACE_ID;
+  vec_iface.elemsize = std::numeric_limits<size_t>::max();
+  vec_iface.nx = 2;
+
+  try {
+    std::ignore = starpu_server::testing::buffer_byte_size_for_tests(
+        reinterpret_cast<const starpu_server::StarpuBufferInterface*>(
+            &vec_iface));
+    FAIL() << "Expected InferenceExecutionException";
+  }
+  catch (const starpu_server::InferenceExecutionException& ex) {
+    const std::string_view message(ex.what());
+    EXPECT_NE(
+        message.find("StarPU buffer size exceeds size_t capacity"),
+        std::string::npos);
+  }
+}
+
+TEST(BufferByteSize, ThrowsWhenInterfaceIdUnsupported)
+{
+  starpu_server::StarpuBufferInterface buffer_iface{};
+  buffer_iface.id = static_cast<starpu_data_interface_id>(-1);
+  buffer_iface.elemsize = 4;
+
+  try {
+    std::ignore =
+        starpu_server::testing::buffer_byte_size_for_tests(&buffer_iface);
+    FAIL() << "Expected InferenceExecutionException";
+  }
+  catch (const starpu_server::InferenceExecutionException& ex) {
+    const std::string_view message(ex.what());
+    EXPECT_NE(
+        message.find("Unsupported StarPU buffer interface id"),
+        std::string::npos);
+  }
+}
+
 TEST(EstimateNonCpuWorkers, ReturnsMaxUnsignedOnOverflow)
 {
   EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
@@ -2106,6 +2191,26 @@ TEST_F(StarPUSetupInitOverrideTest, FailingStarpuInitThrows)
       starpu_server::StarPUInitializationException);
 }
 
+TEST(StarPUSetup_Unit, EmptyDeviceIdsThrows)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::StarPUSetup setup(opts);
+        }
+        catch (const std::invalid_argument& ex) {
+          EXPECT_STREQ(
+              "[ERROR] use_cuda requires explicit device_ids configuration",
+              ex.what());
+          throw;
+        }
+      },
+      std::invalid_argument);
+}
+
 TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
 {
   starpu_server::RuntimeConfig opts;
@@ -2113,6 +2218,32 @@ TEST(StarPUSetup_Unit, DuplicateDeviceIdsThrows)
   opts.devices.ids = {0, 0};
   EXPECT_THROW(
       { starpu_server::StarPUSetup setup(opts); }, std::invalid_argument);
+}
+
+TEST(StarPUSetup_Unit, IgnoresNegativeDeviceIds)
+{
+  StarpuInitCaptureStubGuard capture_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {-1, 2};
+
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    {
+      starpu_server::StarPUSetup setup(opts);
+    }
+    log = capture.str();
+  }
+
+  ASSERT_TRUE(capture_guard.called());
+  EXPECT_NE(
+      log.find("Invalid CUDA device ID -1: must be non-negative"),
+      std::string::npos);
+  EXPECT_EQ(1, capture_guard.conf().ncuda);
+  EXPECT_EQ(1U, capture_guard.conf().use_explicit_workers_cuda_gpuid);
+  EXPECT_EQ(2U, capture_guard.conf().workers_cuda_gpuid[0]);
 }
 
 TEST(InferenceCodelet, RunCodeletInferenceLogsTraceMessage)
@@ -2211,7 +2342,6 @@ TEST(InferenceCodelet, CudaInferenceFuncCopiesResultsToDeviceBuffer)
     )JIT");
   module.to(torch::Device(torch::kCUDA, kDeviceId));
   params.models.models_gpu[kDeviceId] = &module;
-  params.models.num_models_gpu = params.models.models_gpu.size();
 
   int recorded_device_id = -1;
   int recorded_worker_id = -1;
@@ -2220,16 +2350,18 @@ TEST(InferenceCodelet, CudaInferenceFuncCopiesResultsToDeviceBuffer)
   params.device.worker_id = &recorded_worker_id;
   params.device.executed_on = &executed_on;
 
-  using Clock = std::chrono::high_resolution_clock;
+  using Clock = starpu_server::MonotonicClock;
   Clock::time_point start_tp{};
   Clock::time_point end_tp{};
   params.timing.codelet_start_time = &start_tp;
   params.timing.codelet_end_time = &end_tp;
 
-  starpu_variable_interface input_iface{};
-  input_iface.ptr = reinterpret_cast<uintptr_t>(raw_input);
-  starpu_variable_interface output_iface{};
-  output_iface.ptr = reinterpret_cast<uintptr_t>(raw_output);
+  starpu_variable_interface input_iface =
+      starpu_server::make_variable_interface(
+          reinterpret_cast<const float*>(raw_input), kElementCount);
+  starpu_variable_interface output_iface =
+      starpu_server::make_variable_interface(
+          reinterpret_cast<const float*>(raw_output), kElementCount);
 
   std::array<starpu_server::StarpuBufferPtr, 2> buffers{
       &input_iface, &output_iface};
@@ -2288,7 +2420,6 @@ TEST(InferenceCodelet, CudaInferenceFuncThrowsWhenGpuModuleMissing)
   params.num_outputs = 0;
   params.limits.max_inputs = starpu_server::InferLimits::MaxInputs;
   params.limits.max_dims = starpu_server::InferLimits::MaxDims;
-  params.limits.max_models_gpu = starpu_server::InferLimits::MaxModelsGPU;
 
   auto* cuda_func = codelet.get_codelet()->cuda_funcs[0];
   ASSERT_NE(cuda_func, nullptr);
@@ -2440,7 +2571,7 @@ TEST_F(
   starpu_server::ModelConfig model;
   model.name = "invalid_input_model";
   model.inputs.push_back(invalid_input);
-  opts.models.push_back(model);
+  opts.model = model;
 
   testing::internal::CaptureStderr();
   EXPECT_THROW(
@@ -2473,7 +2604,7 @@ TEST_F(
   starpu_server::ModelConfig model;
   model.name = "invalid_output_model";
   model.outputs.push_back(invalid_output);
-  opts.models.push_back(model);
+  opts.model = model;
 
   testing::internal::CaptureStderr();
   EXPECT_THROW(
@@ -2509,7 +2640,7 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "overflow_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
@@ -2531,10 +2662,35 @@ TEST(InputSlotPool_Unit, AllocateSlotBuffersNumelOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "numel_overflow_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
+}
+
+TEST(InputSlotPool_Unit, ComputeInputSizesNumelOverflowThrows)
+{
+  constexpr size_t kMaxSizeT = std::numeric_limits<size_t>::max();
+  const size_t per_sample_numel = kMaxSizeT / 2;
+  const size_t per_sample_bytes = 1;
+  const size_t batch_size = (kMaxSizeT / per_sample_numel) + 1;
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::testing::compute_input_sizes_for_tests(
+              per_sample_bytes, per_sample_numel, batch_size, 0);
+        }
+        catch (const std::overflow_error& ex) {
+          const std::string expected = std::format(
+              "InputSlotPool: per-sample numel ({}) times batch size ({}) "
+              "exceeds size_t range for input {}",
+              per_sample_numel, batch_size, 0);
+          EXPECT_EQ(ex.what(), expected);
+          throw;
+        }
+      },
+      std::overflow_error);
 }
 
 TEST(InputSlotPool_Unit, ConstructionWithoutModelsThrows)
@@ -2562,7 +2718,7 @@ TEST(InputSlotPool_Unit, NonPositiveBatchDimensionThrows)
   starpu_server::ModelConfig model;
   model.name = "invalid_batch_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -2592,7 +2748,7 @@ TEST(InputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
   starpu_server::ModelConfig model;
   model.name = "exceeds_int_max_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -2623,7 +2779,7 @@ TEST(InputSlotPool_Unit, NonPositiveDimensionThrows)
   starpu_server::ModelConfig model;
   model.name = "non_positive_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -2656,7 +2812,7 @@ TEST(InputSlotPool_Unit, DimensionProductOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "product_overflow_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       { starpu_server::InputSlotPool pool(opts, 1); }, std::overflow_error);
@@ -2677,7 +2833,7 @@ TEST(InputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
   starpu_server::ModelConfig model;
   model.name = "minimal_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::InputSlotPool pool(opts, 1);
 
@@ -2726,7 +2882,7 @@ TEST(InputSlotPool_Unit, TryAcquireEmptyPoolReturnsNullopt)
   starpu_server::ModelConfig model;
   model.name = "minimal_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::InputSlotPool pool(opts, 1);
 
@@ -2770,7 +2926,7 @@ TEST(InputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   starpu_server::ModelConfig model;
   model.name = "cuda_probe_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::InputSlotPool pool(opts, 1);
 
@@ -2820,7 +2976,7 @@ TEST(OutputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   starpu_server::ModelConfig model;
   model.name = "cuda_probe_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::OutputSlotPool pool(opts, 1);
 
@@ -2860,7 +3016,7 @@ TEST(
   starpu_server::ModelConfig model;
   model.name = "starpu_pin_success_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   const auto previous_cuda_override =
       starpu_server::testing::set_output_cuda_pinned_override_for_tests(
@@ -2916,7 +3072,7 @@ TEST(
   starpu_server::ModelConfig model;
   model.name = "starpu_pin_failure_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   const auto previous_cuda_override =
       starpu_server::testing::set_output_cuda_pinned_override_for_tests(
@@ -2969,7 +3125,7 @@ TEST(OutputSlotPool_Unit, HostAllocatorFailureThrowsBadAlloc)
   starpu_server::ModelConfig model;
   model.name = "host_allocator_failure_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   const auto previous_allocator =
       starpu_server::testing::set_output_host_allocator_for_tests(
@@ -3011,7 +3167,7 @@ TEST(InputSlotPool_Unit, RegisterFailureResetsSlotState)
   starpu_server::ModelConfig model;
   model.name = "failing_model";
   model.inputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   g_observed_base_ptrs.clear();
   g_observed_handles.clear();
@@ -3080,7 +3236,7 @@ TEST(InputSlotPool_Unit, PartialRegisterFailureResetsSlotState)
   model.name = "partial_failure_model";
   model.inputs.push_back(first_tensor);
   model.inputs.push_back(second_tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   g_observed_base_ptrs.clear();
   g_observed_handles.clear();
@@ -3162,7 +3318,7 @@ TEST(OutputSlotPool_Unit, RegisterFailureResetsSlotState)
   starpu_server::ModelConfig model;
   model.name = "failing_output_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   g_output_observed_base_ptrs.clear();
   g_output_observed_handles.clear();
@@ -3234,7 +3390,7 @@ TEST(OutputSlotPool_Unit, AllocateSlotBuffersOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "overflow_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       { starpu_server::OutputSlotPool pool(opts, 1); }, std::overflow_error);
@@ -3265,7 +3421,7 @@ TEST(OutputSlotPool_Unit, NonPositiveBatchDimensionThrows)
   starpu_server::ModelConfig model;
   model.name = "invalid_batch_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -3295,7 +3451,7 @@ TEST(OutputSlotPool_Unit, NonBatchDimensionNonPositiveThrows)
   starpu_server::ModelConfig model;
   model.name = "non_positive_dims_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -3325,7 +3481,7 @@ TEST(OutputSlotPool_Unit, BatchDimensionExceedsIntMaxThrows)
   starpu_server::ModelConfig model;
   model.name = "exceeds_int_max_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -3356,7 +3512,7 @@ TEST(OutputSlotPool_Unit, NonBatchDimensionOverflowThrows)
   starpu_server::ModelConfig model;
   model.name = "dimension_product_overflow_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   EXPECT_THROW(
       {
@@ -3365,6 +3521,45 @@ TEST(OutputSlotPool_Unit, NonBatchDimensionOverflowThrows)
         }
         catch (const std::overflow_error& ex) {
           EXPECT_STREQ("dimension product overflow", ex.what());
+          throw;
+        }
+      },
+      std::overflow_error);
+}
+
+TEST(OutputSlotPool_Unit, PerSampleBytesOverflowThrows)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.max_batch_size = 1;
+  opts.batching.pool_size = 1;
+
+  const size_t elsize = sizeof(float);
+  const size_t max_numel = std::numeric_limits<size_t>::max() / elsize;
+  const size_t overflow_numel = max_numel + 1;
+  ASSERT_LE(
+      overflow_numel, static_cast<size_t>(std::numeric_limits<int64_t>::max()));
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "bytes_overflow_output";
+  tensor.dims = {1, static_cast<int64_t>(overflow_numel)};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "bytes_overflow_model";
+  model.outputs.push_back(tensor);
+  opts.model = model;
+
+  EXPECT_THROW(
+      {
+        try {
+          starpu_server::OutputSlotPool pool(opts, 1);
+        }
+        catch (const std::overflow_error& ex) {
+          EXPECT_STREQ(
+              "OutputSlotPool: per-sample bytes overflow for output 0",
+              ex.what());
           throw;
         }
       },
@@ -3386,7 +3581,7 @@ TEST(OutputSlotPool_Unit, ReleaseReturnsSlotToPool)
   starpu_server::ModelConfig model;
   model.name = "simple_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::OutputSlotPool pool(opts, 1);
 
@@ -3419,7 +3614,7 @@ TEST(OutputSlotPool_Unit, SlotInfoProvidesConsistentReferences)
   starpu_server::ModelConfig model;
   model.name = "minimal_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   starpu_server::OutputSlotPool pool(opts, 1);
 
@@ -3500,7 +3695,7 @@ TEST(OutputSlotPool_Unit, DefaultSlotCountUsesWorkerCount)
   starpu_server::ModelConfig model;
   model.name = "single_model";
   model.outputs.push_back(tensor);
-  opts.models.push_back(model);
+  opts.model = model;
 
   const int expected_slots =
       std::max(2, static_cast<int>(starpu_worker_get_count()));
@@ -3717,8 +3912,8 @@ TEST(InferenceCodelet, RunInferenceExceptionsAreWrapped)
   float dummy_input = 0.0F;
   float dummy_output = 0.0F;
   std::array<starpu_variable_interface, 2> raw_buffers{};
-  raw_buffers[0] = starpu_server::make_variable_interface(&dummy_input);
-  raw_buffers[1] = starpu_server::make_variable_interface(&dummy_output);
+  raw_buffers[0] = starpu_server::make_variable_interface(&dummy_input, 1);
+  raw_buffers[1] = starpu_server::make_variable_interface(&dummy_output, 1);
   std::array<starpu_server::StarpuBufferPtr, 2> buffers{
       &raw_buffers[0], &raw_buffers[1]};
 
@@ -3758,7 +3953,6 @@ TEST(InferenceCodelet, SelectGpuModuleReturnsMatchingReplica)
   auto module = std::make_unique<torch::jit::script::Module>("dummy");
   params.models.models_gpu.resize(1);
   params.models.models_gpu[0] = module.get();
-  params.models.num_models_gpu = params.models.models_gpu.size();
 
   torch::jit::script::Module* selected =
       starpu_server::select_gpu_module(params, device_id);
@@ -3766,17 +3960,32 @@ TEST(InferenceCodelet, SelectGpuModuleReturnsMatchingReplica)
   EXPECT_EQ(selected, module.get());
 }
 
+TEST(InferenceCodelet, SelectGpuModuleUsesDeviceIdMapping)
+{
+  auto params = starpu_server::make_basic_params(1);
+  params.models.device_ids = {0, 2};
+
+  auto module0 = std::make_unique<torch::jit::script::Module>("m0");
+  auto module1 = std::make_unique<torch::jit::script::Module>("m1");
+  params.models.models_gpu.resize(2);
+  params.models.models_gpu[0] = module0.get();
+  params.models.models_gpu[1] = module1.get();
+
+  torch::jit::script::Module* selected =
+      starpu_server::select_gpu_module(params, 2);
+
+  EXPECT_EQ(selected, module1.get());
+}
+
 TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)
 {
   using starpu_server::kStarpuSchedulerEnvVar;
 
-  if (std::getenv(kStarpuSchedulerEnvVar.data()) != nullptr) {
-    GTEST_SKIP() << "STARPU_SCHED already set, cannot test default scheduler "
-                    "setenv failure";
-  }
+  EnvVarUnsetGuard unset_guard{std::string(kStarpuSchedulerEnvVar)};
+  ASSERT_EQ(std::getenv(kStarpuSchedulerEnvVar.data()), nullptr);
 
   starpu_server::RuntimeConfig opts;
-  opts.models.push_back({});
+  opts.model = starpu_server::ModelConfig{};
   opts.devices.use_cuda = false;
   opts.devices.use_cpu = true;
 
@@ -3797,7 +4006,7 @@ TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)
 TEST(StarPUSetup, ThrowsWhenSetenvFailsForCustomEnvVar_Robustesse)
 {
   starpu_server::RuntimeConfig opts;
-  opts.models.push_back({});
+  opts.model = starpu_server::ModelConfig{};
   opts.devices.use_cuda = false;
   opts.devices.use_cpu = true;
   opts.starpu_env["CUSTOM_VAR"] = "value";

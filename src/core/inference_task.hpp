@@ -19,25 +19,21 @@ struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
   std::shared_ptr<InferenceParams> inference_params;
   std::shared_ptr<void> self_keep_alive;
-  const RuntimeConfig* opts = nullptr;
-  starpu_data_handle_t* dyn_handles = nullptr;
-  starpu_data_access_mode* dyn_modes = nullptr;
   std::vector<starpu_data_handle_t> inputs_handles;
   std::vector<starpu_data_handle_t> outputs_handles;
-  int id = 0;
   std::atomic<int> remaining_outputs_to_acquire{0};
-  std::mutex mutex;
   bool keep_input_handles = false;
   bool keep_output_handles = false;
   OutputSlotPool* output_pool = nullptr;
   int output_slot_id = -1;
   std::function<void()> on_finished;
+  std::shared_ptr<const struct InferenceTaskDependencies> dependencies_owner;
   const struct InferenceTaskDependencies* dependencies = nullptr;
 
   InferenceCallbackContext(
       std::shared_ptr<InferenceJob> job_,
-      std::shared_ptr<InferenceParams> params_, const RuntimeConfig* opts_,
-      int id_, std::vector<starpu_data_handle_t> inputs_,
+      std::shared_ptr<InferenceParams> params_,
+      std::vector<starpu_data_handle_t> inputs_,
       std::vector<starpu_data_handle_t> outputs_) noexcept;
 };
 
@@ -58,7 +54,8 @@ struct InferenceTaskDependencies {
   std::optional<OutputCallbackHook> starpu_output_callback_hook;
 };
 
-extern const InferenceTaskDependencies kDefaultInferenceTaskDependencies;
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
+extern InferenceTaskDependencies kDefaultInferenceTaskDependencies;
 
 // =============================================================================
 // InferenceTask
@@ -98,8 +95,8 @@ class InferenceTask {
   auto create_inference_params() -> std::shared_ptr<InferenceParams>;
 
   auto create_context(
-      const std::vector<starpu_data_handle_t>& inputs,
-      const std::vector<starpu_data_handle_t>& outputs)
+      std::vector<starpu_data_handle_t> inputs,
+      std::vector<starpu_data_handle_t> outputs)
       -> std::shared_ptr<InferenceCallbackContext>;
 
   void fill_model_pointers(
@@ -139,8 +136,7 @@ class InferenceTask {
       const std::shared_ptr<InferenceCallbackContext>& ctx_sptr);
 
   static void record_and_run_completion_callback(
-      InferenceCallbackContext* ctx,
-      std::chrono::high_resolution_clock::time_point end_time);
+      InferenceCallbackContext* ctx, MonotonicClock::time_point end_time);
 
   static void finalize_inference_task(void* arg);
 
@@ -153,6 +149,6 @@ class InferenceTask {
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
   const RuntimeConfig* opts_;
-  const InferenceTaskDependencies* dependencies_;
+  std::shared_ptr<const InferenceTaskDependencies> dependencies_;
 };
 }  // namespace starpu_server

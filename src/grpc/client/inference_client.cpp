@@ -26,7 +26,7 @@ struct AsyncClientCall {
   std::unique_ptr<
       grpc::ClientAsyncResponseReader<inference::ModelInferResponse>>
       response_reader = nullptr;
-  std::chrono::high_resolution_clock::time_point start_time;
+  std::chrono::system_clock::time_point start_time;
   int request_id = 0;
   std::size_t inference_count = 1;
   std::optional<InferenceClient::OutputSummary> expected_outputs;
@@ -336,9 +336,8 @@ InferenceClient::AsyncModelInfer(
 
   auto call = std::make_unique<AsyncClientCall>();
   call->request_id = current_id;
-  call->start_time = std::chrono::high_resolution_clock::now();
+  call->start_time = std::chrono::system_clock::now();
   call->inference_count = determine_inference_count(cfg);
-  last_batch_size_ = call->inference_count;
   call->expected_outputs = std::move(expected_outputs);
   ++total_requests_sent_;
 
@@ -346,7 +345,9 @@ InferenceClient::AsyncModelInfer(
     first_request_time_ = call->start_time;
   }
 
-  log_stats(verbosity_, std::format("Sending request ID: {}", current_id));
+  if (should_log(VerbosityLevel::Stats, verbosity_)) {
+    log_stats(verbosity_, std::format("Sending request ID: {}", current_id));
+  }
 
   inference::ModelInferRequest request;
   request.set_model_name(cfg.model_name);
@@ -388,7 +389,7 @@ InferenceClient::AsyncModelInfer(
     auto* input = request.add_inputs();
     input->set_name(in_cfg.name);
     input->set_datatype(scalar_type_to_string(in_cfg.type));
-    for (auto dim : in_cfg.shape) {
+    for (auto dim : tensor.sizes()) {
       input->add_shape(dim);
     }
     auto flat = tensor.view({-1});
@@ -510,14 +511,22 @@ InferenceClient::AsyncCompleteRpc()
   void* got_tag = nullptr;
   bool call_ctx = false;
   while (cq_.Next(&got_tag, &call_ctx)) {
-    if (!call_ctx) {
+    if (got_tag == nullptr) {
       log_warning("Received invalid RPC completion, exiting CQ loop");
       break;
     }
 
     auto call = std::unique_ptr<AsyncClientCall>(
         static_cast<AsyncClientCall*>(got_tag));
-    auto end = std::chrono::high_resolution_clock::now();
+    auto end = std::chrono::system_clock::now();
+    if (!call_ctx) {
+      auto recv_time_str = time_utils::format_timestamp(end);
+      log_warning(std::format(
+          "Request ID {} completion not ok at {}; treating as failure",
+          call->request_id, recv_time_str));
+      ++rejected_requests_;
+      continue;
+    }
     auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
                        end - call->start_time)
                        .count();
@@ -525,9 +534,6 @@ InferenceClient::AsyncCompleteRpc()
         std::chrono::duration_cast<std::chrono::milliseconds>(
             end.time_since_epoch())
             .count());
-
-    auto sent_time_str = time_utils::format_timestamp(call->start_time);
-    auto recv_time_str = time_utils::format_timestamp(end);
 
     if (call->status.ok()) {
       const auto start_ms = static_cast<int64_t>(
@@ -586,27 +592,34 @@ InferenceClient::AsyncCompleteRpc()
           client_overhead_ms};
       record_latency(sample);
 
-      log_stats(
-          verbosity_,
-          std::format(
-              "Request ID {} sent at {} received at {} latency: {} "
-              "ms (server overall: {:.3f} ms | preprocess: {:.3f} ms, queue: "
-              "{:.3f} ms, batching: {:.3f} ms, submit: {:.3f} ms, scheduling: "
-              "{:.3f} ms, codelet: {:.3f} ms, inference: {:.3f} ms, callback: "
-              "{:.3f} ms, postprocess: {:.3f} ms, job_total: {:.3f} ms), "
-              "request_latency: {} ms, response_latency: {} ms, "
-              "client_overhead: {:.3f} ms",
-              call->request_id, sent_time_str, recv_time_str, latency,
-              overall_ms, preprocess_ms, queue_ms, batch_ms, submit_ms,
-              scheduling_ms, codelet_ms, inference_ms, callback_ms,
-              postprocess_ms, server_total_ms, request_latency_ms,
-              response_latency_ms, client_overhead_ms));
+      if (should_log(VerbosityLevel::Stats, verbosity_)) {
+        auto sent_time_str = time_utils::format_timestamp(call->start_time);
+        auto recv_time_str = time_utils::format_timestamp(end);
+        log_stats(
+            verbosity_,
+            std::format(
+                "Request ID {} sent at {} received at {} latency: {} "
+                "ms (server overall: {:.3f} ms | preprocess: {:.3f} ms, queue: "
+                "{:.3f} ms, batching: {:.3f} ms, submit: {:.3f} ms, "
+                "scheduling: "
+                "{:.3f} ms, codelet: {:.3f} ms, inference: {:.3f} ms, "
+                "callback: "
+                "{:.3f} ms, postprocess: {:.3f} ms, job_total: {:.3f} ms), "
+                "request_latency: {} ms, response_latency: {} ms, "
+                "client_overhead: {:.3f} ms",
+                call->request_id, sent_time_str, recv_time_str, latency,
+                overall_ms, preprocess_ms, queue_ms, batch_ms, submit_ms,
+                scheduling_ms, codelet_ms, inference_ms, callback_ms,
+                postprocess_ms, server_total_ms, request_latency_ms,
+                response_latency_ms, client_overhead_ms));
+      }
 
       validate_server_response(*call);
       total_inference_count_ += call->inference_count;
       last_response_time_ = end;
       ++success_requests_;
     } else {
+      auto recv_time_str = time_utils::format_timestamp(end);
       log_error(std::format(
           "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
           call->status.error_message()));

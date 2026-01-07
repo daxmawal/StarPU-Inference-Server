@@ -23,7 +23,7 @@ SetUtcTimezone()
 TEST(TimeUtils, FormatTimestampEpoch)
 {
   SetUtcTimezone();
-  std::chrono::high_resolution_clock::time_point time_point{};
+  std::chrono::system_clock::time_point time_point{};
   auto formatted = format_timestamp(time_point);
   EXPECT_EQ(formatted, "00:00:00.000");
 }
@@ -41,7 +41,6 @@ TEST(TimeUtils, FormatTimestampKnownTime)
   constexpr milliseconds kMillis{6};
   sys_days days = kYear / kMonth / kDay;
   sys_time<milliseconds> sys_tp = days + kHours + kMinutes + kSeconds + kMillis;
-  auto hr_tp = time_point_cast<high_resolution_clock::duration>(sys_tp);
-  auto formatted = format_timestamp(hr_tp);
+  auto formatted = format_timestamp(sys_tp);
   EXPECT_EQ(formatted, "03:04:05.006");
 }

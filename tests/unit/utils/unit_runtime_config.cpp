@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <optional>
 #include <vector>
 
 #include "utils/runtime_config.hpp"
@@ -36,8 +37,8 @@ const auto compute_max_message_bytes_callable =
     [](int64_t batch_size, const starpu_server::ModelConfig& model,
        const std::vector<starpu_server::TensorConfig>&,
        const std::vector<starpu_server::TensorConfig>&) {
-      std::vector<starpu_server::ModelConfig> models{model};
-      starpu_server::compute_max_message_bytes(batch_size, models);
+      const std::optional<starpu_server::ModelConfig> model_opt{model};
+      starpu_server::compute_max_message_bytes(batch_size, model_opt);
     };
 
 const auto compute_model_message_bytes_callable =
@@ -181,3 +182,16 @@ INSTANTIATE_TEST_SUITE_P(
             },
             make_expect_throw<starpu_server::UnsupportedDtypeException>(),
             compute_max_message_bytes_callable}));
+
+TEST(RuntimeConfigUtils, ComputeMaxMessageBytesWithoutModelUsesMinimum)
+{
+  const std::optional<starpu_server::ModelConfig> model;
+  EXPECT_EQ(
+      starpu_server::compute_max_message_bytes(4, model),
+      starpu_server::kDefaultMinMessageBytes);
+
+  constexpr std::size_t kCustomMinBytes = 1234;
+  EXPECT_EQ(
+      starpu_server::compute_max_message_bytes(4, model, kCustomMinBytes),
+      kCustomMinBytes);
+}

@@ -117,6 +117,26 @@ TEST(BatchingTraceLoggerTest, RequestQueuedEventsEmitNoFlowAnnotations)
   remove_trace_outputs(trace_path);
 }
 
+TEST(BatchingTraceLoggerTest, RequestAndBatchLoggingNoOpsWhenDisabled)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+  remove_trace_outputs(trace_path);
+
+  logger.log_request_enqueued(42, "demo_model");
+  logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
+      .batch_id = 3,
+      .model_name = "demo_model",
+      .logical_job_count = 1,
+  });
+
+  EXPECT_FALSE(logger.enabled());
+  EXPECT_TRUE(logger.file_path_.empty());
+  EXPECT_FALSE(logger.trace_writer_.is_open());
+  EXPECT_FALSE(logger.summary_stream_.is_open());
+  EXPECT_FALSE(std::filesystem::exists(trace_path));
+}
+
 TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
 {
   std::ostringstream line;
@@ -129,6 +149,12 @@ TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
   EXPECT_EQ(line.str(), R"({"prefix":true)");
   EXPECT_EQ(line.str().find("\"flow_"), std::string::npos);
   EXPECT_EQ(line.str().find("\"id_scope\""), std::string::npos);
+}
+
+TEST(BatchingTraceLoggerTest, EscapeCsvFieldDoublesQuotes)
+{
+  const std::string_view input = R"(a"b"c)";
+  EXPECT_EQ(escape_csv_field(input), R"(a""b""c)");
 }
 
 TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
@@ -409,7 +435,7 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1000}};
   const auto end = start + std::chrono::microseconds{10};
   const BatchingTraceLogger::TimeRange queue_times{start, end};
@@ -450,8 +476,8 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto invalid_start = std::chrono::high_resolution_clock::time_point{};
-  const auto valid_end = std::chrono::high_resolution_clock::time_point{
+  const auto invalid_start = starpu_server::MonotonicClock::time_point{};
+  const auto valid_end = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{5000}};
   const BatchingTraceLogger::TimeRange queue_times{invalid_start, valid_end};
 
@@ -491,9 +517,9 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{5000}};
-  const auto end = std::chrono::high_resolution_clock::time_point{
+  const auto end = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{3000}};
   const BatchingTraceLogger::TimeRange queue_times{start, end};
 
@@ -542,7 +568,7 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1500}};
   const auto end = start + std::chrono::microseconds{20};
   const BatchingTraceLogger::TimeRange schedule{start, end};
@@ -583,9 +609,9 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{7000}};
-  const auto end = std::chrono::high_resolution_clock::time_point{
+  const auto end = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{6500}};
   const BatchingTraceLogger::TimeRange schedule{start, end};
 
@@ -835,7 +861,7 @@ TEST(
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1000}};
   const auto end = start + std::chrono::microseconds{10};
   const BatchingTraceLogger::TimeRange codelet_times{start, end};
@@ -897,9 +923,9 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
   logger.trace_start_initialized_ = true;
   logger.trace_start_us_ = 0;
 
-  const auto start = std::chrono::high_resolution_clock::time_point{
+  const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{2000}};
-  const auto end = std::chrono::high_resolution_clock::time_point{
+  const auto end = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1500}};
   const BatchingTraceLogger::TimeRange codelet_times{start, end};
 
@@ -936,7 +962,7 @@ TEST(BatchingTraceLoggerTest, EscapesModelNamesWithSpecialCharacters)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(10);
   std::string model_name = "\"\\\b\f\n\r\tA";
   model_name.push_back(static_cast<char>(0x01));
@@ -967,7 +993,7 @@ TEST(BatchingTraceLoggerTest, RoutesNonWorkerEventsToDedicatedTracks)
 
   logger.configure(true, trace_path.string());
   logger.log_request_enqueued(1, "demo_model");
-  const auto enqueue_start = std::chrono::high_resolution_clock::now();
+  const auto enqueue_start = starpu_server::MonotonicClock::now();
   const auto enqueue_end = enqueue_start + std::chrono::microseconds(10);
   const std::array<int, 2> request_ids{0, 1};
   logger.log_batch_enqueue_span(
@@ -1022,7 +1048,7 @@ TEST(BatchingTraceLoggerTest, IncludesDeviceIdInWorkerLabels)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(50);
   logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
       .batch_id = 3,
@@ -1094,7 +1120,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchBuildSpanWithRequestIds)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(150);
   const std::array<int, 2> request_ids{7, 8};
   logger.log_batch_build_span(
@@ -1124,7 +1150,7 @@ TEST(BatchingTraceLoggerTest, EmitsBatchEnqueueSpanWithRequestIds)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(60);
   const std::array<int, 3> request_ids{4, 5, 6};
   logger.log_batch_enqueue_span(
@@ -1156,7 +1182,7 @@ TEST(BatchingTraceLoggerTest, ExtendsEnqueueWindowToLatestRequestEvent)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto base = std::chrono::high_resolution_clock::now();
+  const auto base = starpu_server::MonotonicClock::now();
   const auto first = base + std::chrono::microseconds(10);
   const auto second = first + std::chrono::microseconds(5);
   const auto last = first + std::chrono::microseconds(25);
@@ -1196,7 +1222,7 @@ TEST(BatchingTraceLoggerTest, PrefixesWarmupEvents)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(100);
   const std::array<int, 2> request_ids{1, 2};
   logger.log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
@@ -1252,7 +1278,7 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto base = std::chrono::high_resolution_clock::now();
+  const auto base = starpu_server::MonotonicClock::now();
   const auto overlapping_start = base + std::chrono::microseconds(50);
   const auto overlapping_end =
       overlapping_start + std::chrono::microseconds(40);
@@ -1318,7 +1344,7 @@ TEST(BatchingTraceLoggerTest, EmitsScopedFlowsBetweenSubmissionAndCompute)
   auto& logger = BatchingTraceLogger::instance();
 
   logger.configure(true, trace_path.string());
-  const auto start = std::chrono::high_resolution_clock::now();
+  const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::microseconds(75);
   const auto build_start = start - std::chrono::microseconds(50);
   const auto build_end = build_start + std::chrono::microseconds(20);
@@ -1525,6 +1551,188 @@ TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
   EXPECT_FALSE(logger.summary_stream_.is_open());
 }
 
+TEST(
+    BatchingTraceLoggerTest,
+    ConfigureQueueMetricsWriterFailsWhenDirectoryMissing)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = std::filesystem::temp_directory_path() /
+                          "batching_trace_missing_metrics_dir" / "trace.json";
+  std::error_code ec;
+  std::filesystem::remove_all(trace_path.parent_path(), ec);
+
+  const auto configured = logger.configure_queue_metrics_writer(trace_path);
+  EXPECT_FALSE(configured);
+  EXPECT_TRUE(logger.queue_metrics_path_.empty());
+  EXPECT_FALSE(logger.queue_metrics_stream_.is_open());
+}
+
+TEST(BatchingTraceLoggerTest, BatchSummaryNoOpsWhenSummaryStreamClosed)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+  remove_trace_outputs(trace_path);
+  const auto summary_path = make_summary_path(trace_path);
+
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.warmup_suppressed_.store(false, std::memory_order_release);
+  logger.summary_file_path_ = summary_path;
+
+  const std::array<int, 1> request_ids{1};
+  const std::array<int64_t, 1> request_arrivals{100};
+  logger.log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
+      .batch_id = 1,
+      .model_name = "demo_model",
+      .batch_size = 1,
+      .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
+      .worker_id = 0,
+      .worker_type = DeviceType::CPU,
+      .device_id = -1,
+      .queue_ms = 0.1,
+      .batch_ms = 0.2,
+      .submit_ms = 0.3,
+      .scheduling_ms = 0.4,
+      .codelet_ms = 0.5,
+      .inference_ms = 0.6,
+      .callback_ms = 0.7,
+      .total_ms = 0.8,
+      .is_warmup = false,
+  });
+
+  EXPECT_FALSE(logger.summary_stream_.is_open());
+  EXPECT_FALSE(std::filesystem::exists(summary_path));
+}
+
+TEST(BatchingTraceLoggerTest, QueueMetricsNoOpsWhenNotReady)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+  remove_trace_outputs(trace_path);
+
+  auto metrics_path = trace_path;
+  metrics_path.replace_filename("metrics.csv");
+
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.warmup_suppressed_.store(false, std::memory_order_release);
+
+  logger.queue_metrics_stream_.open(
+      metrics_path, std::ios::out | std::ios::trunc);
+  ASSERT_TRUE(logger.queue_metrics_stream_.is_open());
+  logger.trace_start_initialized_ = false;
+  logger.log_queue_size(3);
+  logger.queue_metrics_stream_.close();
+
+  logger.trace_start_initialized_ = true;
+  logger.log_queue_size(4);
+
+  std::ifstream stream(metrics_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty());
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, RequestRejectedNoOpsWhenMetricsNotReady)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+  remove_trace_outputs(trace_path);
+
+  auto metrics_path = trace_path;
+  metrics_path.replace_filename("metrics.csv");
+
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.warmup_suppressed_.store(false, std::memory_order_release);
+
+  logger.queue_metrics_stream_.open(
+      metrics_path, std::ios::out | std::ios::trunc);
+  ASSERT_TRUE(logger.queue_metrics_stream_.is_open());
+  logger.trace_start_initialized_ = false;
+  logger.log_request_rejected(5);
+  logger.queue_metrics_stream_.close();
+
+  logger.trace_start_initialized_ = true;
+  logger.log_request_rejected(6);
+
+  std::ifstream stream(metrics_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty());
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, RequestRejectedWritesQueueMetricsWhenReady)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+  remove_trace_outputs(trace_path);
+
+  auto metrics_path = trace_path;
+  metrics_path.replace_filename("metrics.csv");
+
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.warmup_suppressed_.store(false, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+  logger.rejected_total_.store(0, std::memory_order_relaxed);
+
+  logger.queue_metrics_stream_.open(
+      metrics_path, std::ios::out | std::ios::trunc);
+  ASSERT_TRUE(logger.queue_metrics_stream_.is_open());
+  logger.log_request_rejected(7);
+  logger.queue_metrics_stream_.close();
+
+  std::ifstream stream(metrics_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_FALSE(content.empty());
+  EXPECT_NE(content.find(",7,1"), std::string::npos);
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, QueueMetricWriteNoOpsWhenStreamClosed)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+  remove_trace_outputs(trace_path);
+
+  auto metrics_path = trace_path;
+  metrics_path.replace_filename("metrics.csv");
+
+  const BatchingTraceLogger::QueueMetric metric{
+      .timestamp_us = 123,
+      .queue_size = 5,
+      .rejected_total = 2,
+  };
+  logger.write_queue_metric_locked(metric);
+
+  EXPECT_FALSE(logger.queue_metrics_stream_.is_open());
+  EXPECT_FALSE(std::filesystem::exists(metrics_path));
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, TraceFileWriterHeaderNoOpsWhenStreamClosed)
+{
+  detail::TraceFileWriter writer;
+  writer.write_header();
+
+  EXPECT_FALSE(writer.is_open());
+  EXPECT_FALSE(writer.header_written_);
+  EXPECT_FALSE(writer.ready());
+  EXPECT_TRUE(writer.thread_metadata_.empty());
+}
+
 TEST(BatchingTraceLoggerTest, TraceFileWriterReportsOpenState)
 {
   BatchingTraceLogger logger;
@@ -1535,6 +1743,30 @@ TEST(BatchingTraceLoggerTest, TraceFileWriterReportsOpenState)
 
   logger.configure(false, "");
   EXPECT_FALSE(logger.trace_writer_.is_open());
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, ConfigureFromRuntimeUsesTraceSettings)
+{
+  BatchingTraceLogger logger;
+  const auto trace_path = make_temp_trace_path();
+
+  RuntimeConfig cfg;
+  cfg.batching.trace_enabled = true;
+  cfg.batching.trace_output_path = trace_path.string();
+
+  logger.configure_from_runtime(cfg);
+
+  EXPECT_TRUE(logger.enabled());
+  EXPECT_EQ(logger.file_path_, trace_path.string());
+  EXPECT_TRUE(std::filesystem::exists(trace_path));
+
+  cfg.batching.trace_enabled = false;
+  logger.configure_from_runtime(cfg);
+
+  EXPECT_FALSE(logger.enabled());
+  EXPECT_TRUE(logger.file_path_.empty());
 
   remove_trace_outputs(trace_path);
 }

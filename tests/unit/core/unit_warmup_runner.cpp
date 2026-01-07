@@ -1,27 +1,98 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+#include <functional>
 #include <limits>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
-#define private public
-#include "core/warmup.hpp"
-#undef private
-
 #include "core/inference_runner.hpp"
+#include "core/warmup.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
+
+namespace starpu_server::testing {
+auto collect_device_workers_for_test(const RuntimeConfig& opts)
+    -> std::map<int, std::vector<int>>;
+using WarmupThreadHook = std::function<void()>;
+auto set_warmup_server_thread_hook(WarmupThreadHook hook) -> WarmupThreadHook;
+auto set_warmup_client_thread_hook(WarmupThreadHook hook) -> WarmupThreadHook;
+}  // namespace starpu_server::testing
+
+namespace {
+auto
+test_worker_stream_query(
+    unsigned int device_id, int* worker_ids,
+    enum starpu_worker_archtype type) -> int
+{
+  if (type != STARPU_CUDA_WORKER || device_id != 0U) {
+    return 0;
+  }
+  if (worker_ids == nullptr) {
+    return 0;
+  }
+  worker_ids[0] = 7;
+  worker_ids[1] = 9;
+  return 2;
+}
+
+class WorkerStreamQueryGuard {
+ public:
+  WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::set_worker_stream_query_fn(
+        &test_worker_stream_query);
+  }
+  ~WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::reset_worker_stream_query_fn();
+  }
+  WorkerStreamQueryGuard(const WorkerStreamQueryGuard&) = delete;
+  auto operator=(const WorkerStreamQueryGuard&) -> WorkerStreamQueryGuard& =
+                                                       delete;
+};
+
+class WarmupThreadHookGuard {
+ public:
+  WarmupThreadHookGuard(
+      starpu_server::testing::WarmupThreadHook server_hook,
+      starpu_server::testing::WarmupThreadHook client_hook)
+      : server_prev_(starpu_server::testing::set_warmup_server_thread_hook(
+            std::move(server_hook))),
+        client_prev_(starpu_server::testing::set_warmup_client_thread_hook(
+            std::move(client_hook)))
+  {
+  }
+  ~WarmupThreadHookGuard()
+  {
+    starpu_server::testing::set_warmup_server_thread_hook(
+        std::move(server_prev_));
+    starpu_server::testing::set_warmup_client_thread_hook(
+        std::move(client_prev_));
+  }
+  WarmupThreadHookGuard(const WarmupThreadHookGuard&) = delete;
+  auto operator=(const WarmupThreadHookGuard&) -> WarmupThreadHookGuard& =
+                                                      delete;
+
+ private:
+  starpu_server::testing::WarmupThreadHook server_prev_;
+  starpu_server::testing::WarmupThreadHook client_prev_;
+};
+}  // namespace
 
 TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
 {
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
 
-  runner->client_worker(device_workers, queue, 2);
+  starpu_server::WarmupRunnerTestHelper::client_worker(
+      *runner, device_workers, queue, 2);
 
   std::vector<int> request_ids;
   std::vector<int> worker_ids;
@@ -48,7 +119,8 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   opts.seed = 0;
   opts.batching.warmup_pregen_inputs = 1;
   starpu_server::InferenceQueue queue_single;
-  runner->client_worker(device_workers, queue_single, 1);
+  starpu_server::WarmupRunnerTestHelper::client_worker(
+      *runner, device_workers, queue_single, 1);
 
   std::unordered_set<const void*> unique_single;
   for (;;) {
@@ -64,7 +136,8 @@ TEST_F(WarmupRunnerTest, WarmupPregenInputsRespected_Unit)
   opts.batching.warmup_pregen_inputs = 2;
   starpu_server::InferenceQueue queue_double;
   constexpr int kDoublerequest_nb = 5;
-  runner->client_worker(device_workers, queue_double, kDoublerequest_nb);
+  starpu_server::WarmupRunnerTestHelper::client_worker(
+      *runner, device_workers, queue_double, kDoublerequest_nb);
 
   std::unordered_set<const void*> unique_double;
   for (;;) {
@@ -85,13 +158,67 @@ TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
 
   testing::internal::CaptureStderr();
   queue.shutdown();
-  runner->client_worker(device_workers, queue, request_nb);
+  starpu_server::WarmupRunnerTestHelper::client_worker(
+      *runner, device_workers, queue, request_nb);
   const std::string captured = testing::internal::GetCapturedStderr();
 
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);
 
   std::shared_ptr<starpu_server::InferenceJob> job;
   EXPECT_FALSE(queue.wait_and_pop(job));
+}
+
+TEST(WarmupRunnerEdgesTest, CollectDeviceWorkersAddsCudaWorkers)
+{
+  WorkerStreamQueryGuard guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cpu = false;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+
+  const auto workers =
+      starpu_server::testing::collect_device_workers_for_test(opts);
+
+  const auto it = workers.find(0);
+  ASSERT_NE(it, workers.end());
+  EXPECT_EQ(it->second, (std::vector<int>{7, 9}));
+}
+
+TEST(WarmupRunnerEdgesTest, RunCapturesClientThreadException)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.warmup_pregen_inputs = 1;
+  auto runner = fixture.make_runner();
+
+  std::atomic<bool> hook_called{false};
+  WarmupThreadHookGuard guard(
+      starpu_server::testing::WarmupThreadHook{}, [&hook_called]() {
+        hook_called.store(true, std::memory_order_relaxed);
+        throw std::runtime_error("client hook failure");
+      });
+
+  EXPECT_THROW(runner.run(1), std::runtime_error);
+  EXPECT_TRUE(hook_called.load(std::memory_order_relaxed));
+}
+
+TEST(WarmupRunnerEdgesTest, RunCapturesServerThreadException)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.warmup_pregen_inputs = 1;
+  auto runner = fixture.make_runner();
+
+  std::atomic<bool> hook_called{false};
+  WarmupThreadHookGuard guard(
+      [&hook_called]() {
+        hook_called.store(true, std::memory_order_relaxed);
+        throw std::runtime_error("server hook failure");
+      },
+      starpu_server::testing::WarmupThreadHook{});
+
+  EXPECT_THROW(runner.run(1), std::runtime_error);
+  EXPECT_TRUE(hook_called.load(std::memory_order_relaxed));
 }
 
 TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenNoDevicesConfigured)
@@ -164,12 +291,13 @@ TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenComputedRequestsNonPositive)
 
 TEST(WarmupRunnerEdgesTest, RunWarmupLogsCpuAndCudaTargetDescription)
 {
+  skip_if_no_cuda();
   WarmupRunnerTestFixture fixture;
   fixture.init();
   fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
   fixture.opts.devices.use_cpu = true;
   fixture.opts.devices.use_cuda = true;
-  fixture.opts.devices.ids.clear();
+  fixture.opts.devices.ids = {0};
   fixture.opts.batching.warmup_request_nb = 1;
   fixture.opts.batching.warmup_batches_per_worker = 0;
   fixture.opts.batching.warmup_pregen_inputs = 0;
@@ -184,4 +312,52 @@ TEST(WarmupRunnerEdgesTest, RunWarmupLogsCpuAndCudaTargetDescription)
       fixture.outputs_ref);
   const std::string log = capture.str();
   EXPECT_NE(log.find("CPU and CUDA workers"), std::string::npos);
+}
+
+TEST(WarmupRunnerEdgesTest, RunWarmupLogsCudaTargetDescription)
+{
+  skip_if_no_cuda();
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
+  fixture.opts.devices.use_cpu = false;
+  fixture.opts.devices.use_cuda = true;
+  fixture.opts.devices.ids = {0};
+  fixture.opts.batching.warmup_request_nb = 1;
+  fixture.opts.batching.warmup_batches_per_worker = 0;
+  fixture.opts.batching.warmup_pregen_inputs = 0;
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
+
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      fixture.opts, *fixture.starpu, fixture.model_cpu, fixture.models_gpu,
+      fixture.outputs_ref);
+  const std::string log = capture.str();
+  EXPECT_NE(log.find("per CUDA workers"), std::string::npos);
+}
+
+TEST(WarmupRunnerEdgesTest, RunWarmupLogsCpuTargetDescription)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.verbosity = starpu_server::VerbosityLevel::Info;
+  fixture.opts.devices.use_cpu = true;
+  fixture.opts.devices.use_cuda = false;
+  fixture.opts.batching.warmup_request_nb = 1;
+  fixture.opts.batching.warmup_batches_per_worker = 0;
+  fixture.opts.batching.warmup_pregen_inputs = 0;
+  fixture.starpu = std::make_unique<starpu_server::StarPUSetup>(fixture.opts);
+  fixture.model_cpu = starpu_server::make_identity_model();
+  fixture.models_gpu.clear();
+  fixture.outputs_ref = {torch::zeros({1})};
+
+  starpu_server::CaptureStream capture{std::cout};
+  starpu_server::run_warmup(
+      fixture.opts, *fixture.starpu, fixture.model_cpu, fixture.models_gpu,
+      fixture.outputs_ref);
+  const std::string log = capture.str();
+  EXPECT_NE(log.find("per CPU workers"), std::string::npos);
 }

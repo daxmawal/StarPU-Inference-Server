@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <functional>
 #include <limits>
 #include <sstream>
@@ -27,31 +28,39 @@ constexpr int kMaxPort = 65535;
 const std::filesystem::path kDefaultTraceOutputFile{
     RuntimeConfig::BatchingSettings{}.trace_output_path};
 
+struct TransparentStringHash {
+  using is_transparent = void;
+
+  [[nodiscard]] auto operator()(std::string_view value) const noexcept
+      -> std::size_t
+  {
+    return std::hash<std::string_view>{}(value);
+  }
+};
+
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
 {
   static ConfigLoaderPostParseHook hook;
   return hook;
 }
-
-struct TransparentStringHash {
-  using hash_type = std::hash<std::string_view>;
-  using is_transparent = void;
-
-  auto operator()(std::string_view value) const noexcept -> std::size_t
-  {
-    return hash_type{}(value);
-  }
-
-  auto operator()(const std::string& value) const noexcept -> std::size_t
-  {
-    return (*this)(std::string_view{value});
-  }
-};
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
 
 auto parse_tensor_nodes(
     const YAML::Node& nodes, std::size_t max_inputs,
     std::size_t max_dims) -> std::vector<TensorConfig>;
+
+auto
+ensure_model(RuntimeConfig& cfg) -> ModelConfig&
+{
+  if (!cfg.model.has_value()) {
+    cfg.model = ModelConfig{};
+  }
+  return *cfg.model;
+}
 
 void
 parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
@@ -140,13 +149,12 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "verbosity",
           "name",
           "model",
+          "model_name",
           "starpu_env",
-          "request_nb",
           "device_ids",
           "group_cpu_by_numa",
           "inputs",
           "outputs",
-          "delay_us",
           "batch_coalesce_timeout_ms",
           "address",
           "metrics_port",
@@ -158,13 +166,10 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
           "pool_size",
           "trace_enabled",
           "trace_output",
-          "pregen_inputs",
           "warmup_pregen_inputs",
           "warmup_request_nb",
           "warmup_batches_per_worker",
           "seed",
-          "rtol",
-          "atol",
           "sync",
           "use_cpu",
           "use_cuda"};
@@ -194,37 +199,35 @@ void
 parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["model"]) {
-    cfg.models.resize(1);
-    cfg.models[0].path = root["model"].as<std::string>();
-    if (!std::filesystem::exists(cfg.models[0].path)) {
-      log_error(
-          std::string("Model path does not exist: ") + cfg.models[0].path);
+    auto& model = ensure_model(cfg);
+    model.path = root["model"].as<std::string>();
+    if (!std::filesystem::exists(model.path)) {
+      log_error(std::string("Model path does not exist: ") + model.path);
       cfg.valid = false;
     }
   }
-}
 
-void
-parse_request_nb_and_devices(const YAML::Node& root, RuntimeConfig& cfg)
-{
-  if (root["request_nb"]) {
-    cfg.batching.request_nb = root["request_nb"].as<int>();
-    if (cfg.batching.request_nb < 0) {
-      log_error("request_nb must be >= 0");
+  const YAML::Node model_name_node = root["model_name"];
+  if (model_name_node) {
+    if (!model_name_node.IsScalar()) {
+      log_error("model_name must be a scalar string");
       cfg.valid = false;
+      return;
     }
-  }
-  if (root["device_ids"]) {
-    log_error(
-        "device_ids must be nested inside the use_cuda block (e.g. "
-        "\"use_cuda: [{ device_ids: [0] }]\")");
-    cfg.valid = false;
+    auto& model = ensure_model(cfg);
+    model.name = model_name_node.as<std::string>();
   }
 }
 
 void
 parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
+  if (root["device_ids"]) {
+    log_error(
+        "device_ids must be nested inside the use_cuda block (e.g. "
+        "\"use_cuda: [{ device_ids: [0] }]\")");
+    cfg.valid = false;
+  }
   if (root["use_cpu"]) {
     cfg.devices.use_cpu = root["use_cpu"].as<bool>();
   }
@@ -238,7 +241,15 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   }
 
   if (use_cuda_node.IsScalar()) {
-    cfg.devices.use_cuda = use_cuda_node.as<bool>();
+    if (const bool enabled = use_cuda_node.as<bool>(); !enabled) {
+      cfg.devices.use_cuda = false;
+      cfg.devices.ids.clear();
+      return;
+    }
+    log_error(
+        "use_cuda must be a sequence of device mappings when enabled (e.g. "
+        "\"use_cuda: [{ device_ids: [0] }]\")");
+    cfg.valid = false;
     return;
   }
 
@@ -318,13 +329,13 @@ void
 parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["inputs"]) {
-    cfg.models.resize(1);
-    cfg.models[0].inputs = parse_tensor_nodes(
+    auto& model = ensure_model(cfg);
+    model.inputs = parse_tensor_nodes(
         root["inputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
   if (root["outputs"]) {
-    cfg.models.resize(1);
-    cfg.models[0].outputs = parse_tensor_nodes(
+    auto& model = ensure_model(cfg);
+    model.outputs = parse_tensor_nodes(
         root["outputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
   }
 }
@@ -332,13 +343,6 @@ parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["delay_us"]) {
-    cfg.batching.delay_us = root["delay_us"].as<int>();
-    if (cfg.batching.delay_us < 0) {
-      cfg.valid = false;
-      throw std::invalid_argument("delay_us must be >= 0");
-    }
-  }
   if (root["batch_coalesce_timeout_ms"]) {
     cfg.batching.batch_coalesce_timeout_ms =
         root["batch_coalesce_timeout_ms"].as<int>();
@@ -419,17 +423,10 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
 void
 parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
-  if (root["pregen_inputs"]) {
-    const int tmp = root["pregen_inputs"].as<int>();
-    if (tmp <= 0) {
-      throw std::invalid_argument("pregen_inputs must be > 0");
-    }
-    cfg.batching.pregen_inputs = static_cast<size_t>(tmp);
-  }
   if (root["warmup_pregen_inputs"]) {
     const int tmp = root["warmup_pregen_inputs"].as<int>();
-    if (tmp <= 0) {
-      throw std::invalid_argument("warmup_pregen_inputs must be > 0");
+    if (tmp < 0) {
+      throw std::invalid_argument("warmup_pregen_inputs must be >= 0");
     }
     cfg.batching.warmup_pregen_inputs = static_cast<size_t>(tmp);
   }
@@ -458,18 +455,6 @@ parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
       throw std::invalid_argument("seed must be >= 0");
     }
     cfg.seed = static_cast<uint64_t>(tmp);
-  }
-  if (root["rtol"]) {
-    cfg.validation.rtol = root["rtol"].as<double>();
-    if (cfg.validation.rtol < 0) {
-      throw std::invalid_argument("rtol must be >= 0");
-    }
-  }
-  if (root["atol"]) {
-    cfg.validation.atol = root["atol"].as<double>();
-    if (cfg.validation.atol < 0) {
-      throw std::invalid_argument("atol must be >= 0");
-    }
   }
   if (root["sync"]) {
     cfg.batching.synchronous = root["sync"].as<bool>();
@@ -533,6 +518,8 @@ parse_tensor_nodes(
 
 }  // namespace
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 set_config_loader_post_parse_hook(ConfigLoaderPostParseHook hook)
 {
@@ -544,33 +531,41 @@ reset_config_loader_post_parse_hook()
 {
   config_loader_post_parse_hook() = {};
 }
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
 
-auto
-load_config(const std::string& path) -> RuntimeConfig
+namespace {
+
+void
+mark_config_invalid(RuntimeConfig& cfg, const std::string& message)
 {
-  RuntimeConfig cfg;
-  const auto mark_invalid = [&cfg](const std::string& message) {
-    log_error(std::string("Failed to load config: ") + message);
-    cfg.valid = false;
-  };
+  log_error(std::string("Failed to load config: ") + message);
+  cfg.valid = false;
+}
+
+void
+parse_config_file(
+    const std::string& path, RuntimeConfig& cfg,
+    bool& max_message_bytes_configured)
+{
   try {
     YAML::Node root = YAML::LoadFile(path);
     if (!root || !root.IsMap()) {
       log_error("Config root must be a mapping");
       cfg.valid = false;
-      return cfg;
+      return;
     }
 
+    max_message_bytes_configured = static_cast<bool>(root["max_message_bytes"]);
     parse_verbosity(root, cfg);
     parse_config_name(root, cfg);
     if (!validate_allowed_keys(root, cfg)) {
-      return cfg;
+      return;
     }
     if (!validate_required_keys(root, cfg)) {
-      return cfg;
+      return;
     }
     parse_model_node(root, cfg);
-    parse_request_nb_and_devices(root, cfg);
     parse_io_nodes(root, cfg);
     parse_network_and_delay(root, cfg);
     parse_message_and_batching(root, cfg);
@@ -578,43 +573,86 @@ load_config(const std::string& path) -> RuntimeConfig
     parse_device_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
     parse_starpu_env(root, cfg);
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
     if (const auto& hook = config_loader_post_parse_hook(); hook) {
       hook(cfg);
     }
+#endif  // SONAR_IGNORE_END
+    // GCOVR_EXCL_STOP
   }
   catch (const YAML::Exception& exception) {
-    mark_invalid(exception.what());
+    mark_config_invalid(cfg, exception.what());
   }
   catch (const std::invalid_argument& exception) {
-    mark_invalid(exception.what());
+    mark_config_invalid(cfg, exception.what());
   }
   catch (const std::filesystem::filesystem_error& exception) {
-    mark_invalid(exception.what());
+    mark_config_invalid(cfg, exception.what());
+  }
+}
+
+void
+finalize_config(RuntimeConfig& cfg, bool max_message_bytes_configured)
+{
+  if (!cfg.valid) {
+    return;
   }
 
-  if (cfg.valid) {
-    try {
+  try {
+    if (max_message_bytes_configured) {
+      if (cfg.model.has_value()) {
+        const auto required_bytes = compute_model_message_bytes(
+            cfg.batching.max_batch_size, cfg.model->inputs, cfg.model->outputs,
+            0);
+        if (required_bytes > cfg.batching.max_message_bytes) {
+          mark_config_invalid(
+              cfg,
+              std::format(
+                  "max_message_bytes ({}) is too small for configured model "
+                  "(requires at least {} bytes)",
+                  cfg.batching.max_message_bytes, required_bytes));
+        }
+      }
+    } else {
       cfg.batching.max_message_bytes = compute_max_message_bytes(
-          cfg.batching.max_batch_size, cfg.models,
+          cfg.batching.max_batch_size, cfg.model,
           cfg.batching.max_message_bytes);
     }
-    catch (const InvalidDimensionException& invalid_dimension) {
-      log_error(
-          std::string("Failed to load config: ") + invalid_dimension.what());
-      cfg.valid = false;
-    }
-    catch (const MessageSizeOverflowException& message_size_overflow) {
-      log_error(
-          std::string("Failed to load config: ") +
-          message_size_overflow.what());
-      cfg.valid = false;
-    }
-    catch (const UnsupportedDtypeException& unsupported_dtype) {
-      log_error(
-          std::string("Failed to load config: ") + unsupported_dtype.what());
-      cfg.valid = false;
-    }
   }
+  catch (const InvalidDimensionException& invalid_dimension) {
+    mark_config_invalid(cfg, invalid_dimension.what());
+  }
+  catch (const MessageSizeOverflowException& message_size_overflow) {
+    mark_config_invalid(cfg, message_size_overflow.what());
+  }
+  catch (const UnsupportedDtypeException& unsupported_dtype) {
+    mark_config_invalid(cfg, unsupported_dtype.what());
+  }
+
+  if (!cfg.valid) {
+    return;
+  }
+
+  const auto grpc_limit =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  if (cfg.batching.max_message_bytes > grpc_limit) {
+    log_warning(std::format(
+        "max_message_bytes ({}) exceeds gRPC limit ({}); gRPC will clamp "
+        "to {}. Consider reducing max_message_bytes.",
+        cfg.batching.max_message_bytes, grpc_limit, grpc_limit));
+  }
+}
+
+}  // namespace
+
+auto
+load_config(const std::string& path) -> RuntimeConfig
+{
+  RuntimeConfig cfg;
+  bool max_message_bytes_configured = false;
+  parse_config_file(path, cfg, max_message_bytes_configured);
+  finalize_config(cfg, max_message_bytes_configured);
   return cfg;
 }
 

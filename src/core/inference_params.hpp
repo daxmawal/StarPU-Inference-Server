@@ -5,18 +5,11 @@
 #include <chrono>
 
 #include "device_type.hpp"
+#include "inference_limits.hpp"
 #include "logger.hpp"
+#include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
-// =============================================================================
-// Constants for inference limitations
-// =============================================================================
-
-namespace InferLimits {
-inline constexpr size_t MaxInputs = 16;
-inline constexpr size_t MaxDims = 8;
-inline constexpr size_t MaxModelsGPU = 32;
-}  // namespace InferLimits
 
 namespace detail {
 // =============================================================================
@@ -24,10 +17,9 @@ namespace detail {
 // =============================================================================
 
 struct Timing {
-  std::chrono::high_resolution_clock::time_point* codelet_start_time = nullptr;
-  std::chrono::high_resolution_clock::time_point* codelet_end_time = nullptr;
-  std::chrono::high_resolution_clock::time_point* inference_start_time =
-      nullptr;
+  MonotonicClock::time_point* codelet_start_time = nullptr;
+  MonotonicClock::time_point* codelet_end_time = nullptr;
+  MonotonicClock::time_point* inference_start_time = nullptr;
 };
 
 // =============================================================================
@@ -46,8 +38,8 @@ struct DeviceInfo {
 
 struct ModelPointers {
   torch::jit::script::Module* model_cpu = nullptr;
+  std::vector<int> device_ids;
   std::vector<torch::jit::script::Module*> models_gpu;
-  size_t num_models_gpu = 0;
 };
 
 // =============================================================================
@@ -67,7 +59,6 @@ struct TensorLayout {
 struct Limits {
   size_t max_inputs = 0;
   size_t max_dims = 0;
-  size_t max_models_gpu = 0;
 };
 }  // namespace detail
 

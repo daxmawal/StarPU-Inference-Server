@@ -113,7 +113,7 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
         "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
         starpu_server::VerbosityLevel::Info, ""};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -140,8 +140,8 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
         "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
         starpu_server::VerbosityLevel::Info, ""};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, expected_input_types, expected_input_dims,
-        kMaxBatchSize, options, server);
+        queue, reference_outputs, expected_input_types, expected_input_dims, {},
+        {}, kMaxBatchSize, options, server);
   });
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -191,7 +191,7 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
         endpoint, kMaxMessageSizeMiB * kMiB,
         starpu_server::VerbosityLevel::Info, ""};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
 
   EXPECT_EQ(
@@ -236,8 +236,8 @@ TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
         endpoint, kMaxMessageSizeMiB * kMiB,
         starpu_server::VerbosityLevel::Info, ""};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, expected_input_types, expected_input_dims,
-        kMaxBatchSize, options, server);
+        queue, reference_outputs, expected_input_types, expected_input_dims, {},
+        {}, kMaxBatchSize, options, server);
   });
 
   EXPECT_EQ(
@@ -301,7 +301,7 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
 
   while (!server) {
@@ -356,7 +356,7 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
 
   while (!server) {

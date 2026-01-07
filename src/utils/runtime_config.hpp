@@ -13,25 +13,20 @@
 
 #include "datatype_utils.hpp"
 #include "exceptions.hpp"
+#include "inference_limits.hpp"
 #include "logger.hpp"
 
 namespace starpu_server {
 // =============================================================================
 // Compile-time defaults for inference limits
 // =============================================================================
-inline constexpr std::size_t kMaxInputs = 16;
-inline constexpr std::size_t kMaxDims = 8;
-inline constexpr std::size_t kMaxModelsGpu = 32;
 inline constexpr std::size_t kBytesPerKiB = 1024ULL;
 inline constexpr std::size_t kBytesPerMiB = kBytesPerKiB * 1024ULL;
 inline constexpr std::size_t kDefaultMessageSizeMiB = 32ULL;
 inline constexpr std::size_t kDefaultMinMessageBytes =
     kDefaultMessageSizeMiB * kBytesPerMiB;
-inline constexpr std::size_t kDefaultPregenInputs = 10ULL;
 inline constexpr std::size_t kDefaultMaxQueueSize = 100ULL;
 inline constexpr std::string_view kDefaultTraceFileName = "perfetto_trace.json";
-inline constexpr double kDefaultRelativeTolerance = 1e-3;
-inline constexpr double kDefaultAbsoluteTolerance = 1e-5;
 inline constexpr int kDefaultMetricsPort = 9090;
 inline constexpr std::string_view kDefaultStarpuScheduler = "lws";
 inline constexpr std::string_view kStarpuSchedulerEnvVar = "STARPU_SCHED";
@@ -79,15 +74,12 @@ struct RuntimeConfig {
   };
 
   struct BatchingSettings {
-    int request_nb = 1;
-    int delay_us = 0;
     int batch_coalesce_timeout_ms = 0;
     int max_batch_size = 1;
     int pool_size = 0;
     std::size_t max_message_bytes = kDefaultMinMessageBytes;
     std::size_t max_queue_size = kDefaultMaxQueueSize;
     std::size_t max_inflight_tasks = 0;
-    size_t pregen_inputs = kDefaultPregenInputs;
     size_t warmup_pregen_inputs = 2;
     int warmup_request_nb = 2;
     int warmup_batches_per_worker = 1;
@@ -97,31 +89,23 @@ struct RuntimeConfig {
     std::string trace_output_path = std::string(kDefaultTraceFileName);
   };
 
-  struct ValidationSettings {
-    double rtol = kDefaultRelativeTolerance;
-    double atol = kDefaultAbsoluteTolerance;
-  };
-
   struct Limits {
-    size_t max_inputs = kMaxInputs;
-    size_t max_dims = kMaxDims;
-    size_t max_models_gpu = kMaxModelsGpu;
+    size_t max_inputs = InferLimits::MaxInputs;
+    size_t max_dims = InferLimits::MaxDims;
+    size_t max_models_gpu = InferLimits::MaxModelsGPU;
   };
 
   std::string name;
-  std::string config_path;
   std::string server_address = "127.0.0.1:50051";
   int metrics_port = kDefaultMetricsPort;
 
   std::map<std::string, std::string, std::less<>> starpu_env;
-  std::vector<ModelConfig> models;
+  std::optional<ModelConfig> model;
   VerbosityLevel verbosity = VerbosityLevel::Silent;
   DeviceSettings devices{};
   BatchingSettings batching{};
-  ValidationSettings validation{};
   Limits limits{};
   std::optional<uint64_t> seed;
-  bool show_help = false;
   bool valid = true;
 };
 
@@ -195,15 +179,14 @@ compute_model_message_bytes(
 
 inline auto
 compute_max_message_bytes(
-    int max_batch_size, const std::vector<ModelConfig>& models,
+    int max_batch_size, const std::optional<ModelConfig>& model,
     std::size_t min_message_bytes = kDefaultMinMessageBytes) -> std::size_t
 {
-  size_t max_bytes = min_message_bytes;
-  for (const auto& model : models) {
-    const auto bytes = compute_model_message_bytes(
-        max_batch_size, model.inputs, model.outputs, min_message_bytes);
-    max_bytes = std::max(max_bytes, bytes);
+  if (!model.has_value()) {
+    return min_message_bytes;
   }
-  return max_bytes;
+
+  return compute_model_message_bytes(
+      max_batch_size, model->inputs, model->outputs, min_message_bytes);
 }
 }  // namespace starpu_server

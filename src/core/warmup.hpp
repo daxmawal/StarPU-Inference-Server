@@ -7,6 +7,11 @@
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+struct WarmupRunnerTestHelper;
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
 // =============================================================================
 // Runs a warmup phase by simulating inference jobs across StarPU workers
 // =============================================================================
@@ -31,8 +36,13 @@ class WarmupRunner {
   void run(int request_nb_per_worker);
 
  private:
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  friend struct WarmupRunnerTestHelper;
+#endif  // SONAR_IGNORE_END
+  // GCOVR_EXCL_STOP
   void client_worker(
-      const std::map<int, std::vector<int32_t>>& device_workers,
+      const std::map<int, std::vector<int>>& device_workers,
       InferenceQueue& queue, int request_nb_per_worker) const;
 
   // *****************************************************************************

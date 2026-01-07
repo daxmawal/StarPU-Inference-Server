@@ -10,6 +10,7 @@
 #include "../../common/datatype_test_utils.hpp"
 #include "utils/datatype_utils.hpp"
 #include "utils/device_type.hpp"
+#include "utils/tensor_validation.hpp"
 
 class ScalarToDatatypeCase
     : public ::testing::TestWithParam<std::pair<at::ScalarType, std::string>> {
@@ -210,4 +211,13 @@ TEST(DeviceTypeTest, ToString)
   auto invalid_raw = std::numeric_limits<std::uint8_t>::max();
   auto invalid = std::bit_cast<starpu_server::DeviceType>(invalid_raw);
   EXPECT_STREQ(starpu_server::to_string(invalid), "InvalidDeviceType");
+}
+
+TEST(TensorValidation, FormatFailureFallbackForUnknownEnum)
+{
+  constexpr std::string_view label = "input0";
+  const auto message = starpu_server::tensor_validation::format_failure(
+      label, static_cast<starpu_server::tensor_validation::Failure>(0xFF));
+
+  EXPECT_EQ(message, "Tensor 'input0' validation failed.");
 }

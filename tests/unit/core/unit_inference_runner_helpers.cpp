@@ -168,6 +168,15 @@ TEST(
       starpu_server::InvalidGpuDeviceException);
 }
 
+TEST(
+    InferenceRunnerDeviceValidationTest,
+    SanitizeCudaDeviceCountThrowsOnNegativeRawCount)
+{
+  EXPECT_THROW(
+      starpu_server::detail::sanitize_cuda_device_count(-1),
+      starpu_server::InvalidGpuDeviceException);
+}
+
 TEST(InferenceRunnerHelpers, LoadModelAndReferenceOutputCorruptFile)
 {
   namespace fs = std::filesystem;
