@@ -259,15 +259,15 @@ clear_missing_gauges(
 auto
 cpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
 {
-  static std::atomic<std::int64_t> ts{0};
-  return ts;
+  static std::atomic<std::int64_t> timestamp{0};
+  return timestamp;
 }
 
 auto
 gpu_sampling_error_log_ts() -> std::atomic<std::int64_t>&
 {
-  static std::atomic<std::int64_t> ts{0};
-  return ts;
+  static std::atomic<std::int64_t> timestamp{0};
+  return timestamp;
 }
 
 auto

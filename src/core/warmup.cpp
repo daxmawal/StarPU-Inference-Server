@@ -175,8 +175,8 @@ WarmupRunner::client_worker(
 
   std::vector<int> worker_ids_flat;
   worker_ids_flat.reserve(worker_count);
-  for (const auto& entry : device_workers) {
-    const auto& device_worker_ids = entry.second;
+  for (const auto& [device_id, device_worker_ids] : device_workers) {
+    (void)device_id;
     worker_ids_flat.insert(
         worker_ids_flat.end(), device_worker_ids.begin(),
         device_worker_ids.end());
@@ -225,7 +225,7 @@ struct WarmupSyncState {
   {
     std::lock_guard lock(thread_exception_mutex);
     if (!thread_exception) {
-      thread_exception = std::move(exception);
+      thread_exception = exception;
     }
   }
 
@@ -237,7 +237,7 @@ struct WarmupSyncState {
 
   void notify_exception(std::exception_ptr exception, InferenceQueue& queue)
   {
-    store_exception(std::move(exception));
+    store_exception(exception);
     queue.shutdown();
     completed_cv.notify_all();
   }
@@ -353,7 +353,7 @@ WarmupRunner::run(int request_nb_per_worker)
   WarmupSyncState sync_state;
   const auto notify_thread_exception = [&sync_state,
                                         &queue](std::exception_ptr exception) {
-    sync_state.notify_exception(std::move(exception), queue);
+    sync_state.notify_exception(exception, queue);
   };
 
   StarPUTaskRunnerConfig config{};

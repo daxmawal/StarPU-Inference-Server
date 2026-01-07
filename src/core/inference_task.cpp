@@ -393,7 +393,8 @@ InferenceTask::fill_input_layout(
     }
 
     if (!dims.empty()) {
-      if (const auto effective = job_->effective_batch_size()) {
+      if (const auto effective = job_->effective_batch_size();
+          effective.has_value()) {
         dims.front() = std::max<int64_t>(1, *effective);
       } else if (used_config_dims) {
         dims.front() = std::max<int64_t>(1, dims.front());
@@ -696,6 +697,40 @@ InferenceTask::process_output_handle(
   }
 }
 
+namespace {
+void
+copy_outputs_from_pool(InferenceCallbackContext* ctx)
+{
+  const auto copy_start = MonotonicClock::now();
+  std::size_t total_bytes = 0;
+  const auto& base_ptrs = ctx->output_pool->base_ptrs(ctx->output_slot_id);
+  const auto& job_outs = ctx->job->get_output_tensors();
+  const size_t tensor_count = std::min(base_ptrs.size(), job_outs.size());
+  for (size_t i = 0; i < tensor_count; ++i) {
+    const auto& job_output_tensor = job_outs[i];
+    if (!job_output_tensor.defined() || !job_output_tensor.is_cpu() ||
+        !job_output_tensor.is_contiguous()) {
+      throw InvalidInferenceJobException(
+          "Job output tensor must be defined, CPU and contiguous");
+    }
+    std::memcpy(
+        job_output_tensor.data_ptr(), base_ptrs[i], job_output_tensor.nbytes());
+    total_bytes += job_output_tensor.nbytes();
+  }
+  const auto copy_end = MonotonicClock::now();
+  const double copy_ms =
+      std::chrono::duration<double, std::milli>(copy_end - copy_start).count();
+  const auto worker_type_label =
+      std::string_view(to_string(ctx->job->get_executed_on()));
+  observe_io_copy_latency(
+      "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+      worker_type_label, copy_ms);
+  increment_transfer_bytes(
+      "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+      worker_type_label, total_bytes);
+}
+}  // namespace
+
 void
 InferenceTask::finalize_inference_task(void* arg)
 {
@@ -703,39 +738,7 @@ InferenceTask::finalize_inference_task(void* arg)
 
   if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 && ctx->job) {
     run_with_logged_exceptions(
-        [ctx]() {
-          const auto copy_start = MonotonicClock::now();
-          std::size_t total_bytes = 0;
-          const auto& base_ptrs =
-              ctx->output_pool->base_ptrs(ctx->output_slot_id);
-          const auto& job_outs = ctx->job->get_output_tensors();
-          const size_t tensor_count =
-              std::min(base_ptrs.size(), job_outs.size());
-          for (size_t i = 0; i < tensor_count; ++i) {
-            const auto& job_output_tensor = job_outs[i];
-            if (!job_output_tensor.defined() || !job_output_tensor.is_cpu() ||
-                !job_output_tensor.is_contiguous()) {
-              throw InvalidInferenceJobException(
-                  "Job output tensor must be defined, CPU and contiguous");
-            }
-            std::memcpy(
-                job_output_tensor.data_ptr(), base_ptrs[i],
-                job_output_tensor.nbytes());
-            total_bytes += job_output_tensor.nbytes();
-          }
-          const auto copy_end = MonotonicClock::now();
-          const double copy_ms =
-              std::chrono::duration<double, std::milli>(copy_end - copy_start)
-                  .count();
-          const auto worker_type_label =
-              std::string_view(to_string(ctx->job->get_executed_on()));
-          observe_io_copy_latency(
-              "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-              worker_type_label, copy_ms);
-          increment_transfer_bytes(
-              "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-              worker_type_label, total_bytes);
-        },
+        [ctx]() { copy_outputs_from_pool(ctx); },
         ExceptionLoggingMessages{
             "Output copy from pool failed: ",
             "Output copy from pool failed due to an unknown exception."});
