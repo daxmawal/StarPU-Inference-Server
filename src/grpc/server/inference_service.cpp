@@ -366,6 +366,167 @@ convert_input_to_tensor(
   return Status::OK;
 }
 
+struct InputNameState {
+  bool any_named = false;
+  bool any_unnamed = false;
+};
+
+auto
+validate_input_counts(
+    const ModelInferRequest* request, std::size_t expected_count) -> Status
+{
+  if (request->inputs_size() != static_cast<int>(expected_count)) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format(
+            "Expected {} input tensors but received {}", expected_count,
+            request->inputs_size())};
+  }
+  if (request->raw_input_contents_size() != request->inputs_size()) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Number of raw inputs does not match number of input tensors"};
+  }
+  return Status::OK;
+}
+
+auto
+collect_input_name_state(const ModelInferRequest* request) -> InputNameState
+{
+  InputNameState state{};
+  for (const auto& input : request->inputs()) {
+    if (input.name().empty()) {
+      state.any_unnamed = true;
+    } else {
+      state.any_named = true;
+    }
+  }
+  return state;
+}
+
+auto
+validate_input_names(const InputNameState& state, bool has_expected_names)
+    -> Status
+{
+  if (state.any_named && state.any_unnamed) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "All input tensors must include a name when using named inputs"};
+  }
+  if (has_expected_names && !state.any_named) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        "Input tensor names must be provided"};
+  }
+  return Status::OK;
+}
+
+auto
+build_expected_index_by_name(
+    const std::vector<std::string>& expected_input_names,
+    std::unordered_map<std::string_view, std::size_t>& expected_index_by_name)
+    -> Status
+{
+  expected_index_by_name.reserve(expected_input_names.size());
+  for (std::size_t i = 0; i < expected_input_names.size(); ++i) {
+    const auto& name = expected_input_names[i];
+    if (name.empty()) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          std::format("Configured input name missing at index {}", i)};
+    }
+    const auto [it, inserted] = expected_index_by_name.emplace(name, i);
+    if (!inserted) {
+      return {
+          grpc::StatusCode::INVALID_ARGUMENT,
+          std::format("Configured input name '{}' is duplicated", name)};
+    }
+  }
+  return Status::OK;
+}
+
+auto
+resolve_expected_index(
+    const ModelInferRequest::InferInputTensor& input, int input_index,
+    const std::unordered_map<std::string_view, std::size_t>*
+        expected_index_by_name,
+    std::vector<bool>& filled, std::size_t& expected_index) -> Status
+{
+  expected_index = static_cast<std::size_t>(input_index);
+  if (expected_index_by_name == nullptr) {
+    return Status::OK;
+  }
+  const auto it = expected_index_by_name->find(input.name());
+  if (it == expected_index_by_name->end()) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format("Unexpected input tensor name '{}'", input.name())};
+  }
+  expected_index = it->second;
+  if (filled[expected_index]) {
+    return {
+        grpc::StatusCode::INVALID_ARGUMENT,
+        std::format("Input tensor name '{}' is duplicated", input.name())};
+  }
+  return Status::OK;
+}
+
+auto
+process_input(
+    const ModelInferRequest* request, int input_index,
+    const std::unordered_map<std::string_view, std::size_t>*
+        expected_index_by_name,
+    const std::vector<at::ScalarType>& expected_input_types,
+    const std::vector<std::vector<int64_t>>& expected_input_dims,
+    int max_batch_size, std::vector<torch::Tensor>& ordered_inputs,
+    std::vector<std::shared_ptr<const void>>* ordered_lifetimes,
+    std::vector<bool>& filled) -> Status
+{
+  const auto& input = request->inputs(input_index);
+  const auto& raw = request->raw_input_contents(input_index);
+  std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
+
+  std::size_t expected_index = 0;
+  Status status = resolve_expected_index(
+      input, input_index, expected_index_by_name, filled, expected_index);
+  if (!status.ok()) {
+    return status;
+  }
+
+  at::ScalarType dtype = at::kFloat;
+  status =
+      parse_input_dtype(input, expected_input_types[expected_index], dtype);
+  if (!status.ok()) {
+    return status;
+  }
+
+  torch::Tensor tensor;
+  std::shared_ptr<const void> tensor_guard;
+  status = convert_input_to_tensor(
+      input, shape, raw, dtype, tensor,
+      ordered_lifetimes != nullptr ? &tensor_guard : nullptr);
+  if (!status.ok()) {
+    return status;
+  }
+
+  if (expected_index < expected_input_dims.size()) {
+    const auto& expected_dims = expected_input_dims[expected_index];
+    const bool batching_allowed = (max_batch_size > 0);
+    status = validate_configured_shape(
+        shape, expected_dims, batching_allowed, max_batch_size);
+    if (!status.ok()) {
+      return status;
+    }
+  }
+
+  ordered_inputs[expected_index] = std::move(tensor);
+  if (ordered_lifetimes != nullptr) {
+    (*ordered_lifetimes)[expected_index] = std::move(tensor_guard);
+  }
+  filled[expected_index] = true;
+  return Status::OK;
+}
+
 auto
 fill_output_tensor(
     ModelInferResponse* reply, const std::vector<torch::Tensor>& outputs,
@@ -484,59 +645,26 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const ModelInferRequest* request, std::vector<torch::Tensor>& inputs,
     std::vector<std::shared_ptr<const void>>* input_lifetimes) -> Status
 {
-  if (request->inputs_size() !=
-      static_cast<int>(expected_input_types_.size())) {
-    return {
-        grpc::StatusCode::INVALID_ARGUMENT,
-        std::format(
-            "Expected {} input tensors but received {}",
-            expected_input_types_.size(), request->inputs_size())};
-  }
-  if (request->raw_input_contents_size() != request->inputs_size()) {
-    return {
-        grpc::StatusCode::INVALID_ARGUMENT,
-        "Number of raw inputs does not match number of input tensors"};
+  if (auto status =
+          validate_input_counts(request, expected_input_types_.size());
+      !status.ok()) {
+    return status;
   }
 
-  bool any_named = false;
-  bool any_unnamed = false;
-  for (const auto& input : request->inputs()) {
-    if (input.name().empty()) {
-      any_unnamed = true;
-    } else {
-      any_named = true;
-    }
-  }
-  if (any_named && any_unnamed) {
-    return {
-        grpc::StatusCode::INVALID_ARGUMENT,
-        "All input tensors must include a name when using named inputs"};
-  }
-
+  const auto name_state = collect_input_name_state(request);
   const bool has_expected_names = !expected_input_names_.empty();
-  if (has_expected_names && !any_named) {
-    return {
-        grpc::StatusCode::INVALID_ARGUMENT,
-        "Input tensor names must be provided"};
+  if (auto status = validate_input_names(name_state, has_expected_names);
+      !status.ok()) {
+    return status;
   }
   const bool use_name_mapping = has_expected_names;
 
   std::unordered_map<std::string_view, std::size_t> expected_index_by_name;
   if (use_name_mapping) {
-    expected_index_by_name.reserve(expected_input_names_.size());
-    for (std::size_t i = 0; i < expected_input_names_.size(); ++i) {
-      const auto& name = expected_input_names_[i];
-      if (name.empty()) {
-        return {
-            grpc::StatusCode::INVALID_ARGUMENT,
-            std::format("Configured input name missing at index {}", i)};
-      }
-      const auto [it, inserted] = expected_index_by_name.emplace(name, i);
-      if (!inserted) {
-        return {
-            grpc::StatusCode::INVALID_ARGUMENT,
-            std::format("Configured input name '{}' is duplicated", name)};
-      }
+    if (auto status = build_expected_index_by_name(
+            expected_input_names_, expected_index_by_name);
+        !status.ok()) {
+      return status;
     }
   }
 
@@ -549,57 +677,14 @@ InferenceServiceImpl::validate_and_convert_inputs(
   std::vector<bool> filled(expected_count, false);
 
   for (int i = 0; i < request->inputs_size(); ++i) {
-    const auto& input = request->inputs(i);
-    const auto& raw = request->raw_input_contents(i);
-    std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
-
-    std::size_t expected_index = static_cast<std::size_t>(i);
-    if (use_name_mapping) {
-      const auto it = expected_index_by_name.find(input.name());
-      if (it == expected_index_by_name.end()) {
-        return {
-            grpc::StatusCode::INVALID_ARGUMENT,
-            std::format("Unexpected input tensor name '{}'", input.name())};
-      }
-      expected_index = it->second;
-      if (filled[expected_index]) {
-        return {
-            grpc::StatusCode::INVALID_ARGUMENT,
-            std::format("Input tensor name '{}' is duplicated", input.name())};
-      }
-    }
-
-    at::ScalarType dtype = at::kFloat;
-    Status status =
-        parse_input_dtype(input, expected_input_types_[expected_index], dtype);
+    Status status = process_input(
+        request, i, use_name_mapping ? &expected_index_by_name : nullptr,
+        expected_input_types_, expected_input_dims_, max_batch_size_,
+        ordered_inputs,
+        input_lifetimes != nullptr ? &ordered_lifetimes : nullptr, filled);
     if (!status.ok()) {
       return status;
     }
-
-    torch::Tensor tensor;
-    std::shared_ptr<const void> tensor_guard;
-    status = convert_input_to_tensor(
-        input, shape, raw, dtype, tensor,
-        input_lifetimes != nullptr ? &tensor_guard : nullptr);
-    if (!status.ok()) {
-      return status;
-    }
-
-    if (expected_index < expected_input_dims_.size()) {
-      const auto& expected_dims = expected_input_dims_[expected_index];
-      const bool batching_allowed = (max_batch_size_ > 0);
-      status = validate_configured_shape(
-          shape, expected_dims, batching_allowed, max_batch_size_);
-      if (!status.ok()) {
-        return status;
-      }
-    }
-
-    ordered_inputs[expected_index] = std::move(tensor);
-    if (input_lifetimes != nullptr) {
-      ordered_lifetimes[expected_index] = std::move(tensor_guard);
-    }
-    filled[expected_index] = true;
   }
 
   if (use_name_mapping) {
@@ -1073,6 +1158,139 @@ InferenceServiceImpl::handle_async_infer_completion(
   callback_handle->Invoke(Status::OK);
 }
 
+namespace {
+
+auto
+is_context_cancelled(ServerContext* context) -> bool
+{
+  if (context == nullptr) {
+    return false;
+  }
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.is_cancelled_override) {
+    if (auto decision = test_hooks.is_cancelled_override(context);
+        decision.has_value()) {
+      return *decision;
+    }
+  }
+#endif  // SONAR_IGNORE_END
+  return context->IsCancelled();
+}
+
+}  // namespace
+
+void
+InferenceServiceImpl::notify_cancel_flag_created(
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag)
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.on_cancel_flag_created) {
+    test_hooks.on_cancel_flag_created(cancel_flag);
+  }
+#else
+  (void)cancel_flag;
+#endif  // SONAR_IGNORE_END
+}
+
+void
+InferenceServiceImpl::notify_submit_job_async_done(
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag, const Status& status)
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.on_submit_job_async_done) {
+    test_hooks.on_submit_job_async_done(cancel_flag, status);
+  }
+#else
+  (void)cancel_flag;
+  (void)status;
+#endif  // SONAR_IGNORE_END
+}
+
+auto
+InferenceServiceImpl::setup_async_cancellation(
+    ServerContext* context, std::shared_ptr<void>& call_guard,
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    std::string_view resolved_model_name) -> bool
+{
+  if (context == nullptr || !call_guard) {
+    return false;
+  }
+
+  auto on_cancel = [context, cancel_flag, callback_handle,
+                    model_name = std::string(resolved_model_name)]() {
+    if (!is_context_cancelled(context)) {
+      return;
+    }
+    if (cancel_flag->exchange(true, std::memory_order_acq_rel)) {
+      return;
+    }
+    const bool invoked = callback_handle->Invoke(
+        {grpc::StatusCode::CANCELLED, "Request cancelled"});
+    if (invoked) {
+      increment_request_status(
+          static_cast<int>(grpc::StatusCode::CANCELLED), model_name);
+      increment_inference_failure("cancel", "client_cancelled", model_name);
+    }
+  };
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.on_cancel_ready) {
+    test_hooks.on_cancel_ready(on_cancel);
+  }
+#endif  // SONAR_IGNORE_END
+
+  auto done_tag = RpcDoneTag::Create(on_cancel, std::move(call_guard));
+  done_tag->Arm(context);
+  if (is_context_cancelled(context)) {
+    on_cancel();
+    return true;
+  }
+  return false;
+}
+
+auto
+InferenceServiceImpl::handle_input_validation_failure(
+    const Status& status, const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    std::string_view resolved_model_name) -> bool
+{
+  if (status.ok()) {
+    return false;
+  }
+  if (cancel_flag->load(std::memory_order_acquire)) {
+    return true;
+  }
+  increment_request_status(
+      static_cast<int>(status.error_code()), resolved_model_name);
+  increment_inference_failure(
+      "preprocess", status_reason(status), resolved_model_name);
+  callback_handle->Invoke(status);
+  return true;
+}
+
+auto
+InferenceServiceImpl::handle_submit_failure(
+    const Status& status, const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    std::string_view resolved_model_name) -> bool
+{
+  if (status.ok()) {
+    return false;
+  }
+  if (cancel_flag->load(std::memory_order_acquire)) {
+    return true;
+  }
+  increment_request_status(
+      static_cast<int>(status.error_code()), resolved_model_name);
+  callback_handle->Invoke(status);
+  return true;
+}
+
 void
 InferenceServiceImpl::HandleModelInferAsync(
     ServerContext* context, const ModelInferRequest* request,
@@ -1081,12 +1299,7 @@ InferenceServiceImpl::HandleModelInferAsync(
 {
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
   auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& test_hooks = handle_model_infer_async_test_hooks();
-  if (test_hooks.on_cancel_flag_created) {
-    test_hooks.on_cancel_flag_created(cancel_flag);
-  }
-#endif  // SONAR_IGNORE_END
+  notify_cancel_flag_created(cancel_flag);
   NvtxRange request_scope("grpc_handle_infer_request");
 
   auto metrics = get_metrics();
@@ -1095,54 +1308,10 @@ InferenceServiceImpl::HandleModelInferAsync(
   }
 
   const auto resolved_model_name = resolve_model_name(request->model_name());
-  if (context != nullptr && call_guard) {
-    auto is_context_cancelled = [context
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-                                 ,
-                                 cancel_override =
-                                     test_hooks.is_cancelled_override
-#endif  // SONAR_IGNORE_END
-    ]() {
-      if (context == nullptr) {
-        return false;
-      }
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-      if (cancel_override) {
-        if (auto decision = cancel_override(context); decision.has_value()) {
-          return *decision;
-        }
-      }
-#endif  // SONAR_IGNORE_END
-      return context->IsCancelled();
-    };
-    auto on_cancel = [context, cancel_flag, callback_handle,
-                      resolved_model_name, is_context_cancelled]() {
-      if (context == nullptr || !is_context_cancelled()) {
-        return;
-      }
-      if (cancel_flag->exchange(true, std::memory_order_acq_rel)) {
-        return;
-      }
-      const bool invoked = callback_handle->Invoke(
-          {grpc::StatusCode::CANCELLED, "Request cancelled"});
-      if (invoked) {
-        increment_request_status(
-            static_cast<int>(grpc::StatusCode::CANCELLED), resolved_model_name);
-        increment_inference_failure(
-            "cancel", "client_cancelled", resolved_model_name);
-      }
-    };
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    if (test_hooks.on_cancel_ready) {
-      test_hooks.on_cancel_ready(on_cancel);
-    }
-#endif  // SONAR_IGNORE_END
-    auto done_tag = RpcDoneTag::Create(on_cancel, std::move(call_guard));
-    done_tag->Arm(context);
-    if (is_context_cancelled()) {
-      on_cancel();
-      return;
-    }
+  if (setup_async_cancellation(
+          context, call_guard, cancel_flag, callback_handle,
+          resolved_model_name)) {
+    return;
   }
   auto recv_tp = MonotonicClock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1153,15 +1322,8 @@ InferenceServiceImpl::HandleModelInferAsync(
   std::vector<std::shared_ptr<const void>> input_lifetimes;
   Status status =
       validate_and_convert_inputs(request, inputs, &input_lifetimes);
-  if (!status.ok()) {
-    if (cancel_flag->load(std::memory_order_acquire)) {
-      return;
-    }
-    increment_request_status(
-        static_cast<int>(status.error_code()), resolved_model_name);
-    increment_inference_failure(
-        "preprocess", status_reason(status), resolved_model_name);
-    callback_handle->Invoke(status);
+  if (handle_input_validation_failure(
+          status, cancel_flag, callback_handle, resolved_model_name)) {
     return;
   }
 
@@ -1186,18 +1348,10 @@ InferenceServiceImpl::HandleModelInferAsync(
       },
       std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name);
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (test_hooks.on_submit_job_async_done) {
-    test_hooks.on_submit_job_async_done(cancel_flag, status);
-  }
-#endif  // SONAR_IGNORE_END
-  if (!status.ok()) {
-    if (cancel_flag->load(std::memory_order_acquire)) {
-      return;
-    }
-    increment_request_status(
-        static_cast<int>(status.error_code()), resolved_model_name);
-    callback_handle->Invoke(status);
+  notify_submit_job_async_done(cancel_flag, status);
+  if (handle_submit_failure(
+          status, cancel_flag, callback_handle, resolved_model_name)) {
+    return;
   }
 }
 

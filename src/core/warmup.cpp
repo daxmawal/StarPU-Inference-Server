@@ -212,6 +212,114 @@ WarmupRunner::client_worker(
   queue.shutdown();
 }
 
+namespace {
+
+struct WarmupSyncState {
+  std::atomic<int> completed_jobs{0};
+  std::mutex completed_mutex;
+  std::condition_variable completed_cv;
+  std::exception_ptr thread_exception;
+  std::mutex thread_exception_mutex;
+
+  void store_exception(std::exception_ptr exception)
+  {
+    std::lock_guard lock(thread_exception_mutex);
+    if (!thread_exception) {
+      thread_exception = std::move(exception);
+    }
+  }
+
+  auto load_exception() -> std::exception_ptr
+  {
+    std::lock_guard lock(thread_exception_mutex);
+    return thread_exception;
+  }
+
+  void notify_exception(std::exception_ptr exception, InferenceQueue& queue)
+  {
+    store_exception(std::move(exception));
+    queue.shutdown();
+    completed_cv.notify_all();
+  }
+};
+
+auto
+count_worker_total(const std::map<int, std::vector<int>>& device_workers)
+    -> std::size_t
+{
+  return std::accumulate(
+      device_workers.begin(), device_workers.end(), std::size_t{0},
+      [](std::size_t sum, const auto& pair) {
+        return sum + pair.second.size();
+      });
+}
+
+template <typename Fn, typename Notify>
+void
+run_warmup_server_thread(Fn&& fn, Notify&& notify_exception)
+{
+  try {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (auto hook = testing::take_warmup_server_thread_hook()) {
+      hook();
+    }
+#endif  // SONAR_IGNORE_END
+    std::forward<Fn>(fn)();
+  }
+  catch (...) {
+    notify_exception(std::current_exception());
+  }
+}
+
+template <typename Fn, typename Notify>
+void
+run_warmup_client_thread(Fn&& fn, Notify&& notify_exception)
+{
+  try {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (auto hook = testing::take_warmup_client_thread_hook()) {
+      hook();
+    }
+#endif  // SONAR_IGNORE_END
+    std::forward<Fn>(fn)();
+  }
+  catch (...) {
+    notify_exception(std::current_exception());
+  }
+}
+
+auto
+wait_for_warmup_completion(
+    WarmupSyncState& state, std::size_t total_jobs,
+    const WarmupRunner::CompletionObserver& completion_observer)
+    -> std::exception_ptr
+{
+  std::exception_ptr wait_exception;
+  std::unique_lock lock(state.completed_mutex);
+  try {
+    state.completed_cv.wait(lock, [&]() {
+      if (completion_observer) {
+        completion_observer(state.completed_jobs);
+      }
+      if (state.load_exception()) {
+        return true;
+      }
+      int count = state.completed_jobs.load();
+      if (count < 0) {
+        throw InferenceExecutionException(
+            "dummy_completed_jobs became negative, which should not happen.");
+      }
+      return static_cast<std::size_t>(count) >= total_jobs;
+    });
+  }
+  catch (...) {
+    wait_exception = std::current_exception();
+  }
+  return wait_exception;
+}
+
+}  // namespace
+
 // =============================================================================
 // Warmup execution: launch server and client threads and wait for completion
 // =============================================================================
@@ -242,31 +350,11 @@ WarmupRunner::run(int request_nb_per_worker)
   }
 
   InferenceQueue queue(std::numeric_limits<std::size_t>::max());
-  std::atomic dummy_completed_jobs = 0;
-  std::mutex dummy_mutex;
-  std::condition_variable dummy_cv;
-  std::exception_ptr thread_exception;
-  std::mutex thread_exception_mutex;
-
-  const auto store_thread_exception =
-      [&thread_exception,
-       &thread_exception_mutex](std::exception_ptr exception) {
-        std::lock_guard lock(thread_exception_mutex);
-        if (!thread_exception) {
-          thread_exception = std::move(exception);
-        }
-      };
-  const auto load_thread_exception = [&]() {
-    std::lock_guard lock(thread_exception_mutex);
-    return thread_exception;
+  WarmupSyncState sync_state;
+  const auto notify_thread_exception = [&sync_state,
+                                        &queue](std::exception_ptr exception) {
+    sync_state.notify_exception(std::move(exception), queue);
   };
-  const auto notify_thread_exception =
-      [&store_thread_exception, &queue,
-       &dummy_cv](std::exception_ptr exception) {
-        store_thread_exception(std::move(exception));
-        queue.shutdown();
-        dummy_cv.notify_all();
-      };
 
   StarPUTaskRunnerConfig config{};
   config.queue = &queue;
@@ -278,74 +366,31 @@ WarmupRunner::run(int request_nb_per_worker)
   warmup_opts.batching.max_inflight_tasks = 0;
   warmup_opts.batching.max_queue_size = std::numeric_limits<std::size_t>::max();
   config.opts = &warmup_opts;
-  config.completed_jobs = &dummy_completed_jobs;
-  config.all_done_cv = &dummy_cv;
+  config.completed_jobs = &sync_state.completed_jobs;
+  config.all_done_cv = &sync_state.completed_cv;
   StarPUTaskRunner worker(config);
 
   std::jthread server([&]() {
-    try {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-      if (auto hook = testing::take_warmup_server_thread_hook()) {
-        hook();
-      }
-#endif  // SONAR_IGNORE_END
-      worker.run();
-    }
-    catch (...) {
-      notify_thread_exception(std::current_exception());
-    }
+    run_warmup_server_thread(
+        [&worker]() { worker.run(); }, notify_thread_exception);
   });
 
   std::jthread client([this, &device_workers, &queue, &notify_thread_exception,
                        request_nb_per_worker]() {
-    try {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-      if (auto hook = testing::take_warmup_client_thread_hook()) {
-        hook();
-      }
-#endif  // SONAR_IGNORE_END
-      client_worker(device_workers, queue, request_nb_per_worker);
-    }
-    catch (...) {
-      notify_thread_exception(std::current_exception());
-    }
+    run_warmup_client_thread(
+        [this, &device_workers, &queue, request_nb_per_worker]() {
+          client_worker(device_workers, queue, request_nb_per_worker);
+        },
+        notify_thread_exception);
   });
 
-  size_t total_worker_count = 0;
-  for (const auto& [device_id, worker_list] : device_workers) {
-    total_worker_count += worker_list.size();
-  }
+  const size_t total_worker_count = count_worker_total(device_workers);
   const size_t total_jobs =
       static_cast<size_t>(request_nb_per_worker) * total_worker_count;
 
-  std::exception_ptr wait_exception;
-  {
-    std::unique_lock lock(dummy_mutex);
-    try {
-      dummy_cv.wait(
-          lock,
-          [this, total_jobs, &dummy_completed_jobs, &load_thread_exception]() {
-            if (completion_observer_) {
-              completion_observer_(dummy_completed_jobs);
-            }
-            if (load_thread_exception()) {
-              return true;
-            }
-            int count = dummy_completed_jobs.load();
-            if (count < 0) {
-              throw InferenceExecutionException(
-                  "dummy_completed_jobs became negative, which should not "
-                  "happen.");
-            }
-            return static_cast<size_t>(count) >= total_jobs;
-          });
-    }
-    catch (...) {
-      wait_exception = std::current_exception();
-    }
-  }
-
-  auto thread_exception_copy = load_thread_exception();
+  auto wait_exception =
+      wait_for_warmup_completion(sync_state, total_jobs, completion_observer_);
+  auto thread_exception_copy = sync_state.load_exception();
 
   if (wait_exception || thread_exception_copy) {
     queue.shutdown();

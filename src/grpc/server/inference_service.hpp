@@ -214,6 +214,31 @@ class InferenceServiceImpl final
   static auto build_latency_breakdown(
       const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
 
+  static auto setup_async_cancellation(
+      grpc::ServerContext* context, std::shared_ptr<void>& call_guard,
+      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+      const std::shared_ptr<CallbackHandle>& callback_handle,
+      std::string_view resolved_model_name) -> bool;
+
+  static auto handle_input_validation_failure(
+      const grpc::Status& status,
+      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+      const std::shared_ptr<CallbackHandle>& callback_handle,
+      std::string_view resolved_model_name) -> bool;
+
+  static auto handle_submit_failure(
+      const grpc::Status& status,
+      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+      const std::shared_ptr<CallbackHandle>& callback_handle,
+      std::string_view resolved_model_name) -> bool;
+
+  static void notify_cancel_flag_created(
+      const std::shared_ptr<std::atomic<bool>>& cancel_flag);
+
+  static void notify_submit_job_async_done(
+      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+      const grpc::Status& status);
+
   [[nodiscard]] auto resolve_model_name(std::string model_name) const
       -> std::string;
   auto next_request_id() -> int;
