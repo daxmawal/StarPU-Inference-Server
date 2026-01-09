@@ -26,12 +26,12 @@ flowchart LR
   Service --> Validate[Validate + convert tensors]
   Validate --> Queue[InferenceQueue]
 
-  Queue --> Batch[BatchCollector (pass-through when dynamic_batching=false)]
+  Queue --> Batch["BatchCollector<br/>pass-through when dynamic_batching disabled"]
   Batch --> Prepared[Prepared batch queue]
   Prepared --> Runner[StarPUTaskRunner]
 
   Runner --> SlotMgr[SlotManager]
-  SlotMgr --> Pools[Input/Output slot pools]
+  SlotMgr --> Pools[Input and output slot pools]
   Pools --> StarPU[StarPU runtime]
   Runner --> StarPU
   StarPU --> Workers[CPU/GPU workers]
