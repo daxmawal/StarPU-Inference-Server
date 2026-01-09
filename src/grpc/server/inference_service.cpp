@@ -649,12 +649,15 @@ InferenceServiceImpl::InferenceServiceImpl(
     std::vector<at::ScalarType> expected_input_types,
     InputShapeConfig input_shape_config, std::string default_model_name,
     std::vector<std::string> expected_input_names,
-    std::vector<std::string> expected_output_names)
+    std::vector<std::string> expected_output_names, std::string server_name,
+    std::string server_version)
     : queue_(queue), reference_outputs_(reference_outputs),
       expected_input_types_(std::move(expected_input_types)),
       expected_input_dims_(std::move(input_shape_config.expected_input_dims)),
       max_batch_size_(input_shape_config.max_batch_size),
-      default_model_name_(std::move(default_model_name))
+      default_model_name_(std::move(default_model_name)),
+      server_name_(std::move(server_name)),
+      server_version_(std::move(server_version))
 {
   expected_input_names_ = normalize_names(
       std::move(expected_input_names), expected_input_types_.size(), "input",
@@ -670,11 +673,13 @@ InferenceServiceImpl::InferenceServiceImpl(
     std::vector<at::ScalarType> expected_input_types,
     std::string default_model_name,
     std::vector<std::string> expected_input_names,
-    std::vector<std::string> expected_output_names)
+    std::vector<std::string> expected_output_names, std::string server_name,
+    std::string server_version)
     : InferenceServiceImpl(
           queue, reference_outputs, std::move(expected_input_types),
           InputShapeConfig{}, std::move(default_model_name),
-          std::move(expected_input_names), std::move(expected_output_names))
+          std::move(expected_input_names), std::move(expected_output_names),
+          std::move(server_name), std::move(server_version))
 {
 }
 
@@ -710,6 +715,124 @@ InferenceServiceImpl::ModelReady(
     }
   }
   reply->set_ready(ready);
+  return Status::OK;
+}
+
+auto
+InferenceServiceImpl::ServerMetadata(
+    ServerContext* /*context*/,
+    const inference::ServerMetadataRequest* /*request*/,
+    inference::ServerMetadataResponse* reply) -> Status
+{
+  std::string name = server_name_;
+  if (name.empty()) {
+    name = default_model_name_;
+  }
+  if (name.empty()) {
+    name = "starpu_server";
+  }
+  reply->set_name(std::move(name));
+  if (!server_version_.empty()) {
+    reply->set_version(server_version_);
+  }
+  return Status::OK;
+}
+
+auto
+InferenceServiceImpl::ModelMetadata(
+    ServerContext* /*context*/, const inference::ModelMetadataRequest* request,
+    inference::ModelMetadataResponse* reply) -> Status
+{
+  const auto resolved_model_name = resolve_model_name(request->name());
+  if (!resolved_model_name.empty()) {
+    reply->set_name(resolved_model_name);
+  }
+  if (!request->version().empty()) {
+    reply->add_versions(request->version());
+  }
+
+  for (std::size_t i = 0; i < expected_input_types_.size(); ++i) {
+    auto* input = reply->add_inputs();
+    input->set_name(resolve_tensor_name(i, expected_input_names_, "input"));
+    try {
+      input->set_datatype(scalar_type_to_datatype(expected_input_types_[i]));
+    }
+    catch (const std::invalid_argument& e) {
+      return {grpc::StatusCode::INTERNAL, e.what()};
+    }
+    if (i < expected_input_dims_.size()) {
+      for (const auto dim : expected_input_dims_[i]) {
+        input->add_shape(dim);
+      }
+    }
+  }
+
+  if (reference_outputs_ != nullptr) {
+    for (std::size_t i = 0; i < reference_outputs_->size(); ++i) {
+      const auto& output = (*reference_outputs_)[i];
+      auto* output_meta = reply->add_outputs();
+      output_meta->set_name(
+          resolve_tensor_name(i, expected_output_names_, "output"));
+      try {
+        output_meta->set_datatype(
+            scalar_type_to_datatype(output.scalar_type()));
+      }
+      catch (const std::invalid_argument& e) {
+        return {grpc::StatusCode::INTERNAL, e.what()};
+      }
+      for (const auto dim : output.sizes()) {
+        output_meta->add_shape(dim);
+      }
+    }
+  }
+
+  return Status::OK;
+}
+
+auto
+InferenceServiceImpl::ModelConfig(
+    ServerContext* /*context*/, const inference::ModelConfigRequest* request,
+    inference::ModelConfigResponse* reply) -> Status
+{
+  auto* config = reply->mutable_config();
+  const auto resolved_model_name = resolve_model_name(request->name());
+  if (!resolved_model_name.empty()) {
+    config->set_name(resolved_model_name);
+  }
+  config->set_max_batch_size(max_batch_size_);
+
+  for (std::size_t i = 0; i < expected_input_types_.size(); ++i) {
+    auto* input = config->add_input();
+    input->set_name(resolve_tensor_name(i, expected_input_names_, "input"));
+    const auto dtype = scalar_type_to_model_dtype(expected_input_types_[i]);
+    if (dtype == inference::DataType::TYPE_INVALID) {
+      return {grpc::StatusCode::INTERNAL, "Unsupported input datatype"};
+    }
+    input->set_data_type(dtype);
+    if (i < expected_input_dims_.size()) {
+      for (const auto dim : expected_input_dims_[i]) {
+        input->add_dims(dim);
+      }
+    }
+  }
+
+  if (reference_outputs_ != nullptr) {
+    for (std::size_t i = 0; i < reference_outputs_->size(); ++i) {
+      const auto& output = (*reference_outputs_)[i];
+      auto* output_config = config->add_output();
+      output_config->set_name(
+          resolve_tensor_name(i, expected_output_names_, "output"));
+      const auto dtype = scalar_type_to_model_dtype(output.scalar_type());
+      if (dtype == inference::DataType::TYPE_INVALID) {
+        return {grpc::StatusCode::INTERNAL, "Unsupported output datatype"};
+      }
+      output_config->set_data_type(dtype);
+      for (const auto dim : output.sizes()) {
+        output_config->add_dims(dim);
+      }
+    }
+  }
+
   return Status::OK;
 }
 
@@ -1720,6 +1843,46 @@ compute_thread_count() -> std::size_t
 
 namespace {
 
+auto
+scalar_type_to_model_dtype(at::ScalarType type) -> inference::DataType
+{
+  switch (type) {
+    case at::kBool:
+      return inference::DataType::TYPE_BOOL;
+    case at::kByte:
+      return inference::DataType::TYPE_UINT8;
+    case at::kChar:
+      return inference::DataType::TYPE_INT8;
+    case at::kShort:
+      return inference::DataType::TYPE_INT16;
+    case at::kInt:
+      return inference::DataType::TYPE_INT32;
+    case at::kLong:
+      return inference::DataType::TYPE_INT64;
+    case at::kHalf:
+      return inference::DataType::TYPE_FP16;
+    case at::kFloat:
+      return inference::DataType::TYPE_FP32;
+    case at::kDouble:
+      return inference::DataType::TYPE_FP64;
+    case at::kBFloat16:
+      return inference::DataType::TYPE_BF16;
+    default:
+      return inference::DataType::TYPE_INVALID;
+  }
+}
+
+auto
+resolve_tensor_name(
+    std::size_t index, std::span<const std::string> names,
+    std::string_view fallback_prefix) -> std::string
+{
+  if (index < names.size() && !names[index].empty()) {
+    return names[index];
+  }
+  return std::format("{}{}", fallback_prefix, index);
+}
+
 void
 enable_grpc_health_and_reflection()
 {
@@ -1832,6 +1995,23 @@ AsyncServerContext::start()
           async_service_, completion_queue_.get(), impl_,
           &inference::GRPCInferenceService::AsyncService::RequestModelReady,
           std::mem_fn(&InferenceServiceImpl::ModelReady));
+  UnaryCallData<
+      inference::ServerMetadataRequest, inference::ServerMetadataResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestServerMetadata,
+          std::mem_fn(&InferenceServiceImpl::ServerMetadata));
+  UnaryCallData<
+      inference::ModelMetadataRequest, inference::ModelMetadataResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestModelMetadata,
+          std::mem_fn(&InferenceServiceImpl::ModelMetadata));
+  UnaryCallData<inference::ModelConfigRequest, inference::ModelConfigResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestModelConfig,
+          std::mem_fn(&InferenceServiceImpl::ModelConfig));
   ModelInferCallData::Start(async_service_, completion_queue_.get(), impl_);
 }
 
@@ -1876,7 +2056,8 @@ RunGrpcServer(
       std::vector<std::string>(
           expected_input_names.begin(), expected_input_names.end()),
       std::vector<std::string>(
-          expected_output_names.begin(), expected_output_names.end()));
+          expected_output_names.begin(), expected_output_names.end()),
+      options.server_name, options.server_version);
   run_grpc_server_impl(service, options, server);
 }
 
@@ -1896,7 +2077,8 @@ RunGrpcServer(
       std::vector<std::string>(
           expected_input_names.begin(), expected_input_names.end()),
       std::vector<std::string>(
-          expected_output_names.begin(), expected_output_names.end()));
+          expected_output_names.begin(), expected_output_names.end()),
+      options.server_name, options.server_version);
   run_grpc_server_impl(service, options, server);
 }
 

@@ -539,8 +539,9 @@ launch_threads(
       default_model_name = opts.name;
     }
     const auto server_options = starpu_server::GrpcServerOptions{
-        opts.server_address, opts.batching.max_message_bytes, opts.verbosity,
-        std::move(default_model_name)};
+        opts.server_address, opts.batching.max_message_bytes,
+        opts.verbosity,      std::move(default_model_name),
+        opts.name,           ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
         expected_input_names, expected_output_names,

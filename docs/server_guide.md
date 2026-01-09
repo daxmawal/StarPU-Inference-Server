@@ -88,6 +88,27 @@ traffic. The final number of warmup requests per worker is the maximum between
 each worker executes at least the configured number of full batches to warm its
 caches and kernels. Set `warmup_pregen_inputs: 0` to skip warmup entirely.
 
+### gRPC metadata endpoints
+
+The server exposes lightweight introspection endpoints derived from the YAML
+config so clients can self-discover model shapes and batching limits:
+
+- `ServerMetadata`: returns server name/version and supported extensions.
+- `ModelMetadata`: returns model name, versions (if provided), and I/O tensor
+  names, dtypes, and shapes.
+- `ModelConfig`: returns a `ModelConfig` message with `max_batch_size` and the
+  configured input/output schema.
+
+Example queries with grpcurl (uses server reflection when available):
+
+```bash
+grpcurl -plaintext 127.0.0.1:50051 inference.GRPCInferenceService/ServerMetadata
+grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
+  inference.GRPCInferenceService/ModelMetadata
+grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
+  inference.GRPCInferenceService/ModelConfig
+```
+
 ### StarPU environment overrides
 
 The `starpu_env` block lets you pin StarPU-specific environment variables inside

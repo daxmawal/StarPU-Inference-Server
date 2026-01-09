@@ -42,7 +42,8 @@ class InferenceServiceImpl final
       std::vector<at::ScalarType> expected_input_types,
       InputShapeConfig input_shape_config, std::string default_model_name = {},
       std::vector<std::string> expected_input_names = {},
-      std::vector<std::string> expected_output_names = {});
+      std::vector<std::string> expected_output_names = {},
+      std::string server_name = {}, std::string server_version = {});
 
   InferenceServiceImpl(
       InferenceQueue* queue,
@@ -50,7 +51,8 @@ class InferenceServiceImpl final
       std::vector<at::ScalarType> expected_input_types,
       std::string default_model_name = {},
       std::vector<std::string> expected_input_names = {},
-      std::vector<std::string> expected_output_names = {});
+      std::vector<std::string> expected_output_names = {},
+      std::string server_name = {}, std::string server_version = {});
 
   auto ServerLive(
       grpc::ServerContext* context, const inference::ServerLiveRequest* request,
@@ -64,6 +66,21 @@ class InferenceServiceImpl final
   auto ModelReady(
       grpc::ServerContext* context, const inference::ModelReadyRequest* request,
       inference::ModelReadyResponse* reply) -> grpc::Status override;
+
+  auto ServerMetadata(
+      grpc::ServerContext* context,
+      const inference::ServerMetadataRequest* request,
+      inference::ServerMetadataResponse* reply) -> grpc::Status override;
+
+  auto ModelMetadata(
+      grpc::ServerContext* context,
+      const inference::ModelMetadataRequest* request,
+      inference::ModelMetadataResponse* reply) -> grpc::Status override;
+
+  auto ModelConfig(
+      grpc::ServerContext* context,
+      const inference::ModelConfigRequest* request,
+      inference::ModelConfigResponse* reply) -> grpc::Status override;
 
 // Sync wrapper used by in-process tests; async server uses
 // HandleModelInferAsync.
@@ -277,6 +294,8 @@ class InferenceServiceImpl final
   std::vector<std::string> expected_output_names_;
   int max_batch_size_ = 0;
   std::string default_model_name_;
+  std::string server_name_;
+  std::string server_version_;
   std::atomic<int> next_request_id_{0};
 };
 
@@ -316,6 +335,8 @@ struct GrpcServerOptions {
   std::size_t max_message_bytes;
   VerbosityLevel verbosity;
   std::string default_model_name;
+  std::string server_name;
+  std::string server_version;
 };
 
 void RunGrpcServer(

@@ -110,8 +110,12 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
   std::jthread thread([&]() {
     const auto options = starpu_server::GrpcServerOptions{
-        "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, ""};
+        "127.0.0.1:0",
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
@@ -137,8 +141,12 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
       {kMaxBatchSize, 3, 224, 224}};
   std::jthread thread([&]() {
     const auto options = starpu_server::GrpcServerOptions{
-        "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, ""};
+        "127.0.0.1:0",
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims, {},
         {}, kMaxBatchSize, options, server);
@@ -188,8 +196,12 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
   const auto endpoint = "127.0.0.1:" + std::to_string(port);
   auto future = std::async(std::launch::async, [&]() {
     const auto options = starpu_server::GrpcServerOptions{
-        endpoint, kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, ""};
+        endpoint,
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
@@ -233,8 +245,12 @@ TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
   const auto endpoint = "127.0.0.1:" + std::to_string(port);
   auto future = std::async(std::launch::async, [&]() {
     const auto options = starpu_server::GrpcServerOptions{
-        endpoint, kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, ""};
+        endpoint,
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims, {},
         {}, kMaxBatchSize, options, server);
