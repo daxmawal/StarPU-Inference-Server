@@ -173,6 +173,33 @@ TEST(InferenceQueue_Robustesse, RejectsPushWhenFull)
   EXPECT_FALSE(queue_full);
 }
 
+TEST(InferenceQueue_Robustesse, TotalPushedCountsSuccessfulPushesAndResets)
+{
+  starpu_server::InferenceQueue queue(2);
+
+  EXPECT_EQ(queue.total_pushed(), 0U);
+
+  auto job0 = std::make_shared<starpu_server::InferenceJob>();
+  auto job1 = std::make_shared<starpu_server::InferenceJob>();
+  ASSERT_TRUE(queue.push(job0));
+  ASSERT_TRUE(queue.push(job1));
+  EXPECT_EQ(queue.total_pushed(), 2U);
+
+  auto job2 = std::make_shared<starpu_server::InferenceJob>();
+  bool queue_full = false;
+  EXPECT_FALSE(queue.push(job2, &queue_full));
+  EXPECT_TRUE(queue_full);
+  EXPECT_EQ(queue.total_pushed(), 2U);
+
+  std::shared_ptr<starpu_server::InferenceJob> popped_job;
+  ASSERT_TRUE(queue.try_pop(popped_job));
+  EXPECT_TRUE(queue.push(job2));
+  EXPECT_EQ(queue.total_pushed(), 3U);
+
+  queue.reset_counters();
+  EXPECT_EQ(queue.total_pushed(), 0U);
+}
+
 TEST(InferenceQueue_Robustesse, ConstructorThrowsWhenMaxSizeIsZero)
 {
   EXPECT_THROW(

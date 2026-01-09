@@ -278,6 +278,23 @@ TEST_F(MultiTypeInferenceServiceTest, ValidateInputsMultipleDtypes)
   EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
 }
 
+TEST_F(MultiTypeInferenceServiceTest, ValidateInputsRejectsDatatypeMismatch)
+{
+  std::vector<int64_t> data0 = {kI10, kI20, kI30};
+  std::vector<float> data1 = {kF1, kF2, kF3, kF4};
+  auto req = starpu_server::make_model_infer_request({
+      {{3}, at::kLong, starpu_server::to_raw_data(data0)},
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data1)},
+  });
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Input tensor datatype mismatch");
+}
+
 TEST_F(MultiTypeInferenceServiceTest, ValidateInputsRejectsMixedNamedAndUnnamed)
 {
   std::vector<float> data0 = {kF1, kF2, kF3, kF4};
@@ -422,6 +439,34 @@ TEST_F(NamedInputInferenceServiceTest, ValidateInputsReordersByNameMapping)
 
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 2U);
+  EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
+  EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
+  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
+  EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
+  EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
+  EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
+}
+
+TEST_F(NamedInputInferenceServiceTest, ValidateInputsReordersKeepAliveByName)
+{
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  auto req = starpu_server::make_model_infer_request({
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+  });
+  req.mutable_inputs(0)->set_name("second");
+  req.mutable_inputs(1)->set_name("first");
+
+  std::vector<torch::Tensor> inputs;
+  std::vector<std::shared_ptr<const void>> keep_alive;
+  auto status = service->validate_and_convert_inputs(&req, inputs, &keep_alive);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 2U);
+  ASSERT_EQ(keep_alive.size(), 2U);
+  EXPECT_EQ(inputs[0].data_ptr(), const_cast<void*>(keep_alive[0].get()));
+  EXPECT_EQ(inputs[1].data_ptr(), const_cast<void*>(keep_alive[1].get()));
   EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);

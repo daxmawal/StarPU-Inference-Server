@@ -51,7 +51,7 @@ python3 client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --text "Your evaluation sentence" \
   --text "Add a second sentence for batching" \
-  --reference-model ../models/bert_libtorch.pt \
+  --reference-model models/bert_libtorch.pt \
   --rtol 1e-3 \
   --atol 1e-5
 ```

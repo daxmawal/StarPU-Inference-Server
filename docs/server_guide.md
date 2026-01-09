@@ -22,7 +22,7 @@ configuration is written in YAML and must include the following required keys:
 |`outputs`|Sequence describing each output tensor, every element must define `name`, `data_type`, and `dims`.|
 |`max_batch_size`|Upper bound for per-request batch size.|
 |`batch_coalesce_timeout_ms`|Milliseconds to wait before flushing a dynamic batch.|
-|`pool_size`|Number of reusable I/O buffer slots to preallocate per GPU. A value of x allocates x I/O slots per device.|
+|`pool_size`|Number of reusable input/output buffer slots to preallocate.|
 
 Each tensor entry under `inputs` or `outputs` must provide:
 
@@ -41,11 +41,13 @@ Optional keys unlock batching, logging, and runtime controls:
 |Key|Description|Default|
 |---|---|---|
 |`starpu_env`|Lets you pin StarPU-specific environment variables.|unset|
+|`model_name`|Model name exposed through gRPC. If omitted, defaults to `name`.|`name`|
 |`use_cpu`|Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution.|`true`|
 |`group_cpu_by_numa`|Spawn one StarPU CPU worker per NUMA node instead of per core.|`false`|
 |`use_cuda`|Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`.|`false`|
 |`address`|gRPC listen address (host:port).|`127.0.0.1:50051`|
 |`metrics_port`|Port for the Prometheus metrics endpoint.|`9090`|
+|`max_message_bytes`|Maximum gRPC message size (bytes) for request/response payloads. If omitted, computed from model I/O and `max_batch_size` (minimum 32 MiB).|`auto (>= 32 MiB)`|
 |`max_queue_size`|Maximum number of pending inference requests; additional requests are rejected immediately with `RESOURCE_EXHAUSTED`.|`100`|
 |`max_inflight_tasks`|Upper bound on StarPU tasks already submitted (backlog inside StarPU). `0` keeps it unbounded, set a value to apply backpressure before submitting new tasks.|`0`|
 
@@ -64,24 +66,27 @@ queue grow unbounded.
 flight). When the limit is reached, batch collection pauses until a task
 finishes, preventing unbounded prefetching into StarPU’s internal queues.
 
-Optional keys for debugging:
+Optional keys for warmup, tracing, and debugging:
 
 |Key|Description|Default|
 |---|---|---|
-|`verbosity`|Log verbosity level. Supported aliases: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`.|`0`|
+|`verbosity`|Log verbosity level. Alias: `verbose`. Supported values: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`.|`0`|
 |`dynamic_batching`|Enable dynamic batching (`true`/`false`).|`true`|
 |`sync`|Run the StarPU worker pool in synchronous mode (`true`/`false`).|`false`|
 |`trace_enabled`|Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI plus a CSV summary of each batch.|`false`|
-|`trace_output`|Directory for the batching Perfetto trace (requires `trace_enabled: true`). The server writes `perfetto_trace.json`, `trace.csv` (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings, warmup batches excluded) and `metrics.csv` (queue size + cumulative rejections over time) there.|`.`|
+|`trace_output`|Directory for the batching Perfetto trace (requires `trace_enabled: true`). When set, the server writes `perfetto_trace.json`, `trace.csv` (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings, warmup batches excluded) and `metrics.csv` (queue size + cumulative rejections over time) there. If unset, it writes `perfetto_trace.json` in the current working directory.|unset|
+|`warmup_pregen_inputs`|Number of pre-generated inputs reused during warmup. Set to `0` to skip warmup entirely.|`2`|
+|`warmup_request_nb`|Warmup requests per worker before batching scaling.|`2`|
 |`warmup_batches_per_worker`|Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests.|`1`|
+|`seed`|Seed for warmup input RNG and `torch::manual_seed`.|unset|
 
 Traces use the Chrome trace-event JSON format, so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [tracing guide](./tracing.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, using Perfetto, and capturing StarPU FXT traces. Enable it only while profiling dynamic batching, for GPU-wide timelines rely on NVIDIA `nsys`.
 
 During startup the server always schedules a short warmup before accepting real
-traffic. The final number of warmup requests is the maximum between the legacy
-`warmup_request_nb` (exact request count) and
-`warmup_batches_per_worker * max_batch_size`, ensuring each worker executes at
-least the configured number of full batches to warm its caches and kernels.
+traffic. The final number of warmup requests per worker is the maximum between
+`warmup_request_nb` and `warmup_batches_per_worker * max_batch_size`, ensuring
+each worker executes at least the configured number of full batches to warm its
+caches and kernels. Set `warmup_pregen_inputs: 0` to skip warmup entirely.
 
 ### StarPU environment overrides
 

@@ -3773,6 +3773,32 @@ TEST_F(
 
 TEST_F(
     StarPUTaskRunnerFixture,
+    CollectBatchReturnsFirstWhenLogicalJobCountExceedsOne)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+
+  auto first = make_job(
+      40, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  first->set_logical_job_count(2);
+
+  auto queued = make_job(
+      41, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(queued));
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  ASSERT_EQ(collected.size(), 1U);
+  EXPECT_EQ(collected.front(), first);
+  EXPECT_EQ(queue_.size(), 1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
     WaitForNextJobDeliversAggregatedJobWithoutCoalescing)
 {
   opts_.batching.dynamic_batching = true;

@@ -22,7 +22,10 @@ Install dependencies following [installation](./installation.md).
 
 Create a lightweight Python environment, install the dependencies, and run the
 export script. It downloads `bert-base-uncased`, traces the model, and stores
-the artifact in `../models/bert_libtorch.pt`.
+the artifact in `models/bert_libtorch.pt` at the repo root (path is
+`../models/bert_libtorch.pt` when running from `build/`).
+
+From `build/` (one level below the repo root):
 
 ```bash
 python3 -m venv .venv
@@ -42,7 +45,7 @@ deactivate
 ## 3. Launch the inference server
 
 The configuration file `models/bert.yml` already points to the exported model.
-Start the server from the build repository:
+Start the server from `build/`:
 
 ```bash
 ./starpu_server --config ../models/bert.yml
@@ -58,7 +61,8 @@ GPU IDs or a CPU-only setup ([Server Configuration](./server_guide.md)).
 ## 4. Launch the client
 
 Follow the [Client Guide](./client_guide.md) to set up the Python virtual
-environment and dependencies. Once ready, send an inference request:
+environment and dependencies. Once ready, send an inference request from the
+repo root (one level above `build/`):
 
 ```bash
 python3 client/bert_inference_client.py \

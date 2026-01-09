@@ -50,8 +50,39 @@ config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
 // GCOVR_EXCL_STOP
 
 auto parse_tensor_nodes(
-    const YAML::Node& nodes, std::size_t max_inputs,
-    std::size_t max_dims) -> std::vector<TensorConfig>;
+    const YAML::Node& nodes, std::size_t max_inputs, std::size_t max_dims,
+    std::string_view label) -> std::vector<TensorConfig>;
+
+auto
+make_indexed_path(std::string_view base, std::size_t index) -> std::string
+{
+  return std::format("{}[{}]", base, index);
+}
+
+auto
+make_indexed_field_path(
+    std::string_view base, std::size_t index,
+    std::string_view field) -> std::string
+{
+  return std::format("{}[{}].{}", base, index, field);
+}
+
+template <typename T>
+auto
+parse_scalar(
+    const YAML::Node& node, std::string_view key,
+    std::string_view type_desc) -> T
+{
+  if (!node.IsScalar()) {
+    throw std::invalid_argument(std::format("{} must be {}", key, type_desc));
+  }
+  try {
+    return node.as<T>();
+  }
+  catch (const YAML::BadConversion&) {
+    throw std::invalid_argument(std::format("{} must be {}", key, type_desc));
+  }
+}
 
 auto
 ensure_model(RuntimeConfig& cfg) -> ModelConfig&
@@ -66,9 +97,11 @@ void
 parse_verbosity(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["verbose"]) {
-    cfg.verbosity = parse_verbosity_level(root["verbose"].as<std::string>());
+    cfg.verbosity = parse_verbosity_level(parse_scalar<std::string>(
+        root["verbose"], "verbose", "a scalar value"));
   } else if (root["verbosity"]) {
-    cfg.verbosity = parse_verbosity_level(root["verbosity"].as<std::string>());
+    cfg.verbosity = parse_verbosity_level(parse_scalar<std::string>(
+        root["verbosity"], "verbosity", "a scalar value"));
   }
 }
 
@@ -80,9 +113,8 @@ parse_config_name(const YAML::Node& root, RuntimeConfig& cfg)
     return;
   }
   if (!name_node.IsScalar()) {
-    log_error("Configuration option 'name' must be a scalar string");
-    cfg.valid = false;
-    return;
+    throw std::invalid_argument(
+        "Configuration option 'name' must be a scalar string");
   }
   cfg.name = name_node.as<std::string>();
 }
@@ -119,8 +151,8 @@ resolve_trace_output_directory(std::string directory) -> std::string
   return (directory_path / kDefaultTraceOutputFile).string();
 }
 
-auto
-validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
+void
+validate_required_keys(const YAML::Node& root)
 {
   const std::vector<std::string> required_keys{
       "name",
@@ -130,17 +162,33 @@ validate_required_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
       "pool_size",
       "max_batch_size",
       "batch_coalesce_timeout_ms"};
+  std::vector<std::string> missing_keys;
+  missing_keys.reserve(required_keys.size());
   for (const auto& key : required_keys) {
     if (!root[key]) {
-      log_error(std::string("Missing required key: ") + key);
-      cfg.valid = false;
+      missing_keys.push_back(key);
     }
   }
-  return cfg.valid;
+  if (missing_keys.empty()) {
+    return;
+  }
+  if (missing_keys.size() == 1U) {
+    throw std::invalid_argument(
+        std::string("Missing required key: ") + missing_keys.front());
+  }
+  std::ostringstream oss;
+  oss << "Missing required keys: ";
+  for (std::size_t i = 0; i < missing_keys.size(); ++i) {
+    if (i != 0U) {
+      oss << ", ";
+    }
+    oss << missing_keys[i];
+  }
+  throw std::invalid_argument(oss.str());
 }
 
-auto
-validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
+void
+validate_allowed_keys(const YAML::Node& root)
 {
   static const std::unordered_set<
       std::string, TransparentStringHash, std::equal_to<>>
@@ -176,43 +224,45 @@ validate_allowed_keys(const YAML::Node& root, RuntimeConfig& cfg) -> bool
 
   for (const auto& kvalue : root) {
     if (!kvalue.first.IsScalar()) {
-      log_error("Configuration keys must be scalar strings");
-      cfg.valid = false;
-      continue;
+      throw std::invalid_argument("Configuration keys must be scalar strings");
     }
     const auto key = kvalue.first.as<std::string>();
     if (!kAllowedKeys.contains(key)) {
       if (key == "scheduler") {
-        log_error(
+        throw std::invalid_argument(
             "Unknown configuration option: scheduler (use starpu_env with "
             "STARPU_SCHED)");
       } else {
-        log_error(std::string("Unknown configuration option: ") + key);
+        throw std::invalid_argument(
+            std::string("Unknown configuration option: ") + key);
       }
-      cfg.valid = false;
     }
   }
-  return cfg.valid;
 }
 
 void
 parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["model"]) {
+    const YAML::Node model_node = root["model"];
+    if (!model_node.IsScalar()) {
+      throw std::invalid_argument("model must be a scalar string");
+    }
     auto& model = ensure_model(cfg);
-    model.path = root["model"].as<std::string>();
+    model.path = model_node.as<std::string>();
+    if (model.path.empty()) {
+      throw std::invalid_argument("model must not be empty");
+    }
     if (!std::filesystem::exists(model.path)) {
-      log_error(std::string("Model path does not exist: ") + model.path);
-      cfg.valid = false;
+      throw std::invalid_argument(
+          std::string("Model path does not exist: ") + model.path);
     }
   }
 
   const YAML::Node model_name_node = root["model_name"];
   if (model_name_node) {
     if (!model_name_node.IsScalar()) {
-      log_error("model_name must be a scalar string");
-      cfg.valid = false;
-      return;
+      throw std::invalid_argument("model_name must be a scalar string");
     }
     auto& model = ensure_model(cfg);
     model.name = model_name_node.as<std::string>();
@@ -223,16 +273,17 @@ void
 parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["device_ids"]) {
-    log_error(
+    throw std::invalid_argument(
         "device_ids must be nested inside the use_cuda block (e.g. "
         "\"use_cuda: [{ device_ids: [0] }]\")");
-    cfg.valid = false;
   }
   if (root["use_cpu"]) {
-    cfg.devices.use_cpu = root["use_cpu"].as<bool>();
+    cfg.devices.use_cpu =
+        parse_scalar<bool>(root["use_cpu"], "use_cpu", "a boolean");
   }
   if (root["group_cpu_by_numa"]) {
-    cfg.devices.group_cpu_by_numa = root["group_cpu_by_numa"].as<bool>();
+    cfg.devices.group_cpu_by_numa = parse_scalar<bool>(
+        root["group_cpu_by_numa"], "group_cpu_by_numa", "a boolean");
   }
 
   const YAML::Node use_cuda_node = root["use_cuda"];
@@ -241,57 +292,65 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   }
 
   if (use_cuda_node.IsScalar()) {
-    if (const bool enabled = use_cuda_node.as<bool>(); !enabled) {
+    if (const bool enabled =
+            parse_scalar<bool>(use_cuda_node, "use_cuda", "a boolean");
+        !enabled) {
       cfg.devices.use_cuda = false;
       cfg.devices.ids.clear();
       return;
     }
-    log_error(
+    throw std::invalid_argument(
         "use_cuda must be a sequence of device mappings when enabled (e.g. "
         "\"use_cuda: [{ device_ids: [0] }]\")");
-    cfg.valid = false;
-    return;
   }
 
   if (!use_cuda_node.IsSequence()) {
-    log_error("use_cuda must be a boolean or a sequence of device mappings");
-    cfg.valid = false;
-    return;
+    throw std::invalid_argument(
+        "use_cuda must be a boolean or a sequence of device mappings");
   }
 
   cfg.devices.use_cuda = true;
   cfg.devices.ids.clear();
+  if (use_cuda_node.size() == 0U) {
+    throw std::invalid_argument(
+        "use_cuda requires at least one device_ids "
+        "entry");
+  }
 
-  for (const auto& entry : use_cuda_node) {
+  for (std::size_t i = 0; i < use_cuda_node.size(); ++i) {
+    const auto& entry = use_cuda_node[i];
     if (!entry.IsMap()) {
-      log_error("use_cuda entries must be mappings that define device_ids");
-      cfg.valid = false;
-      continue;
+      throw std::invalid_argument(std::format(
+          "use_cuda[{}] must be a mapping that defines device_ids", i));
     }
 
     const YAML::Node device_ids_node = entry["device_ids"];
 
     if (!device_ids_node) {
-      log_error("use_cuda entries require a device_ids sequence");
-      cfg.valid = false;
-      continue;
+      throw std::invalid_argument(
+          std::format("use_cuda[{}].device_ids is required", i));
     }
 
     if (!device_ids_node.IsSequence()) {
-      log_error("device_ids inside use_cuda must be a sequence");
-      cfg.valid = false;
-      continue;
+      throw std::invalid_argument(std::format(
+          "use_cuda[{}].device_ids must be a sequence of integers", i));
     }
 
-    const auto device_ids = device_ids_node.as<std::vector<int>>();
-    cfg.devices.ids.insert(
-        cfg.devices.ids.end(), device_ids.begin(), device_ids.end());
+    for (std::size_t j = 0; j < device_ids_node.size(); ++j) {
+      const auto& id_node = device_ids_node[j];
+      const auto id_path = std::format("use_cuda[{}].device_ids[{}]", i, j);
+      const int device_id = parse_scalar<int>(id_node, id_path, "an integer");
+      if (device_id < 0) {
+        throw std::invalid_argument(std::format("{} must be >= 0", id_path));
+      }
+      cfg.devices.ids.push_back(device_id);
+    }
   }
 
   if (cfg.devices.ids.empty()) {
-    log_error("use_cuda requires at least one device_ids entry");
-    cfg.valid = false;
-    cfg.devices.use_cuda = false;
+    throw std::invalid_argument(
+        "use_cuda requires at least one device_ids "
+        "entry");
   }
 }
 
@@ -304,23 +363,19 @@ parse_starpu_env(const YAML::Node& root, RuntimeConfig& cfg)
   }
 
   if (!env_node.IsMap()) {
-    log_error("starpu_env must be a mapping of variable names to values");
-    cfg.valid = false;
-    return;
+    throw std::invalid_argument(
+        "starpu_env must be a mapping of variable names to values");
   }
 
   for (const auto& item : env_node) {
     if (!item.first.IsScalar()) {
-      log_error("starpu_env entries must have scalar keys");
-      cfg.valid = false;
-      continue;
-    }
-    if (!item.second.IsScalar()) {
-      log_error("starpu_env entries must have scalar values");
-      cfg.valid = false;
-      continue;
+      throw std::invalid_argument("starpu_env entries must have scalar keys");
     }
     const auto key = item.first.as<std::string>();
+    if (!item.second.IsScalar()) {
+      throw std::invalid_argument(
+          std::format("starpu_env entry '{}' must have a scalar value", key));
+    }
     cfg.starpu_env[key] = item.second.as<std::string>();
   }
 }
@@ -331,12 +386,12 @@ parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   if (root["inputs"]) {
     auto& model = ensure_model(cfg);
     model.inputs = parse_tensor_nodes(
-        root["inputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
+        root["inputs"], cfg.limits.max_inputs, cfg.limits.max_dims, "inputs");
   }
   if (root["outputs"]) {
     auto& model = ensure_model(cfg);
     model.outputs = parse_tensor_nodes(
-        root["outputs"], cfg.limits.max_inputs, cfg.limits.max_dims);
+        root["outputs"], cfg.limits.max_inputs, cfg.limits.max_dims, "outputs");
   }
 }
 
@@ -344,21 +399,22 @@ void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["batch_coalesce_timeout_ms"]) {
-    cfg.batching.batch_coalesce_timeout_ms =
-        root["batch_coalesce_timeout_ms"].as<int>();
+    cfg.batching.batch_coalesce_timeout_ms = parse_scalar<int>(
+        root["batch_coalesce_timeout_ms"], "batch_coalesce_timeout_ms",
+        "an integer");
     if (cfg.batching.batch_coalesce_timeout_ms < 0) {
-      cfg.valid = false;
       throw std::invalid_argument("batch_coalesce_timeout_ms must be >= 0");
     }
   }
   if (root["address"]) {
-    cfg.server_address = root["address"].as<std::string>();
+    cfg.server_address = parse_scalar<std::string>(
+        root["address"], "address", "a scalar string");
   }
   if (root["metrics_port"]) {
-    cfg.metrics_port = root["metrics_port"].as<int>();
+    cfg.metrics_port =
+        parse_scalar<int>(root["metrics_port"], "metrics_port", "an integer");
     if (cfg.metrics_port < kMinPort || cfg.metrics_port > kMaxPort) {
-      log_error("metrics_port must be between 1 and 65535");
-      cfg.valid = false;
+      throw std::invalid_argument("metrics_port must be between 1 and 65535");
     }
   }
 }
@@ -367,7 +423,8 @@ void
 parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["max_message_bytes"]) {
-    const auto tmp = root["max_message_bytes"].as<long long>();
+    const auto tmp = parse_scalar<long long>(
+        root["max_message_bytes"], "max_message_bytes", "an integer");
     if (tmp < 0 || static_cast<unsigned long long>(tmp) >
                        std::numeric_limits<std::size_t>::max()) {
       throw std::invalid_argument(
@@ -376,22 +433,26 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.batching.max_message_bytes = static_cast<std::size_t>(tmp);
   }
   if (root["max_batch_size"]) {
-    cfg.batching.max_batch_size = root["max_batch_size"].as<int>();
+    cfg.batching.max_batch_size = parse_scalar<int>(
+        root["max_batch_size"], "max_batch_size", "an integer");
     if (cfg.batching.max_batch_size <= 0) {
       throw std::invalid_argument("max_batch_size must be > 0");
     }
   }
   if (root["dynamic_batching"]) {
-    cfg.batching.dynamic_batching = root["dynamic_batching"].as<bool>();
+    cfg.batching.dynamic_batching = parse_scalar<bool>(
+        root["dynamic_batching"], "dynamic_batching", "a boolean");
   }
   if (root["pool_size"]) {
-    cfg.batching.pool_size = root["pool_size"].as<int>();
+    cfg.batching.pool_size =
+        parse_scalar<int>(root["pool_size"], "pool_size", "an integer");
     if (cfg.batching.pool_size <= 0) {
       throw std::invalid_argument("pool_size must be > 0");
     }
   }
   if (root["max_inflight_tasks"]) {
-    const auto tmp = root["max_inflight_tasks"].as<long long>();
+    const auto tmp = parse_scalar<long long>(
+        root["max_inflight_tasks"], "max_inflight_tasks", "an integer");
     if (tmp < 0 || static_cast<unsigned long long>(tmp) >
                        std::numeric_limits<std::size_t>::max()) {
       throw std::invalid_argument(
@@ -400,7 +461,8 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.batching.max_inflight_tasks = static_cast<std::size_t>(tmp);
   }
   if (root["max_queue_size"]) {
-    const auto tmp = root["max_queue_size"].as<long long>();
+    const auto tmp = parse_scalar<long long>(
+        root["max_queue_size"], "max_queue_size", "an integer");
     if (tmp <= 0 || static_cast<unsigned long long>(tmp) >
                         std::numeric_limits<std::size_t>::max()) {
       throw std::invalid_argument(
@@ -409,11 +471,13 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.batching.max_queue_size = static_cast<std::size_t>(tmp);
   }
   if (root["trace_enabled"]) {
-    cfg.batching.trace_enabled = root["trace_enabled"].as<bool>();
+    cfg.batching.trace_enabled =
+        parse_scalar<bool>(root["trace_enabled"], "trace_enabled", "a boolean");
   }
   if (root["trace_output"]) {
     cfg.batching.trace_output_path =
-        resolve_trace_output_directory(root["trace_output"].as<std::string>());
+        resolve_trace_output_directory(parse_scalar<std::string>(
+            root["trace_output"], "trace_output", "a scalar string"));
     if (cfg.batching.trace_output_path.empty()) {
       throw std::invalid_argument("trace_output must not be empty");
     }
@@ -424,21 +488,25 @@ void
 parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["warmup_pregen_inputs"]) {
-    const int tmp = root["warmup_pregen_inputs"].as<int>();
+    const int tmp = parse_scalar<int>(
+        root["warmup_pregen_inputs"], "warmup_pregen_inputs", "an integer");
     if (tmp < 0) {
       throw std::invalid_argument("warmup_pregen_inputs must be >= 0");
     }
     cfg.batching.warmup_pregen_inputs = static_cast<size_t>(tmp);
   }
   if (root["warmup_request_nb"]) {
-    const int tmp = root["warmup_request_nb"].as<int>();
+    const int tmp = parse_scalar<int>(
+        root["warmup_request_nb"], "warmup_request_nb", "an integer");
     if (tmp < 0) {
       throw std::invalid_argument("warmup_request_nb must be >= 0");
     }
     cfg.batching.warmup_request_nb = tmp;
   }
   if (root["warmup_batches_per_worker"]) {
-    const int tmp = root["warmup_batches_per_worker"].as<int>();
+    const int tmp = parse_scalar<int>(
+        root["warmup_batches_per_worker"], "warmup_batches_per_worker",
+        "an integer");
     if (tmp < 0) {
       throw std::invalid_argument("warmup_batches_per_worker must be >= 0");
     }
@@ -450,67 +518,104 @@ void
 parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["seed"]) {
-    const auto tmp = root["seed"].as<long long>();
+    const auto tmp =
+        parse_scalar<long long>(root["seed"], "seed", "an integer");
     if (tmp < 0) {
       throw std::invalid_argument("seed must be >= 0");
     }
     cfg.seed = static_cast<uint64_t>(tmp);
   }
   if (root["sync"]) {
-    cfg.batching.synchronous = root["sync"].as<bool>();
+    cfg.batching.synchronous =
+        parse_scalar<bool>(root["sync"], "sync", "a boolean");
   }
 }
 
 auto
 parse_tensor_nodes(
-    const YAML::Node& nodes, std::size_t max_inputs,
-    std::size_t max_dims) -> std::vector<TensorConfig>
+    const YAML::Node& nodes, std::size_t max_inputs, std::size_t max_dims,
+    std::string_view label) -> std::vector<TensorConfig>
 {
   std::vector<TensorConfig> tensors;
-  if (!nodes || !nodes.IsSequence()) {
+  if (!nodes) {
     return tensors;
   }
-  for (const auto& node : nodes) {
+  if (!nodes.IsSequence()) {
+    throw std::invalid_argument(
+        std::format("{} must be a sequence of tensor definitions", label));
+  }
+  for (std::size_t i = 0; i < nodes.size(); ++i) {
+    const auto& node = nodes[i];
     if (tensors.size() >= max_inputs) {
       std::ostringstream oss;
-      oss << "number of tensors must be <= " << max_inputs;
+      oss << label << " must have at most " << max_inputs << " entries";
       throw std::invalid_argument(oss.str());
     }
 
     TensorConfig tensor_config{};
-    if (node["name"]) {
-      tensor_config.name = node["name"].as<std::string>();
-    }
-    if (!node["dims"]) {
-      throw std::invalid_argument("tensor node missing dims");
-    }
-    if (!node["data_type"]) {
-      throw std::invalid_argument("tensor node missing data_type");
+    const auto entry_path = make_indexed_path(label, i);
+    if (!node.IsMap()) {
+      throw std::invalid_argument(
+          std::format("{} must be a mapping", entry_path));
     }
 
-    tensor_config.dims = node["dims"].as<std::vector<int64_t>>();
-    if (tensor_config.dims.size() > max_dims) {
+    if (const YAML::Node name_node = node["name"]) {
+      const auto name_path = make_indexed_field_path(label, i, "name");
+      if (!name_node.IsScalar()) {
+        throw std::invalid_argument(
+            std::format("{} must be a scalar string", name_path));
+      }
+      tensor_config.name = name_node.as<std::string>();
+    }
+
+    const YAML::Node dims_node = node["dims"];
+    const auto dims_path = make_indexed_field_path(label, i, "dims");
+    if (!dims_node) {
+      throw std::invalid_argument(std::format("{} is required", dims_path));
+    }
+    if (!dims_node.IsSequence()) {
+      throw std::invalid_argument(
+          std::format("{} must be a sequence of integers", dims_path));
+    }
+    if (dims_node.size() > max_dims) {
       std::ostringstream oss;
-      oss << "tensor dims must be <= " << max_dims;
+      oss << dims_path << " must have at most " << max_dims << " entries";
       throw std::invalid_argument(oss.str());
     }
 
-    for (size_t i = 0; i < tensor_config.dims.size(); ++i) {
-      const auto dim_value = tensor_config.dims[i];
+    tensor_config.dims.reserve(dims_node.size());
+    for (std::size_t j = 0; j < dims_node.size(); ++j) {
+      const auto& dim_node = dims_node[j];
+      const auto dim_path = std::format("{}[{}]", dims_path, j);
+      const auto dim_value =
+          parse_scalar<long long>(dim_node, dim_path, "an integer");
+
       if (dim_value <= 0) {
-        std::ostringstream oss;
-        oss << "dims[" << i << "] must be positive";
-        throw std::invalid_argument(oss.str());
+        throw std::invalid_argument(std::format("{} must be > 0", dim_path));
       }
       if (dim_value > std::numeric_limits<int>::max()) {
-        std::ostringstream oss;
-        oss << "dims[" << i
-            << "] must be <= " << std::numeric_limits<int>::max();
-        throw std::invalid_argument(oss.str());
+        throw std::invalid_argument(std::format(
+            "{} must be <= {}", dim_path, std::numeric_limits<int>::max()));
       }
+      tensor_config.dims.push_back(static_cast<int64_t>(dim_value));
     }
-    tensor_config.type =
-        string_to_scalar_type(node["data_type"].as<std::string>());
+
+    const YAML::Node type_node = node["data_type"];
+    const auto type_path = make_indexed_field_path(label, i, "data_type");
+    if (!type_node) {
+      throw std::invalid_argument(std::format("{} is required", type_path));
+    }
+    if (!type_node.IsScalar()) {
+      throw std::invalid_argument(
+          std::format("{} must be a scalar string", type_path));
+    }
+    try {
+      tensor_config.type = string_to_scalar_type(type_node.as<std::string>());
+    }
+    catch (const std::invalid_argument& exception) {
+      throw std::invalid_argument(
+          std::format("{}: {}", type_path, exception.what()));
+    }
     tensors.push_back(std::move(tensor_config));
   }
   return tensors;
@@ -551,20 +656,14 @@ parse_config_file(
   try {
     YAML::Node root = YAML::LoadFile(path);
     if (!root || !root.IsMap()) {
-      log_error("Config root must be a mapping");
-      cfg.valid = false;
-      return;
+      throw std::invalid_argument("Config root must be a mapping");
     }
 
     max_message_bytes_configured = static_cast<bool>(root["max_message_bytes"]);
     parse_verbosity(root, cfg);
     parse_config_name(root, cfg);
-    if (!validate_allowed_keys(root, cfg)) {
-      return;
-    }
-    if (!validate_required_keys(root, cfg)) {
-      return;
-    }
+    validate_allowed_keys(root);
+    validate_required_keys(root);
     parse_model_node(root, cfg);
     parse_io_nodes(root, cfg);
     parse_network_and_delay(root, cfg);
