@@ -237,6 +237,7 @@ class InferenceServiceImpl final
     MonotonicClock::time_point recv_tp;
     int64_t recv_ms;
     std::string resolved_model_name;
+    InferenceServiceImpl* impl = nullptr;
     const std::vector<std::string>* output_names = nullptr;
     std::shared_ptr<std::atomic<bool>> cancel_flag;
     std::optional<AsyncFailureInfo> failure_info;
@@ -276,7 +277,7 @@ class InferenceServiceImpl final
       const grpc::Status& status,
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
       const std::shared_ptr<CallbackHandle>& callback_handle,
-      std::string_view resolved_model_name,
+      InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
       MonotonicClock::time_point recv_tp) -> bool;
 
@@ -284,7 +285,7 @@ class InferenceServiceImpl final
       const grpc::Status& status,
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
       const std::shared_ptr<CallbackHandle>& callback_handle,
-      std::string_view resolved_model_name,
+      InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
       MonotonicClock::time_point recv_tp) -> bool;
 

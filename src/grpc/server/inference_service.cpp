@@ -50,11 +50,6 @@ using inference::ServerReadyResponse;
 
 namespace {
 
-auto request_batch_size(const ModelInferRequest* request, int max_batch_size)
-    -> uint64_t;
-auto duration_ms_to_ns(double duration_ms) -> uint64_t;
-auto elapsed_since(MonotonicClock::time_point start) -> uint64_t;
-
 auto
 status_reason(const Status& status) -> std::string
 {
@@ -107,6 +102,91 @@ check_missing_named_inputs(
     }
   }
   return Status::OK;
+}
+
+auto
+scalar_type_to_model_dtype(at::ScalarType type) -> inference::DataType
+{
+  switch (type) {
+    case at::kBool:
+      return inference::DataType::TYPE_BOOL;
+    case at::kByte:
+      return inference::DataType::TYPE_UINT8;
+    case at::kChar:
+      return inference::DataType::TYPE_INT8;
+    case at::kShort:
+      return inference::DataType::TYPE_INT16;
+    case at::kInt:
+      return inference::DataType::TYPE_INT32;
+    case at::kLong:
+      return inference::DataType::TYPE_INT64;
+    case at::kHalf:
+      return inference::DataType::TYPE_FP16;
+    case at::kFloat:
+      return inference::DataType::TYPE_FP32;
+    case at::kDouble:
+      return inference::DataType::TYPE_FP64;
+    case at::kBFloat16:
+      return inference::DataType::TYPE_BF16;
+    default:
+      return inference::DataType::TYPE_INVALID;
+  }
+}
+
+auto
+resolve_tensor_name(
+    std::size_t index, std::span<const std::string> names,
+    std::string_view fallback_prefix) -> std::string
+{
+  if (index < names.size() && !names[index].empty()) {
+    return names[index];
+  }
+  return std::format("{}{}", fallback_prefix, index);
+}
+
+auto
+request_batch_size(const ModelInferRequest* request, int max_batch_size)
+    -> uint64_t
+{
+  if (request == nullptr || request->inputs_size() == 0 ||
+      max_batch_size <= 0) {
+    return 1U;
+  }
+  const auto& input = request->inputs(0);
+  if (input.shape_size() == 0) {
+    return 1U;
+  }
+  const int64_t batch = input.shape(0);
+  if (batch <= 0) {
+    return 1U;
+  }
+  return static_cast<uint64_t>(batch);
+}
+
+auto
+duration_ms_to_ns(double duration_ms) -> uint64_t
+{
+  if (duration_ms <= 0.0) {
+    return 0U;
+  }
+  constexpr double kNsPerMs = 1'000'000.0;
+  const double ns = duration_ms * kNsPerMs;
+  if (ns >= static_cast<double>(std::numeric_limits<uint64_t>::max())) {
+    return std::numeric_limits<uint64_t>::max();
+  }
+  return static_cast<uint64_t>(ns);
+}
+
+auto
+elapsed_since(const MonotonicClock::time_point start) -> uint64_t
+{
+  const auto now = MonotonicClock::now();
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count();
+  if (elapsed <= 0) {
+    return 0U;
+  }
+  return static_cast<uint64_t>(elapsed);
 }
 
 }  // namespace
@@ -1228,8 +1308,8 @@ InferenceServiceImpl::TestAccessor::HandleAsyncInferCompletionForTest(
   LatencyBreakdown breakdown{};
   detail::TimingInfo timing_info{};
   AsyncInferCompletionContext context{
-      &request, &reply,  callback_handle, nullptr,     MonotonicClock::now(),
-      0,        "model", nullptr,         cancel_flag, std::nullopt};
+      &request, &reply,  callback_handle, nullptr,     MonotonicClock::now(), 0,
+      "model",  nullptr, nullptr,         cancel_flag, std::nullopt};
   handle_async_infer_completion(
       context, Status::OK, outputs, breakdown, timing_info);
   return called;
@@ -1326,7 +1406,10 @@ InferenceServiceImpl::handle_job_failure(
     }
     increment_inference_failure(stage, reason, context.resolved_model_name);
   }
-  record_failure(context.request, context.recv_tp, context.resolved_model_name);
+  if (context.impl != nullptr) {
+    context.impl->record_failure(
+        context.request, context.recv_tp, context.resolved_model_name);
+  }
   callback_handle->Invoke(job_status);
   return true;
 }
@@ -1363,8 +1446,10 @@ InferenceServiceImpl::finalize_successful_completion(
       context.request, context.reply, outs, context.recv_ms, breakdown,
       response_options);
   if (!populate_status.ok()) {
-    record_failure(
-        context.request, context.recv_tp, context.resolved_model_name);
+    if (context.impl != nullptr) {
+      context.impl->record_failure(
+          context.request, context.recv_tp, context.resolved_model_name);
+    }
     increment_request_status(
         static_cast<int>(populate_status.error_code()),
         context.resolved_model_name);
@@ -1427,8 +1512,11 @@ InferenceServiceImpl::finalize_successful_completion(
     return;
   }
 
-  record_success(
-      context.request, breakdown, context.recv_tp, context.resolved_model_name);
+  if (context.impl != nullptr) {
+    context.impl->record_success(
+        context.request, breakdown, context.recv_tp,
+        context.resolved_model_name);
+  }
   increment_request_status(
       static_cast<int>(grpc::StatusCode::OK), context.resolved_model_name);
   callback_handle->Invoke(Status::OK);
@@ -1555,7 +1643,8 @@ auto
 InferenceServiceImpl::handle_input_validation_failure(
     const Status& status, const std::shared_ptr<std::atomic<bool>>& cancel_flag,
     const std::shared_ptr<CallbackHandle>& callback_handle,
-    std::string_view resolved_model_name, const ModelInferRequest* request,
+    InferenceServiceImpl* service, std::string_view resolved_model_name,
+    const ModelInferRequest* request,
     MonotonicClock::time_point recv_tp) -> bool
 {
   if (status.ok()) {
@@ -1564,7 +1653,9 @@ InferenceServiceImpl::handle_input_validation_failure(
   if (cancel_flag->load(std::memory_order_acquire)) {
     return true;
   }
-  record_failure(request, recv_tp, resolved_model_name);
+  if (service != nullptr) {
+    service->record_failure(request, recv_tp, resolved_model_name);
+  }
   increment_request_status(
       static_cast<int>(status.error_code()), resolved_model_name);
   increment_inference_failure(
@@ -1577,7 +1668,8 @@ auto
 InferenceServiceImpl::handle_submit_failure(
     const Status& status, const std::shared_ptr<std::atomic<bool>>& cancel_flag,
     const std::shared_ptr<CallbackHandle>& callback_handle,
-    std::string_view resolved_model_name, const ModelInferRequest* request,
+    InferenceServiceImpl* service, std::string_view resolved_model_name,
+    const ModelInferRequest* request,
     MonotonicClock::time_point recv_tp) -> bool
 {
   if (status.ok()) {
@@ -1586,7 +1678,9 @@ InferenceServiceImpl::handle_submit_failure(
   if (cancel_flag->load(std::memory_order_acquire)) {
     return true;
   }
-  record_failure(request, recv_tp, resolved_model_name);
+  if (service != nullptr) {
+    service->record_failure(request, recv_tp, resolved_model_name);
+  }
   increment_request_status(
       static_cast<int>(status.error_code()), resolved_model_name);
   callback_handle->Invoke(status);
@@ -1685,8 +1779,8 @@ InferenceServiceImpl::HandleModelInferAsync(
   Status status =
       validate_and_convert_inputs(request, inputs, &input_lifetimes);
   if (handle_input_validation_failure(
-          status, cancel_flag, callback_handle, resolved_model_name, request,
-          recv_tp)) {
+          status, cancel_flag, callback_handle, this, resolved_model_name,
+          request, recv_tp)) {
     return;
   }
 
@@ -1698,14 +1792,14 @@ InferenceServiceImpl::HandleModelInferAsync(
   status = submit_job_async(
       inputs,
       [request, reply, recv_tp, recv_ms, metrics, callback_handle,
-       resolved_model_name, cancel_flag, output_names](
+       resolved_model_name, cancel_flag, output_names, service = this](
           Status const& job_status, const std::vector<torch::Tensor>& outs,
           LatencyBreakdown breakdown, detail::TimingInfo timing_info,
           std::optional<AsyncFailureInfo> failure_info) mutable {
         handle_async_infer_completion(
             AsyncInferCompletionContext{
                 request, reply, callback_handle, metrics, recv_tp, recv_ms,
-                resolved_model_name, output_names, cancel_flag,
+                resolved_model_name, service, output_names, cancel_flag,
                 std::move(failure_info)},
             job_status, outs, breakdown, timing_info);
       },
@@ -1713,8 +1807,8 @@ InferenceServiceImpl::HandleModelInferAsync(
 
   notify_submit_job_async_done(cancel_flag, status);
   if (handle_submit_failure(
-          status, cancel_flag, callback_handle, resolved_model_name, request,
-          recv_tp)) {
+          status, cancel_flag, callback_handle, this, resolved_model_name,
+          request, recv_tp)) {
     return;
   }
 }
@@ -1989,91 +2083,6 @@ compute_thread_count() -> std::size_t
 }
 
 namespace {
-
-auto
-scalar_type_to_model_dtype(at::ScalarType type) -> inference::DataType
-{
-  switch (type) {
-    case at::kBool:
-      return inference::DataType::TYPE_BOOL;
-    case at::kByte:
-      return inference::DataType::TYPE_UINT8;
-    case at::kChar:
-      return inference::DataType::TYPE_INT8;
-    case at::kShort:
-      return inference::DataType::TYPE_INT16;
-    case at::kInt:
-      return inference::DataType::TYPE_INT32;
-    case at::kLong:
-      return inference::DataType::TYPE_INT64;
-    case at::kHalf:
-      return inference::DataType::TYPE_FP16;
-    case at::kFloat:
-      return inference::DataType::TYPE_FP32;
-    case at::kDouble:
-      return inference::DataType::TYPE_FP64;
-    case at::kBFloat16:
-      return inference::DataType::TYPE_BF16;
-    default:
-      return inference::DataType::TYPE_INVALID;
-  }
-}
-
-auto
-resolve_tensor_name(
-    std::size_t index, std::span<const std::string> names,
-    std::string_view fallback_prefix) -> std::string
-{
-  if (index < names.size() && !names[index].empty()) {
-    return names[index];
-  }
-  return std::format("{}{}", fallback_prefix, index);
-}
-
-auto
-request_batch_size(const ModelInferRequest* request, int max_batch_size)
-    -> uint64_t
-{
-  if (request == nullptr || request->inputs_size() == 0 ||
-      max_batch_size <= 0) {
-    return 1U;
-  }
-  const auto& input = request->inputs(0);
-  if (input.shape_size() == 0) {
-    return 1U;
-  }
-  const int64_t batch = input.shape(0);
-  if (batch <= 0) {
-    return 1U;
-  }
-  return static_cast<uint64_t>(batch);
-}
-
-auto
-duration_ms_to_ns(double duration_ms) -> uint64_t
-{
-  if (duration_ms <= 0.0) {
-    return 0U;
-  }
-  constexpr double kNsPerMs = 1'000'000.0;
-  const double ns = duration_ms * kNsPerMs;
-  if (ns >= static_cast<double>(std::numeric_limits<uint64_t>::max())) {
-    return std::numeric_limits<uint64_t>::max();
-  }
-  return static_cast<uint64_t>(ns);
-}
-
-auto
-elapsed_since(const MonotonicClock::time_point start) -> uint64_t
-{
-  const auto now = MonotonicClock::now();
-  const auto elapsed =
-      std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count();
-  if (elapsed <= 0) {
-    return 0U;
-  }
-  return static_cast<uint64_t>(elapsed);
-}
 
 void
 enable_grpc_health_and_reflection()
