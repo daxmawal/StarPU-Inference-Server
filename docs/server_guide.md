@@ -98,6 +98,8 @@ config so clients can self-discover model shapes and batching limits:
   names, dtypes, and shapes.
 - `ModelConfig`: returns a `ModelConfig` message with `max_batch_size` and the
   configured input/output schema.
+- `ModelStatistics`: returns in-memory counters and latency aggregates for
+  requests seen by the server.
 
 Example queries with grpcurl (uses server reflection when available):
 
@@ -107,6 +109,8 @@ grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
   inference.GRPCInferenceService/ModelMetadata
 grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
   inference.GRPCInferenceService/ModelConfig
+grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
+  inference.GRPCInferenceService/ModelStatistics
 ```
 
 ### StarPU environment overrides

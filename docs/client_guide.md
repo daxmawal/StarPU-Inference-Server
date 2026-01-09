@@ -52,6 +52,8 @@ grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
   inference.GRPCInferenceService/ModelMetadata
 grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
   inference.GRPCInferenceService/ModelConfig
+grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
+  inference.GRPCInferenceService/ModelStatistics
 ```
 
 ---

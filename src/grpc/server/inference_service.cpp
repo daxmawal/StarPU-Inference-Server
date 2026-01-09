@@ -50,6 +50,11 @@ using inference::ServerReadyResponse;
 
 namespace {
 
+auto request_batch_size(const ModelInferRequest* request, int max_batch_size)
+    -> uint64_t;
+auto duration_ms_to_ns(double duration_ms) -> uint64_t;
+auto elapsed_since(MonotonicClock::time_point start) -> uint64_t;
+
 auto
 status_reason(const Status& status) -> std::string
 {
@@ -837,6 +842,71 @@ InferenceServiceImpl::ModelConfig(
 }
 
 auto
+InferenceServiceImpl::ModelStatistics(
+    ServerContext* /*context*/,
+    const inference::ModelStatisticsRequest* request,
+    inference::ModelStatisticsResponse* reply) -> Status
+{
+  if (request == nullptr || reply == nullptr) {
+    return {grpc::StatusCode::INVALID_ARGUMENT, "Invalid request"};
+  }
+  const std::string requested_name = resolve_model_name(request->name());
+  const std::string requested_version = request->version();
+  const auto fill_stat = [](inference::StatisticDuration* target,
+                            const StatisticDurationState& state) {
+    if (target == nullptr) {
+      return;
+    }
+    target->set_count(state.count);
+    target->set_ns(state.ns);
+  };
+
+  std::vector<std::pair<ModelStatsKey, ModelStatsState>> snapshot;
+  {
+    std::scoped_lock lock(model_stats_mutex_);
+    snapshot.reserve(model_stats_.size());
+    for (const auto& entry : model_stats_) {
+      snapshot.emplace_back(entry.first, entry.second);
+    }
+  }
+
+  for (const auto& [key, state] : snapshot) {
+    if (!requested_name.empty() && key.name != requested_name) {
+      continue;
+    }
+    if (!requested_version.empty() && key.version != requested_version) {
+      continue;
+    }
+    auto* stats = reply->add_model_stats();
+    if (!key.name.empty()) {
+      stats->set_name(key.name);
+    }
+    if (!key.version.empty()) {
+      stats->set_version(key.version);
+    }
+    stats->set_last_inference(state.last_inference_ms);
+    stats->set_inference_count(state.inference_count);
+    stats->set_execution_count(state.execution_count);
+
+    auto* infer_stats = stats->mutable_inference_stats();
+    fill_stat(infer_stats->mutable_success(), state.inference_stats.success);
+    fill_stat(infer_stats->mutable_fail(), state.inference_stats.fail);
+    fill_stat(infer_stats->mutable_queue(), state.inference_stats.queue);
+    fill_stat(
+        infer_stats->mutable_compute_input(),
+        state.inference_stats.compute_input);
+    fill_stat(
+        infer_stats->mutable_compute_infer(),
+        state.inference_stats.compute_infer);
+    fill_stat(
+        infer_stats->mutable_compute_output(),
+        state.inference_stats.compute_output);
+  }
+
+  return Status::OK;
+}
+
+auto
 InferenceServiceImpl::validate_and_convert_inputs(
     const ModelInferRequest* request, std::vector<torch::Tensor>& inputs,
     std::vector<std::shared_ptr<const void>>* input_lifetimes) -> Status
@@ -1256,6 +1326,7 @@ InferenceServiceImpl::handle_job_failure(
     }
     increment_inference_failure(stage, reason, context.resolved_model_name);
   }
+  record_failure(context.request, context.recv_tp, context.resolved_model_name);
   callback_handle->Invoke(job_status);
   return true;
 }
@@ -1292,6 +1363,8 @@ InferenceServiceImpl::finalize_successful_completion(
       context.request, context.reply, outs, context.recv_ms, breakdown,
       response_options);
   if (!populate_status.ok()) {
+    record_failure(
+        context.request, context.recv_tp, context.resolved_model_name);
     increment_request_status(
         static_cast<int>(populate_status.error_code()),
         context.resolved_model_name);
@@ -1354,6 +1427,8 @@ InferenceServiceImpl::finalize_successful_completion(
     return;
   }
 
+  record_success(
+      context.request, breakdown, context.recv_tp, context.resolved_model_name);
   increment_request_status(
       static_cast<int>(grpc::StatusCode::OK), context.resolved_model_name);
   callback_handle->Invoke(Status::OK);
@@ -1431,14 +1506,17 @@ InferenceServiceImpl::setup_async_cancellation(
     ServerContext* context, std::shared_ptr<void>& call_guard,
     const std::shared_ptr<std::atomic<bool>>& cancel_flag,
     const std::shared_ptr<CallbackHandle>& callback_handle,
-    std::string_view resolved_model_name) -> bool
+    std::string_view resolved_model_name, InferenceServiceImpl* service,
+    const ModelInferRequest* request,
+    MonotonicClock::time_point recv_tp) -> bool
 {
   if (context == nullptr || !call_guard) {
     return false;
   }
 
   auto on_cancel = [context, cancel_flag, callback_handle,
-                    model_name = std::string(resolved_model_name)]() {
+                    model_name = std::string(resolved_model_name), service,
+                    request, recv_tp]() {
     if (!is_context_cancelled(context)) {
       return;
     }
@@ -1448,6 +1526,9 @@ InferenceServiceImpl::setup_async_cancellation(
     const bool invoked = callback_handle->Invoke(
         {grpc::StatusCode::CANCELLED, "Request cancelled"});
     if (invoked) {
+      if (service != nullptr) {
+        service->record_failure(request, recv_tp, model_name);
+      }
       increment_request_status(
           static_cast<int>(grpc::StatusCode::CANCELLED), model_name);
       increment_inference_failure("cancel", "client_cancelled", model_name);
@@ -1474,7 +1555,8 @@ auto
 InferenceServiceImpl::handle_input_validation_failure(
     const Status& status, const std::shared_ptr<std::atomic<bool>>& cancel_flag,
     const std::shared_ptr<CallbackHandle>& callback_handle,
-    std::string_view resolved_model_name) -> bool
+    std::string_view resolved_model_name, const ModelInferRequest* request,
+    MonotonicClock::time_point recv_tp) -> bool
 {
   if (status.ok()) {
     return false;
@@ -1482,6 +1564,7 @@ InferenceServiceImpl::handle_input_validation_failure(
   if (cancel_flag->load(std::memory_order_acquire)) {
     return true;
   }
+  record_failure(request, recv_tp, resolved_model_name);
   increment_request_status(
       static_cast<int>(status.error_code()), resolved_model_name);
   increment_inference_failure(
@@ -1494,7 +1577,8 @@ auto
 InferenceServiceImpl::handle_submit_failure(
     const Status& status, const std::shared_ptr<std::atomic<bool>>& cancel_flag,
     const std::shared_ptr<CallbackHandle>& callback_handle,
-    std::string_view resolved_model_name) -> bool
+    std::string_view resolved_model_name, const ModelInferRequest* request,
+    MonotonicClock::time_point recv_tp) -> bool
 {
   if (status.ok()) {
     return false;
@@ -1502,10 +1586,71 @@ InferenceServiceImpl::handle_submit_failure(
   if (cancel_flag->load(std::memory_order_acquire)) {
     return true;
   }
+  record_failure(request, recv_tp, resolved_model_name);
   increment_request_status(
       static_cast<int>(status.error_code()), resolved_model_name);
   callback_handle->Invoke(status);
   return true;
+}
+
+void
+InferenceServiceImpl::record_success(
+    const ModelInferRequest* request, const LatencyBreakdown& breakdown,
+    MonotonicClock::time_point recv_tp, std::string_view resolved_model_name)
+{
+  if (request == nullptr) {
+    return;
+  }
+  const uint64_t now_ms = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  const uint64_t batch_size = request_batch_size(request, max_batch_size_);
+  const uint64_t total_ns = duration_ms_to_ns(
+      breakdown.overall_ms > 0.0 ? breakdown.overall_ms : breakdown.total_ms);
+  (void)recv_tp;
+
+  ModelStatsKey key{std::string(resolved_model_name), request->model_version()};
+  std::scoped_lock lock(model_stats_mutex_);
+  auto& stats = model_stats_[key];
+  stats.last_inference_ms = now_ms;
+  stats.inference_count += batch_size;
+  stats.execution_count += 1;
+  stats.inference_stats.success.count += 1;
+  stats.inference_stats.success.ns += total_ns;
+  stats.inference_stats.queue.count += 1;
+  stats.inference_stats.queue.ns += duration_ms_to_ns(breakdown.queue_ms);
+  stats.inference_stats.compute_input.count += 1;
+  stats.inference_stats.compute_input.ns +=
+      duration_ms_to_ns(breakdown.preprocess_ms);
+  stats.inference_stats.compute_infer.count += 1;
+  stats.inference_stats.compute_infer.ns +=
+      duration_ms_to_ns(breakdown.inference_ms);
+  stats.inference_stats.compute_output.count += 1;
+  stats.inference_stats.compute_output.ns +=
+      duration_ms_to_ns(breakdown.postprocess_ms);
+}
+
+void
+InferenceServiceImpl::record_failure(
+    const ModelInferRequest* request, MonotonicClock::time_point recv_tp,
+    std::string_view resolved_model_name)
+{
+  if (request == nullptr) {
+    return;
+  }
+  const uint64_t now_ms = static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  const uint64_t total_ns = elapsed_since(recv_tp);
+
+  ModelStatsKey key{std::string(resolved_model_name), request->model_version()};
+  std::scoped_lock lock(model_stats_mutex_);
+  auto& stats = model_stats_[key];
+  stats.last_inference_ms = now_ms;
+  stats.inference_stats.fail.count += 1;
+  stats.inference_stats.fail.ns += total_ns;
 }
 
 void
@@ -1525,22 +1670,23 @@ InferenceServiceImpl::HandleModelInferAsync(
     metrics->counters().requests_total->Increment();
   }
   increment_requests_received(resolved_model_name);
-  if (setup_async_cancellation(
-          context, call_guard, cancel_flag, callback_handle,
-          resolved_model_name)) {
-    return;
-  }
   auto recv_tp = MonotonicClock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch())
                         .count();
+  if (setup_async_cancellation(
+          context, call_guard, cancel_flag, callback_handle,
+          resolved_model_name, this, request, recv_tp)) {
+    return;
+  }
 
   std::vector<torch::Tensor> inputs;
   std::vector<std::shared_ptr<const void>> input_lifetimes;
   Status status =
       validate_and_convert_inputs(request, inputs, &input_lifetimes);
   if (handle_input_validation_failure(
-          status, cancel_flag, callback_handle, resolved_model_name)) {
+          status, cancel_flag, callback_handle, resolved_model_name, request,
+          recv_tp)) {
     return;
   }
 
@@ -1567,7 +1713,8 @@ InferenceServiceImpl::HandleModelInferAsync(
 
   notify_submit_job_async_done(cancel_flag, status);
   if (handle_submit_failure(
-          status, cancel_flag, callback_handle, resolved_model_name)) {
+          status, cancel_flag, callback_handle, resolved_model_name, request,
+          recv_tp)) {
     return;
   }
 }
@@ -1883,6 +2030,51 @@ resolve_tensor_name(
   return std::format("{}{}", fallback_prefix, index);
 }
 
+auto
+request_batch_size(const ModelInferRequest* request, int max_batch_size)
+    -> uint64_t
+{
+  if (request == nullptr || request->inputs_size() == 0 ||
+      max_batch_size <= 0) {
+    return 1U;
+  }
+  const auto& input = request->inputs(0);
+  if (input.shape_size() == 0) {
+    return 1U;
+  }
+  const int64_t batch = input.shape(0);
+  if (batch <= 0) {
+    return 1U;
+  }
+  return static_cast<uint64_t>(batch);
+}
+
+auto
+duration_ms_to_ns(double duration_ms) -> uint64_t
+{
+  if (duration_ms <= 0.0) {
+    return 0U;
+  }
+  constexpr double kNsPerMs = 1'000'000.0;
+  const double ns = duration_ms * kNsPerMs;
+  if (ns >= static_cast<double>(std::numeric_limits<uint64_t>::max())) {
+    return std::numeric_limits<uint64_t>::max();
+  }
+  return static_cast<uint64_t>(ns);
+}
+
+auto
+elapsed_since(const MonotonicClock::time_point start) -> uint64_t
+{
+  const auto now = MonotonicClock::now();
+  const auto elapsed =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(now - start).count();
+  if (elapsed <= 0) {
+    return 0U;
+  }
+  return static_cast<uint64_t>(elapsed);
+}
+
 void
 enable_grpc_health_and_reflection()
 {
@@ -2012,6 +2204,13 @@ AsyncServerContext::start()
           async_service_, completion_queue_.get(), impl_,
           &inference::GRPCInferenceService::AsyncService::RequestModelConfig,
           std::mem_fn(&InferenceServiceImpl::ModelConfig));
+  UnaryCallData<
+      inference::ModelStatisticsRequest, inference::ModelStatisticsResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestModelStatistics,
+          std::mem_fn(&InferenceServiceImpl::ModelStatistics));
   ModelInferCallData::Start(async_service_, completion_queue_.get(), impl_);
 }
 

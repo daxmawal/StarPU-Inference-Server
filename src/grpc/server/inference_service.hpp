@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -14,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "grpc_service.grpc.pb.h"
@@ -81,6 +83,11 @@ class InferenceServiceImpl final
       grpc::ServerContext* context,
       const inference::ModelConfigRequest* request,
       inference::ModelConfigResponse* reply) -> grpc::Status override;
+
+  auto ModelStatistics(
+      grpc::ServerContext* context,
+      const inference::ModelStatisticsRequest* request,
+      inference::ModelStatisticsResponse* reply) -> grpc::Status override;
 
 // Sync wrapper used by in-process tests; async server uses
 // HandleModelInferAsync.
@@ -261,19 +268,25 @@ class InferenceServiceImpl final
       grpc::ServerContext* context, std::shared_ptr<void>& call_guard,
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
       const std::shared_ptr<CallbackHandle>& callback_handle,
-      std::string_view resolved_model_name) -> bool;
+      std::string_view resolved_model_name, InferenceServiceImpl* service,
+      const inference::ModelInferRequest* request,
+      MonotonicClock::time_point recv_tp) -> bool;
 
   static auto handle_input_validation_failure(
       const grpc::Status& status,
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
       const std::shared_ptr<CallbackHandle>& callback_handle,
-      std::string_view resolved_model_name) -> bool;
+      std::string_view resolved_model_name,
+      const inference::ModelInferRequest* request,
+      MonotonicClock::time_point recv_tp) -> bool;
 
   static auto handle_submit_failure(
       const grpc::Status& status,
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
       const std::shared_ptr<CallbackHandle>& callback_handle,
-      std::string_view resolved_model_name) -> bool;
+      std::string_view resolved_model_name,
+      const inference::ModelInferRequest* request,
+      MonotonicClock::time_point recv_tp) -> bool;
 
   static void notify_cancel_flag_created(
       const std::shared_ptr<std::atomic<bool>>& cancel_flag);
@@ -281,6 +294,15 @@ class InferenceServiceImpl final
   static void notify_submit_job_async_done(
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
       const grpc::Status& status);
+
+  void record_success(
+      const inference::ModelInferRequest* request,
+      const LatencyBreakdown& breakdown, MonotonicClock::time_point recv_tp,
+      std::string_view resolved_model_name);
+
+  void record_failure(
+      const inference::ModelInferRequest* request,
+      MonotonicClock::time_point recv_tp, std::string_view resolved_model_name);
 
   [[nodiscard]] auto resolve_model_name(std::string model_name) const
       -> std::string;
@@ -296,6 +318,44 @@ class InferenceServiceImpl final
   std::string default_model_name_;
   std::string server_name_;
   std::string server_version_;
+  struct StatisticDurationState {
+    uint64_t count = 0;
+    uint64_t ns = 0;
+  };
+  struct InferStatisticsState {
+    StatisticDurationState success{};
+    StatisticDurationState fail{};
+    StatisticDurationState queue{};
+    StatisticDurationState compute_input{};
+    StatisticDurationState compute_infer{};
+    StatisticDurationState compute_output{};
+  };
+  struct ModelStatsState {
+    uint64_t last_inference_ms = 0;
+    uint64_t inference_count = 0;
+    uint64_t execution_count = 0;
+    InferStatisticsState inference_stats{};
+  };
+  struct ModelStatsKey {
+    std::string name;
+    std::string version;
+
+    bool operator==(const ModelStatsKey& other) const
+    {
+      return name == other.name && version == other.version;
+    }
+  };
+  struct ModelStatsKeyHash {
+    std::size_t operator()(const ModelStatsKey& key) const noexcept
+    {
+      const std::size_t h1 = std::hash<std::string>{}(key.name);
+      const std::size_t h2 = std::hash<std::string>{}(key.version);
+      return h1 ^ (h2 + 0x9e3779b9U + (h1 << 6U) + (h1 >> 2U));
+    }
+  };
+  mutable std::mutex model_stats_mutex_;
+  std::unordered_map<ModelStatsKey, ModelStatsState, ModelStatsKeyHash>
+      model_stats_;
   std::atomic<int> next_request_id_{0};
 };
 
