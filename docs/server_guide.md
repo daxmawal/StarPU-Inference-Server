@@ -58,6 +58,7 @@ flowchart LR
   Service -. metrics .-> Metrics
   Runner -. metrics .-> Metrics
   Queue -. trace .-> Trace["Batching trace logger<br/>Perfetto + CSV files"]
+  Service -. trace .-> Trace
   Runner -. trace .-> Trace
 ```
 
