@@ -9,6 +9,36 @@ This guide walks through launching the gRPC inference server and crafting the
 YAML configuration files it consumes. It assumes you already followed
 [installation](./installation.md) to install dependencies and build the project.
 
+## Architecture overview
+
+At a high level, the gRPC server validates incoming requests, queues them for
+dynamic batching, and submits batches as StarPU tasks that execute the
+TorchScript model on CPU and/or GPU workers. Metrics and tracing are emitted as
+side channels.
+
+```mermaid
+flowchart LR
+  Client[gRPC client] -->|ModelInfer request| GRPC[gRPC server]
+  GRPC --> Service[InferenceServiceImpl]
+  Service --> Validate[Validate + convert tensors]
+  Validate --> Queue[InferenceQueue]
+  Queue --> Batch[BatchCollector]
+  Batch --> Runner[StarPUTaskRunner]
+  Runner --> StarPU[StarPU runtime]
+  StarPU --> Workers[CPU/GPU workers]
+  Workers --> Model[TorchScript model]
+  Model --> Runner
+  Runner --> Service
+  Service -->|ModelInfer response| GRPC
+  GRPC --> Client
+
+  Config[Model YAML config] --> Service
+  Config --> StarPU
+
+  Service -. metrics .-> Metrics[Prometheus metrics endpoint]
+  Batch -. trace .-> Trace[Batching trace logger]
+```
+
 ## 1. Prepare a model configuration
 
 The server loads exactly one TorchScript model per configuration file. The
