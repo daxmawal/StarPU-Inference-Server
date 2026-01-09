@@ -57,7 +57,7 @@ flowchart LR
   Queue -. metrics .-> Metrics[Prometheus metrics endpoint]
   Service -. metrics .-> Metrics
   Runner -. metrics .-> Metrics
-  Queue -. trace .-> Trace[Batching trace logger (Perfetto/CSV files)]
+  Queue -. trace .-> Trace["Batching trace logger<br/>Perfetto + CSV files"]
   Runner -. trace .-> Trace
 ```
 
