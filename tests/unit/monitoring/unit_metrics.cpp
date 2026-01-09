@@ -123,6 +123,7 @@ AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
   ASSERT_NE(histograms.batch_size, nullptr);
   ASSERT_NE(histograms.logical_batch_size, nullptr);
   ASSERT_NE(families.requests_by_status, nullptr);
+  ASSERT_NE(families.requests_received, nullptr);
   ASSERT_NE(families.inference_completed, nullptr);
   ASSERT_NE(families.inference_failures, nullptr);
   ASSERT_NE(families.model_load_failures, nullptr);
@@ -252,6 +253,7 @@ TEST(Metrics, InitializesPointersAndRegistry)
   EXPECT_TRUE(HasMetric(families, "requests_total"));
   EXPECT_TRUE(HasMetric(families, "requests_rejected_total"));
   EXPECT_TRUE(HasMetric(families, "requests_by_status_total"));
+  EXPECT_TRUE(HasMetric(families, "requests_received_total"));
   EXPECT_TRUE(HasMetric(families, "inference_latency_ms"));
   EXPECT_TRUE(HasMetric(families, "inference_queue_size"));
   EXPECT_TRUE(HasMetric(families, "inference_max_queue_size"));
@@ -453,6 +455,32 @@ TEST(Metrics, IncrementRequestStatusUsesExpectedLabels)
     ASSERT_TRUE(value.has_value());
     EXPECT_DOUBLE_EQ(*value, 1.0);
   }
+}
+
+TEST(Metrics, IncrementRequestsReceivedUsesModelLabel)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  increment_requests_received("model-a");
+  increment_requests_received("model-a");
+  increment_requests_received("model-b");
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+
+  const auto model_a = FindCounterValue(
+      families, "requests_received_total", {{"model", "model-a"}});
+  ASSERT_TRUE(model_a.has_value());
+  EXPECT_DOUBLE_EQ(*model_a, 2.0);
+
+  const auto model_b = FindCounterValue(
+      families, "requests_received_total", {{"model", "model-b"}});
+  ASSERT_TRUE(model_b.has_value());
+  EXPECT_DOUBLE_EQ(*model_b, 1.0);
 }
 
 TEST(MetricsRegistry, EscapesReservedStatusLabels)

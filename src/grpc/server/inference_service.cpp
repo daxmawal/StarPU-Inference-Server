@@ -1391,12 +1391,12 @@ InferenceServiceImpl::HandleModelInferAsync(
   notify_cancel_flag_created(cancel_flag);
   NvtxRange request_scope("grpc_handle_infer_request");
 
+  const auto resolved_model_name = resolve_model_name(request->model_name());
   auto metrics = get_metrics();
   if (metrics && metrics->counters().requests_total != nullptr) {
     metrics->counters().requests_total->Increment();
   }
-
-  const auto resolved_model_name = resolve_model_name(request->model_name());
+  increment_requests_received(resolved_model_name);
   if (setup_async_cancellation(
           context, call_guard, cancel_flag, callback_handle,
           resolved_model_name)) {

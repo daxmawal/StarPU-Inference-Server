@@ -127,6 +127,7 @@ class MetricsRegistry {
     prometheus::Family<prometheus::Gauge>* gpu_temperature{nullptr};
     prometheus::Family<prometheus::Gauge>* gpu_power{nullptr};
     prometheus::Family<prometheus::Counter>* requests_by_status{nullptr};
+    prometheus::Family<prometheus::Counter>* requests_received{nullptr};
     prometheus::Family<prometheus::Counter>* inference_completed{nullptr};
     prometheus::Family<prometheus::Counter>* inference_failures{nullptr};
     prometheus::Family<prometheus::Counter>* model_load_failures{nullptr};
@@ -165,6 +166,7 @@ class MetricsRegistry {
       StatusCodeLabel code_label, ModelLabel model_label);
   void increment_completed_counter(
       std::string_view model_label, std::size_t logical_jobs);
+  void increment_received_counter(std::string_view model_label);
   void increment_failure_counter(
       FailureStageLabel stage_label, FailureReasonLabel reason_label,
       ModelLabel model_label, std::size_t count);
@@ -503,6 +505,8 @@ class MetricsRegistry {
 
   struct ModelMetricsCache {
     std::unordered_map<ModelKey, prometheus::Counter*, ModelKeyHash>
+        requests_received;
+    std::unordered_map<ModelKey, prometheus::Counter*, ModelKeyHash>
         inference_completed;
     std::unordered_map<FailureKey, prometheus::Counter*, FailureKeyHash>
         inference_failures;
@@ -578,6 +582,7 @@ void set_server_health(bool ready);
 void set_starpu_prepared_queue_depth(std::size_t depth);
 void set_batch_pending_jobs(std::size_t pending);
 void increment_request_status(int status_code, std::string_view model_name);
+void increment_requests_received(std::string_view model_name);
 void increment_inference_completed(
     std::string_view model_name, std::size_t logical_jobs);
 void increment_inference_failure(
