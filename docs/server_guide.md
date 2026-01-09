@@ -11,32 +11,47 @@ YAML configuration files it consumes. It assumes you already followed
 
 ## Architecture overview
 
-At a high level, the gRPC server validates incoming requests, queues them for
-dynamic batching, and submits batches as StarPU tasks that execute the
-TorchScript model on CPU and/or GPU workers. Metrics and tracing are emitted as
-side channels.
+At a high level, the async gRPC server receives requests on CompletionQueue
+threads, validates and converts tensors, and enqueues jobs for batching (which
+can pass through when `dynamic_batching` is disabled). The StarPU task runner
+uses slot pools to stage inputs/outputs, submits tasks to StarPU CPU/GPU
+workers, and a result dispatcher returns responses. Metrics and trace events are
+emitted from the queue and runner and exposed through the Prometheus endpoint.
 
 ```mermaid
 flowchart LR
-  Client[gRPC client] -->|ModelInfer request| GRPC[gRPC server]
-  GRPC --> Service[InferenceServiceImpl]
+  Client[gRPC client] -->|ModelInfer request| GRPC[gRPC async server]
+  GRPC --> CQ[CompletionQueue threads]
+  CQ --> Service[InferenceServiceImpl]
   Service --> Validate[Validate + convert tensors]
   Validate --> Queue[InferenceQueue]
-  Queue --> Batch[BatchCollector]
-  Batch --> Runner[StarPUTaskRunner]
-  Runner --> StarPU[StarPU runtime]
+
+  Queue --> Batch[BatchCollector (pass-through when dynamic_batching=false)]
+  Batch --> Prepared[Prepared batch queue]
+  Prepared --> Runner[StarPUTaskRunner]
+
+  Runner --> SlotMgr[SlotManager]
+  SlotMgr --> Pools[Input/Output slot pools]
+  Pools --> StarPU[StarPU runtime]
+  Runner --> StarPU
   StarPU --> Workers[CPU/GPU workers]
   Workers --> Model[TorchScript model]
   Model --> Runner
-  Runner --> Service
+
+  Runner --> Dispatcher[ResultDispatcher]
+  Dispatcher --> Service
   Service -->|ModelInfer response| GRPC
   GRPC --> Client
 
-  Config[Model YAML config] --> Service
+  Config[Model YAML config] --> GRPC
+  Config --> Service
   Config --> StarPU
+  Config --> Pools
 
-  Service -. metrics .-> Metrics[Prometheus metrics endpoint]
-  Batch -. trace .-> Trace[Batching trace logger]
+  Queue -. metrics .-> Metrics[Prometheus metrics endpoint]
+  Runner -. metrics .-> Metrics
+  Queue -. trace .-> Trace[Batching trace logger]
+  Runner -. trace .-> Trace
 ```
 
 ## 1. Prepare a model configuration
