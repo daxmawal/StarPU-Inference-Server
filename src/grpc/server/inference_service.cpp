@@ -1,5 +1,7 @@
 #include "inference_service.hpp"
 
+#include <grpcpp/health_check_service_interface.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -20,6 +22,9 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#if defined(STARPU_ENABLE_GRPC_REFLECTION)
+#include <grpcpp/ext/proto_server_reflection_plugin.h>
+#endif
 
 #include "core/inference_runner.hpp"
 #include "monitoring/metrics.hpp"
@@ -1713,6 +1718,35 @@ compute_thread_count() -> std::size_t
   return compute_thread_count_from(std::thread::hardware_concurrency());
 }
 
+namespace {
+
+void
+enable_grpc_health_and_reflection()
+{
+  static std::once_flag init_flag;
+  std::call_once(init_flag, []() {
+    grpc::EnableDefaultHealthCheckService(true);
+#if defined(STARPU_ENABLE_GRPC_REFLECTION)
+    grpc::reflection::InitProtoReflectionServerBuilderPlugin();
+#endif
+  });
+}
+
+void
+set_grpc_health_status(Server* server, bool serving)
+{
+  if (server == nullptr) {
+    return;
+  }
+  auto* health_service = server->GetHealthCheckService();
+  if (health_service == nullptr) {
+    return;
+  }
+  health_service->SetServingStatus(serving);
+}
+
+}  // namespace
+
 void
 run_grpc_server_impl(
     InferenceServiceImpl& service, const GrpcServerOptions& options,
@@ -1720,6 +1754,8 @@ run_grpc_server_impl(
 {
   inference::GRPCInferenceService::AsyncService async_service;
   AsyncServerContext async_context(async_service, service);
+
+  enable_grpc_health_and_reflection();
 
   ServerBuilder builder;
   builder.AddListeningPort(options.address, grpc::InsecureServerCredentials());
@@ -1740,12 +1776,14 @@ run_grpc_server_impl(
     return;
   }
   set_server_health(true);
+  set_grpc_health_status(server.get(), true);
   async_context.start();
   log_info(
       options.verbosity,
       std::format("Server listening on {}", options.address));
   server->Wait();
   set_server_health(false);
+  set_grpc_health_status(server.get(), false);
   async_context.shutdown();
   server.reset();
 }
@@ -1866,6 +1904,7 @@ void
 StopServer(Server* server)
 {
   if (server != nullptr) {
+    set_grpc_health_status(server, false);
     server->Shutdown();
   }
 }
