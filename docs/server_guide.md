@@ -15,8 +15,11 @@ At a high level, the async gRPC server receives requests on CompletionQueue
 threads, validates and converts tensors, and enqueues jobs for batching (which
 can pass through when `dynamic_batching` is disabled). The StarPU task runner
 uses slot pools to stage inputs/outputs, submits tasks to StarPU CPU/GPU
-workers, and a result dispatcher returns responses. Metrics and trace events are
-emitted from the queue and runner and exposed through the Prometheus endpoint.
+workers, and a result dispatcher returns responses. During startup the server
+loads the model, initializes StarPU, runs warmup, and only then starts serving.
+Metrics are emitted by the gRPC service, queue, and runner and exposed through
+the Prometheus endpoint. Batching traces are written by the trace logger to
+Perfetto JSON + CSV files.
 
 ```mermaid
 flowchart LR
@@ -45,12 +48,16 @@ flowchart LR
 
   Config[Model YAML config] --> GRPC
   Config --> Service
+  Config --> Queue
+  Config --> Batch
   Config --> StarPU
   Config --> Pools
+  Config --> Metrics
 
   Queue -. metrics .-> Metrics[Prometheus metrics endpoint]
+  Service -. metrics .-> Metrics
   Runner -. metrics .-> Metrics
-  Queue -. trace .-> Trace[Batching trace logger]
+  Queue -. trace .-> Trace[Batching trace logger (Perfetto/CSV files)]
   Runner -. trace .-> Trace
 ```
 
