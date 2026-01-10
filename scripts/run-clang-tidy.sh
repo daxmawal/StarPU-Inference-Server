@@ -92,13 +92,8 @@ cleanup_clang_tidy_config() {
   return 0
 }
 
-trap cleanup_clang_tidy_config EXIT INT TERM
-
-if [[ -f "$CLANG_TIDY_CONFIG" ]]; then
-  cp "$CLANG_TIDY_CONFIG" "$CLANG_TIDY_CONFIG.bak"
-fi
-
-cat > "$CLANG_TIDY_CONFIG" << EOF
+write_clang_tidy_config() {
+  cat > "$CLANG_TIDY_CONFIG" << EOF
 ---
 Checks: "performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*,clang-diagnostic-unused-includes"
 HeaderFilterRegex: "$HEADER_FILTER"
@@ -115,6 +110,15 @@ ExtraArgs:
   - "-I$LIBTORCH_DIR/include/torch/csrc/api/include"
   - "-I$GRPC_DIR/include"
 EOF
+}
+
+trap cleanup_clang_tidy_config EXIT INT TERM
+
+if [[ -f "$CLANG_TIDY_CONFIG" ]]; then
+  cp "$CLANG_TIDY_CONFIG" "$CLANG_TIDY_CONFIG.bak"
+fi
+
+write_clang_tidy_config
 
 CLANG_TIDY_ARGS=(
   -p "$BUILD_DIR"
@@ -143,6 +147,9 @@ else
 fi
 
 for file in $FILES; do
+  if [[ ! -f "$CLANG_TIDY_CONFIG" ]]; then
+    write_clang_tidy_config
+  fi
   echo "====> Analyzing $file"
   clang-tidy "$file" "${CLANG_TIDY_ARGS[@]}"
   echo

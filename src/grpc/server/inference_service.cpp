@@ -50,6 +50,11 @@ using inference::ServerReadyResponse;
 
 namespace {
 
+struct NormalizeNamesOptions {
+  std::string_view fallback_prefix;
+  std::string_view kind;
+};
+
 auto
 status_reason(const Status& status) -> std::string
 {
@@ -59,8 +64,7 @@ status_reason(const Status& status) -> std::string
 auto
 normalize_names(
     std::vector<std::string> names, std::size_t expected_size,
-    std::string_view fallback_prefix,
-    std::string_view kind) -> std::vector<std::string>
+    NormalizeNamesOptions options) -> std::vector<std::string>
 {
   if (names.empty()) {
     return names;
@@ -76,13 +80,13 @@ normalize_names(
     log_warning(std::format(
         "Configured {} names count ({}) does not match expected count ({}); "
         "ignoring names.",
-        kind, names.size(), expected_size));
+        options.kind, names.size(), expected_size));
     return {};
   }
 
   for (std::size_t i = 0; i < names.size(); ++i) {
     if (names[i].empty()) {
-      names[i] = std::format("{}{}", fallback_prefix, i);
+      names[i] = std::format("{}{}", options.fallback_prefix, i);
     }
   }
 
@@ -170,11 +174,12 @@ duration_ms_to_ns(double duration_ms) -> uint64_t
     return 0U;
   }
   constexpr double kNsPerMs = 1'000'000.0;
-  const double ns = duration_ms * kNsPerMs;
-  if (ns >= static_cast<double>(std::numeric_limits<uint64_t>::max())) {
+  const double duration_ns = duration_ms * kNsPerMs;
+  if (duration_ns >=
+      static_cast<double>(std::numeric_limits<uint64_t>::max())) {
     return std::numeric_limits<uint64_t>::max();
   }
-  return static_cast<uint64_t>(ns);
+  return static_cast<uint64_t>(duration_ns);
 }
 
 auto
@@ -525,8 +530,8 @@ build_expected_index_by_name(
           grpc::StatusCode::INVALID_ARGUMENT,
           std::format("Configured input name missing at index {}", i)};
     }
-    const auto [it, inserted] = expected_index_by_name.try_emplace(name, i);
-    if (!inserted) {
+    const auto insert_result = expected_index_by_name.try_emplace(name, i);
+    if (!insert_result.second) {
       return {
           grpc::StatusCode::INVALID_ARGUMENT,
           std::format("Configured input name '{}' is duplicated", name)};
@@ -546,13 +551,13 @@ resolve_expected_index(
   if (expected_index_by_name == nullptr) {
     return Status::OK;
   }
-  const auto it = expected_index_by_name->find(input.name());
-  if (it == expected_index_by_name->end()) {
+  const auto name_iter = expected_index_by_name->find(input.name());
+  if (name_iter == expected_index_by_name->end()) {
     return {
         grpc::StatusCode::INVALID_ARGUMENT,
         std::format("Unexpected input tensor name '{}'", input.name())};
   }
-  expected_index = it->second;
+  expected_index = name_iter->second;
   if (filled[expected_index]) {
     return {
         grpc::StatusCode::INVALID_ARGUMENT,
@@ -564,12 +569,12 @@ resolve_expected_index(
 struct ProcessInputContext {
   const std::unordered_map<std::string_view, std::size_t>*
       expected_index_by_name;
-  const std::vector<at::ScalarType>& expected_input_types;
-  const std::vector<std::vector<int64_t>>& expected_input_dims;
+  const std::vector<at::ScalarType>* expected_input_types;
+  const std::vector<std::vector<int64_t>>* expected_input_dims;
   int max_batch_size;
-  std::vector<torch::Tensor>& ordered_inputs;
+  std::vector<torch::Tensor>* ordered_inputs;
   std::vector<std::shared_ptr<const void>>* ordered_lifetimes;
-  std::vector<bool>& filled;
+  std::vector<bool>* filled;
 };
 
 auto
@@ -583,7 +588,7 @@ process_input(
 
   std::size_t expected_index = 0;
   Status status = resolve_expected_index(
-      input, input_index, context.expected_index_by_name, context.filled,
+      input, input_index, context.expected_index_by_name, *context.filled,
       expected_index);
   if (!status.ok()) {
     return status;
@@ -591,7 +596,7 @@ process_input(
 
   at::ScalarType dtype = at::kFloat;
   status = parse_input_dtype(
-      input, context.expected_input_types[expected_index], dtype);
+      input, (*context.expected_input_types)[expected_index], dtype);
   if (!status.ok()) {
     return status;
   }
@@ -605,8 +610,8 @@ process_input(
     return status;
   }
 
-  if (expected_index < context.expected_input_dims.size()) {
-    const auto& expected_dims = context.expected_input_dims[expected_index];
+  if (expected_index < context.expected_input_dims->size()) {
+    const auto& expected_dims = (*context.expected_input_dims)[expected_index];
     const bool batching_allowed = (context.max_batch_size > 0);
     status = validate_configured_shape(
         shape, expected_dims, batching_allowed, context.max_batch_size);
@@ -615,11 +620,11 @@ process_input(
     }
   }
 
-  context.ordered_inputs[expected_index] = std::move(tensor);
+  (*context.ordered_inputs)[expected_index] = std::move(tensor);
   if (context.ordered_lifetimes != nullptr) {
     (*context.ordered_lifetimes)[expected_index] = std::move(tensor_guard);
   }
-  context.filled[expected_index] = true;
+  (*context.filled)[expected_index] = true;
   return Status::OK;
 }
 
@@ -629,8 +634,7 @@ fill_output_tensor(
     std::span<const std::size_t> output_indices,
     std::span<const std::string> output_names) -> Status
 {
-  for (std::size_t pos = 0; pos < output_indices.size(); ++pos) {
-    const std::size_t output_index = output_indices[pos];
+  for (const std::size_t output_index : output_indices) {
     if (output_index >= outputs.size()) {
       return {
           grpc::StatusCode::INVALID_ARGUMENT,
@@ -745,12 +749,13 @@ InferenceServiceImpl::InferenceServiceImpl(
       server_version_(std::move(server_version))
 {
   expected_input_names_ = normalize_names(
-      std::move(expected_input_names), expected_input_types_.size(), "input",
-      "input");
+      std::move(expected_input_names), expected_input_types_.size(),
+      NormalizeNamesOptions{"input", "input"});
   const std::size_t output_count =
       reference_outputs_ != nullptr ? reference_outputs_->size() : 0U;
   expected_output_names_ = normalize_names(
-      std::move(expected_output_names), output_count, "output", "output");
+      std::move(expected_output_names), output_count,
+      NormalizeNamesOptions{"output", "output"});
 }
 
 InferenceServiceImpl::InferenceServiceImpl(
@@ -1023,12 +1028,12 @@ InferenceServiceImpl::validate_and_convert_inputs(
   std::vector<bool> filled(expected_count, false);
   const ProcessInputContext process_context{
       use_name_mapping ? &expected_index_by_name : nullptr,
-      expected_input_types_,
-      expected_input_dims_,
+      &expected_input_types_,
+      &expected_input_dims_,
       max_batch_size_,
-      ordered_inputs,
+      &ordered_inputs,
       input_lifetimes != nullptr ? &ordered_lifetimes : nullptr,
-      filled};
+      &filled};
 
   for (int i = 0; i < request->inputs_size(); ++i) {
     Status status = process_input(request, i, process_context);
@@ -1239,7 +1244,8 @@ InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
     std::string_view kind) -> std::vector<std::string>
 {
   return normalize_names(
-      std::move(names), expected_size, fallback_prefix, kind);
+      std::move(names), expected_size,
+      NormalizeNamesOptions{fallback_prefix, kind});
 }
 
 void
@@ -1817,6 +1823,16 @@ auto
 InferenceServiceImpl::populate_response(
     const ModelInferRequest* request, ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
+    const LatencyBreakdown& breakdown) -> Status
+{
+  return populate_response(
+      request, reply, outputs, recv_ms, breakdown, PopulateResponseOptions{});
+}
+
+auto
+InferenceServiceImpl::populate_response(
+    const ModelInferRequest* request, ModelInferResponse* reply,
+    const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
     const LatencyBreakdown& breakdown,
     PopulateResponseOptions options) -> Status
 {
@@ -1848,9 +1864,9 @@ InferenceServiceImpl::populate_response(
     std::unordered_map<std::string_view, std::size_t> index_by_name;
     index_by_name.reserve(resolved_names.size());
     for (std::size_t i = 0; i < resolved_names.size(); ++i) {
-      const auto [it, inserted] =
+      const auto insert_result =
           index_by_name.try_emplace(resolved_names[i], i);
-      if (!inserted) {
+      if (!insert_result.second) {
         return {
             grpc::StatusCode::INVALID_ARGUMENT,
             std::format(
@@ -1867,20 +1883,20 @@ InferenceServiceImpl::populate_response(
             grpc::StatusCode::INVALID_ARGUMENT,
             "Requested output name must be non-empty"};
       }
-      const auto it = index_by_name.find(requested.name());
-      if (it == index_by_name.end()) {
+      const auto name_iter = index_by_name.find(requested.name());
+      if (name_iter == index_by_name.end()) {
         return {
             grpc::StatusCode::INVALID_ARGUMENT,
             std::format(
                 "Requested output '{}' is not available", requested.name())};
       }
-      if (!seen.insert(it->first).second) {
+      if (!seen.insert(name_iter->first).second) {
         return {
             grpc::StatusCode::INVALID_ARGUMENT,
             std::format(
                 "Requested output '{}' is duplicated", requested.name())};
       }
-      output_indices.push_back(it->second);
+      output_indices.push_back(name_iter->second);
     }
   } else {
     output_indices.reserve(outputs.size());

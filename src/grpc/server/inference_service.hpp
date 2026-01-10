@@ -115,8 +115,6 @@ class InferenceServiceImpl final
     std::string_view model_name_override;
     bool set_prepost_overall = true;
     std::span<const std::string> output_names;
-
-    PopulateResponseOptions() {}
   };
 
   struct AsyncFailureInfo {
@@ -179,8 +177,13 @@ class InferenceServiceImpl final
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
       const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
+      const LatencyBreakdown& breakdown) -> grpc::Status;
+  static auto populate_response(
+      const inference::ModelInferRequest* request,
+      inference::ModelInferResponse* reply,
+      const std::vector<torch::Tensor>& outputs, int64_t recv_ms,
       const LatencyBreakdown& breakdown,
-      PopulateResponseOptions options = {}) -> grpc::Status;
+      PopulateResponseOptions options) -> grpc::Status;
 
   using AsyncJobCallback = std::function<void(
       grpc::Status, std::vector<torch::Tensor>, LatencyBreakdown,
@@ -341,17 +344,22 @@ class InferenceServiceImpl final
     std::string name;
     std::string version;
 
-    bool operator==(const ModelStatsKey& other) const
+    auto operator==(const ModelStatsKey& other) const -> bool
     {
       return name == other.name && version == other.version;
     }
   };
   struct ModelStatsKeyHash {
-    std::size_t operator()(const ModelStatsKey& key) const noexcept
+    auto operator()(const ModelStatsKey& key) const noexcept -> std::size_t
     {
-      const std::size_t h1 = std::hash<std::string>{}(key.name);
-      const std::size_t h2 = std::hash<std::string>{}(key.version);
-      return h1 ^ (h2 + 0x9e3779b9U + (h1 << 6U) + (h1 >> 2U));
+      constexpr std::size_t kHashCombineMagic = 0x9e3779b9U;
+      constexpr unsigned kHashCombineLeftShift = 6U;
+      constexpr unsigned kHashCombineRightShift = 2U;
+      const std::size_t name_hash = std::hash<std::string>{}(key.name);
+      const std::size_t version_hash = std::hash<std::string>{}(key.version);
+      return name_hash ^ (version_hash + kHashCombineMagic +
+                          (name_hash << kHashCombineLeftShift) +
+                          (name_hash >> kHashCombineRightShift));
     }
   };
   mutable std::mutex model_stats_mutex_;

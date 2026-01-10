@@ -654,7 +654,7 @@ run_codelet_inference(
     bool armed{false};
 
     WorkerInflightGuard(
-        int worker_id, int device_id, std::string_view worker_type_label,
+        int worker_id, std::string_view worker_type_label, int device_id,
         bool armed_flag)
         : worker(worker_id), device(device_id), worker_type(worker_type_label),
           armed(armed_flag)
@@ -674,7 +674,7 @@ run_codelet_inference(
     }
   };
   WorkerInflightGuard inflight_guard{
-      worker_id, device_id, worker_type_label, /*armed_flag=*/false};
+      worker_id, worker_type_label, device_id, /*armed_flag=*/false};
   set_worker_inflight_gauge(worker_id, device_id, worker_type_label, 1);
   inflight_guard.armed = true;
 
