@@ -167,6 +167,16 @@ class InferenceServiceImpl final
         const inference::ModelInferRequest* request,
         const LatencyBreakdown& breakdown, MonotonicClock::time_point recv_tp,
         std::string_view resolved_model_name);
+    static void RecordFailureForTest(
+        InferenceServiceImpl* service,
+        const inference::ModelInferRequest* request,
+        MonotonicClock::time_point recv_tp,
+        std::string_view resolved_model_name);
+    static auto ScalarTypeToModelDtypeForTest(at::ScalarType type)
+        -> inference::DataType;
+    static auto ResolveTensorNameForTest(
+        std::size_t index, std::span<const std::string> names,
+        std::string_view fallback_prefix) -> std::string;
     static auto IsContextCancelledForTest(grpc::ServerContext* context) -> bool;
     static auto FillOutputTensorForTest(
         inference::ModelInferResponse* reply,

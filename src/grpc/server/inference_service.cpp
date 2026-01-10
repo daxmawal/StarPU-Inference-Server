@@ -1331,6 +1331,29 @@ InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
   service->record_success(request, breakdown, recv_tp, resolved_model_name);
 }
 
+void
+InferenceServiceImpl::TestAccessor::RecordFailureForTest(
+    InferenceServiceImpl* service, const ModelInferRequest* request,
+    MonotonicClock::time_point recv_tp, std::string_view resolved_model_name)
+{
+  service->record_failure(request, recv_tp, resolved_model_name);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::ScalarTypeToModelDtypeForTest(
+    at::ScalarType type) -> inference::DataType
+{
+  return scalar_type_to_model_dtype(type);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::ResolveTensorNameForTest(
+    std::size_t index, std::span<const std::string> names,
+    std::string_view fallback_prefix) -> std::string
+{
+  return resolve_tensor_name(index, names, fallback_prefix);
+}
+
 auto
 InferenceServiceImpl::TestAccessor::IsContextCancelledForTest(
     grpc::ServerContext* context) -> bool
