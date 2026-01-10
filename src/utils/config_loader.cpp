@@ -50,8 +50,8 @@ config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
 // GCOVR_EXCL_STOP
 
 auto parse_tensor_nodes(
-    const YAML::Node& nodes, std::size_t max_inputs, std::size_t max_dims,
-    std::string_view label) -> std::vector<TensorConfig>;
+    const YAML::Node& nodes, std::size_t max_inputs, std::string_view label,
+    std::size_t max_dims) -> std::vector<TensorConfig>;
 
 auto
 make_indexed_path(std::string_view base, std::size_t index) -> std::string
@@ -385,12 +385,12 @@ parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   if (root["inputs"]) {
     auto& model = ensure_model(cfg);
     model.inputs = parse_tensor_nodes(
-        root["inputs"], cfg.limits.max_inputs, cfg.limits.max_dims, "inputs");
+        root["inputs"], cfg.limits.max_inputs, "inputs", cfg.limits.max_dims);
   }
   if (root["outputs"]) {
     auto& model = ensure_model(cfg);
     model.outputs = parse_tensor_nodes(
-        root["outputs"], cfg.limits.max_inputs, cfg.limits.max_dims, "outputs");
+        root["outputs"], cfg.limits.max_inputs, "outputs", cfg.limits.max_dims);
   }
 }
 
@@ -547,8 +547,8 @@ parse_tensor_name(
 
 auto
 parse_tensor_dims(
-    const YAML::Node& node, std::size_t index, std::size_t max_dims,
-    std::string_view label) -> std::vector<int64_t>
+    const YAML::Node& node, std::size_t index, std::string_view label,
+    std::size_t max_dims) -> std::vector<int64_t>
 {
   const YAML::Node dims_node = node["dims"];
   const auto dims_path = make_indexed_field_path(label, index, "dims");
@@ -610,8 +610,8 @@ parse_tensor_type(
 
 auto
 parse_tensor_entry(
-    const YAML::Node& node, std::size_t index, std::size_t max_dims,
-    std::string_view label) -> TensorConfig
+    const YAML::Node& node, std::size_t index, std::string_view label,
+    std::size_t max_dims) -> TensorConfig
 {
   const auto entry_path = make_indexed_path(label, index);
   if (!node.IsMap()) {
@@ -621,15 +621,15 @@ parse_tensor_entry(
 
   TensorConfig tensor_config{};
   parse_tensor_name(node, index, label, tensor_config);
-  tensor_config.dims = parse_tensor_dims(node, index, max_dims, label);
+  tensor_config.dims = parse_tensor_dims(node, index, label, max_dims);
   tensor_config.type = parse_tensor_type(node, index, label);
   return tensor_config;
 }
 
 auto
 parse_tensor_nodes(
-    const YAML::Node& nodes, std::size_t max_inputs, std::size_t max_dims,
-    std::string_view label) -> std::vector<TensorConfig>
+    const YAML::Node& nodes, std::size_t max_inputs, std::string_view label,
+    std::size_t max_dims) -> std::vector<TensorConfig>
 {
   std::vector<TensorConfig> tensors;
   if (!nodes) {
@@ -646,7 +646,7 @@ parse_tensor_nodes(
       oss << label << " must have at most " << max_inputs << " entries";
       throw std::invalid_argument(oss.str());
     }
-    tensors.push_back(parse_tensor_entry(node, i, max_dims, label));
+    tensors.push_back(parse_tensor_entry(node, i, label, max_dims));
   }
   return tensors;
 }
