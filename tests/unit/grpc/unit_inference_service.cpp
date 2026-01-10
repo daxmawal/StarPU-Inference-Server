@@ -79,6 +79,20 @@ struct HandleAsyncInferCompletionHooksGuard {
         ClearHandleAsyncInferCompletionTestHooks();
   }
 };
+
+struct ModelStatisticsNullTargetGuard {
+  explicit ModelStatisticsNullTargetGuard(bool enable = true)
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        SetModelStatisticsForceNullTargetForTest(enable);
+  }
+
+  ~ModelStatisticsNullTargetGuard()
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        SetModelStatisticsForceNullTargetForTest(false);
+  }
+};
 }  // namespace
 
 class MetricsInferenceServiceTest : public InferenceServiceTest {
@@ -306,6 +320,43 @@ TEST_F(InferenceServiceTest, ModelMetadataUsesRequestNameWhenNoDefaultModel)
   EXPECT_EQ(reply.outputs_size(), 0);
 }
 
+TEST(InferenceServiceImpl, ModelMetadataRejectsUnsupportedInputDatatype)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kComplexFloat}, "server_model");
+
+  grpc::ServerContext ctx;
+  inference::ModelMetadataRequest req;
+  req.set_name("server_model");
+  inference::ModelMetadataResponse reply;
+
+  auto status = service.ModelMetadata(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Unsupported at::ScalarType");
+}
+
+TEST(InferenceServiceImpl, ModelMetadataRejectsUnsupportedOutputDatatype)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kComplexFloat))};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat}, "server_model");
+
+  grpc::ServerContext ctx;
+  inference::ModelMetadataRequest req;
+  req.set_name("server_model");
+  inference::ModelMetadataResponse reply;
+
+  auto status = service.ModelMetadata(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Unsupported at::ScalarType");
+}
+
 TEST(InferenceServiceImpl, ModelConfigPopulatesConfig)
 {
   starpu_server::InferenceQueue queue;
@@ -392,6 +443,139 @@ TEST(InferenceServiceImpl, ModelConfigRejectsUnsupportedInputDatatype)
   EXPECT_EQ(status.error_message(), "Unsupported input datatype");
 }
 
+TEST(InferenceServiceImpl, ModelConfigRejectsUnsupportedOutputDatatype)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kComplexFloat))};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelConfigRequest req;
+  inference::ModelConfigResponse reply;
+
+  auto status = service.ModelConfig(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Unsupported output datatype");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsRejectsNullRequest)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsResponse reply;
+
+  auto status = service.ModelStatistics(&ctx, nullptr, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Invalid request");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsRejectsNullReply)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsRequest req;
+
+  auto status = service.ModelStatistics(&ctx, &req, nullptr);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Invalid request");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsSkipsMismatchedName)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+
+  auto request_a = starpu_server::make_model_request("model_a", "v1");
+  auto request_b = starpu_server::make_model_request("model_b", "v1");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request_a, breakdown, starpu_server::MonotonicClock::now(),
+      "model_a");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request_b, breakdown, starpu_server::MonotonicClock::now(),
+      "model_b");
+
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsRequest req;
+  req.set_name("model_a");
+  inference::ModelStatisticsResponse reply;
+
+  auto status = service.ModelStatistics(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(reply.model_stats_size(), 1);
+  EXPECT_EQ(reply.model_stats(0).name(), "model_a");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsSkipsMismatchedVersion)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+
+  auto request_v1 = starpu_server::make_model_request("model_a", "v1");
+  auto request_v2 = starpu_server::make_model_request("model_a", "v2");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request_v1, breakdown, starpu_server::MonotonicClock::now(),
+      "model_a");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request_v2, breakdown, starpu_server::MonotonicClock::now(),
+      "model_a");
+
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsRequest req;
+  req.set_name("model_a");
+  req.set_version("v1");
+  inference::ModelStatisticsResponse reply;
+
+  auto status = service.ModelStatistics(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(reply.model_stats_size(), 1);
+  EXPECT_EQ(reply.model_stats(0).version(), "v1");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsHandlesNullStatisticTarget)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+  auto request = starpu_server::make_model_request("model_a", "v1");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request, breakdown, starpu_server::MonotonicClock::now(),
+      "model_a");
+
+  ModelStatisticsNullTargetGuard guard;
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsRequest req;
+  req.set_name("model_a");
+  inference::ModelStatisticsResponse reply;
+
+  auto status = service.ModelStatistics(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(reply.model_stats_size(), 1);
+}
+
 TEST(InferenceServiceImpl, RequestBatchSizeHandlesEmptyShape)
 {
   inference::ModelInferRequest req;
@@ -428,6 +612,28 @@ TEST(InferenceServiceImpl, RequestBatchSizeReturnsBatch)
       starpu_server::InferenceServiceImpl::TestAccessor::
           RequestBatchSizeForTest(&req, 4),
       3U);
+}
+
+TEST(InferenceServiceImpl, DurationMsToNsSaturatesToMax)
+{
+  const double duration_ms =
+      static_cast<double>(std::numeric_limits<uint64_t>::max());
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::DurationMsToNsForTest(
+          duration_ms),
+      std::numeric_limits<uint64_t>::max());
+}
+
+TEST(InferenceServiceImpl, ElapsedSinceReturnsZeroForFutureStart)
+{
+  const auto future_start =
+      starpu_server::MonotonicClock::now() + std::chrono::seconds(1);
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::ElapsedSinceForTest(
+          future_start),
+      0U);
 }
 
 TEST_F(InferenceServiceTest, ValidateInputsSuccess)

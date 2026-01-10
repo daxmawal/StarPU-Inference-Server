@@ -253,6 +253,10 @@ class RpcDoneTag final : public AsyncCallDataBase,
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+struct ModelStatisticsTestHooks {
+  bool force_null_stat_target = false;
+};
+
 auto
 handle_model_infer_async_test_hooks()
     -> InferenceServiceImpl::HandleModelInferAsyncTestHooks&
@@ -266,6 +270,13 @@ handle_async_infer_completion_test_hooks()
     -> InferenceServiceImpl::HandleAsyncInferCompletionTestHooks&
 {
   static InferenceServiceImpl::HandleAsyncInferCompletionTestHooks hooks{};
+  return hooks;
+}
+
+auto
+model_statistics_test_hooks() -> ModelStatisticsTestHooks&
+{
+  static ModelStatisticsTestHooks hooks{};
   return hooks;
 }
 #endif  // SONAR_IGNORE_END
@@ -974,6 +985,11 @@ InferenceServiceImpl::ModelStatistics(
     stats->set_execution_count(state.execution_count);
 
     auto* infer_stats = stats->mutable_inference_stats();
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (model_statistics_test_hooks().force_null_stat_target) {
+      fill_stat(nullptr, state.inference_stats.success);
+    }
+#endif  // SONAR_IGNORE_END
     fill_stat(infer_stats->mutable_success(), state.inference_stats.success);
     fill_stat(infer_stats->mutable_fail(), state.inference_stats.fail);
     fill_stat(infer_stats->mutable_queue(), state.inference_stats.queue);
@@ -1359,6 +1375,27 @@ InferenceServiceImpl::TestAccessor::RequestBatchSizeForTest(
     const ModelInferRequest* request, int max_batch_size) -> uint64_t
 {
   return request_batch_size(request, max_batch_size);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::DurationMsToNsForTest(double duration_ms)
+    -> uint64_t
+{
+  return duration_ms_to_ns(duration_ms);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::ElapsedSinceForTest(
+    MonotonicClock::time_point start) -> uint64_t
+{
+  return elapsed_since(start);
+}
+
+void
+InferenceServiceImpl::TestAccessor::SetModelStatisticsForceNullTargetForTest(
+    bool enable)
+{
+  model_statistics_test_hooks().force_null_stat_target = enable;
 }
 
 auto

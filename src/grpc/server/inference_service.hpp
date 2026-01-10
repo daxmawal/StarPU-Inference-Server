@@ -180,6 +180,10 @@ class InferenceServiceImpl final
     static auto RequestBatchSizeForTest(
         const inference::ModelInferRequest* request,
         int max_batch_size) -> uint64_t;
+    static auto DurationMsToNsForTest(double duration_ms) -> uint64_t;
+    static auto ElapsedSinceForTest(MonotonicClock::time_point start)
+        -> uint64_t;
+    static void SetModelStatisticsForceNullTargetForTest(bool enable);
     static auto IsContextCancelledForTest(grpc::ServerContext* context) -> bool;
     static auto FillOutputTensorForTest(
         inference::ModelInferResponse* reply,
