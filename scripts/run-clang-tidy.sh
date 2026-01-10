@@ -110,6 +110,7 @@ ExtraArgs:
   - "-I$LIBTORCH_DIR/include/torch/csrc/api/include"
   - "-I$GRPC_DIR/include"
 EOF
+  return 0
 }
 
 trap cleanup_clang_tidy_config EXIT INT TERM
