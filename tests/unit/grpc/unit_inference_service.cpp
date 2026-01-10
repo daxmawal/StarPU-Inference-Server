@@ -894,6 +894,27 @@ TEST(InferenceServiceImpl, RpcDoneTagArmHandlesNullContext)
                       ArmRpcDoneTagWithNullContextForTest());
 }
 
+TEST(InferenceServiceImpl, GrpcHealthStatusHandlesNullServer)
+{
+  EXPECT_NO_THROW(starpu_server::InferenceServiceImpl::TestAccessor::
+                      SetGrpcHealthStatusForTest(nullptr, true));
+}
+
+TEST_F(InferenceServiceTest, RecordSuccessHandlesNullRequest)
+{
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+  EXPECT_NO_THROW(
+      starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+          service.get(), nullptr, breakdown,
+          starpu_server::MonotonicClock::now(), "model"));
+}
+
+TEST(InferenceServiceImpl, IsContextCancelledHandlesNullContext)
+{
+  EXPECT_FALSE(starpu_server::InferenceServiceImpl::TestAccessor::
+                   IsContextCancelledForTest(nullptr));
+}
+
 TEST(InferenceServiceImpl, RpcDoneTagProceedInvokesOnDoneWhenOk)
 {
   const bool called = starpu_server::InferenceServiceImpl::TestAccessor::

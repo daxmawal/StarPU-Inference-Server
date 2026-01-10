@@ -161,6 +161,13 @@ class InferenceServiceImpl final
         std::span<const std::string> expected_names) -> grpc::Status;
     static void ArmRpcDoneTagWithNullContextForTest();
     static auto RpcDoneTagProceedForTest(bool is_ok, bool with_on_done) -> bool;
+    static void SetGrpcHealthStatusForTest(grpc::Server* server, bool serving);
+    static void RecordSuccessForTest(
+        InferenceServiceImpl* service,
+        const inference::ModelInferRequest* request,
+        const LatencyBreakdown& breakdown, MonotonicClock::time_point recv_tp,
+        std::string_view resolved_model_name);
+    static auto IsContextCancelledForTest(grpc::ServerContext* context) -> bool;
     static auto FillOutputTensorForTest(
         inference::ModelInferResponse* reply,
         const std::vector<torch::Tensor>& outputs,

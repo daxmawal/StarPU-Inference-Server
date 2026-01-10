@@ -1160,6 +1160,39 @@ InferenceServiceImpl::submit_job_async(
   return Status::OK;
 }
 
+namespace {
+void
+set_grpc_health_status(Server* server, bool serving)
+{
+  if (server == nullptr) {
+    return;
+  }
+  auto* health_service = server->GetHealthCheckService();
+  if (health_service == nullptr) {
+    return;
+  }
+  health_service->SetServingStatus(serving);
+}
+
+auto
+is_context_cancelled(ServerContext* context) -> bool
+{
+  if (context == nullptr) {
+    return false;
+  }
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& test_hooks = handle_model_infer_async_test_hooks();
+  if (test_hooks.is_cancelled_override) {
+    if (auto decision = test_hooks.is_cancelled_override(context);
+        decision.has_value()) {
+      return *decision;
+    }
+  }
+#endif  // SONAR_IGNORE_END
+  return context->IsCancelled();
+}
+}  // namespace
+
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
@@ -1280,6 +1313,29 @@ InferenceServiceImpl::TestAccessor::RpcDoneTagProceedForTest(
   auto tag = RpcDoneTag::Create(std::move(on_done), std::make_shared<int>(0));
   tag->Proceed(is_ok);
   return called;
+}
+
+void
+InferenceServiceImpl::TestAccessor::SetGrpcHealthStatusForTest(
+    grpc::Server* server, bool serving)
+{
+  set_grpc_health_status(server, serving);
+}
+
+void
+InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+    InferenceServiceImpl* service, const ModelInferRequest* request,
+    const LatencyBreakdown& breakdown, MonotonicClock::time_point recv_tp,
+    std::string_view resolved_model_name)
+{
+  service->record_success(request, breakdown, recv_tp, resolved_model_name);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::IsContextCancelledForTest(
+    grpc::ServerContext* context) -> bool
+{
+  return is_context_cancelled(context);
 }
 
 auto
@@ -1543,28 +1599,6 @@ InferenceServiceImpl::handle_async_infer_completion(
   }
   finalize_successful_completion(context, outs, breakdown, timing_info);
 }
-
-namespace {
-
-auto
-is_context_cancelled(ServerContext* context) -> bool
-{
-  if (context == nullptr) {
-    return false;
-  }
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& test_hooks = handle_model_infer_async_test_hooks();
-  if (test_hooks.is_cancelled_override) {
-    if (auto decision = test_hooks.is_cancelled_override(context);
-        decision.has_value()) {
-      return *decision;
-    }
-  }
-#endif  // SONAR_IGNORE_END
-  return context->IsCancelled();
-}
-
-}  // namespace
 
 void
 InferenceServiceImpl::notify_cancel_flag_created(
@@ -2110,19 +2144,6 @@ enable_grpc_health_and_reflection()
     grpc::reflection::InitProtoReflectionServerBuilderPlugin();
 #endif
   });
-}
-
-void
-set_grpc_health_status(Server* server, bool serving)
-{
-  if (server == nullptr) {
-    return;
-  }
-  auto* health_service = server->GetHealthCheckService();
-  if (health_service == nullptr) {
-    return;
-  }
-  health_service->SetServingStatus(serving);
 }
 
 }  // namespace
