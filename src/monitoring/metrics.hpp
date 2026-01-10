@@ -224,6 +224,7 @@ class MetricsRegistry {
     static void ClearModelLoadFailuresFamily(MetricsRegistry& metrics);
     static void ClearInferenceFailuresFamily(MetricsRegistry& metrics);
     static void ClearInferenceCompletedFamily(MetricsRegistry& metrics);
+    static void ClearRequestsReceivedFamily(MetricsRegistry& metrics);
     static void ClearRequestsByStatusFamily(MetricsRegistry& metrics);
     static auto FailureKeyOverflowIsEmpty() -> bool;
     static auto FailureKeyEquals(

@@ -1354,6 +1354,21 @@ TEST(MetricsRegistry, IncrementCompletedCounterSkipsWhenFamilyMissing)
   EXPECT_FALSE(value.has_value());
 }
 
+TEST(MetricsRegistry, IncrementReceivedCounterSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  MetricsRegistry::TestAccessor::ClearRequestsReceivedFamily(metrics);
+  metrics.increment_received_counter("model-recv");
+
+  const auto value = FindCounterValue(
+      metrics.registry()->Collect(), "requests_received_total",
+      {{"model", "model-recv"}});
+  EXPECT_FALSE(value.has_value());
+}
+
 TEST(MetricsRegistry, IncrementStatusCounterSkipsWhenFamilyMissing)
 {
   MetricsRegistry metrics(

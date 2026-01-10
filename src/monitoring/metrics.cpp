@@ -2441,6 +2441,13 @@ starpu_server::MetricsRegistry::TestAccessor::ClearInferenceCompletedFamily(
 }
 
 void
+starpu_server::MetricsRegistry::TestAccessor::ClearRequestsReceivedFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.families_.requests_received = nullptr;
+}
+
+void
 starpu_server::MetricsRegistry::TestAccessor::ClearRequestsByStatusFamily(
     starpu_server::MetricsRegistry& metrics)
 {
