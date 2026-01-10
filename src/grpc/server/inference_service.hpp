@@ -177,6 +177,9 @@ class InferenceServiceImpl final
     static auto ResolveTensorNameForTest(
         std::size_t index, std::span<const std::string> names,
         std::string_view fallback_prefix) -> std::string;
+    static auto RequestBatchSizeForTest(
+        const inference::ModelInferRequest* request,
+        int max_batch_size) -> uint64_t;
     static auto IsContextCancelledForTest(grpc::ServerContext* context) -> bool;
     static auto FillOutputTensorForTest(
         inference::ModelInferResponse* reply,

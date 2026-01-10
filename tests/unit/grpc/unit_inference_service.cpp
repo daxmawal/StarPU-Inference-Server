@@ -392,6 +392,44 @@ TEST(InferenceServiceImpl, ModelConfigRejectsUnsupportedInputDatatype)
   EXPECT_EQ(status.error_message(), "Unsupported input datatype");
 }
 
+TEST(InferenceServiceImpl, RequestBatchSizeHandlesEmptyShape)
+{
+  inference::ModelInferRequest req;
+  auto* input = req.add_inputs();
+  input->set_datatype("FP32");
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          RequestBatchSizeForTest(&req, 4),
+      1U);
+}
+
+TEST(InferenceServiceImpl, RequestBatchSizeHandlesNonPositiveBatch)
+{
+  inference::ModelInferRequest req;
+  auto* input = req.add_inputs();
+  input->set_datatype("FP32");
+  input->add_shape(0);
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          RequestBatchSizeForTest(&req, 4),
+      1U);
+}
+
+TEST(InferenceServiceImpl, RequestBatchSizeReturnsBatch)
+{
+  inference::ModelInferRequest req;
+  auto* input = req.add_inputs();
+  input->set_datatype("FP32");
+  input->add_shape(3);
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          RequestBatchSizeForTest(&req, 4),
+      3U);
+}
+
 TEST_F(InferenceServiceTest, ValidateInputsSuccess)
 {
   auto req = starpu_server::make_valid_request();

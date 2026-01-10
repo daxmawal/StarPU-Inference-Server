@@ -1355,6 +1355,13 @@ InferenceServiceImpl::TestAccessor::ResolveTensorNameForTest(
 }
 
 auto
+InferenceServiceImpl::TestAccessor::RequestBatchSizeForTest(
+    const ModelInferRequest* request, int max_batch_size) -> uint64_t
+{
+  return request_batch_size(request, max_batch_size);
+}
+
+auto
 InferenceServiceImpl::TestAccessor::IsContextCancelledForTest(
     grpc::ServerContext* context) -> bool
 {
