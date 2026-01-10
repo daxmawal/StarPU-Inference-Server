@@ -3,6 +3,8 @@
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+#include <yaml-cpp/yaml.h>
+
 #include <functional>
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
@@ -18,6 +20,9 @@ auto load_config(const std::string& path) -> RuntimeConfig;
 using ConfigLoaderPostParseHook = std::function<void(RuntimeConfig&)>;
 void set_config_loader_post_parse_hook(ConfigLoaderPostParseHook hook);
 void reset_config_loader_post_parse_hook();
+auto parse_tensor_nodes_for_test(
+    const YAML::Node& nodes, std::size_t max_inputs, std::string_view label,
+    std::size_t max_dims) -> std::vector<TensorConfig>;
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 

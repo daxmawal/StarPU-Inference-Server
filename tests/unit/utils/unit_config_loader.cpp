@@ -163,6 +163,14 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt, false, false},
     InvalidConfigCase{
+        "InvalidYamlSyntaxSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: [1, 2\n";
+          return yaml;
+        }(),
+        std::nullopt, false, false},
+    InvalidConfigCase{
         "UseCudaEmptySequenceInvalid",
         [] {
           auto yaml = base_model_yaml();
@@ -750,6 +758,13 @@ TEST_P(InvalidConfigTest, MarksConfigInvalid)
 INSTANTIATE_TEST_SUITE_P(
     InvalidConfigs, InvalidConfigTest, ::testing::ValuesIn(kInvalidConfigCases),
     InvalidConfigCaseName);
+
+TEST(ConfigLoader, ParseTensorNodesReturnsEmptyWhenUndefined)
+{
+  YAML::Node undefined(YAML::NodeType::Undefined);
+  const auto tensors = parse_tensor_nodes_for_test(undefined, 4U, "inputs", 4U);
+  EXPECT_TRUE(tensors.empty());
+}
 
 TEST(ConfigLoader, AcceptsBooleanUseCudaFalse)
 {

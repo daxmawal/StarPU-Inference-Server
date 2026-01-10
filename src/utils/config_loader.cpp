@@ -666,6 +666,14 @@ reset_config_loader_post_parse_hook()
 {
   config_loader_post_parse_hook() = {};
 }
+
+auto
+parse_tensor_nodes_for_test(
+    const YAML::Node& nodes, std::size_t max_inputs, std::string_view label,
+    std::size_t max_dims) -> std::vector<TensorConfig>
+{
+  return parse_tensor_nodes(nodes, max_inputs, label, max_dims);
+}
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
