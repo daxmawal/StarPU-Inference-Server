@@ -135,7 +135,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "unknown_option: true\n";
           return yaml;
         }(),
-        "Unknown configuration option: unknown_option"},
+        "Failed to load config: Unknown configuration option: unknown_option"},
     InvalidConfigCase{
         "NonScalarKeySetsValidFalse",
         [] {
@@ -144,7 +144,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += ": true\n";
           return yaml;
         }(),
-        "Configuration keys must be scalar strings"},
+        "Failed to load config: Configuration keys must be scalar strings"},
     InvalidConfigCase{
         "DeviceIdsAtRootInvalid",
         [] {
@@ -152,13 +152,21 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "device_ids: [0]\n";
           return yaml;
         }(),
-        "device_ids must be nested inside the use_cuda block (e.g. "
-        "\"use_cuda: [{ device_ids: [0] }]\")"},
+        "Failed to load config: device_ids must be nested inside the use_cuda "
+        "block (e.g. \"use_cuda: [{ device_ids: [0] }]\")"},
     InvalidConfigCase{
         "InvalidConfigSetsValidFalse",
         [] {
           auto yaml = base_model_yaml();
           yaml += "max_batch_size: 0\n";
+          return yaml;
+        }(),
+        std::nullopt, false, false},
+    InvalidConfigCase{
+        "InvalidYamlSyntaxSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: [1, 2\n";
           return yaml;
         }(),
         std::nullopt, false, false},
@@ -169,7 +177,8 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "use_cuda: []\n";
           return yaml;
         }(),
-        "use_cuda requires at least one device_ids entry"},
+        "Failed to load config: use_cuda requires at least one device_ids "
+        "entry"},
     InvalidConfigCase{
         "UseCudaNonSequenceInvalid",
         [] {
@@ -178,7 +187,8 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "  device_ids: [0]\n";
           return yaml;
         }(),
-        "use_cuda must be a boolean or a sequence of device mappings"},
+        "Failed to load config: use_cuda must be a boolean or a sequence of "
+        "device mappings"},
     InvalidConfigCase{
         "UseCudaEntryNotMapInvalid",
         [] {
@@ -188,7 +198,8 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "  - { device_ids: [0] }\n";
           return yaml;
         }(),
-        "use_cuda entries must be mappings that define device_ids"},
+        "Failed to load config: use_cuda[0] must be a mapping that defines "
+        "device_ids"},
     InvalidConfigCase{
         "UseCudaEntryMissingDeviceIdsInvalid",
         [] {
@@ -198,7 +209,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "  - { device_ids: [0] }\n";
           return yaml;
         }(),
-        "use_cuda entries require a device_ids sequence"},
+        "Failed to load config: use_cuda[0].device_ids is required"},
     InvalidConfigCase{
         "UseCudaEntryDeviceIdsNotSequenceInvalid",
         [] {
@@ -208,7 +219,27 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "  - { device_ids: [1] }\n";
           return yaml;
         }(),
-        "device_ids inside use_cuda must be a sequence"},
+        "Failed to load config: use_cuda[0].device_ids must be a sequence of "
+        "integers"},
+    InvalidConfigCase{
+        "UseCudaNegativeDeviceIdInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - { device_ids: [-1] }\n";
+          return yaml;
+        }(),
+        "Failed to load config: use_cuda[0].device_ids[0] must be >= 0"},
+    InvalidConfigCase{
+        "UseCudaEmptyDeviceIdsInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - { device_ids: [] }\n";
+          return yaml;
+        }(),
+        "Failed to load config: use_cuda requires at least one device_ids "
+        "entry"},
     InvalidConfigCase{
         "StarpuEnvNotMapInvalid",
         [] {
@@ -216,7 +247,8 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "starpu_env: []\n";
           return yaml;
         }(),
-        "starpu_env must be a mapping of variable names to values"},
+        "Failed to load config: starpu_env must be a mapping of variable "
+        "names to values"},
     InvalidConfigCase{
         "StarpuEnvKeyNotScalarInvalid",
         [] {
@@ -226,7 +258,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "  : value\n";
           return yaml;
         }(),
-        "starpu_env entries must have scalar keys"},
+        "Failed to load config: starpu_env entries must have scalar keys"},
     InvalidConfigCase{
         "StarpuEnvValueNotScalarInvalid",
         [] {
@@ -235,7 +267,8 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "  VAR: [1, 2]\n";
           return yaml;
         }(),
-        "starpu_env entries must have scalar values"},
+        "Failed to load config: starpu_env entry 'VAR' must have a scalar "
+        "value"},
     InvalidConfigCase{
         "NegativeBatchCoalesceTimeoutSetsValidFalse",
         [] {
@@ -265,14 +298,30 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt},
     InvalidConfigCase{
+        "MetricsPortNotScalarInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "metrics_port: [1]\n";
+          return yaml;
+        }(),
+        "Failed to load config: metrics_port must be an integer"},
+    InvalidConfigCase{
+        "MetricsPortBadConversionInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "metrics_port: not_a_number\n";
+          return yaml;
+        }(),
+        "Failed to load config: metrics_port must be an integer"},
+    InvalidConfigCase{
         "DeprecatedSchedulerOptionSetsValidFalse",
         [] {
           auto yaml = std::string{"scheduler: unknown\n"};
           yaml += base_model_yaml();
           return yaml;
         }(),
-        "Unknown configuration option: scheduler (use starpu_env with "
-        "STARPU_SCHED)"},
+        "Failed to load config: Unknown configuration option: scheduler (use "
+        "starpu_env with STARPU_SCHED)"},
     InvalidConfigCase{
         "NegativeDimensionSetsValidFalse",
         [] {
@@ -401,7 +450,8 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
-        "Configuration option 'name' must be a scalar string"},
+        "Failed to load config: Configuration option 'name' must be a scalar "
+        "string"},
     InvalidConfigCase{
         "NonScalarModelNameSetsValidFalse",
         [] {
@@ -409,7 +459,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "model_name: [invalid, name]\n";
           return yaml;
         }(),
-        "model_name must be a scalar string"},
+        "Failed to load config: model_name must be a scalar string"},
     InvalidConfigCase{
         "MissingNameSetsValidFalse",
         [] {
@@ -428,7 +478,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
-        "Missing required key: name"},
+        "Failed to load config: Missing required key: name"},
     InvalidConfigCase{
         "MissingModelSetsValidFalse",
         [] {
@@ -448,6 +498,36 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           return yaml;
         }(),
         std::nullopt, false, false},
+    InvalidConfigCase{
+        "EmptyModelPathSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: \"\"\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: model must not be empty", false, false},
+    InvalidConfigCase{
+        "MissingMultipleRequiredKeysSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          return yaml;
+        }(),
+        "Failed to load config: Missing required keys: model, inputs, outputs, "
+        "pool_size, max_batch_size, batch_coalesce_timeout_ms",
+        false, false},
     InvalidConfigCase{
         "NonexistentModelFileSetsValidFalse", base_model_yaml(), std::nullopt,
         true, false},
@@ -483,6 +563,105 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           return yaml;
         }(),
         std::nullopt},
+    InvalidConfigCase{
+        "InputNameNotScalarSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: [invalid]\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0].name must be a scalar string"},
+    InvalidConfigCase{
+        "InputDimsNotSequenceSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: 1\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0].dims must be a sequence of integers"},
+    InvalidConfigCase{
+        "InputDataTypeNotScalarSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: [float32]\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0].data_type must be a scalar string"},
+    InvalidConfigCase{
+        "InputDataTypeInvalidSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: not_a_dtype\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0].data_type: Unsupported type: "
+        "not_a_dtype"},
+    InvalidConfigCase{
+        "InputsEntryNotMapSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - in\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0] must be a mapping"},
     InvalidConfigCase{
         "TooManyInputsSetsValidFalse",
         [] {
@@ -580,6 +759,13 @@ INSTANTIATE_TEST_SUITE_P(
     InvalidConfigs, InvalidConfigTest, ::testing::ValuesIn(kInvalidConfigCases),
     InvalidConfigCaseName);
 
+TEST(ConfigLoader, ParseTensorNodesReturnsEmptyWhenUndefined)
+{
+  YAML::Node undefined(YAML::NodeType::Undefined);
+  const auto tensors = parse_tensor_nodes_for_test(undefined, 4U, "inputs", 4U);
+  EXPECT_TRUE(tensors.empty());
+}
+
 TEST(ConfigLoader, AcceptsBooleanUseCudaFalse)
 {
   const auto model_path =
@@ -610,8 +796,8 @@ TEST(ConfigLoader, RejectsBooleanUseCudaTrue)
   starpu_server::CaptureStream capture{std::cerr};
   const RuntimeConfig cfg = load_config(config_path.string());
   const std::string expected_error =
-      "use_cuda must be a sequence of device mappings when enabled (e.g. "
-      "\"use_cuda: [{ device_ids: [0] }]\")";
+      "Failed to load config: use_cuda must be a sequence of device mappings "
+      "when enabled (e.g. \"use_cuda: [{ device_ids: [0] }]\")";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }
@@ -622,8 +808,8 @@ TEST(ConfigLoader, RejectsNonMappingRoot)
       WriteTempFile("config_loader_non_mapping_root.yaml", "- item\n");
   starpu_server::CaptureStream capture{std::cerr};
   const RuntimeConfig cfg = load_config(config_path.string());
-  const std::string expected =
-      expected_log_line(ErrorLevel, "Config root must be a mapping");
+  const std::string expected = expected_log_line(
+      ErrorLevel, "Failed to load config: Config root must be a mapping");
   EXPECT_EQ(capture.str(), expected);
   EXPECT_FALSE(cfg.valid);
 }
@@ -634,8 +820,8 @@ TEST(ConfigLoader, RejectsEmptyConfig)
       WriteTempFile("config_loader_empty.yaml", std::string{});
   starpu_server::CaptureStream capture{std::cerr};
   const RuntimeConfig cfg = load_config(config_path.string());
-  const std::string expected =
-      expected_log_line(ErrorLevel, "Config root must be a mapping");
+  const std::string expected = expected_log_line(
+      ErrorLevel, "Failed to load config: Config root must be a mapping");
   EXPECT_EQ(capture.str(), expected);
   EXPECT_FALSE(cfg.valid);
 }
@@ -730,7 +916,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_FALSE(cfg.devices.group_cpu_by_numa);
 }
 
-TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
+TEST(ConfigLoader, RejectsNonSequenceInput)
 {
   const auto model_path =
       WriteEmptyModelFile("config_loader_non_sequence_input_model.pt");
@@ -754,15 +940,13 @@ TEST(ConfigLoader, NonSequenceInputYieldsEmptyTensorList)
                    "config_loader_non_sequence_input.yaml";
   std::ofstream(tmp) << yaml.str();
 
+  starpu_server::CaptureStream capture{std::cerr};
   const RuntimeConfig cfg = load_config(tmp.string());
 
-  EXPECT_TRUE(cfg.valid);
-  ASSERT_TRUE(cfg.model.has_value());
-  EXPECT_TRUE(cfg.model->inputs.empty());
-  ASSERT_EQ(cfg.model->outputs.size(), 1U);
-  EXPECT_EQ(cfg.model->outputs[0].name, "out");
-  EXPECT_EQ(cfg.model->outputs[0].dims, (std::vector<int64_t>{1}));
-  EXPECT_EQ(cfg.model->outputs[0].type, at::kFloat);
+  const std::string expected_error =
+      "Failed to load config: inputs must be a sequence of tensor definitions";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
 }
 
 TEST(ConfigLoader, ParsesRuntimeFlags)

@@ -1,5 +1,4 @@
 #include <hwloc.h>
-#include <signal.h>
 #include <starpu.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -9,6 +8,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -62,6 +62,9 @@ constexpr auto kPlotScriptTimeout =
     std::chrono::steady_clock::duration::zero();  // Disable timeout.
 constexpr auto kPlotScriptPollInterval = std::chrono::milliseconds(50);
 constexpr auto kPlotScriptTerminateTimeout = std::chrono::seconds(1);
+constexpr int kSignalExitCodeOffset = 128;
+constexpr int kExecFailedExitCode = 127;
+constexpr int kPlotScriptSearchDepth = 6;
 
 auto
 resolve_python_executable() -> std::optional<std::filesystem::path>
@@ -90,7 +93,7 @@ wait_status_to_exit_code(int status) -> std::optional<int>
     return WEXITSTATUS(status);
   }
   if (WIFSIGNALED(status)) {
-    return 128 + WTERMSIG(status);
+    return kSignalExitCodeOffset + WTERMSIG(status);
   }
   return std::nullopt;
 }
@@ -102,10 +105,10 @@ log_waitpid_error()
       "Failed to wait for plot generation process: {}", std::strerror(errno)));
 }
 
-enum class WaitPidState { Exited, StillRunning, Error };
+enum class WaitPidState : std::uint8_t { Exited, StillRunning, Error };
 
 struct WaitPidResult {
-  WaitPidState state;
+  WaitPidState state = WaitPidState::Error;
   std::optional<int> exit_code;
 };
 
@@ -129,10 +132,10 @@ waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
   }
 }
 
-enum class WaitOutcome { Exited, TimedOut, Error };
+enum class WaitOutcome : std::uint8_t { Exited, TimedOut, Error };
 
 struct WaitOutcomeResult {
-  WaitOutcome outcome;
+  WaitOutcome outcome = WaitOutcome::Error;
   std::optional<int> exit_code;
 };
 
@@ -242,7 +245,7 @@ run_plot_script(
   }
   if (pid == 0) {
     execv(argv[0], argv.data());
-    _exit(127);
+    _exit(kExecFailedExitCode);
   }
 
   return wait_for_plot_process(pid);
@@ -276,7 +279,7 @@ candidate_plot_scripts() -> std::vector<std::filesystem::path>
     return candidates;
   }
   auto base_dir = std::filesystem::path(exe_path).parent_path();
-  for (int depth = 0; depth < 6; ++depth) {
+  for (int depth = 0; depth < kPlotScriptSearchDepth; ++depth) {
     candidates.emplace_back(base_dir / "scripts/plot_batch_summary.py");
     if (!base_dir.has_parent_path()) {
       break;
@@ -539,8 +542,9 @@ launch_threads(
       default_model_name = opts.name;
     }
     const auto server_options = starpu_server::GrpcServerOptions{
-        opts.server_address, opts.batching.max_message_bytes, opts.verbosity,
-        std::move(default_model_name)};
+        opts.server_address, opts.batching.max_message_bytes,
+        opts.verbosity,      std::move(default_model_name),
+        opts.name,           ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims,
         expected_input_names, expected_output_names,

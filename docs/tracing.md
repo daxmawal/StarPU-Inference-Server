@@ -13,17 +13,17 @@ Enable the batching trace in your YAML and inspect the Chrome trace-event JSON
 with Perfetto:
 
 ```yaml
-batching:
-  trace_enabled: true
-  trace_output: /tmp/  # optional custom path
+trace_enabled: true
+trace_output: /tmp  # optional custom directory
 ```
 
 - `trace_enabled` flips instrumentation on as soon as the server starts.
-- `trace_output` must point to a directory, the server writes
-  `perfetto_trace.json` there. The same directory also receives
-  `trace.csv` (one line per batch, warmup batches excluded) and `metrics.csv`
-  (queue size and cumulative rejections over time). The server runs
-  `scripts/plot_batch_summary.py` at shutdown to produce plots.
+- `trace_output` is optional. If omitted, the server writes
+  `perfetto_trace.json` in the current working directory. When set, it must
+  point to a directory, and the server writes `perfetto_trace.json` there. The
+  same directory also receives `trace.csv` (one line per batch, warmup batches
+  excluded) and `metrics.csv` (queue size and cumulative rejections over time).
+  The server runs `scripts/plot_batch_summary.py` at shutdown to produce plots.
 
 Each restart truncates the previous JSON, so copy it elsewhere before relaunch.
 Stop the server before opening the file.
@@ -51,7 +51,7 @@ for CPU/GPU batches plus a queue-size/rejections view (if `metrics.csv` is
 present). Run it manually to re-plot or to point at archived traces:
 
 ```bash
-python3 /scripts/plot_batch_summary.py /path/to/trace.csv --output batching_plots.png
+python3 scripts/plot_batch_summary.py /path/to/trace.csv --output batching_plots.png
 ```
 
 ![Plot preview](images/plot.png)
@@ -67,7 +67,7 @@ starpu_env:
   STARPU_FXT_PREFIX: "/tmp/starpu_traces"
 ```
 
-Then launch the serve.
+Then launch the server.
 This produces `prof_<pid>` files under the chosen prefix. Convert them to a
 Paje timeline and open with Vite:
 

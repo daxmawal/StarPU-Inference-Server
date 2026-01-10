@@ -41,7 +41,24 @@ CPU worker and one CUDA worker (device `0`).
 
 ---
 
-## 3. Run an inference with natural language input
+## 3. Inspect server metadata (optional)
+
+Use the standard gRPC metadata endpoints to discover the model schema and
+batching limits. grpcurl will use server reflection when available.
+
+```bash
+grpcurl -plaintext 127.0.0.1:50051 inference.GRPCInferenceService/ServerMetadata
+grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
+  inference.GRPCInferenceService/ModelMetadata
+grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
+  inference.GRPCInferenceService/ModelConfig
+grpcurl -plaintext -d '{"name":"bert_local"}' 127.0.0.1:50051 \
+  inference.GRPCInferenceService/ModelStatistics
+```
+
+---
+
+## 4. Run an inference with natural language input
 
 Use `client/bert_inference_client.py` to tokenize one or more sentences,
 submit them for inference, and print a short summary of the returned tensor.
@@ -51,7 +68,7 @@ python3 client/bert_inference_client.py \
   --server 127.0.0.1:50051 \
   --text "Your evaluation sentence" \
   --text "Add a second sentence for batching" \
-  --reference-model ../models/bert_libtorch.pt \
+  --reference-model models/bert_libtorch.pt \
   --rtol 1e-3 \
   --atol 1e-5
 ```
@@ -61,7 +78,7 @@ Responses contain a single tensor shaped `[batch, 128, 768]` by default, the
 client prints sample values and, when `--reference-model` is set, validates the
 outputs against a local TorchScript model using the provided tolerances.
 
-## 4. Write your own client
+## 5. Write your own client
 
 If you need to write your own client, start from these references:
 

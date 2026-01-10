@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -76,6 +77,20 @@ struct HandleAsyncInferCompletionHooksGuard {
   {
     starpu_server::InferenceServiceImpl::TestAccessor::
         ClearHandleAsyncInferCompletionTestHooks();
+  }
+};
+
+struct ModelStatisticsNullTargetGuard {
+  explicit ModelStatisticsNullTargetGuard(bool enable = true)
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        SetModelStatisticsForceNullTargetForTest(enable);
+  }
+
+  ~ModelStatisticsNullTargetGuard()
+  {
+    starpu_server::InferenceServiceImpl::TestAccessor::
+        SetModelStatisticsForceNullTargetForTest(false);
   }
 };
 }  // namespace
@@ -181,6 +196,446 @@ TEST(ComputeThreadCount, ClampsToConfiguredBounds)
       starpu_server::kMaxGrpcThreads);
 }
 
+TEST(InferenceServiceImpl, ServerMetadataUsesServerNameAndVersion)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat}, "default_model", {}, {}, "my_server",
+      "1.2.3");
+
+  grpc::ServerContext ctx;
+  inference::ServerMetadataRequest req;
+  inference::ServerMetadataResponse reply;
+
+  auto status = service.ServerMetadata(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(reply.name(), "my_server");
+  EXPECT_EQ(reply.version(), "1.2.3");
+}
+
+TEST(InferenceServiceImpl, ServerMetadataFallsBackToDefaultModelName)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat}, "fallback_model");
+
+  grpc::ServerContext ctx;
+  inference::ServerMetadataRequest req;
+  inference::ServerMetadataResponse reply;
+
+  auto status = service.ServerMetadata(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(reply.name(), "fallback_model");
+  EXPECT_TRUE(reply.version().empty());
+}
+
+TEST(InferenceServiceImpl, ServerMetadataUsesHardcodedFallbackName)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ServerMetadataRequest req;
+  inference::ServerMetadataResponse reply;
+
+  auto status = service.ServerMetadata(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(reply.name(), "starpu_server");
+  EXPECT_TRUE(reply.version().empty());
+}
+
+TEST(InferenceServiceImpl, ModelMetadataPopulatesInputsAndOutputs)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs = {
+      torch::zeros({2, 2}, torch::TensorOptions().dtype(at::kFloat)),
+      torch::zeros({3}, torch::TensorOptions().dtype(at::kLong))};
+  std::vector<std::vector<int64_t>> input_dims = {{1, 2}, {3}};
+  std::vector<std::string> input_names = {"input0", ""};
+  std::vector<std::string> output_names = {"out0", ""};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat, at::kLong},
+      starpu_server::InferenceServiceImpl::InputShapeConfig{
+          std::move(input_dims), 0},
+      "server_model", std::move(input_names), std::move(output_names));
+
+  grpc::ServerContext ctx;
+  inference::ModelMetadataRequest req;
+  req.set_name("client_model");
+  req.set_version("v1");
+  inference::ModelMetadataResponse reply;
+
+  auto status = service.ModelMetadata(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(reply.name(), "server_model");
+  ASSERT_EQ(reply.versions_size(), 1);
+  EXPECT_EQ(reply.versions(0), "v1");
+
+  ASSERT_EQ(reply.inputs_size(), 2);
+  EXPECT_EQ(reply.inputs(0).name(), "input0");
+  EXPECT_EQ(reply.inputs(0).datatype(), "FP32");
+  ASSERT_EQ(reply.inputs(0).shape_size(), 2);
+  EXPECT_EQ(reply.inputs(0).shape(0), 1);
+  EXPECT_EQ(reply.inputs(0).shape(1), 2);
+  EXPECT_EQ(reply.inputs(1).name(), "input1");
+  EXPECT_EQ(reply.inputs(1).datatype(), "INT64");
+  ASSERT_EQ(reply.inputs(1).shape_size(), 1);
+  EXPECT_EQ(reply.inputs(1).shape(0), 3);
+
+  ASSERT_EQ(reply.outputs_size(), 2);
+  EXPECT_EQ(reply.outputs(0).name(), "out0");
+  EXPECT_EQ(reply.outputs(0).datatype(), "FP32");
+  ASSERT_EQ(reply.outputs(0).shape_size(), 2);
+  EXPECT_EQ(reply.outputs(0).shape(0), 2);
+  EXPECT_EQ(reply.outputs(0).shape(1), 2);
+  EXPECT_EQ(reply.outputs(1).name(), "output1");
+  EXPECT_EQ(reply.outputs(1).datatype(), "INT64");
+  ASSERT_EQ(reply.outputs(1).shape_size(), 1);
+  EXPECT_EQ(reply.outputs(1).shape(0), 3);
+}
+
+TEST_F(InferenceServiceTest, ModelMetadataUsesRequestNameWhenNoDefaultModel)
+{
+  grpc::ServerContext ctx;
+  inference::ModelMetadataRequest req;
+  req.set_name("client_model");
+  inference::ModelMetadataResponse reply;
+
+  auto status = service->ModelMetadata(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(reply.name(), "client_model");
+  EXPECT_EQ(reply.versions_size(), 0);
+  ASSERT_EQ(reply.inputs_size(), 1);
+  EXPECT_EQ(reply.inputs(0).name(), "input0");
+  EXPECT_EQ(reply.inputs(0).datatype(), "FP32");
+  EXPECT_EQ(reply.outputs_size(), 0);
+}
+
+TEST(InferenceServiceImpl, ModelMetadataRejectsUnsupportedInputDatatype)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kComplexFloat}, "server_model");
+
+  grpc::ServerContext ctx;
+  inference::ModelMetadataRequest req;
+  req.set_name("server_model");
+  inference::ModelMetadataResponse reply;
+
+  auto status = service.ModelMetadata(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Unsupported at::ScalarType");
+}
+
+TEST(InferenceServiceImpl, ModelMetadataRejectsUnsupportedOutputDatatype)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kComplexFloat))};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat}, "server_model");
+
+  grpc::ServerContext ctx;
+  inference::ModelMetadataRequest req;
+  req.set_name("server_model");
+  inference::ModelMetadataResponse reply;
+
+  auto status = service.ModelMetadata(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Unsupported at::ScalarType");
+}
+
+TEST(InferenceServiceImpl, ModelConfigPopulatesConfig)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs = {
+      torch::zeros({2, 2}, torch::TensorOptions().dtype(at::kFloat)),
+      torch::zeros({3}, torch::TensorOptions().dtype(at::kLong))};
+  std::vector<std::vector<int64_t>> input_dims = {{1, 2}, {3}};
+  std::vector<std::string> input_names = {"first", ""};
+  std::vector<std::string> output_names = {"out0", ""};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat, at::kLong},
+      starpu_server::InferenceServiceImpl::InputShapeConfig{
+          std::move(input_dims), 8},
+      "server_model", std::move(input_names), std::move(output_names));
+
+  grpc::ServerContext ctx;
+  inference::ModelConfigRequest req;
+  req.set_name("client_model");
+  inference::ModelConfigResponse reply;
+
+  auto status = service.ModelConfig(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  const auto& config = reply.config();
+  EXPECT_EQ(config.name(), "server_model");
+  EXPECT_EQ(config.max_batch_size(), 8);
+
+  ASSERT_EQ(config.input_size(), 2);
+  EXPECT_EQ(config.input(0).name(), "first");
+  EXPECT_EQ(config.input(0).data_type(), inference::DataType::TYPE_FP32);
+  ASSERT_EQ(config.input(0).dims_size(), 2);
+  EXPECT_EQ(config.input(0).dims(0), 1);
+  EXPECT_EQ(config.input(0).dims(1), 2);
+  EXPECT_EQ(config.input(1).name(), "input1");
+  EXPECT_EQ(config.input(1).data_type(), inference::DataType::TYPE_INT64);
+  ASSERT_EQ(config.input(1).dims_size(), 1);
+  EXPECT_EQ(config.input(1).dims(0), 3);
+
+  ASSERT_EQ(config.output_size(), 2);
+  EXPECT_EQ(config.output(0).name(), "out0");
+  EXPECT_EQ(config.output(0).data_type(), inference::DataType::TYPE_FP32);
+  ASSERT_EQ(config.output(0).dims_size(), 2);
+  EXPECT_EQ(config.output(0).dims(0), 2);
+  EXPECT_EQ(config.output(0).dims(1), 2);
+  EXPECT_EQ(config.output(1).name(), "output1");
+  EXPECT_EQ(config.output(1).data_type(), inference::DataType::TYPE_INT64);
+  ASSERT_EQ(config.output(1).dims_size(), 1);
+  EXPECT_EQ(config.output(1).dims(0), 3);
+}
+
+TEST_F(InferenceServiceTest, ModelConfigUsesRequestNameWhenNoDefaultModel)
+{
+  grpc::ServerContext ctx;
+  inference::ModelConfigRequest req;
+  req.set_name("client_model");
+  inference::ModelConfigResponse reply;
+
+  auto status = service->ModelConfig(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  const auto& config = reply.config();
+  EXPECT_EQ(config.name(), "client_model");
+  EXPECT_EQ(config.max_batch_size(), 0);
+  ASSERT_EQ(config.input_size(), 1);
+  EXPECT_EQ(config.input(0).name(), "input0");
+  EXPECT_EQ(config.input(0).data_type(), inference::DataType::TYPE_FP32);
+  EXPECT_EQ(config.output_size(), 0);
+}
+
+TEST(InferenceServiceImpl, ModelConfigRejectsUnsupportedInputDatatype)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kComplexFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelConfigRequest req;
+  inference::ModelConfigResponse reply;
+
+  auto status = service.ModelConfig(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Unsupported input datatype");
+}
+
+TEST(InferenceServiceImpl, ModelConfigRejectsUnsupportedOutputDatatype)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kComplexFloat))};
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelConfigRequest req;
+  inference::ModelConfigResponse reply;
+
+  auto status = service.ModelConfig(&ctx, &req, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Unsupported output datatype");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsRejectsNullRequest)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsResponse reply;
+
+  auto status = service.ModelStatistics(&ctx, nullptr, &reply);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Invalid request");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsRejectsNullReply)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsRequest req;
+
+  auto status = service.ModelStatistics(&ctx, &req, nullptr);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Invalid request");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsSkipsMismatchedName)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+
+  auto request_a = starpu_server::make_model_request("model_a", "v1");
+  auto request_b = starpu_server::make_model_request("model_b", "v1");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request_a, breakdown, starpu_server::MonotonicClock::now(),
+      "model_a");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request_b, breakdown, starpu_server::MonotonicClock::now(),
+      "model_b");
+
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsRequest req;
+  req.set_name("model_a");
+  inference::ModelStatisticsResponse reply;
+
+  auto status = service.ModelStatistics(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(reply.model_stats_size(), 1);
+  EXPECT_EQ(reply.model_stats(0).name(), "model_a");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsSkipsMismatchedVersion)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+
+  auto request_v1 = starpu_server::make_model_request("model_a", "v1");
+  auto request_v2 = starpu_server::make_model_request("model_a", "v2");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request_v1, breakdown, starpu_server::MonotonicClock::now(),
+      "model_a");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request_v2, breakdown, starpu_server::MonotonicClock::now(),
+      "model_a");
+
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsRequest req;
+  req.set_name("model_a");
+  req.set_version("v1");
+  inference::ModelStatisticsResponse reply;
+
+  auto status = service.ModelStatistics(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(reply.model_stats_size(), 1);
+  EXPECT_EQ(reply.model_stats(0).version(), "v1");
+}
+
+TEST(InferenceServiceImpl, ModelStatisticsHandlesNullStatisticTarget)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+  auto request = starpu_server::make_model_request("model_a", "v1");
+  starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+      &service, &request, breakdown, starpu_server::MonotonicClock::now(),
+      "model_a");
+
+  ModelStatisticsNullTargetGuard guard;
+  grpc::ServerContext ctx;
+  inference::ModelStatisticsRequest req;
+  req.set_name("model_a");
+  inference::ModelStatisticsResponse reply;
+
+  auto status = service.ModelStatistics(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(reply.model_stats_size(), 1);
+}
+
+TEST(InferenceServiceImpl, RequestBatchSizeHandlesEmptyShape)
+{
+  inference::ModelInferRequest req;
+  auto* input = req.add_inputs();
+  input->set_datatype("FP32");
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          RequestBatchSizeForTest(&req, 4),
+      1U);
+}
+
+TEST(InferenceServiceImpl, RequestBatchSizeHandlesNonPositiveBatch)
+{
+  inference::ModelInferRequest req;
+  auto* input = req.add_inputs();
+  input->set_datatype("FP32");
+  input->add_shape(0);
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          RequestBatchSizeForTest(&req, 4),
+      1U);
+}
+
+TEST(InferenceServiceImpl, RequestBatchSizeReturnsBatch)
+{
+  inference::ModelInferRequest req;
+  auto* input = req.add_inputs();
+  input->set_datatype("FP32");
+  input->add_shape(3);
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          RequestBatchSizeForTest(&req, 4),
+      3U);
+}
+
+TEST(InferenceServiceImpl, DurationMsToNsSaturatesToMax)
+{
+  const double duration_ms =
+      static_cast<double>(std::numeric_limits<uint64_t>::max());
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::DurationMsToNsForTest(
+          duration_ms),
+      std::numeric_limits<uint64_t>::max());
+}
+
+TEST(InferenceServiceImpl, ElapsedSinceReturnsZeroForFutureStart)
+{
+  const auto future_start =
+      starpu_server::MonotonicClock::now() + std::chrono::seconds(1);
+
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::ElapsedSinceForTest(
+          future_start),
+      0U);
+}
+
 TEST_F(InferenceServiceTest, ValidateInputsSuccess)
 {
   auto req = starpu_server::make_valid_request();
@@ -276,6 +731,23 @@ TEST_F(MultiTypeInferenceServiceTest, ValidateInputsMultipleDtypes)
   EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
   EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
   EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
+}
+
+TEST_F(MultiTypeInferenceServiceTest, ValidateInputsRejectsDatatypeMismatch)
+{
+  std::vector<int64_t> data0 = {kI10, kI20, kI30};
+  std::vector<float> data1 = {kF1, kF2, kF3, kF4};
+  auto req = starpu_server::make_model_infer_request({
+      {{3}, at::kLong, starpu_server::to_raw_data(data0)},
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data1)},
+  });
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "Input tensor datatype mismatch");
 }
 
 TEST_F(MultiTypeInferenceServiceTest, ValidateInputsRejectsMixedNamedAndUnnamed)
@@ -422,6 +894,34 @@ TEST_F(NamedInputInferenceServiceTest, ValidateInputsReordersByNameMapping)
 
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 2U);
+  EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
+  EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
+  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
+  EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
+  EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
+  EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
+}
+
+TEST_F(NamedInputInferenceServiceTest, ValidateInputsReordersKeepAliveByName)
+{
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  auto req = starpu_server::make_model_infer_request({
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+  });
+  req.mutable_inputs(0)->set_name("second");
+  req.mutable_inputs(1)->set_name("first");
+
+  std::vector<torch::Tensor> inputs;
+  std::vector<std::shared_ptr<const void>> keep_alive;
+  auto status = service->validate_and_convert_inputs(&req, inputs, &keep_alive);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 2U);
+  ASSERT_EQ(keep_alive.size(), 2U);
+  EXPECT_EQ(inputs[0].data_ptr(), const_cast<void*>(keep_alive[0].get()));
+  EXPECT_EQ(inputs[1].data_ptr(), const_cast<void*>(keep_alive[1].get()));
   EXPECT_EQ(inputs[0].scalar_type(), at::kFloat);
   EXPECT_EQ(inputs[0].sizes(), (torch::IntArrayRef{2, 2}));
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
@@ -847,6 +1347,101 @@ TEST(InferenceServiceImpl, RpcDoneTagArmHandlesNullContext)
 {
   EXPECT_NO_THROW(starpu_server::InferenceServiceImpl::TestAccessor::
                       ArmRpcDoneTagWithNullContextForTest());
+}
+
+TEST(InferenceServiceImpl, GrpcHealthStatusHandlesNullServer)
+{
+  EXPECT_NO_THROW(starpu_server::InferenceServiceImpl::TestAccessor::
+                      SetGrpcHealthStatusForTest(nullptr, true));
+}
+
+TEST_F(InferenceServiceTest, RecordSuccessHandlesNullRequest)
+{
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown{};
+  EXPECT_NO_THROW(
+      starpu_server::InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+          service.get(), nullptr, breakdown,
+          starpu_server::MonotonicClock::now(), "model"));
+}
+
+TEST_F(InferenceServiceTest, RecordFailureHandlesNullRequest)
+{
+  EXPECT_NO_THROW(
+      starpu_server::InferenceServiceImpl::TestAccessor::RecordFailureForTest(
+          service.get(), nullptr, starpu_server::MonotonicClock::now(),
+          "model"));
+}
+
+TEST(InferenceServiceImpl, IsContextCancelledHandlesNullContext)
+{
+  EXPECT_FALSE(starpu_server::InferenceServiceImpl::TestAccessor::
+                   IsContextCancelledForTest(nullptr));
+}
+
+TEST(InferenceServiceImpl, ScalarTypeToModelDtypeMapsKnownTypes)
+{
+  using DataType = inference::DataType;
+  struct Case {
+    at::ScalarType type;
+    DataType expected;
+  };
+  const std::array<Case, 10> cases = {{
+      {at::kBool, DataType::TYPE_BOOL},
+      {at::kByte, DataType::TYPE_UINT8},
+      {at::kChar, DataType::TYPE_INT8},
+      {at::kShort, DataType::TYPE_INT16},
+      {at::kInt, DataType::TYPE_INT32},
+      {at::kLong, DataType::TYPE_INT64},
+      {at::kHalf, DataType::TYPE_FP16},
+      {at::kFloat, DataType::TYPE_FP32},
+      {at::kDouble, DataType::TYPE_FP64},
+      {at::kBFloat16, DataType::TYPE_BF16},
+  }};
+
+  for (const auto& test_case : cases) {
+    EXPECT_EQ(
+        starpu_server::InferenceServiceImpl::TestAccessor::
+            ScalarTypeToModelDtypeForTest(test_case.type),
+        test_case.expected);
+  }
+}
+
+TEST(InferenceServiceImpl, ScalarTypeToModelDtypeReturnsInvalidForUnsupported)
+{
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          ScalarTypeToModelDtypeForTest(at::kComplexFloat),
+      inference::DataType::TYPE_INVALID);
+}
+
+TEST(InferenceServiceImpl, ResolveTensorNameUsesExplicitName)
+{
+  std::vector<std::string> names = {"first", "second"};
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          ResolveTensorNameForTest(
+              1, std::span<const std::string>(names), "input"),
+      "second");
+}
+
+TEST(InferenceServiceImpl, ResolveTensorNameFallsBackForEmptyEntry)
+{
+  std::vector<std::string> names = {"", "second"};
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          ResolveTensorNameForTest(
+              0, std::span<const std::string>(names), "input"),
+      "input0");
+}
+
+TEST(InferenceServiceImpl, ResolveTensorNameFallsBackForOutOfRange)
+{
+  std::vector<std::string> names = {"first"};
+  EXPECT_EQ(
+      starpu_server::InferenceServiceImpl::TestAccessor::
+          ResolveTensorNameForTest(
+              2, std::span<const std::string>(names), "output"),
+      "output2");
 }
 
 TEST(InferenceServiceImpl, RpcDoneTagProceedInvokesOnDoneWhenOk)

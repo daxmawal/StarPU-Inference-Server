@@ -32,9 +32,18 @@ namespace {
 constexpr int kCpuWarmupDeviceId = std::numeric_limits<int>::min();
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-std::mutex warmup_hook_mutex;
-std::function<void()> warmup_server_thread_hook;
-std::function<void()> warmup_client_thread_hook;
+struct WarmupHookState {
+  std::mutex mutex;
+  std::function<void()> server_thread_hook;
+  std::function<void()> client_thread_hook;
+};
+
+auto
+warmup_hook_state() -> WarmupHookState&
+{
+  static WarmupHookState state;
+  return state;
+}
 #endif  // SONAR_IGNORE_END
 
 auto
@@ -89,9 +98,10 @@ auto
 set_warmup_server_thread_hook(std::function<void()> hook)
     -> std::function<void()>
 {
-  std::lock_guard lock(warmup_hook_mutex);
-  auto previous = std::move(warmup_server_thread_hook);
-  warmup_server_thread_hook = std::move(hook);
+  auto& state = warmup_hook_state();
+  std::lock_guard lock(state.mutex);
+  auto previous = std::move(state.server_thread_hook);
+  state.server_thread_hook = std::move(hook);
   return previous;
 }
 
@@ -99,24 +109,27 @@ auto
 set_warmup_client_thread_hook(std::function<void()> hook)
     -> std::function<void()>
 {
-  std::lock_guard lock(warmup_hook_mutex);
-  auto previous = std::move(warmup_client_thread_hook);
-  warmup_client_thread_hook = std::move(hook);
+  auto& state = warmup_hook_state();
+  std::lock_guard lock(state.mutex);
+  auto previous = std::move(state.client_thread_hook);
+  state.client_thread_hook = std::move(hook);
   return previous;
 }
 
 auto
 take_warmup_server_thread_hook() -> std::function<void()>
 {
-  std::lock_guard lock(warmup_hook_mutex);
-  return std::exchange(warmup_server_thread_hook, {});
+  auto& state = warmup_hook_state();
+  std::lock_guard lock(state.mutex);
+  return std::exchange(state.server_thread_hook, {});
 }
 
 auto
 take_warmup_client_thread_hook() -> std::function<void()>
 {
-  std::lock_guard lock(warmup_hook_mutex);
-  return std::exchange(warmup_client_thread_hook, {});
+  auto& state = warmup_hook_state();
+  std::lock_guard lock(state.mutex);
+  return std::exchange(state.client_thread_hook, {});
 }
 }  // namespace testing
 #endif  // SONAR_IGNORE_END
@@ -225,7 +238,7 @@ struct WarmupSyncState {
   {
     std::lock_guard lock(thread_exception_mutex);
     if (!thread_exception) {
-      thread_exception = exception;
+      thread_exception = std::move(exception);
     }
   }
 
@@ -237,7 +250,7 @@ struct WarmupSyncState {
 
   void notify_exception(std::exception_ptr exception, InferenceQueue& queue)
   {
-    store_exception(exception);
+    store_exception(std::move(exception));
     queue.shutdown();
     completed_cv.notify_all();
   }
@@ -256,7 +269,7 @@ count_worker_total(const std::map<int, std::vector<int>>& device_workers)
 
 template <typename Fn, typename Notify>
 void
-run_warmup_server_thread(Fn&& fn, Notify&& notify_exception)
+run_warmup_server_thread(Fn&& task_fn, Notify&& notify_exception)
 {
   try {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -264,7 +277,7 @@ run_warmup_server_thread(Fn&& fn, Notify&& notify_exception)
       hook();
     }
 #endif  // SONAR_IGNORE_END
-    std::forward<Fn>(fn)();
+    std::forward<Fn>(task_fn)();
   }
   catch (...) {
     notify_exception(std::current_exception());
@@ -273,7 +286,7 @@ run_warmup_server_thread(Fn&& fn, Notify&& notify_exception)
 
 template <typename Fn, typename Notify>
 void
-run_warmup_client_thread(Fn&& fn, Notify&& notify_exception)
+run_warmup_client_thread(Fn&& task_fn, Notify&& notify_exception)
 {
   try {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -281,7 +294,7 @@ run_warmup_client_thread(Fn&& fn, Notify&& notify_exception)
       hook();
     }
 #endif  // SONAR_IGNORE_END
-    std::forward<Fn>(fn)();
+    std::forward<Fn>(task_fn)();
   }
   catch (...) {
     notify_exception(std::current_exception());
@@ -353,7 +366,7 @@ WarmupRunner::run(int request_nb_per_worker)
   WarmupSyncState sync_state;
   const auto notify_thread_exception = [&sync_state,
                                         &queue](std::exception_ptr exception) {
-    sync_state.notify_exception(exception, queue);
+    sync_state.notify_exception(std::move(exception), queue);
   };
 
   StarPUTaskRunnerConfig config{};

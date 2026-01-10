@@ -110,8 +110,12 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
   std::jthread thread([&]() {
     const auto options = starpu_server::GrpcServerOptions{
-        "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, ""};
+        "127.0.0.1:0",
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
@@ -137,8 +141,12 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
       {kMaxBatchSize, 3, 224, 224}};
   std::jthread thread([&]() {
     const auto options = starpu_server::GrpcServerOptions{
-        "127.0.0.1:0", kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, ""};
+        "127.0.0.1:0",
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims, {},
         {}, kMaxBatchSize, options, server);
@@ -188,8 +196,12 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
   const auto endpoint = "127.0.0.1:" + std::to_string(port);
   auto future = std::async(std::launch::async, [&]() {
     const auto options = starpu_server::GrpcServerOptions{
-        endpoint, kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, ""};
+        endpoint,
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
@@ -233,8 +245,12 @@ TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
   const auto endpoint = "127.0.0.1:" + std::to_string(port);
   auto future = std::async(std::launch::async, [&]() {
     const auto options = starpu_server::GrpcServerOptions{
-        endpoint, kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info, ""};
+        endpoint,
+        kMaxMessageSizeMiB * kMiB,
+        starpu_server::VerbosityLevel::Info,
+        "",
+        "",
+        ""};
     starpu_server::RunGrpcServer(
         queue, reference_outputs, expected_input_types, expected_input_dims, {},
         {}, kMaxBatchSize, options, server);
@@ -295,9 +311,13 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
-  const auto options = starpu_server::GrpcServerOptions{
-      address, kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info,
-      ""};
+  const auto options =
+      starpu_server::GrpcServerOptions{address,
+                                       kMaxMessageSizeMiB * kMiB,
+                                       starpu_server::VerbosityLevel::Info,
+                                       "",
+                                       "",
+                                       ""};
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
@@ -341,9 +361,13 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
 
-  const auto options = starpu_server::GrpcServerOptions{
-      address, kMaxMessageSizeMiB * kMiB, starpu_server::VerbosityLevel::Info,
-      ""};
+  const auto options =
+      starpu_server::GrpcServerOptions{address,
+                                       kMaxMessageSizeMiB * kMiB,
+                                       starpu_server::VerbosityLevel::Info,
+                                       "",
+                                       "",
+                                       ""};
 
   constexpr float kVal1 = 10.0F;
   constexpr float kVal2 = 20.0F;
@@ -385,6 +409,22 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
       request, response, expected_outputs, response.server_receive_ms(),
       response.server_send_ms(), response_breakdown);
   EXPECT_GE(response.server_total_ms(), 0.0);
+
+  inference::ModelStatisticsRequest stats_request;
+  stats_request.set_name("model");
+  stats_request.set_version("1");
+  inference::ModelStatisticsResponse stats_response;
+  grpc::ClientContext stats_context;
+  const auto stats_status =
+      stub->ModelStatistics(&stats_context, stats_request, &stats_response);
+  ASSERT_TRUE(stats_status.ok());
+  ASSERT_GE(stats_response.model_stats_size(), 1);
+  const auto& model_stats = stats_response.model_stats(0);
+  EXPECT_EQ(model_stats.name(), "model");
+  EXPECT_EQ(model_stats.version(), "1");
+  EXPECT_GE(model_stats.inference_count(), 1U);
+  EXPECT_GE(model_stats.execution_count(), 1U);
+  EXPECT_GE(model_stats.inference_stats().success().count(), 1U);
 
   worker.join();
 

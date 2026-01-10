@@ -888,6 +888,13 @@ MetricsRegistry::initialize(
   (void)families_.requests_by_status->Add(
       {{"code", "unlabeled"}, {"model", "unlabeled"}});
 
+  auto& received_family = prometheus::BuildCounter()
+                              .Name("requests_received_total")
+                              .Help("Total requests received by model")
+                              .Register(*registry_state_.registry);
+  families_.requests_received = &received_family;
+  (void)families_.requests_received->Add({{"model", "unlabeled"}});
+
   auto& completed_family = prometheus::BuildCounter()
                                .Name("inference_completed_total")
                                .Help("Total logical inferences completed")
@@ -1436,6 +1443,16 @@ increment_request_status(int status_code, std::string_view model_name)
 }
 
 void
+increment_requests_received(std::string_view model_name)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr == nullptr) {
+    return;
+  }
+  metrics_ptr->increment_received_counter(model_name);
+}
+
+void
 observe_batch_size(std::size_t batch_size)
 {
   auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
@@ -1692,6 +1709,34 @@ MetricsRegistry::increment_completed_counter(
   }
   if (entry->second != nullptr) {
     entry->second->Increment(static_cast<double>(logical_jobs));
+  }
+}
+
+void
+MetricsRegistry::increment_received_counter(std::string_view model_label)
+{
+  if (families_.requests_received == nullptr) {
+    return;
+  }
+  ModelKey key{std::string(model_label)};
+  std::scoped_lock lock(mutexes_.model_metrics);
+  auto entry = caches_.model.requests_received.find(key);
+  if (entry == caches_.model.requests_received.end()) {
+    const bool overflow =
+        caches_.model.requests_received.size() >= kMaxLabelSeries;
+    ModelKey map_key = overflow ? ModelKey::Overflow() : std::move(key);
+    auto [inserted_it, inserted] = caches_.model.requests_received.try_emplace(
+        std::move(map_key), nullptr);
+    entry = inserted_it;
+    if (inserted) {
+      const std::string model_label_value =
+          overflow ? kOverflowLabel : escape_label_value(model_label);
+      entry->second =
+          &families_.requests_received->Add({{"model", model_label_value}});
+    }
+  }
+  if (entry->second != nullptr) {
+    entry->second->Increment();
   }
 }
 
@@ -2393,6 +2438,13 @@ starpu_server::MetricsRegistry::TestAccessor::ClearInferenceCompletedFamily(
     starpu_server::MetricsRegistry& metrics)
 {
   metrics.families_.inference_completed = nullptr;
+}
+
+void
+starpu_server::MetricsRegistry::TestAccessor::ClearRequestsReceivedFamily(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.families_.requests_received = nullptr;
 }
 
 void

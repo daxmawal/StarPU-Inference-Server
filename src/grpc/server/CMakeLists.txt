@@ -44,8 +44,12 @@ target_link_libraries(
 
 if(TARGET gRPC::grpc++_reflection)
   target_link_libraries(starpu_server PRIVATE gRPC::grpc++_reflection)
+  target_compile_definitions(starpu_server
+                             PRIVATE STARPU_ENABLE_GRPC_REFLECTION=1)
 elseif(TARGET grpc++_reflection)
   target_link_libraries(starpu_server PRIVATE grpc++_reflection)
+  target_compile_definitions(starpu_server
+                             PRIVATE STARPU_ENABLE_GRPC_REFLECTION=1)
 else()
   message(
     WARNING
