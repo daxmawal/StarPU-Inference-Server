@@ -214,6 +214,25 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "Failed to load config: use_cuda[0].device_ids must be a sequence of "
         "integers"},
     InvalidConfigCase{
+        "UseCudaNegativeDeviceIdInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - { device_ids: [-1] }\n";
+          return yaml;
+        }(),
+        "Failed to load config: use_cuda[0].device_ids[0] must be >= 0"},
+    InvalidConfigCase{
+        "UseCudaEmptyDeviceIdsInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - { device_ids: [] }\n";
+          return yaml;
+        }(),
+        "Failed to load config: use_cuda requires at least one device_ids "
+        "entry"},
+    InvalidConfigCase{
         "StarpuEnvNotMapInvalid",
         [] {
           auto yaml = base_model_yaml();
@@ -270,6 +289,22 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           return yaml;
         }(),
         std::nullopt},
+    InvalidConfigCase{
+        "MetricsPortNotScalarInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "metrics_port: [1]\n";
+          return yaml;
+        }(),
+        "Failed to load config: metrics_port must be an integer"},
+    InvalidConfigCase{
+        "MetricsPortBadConversionInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "metrics_port: not_a_number\n";
+          return yaml;
+        }(),
+        "Failed to load config: metrics_port must be an integer"},
     InvalidConfigCase{
         "DeprecatedSchedulerOptionSetsValidFalse",
         [] {
@@ -456,6 +491,36 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         std::nullopt, false, false},
     InvalidConfigCase{
+        "EmptyModelPathSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: \"\"\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: model must not be empty", false, false},
+    InvalidConfigCase{
+        "MissingMultipleRequiredKeysSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          return yaml;
+        }(),
+        "Failed to load config: Missing required keys: model, inputs, outputs, "
+        "pool_size, max_batch_size, batch_coalesce_timeout_ms",
+        false, false},
+    InvalidConfigCase{
         "NonexistentModelFileSetsValidFalse", base_model_yaml(), std::nullopt,
         true, false},
     InvalidConfigCase{
@@ -490,6 +555,105 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           return yaml;
         }(),
         std::nullopt},
+    InvalidConfigCase{
+        "InputNameNotScalarSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: [invalid]\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0].name must be a scalar string"},
+    InvalidConfigCase{
+        "InputDimsNotSequenceSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: 1\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0].dims must be a sequence of integers"},
+    InvalidConfigCase{
+        "InputDataTypeNotScalarSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: [float32]\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0].data_type must be a scalar string"},
+    InvalidConfigCase{
+        "InputDataTypeInvalidSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: not_a_dtype\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0].data_type: Unsupported type: "
+        "not_a_dtype"},
+    InvalidConfigCase{
+        "InputsEntryNotMapSetsValidFalse",
+        [] {
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - in\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "max_batch_size: 1\n";
+          yaml += "pool_size: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: inputs[0] must be a mapping"},
     InvalidConfigCase{
         "TooManyInputsSetsValidFalse",
         [] {
