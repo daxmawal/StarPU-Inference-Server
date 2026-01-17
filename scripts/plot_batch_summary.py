@@ -24,6 +24,7 @@ from typing import Iterable, List, NamedTuple, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.gridspec import GridSpecFromSubplotSpec
+from matplotlib.patches import Patch
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 PHASE_LABELS = [
@@ -65,6 +66,7 @@ AVERAGE_DURATION_MS_LABEL = "Average duration (ms)"
 TIME_SINCE_FIRST_ARRIVAL_LABEL = "Time since first arrival (s)"
 LEGEND_LOC_UPPER_RIGHT = "upper right"
 LEGEND_LOC_LOWER_RIGHT = "lower right"
+LEGEND_LOC_UPPER_LEFT = "upper left"
 INSET_LOC_LOWER_LEFT = "lower left"
 
 BatchRow = Tuple[
@@ -363,6 +365,30 @@ def add_congestion_shading(
             zorder=0,
             linewidth=0,
         )
+
+
+def add_congestion_legend(
+    ax: plt.Axes,
+    batch_ids: Sequence[int],
+    congested_flags: Sequence[bool | None],
+    *,
+    loc: str = LEGEND_LOC_UPPER_RIGHT,
+) -> None:
+    spans = compute_congestion_spans(batch_ids, congested_flags)
+    if not spans:
+        return
+    patch = Patch(
+        facecolor=CONGESTION_SHADE_COLOR,
+        edgecolor="none",
+        alpha=CONGESTION_SHADE_ALPHA,
+        label="Congestion",
+    )
+    handles, labels = ax.get_legend_handles_labels()
+    if "Congestion" not in labels:
+        handles.append(patch)
+        labels.append("Congestion")
+    if handles:
+        ax.legend(handles=handles, labels=labels, loc=loc, fontsize="small")
 
 
 def plot_latency_stack(
@@ -1459,6 +1485,7 @@ def _plot_latency_overview(
         "Latency vs batch size (multidim)",
         worker_types=worker_types,
     )
+    add_congestion_legend(axes[0], all_ids, all_congested, loc=LEGEND_LOC_UPPER_LEFT)
 
     add_congestion_shading(axes[1], all_ids, all_congested)
     has_worker_data = False
@@ -1502,6 +1529,7 @@ def _plot_latency_overview(
     axes[1].grid(True, linestyle="--", alpha=0.4)
     if has_worker_data:
         axes[1].legend(loc=LEGEND_LOC_UPPER_RIGHT, fontsize="small")
+    add_congestion_legend(axes[1], all_ids, all_congested, loc=LEGEND_LOC_UPPER_RIGHT)
 
     x_limits = axes[1].get_xlim() if all_ids else None
     y_limits = axes[1].get_ylim() if all_ids else None
