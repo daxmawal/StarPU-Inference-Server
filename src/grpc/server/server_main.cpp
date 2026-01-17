@@ -477,32 +477,37 @@ launch_threads(
     std::vector<torch::jit::script::Module>& models_gpu,
     std::vector<torch::Tensor>& reference_outputs)
 {
+  const auto make_congestion_config =
+      [](const starpu_server::RuntimeConfig& cfg) {
+        using namespace std::chrono;
+        starpu_server::congestion::Config out{};
+        out.enabled = cfg.congestion.enabled;
+        out.latency_slo_ms = cfg.congestion.latency_slo_ms;
+        out.queue_latency_budget_ms = cfg.congestion.queue_latency_budget_ms;
+        out.queue_latency_budget_ratio =
+            cfg.congestion.queue_latency_budget_ratio;
+        out.e2e_warn_ratio = cfg.congestion.e2e_warn_ratio;
+        out.e2e_ok_ratio = cfg.congestion.e2e_ok_ratio;
+        out.fill_high = cfg.congestion.fill_high;
+        out.fill_low = cfg.congestion.fill_low;
+        out.rho_high = cfg.congestion.rho_high;
+        out.rho_low = cfg.congestion.rho_low;
+        out.alpha = cfg.congestion.alpha;
+        out.entry_horizon =
+            seconds(std::max(1, cfg.congestion.entry_horizon_seconds));
+        out.exit_horizon =
+            seconds(std::max(1, cfg.congestion.exit_horizon_seconds));
+        out.tick_interval =
+            milliseconds(std::max(1, cfg.congestion.tick_interval_ms));
+        return out;
+      };
+
   static starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
   queue.reset_counters();
   auto& server_ctx = server_context();
   server_ctx.queue_ptr = &queue;
 
-  starpu_server::congestion::Config congestion_cfg{};
-  congestion_cfg.enabled = opts.congestion.enabled;
-  congestion_cfg.latency_slo_ms = opts.congestion.latency_slo_ms;
-  congestion_cfg.queue_latency_budget_ms =
-      opts.congestion.queue_latency_budget_ms;
-  congestion_cfg.queue_latency_budget_ratio =
-      opts.congestion.queue_latency_budget_ratio;
-  congestion_cfg.e2e_warn_ratio = opts.congestion.e2e_warn_ratio;
-  congestion_cfg.e2e_ok_ratio = opts.congestion.e2e_ok_ratio;
-  congestion_cfg.fill_high = opts.congestion.fill_high;
-  congestion_cfg.fill_low = opts.congestion.fill_low;
-  congestion_cfg.rho_high = opts.congestion.rho_high;
-  congestion_cfg.rho_low = opts.congestion.rho_low;
-  congestion_cfg.alpha = opts.congestion.alpha;
-  congestion_cfg.entry_horizon =
-      std::chrono::seconds(std::max(1, opts.congestion.entry_horizon_seconds));
-  congestion_cfg.exit_horizon =
-      std::chrono::seconds(std::max(1, opts.congestion.exit_horizon_seconds));
-  congestion_cfg.tick_interval =
-      std::chrono::milliseconds(std::max(1, opts.congestion.tick_interval_ms));
-  starpu_server::congestion::start(&queue, congestion_cfg);
+  starpu_server::congestion::start(&queue, make_congestion_config(opts));
 
   std::jthread notifier_thread([&server_ctx]() {
     constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
