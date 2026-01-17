@@ -65,7 +65,7 @@ TEST_F(CongestionMonitorTest, ClearsAfterExitConditionsHold)
   ASSERT_TRUE(starpu_server::congestion::start(&queue, cfg));
 
   for (int i = 0; i < 8; ++i) {
-    queue.push(std::make_shared<starpu_server::InferenceJob>());
+    ASSERT_TRUE(queue.push(std::make_shared<starpu_server::InferenceJob>()));
   }
   starpu_server::congestion::record_arrival(8);
 
