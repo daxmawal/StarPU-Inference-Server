@@ -54,6 +54,8 @@ SLA_THRESHOLDS_MS = (50.0, 100.0, 200.0)
 MAX_WORKER_CDFS = 6
 CPU_COLOR = "#d62728"
 GPU_COLOR = "#1f77b4"
+CONGESTION_SHADE_COLOR = "#ff0000"
+CONGESTION_SHADE_ALPHA = 0.12
 BATCH_ID_LABEL = "Batch ID"
 BATCH_SIZE_LABEL = "Batch size"
 WORKER_ID_LABEL = "Worker ID"
@@ -74,6 +76,7 @@ BatchRow = Tuple[
     int,  # logical job count
     Tuple[float, ...],  # phase breakdown
     Tuple[int, ...],  # request arrival timestamps (us)
+    bool | None,  # congestion flag
 ]
 
 
@@ -85,6 +88,7 @@ class PlotInputs(NamedTuple):
     all_jobs: List[int]
     all_breakdowns: List[Tuple[float, ...]]
     all_arrivals: List[Tuple[int, ...]]
+    all_congested: List[bool | None]
     cpu_ids: List[int]
     cpu_lat: List[float]
     cpu_workers: List[int]
@@ -141,6 +145,19 @@ def parse_request_arrival_field(field: str | None) -> Tuple[int, ...]:
     return tuple(values)
 
 
+def parse_optional_bool(field: str | None) -> bool | None:
+    if field is None:
+        return None
+    token = field.strip().lower()
+    if not token:
+        return None
+    if token in ("1", "true", "t", "yes", "y"):
+        return True
+    if token in ("0", "false", "f", "no", "n"):
+        return False
+    raise ValueError(f"Invalid boolean value '{field}'")
+
+
 def load_latencies(
     csv_path: Path,
 ) -> List[BatchRow]:
@@ -155,11 +172,13 @@ def load_latencies(
             "batch_size",
         }
         required.update(f"{label}_ms" for label in PHASE_LABELS)
-        missing = sorted(required - set(reader.fieldnames or []))
+        fieldnames = set(reader.fieldnames or [])
+        missing = sorted(required - fieldnames)
         if missing:
             raise ValueError(
                 f"{csv_path} is missing required columns: {', '.join(missing)}"
             )
+        has_congested = "congested" in fieldnames
         for row in reader:
             try:
                 batch_id = int(row["batch_id"])
@@ -178,6 +197,9 @@ def load_latencies(
             breakdown = tuple(float(row[f"{label}_ms"]) for label in PHASE_LABELS)
             arrivals_field = row.get("request_arrival_us")
             arrivals = parse_request_arrival_field(arrivals_field)
+            congested = (
+                parse_optional_bool(row.get("congested")) if has_congested else None
+            )
             batches.append(
                 (
                     batch_id,
@@ -188,6 +210,7 @@ def load_latencies(
                     logical_jobs,
                     breakdown,
                     arrivals,
+                    congested,
                 )
             )
     return batches
@@ -232,6 +255,7 @@ def filter_latencies(
     List[int],
     List[Tuple[float, ...]],
     List[Tuple[int, ...]],
+    List[bool | None],
 ]:
     ids: List[int] = []
     latencies: List[float] = []
@@ -240,6 +264,7 @@ def filter_latencies(
     logical_jobs: List[int] = []
     breakdowns: List[Tuple[float, ...]] = []
     arrivals: List[Tuple[int, ...]] = []
+    congested_flags: List[bool | None] = []
     for (
         batch_id,
         latency,
@@ -249,6 +274,7 @@ def filter_latencies(
         logical_job_count,
         breakdown,
         request_arrivals,
+        congested,
     ) in data:
         if worker_type is None or device == worker_type:
             ids.append(batch_id)
@@ -258,7 +284,17 @@ def filter_latencies(
             logical_jobs.append(logical_job_count)
             breakdowns.append(breakdown)
             arrivals.append(request_arrivals)
-    return ids, latencies, worker_ids, batch_sizes, logical_jobs, breakdowns, arrivals
+            congested_flags.append(congested)
+    return (
+        ids,
+        latencies,
+        worker_ids,
+        batch_sizes,
+        logical_jobs,
+        breakdowns,
+        arrivals,
+        congested_flags,
+    )
 
 
 def flatten_request_arrival_seconds(
@@ -277,6 +313,56 @@ def flatten_request_arrival_seconds(
         (timestamp - start) / 1_000_000.0 for timestamp in events if timestamp >= start
     ]
     return relative_seconds
+
+
+def compute_congestion_spans(
+    batch_ids: Sequence[int],
+    congested_flags: Sequence[bool | None],
+) -> List[Tuple[float, float]]:
+    if not batch_ids or not congested_flags:
+        return []
+    if len(batch_ids) != len(congested_flags):
+        return []
+    pairs = sorted(zip(batch_ids, congested_flags), key=lambda item: item[0])
+    ids = [item[0] for item in pairs]
+    flags = [bool(flag) if flag is not None else False for _, flag in pairs]
+    if not any(flags):
+        return []
+    if len(ids) == 1:
+        return [(ids[0] - 0.5, ids[0] + 0.5)] if flags[0] else []
+    boundaries = [ids[0] - (ids[1] - ids[0]) / 2.0]
+    boundaries.extend((ids[idx] + ids[idx + 1]) / 2.0 for idx in range(len(ids) - 1))
+    boundaries.append(ids[-1] + (ids[-1] - ids[-2]) / 2.0)
+    spans: List[Tuple[float, float]] = []
+    in_span = False
+    start = 0.0
+    for idx, flag in enumerate(flags):
+        if flag and not in_span:
+            start = boundaries[idx]
+            in_span = True
+        if in_span and not flag:
+            spans.append((start, boundaries[idx]))
+            in_span = False
+    if in_span:
+        spans.append((start, boundaries[-1]))
+    return spans
+
+
+def add_congestion_shading(
+    ax: plt.Axes,
+    batch_ids: Sequence[int],
+    congested_flags: Sequence[bool | None],
+) -> None:
+    spans = compute_congestion_spans(batch_ids, congested_flags)
+    for start, end in spans:
+        ax.axvspan(
+            start,
+            end,
+            color=CONGESTION_SHADE_COLOR,
+            alpha=CONGESTION_SHADE_ALPHA,
+            zorder=0,
+            linewidth=0,
+        )
 
 
 def plot_latency_stack(
@@ -1288,6 +1374,7 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         all_jobs,
         all_breakdowns,
         all_arrivals,
+        all_congested,
     ) = filter_latencies(data)
     (
         cpu_ids,
@@ -1297,6 +1384,7 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         cpu_jobs,
         cpu_breakdowns,
         cpu_arrivals,
+        _,
     ) = filter_latencies(data, worker_type="cpu")
     (
         gpu_ids,
@@ -1306,6 +1394,7 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         gpu_jobs,
         gpu_breakdowns,
         gpu_arrivals,
+        _,
     ) = filter_latencies(data, worker_type="cuda")
     worker_type_by_id = {batch_id: worker_type for batch_id, _, worker_type, *_ in data}
     all_worker_types = [
@@ -1327,6 +1416,7 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         all_jobs,
         all_breakdowns,
         all_arrivals,
+        all_congested,
         cpu_ids,
         cpu_lat,
         cpu_workers,
@@ -1353,12 +1443,14 @@ def _plot_latency_overview(
     all_ids: Sequence[int],
     all_lat: Sequence[float],
     all_sizes: Sequence[int],
+    all_congested: Sequence[bool | None],
     cpu_ids: Sequence[int],
     cpu_lat: Sequence[float],
     gpu_ids: Sequence[int],
     gpu_lat: Sequence[float],
     worker_types: Sequence[str],
 ) -> None:
+    add_congestion_shading(axes[0], all_ids, all_congested)
     scatter_with_size(
         axes[0],
         all_ids,
@@ -1368,6 +1460,7 @@ def _plot_latency_overview(
         worker_types=worker_types,
     )
 
+    add_congestion_shading(axes[1], all_ids, all_congested)
     has_worker_data = False
     if gpu_ids:
         axes[1].scatter(
@@ -1766,6 +1859,7 @@ def render_plots(
         all_jobs,
         all_breakdowns,
         all_arrivals,
+        all_congested,
         cpu_ids,
         cpu_lat,
         cpu_workers,
@@ -1791,6 +1885,7 @@ def render_plots(
         all_ids,
         all_lat,
         all_sizes,
+        all_congested,
         cpu_ids,
         cpu_lat,
         gpu_ids,

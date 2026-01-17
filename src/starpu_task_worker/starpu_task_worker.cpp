@@ -1028,6 +1028,7 @@ ResultDispatcher::record_job_metrics(
         .callback_ms = breakdown.callback_ms,
         .total_ms = breakdown.total_ms,
         .is_warmup = is_warmup_job(job),
+        .congested = congestion::is_congested(),
     });
   }
 }

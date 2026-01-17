@@ -174,6 +174,7 @@ class BatchingTraceLogger {
     double callback_ms;
     double total_ms;
     bool is_warmup = false;
+    bool congested = false;
   };
   struct QueueMetric {
     int64_t timestamp_us = 0;

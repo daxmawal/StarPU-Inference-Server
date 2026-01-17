@@ -1068,7 +1068,8 @@ BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
                   << std::format("{:.3f}", args.inference_ms) << ','
                   << std::format("{:.3f}", args.callback_ms) << ','
                   << std::format("{:.3f}", args.total_ms) << ','
-                  << (args.is_warmup ? "true" : "false") << '\n';
+                  << (args.is_warmup ? "true" : "false") << ','
+                  << (args.congested ? "true" : "false") << '\n';
 }
 
 auto
@@ -1088,7 +1089,8 @@ BatchingTraceLogger::configure_summary_writer(
   summary_stream_
       << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
          "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
-         "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,warmup\n";
+         "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,"
+         "warmup,congested\n";
 
   [[maybe_unused]] const bool queue_writer_ready =
       configure_queue_metrics_writer(trace_path);
