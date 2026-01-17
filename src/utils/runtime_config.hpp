@@ -89,6 +89,23 @@ struct RuntimeConfig {
     std::string trace_output_path = std::string(kDefaultTraceFileName);
   };
 
+  struct CongestionSettings {
+    bool enabled = true;
+    double latency_slo_ms = 0.0;
+    double queue_latency_budget_ms = 0.0;
+    double queue_latency_budget_ratio = 0.30;
+    double e2e_warn_ratio = 0.90;
+    double e2e_ok_ratio = 0.80;
+    double fill_high = 0.80;
+    double fill_low = 0.60;
+    double rho_high = 1.05;
+    double rho_low = 0.90;
+    double alpha = 0.2;
+    int entry_horizon_seconds = 5;
+    int exit_horizon_seconds = 15;
+    int tick_interval_ms = 1000;
+  };
+
   struct Limits {
     size_t max_inputs = InferLimits::MaxInputs;
     size_t max_dims = InferLimits::MaxDims;
@@ -106,6 +123,7 @@ struct RuntimeConfig {
   BatchingSettings batching{};
   Limits limits{};
   std::optional<uint64_t> seed;
+  CongestionSettings congestion{};
   bool valid = true;
 };
 

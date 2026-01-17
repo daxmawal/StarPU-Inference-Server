@@ -211,6 +211,7 @@ validate_allowed_keys(const YAML::Node& root)
           "max_inflight_tasks",
           "max_batch_size",
           "dynamic_batching",
+          "congestion",
           "pool_size",
           "trace_enabled",
           "trace_output",
@@ -484,6 +485,128 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
 }
 
 void
+parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
+{
+  const YAML::Node congestion_node = root["congestion"];
+  if (!congestion_node) {
+    return;
+  }
+  if (!congestion_node.IsMap()) {
+    throw std::invalid_argument("congestion must be a mapping");
+  }
+
+  auto parse_non_negative_ms = [&](std::string_view key) -> double {
+    const double value =
+        parse_scalar<double>(congestion_node[key], key, "a number");
+    if (value < 0.0) {
+      throw std::invalid_argument(
+          std::format("{} must be >= 0", key));
+    }
+    return value;
+  };
+
+  if (congestion_node["enabled"]) {
+    cfg.congestion.enabled = parse_scalar<bool>(
+        congestion_node["enabled"], "congestion.enabled", "a boolean");
+  }
+  if (congestion_node["latency_slo_ms"]) {
+    cfg.congestion.latency_slo_ms =
+        parse_non_negative_ms("latency_slo_ms");
+  }
+  if (congestion_node["queue_latency_budget_ms"]) {
+    cfg.congestion.queue_latency_budget_ms =
+        parse_non_negative_ms("queue_latency_budget_ms");
+  }
+  if (congestion_node["queue_latency_budget_ratio"]) {
+    const double ratio = parse_scalar<double>(
+        congestion_node["queue_latency_budget_ratio"],
+        "queue_latency_budget_ratio", "a number");
+    if (ratio < 0.0) {
+      throw std::invalid_argument(
+          "queue_latency_budget_ratio must be >= 0");
+    }
+    cfg.congestion.queue_latency_budget_ratio = ratio;
+  }
+  if (congestion_node["e2e_warn_ratio"]) {
+    cfg.congestion.e2e_warn_ratio = parse_scalar<double>(
+        congestion_node["e2e_warn_ratio"], "e2e_warn_ratio", "a number");
+  }
+  if (congestion_node["e2e_ok_ratio"]) {
+    cfg.congestion.e2e_ok_ratio = parse_scalar<double>(
+        congestion_node["e2e_ok_ratio"], "e2e_ok_ratio", "a number");
+  }
+  if (cfg.congestion.e2e_warn_ratio <= 0.0) {
+    throw std::invalid_argument("e2e_warn_ratio must be > 0");
+  }
+  if (cfg.congestion.e2e_ok_ratio <= 0.0 ||
+      cfg.congestion.e2e_ok_ratio > cfg.congestion.e2e_warn_ratio) {
+    throw std::invalid_argument(
+        "e2e_ok_ratio must be > 0 and <= e2e_warn_ratio");
+  }
+  if (congestion_node["fill_high"]) {
+    cfg.congestion.fill_high = parse_scalar<double>(
+        congestion_node["fill_high"], "fill_high", "a number");
+  }
+  if (congestion_node["fill_low"]) {
+    cfg.congestion.fill_low = parse_scalar<double>(
+        congestion_node["fill_low"], "fill_low", "a number");
+  }
+  if (cfg.congestion.fill_high <= 0.0 || cfg.congestion.fill_high > 1.0 ||
+      cfg.congestion.fill_low < 0.0 || cfg.congestion.fill_low >= 1.0) {
+    throw std::invalid_argument("fill_high must be (0,1] and fill_low in [0,1)");
+  }
+  if (cfg.congestion.fill_low >= cfg.congestion.fill_high) {
+    throw std::invalid_argument("fill_low must be < fill_high");
+  }
+  if (congestion_node["rho_high"]) {
+    cfg.congestion.rho_high = parse_scalar<double>(
+        congestion_node["rho_high"], "rho_high", "a number");
+  }
+  if (congestion_node["rho_low"]) {
+    cfg.congestion.rho_low = parse_scalar<double>(
+        congestion_node["rho_low"], "rho_low", "a number");
+  }
+  if (cfg.congestion.rho_high <= 0.0) {
+    throw std::invalid_argument("rho_high must be > 0");
+  }
+  if (cfg.congestion.rho_low < 0.0) {
+    throw std::invalid_argument("rho_low must be >= 0");
+  }
+  if (cfg.congestion.rho_low >= cfg.congestion.rho_high) {
+    throw std::invalid_argument("rho_low must be < rho_high");
+  }
+  if (congestion_node["alpha_ewma"]) {
+    cfg.congestion.alpha = parse_scalar<double>(
+        congestion_node["alpha_ewma"], "alpha_ewma", "a number");
+  }
+  if (cfg.congestion.alpha <= 0.0 || cfg.congestion.alpha > 1.0) {
+    throw std::invalid_argument("alpha_ewma must be in (0, 1]");
+  }
+  if (congestion_node["entry_horizon_seconds"]) {
+    cfg.congestion.entry_horizon_seconds = parse_scalar<int>(
+        congestion_node["entry_horizon_seconds"], "entry_horizon_seconds",
+        "an integer");
+  }
+  if (congestion_node["exit_horizon_seconds"]) {
+    cfg.congestion.exit_horizon_seconds = parse_scalar<int>(
+        congestion_node["exit_horizon_seconds"], "exit_horizon_seconds",
+        "an integer");
+  }
+  if (cfg.congestion.entry_horizon_seconds <= 0 ||
+      cfg.congestion.exit_horizon_seconds <= 0) {
+    throw std::invalid_argument(
+        "entry_horizon_seconds and exit_horizon_seconds must be > 0");
+  }
+  if (congestion_node["tick_interval_ms"]) {
+    cfg.congestion.tick_interval_ms = parse_scalar<int>(
+        congestion_node["tick_interval_ms"], "tick_interval_ms", "an integer");
+  }
+  if (cfg.congestion.tick_interval_ms <= 0) {
+    throw std::invalid_argument("tick_interval_ms must be > 0");
+  }
+}
+
+void
 parse_generation_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
   if (root["warmup_pregen_inputs"]) {
@@ -706,6 +829,7 @@ parse_config_file(
     parse_io_nodes(root, cfg);
     parse_network_and_delay(root, cfg);
     parse_message_and_batching(root, cfg);
+    parse_congestion(root, cfg);
     parse_generation_nodes(root, cfg);
     parse_device_nodes(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);

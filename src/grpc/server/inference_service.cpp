@@ -27,6 +27,7 @@
 #endif
 
 #include "core/inference_runner.hpp"
+#include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/client_utils.hpp"
@@ -1161,6 +1162,7 @@ InferenceServiceImpl::submit_job_async(
     if (queue_full) {
       increment_inference_failure("enqueue", "queue_full", job->model_name());
       increment_rejected_requests();
+      congestion::record_rejection(1);
       BatchingTraceLogger::instance().log_request_rejected(queue_->size());
       return {grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
     }
@@ -1871,6 +1873,7 @@ InferenceServiceImpl::HandleModelInferAsync(
     metrics->counters().requests_total->Increment();
   }
   increment_requests_received(resolved_model_name);
+  congestion::record_arrival(1);
   auto recv_tp = MonotonicClock::now();
   int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::system_clock::now().time_since_epoch())

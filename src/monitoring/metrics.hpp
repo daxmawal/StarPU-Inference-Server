@@ -93,6 +93,18 @@ class MetricsRegistry {
     prometheus::Gauge* queue_fill_ratio{nullptr};
     prometheus::Gauge* queue_capacity{nullptr};
     prometheus::Gauge* batch_pending_jobs{nullptr};
+    prometheus::Gauge* congestion_flag{nullptr};
+    prometheus::Gauge* congestion_score{nullptr};
+    prometheus::Gauge* congestion_lambda_rps{nullptr};
+    prometheus::Gauge* congestion_mu_rps{nullptr};
+    prometheus::Gauge* congestion_rho_ewma{nullptr};
+    prometheus::Gauge* congestion_queue_fill_ewma{nullptr};
+    prometheus::Gauge* congestion_queue_growth_rate{nullptr};
+    prometheus::Gauge* congestion_queue_p95_ms{nullptr};
+    prometheus::Gauge* congestion_queue_p99_ms{nullptr};
+    prometheus::Gauge* congestion_e2e_p95_ms{nullptr};
+    prometheus::Gauge* congestion_e2e_p99_ms{nullptr};
+    prometheus::Gauge* congestion_rejection_rps{nullptr};
   };
 
   struct HistogramMetrics {
@@ -582,6 +594,18 @@ void set_queue_fill_ratio(std::size_t size, std::size_t capacity);
 void set_server_health(bool ready);
 void set_starpu_prepared_queue_depth(std::size_t depth);
 void set_batch_pending_jobs(std::size_t pending);
+void set_congestion_flag(bool congested);
+void set_congestion_score(double score);
+void set_congestion_arrival_rate(double rps);
+void set_congestion_completion_rate(double rps);
+void set_congestion_rejection_rate(double rps);
+void set_congestion_rho(double rho);
+void set_congestion_fill_ewma(double fill);
+void set_congestion_queue_growth_rate(double rate);
+void set_congestion_queue_latency_p95(double latency_ms);
+void set_congestion_queue_latency_p99(double latency_ms);
+void set_congestion_e2e_latency_p95(double latency_ms);
+void set_congestion_e2e_latency_p99(double latency_ms);
 void increment_request_status(int status_code, std::string_view model_name);
 void increment_requests_received(std::string_view model_name);
 void increment_inference_completed(

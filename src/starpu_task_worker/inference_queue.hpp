@@ -130,6 +130,8 @@ class InferenceQueue {
     return queue_.size();
   }
 
+  [[nodiscard]] auto capacity() const -> std::size_t { return max_size_; }
+
   [[nodiscard]] auto is_shutdown() const -> bool
   {
     const std::scoped_lock lock(mutex_);

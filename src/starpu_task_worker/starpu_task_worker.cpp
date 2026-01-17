@@ -29,6 +29,7 @@
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
+#include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/batching_trace_logger.hpp"
@@ -962,6 +963,8 @@ ResultDispatcher::record_job_metrics(
   const auto logical_jobs =
       static_cast<std::size_t>(std::max(1, job->logical_job_count()));
   observe_logical_batch_size(logical_jobs);
+  const auto breakdown =
+      detail::compute_latency_breakdown(timing, latency.count());
   if (!warmup) {
     increment_inference_completed(job->model_name(), logical_jobs);
     const auto codelet_end = timing.codelet_end_time;
@@ -991,6 +994,8 @@ ResultDispatcher::record_job_metrics(
       observe_compute_latency_by_worker(
           worker_id, device_id, worker_type_label, compute_ms);
     }
+    congestion::record_completion(
+        logical_jobs, breakdown.queue_ms, latency.count());
   }
   perf_observer::record_job(
       timing.enqueued_time, timing.callback_end_time, batch_size, warmup);
@@ -1001,8 +1006,6 @@ ResultDispatcher::record_job_metrics(
 
   auto& tracer = BatchingTraceLogger::instance();
   if (tracer.enabled()) {
-    const auto breakdown =
-        detail::compute_latency_breakdown(timing, latency.count());
     const auto request_ids =
         task_runner_internal::build_request_ids_for_trace(job);
     const auto request_arrivals =

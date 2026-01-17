@@ -26,6 +26,7 @@
 #include "core/inference_runner.hpp"
 #include "core/starpu_setup.hpp"
 #include "inference_service.hpp"
+#include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
@@ -481,6 +482,28 @@ launch_threads(
   auto& server_ctx = server_context();
   server_ctx.queue_ptr = &queue;
 
+  starpu_server::congestion::Config congestion_cfg{};
+  congestion_cfg.enabled = opts.congestion.enabled;
+  congestion_cfg.latency_slo_ms = opts.congestion.latency_slo_ms;
+  congestion_cfg.queue_latency_budget_ms =
+      opts.congestion.queue_latency_budget_ms;
+  congestion_cfg.queue_latency_budget_ratio =
+      opts.congestion.queue_latency_budget_ratio;
+  congestion_cfg.e2e_warn_ratio = opts.congestion.e2e_warn_ratio;
+  congestion_cfg.e2e_ok_ratio = opts.congestion.e2e_ok_ratio;
+  congestion_cfg.fill_high = opts.congestion.fill_high;
+  congestion_cfg.fill_low = opts.congestion.fill_low;
+  congestion_cfg.rho_high = opts.congestion.rho_high;
+  congestion_cfg.rho_low = opts.congestion.rho_low;
+  congestion_cfg.alpha = opts.congestion.alpha;
+  congestion_cfg.entry_horizon =
+      std::chrono::seconds(std::max(1, opts.congestion.entry_horizon_seconds));
+  congestion_cfg.exit_horizon =
+      std::chrono::seconds(std::max(1, opts.congestion.exit_horizon_seconds));
+  congestion_cfg.tick_interval =
+      std::chrono::milliseconds(std::max(1, opts.congestion.tick_interval_ms));
+  starpu_server::congestion::start(&queue, congestion_cfg);
+
   std::jthread notifier_thread([&server_ctx]() {
     constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
     while (signal_stop_requested_flag() == 0) {
@@ -575,6 +598,7 @@ launch_threads(
       return static_cast<std::size_t>(completed) >= total_jobs;
     });
   }
+  starpu_server::congestion::shutdown();
   server_ctx.stop_cv.notify_one();
 }
 

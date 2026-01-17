@@ -1632,6 +1632,64 @@ TEST(ConfigLoader, ParsesMaxQueueSize)
   EXPECT_EQ(cfg.batching.max_queue_size, 50U);
 }
 
+TEST(ConfigLoader, ParsesCongestionBlock)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_congestion_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: congestion_config\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "pool_size: 1\n";
+  yaml << "congestion:\n";
+  yaml << "  enabled: true\n";
+  yaml << "  latency_slo_ms: 150\n";
+  yaml << "  queue_latency_budget_ms: 30\n";
+  yaml << "  queue_latency_budget_ratio: 0.25\n";
+  yaml << "  e2e_warn_ratio: 0.9\n";
+  yaml << "  e2e_ok_ratio: 0.8\n";
+  yaml << "  fill_high: 0.85\n";
+  yaml << "  fill_low: 0.65\n";
+  yaml << "  rho_high: 1.1\n";
+  yaml << "  rho_low: 0.9\n";
+  yaml << "  alpha_ewma: 0.4\n";
+  yaml << "  entry_horizon_seconds: 3\n";
+  yaml << "  exit_horizon_seconds: 7\n";
+  yaml << "  tick_interval_ms: 500\n";
+
+  const auto tmp =
+      std::filesystem::temp_directory_path() / "config_loader_congestion.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  ASSERT_TRUE(cfg.valid);
+  EXPECT_TRUE(cfg.congestion.enabled);
+  EXPECT_DOUBLE_EQ(cfg.congestion.latency_slo_ms, 150.0);
+  EXPECT_DOUBLE_EQ(cfg.congestion.queue_latency_budget_ms, 30.0);
+  EXPECT_DOUBLE_EQ(cfg.congestion.queue_latency_budget_ratio, 0.25);
+  EXPECT_DOUBLE_EQ(cfg.congestion.e2e_warn_ratio, 0.9);
+  EXPECT_DOUBLE_EQ(cfg.congestion.e2e_ok_ratio, 0.8);
+  EXPECT_DOUBLE_EQ(cfg.congestion.fill_high, 0.85);
+  EXPECT_DOUBLE_EQ(cfg.congestion.fill_low, 0.65);
+  EXPECT_DOUBLE_EQ(cfg.congestion.rho_high, 1.1);
+  EXPECT_DOUBLE_EQ(cfg.congestion.rho_low, 0.9);
+  EXPECT_DOUBLE_EQ(cfg.congestion.alpha, 0.4);
+  EXPECT_EQ(cfg.congestion.entry_horizon_seconds, 3);
+  EXPECT_EQ(cfg.congestion.exit_horizon_seconds, 7);
+  EXPECT_EQ(cfg.congestion.tick_interval_ms, 500);
+}
+
 TEST(ConfigLoader, MaxQueueSizeRejectsNonPositive)
 {
   const auto model_path =
