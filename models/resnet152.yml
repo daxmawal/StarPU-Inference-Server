@@ -28,3 +28,17 @@ group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }
 pool_size: 12
+congestion:
+  enabled: true
+  latency_slo_ms: 150
+  queue_latency_budget_ratio: 0.25
+  e2e_warn_ratio: 0.90
+  e2e_ok_ratio: 0.80
+  fill_high: 0.85
+  fill_low: 0.65
+  rho_high: 1.10
+  rho_low: 0.90
+  alpha_ewma: 0.4
+  entry_horizon_ms: 3000
+  exit_horizon_ms: 7000
+  tick_interval_ms: 500

@@ -44,7 +44,9 @@ horizon is considered satisfied.
 
 ## Configuration fields
 
-All fields live under the `congestion:` block.
+All fields live under the `congestion:` block. The block is optional: if it is
+omitted, defaults from `RuntimeConfig::CongestionSettings` are used. Any field
+left out keeps its default value.
 
 - `enabled` (bool): Enable congestion detection.
 - `latency_slo_ms` (ms): End-to-end SLO target. If 0, SLO-based checks are off.
