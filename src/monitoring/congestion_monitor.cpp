@@ -18,6 +18,7 @@
 #include "logger.hpp"
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "utils/batching_trace_logger.hpp"
 
 namespace starpu_server::congestion {
 namespace {
@@ -103,6 +104,7 @@ class CongestionMonitor {
       worker_.request_stop();
       worker_.join();
     }
+    flush_congestion_span(std::chrono::steady_clock::now());
   }
 
   void record_arrival(std::size_t count)
@@ -290,7 +292,7 @@ class CongestionMonitor {
     const auto elapsed_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
     if (panic) {
-      set_congested(true);
+      set_congested(true, now);
       entry_accumulator_ = cfg_.entry_horizon;
       exit_accumulator_ = std::chrono::milliseconds::zero();
     } else if (!congested()) {
@@ -300,7 +302,7 @@ class CongestionMonitor {
         entry_accumulator_ = std::chrono::milliseconds::zero();
       }
       if (entry_accumulator_ >= cfg_.entry_horizon) {
-        set_congested(true);
+        set_congested(true, now);
         exit_accumulator_ = std::chrono::milliseconds::zero();
       }
     } else {
@@ -310,7 +312,7 @@ class CongestionMonitor {
         exit_accumulator_ = std::chrono::milliseconds::zero();
       }
       if (exit_accumulator_ >= cfg_.exit_horizon) {
-        set_congested(false);
+        set_congested(false, now);
         entry_accumulator_ = std::chrono::milliseconds::zero();
       }
     }
@@ -404,9 +406,28 @@ class CongestionMonitor {
     }
   }
 
-  void set_congested(bool state)
+  void set_congested(bool state, std::chrono::steady_clock::time_point now)
   {
-    congested_flag_.store(state, std::memory_order_release);
+    const bool previous =
+        congested_flag_.exchange(state, std::memory_order_acq_rel);
+    if (state && !previous) {
+      congestion_start_ = now;
+    } else if (!state && previous) {
+      flush_congestion_span(now);
+    }
+  }
+
+  void flush_congestion_span(std::chrono::steady_clock::time_point end_time)
+  {
+    if (!congestion_start_.has_value()) {
+      return;
+    }
+    auto& tracer = BatchingTraceLogger::instance();
+    tracer.log_congestion_span(BatchingTraceLogger::TimeRange{
+        .start = *congestion_start_,
+        .end = end_time,
+    });
+    congestion_start_.reset();
   }
 
   InferenceQueue* queue_;
@@ -428,6 +449,7 @@ class CongestionMonitor {
   std::optional<double> queue_p99_ewma_;
   std::optional<double> e2e_p95_ewma_;
   std::optional<double> e2e_p99_ewma_;
+  std::optional<std::chrono::steady_clock::time_point> congestion_start_;
   std::size_t last_queue_size_{0};
   std::chrono::steady_clock::time_point last_tick_;
   std::chrono::milliseconds entry_accumulator_{0};

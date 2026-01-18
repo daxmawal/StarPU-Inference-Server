@@ -241,6 +241,7 @@ class BatchingTraceLogger {
       bool is_warmup = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
   void log_batch_summary(const BatchSummaryLogArgs& args);
+  void log_congestion_span(TimeRange range);
   void log_queue_size(std::size_t queue_size);
   void log_request_rejected(std::size_t queue_size = 0);
   [[nodiscard]] auto summary_file_path() const

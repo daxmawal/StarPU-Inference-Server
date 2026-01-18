@@ -20,14 +20,17 @@ constexpr int kRequestEnqueuedTrackId = 1;
 constexpr int kBatchEnqueueTrackId = 2;
 constexpr int kBatchBuildTrackId = 3;
 constexpr int kBatchSubmittedTrackId = 4;
+constexpr int kCongestionTrackId = 5;
 constexpr int kWorkerThreadOffset = 10;
 constexpr int kWorkerLaneThreadStride = 1000;
 constexpr unsigned char kAsciiPrintableFloor = 0x20;
+constexpr int kCongestionSortIndex = -4;
 constexpr int kRequestEnqueuedSortIndex = -3;
 constexpr int kBatchEnqueueSortIndex = -2;
 constexpr int kBatchBuildSortIndex = -1;
 constexpr int kBatchSubmittedSortIndex = 0;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
+constexpr std::string_view kCongestionTrackName = "congestion";
 constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
 constexpr std::string_view kBatchEnqueueTrackName = "batch";
 constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
@@ -312,6 +315,8 @@ TraceFileWriter::write_header()
   header_written_ = true;
   thread_metadata_.clear();
   write_process_metadata();
+  ensure_thread_metadata(
+      kCongestionTrackId, kCongestionTrackName, kCongestionSortIndex);
   ensure_thread_metadata(
       kRequestEnqueuedTrackId, kRequestEnqueuedTrackName,
       kRequestEnqueuedSortIndex);
@@ -952,6 +957,34 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
     return;
   }
   write_summary_line_locked(args);
+}
+
+void
+BatchingTraceLogger::log_congestion_span(TimeRange range)
+{
+  if (!logging_enabled()) {
+    return;
+  }
+  const auto start_ts = relative_timestamp_from_time_point(range.start);
+  const auto end_ts = relative_timestamp_from_time_point(range.end);
+  if (!start_ts || !end_ts || *end_ts < *start_ts) {
+    return;
+  }
+  const int64_t duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
+
+  std::ostringstream line;
+  line << R"({"name":"congestion","cat":"monitoring","ph":"X","ts":)"
+       << *start_ts << ",\"dur\":" << duration << ",\"pid\":" << kTraceProcessId
+       << ",\"tid\":" << kCongestionTrackId
+       << R"(,"cname":"bad","args":{"state":"congested"}})";
+
+  std::lock_guard lock(mutex_);
+  if (!trace_writer_.ready()) {
+    return;
+  }
+  trace_writer_.ensure_thread_metadata(
+      kCongestionTrackId, kCongestionTrackName, kCongestionSortIndex);
+  trace_writer_.write_line(line.str());
 }
 
 void
