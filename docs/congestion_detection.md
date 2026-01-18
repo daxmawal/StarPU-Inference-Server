@@ -24,29 +24,36 @@ configuration fields in the `congestion:` YAML block.
 
 Formulas (per tick):
 
-```text
-dt = max(elapsed_since_last_tick, tick_interval_ms)
-clamp(x) = min(max(x, 0), 1)
-ewma_t = alpha * x_t + (1 - alpha) * ewma_{t-1}
+$$
+\begin{aligned}
+dt &= \max(\text{elapsed\_since\_last\_tick}, \text{tick\_interval\_ms}) \\
+\operatorname{clamp}(x) &= \min(\max(x, 0), 1) \\
+\text{EWMA}_t &= \alpha x_t + (1 - \alpha)\text{EWMA}_{t-1} \\
+\lambda &= \frac{\text{arrivals}}{dt} \\
+\mu &= \frac{\text{completions}}{dt}
+\end{aligned}
+$$
 
-lambda = arrivals / dt
-mu = completions / dt
+$$
+\rho_{\text{sample}} =
+\begin{cases}
+\lambda / \mu, & \mu > 0 \\
+1000, & \mu = 0 \text{ and } \lambda > 0 \\
+0, & \text{otherwise}
+\end{cases}
+$$
 
-rho_sample =
-  lambda / mu                 if mu > 0
-  1000                        if mu == 0 and lambda > 0
-  0                           otherwise
-rho_smoothed = ewma(rho_sample)
-
-fill_ratio = clamp(queue_size / queue_capacity, 0, 1)
-fill_smoothed = ewma(fill_ratio)
-
-dqueue = (queue_size - last_queue_size) / dt
-dqueue_smoothed = ewma(dqueue)
-
-queue_p95_smoothed = ewma(p95(queue_latency_samples))
-e2e_p95_smoothed = ewma(p95(e2e_latency_samples))
-```
+$$
+\begin{aligned}
+\rho_{\text{smoothed}} &= \operatorname{EWMA}(\rho_{\text{sample}}) \\
+\text{fill\_ratio} &= \operatorname{clamp}\left(\frac{\text{queue\_size}}{\text{queue\_capacity}}\right) \\
+\text{fill\_smoothed} &= \operatorname{EWMA}(\text{fill\_ratio}) \\
+\text{dqueue} &= \frac{\text{queue\_size} - \text{last\_queue\_size}}{dt} \\
+\text{dqueue\_smoothed} &= \operatorname{EWMA}(\text{dqueue}) \\
+\text{queue\_p95\_smoothed} &= \operatorname{EWMA}\left(P_{95}(\text{queue\_latency\_samples})\right) \\
+\text{e2e\_p95\_smoothed} &= \operatorname{EWMA}\left(P_{95}(\text{e2e\_latency\_samples})\right)
+\end{aligned}
+$$
 
 Notes:
 
@@ -77,24 +84,37 @@ Exit condition is true if ALL of the following holds:
 
 Formulas (per tick):
 
-```text
-under_provisioned = rho_smoothed > rho_high
-queue_pressure = fill_smoothed > fill_high && dqueue_smoothed > 0
+$$
+\begin{aligned}
+\text{under\_provisioned} &= \rho_{\text{smoothed}} > \rho_{\text{high}} \\
+\text{queue\_pressure} &= \text{fill\_smoothed} > \text{fill\_high} \land \text{dqueue\_smoothed} > 0
+\end{aligned}
+$$
 
-if latency_slo_ms > 0:
-  latency_danger = e2e_p95_smoothed > latency_slo_ms * e2e_warn_ratio
-  latency_ok = e2e_p95_smoothed < latency_slo_ms * e2e_ok_ratio
-elif queue_budget_ms is set:
-  latency_danger = queue_p95_smoothed > queue_budget_ms
-  latency_ok = queue_p95_smoothed < queue_budget_ms
-else:
-  latency_danger = false
-  latency_ok = true
+$$
+\text{latency\_danger} =
+\begin{cases}
+\text{e2e\_p95\_smoothed} > \text{latency\_slo\_ms} \cdot \text{e2e\_warn\_ratio}, & \text{latency\_slo\_ms} > 0 \\
+\text{queue\_p95\_smoothed} > \text{queue\_budget\_ms}, & \text{queue\_budget\_ms set} \\
+\text{false}, & \text{otherwise}
+\end{cases}
+$$
 
-entry_condition = under_provisioned || queue_pressure || latency_danger
-exit_condition = fill_smoothed < fill_low && rho_smoothed < rho_low &&
-                 latency_ok
-```
+$$
+\text{latency\_ok} =
+\begin{cases}
+\text{e2e\_p95\_smoothed} < \text{latency\_slo\_ms} \cdot \text{e2e\_ok\_ratio}, & \text{latency\_slo\_ms} > 0 \\
+\text{queue\_p95\_smoothed} < \text{queue\_budget\_ms}, & \text{queue\_budget\_ms set} \\
+\text{true}, & \text{otherwise}
+\end{cases}
+$$
+
+$$
+\begin{aligned}
+\text{entry\_condition} &= \text{under\_provisioned} \lor \text{queue\_pressure} \lor \text{latency\_danger} \\
+\text{exit\_condition} &= \text{fill\_smoothed} < \text{fill\_low} \land \rho_{\text{smoothed}} < \rho_{\text{low}} \land \text{latency\_ok}
+\end{aligned}
+$$
 
 If a rejection occurs in a tick, congestion is set immediately and the entry
 horizon is considered satisfied.
@@ -116,31 +136,40 @@ three pressure scores, each clamped to [0,1].
 
 Formulas:
 
-```text
-clamp(x) = min(max(x, 0), 1)
+$$
+\operatorname{clamp}(x) = \min(\max(x, 0), 1)
+$$
 
-queue_pressure_score =
-  clamp((fill_smoothed - fill_low) / (fill_high - fill_low))   if fill_high > fill_low
-  0                                                           otherwise
+$$
+\text{queue\_pressure\_score} =
+\begin{cases}
+\operatorname{clamp}\left(\frac{\text{fill\_smoothed} - \text{fill\_low}}{\text{fill\_high} - \text{fill\_low}}\right), & \text{fill\_high} > \text{fill\_low} \\
+0, & \text{otherwise}
+\end{cases}
+$$
 
-capacity_pressure_score =
-  clamp((rho_smoothed - rho_low) / (rho_high - rho_low))       if rho_high > rho_low
-  0                                                           otherwise
+$$
+\text{capacity\_pressure\_score} =
+\begin{cases}
+\operatorname{clamp}\left(\frac{\rho_{\text{smoothed}} - \rho_{\text{low}}}{\rho_{\text{high}} - \rho_{\text{low}}}\right), & \rho_{\text{high}} > \rho_{\text{low}} \\
+0, & \text{otherwise}
+\end{cases}
+$$
 
-if latency_slo_ms > 0 and e2e_p95_smoothed exists:
-  lower = latency_slo_ms * e2e_ok_ratio
-  upper = latency_slo_ms * 1.1
-  latency_pressure_score = clamp((e2e_p95_smoothed - lower) / (upper - lower))
-elif queue_budget_ms is set and queue_p95_smoothed exists:
-  lower = queue_budget_ms
-  upper = queue_budget_ms * 1.2
-  latency_pressure_score = clamp((queue_p95_smoothed - lower) / (upper - lower))
-else:
-  latency_pressure_score = 0
+$$
+\text{latency\_pressure\_score} =
+\begin{cases}
+\operatorname{clamp}\left(\frac{\text{e2e\_p95\_smoothed} - \text{latency\_slo\_ms} \cdot \text{e2e\_ok\_ratio}}{\text{latency\_slo\_ms} \cdot 1.1 - \text{latency\_slo\_ms} \cdot \text{e2e\_ok\_ratio}}\right),
+ & \text{latency\_slo\_ms} > 0 \text{ and e2e\_p95\_smoothed exists} \\
+\operatorname{clamp}\left(\frac{\text{queue\_p95\_smoothed} - \text{queue\_budget\_ms}}{\text{queue\_budget\_ms} \cdot 1.2 - \text{queue\_budget\_ms}}\right),
+ & \text{queue\_budget\_ms set and queue\_p95\_smoothed exists} \\
+0, & \text{otherwise}
+\end{cases}
+$$
 
-congestion_score = max(queue_pressure_score, latency_pressure_score,
-                       capacity_pressure_score)
-```
+$$
+\text{congestion\_score} = \max(\text{queue\_pressure\_score}, \text{latency\_pressure\_score}, \text{capacity\_pressure\_score})
+$$
 
 ## Configuration fields
 
