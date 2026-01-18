@@ -591,23 +591,9 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
   }
   if (congestion_node["entry_horizon_ms"]) {
     cfg.congestion.entry_horizon_ms = parse_positive_int("entry_horizon_ms");
-  } else if (congestion_node["entry_horizon_seconds"]) {
-    const int seconds = parse_positive_int("entry_horizon_seconds");
-    if (seconds > std::numeric_limits<int>::max() / 1000) {
-      throw std::invalid_argument(
-          "entry_horizon_seconds is too large for milliseconds");
-    }
-    cfg.congestion.entry_horizon_ms = seconds * 1000;
   }
   if (congestion_node["exit_horizon_ms"]) {
     cfg.congestion.exit_horizon_ms = parse_positive_int("exit_horizon_ms");
-  } else if (congestion_node["exit_horizon_seconds"]) {
-    const int seconds = parse_positive_int("exit_horizon_seconds");
-    if (seconds > std::numeric_limits<int>::max() / 1000) {
-      throw std::invalid_argument(
-          "exit_horizon_seconds is too large for milliseconds");
-    }
-    cfg.congestion.exit_horizon_ms = seconds * 1000;
   }
   if (cfg.congestion.entry_horizon_ms <= 0 ||
       cfg.congestion.exit_horizon_ms <= 0) {

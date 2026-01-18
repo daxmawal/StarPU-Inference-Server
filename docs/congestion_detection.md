@@ -5,8 +5,9 @@ configuration fields in the `congestion:` YAML block.
 
 ## Summary
 
-- A background monitor samples queue and latency metrics every tick.
-- Metrics are smoothed with an EWMA to reduce noise.
+- A background monitor samples queue and latency metrics every tick (default
+  1000 ms, configurable via `tick_interval_ms`).
+- Metrics are smoothed with an EWMA (Exponential Weighted Moving Average) to reduce noise.
 - Congestion enters only after the entry horizon is satisfied.
 - Congestion exits only after the exit horizon is satisfied.
 - Any rejection in a tick triggers an immediate congestion state.
@@ -44,7 +45,7 @@ horizon is considered satisfied.
 
 ## Configuration fields
 
-All fields live under the `congestion:` block. The block is optional: if it is
+All fields live under the `congestion:` block. The block is optional, if it is
 omitted, defaults from `RuntimeConfig::CongestionSettings` are used and
 congestion detection stays enabled. Any field left out keeps its default value.
 
@@ -69,24 +70,21 @@ congestion detection stays enabled. Any field left out keeps its default value.
   exiting congestion.
 - `tick_interval_ms` (>0): Sampling period for the congestion monitor.
 
-Compatibility: `entry_horizon_seconds` and `exit_horizon_seconds` are still
-accepted in YAML and converted to milliseconds, but `*_ms` is preferred.
-
 ## Example YAML
 
 ```yaml
 congestion:
   enabled: true
-  latency_slo_ms: 150        # optional end-to-end SLO for latency checks
-  queue_latency_budget_ms: 30 # optional explicit queue budget
-  fill_high: 0.8              # enter when fill EWMA above this and rising
-  fill_low: 0.6               # exit once below this
-  rho_high: 1.05              # enter when λ/μ EWMA above this
-  rho_low: 0.9                # exit once below this
-  alpha_ewma: 0.2             # smoothing factor
-  entry_horizon_ms: 5000      # how long criteria must hold to enter
-  exit_horizon_ms: 15000      # how long healthy criteria must hold to exit
-  tick_interval_ms: 1000      # sampling interval
+  latency_slo_ms: 150
+  queue_latency_budget_ms: 30
+  fill_high: 0.8
+  fill_low: 0.6
+  rho_high: 1.05
+  rho_low: 0.9
+  alpha_ewma: 0.2
+  entry_horizon_ms: 5000
+  exit_horizon_ms: 15000
+  tick_interval_ms: 1000
 ```
 
 ## Outputs and observability
@@ -94,9 +92,5 @@ congestion:
 - Prometheus: `inference_congestion_flag`, `inference_congestion_score`,
   `inference_congestion_*` gauges.
 - Perfetto trace: `perfetto_trace.json` contains a `congestion` track with
-  red slices during congested periods.
+  during congested periods.
 - Trace summary: `trace.csv` has a `congested` column for each batch.
-
-## References
-
-See `docs/congestion_bibliography.md`.
