@@ -205,12 +205,12 @@ starpu_env:
   and enforce CPU affinities while initialising workers (can help when bindings
   are managed externally).
 
-### Congestion detection (beta)
+### Congestion detection
 
-The server exposes a congestion detector (enabled by default) that smooths
+The server exposes a congestion detector. It smooths
 queue/fill signals and raises a `congestion_flag` metric before the queue
-overflows. Tune it with the `congestion` block in the YAML, or disable it with
-`enabled: false`. See `docs/congestion_detection.md` for details on the
+overflows. Tune it with the `congestion` block in the YAML.
+See `docs/congestion_detection.md` for details on the
 detector, configuration fields, and examples.
 
 ## 3. Example: `models/bert.yml`
