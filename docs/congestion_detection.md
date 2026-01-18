@@ -14,21 +14,45 @@ configuration fields in the `congestion:` YAML block.
 
 ## Signals and derived metrics
 
-- Arrival rate (lambda): requests/s over the last tick (lambda = arrivals / dt).
-- Completion rate (mu): logical jobs/s over the last tick (mu = completions / dt).
-- Load (rho): lambda / mu (smoothed; if mu == 0 and lambda > 0, rho is capped
-  at 1000).
-- Queue fill ratio: queue_size / queue_capacity (clamped to [0,1], smoothed).
-- Queue growth rate: (queue_size - last_queue_size) / dt (smoothed).
-- Queue latency p95: p95 of queue latency samples in the tick (smoothed).
-- E2E latency p95: p95 of end-to-end latency samples in the tick (smoothed).
+- Arrival rate (lambda): requests/s over the last tick.
+- Completion rate (mu): logical jobs/s over the last tick.
+- Load (rho): smoothed arrival/processing ratio.
+- Queue fill ratio: smoothed queue utilization.
+- Queue growth rate: smoothed rate of queue_size change.
+- Queue latency p95: smoothed p95 of queue latency samples in the tick.
+- E2E latency p95: smoothed p95 of end-to-end latency samples in the tick.
+
+Formulas (per tick):
+
+```text
+dt = max(elapsed_since_last_tick, tick_interval_ms)
+clamp(x) = min(max(x, 0), 1)
+ewma_t = alpha * x_t + (1 - alpha) * ewma_{t-1}
+
+lambda = arrivals / dt
+mu = completions / dt
+
+rho_sample =
+  lambda / mu                 if mu > 0
+  1000                        if mu == 0 and lambda > 0
+  0                           otherwise
+rho_smoothed = ewma(rho_sample)
+
+fill_ratio = clamp(queue_size / queue_capacity, 0, 1)
+fill_smoothed = ewma(fill_ratio)
+
+dqueue = (queue_size - last_queue_size) / dt
+dqueue_smoothed = ewma(dqueue)
+
+queue_p95_smoothed = ewma(p95(queue_latency_samples))
+e2e_p95_smoothed = ewma(p95(e2e_latency_samples))
+```
 
 Notes:
 
-- dt is the elapsed time since the previous tick, clamped to at least
+- dt uses the elapsed time since the previous tick, but never less than
   `tick_interval_ms`.
-- Smoothed values use an EWMA: s_t = alpha *x_t + (1 - alpha)* s_{t-1}. The
-  first sample initializes the EWMA, for percentile signals, if no samples
+- The first sample initializes the EWMA. For percentile signals, if no samples
   arrive in a tick the smoothed value is unchanged.
 - queue_budget_ms is `queue_latency_budget_ms` when set, otherwise
   `latency_slo_ms * queue_latency_budget_ratio` when SLO is enabled.
@@ -51,6 +75,27 @@ Exit condition is true if ALL of the following holds:
   - if latency_slo_ms > 0: e2e_p95_smoothed < latency_slo_ms * e2e_ok_ratio
   - else if queue budget is set: queue_p95_smoothed < queue_budget_ms
 
+Formulas (per tick):
+
+```text
+under_provisioned = rho_smoothed > rho_high
+queue_pressure = fill_smoothed > fill_high && dqueue_smoothed > 0
+
+if latency_slo_ms > 0:
+  latency_danger = e2e_p95_smoothed > latency_slo_ms * e2e_warn_ratio
+  latency_ok = e2e_p95_smoothed < latency_slo_ms * e2e_ok_ratio
+elif queue_budget_ms is set:
+  latency_danger = queue_p95_smoothed > queue_budget_ms
+  latency_ok = queue_p95_smoothed < queue_budget_ms
+else:
+  latency_danger = false
+  latency_ok = true
+
+entry_condition = under_provisioned || queue_pressure || latency_danger
+exit_condition = fill_smoothed < fill_low && rho_smoothed < rho_low &&
+                 latency_ok
+```
+
 If a rejection occurs in a tick, congestion is set immediately and the entry
 horizon is considered satisfied.
 
@@ -67,28 +112,35 @@ Horizon handling:
 
 The `inference_congestion_score` gauge is a normalized score in [0,1] that
 tracks how close the system is to congestion. It is computed as the maximum of
-three pressure scores, each clamped to [0,1]:
+three pressure scores, each clamped to [0,1].
 
-- clamp(x) = min(max(x, 0), 1)
-- queue_pressure_score = clamp((fill_smoothed - fill_low) /
-  (fill_high - fill_low)) if fill_high > fill_low, else 0.
-- capacity_pressure_score = clamp((rho_smoothed - rho_low) /
-  (rho_high - rho_low)) if rho_high > rho_low, else 0.
-- latency_pressure_score:
-  - if SLO is enabled and e2e_p95_smoothed exists:
-    - lower = latency_slo_ms * e2e_ok_ratio
-    - upper = latency_slo_ms * 1.1
-    - score = clamp((e2e_p95_smoothed - lower) / (upper - lower))
-  - else if queue_budget_ms is set and queue_p95_smoothed exists:
-    - lower = queue_budget_ms
-    - upper = queue_budget_ms * 1.2
-    - score = clamp((queue_p95_smoothed - lower) / (upper - lower))
-  - else: 0
+Formulas:
 
-Final score:
+```text
+clamp(x) = min(max(x, 0), 1)
 
-- congestion_score = max(queue_pressure_score, latency_pressure_score,
-  capacity_pressure_score)
+queue_pressure_score =
+  clamp((fill_smoothed - fill_low) / (fill_high - fill_low))   if fill_high > fill_low
+  0                                                           otherwise
+
+capacity_pressure_score =
+  clamp((rho_smoothed - rho_low) / (rho_high - rho_low))       if rho_high > rho_low
+  0                                                           otherwise
+
+if latency_slo_ms > 0 and e2e_p95_smoothed exists:
+  lower = latency_slo_ms * e2e_ok_ratio
+  upper = latency_slo_ms * 1.1
+  latency_pressure_score = clamp((e2e_p95_smoothed - lower) / (upper - lower))
+elif queue_budget_ms is set and queue_p95_smoothed exists:
+  lower = queue_budget_ms
+  upper = queue_budget_ms * 1.2
+  latency_pressure_score = clamp((queue_p95_smoothed - lower) / (upper - lower))
+else:
+  latency_pressure_score = 0
+
+congestion_score = max(queue_pressure_score, latency_pressure_score,
+                       capacity_pressure_score)
+```
 
 ## Configuration fields
 
