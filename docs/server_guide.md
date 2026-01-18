@@ -214,8 +214,8 @@ congestion:
   rho_high: 1.05              # enter when λ/μ EWMA above this
   rho_low: 0.9                # exit once below this
   alpha_ewma: 0.2             # smoothing factor
-  entry_horizon_seconds: 5    # how long criteria must hold to enter
-  exit_horizon_seconds: 15    # how long healthy criteria must hold to exit
+  entry_horizon_ms: 5000      # how long criteria must hold to enter
+  exit_horizon_ms: 15000      # how long healthy criteria must hold to exit
   tick_interval_ms: 1000      # sampling interval
 ```
 

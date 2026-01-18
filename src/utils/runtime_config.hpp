@@ -95,17 +95,17 @@ struct RuntimeConfig {
     double queue_latency_budget_ms =
         0.0;  // Queue latency budget (ms); 0 uses ratio.
     double queue_latency_budget_ratio =
-        0.30;                       // Fraction of SLO reserved for queue.
-    double e2e_warn_ratio = 0.90;   // SLO ratio to trigger congestion.
-    double e2e_ok_ratio = 0.80;     // SLO ratio to clear congestion.
-    double fill_high = 0.80;        // Queue fill ratio to enter congestion.
-    double fill_low = 0.60;         // Queue fill ratio to exit congestion.
-    double rho_high = 1.05;         // Arrival/processing ratio to enter.
-    double rho_low = 0.90;          // Arrival/processing ratio to exit.
-    double alpha = 0.2;             // EWMA smoothing factor.
-    int entry_horizon_seconds = 1;  // Time in condition before entering.
-    int exit_horizon_seconds = 2;   // Time in condition before exiting.
-    int tick_interval_ms = 1000;    // Sampling interval for congestion.
+        0.30;                      // Fraction of SLO reserved for queue.
+    double e2e_warn_ratio = 0.90;  // SLO ratio to trigger congestion.
+    double e2e_ok_ratio = 0.80;    // SLO ratio to clear congestion.
+    double fill_high = 0.80;       // Queue fill ratio to enter congestion.
+    double fill_low = 0.60;        // Queue fill ratio to exit congestion.
+    double rho_high = 1.05;        // Arrival/processing ratio to enter.
+    double rho_low = 0.90;         // Arrival/processing ratio to exit.
+    double alpha = 0.2;            // EWMA smoothing factor.
+    int entry_horizon_ms = 1000;   // Time in condition before entering (ms).
+    int exit_horizon_ms = 2000;    // Time in condition before exiting (ms).
+    int tick_interval_ms = 1000;   // Sampling interval for congestion.
   };
 
   struct Limits {

@@ -494,9 +494,9 @@ launch_threads(
         out.rho_low = cfg.congestion.rho_low;
         out.alpha = cfg.congestion.alpha;
         out.entry_horizon =
-            seconds(std::max(1, cfg.congestion.entry_horizon_seconds));
+            milliseconds(std::max(1, cfg.congestion.entry_horizon_ms));
         out.exit_horizon =
-            seconds(std::max(1, cfg.congestion.exit_horizon_seconds));
+            milliseconds(std::max(1, cfg.congestion.exit_horizon_ms));
         out.tick_interval =
             milliseconds(std::max(1, cfg.congestion.tick_interval_ms));
         return out;

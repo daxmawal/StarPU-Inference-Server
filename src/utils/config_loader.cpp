@@ -499,10 +499,18 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
     const double value =
         parse_scalar<double>(congestion_node[key], key, "a number");
     if (value < 0.0) {
-      throw std::invalid_argument(
-          std::format("{} must be >= 0", key));
+      throw std::invalid_argument(std::format("{} must be >= 0", key));
     }
     return value;
+  };
+  auto parse_positive_int = [&](std::string_view key) -> int {
+    const auto value =
+        parse_scalar<long long>(congestion_node[key], key, "an integer");
+    if (value <= 0 || value > std::numeric_limits<int>::max()) {
+      throw std::invalid_argument(
+          std::format("{} must be > 0 and fit in int", key));
+    }
+    return static_cast<int>(value);
   };
 
   if (congestion_node["enabled"]) {
@@ -510,8 +518,7 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
         congestion_node["enabled"], "congestion.enabled", "a boolean");
   }
   if (congestion_node["latency_slo_ms"]) {
-    cfg.congestion.latency_slo_ms =
-        parse_non_negative_ms("latency_slo_ms");
+    cfg.congestion.latency_slo_ms = parse_non_negative_ms("latency_slo_ms");
   }
   if (congestion_node["queue_latency_budget_ms"]) {
     cfg.congestion.queue_latency_budget_ms =
@@ -522,8 +529,7 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
         congestion_node["queue_latency_budget_ratio"],
         "queue_latency_budget_ratio", "a number");
     if (ratio < 0.0) {
-      throw std::invalid_argument(
-          "queue_latency_budget_ratio must be >= 0");
+      throw std::invalid_argument("queue_latency_budget_ratio must be >= 0");
     }
     cfg.congestion.queue_latency_budget_ratio = ratio;
   }
@@ -553,7 +559,8 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
   }
   if (cfg.congestion.fill_high <= 0.0 || cfg.congestion.fill_high > 1.0 ||
       cfg.congestion.fill_low < 0.0 || cfg.congestion.fill_low >= 1.0) {
-    throw std::invalid_argument("fill_high must be (0,1] and fill_low in [0,1)");
+    throw std::invalid_argument(
+        "fill_high must be (0,1] and fill_low in [0,1)");
   }
   if (cfg.congestion.fill_low >= cfg.congestion.fill_high) {
     throw std::invalid_argument("fill_low must be < fill_high");
@@ -563,8 +570,8 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
         congestion_node["rho_high"], "rho_high", "a number");
   }
   if (congestion_node["rho_low"]) {
-    cfg.congestion.rho_low = parse_scalar<double>(
-        congestion_node["rho_low"], "rho_low", "a number");
+    cfg.congestion.rho_low =
+        parse_scalar<double>(congestion_node["rho_low"], "rho_low", "a number");
   }
   if (cfg.congestion.rho_high <= 0.0) {
     throw std::invalid_argument("rho_high must be > 0");
@@ -582,20 +589,30 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
   if (cfg.congestion.alpha <= 0.0 || cfg.congestion.alpha > 1.0) {
     throw std::invalid_argument("alpha_ewma must be in (0, 1]");
   }
-  if (congestion_node["entry_horizon_seconds"]) {
-    cfg.congestion.entry_horizon_seconds = parse_scalar<int>(
-        congestion_node["entry_horizon_seconds"], "entry_horizon_seconds",
-        "an integer");
+  if (congestion_node["entry_horizon_ms"]) {
+    cfg.congestion.entry_horizon_ms = parse_positive_int("entry_horizon_ms");
+  } else if (congestion_node["entry_horizon_seconds"]) {
+    const int seconds = parse_positive_int("entry_horizon_seconds");
+    if (seconds > std::numeric_limits<int>::max() / 1000) {
+      throw std::invalid_argument(
+          "entry_horizon_seconds is too large for milliseconds");
+    }
+    cfg.congestion.entry_horizon_ms = seconds * 1000;
   }
-  if (congestion_node["exit_horizon_seconds"]) {
-    cfg.congestion.exit_horizon_seconds = parse_scalar<int>(
-        congestion_node["exit_horizon_seconds"], "exit_horizon_seconds",
-        "an integer");
+  if (congestion_node["exit_horizon_ms"]) {
+    cfg.congestion.exit_horizon_ms = parse_positive_int("exit_horizon_ms");
+  } else if (congestion_node["exit_horizon_seconds"]) {
+    const int seconds = parse_positive_int("exit_horizon_seconds");
+    if (seconds > std::numeric_limits<int>::max() / 1000) {
+      throw std::invalid_argument(
+          "exit_horizon_seconds is too large for milliseconds");
+    }
+    cfg.congestion.exit_horizon_ms = seconds * 1000;
   }
-  if (cfg.congestion.entry_horizon_seconds <= 0 ||
-      cfg.congestion.exit_horizon_seconds <= 0) {
+  if (cfg.congestion.entry_horizon_ms <= 0 ||
+      cfg.congestion.exit_horizon_ms <= 0) {
     throw std::invalid_argument(
-        "entry_horizon_seconds and exit_horizon_seconds must be > 0");
+        "entry_horizon_ms and exit_horizon_ms must be > 0");
   }
   if (congestion_node["tick_interval_ms"]) {
     cfg.congestion.tick_interval_ms = parse_scalar<int>(

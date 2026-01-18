@@ -1663,8 +1663,8 @@ TEST(ConfigLoader, ParsesCongestionBlock)
   yaml << "  rho_high: 1.1\n";
   yaml << "  rho_low: 0.9\n";
   yaml << "  alpha_ewma: 0.4\n";
-  yaml << "  entry_horizon_seconds: 3\n";
-  yaml << "  exit_horizon_seconds: 7\n";
+  yaml << "  entry_horizon_ms: 3000\n";
+  yaml << "  exit_horizon_ms: 7000\n";
   yaml << "  tick_interval_ms: 500\n";
 
   const auto tmp =
@@ -1685,8 +1685,8 @@ TEST(ConfigLoader, ParsesCongestionBlock)
   EXPECT_DOUBLE_EQ(cfg.congestion.rho_high, 1.1);
   EXPECT_DOUBLE_EQ(cfg.congestion.rho_low, 0.9);
   EXPECT_DOUBLE_EQ(cfg.congestion.alpha, 0.4);
-  EXPECT_EQ(cfg.congestion.entry_horizon_seconds, 3);
-  EXPECT_EQ(cfg.congestion.exit_horizon_seconds, 7);
+  EXPECT_EQ(cfg.congestion.entry_horizon_ms, 3000);
+  EXPECT_EQ(cfg.congestion.exit_horizon_ms, 7000);
   EXPECT_EQ(cfg.congestion.tick_interval_ms, 500);
 }
 
