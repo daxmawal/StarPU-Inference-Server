@@ -210,8 +210,8 @@ starpu_env:
 The server exposes a congestion detector. It smooths
 queue/fill signals and raises a `congestion_flag` metric before the queue
 overflows. Tune it with the `congestion` block in the YAML.
-See `docs/congestion_detection.md` for details on the
-detector, configuration fields, and examples.
+See [congestion doc](./congestion_detection.md) for details on the
+detector, yaml configuration fields, and examples.
 
 ## 3. Example: `models/bert.yml`
 
