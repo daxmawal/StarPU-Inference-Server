@@ -90,20 +90,22 @@ struct RuntimeConfig {
   };
 
   struct CongestionSettings {
-    bool enabled = true;
-    double latency_slo_ms = 0.0;
-    double queue_latency_budget_ms = 0.0;
-    double queue_latency_budget_ratio = 0.30;
-    double e2e_warn_ratio = 0.90;
-    double e2e_ok_ratio = 0.80;
-    double fill_high = 0.80;
-    double fill_low = 0.60;
-    double rho_high = 1.05;
-    double rho_low = 0.90;
-    double alpha = 0.2;
-    int entry_horizon_seconds = 5;
-    int exit_horizon_seconds = 15;
-    int tick_interval_ms = 1000;
+    bool enabled = true;          // Enable congestion detection.
+    double latency_slo_ms = 0.0;  // End-to-end SLO (ms); 0 disables SLO.
+    double queue_latency_budget_ms =
+        0.0;  // Queue latency budget (ms); 0 uses ratio.
+    double queue_latency_budget_ratio =
+        0.30;                       // Fraction of SLO reserved for queue.
+    double e2e_warn_ratio = 0.90;   // SLO ratio to trigger congestion.
+    double e2e_ok_ratio = 0.80;     // SLO ratio to clear congestion.
+    double fill_high = 0.80;        // Queue fill ratio to enter congestion.
+    double fill_low = 0.60;         // Queue fill ratio to exit congestion.
+    double rho_high = 1.05;         // Arrival/processing ratio to enter.
+    double rho_low = 0.90;          // Arrival/processing ratio to exit.
+    double alpha = 0.2;             // EWMA smoothing factor.
+    int entry_horizon_seconds = 1;  // Time in condition before entering.
+    int exit_horizon_seconds = 2;   // Time in condition before exiting.
+    int tick_interval_ms = 1000;    // Sampling interval for congestion.
   };
 
   struct Limits {
