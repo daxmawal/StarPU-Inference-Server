@@ -200,31 +200,10 @@ starpu_env:
 
 ### Congestion detection (beta)
 
-The server now exposes an optional congestion detector that smooths queue/fill
+The server exposes an optional congestion detector that smooths queue/fill
 signals and raises a `congestion_flag` metric before the queue overflows. Enable
-and tune it with the `congestion` block in the YAML:
-
-```yaml
-congestion:
-  enabled: true
-  latency_slo_ms: 150        # optional end-to-end SLO for latency checks
-  queue_latency_budget_ms: 30 # optional explicit queue budget
-  fill_high: 0.8              # enter when fill EWMA above this and rising
-  fill_low: 0.6               # exit once below this
-  rho_high: 1.05              # enter when λ/μ EWMA above this
-  rho_low: 0.9                # exit once below this
-  alpha_ewma: 0.2             # smoothing factor
-  entry_horizon_ms: 5000      # how long criteria must hold to enter
-  exit_horizon_ms: 15000      # how long healthy criteria must hold to exit
-  tick_interval_ms: 1000      # sampling interval
-```
-
-Exported Prometheus gauges: `inference_congestion_flag`, `inference_congestion_score`,
-`inference_lambda_rps`, `inference_mu_rps`, `inference_rho_ewma`,
-`inference_queue_fill_ratio_ewma`, `inference_queue_growth_rate`,
-`inference_queue_latency_p95_ms`, `inference_queue_latency_p99_ms`,
-`inference_e2e_latency_p95_ms`, `inference_e2e_latency_p99_ms`,
-`inference_rejection_rate_rps`.
+and tune it with the `congestion` block in the YAML.
+See `docs/congestion_detection.md` for details on the detector, configuration fields, and examples.
 
 ## 3. Example: `models/bert.yml`
 
