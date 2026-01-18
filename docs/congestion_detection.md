@@ -14,13 +14,24 @@ configuration fields in the `congestion:` YAML block.
 
 ## Signals and derived metrics
 
-- Arrival rate (lambda): requests/s over the last tick.
-- Completion rate (mu): logical jobs/s over the last tick.
-- Load (rho): lambda / mu (smoothed).
-- Queue fill ratio: queue_size / queue_capacity (smoothed).
-- Queue growth rate: d(queue_size)/dt (smoothed).
-- Queue latency p95: p95 of queue latency samples (smoothed).
-- E2E latency p95: p95 of end-to-end latency samples (smoothed).
+- Arrival rate (lambda): requests/s over the last tick (lambda = arrivals / dt).
+- Completion rate (mu): logical jobs/s over the last tick (mu = completions / dt).
+- Load (rho): lambda / mu (smoothed; if mu == 0 and lambda > 0, rho is capped
+  at 1000).
+- Queue fill ratio: queue_size / queue_capacity (clamped to [0,1], smoothed).
+- Queue growth rate: (queue_size - last_queue_size) / dt (smoothed).
+- Queue latency p95: p95 of queue latency samples in the tick (smoothed).
+- E2E latency p95: p95 of end-to-end latency samples in the tick (smoothed).
+
+Notes:
+
+- dt is the elapsed time since the previous tick, clamped to at least
+  `tick_interval_ms`.
+- Smoothed values use an EWMA: s_t = alpha *x_t + (1 - alpha)* s_{t-1}. The
+  first sample initializes the EWMA, for percentile signals, if no samples
+  arrive in a tick the smoothed value is unchanged.
+- queue_budget_ms is `queue_latency_budget_ms` when set, otherwise
+  `latency_slo_ms * queue_latency_budget_ratio` when SLO is enabled.
 
 ## Entry and exit logic (per tick)
 
@@ -42,6 +53,42 @@ Exit condition is true if ALL of the following holds:
 
 If a rejection occurs in a tick, congestion is set immediately and the entry
 horizon is considered satisfied.
+
+Horizon handling:
+
+- When not congested, the entry accumulator adds the elapsed tick duration
+  while the entry condition stays true and resets to zero when it becomes
+  false. Congestion starts once it reaches `entry_horizon_ms`.
+- When congested, the exit accumulator adds elapsed tick duration while the
+  exit condition stays true and resets to zero when it becomes false. The
+  monitor clears congestion once it reaches `exit_horizon_ms`.
+
+## Congestion score
+
+The `inference_congestion_score` gauge is a normalized score in [0,1] that
+tracks how close the system is to congestion. It is computed as the maximum of
+three pressure scores, each clamped to [0,1]:
+
+- clamp(x) = min(max(x, 0), 1)
+- queue_pressure_score = clamp((fill_smoothed - fill_low) /
+  (fill_high - fill_low)) if fill_high > fill_low, else 0.
+- capacity_pressure_score = clamp((rho_smoothed - rho_low) /
+  (rho_high - rho_low)) if rho_high > rho_low, else 0.
+- latency_pressure_score:
+  - if SLO is enabled and e2e_p95_smoothed exists:
+    - lower = latency_slo_ms * e2e_ok_ratio
+    - upper = latency_slo_ms * 1.1
+    - score = clamp((e2e_p95_smoothed - lower) / (upper - lower))
+  - else if queue_budget_ms is set and queue_p95_smoothed exists:
+    - lower = queue_budget_ms
+    - upper = queue_budget_ms * 1.2
+    - score = clamp((queue_p95_smoothed - lower) / (upper - lower))
+  - else: 0
+
+Final score:
+
+- congestion_score = max(queue_pressure_score, latency_pressure_score,
+  capacity_pressure_score)
 
 ## Configuration fields
 
