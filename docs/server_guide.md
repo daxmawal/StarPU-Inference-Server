@@ -54,12 +54,19 @@ flowchart LR
   Config --> Pools
   Config --> Metrics
 
+  Congestion[Congestion monitor]
+  Service -. arrivals/rejections .-> Congestion
+  Runner -. completions/latency .-> Congestion
+  Queue -. queue size .-> Congestion
+
   Queue -. metrics .-> Metrics[Prometheus metrics endpoint]
   Service -. metrics .-> Metrics
   Runner -. metrics .-> Metrics
+  Congestion -. metrics .-> Metrics
   Queue -. trace .-> Trace["Batching trace logger<br/>Perfetto + CSV files"]
   Service -. trace .-> Trace
   Runner -. trace .-> Trace
+  Congestion -. trace .-> Trace
 ```
 
 ## 1. Prepare a model configuration
@@ -200,10 +207,11 @@ starpu_env:
 
 ### Congestion detection (beta)
 
-The server exposes an optional congestion detector that smooths queue/fill
-signals and raises a `congestion_flag` metric before the queue overflows. Enable
-and tune it with the `congestion` block in the YAML.
-See `docs/congestion_detection.md` for details on the detector, configuration fields, and examples.
+The server exposes a congestion detector (enabled by default) that smooths
+queue/fill signals and raises a `congestion_flag` metric before the queue
+overflows. Tune it with the `congestion` block in the YAML, or disable it with
+`enabled: false`. See `docs/congestion_detection.md` for details on the
+detector, configuration fields, and examples.
 
 ## 3. Example: `models/bert.yml`
 
