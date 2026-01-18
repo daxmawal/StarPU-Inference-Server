@@ -26,42 +26,45 @@ Formulas (per tick):
 
 $$
 \begin{aligned}
-dt &= \max(\text{elapsed\_since\_last\_tick}, \text{tick\_interval\_ms}) \\
-\operatorname{clamp}(x) &= \min(\max(x, 0), 1) \\
-\text{EWMA}_t &= \alpha x_t + (1 - \alpha)\text{EWMA}_{t-1} \\
-\lambda &= \frac{\text{arrivals}}{dt} \\
-\mu &= \frac{\text{completions}}{dt}
+\Delta t &= \max(\Delta t_{\mathrm{elapsed}}, T_{\mathrm{tick}}) \\
+c(x) &= \min(\max(x, 0), 1) \\
+\tilde{x}_t &= \alpha x_t + (1 - \alpha)\tilde{x}_{t-1} \\
+\lambda &= \frac{N_a}{\Delta t} \\
+\mu &= \frac{N_c}{\Delta t}
 \end{aligned}
 $$
 
 $$
-\rho_{\text{sample}} =
+\rho_{sample} =
 \begin{cases}
 \lambda / \mu, & \mu > 0 \\
-1000, & \mu = 0 \text{ and } \lambda > 0 \\
+1000, & \mu = 0 \land \lambda > 0 \\
 0, & \text{otherwise}
 \end{cases}
 $$
 
 $$
 \begin{aligned}
-\rho_{\text{smoothed}} &= \operatorname{EWMA}(\rho_{\text{sample}}) \\
-\text{fill\_ratio} &= \operatorname{clamp}\left(\frac{\text{queue\_size}}{\text{queue\_capacity}}\right) \\
-\text{fill\_smoothed} &= \operatorname{EWMA}(\text{fill\_ratio}) \\
-\text{dqueue} &= \frac{\text{queue\_size} - \text{last\_queue\_size}}{dt} \\
-\text{dqueue\_smoothed} &= \operatorname{EWMA}(\text{dqueue}) \\
-\text{queue\_p95\_smoothed} &= \operatorname{EWMA}\left(P_{95}(\text{queue\_latency\_samples})\right) \\
-\text{e2e\_p95\_smoothed} &= \operatorname{EWMA}\left(P_{95}(\text{e2e\_latency\_samples})\right)
+f &= c(q / C) \\
+\dot{q} &= \frac{q - q_{prev}}{\Delta t} \\
+Q_{95} &= P_{95}(L_q) \\
+E_{95} &= P_{95}(L_e)
 \end{aligned}
 $$
 
 Notes:
 
-- dt uses the elapsed time since the previous tick, but never less than
-  `tick_interval_ms`.
-- The first sample initializes the EWMA. For percentile signals, if no samples
-  arrive in a tick the smoothed value is unchanged.
-- queue_budget_ms is `queue_latency_budget_ms` when set, otherwise
+- $\Delta t_{\mathrm{elapsed}}$ is the elapsed time since the previous tick;
+  $T_{\mathrm{tick}}$ is `tick_interval_ms`.
+- $c(x)$ is the clamp function.
+- $N_a$ and $N_c$ are arrivals and completions in the tick.
+- $q$, $C$, and $q_{prev}$ are queue size, capacity, and previous queue size.
+- $L_q$ and $L_e$ are the queue and end-to-end latency samples in the tick.
+- $\tilde{x}$ denotes the EWMA-smoothed value of $x$ (e.g.,
+  $\tilde{\rho}$, $\tilde{f}$, $\tilde{\dot{q}}$, $\tilde{Q}_{95}$).
+- The first sample initializes the EWMA; if no latency samples arrive in a
+  tick, the corresponding smoothed percentile is unchanged.
+- `queue_budget_ms` is `queue_latency_budget_ms` when set, otherwise
   `latency_slo_ms * queue_latency_budget_ratio` when SLO is enabled.
 
 ## Entry and exit logic (per tick)
@@ -84,35 +87,39 @@ Exit condition is true if ALL of the following holds:
 
 Formulas (per tick):
 
+Notation: $U$ = under_provisioned, $P$ = queue_pressure, $D$ = latency_danger,
+$K$ = latency_ok, $L_{slo}$ = `latency_slo_ms`, $r_{warn}$ = `e2e_warn_ratio`,
+$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`.
+
 $$
 \begin{aligned}
-\text{under\_provisioned} &= \rho_{\text{smoothed}} > \rho_{\text{high}} \\
-\text{queue\_pressure} &= \text{fill\_smoothed} > \text{fill\_high} \land \text{dqueue\_smoothed} > 0
+U &= \tilde{\rho} > \rho_{high} \\
+P &= \tilde{f} > f_{high} \land \tilde{\dot{q}} > 0
 \end{aligned}
 $$
 
 $$
-\text{latency\_danger} =
+D =
 \begin{cases}
-\text{e2e\_p95\_smoothed} > \text{latency\_slo\_ms} \cdot \text{e2e\_warn\_ratio}, & \text{latency\_slo\_ms} > 0 \\
-\text{queue\_p95\_smoothed} > \text{queue\_budget\_ms}, & \text{queue\_budget\_ms set} \\
+\tilde{E}_{95} > L_{slo} \, r_{warn}, & L_{slo} > 0 \\
+\tilde{Q}_{95} > B, & B > 0 \\
 \text{false}, & \text{otherwise}
 \end{cases}
 $$
 
 $$
-\text{latency\_ok} =
+K =
 \begin{cases}
-\text{e2e\_p95\_smoothed} < \text{latency\_slo\_ms} \cdot \text{e2e\_ok\_ratio}, & \text{latency\_slo\_ms} > 0 \\
-\text{queue\_p95\_smoothed} < \text{queue\_budget\_ms}, & \text{queue\_budget\_ms set} \\
+\tilde{E}_{95} < L_{slo} \, r_{ok}, & L_{slo} > 0 \\
+\tilde{Q}_{95} < B, & B > 0 \\
 \text{true}, & \text{otherwise}
 \end{cases}
 $$
 
 $$
 \begin{aligned}
-\text{entry\_condition} &= \text{under\_provisioned} \lor \text{queue\_pressure} \lor \text{latency\_danger} \\
-\text{exit\_condition} &= \text{fill\_smoothed} < \text{fill\_low} \land \rho_{\text{smoothed}} < \rho_{\text{low}} \land \text{latency\_ok}
+C_{entry} &= U \lor P \lor D \\
+C_{exit} &= \tilde{f} < f_{low} \land \tilde{\rho} < \rho_{low} \land K
 \end{aligned}
 $$
 
@@ -136,39 +143,40 @@ three pressure scores, each clamped to [0,1].
 
 Formulas:
 
+Notation: $S_q$, $S_c$, and $S_l$ are the queue, capacity, and latency pressure
+scores (with $L_{slo}$, $r_{ok}$, and $B$ as defined above).
+
 $$
-\operatorname{clamp}(x) = \min(\max(x, 0), 1)
+c(x) = \min(\max(x, 0), 1)
 $$
 
 $$
-\text{queue\_pressure\_score} =
+S_q =
 \begin{cases}
-\operatorname{clamp}\left(\frac{\text{fill\_smoothed} - \text{fill\_low}}{\text{fill\_high} - \text{fill\_low}}\right), & \text{fill\_high} > \text{fill\_low} \\
+c\left(\frac{\tilde{f} - f_{low}}{f_{high} - f_{low}}\right), & f_{high} > f_{low} \\
 0, & \text{otherwise}
 \end{cases}
 $$
 
 $$
-\text{capacity\_pressure\_score} =
+S_c =
 \begin{cases}
-\operatorname{clamp}\left(\frac{\rho_{\text{smoothed}} - \rho_{\text{low}}}{\rho_{\text{high}} - \rho_{\text{low}}}\right), & \rho_{\text{high}} > \rho_{\text{low}} \\
+c\left(\frac{\tilde{\rho} - \rho_{low}}{\rho_{high} - \rho_{low}}\right), & \rho_{high} > \rho_{low} \\
 0, & \text{otherwise}
 \end{cases}
 $$
 
 $$
-\text{latency\_pressure\_score} =
+S_l =
 \begin{cases}
-\operatorname{clamp}\left(\frac{\text{e2e\_p95\_smoothed} - \text{latency\_slo\_ms} \cdot \text{e2e\_ok\_ratio}}{\text{latency\_slo\_ms} \cdot 1.1 - \text{latency\_slo\_ms} \cdot \text{e2e\_ok\_ratio}}\right),
- & \text{latency\_slo\_ms} > 0 \text{ and e2e\_p95\_smoothed exists} \\
-\operatorname{clamp}\left(\frac{\text{queue\_p95\_smoothed} - \text{queue\_budget\_ms}}{\text{queue\_budget\_ms} \cdot 1.2 - \text{queue\_budget\_ms}}\right),
- & \text{queue\_budget\_ms set and queue\_p95\_smoothed exists} \\
+c\left(\frac{\tilde{E}_{95} - L_{slo} \, r_{ok}}{1.1 L_{slo} - L_{slo} \, r_{ok}}\right), & L_{slo} > 0 \\
+c\left(\frac{\tilde{Q}_{95} - B}{1.2 B - B}\right), & B > 0 \\
 0, & \text{otherwise}
 \end{cases}
 $$
 
 $$
-\text{congestion\_score} = \max(\text{queue\_pressure\_score}, \text{latency\_pressure\_score}, \text{capacity\_pressure\_score})
+S = \max(S_q, S_l, S_c)
 $$
 
 ## Configuration fields
