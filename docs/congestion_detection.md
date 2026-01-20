@@ -71,7 +71,7 @@ Notes:
 
 Entry condition is true if ANY of the following holds:
 
-- under_provisioned: rho_smoothed > rho_high
+- under_provisioned: ρ_smoothed > ρ_high
 - queue_pressure: fill_smoothed > fill_high AND dqueue_smoothed > 0
 - latency_danger:
   - if latency_slo_ms > 0: e2e_p95_smoothed > latency_slo_ms * e2e_warn_ratio
@@ -80,7 +80,7 @@ Entry condition is true if ANY of the following holds:
 Exit condition is true if ALL of the following holds:
 
 - fill_smoothed < fill_low
-- rho_smoothed < rho_low
+- ρ_smoothed < ρ_low
 - latency_ok:
   - if latency_slo_ms > 0: e2e_p95_smoothed < latency_slo_ms * e2e_ok_ratio
   - else if queue budget is set: queue_p95_smoothed < queue_budget_ms
