@@ -14,9 +14,9 @@ configuration fields in the `congestion:` YAML block.
 
 ## Signals and derived metrics
 
-- Arrival rate (lambda): requests/s over the last tick.
-- Completion rate (mu): logical jobs/s over the last tick.
-- Load (rho): smoothed arrival/processing ratio.
+- Arrival rate (λ): requests/s over the last tick.
+- Completion rate (μ): logical jobs/s over the last tick.
+- Load (ρ): smoothed arrival/processing ratio.
 - Queue fill ratio: smoothed queue utilization.
 - Queue growth rate: smoothed rate of queue_size change.
 - Queue latency p95: smoothed p95 of queue latency samples in the tick.
