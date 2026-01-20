@@ -7,7 +7,7 @@ configuration fields in the `congestion:` YAML block.
 
 - A background monitor samples queue and latency metrics every tick (default
   1000 ms, configurable via `tick_interval_ms`).
-- Metrics are smoothed with an EWMA (Exponential Weighted Moving Average) to reduce noise.
+- Metrics are smoothed with an Exponential Weighted Moving Average (EWMA) to reduce noise.
 - Congestion enters only after the entry horizon is satisfied.
 - Congestion exits only after the exit horizon is satisfied.
 - Any rejection in a tick triggers an immediate congestion state.
@@ -54,9 +54,10 @@ $$
 
 Notes:
 
-- $\Delta t_{\mathrm{elapsed}}$ is the elapsed time since the previous tick;
+- $\Delta t_{\mathrm{elapsed}}$ is the elapsed time since the previous tick,
   $T_{\mathrm{tick}}$ is `tick_interval_ms`.
 - $c(x)$ is the clamp function.
+- $\alpha$ is `alpha_ewma` smoothing factor.
 - $N_a$ and $N_c$ are arrivals and completions in the tick.
 - $q$, $C$, and $q_{prev}$ are queue size, capacity, and previous queue size.
 - $L_q$ and $L_e$ are the queue and end-to-end latency samples in the tick.
@@ -71,7 +72,7 @@ Notes:
 
 Entry condition is true if ANY of the following holds:
 
-- under_provisioned: ρ_smoothed > ρ_high
+- under_provisioned (capacity shortfall): ρ_smoothed > ρ_high
 - queue_pressure: fill_smoothed > fill_high AND dqueue_smoothed > 0
 - latency_danger:
   - if latency_slo_ms > 0: e2e_p95_smoothed > latency_slo_ms * e2e_warn_ratio
@@ -140,6 +141,7 @@ Horizon handling:
 The `inference_congestion_score` gauge is a normalized score in [0,1] that
 tracks how close the system is to congestion. It is computed as the maximum of
 three pressure scores, each clamped to [0,1].
+The score is informational only and does not affect congestion entry/exit.
 
 Formulas:
 
