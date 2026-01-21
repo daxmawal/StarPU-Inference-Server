@@ -835,6 +835,71 @@ TEST(Metrics, SetQueueFillAndStarpuGauges)
   EXPECT_DOUBLE_EQ(pending_gauge->Value(), 13.0);
 }
 
+TEST(Metrics, CongestionSettersNoOpWhenMetricsMissing)
+{
+  shutdown_metrics();
+  EXPECT_EQ(get_metrics(), nullptr);
+
+  set_congestion_flag(true);
+  set_congestion_score(0.4);
+  set_congestion_arrival_rate(3.0);
+  set_congestion_completion_rate(4.0);
+  set_congestion_rejection_rate(0.5);
+  set_congestion_rho(0.75);
+  set_congestion_fill_ewma(0.2);
+  set_congestion_queue_growth_rate(1.1);
+  set_congestion_queue_latency_p95(2.2);
+  set_congestion_queue_latency_p99(3.3);
+  set_congestion_e2e_latency_p95(4.4);
+  set_congestion_e2e_latency_p99(5.5);
+
+  EXPECT_EQ(get_metrics(), nullptr);
+}
+
+TEST(Metrics, CongestionSettersUpdateGauges)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  set_congestion_flag(true);
+  set_congestion_score(1.5);
+  set_congestion_arrival_rate(-2.0);
+  set_congestion_completion_rate(4.25);
+  set_congestion_rejection_rate(-0.5);
+  set_congestion_rho(std::nan(""));
+  set_congestion_fill_ewma(1.2);
+  set_congestion_queue_growth_rate(3.5);
+  set_congestion_queue_latency_p95(-7.0);
+  set_congestion_queue_latency_p99(9.25);
+  set_congestion_e2e_latency_p95(-1.0);
+  set_congestion_e2e_latency_p99(12.5);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+
+  auto expect_gauge = [&](std::string_view name, double expected) {
+    const auto value = FindGaugeValue(families, name, {});
+    ASSERT_TRUE(value.has_value()) << "Missing gauge " << name;
+    EXPECT_DOUBLE_EQ(*value, expected);
+  };
+
+  expect_gauge("inference_congestion_flag", 1.0);
+  expect_gauge("inference_congestion_score", 1.0);
+  expect_gauge("inference_lambda_rps", 0.0);
+  expect_gauge("inference_mu_rps", 4.25);
+  expect_gauge("inference_rejection_rate_rps", 0.0);
+  expect_gauge("inference_rho_ewma", 0.0);
+  expect_gauge("inference_queue_fill_ratio_ewma", 1.0);
+  expect_gauge("inference_queue_growth_rate", 3.5);
+  expect_gauge("inference_queue_latency_p95_ms", 0.0);
+  expect_gauge("inference_queue_latency_p99_ms", 9.25);
+  expect_gauge("inference_e2e_latency_p95_ms", 0.0);
+  expect_gauge("inference_e2e_latency_p99_ms", 12.5);
+}
+
 TEST(Metrics, InitializeThrowsWhenExposerRegisterFails)
 {
   class ThrowingHandle : public MetricsRegistry::ExposerHandle {
