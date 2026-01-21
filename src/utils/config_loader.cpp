@@ -52,6 +52,8 @@ config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
 auto parse_tensor_nodes(
     const YAML::Node& nodes, std::size_t max_inputs, std::string_view label,
     std::size_t max_dims) -> std::vector<TensorConfig>;
+void parse_congestion_horizons(
+    const YAML::Node& congestion_node, RuntimeConfig& cfg);
 
 auto
 make_indexed_path(std::string_view base, std::size_t index) -> std::string
@@ -857,6 +859,13 @@ parse_tensor_nodes_for_test(
     std::size_t max_dims) -> std::vector<TensorConfig>
 {
   return parse_tensor_nodes(nodes, max_inputs, label, max_dims);
+}
+
+void
+parse_congestion_horizons_for_test(
+    const YAML::Node& congestion_node, RuntimeConfig& cfg)
+{
+  parse_congestion_horizons(congestion_node, cfg);
 }
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
