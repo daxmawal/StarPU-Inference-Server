@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <optional>
+#include <vector>
 
 namespace starpu_server {
 class InferenceQueue;
@@ -68,5 +69,39 @@ void record_completion(std::size_t logical_jobs, CompletionLatencies latencies);
 void record_rejection(std::size_t count = 1);
 auto snapshot() -> std::optional<Snapshot>;
 auto is_congested() -> bool;
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+struct LatencyFlagResult {
+  bool danger;
+  bool ok;
+};
+
+struct NormalizedConfigResult {
+  std::chrono::milliseconds tick_interval;
+  std::chrono::milliseconds entry_horizon;
+  std::chrono::milliseconds exit_horizon;
+  std::optional<double> queue_budget_ms;
+};
+
+auto percentile_for_test(std::vector<double> samples, double pct)
+    -> std::optional<double>;
+auto update_ewma_for_test(
+    std::optional<double>& state, double sample, double alpha) -> double;
+auto record_arrival_for_test(std::size_t count) -> std::size_t;
+auto record_rejection_for_test(std::size_t count) -> std::size_t;
+auto evaluate_latency_flags_for_test(
+    double queue_budget_ms,
+    std::optional<double> queue_p95) -> LatencyFlagResult;
+auto compute_queue_pressure_score_for_test(
+    double fill_high, double fill_low, double fill_smoothed) -> double;
+auto compute_latency_pressure_score_for_test(
+    double latency_slo_ms, double e2e_ok_ratio,
+    std::optional<double> e2e_p95) -> double;
+auto compute_latency_pressure_score_queue_budget_for_test(
+    double queue_budget_ms, std::optional<double> queue_p95) -> double;
+auto normalize_config_for_test(Config cfg) -> NormalizedConfigResult;
+auto compute_capacity_pressure_score_for_test(
+    double rho_high, double rho_low, double rho_smoothed) -> double;
+#endif  // SONAR_IGNORE_END
 
 }  // namespace starpu_server::congestion

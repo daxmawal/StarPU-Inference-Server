@@ -133,6 +133,18 @@ class CongestionMonitor {
     arrivals_.fetch_add(count, std::memory_order_release);
   }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  [[nodiscard]] auto arrivals_for_test() const -> std::size_t
+  {
+    return arrivals_.load(std::memory_order_acquire);
+  }
+
+  [[nodiscard]] auto rejections_for_test() const -> std::size_t
+  {
+    return rejections_.load(std::memory_order_acquire);
+  }
+#endif  // SONAR_IGNORE_END
+
   void record_completion(
       std::size_t logical_jobs, CompletionLatencies latencies)
   {
@@ -168,6 +180,52 @@ class CongestionMonitor {
   {
     return congested_flag_.load(std::memory_order_acquire);
   }
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto evaluate_latency_flags_for_test(
+      std::optional<double> queue_p95,
+      std::optional<double> e2e_p95 = std::nullopt) -> LatencyFlagResult
+  {
+    TickStats stats{};
+    stats.queue_p95_smoothed = queue_p95;
+    stats.e2e_p95_smoothed = e2e_p95;
+    const auto flags = evaluate_latency_flags(stats);
+    return LatencyFlagResult{flags.danger, flags.ok};
+  }
+
+  [[nodiscard]] auto compute_queue_pressure_score_for_test(
+      double fill_smoothed) const -> double
+  {
+    return compute_queue_pressure_score(fill_smoothed);
+  }
+
+  [[nodiscard]] auto compute_latency_pressure_score_for_test(
+      std::optional<double> e2e_p95,
+      std::optional<double> queue_p95 = std::nullopt) const -> double
+  {
+    TickStats stats{};
+    stats.e2e_p95_smoothed = e2e_p95;
+    stats.queue_p95_smoothed = queue_p95;
+    return compute_latency_pressure_score(stats);
+  }
+
+  [[nodiscard]] auto normalized_config_for_test() const
+      -> NormalizedConfigResult
+  {
+    return NormalizedConfigResult{
+        .tick_interval = cfg_.tick_interval,
+        .entry_horizon = cfg_.entry_horizon,
+        .exit_horizon = cfg_.exit_horizon,
+        .queue_budget_ms = queue_budget_ms_,
+    };
+  }
+
+  [[nodiscard]] auto compute_capacity_pressure_score_for_test(
+      double rho_smoothed) const -> double
+  {
+    return compute_capacity_pressure_score(rho_smoothed);
+  }
+#endif  // SONAR_IGNORE_END
 
  private:
   struct TickStats {
@@ -612,5 +670,112 @@ is_congested() -> bool
   auto monitor = monitor_atomic().load(std::memory_order_acquire);
   return monitor != nullptr && monitor->congested();
 }
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+percentile_for_test(std::vector<double> samples, double pct)
+    -> std::optional<double>
+{
+  return percentile(samples, pct);
+}
+
+auto
+update_ewma_for_test(std::optional<double>& state, double sample, double alpha)
+    -> double
+{
+  return update_ewma(state, sample, alpha);
+}
+
+auto
+record_arrival_for_test(std::size_t count) -> std::size_t
+{
+  InferenceQueue queue(1);
+  Config cfg;
+  CongestionMonitor monitor(&queue, cfg);
+  monitor.record_arrival(count);
+  return monitor.arrivals_for_test();
+}
+
+auto
+record_rejection_for_test(std::size_t count) -> std::size_t
+{
+  InferenceQueue queue(1);
+  Config cfg;
+  CongestionMonitor monitor(&queue, cfg);
+  monitor.record_rejection(count);
+  return monitor.rejections_for_test();
+}
+
+auto
+evaluate_latency_flags_for_test(
+    double queue_budget_ms,
+    std::optional<double> queue_p95) -> LatencyFlagResult
+{
+  InferenceQueue queue(1);
+  Config cfg;
+  cfg.latency_slo_ms = 0.0;
+  cfg.queue_latency_budget_ms = queue_budget_ms;
+  CongestionMonitor monitor(&queue, cfg);
+  return monitor.evaluate_latency_flags_for_test(queue_p95);
+}
+
+auto
+compute_queue_pressure_score_for_test(
+    double fill_high, double fill_low, double fill_smoothed) -> double
+{
+  InferenceQueue queue(1);
+  Config cfg;
+  cfg.fill_high = fill_high;
+  cfg.fill_low = fill_low;
+  CongestionMonitor monitor(&queue, cfg);
+  return monitor.compute_queue_pressure_score_for_test(fill_smoothed);
+}
+
+auto
+compute_latency_pressure_score_for_test(
+    double latency_slo_ms, double e2e_ok_ratio,
+    std::optional<double> e2e_p95) -> double
+{
+  InferenceQueue queue(1);
+  Config cfg;
+  cfg.latency_slo_ms = latency_slo_ms;
+  cfg.e2e_ok_ratio = e2e_ok_ratio;
+  CongestionMonitor monitor(&queue, cfg);
+  return monitor.compute_latency_pressure_score_for_test(e2e_p95);
+}
+
+auto
+compute_latency_pressure_score_queue_budget_for_test(
+    double queue_budget_ms, std::optional<double> queue_p95) -> double
+{
+  InferenceQueue queue(1);
+  Config cfg;
+  cfg.latency_slo_ms = 0.0;
+  cfg.queue_latency_budget_ms = queue_budget_ms;
+  CongestionMonitor monitor(&queue, cfg);
+  return monitor.compute_latency_pressure_score_for_test(
+      std::nullopt, queue_p95);
+}
+
+auto
+normalize_config_for_test(Config cfg) -> NormalizedConfigResult
+{
+  InferenceQueue queue(1);
+  CongestionMonitor monitor(&queue, cfg);
+  return monitor.normalized_config_for_test();
+}
+
+auto
+compute_capacity_pressure_score_for_test(
+    double rho_high, double rho_low, double rho_smoothed) -> double
+{
+  InferenceQueue queue(1);
+  Config cfg;
+  cfg.rho_high = rho_high;
+  cfg.rho_low = rho_low;
+  CongestionMonitor monitor(&queue, cfg);
+  return monitor.compute_capacity_pressure_score_for_test(rho_smoothed);
+}
+#endif  // SONAR_IGNORE_END
 
 }  // namespace starpu_server::congestion

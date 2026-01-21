@@ -2,8 +2,11 @@
 
 #include <chrono>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <thread>
+#include <vector>
 
 #include "core/inference_runner.hpp"
 #include "monitoring/congestion_monitor.hpp"
@@ -94,6 +97,168 @@ TEST_F(CongestionMonitorTest, ClearsAfterExitConditionsHold)
   EXPECT_FALSE(snap->congestion);
   EXPECT_LT(snap->fill_ewma, cfg.fill_high);
   EXPECT_LT(snap->rho_ewma, cfg.rho_high);
+}
+
+TEST_F(CongestionMonitorTest, StartReturnsFalseWithoutQueue)
+{
+  starpu_server::congestion::Config cfg;
+  cfg.enabled = true;
+
+  EXPECT_FALSE(starpu_server::congestion::start(nullptr, cfg));
+  EXPECT_FALSE(starpu_server::congestion::is_congested());
+  EXPECT_FALSE(starpu_server::congestion::snapshot().has_value());
+}
+
+TEST_F(CongestionMonitorTest, SnapshotReturnsNulloptWhenStopped)
+{
+  starpu_server::congestion::shutdown();
+  EXPECT_FALSE(starpu_server::congestion::snapshot().has_value());
+}
+
+TEST(PercentileTest, ReturnsMinWhenPctNonPositive)
+{
+  std::vector<double> samples{3.0, 1.0, 2.0};
+  const auto value = starpu_server::congestion::percentile_for_test(samples, 0);
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 1.0);
+}
+
+TEST(PercentileTest, ReturnsMaxWhenPctAtLeastHundred)
+{
+  std::vector<double> samples{3.0, 1.0, 2.0};
+  const auto value =
+      starpu_server::congestion::percentile_for_test(samples, 100.0);
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 3.0);
+}
+
+TEST(PercentileTest, ReturnsSampleWhenPositionIsExactIndex)
+{
+  std::vector<double> samples{5.0, 1.0, 3.0, 2.0, 4.0};
+  const auto value =
+      starpu_server::congestion::percentile_for_test(samples, 50.0);
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 3.0);
+}
+
+TEST(UpdateEwmaTest, TreatsNonFiniteSampleAsZero)
+{
+  std::optional<double> state;
+  const double sample = std::numeric_limits<double>::quiet_NaN();
+  const double alpha = 0.5;
+
+  const auto value =
+      starpu_server::congestion::update_ewma_for_test(state, sample, alpha);
+
+  ASSERT_TRUE(state.has_value());
+  EXPECT_DOUBLE_EQ(*state, 0.0);
+  EXPECT_DOUBLE_EQ(value, 0.0);
+}
+
+TEST(RecordArrivalTest, SkipsZeroCount)
+{
+  const auto arrivals = starpu_server::congestion::record_arrival_for_test(0);
+  EXPECT_EQ(arrivals, 0U);
+}
+
+TEST(RecordRejectionTest, SkipsZeroCount)
+{
+  const auto rejections =
+      starpu_server::congestion::record_rejection_for_test(0);
+  EXPECT_EQ(rejections, 0U);
+}
+
+TEST(LatencyFlagsTest, UsesQueueBudgetForDangerWhenE2EMissing)
+{
+  const auto flags =
+      starpu_server::congestion::evaluate_latency_flags_for_test(10.0, 15.0);
+  EXPECT_TRUE(flags.danger);
+  EXPECT_FALSE(flags.ok);
+}
+
+TEST(LatencyFlagsTest, UsesQueueBudgetForOkWhenE2EMissing)
+{
+  const auto flags =
+      starpu_server::congestion::evaluate_latency_flags_for_test(10.0, 5.0);
+  EXPECT_FALSE(flags.danger);
+  EXPECT_TRUE(flags.ok);
+}
+
+TEST(QueuePressureScoreTest, ReturnsZeroWhenHighNotAboveLow)
+{
+  const auto score =
+      starpu_server::congestion::compute_queue_pressure_score_for_test(
+          0.5, 0.5, 0.9);
+  EXPECT_DOUBLE_EQ(score, 0.0);
+}
+
+TEST(LatencyPressureScoreTest, ReturnsScaledValueWhenUpperAboveLower)
+{
+  const auto score =
+      starpu_server::congestion::compute_latency_pressure_score_for_test(
+          100.0, 0.8, 95.0);
+  EXPECT_NEAR(score, 0.5, 1e-9);
+}
+
+TEST(LatencyPressureScoreTest, UsesQueueBudgetPathWhenAvailable)
+{
+  const auto score = starpu_server::congestion::
+      compute_latency_pressure_score_queue_budget_for_test(10.0, 11.0);
+  EXPECT_NEAR(score, 0.5, 1e-9);
+}
+
+TEST(NormalizeConfigTest, FixesNonPositiveTickInterval)
+{
+  starpu_server::congestion::Config cfg;
+  cfg.tick_interval = 0ms;
+  cfg.entry_horizon = 2s;
+  cfg.exit_horizon = 3s;
+
+  const auto result = starpu_server::congestion::normalize_config_for_test(cfg);
+  EXPECT_EQ(result.tick_interval, 1s);
+}
+
+TEST(NormalizeConfigTest, ClampsEntryHorizonToTickInterval)
+{
+  starpu_server::congestion::Config cfg;
+  cfg.tick_interval = 200ms;
+  cfg.entry_horizon = 100ms;
+  cfg.exit_horizon = 400ms;
+
+  const auto result = starpu_server::congestion::normalize_config_for_test(cfg);
+  EXPECT_EQ(result.entry_horizon, 200ms);
+  EXPECT_EQ(result.exit_horizon, 400ms);
+}
+
+TEST(NormalizeConfigTest, ClampsExitHorizonToDoubleTickInterval)
+{
+  starpu_server::congestion::Config cfg;
+  cfg.tick_interval = 200ms;
+  cfg.entry_horizon = 200ms;
+  cfg.exit_horizon = 100ms;
+
+  const auto result = starpu_server::congestion::normalize_config_for_test(cfg);
+  EXPECT_EQ(result.exit_horizon, 400ms);
+}
+
+TEST(NormalizeConfigTest, UsesQueueLatencyBudgetWhenProvided)
+{
+  starpu_server::congestion::Config cfg;
+  cfg.queue_latency_budget_ms = 42.0;
+  cfg.latency_slo_ms = 100.0;
+  cfg.queue_latency_budget_ratio = 0.5;
+
+  const auto result = starpu_server::congestion::normalize_config_for_test(cfg);
+  ASSERT_TRUE(result.queue_budget_ms.has_value());
+  EXPECT_DOUBLE_EQ(*result.queue_budget_ms, 42.0);
+}
+
+TEST(CapacityPressureScoreTest, ReturnsZeroWhenHighNotAboveLow)
+{
+  const auto score =
+      starpu_server::congestion::compute_capacity_pressure_score_for_test(
+          1.0, 1.0, 2.0);
+  EXPECT_DOUBLE_EQ(score, 0.0);
 }
 
 }  // namespace
