@@ -1,5 +1,7 @@
 # Congestion detection
 
+Congestion is a server state where incoming work is outpacing processing
+capacity, causing queues and/or tail latencies to grow.
 This document explains the congestion detector, its signals, and the
 configuration fields in the `congestion:` YAML block.
 
