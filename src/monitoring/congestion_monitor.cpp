@@ -79,10 +79,28 @@ update_optional_ewma(
   return state;
 }
 
+auto
+safe_divide(double numerator, double denominator) -> double
+{
+  return denominator > kEpsilon ? numerator / denominator : 0.0;
+}
+
+auto
+compute_rho_sample(double lambda_rps, double mu_rps) -> double
+{
+  if (mu_rps > 0.0) {
+    return lambda_rps / mu_rps;
+  }
+  if (lambda_rps > 0.0) {
+    return kMaxRho;
+  }
+  return 0.0;
+}
+
 class CongestionMonitor {
  public:
   CongestionMonitor(InferenceQueue* queue, Config cfg)
-      : queue_(queue), cfg_(std::move(cfg)),
+      : queue_(queue), cfg_(cfg),
         last_queue_size_(queue_ != nullptr ? queue_->size() : 0),
         last_tick_(std::chrono::steady_clock::now())
   {
@@ -116,18 +134,18 @@ class CongestionMonitor {
   }
 
   void record_completion(
-      std::size_t logical_jobs, double queue_latency_ms, double e2e_latency_ms)
+      std::size_t logical_jobs, CompletionLatencies latencies)
   {
     if (logical_jobs > 0) {
       completions_.fetch_add(logical_jobs, std::memory_order_release);
     }
-    if (queue_latency_ms > 0.0 || e2e_latency_ms > 0.0) {
+    if (latencies.queue_latency_ms > 0.0 || latencies.e2e_latency_ms > 0.0) {
       std::scoped_lock lock(samples_mutex_);
-      if (queue_latency_ms > 0.0) {
-        queue_latency_ms_.push_back(queue_latency_ms);
+      if (latencies.queue_latency_ms > 0.0) {
+        queue_latency_ms_.push_back(latencies.queue_latency_ms);
       }
-      if (e2e_latency_ms > 0.0) {
-        e2e_latency_ms_.push_back(e2e_latency_ms);
+      if (latencies.e2e_latency_ms > 0.0) {
+        e2e_latency_ms_.push_back(latencies.e2e_latency_ms);
       }
     }
   }
@@ -152,6 +170,260 @@ class CongestionMonitor {
   }
 
  private:
+  struct TickStats {
+    std::chrono::steady_clock::time_point now;
+    std::chrono::milliseconds elapsed;
+    double dt_seconds;
+    double lambda_rps;
+    double mu_rps;
+    double rejection_rps;
+    std::size_t queue_size;
+    std::size_t queue_capacity;
+    double fill_smoothed;
+    double dqueue_smoothed;
+    double rho_smoothed;
+    std::optional<double> queue_p95_smoothed;
+    std::optional<double> queue_p99_smoothed;
+    std::optional<double> e2e_p95_smoothed;
+    std::optional<double> e2e_p99_smoothed;
+    bool panic;
+  };
+
+  struct LatencyFlags {
+    bool danger;
+    bool ok;
+  };
+
+  auto capture_tick_stats() -> TickStats
+  {
+    TickStats stats{};
+    stats.now = std::chrono::steady_clock::now();
+    stats.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        stats.now - last_tick_);
+    stats.dt_seconds = std::max(
+        std::chrono::duration<double>(stats.elapsed).count(),
+        std::chrono::duration<double>(cfg_.tick_interval).count());
+    last_tick_ = stats.now;
+
+    const auto arrivals = arrivals_.exchange(0, std::memory_order_acq_rel);
+    const auto completions =
+        completions_.exchange(0, std::memory_order_acq_rel);
+    const auto rejections = rejections_.exchange(0, std::memory_order_acq_rel);
+
+    stats.lambda_rps =
+        safe_divide(static_cast<double>(arrivals), stats.dt_seconds);
+    stats.mu_rps =
+        safe_divide(static_cast<double>(completions), stats.dt_seconds);
+    stats.rejection_rps =
+        safe_divide(static_cast<double>(rejections), stats.dt_seconds);
+    stats.panic = rejections > 0;
+
+    stats.queue_capacity = queue_ != nullptr ? queue_->capacity() : 0U;
+    stats.queue_size = queue_ != nullptr ? queue_->size() : 0U;
+    const double fill_ratio =
+        stats.queue_capacity > 0
+            ? std::clamp(
+                  static_cast<double>(stats.queue_size) /
+                      static_cast<double>(stats.queue_capacity),
+                  0.0, 1.0)
+            : 0.0;
+    stats.fill_smoothed = update_ewma(fill_ewma_, fill_ratio, cfg_.alpha);
+
+    const double dqueue_dt = safe_divide(
+        static_cast<double>(stats.queue_size) -
+            static_cast<double>(last_queue_size_),
+        stats.dt_seconds);
+    last_queue_size_ = stats.queue_size;
+    stats.dqueue_smoothed = update_ewma(dqueue_ewma_, dqueue_dt, cfg_.alpha);
+
+    const double rho_sample =
+        compute_rho_sample(stats.lambda_rps, stats.mu_rps);
+    stats.rho_smoothed =
+        update_ewma(rho_ewma_, std::min(rho_sample, kMaxRho), cfg_.alpha);
+
+    std::vector<double> queue_samples;
+    std::vector<double> e2e_samples;
+    {
+      std::scoped_lock lock(samples_mutex_);
+      queue_samples.swap(queue_latency_ms_);
+      e2e_samples.swap(e2e_latency_ms_);
+    }
+
+    const auto queue_p95 = percentile(queue_samples, 95.0);
+    const auto queue_p99 = percentile(queue_samples, 99.0);
+    const auto e2e_p95 = percentile(e2e_samples, 95.0);
+    const auto e2e_p99 = percentile(e2e_samples, 99.0);
+
+    stats.queue_p95_smoothed =
+        update_optional_ewma(queue_p95_ewma_, queue_p95, cfg_.alpha);
+    stats.queue_p99_smoothed =
+        update_optional_ewma(queue_p99_ewma_, queue_p99, cfg_.alpha);
+    stats.e2e_p95_smoothed =
+        update_optional_ewma(e2e_p95_ewma_, e2e_p95, cfg_.alpha);
+    stats.e2e_p99_smoothed =
+        update_optional_ewma(e2e_p99_ewma_, e2e_p99, cfg_.alpha);
+
+    return stats;
+  }
+
+  auto evaluate_latency_flags(const TickStats& stats) const -> LatencyFlags
+  {
+    LatencyFlags flags{.danger = false, .ok = true};
+    if (warn_latency_ms_ > 0.0 && stats.e2e_p95_smoothed.has_value()) {
+      flags.danger = *stats.e2e_p95_smoothed > warn_latency_ms_;
+    } else if (
+        queue_budget_ms_.has_value() && stats.queue_p95_smoothed.has_value()) {
+      flags.danger = *stats.queue_p95_smoothed > *queue_budget_ms_;
+    }
+
+    if (ok_latency_ms_ > 0.0 && stats.e2e_p95_smoothed.has_value()) {
+      flags.ok = *stats.e2e_p95_smoothed < ok_latency_ms_;
+    } else if (
+        queue_budget_ms_.has_value() && stats.queue_p95_smoothed.has_value()) {
+      flags.ok = *stats.queue_p95_smoothed < *queue_budget_ms_;
+    }
+    return flags;
+  }
+
+  auto compute_entry_condition(
+      const TickStats& stats, const LatencyFlags& flags) const -> bool
+  {
+    const bool under_provisioned = stats.rho_smoothed > cfg_.rho_high;
+    const bool queue_pressure =
+        stats.fill_smoothed > cfg_.fill_high && stats.dqueue_smoothed > 0.0;
+    return under_provisioned || queue_pressure || flags.danger;
+  }
+
+  auto compute_exit_condition(
+      const TickStats& stats, const LatencyFlags& flags) const -> bool
+  {
+    return stats.fill_smoothed < cfg_.fill_low &&
+           stats.rho_smoothed < cfg_.rho_low && flags.ok;
+  }
+
+  void update_congestion_state(
+      const TickStats& stats, bool entry_condition, bool exit_condition)
+  {
+    const auto elapsed_ms = stats.elapsed;
+    if (stats.panic) {
+      set_congested(true, stats.now);
+      entry_accumulator_ = cfg_.entry_horizon;
+      exit_accumulator_ = std::chrono::milliseconds::zero();
+      return;
+    }
+
+    if (!congested()) {
+      entry_accumulator_ = entry_condition ? entry_accumulator_ + elapsed_ms
+                                           : std::chrono::milliseconds::zero();
+      if (entry_accumulator_ >= cfg_.entry_horizon) {
+        set_congested(true, stats.now);
+        exit_accumulator_ = std::chrono::milliseconds::zero();
+      }
+      return;
+    }
+
+    exit_accumulator_ = exit_condition ? exit_accumulator_ + elapsed_ms
+                                       : std::chrono::milliseconds::zero();
+    if (exit_accumulator_ >= cfg_.exit_horizon) {
+      set_congested(false, stats.now);
+      entry_accumulator_ = std::chrono::milliseconds::zero();
+    }
+  }
+
+  auto compute_queue_pressure_score(double fill_smoothed) const -> double
+  {
+    if (cfg_.fill_high <= cfg_.fill_low) {
+      return 0.0;
+    }
+    return std::clamp(
+        (fill_smoothed - cfg_.fill_low) /
+            std::max(cfg_.fill_high - cfg_.fill_low, kEpsilon),
+        0.0, 1.0);
+  }
+
+  auto compute_latency_pressure_score(const TickStats& stats) const -> double
+  {
+    if (warn_latency_ms_ > 0.0 && stats.e2e_p95_smoothed.has_value()) {
+      const double upper = cfg_.latency_slo_ms * 1.1;
+      const double lower = ok_latency_ms_;
+      if (upper > lower) {
+        return std::clamp(
+            (*stats.e2e_p95_smoothed - lower) / (upper - lower), 0.0, 1.0);
+      }
+    } else if (
+        queue_budget_ms_.has_value() && stats.queue_p95_smoothed.has_value()) {
+      const double upper = *queue_budget_ms_ * 1.2;
+      const double lower = *queue_budget_ms_;
+      if (upper > lower) {
+        return std::clamp(
+            (*stats.queue_p95_smoothed - lower) / (upper - lower), 0.0, 1.0);
+      }
+    }
+    return 0.0;
+  }
+
+  auto compute_capacity_pressure_score(double rho_smoothed) const -> double
+  {
+    if (cfg_.rho_high <= cfg_.rho_low) {
+      return 0.0;
+    }
+    return std::clamp(
+        (rho_smoothed - cfg_.rho_low) /
+            std::max(cfg_.rho_high - cfg_.rho_low, kEpsilon),
+        0.0, 1.0);
+  }
+
+  auto compute_pressure_score(const TickStats& stats) const -> double
+  {
+    const double queue_pressure_score =
+        compute_queue_pressure_score(stats.fill_smoothed);
+    const double latency_pressure_score = compute_latency_pressure_score(stats);
+    const double capacity_pressure_score =
+        compute_capacity_pressure_score(stats.rho_smoothed);
+    return std::max(
+        {queue_pressure_score, latency_pressure_score,
+         capacity_pressure_score});
+  }
+
+  static auto build_snapshot(
+      const TickStats& stats, double score, bool congested_state) -> Snapshot
+  {
+    Snapshot snap{};
+    snap.congestion = congested_state;
+    snap.lambda_rps = stats.lambda_rps;
+    snap.mu_rps = stats.mu_rps;
+    snap.rho_ewma = stats.rho_smoothed;
+    snap.fill_ewma = stats.fill_smoothed;
+    snap.dqueue_ewma = stats.dqueue_smoothed;
+    snap.queue_p95_ms = stats.queue_p95_smoothed.value_or(0.0);
+    snap.queue_p99_ms = stats.queue_p99_smoothed.value_or(0.0);
+    snap.e2e_p95_ms = stats.e2e_p95_smoothed.value_or(0.0);
+    snap.e2e_p99_ms = stats.e2e_p99_smoothed.value_or(0.0);
+    snap.rejection_rps = stats.rejection_rps;
+    snap.score = score;
+    snap.queue_size = stats.queue_size;
+    snap.queue_capacity = stats.queue_capacity;
+    snap.last_tick = stats.now;
+    return snap;
+  }
+
+  static void publish_metrics(
+      const TickStats& stats, double score, bool congested_state)
+  {
+    set_congestion_flag(congested_state);
+    set_congestion_score(score);
+    set_congestion_arrival_rate(stats.lambda_rps);
+    set_congestion_completion_rate(stats.mu_rps);
+    set_congestion_rejection_rate(stats.rejection_rps);
+    set_congestion_rho(stats.rho_smoothed);
+    set_congestion_fill_ewma(stats.fill_smoothed);
+    set_congestion_queue_growth_rate(stats.dqueue_smoothed);
+    set_congestion_queue_latency_p95(stats.queue_p95_smoothed.value_or(0.0));
+    set_congestion_queue_latency_p99(stats.queue_p99_smoothed.value_or(0.0));
+    set_congestion_e2e_latency_p95(stats.e2e_p95_smoothed.value_or(0.0));
+    set_congestion_e2e_latency_p99(stats.e2e_p99_smoothed.value_or(0.0));
+  }
+
   void normalize_config()
   {
     if (cfg_.tick_interval <= std::chrono::milliseconds::zero()) {
@@ -192,218 +464,22 @@ class CongestionMonitor {
 
   void run_tick()
   {
-    const auto now = std::chrono::steady_clock::now();
-    const auto elapsed =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - last_tick_);
-    const double dt_seconds = std::max(
-        std::chrono::duration<double>(elapsed).count(),
-        std::chrono::duration<double>(cfg_.tick_interval).count());
-    last_tick_ = now;
+    const auto stats = capture_tick_stats();
+    const auto latency_flags = evaluate_latency_flags(stats);
+    const bool entry_condition = compute_entry_condition(stats, latency_flags);
+    const bool exit_condition = compute_exit_condition(stats, latency_flags);
 
-    const auto arrivals = arrivals_.exchange(0, std::memory_order_acq_rel);
-    const auto completions =
-        completions_.exchange(0, std::memory_order_acq_rel);
-    const auto rejections = rejections_.exchange(0, std::memory_order_acq_rel);
+    update_congestion_state(stats, entry_condition, exit_condition);
+    const bool congested_state = congested();
+    const double score = compute_pressure_score(stats);
 
-    const double lambda_rps = dt_seconds > kEpsilon
-                                  ? static_cast<double>(arrivals) / dt_seconds
-                                  : 0.0;
-    const double mu_rps = dt_seconds > kEpsilon
-                              ? static_cast<double>(completions) / dt_seconds
-                              : 0.0;
-    const double rejection_rps =
-        dt_seconds > kEpsilon ? static_cast<double>(rejections) / dt_seconds
-                              : 0.0;
-
-    const std::size_t queue_capacity =
-        queue_ != nullptr ? queue_->capacity() : 0U;
-    const std::size_t queue_size = queue_ != nullptr ? queue_->size() : 0U;
-    const double fill_ratio = queue_capacity > 0
-                                  ? std::clamp(
-                                        static_cast<double>(queue_size) /
-                                            static_cast<double>(queue_capacity),
-                                        0.0, 1.0)
-                                  : 0.0;
-    const double fill_smoothed =
-        update_ewma(fill_ewma_, fill_ratio, cfg_.alpha);
-
-    const double dqueue_dt = dt_seconds > kEpsilon
-                                 ? (static_cast<double>(queue_size) -
-                                    static_cast<double>(last_queue_size_)) /
-                                       dt_seconds
-                                 : 0.0;
-    last_queue_size_ = queue_size;
-    const double dqueue_smoothed =
-        update_ewma(dqueue_ewma_, dqueue_dt, cfg_.alpha);
-
-    double rho_sample = 0.0;
-    if (mu_rps > 0.0) {
-      rho_sample = lambda_rps / mu_rps;
-    } else if (lambda_rps > 0.0) {
-      rho_sample = kMaxRho;
-    }
-    const double rho_smoothed =
-        update_ewma(rho_ewma_, std::min(rho_sample, kMaxRho), cfg_.alpha);
-
-    std::vector<double> queue_samples;
-    std::vector<double> e2e_samples;
-    {
-      std::scoped_lock lock(samples_mutex_);
-      queue_samples.swap(queue_latency_ms_);
-      e2e_samples.swap(e2e_latency_ms_);
-    }
-
-    const auto queue_p95 = percentile(queue_samples, 95.0);
-    const auto queue_p99 = percentile(queue_samples, 99.0);
-    const auto e2e_p95 = percentile(e2e_samples, 95.0);
-    const auto e2e_p99 = percentile(e2e_samples, 99.0);
-
-    const auto queue_p95_smoothed =
-        update_optional_ewma(queue_p95_ewma_, queue_p95, cfg_.alpha);
-    const auto queue_p99_smoothed =
-        update_optional_ewma(queue_p99_ewma_, queue_p99, cfg_.alpha);
-    const auto e2e_p95_smoothed =
-        update_optional_ewma(e2e_p95_ewma_, e2e_p95, cfg_.alpha);
-    const auto e2e_p99_smoothed =
-        update_optional_ewma(e2e_p99_ewma_, e2e_p99, cfg_.alpha);
-
-    const bool panic = rejections > 0;
-    const bool under_provisioned = rho_smoothed > cfg_.rho_high;
-    const bool queue_pressure =
-        fill_smoothed > cfg_.fill_high && dqueue_smoothed > 0.0;
-    bool latency_danger = false;
-    if (warn_latency_ms_ > 0.0 && e2e_p95_smoothed.has_value()) {
-      latency_danger = *e2e_p95_smoothed > warn_latency_ms_;
-    } else if (queue_budget_ms_.has_value() && queue_p95_smoothed.has_value()) {
-      latency_danger = *queue_p95_smoothed > *queue_budget_ms_;
-    }
-    const bool entry_condition =
-        under_provisioned || queue_pressure || latency_danger;
-
-    bool latency_ok = true;
-    if (ok_latency_ms_ > 0.0 && e2e_p95_smoothed.has_value()) {
-      latency_ok = *e2e_p95_smoothed < ok_latency_ms_;
-    } else if (queue_budget_ms_.has_value() && queue_p95_smoothed.has_value()) {
-      latency_ok = *queue_p95_smoothed < *queue_budget_ms_;
-    }
-    const bool exit_condition = fill_smoothed < cfg_.fill_low &&
-                                rho_smoothed < cfg_.rho_low && latency_ok;
-
-    const auto elapsed_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
-    if (panic) {
-      set_congested(true, now);
-      entry_accumulator_ = cfg_.entry_horizon;
-      exit_accumulator_ = std::chrono::milliseconds::zero();
-    } else if (!congested()) {
-      if (entry_condition) {
-        entry_accumulator_ += elapsed_ms;
-      } else {
-        entry_accumulator_ = std::chrono::milliseconds::zero();
-      }
-      if (entry_accumulator_ >= cfg_.entry_horizon) {
-        set_congested(true, now);
-        exit_accumulator_ = std::chrono::milliseconds::zero();
-      }
-    } else {
-      if (exit_condition) {
-        exit_accumulator_ += elapsed_ms;
-      } else {
-        exit_accumulator_ = std::chrono::milliseconds::zero();
-      }
-      if (exit_accumulator_ >= cfg_.exit_horizon) {
-        set_congested(false, now);
-        entry_accumulator_ = std::chrono::milliseconds::zero();
-      }
-    }
-
-    const double queue_pressure_score =
-        cfg_.fill_high > cfg_.fill_low
-            ? std::clamp(
-                  (fill_smoothed - cfg_.fill_low) /
-                      std::max(cfg_.fill_high - cfg_.fill_low, kEpsilon),
-                  0.0, 1.0)
-            : 0.0;
-
-    double latency_pressure_score = 0.0;
-    if (warn_latency_ms_ > 0.0 && e2e_p95_smoothed.has_value()) {
-      const double upper = cfg_.latency_slo_ms * 1.1;
-      const double lower = ok_latency_ms_;
-      if (upper > lower) {
-        latency_pressure_score =
-            std::clamp((*e2e_p95_smoothed - lower) / (upper - lower), 0.0, 1.0);
-      }
-    } else if (queue_budget_ms_.has_value() && queue_p95_smoothed.has_value()) {
-      const double upper = *queue_budget_ms_ * 1.2;
-      const double lower = *queue_budget_ms_;
-      if (upper > lower) {
-        latency_pressure_score = std::clamp(
-            (*queue_p95_smoothed - lower) / (upper - lower), 0.0, 1.0);
-      }
-    }
-
-    const double capacity_pressure_score =
-        cfg_.rho_high > cfg_.rho_low
-            ? std::clamp(
-                  (rho_smoothed - cfg_.rho_low) /
-                      std::max(cfg_.rho_high - cfg_.rho_low, kEpsilon),
-                  0.0, 1.0)
-            : 0.0;
-
-    const double score = std::max(
-        {queue_pressure_score, latency_pressure_score,
-         capacity_pressure_score});
-
-    Snapshot snap{};
-    snap.congestion = congested();
-    snap.lambda_rps = lambda_rps;
-    snap.mu_rps = mu_rps;
-    snap.rho_ewma = rho_smoothed;
-    snap.fill_ewma = fill_smoothed;
-    snap.dqueue_ewma = dqueue_smoothed;
-    snap.queue_p95_ms = queue_p95_smoothed.value_or(0.0);
-    snap.queue_p99_ms = queue_p99_smoothed.value_or(0.0);
-    snap.e2e_p95_ms = e2e_p95_smoothed.value_or(0.0);
-    snap.e2e_p99_ms = e2e_p99_smoothed.value_or(0.0);
-    snap.rejection_rps = rejection_rps;
-    snap.score = score;
-    snap.queue_size = queue_size;
-    snap.queue_capacity = queue_capacity;
-    snap.last_tick = now;
-
+    const Snapshot snap = build_snapshot(stats, score, congested_state);
     {
       std::scoped_lock lock(snapshot_mutex_);
       snapshot_ = snap;
     }
 
-    set_congestion_flag(snap.congestion);
-    set_congestion_score(score);
-    set_congestion_arrival_rate(lambda_rps);
-    set_congestion_completion_rate(mu_rps);
-    set_congestion_rejection_rate(rejection_rps);
-    set_congestion_rho(rho_smoothed);
-    set_congestion_fill_ewma(fill_smoothed);
-    set_congestion_queue_growth_rate(dqueue_smoothed);
-    if (queue_p95_smoothed.has_value()) {
-      set_congestion_queue_latency_p95(*queue_p95_smoothed);
-    } else {
-      set_congestion_queue_latency_p95(0.0);
-    }
-    if (queue_p99_smoothed.has_value()) {
-      set_congestion_queue_latency_p99(*queue_p99_smoothed);
-    } else {
-      set_congestion_queue_latency_p99(0.0);
-    }
-    if (e2e_p95_smoothed.has_value()) {
-      set_congestion_e2e_latency_p95(*e2e_p95_smoothed);
-    } else {
-      set_congestion_e2e_latency_p95(0.0);
-    }
-    if (e2e_p99_smoothed.has_value()) {
-      set_congestion_e2e_latency_p99(*e2e_p99_smoothed);
-    } else {
-      set_congestion_e2e_latency_p99(0.0);
-    }
+    publish_metrics(stats, score, congested_state);
   }
 
   void set_congested(bool state, std::chrono::steady_clock::time_point now)
@@ -468,8 +544,8 @@ monitor_atomic() -> std::atomic<std::shared_ptr<CongestionMonitor>>&
 
 }  // namespace
 
-bool
-start(InferenceQueue* queue, Config config)
+auto
+start(InferenceQueue* queue, Config config) -> bool
 {
   if (queue == nullptr || !config.enabled) {
     monitor_atomic().store(nullptr, std::memory_order_release);
@@ -478,7 +554,7 @@ start(InferenceQueue* queue, Config config)
     }
     return false;
   }
-  auto monitor = std::make_shared<CongestionMonitor>(queue, std::move(config));
+  auto monitor = std::make_shared<CongestionMonitor>(queue, config);
   monitor->start();
   monitor_atomic().store(monitor, std::memory_order_release);
   return true;
@@ -503,12 +579,11 @@ record_arrival(std::size_t count)
 }
 
 void
-record_completion(
-    std::size_t logical_jobs, double queue_latency_ms, double e2e_latency_ms)
+record_completion(std::size_t logical_jobs, CompletionLatencies latencies)
 {
   auto monitor = monitor_atomic().load(std::memory_order_acquire);
   if (monitor != nullptr) {
-    monitor->record_completion(logical_jobs, queue_latency_ms, e2e_latency_ms);
+    monitor->record_completion(logical_jobs, latencies);
   }
 }
 
@@ -531,8 +606,8 @@ snapshot() -> std::optional<Snapshot>
   return monitor->snapshot();
 }
 
-bool
-is_congested()
+auto
+is_congested() -> bool
 {
   auto monitor = monitor_atomic().load(std::memory_order_acquire);
   return monitor != nullptr && monitor->congested();

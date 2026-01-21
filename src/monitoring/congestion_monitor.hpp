@@ -9,22 +9,33 @@ class InferenceQueue;
 }  // namespace starpu_server
 
 namespace starpu_server::congestion {
+inline constexpr double kDefaultQueueLatencyBudgetRatio = 0.30;
+inline constexpr double kDefaultE2EWarnRatio = 0.90;
+inline constexpr double kDefaultE2EOkRatio = 0.80;
+inline constexpr double kDefaultFillHigh = 0.80;
+inline constexpr double kDefaultFillLow = 0.60;
+inline constexpr double kDefaultRhoHigh = 1.05;
+inline constexpr double kDefaultRhoLow = 0.90;
+inline constexpr double kDefaultEwmaAlpha = 0.2;
+inline constexpr std::chrono::seconds kDefaultTickInterval{1};
+inline constexpr std::chrono::seconds kDefaultEntryHorizon{5};
+inline constexpr std::chrono::seconds kDefaultExitHorizon{15};
 
 struct Config {
   bool enabled{true};
   double latency_slo_ms{0.0};
   double queue_latency_budget_ms{0.0};
-  double queue_latency_budget_ratio{0.30};
-  double e2e_warn_ratio{0.90};
-  double e2e_ok_ratio{0.80};
-  double fill_high{0.80};
-  double fill_low{0.60};
-  double rho_high{1.05};
-  double rho_low{0.90};
-  double alpha{0.2};
-  std::chrono::milliseconds tick_interval{std::chrono::seconds(1)};
-  std::chrono::milliseconds entry_horizon{std::chrono::seconds(5)};
-  std::chrono::milliseconds exit_horizon{std::chrono::seconds(15)};
+  double queue_latency_budget_ratio{kDefaultQueueLatencyBudgetRatio};
+  double e2e_warn_ratio{kDefaultE2EWarnRatio};
+  double e2e_ok_ratio{kDefaultE2EOkRatio};
+  double fill_high{kDefaultFillHigh};
+  double fill_low{kDefaultFillLow};
+  double rho_high{kDefaultRhoHigh};
+  double rho_low{kDefaultRhoLow};
+  double alpha{kDefaultEwmaAlpha};
+  std::chrono::milliseconds tick_interval{kDefaultTickInterval};
+  std::chrono::milliseconds entry_horizon{kDefaultEntryHorizon};
+  std::chrono::milliseconds exit_horizon{kDefaultExitHorizon};
 };
 
 struct Snapshot {
@@ -42,16 +53,20 @@ struct Snapshot {
   double score{0.0};
   std::size_t queue_size{0};
   std::size_t queue_capacity{0};
-  std::chrono::steady_clock::time_point last_tick{};
+  std::chrono::steady_clock::time_point last_tick;
 };
 
-bool start(InferenceQueue* queue, Config config = {});
+struct CompletionLatencies {
+  double queue_latency_ms{0.0};
+  double e2e_latency_ms{0.0};
+};
+
+auto start(InferenceQueue* queue, Config config = {}) -> bool;
 void shutdown();
 void record_arrival(std::size_t count = 1);
-void record_completion(
-    std::size_t logical_jobs, double queue_latency_ms, double e2e_latency_ms);
+void record_completion(std::size_t logical_jobs, CompletionLatencies latencies);
 void record_rejection(std::size_t count = 1);
 auto snapshot() -> std::optional<Snapshot>;
-bool is_congested();
+auto is_congested() -> bool;
 
 }  // namespace starpu_server::congestion

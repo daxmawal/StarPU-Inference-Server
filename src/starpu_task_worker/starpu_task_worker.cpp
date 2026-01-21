@@ -995,7 +995,10 @@ ResultDispatcher::record_job_metrics(
           worker_id, device_id, worker_type_label, compute_ms);
     }
     congestion::record_completion(
-        logical_jobs, breakdown.queue_ms, latency.count());
+        logical_jobs, congestion::CompletionLatencies{
+                          .queue_latency_ms = breakdown.queue_ms,
+                          .e2e_latency_ms = latency.count(),
+                      });
   }
   perf_observer::record_job(
       timing.enqueued_time, timing.callback_end_time, batch_size, warmup);

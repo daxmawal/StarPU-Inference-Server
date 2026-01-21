@@ -75,8 +75,16 @@ TEST_F(CongestionMonitorTest, ClearsAfterExitConditionsHold)
   std::shared_ptr<starpu_server::InferenceJob> drained;
   while (queue.try_pop(drained)) {
   }
-  starpu_server::congestion::record_completion(16, 1.0, 10.0);
-  starpu_server::congestion::record_completion(16, 1.0, 10.0);
+  starpu_server::congestion::record_completion(
+      16, starpu_server::congestion::CompletionLatencies{
+              .queue_latency_ms = 1.0,
+              .e2e_latency_ms = 10.0,
+          });
+  starpu_server::congestion::record_completion(
+      16, starpu_server::congestion::CompletionLatencies{
+              .queue_latency_ms = 1.0,
+              .e2e_latency_ms = 10.0,
+          });
 
   EXPECT_TRUE(wait_until(
       [] { return !starpu_server::congestion::is_congested(); }, 1200ms));
