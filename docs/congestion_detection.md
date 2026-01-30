@@ -92,8 +92,8 @@ Formulas (per tick):
 
 Notation: $U$ = under_provisioned, $P$ = queue_pressure, $D$ = latency_danger,
 $K$ = latency_ok, $L_{slo}$ = `latency_slo_ms`, $r_{warn}$ = `e2e_warn_ratio`,
-$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`, $f\_{high}$/$f\_{low}$ =
-`fill_high`/`fill_low`, $\rho\_{high}$/$\rho\_{low}$ = `rho_high`/`rho_low`.
+$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`, $f_{high}$/$f\_{low}$ =
+`fill_high`/`fill_low`, $\rho_{high}$/$\rho\_{low}$ = `rho_high`/`rho_low`.
 
 $$
 \begin{aligned}
