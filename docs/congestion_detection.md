@@ -19,10 +19,10 @@ configuration fields in the `congestion:` YAML block.
 - Arrival rate (λ): requests/s over the last tick.
 - Completion rate (μ): logical jobs/s over the last tick.
 - Load (ρ): smoothed arrival/processing ratio.
-- Queue fill ratio: smoothed queue utilization.
-- Queue growth rate: smoothed rate of queue_size change.
-- Queue latency p95: smoothed p95 of queue latency samples in the tick.
-- E2E latency p95: smoothed p95 of end-to-end latency samples in the tick.
+- Queue fill ratio ($f$): smoothed queue utilization.
+- Queue growth rate ($\dot{q}$): smoothed rate of queue_size change.
+- Queue latency p95 ($Q_{95}$): smoothed p95 of queue latency samples in the tick.
+- E2E latency p95 ($E_{95}$): smoothed p95 of end-to-end latency samples in the tick.
 
 Formulas (per tick):
 
@@ -63,9 +63,9 @@ Notes:
 - $N_a$ and $N_c$ are arrivals and completions in the tick.
 - $q$, $C$, and $q_{prev}$ are queue size, capacity, and previous queue size.
 - $L_q$ and $L_e$ are the queue and end-to-end latency samples in the tick.
-- $\tilde{x}$ denotes the EWMA-smoothed value of $x$ (e.g.,
+- $\tilde{x}\_t$ denotes the EWMA-smoothed value of $x$ (e.g.,
   $\tilde{\rho}$, $\tilde{f}$, $\tilde{\dot{q}}$, $\tilde{Q}_{95}$).
-- The first sample initializes the EWMA; if no latency samples arrive in a
+- The first sample initializes the EWMA, if no latency samples arrive in a
   tick, the corresponding smoothed percentile is unchanged.
 - `queue_budget_ms` is `queue_latency_budget_ms` when set, otherwise
   `latency_slo_ms * queue_latency_budget_ratio` when SLO is enabled.
