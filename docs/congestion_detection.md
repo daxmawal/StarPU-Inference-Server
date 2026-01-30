@@ -19,7 +19,7 @@ configuration fields in the `congestion:` YAML block.
 - Arrival rate (λ): requests/s over the last tick.
 - Completion rate (μ): logical jobs/s over the last tick.
 - Load (ρ): smoothed arrival/processing ratio.
-- Queue fill ratio ($f$): smoothed queue utilization.
+- Queue fill ratio ($f$): queue utilization.
 - Queue growth rate ($\dot{q}$): rate of queue_size change in the tick.
 - Queue latency p95 ($Q_{95}$): p95 of queue latency samples in the tick.
 - E2E latency p95 ($E_{95}$): p95 of end-to-end latency samples in the tick.
