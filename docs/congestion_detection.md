@@ -76,7 +76,7 @@ Notes:
 Entry condition is true if ANY of the following holds:
 
 - under_provisioned (capacity shortfall): $\tilde{\rho}\_t$ > $\rho_{high}$
-- queue_pressure: $\tilde{f}\_t$ > $f_{high}$ AND $\tilde{\dot{q}}\_t > 0
+- queue_pressure: $\tilde{f}\_t$ > $f_{high}$ AND $\tilde{\dot{q}}\_t$ > 0
 - latency_danger:
   - if $L_{slo}$ > 0: $\tilde{E}\_{t,95}$ > $L\_{slo} \, r\_{warn}$
   - else if queue budget is set: $\tilde{Q}_{t,95}$ > $B$
