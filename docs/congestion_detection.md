@@ -77,7 +77,7 @@ Entry condition is true if ANY of the following holds:
 - under_provisioned (capacity shortfall): $\tilde{\rho}$ > $\rho_{high}$
 - queue_pressure: $\tilde{f}$ > $f_{high}$ AND $\tilde{\dot{q}}$ > 0
 - latency_danger:
-  - if $L_{slo}$ > 0: $\tilde{E}_{95}$ > $L_{slo} \, r_{warn}$
+  - if $L_{slo}$ > 0: $\tilde{E}\_{95}$ > $L\_{slo} \, r\_{warn}$
   - else if queue budget is set: $\tilde{Q}_{95}$ > $B$
 
 Exit condition is true if ALL of the following holds:
@@ -85,15 +85,15 @@ Exit condition is true if ALL of the following holds:
 - $\tilde{f}$ < $f_{low}$
 - $\tilde{\rho}$ < $\rho_{low}$
 - latency_ok:
-  - if $L_{slo}$ > 0: $\tilde{E}_{95}$ < $L_{slo} \, r_{ok}$
+  - if $L\_{slo}$ > 0: $\tilde{E}\_{95}$ < $L\_{slo} \, r\_{ok}$
   - else if queue budget is set: $\tilde{Q}_{95}$ < $B$
 
 Formulas (per tick):
 
 Notation: $U$ = under_provisioned, $P$ = queue_pressure, $D$ = latency_danger,
 $K$ = latency_ok, $L_{slo}$ = `latency_slo_ms`, $r_{warn}$ = `e2e_warn_ratio`,
-$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`, $f_{high}$/$f_{low}$ =
-`fill_high`/`fill_low`, $\rho_{high}$/$\rho_{low}$ = `rho_high`/`rho_low`.
+$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`, $f\_{high}$/$f\_{low}$ =
+`fill_high`/`fill_low`, $\rho\_{high}$/$\rho\_{low}$ = `rho_high`/`rho_low`.
 
 $$
 \begin{aligned}
