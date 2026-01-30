@@ -64,8 +64,8 @@ Notes:
 - $q$, $C$, and $q_{prev}$ are queue size, capacity, and previous queue size.
 - $L_q$ and $L_e$ are the queue and end-to-end latency samples in the tick.
 - $\tilde{x}\_t$ denotes the EWMA-smoothed value of $x$ (e.g.,
-  $\tilde{\rho}\_t$, $\tilde{f}\_t$, $\tilde{\dot{q}}\_t$, $\tilde{Q}_{t,95}$,
-  $\tilde{E}_{t,95}$).
+  $\tilde{\rho}\_t$, $\tilde{f}\_t$, $\tilde{\dot{q}}\_t$, $\tilde{Q}\_{t,95}$,
+  $\tilde{E}\_{t,95}$).
 - The first sample initializes the EWMA, if no latency samples arrive in a
   tick, the corresponding smoothed percentile is unchanged.
 - `queue_budget_ms` is `queue_latency_budget_ms` when set, otherwise
