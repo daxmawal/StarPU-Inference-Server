@@ -74,19 +74,19 @@ Notes:
 
 Entry condition is true if ANY of the following holds:
 
-- under_provisioned (capacity shortfall): $\tilde{\rho}$ > $\rho_{high}$
-- queue_pressure: $\tilde{f}$ > $f_{high}$ AND $\tilde{\dot{q}}$ > 0
+- under_provisioned (capacity shortfall): $\tilde{\rho}\_t$ > $\rho_{high}$
+- queue_pressure: $\tilde{f}\_t$ > $f_{high}$ AND $\tilde{\dot{q}}\_t > 0
 - latency_danger:
-  - if $L_{slo}$ > 0: $\tilde{E}\_{95}$ > $L\_{slo} \, r\_{warn}$
-  - else if queue budget is set: $\tilde{Q}_{95}$ > $B$
+  - if $L_{slo}$ > 0: $\tilde{E}\_{t,95}$ > $L\_{slo} \, r\_{warn}$
+  - else if queue budget is set: $\tilde{Q}_{t,95}$ > $B$
 
 Exit condition is true if ALL of the following holds:
 
-- $\tilde{f}$ < $f_{low}$
-- $\tilde{\rho}$ < $\rho_{low}$
+- $\tilde{f}\_t$ < $f_{low}$
+- $\tilde{\rho}\_t$ < $\rho_{low}$
 - latency_ok:
-  - if $L\_{slo}$ > 0: $\tilde{E}\_{95}$ < $L\_{slo} \, r\_{ok}$
-  - else if queue budget is set: $\tilde{Q}_{95}$ < $B$
+  - if $L\_{slo}$ > 0: $\tilde{E}\_{t,95}$ < $L\_{slo} \, r\_{ok}$
+  - else if queue budget is set: $\tilde{Q}_{t,95}$ < $B$
 
 Formulas (per tick):
 
@@ -97,16 +97,16 @@ $r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`, $f_{high}$/$f\_{low}$ =
 
 $$
 \begin{aligned}
-U &= \tilde{\rho} > \rho_{high} \\
-P &= \tilde{f} > f_{high} \land \tilde{\dot{q}} > 0
+U &= \tilde{\rho}\_t > \rho_{high} \\
+P &= \tilde{f}\_t > f_{high} \land \tilde{\dot{q}}\_t > 0
 \end{aligned}
 $$
 
 $$
 D =
 \begin{cases}
-\tilde{E}_{95} > L_{slo} \, r_{warn}, & L_{slo} > 0 \\
-\tilde{Q}_{95} > B, & B > 0 \\
+\tilde{E}_{t,95} > L_{slo} \, r_{warn}, & L_{slo} > 0 \\
+\tilde{Q}_{t,95} > B, & B > 0 \\
 \text{false}, & \text{otherwise}
 \end{cases}
 $$
@@ -114,8 +114,8 @@ $$
 $$
 K =
 \begin{cases}
-\tilde{E}_{95} < L_{slo} \, r_{ok}, & L_{slo} > 0 \\
-\tilde{Q}_{95} < B, & B > 0 \\
+\tilde{E}_{t,95} < L_{slo} \, r_{ok}, & L_{slo} > 0 \\
+\tilde{Q}_{t,95} < B, & B > 0 \\
 \text{true}, & \text{otherwise}
 \end{cases}
 $$
@@ -123,7 +123,7 @@ $$
 $$
 \begin{aligned}
 C_{entry} &= U \lor P \lor D \\
-C_{exit} &= \tilde{f} < f_{low} \land \tilde{\rho} < \rho_{low} \land K
+C_{exit} &= \tilde{f}\_t < f_{low} \land \tilde{\rho}\_t < \rho_{low} \land K
 \end{aligned}
 $$
 
@@ -158,7 +158,7 @@ $$
 $$
 S_q =
 \begin{cases}
-c\left(\frac{\tilde{f} - f_{low}}{f_{high} - f_{low}}\right), & f_{high} > f_{low} \\
+c\left(\frac{\tilde{f}\_t - f_{low}}{f_{high} - f_{low}}\right), & f_{high} > f_{low} \\
 0, & \text{otherwise}
 \end{cases}
 $$
@@ -166,7 +166,7 @@ $$
 $$
 S_c =
 \begin{cases}
-c\left(\frac{\tilde{\rho} - \rho_{low}}{\rho_{high} - \rho_{low}}\right), & \rho_{high} > \rho_{low} \\
+c\left(\frac{\tilde{\rho}\_t - \rho_{low}}{\rho_{high} - \rho_{low}}\right), & \rho_{high} > \rho_{low} \\
 0, & \text{otherwise}
 \end{cases}
 $$
@@ -174,8 +174,8 @@ $$
 $$
 S_l =
 \begin{cases}
-c\left(\frac{\tilde{E}_{95} - L_{slo} \, r_{ok}}{1.1 L_{slo} - L_{slo} \, r_{ok}}\right), & L_{slo} > 0 \\
-c\left(\frac{\tilde{Q}_{95} - B}{1.2 B - B}\right), & B > 0 \\
+c\left(\frac{\tilde{E}_{t,95} - L_{slo} \, r_{ok}}{1.1 L_{slo} - L_{slo} \, r_{ok}}\right), & L_{slo} > 0 \\
+c\left(\frac{\tilde{Q}_{t,95} - B}{1.2 B - B}\right), & B > 0 \\
 0, & \text{otherwise}
 \end{cases}
 $$
