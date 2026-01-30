@@ -74,25 +74,26 @@ Notes:
 
 Entry condition is true if ANY of the following holds:
 
-- under_provisioned (capacity shortfall): ρ_smoothed > ρ_high
-- queue_pressure: fill_smoothed > fill_high AND dqueue_smoothed > 0
+- under_provisioned (capacity shortfall): $\tilde{\rho}$ > $\rho_{high}$
+- queue_pressure: $\tilde{f}$ > $f_{high}$ AND $\tilde{\dot{q}}$ > 0
 - latency_danger:
-  - if latency_slo_ms > 0: e2e_p95_smoothed > latency_slo_ms * e2e_warn_ratio
-  - else if queue budget is set: queue_p95_smoothed > queue_budget_ms
+  - if $L_{slo}$ > 0: $\tilde{E}_{95}$ > $L_{slo} \, r_{warn}$
+  - else if queue budget is set: $\tilde{Q}_{95}$ > $B$
 
 Exit condition is true if ALL of the following holds:
 
-- fill_smoothed < fill_low
-- ρ_smoothed < ρ_low
+- $\tilde{f}$ < $f_{low}$
+- $\tilde{\rho}$ < $\rho_{low}$
 - latency_ok:
-  - if latency_slo_ms > 0: e2e_p95_smoothed < latency_slo_ms * e2e_ok_ratio
-  - else if queue budget is set: queue_p95_smoothed < queue_budget_ms
+  - if $L_{slo}$ > 0: $\tilde{E}_{95}$ < $L_{slo} \, r_{ok}$
+  - else if queue budget is set: $\tilde{Q}_{95}$ < $B$
 
 Formulas (per tick):
 
 Notation: $U$ = under_provisioned, $P$ = queue_pressure, $D$ = latency_danger,
 $K$ = latency_ok, $L_{slo}$ = `latency_slo_ms`, $r_{warn}$ = `e2e_warn_ratio`,
-$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`.
+$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`, $f_{high}$/$f_{low}$ =
+`fill_high`/`fill_low`, $\rho_{high}$/$\rho_{low}$ = `rho_high`/`rho_low`.
 
 $$
 \begin{aligned}
