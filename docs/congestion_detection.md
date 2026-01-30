@@ -73,6 +73,13 @@ Notes:
 
 ## Entry and exit logic (per tick)
 
+Formulas (per tick):
+
+Notation: $U$ = under_provisioned, $P$ = queue_pressure, $D$ = latency_danger,
+$K$ = latency_ok, $L_{slo}$ = `latency_slo_ms`, $r_{warn}$ = `e2e_warn_ratio`,
+$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`, $f_{high}$/$f\_{low}$ =
+`fill_high`/`fill_low`, $\rho_{high}$/$\rho\_{low}$ = `rho_high`/`rho_low`.
+
 Entry condition is true if ANY of the following holds:
 
 - under_provisioned (capacity shortfall): $\tilde{\rho}\_t$ > $\rho_{high}$
@@ -88,13 +95,6 @@ Exit condition is true if ALL of the following holds:
 - latency_ok:
   - if $L\_{slo}$ > 0: $\tilde{E}\_{t,95}$ < $L\_{slo} \, r\_{ok}$
   - else if queue budget is set: $\tilde{Q}_{t,95}$ < $B$
-
-Formulas (per tick):
-
-Notation: $U$ = under_provisioned, $P$ = queue_pressure, $D$ = latency_danger,
-$K$ = latency_ok, $L_{slo}$ = `latency_slo_ms`, $r_{warn}$ = `e2e_warn_ratio`,
-$r_{ok}$ = `e2e_ok_ratio`, $B$ = `queue_budget_ms`, $f_{high}$/$f\_{low}$ =
-`fill_high`/`fill_low`, $\rho_{high}$/$\rho\_{low}$ = `rho_high`/`rho_low`.
 
 $$
 \begin{aligned}
