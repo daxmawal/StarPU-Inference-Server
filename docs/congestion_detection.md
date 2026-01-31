@@ -175,8 +175,8 @@ $$
 $$
 S_l =
 \begin{cases}
-c\left(\frac{\tilde{E}_{t,95} - L_{slo} \, r_{ok}}{1.1 L_{slo} - L_{slo} \times r_{ok}}\right), & L_{slo} > 0 \\
-c\left(\frac{\tilde{Q}_{t,95} - B}{1.2 B - B}\right) \times & B > 0 \\
+c\left(\frac{\tilde{E}_{t,95} - L_{slo} \times r_{ok}}{1.1 L_{slo} - L_{slo} \times r_{ok}}\right), & L_{slo} > 0 \\
+c\left(\frac{\tilde{Q}_{t,95} - B}{1.2 B - B}\right), & B > 0 \\
 0, & \text{otherwise}
 \end{cases}
 $$
