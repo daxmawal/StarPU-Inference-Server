@@ -16,7 +16,7 @@ configuration fields in the `congestion:` YAML block.
 
 ## Signals and derived metrics
 
-- Arrival rate (λ): requests/s over the last tick.
+- Arrival rate (λ): requests/s over the last tick (normalized by the tick duration $\Delta t$ in seconds).
 - Completion rate (μ): logical jobs/s over the last tick.
 - Load (ρ): smoothed arrival/processing ratio.
 - Queue fill ratio ($f$): queue utilization.
