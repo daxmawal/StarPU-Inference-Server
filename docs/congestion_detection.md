@@ -88,13 +88,7 @@ Entry condition is true if ANY of the following holds:
   - if $L_{slo}$ > 0: $\tilde{E}\_{t,95}$ > $L\_{slo} \times r\_{warn}$
   - else if queue budget is set: $\tilde{Q}_{t,95}$ > $B$
 
-Exit condition is true if ALL of the following holds:
-
-- $\tilde{f}\_t$ < $f_{low}$
-- $\tilde{\rho}\_t$ < $\rho_{low}$
-- latency_ok:
-  - if $L\_{slo}$ > 0: $\tilde{E}\_{t,95}$ < $L\_{slo} \times r\_{ok}$
-  - else if queue budget is set: $\tilde{Q}_{t,95}$ < $B$
+Entry formulas:
 
 $$
 \begin{aligned}
@@ -113,6 +107,22 @@ D =
 $$
 
 $$
+\begin{aligned}
+C_{entry} &= U \lor P \lor D \\
+\end{aligned}
+$$
+
+Exit condition is true if ALL of the following holds:
+
+- $\tilde{f}\_t$ < $f_{low}$
+- $\tilde{\rho}\_t$ < $\rho_{low}$
+- latency_ok:
+  - if $L\_{slo}$ > 0: $\tilde{E}\_{t,95}$ < $L\_{slo} \times r\_{ok}$
+  - else if queue budget is set: $\tilde{Q}_{t,95}$ < $B$
+
+Exit formulas:
+
+$$
 K =
 \begin{cases}
 \tilde{E}_{t,95} < L_{slo} \times r_{ok}, & L_{slo} > 0 \\
@@ -123,7 +133,6 @@ $$
 
 $$
 \begin{aligned}
-C_{entry} &= U \lor P \lor D \\
 C_{exit} &= \tilde{f}\_t < f_{low} \land \tilde{\rho}\_t < \rho_{low} \land K
 \end{aligned}
 $$
