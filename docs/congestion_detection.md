@@ -114,7 +114,7 @@ $$
 
 Exit condition is true if ALL of the following holds:
 
-- $\tilde{f}\_t$ < $f_{low}$
+- $\tilde{f}\_t < f_{low}$
 - $\tilde{\rho}\_t$ < $\rho_{low}$
 - latency_ok:
   - if $L\_{slo}$ > 0: $\tilde{E}\_{t,95}$ < $L\_{slo} \times r\_{ok}$
