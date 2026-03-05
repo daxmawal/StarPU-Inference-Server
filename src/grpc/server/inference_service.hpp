@@ -375,10 +375,7 @@ class InferenceServiceImpl final
     std::string name;
     std::string version;
 
-    auto operator==(const ModelStatsKey& other) const -> bool
-    {
-      return name == other.name && version == other.version;
-    }
+    auto operator==(const ModelStatsKey& other) const -> bool = default;
   };
   struct ModelStatsKeyHash {
     auto operator()(const ModelStatsKey& key) const noexcept -> std::size_t

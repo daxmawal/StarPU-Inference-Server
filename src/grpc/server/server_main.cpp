@@ -496,6 +496,42 @@ make_congestion_config(const starpu_server::RuntimeConfig& cfg)
   return out;
 }
 
+auto
+resolve_default_model_name(const starpu_server::RuntimeConfig& opts)
+    -> std::string
+{
+  if (opts.model.has_value() && !opts.model->name.empty()) {
+    return opts.model->name;
+  }
+  return opts.name;
+}
+
+auto
+make_grpc_server_options(const starpu_server::RuntimeConfig& opts)
+    -> starpu_server::GrpcServerOptions
+{
+  return {opts.server_address, opts.batching.max_message_bytes,
+          opts.verbosity,      resolve_default_model_name(opts),
+          opts.name,           ""};
+}
+
+auto
+make_grpc_model_spec(
+    const starpu_server::RuntimeConfig& opts,
+    std::span<const at::ScalarType> expected_input_types,
+    std::span<const std::vector<int64_t>> expected_input_dims,
+    std::span<const std::string> expected_input_names,
+    std::span<const std::string> expected_output_names)
+    -> starpu_server::GrpcModelSpec
+{
+  return {
+      .expected_input_types = expected_input_types,
+      .expected_input_dims = expected_input_dims,
+      .expected_input_names = expected_input_names,
+      .expected_output_names = expected_output_names,
+      .max_batch_size = opts.batching.max_batch_size};
+}
+
 void
 launch_threads(
     const starpu_server::RuntimeConfig& opts,
@@ -564,22 +600,10 @@ launch_threads(
   }
 
   std::jthread grpc_thread([&]() {
-    std::string default_model_name;
-    if (opts.model.has_value() && !opts.model->name.empty()) {
-      default_model_name = opts.model->name;
-    } else {
-      default_model_name = opts.name;
-    }
-    const auto server_options = starpu_server::GrpcServerOptions{
-        opts.server_address, opts.batching.max_message_bytes,
-        opts.verbosity,      std::move(default_model_name),
-        opts.name,           ""};
-    const auto model_spec = starpu_server::GrpcModelSpec{
-        .expected_input_types = expected_input_types,
-        .expected_input_dims = expected_input_dims,
-        .expected_input_names = expected_input_names,
-        .expected_output_names = expected_output_names,
-        .max_batch_size = opts.batching.max_batch_size};
+    const auto server_options = make_grpc_server_options(opts);
+    const auto model_spec = make_grpc_model_spec(
+        opts, expected_input_types, expected_input_dims, expected_input_names,
+        expected_output_names);
     starpu_server::RunGrpcServer(
         queue, reference_outputs, model_spec, server_options,
         server_ctx.server);
