@@ -20,7 +20,8 @@ class ResolveModelNameTest : public ::testing::Test {
   {
     return std::make_unique<starpu_server::InferenceServiceImpl>(
         &queue_, &reference_outputs_, std::vector<at::ScalarType>{at::kFloat},
-        std::move(default_model_name));
+        starpu_server::InferenceServiceImpl::ServiceOptions{
+            .default_model_name = std::move(default_model_name)});
   }
 
   starpu_server::InferenceQueue queue_;

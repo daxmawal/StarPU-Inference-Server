@@ -128,8 +128,9 @@ class NamedInputInferenceServiceTest : public InferenceServiceTest {
     std::vector<at::ScalarType> expected_types = {at::kFloat, at::kLong};
     std::vector<std::string> expected_names = {"first", "second"};
     service = std::make_unique<starpu_server::InferenceServiceImpl>(
-        &queue, &ref_outputs, std::move(expected_types), "",
-        std::move(expected_names));
+        &queue, &ref_outputs, std::move(expected_types),
+        starpu_server::InferenceServiceImpl::ServiceOptions{
+            .expected_input_names = std::move(expected_names)});
   }
 };
 
