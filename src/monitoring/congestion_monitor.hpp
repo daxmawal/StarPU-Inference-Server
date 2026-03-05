@@ -83,6 +83,24 @@ struct NormalizedConfigResult {
   std::optional<double> queue_budget_ms;
 };
 
+struct QueuePressureScoreTestArgs {
+  double fill_high{0.0};
+  double fill_low{0.0};
+  double fill_smoothed{0.0};
+};
+
+struct LatencyPressureScoreTestArgs {
+  double latency_slo_ms{0.0};
+  double e2e_ok_ratio{0.0};
+  std::optional<double> e2e_p95;
+};
+
+struct CapacityPressureScoreTestArgs {
+  double rho_high{0.0};
+  double rho_low{0.0};
+  double rho_smoothed{0.0};
+};
+
 auto percentile_for_test(std::vector<double> samples, double pct)
     -> std::optional<double>;
 auto update_ewma_for_test(
@@ -93,15 +111,14 @@ auto evaluate_latency_flags_for_test(
     double queue_budget_ms,
     std::optional<double> queue_p95) -> LatencyFlagResult;
 auto compute_queue_pressure_score_for_test(
-    double fill_high, double fill_low, double fill_smoothed) -> double;
+    const QueuePressureScoreTestArgs& args) -> double;
 auto compute_latency_pressure_score_for_test(
-    double latency_slo_ms, double e2e_ok_ratio,
-    std::optional<double> e2e_p95) -> double;
+    const LatencyPressureScoreTestArgs& args) -> double;
 auto compute_latency_pressure_score_queue_budget_for_test(
     double queue_budget_ms, std::optional<double> queue_p95) -> double;
 auto normalize_config_for_test(Config cfg) -> NormalizedConfigResult;
 auto compute_capacity_pressure_score_for_test(
-    double rho_high, double rho_low, double rho_smoothed) -> double;
+    const CapacityPressureScoreTestArgs& args) -> double;
 #endif  // SONAR_IGNORE_END
 
 }  // namespace starpu_server::congestion

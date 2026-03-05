@@ -266,7 +266,6 @@ class BatchingTraceLogger {
   auto configure_summary_writer(const std::filesystem::path& trace_path)
       -> bool;
   void close_summary_writer();
-  void close_queue_metrics_writer();
   [[nodiscard]] auto configure_queue_metrics_writer(
       const std::filesystem::path& trace_path) -> bool;
   [[nodiscard]] auto relative_timestamp_from_time_point(

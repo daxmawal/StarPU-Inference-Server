@@ -188,7 +188,7 @@ TEST(QueuePressureScoreTest, ReturnsZeroWhenHighNotAboveLow)
 {
   const auto score =
       starpu_server::congestion::compute_queue_pressure_score_for_test(
-          0.5, 0.5, 0.9);
+          {.fill_high = 0.5, .fill_low = 0.5, .fill_smoothed = 0.9});
   EXPECT_DOUBLE_EQ(score, 0.0);
 }
 
@@ -196,7 +196,7 @@ TEST(LatencyPressureScoreTest, ReturnsScaledValueWhenUpperAboveLower)
 {
   const auto score =
       starpu_server::congestion::compute_latency_pressure_score_for_test(
-          100.0, 0.8, 95.0);
+          {.latency_slo_ms = 100.0, .e2e_ok_ratio = 0.8, .e2e_p95 = 95.0});
   EXPECT_NEAR(score, 0.5, 1e-9);
 }
 
@@ -257,7 +257,7 @@ TEST(CapacityPressureScoreTest, ReturnsZeroWhenHighNotAboveLow)
 {
   const auto score =
       starpu_server::congestion::compute_capacity_pressure_score_for_test(
-          1.0, 1.0, 2.0);
+          {.rho_high = 1.0, .rho_low = 1.0, .rho_smoothed = 2.0});
   EXPECT_DOUBLE_EQ(score, 0.0);
 }
 

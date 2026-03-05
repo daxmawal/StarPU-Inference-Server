@@ -33,6 +33,7 @@ Options:
   --header-filter <regex> Header filter regex for clang-tidy
   -h, --help              Show this help
 EOF
+  return 0
 }
 
 require_command() {
@@ -41,6 +42,7 @@ require_command() {
     echo "Error: $cmd is not installed or not in PATH." >&2
     exit 1
   fi
+  return 0
 }
 
 require_command jq
@@ -59,6 +61,7 @@ read_cmake_cache_value() {
       }
     }
   ' "$cache_file"
+  return $?
 }
 
 resolve_libtorch_dir_from_cache() {

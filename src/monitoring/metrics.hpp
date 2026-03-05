@@ -80,6 +80,21 @@ class MetricsRegistry {
   };
 
   struct GaugeMetrics {
+    struct CongestionGaugeMetrics {
+      prometheus::Gauge* flag{nullptr};
+      prometheus::Gauge* score{nullptr};
+      prometheus::Gauge* lambda_rps{nullptr};
+      prometheus::Gauge* mu_rps{nullptr};
+      prometheus::Gauge* rho_ewma{nullptr};
+      prometheus::Gauge* queue_fill_ewma{nullptr};
+      prometheus::Gauge* queue_growth_rate{nullptr};
+      prometheus::Gauge* queue_p95_ms{nullptr};
+      prometheus::Gauge* queue_p99_ms{nullptr};
+      prometheus::Gauge* e2e_p95_ms{nullptr};
+      prometheus::Gauge* e2e_p99_ms{nullptr};
+      prometheus::Gauge* rejection_rps{nullptr};
+    };
+
     prometheus::Gauge* queue_size{nullptr};
     prometheus::Gauge* inflight_tasks{nullptr};
     prometheus::Gauge* max_inflight_tasks{nullptr};
@@ -93,18 +108,7 @@ class MetricsRegistry {
     prometheus::Gauge* queue_fill_ratio{nullptr};
     prometheus::Gauge* queue_capacity{nullptr};
     prometheus::Gauge* batch_pending_jobs{nullptr};
-    prometheus::Gauge* congestion_flag{nullptr};
-    prometheus::Gauge* congestion_score{nullptr};
-    prometheus::Gauge* congestion_lambda_rps{nullptr};
-    prometheus::Gauge* congestion_mu_rps{nullptr};
-    prometheus::Gauge* congestion_rho_ewma{nullptr};
-    prometheus::Gauge* congestion_queue_fill_ewma{nullptr};
-    prometheus::Gauge* congestion_queue_growth_rate{nullptr};
-    prometheus::Gauge* congestion_queue_p95_ms{nullptr};
-    prometheus::Gauge* congestion_queue_p99_ms{nullptr};
-    prometheus::Gauge* congestion_e2e_p95_ms{nullptr};
-    prometheus::Gauge* congestion_e2e_p99_ms{nullptr};
-    prometheus::Gauge* congestion_rejection_rps{nullptr};
+    CongestionGaugeMetrics congestion{};
   };
 
   struct HistogramMetrics {

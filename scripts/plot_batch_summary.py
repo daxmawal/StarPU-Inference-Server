@@ -321,32 +321,34 @@ def compute_congestion_spans(
     batch_ids: Sequence[int],
     congested_flags: Sequence[bool | None],
 ) -> List[Tuple[float, float]]:
-    if not batch_ids or not congested_flags:
-        return []
-    if len(batch_ids) != len(congested_flags):
+    if not batch_ids or len(batch_ids) != len(congested_flags):
         return []
     pairs = sorted(zip(batch_ids, congested_flags), key=lambda item: item[0])
     ids = [item[0] for item in pairs]
     flags = [bool(flag) if flag is not None else False for _, flag in pairs]
-    if not any(flags):
-        return []
     if len(ids) == 1:
         return [(ids[0] - 0.5, ids[0] + 0.5)] if flags[0] else []
+    if not any(flags):
+        return []
     boundaries = [ids[0] - (ids[1] - ids[0]) / 2.0]
     boundaries.extend((ids[idx] + ids[idx + 1]) / 2.0 for idx in range(len(ids) - 1))
     boundaries.append(ids[-1] + (ids[-1] - ids[-2]) / 2.0)
+    return _collect_congestion_spans(flags, boundaries)
+
+
+def _collect_congestion_spans(
+    flags: Sequence[bool], boundaries: Sequence[float]
+) -> List[Tuple[float, float]]:
     spans: List[Tuple[float, float]] = []
-    in_span = False
-    start = 0.0
+    start_idx: int | None = None
     for idx, flag in enumerate(flags):
-        if flag and not in_span:
-            start = boundaries[idx]
-            in_span = True
-        if in_span and not flag:
-            spans.append((start, boundaries[idx]))
-            in_span = False
-    if in_span:
-        spans.append((start, boundaries[-1]))
+        if flag and start_idx is None:
+            start_idx = idx
+        elif not flag and start_idx is not None:
+            spans.append((boundaries[start_idx], boundaries[idx]))
+            start_idx = None
+    if start_idx is not None:
+        spans.append((boundaries[start_idx], boundaries[-1]))
     return spans
 
 

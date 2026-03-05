@@ -165,6 +165,14 @@ format_worker_label(
   return std::format("worker-{} ({})", worker_id, worker_type_str);
 }
 
+void
+close_stream_if_open(std::ofstream& stream)
+{
+  if (stream.is_open()) {
+    stream.close();
+  }
+}
+
 }  // namespace
 
 namespace detail {
@@ -1133,25 +1141,15 @@ BatchingTraceLogger::configure_summary_writer(
 void
 BatchingTraceLogger::close_summary_writer()
 {
-  if (summary_stream_.is_open()) {
-    summary_stream_.close();
-  }
-  close_queue_metrics_writer();
-}
-
-void
-BatchingTraceLogger::close_queue_metrics_writer()
-{
-  if (queue_metrics_stream_.is_open()) {
-    queue_metrics_stream_.close();
-  }
+  close_stream_if_open(summary_stream_);
+  close_stream_if_open(queue_metrics_stream_);
 }
 
 auto
 BatchingTraceLogger::configure_queue_metrics_writer(
     const std::filesystem::path& trace_path) -> bool
 {
-  close_queue_metrics_writer();
+  close_stream_if_open(queue_metrics_stream_);
   queue_metrics_path_ = metrics_path_from_trace(trace_path);
   queue_metrics_stream_.open(
       queue_metrics_path_, std::ios::out | std::ios::trunc);
