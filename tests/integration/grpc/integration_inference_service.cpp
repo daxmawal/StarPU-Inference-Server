@@ -147,9 +147,14 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
         "",
         "",
         ""};
+    const auto model_spec = starpu_server::GrpcModelSpec{
+        .expected_input_types = expected_input_types,
+        .expected_input_dims = expected_input_dims,
+        .expected_input_names = {},
+        .expected_output_names = {},
+        .max_batch_size = kMaxBatchSize};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, expected_input_types, expected_input_dims, {},
-        {}, kMaxBatchSize, options, server);
+        queue, reference_outputs, model_spec, options, server);
   });
   while (!server) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -251,9 +256,14 @@ TEST(GrpcServer, RunGrpcServerWithExpectedDims_FailsWhenPortUnavailable)
         "",
         "",
         ""};
+    const auto model_spec = starpu_server::GrpcModelSpec{
+        .expected_input_types = expected_input_types,
+        .expected_input_dims = expected_input_dims,
+        .expected_input_names = {},
+        .expected_output_names = {},
+        .max_batch_size = kMaxBatchSize};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, expected_input_types, expected_input_dims, {},
-        {}, kMaxBatchSize, options, server);
+        queue, reference_outputs, model_spec, options, server);
   });
 
   EXPECT_EQ(

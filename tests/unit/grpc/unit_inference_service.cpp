@@ -201,8 +201,11 @@ TEST(InferenceServiceImpl, ServerMetadataUsesServerNameAndVersion)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs;
   starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kFloat}, "default_model", {}, {}, "my_server",
-      "1.2.3");
+      &queue, &ref_outputs, {at::kFloat},
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .default_model_name = "default_model",
+          .server_name = "my_server",
+          .server_version = "1.2.3"});
 
   grpc::ServerContext ctx;
   inference::ServerMetadataRequest req;
@@ -220,7 +223,9 @@ TEST(InferenceServiceImpl, ServerMetadataFallsBackToDefaultModelName)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs;
   starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kFloat}, "fallback_model");
+      &queue, &ref_outputs, {at::kFloat},
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .default_model_name = "fallback_model"});
 
   grpc::ServerContext ctx;
   inference::ServerMetadataRequest req;
@@ -264,7 +269,10 @@ TEST(InferenceServiceImpl, ModelMetadataPopulatesInputsAndOutputs)
       &queue, &ref_outputs, {at::kFloat, at::kLong},
       starpu_server::InferenceServiceImpl::InputShapeConfig{
           std::move(input_dims), 0},
-      "server_model", std::move(input_names), std::move(output_names));
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .default_model_name = "server_model",
+          .expected_input_names = std::move(input_names),
+          .expected_output_names = std::move(output_names)});
 
   grpc::ServerContext ctx;
   inference::ModelMetadataRequest req;
@@ -325,7 +333,9 @@ TEST(InferenceServiceImpl, ModelMetadataRejectsUnsupportedInputDatatype)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs;
   starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kComplexFloat}, "server_model");
+      &queue, &ref_outputs, {at::kComplexFloat},
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .default_model_name = "server_model"});
 
   grpc::ServerContext ctx;
   inference::ModelMetadataRequest req;
@@ -344,7 +354,9 @@ TEST(InferenceServiceImpl, ModelMetadataRejectsUnsupportedOutputDatatype)
   std::vector<torch::Tensor> ref_outputs = {
       torch::zeros({1}, torch::TensorOptions().dtype(at::kComplexFloat))};
   starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kFloat}, "server_model");
+      &queue, &ref_outputs, {at::kFloat},
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .default_model_name = "server_model"});
 
   grpc::ServerContext ctx;
   inference::ModelMetadataRequest req;
@@ -370,7 +382,10 @@ TEST(InferenceServiceImpl, ModelConfigPopulatesConfig)
       &queue, &ref_outputs, {at::kFloat, at::kLong},
       starpu_server::InferenceServiceImpl::InputShapeConfig{
           std::move(input_dims), 8},
-      "server_model", std::move(input_names), std::move(output_names));
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .default_model_name = "server_model",
+          .expected_input_names = std::move(input_names),
+          .expected_output_names = std::move(output_names)});
 
   grpc::ServerContext ctx;
   inference::ModelConfigRequest req;
@@ -866,8 +881,9 @@ TEST(InferenceServiceImpl, ValidateInputsRejectsDuplicateConfiguredNames)
   std::vector<at::ScalarType> expected_types = {at::kFloat, at::kLong};
   std::vector<std::string> expected_names = {"dup", "dup"};
   starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, std::move(expected_types), "",
-      std::move(expected_names));
+      &queue, &ref_outputs, std::move(expected_types),
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .expected_input_names = std::move(expected_names)});
 
   std::vector<torch::Tensor> inputs;
   auto status = service.validate_and_convert_inputs(&req, inputs);
@@ -1604,7 +1620,9 @@ TEST(InferenceServiceImpl, ModelReadyRejectsMismatchedName)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs;
   starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kFloat}, "default-model");
+      &queue, &ref_outputs, {at::kFloat},
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .default_model_name = "default-model"});
   grpc::ServerContext context;
   inference::ModelReadyRequest request;
   inference::ModelReadyResponse response;

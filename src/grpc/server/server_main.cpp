@@ -470,6 +470,32 @@ prepare_models_and_warmup(
   return {model_cpu, models_gpu, reference_outputs};
 }
 
+auto
+make_congestion_config(const starpu_server::RuntimeConfig& cfg)
+    -> starpu_server::congestion::Config
+{
+  using namespace std::chrono;
+
+  starpu_server::congestion::Config out{};
+  out.enabled = cfg.congestion.enabled;
+  out.latency_slo_ms = cfg.congestion.latency_slo_ms;
+  out.queue_latency_budget_ms = cfg.congestion.queue_latency_budget_ms;
+  out.queue_latency_budget_ratio = cfg.congestion.queue_latency_budget_ratio;
+  out.e2e_warn_ratio = cfg.congestion.e2e_warn_ratio;
+  out.e2e_ok_ratio = cfg.congestion.e2e_ok_ratio;
+  out.fill_high = cfg.congestion.fill_high;
+  out.fill_low = cfg.congestion.fill_low;
+  out.rho_high = cfg.congestion.rho_high;
+  out.rho_low = cfg.congestion.rho_low;
+  out.alpha = cfg.congestion.alpha;
+  out.entry_horizon =
+      milliseconds(std::max(1, cfg.congestion.entry_horizon_ms));
+  out.exit_horizon = milliseconds(std::max(1, cfg.congestion.exit_horizon_ms));
+  out.tick_interval =
+      milliseconds(std::max(1, cfg.congestion.tick_interval_ms));
+  return out;
+}
+
 void
 launch_threads(
     const starpu_server::RuntimeConfig& opts,
@@ -477,31 +503,6 @@ launch_threads(
     std::vector<torch::jit::script::Module>& models_gpu,
     std::vector<torch::Tensor>& reference_outputs)
 {
-  const auto make_congestion_config =
-      [](const starpu_server::RuntimeConfig& cfg) {
-        using namespace std::chrono;
-        starpu_server::congestion::Config out{};
-        out.enabled = cfg.congestion.enabled;
-        out.latency_slo_ms = cfg.congestion.latency_slo_ms;
-        out.queue_latency_budget_ms = cfg.congestion.queue_latency_budget_ms;
-        out.queue_latency_budget_ratio =
-            cfg.congestion.queue_latency_budget_ratio;
-        out.e2e_warn_ratio = cfg.congestion.e2e_warn_ratio;
-        out.e2e_ok_ratio = cfg.congestion.e2e_ok_ratio;
-        out.fill_high = cfg.congestion.fill_high;
-        out.fill_low = cfg.congestion.fill_low;
-        out.rho_high = cfg.congestion.rho_high;
-        out.rho_low = cfg.congestion.rho_low;
-        out.alpha = cfg.congestion.alpha;
-        out.entry_horizon =
-            milliseconds(std::max(1, cfg.congestion.entry_horizon_ms));
-        out.exit_horizon =
-            milliseconds(std::max(1, cfg.congestion.exit_horizon_ms));
-        out.tick_interval =
-            milliseconds(std::max(1, cfg.congestion.tick_interval_ms));
-        return out;
-      };
-
   static starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
   queue.reset_counters();
   auto& server_ctx = server_context();
@@ -573,10 +574,15 @@ launch_threads(
         opts.server_address, opts.batching.max_message_bytes,
         opts.verbosity,      std::move(default_model_name),
         opts.name,           ""};
+    const auto model_spec = starpu_server::GrpcModelSpec{
+        .expected_input_types = expected_input_types,
+        .expected_input_dims = expected_input_dims,
+        .expected_input_names = expected_input_names,
+        .expected_output_names = expected_output_names,
+        .max_batch_size = opts.batching.max_batch_size};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, expected_input_types, expected_input_dims,
-        expected_input_names, expected_output_names,
-        opts.batching.max_batch_size, server_options, server_ctx.server);
+        queue, reference_outputs, model_spec, server_options,
+        server_ctx.server);
   });
 
   std::signal(SIGINT, signal_handler);

@@ -38,23 +38,25 @@ class InferenceServiceImpl final
     int max_batch_size = 0;
   };
 
-  InferenceServiceImpl(
-      InferenceQueue* queue,
-      const std::vector<torch::Tensor>* reference_outputs,
-      std::vector<at::ScalarType> expected_input_types,
-      InputShapeConfig input_shape_config, std::string default_model_name = {},
-      std::vector<std::string> expected_input_names = {},
-      std::vector<std::string> expected_output_names = {},
-      std::string server_name = {}, std::string server_version = {});
+  struct ServiceOptions {
+    std::string default_model_name;
+    std::vector<std::string> expected_input_names;
+    std::vector<std::string> expected_output_names;
+    std::string server_name;
+    std::string server_version;
+  };
 
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      std::string default_model_name = {},
-      std::vector<std::string> expected_input_names = {},
-      std::vector<std::string> expected_output_names = {},
-      std::string server_name = {}, std::string server_version = {});
+      InputShapeConfig input_shape_config, ServiceOptions service_options = {});
+
+  InferenceServiceImpl(
+      InferenceQueue* queue,
+      const std::vector<torch::Tensor>* reference_outputs,
+      std::vector<at::ScalarType> expected_input_types,
+      ServiceOptions service_options = {});
 
   auto ServerLive(
       grpc::ServerContext* context, const inference::ServerLiveRequest* request,
@@ -270,6 +272,15 @@ class InferenceServiceImpl final
     std::optional<AsyncFailureInfo> failure_info;
   };
 
+  struct AsyncCancellationContext {
+    std::shared_ptr<std::atomic<bool>> cancel_flag;
+    std::shared_ptr<CallbackHandle> callback_handle;
+    std::string_view resolved_model_name;
+    InferenceServiceImpl* service = nullptr;
+    const inference::ModelInferRequest* request = nullptr;
+    MonotonicClock::time_point recv_tp;
+  };
+
   static auto is_async_cancelled(const AsyncInferCompletionContext& context)
       -> bool;
   static auto prepare_async_completion(
@@ -294,11 +305,7 @@ class InferenceServiceImpl final
 
   static auto setup_async_cancellation(
       grpc::ServerContext* context, std::shared_ptr<void>& call_guard,
-      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
-      const std::shared_ptr<CallbackHandle>& callback_handle,
-      std::string_view resolved_model_name, InferenceServiceImpl* service,
-      const inference::ModelInferRequest* request,
-      MonotonicClock::time_point recv_tp) -> bool;
+      const AsyncCancellationContext& cancellation_context) -> bool;
 
   static auto handle_input_validation_failure(
       const grpc::Status& status,
@@ -432,13 +439,18 @@ struct GrpcServerOptions {
   std::string server_version;
 };
 
+struct GrpcModelSpec {
+  std::span<const at::ScalarType> expected_input_types;
+  std::span<const std::vector<int64_t>> expected_input_dims;
+  std::span<const std::string> expected_input_names;
+  std::span<const std::string> expected_output_names;
+  int max_batch_size = 0;
+};
+
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
-    const std::vector<at::ScalarType>& expected_input_types,
-    const std::vector<std::vector<int64_t>>& expected_input_dims,
-    const std::vector<std::string>& expected_input_names,
-    const std::vector<std::string>& expected_output_names, int max_batch_size,
-    const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
+    const GrpcModelSpec& model_spec, const GrpcServerOptions& options,
+    std::unique_ptr<grpc::Server>& server);
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
