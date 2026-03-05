@@ -30,6 +30,20 @@ inline constexpr std::string_view kDefaultTraceFileName = "perfetto_trace.json";
 inline constexpr int kDefaultMetricsPort = 9090;
 inline constexpr std::string_view kDefaultStarpuScheduler = "lws";
 inline constexpr std::string_view kStarpuSchedulerEnvVar = "STARPU_SCHED";
+// =============================================================================
+// Compile-time defaults for congestion detection
+// =============================================================================
+inline constexpr double kDefaultCongestionQueueLatencyBudgetRatio = 0.30;
+inline constexpr double kDefaultCongestionE2EWarnRatio = 0.90;
+inline constexpr double kDefaultCongestionE2EOkRatio = 0.80;
+inline constexpr double kDefaultCongestionFillHigh = 0.80;
+inline constexpr double kDefaultCongestionFillLow = 0.60;
+inline constexpr double kDefaultCongestionRhoHigh = 1.05;
+inline constexpr double kDefaultCongestionRhoLow = 0.90;
+inline constexpr double kDefaultCongestionEwmaAlpha = 0.2;
+inline constexpr int kDefaultCongestionEntryHorizonMs = 1000;
+inline constexpr int kDefaultCongestionExitHorizonMs = 2000;
+inline constexpr int kDefaultCongestionTickIntervalMs = 1000;
 
 // =============================================================================
 // TensorConfig
@@ -89,6 +103,37 @@ struct RuntimeConfig {
     std::string trace_output_path = std::string(kDefaultTraceFileName);
   };
 
+  struct CongestionSettings {
+    bool enabled = true;          // Enable congestion detection.
+    double latency_slo_ms = 0.0;  // End-to-end SLO (ms); 0 disables SLO.
+    double queue_latency_budget_ms =
+        0.0;  // Queue latency budget (ms); 0 uses ratio.
+    double queue_latency_budget_ratio =
+        kDefaultCongestionQueueLatencyBudgetRatio;  // Fraction of SLO reserved
+                                                    // for queue.
+    double e2e_warn_ratio =
+        kDefaultCongestionE2EWarnRatio;  // SLO ratio to trigger congestion.
+    double e2e_ok_ratio =
+        kDefaultCongestionE2EOkRatio;  // SLO ratio to clear congestion.
+    double fill_high =
+        kDefaultCongestionFillHigh;  // Queue fill ratio to enter congestion.
+    double fill_low =
+        kDefaultCongestionFillLow;  // Queue fill ratio to exit congestion.
+    double rho_high =
+        kDefaultCongestionRhoHigh;  // Arrival/processing ratio to enter.
+    double rho_low =
+        kDefaultCongestionRhoLow;  // Arrival/processing ratio to exit.
+    double alpha = kDefaultCongestionEwmaAlpha;  // EWMA smoothing factor.
+    int entry_horizon_ms =
+        kDefaultCongestionEntryHorizonMs;  // Time in condition before entering
+                                           // (ms).
+    int exit_horizon_ms =
+        kDefaultCongestionExitHorizonMs;  // Time in condition before exiting
+                                          // (ms).
+    int tick_interval_ms =
+        kDefaultCongestionTickIntervalMs;  // Sampling interval for congestion.
+  };
+
   struct Limits {
     size_t max_inputs = InferLimits::MaxInputs;
     size_t max_dims = InferLimits::MaxDims;
@@ -106,6 +151,7 @@ struct RuntimeConfig {
   BatchingSettings batching{};
   Limits limits{};
   std::optional<uint64_t> seed;
+  CongestionSettings congestion{};
   bool valid = true;
 };
 

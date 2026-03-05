@@ -34,6 +34,7 @@ target_sources(
             monitoring/cpu_usage_provider.cpp
             monitoring/gpu_metrics_sampling.cpp
             monitoring/queue_size_gauge.cpp
+            monitoring/unit_congestion_monitor.cpp
             monitoring/unit_metrics.cpp
             utils/unit_client_utils.cpp
             utils/unit_datatype_utils.cpp

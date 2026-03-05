@@ -14,7 +14,7 @@
   "cmake.ctestArgs": [
     "--output-on-failure"
   ],
-  // --- cpptools : indexation + clang-tidy ---
+  // --- cpptools : indexing + clang-tidy ---
   "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
   "C_Cpp.codeAnalysis.clangTidy.enabled": true,
   "C_Cpp.codeAnalysis.clangTidy.useBuildPath": true,
@@ -45,7 +45,7 @@
       "strings": false
     }
   },
-  // --- Exclusions build ---
+  // --- Build exclusions ---
   "files.exclude": {
     "build/": true
   },

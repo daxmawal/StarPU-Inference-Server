@@ -174,6 +174,7 @@ class BatchingTraceLogger {
     double callback_ms;
     double total_ms;
     bool is_warmup = false;
+    bool congested = false;
   };
   struct QueueMetric {
     int64_t timestamp_us = 0;
@@ -240,6 +241,7 @@ class BatchingTraceLogger {
       bool is_warmup = false);
   void log_batch_compute_span(const BatchComputeLogArgs& args);
   void log_batch_summary(const BatchSummaryLogArgs& args);
+  void log_congestion_span(TimeRange range);
   void log_queue_size(std::size_t queue_size);
   void log_request_rejected(std::size_t queue_size = 0);
   [[nodiscard]] auto summary_file_path() const
@@ -264,7 +266,6 @@ class BatchingTraceLogger {
   auto configure_summary_writer(const std::filesystem::path& trace_path)
       -> bool;
   void close_summary_writer();
-  void close_queue_metrics_writer();
   [[nodiscard]] auto configure_queue_metrics_writer(
       const std::filesystem::path& trace_path) -> bool;
   [[nodiscard]] auto relative_timestamp_from_time_point(

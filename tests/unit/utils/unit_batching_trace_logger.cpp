@@ -633,6 +633,170 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
   remove_trace_outputs(trace_path);
 }
 
+TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWithoutValidTimestamps)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto valid_start = starpu_server::MonotonicClock::time_point{
+      std::chrono::microseconds{1000}};
+  const auto valid_end = starpu_server::MonotonicClock::time_point{
+      std::chrono::microseconds{2000}};
+
+  logger.log_congestion_span(BatchingTraceLogger::TimeRange{
+      starpu_server::MonotonicClock::time_point{}, valid_end});
+  logger.log_congestion_span(BatchingTraceLogger::TimeRange{
+      valid_start, starpu_server::MonotonicClock::time_point{}});
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_congestion_span should not emit when timestamps are invalid.";
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenEndBeforeStart)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = starpu_server::MonotonicClock::time_point{
+      std::chrono::microseconds{5000}};
+  const auto end = starpu_server::MonotonicClock::time_point{
+      std::chrono::microseconds{4000}};
+
+  logger.log_congestion_span(BatchingTraceLogger::TimeRange{start, end});
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_congestion_span should not emit when end precedes start.";
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenWriterNotReady)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = false;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = starpu_server::MonotonicClock::time_point{
+      std::chrono::microseconds{2500}};
+  const auto end = starpu_server::MonotonicClock::time_point{
+      std::chrono::microseconds{2600}};
+
+  logger.log_congestion_span(BatchingTraceLogger::TimeRange{start, end});
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(content.empty())
+      << "log_congestion_span should not emit when trace writer is not ready.";
+
+  remove_trace_outputs(trace_path);
+}
+
+TEST(BatchingTraceLoggerTest, LogCongestionSpanWritesWhenReady)
+{
+  const auto trace_path = make_temp_trace_path();
+  BatchingTraceLogger logger;
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.open(
+        trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
+    logger.trace_writer_.header_written_ = true;
+    logger.trace_writer_.first_record_ = true;
+  }
+  logger.enabled_.store(true, std::memory_order_release);
+  logger.trace_start_initialized_ = true;
+  logger.trace_start_us_ = 0;
+
+  const auto start = starpu_server::MonotonicClock::time_point{
+      std::chrono::microseconds{8000}};
+  const auto end = start + std::chrono::microseconds{25};
+
+  logger.log_congestion_span(BatchingTraceLogger::TimeRange{start, end});
+
+  {
+    std::lock_guard<std::mutex> lock(logger.mutex_);
+    logger.trace_writer_.stream_.close();
+  }
+
+  std::ifstream stream(trace_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string content(
+      (std::istreambuf_iterator<char>(stream)),
+      std::istreambuf_iterator<char>());
+  EXPECT_FALSE(content.empty());
+  EXPECT_NE(content.find("\"cname\":\"bad\""), std::string::npos);
+  EXPECT_NE(content.find("\"state\":\"congested\""), std::string::npos);
+  EXPECT_NE(content.find("\"cat\":\"monitoring\""), std::string::npos);
+
+  remove_trace_outputs(trace_path);
+}
+
 TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
 {
   const auto trace_path = make_temp_trace_path();

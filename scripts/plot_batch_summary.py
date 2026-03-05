@@ -24,6 +24,7 @@ from typing import Iterable, List, NamedTuple, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.gridspec import GridSpecFromSubplotSpec
+from matplotlib.patches import Patch
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 PHASE_LABELS = [
@@ -54,6 +55,8 @@ SLA_THRESHOLDS_MS = (50.0, 100.0, 200.0)
 MAX_WORKER_CDFS = 6
 CPU_COLOR = "#d62728"
 GPU_COLOR = "#1f77b4"
+CONGESTION_SHADE_COLOR = "#ff0000"
+CONGESTION_SHADE_ALPHA = 0.12
 BATCH_ID_LABEL = "Batch ID"
 BATCH_SIZE_LABEL = "Batch size"
 WORKER_ID_LABEL = "Worker ID"
@@ -63,6 +66,7 @@ AVERAGE_DURATION_MS_LABEL = "Average duration (ms)"
 TIME_SINCE_FIRST_ARRIVAL_LABEL = "Time since first arrival (s)"
 LEGEND_LOC_UPPER_RIGHT = "upper right"
 LEGEND_LOC_LOWER_RIGHT = "lower right"
+LEGEND_LOC_UPPER_LEFT = "upper left"
 INSET_LOC_LOWER_LEFT = "lower left"
 
 BatchRow = Tuple[
@@ -74,6 +78,7 @@ BatchRow = Tuple[
     int,  # logical job count
     Tuple[float, ...],  # phase breakdown
     Tuple[int, ...],  # request arrival timestamps (us)
+    bool | None,  # congestion flag
 ]
 
 
@@ -85,6 +90,7 @@ class PlotInputs(NamedTuple):
     all_jobs: List[int]
     all_breakdowns: List[Tuple[float, ...]]
     all_arrivals: List[Tuple[int, ...]]
+    all_congested: List[bool | None]
     cpu_ids: List[int]
     cpu_lat: List[float]
     cpu_workers: List[int]
@@ -141,6 +147,19 @@ def parse_request_arrival_field(field: str | None) -> Tuple[int, ...]:
     return tuple(values)
 
 
+def parse_optional_bool(field: str | None) -> bool | None:
+    if field is None:
+        return None
+    token = field.strip().lower()
+    if not token:
+        return None
+    if token in ("1", "true", "t", "yes", "y"):
+        return True
+    if token in ("0", "false", "f", "no", "n"):
+        return False
+    raise ValueError(f"Invalid boolean value '{field}'")
+
+
 def load_latencies(
     csv_path: Path,
 ) -> List[BatchRow]:
@@ -155,11 +174,13 @@ def load_latencies(
             "batch_size",
         }
         required.update(f"{label}_ms" for label in PHASE_LABELS)
-        missing = sorted(required - set(reader.fieldnames or []))
+        fieldnames = set(reader.fieldnames or [])
+        missing = sorted(required - fieldnames)
         if missing:
             raise ValueError(
                 f"{csv_path} is missing required columns: {', '.join(missing)}"
             )
+        has_congested = "congested" in fieldnames
         for row in reader:
             try:
                 batch_id = int(row["batch_id"])
@@ -178,6 +199,9 @@ def load_latencies(
             breakdown = tuple(float(row[f"{label}_ms"]) for label in PHASE_LABELS)
             arrivals_field = row.get("request_arrival_us")
             arrivals = parse_request_arrival_field(arrivals_field)
+            congested = (
+                parse_optional_bool(row.get("congested")) if has_congested else None
+            )
             batches.append(
                 (
                     batch_id,
@@ -188,6 +212,7 @@ def load_latencies(
                     logical_jobs,
                     breakdown,
                     arrivals,
+                    congested,
                 )
             )
     return batches
@@ -232,6 +257,7 @@ def filter_latencies(
     List[int],
     List[Tuple[float, ...]],
     List[Tuple[int, ...]],
+    List[bool | None],
 ]:
     ids: List[int] = []
     latencies: List[float] = []
@@ -240,6 +266,7 @@ def filter_latencies(
     logical_jobs: List[int] = []
     breakdowns: List[Tuple[float, ...]] = []
     arrivals: List[Tuple[int, ...]] = []
+    congested_flags: List[bool | None] = []
     for (
         batch_id,
         latency,
@@ -249,6 +276,7 @@ def filter_latencies(
         logical_job_count,
         breakdown,
         request_arrivals,
+        congested,
     ) in data:
         if worker_type is None or device == worker_type:
             ids.append(batch_id)
@@ -258,7 +286,17 @@ def filter_latencies(
             logical_jobs.append(logical_job_count)
             breakdowns.append(breakdown)
             arrivals.append(request_arrivals)
-    return ids, latencies, worker_ids, batch_sizes, logical_jobs, breakdowns, arrivals
+            congested_flags.append(congested)
+    return (
+        ids,
+        latencies,
+        worker_ids,
+        batch_sizes,
+        logical_jobs,
+        breakdowns,
+        arrivals,
+        congested_flags,
+    )
 
 
 def flatten_request_arrival_seconds(
@@ -277,6 +315,82 @@ def flatten_request_arrival_seconds(
         (timestamp - start) / 1_000_000.0 for timestamp in events if timestamp >= start
     ]
     return relative_seconds
+
+
+def compute_congestion_spans(
+    batch_ids: Sequence[int],
+    congested_flags: Sequence[bool | None],
+) -> List[Tuple[float, float]]:
+    if not batch_ids or len(batch_ids) != len(congested_flags):
+        return []
+    pairs = sorted(zip(batch_ids, congested_flags), key=lambda item: item[0])
+    ids = [item[0] for item in pairs]
+    flags = [bool(flag) if flag is not None else False for _, flag in pairs]
+    if len(ids) == 1:
+        return [(ids[0] - 0.5, ids[0] + 0.5)] if flags[0] else []
+    if not any(flags):
+        return []
+    boundaries = [ids[0] - (ids[1] - ids[0]) / 2.0]
+    boundaries.extend((ids[idx] + ids[idx + 1]) / 2.0 for idx in range(len(ids) - 1))
+    boundaries.append(ids[-1] + (ids[-1] - ids[-2]) / 2.0)
+    return _collect_congestion_spans(flags, boundaries)
+
+
+def _collect_congestion_spans(
+    flags: Sequence[bool], boundaries: Sequence[float]
+) -> List[Tuple[float, float]]:
+    spans: List[Tuple[float, float]] = []
+    start_idx: int | None = None
+    for idx, flag in enumerate(flags):
+        if flag and start_idx is None:
+            start_idx = idx
+        elif not flag and start_idx is not None:
+            spans.append((boundaries[start_idx], boundaries[idx]))
+            start_idx = None
+    if start_idx is not None:
+        spans.append((boundaries[start_idx], boundaries[-1]))
+    return spans
+
+
+def add_congestion_shading(
+    ax: plt.Axes,
+    batch_ids: Sequence[int],
+    congested_flags: Sequence[bool | None],
+) -> None:
+    spans = compute_congestion_spans(batch_ids, congested_flags)
+    for start, end in spans:
+        ax.axvspan(
+            start,
+            end,
+            color=CONGESTION_SHADE_COLOR,
+            alpha=CONGESTION_SHADE_ALPHA,
+            zorder=0,
+            linewidth=0,
+        )
+
+
+def add_congestion_legend(
+    ax: plt.Axes,
+    batch_ids: Sequence[int],
+    congested_flags: Sequence[bool | None],
+    *,
+    loc: str = LEGEND_LOC_UPPER_RIGHT,
+) -> None:
+    spans = compute_congestion_spans(batch_ids, congested_flags)
+    if not spans:
+        return
+    patch = Patch(
+        facecolor=CONGESTION_SHADE_COLOR,
+        edgecolor="none",
+        alpha=CONGESTION_SHADE_ALPHA,
+        label="Congestion",
+    )
+    handles, labels = ax.get_legend_handles_labels()
+    if "Congestion" not in labels:
+        handles.append(patch)
+        labels.append("Congestion")
+    if handles:
+        ax.legend(handles=handles, labels=labels, loc=loc, fontsize="small")
 
 
 def plot_latency_stack(
@@ -1288,6 +1402,7 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         all_jobs,
         all_breakdowns,
         all_arrivals,
+        all_congested,
     ) = filter_latencies(data)
     (
         cpu_ids,
@@ -1297,6 +1412,7 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         cpu_jobs,
         cpu_breakdowns,
         cpu_arrivals,
+        _,
     ) = filter_latencies(data, worker_type="cpu")
     (
         gpu_ids,
@@ -1306,6 +1422,7 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         gpu_jobs,
         gpu_breakdowns,
         gpu_arrivals,
+        _,
     ) = filter_latencies(data, worker_type="cuda")
     worker_type_by_id = {batch_id: worker_type for batch_id, _, worker_type, *_ in data}
     all_worker_types = [
@@ -1327,6 +1444,7 @@ def load_plot_inputs(args: argparse.Namespace) -> PlotInputs | None:
         all_jobs,
         all_breakdowns,
         all_arrivals,
+        all_congested,
         cpu_ids,
         cpu_lat,
         cpu_workers,
@@ -1353,12 +1471,14 @@ def _plot_latency_overview(
     all_ids: Sequence[int],
     all_lat: Sequence[float],
     all_sizes: Sequence[int],
+    all_congested: Sequence[bool | None],
     cpu_ids: Sequence[int],
     cpu_lat: Sequence[float],
     gpu_ids: Sequence[int],
     gpu_lat: Sequence[float],
     worker_types: Sequence[str],
 ) -> None:
+    add_congestion_shading(axes[0], all_ids, all_congested)
     scatter_with_size(
         axes[0],
         all_ids,
@@ -1367,7 +1487,9 @@ def _plot_latency_overview(
         "Latency vs batch size (multidim)",
         worker_types=worker_types,
     )
+    add_congestion_legend(axes[0], all_ids, all_congested, loc=LEGEND_LOC_UPPER_LEFT)
 
+    add_congestion_shading(axes[1], all_ids, all_congested)
     has_worker_data = False
     if gpu_ids:
         axes[1].scatter(
@@ -1409,6 +1531,7 @@ def _plot_latency_overview(
     axes[1].grid(True, linestyle="--", alpha=0.4)
     if has_worker_data:
         axes[1].legend(loc=LEGEND_LOC_UPPER_RIGHT, fontsize="small")
+    add_congestion_legend(axes[1], all_ids, all_congested, loc=LEGEND_LOC_UPPER_RIGHT)
 
     x_limits = axes[1].get_xlim() if all_ids else None
     y_limits = axes[1].get_ylim() if all_ids else None
@@ -1766,6 +1889,7 @@ def render_plots(
         all_jobs,
         all_breakdowns,
         all_arrivals,
+        all_congested,
         cpu_ids,
         cpu_lat,
         cpu_workers,
@@ -1791,6 +1915,7 @@ def render_plots(
         all_ids,
         all_lat,
         all_sizes,
+        all_congested,
         cpu_ids,
         cpu_lat,
         gpu_ids,

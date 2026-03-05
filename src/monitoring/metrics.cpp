@@ -1048,6 +1048,87 @@ MetricsRegistry::initialize(
   histograms_.batch_collect_latency =
       &batch_collect_family.Add({}, kInferenceLatencyMsBuckets);
 
+  auto& congestion_flag_family = prometheus::BuildGauge()
+                                     .Name("inference_congestion_flag")
+                                     .Help(
+                                         "1 when congestion detector reports "
+                                         "congestion, 0 otherwise")
+                                     .Register(*registry_state_.registry);
+  gauges_.congestion.flag = &congestion_flag_family.Add({});
+
+  auto& congestion_score_family = prometheus::BuildGauge()
+                                      .Name("inference_congestion_score")
+                                      .Help(
+                                          "Composite congestion pressure "
+                                          "score (0-1, heuristic)")
+                                      .Register(*registry_state_.registry);
+  gauges_.congestion.score = &congestion_score_family.Add({});
+
+  auto& lambda_family =
+      prometheus::BuildGauge()
+          .Name("inference_lambda_rps")
+          .Help("Arrival rate (requests/s) over congestion tick")
+          .Register(*registry_state_.registry);
+  gauges_.congestion.lambda_rps = &lambda_family.Add({});
+
+  auto& mu_family = prometheus::BuildGauge()
+                        .Name("inference_mu_rps")
+                        .Help(
+                            "Completion rate (requests/s) over congestion "
+                            "tick")
+                        .Register(*registry_state_.registry);
+  gauges_.congestion.mu_rps = &mu_family.Add({});
+
+  auto& rho_family = prometheus::BuildGauge()
+                         .Name("inference_rho_ewma")
+                         .Help("Smoothed utilization ratio lambda/mu")
+                         .Register(*registry_state_.registry);
+  gauges_.congestion.rho_ewma = &rho_family.Add({});
+
+  auto& fill_ewma_family = prometheus::BuildGauge()
+                               .Name("inference_queue_fill_ratio_ewma")
+                               .Help("Smoothed queue fill ratio (0-1)")
+                               .Register(*registry_state_.registry);
+  gauges_.congestion.queue_fill_ewma = &fill_ewma_family.Add({});
+
+  auto& dq_family = prometheus::BuildGauge()
+                        .Name("inference_queue_growth_rate")
+                        .Help("Queue growth rate dQ/dt (jobs per second)")
+                        .Register(*registry_state_.registry);
+  gauges_.congestion.queue_growth_rate = &dq_family.Add({});
+
+  auto& queue_p95_family = prometheus::BuildGauge()
+                               .Name("inference_queue_latency_p95_ms")
+                               .Help("p95 queue latency over congestion tick")
+                               .Register(*registry_state_.registry);
+  gauges_.congestion.queue_p95_ms = &queue_p95_family.Add({});
+
+  auto& queue_p99_family = prometheus::BuildGauge()
+                               .Name("inference_queue_latency_p99_ms")
+                               .Help("p99 queue latency over congestion tick")
+                               .Register(*registry_state_.registry);
+  gauges_.congestion.queue_p99_ms = &queue_p99_family.Add({});
+
+  auto& e2e_p95_family =
+      prometheus::BuildGauge()
+          .Name("inference_e2e_latency_p95_ms")
+          .Help("p95 end-to-end latency over congestion tick")
+          .Register(*registry_state_.registry);
+  gauges_.congestion.e2e_p95_ms = &e2e_p95_family.Add({});
+
+  auto& e2e_p99_family =
+      prometheus::BuildGauge()
+          .Name("inference_e2e_latency_p99_ms")
+          .Help("p99 end-to-end latency over congestion tick")
+          .Register(*registry_state_.registry);
+  gauges_.congestion.e2e_p99_ms = &e2e_p99_family.Add({});
+
+  auto& rejection_rate_family = prometheus::BuildGauge()
+                                    .Name("inference_rejection_rate_rps")
+                                    .Help("Request rejection rate (requests/s)")
+                                    .Register(*registry_state_.registry);
+  gauges_.congestion.rejection_rps = &rejection_rate_family.Add({});
+
   auto& submit_family = prometheus::BuildHistogram()
                             .Name("inference_submit_latency_ms")
                             .Help(
@@ -1418,6 +1499,121 @@ increment_rejected_requests()
   if (metrics_ptr &&
       metrics_ptr->counters().requests_rejected_total != nullptr) {
     metrics_ptr->counters().requests_rejected_total->Increment();
+  }
+}
+
+void
+set_congestion_flag(bool congested)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.flag != nullptr) {
+    metrics_ptr->gauges().congestion.flag->Set(congested ? 1.0 : 0.0);
+  }
+}
+
+void
+set_congestion_score(double score)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.score != nullptr) {
+    metrics_ptr->gauges().congestion.score->Set(std::clamp(score, 0.0, 1.0));
+  }
+}
+
+void
+set_congestion_arrival_rate(double rps)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.lambda_rps != nullptr) {
+    metrics_ptr->gauges().congestion.lambda_rps->Set(std::max(0.0, rps));
+  }
+}
+
+void
+set_congestion_completion_rate(double rps)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.mu_rps != nullptr) {
+    metrics_ptr->gauges().congestion.mu_rps->Set(std::max(0.0, rps));
+  }
+}
+
+void
+set_congestion_rejection_rate(double rps)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr &&
+      metrics_ptr->gauges().congestion.rejection_rps != nullptr) {
+    metrics_ptr->gauges().congestion.rejection_rps->Set(std::max(0.0, rps));
+  }
+}
+
+void
+set_congestion_rho(double rho)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.rho_ewma != nullptr) {
+    const double value = std::isfinite(rho) ? rho : 0.0;
+    metrics_ptr->gauges().congestion.rho_ewma->Set(std::max(0.0, value));
+  }
+}
+
+void
+set_congestion_fill_ewma(double fill)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr &&
+      metrics_ptr->gauges().congestion.queue_fill_ewma != nullptr) {
+    metrics_ptr->gauges().congestion.queue_fill_ewma->Set(
+        std::clamp(fill, 0.0, 1.0));
+  }
+}
+
+void
+set_congestion_queue_growth_rate(double rate)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr &&
+      metrics_ptr->gauges().congestion.queue_growth_rate != nullptr) {
+    metrics_ptr->gauges().congestion.queue_growth_rate->Set(rate);
+  }
+}
+
+void
+set_congestion_queue_latency_p95(double latency_ms)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.queue_p95_ms != nullptr) {
+    metrics_ptr->gauges().congestion.queue_p95_ms->Set(
+        std::max(0.0, latency_ms));
+  }
+}
+
+void
+set_congestion_queue_latency_p99(double latency_ms)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.queue_p99_ms != nullptr) {
+    metrics_ptr->gauges().congestion.queue_p99_ms->Set(
+        std::max(0.0, latency_ms));
+  }
+}
+
+void
+set_congestion_e2e_latency_p95(double latency_ms)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.e2e_p95_ms != nullptr) {
+    metrics_ptr->gauges().congestion.e2e_p95_ms->Set(std::max(0.0, latency_ms));
+  }
+}
+
+void
+set_congestion_e2e_latency_p99(double latency_ms)
+{
+  auto metrics_ptr = metrics_atomic().load(std::memory_order_acquire);
+  if (metrics_ptr && metrics_ptr->gauges().congestion.e2e_p99_ms != nullptr) {
+    metrics_ptr->gauges().congestion.e2e_p99_ms->Set(std::max(0.0, latency_ms));
   }
 }
 

@@ -4,6 +4,7 @@ set(CORE_DIR ${SRC_DIR}/core)
 set(TASK_WORKER_DIR ${SRC_DIR}/starpu_task_worker)
 set(GRPC_SERVER_DIR ${SRC_DIR}/grpc/server)
 set(GRPC_CLIENT_DIR ${SRC_DIR}/grpc/client)
+set(MONITORING_DIR ${SRC_DIR}/monitoring)
 set(TESTS_DIR ${PROJECT_SOURCE_DIR}/tests)
 
 add_subdirectory(unit)
@@ -17,7 +18,8 @@ add_executable(
   ${CORE_DIR}/output_slot_pool.cpp
   ${CORE_DIR}/warmup.cpp
   ${CORE_DIR}/starpu_setup.cpp
-  ${SRC_DIR}/monitoring/metrics.cpp
+  ${MONITORING_DIR}/metrics.cpp
+  ${MONITORING_DIR}/congestion_monitor.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
   ${GRPC_CLIENT_DIR}/client_args.cpp
   ${UTILS_DIR}/client_utils.cpp

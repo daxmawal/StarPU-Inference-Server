@@ -20,14 +20,17 @@ constexpr int kRequestEnqueuedTrackId = 1;
 constexpr int kBatchEnqueueTrackId = 2;
 constexpr int kBatchBuildTrackId = 3;
 constexpr int kBatchSubmittedTrackId = 4;
+constexpr int kCongestionTrackId = 5;
 constexpr int kWorkerThreadOffset = 10;
 constexpr int kWorkerLaneThreadStride = 1000;
 constexpr unsigned char kAsciiPrintableFloor = 0x20;
+constexpr int kCongestionSortIndex = -4;
 constexpr int kRequestEnqueuedSortIndex = -3;
 constexpr int kBatchEnqueueSortIndex = -2;
 constexpr int kBatchBuildSortIndex = -1;
 constexpr int kBatchSubmittedSortIndex = 0;
 constexpr std::string_view kProcessName = "StarPU Inference Server";
+constexpr std::string_view kCongestionTrackName = "congestion";
 constexpr std::string_view kRequestEnqueuedTrackName = "request enqueued";
 constexpr std::string_view kBatchEnqueueTrackName = "batch";
 constexpr std::string_view kBatchBuildTrackName = "dynamic batching";
@@ -160,6 +163,14 @@ format_worker_label(
         "device {} worker {} ({})", device_id, worker_id, worker_type_str);
   }
   return std::format("worker-{} ({})", worker_id, worker_type_str);
+}
+
+void
+close_stream_if_open(std::ofstream& stream)
+{
+  if (stream.is_open()) {
+    stream.close();
+  }
 }
 
 }  // namespace
@@ -312,6 +323,8 @@ TraceFileWriter::write_header()
   header_written_ = true;
   thread_metadata_.clear();
   write_process_metadata();
+  ensure_thread_metadata(
+      kCongestionTrackId, kCongestionTrackName, kCongestionSortIndex);
   ensure_thread_metadata(
       kRequestEnqueuedTrackId, kRequestEnqueuedTrackName,
       kRequestEnqueuedSortIndex);
@@ -955,6 +968,34 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
 }
 
 void
+BatchingTraceLogger::log_congestion_span(TimeRange range)
+{
+  if (!logging_enabled()) {
+    return;
+  }
+  const auto start_ts = relative_timestamp_from_time_point(range.start);
+  const auto end_ts = relative_timestamp_from_time_point(range.end);
+  if (!start_ts || !end_ts || *end_ts < *start_ts) {
+    return;
+  }
+  const int64_t duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
+
+  std::ostringstream line;
+  line << R"({"name":"congestion","cat":"monitoring","ph":"X","ts":)"
+       << *start_ts << ",\"dur\":" << duration << ",\"pid\":" << kTraceProcessId
+       << ",\"tid\":" << kCongestionTrackId
+       << R"(,"cname":"bad","args":{"state":"congested"}})";
+
+  std::lock_guard lock(mutex_);
+  if (!trace_writer_.ready()) {
+    return;
+  }
+  trace_writer_.ensure_thread_metadata(
+      kCongestionTrackId, kCongestionTrackName, kCongestionSortIndex);
+  trace_writer_.write_line(line.str());
+}
+
+void
 BatchingTraceLogger::log_queue_size(std::size_t queue_size)
 {
   if (!logging_enabled()) {
@@ -1068,7 +1109,8 @@ BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
                   << std::format("{:.3f}", args.inference_ms) << ','
                   << std::format("{:.3f}", args.callback_ms) << ','
                   << std::format("{:.3f}", args.total_ms) << ','
-                  << (args.is_warmup ? "true" : "false") << '\n';
+                  << (args.is_warmup ? "true" : "false") << ','
+                  << (args.congested ? "true" : "false") << '\n';
 }
 
 auto
@@ -1088,7 +1130,8 @@ BatchingTraceLogger::configure_summary_writer(
   summary_stream_
       << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
          "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
-         "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,warmup\n";
+         "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,"
+         "warmup,congested\n";
 
   [[maybe_unused]] const bool queue_writer_ready =
       configure_queue_metrics_writer(trace_path);
@@ -1098,25 +1141,15 @@ BatchingTraceLogger::configure_summary_writer(
 void
 BatchingTraceLogger::close_summary_writer()
 {
-  if (summary_stream_.is_open()) {
-    summary_stream_.close();
-  }
-  close_queue_metrics_writer();
-}
-
-void
-BatchingTraceLogger::close_queue_metrics_writer()
-{
-  if (queue_metrics_stream_.is_open()) {
-    queue_metrics_stream_.close();
-  }
+  close_stream_if_open(summary_stream_);
+  close_stream_if_open(queue_metrics_stream_);
 }
 
 auto
 BatchingTraceLogger::configure_queue_metrics_writer(
     const std::filesystem::path& trace_path) -> bool
 {
-  close_queue_metrics_writer();
+  close_stream_if_open(queue_metrics_stream_);
   queue_metrics_path_ = metrics_path_from_trace(trace_path);
   queue_metrics_stream_.open(
       queue_metrics_path_, std::ios::out | std::ios::trunc);
