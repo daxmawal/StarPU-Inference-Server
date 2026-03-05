@@ -245,6 +245,44 @@ jobs:
           name: build-folder-clang
           path: build-clang/
 
+  sanitizers:
+    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    runs-on: self-hosted
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Configure and Build (ASan + UBSan)
+        run: |
+          cmake -S . -B build-sanitizers \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_SANITIZERS=ON
+          cmake --build build-sanitizers -- -j$(nproc)
+        shell: bash
+
+      - name: Run sanitizer unit tests (CPU-only)
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          SANITIZER_GTEST_FILTER: "*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*:*Cuda*:*CUDA*:*Gpu*:*GPU*:*PopulateResponseHandlesCudaOutputs:*CleanupSlotBuffersUnpinsStarpuMemory"
+        run: |
+          chmod +x build-sanitizers/all_tests || true
+          build-sanitizers/all_tests --gtest_filter="$SANITIZER_GTEST_FILTER"
+        shell: bash
+
   clang-analyzer:
     needs: build
     runs-on: self-hosted
@@ -305,10 +343,29 @@ jobs:
         working-directory: build
         run: chmod +x all_tests || true
 
-      - name: Run tests and generate JUnit XML
+      - name: Run unit tests
         run: |
-          ctest --test-dir build --output-on-failure -T Test --no-compress-output
-          cp build/Testing/*/Test.xml build/junit.xml
+          ctest --test-dir build --output-on-failure -R '^unit_tests$' \
+            --output-junit build/junit-unit.xml
+
+      - name: Run integration tests
+        run: |
+          ctest --test-dir build --output-on-failure -R '^integration_tests$' \
+            --output-junit build/junit-integration.xml
+
+      - name: Run e2e tests
+        run: |
+          ctest --test-dir build --output-on-failure -R '^e2e_tests$' \
+            --output-junit build/junit-e2e.xml
+
+      - name: Upload JUnit reports
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-reports
+          path: |
+            build/junit-unit.xml
+            build/junit-integration.xml
+            build/junit-e2e.xml
 
       - name: Generate coverage report using gcovr in venv
         working-directory: build

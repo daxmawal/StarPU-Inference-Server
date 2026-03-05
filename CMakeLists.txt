@@ -8,6 +8,24 @@ option(BUILD_TESTS "Build unit tests" OFF)
 option(USE_BUNDLED_DEPS "Build bundled dependencies from external/ submodules"
        ON)
 
+function(starpu_apply_sanitizers target_name)
+  if(NOT ENABLE_SANITIZERS)
+    return()
+  endif()
+
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(
+      FATAL_ERROR
+        "ENABLE_SANITIZERS requires Clang or GCC for target: ${target_name}")
+  endif()
+
+  target_compile_options(
+    ${target_name} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer
+                           -fno-sanitize-recover=all)
+  target_link_options(${target_name} PRIVATE -fsanitize=address,undefined
+                      -fno-sanitize-recover=all)
+endfunction()
+
 # === C++ Settings ===
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 

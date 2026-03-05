@@ -86,4 +86,17 @@ if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_link_options(all_tests PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
 endif()
 
-add_test(NAME all_tests COMMAND all_tests)
+starpu_apply_sanitizers(all_tests)
+
+set(STARPU_TEST_FILTER_UNIT
+    "*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*")
+set(STARPU_TEST_FILTER_INTEGRATION
+    "*Integration*:*_Integration*:*EndToEndInference*")
+set(STARPU_TEST_FILTER_E2E "*E2E*")
+
+add_test(NAME unit_tests COMMAND all_tests
+                                 --gtest_filter=${STARPU_TEST_FILTER_UNIT})
+add_test(NAME integration_tests
+         COMMAND all_tests --gtest_filter=${STARPU_TEST_FILTER_INTEGRATION})
+add_test(NAME e2e_tests COMMAND all_tests
+                                --gtest_filter=${STARPU_TEST_FILTER_E2E})

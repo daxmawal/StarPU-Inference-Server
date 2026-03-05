@@ -71,3 +71,5 @@ if(HAVE_NVTX)
                                PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   endif()
 endif()
+
+starpu_apply_sanitizers(starpu_server)
