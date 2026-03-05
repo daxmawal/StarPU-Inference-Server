@@ -1,6 +1,9 @@
 name: pipeline
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -174,16 +177,13 @@ jobs:
           EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
           echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
 
-      - name: Install markdownlint
-        run: npm install -g markdownlint-cli
-
       - name: Run markdownlint
         run: |
           IGNORE_ARGS=()
           for path in $EXCLUDED_PATHS; do
             IGNORE_ARGS+=(--ignore "$path/**")
           done
-          markdownlint '**/*.md' "${IGNORE_ARGS[@]}"
+          npx --yes markdownlint-cli@0.43.0 '**/*.md' "${IGNORE_ARGS[@]}"
 
   build:
     needs: [clang-format, cmake-format, whitespace, markdownlint]
