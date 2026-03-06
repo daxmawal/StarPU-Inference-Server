@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <format>
 #include <iostream>
@@ -20,9 +21,11 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "core/inference_runner.hpp"
@@ -47,6 +50,28 @@ struct ServerContext {
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
   std::atomic<bool> stop_requested{false};
+};
+
+struct ThreadExceptionState {
+  std::mutex mutex;
+  std::exception_ptr exception;
+  std::string thread_name;
+
+  void capture(std::string_view name, std::exception_ptr caught_exception)
+  {
+    std::lock_guard lock(mutex);
+    if (exception != nullptr) {
+      return;
+    }
+    exception = std::move(caught_exception);
+    thread_name = name;
+  }
+
+  auto take() -> std::pair<std::exception_ptr, std::string>
+  {
+    std::lock_guard lock(mutex);
+    return {std::move(exception), std::move(thread_name)};
+  }
 };
 
 class RuntimeCleanupGuard {
@@ -191,6 +216,57 @@ request_server_stop(ServerContext& ctx)
 {
   ctx.stop_requested.store(true, std::memory_order_relaxed);
   ctx.stop_cv.notify_one();
+}
+
+template <typename Fn>
+void
+run_thread_entry_with_exception_capture(
+    std::string_view thread_name, ThreadExceptionState& state,
+    ServerContext& server_ctx, starpu_server::InferenceQueue* queue,
+    Fn&& fn) noexcept
+{
+  try {
+    std::forward<Fn>(fn)();
+  }
+  catch (const std::exception& e) {
+    starpu_server::log_error(std::format(
+        "Unhandled exception escaped '{}' thread: {}", thread_name, e.what()));
+    state.capture(thread_name, std::current_exception());
+    if (queue != nullptr) {
+      queue->shutdown();
+    }
+    request_server_stop(server_ctx);
+  }
+  catch (...) {
+    starpu_server::log_error(std::format(
+        "Unhandled non-standard exception escaped '{}' thread.", thread_name));
+    state.capture(thread_name, std::current_exception());
+    if (queue != nullptr) {
+      queue->shutdown();
+    }
+    request_server_stop(server_ctx);
+  }
+}
+
+void
+rethrow_thread_exception_if_any(ThreadExceptionState& state)
+{
+  auto [thread_exception, thread_name] = state.take();
+  if (thread_exception == nullptr) {
+    return;
+  }
+
+  try {
+    std::rethrow_exception(thread_exception);
+  }
+  catch (const std::exception& e) {
+    throw std::runtime_error(std::format(
+        "Thread '{}' terminated with exception: {}", thread_name, e.what()));
+  }
+  catch (...) {
+    throw std::runtime_error(std::format(
+        "Thread '{}' terminated with unknown exception.", thread_name));
+  }
 }
 
 void
@@ -752,6 +828,7 @@ launch_threads(
 {
   queue.reset_counters();
   auto& server_ctx = server_context();
+  ThreadExceptionState thread_exception_state;
   server_ctx.stop_requested.store(false, std::memory_order_relaxed);
   signal_stop_requested_flag() = 0;
   reset_server_state(server_ctx);
@@ -763,21 +840,26 @@ launch_threads(
   starpu_server::congestion::start(&queue, make_congestion_config(opts));
 
   const bool use_blocking_signal_wait = signal_pipe.active();
-  std::jthread notifier_thread([&server_ctx, read_fd = signal_pipe.read_fd(),
+  std::jthread notifier_thread([&server_ctx, &queue, &thread_exception_state,
+                                read_fd = signal_pipe.read_fd(),
                                 use_blocking_signal_wait]() {
-    if (use_blocking_signal_wait) {
-      if (signal_stop_requested_flag() == 0) {
-        wait_for_signal_notification(read_fd);
-      }
-    } else {
-      constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
-      while (signal_stop_requested_flag() == 0) {
-        std::this_thread::sleep_for(kNotifierSleep);
-      }
-    }
-    if (signal_stop_requested_flag() != 0) {
-      request_server_stop(server_ctx);
-    }
+    run_thread_entry_with_exception_capture(
+        "signal-notifier", thread_exception_state, server_ctx, &queue,
+        [read_fd, use_blocking_signal_wait, &server_ctx]() {
+          if (use_blocking_signal_wait) {
+            if (signal_stop_requested_flag() == 0) {
+              wait_for_signal_notification(read_fd);
+            }
+          } else {
+            constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
+            while (signal_stop_requested_flag() == 0) {
+              std::this_thread::sleep_for(kNotifierSleep);
+            }
+          }
+          if (signal_stop_requested_flag() != 0) {
+            request_server_stop(server_ctx);
+          }
+        });
   });
   struct SignalPipeShutdownGuard {
     SignalNotificationPipe* pipe = nullptr;
@@ -804,7 +886,12 @@ launch_threads(
   config.all_done_cv = &all_done_cv;
   starpu_server::StarPUTaskRunner worker(config);
 
-  std::jthread worker_thread(&starpu_server::StarPUTaskRunner::run, &worker);
+  std::jthread worker_thread(
+      [&server_ctx, &queue, &thread_exception_state, &worker]() {
+        run_thread_entry_with_exception_capture(
+            "starpu-worker", thread_exception_state, server_ctx, &queue,
+            [&worker]() { worker.run(); });
+      });
   std::vector<at::ScalarType> expected_input_types;
   if (opts.model.has_value()) {
     expected_input_types.reserve(opts.model->inputs.size());
@@ -834,25 +921,31 @@ launch_threads(
     }
   }
 
-  std::jthread grpc_thread([&]() {
-    std::unique_ptr<grpc::Server> grpc_server;
-    const auto server_hooks = starpu_server::GrpcServerLifecycleHooks{
-        .on_started =
-            [&server_ctx](grpc::Server* server) {
-              mark_server_started(server_ctx, server);
-            },
-        .on_stopped =
-            [&server_ctx]() {
-              mark_server_stopped(server_ctx);
-              request_server_stop(server_ctx);
-            }};
-    const auto server_options = make_grpc_server_options(opts);
-    const auto model_spec = make_grpc_model_spec(
-        opts, expected_input_types, expected_input_dims, expected_input_names,
-        expected_output_names);
-    starpu_server::RunGrpcServer(
-        queue, reference_outputs, model_spec, server_options, grpc_server,
-        server_hooks);
+  std::jthread grpc_thread([&server_ctx, &queue, &thread_exception_state, &opts,
+                            &reference_outputs, &expected_input_types,
+                            &expected_input_dims, &expected_input_names,
+                            &expected_output_names]() {
+    run_thread_entry_with_exception_capture(
+        "grpc-server", thread_exception_state, server_ctx, &queue, [&]() {
+          std::unique_ptr<grpc::Server> grpc_server;
+          const auto server_hooks = starpu_server::GrpcServerLifecycleHooks{
+              .on_started =
+                  [&server_ctx](grpc::Server* server) {
+                    mark_server_started(server_ctx, server);
+                  },
+              .on_stopped =
+                  [&server_ctx]() {
+                    mark_server_stopped(server_ctx);
+                    request_server_stop(server_ctx);
+                  }};
+          const auto server_options = make_grpc_server_options(opts);
+          const auto model_spec = make_grpc_model_spec(
+              opts, expected_input_types, expected_input_dims,
+              expected_input_names, expected_output_names);
+          starpu_server::RunGrpcServer(
+              queue, reference_outputs, model_spec, server_options, grpc_server,
+              server_hooks);
+        });
   });
 
   {
@@ -873,6 +966,7 @@ launch_threads(
   }
   starpu_server::congestion::shutdown();
   server_ctx.stop_cv.notify_one();
+  rethrow_thread_exception_if_any(thread_exception_state);
 }
 
 auto
