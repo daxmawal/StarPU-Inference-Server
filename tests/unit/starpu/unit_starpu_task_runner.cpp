@@ -5077,6 +5077,55 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
   EXPECT_EQ(queue_.size(), 0U);
 }
 
+TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto model_config = make_model_config(
+      "submit_fail_model", {make_tensor_config("input0", {1}, at::kFloat)},
+      {make_tensor_config("output0", {1}, at::kFloat)});
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+
+  starpu_test::ScopedStarpuDataAcquireOverride acquire_override(
+      &NoOpStarpuDataAcquire);
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &NoOpStarpuDataRelease);
+  submit_override_calls.store(0, std::memory_order_relaxed);
+  starpu_test::ScopedStarpuTaskSubmitOverride submit_override(
+      &AlwaysFailStarpuSubmit);
+
+  auto configure_job = [](starpu_server::CallbackProbe& probe, int request_id) {
+    probe.job->set_request_id(request_id);
+    probe.job->set_model_name("submit_fail_model");
+    probe.job->set_input_tensors(
+        {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+    probe.job->set_input_types({at::kFloat});
+    probe.job->set_output_tensors(
+        {torch::zeros({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  };
+
+  auto first_probe = starpu_server::make_callback_probe();
+  auto second_probe = starpu_server::make_callback_probe();
+  configure_job(first_probe, 1001);
+  configure_job(second_probe, 1002);
+
+  ASSERT_TRUE(queue_.push(first_probe.job));
+  ASSERT_TRUE(queue_.push(second_probe.job));
+  queue_.shutdown();
+
+  runner_->run();
+
+  EXPECT_TRUE(first_probe.called);
+  EXPECT_TRUE(second_probe.called);
+  EXPECT_TRUE(first_probe.results.empty());
+  EXPECT_TRUE(second_probe.results.empty());
+  EXPECT_EQ(first_probe.latency, -1);
+  EXPECT_EQ(second_probe.latency, -1);
+  EXPECT_EQ(completed_jobs_.load(), 2U);
+  EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_EQ(submit_override_calls.load(std::memory_order_relaxed), 2);
+}
+
 TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
 {
   opts_.batching.dynamic_batching = false;

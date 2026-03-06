@@ -557,6 +557,115 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsUnderConcurrentRpcLoad)
   signal_stop_requested_flag() = 0;
 }
 
+TEST(
+    ServerMainOrchestration,
+    LaunchThreadsStopsOnSignalStormUnderConcurrentRpcLoad)
+{
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+  constexpr auto kClientActivityTimeout = std::chrono::seconds(2);
+  constexpr int kClientThreads = 8;
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = address;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 16;
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs;
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+
+  std::atomic<bool> stop_clients{false};
+  std::atomic<int> started_requests{0};
+  std::mutex started_requests_mutex;
+  std::condition_variable started_requests_cv;
+  std::vector<std::jthread> clients;
+  clients.reserve(kClientThreads);
+  for (int i = 0; i < kClientThreads; ++i) {
+    clients.emplace_back([&, channel]() {
+      auto stub = inference::GRPCInferenceService::NewStub(channel);
+      while (!stop_clients.load(std::memory_order_acquire)) {
+        grpc::ClientContext rpc_ctx;
+        rpc_ctx.set_deadline(
+            std::chrono::system_clock::now() + std::chrono::milliseconds(200));
+        inference::ServerLiveRequest request;
+        inference::ServerLiveResponse response;
+        const int previous =
+            started_requests.fetch_add(1, std::memory_order_relaxed);
+        if (previous == 0) {
+          std::lock_guard<std::mutex> lock(started_requests_mutex);
+          started_requests_cv.notify_one();
+        }
+        (void)stub->ServerLive(&rpc_ctx, request, &response);
+      }
+    });
+  }
+
+  {
+    std::unique_lock<std::mutex> lock(started_requests_mutex);
+    ASSERT_TRUE(started_requests_cv.wait_for(
+        lock, kClientActivityTimeout,
+        [&started_requests]() {
+          return started_requests.load(std::memory_order_relaxed) > 0;
+        }))
+        << "No RPC request started before signal storm";
+  }
+
+  std::latch storm_start{1};
+  std::jthread signal_storm([&storm_start]() {
+    storm_start.wait();
+    for (int i = 0; i < 64; ++i) {
+      signal_handler((i % 2 == 0) ? SIGINT : SIGTERM);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  });
+  storm_start.count_down();
+
+  if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
+    signal_stop_requested_flag() = 1;
+    ctx.stop_requested.store(true, std::memory_order_relaxed);
+    ctx.stop_cv.notify_one();
+  }
+
+  stop_clients.store(true, std::memory_order_release);
+  clients.clear();
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop within timeout on signal storm under "
+         "RPC load";
+  EXPECT_NO_THROW(done_future.get());
+  EXPECT_GT(started_requests.load(std::memory_order_relaxed), 0);
+
+  signal_stop_requested_flag() = 0;
+}
+
 TEST(ServerMainPlotScript, LocatePlotScriptFindsRepositoryScript)
 {
   starpu_server::RuntimeConfig opts;
