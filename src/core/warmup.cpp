@@ -149,10 +149,10 @@ WarmupRunner::WarmupRunner(
 // Client thread: generate and enqueue jobs for warmup
 // =============================================================================
 
-void
+auto
 WarmupRunner::client_worker(
     const std::map<int, std::vector<int>>& device_workers,
-    InferenceQueue& queue, int request_nb_per_worker) const
+    InferenceQueue& queue, int request_nb_per_worker) const -> std::size_t
 {
   if (request_nb_per_worker < 0) {
     throw std::invalid_argument("request_nb_per_worker must be non-negative");
@@ -183,6 +183,7 @@ WarmupRunner::client_worker(
 
   const auto total = static_cast<int>(total_size_t);
   int request_id = 0;
+  std::size_t enqueued_jobs = 0;
   const auto& model_name = opts_.model ? opts_.model->name : opts_.name;
 
   std::vector<int> worker_ids_flat;
@@ -213,21 +214,25 @@ WarmupRunner::client_worker(
         log_warning(std::format(
             "[Warmup] Failed to enqueue job {}: {}", job_request_id, reason));
         queue.shutdown();
-        return;
+        return enqueued_jobs;
       }
       const auto log_now = std::chrono::system_clock::now();
       client_utils::log_job_enqueued(opts_, job_request_id, total, log_now);
       request_id++;
+      ++enqueued_jobs;
     }
   }
 
   queue.shutdown();
+  return enqueued_jobs;
 }
 
 namespace {
 
 struct WarmupSyncState {
   std::atomic<std::size_t> completed_jobs{0};
+  std::atomic<std::size_t> enqueued_jobs{0};
+  std::atomic<bool> client_done{false};
   std::mutex completed_mutex;
   std::condition_variable completed_cv;
   std::exception_ptr thread_exception;
@@ -253,18 +258,14 @@ struct WarmupSyncState {
     queue.shutdown();
     completed_cv.notify_all();
   }
-};
 
-auto
-count_worker_total(const std::map<int, std::vector<int>>& device_workers)
-    -> std::size_t
-{
-  return std::accumulate(
-      device_workers.begin(), device_workers.end(), std::size_t{0},
-      [](std::size_t sum, const auto& pair) {
-        return sum + pair.second.size();
-      });
-}
+  void set_client_enqueued_jobs(std::size_t value)
+  {
+    enqueued_jobs.store(value, std::memory_order_release);
+    client_done.store(true, std::memory_order_release);
+    completed_cv.notify_all();
+  }
+};
 
 template <typename Fn, typename Notify>
 void
@@ -302,7 +303,7 @@ run_warmup_client_thread(Fn&& task_fn, Notify&& notify_exception)
 
 auto
 wait_for_warmup_completion(
-    WarmupSyncState& state, std::size_t total_jobs,
+    WarmupSyncState& state,
     const WarmupRunner::CompletionObserver& completion_observer)
     -> std::exception_ptr
 {
@@ -316,8 +317,13 @@ wait_for_warmup_completion(
       if (state.load_exception()) {
         return true;
       }
-      const auto count = state.completed_jobs.load();
-      return count >= total_jobs;
+      if (!state.client_done.load(std::memory_order_acquire)) {
+        return false;
+      }
+      const auto completed =
+          state.completed_jobs.load(std::memory_order_acquire);
+      const auto enqueued = state.enqueued_jobs.load(std::memory_order_acquire);
+      return completed >= enqueued;
     });
   }
   catch (...) {
@@ -401,20 +407,18 @@ WarmupRunner::run(int request_nb_per_worker)
   });
 
   std::jthread client([this, &device_workers, &queue, &notify_thread_exception,
-                       request_nb_per_worker]() {
+                       &sync_state, request_nb_per_worker]() {
     run_warmup_client_thread(
-        [this, &device_workers, &queue, request_nb_per_worker]() {
-          client_worker(device_workers, queue, request_nb_per_worker);
+        [this, &device_workers, &queue, &sync_state, request_nb_per_worker]() {
+          const auto enqueued_jobs =
+              client_worker(device_workers, queue, request_nb_per_worker);
+          sync_state.set_client_enqueued_jobs(enqueued_jobs);
         },
         notify_thread_exception);
   });
 
-  const size_t total_worker_count = count_worker_total(device_workers);
-  const size_t total_jobs =
-      static_cast<size_t>(request_nb_per_worker) * total_worker_count;
-
   auto wait_exception =
-      wait_for_warmup_completion(sync_state, total_jobs, completion_observer_);
+      wait_for_warmup_completion(sync_state, completion_observer_);
   auto thread_exception_copy = sync_state.load_exception();
 
   if (wait_exception || thread_exception_copy) {

@@ -91,8 +91,9 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
 
-  starpu_server::WarmupRunnerTestHelper::client_worker(
-      *runner, device_workers, queue, 2);
+  const auto enqueued_jobs =
+      starpu_server::WarmupRunnerTestHelper::client_worker(
+          *runner, device_workers, queue, 2);
 
   std::vector<int> request_ids;
   std::vector<int> worker_ids;
@@ -107,6 +108,7 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
     worker_ids.push_back(worker);
   }
 
+  EXPECT_EQ(enqueued_jobs, 4U);
   ASSERT_EQ(request_ids.size(), 4U);
   EXPECT_EQ(request_ids, (std::vector<int>{0, 1, 2, 3}));
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
@@ -158,13 +160,34 @@ TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
 
   testing::internal::CaptureStderr();
   queue.shutdown();
-  starpu_server::WarmupRunnerTestHelper::client_worker(
-      *runner, device_workers, queue, request_nb);
+  const auto enqueued_jobs =
+      starpu_server::WarmupRunnerTestHelper::client_worker(
+          *runner, device_workers, queue, request_nb);
   const std::string captured = testing::internal::GetCapturedStderr();
 
+  EXPECT_EQ(enqueued_jobs, 0U);
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);
 
   std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.wait_and_pop(job));
+}
+
+TEST_F(WarmupRunnerTest, ClientWorkerReportsPartialEnqueueWhenQueueIsFull)
+{
+  auto device_workers = make_device_workers();
+  starpu_server::InferenceQueue queue(/*max_size=*/1);
+
+  testing::internal::CaptureStderr();
+  const auto enqueued_jobs =
+      starpu_server::WarmupRunnerTestHelper::client_worker(
+          *runner, device_workers, queue, /*request_nb_per_worker=*/2);
+  const std::string captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_EQ(enqueued_jobs, 1U);
+  EXPECT_NE(captured.find("queue is full"), std::string::npos);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_TRUE(queue.wait_and_pop(job));
   EXPECT_FALSE(queue.wait_and_pop(job));
 }
 
