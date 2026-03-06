@@ -802,6 +802,133 @@ TEST(ConfigLoader, ParseTensorNodesReturnsEmptyWhenUndefined)
   EXPECT_TRUE(tensors.empty());
 }
 
+TEST(ConfigLoader, IOBlockParsesTensorNodesForTest)
+{
+  const YAML::Node nodes = YAML::Load(R"(
+- name: first
+  dims: [1, 4]
+  data_type: float32
+- name: second
+  dims: [2]
+  data_type: int64
+)");
+
+  const auto tensors = parse_tensor_nodes_for_test(nodes, 4U, "inputs", 4U);
+
+  ASSERT_EQ(tensors.size(), 2U);
+  EXPECT_EQ(tensors[0].name, "first");
+  EXPECT_EQ(tensors[0].dims, (std::vector<int64_t>{1, 4}));
+  EXPECT_EQ(tensors[0].type, at::kFloat);
+  EXPECT_EQ(tensors[1].name, "second");
+  EXPECT_EQ(tensors[1].dims, (std::vector<int64_t>{2}));
+  EXPECT_EQ(tensors[1].type, at::kLong);
+}
+
+TEST(ConfigLoader, IOBlockRejectsTooManyTensorEntriesForTest)
+{
+  const YAML::Node nodes = YAML::Load(R"(
+- { name: a, dims: [1], data_type: float32 }
+- { name: b, dims: [1], data_type: float32 }
+)");
+
+  try {
+    static_cast<void>(parse_tensor_nodes_for_test(nodes, 1U, "inputs", 4U));
+    FAIL() << "Expected parse_tensor_nodes_for_test to reject too many entries";
+  }
+  catch (const std::invalid_argument& error) {
+    EXPECT_EQ(error.what(), std::string("inputs must have at most 1 entries"));
+  }
+}
+
+TEST(ConfigLoader, DeviceBlockParsesCpuCudaAndNumaSettings)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_device_block_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "use_cpu: false\n";
+  yaml += "group_cpu_by_numa: true\n";
+  yaml += "use_cuda:\n";
+  yaml += "  - { device_ids: [2, 5] }\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_device_block.yaml", yaml);
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_FALSE(cfg.devices.use_cpu);
+  EXPECT_TRUE(cfg.devices.group_cpu_by_numa);
+  EXPECT_TRUE(cfg.devices.use_cuda);
+  EXPECT_EQ(cfg.devices.ids, (std::vector<int>{2, 5}));
+}
+
+TEST(ConfigLoader, BatchingBlockParsesNetworkQueueAndTraceSettings)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_batching_block_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  const auto trace_dir = MakeUniqueTempDir("config_loader_batching_trace_dir");
+
+  yaml += "address: 0.0.0.0:60061\n";
+  yaml += "metrics_port: 9191\n";
+  yaml += "max_message_bytes: 65536\n";
+  yaml += "max_queue_size: 64\n";
+  yaml += "max_inflight_tasks: 8\n";
+  yaml += "dynamic_batching: false\n";
+  yaml += "trace_enabled: true\n";
+  yaml += "trace_output: " + trace_dir.string() + "\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_batching_block.yaml", yaml);
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.server_address, "0.0.0.0:60061");
+  EXPECT_EQ(cfg.metrics_port, 9191);
+  EXPECT_EQ(cfg.batching.max_message_bytes, 65536U);
+  EXPECT_EQ(cfg.batching.max_queue_size, 64U);
+  EXPECT_EQ(cfg.batching.max_inflight_tasks, 8U);
+  EXPECT_FALSE(cfg.batching.dynamic_batching);
+  EXPECT_TRUE(cfg.batching.trace_enabled);
+  EXPECT_EQ(
+      cfg.batching.trace_output_path,
+      (trace_dir / std::string(kDefaultTraceFileName)).string());
+}
+
+TEST(ConfigLoader, CongestionBlockPartialConfigPreservesUnsetDefaults)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_congestion_partial_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += "  enabled: false\n";
+  yaml += "  tick_interval_ms: 250\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_congestion_partial.yaml", yaml);
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  ASSERT_TRUE(cfg.valid);
+  EXPECT_FALSE(cfg.congestion.enabled);
+  EXPECT_EQ(cfg.congestion.tick_interval_ms, 250);
+  EXPECT_DOUBLE_EQ(cfg.congestion.fill_high, kDefaultCongestionFillHigh);
+  EXPECT_DOUBLE_EQ(cfg.congestion.fill_low, kDefaultCongestionFillLow);
+  EXPECT_DOUBLE_EQ(cfg.congestion.alpha, kDefaultCongestionEwmaAlpha);
+}
+
+TEST(ConfigLoader, CongestionBlockParseHorizonsForTestAcceptsPositiveValues)
+{
+  YAML::Node congestion_node = YAML::Load(R"(
+entry_horizon_ms: 250
+exit_horizon_ms: 500
+)");
+
+  RuntimeConfig cfg;
+  parse_congestion_horizons_for_test(congestion_node, cfg);
+
+  EXPECT_EQ(cfg.congestion.entry_horizon_ms, 250);
+  EXPECT_EQ(cfg.congestion.exit_horizon_ms, 500);
+}
+
 TEST(ConfigLoader, AcceptsBooleanUseCudaFalse)
 {
   const auto model_path =
