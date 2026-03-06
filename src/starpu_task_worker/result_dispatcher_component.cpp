@@ -323,31 +323,15 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     }
 
     outputs.clear();
-    static_cast<void>(job_sp->release_input_tensors());
-    job_sp->release_input_memory_holders();
-    job_sp->set_output_tensors({});
+    cleanup_terminal_job_payload(job_sp);
 
     offset += static_cast<std::size_t>(
         std::max<int64_t>(1, slice_result.processed_length));
   }
 
-  const auto& pending = aggregated_job->pending_sub_jobs();
-  for (const auto& sub_job : pending) {
-    if (sub_job && sub_job->has_on_complete()) {
-      sub_job->set_on_complete({});
-    }
-  }
-
-  aggregated_job->set_aggregated_sub_jobs({});
-  aggregated_job->clear_pending_sub_jobs();
-
-  if (!aggregated_job->get_input_tensors().empty()) {
-    static_cast<void>(aggregated_job->release_input_tensors());
-  }
-  if (!aggregated_job->get_input_memory_holders().empty()) {
-    aggregated_job->release_input_memory_holders();
-  }
-  aggregated_job->set_output_tensors({});
+  clear_pending_sub_job_callbacks(aggregated_job);
+  clear_batching_state(aggregated_job);
+  cleanup_terminal_job_payload(aggregated_job);
 }
 
 auto
@@ -412,6 +396,43 @@ ResultDispatcher::invoke_previous_callback(
     return;
   }
   previous(std::move(results), latency_ms);
+}
+
+void
+ResultDispatcher::clear_pending_sub_job_callbacks(
+    const std::shared_ptr<InferenceJob>& job)
+{
+  if (job == nullptr) {
+    return;
+  }
+  const auto& pending = job->pending_sub_jobs();
+  for (const auto& sub_job : pending) {
+    if (sub_job && sub_job->has_on_complete()) {
+      sub_job->set_on_complete({});
+    }
+  }
+}
+
+void
+ResultDispatcher::clear_batching_state(const std::shared_ptr<InferenceJob>& job)
+{
+  if (job == nullptr) {
+    return;
+  }
+  job->set_aggregated_sub_jobs({});
+  job->clear_pending_sub_jobs();
+}
+
+void
+ResultDispatcher::cleanup_terminal_job_payload(
+    const std::shared_ptr<InferenceJob>& job)
+{
+  if (job == nullptr) {
+    return;
+  }
+  static_cast<void>(job->release_input_tensors());
+  job->release_input_memory_holders();
+  job->set_output_tensors({});
 }
 
 }  // namespace starpu_server

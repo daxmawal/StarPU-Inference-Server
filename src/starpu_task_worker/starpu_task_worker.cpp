@@ -903,14 +903,13 @@ void
 StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
 {
   job->set_on_complete({});
-  job->set_aggregated_sub_jobs({});
+  ResultDispatcher::clear_pending_sub_job_callbacks(job);
 
   auto pending_jobs = job->take_pending_sub_jobs();
   SlotManager::release_pending_jobs(job, pending_jobs);
 
-  static_cast<void>(job->release_input_tensors());
-  job->release_input_memory_holders();
-  job->set_output_tensors({});
+  ResultDispatcher::clear_batching_state(job);
+  ResultDispatcher::cleanup_terminal_job_payload(job);
   result_dispatcher_->finalize_job_completion(job);
   release_inflight_slot();
 }

@@ -44,6 +44,14 @@ class ResultDispatcher {
       const std::function<void(std::vector<torch::Tensor>&&, double)>& previous,
       std::vector<torch::Tensor>& results, double latency_ms);
 
+  static void clear_pending_sub_job_callbacks(
+      const std::shared_ptr<InferenceJob>& job);
+
+  static void clear_batching_state(const std::shared_ptr<InferenceJob>& job);
+
+  static void cleanup_terminal_job_payload(
+      const std::shared_ptr<InferenceJob>& job);
+
   static void propagate_completion_to_sub_jobs(
       const std::shared_ptr<InferenceJob>& aggregated_job,
       const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
