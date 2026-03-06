@@ -27,7 +27,11 @@ target_sources(
             grpc/inference_client_helpers_test.cpp
             grpc/robustness/edgecases_client.cpp
             grpc/robustness/edgecases_inference_service.cpp
-            starpu/unit_starpu_task_runner.cpp
+            starpu/unit_starpu_task_runner_support.cpp
+            starpu/unit_starpu_task_runner_callbacks_and_tracing.cpp
+            starpu/unit_starpu_task_runner_submission_and_slots.cpp
+            starpu/unit_starpu_task_runner_batching_and_internal.cpp
+            starpu/unit_starpu_task_runner_runloop_and_inflight.cpp
             starpu/unit_tensor_builder_from_starpu.cpp
             starpu/robustness/edgecases_starpu_setup.cpp
             starpu/robustness/edgecases_starpu_task_runner.cpp
