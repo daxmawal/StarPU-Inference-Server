@@ -307,8 +307,9 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       dependencies_(
           config.dependencies != nullptr ? *config.dependencies
                                          : kDefaultInferenceTaskDependencies),
+      inflight_state_(std::make_shared<InflightState>()),
       slot_manager_(std::make_unique<SlotManager>(starpu_, opts_)),
-      result_dispatcher_(std::make_unique<ResultDispatcher>(
+      result_dispatcher_(std::make_shared<ResultDispatcher>(
           opts_, completed_jobs_, all_done_cv_))
 {
   task_runner_internal::validate_not_null(queue_, "queue");
@@ -319,11 +320,11 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
   task_runner_internal::validate_not_null(completed_jobs_, "completed_jobs");
   task_runner_internal::validate_not_null(all_done_cv_, "all_done_cv");
 
-  inflight_state_.max_tasks =
+  inflight_state_->max_tasks =
       opts_ != nullptr ? opts_->batching.max_inflight_tasks : 0;
-  set_max_inflight_tasks(inflight_state_.max_tasks);
-  set_inflight_tasks(inflight_state_.tasks.load(std::memory_order_relaxed));
-  if (inflight_state_.max_tasks > 0) {
+  set_max_inflight_tasks(inflight_state_->max_tasks);
+  set_inflight_tasks(inflight_state_->tasks.load(std::memory_order_relaxed));
+  if (inflight_state_->max_tasks > 0) {
     set_starpu_worker_busy_ratio(0.0);
   }
 
@@ -336,10 +337,10 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
           .batching_done = &prepared_state_.batching_done,
       },
       InflightContext{
-          .inflight_tasks = &inflight_state_.tasks,
-          .inflight_cv = &inflight_state_.cv,
-          .inflight_mutex = &inflight_state_.mutex,
-          .max_inflight_tasks = inflight_state_.max_tasks,
+          .inflight_tasks = &inflight_state_->tasks,
+          .inflight_cv = &inflight_state_->cv,
+          .inflight_mutex = &inflight_state_->mutex,
+          .max_inflight_tasks = inflight_state_->max_tasks,
       });
 }
 
@@ -476,19 +477,19 @@ StarPUTaskRunner::finalize_job_after_exception(
 void
 StarPUTaskRunner::reserve_inflight_slot()
 {
-  if (inflight_state_.max_tasks > 0) {
-    std::unique_lock lock(inflight_state_.mutex);
-    inflight_state_.cv.wait(lock, [this] {
-      return inflight_state_.tasks.load(std::memory_order_acquire) <
-             inflight_state_.max_tasks;
+  if (inflight_state_ != nullptr && inflight_state_->max_tasks > 0) {
+    std::unique_lock lock(inflight_state_->mutex);
+    inflight_state_->cv.wait(lock, [this] {
+      return inflight_state_->tasks.load(std::memory_order_acquire) <
+             inflight_state_->max_tasks;
     });
   }
   const auto current =
-      inflight_state_.tasks.fetch_add(1, std::memory_order_release) + 1;
+      inflight_state_->tasks.fetch_add(1, std::memory_order_release) + 1;
   set_inflight_tasks(current);
-  if (inflight_state_.max_tasks > 0) {
+  if (inflight_state_->max_tasks > 0) {
     const double ratio = static_cast<double>(current) /
-                         static_cast<double>(inflight_state_.max_tasks);
+                         static_cast<double>(inflight_state_->max_tasks);
     set_starpu_worker_busy_ratio(ratio);
   }
 }
@@ -498,27 +499,34 @@ StarPUTaskRunner::reserve_inflight_slot()
 void
 StarPUTaskRunner::release_inflight_slot()
 {
-  if (!has_inflight_limit()) {
+  release_inflight_slot(inflight_state_);
+}
+
+void
+StarPUTaskRunner::release_inflight_slot(
+    const std::shared_ptr<InflightState>& inflight_state)
+{
+  if (inflight_state == nullptr || inflight_state->max_tasks == 0) {
     return;
   }
-  std::size_t previous = inflight_state_.tasks.load(std::memory_order_acquire);
+  std::size_t previous = inflight_state->tasks.load(std::memory_order_acquire);
   while (true) {
     if (previous == 0) {
       return;
     }
-    if (inflight_state_.tasks.compare_exchange_weak(
+    if (inflight_state->tasks.compare_exchange_weak(
             previous, previous - 1, std::memory_order_acq_rel)) {
       break;
     }
   }
   set_inflight_tasks(previous - 1);
-  if (inflight_state_.max_tasks > 0 && previous > 0) {
+  if (inflight_state->max_tasks > 0 && previous > 0) {
     const double ratio = static_cast<double>(previous - 1) /
-                         static_cast<double>(inflight_state_.max_tasks);
+                         static_cast<double>(inflight_state->max_tasks);
     set_starpu_worker_busy_ratio(ratio);
   }
-  std::scoped_lock lock(inflight_state_.mutex);
-  inflight_state_.cv.notify_one();
+  std::scoped_lock lock(inflight_state->mutex);
+  inflight_state->cv.notify_one();
 }
 
 // GCOVR_EXCL_START

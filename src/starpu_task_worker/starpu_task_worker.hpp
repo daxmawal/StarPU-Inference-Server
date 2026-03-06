@@ -100,8 +100,6 @@ class StarPUTaskRunner {
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
-  friend struct InflightReleaseGuard;
-
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   friend class StarPUTaskRunnerTestAdapter;
@@ -115,6 +113,8 @@ class StarPUTaskRunner {
     int submission_id;
     int job_id;
   };
+
+  struct InflightState;
 
   struct PoolResources {
     InputSlotPool* input_pool = nullptr;
@@ -200,9 +200,11 @@ class StarPUTaskRunner {
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
   void release_inflight_slot();
+  static void release_inflight_slot(
+      const std::shared_ptr<InflightState>& inflight_state);
   [[nodiscard]] auto has_inflight_limit() const -> bool
   {
-    return inflight_state_.max_tasks > 0;
+    return inflight_state_ != nullptr && inflight_state_->max_tasks > 0;
   }
 
   struct InflightState {
@@ -232,11 +234,11 @@ class StarPUTaskRunner {
   std::atomic<int> next_submission_id_{0};
   std::jthread batching_thread_;
 
-  InflightState inflight_state_;
+  std::shared_ptr<InflightState> inflight_state_;
   PreparedState prepared_state_;
 
   std::unique_ptr<BatchCollector> batch_collector_;
   std::unique_ptr<SlotManager> slot_manager_;
-  std::unique_ptr<ResultDispatcher> result_dispatcher_;
+  std::shared_ptr<ResultDispatcher> result_dispatcher_;
 };
 }  // namespace starpu_server

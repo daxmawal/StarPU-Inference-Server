@@ -616,13 +616,19 @@ class StarPUTaskRunnerTestAdapter {
 
   static auto get_inflight_tasks(const StarPUTaskRunner* runner) -> std::size_t
   {
-    return runner->inflight_state_.tasks.load(std::memory_order_acquire);
+    if (runner == nullptr || runner->inflight_state_ == nullptr) {
+      return 0;
+    }
+    return runner->inflight_state_->tasks.load(std::memory_order_acquire);
   }
 
   static auto get_max_inflight_tasks(const StarPUTaskRunner* runner)
       -> std::size_t
   {
-    return runner->inflight_state_.max_tasks;
+    if (runner == nullptr || runner->inflight_state_ == nullptr) {
+      return 0;
+    }
+    return runner->inflight_state_->max_tasks;
   }
 };
 }  // namespace starpu_server
@@ -1138,6 +1144,37 @@ TEST_F(
       starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
           runner_.get()),
       0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackRemainsValidAfterRunnerDestruction)
+{
+  opts_.batching.max_inflight_tasks = 2;
+  reset_runner_with_model(
+      make_model_config(
+          "test_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+
+  auto job = make_job(1, {torch::tensor({1.0F})});
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  runner_->prepare_job_completion_callback(job);
+  auto completion = job->get_on_complete();
+
+  runner_.reset();
+
+  EXPECT_NO_THROW(
+      completion(std::vector<torch::Tensor>{torch::tensor({2.0F})}, 5.0));
+  EXPECT_TRUE(callback_invoked);
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
 }
 
 TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)

@@ -34,11 +34,11 @@ class ResultDispatcher {
   void finalize_job_completion(const std::shared_ptr<InferenceJob>& job) const;
 
   static auto resolve_batch_size(
-      StarPUTaskRunner& runner,
+      const RuntimeConfig* opts,
       const std::shared_ptr<InferenceJob>& job) -> std::size_t;
 
   static void emit_batch_traces(
-      const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner);
+      const RuntimeConfig* opts, const std::shared_ptr<InferenceJob>& job);
 
   static void invoke_previous_callback(
       const std::function<void(std::vector<torch::Tensor>&&, double)>& previous,
@@ -50,10 +50,13 @@ class ResultDispatcher {
 
  private:
   void handle_job_completion(
-      StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job,
+      const std::shared_ptr<InferenceJob>& job,
       const std::function<void(std::vector<torch::Tensor>, double)>&
           prev_callback,
       std::vector<torch::Tensor>& results, double latency_ms) const;
+
+  static void release_inflight_slot(
+      const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state);
 
   const RuntimeConfig* opts_;
   std::atomic<std::size_t>* completed_jobs_;

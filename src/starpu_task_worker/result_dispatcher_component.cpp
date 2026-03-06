@@ -25,26 +25,45 @@ is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
   return job && job->get_fixed_worker_id().has_value();
 }
 
+inline auto
+resolve_batch_size_for_job(
+    const RuntimeConfig* opts,
+    const std::shared_ptr<InferenceJob>& job) -> int64_t
+{
+  if (!job) {
+    return 1;
+  }
+  if (const auto effective = job->effective_batch_size();
+      effective.has_value()) {
+    return std::max<int64_t>(1, *effective);
+  }
+
+  const auto& inputs = job->get_input_tensors();
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  if (opts != nullptr && opts->model.has_value() &&
+      !opts->model->inputs.empty()) {
+    const auto per_sample_rank =
+        static_cast<int64_t>(opts->model->inputs[0].dims.size());
+    if (const auto rank0 = inputs[0].dim();
+        rank0 == per_sample_rank + 1 && rank0 > 0) {
+      return std::max<int64_t>(1, inputs[0].size(0));
+    }
+    return 1;
+  }
+
+  const auto& first = inputs.front();
+  if (first.dim() <= 0) {
+    return 1;
+  }
+  return std::max<int64_t>(1, first.size(0));
+}
+
 }  // namespace
 
 using clock = task_runner_internal::Clock;
-
-struct InflightReleaseGuard {
-  explicit InflightReleaseGuard(StarPUTaskRunner* runner_in) : runner(runner_in)
-  {
-  }
-  InflightReleaseGuard(const InflightReleaseGuard&) = delete;
-  auto operator=(const InflightReleaseGuard&) -> InflightReleaseGuard& = delete;
-  InflightReleaseGuard(InflightReleaseGuard&&) = delete;
-  auto operator=(InflightReleaseGuard&&) -> InflightReleaseGuard& = delete;
-  ~InflightReleaseGuard()
-  {
-    if (runner != nullptr) {
-      runner->release_inflight_slot();
-    }
-  }
-  StarPUTaskRunner* runner;
-};
 
 ResultDispatcher::ResultDispatcher(
     const RuntimeConfig* opts, std::atomic<std::size_t>* completed_jobs,
@@ -58,14 +77,22 @@ ResultDispatcher::prepare_job_completion_callback(
     StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job) const
 {
   auto prev_callback = job->get_on_complete();
-  const auto* dispatcher = this;
+  auto dispatcher = runner.result_dispatcher_;
   const bool track_inflight = runner.has_inflight_limit();
+  auto inflight_state = runner.inflight_state_;
   job->set_on_complete(
-      [dispatcher, prev_callback, job_sptr = job, &runner, track_inflight](
+      [dispatcher, prev_callback, job_sptr = job, inflight_state,
+       track_inflight](
           std::vector<torch::Tensor> results, double latency_ms) mutable {
-        InflightReleaseGuard guard(track_inflight ? &runner : nullptr);
+        if (dispatcher == nullptr) {
+          return;
+        }
         dispatcher->handle_job_completion(
-            runner, job_sptr, prev_callback, results, latency_ms);
+            job_sptr, prev_callback, results, latency_ms);
+        if (track_inflight) {
+          ResultDispatcher::release_inflight_slot(inflight_state);
+        }
+        dispatcher->finalize_job_completion(job_sptr);
       });
 }
 
@@ -215,6 +242,9 @@ void
 ResultDispatcher::finalize_job_completion(
     const std::shared_ptr<InferenceJob>& job) const
 {
+  if (job == nullptr || completed_jobs_ == nullptr || all_done_cv_ == nullptr) {
+    return;
+  }
   const std::size_t logical_jobs =
       static_cast<std::size_t>(std::max(1, job->logical_job_count()));
   completed_jobs_->fetch_add(logical_jobs, std::memory_order_release);
@@ -223,21 +253,22 @@ ResultDispatcher::finalize_job_completion(
 
 void
 ResultDispatcher::handle_job_completion(
-    StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job,
+    const std::shared_ptr<InferenceJob>& job,
     const std::function<void(std::vector<torch::Tensor>, double)>&
         prev_callback,
     std::vector<torch::Tensor>& results, double latency_ms) const
 {
   run_with_logged_exceptions(
-      [this, &runner, prev_callback, job, &results, latency_ms] {
-        if (job) {
-          static_cast<void>(job->release_input_tensors());
+      [this, prev_callback, job, &results, latency_ms] {
+        if (!job) {
+          return;
         }
+        static_cast<void>(job->release_input_tensors());
         ResultDispatcher::ensure_callback_timing(job->timing_info());
         record_job_metrics(
             job, StarPUTaskRunner::DurationMs{latency_ms},
-            ResultDispatcher::resolve_batch_size(runner, job));
-        ResultDispatcher::emit_batch_traces(job, runner);
+            ResultDispatcher::resolve_batch_size(opts_, job));
+        ResultDispatcher::emit_batch_traces(opts_, job);
         run_with_logged_exceptions(
             [prev_callback, &results, latency_ms] {
               ResultDispatcher::invoke_previous_callback(
@@ -246,7 +277,6 @@ ResultDispatcher::handle_job_completion(
             ExceptionLoggingMessages{
                 "Exception in completion callback: ",
                 "Unknown exception in completion callback"});
-        finalize_job_completion(job);
       },
       ExceptionLoggingMessages{
           "Exception while finalizing job completion: ",
@@ -322,17 +352,21 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
 
 auto
 ResultDispatcher::resolve_batch_size(
-    StarPUTaskRunner& runner,
+    const RuntimeConfig* opts,
     const std::shared_ptr<InferenceJob>& job) -> std::size_t
 {
   return std::max<std::size_t>(
-      std::size_t{1}, static_cast<std::size_t>(runner.resolve_batch_size(job)));
+      std::size_t{1},
+      static_cast<std::size_t>(resolve_batch_size_for_job(opts, job)));
 }
 
 void
 ResultDispatcher::emit_batch_traces(
-    const std::shared_ptr<InferenceJob>& job, StarPUTaskRunner& runner)
+    const RuntimeConfig* opts, const std::shared_ptr<InferenceJob>& job)
 {
+  if (!job) {
+    return;
+  }
   auto& tracer = BatchingTraceLogger::instance();
   if (!tracer.enabled()) {
     return;
@@ -352,7 +386,7 @@ ResultDispatcher::emit_batch_traces(
   tracer.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
       .batch_id = job->submission_id(),
       .model_name = job->model_name(),
-      .batch_size = resolve_batch_size(runner, job),
+      .batch_size = resolve_batch_size(opts, job),
       .worker_id = job->get_worker_id(),
       .worker_type = job->get_executed_on(),
       .codelet_times =
@@ -360,6 +394,13 @@ ResultDispatcher::emit_batch_traces(
       .is_warmup = warmup_job,
       .device_id = job->get_device_id(),
   });
+}
+
+void
+ResultDispatcher::release_inflight_slot(
+    const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state)
+{
+  StarPUTaskRunner::release_inflight_slot(inflight_state);
 }
 
 void
