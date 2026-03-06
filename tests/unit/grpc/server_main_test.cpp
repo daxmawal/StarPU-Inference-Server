@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <csignal>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -115,6 +116,66 @@ wait_for_channel_ready(
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
   return channel->WaitForConnected(std::chrono::system_clock::now() + timeout);
+}
+
+auto
+make_temp_test_path(const std::string& stem, const std::string& extension)
+    -> std::filesystem::path
+{
+  static std::atomic<std::uint64_t> temp_artifact_counter{0};
+  const auto id = temp_artifact_counter.fetch_add(1, std::memory_order_relaxed);
+  return std::filesystem::temp_directory_path() /
+         (stem + "_" + std::to_string(id) + extension);
+}
+
+auto
+spawn_exiting_child(int exit_code) -> pid_t
+{
+  const pid_t pid = ::fork();
+  if (pid == 0) {
+    _exit(exit_code);
+  }
+  return pid;
+}
+
+auto
+spawn_sleeping_child(bool ignore_sigterm) -> pid_t
+{
+  int ready_pipe[2]{-1, -1};
+  if (::pipe(ready_pipe) != 0) {
+    return -1;
+  }
+
+  const pid_t pid = ::fork();
+  if (pid == 0) {
+    ::close(ready_pipe[0]);
+    if (ignore_sigterm) {
+      sigset_t blocked{};
+      ::sigemptyset(&blocked);
+      ::sigaddset(&blocked, SIGTERM);
+      (void)::sigprocmask(SIG_BLOCK, &blocked, nullptr);
+    }
+    const char ready = '1';
+    (void)::write(ready_pipe[1], &ready, 1);
+    ::close(ready_pipe[1]);
+    while (true) {
+      ::pause();
+    }
+  }
+  ::close(ready_pipe[1]);
+  if (pid < 0) {
+    ::close(ready_pipe[0]);
+    return -1;
+  }
+  char ready = 0;
+  const auto bytes_read = ::read(ready_pipe[0], &ready, 1);
+  ::close(ready_pipe[0]);
+  if (bytes_read != 1) {
+    (void)::kill(pid, SIGKILL);
+    (void)wait_for_exit_blocking(pid);
+    return -1;
+  }
+  return pid;
 }
 
 TEST(ServerMainArgs, HandleProgramArgumentsParsesLongConfigFlag)
@@ -373,6 +434,75 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsUnderConcurrentRpcLoad)
   EXPECT_GT(started_requests.load(std::memory_order_relaxed), 0);
 
   signal_stop_requested_flag() = 0;
+}
+
+TEST(ServerMainPlotScript, LocatePlotScriptFindsRepositoryScript)
+{
+  starpu_server::RuntimeConfig opts;
+  const auto script_path = locate_plot_script(opts);
+  ASSERT_TRUE(script_path.has_value());
+  EXPECT_TRUE(script_path->is_absolute());
+  EXPECT_EQ(script_path->filename(), "plot_batch_summary.py");
+  EXPECT_TRUE(std::filesystem::is_regular_file(*script_path));
+}
+
+TEST(ServerMainPlotProcess, WaitForPlotProcessReturnsChildExitCode)
+{
+  const pid_t pid = spawn_exiting_child(7);
+  ASSERT_GT(pid, 0);
+  const auto exit_code = wait_for_plot_process(pid);
+  ASSERT_TRUE(exit_code.has_value());
+  EXPECT_EQ(*exit_code, 7);
+}
+
+TEST(ServerMainPlotProcess, WaitForExitWithTimeoutTimesOutThenReapsChild)
+{
+  const pid_t pid = spawn_sleeping_child(false);
+  ASSERT_GT(pid, 0);
+
+  const auto result =
+      wait_for_exit_with_timeout(pid, std::chrono::milliseconds(10));
+  EXPECT_EQ(result.outcome, WaitOutcome::TimedOut);
+  EXPECT_FALSE(result.exit_code.has_value());
+
+  ASSERT_EQ(::kill(pid, SIGKILL), 0);
+  const auto exit_code = wait_for_exit_blocking(pid);
+  ASSERT_TRUE(exit_code.has_value());
+  EXPECT_EQ(*exit_code, 128 + SIGKILL);
+}
+
+TEST(
+    ServerMainPlotProcess, TerminateAndWaitEscalatesToSigkillWhenSigtermIgnored)
+{
+  const pid_t pid = spawn_sleeping_child(true);
+  ASSERT_GT(pid, 0);
+
+  const auto exit_code = terminate_and_wait(pid);
+  ASSERT_TRUE(exit_code.has_value());
+  EXPECT_EQ(*exit_code, 128 + SIGKILL);
+}
+
+TEST(ServerMainPlotProcess, RunPlotScriptReturnsNonZeroForMissingScript)
+{
+  const auto summary_path = make_temp_test_path("batch_summary", ".csv");
+  const auto output_path = make_temp_test_path("batch_plots", ".png");
+  TempFileGuard summary_guard{summary_path};
+  TempFileGuard output_guard{output_path};
+  {
+    std::ofstream summary_file(summary_path);
+    ASSERT_TRUE(summary_file.is_open());
+    summary_file << "timestamp_ms,latency_ms\n";
+  }
+
+  const auto exit_code = run_plot_script(
+      "/definitely/missing_plot_batch_summary.py", summary_path, output_path);
+  if (!resolve_python_executable().has_value()) {
+    EXPECT_FALSE(exit_code.has_value());
+    return;
+  }
+
+  ASSERT_TRUE(exit_code.has_value());
+  EXPECT_NE(*exit_code, 0);
 }
 
 }  // namespace
