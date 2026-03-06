@@ -164,8 +164,7 @@ compute_latency_breakdown(const TimingInfo& timing, double total_latency_ms)
 
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-    int request_identifier,
-    std::function<void(const std::vector<torch::Tensor>&, double)> callback)
+    int request_identifier, CompletionCallback callback)
     : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
       request_id_(request_identifier), on_complete_(std::move(callback)),
       start_time_(MonotonicClock::now())

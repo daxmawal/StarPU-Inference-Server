@@ -254,8 +254,7 @@ ResultDispatcher::finalize_job_completion(
 void
 ResultDispatcher::handle_job_completion(
     const std::shared_ptr<InferenceJob>& job,
-    const std::function<void(std::vector<torch::Tensor>, double)>&
-        prev_callback,
+    const InferenceJob::CompletionCallback& prev_callback,
     std::vector<torch::Tensor>& results, double latency_ms) const
 {
   run_with_logged_exceptions(
@@ -389,7 +388,7 @@ ResultDispatcher::release_inflight_slot(
 
 void
 ResultDispatcher::invoke_previous_callback(
-    const std::function<void(std::vector<torch::Tensor>&&, double)>& previous,
+    const InferenceJob::CompletionCallback& previous,
     std::vector<torch::Tensor>& results, double latency_ms)
 {
   if (!previous) {
@@ -407,8 +406,8 @@ ResultDispatcher::clear_pending_sub_job_callbacks(
   }
   const auto& pending = job->pending_sub_jobs();
   for (const auto& sub_job : pending) {
-    if (sub_job && sub_job->has_on_complete()) {
-      sub_job->set_on_complete({});
+    if (sub_job != nullptr) {
+      static_cast<void>(sub_job->take_on_complete());
     }
   }
 }

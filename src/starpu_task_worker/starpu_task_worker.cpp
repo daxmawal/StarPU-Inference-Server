@@ -606,10 +606,9 @@ StarPUTaskRunner::handle_job_exception(
   }
 
   bool completion_invoked = false;
-  if (job->has_on_complete()) {
-    const auto completion = job->get_on_complete();
+  if (auto completion = job->take_on_complete(); completion) {
     run_with_logged_exceptions(
-        [&completion, &completion_invoked]() {
+        [completion = std::move(completion), &completion_invoked]() mutable {
           completion({}, -1);
           completion_invoked = true;
         },
@@ -902,7 +901,7 @@ StarPUTaskRunner::submit_inference_task(
 void
 StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
 {
-  job->set_on_complete({});
+  static_cast<void>(job->take_on_complete());
   ResultDispatcher::clear_pending_sub_job_callbacks(job);
 
   auto pending_jobs = job->take_pending_sub_jobs();

@@ -40,8 +40,11 @@ class ResultDispatcher {
   static void emit_batch_traces(
       const RuntimeConfig* opts, const std::shared_ptr<InferenceJob>& job);
 
+  // Invoke the callback captured before dispatcher wrapping.
+  // Terminal callback contract: success/error/cancel must converge to one
+  // callback execution per job.
   static void invoke_previous_callback(
-      const std::function<void(std::vector<torch::Tensor>&&, double)>& previous,
+      const InferenceJob::CompletionCallback& previous,
       std::vector<torch::Tensor>& results, double latency_ms);
 
   static void clear_pending_sub_job_callbacks(
@@ -59,8 +62,7 @@ class ResultDispatcher {
  private:
   void handle_job_completion(
       const std::shared_ptr<InferenceJob>& job,
-      const std::function<void(std::vector<torch::Tensor>, double)>&
-          prev_callback,
+      const InferenceJob::CompletionCallback& prev_callback,
       std::vector<torch::Tensor>& results, double latency_ms) const;
 
   static void release_inflight_slot(

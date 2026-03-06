@@ -228,6 +228,26 @@ TEST(InferenceJobTest, SettersGettersAndCallback)
       callback_called, cb_tensors, cb_latency, outputs, kLatencyMs));
 }
 
+TEST(InferenceJobTest, TakeOnCompleteConsumesCallbackSlotOnce)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  int callback_calls = 0;
+
+  job->set_on_complete([&callback_calls](std::vector<torch::Tensor>, double) {
+    ++callback_calls;
+  });
+
+  ASSERT_TRUE(job->has_on_complete());
+  auto callback = job->take_on_complete();
+  ASSERT_TRUE(static_cast<bool>(callback));
+  EXPECT_FALSE(job->has_on_complete());
+  EXPECT_FALSE(static_cast<bool>(job->get_on_complete()));
+  EXPECT_FALSE(static_cast<bool>(job->take_on_complete()));
+
+  callback({}, kLatencyMs);
+  EXPECT_EQ(callback_calls, 1);
+}
+
 TEST(InferenceJobTest, SetInputTensorsCopiesNonContiguousAsContiguous)
 {
   auto non_contiguous =

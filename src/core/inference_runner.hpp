@@ -6,6 +6,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -145,6 +146,10 @@ class JobBatchState {
 class InferenceJob : public JobBatchState {
  public:
   using AggregatedSubJob = JobBatchState::AggregatedSubJob;
+  // Terminal callback contract:
+  // exactly one execution per job across success/error/cancel paths.
+  using CompletionCallback =
+      std::function<void(std::vector<torch::Tensor>, double)>;
 
   struct FailureInfo {
     std::string stage;
@@ -157,9 +162,7 @@ class InferenceJob : public JobBatchState {
 
   InferenceJob(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-      int request_identifier,
-      std::function<void(const std::vector<torch::Tensor>&, double)> callback =
-          nullptr);
+      int request_identifier, CompletionCallback callback = nullptr);
 
   void set_request_id(int request_id) { request_id_ = request_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
@@ -189,9 +192,11 @@ class InferenceJob : public JobBatchState {
     }
   }
   void set_start_time(MonotonicClock::time_point time) { start_time_ = time; }
-  void set_on_complete(
-      std::function<void(std::vector<torch::Tensor>, double)> call_back)
+  // Register or replace the terminal callback for this job.
+  // The callback must be consumed via take_on_complete() and invoked once.
+  void set_on_complete(CompletionCallback call_back)
   {
+    const std::scoped_lock lock(on_complete_mutex_);
     on_complete_ = std::move(call_back);
   }
   void set_model_name(std::string model_name)
@@ -270,13 +275,26 @@ class InferenceJob : public JobBatchState {
   {
     return fixed_worker_id_;
   }
-  [[nodiscard]] auto get_on_complete() const
-      -> const std::function<void(std::vector<torch::Tensor>, double)>&
+  // Snapshot helper for tests/introspection only.
+  // Do not use this in terminal dispatch paths.
+  [[nodiscard]] auto get_on_complete() const -> CompletionCallback
   {
+    const std::scoped_lock lock(on_complete_mutex_);
     return on_complete_;
   }
+
+  // Consume and clear the callback atomically.
+  // After a successful take, subsequent take/has/get observe an empty slot
+  // unless a new callback is explicitly set.
+  [[nodiscard]] auto take_on_complete() -> CompletionCallback
+  {
+    const std::scoped_lock lock(on_complete_mutex_);
+    return std::exchange(on_complete_, CompletionCallback{});
+  }
+
   [[nodiscard]] auto has_on_complete() const -> bool
   {
+    const std::scoped_lock lock(on_complete_mutex_);
     return static_cast<bool>(on_complete_);
   }
 
@@ -296,7 +314,8 @@ class InferenceJob : public JobBatchState {
   int request_id_ = 0;
   int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
-  std::function<void(std::vector<torch::Tensor>, double)> on_complete_;
+  mutable std::mutex on_complete_mutex_;
+  CompletionCallback on_complete_;
   MonotonicClock::time_point start_time_;
   std::string model_name_;
   std::optional<FailureInfo> failure_info_;

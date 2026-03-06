@@ -811,17 +811,15 @@ InferenceTask::record_and_run_completion_callback(
 
   ctx->job->timing_info().callback_end_time = end_time;
 
-  if (ctx->job->has_on_complete()) {
-    const auto& callback = ctx->job->get_on_complete();
+  auto callback = ctx->job->take_on_complete();
+  if (callback) {
     run_with_logged_exceptions(
-        [ctx, &callback, latency_ms]() {
+        [ctx, callback = std::move(callback), latency_ms]() mutable {
           callback(ctx->job->get_output_tensors(), latency_ms);
         },
         ExceptionLoggingMessages{
             "Exception in completion callback: ",
             "Unknown exception in completion callback"});
-
-    ctx->job->set_on_complete({});
   }
 
   ctx->job->release_input_memory_holders();
