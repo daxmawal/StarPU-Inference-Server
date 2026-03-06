@@ -2,6 +2,7 @@
 
 #include <torch/torch.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -78,6 +79,54 @@ auto build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
 
 auto build_request_arrival_us_for_trace(
     const std::shared_ptr<InferenceJob>& job) -> std::vector<int64_t>;
+
+[[nodiscard]] inline auto
+batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
+{
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  const auto& first = inputs.front();
+  if (first.dim() <= 0) {
+    return 1;
+  }
+
+  const auto dim0 = first.size(0);
+  return dim0 > 0 ? static_cast<std::size_t>(dim0) : std::size_t{1};
+}
+
+[[nodiscard]] inline auto
+resolve_batch_size_for_job(
+    const RuntimeConfig* opts,
+    const std::shared_ptr<InferenceJob>& job) -> int64_t
+{
+  if (!job) {
+    return 1;
+  }
+  if (const auto effective = job->effective_batch_size();
+      effective.has_value()) {
+    return std::max<int64_t>(1, *effective);
+  }
+
+  const auto& inputs = job->get_input_tensors();
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  if (opts != nullptr && opts->model.has_value() &&
+      !opts->model->inputs.empty()) {
+    const auto per_sample_rank =
+        static_cast<int64_t>(opts->model->inputs[0].dims.size());
+    if (const auto rank0 = inputs[0].dim();
+        rank0 == per_sample_rank + 1 && rank0 > 0) {
+      return std::max<int64_t>(1, inputs[0].size(0));
+    }
+    return 1;
+  }
+
+  return static_cast<int64_t>(batch_size_from_inputs(inputs));
+}
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START

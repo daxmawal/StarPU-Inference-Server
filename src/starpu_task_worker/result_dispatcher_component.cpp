@@ -25,42 +25,6 @@ is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
   return job && job->get_fixed_worker_id().has_value();
 }
 
-inline auto
-resolve_batch_size_for_job(
-    const RuntimeConfig* opts,
-    const std::shared_ptr<InferenceJob>& job) -> int64_t
-{
-  if (!job) {
-    return 1;
-  }
-  if (const auto effective = job->effective_batch_size();
-      effective.has_value()) {
-    return std::max<int64_t>(1, *effective);
-  }
-
-  const auto& inputs = job->get_input_tensors();
-  if (inputs.empty()) {
-    return 1;
-  }
-
-  if (opts != nullptr && opts->model.has_value() &&
-      !opts->model->inputs.empty()) {
-    const auto per_sample_rank =
-        static_cast<int64_t>(opts->model->inputs[0].dims.size());
-    if (const auto rank0 = inputs[0].dim();
-        rank0 == per_sample_rank + 1 && rank0 > 0) {
-      return std::max<int64_t>(1, inputs[0].size(0));
-    }
-    return 1;
-  }
-
-  const auto& first = inputs.front();
-  if (first.dim() <= 0) {
-    return 1;
-  }
-  return std::max<int64_t>(1, first.size(0));
-}
-
 }  // namespace
 
 using clock = task_runner_internal::Clock;
@@ -340,7 +304,8 @@ ResultDispatcher::resolve_batch_size(
 {
   return std::max<std::size_t>(
       std::size_t{1},
-      static_cast<std::size_t>(resolve_batch_size_for_job(opts, job)));
+      static_cast<std::size_t>(
+          task_runner_internal::resolve_batch_size_for_job(opts, job)));
 }
 
 void
