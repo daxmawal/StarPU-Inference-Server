@@ -41,7 +41,7 @@ target_link_libraries(
           StarPU::starpu
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp
-          ${HWLOC_LIBRARY})
+          HWLOC::hwloc)
 
 if(TARGET gRPC::grpc++_reflection)
   target_link_libraries(starpu_server PRIVATE gRPC::grpc++_reflection)
