@@ -22,14 +22,8 @@ jobs:
 
       - name: Compute excluded paths
         run: |
-          EXCLUDES="external"
-          if [ -f .gitmodules ]; then
-            while read -r _ path; do
-              EXCLUDES="$EXCLUDES $path"
-            done < <(git config --file .gitmodules --get-regexp path || true)
-          fi
-          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
-          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
+          mapfile -t EXCLUDED_PATHS_ARRAY < <(./scripts/ci_excluded_paths.sh)
+          echo "EXCLUDED_PATHS=${EXCLUDED_PATHS_ARRAY[*]}" >> "$GITHUB_ENV"
 
       - name: Install cmake-format
         run: pip install cmakelang
@@ -64,14 +58,8 @@ jobs:
 
       - name: Compute excluded paths
         run: |
-          EXCLUDES="external"
-          if [ -f .gitmodules ]; then
-            while read -r _ path; do
-              EXCLUDES="$EXCLUDES $path"
-            done < <(git config --file .gitmodules --get-regexp path || true)
-          fi
-          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
-          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
+          mapfile -t EXCLUDED_PATHS_ARRAY < <(./scripts/ci_excluded_paths.sh)
+          echo "EXCLUDED_PATHS=${EXCLUDED_PATHS_ARRAY[*]}" >> "$GITHUB_ENV"
 
       - name: Check trailing whitespace
         run: |
@@ -135,14 +123,8 @@ jobs:
 
       - name: Compute excluded paths
         run: |
-          EXCLUDES="external"
-          if [ -f .gitmodules ]; then
-            while read -r _ path; do
-              EXCLUDES="$EXCLUDES $path"
-            done < <(git config --file .gitmodules --get-regexp path || true)
-          fi
-          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
-          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
+          mapfile -t EXCLUDED_PATHS_ARRAY < <(./scripts/ci_excluded_paths.sh)
+          echo "EXCLUDED_PATHS=${EXCLUDED_PATHS_ARRAY[*]}" >> "$GITHUB_ENV"
 
       - name: Install clang-format
         run: sudo apt-get install -y clang-format
@@ -168,14 +150,8 @@ jobs:
 
       - name: Compute excluded paths
         run: |
-          EXCLUDES="external"
-          if [ -f .gitmodules ]; then
-            while read -r _ path; do
-              EXCLUDES="$EXCLUDES $path"
-            done < <(git config --file .gitmodules --get-regexp path || true)
-          fi
-          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
-          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
+          mapfile -t EXCLUDED_PATHS_ARRAY < <(./scripts/ci_excluded_paths.sh)
+          echo "EXCLUDED_PATHS=${EXCLUDED_PATHS_ARRAY[*]}" >> "$GITHUB_ENV"
 
       - name: Run markdownlint
         run: |
