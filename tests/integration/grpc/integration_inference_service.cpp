@@ -15,7 +15,21 @@
 
 namespace {
 auto pick_unused_port() -> int;
+
+constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+
+auto
+wait_for_server_start(
+    const std::unique_ptr<grpc::Server>& server,
+    std::chrono::steady_clock::duration timeout = kServerStartTimeout) -> bool
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (!server && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return static_cast<bool>(server);
 }
+}  // namespace
 
 TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
 {
@@ -123,9 +137,8 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
     starpu_server::RunGrpcServer(
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_server_start(server))
+      << "Timed out waiting for gRPC server startup";
   starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
@@ -160,9 +173,8 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
     starpu_server::RunGrpcServer(
         queue, reference_outputs, model_spec, options, server);
   });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_server_start(server))
+      << "Timed out waiting for gRPC server startup";
   starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
@@ -206,9 +218,9 @@ TEST(GrpcServer, RunGrpcServerSupportsDoubleStartStopCycle)
           queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
     });
 
-    while (!server) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+    ASSERT_TRUE(wait_for_server_start(server))
+        << "cycle " << cycle_index
+        << " timed out waiting for gRPC server startup";
 
     auto channel =
         grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
@@ -395,9 +407,8 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
 
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_server_start(server))
+      << "Timed out waiting for gRPC server startup";
 
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
@@ -445,9 +456,8 @@ TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForRepositoryIndex)
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
 
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_server_start(server))
+      << "Timed out waiting for gRPC server startup";
 
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
@@ -494,9 +504,8 @@ TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForModelStreamInfer)
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
 
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_server_start(server))
+      << "Timed out waiting for gRPC server startup";
 
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
@@ -552,9 +561,8 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
         queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
   });
 
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_server_start(server))
+      << "Timed out waiting for gRPC server startup";
 
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
