@@ -98,9 +98,36 @@ set(STARPU_TEST_FILTER_INTEGRATION
     "*Integration*:*_Integration*:*EndToEndInference*")
 set(STARPU_TEST_FILTER_E2E "*E2E*")
 
-add_test(NAME unit_tests COMMAND all_tests
-                                 --gtest_filter=${STARPU_TEST_FILTER_UNIT})
-add_test(NAME integration_tests
-         COMMAND all_tests --gtest_filter=${STARPU_TEST_FILTER_INTEGRATION})
-add_test(NAME e2e_tests COMMAND all_tests
-                                --gtest_filter=${STARPU_TEST_FILTER_E2E})
+function(starpu_add_sharded_gtest_group group_name gtest_filter shard_count
+         timeout_seconds)
+  math(EXPR last_shard "${shard_count} - 1")
+  foreach(shard_index RANGE 0 ${last_shard})
+    math(EXPR shard_number "${shard_index} + 1")
+    set(test_name "${group_name}_shard_${shard_number}")
+    add_test(
+      NAME ${test_name}
+      COMMAND
+        ${CMAKE_COMMAND} -E env GTEST_TOTAL_SHARDS=${shard_count}
+        GTEST_SHARD_INDEX=${shard_index} $<TARGET_FILE:all_tests>
+        --gtest_filter=${gtest_filter})
+    set_tests_properties(${test_name} PROPERTIES TIMEOUT ${timeout_seconds})
+  endforeach()
+endfunction()
+
+set(STARPU_UNIT_TEST_SHARDS 4)
+set(STARPU_INTEGRATION_TEST_SHARDS 2)
+set(STARPU_E2E_TEST_SHARDS 1)
+
+set(STARPU_UNIT_TEST_TIMEOUT_SECONDS 480)
+set(STARPU_INTEGRATION_TEST_TIMEOUT_SECONDS 600)
+set(STARPU_E2E_TEST_TIMEOUT_SECONDS 600)
+
+starpu_add_sharded_gtest_group(
+  "unit_tests" "${STARPU_TEST_FILTER_UNIT}" ${STARPU_UNIT_TEST_SHARDS}
+  ${STARPU_UNIT_TEST_TIMEOUT_SECONDS})
+starpu_add_sharded_gtest_group(
+  "integration_tests" "${STARPU_TEST_FILTER_INTEGRATION}"
+  ${STARPU_INTEGRATION_TEST_SHARDS} ${STARPU_INTEGRATION_TEST_TIMEOUT_SECONDS})
+starpu_add_sharded_gtest_group(
+  "e2e_tests" "${STARPU_TEST_FILTER_E2E}" ${STARPU_E2E_TEST_SHARDS}
+  ${STARPU_E2E_TEST_TIMEOUT_SECONDS})

@@ -339,6 +339,9 @@ jobs:
     env:
       # Incremental tightening to reduce CI churn while improving quality.
       COVERAGE_MIN_LINE: "72"
+      CTEST_TIMEOUT_UNIT_SECONDS: "480"
+      CTEST_TIMEOUT_INTEGRATION_SECONDS: "600"
+      CTEST_TIMEOUT_E2E_SECONDS: "600"
 
     steps:
       - name: Checkout code
@@ -364,19 +367,25 @@ jobs:
         working-directory: build
         run: chmod +x all_tests || true
 
-      - name: Run unit tests
+      - name: Run unit test shards
         run: |
-          ctest --test-dir build --output-on-failure -R '^unit_tests$' \
+          ctest --test-dir build --output-on-failure \
+            --timeout "$CTEST_TIMEOUT_UNIT_SECONDS" \
+            -R '^unit_tests_shard_.*$' \
             --output-junit build/junit-unit.xml
 
-      - name: Run integration tests
+      - name: Run integration test shards
         run: |
-          ctest --test-dir build --output-on-failure -R '^integration_tests$' \
+          ctest --test-dir build --output-on-failure \
+            --timeout "$CTEST_TIMEOUT_INTEGRATION_SECONDS" \
+            -R '^integration_tests_shard_.*$' \
             --output-junit build/junit-integration.xml
 
-      - name: Run e2e tests
+      - name: Run e2e test shards
         run: |
-          ctest --test-dir build --output-on-failure -R '^e2e_tests$' \
+          ctest --test-dir build --output-on-failure \
+            --timeout "$CTEST_TIMEOUT_E2E_SECONDS" \
+            -R '^e2e_tests_shard_.*$' \
             --output-junit build/junit-e2e.xml
 
       - name: Upload JUnit reports
