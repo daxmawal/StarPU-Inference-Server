@@ -222,6 +222,17 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "Failed to load config: use_cuda[0].device_ids must be a sequence of "
         "integers"},
     InvalidConfigCase{
+        "BothBackendsDisabledInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cpu: false\n";
+          yaml += "use_cuda: false\n";
+          return yaml;
+        }(),
+        "Failed to load config: At least one execution backend must be "
+        "enabled: "
+        "set use_cpu: true and/or configure use_cuda with device_ids"},
+    InvalidConfigCase{
         "UseCudaNegativeDeviceIdInvalid",
         [] {
           auto yaml = base_model_yaml();

@@ -895,6 +895,24 @@ mark_config_invalid(RuntimeConfig& cfg, const std::string& message)
 }
 
 void
+validate_cross_field_invariants(const RuntimeConfig& cfg)
+{
+  if (!cfg.devices.use_cpu && !cfg.devices.use_cuda) {
+    throw std::invalid_argument(
+        "At least one execution backend must be enabled: set use_cpu: true "
+        "and/or configure use_cuda with device_ids");
+  }
+  if (cfg.devices.use_cuda && cfg.devices.ids.empty()) {
+    throw std::invalid_argument(
+        "use_cuda is enabled but no CUDA device_ids are configured");
+  }
+  if (!cfg.devices.use_cuda && !cfg.devices.ids.empty()) {
+    throw std::invalid_argument(
+        "device_ids are configured but use_cuda is disabled");
+  }
+}
+
+void
 parse_config_file(
     const std::string& path, RuntimeConfig& cfg,
     bool& max_message_bytes_configured)
@@ -946,6 +964,8 @@ finalize_config(RuntimeConfig& cfg, bool max_message_bytes_configured)
   }
 
   try {
+    validate_cross_field_invariants(cfg);
+
     if (max_message_bytes_configured) {
       if (cfg.model.has_value()) {
         const auto required_bytes = compute_model_message_bytes(
@@ -974,6 +994,9 @@ finalize_config(RuntimeConfig& cfg, bool max_message_bytes_configured)
   }
   catch (const UnsupportedDtypeException& unsupported_dtype) {
     mark_config_invalid(cfg, unsupported_dtype.what());
+  }
+  catch (const std::invalid_argument& invalid_argument) {
+    mark_config_invalid(cfg, invalid_argument.what());
   }
 
   if (!cfg.valid) {
