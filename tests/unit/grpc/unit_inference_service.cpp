@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 
@@ -431,45 +432,29 @@ TEST_F(InferenceServiceTest, ModelMetadataUsesRequestNameWhenNoDefaultModel)
   EXPECT_EQ(reply.outputs_size(), 0);
 }
 
-TEST(InferenceServiceImpl, ModelMetadataRejectsUnsupportedInputDatatype)
+TEST(InferenceServiceImpl, ConstructorRejectsUnsupportedInputDatatype)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs;
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kComplexFloat},
-      starpu_server::InferenceServiceImpl::ServiceOptions{
-          .default_model_name = "server_model"});
-
-  grpc::ServerContext ctx;
-  inference::ModelMetadataRequest req;
-  req.set_name("server_model");
-  inference::ModelMetadataResponse reply;
-
-  auto status = service.ModelMetadata(&ctx, &req, &reply);
-
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Unsupported at::ScalarType");
+  EXPECT_THROW(
+      (void)starpu_server::InferenceServiceImpl(
+          &queue, &ref_outputs, {at::kComplexFloat},
+          starpu_server::InferenceServiceImpl::ServiceOptions{
+              .default_model_name = "server_model"}),
+      std::invalid_argument);
 }
 
-TEST(InferenceServiceImpl, ModelMetadataRejectsUnsupportedOutputDatatype)
+TEST(InferenceServiceImpl, ConstructorRejectsUnsupportedOutputDatatype)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs = {
       torch::zeros({1}, torch::TensorOptions().dtype(at::kComplexFloat))};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kFloat},
-      starpu_server::InferenceServiceImpl::ServiceOptions{
-          .default_model_name = "server_model"});
-
-  grpc::ServerContext ctx;
-  inference::ModelMetadataRequest req;
-  req.set_name("server_model");
-  inference::ModelMetadataResponse reply;
-
-  auto status = service.ModelMetadata(&ctx, &req, &reply);
-
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Unsupported at::ScalarType");
+  EXPECT_THROW(
+      (void)starpu_server::InferenceServiceImpl(
+          &queue, &ref_outputs, {at::kFloat},
+          starpu_server::InferenceServiceImpl::ServiceOptions{
+              .default_model_name = "server_model"}),
+      std::invalid_argument);
 }
 
 TEST(InferenceServiceImpl, ModelConfigPopulatesConfig)
@@ -544,39 +529,25 @@ TEST_F(InferenceServiceTest, ModelConfigUsesRequestNameWhenNoDefaultModel)
   EXPECT_EQ(config.output_size(), 0);
 }
 
-TEST(InferenceServiceImpl, ModelConfigRejectsUnsupportedInputDatatype)
+TEST(InferenceServiceImpl, ConstructorRejectsUnsupportedInputDatatypeForConfig)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs;
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kComplexFloat});
-
-  grpc::ServerContext ctx;
-  inference::ModelConfigRequest req;
-  inference::ModelConfigResponse reply;
-
-  auto status = service.ModelConfig(&ctx, &req, &reply);
-
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Unsupported input datatype");
+  EXPECT_THROW(
+      (void)starpu_server::InferenceServiceImpl(
+          &queue, &ref_outputs, {at::kComplexFloat}),
+      std::invalid_argument);
 }
 
-TEST(InferenceServiceImpl, ModelConfigRejectsUnsupportedOutputDatatype)
+TEST(InferenceServiceImpl, ConstructorRejectsUnsupportedOutputDatatypeForConfig)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> ref_outputs = {
       torch::zeros({1}, torch::TensorOptions().dtype(at::kComplexFloat))};
-  starpu_server::InferenceServiceImpl service(
-      &queue, &ref_outputs, {at::kFloat});
-
-  grpc::ServerContext ctx;
-  inference::ModelConfigRequest req;
-  inference::ModelConfigResponse reply;
-
-  auto status = service.ModelConfig(&ctx, &req, &reply);
-
-  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
-  EXPECT_EQ(status.error_message(), "Unsupported output datatype");
+  EXPECT_THROW(
+      (void)starpu_server::InferenceServiceImpl(
+          &queue, &ref_outputs, {at::kFloat}),
+      std::invalid_argument);
 }
 
 TEST(InferenceServiceImpl, ModelStatisticsRejectsNullRequest)

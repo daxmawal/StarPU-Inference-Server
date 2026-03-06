@@ -406,6 +406,8 @@ class InferenceServiceImpl final
       const inference::ModelInferRequest* request,
       MonotonicClock::time_point recv_tp, std::string_view resolved_model_name);
 
+  void validate_schema_or_throw() const;
+
   [[nodiscard]] auto resolve_model_name(std::string model_name) const
       -> std::string;
   auto next_request_id() -> int;
