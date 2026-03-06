@@ -21,6 +21,9 @@ add_executable(
   ${MONITORING_DIR}/metrics.cpp
   ${MONITORING_DIR}/congestion_monitor.cpp
   ${TASK_WORKER_DIR}/starpu_task_worker.cpp
+  ${TASK_WORKER_DIR}/batch_collector_component.cpp
+  ${TASK_WORKER_DIR}/result_dispatcher_component.cpp
+  ${TASK_WORKER_DIR}/slot_manager_component.cpp
   ${GRPC_CLIENT_DIR}/client_args.cpp
   ${UTILS_DIR}/client_utils.cpp
   ${UTILS_DIR}/perf_observer.cpp

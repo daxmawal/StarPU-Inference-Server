@@ -1,0 +1,659 @@
+#include "slot_manager_component.hpp"
+
+#include <cuda_runtime_api.h>
+#include <starpu_data_interfaces.h>
+#include <torch/torch.h>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstring>
+#include <execution>
+#include <format>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <new>
+#include <ranges>
+#include <span>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include "exceptions.hpp"
+#include "monitoring/metrics.hpp"
+#include "task_runner_internal.hpp"
+#include "utils/device_type.hpp"
+#include "utils/nvtx.hpp"
+#include "utils/tensor_validation.hpp"
+
+namespace starpu_server {
+
+using clock = task_runner_internal::Clock;
+
+namespace {
+
+struct VectorResizeSpec {
+  std::size_t element_count;
+  std::size_t byte_count;
+};
+
+void
+resize_starpu_vector_interface_impl(
+    starpu_vector_interface* vector_interface, VectorResizeSpec spec,
+    bool is_input_handle)
+{
+  if (vector_interface == nullptr) {
+    return;
+  }
+
+  const auto elem_size = vector_interface->elemsize;
+  if (elem_size == 0) {
+    throw StarPUDataAcquireException(
+        "StarPU vector interface reported zero element size");
+  }
+
+  if (spec.byte_count % elem_size != 0) {
+    if (is_input_handle) {
+      throw InvalidInputTensorException(std::format(
+          "Input tensor byte size ({}) is not divisible by element size ({})",
+          spec.byte_count, elem_size));
+    }
+    throw InvalidInferenceJobException(std::format(
+        "Output tensor byte size ({}) is not divisible by element size ({})",
+        spec.byte_count, elem_size));
+  }
+
+  const auto required_numel = spec.byte_count / elem_size;
+  if (required_numel != spec.element_count) {
+    spec.element_count = required_numel;
+  }
+
+  const auto alloc_size = vector_interface->allocsize;
+  if (alloc_size != std::numeric_limits<size_t>::max() && alloc_size != 0 &&
+      spec.byte_count > alloc_size) {
+    if (is_input_handle) {
+      throw InputPoolCapacityException(std::format(
+          "Input tensor requires {} bytes but slot capacity is {} bytes",
+          spec.byte_count, alloc_size));
+    }
+    throw InvalidInferenceJobException(std::format(
+        "Output tensor requires {} bytes but slot capacity is {} bytes",
+        spec.byte_count, alloc_size));
+  }
+
+  vector_interface->nx = spec.element_count;
+}
+
+void
+resize_starpu_vector_handle_impl(
+    starpu_data_handle_t handle, VectorResizeSpec spec, bool is_input_handle)
+{
+  if (handle == nullptr) {
+    throw StarPUDataAcquireException("StarPU vector handle is null");
+  }
+
+  if (starpu_data_get_interface_id(handle) != STARPU_VECTOR_INTERFACE_ID) {
+    throw StarPUDataAcquireException(
+        "Expected StarPU vector interface for handle");
+  }
+
+  const unsigned memory_nodes = starpu_memory_nodes_get_count();
+  for (unsigned node = 0; node < memory_nodes; ++node) {
+    auto* raw_interface = starpu_data_get_interface_on_node(handle, node);
+    if (raw_interface == nullptr) {
+      continue;
+    }
+    auto* vector_interface =
+        static_cast<starpu_vector_interface*>(raw_interface);
+    resize_starpu_vector_interface_impl(
+        vector_interface, spec, is_input_handle);
+  }
+}
+
+template <typename Func>
+void
+parallel_for_each_index(std::size_t count, Func&& func)
+{
+  if (count == 0) {
+    return;
+  }
+
+  const auto indices = std::views::iota(std::size_t{0}, count);
+
+  std::atomic abort{false};
+  std::exception_ptr first_error;
+  std::mutex error_mutex;
+  auto&& task = std::forward<Func>(func);
+
+  std::for_each(
+      std::execution::par, indices.begin(), indices.end(),
+      [&](std::size_t idx) {
+        if (abort.load(std::memory_order_acquire)) {
+          return;
+        }
+        try {
+          task(idx);
+        }
+        catch (...) {
+          std::lock_guard lock(error_mutex);
+          if (!first_error) {
+            first_error = std::current_exception();
+            abort.store(true, std::memory_order_release);
+          }
+        }
+      });
+
+  if (first_error) {
+    std::rethrow_exception(first_error);
+  }
+}
+
+}  // namespace
+
+class SlotHandleLease {
+ public:
+  SlotHandleLease(
+      std::span<const starpu_data_handle_t> handles,
+      starpu_data_access_mode mode)
+  {
+    acquired_.reserve(handles.size());
+    for (auto* const handle : handles) {
+      if (handle == nullptr) {
+        continue;
+      }
+      const int result_code = starpu_data_acquire(handle, mode);
+      if (result_code != 0) {
+        release_all();
+        throw StarPUDataAcquireException(std::format(
+            "starpu_data_acquire failed with code {}", result_code));
+      }
+      acquired_.push_back(handle);
+    }
+  }
+
+  SlotHandleLease(const SlotHandleLease&) = delete;
+  auto operator=(const SlotHandleLease&) -> SlotHandleLease& = delete;
+
+  SlotHandleLease(SlotHandleLease&& other) noexcept
+      : acquired_(std::move(other.acquired_))
+  {
+    other.acquired_.clear();
+  }
+
+  auto operator=(SlotHandleLease&& other) noexcept -> SlotHandleLease&
+  {
+    if (this != &other) {
+      release_all();
+      acquired_ = std::move(other.acquired_);
+      other.acquired_.clear();
+    }
+    return *this;
+  }
+
+  ~SlotHandleLease() { release_all(); }
+
+ private:
+  void release_all() noexcept
+  {
+    for (auto* const handle : acquired_ | std::views::reverse) {
+      if (handle != nullptr) {
+        starpu_data_release(handle);
+      }
+    }
+    acquired_.clear();
+  }
+
+  std::vector<starpu_data_handle_t> acquired_;
+};
+
+class CudaCopyBatch {
+ public:
+  explicit CudaCopyBatch(bool enable)
+  {
+    if (!enable) {
+      return;
+    }
+    const auto status =
+        cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking);
+    if (status == cudaSuccess) {
+      enabled_ = true;
+    } else {
+      stream_ = nullptr;
+    }
+  }
+
+  CudaCopyBatch(const CudaCopyBatch&) = delete;
+  auto operator=(const CudaCopyBatch&) -> CudaCopyBatch& = delete;
+  CudaCopyBatch(CudaCopyBatch&&) = delete;
+  auto operator=(CudaCopyBatch&&) -> CudaCopyBatch& = delete;
+
+  ~CudaCopyBatch()
+  {
+    if (stream_ != nullptr) {
+      cudaStreamDestroy(stream_);
+    }
+  }
+
+  [[nodiscard]] auto active() const -> bool { return enabled_; }
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  [[nodiscard]] auto stream() const -> cudaStream_t { return stream_; }
+  [[nodiscard]] auto pending() const -> bool { return pending_; }
+#endif  // SONAR_IGNORE_END
+  // GCOVR_EXCL_STOP
+
+  auto enqueue(
+      std::byte* dst, const std::byte* src, std::size_t bytes,
+      bool allow_async) -> bool
+  {
+    if (!enabled_ || !allow_async || bytes == 0) {
+      return false;
+    }
+    if (const auto status = cudaMemcpyAsync(
+            static_cast<void*>(dst), static_cast<const void*>(src), bytes,
+            cudaMemcpyHostToHost, stream_);
+        status != cudaSuccess) {
+      enabled_ = false;
+      pending_ = false;
+      return false;
+    }
+    pending_ = true;
+    return true;
+  }
+
+  void finalize()
+  {
+    if (!enabled_ || !pending_) {
+      return;
+    }
+    if (const auto status = cudaStreamSynchronize(stream_);
+        status != cudaSuccess) {
+      enabled_ = false;
+    }
+    pending_ = false;
+  }
+
+ private:
+  cudaStream_t stream_{nullptr};
+  bool enabled_{false};
+  bool pending_{false};
+};
+
+SlotManager::SlotManager(StarPUSetup* starpu, const RuntimeConfig* opts)
+    : starpu_(starpu), opts_(opts)
+{
+}
+
+auto
+SlotManager::acquire_pools() -> StarPUTaskRunner::PoolResources
+{
+  StarPUTaskRunner::PoolResources pools{};
+  if (starpu_ != nullptr && starpu_->has_input_pool()) {
+    pools.input_pool = &starpu_->input_pool();
+    pools.input_slot = pools.input_pool->acquire();
+  }
+  if (starpu_ != nullptr && starpu_->has_output_pool()) {
+    pools.output_pool = &starpu_->output_pool();
+    pools.output_slot = pools.output_pool->acquire();
+  }
+  return pools;
+}
+
+[[nodiscard]] auto
+SlotManager::validate_batch_and_copy_inputs(
+    const std::shared_ptr<InferenceJob>& job, int64_t batch,
+    const StarPUTaskRunner::PoolResources& pools) const -> int64_t
+{
+  if (!pools.has_input()) {
+    return batch;
+  }
+
+  const auto& inputs = job->get_input_tensors();
+  const auto& base_ptrs = pools.input_pool->base_ptrs(pools.input_slot);
+  if (inputs.size() != base_ptrs.size()) {
+    throw InputPoolMismatchException(
+        "Input count mismatch between job and slot");
+  }
+  const auto& buffer_infos =
+      pools.input_pool->host_buffer_infos(pools.input_slot);
+  if (base_ptrs.size() != buffer_infos.size()) {
+    throw InputPoolMismatchException(
+        "Input slot base pointers mismatch buffer info metadata");
+  }
+
+  if (batch < 1 || batch > pools.input_pool->max_batch_size()) {
+    throw InputPoolCapacityException("Batch size exceeds input pool capacity");
+  }
+
+  NvtxRange nvtx_copy_scope("HtoD-staged host copy (pooled inputs)");
+  const auto& handles = pools.input_pool->handles(pools.input_slot);
+
+  // Track copy metrics (duration + total bytes).
+  const auto copy_start = clock::now();
+  std::atomic<std::size_t> total_bytes_copied{0};
+
+  const std::span<const starpu_data_handle_t> handle_span(
+      handles.data(), handles.size());
+  SlotHandleLease handle_lease(handle_span, STARPU_W);
+
+  const bool want_cuda_copy = opts_ != nullptr && opts_->devices.use_cuda &&
+                              torch::cuda::is_available();
+  const bool slot_has_pinned_buffers = std::ranges::any_of(
+      buffer_infos, [](const InputSlotPool::HostBufferInfo& info) {
+        return info.cuda_pinned || info.starpu_pinned;
+      });
+  CudaCopyBatch copy_batch(want_cuda_copy && slot_has_pinned_buffers);
+
+  const auto prepare_input_for_copy = [&](std::size_t input_idx) {
+    const auto& tensor = inputs[input_idx];
+    const auto label = std::format("input[{}]", input_idx);
+    if (auto error =
+            tensor_validation::validate_cpu_contiguous_tensor(tensor, label)) {
+      throw InvalidInputTensorException(*error);
+    }
+    const VectorResizeSpec spec{
+        static_cast<std::size_t>(tensor.numel()), tensor.nbytes()};
+    resize_starpu_vector_handle_impl(handles[input_idx], spec, true);
+    total_bytes_copied.fetch_add(spec.byte_count, std::memory_order_relaxed);
+    return spec;
+  };
+
+  const auto copy_input_data = [&](std::size_t input_idx,
+                                   const torch::Tensor& tensor,
+                                   const VectorResizeSpec& spec) {
+    const auto& buffer_info = buffer_infos.at(input_idx);
+    const bool allow_async =
+        buffer_info.cuda_pinned || buffer_info.starpu_pinned;
+    if (!copy_batch.enqueue(
+            base_ptrs[input_idx],
+            static_cast<const std::byte*>(tensor.data_ptr()), spec.byte_count,
+            allow_async)) {
+      std::memcpy(base_ptrs[input_idx], tensor.data_ptr(), spec.byte_count);
+    }
+  };
+
+  const auto copy_single_input = [&](std::size_t input_idx) {
+    const auto& tensor = inputs[input_idx];
+    const auto spec = prepare_input_for_copy(input_idx);
+    copy_input_data(input_idx, tensor, spec);
+  };
+
+  if (job->has_pending_sub_jobs()) {
+    auto pending_jobs = job->take_pending_sub_jobs();
+    total_bytes_copied.fetch_add(
+        copy_job_inputs_to_slot(
+            job, pending_jobs, handles, base_ptrs, buffer_infos, copy_batch),
+        std::memory_order_relaxed);
+    release_pending_jobs(job, pending_jobs);
+  } else if (copy_batch.active()) {
+    for (std::size_t idx = 0; idx < inputs.size(); ++idx) {
+      copy_single_input(idx);
+    }
+  } else {
+    parallel_for_each_index(inputs.size(), copy_single_input);
+  }
+
+  copy_batch.finalize();
+
+  const auto copy_end = clock::now();
+  const auto bytes = total_bytes_copied.load(std::memory_order_relaxed);
+  if (bytes > 0) {
+    const double duration_ms =
+        std::chrono::duration<double, std::milli>(copy_end - copy_start)
+            .count();
+    const auto worker_type_label =
+        std::string_view(to_string(job->get_executed_on()));
+    observe_io_copy_latency(
+        "h2d", job->get_worker_id(), job->get_device_id(), worker_type_label,
+        duration_ms);
+    increment_transfer_bytes(
+        "h2d", job->get_worker_id(), job->get_device_id(), worker_type_label,
+        bytes);
+  }
+
+  return batch;
+}
+
+auto
+SlotManager::copy_job_inputs_to_slot(
+    const std::shared_ptr<InferenceJob>& job,
+    std::span<const std::shared_ptr<InferenceJob>> pending_jobs,
+    std::span<const starpu_data_handle_t> handles,
+    std::span<std::byte* const> base_ptrs,
+    std::span<const InputSlotPool::HostBufferInfo> buffer_infos,
+    CudaCopyBatch& copy_batch) -> std::size_t
+{
+  if (!job) {
+    return 0;
+  }
+
+  std::size_t total_bytes_copied = 0;
+  const auto& master_inputs = job->get_input_tensors();
+  for (std::size_t input_idx = 0; input_idx < master_inputs.size();
+       ++input_idx) {
+    auto* dst = base_ptrs[input_idx];
+    std::size_t offset = 0;
+    std::size_t total_numel = 0;
+    std::size_t total_bytes = 0;
+    const auto& buffer_info = buffer_infos[input_idx];
+    auto buffer_span = std::span<std::byte>(dst, buffer_info.bytes);
+    const bool allow_async =
+        buffer_info.cuda_pinned || buffer_info.starpu_pinned;
+
+    const auto input_label = std::format("input[{}]", input_idx);
+    const auto validate_tensor = [&input_label](const torch::Tensor& tensor) {
+      if (auto error = tensor_validation::validate_cpu_contiguous_tensor(
+              tensor, input_label)) {
+        throw InvalidInputTensorException(*error);
+      }
+    };
+    auto ensure_capacity = [&](size_t bytes) {
+      if (buffer_span.size() < offset + bytes) {
+        throw InputPoolCapacityException(
+            "Input tensor exceeds allocated slot buffer capacity");
+      }
+    };
+    auto transfer_tensor_data = [&](const torch::Tensor& tensor, size_t bytes) {
+      auto* destination = buffer_span.subspan(offset, bytes).data();
+      if (!copy_batch.enqueue(
+              destination, static_cast<const std::byte*>(tensor.data_ptr()),
+              bytes, allow_async)) {
+        std::memcpy(destination, tensor.data_ptr(), bytes);
+      }
+    };
+    auto copy_tensor = [&](const torch::Tensor& tensor) {
+      validate_tensor(tensor);
+      const size_t bytes = tensor.nbytes();
+      const auto numel = static_cast<size_t>(tensor.numel());
+      ensure_capacity(bytes);
+      transfer_tensor_data(tensor, bytes);
+      offset += bytes;
+      total_bytes += bytes;
+      total_numel += numel;
+      total_bytes_copied += bytes;
+    };
+
+    copy_tensor(master_inputs[input_idx]);
+    for (const auto& pending : pending_jobs) {
+      if (!pending) {
+        continue;
+      }
+      const auto& pending_inputs = pending->get_input_tensors();
+      if (input_idx >= pending_inputs.size()) {
+        throw InconsistentInputTensorCountException(
+            "Inconsistent input tensor count");
+      }
+      copy_tensor(pending_inputs[input_idx]);
+    }
+
+    const VectorResizeSpec spec{total_numel, total_bytes};
+    resize_starpu_vector_handle_impl(handles[input_idx], spec, true);
+  }
+
+  return total_bytes_copied;
+}
+
+void
+SlotManager::release_pending_jobs(
+    const std::shared_ptr<InferenceJob>& job,
+    std::vector<std::shared_ptr<InferenceJob>>& pending_jobs)
+{
+  if (pending_jobs.empty()) {
+    return;
+  }
+
+  std::vector<std::shared_ptr<InferenceJob>> release_jobs;
+  release_jobs.reserve(pending_jobs.size() + 1);
+  release_jobs.push_back(job);
+  for (auto& pending : pending_jobs) {
+    release_jobs.push_back(std::move(pending));
+  }
+  task_runner_internal::release_inputs_from_additional_jobs(release_jobs);
+  pending_jobs.clear();
+}
+
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+SlotManager::validate_batch_and_copy_inputs_for_test(
+    SlotManager* manager, const std::shared_ptr<InferenceJob>& job,
+    int64_t batch, InputSlotPool* input_pool, int input_slot,
+    OutputSlotPool* output_pool, int output_slot) -> int64_t
+{
+  if (manager == nullptr) {
+    return -1;
+  }
+  StarPUTaskRunner::PoolResources pools{};
+  pools.input_pool = input_pool;
+  pools.input_slot = input_slot;
+  pools.output_pool = output_pool;
+  pools.output_slot = output_slot;
+  return manager->validate_batch_and_copy_inputs(job, batch, pools);
+}
+
+namespace task_runner_internal::testing {
+
+void
+resize_starpu_vector_interface(
+    starpu_vector_interface* vector_interface, VectorResizeSpecShim spec,
+    bool is_input_handle)
+{
+  VectorResizeSpec internal{spec.element_count, spec.byte_count};
+  resize_starpu_vector_interface_impl(
+      vector_interface, internal, is_input_handle);
+}
+
+auto
+cuda_copy_batch_create(bool enable) -> void*
+{
+  auto batch = std::make_unique<CudaCopyBatch>(enable);
+  return batch.release();
+}
+
+void
+cuda_copy_batch_destroy(void* batch)
+{
+  std::unique_ptr<CudaCopyBatch> batch_owner(
+      static_cast<CudaCopyBatch*>(batch));
+  static_cast<void>(batch_owner);
+}
+
+auto
+cuda_copy_batch_enqueue(
+    void* batch, std::byte* dst, const std::byte* src, std::size_t bytes,
+    bool allow_async) -> bool
+{
+  if (batch == nullptr) {
+    return false;
+  }
+  return static_cast<CudaCopyBatch*>(batch)->enqueue(
+      dst, src, bytes, allow_async);
+}
+
+void
+cuda_copy_batch_finalize(void* batch)
+{
+  if (batch == nullptr) {
+    return;
+  }
+  static_cast<CudaCopyBatch*>(batch)->finalize();
+}
+
+auto
+cuda_copy_batch_enabled(const void* batch) -> bool
+{
+  return batch != nullptr ? static_cast<const CudaCopyBatch*>(batch)->active()
+                          : false;
+}
+
+auto
+cuda_copy_batch_pending(const void* batch) -> bool
+{
+  return batch != nullptr ? static_cast<const CudaCopyBatch*>(batch)->pending()
+                          : false;
+}
+
+auto
+cuda_copy_batch_stream(const void* batch) -> cudaStream_t
+{
+  return batch != nullptr ? static_cast<const CudaCopyBatch*>(batch)->stream()
+                          : nullptr;
+}
+
+void
+slot_handle_lease_construct(
+    void* storage, std::span<const starpu_data_handle_t> handles,
+    starpu_data_access_mode mode)
+{
+  if (storage == nullptr) {
+    return;
+  }
+  new (storage) SlotHandleLease(handles, mode);
+}
+
+void
+slot_handle_lease_destroy(void* storage)
+{
+  if (storage == nullptr) {
+    return;
+  }
+  std::destroy_at(static_cast<SlotHandleLease*>(storage));
+}
+
+auto
+slot_manager_copy_job_inputs_to_slot(
+    const std::shared_ptr<InferenceJob>& job,
+    std::span<const std::shared_ptr<InferenceJob>> pending_jobs,
+    std::span<const starpu_data_handle_t> handles,
+    std::span<std::byte* const> base_ptrs,
+    std::span<const InputSlotPool::HostBufferInfo> buffer_infos,
+    void* copy_batch) -> std::size_t
+{
+  if (copy_batch == nullptr) {
+    CudaCopyBatch fallback(false);
+    return SlotManager::copy_job_inputs_to_slot(
+        job, pending_jobs, handles, base_ptrs, buffer_infos, fallback);
+  }
+  return SlotManager::copy_job_inputs_to_slot(
+      job, pending_jobs, handles, base_ptrs, buffer_infos,
+      *static_cast<CudaCopyBatch*>(copy_batch));
+}
+
+auto
+slot_manager_validate_batch_and_copy_inputs(
+    SlotManager* slot_manager, const std::shared_ptr<InferenceJob>& job,
+    int64_t batch, InputSlotPool* input_pool, int input_slot,
+    OutputSlotPool* output_pool, int output_slot) -> int64_t
+{
+  return SlotManager::validate_batch_and_copy_inputs_for_test(
+      slot_manager, job, batch, input_pool, input_slot, output_pool,
+      output_slot);
+}
+
+}  // namespace task_runner_internal::testing
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
+
+}  // namespace starpu_server

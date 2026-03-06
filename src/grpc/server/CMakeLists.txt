@@ -21,6 +21,9 @@ target_sources(
           ${UTILS_DIR}/config_loader.cpp
           ${MONITORING_DIR}/congestion_monitor.cpp
           ${STARPU_TASK_WORKER_DIR}/starpu_task_worker.cpp
+          ${STARPU_TASK_WORKER_DIR}/batch_collector_component.cpp
+          ${STARPU_TASK_WORKER_DIR}/result_dispatcher_component.cpp
+          ${STARPU_TASK_WORKER_DIR}/slot_manager_component.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/inference_service.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp
           ${MONITORING_DIR}/metrics.cpp)
