@@ -266,6 +266,63 @@ TEST_F(StarPUTaskRunnerFixture, WaitForNextJobBlocksWhenInflightLimitReached)
 }
 
 TEST_F(
+    StarPUTaskRunnerFixture,
+    WaitForNextJobUnblocksOnQueueShutdownWhenInflightLimitReached)
+{
+  opts_.batching.max_inflight_tasks = 1;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  std::atomic<bool> thread_started{false};
+  std::atomic<bool> thread_completed{false};
+  std::shared_ptr<starpu_server::InferenceJob> retrieved_job;
+
+  std::jthread waiter([&] {
+    thread_started.store(true, std::memory_order_release);
+    retrieved_job = runner_->wait_for_next_job();
+    thread_completed.store(true, std::memory_order_release);
+  });
+
+  while (!thread_started.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  EXPECT_FALSE(thread_completed.load(std::memory_order_acquire));
+
+  queue_.shutdown();
+
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+  bool forced_release = false;
+  while (!thread_completed.load(std::memory_order_acquire) &&
+         std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  if (!thread_completed.load(std::memory_order_acquire)) {
+    forced_release = true;
+    starpu_server::StarPUTaskRunnerTestAdapter::release_inflight_slot(
+        runner_.get());
+  }
+
+  waiter.join();
+  EXPECT_FALSE(forced_release);
+  EXPECT_TRUE(thread_completed.load(std::memory_order_acquire));
+  EXPECT_EQ(retrieved_job, nullptr);
+}
+
+TEST_F(
     StarPUTaskRunnerFixture, WaitForNextJobReturnsImmediatelyWhenSlotsAvailable)
 {
   opts_.batching.max_inflight_tasks = 5;

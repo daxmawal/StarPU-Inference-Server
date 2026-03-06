@@ -68,6 +68,8 @@ class BatchCollector {
       task_runner_internal::Clock::time_point coalesce_deadline)
       -> std::shared_ptr<InferenceJob>;
   void store_pending_job(const std::shared_ptr<InferenceJob>& job);
+  [[nodiscard]] auto is_batching_done() const -> bool;
+  [[nodiscard]] auto should_abort_inflight_wait() const -> bool;
   [[nodiscard]] static auto should_hold_job(
       const std::shared_ptr<InferenceJob>& candidate,
       const std::shared_ptr<InferenceJob>& reference,

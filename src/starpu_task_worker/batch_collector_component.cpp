@@ -39,10 +39,16 @@ BatchCollector::wait_for_next_job() -> std::shared_ptr<InferenceJob>
   if (max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr &&
       inflight_mutex_ != nullptr && inflight_cv_ != nullptr) {
     std::unique_lock lock(*inflight_mutex_);
-    inflight_cv_->wait(lock, [this] {
-      const auto inflight = inflight_tasks_->load(std::memory_order_acquire);
-      return inflight < max_inflight_tasks_;
-    });
+    while (inflight_tasks_->load(std::memory_order_acquire) >=
+           max_inflight_tasks_) {
+      if (should_abort_inflight_wait()) {
+        return nullptr;
+      }
+      // Bounded waiting avoids indefinite blocking when shutdown happens on a
+      // different condition variable.
+      static_cast<void>(
+          inflight_cv_->wait_for(lock, std::chrono::milliseconds(10)));
+    }
   }
 
   if (pending_job_ != nullptr && *pending_job_) {
@@ -145,6 +151,34 @@ BatchCollector::store_pending_job(const std::shared_ptr<InferenceJob>& job)
   if (pending_job_ != nullptr) {
     *pending_job_ = job;
   }
+}
+
+[[nodiscard]] auto
+BatchCollector::is_batching_done() const -> bool
+{
+  if (batching_done_ == nullptr) {
+    return false;
+  }
+  if (prepared_mutex_ == nullptr) {
+    return *batching_done_;
+  }
+  const std::scoped_lock lock(*prepared_mutex_);
+  return *batching_done_;
+}
+
+[[nodiscard]] auto
+BatchCollector::should_abort_inflight_wait() const -> bool
+{
+  if (is_batching_done()) {
+    return true;
+  }
+  if (queue_ == nullptr) {
+    return true;
+  }
+  if (pending_job_ != nullptr && *pending_job_ != nullptr) {
+    return false;
+  }
+  return queue_->is_shutdown() && queue_->size() == 0;
 }
 
 [[nodiscard]] auto
