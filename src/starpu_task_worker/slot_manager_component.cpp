@@ -10,7 +10,6 @@
 #include <cstring>
 #include <execution>
 #include <format>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -23,6 +22,7 @@
 
 #include "exceptions.hpp"
 #include "monitoring/metrics.hpp"
+#include "starpu_vector_resize_utils.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/device_type.hpp"
 #include "utils/nvtx.hpp"
@@ -33,84 +33,6 @@ namespace starpu_server {
 using clock = task_runner_internal::Clock;
 
 namespace {
-
-struct VectorResizeSpec {
-  std::size_t element_count;
-  std::size_t byte_count;
-};
-
-void
-resize_starpu_vector_interface_impl(
-    starpu_vector_interface* vector_interface, VectorResizeSpec spec,
-    bool is_input_handle)
-{
-  if (vector_interface == nullptr) {
-    return;
-  }
-
-  const auto elem_size = vector_interface->elemsize;
-  if (elem_size == 0) {
-    throw StarPUDataAcquireException(
-        "StarPU vector interface reported zero element size");
-  }
-
-  if (spec.byte_count % elem_size != 0) {
-    if (is_input_handle) {
-      throw InvalidInputTensorException(std::format(
-          "Input tensor byte size ({}) is not divisible by element size ({})",
-          spec.byte_count, elem_size));
-    }
-    throw InvalidInferenceJobException(std::format(
-        "Output tensor byte size ({}) is not divisible by element size ({})",
-        spec.byte_count, elem_size));
-  }
-
-  const auto required_numel = spec.byte_count / elem_size;
-  if (required_numel != spec.element_count) {
-    spec.element_count = required_numel;
-  }
-
-  const auto alloc_size = vector_interface->allocsize;
-  if (alloc_size != std::numeric_limits<size_t>::max() && alloc_size != 0 &&
-      spec.byte_count > alloc_size) {
-    if (is_input_handle) {
-      throw InputPoolCapacityException(std::format(
-          "Input tensor requires {} bytes but slot capacity is {} bytes",
-          spec.byte_count, alloc_size));
-    }
-    throw InvalidInferenceJobException(std::format(
-        "Output tensor requires {} bytes but slot capacity is {} bytes",
-        spec.byte_count, alloc_size));
-  }
-
-  vector_interface->nx = spec.element_count;
-}
-
-void
-resize_starpu_vector_handle_impl(
-    starpu_data_handle_t handle, VectorResizeSpec spec, bool is_input_handle)
-{
-  if (handle == nullptr) {
-    throw StarPUDataAcquireException("StarPU vector handle is null");
-  }
-
-  if (starpu_data_get_interface_id(handle) != STARPU_VECTOR_INTERFACE_ID) {
-    throw StarPUDataAcquireException(
-        "Expected StarPU vector interface for handle");
-  }
-
-  const unsigned memory_nodes = starpu_memory_nodes_get_count();
-  for (unsigned node = 0; node < memory_nodes; ++node) {
-    auto* raw_interface = starpu_data_get_interface_on_node(handle, node);
-    if (raw_interface == nullptr) {
-      continue;
-    }
-    auto* vector_interface =
-        static_cast<starpu_vector_interface*>(raw_interface);
-    resize_starpu_vector_interface_impl(
-        vector_interface, spec, is_input_handle);
-  }
-}
 
 template <typename Func>
 void
@@ -353,26 +275,27 @@ SlotManager::validate_batch_and_copy_inputs(
             tensor_validation::validate_cpu_contiguous_tensor(tensor, label)) {
       throw InvalidInputTensorException(*error);
     }
-    const VectorResizeSpec spec{
+    const task_runner_internal::VectorResizeSpec spec{
         static_cast<std::size_t>(tensor.numel()), tensor.nbytes()};
-    resize_starpu_vector_handle_impl(handles[input_idx], spec, true);
+    task_runner_internal::resize_starpu_vector_handle(
+        handles[input_idx], spec, true);
     total_bytes_copied.fetch_add(spec.byte_count, std::memory_order_relaxed);
     return spec;
   };
 
-  const auto copy_input_data = [&](std::size_t input_idx,
-                                   const torch::Tensor& tensor,
-                                   const VectorResizeSpec& spec) {
-    const auto& buffer_info = buffer_infos.at(input_idx);
-    const bool allow_async =
-        buffer_info.cuda_pinned || buffer_info.starpu_pinned;
-    if (!copy_batch.enqueue(
-            base_ptrs[input_idx],
-            static_cast<const std::byte*>(tensor.data_ptr()), spec.byte_count,
-            allow_async)) {
-      std::memcpy(base_ptrs[input_idx], tensor.data_ptr(), spec.byte_count);
-    }
-  };
+  const auto copy_input_data =
+      [&](std::size_t input_idx, const torch::Tensor& tensor,
+          const task_runner_internal::VectorResizeSpec& spec) {
+        const auto& buffer_info = buffer_infos.at(input_idx);
+        const bool allow_async =
+            buffer_info.cuda_pinned || buffer_info.starpu_pinned;
+        if (!copy_batch.enqueue(
+                base_ptrs[input_idx],
+                static_cast<const std::byte*>(tensor.data_ptr()),
+                spec.byte_count, allow_async)) {
+          std::memcpy(base_ptrs[input_idx], tensor.data_ptr(), spec.byte_count);
+        }
+      };
 
   const auto copy_single_input = [&](std::size_t input_idx) {
     const auto& tensor = inputs[input_idx];
@@ -488,8 +411,9 @@ SlotManager::copy_job_inputs_to_slot(
       copy_tensor(pending_inputs[input_idx]);
     }
 
-    const VectorResizeSpec spec{total_numel, total_bytes};
-    resize_starpu_vector_handle_impl(handles[input_idx], spec, true);
+    const task_runner_internal::VectorResizeSpec spec{total_numel, total_bytes};
+    task_runner_internal::resize_starpu_vector_handle(
+        handles[input_idx], spec, true);
   }
 
   return total_bytes_copied;
@@ -540,9 +464,11 @@ resize_starpu_vector_interface(
     starpu_vector_interface* vector_interface, VectorResizeSpecShim spec,
     bool is_input_handle)
 {
-  VectorResizeSpec internal{spec.element_count, spec.byte_count};
-  resize_starpu_vector_interface_impl(
-      vector_interface, internal, is_input_handle);
+  task_runner_internal::resize_starpu_vector_interface(
+      vector_interface,
+      task_runner_internal::VectorResizeSpec{
+          spec.element_count, spec.byte_count},
+      is_input_handle);
 }
 
 auto
