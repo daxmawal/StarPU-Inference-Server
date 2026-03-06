@@ -1,4 +1,10 @@
+#include <arpa/inet.h>
+#include <grpcpp/create_channel.h>
+#include <grpcpp/security/credentials.h>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include <array>
 #include <chrono>
@@ -65,6 +71,47 @@ write_temp_config_file() -> TempFileGuard
 
   EXPECT_TRUE(std::filesystem::exists(guard.path));
   return guard;
+}
+
+auto
+pick_unused_port() -> int
+{
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return -1;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+
+  if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    ::close(fd);
+    return -1;
+  }
+
+  socklen_t addr_len = sizeof(addr);
+  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &addr_len) != 0) {
+    ::close(fd);
+    return -1;
+  }
+
+  const int port = ntohs(addr.sin_port);
+  ::close(fd);
+  return port;
+}
+
+auto
+wait_for_server_start(
+    const std::unique_ptr<grpc::Server>& server,
+    std::chrono::steady_clock::duration timeout) -> bool
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (!server && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  return static_cast<bool>(server);
 }
 
 TEST(ServerMainArgs, HandleProgramArgumentsParsesLongConfigFlag)
@@ -157,6 +204,152 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
   ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
       << "launch_threads did not stop within timeout";
   EXPECT_NO_THROW(done_future.get());
+
+  signal_stop_requested_flag() = 0;
+}
+
+TEST(ServerMainOrchestration, LaunchThreadsStopsOnBrutalSignal)
+{
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = "127.0.0.1:" + std::to_string(port);
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 8;
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs;
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  ASSERT_TRUE(wait_for_server_start(ctx.server, kServerStartTimeout))
+      << "Timed out waiting for gRPC server startup";
+
+  // Brutal stop: signal storm once the server is live.
+  std::jthread signal_storm([]() {
+    for (int i = 0; i < 50; ++i) {
+      signal_handler(SIGINT);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  });
+
+  if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
+    signal_stop_requested_flag() = 1;
+    ctx.stop_requested.store(true, std::memory_order_relaxed);
+    ctx.stop_cv.notify_one();
+  }
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop within timeout on brutal signal";
+  EXPECT_NO_THROW(done_future.get());
+
+  signal_stop_requested_flag() = 0;
+}
+
+TEST(ServerMainOrchestration, LaunchThreadsStopsUnderConcurrentRpcLoad)
+{
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+  constexpr auto kLoadWindow = std::chrono::milliseconds(200);
+  constexpr int kClientThreads = 6;
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = address;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 16;
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs;
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  ASSERT_TRUE(wait_for_server_start(ctx.server, kServerStartTimeout))
+      << "Timed out waiting for gRPC server startup";
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+
+  std::atomic<bool> stop_clients{false};
+  std::atomic<int> started_requests{0};
+  std::vector<std::jthread> clients;
+  clients.reserve(kClientThreads);
+  for (int i = 0; i < kClientThreads; ++i) {
+    clients.emplace_back([&, channel]() {
+      auto stub = inference::GRPCInferenceService::NewStub(channel);
+      while (!stop_clients.load(std::memory_order_acquire)) {
+        grpc::ClientContext rpc_ctx;
+        rpc_ctx.set_deadline(
+            std::chrono::system_clock::now() + std::chrono::milliseconds(200));
+        inference::ServerLiveRequest request;
+        inference::ServerLiveResponse response;
+        started_requests.fetch_add(1, std::memory_order_relaxed);
+        (void)stub->ServerLive(&rpc_ctx, request, &response);
+      }
+    });
+  }
+
+  std::this_thread::sleep_for(kLoadWindow);
+  signal_handler(SIGTERM);
+  stop_clients.store(true, std::memory_order_release);
+  clients.clear();
+
+  if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
+    signal_stop_requested_flag() = 1;
+    ctx.stop_requested.store(true, std::memory_order_relaxed);
+    ctx.stop_cv.notify_one();
+  }
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop within timeout under RPC load";
+  EXPECT_NO_THROW(done_future.get());
+  EXPECT_GT(started_requests.load(std::memory_order_relaxed), 0);
 
   signal_stop_requested_flag() = 0;
 }
