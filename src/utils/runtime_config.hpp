@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <format>
 #include <limits>
 #include <map>
 #include <optional>
@@ -154,6 +155,35 @@ struct RuntimeConfig {
   CongestionSettings congestion{};
   bool valid = true;
 };
+
+inline void
+validate_batching_settings_coherence(
+    const RuntimeConfig::BatchingSettings& batching)
+{
+  if (batching.max_batch_size <= 0) {
+    throw std::invalid_argument("max_batch_size must be > 0");
+  }
+  if (batching.pool_size <= 0) {
+    throw std::invalid_argument("pool_size must be > 0");
+  }
+
+  const auto max_batch = static_cast<std::size_t>(batching.max_batch_size);
+  const auto pool_size = static_cast<std::size_t>(batching.pool_size);
+  if (batching.max_queue_size < max_batch) {
+    throw std::invalid_argument(std::format(
+        "Incoherent batching config: max_queue_size ({}) must be >= "
+        "max_batch_size ({})",
+        batching.max_queue_size, batching.max_batch_size));
+  }
+
+  if (batching.max_inflight_tasks > 0 &&
+      batching.max_inflight_tasks < pool_size) {
+    throw std::invalid_argument(std::format(
+        "Incoherent batching config: max_inflight_tasks ({}) must be 0 "
+        "(unbounded) or >= pool_size ({})",
+        batching.max_inflight_tasks, batching.pool_size));
+  }
+}
 
 inline auto
 compute_model_message_bytes(

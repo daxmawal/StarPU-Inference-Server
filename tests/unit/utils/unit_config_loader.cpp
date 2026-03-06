@@ -2152,6 +2152,112 @@ TEST(ConfigLoader, MaxQueueSizeRejectsNonPositive)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, BatchingCoherenceRejectsQueueLowerThanMaxBatch)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_incoherent_queue_batch_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: incoherent_queue_batch\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 8\n";
+  yaml << "pool_size: 2\n";
+  yaml << "max_queue_size: 4\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_incoherent_queue_batch.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Incoherent batching config: max_queue_size (4) "
+      "must be >= max_batch_size (8)";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, BatchingCoherenceRejectsInflightLowerThanPoolSize)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_incoherent_inflight_pool_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: incoherent_inflight_pool\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 4\n";
+  yaml << "pool_size: 8\n";
+  yaml << "max_queue_size: 32\n";
+  yaml << "max_inflight_tasks: 3\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_incoherent_inflight_pool.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Incoherent batching config: max_inflight_tasks "
+      "(3) must be 0 (unbounded) or >= pool_size (8)";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, BatchingCoherenceAcceptsBoundaryValues)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_coherent_batching_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: coherent_batching\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 8\n";
+  yaml << "pool_size: 4\n";
+  yaml << "max_queue_size: 8\n";
+  yaml << "max_inflight_tasks: 4\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_coherent_batching.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.batching.max_batch_size, 8);
+  EXPECT_EQ(cfg.batching.pool_size, 4);
+  EXPECT_EQ(cfg.batching.max_queue_size, 8U);
+  EXPECT_EQ(cfg.batching.max_inflight_tasks, 4U);
+}
+
 TEST(ConfigLoader, MissingModelSkipsParsingOtherKeys)
 {
   const std::string yaml = R"(

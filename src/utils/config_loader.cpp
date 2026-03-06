@@ -897,6 +897,8 @@ mark_config_invalid(RuntimeConfig& cfg, const std::string& message)
 void
 validate_cross_field_invariants(const RuntimeConfig& cfg)
 {
+  validate_batching_settings_coherence(cfg.batching);
+
   if (!cfg.devices.use_cpu && !cfg.devices.use_cuda) {
     throw std::invalid_argument(
         "At least one execution backend must be enabled: set use_cpu: true "
