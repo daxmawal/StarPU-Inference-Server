@@ -419,17 +419,21 @@ WarmupRunner::run(int request_nb_per_worker)
 
   auto wait_exception =
       wait_for_warmup_completion(sync_state, completion_observer_);
-  auto thread_exception_copy = sync_state.load_exception();
-
-  if (wait_exception || thread_exception_copy) {
+  if (wait_exception || sync_state.load_exception()) {
     queue.shutdown();
-    if (client.joinable()) {
-      client.join();
-    }
-    if (server.joinable()) {
-      server.join();
-    }
-    starpu_task_wait_for_all();
+  }
+
+  if (client.joinable()) {
+    client.join();
+  }
+  if (server.joinable()) {
+    server.join();
+  }
+
+  starpu_task_wait_for_all();
+
+  auto thread_exception_copy = sync_state.load_exception();
+  if (wait_exception || thread_exception_copy) {
     std::rethrow_exception(
         wait_exception ? wait_exception : thread_exception_copy);
   }
