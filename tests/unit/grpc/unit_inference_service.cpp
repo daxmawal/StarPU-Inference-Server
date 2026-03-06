@@ -2546,6 +2546,218 @@ TEST_F(InferenceServiceTest, HandleModelInferAsyncIgnoresRepeatedCompletion)
 
 TEST_F(
     InferenceServiceTest,
+    HandleModelInferAsyncInvokesCallbackExactlyOnceWhenCancelRacesCompletionStorm)
+{
+  auto request = starpu_server::make_valid_request();
+  ref_outputs = {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  const std::vector<torch::Tensor> worker_outputs = {
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+
+  std::mutex cancel_handler_mutex;
+  std::function<void()> cancel_handler;
+  std::promise<void> cancel_ready_promise;
+  auto cancel_ready_future = cancel_ready_promise.get_future();
+  std::atomic<bool> cancel_ready_set{false};
+  std::atomic<bool> force_cancelled{false};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.is_cancelled_override =
+      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+    return force_cancelled.load(std::memory_order_acquire);
+  };
+  hooks.on_cancel_ready =
+      [&cancel_handler_mutex, &cancel_handler, &cancel_ready_promise,
+       &cancel_ready_set](const std::function<void()>& cancel_handler_ready) {
+        {
+          std::scoped_lock lock(cancel_handler_mutex);
+          cancel_handler = cancel_handler_ready;
+        }
+        if (!cancel_ready_set.exchange(true, std::memory_order_acq_rel)) {
+          cancel_ready_promise.set_value();
+        }
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+  std::atomic<int> callback_count{0};
+  std::atomic<bool> double_callback{false};
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&status_promise, &callback_count,
+       &double_callback](grpc::Status status) mutable {
+        const int previous =
+            callback_count.fetch_add(1, std::memory_order_acq_rel);
+        if (previous == 0) {
+          status_promise.set_value(std::move(status));
+          return;
+        }
+        double_callback.store(true, std::memory_order_release);
+      },
+      std::make_shared<int>(1));
+
+  ASSERT_EQ(
+      cancel_ready_future.wait_for(std::chrono::seconds(5)),
+      std::future_status::ready);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  ASSERT_TRUE(queue.wait_for_and_pop(job, std::chrono::milliseconds(500)));
+  ASSERT_NE(job, nullptr);
+
+  std::function<void()> local_cancel_handler;
+  {
+    std::scoped_lock lock(cancel_handler_mutex);
+    local_cancel_handler = cancel_handler;
+  }
+  ASSERT_TRUE(static_cast<bool>(local_cancel_handler));
+
+  auto start_promise = std::make_shared<std::promise<void>>();
+  auto start_signal = start_promise->get_future().share();
+
+  std::jthread cancel_thread(
+      [&force_cancelled, &local_cancel_handler, start_signal]() mutable {
+        start_signal.wait();
+        force_cancelled.store(true, std::memory_order_release);
+        for (int i = 0; i < 64; ++i) {
+          local_cancel_handler();
+        }
+      });
+  std::jthread completion_thread(
+      [&job, &worker_outputs, start_signal]() mutable {
+        start_signal.wait();
+        auto outputs_copy = worker_outputs;
+        job->get_on_complete()(outputs_copy, 0.0);
+      });
+
+  start_promise->set_value();
+
+  ASSERT_EQ(
+      status_future.wait_for(std::chrono::seconds(5)),
+      std::future_status::ready);
+  const auto status = status_future.get();
+
+  auto outputs_copy = worker_outputs;
+  job->get_on_complete()(outputs_copy, 0.0);
+  local_cancel_handler();
+  local_cancel_handler();
+
+  EXPECT_EQ(callback_count.load(std::memory_order_acquire), 1);
+  EXPECT_FALSE(double_callback.load(std::memory_order_acquire));
+  const auto code = status.error_code();
+  EXPECT_TRUE(
+      code == grpc::StatusCode::OK || code == grpc::StatusCode::CANCELLED);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncInvokesCallbackExactlyOnceWhenCancelRacesSubmitFailure)
+{
+  auto request = starpu_server::make_valid_request();
+  queue.shutdown();
+
+  std::mutex cancel_handler_mutex;
+  std::function<void()> cancel_handler;
+  std::promise<void> cancel_ready_promise;
+  auto cancel_ready_future = cancel_ready_promise.get_future();
+  std::atomic<bool> cancel_ready_set{false};
+  std::atomic<bool> force_cancelled{false};
+  std::mutex cancel_threads_mutex;
+  std::vector<std::jthread> cancel_threads;
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.is_cancelled_override =
+      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+    return force_cancelled.load(std::memory_order_acquire);
+  };
+  hooks.on_cancel_ready =
+      [&cancel_handler_mutex, &cancel_handler, &cancel_ready_promise,
+       &cancel_ready_set](const std::function<void()>& cancel_handler_ready) {
+        {
+          std::scoped_lock lock(cancel_handler_mutex);
+          cancel_handler = cancel_handler_ready;
+        }
+        if (!cancel_ready_set.exchange(true, std::memory_order_acq_rel)) {
+          cancel_ready_promise.set_value();
+        }
+      };
+  hooks.on_submit_job_async_done =
+      [&cancel_handler_mutex, &cancel_handler, &force_cancelled,
+       &cancel_threads_mutex, &cancel_threads](
+          const std::shared_ptr<std::atomic<bool>>& /*cancel_flag*/,
+          const grpc::Status& status) {
+        if (status.ok()) {
+          return;
+        }
+        std::function<void()> local_cancel_handler;
+        {
+          std::scoped_lock lock(cancel_handler_mutex);
+          local_cancel_handler = cancel_handler;
+        }
+        if (!local_cancel_handler) {
+          return;
+        }
+        force_cancelled.store(true, std::memory_order_release);
+        std::scoped_lock lock(cancel_threads_mutex);
+        cancel_threads.emplace_back([local_cancel_handler]() mutable {
+          for (int i = 0; i < 64; ++i) {
+            local_cancel_handler();
+          }
+        });
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+  std::atomic<int> callback_count{0};
+  std::atomic<bool> double_callback{false};
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&status_promise, &callback_count,
+       &double_callback](grpc::Status status) mutable {
+        const int previous =
+            callback_count.fetch_add(1, std::memory_order_acq_rel);
+        if (previous == 0) {
+          status_promise.set_value(std::move(status));
+          return;
+        }
+        double_callback.store(true, std::memory_order_release);
+      },
+      std::make_shared<int>(1));
+
+  ASSERT_EQ(
+      cancel_ready_future.wait_for(std::chrono::seconds(5)),
+      std::future_status::ready);
+  ASSERT_EQ(
+      status_future.wait_for(std::chrono::seconds(5)),
+      std::future_status::ready);
+  const auto status = status_future.get();
+
+  {
+    std::scoped_lock lock(cancel_threads_mutex);
+    cancel_threads.clear();
+  }
+
+  std::function<void()> local_cancel_handler;
+  {
+    std::scoped_lock lock(cancel_handler_mutex);
+    local_cancel_handler = cancel_handler;
+  }
+  ASSERT_TRUE(static_cast<bool>(local_cancel_handler));
+  local_cancel_handler();
+  local_cancel_handler();
+
+  EXPECT_EQ(callback_count.load(std::memory_order_acquire), 1);
+  EXPECT_FALSE(double_callback.load(std::memory_order_acquire));
+  const auto code = status.error_code();
+  EXPECT_TRUE(
+      code == grpc::StatusCode::UNAVAILABLE ||
+      code == grpc::StatusCode::CANCELLED);
+}
+
+TEST_F(
+    InferenceServiceTest,
     HandleModelInferAsyncCancelsDuringSubmitUnderConcurrentLoad)
 {
   constexpr int kProducerThreads = 4;

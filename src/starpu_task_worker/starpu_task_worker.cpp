@@ -489,7 +489,7 @@ struct InflightReleaseGuard {
 class ResultDispatcher {
  public:
   ResultDispatcher(
-      const RuntimeConfig* opts, std::atomic<int>* completed_jobs,
+      const RuntimeConfig* opts, std::atomic<std::size_t>* completed_jobs,
       std::condition_variable* all_done_cv)
       : opts_(opts), completed_jobs_(completed_jobs), all_done_cv_(all_done_cv)
   {
@@ -530,7 +530,7 @@ class ResultDispatcher {
       std::vector<torch::Tensor>& results, double latency_ms) const;
 
   const RuntimeConfig* opts_;
-  std::atomic<int>* completed_jobs_;
+  std::atomic<std::size_t>* completed_jobs_;
   std::condition_variable* all_done_cv_;
 };
 
@@ -845,7 +845,8 @@ void
 ResultDispatcher::finalize_job_completion(
     const std::shared_ptr<InferenceJob>& job) const
 {
-  const int logical_jobs = std::max(1, job->logical_job_count());
+  const std::size_t logical_jobs =
+      static_cast<std::size_t>(std::max(1, job->logical_job_count()));
   completed_jobs_->fetch_add(logical_jobs, std::memory_order_release);
   all_done_cv_->notify_all();
 }

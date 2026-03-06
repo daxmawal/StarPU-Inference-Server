@@ -17,12 +17,17 @@ TEST_F(WarmupRunnerTest, WarmupRunnerRunNegativeRequestNbRobustesse)
 }
 
 TEST_F(
-    WarmupRunnerTest, WarmupRunnerRunThrowsOnNegativeCompletedJobs_Robustesse)
+    WarmupRunnerTest, WarmupRunnerRunObserverSeesCompletionCounter_Robustesse)
 {
+  std::atomic<bool> observer_called{false};
   init_runner(
-      true, [](std::atomic<int>& completed_jobs) { completed_jobs.store(-1); });
+      false, [&observer_called](std::atomic<std::size_t>& completed_jobs) {
+        (void)completed_jobs.load(std::memory_order_relaxed);
+        observer_called.store(true, std::memory_order_relaxed);
+      });
 
-  EXPECT_THROW(runner->run(1), starpu_server::InferenceExecutionException);
+  EXPECT_NO_THROW(runner->run(1));
+  EXPECT_TRUE(observer_called.load(std::memory_order_relaxed));
 }
 
 class WarmupRunnerClientWorkerInvalidRequestNb_Robustesse
@@ -97,9 +102,10 @@ TEST(WarmupRunnerEdgesTest, WarmupSkippedWhenPregenInputsZero_Robustesse)
   fixture.opts.batching.warmup_pregen_inputs = 0;
 
   std::atomic<bool> observer_called{false};
-  auto runner = fixture.make_runner([&](std::atomic<int>& /*completed_jobs*/) {
-    observer_called.store(true, std::memory_order_relaxed);
-  });
+  auto runner =
+      fixture.make_runner([&](std::atomic<std::size_t>& /*completed_jobs*/) {
+        observer_called.store(true, std::memory_order_relaxed);
+      });
 
   EXPECT_NO_THROW(runner.run(1));
   EXPECT_FALSE(observer_called.load(std::memory_order_relaxed));

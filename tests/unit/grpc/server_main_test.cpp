@@ -38,6 +38,41 @@ struct TempFileGuard {
   }
 };
 
+struct OccupiedLoopbackPort {
+  int socket_fd = -1;
+  int port = -1;
+
+  OccupiedLoopbackPort() = default;
+  OccupiedLoopbackPort(const OccupiedLoopbackPort&) = delete;
+  auto operator=(const OccupiedLoopbackPort&) -> OccupiedLoopbackPort& = delete;
+  OccupiedLoopbackPort(OccupiedLoopbackPort&& other) noexcept
+      : socket_fd(other.socket_fd), port(other.port)
+  {
+    other.socket_fd = -1;
+    other.port = -1;
+  }
+  auto operator=(OccupiedLoopbackPort&& other) noexcept -> OccupiedLoopbackPort&
+  {
+    if (this == &other) {
+      return *this;
+    }
+    if (socket_fd >= 0) {
+      ::close(socket_fd);
+    }
+    socket_fd = other.socket_fd;
+    port = other.port;
+    other.socket_fd = -1;
+    other.port = -1;
+    return *this;
+  }
+  ~OccupiedLoopbackPort()
+  {
+    if (socket_fd >= 0) {
+      ::close(socket_fd);
+    }
+  }
+};
+
 auto
 fixture_model_path() -> std::filesystem::path
 {
@@ -106,6 +141,44 @@ pick_unused_port() -> int
   const int port = ntohs(addr.sin_port);
   ::close(fd);
   return port;
+}
+
+auto
+occupy_loopback_port() -> OccupiedLoopbackPort
+{
+  OccupiedLoopbackPort occupied;
+  occupied.socket_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (occupied.socket_fd < 0) {
+    return occupied;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  if (::bind(
+          occupied.socket_fd, reinterpret_cast<sockaddr*>(&addr),
+          sizeof(addr)) != 0) {
+    ::close(occupied.socket_fd);
+    occupied.socket_fd = -1;
+    return occupied;
+  }
+  if (::listen(occupied.socket_fd, 1) != 0) {
+    ::close(occupied.socket_fd);
+    occupied.socket_fd = -1;
+    return occupied;
+  }
+
+  socklen_t addr_len = sizeof(addr);
+  if (::getsockname(
+          occupied.socket_fd, reinterpret_cast<sockaddr*>(&addr), &addr_len) !=
+      0) {
+    ::close(occupied.socket_fd);
+    occupied.socket_fd = -1;
+    return occupied;
+  }
+  occupied.port = ntohs(addr.sin_port);
+  return occupied;
 }
 
 auto
@@ -273,6 +346,54 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
   ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
       << "launch_threads did not stop within timeout";
   EXPECT_NO_THROW(done_future.get());
+
+  signal_stop_requested_flag() = 0;
+}
+
+TEST(
+    ServerMainOrchestration,
+    LaunchThreadsStopsWhenGrpcStartupFailsOnOccupiedPort)
+{
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+
+  auto occupied_port = occupy_loopback_port();
+  ASSERT_GE(occupied_port.socket_fd, 0);
+  ASSERT_GT(occupied_port.port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(occupied_port.port);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = address;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 8;
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs;
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop after gRPC startup failure";
+  EXPECT_NO_THROW(done_future.get());
+  EXPECT_TRUE(ctx.stop_requested.load(std::memory_order_relaxed));
+  EXPECT_EQ(signal_stop_requested_flag(), 0);
 
   signal_stop_requested_flag() = 0;
 }

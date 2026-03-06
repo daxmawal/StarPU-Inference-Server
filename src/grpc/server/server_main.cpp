@@ -1,3 +1,4 @@
+#include <fcntl.h>
 #include <hwloc.h>
 #include <starpu.h>
 #include <sys/wait.h>
@@ -94,6 +95,124 @@ signal_stop_requested_flag() -> volatile std::sig_atomic_t&
 {
   static volatile std::sig_atomic_t value = 0;
   return value;
+}
+
+auto
+signal_stop_notify_fd() -> volatile std::sig_atomic_t&
+{
+  static volatile std::sig_atomic_t value = -1;
+  return value;
+}
+
+class SignalNotificationPipe {
+ public:
+  SignalNotificationPipe()
+  {
+    int fds[2]{-1, -1};
+    if (::pipe(fds) != 0) {
+      starpu_server::log_warning(std::format(
+          "Failed to create stop-notification pipe; falling back to polling "
+          "signal flag: {}",
+          std::strerror(errno)));
+      return;
+    }
+    read_fd_ = fds[0];
+    write_fd_ = fds[1];
+    if (!set_non_blocking(write_fd_)) {
+      starpu_server::log_warning(std::format(
+          "Failed to configure stop-notification pipe write end as "
+          "non-blocking; falling back to polling signal flag: {}",
+          std::strerror(errno)));
+      close_fd_noexcept(read_fd_);
+      close_fd_noexcept(write_fd_);
+      read_fd_ = -1;
+      write_fd_ = -1;
+      return;
+    }
+    signal_stop_notify_fd() = static_cast<std::sig_atomic_t>(write_fd_);
+  }
+
+  SignalNotificationPipe(const SignalNotificationPipe&) = delete;
+  auto operator=(const SignalNotificationPipe&) -> SignalNotificationPipe& =
+                                                       delete;
+  SignalNotificationPipe(SignalNotificationPipe&&) = delete;
+  auto operator=(SignalNotificationPipe&&) -> SignalNotificationPipe& = delete;
+
+  ~SignalNotificationPipe() noexcept
+  {
+    shutdown();
+    close_fd_noexcept(read_fd_);
+  }
+
+  void shutdown() noexcept
+  {
+    if (write_fd_ >= 0) {
+      signal_stop_notify_fd() = -1;
+      close_fd_noexcept(write_fd_);
+      write_fd_ = -1;
+    } else {
+      signal_stop_notify_fd() = -1;
+    }
+  }
+
+  [[nodiscard]] auto read_fd() const noexcept -> int { return read_fd_; }
+
+  [[nodiscard]] auto active() const noexcept -> bool
+  {
+    return read_fd_ >= 0 && write_fd_ >= 0;
+  }
+
+ private:
+  static auto set_non_blocking(int fd) -> bool
+  {
+    if (fd < 0) {
+      return false;
+    }
+    const int flags = ::fcntl(fd, F_GETFL);
+    if (flags < 0) {
+      return false;
+    }
+    return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+  }
+
+  static void close_fd_noexcept(int fd) noexcept
+  {
+    if (fd >= 0) {
+      (void)::close(fd);
+    }
+  }
+
+  int read_fd_ = -1;
+  int write_fd_ = -1;
+};
+
+void
+request_server_stop(ServerContext& ctx)
+{
+  ctx.stop_requested.store(true, std::memory_order_relaxed);
+  ctx.stop_cv.notify_one();
+}
+
+void
+wait_for_signal_notification(int read_fd)
+{
+  if (read_fd < 0) {
+    return;
+  }
+  std::array<char, 16> buffer{};
+  while (true) {
+    const ssize_t bytes_read = ::read(read_fd, buffer.data(), buffer.size());
+    if (bytes_read > 0 || bytes_read == 0) {
+      return;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    starpu_server::log_warning(std::format(
+        "Failed while waiting for stop signal notification: {}",
+        std::strerror(errno)));
+    return;
+  }
 }
 
 auto
@@ -472,7 +591,16 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
 void
 signal_handler(int /*signal*/)
 {
+  const int saved_errno = errno;
   signal_stop_requested_flag() = 1;
+  const auto notify_fd = signal_stop_notify_fd();
+  if (notify_fd >= 0) {
+    const std::uint8_t byte = 1;
+    const ssize_t write_result =
+        ::write(static_cast<int>(notify_fd), &byte, sizeof(byte));
+    (void)write_result;
+  }
+  errno = saved_errno;
 }
 
 auto
@@ -628,18 +756,41 @@ launch_threads(
   signal_stop_requested_flag() = 0;
   reset_server_state(server_ctx);
 
+  SignalNotificationPipe signal_pipe;
+  std::signal(SIGINT, signal_handler);
+  std::signal(SIGTERM, signal_handler);
+
   starpu_server::congestion::start(&queue, make_congestion_config(opts));
 
-  std::jthread notifier_thread([&server_ctx]() {
-    constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
-    while (signal_stop_requested_flag() == 0) {
-      std::this_thread::sleep_for(kNotifierSleep);
+  const bool use_blocking_signal_wait = signal_pipe.active();
+  std::jthread notifier_thread([&server_ctx, read_fd = signal_pipe.read_fd(),
+                                use_blocking_signal_wait]() {
+    if (use_blocking_signal_wait) {
+      if (signal_stop_requested_flag() == 0) {
+        wait_for_signal_notification(read_fd);
+      }
+    } else {
+      constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
+      while (signal_stop_requested_flag() == 0) {
+        std::this_thread::sleep_for(kNotifierSleep);
+      }
     }
-    server_ctx.stop_requested.store(true, std::memory_order_relaxed);
-    server_ctx.stop_cv.notify_one();
+    if (signal_stop_requested_flag() != 0) {
+      request_server_stop(server_ctx);
+    }
   });
+  struct SignalPipeShutdownGuard {
+    SignalNotificationPipe* pipe = nullptr;
+    ~SignalPipeShutdownGuard()
+    {
+      if (pipe != nullptr) {
+        pipe->shutdown();
+      }
+    }
+  };
+  const SignalPipeShutdownGuard signal_pipe_shutdown_guard{&signal_pipe};
 
-  std::atomic completed_jobs{0};
+  std::atomic<std::size_t> completed_jobs{0};
   std::condition_variable all_done_cv;
   std::mutex all_done_mutex;
 
@@ -690,7 +841,11 @@ launch_threads(
             [&server_ctx](grpc::Server* server) {
               mark_server_started(server_ctx, server);
             },
-        .on_stopped = [&server_ctx]() { mark_server_stopped(server_ctx); }};
+        .on_stopped =
+            [&server_ctx]() {
+              mark_server_stopped(server_ctx);
+              request_server_stop(server_ctx);
+            }};
     const auto server_options = make_grpc_server_options(opts);
     const auto model_spec = make_grpc_model_spec(
         opts, expected_input_types, expected_input_dims, expected_input_names,
@@ -699,9 +854,6 @@ launch_threads(
         queue, reference_outputs, model_spec, server_options, grpc_server,
         server_hooks);
   });
-
-  std::signal(SIGINT, signal_handler);
-  std::signal(SIGTERM, signal_handler);
 
   {
     std::unique_lock lock(server_ctx.stop_mutex);
@@ -715,11 +867,8 @@ launch_threads(
   if (total_jobs > 0) {
     std::unique_lock lock(all_done_mutex);
     all_done_cv.wait(lock, [&completed_jobs, total_jobs]() {
-      const int completed = completed_jobs.load(std::memory_order_acquire);
-      if (completed < 0) {
-        return true;
-      }
-      return static_cast<std::size_t>(completed) >= total_jobs;
+      const auto completed = completed_jobs.load(std::memory_order_acquire);
+      return completed >= total_jobs;
     });
   }
   starpu_server::congestion::shutdown();

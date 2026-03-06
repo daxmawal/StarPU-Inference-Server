@@ -118,7 +118,7 @@ TEST_P(StarPUTaskRunnerConfigInvalidTest, NullPointerThrows)
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   starpu_server::RuntimeConfig opts;
-  std::atomic<int> completed_jobs{0};
+  std::atomic<std::size_t> completed_jobs{0};
   std::condition_variable completion_cv;
   starpu_server::StarPUSetup starpu(opts);
 

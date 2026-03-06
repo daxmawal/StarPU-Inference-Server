@@ -41,8 +41,8 @@ TEST_F(WarmupRunnerTest, WarmupRunnerRunNoCuda_Integration)
 
 TEST_F(WarmupRunnerTest, WarmupRunsOnCpuWhenCudaDisabled_Integration)
 {
-  std::atomic<int> last_observed{0};
-  init_runner(false, [&](std::atomic<int>& completed_jobs) {
+  std::atomic<std::size_t> last_observed{0};
+  init_runner(false, [&](std::atomic<std::size_t>& completed_jobs) {
     last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
   });
 
@@ -54,7 +54,7 @@ TEST_F(WarmupRunnerTest, WarmupRunsOnCpuWhenCudaDisabled_Integration)
   runner->run(kWarmupShort);
 
   const auto expected_jobs =
-      static_cast<int>(cpu_workers.size() * static_cast<size_t>(kWarmupShort));
+      cpu_workers.size() * static_cast<std::size_t>(kWarmupShort);
   EXPECT_EQ(last_observed.load(), expected_jobs);
 }
 
@@ -101,8 +101,8 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers_Integration)
 
 TEST_F(WarmupRunnerTest, WarmupRunnerRunZeroRequestNb_Integration)
 {
-  std::atomic<int> last_observed{0};
-  init_runner(true, [&](std::atomic<int>& completed_jobs) {
+  std::atomic<std::size_t> last_observed{0};
+  init_runner(true, [&](std::atomic<std::size_t>& completed_jobs) {
     last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
   });
   auto elapsed_ms = measure_ms([&]() { runner->run(0); });

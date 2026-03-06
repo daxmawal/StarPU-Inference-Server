@@ -53,7 +53,7 @@ struct StarPUTaskRunnerConfig {
   std::vector<torch::jit::script::Module>* models_gpu{};
   StarPUSetup* starpu{};
   const RuntimeConfig* opts{};
-  std::atomic<int>* completed_jobs{};
+  std::atomic<std::size_t>* completed_jobs{};
   std::condition_variable* all_done_cv{};
   const InferenceTaskDependencies* dependencies{};
 };
@@ -225,7 +225,7 @@ class StarPUTaskRunner {
   StarPUSetup* starpu_;
   const RuntimeConfig* opts_;
 
-  std::atomic<int>* completed_jobs_;
+  std::atomic<std::size_t>* completed_jobs_;
   std::condition_variable* all_done_cv_;
   InferenceTaskDependencies dependencies_;
   std::shared_ptr<InferenceJob> pending_job_;

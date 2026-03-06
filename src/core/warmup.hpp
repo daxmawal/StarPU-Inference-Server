@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
 
 #include "inference_queue.hpp"
@@ -19,7 +20,7 @@ struct WarmupRunnerTestHelper;
 class WarmupRunner {
  public:
   using CompletionObserver =
-      std::function<void(std::atomic<int>& dummy_completed_jobs)>;
+      std::function<void(std::atomic<std::size_t>& dummy_completed_jobs)>;
 
   WarmupRunner(
       const RuntimeConfig& opts, StarPUSetup& starpu,

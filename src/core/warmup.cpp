@@ -19,7 +19,6 @@
 
 #include "batching_trace_logger.hpp"
 #include "client_utils.hpp"
-#include "exceptions.hpp"
 #include "inference_queue.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
@@ -228,7 +227,7 @@ WarmupRunner::client_worker(
 namespace {
 
 struct WarmupSyncState {
-  std::atomic<int> completed_jobs{0};
+  std::atomic<std::size_t> completed_jobs{0};
   std::mutex completed_mutex;
   std::condition_variable completed_cv;
   std::exception_ptr thread_exception;
@@ -317,12 +316,8 @@ wait_for_warmup_completion(
       if (state.load_exception()) {
         return true;
       }
-      int count = state.completed_jobs.load();
-      if (count < 0) {
-        throw InferenceExecutionException(
-            "dummy_completed_jobs became negative, which should not happen.");
-      }
-      return static_cast<std::size_t>(count) >= total_jobs;
+      const auto count = state.completed_jobs.load();
+      return count >= total_jobs;
     });
   }
   catch (...) {
