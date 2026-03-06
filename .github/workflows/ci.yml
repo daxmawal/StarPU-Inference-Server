@@ -254,9 +254,11 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1:detect_container_overflow=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           SANITIZER_GTEST_FILTER: "*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*:*Cuda*:*CUDA*:*Gpu*:*GPU*:*PopulateResponseHandlesCudaOutputs:*CleanupSlotBuffersUnpinsStarpuMemory"
+          SANITIZER_CRITICAL_PATHS_FILTER: "WarmupRunnerTest.WarmupRunnerRunNoCuda_Integration:WarmupRunnerTest.WarmupRunsOnCpuWhenCudaDisabled_Integration:WarmupRunnerTest.WarmupRunWithMockedWorkers_Integration:WarmupRunnerTest.WarmupRunnerRunZeroRequestNb_Integration:WarmupRunnerEdgesTest.RunNoCudaNoThreads_Integration"
         run: |
           chmod +x build-sanitizers/all_tests || true
           build-sanitizers/all_tests --gtest_filter="$SANITIZER_GTEST_FILTER"
+          build-sanitizers/all_tests --gtest_filter="$SANITIZER_CRITICAL_PATHS_FILTER"
         shell: bash
 
   tsan:
@@ -291,10 +293,12 @@ jobs:
       - name: Run targeted TSAN tests (CPU-only)
         env:
           TSAN_OPTIONS: halt_on_error=1:abort_on_error=1
-          TSAN_GTEST_FILTER: "*ServerMainOrchestration*:*HandleModelInferAsync*:*AsyncServerContext*:*UnaryCallDataGuard*:*InferenceQueue*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*:*Cuda*:*CUDA*:*Gpu*:*GPU*"
+          TSAN_GTEST_FILTER: "*ServerMainOrchestration*:*HandleModelInferAsync*:*AsyncServerContext*:*UnaryCallDataGuard*:*InferenceQueue*:*WarmupRunner*:*PrepareJobCompletionCallback*:*FinalizeJobCompletion*:*RecordJobMetricsUpdatesPerfObserver*:*WaitForNextJob*:*BatchingLoop*:*ReleaseInflightSlot*:*ReserveAndReleaseInflightSlotWorkTogetherWithLimit*:*RunDrainsQueueWhenStarpuSubmitAlwaysFails*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*:*Cuda*:*CUDA*:*Gpu*:*GPU*"
+          TSAN_CRITICAL_PATHS_FILTER: "WarmupRunnerTest.WarmupRunnerRunNoCuda_Integration:WarmupRunnerTest.WarmupRunsOnCpuWhenCudaDisabled_Integration:WarmupRunnerTest.WarmupRunWithMockedWorkers_Integration:WarmupRunnerTest.WarmupRunnerRunZeroRequestNb_Integration:WarmupRunnerEdgesTest.RunNoCudaNoThreads_Integration"
         run: |
           chmod +x build-tsan/all_tests || true
           build-tsan/all_tests --gtest_filter="$TSAN_GTEST_FILTER"
+          build-tsan/all_tests --gtest_filter="$TSAN_CRITICAL_PATHS_FILTER"
         shell: bash
 
   clang-analyzer:
