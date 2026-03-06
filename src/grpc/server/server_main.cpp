@@ -44,6 +44,47 @@ struct ServerContext {
   std::atomic<bool> stop_requested{false};
 };
 
+class RuntimeCleanupGuard {
+ public:
+  RuntimeCleanupGuard() = default;
+  RuntimeCleanupGuard(const RuntimeCleanupGuard&) = delete;
+  auto operator=(const RuntimeCleanupGuard&) -> RuntimeCleanupGuard& = delete;
+  RuntimeCleanupGuard(RuntimeCleanupGuard&&) = delete;
+  auto operator=(RuntimeCleanupGuard&&) -> RuntimeCleanupGuard& = delete;
+  ~RuntimeCleanupGuard() noexcept
+  {
+    if (!active_) {
+      return;
+    }
+    reset_trace_logger_noexcept();
+    shutdown_metrics_noexcept();
+  }
+
+  void Dismiss() noexcept { active_ = false; }
+
+ private:
+  static void reset_trace_logger_noexcept() noexcept
+  {
+    try {
+      auto& tracer = starpu_server::BatchingTraceLogger::instance();
+      tracer.configure(false, "");
+    }
+    catch (...) {
+    }
+  }
+
+  static void shutdown_metrics_noexcept() noexcept
+  {
+    try {
+      starpu_server::shutdown_metrics();
+    }
+    catch (...) {
+    }
+  }
+
+  bool active_ = true;
+};
+
 auto
 signal_stop_requested_flag() -> volatile std::sig_atomic_t&
 {
@@ -733,6 +774,7 @@ main(int argc, char* argv[]) -> int
   try {
     starpu_server::RuntimeConfig opts =
         handle_program_arguments({argv, static_cast<size_t>(argc)});
+    RuntimeCleanupGuard cleanup_guard;
     starpu_server::BatchingTraceLogger::instance().configure_from_runtime(opts);
     const bool metrics_ok = starpu_server::init_metrics(opts.metrics_port);
     if (!metrics_ok) {
@@ -750,6 +792,7 @@ main(int argc, char* argv[]) -> int
     tracer.configure(false, "");
     run_trace_plots_if_enabled(opts);
     starpu_server::shutdown_metrics();
+    cleanup_guard.Dismiss();
   }
   catch (const starpu_server::InferenceEngineException& e) {
     std::cerr << "\o{33}[1;31m[Inference Error] " << e.what() << "\o{33}[0m\n";
