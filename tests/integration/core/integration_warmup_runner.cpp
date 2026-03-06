@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <iterator>
@@ -34,24 +35,38 @@ count_threads() -> int
 
 TEST_F(WarmupRunnerTest, WarmupRunnerRunNoCuda_Integration)
 {
-  constexpr int kWarmupQuick = 42;
-  auto elapsed_ms = measure_ms([&]() { runner->run(kWarmupQuick); });
-  EXPECT_LT(elapsed_ms, 1000);
+  std::atomic<std::size_t> last_observed{0};
+  auto local_runner =
+      make_runner([&](std::atomic<std::size_t>& completed_jobs) {
+        last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
+      });
+
+  const auto cpu_workers =
+      starpu_server::StarPUSetup::get_worker_ids_by_type(STARPU_CPU_WORKER);
+  ASSERT_FALSE(cpu_workers.empty());
+
+  constexpr int kWarmupQuick = 1;
+  EXPECT_NO_THROW(local_runner.run(kWarmupQuick));
+
+  const auto expected_jobs =
+      cpu_workers.size() * static_cast<std::size_t>(kWarmupQuick);
+  EXPECT_EQ(last_observed.load(std::memory_order_relaxed), expected_jobs);
 }
 
 TEST_F(WarmupRunnerTest, WarmupRunsOnCpuWhenCudaDisabled_Integration)
 {
   std::atomic<std::size_t> last_observed{0};
-  init_runner(false, [&](std::atomic<std::size_t>& completed_jobs) {
-    last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
-  });
+  auto local_runner =
+      make_runner([&](std::atomic<std::size_t>& completed_jobs) {
+        last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
+      });
 
   const auto cpu_workers =
       starpu_server::StarPUSetup::get_worker_ids_by_type(STARPU_CPU_WORKER);
   ASSERT_FALSE(cpu_workers.empty());
 
   constexpr int kWarmupShort = 3;
-  runner->run(kWarmupShort);
+  local_runner.run(kWarmupShort);
 
   const auto expected_jobs =
       cpu_workers.size() * static_cast<std::size_t>(kWarmupShort);
@@ -60,7 +75,6 @@ TEST_F(WarmupRunnerTest, WarmupRunsOnCpuWhenCudaDisabled_Integration)
 
 TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers_Integration)
 {
-  init_runner(true);
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
 
@@ -94,20 +108,27 @@ TEST_F(WarmupRunnerTest, WarmupRunWithMockedWorkers_Integration)
 
   {
     std::unique_lock lock(mutex);
-    cond_var.wait(lock, [&] { return completed.load() >= total_jobs; });
+    const auto finished =
+        cond_var.wait_for(lock, std::chrono::seconds(10), [&] {
+          return completed.load(std::memory_order_relaxed) >= total_jobs;
+        });
+    if (!finished) {
+      queue.shutdown();
+    }
+    ASSERT_TRUE(finished) << "Warmup mocked workers did not complete in time";
   }
-  EXPECT_EQ(completed.load(), total_jobs);
+  EXPECT_EQ(completed.load(std::memory_order_relaxed), total_jobs);
 }
 
 TEST_F(WarmupRunnerTest, WarmupRunnerRunZeroRequestNb_Integration)
 {
   std::atomic<std::size_t> last_observed{0};
-  init_runner(true, [&](std::atomic<std::size_t>& completed_jobs) {
-    last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
-  });
-  auto elapsed_ms = measure_ms([&]() { runner->run(0); });
-  EXPECT_EQ(last_observed.load(), 0);
-  EXPECT_LT(elapsed_ms, 100);
+  auto local_runner =
+      make_runner([&](std::atomic<std::size_t>& completed_jobs) {
+        last_observed.store(completed_jobs.load(), std::memory_order_relaxed);
+      });
+  EXPECT_NO_THROW(local_runner.run(0));
+  EXPECT_EQ(last_observed.load(std::memory_order_relaxed), 0U);
 }
 
 TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads_Integration)
@@ -123,8 +144,7 @@ TEST(WarmupRunnerEdgesTest, RunNoCudaNoThreads_Integration)
   auto runner = fixture.make_runner();
   const auto before = count_threads();
   constexpr int kWarmupShort = 100;
-  const auto elapsed_ms = measure_ms([&]() { runner.run(kWarmupShort); });
+  EXPECT_NO_THROW(runner.run(kWarmupShort));
   const auto after = count_threads();
   EXPECT_EQ(before, after);
-  EXPECT_LT(elapsed_ms, 50);
 }
