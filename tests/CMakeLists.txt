@@ -87,6 +87,7 @@ if(ENABLE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 starpu_apply_sanitizers(all_tests)
+starpu_apply_tsan(all_tests)
 
 set(STARPU_TEST_FILTER_UNIT
     "*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*")

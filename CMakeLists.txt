@@ -4,9 +4,17 @@ project(starpu_server LANGUAGES CXX)
 # === Options ===
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(ENABLE_TSAN "Enable thread sanitizer" OFF)
 option(BUILD_TESTS "Build unit tests" OFF)
 option(USE_BUNDLED_DEPS "Build bundled dependencies from external/ submodules"
        ON)
+
+if(ENABLE_SANITIZERS AND ENABLE_TSAN)
+  message(
+    FATAL_ERROR
+      "ENABLE_SANITIZERS (ASan/UBSan) and ENABLE_TSAN cannot be enabled together."
+  )
+endif()
 
 function(starpu_apply_sanitizers target_name)
   if(NOT ENABLE_SANITIZERS)
@@ -24,6 +32,22 @@ function(starpu_apply_sanitizers target_name)
                            -fno-sanitize-recover=all)
   target_link_options(${target_name} PRIVATE -fsanitize=address,undefined
                       -fno-sanitize-recover=all)
+endfunction()
+
+function(starpu_apply_tsan target_name)
+  if(NOT ENABLE_TSAN)
+    return()
+  endif()
+
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(
+      FATAL_ERROR "ENABLE_TSAN requires Clang or GCC for target: ${target_name}"
+    )
+  endif()
+
+  target_compile_options(${target_name} PRIVATE -fsanitize=thread
+                                                -fno-omit-frame-pointer)
+  target_link_options(${target_name} PRIVATE -fsanitize=thread)
 endfunction()
 
 # === C++ Settings ===

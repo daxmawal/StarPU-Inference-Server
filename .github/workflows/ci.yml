@@ -259,6 +259,44 @@ jobs:
           build-sanitizers/all_tests --gtest_filter="$SANITIZER_GTEST_FILTER"
         shell: bash
 
+  tsan:
+    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    runs-on: self-hosted
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Configure and Build (TSan targeted)
+        run: |
+          cmake -S . -B build-tsan \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_SANITIZERS=OFF \
+            -DENABLE_TSAN=ON
+          cmake --build build-tsan -- -j$(nproc)
+        shell: bash
+
+      - name: Run targeted TSAN tests (CPU-only)
+        env:
+          TSAN_OPTIONS: halt_on_error=1:abort_on_error=1
+          TSAN_GTEST_FILTER: "*ServerMainOrchestration*:*HandleModelInferAsync*:*AsyncServerContext*:*UnaryCallDataGuard*:*InferenceQueue*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*:*Cuda*:*CUDA*:*Gpu*:*GPU*"
+        run: |
+          chmod +x build-tsan/all_tests || true
+          build-tsan/all_tests --gtest_filter="$TSAN_GTEST_FILTER"
+        shell: bash
+
   clang-analyzer:
     needs: build
     runs-on: self-hosted
@@ -295,7 +333,8 @@ jobs:
     needs: build
     runs-on: self-hosted
     env:
-      COVERAGE_MIN_LINE: "70"
+      # Incremental tightening to reduce CI churn while improving quality.
+      COVERAGE_MIN_LINE: "72"
 
     steps:
       - name: Checkout code

@@ -73,3 +73,4 @@ if(HAVE_NVTX)
 endif()
 
 starpu_apply_sanitizers(starpu_server)
+starpu_apply_tsan(starpu_server)

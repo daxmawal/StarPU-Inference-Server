@@ -27,3 +27,4 @@ else()
 endif()
 
 starpu_apply_sanitizers(client_example)
+starpu_apply_tsan(client_example)
