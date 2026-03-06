@@ -357,6 +357,104 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
   EXPECT_EQ(server, nullptr);
 }
 
+TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForRepositoryIndex)
+{
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+
+  const auto options =
+      starpu_server::GrpcServerOptions{address,
+                                       kMaxMessageSizeMiB * kMiB,
+                                       starpu_server::VerbosityLevel::Info,
+                                       "",
+                                       "",
+                                       ""};
+
+  std::jthread thread([&, options]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+  });
+
+  while (!server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+  auto stub = inference::GRPCInferenceService::NewStub(channel);
+
+  grpc::ClientContext context;
+  inference::RepositoryIndexRequest request;
+  inference::RepositoryIndexResponse response;
+  const auto status = stub->RepositoryIndex(&context, request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNIMPLEMENTED);
+  EXPECT_EQ(status.error_message(), "RPC RepositoryIndex is not implemented");
+
+  starpu_server::StopServer(server.get());
+  thread.join();
+  EXPECT_EQ(server, nullptr);
+}
+
+TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForModelStreamInfer)
+{
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+
+  const auto options =
+      starpu_server::GrpcServerOptions{address,
+                                       kMaxMessageSizeMiB * kMiB,
+                                       starpu_server::VerbosityLevel::Info,
+                                       "",
+                                       "",
+                                       ""};
+
+  std::jthread thread([&, options]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+  });
+
+  while (!server) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+  auto stub = inference::GRPCInferenceService::NewStub(channel);
+
+  grpc::ClientContext context;
+  auto stream = stub->ModelStreamInfer(&context);
+  ASSERT_NE(stream, nullptr);
+  const auto status = stream->Finish();
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNIMPLEMENTED);
+  EXPECT_EQ(status.error_message(), "RPC ModelStreamInfer is not implemented");
+
+  starpu_server::StopServer(server.get());
+  thread.join();
+  EXPECT_EQ(server, nullptr);
+}
+
 TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
 {
   const int port = pick_unused_port();

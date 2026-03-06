@@ -91,6 +91,73 @@ class InferenceServiceImpl final
       const inference::ModelStatisticsRequest* request,
       inference::ModelStatisticsResponse* reply) -> grpc::Status override;
 
+  auto ModelStreamInfer(
+      grpc::ServerContext* context,
+      grpc::ServerReaderWriter<
+          inference::ModelStreamInferResponse, inference::ModelInferRequest>*
+          stream) -> grpc::Status override;
+
+  auto RepositoryIndex(
+      grpc::ServerContext* context,
+      const inference::RepositoryIndexRequest* request,
+      inference::RepositoryIndexResponse* reply) -> grpc::Status override;
+
+  auto RepositoryModelLoad(
+      grpc::ServerContext* context,
+      const inference::RepositoryModelLoadRequest* request,
+      inference::RepositoryModelLoadResponse* reply) -> grpc::Status override;
+
+  auto RepositoryModelUnload(
+      grpc::ServerContext* context,
+      const inference::RepositoryModelUnloadRequest* request,
+      inference::RepositoryModelUnloadResponse* reply) -> grpc::Status override;
+
+  auto SystemSharedMemoryStatus(
+      grpc::ServerContext* context,
+      const inference::SystemSharedMemoryStatusRequest* request,
+      inference::SystemSharedMemoryStatusResponse* reply)
+      -> grpc::Status override;
+
+  auto SystemSharedMemoryRegister(
+      grpc::ServerContext* context,
+      const inference::SystemSharedMemoryRegisterRequest* request,
+      inference::SystemSharedMemoryRegisterResponse* reply)
+      -> grpc::Status override;
+
+  auto SystemSharedMemoryUnregister(
+      grpc::ServerContext* context,
+      const inference::SystemSharedMemoryUnregisterRequest* request,
+      inference::SystemSharedMemoryUnregisterResponse* reply)
+      -> grpc::Status override;
+
+  auto CudaSharedMemoryStatus(
+      grpc::ServerContext* context,
+      const inference::CudaSharedMemoryStatusRequest* request,
+      inference::CudaSharedMemoryStatusResponse* reply)
+      -> grpc::Status override;
+
+  auto CudaSharedMemoryRegister(
+      grpc::ServerContext* context,
+      const inference::CudaSharedMemoryRegisterRequest* request,
+      inference::CudaSharedMemoryRegisterResponse* reply)
+      -> grpc::Status override;
+
+  auto CudaSharedMemoryUnregister(
+      grpc::ServerContext* context,
+      const inference::CudaSharedMemoryUnregisterRequest* request,
+      inference::CudaSharedMemoryUnregisterResponse* reply)
+      -> grpc::Status override;
+
+  auto TraceSetting(
+      grpc::ServerContext* context,
+      const inference::TraceSettingRequest* request,
+      inference::TraceSettingResponse* reply) -> grpc::Status override;
+
+  auto LogSettings(
+      grpc::ServerContext* context,
+      const inference::LogSettingsRequest* request,
+      inference::LogSettingsResponse* reply) -> grpc::Status override;
+
 // Sync wrapper used by in-process tests; async server uses
 // HandleModelInferAsync.
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START

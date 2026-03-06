@@ -63,6 +63,14 @@ status_reason(const Status& status) -> std::string
 }
 
 auto
+unimplemented_rpc_status(std::string_view rpc_name) -> Status
+{
+  return {
+      grpc::StatusCode::UNIMPLEMENTED,
+      std::format("RPC {} is not implemented", rpc_name)};
+}
+
+auto
 normalize_names(
     std::vector<std::string> names, std::size_t expected_size,
     NormalizeNamesOptions options) -> std::vector<std::string>
@@ -1003,6 +1011,115 @@ InferenceServiceImpl::ModelStatistics(
   }
 
   return Status::OK;
+}
+
+auto
+InferenceServiceImpl::ModelStreamInfer(
+    ServerContext* /*context*/,
+    grpc::ServerReaderWriter<
+        inference::ModelStreamInferResponse,
+        inference::ModelInferRequest>* /*stream*/) -> Status
+{
+  return unimplemented_rpc_status("ModelStreamInfer");
+}
+
+auto
+InferenceServiceImpl::RepositoryIndex(
+    ServerContext* /*context*/,
+    const inference::RepositoryIndexRequest* /*request*/,
+    inference::RepositoryIndexResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("RepositoryIndex");
+}
+
+auto
+InferenceServiceImpl::RepositoryModelLoad(
+    ServerContext* /*context*/,
+    const inference::RepositoryModelLoadRequest* /*request*/,
+    inference::RepositoryModelLoadResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("RepositoryModelLoad");
+}
+
+auto
+InferenceServiceImpl::RepositoryModelUnload(
+    ServerContext* /*context*/,
+    const inference::RepositoryModelUnloadRequest* /*request*/,
+    inference::RepositoryModelUnloadResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("RepositoryModelUnload");
+}
+
+auto
+InferenceServiceImpl::SystemSharedMemoryStatus(
+    ServerContext* /*context*/,
+    const inference::SystemSharedMemoryStatusRequest* /*request*/,
+    inference::SystemSharedMemoryStatusResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("SystemSharedMemoryStatus");
+}
+
+auto
+InferenceServiceImpl::SystemSharedMemoryRegister(
+    ServerContext* /*context*/,
+    const inference::SystemSharedMemoryRegisterRequest* /*request*/,
+    inference::SystemSharedMemoryRegisterResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("SystemSharedMemoryRegister");
+}
+
+auto
+InferenceServiceImpl::SystemSharedMemoryUnregister(
+    ServerContext* /*context*/,
+    const inference::SystemSharedMemoryUnregisterRequest* /*request*/,
+    inference::SystemSharedMemoryUnregisterResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("SystemSharedMemoryUnregister");
+}
+
+auto
+InferenceServiceImpl::CudaSharedMemoryStatus(
+    ServerContext* /*context*/,
+    const inference::CudaSharedMemoryStatusRequest* /*request*/,
+    inference::CudaSharedMemoryStatusResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("CudaSharedMemoryStatus");
+}
+
+auto
+InferenceServiceImpl::CudaSharedMemoryRegister(
+    ServerContext* /*context*/,
+    const inference::CudaSharedMemoryRegisterRequest* /*request*/,
+    inference::CudaSharedMemoryRegisterResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("CudaSharedMemoryRegister");
+}
+
+auto
+InferenceServiceImpl::CudaSharedMemoryUnregister(
+    ServerContext* /*context*/,
+    const inference::CudaSharedMemoryUnregisterRequest* /*request*/,
+    inference::CudaSharedMemoryUnregisterResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("CudaSharedMemoryUnregister");
+}
+
+auto
+InferenceServiceImpl::TraceSetting(
+    ServerContext* /*context*/,
+    const inference::TraceSettingRequest* /*request*/,
+    inference::TraceSettingResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("TraceSetting");
+}
+
+auto
+InferenceServiceImpl::LogSettings(
+    ServerContext* /*context*/,
+    const inference::LogSettingsRequest* /*request*/,
+    inference::LogSettingsResponse* /*reply*/) -> Status
+{
+  return unimplemented_rpc_status("LogSettings");
 }
 
 auto
@@ -2199,6 +2316,68 @@ class ModelInferCallData final
   SharedPtr self_ref_;
 };
 
+class ModelStreamInferCallData final
+    : public AsyncCallDataBase,
+      public std::enable_shared_from_this<ModelStreamInferCallData> {
+ public:
+  using Self = ModelStreamInferCallData;
+  using SharedPtr = std::shared_ptr<Self>;
+
+  ModelStreamInferCallData(
+      inference::GRPCInferenceService::AsyncService* service,
+      grpc::ServerCompletionQueue* completion_queue)
+      : service_(service), cq_(completion_queue), stream_(&ctx_)
+  {
+  }
+
+  static void Start(
+      inference::GRPCInferenceService::AsyncService* service,
+      grpc::ServerCompletionQueue* completion_queue)
+  {
+    auto call = std::make_shared<Self>(service, completion_queue);
+    call->Proceed(true);
+  }
+
+  void Proceed(bool is_ok) override
+  {
+    using enum CallStatus;
+    switch (status_) {
+      case Create: {
+        status_ = Process;
+        self_ref_ = this->shared_from_this();
+        service_->RequestModelStreamInfer(&ctx_, &stream_, cq_, cq_, this);
+        break;
+      }
+      case Process: {
+        if (!is_ok) {
+          status_ = Finish;
+          self_ref_.reset();
+          return;
+        }
+        Start(service_, cq_);
+        status_ = Finish;
+        stream_.Finish(unimplemented_rpc_status("ModelStreamInfer"), this);
+        break;
+      }
+      case Finish:
+        self_ref_.reset();
+        break;
+    }
+  }
+
+ private:
+  enum class CallStatus : std::uint8_t { Create, Process, Finish };
+
+  inference::GRPCInferenceService::AsyncService* service_;
+  grpc::ServerCompletionQueue* cq_;
+  grpc::ServerContext ctx_;
+  grpc::ServerAsyncReaderWriter<
+      inference::ModelStreamInferResponse, inference::ModelInferRequest>
+      stream_;
+  CallStatus status_ = CallStatus::Create;
+  SharedPtr self_ref_;
+};
+
 auto
 compute_thread_count() -> std::size_t
 {
@@ -2330,6 +2509,89 @@ AsyncServerContext::start()
           &inference::GRPCInferenceService::AsyncService::
               RequestModelStatistics,
           std::mem_fn(&InferenceServiceImpl::ModelStatistics));
+  UnaryCallData<
+      inference::RepositoryIndexRequest, inference::RepositoryIndexResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestRepositoryIndex,
+          std::mem_fn(&InferenceServiceImpl::RepositoryIndex));
+  UnaryCallData<
+      inference::RepositoryModelLoadRequest,
+      inference::RepositoryModelLoadResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestRepositoryModelLoad,
+          std::mem_fn(&InferenceServiceImpl::RepositoryModelLoad));
+  UnaryCallData<
+      inference::RepositoryModelUnloadRequest,
+      inference::RepositoryModelUnloadResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestRepositoryModelUnload,
+          std::mem_fn(&InferenceServiceImpl::RepositoryModelUnload));
+  UnaryCallData<
+      inference::SystemSharedMemoryStatusRequest,
+      inference::SystemSharedMemoryStatusResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestSystemSharedMemoryStatus,
+          std::mem_fn(&InferenceServiceImpl::SystemSharedMemoryStatus));
+  UnaryCallData<
+      inference::SystemSharedMemoryRegisterRequest,
+      inference::SystemSharedMemoryRegisterResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestSystemSharedMemoryRegister,
+          std::mem_fn(&InferenceServiceImpl::SystemSharedMemoryRegister));
+  UnaryCallData<
+      inference::SystemSharedMemoryUnregisterRequest,
+      inference::SystemSharedMemoryUnregisterResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestSystemSharedMemoryUnregister,
+          std::mem_fn(&InferenceServiceImpl::SystemSharedMemoryUnregister));
+  UnaryCallData<
+      inference::CudaSharedMemoryStatusRequest,
+      inference::CudaSharedMemoryStatusResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestCudaSharedMemoryStatus,
+          std::mem_fn(&InferenceServiceImpl::CudaSharedMemoryStatus));
+  UnaryCallData<
+      inference::CudaSharedMemoryRegisterRequest,
+      inference::CudaSharedMemoryRegisterResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestCudaSharedMemoryRegister,
+          std::mem_fn(&InferenceServiceImpl::CudaSharedMemoryRegister));
+  UnaryCallData<
+      inference::CudaSharedMemoryUnregisterRequest,
+      inference::CudaSharedMemoryUnregisterResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestCudaSharedMemoryUnregister,
+          std::mem_fn(&InferenceServiceImpl::CudaSharedMemoryUnregister));
+  UnaryCallData<
+      inference::TraceSettingRequest, inference::TraceSettingResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestTraceSetting,
+          std::mem_fn(&InferenceServiceImpl::TraceSetting));
+  UnaryCallData<inference::LogSettingsRequest, inference::LogSettingsResponse>::
+      Start(
+          async_service_, completion_queue_.get(), impl_,
+          &inference::GRPCInferenceService::AsyncService::RequestLogSettings,
+          std::mem_fn(&InferenceServiceImpl::LogSettings));
+  ModelStreamInferCallData::Start(async_service_, completion_queue_.get());
   ModelInferCallData::Start(async_service_, completion_queue_.get(), impl_);
 }
 

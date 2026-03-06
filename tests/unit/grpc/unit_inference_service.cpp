@@ -257,6 +257,108 @@ TEST(InferenceServiceImpl, ServerMetadataUsesHardcodedFallbackName)
   EXPECT_TRUE(reply.version().empty());
 }
 
+TEST(InferenceServiceImpl, UnsupportedUnaryRpcsReturnUnimplemented)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+  grpc::ServerContext ctx;
+
+  using RpcInvoke = std::function<grpc::Status()>;
+  const std::array<std::pair<const char*, RpcInvoke>, 11> test_cases = {{
+      {"RepositoryIndex",
+       [&service, &ctx]() {
+         inference::RepositoryIndexRequest req;
+         inference::RepositoryIndexResponse reply;
+         return service.RepositoryIndex(&ctx, &req, &reply);
+       }},
+      {"RepositoryModelLoad",
+       [&service, &ctx]() {
+         inference::RepositoryModelLoadRequest req;
+         inference::RepositoryModelLoadResponse reply;
+         return service.RepositoryModelLoad(&ctx, &req, &reply);
+       }},
+      {"RepositoryModelUnload",
+       [&service, &ctx]() {
+         inference::RepositoryModelUnloadRequest req;
+         inference::RepositoryModelUnloadResponse reply;
+         return service.RepositoryModelUnload(&ctx, &req, &reply);
+       }},
+      {"SystemSharedMemoryStatus",
+       [&service, &ctx]() {
+         inference::SystemSharedMemoryStatusRequest req;
+         inference::SystemSharedMemoryStatusResponse reply;
+         return service.SystemSharedMemoryStatus(&ctx, &req, &reply);
+       }},
+      {"SystemSharedMemoryRegister",
+       [&service, &ctx]() {
+         inference::SystemSharedMemoryRegisterRequest req;
+         inference::SystemSharedMemoryRegisterResponse reply;
+         return service.SystemSharedMemoryRegister(&ctx, &req, &reply);
+       }},
+      {"SystemSharedMemoryUnregister",
+       [&service, &ctx]() {
+         inference::SystemSharedMemoryUnregisterRequest req;
+         inference::SystemSharedMemoryUnregisterResponse reply;
+         return service.SystemSharedMemoryUnregister(&ctx, &req, &reply);
+       }},
+      {"CudaSharedMemoryStatus",
+       [&service, &ctx]() {
+         inference::CudaSharedMemoryStatusRequest req;
+         inference::CudaSharedMemoryStatusResponse reply;
+         return service.CudaSharedMemoryStatus(&ctx, &req, &reply);
+       }},
+      {"CudaSharedMemoryRegister",
+       [&service, &ctx]() {
+         inference::CudaSharedMemoryRegisterRequest req;
+         inference::CudaSharedMemoryRegisterResponse reply;
+         return service.CudaSharedMemoryRegister(&ctx, &req, &reply);
+       }},
+      {"CudaSharedMemoryUnregister",
+       [&service, &ctx]() {
+         inference::CudaSharedMemoryUnregisterRequest req;
+         inference::CudaSharedMemoryUnregisterResponse reply;
+         return service.CudaSharedMemoryUnregister(&ctx, &req, &reply);
+       }},
+      {"TraceSetting",
+       [&service, &ctx]() {
+         inference::TraceSettingRequest req;
+         inference::TraceSettingResponse reply;
+         return service.TraceSetting(&ctx, &req, &reply);
+       }},
+      {"LogSettings",
+       [&service, &ctx]() {
+         inference::LogSettingsRequest req;
+         inference::LogSettingsResponse reply;
+         return service.LogSettings(&ctx, &req, &reply);
+       }},
+  }};
+
+  for (const auto& [rpc_name, invoke] : test_cases) {
+    SCOPED_TRACE(rpc_name);
+    const auto status = invoke();
+    EXPECT_EQ(status.error_code(), grpc::StatusCode::UNIMPLEMENTED);
+    EXPECT_EQ(
+        status.error_message(),
+        std::string("RPC ") + rpc_name + " is not implemented");
+  }
+}
+
+TEST(InferenceServiceImpl, ModelStreamInferReturnsUnimplemented)
+{
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> ref_outputs;
+  starpu_server::InferenceServiceImpl service(
+      &queue, &ref_outputs, {at::kFloat});
+  grpc::ServerContext ctx;
+
+  auto status = service.ModelStreamInfer(&ctx, nullptr);
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNIMPLEMENTED);
+  EXPECT_EQ(status.error_message(), "RPC ModelStreamInfer is not implemented");
+}
+
 TEST(InferenceServiceImpl, ModelMetadataPopulatesInputsAndOutputs)
 {
   starpu_server::InferenceQueue queue;
