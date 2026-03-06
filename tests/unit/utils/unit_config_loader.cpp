@@ -231,6 +231,15 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         }(),
         "Failed to load config: use_cuda[0].device_ids[0] must be >= 0"},
     InvalidConfigCase{
+        "UseCudaDuplicatedDeviceIdInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - { device_ids: [0, 0] }\n";
+          return yaml;
+        }(),
+        "Failed to load config: use_cuda[0].device_ids[1] is duplicated"},
+    InvalidConfigCase{
         "UseCudaEmptyDeviceIdsInvalid",
         [] {
           auto yaml = base_model_yaml();
@@ -1283,6 +1292,56 @@ TEST(ConfigLoader, FilesystemErrorsMarkConfigInvalid)
   EXPECT_FALSE(cfg.valid);
   EXPECT_EQ(
       capture.str(), expected_log_line(ErrorLevel, expected_error_message));
+}
+
+TEST(ConfigLoader, RejectsModelPathThatIsDirectory)
+{
+  const auto model_dir = MakeUniqueTempDir("config_loader_model_directory");
+  ScopedPermissionRestorer cleanup(model_dir);
+
+  std::string yaml = base_model_yaml();
+  yaml = ReplaceModelPath(std::move(yaml), model_dir);
+
+  const auto tmp = WriteTempFile("config_loader_model_directory.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Model path must be a regular file: " +
+      model_dir.string();
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, RejectsUnreadableModelPath)
+{
+  const auto model_dir = MakeUniqueTempDir("config_loader_model_unreadable");
+  ScopedPermissionRestorer cleanup(model_dir);
+
+  const auto model_path = model_dir / "model.pt";
+  std::ofstream(model_path).put('\0');
+  std::filesystem::permissions(
+      model_path, std::filesystem::perms::owner_write,
+      std::filesystem::perm_options::replace);
+
+  std::ifstream probe(model_path, std::ios::binary);
+  if (probe.good()) {
+    GTEST_SKIP() << "Model file remains readable under current privileges";
+  }
+
+  std::string yaml = base_model_yaml();
+  yaml = ReplaceModelPath(std::move(yaml), model_path);
+  const auto tmp = WriteTempFile("config_loader_model_unreadable.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Model path is not readable: " +
+      model_path.string();
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
 }
 
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)

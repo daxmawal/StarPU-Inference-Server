@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <sstream>
@@ -255,9 +256,19 @@ parse_model_node(const YAML::Node& root, RuntimeConfig& cfg)
     if (model.path.empty()) {
       throw std::invalid_argument("model must not be empty");
     }
-    if (!std::filesystem::exists(model.path)) {
+    const std::filesystem::path model_path{model.path};
+    if (!std::filesystem::exists(model_path)) {
       throw std::invalid_argument(
           std::string("Model path does not exist: ") + model.path);
+    }
+    if (!std::filesystem::is_regular_file(model_path)) {
+      throw std::invalid_argument(
+          std::string("Model path must be a regular file: ") + model.path);
+    }
+    std::ifstream model_stream(model_path, std::ios::binary);
+    if (!model_stream.good()) {
+      throw std::invalid_argument(
+          std::string("Model path is not readable: ") + model.path);
     }
   }
 
@@ -313,6 +324,7 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 
   cfg.devices.use_cuda = true;
   cfg.devices.ids.clear();
+  std::unordered_set<int> seen_device_ids;
   if (use_cuda_node.size() == 0U) {
     throw std::invalid_argument(
         "use_cuda requires at least one device_ids "
@@ -344,6 +356,9 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
       const int device_id = parse_scalar<int>(id_node, id_path, "an integer");
       if (device_id < 0) {
         throw std::invalid_argument(std::format("{} must be >= 0", id_path));
+      }
+      if (!seen_device_ids.insert(device_id).second) {
+        throw std::invalid_argument(std::format("{} is duplicated", id_path));
       }
       cfg.devices.ids.push_back(device_id);
     }

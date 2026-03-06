@@ -2460,6 +2460,10 @@ TEST_F(
     });
   }
 
+  // Ensure all submit hooks had a chance to flip cancel flags before
+  // completions are dispatched from queued jobs; otherwise this test is racy.
+  producers.clear();
+
   int handled_jobs = 0;
   while (handled_jobs < kExpectedJobs) {
     std::shared_ptr<starpu_server::InferenceJob> job;
@@ -2469,7 +2473,6 @@ TEST_F(
     ++handled_jobs;
   }
 
-  producers.clear();
   EXPECT_EQ(callback_count.load(std::memory_order_relaxed), 0);
 }
 
