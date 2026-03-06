@@ -93,8 +93,10 @@ Each tensor entry under `inputs` or `outputs` must provide:
   - `TYPE_INT8`, `TYPE_INT16`, `TYPE_INT32`, `TYPE_INT64`
   - `TYPE_FP16`, `TYPE_FP32`, `TYPE_FP64`
   - `TYPE_BF16`
-  - `TYPE_STRING`
 - `dims`: positive integer dimensions (batch dimension first).
+
+`TYPE_STRING` is defined in the protobuf schema but is not accepted by the
+current runtime datatype mapping yet.
 
 Optional keys unlock batching, logging, and runtime controls:
 
@@ -153,7 +155,8 @@ caches and kernels. Set `warmup_pregen_inputs: 0` to skip warmup entirely.
 The server exposes lightweight introspection endpoints derived from the YAML
 config so clients can self-discover model shapes and batching limits:
 
-- `ServerMetadata`: returns server name/version and supported extensions.
+- `ServerMetadata`: returns server name/version. The `extensions` field is
+  currently returned empty.
 - `ModelMetadata`: returns model name, versions (if provided), and I/O tensor
   names, dtypes, and shapes.
 - `ModelConfig`: returns a `ModelConfig` message with `max_batch_size` and the
