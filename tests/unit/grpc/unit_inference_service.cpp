@@ -32,8 +32,9 @@ using starpu_server::test_constants::kI30;
 auto
 make_temp_trace_path() -> std::filesystem::path
 {
+  static std::atomic<std::uint64_t> trace_file_counter{0};
   const auto suffix =
-      std::chrono::steady_clock::now().time_since_epoch().count();
+      trace_file_counter.fetch_add(1, std::memory_order_relaxed);
   return std::filesystem::temp_directory_path() /
          ("submit_job_trace_" + std::to_string(suffix) + ".json");
 }

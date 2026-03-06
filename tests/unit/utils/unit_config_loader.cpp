@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -23,10 +25,25 @@ using namespace starpu_server;
 namespace {
 
 auto
+NextTempArtifactSequence() -> std::uint64_t
+{
+  static std::atomic<std::uint64_t> sequence{0};
+  return sequence.fetch_add(1, std::memory_order_relaxed);
+}
+
+auto
+DeterministicTempPath(const std::string& name) -> std::filesystem::path
+{
+  const auto sequence = NextTempArtifactSequence();
+  return std::filesystem::temp_directory_path() /
+         (std::to_string(sequence) + "_" + name);
+}
+
+auto
 WriteTempFile(const std::string& name, const std::string& contents)
     -> std::filesystem::path
 {
-  const auto path = std::filesystem::temp_directory_path() / name;
+  const auto path = DeterministicTempPath(name);
   std::ofstream(path) << contents;
   return path;
 }
@@ -34,7 +51,7 @@ WriteTempFile(const std::string& name, const std::string& contents)
 auto
 WriteEmptyModelFile(const std::string& name) -> std::filesystem::path
 {
-  const auto path = std::filesystem::temp_directory_path() / name;
+  const auto path = DeterministicTempPath(name);
   std::ofstream(path).put('\0');
   return path;
 }
@@ -74,8 +91,7 @@ struct ScopedPermissionRestorer {
 auto
 MakeUniqueTempDir(const std::string& prefix) -> std::filesystem::path
 {
-  const auto unique_suffix =
-      std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto unique_suffix = NextTempArtifactSequence();
   auto path = std::filesystem::temp_directory_path() /
               (prefix + "_" + std::to_string(unique_suffix));
   std::filesystem::create_directories(path);

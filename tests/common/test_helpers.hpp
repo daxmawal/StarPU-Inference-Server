@@ -4,6 +4,7 @@
 #include <starpu.h>
 #include <torch/script.h>
 
+#include <atomic>
 #include <bit>
 #include <cassert>
 #include <chrono>
@@ -44,10 +45,11 @@ skip_if_no_cuda()
 inline auto
 MakeTempModelPath(const char* base) -> std::filesystem::path
 {
+  static std::atomic<std::uint64_t> temp_model_counter{0};
   const auto dir = std::filesystem::temp_directory_path();
-  const auto time =
-      std::chrono::high_resolution_clock::now().time_since_epoch().count();
-  return dir / (std::string(base) + "_" + std::to_string(time) + ".pt");
+  const auto sequence =
+      temp_model_counter.fetch_add(1, std::memory_order_relaxed);
+  return dir / (std::string(base) + "_" + std::to_string(sequence) + ".pt");
 }
 
 namespace starpu_server {
@@ -328,29 +330,33 @@ start_test_grpc_server(
 {
   TestGrpcServer handle;
   std::promise<int> port_promise;
+  std::promise<void> server_ready_promise;
   auto port_future = port_promise.get_future();
-  handle.thread = std::jthread([&queue, &reference_outputs, port, &handle,
-                                expected_input_types,
-                                p = std::move(port_promise)]() mutable {
-    InferenceServiceImpl service(
-        &queue, &reference_outputs, expected_input_types);
-    grpc::ServerBuilder builder;
-    std::string address = std::format("0.0.0.0:{}", port);
-    int selected_port = 0;
-    builder.AddListeningPort(
-        address, grpc::InsecureServerCredentials(), &selected_port);
-    builder.RegisterService(&service);
-    builder.SetMaxReceiveMessageSize(32 * 1024 * 1024);
-    builder.SetMaxSendMessageSize(32 * 1024 * 1024);
-    handle.server = builder.BuildAndStart();
-    p.set_value(selected_port);
-    handle.server->Wait();
-    handle.server.reset();
-  });
+  auto server_ready_future = server_ready_promise.get_future();
+  handle.thread =
+      std::jthread([&queue, &reference_outputs, port, &handle,
+                    expected_input_types, p = std::move(port_promise),
+                    ready = std::move(server_ready_promise)]() mutable {
+        InferenceServiceImpl service(
+            &queue, &reference_outputs, expected_input_types);
+        grpc::ServerBuilder builder;
+        std::string address = std::format("0.0.0.0:{}", port);
+        int selected_port = 0;
+        builder.AddListeningPort(
+            address, grpc::InsecureServerCredentials(), &selected_port);
+        builder.RegisterService(&service);
+        builder.SetMaxReceiveMessageSize(32 * 1024 * 1024);
+        builder.SetMaxSendMessageSize(32 * 1024 * 1024);
+        handle.server = builder.BuildAndStart();
+        p.set_value(selected_port);
+        ready.set_value();
+        if (handle.server != nullptr) {
+          handle.server->Wait();
+          handle.server.reset();
+        }
+      });
   handle.port = port_future.get();
-  while (!handle.server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  server_ready_future.get();
   return handle;
 }
 

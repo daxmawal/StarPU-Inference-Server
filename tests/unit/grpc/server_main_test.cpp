@@ -7,11 +7,16 @@
 #include <unistd.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <latch>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -48,8 +53,8 @@ fixture_model_path() -> std::filesystem::path
 auto
 write_temp_config_file() -> TempFileGuard
 {
-  const auto suffix =
-      std::chrono::steady_clock::now().time_since_epoch().count();
+  static std::atomic<std::uint64_t> temp_file_counter{0};
+  const auto suffix = temp_file_counter.fetch_add(1, std::memory_order_relaxed);
   TempFileGuard guard{
       std::filesystem::temp_directory_path() /
       ("server_main_test_" + std::to_string(suffix) + ".yml")};
@@ -103,15 +108,13 @@ pick_unused_port() -> int
 }
 
 auto
-wait_for_server_start(
-    const std::unique_ptr<grpc::Server>& server,
-    std::chrono::steady_clock::duration timeout) -> bool
+wait_for_channel_ready(
+    const std::string& address,
+    std::chrono::system_clock::duration timeout) -> bool
 {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
-  while (!server && std::chrono::steady_clock::now() < deadline) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
-  return static_cast<bool>(server);
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  return channel->WaitForConnected(std::chrono::system_clock::now() + timeout);
 }
 
 TEST(ServerMainArgs, HandleProgramArgumentsParsesLongConfigFlag)
@@ -161,10 +164,14 @@ TEST(ServerMainSignal, SignalHandlerSetsStopFlag)
 TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
 {
   constexpr auto kLaunchTimeout = std::chrono::seconds(10);
-  constexpr auto kSignalDelay = std::chrono::milliseconds(100);
+  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
 
   starpu_server::RuntimeConfig opts;
-  opts.server_address = "127.0.0.1:0";
+  opts.server_address = address;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
 
@@ -192,7 +199,8 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
     }
   });
 
-  std::this_thread::sleep_for(kSignalDelay);
+  ASSERT_TRUE(wait_for_channel_ready(address, kServerStartTimeout))
+      << "Timed out waiting for gRPC server startup";
   signal_handler(SIGTERM);
 
   if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
@@ -215,9 +223,10 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsOnBrutalSignal)
 
   const int port = pick_unused_port();
   ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
 
   starpu_server::RuntimeConfig opts;
-  opts.server_address = "127.0.0.1:" + std::to_string(port);
+  opts.server_address = address;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
 
@@ -245,16 +254,17 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsOnBrutalSignal)
     }
   });
 
-  ASSERT_TRUE(wait_for_server_start(ctx.server, kServerStartTimeout))
+  ASSERT_TRUE(wait_for_channel_ready(address, kServerStartTimeout))
       << "Timed out waiting for gRPC server startup";
 
-  // Brutal stop: signal storm once the server is live.
-  std::jthread signal_storm([]() {
+  std::latch storm_start{1};
+  std::jthread signal_storm([&storm_start]() {
+    storm_start.wait();
     for (int i = 0; i < 50; ++i) {
       signal_handler(SIGINT);
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   });
+  storm_start.count_down();
 
   if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
     signal_stop_requested_flag() = 1;
@@ -272,8 +282,7 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsOnBrutalSignal)
 TEST(ServerMainOrchestration, LaunchThreadsStopsUnderConcurrentRpcLoad)
 {
   constexpr auto kLaunchTimeout = std::chrono::seconds(10);
-  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
-  constexpr auto kLoadWindow = std::chrono::milliseconds(200);
+  constexpr auto kClientActivityTimeout = std::chrono::seconds(2);
   constexpr int kClientThreads = 6;
 
   const int port = pick_unused_port();
@@ -308,9 +317,6 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsUnderConcurrentRpcLoad)
     }
   });
 
-  ASSERT_TRUE(wait_for_server_start(ctx.server, kServerStartTimeout))
-      << "Timed out waiting for gRPC server startup";
-
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
   ASSERT_TRUE(channel->WaitForConnected(
@@ -318,6 +324,8 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsUnderConcurrentRpcLoad)
 
   std::atomic<bool> stop_clients{false};
   std::atomic<int> started_requests{0};
+  std::mutex started_requests_mutex;
+  std::condition_variable started_requests_cv;
   std::vector<std::jthread> clients;
   clients.reserve(kClientThreads);
   for (int i = 0; i < kClientThreads; ++i) {
@@ -329,13 +337,26 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsUnderConcurrentRpcLoad)
             std::chrono::system_clock::now() + std::chrono::milliseconds(200));
         inference::ServerLiveRequest request;
         inference::ServerLiveResponse response;
-        started_requests.fetch_add(1, std::memory_order_relaxed);
+        const int previous =
+            started_requests.fetch_add(1, std::memory_order_relaxed);
+        if (previous == 0) {
+          std::lock_guard<std::mutex> lock(started_requests_mutex);
+          started_requests_cv.notify_one();
+        }
         (void)stub->ServerLive(&rpc_ctx, request, &response);
       }
     });
   }
 
-  std::this_thread::sleep_for(kLoadWindow);
+  {
+    std::unique_lock<std::mutex> lock(started_requests_mutex);
+    ASSERT_TRUE(started_requests_cv.wait_for(
+        lock, kClientActivityTimeout,
+        [&started_requests]() {
+          return started_requests.load(std::memory_order_relaxed) > 0;
+        }))
+        << "No RPC request started before stop signal";
+  }
   signal_handler(SIGTERM);
   stop_clients.store(true, std::memory_order_release);
   clients.clear();
