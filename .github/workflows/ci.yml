@@ -294,6 +294,8 @@ jobs:
   test-and-coverage:
     needs: build
     runs-on: self-hosted
+    env:
+      COVERAGE_MIN_LINE: "70"
 
     steps:
       - name: Checkout code
@@ -376,6 +378,20 @@ jobs:
             --exclude '^usr/.*' \
             --exclude '^Install/.*' \
             --lcov -o coverage.lcov
+
+      - name: Enforce minimum line coverage
+        working-directory: build
+        run: |
+          ROOTDIR="$(cd .. && pwd)"
+          ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --filter "$ROOTDIR/src" \
+            --exclude '^build/.*' \
+            --exclude '^build/_deps/.*' \
+            --exclude '^tests/.*' \
+            --exclude '^external/.*' \
+            --exclude '^usr/.*' \
+            --exclude '^Install/.*' \
+            --fail-under-line "$COVERAGE_MIN_LINE"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
