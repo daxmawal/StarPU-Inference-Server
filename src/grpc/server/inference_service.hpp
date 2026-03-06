@@ -390,6 +390,14 @@ class InferenceServiceImpl final
       const inference::ModelInferRequest* request,
       MonotonicClock::time_point recv_tp) -> bool;
 
+  static void handle_async_internal_error(
+      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+      const std::shared_ptr<CallbackHandle>& callback_handle,
+      InferenceServiceImpl* service, std::string_view resolved_model_name,
+      const inference::ModelInferRequest* request,
+      MonotonicClock::time_point recv_tp, std::string_view stage,
+      std::string_view reason, std::string_view log_context);
+
   static void notify_cancel_flag_created(
       const std::shared_ptr<std::atomic<bool>>& cancel_flag);
 

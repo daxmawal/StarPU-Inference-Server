@@ -1149,6 +1149,15 @@ TEST_F(InferenceServiceTest, ValidateInputsMismatchedCount)
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
+TEST_F(InferenceServiceTest, ValidateInputsRejectsNullRequest)
+{
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(nullptr, inputs);
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "ModelInfer request is null");
+}
+
 TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
 {
   auto req = starpu_server::make_model_request("model", "1");
@@ -1175,6 +1184,36 @@ TEST(InferenceServiceImpl, PopulateResponsePopulatesFieldsAndTimes)
   reply.set_server_send_ms(send_ms);
   starpu_server::verify_populate_response(
       req, reply, outputs, recv_ms, send_ms, breakdown);
+}
+
+TEST(InferenceServiceImpl, PopulateResponseRejectsNullRequest)
+{
+  inference::ModelInferResponse reply;
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1}, torch::TensorOptions().dtype(at::kInt))};
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      nullptr, &reply, outputs, 0, breakdown);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "ModelInfer request is null");
+}
+
+TEST(InferenceServiceImpl, PopulateResponseRejectsNullReply)
+{
+  auto req = starpu_server::make_model_request("model", "1");
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1}, torch::TensorOptions().dtype(at::kInt))};
+  starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
+
+  auto status = starpu_server::InferenceServiceImpl::populate_response(
+      &req, nullptr, outputs, 0, breakdown);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "ModelInfer response is null");
 }
 
 TEST(InferenceServiceImpl, PopulateResponseUsesOverrideModelName)
@@ -1571,6 +1610,21 @@ TEST(InferenceServiceImpl, FillOutputTensorRejectsOutOfRangeIndex)
   EXPECT_EQ(reply.raw_output_contents_size(), 0);
 }
 
+TEST(InferenceServiceImpl, FillOutputTensorRejectsNullReply)
+{
+  std::vector<torch::Tensor> outputs = {
+      torch::tensor({1.0F}, torch::TensorOptions().dtype(at::kFloat))};
+  std::vector<std::size_t> output_indices = {0U};
+  std::vector<std::string> output_names = {"out0"};
+
+  auto status = starpu_server::InferenceServiceImpl::TestAccessor::
+      FillOutputTensorForTest(nullptr, outputs, output_indices, output_names);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "ModelInfer response is null");
+}
+
 TEST(InferenceServiceImpl, FillOutputTensorUsesFallbackName)
 {
   inference::ModelInferResponse reply;
@@ -1730,6 +1784,40 @@ TEST_F(InferenceServiceTest, HandleModelInferAsyncWorksWithNullContext)
   ASSERT_EQ(reply.outputs_size(), 1);
 }
 
+TEST_F(InferenceServiceTest, HandleModelInferAsyncRejectsNullRequest)
+{
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  service->HandleModelInferAsync(
+      &ctx, nullptr, &reply, [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      });
+
+  const grpc::Status status = status_future.get();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "ModelInfer request is null");
+  expect_empty_infer_response(reply);
+}
+
+TEST_F(InferenceServiceTest, HandleModelInferAsyncRejectsNullReply)
+{
+  auto request = starpu_server::make_valid_request();
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  service->HandleModelInferAsync(
+      &ctx, &request, nullptr, [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      });
+
+  const grpc::Status status = status_future.get();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(status.error_message(), "ModelInfer response is null");
+}
+
 TEST_F(
     InferenceServiceTest, HandleModelInferAsyncSkipsErrorCallbackWhenCancelled)
 {
@@ -1804,6 +1892,52 @@ TEST_F(
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
   EXPECT_TRUE(outputs.empty());
+}
+
+TEST(InferenceServiceImpl, SubmitJobAsyncReturnsUnavailableWhenQueueIsNull)
+{
+  std::vector<torch::Tensor> ref_outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  starpu_server::InferenceServiceImpl service(
+      nullptr, &ref_outputs, {at::kFloat});
+
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1}, torch::TensorOptions().dtype(at::kFloat))};
+
+  auto status = service.submit_job_async(
+      inputs,
+      [](grpc::Status, std::vector<torch::Tensor>,
+         starpu_server::InferenceServiceImpl::LatencyBreakdown,
+         starpu_server::detail::TimingInfo,
+         std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>) {
+      });
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
+  EXPECT_EQ(status.error_message(), "Inference queue unavailable");
+}
+
+TEST(
+    InferenceServiceImpl,
+    SubmitJobAsyncReturnsFailedPreconditionWhenReferenceOutputsAreNull)
+{
+  starpu_server::InferenceQueue queue;
+  starpu_server::InferenceServiceImpl service(&queue, nullptr, {at::kFloat});
+
+  std::vector<torch::Tensor> inputs = {
+      torch::tensor({kF1}, torch::TensorOptions().dtype(at::kFloat))};
+
+  auto status = service.submit_job_async(
+      inputs,
+      [](grpc::Status, std::vector<torch::Tensor>,
+         starpu_server::InferenceServiceImpl::LatencyBreakdown,
+         starpu_server::detail::TimingInfo,
+         std::optional<starpu_server::InferenceServiceImpl::AsyncFailureInfo>) {
+      });
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::FAILED_PRECONDITION);
+  EXPECT_EQ(status.error_message(), "Reference outputs are unavailable");
 }
 
 TEST_F(
@@ -2198,6 +2332,39 @@ TEST_F(
   EXPECT_FALSE(double_callback.load());
 }
 
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncConvertsCompletionExceptionToInternalError)
+{
+  auto request = starpu_server::make_valid_request();
+  auto expected_outputs = std::vector<torch::Tensor>{
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+  auto worker = prepare_job(expected_outputs, expected_outputs);
+
+  starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+      hooks;
+  hooks.before_final_cancel_check =
+      [](const std::shared_ptr<std::atomic<bool>>&) {
+        throw std::runtime_error("forced async completion failure");
+      };
+  HandleAsyncInferCompletionHooksGuard guard{std::move(hooks)};
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply, [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      });
+
+  const grpc::Status status = status_future.get();
+  worker.join();
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Internal server error");
+}
+
 TEST_F(InferenceServiceTest, HandleModelInferAsyncIgnoresRepeatedCompletion)
 {
   auto request = starpu_server::make_valid_request();
@@ -2254,4 +2421,107 @@ TEST_F(InferenceServiceTest, HandleModelInferAsyncIgnoresRepeatedCompletion)
   EXPECT_EQ(
       reply.raw_output_contents(0),
       std::string(reinterpret_cast<const char*>(expected_ptr), expected_bytes));
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncCancelsDuringSubmitUnderConcurrentLoad)
+{
+  constexpr int kProducerThreads = 4;
+  constexpr int kRequestsPerThread = 16;
+  constexpr int kExpectedJobs = kProducerThreads * kRequestsPerThread;
+
+  std::atomic<int> callback_count{0};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_submit_job_async_done =
+      [](const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+         const grpc::Status& status) {
+        if (status.ok()) {
+          cancel_flag->store(true, std::memory_order_release);
+        }
+      };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  std::vector<std::jthread> producers;
+  producers.reserve(kProducerThreads);
+  for (int thread_index = 0; thread_index < kProducerThreads; ++thread_index) {
+    producers.emplace_back([&]() {
+      for (int request_index = 0; request_index < kRequestsPerThread;
+           ++request_index) {
+        auto request = starpu_server::make_valid_request();
+        grpc::ServerContext context;
+        inference::ModelInferResponse local_reply;
+        service->HandleModelInferAsync(
+            &context, &request, &local_reply, [&](grpc::Status) {
+              callback_count.fetch_add(1, std::memory_order_relaxed);
+            });
+      }
+    });
+  }
+
+  int handled_jobs = 0;
+  while (handled_jobs < kExpectedJobs) {
+    std::shared_ptr<starpu_server::InferenceJob> job;
+    ASSERT_TRUE(queue.wait_for_and_pop(job, std::chrono::milliseconds(500)));
+    ASSERT_NE(job, nullptr);
+    job->get_on_complete()({}, 0.0);
+    ++handled_jobs;
+  }
+
+  producers.clear();
+  EXPECT_EQ(callback_count.load(std::memory_order_relaxed), 0);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncCancelsDuringCallbackUnderConcurrentLoad)
+{
+  constexpr int kProducerThreads = 4;
+  constexpr int kRequestsPerThread = 16;
+  constexpr int kExpectedJobs = kProducerThreads * kRequestsPerThread;
+
+  ref_outputs = {torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  const std::vector<torch::Tensor> worker_outputs = {
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+
+  std::atomic<int> callback_count{0};
+
+  starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+      hooks;
+  hooks.before_final_cancel_check =
+      [](const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
+        cancel_flag->store(true, std::memory_order_release);
+      };
+  HandleAsyncInferCompletionHooksGuard guard{std::move(hooks)};
+
+  std::vector<std::jthread> producers;
+  producers.reserve(kProducerThreads);
+  for (int thread_index = 0; thread_index < kProducerThreads; ++thread_index) {
+    producers.emplace_back([&]() {
+      for (int request_index = 0; request_index < kRequestsPerThread;
+           ++request_index) {
+        auto request = starpu_server::make_valid_request();
+        grpc::ServerContext context;
+        inference::ModelInferResponse local_reply;
+        service->HandleModelInferAsync(
+            &context, &request, &local_reply, [&](grpc::Status) {
+              callback_count.fetch_add(1, std::memory_order_relaxed);
+            });
+      }
+    });
+  }
+
+  int handled_jobs = 0;
+  while (handled_jobs < kExpectedJobs) {
+    std::shared_ptr<starpu_server::InferenceJob> job;
+    ASSERT_TRUE(queue.wait_for_and_pop(job, std::chrono::milliseconds(500)));
+    ASSERT_NE(job, nullptr);
+    auto outputs_copy = worker_outputs;
+    job->get_on_complete()(outputs_copy, 0.0);
+    ++handled_jobs;
+  }
+
+  producers.clear();
+  EXPECT_EQ(callback_count.load(std::memory_order_relaxed), 0);
 }
