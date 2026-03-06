@@ -1,3 +1,5 @@
+#include <prometheus/metric_family.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -10,6 +12,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -95,6 +98,30 @@ struct ModelStatisticsNullTargetGuard {
         SetModelStatisticsForceNullTargetForTest(false);
   }
 };
+
+auto
+sum_counter_values_for_label(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name, std::string_view label_name,
+    std::string_view label_value) -> double
+{
+  double sum = 0.0;
+  for (const auto& family : families) {
+    if (family.name != family_name) {
+      continue;
+    }
+    for (const auto& metric : family.metric) {
+      const bool has_label =
+          std::ranges::any_of(metric.label, [&](const auto& label) {
+            return label.name == label_name && label.value == label_value;
+          });
+      if (has_label) {
+        sum += metric.counter.value;
+      }
+    }
+  }
+  return sum;
+}
 }  // namespace
 
 class MetricsInferenceServiceTest : public InferenceServiceTest {
@@ -2292,6 +2319,99 @@ TEST_F(
   const auto& histogram = histogram_it->metric.front().histogram;
   EXPECT_EQ(histogram.sample_count, 1);
   EXPECT_GT(histogram.sample_sum, 0.0);
+}
+
+TEST_F(
+    MetricsInferenceServiceTest,
+    HandleModelInferAsyncCountsSingleTerminalStatusWhenCancelRacesCompletion)
+{
+  auto request = starpu_server::make_valid_request();
+  auto expected_outputs = std::vector<torch::Tensor>{
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+  auto worker = prepare_job(expected_outputs, expected_outputs);
+
+  auto metrics = starpu_server::get_metrics();
+  ASSERT_NE(metrics, nullptr);
+
+  std::mutex cancel_handler_mutex;
+  std::function<void()> cancel_handler;
+  std::atomic<bool> force_cancelled{false};
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks
+      model_hooks;
+  model_hooks.is_cancelled_override =
+      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+    return force_cancelled.load(std::memory_order_acquire);
+  };
+  model_hooks.on_cancel_ready = [&cancel_handler_mutex, &cancel_handler](
+                                    const std::function<void()>& cancel_ready) {
+    std::scoped_lock lock(cancel_handler_mutex);
+    cancel_handler = cancel_ready;
+  };
+
+  starpu_server::InferenceServiceImpl::HandleAsyncInferCompletionTestHooks
+      completion_hooks;
+  completion_hooks.before_final_cancel_check =
+      [&force_cancelled, &cancel_handler_mutex,
+       &cancel_handler](const std::shared_ptr<std::atomic<bool>>&) {
+        force_cancelled.store(true, std::memory_order_release);
+        std::function<void()> local_handler;
+        {
+          std::scoped_lock lock(cancel_handler_mutex);
+          local_handler = cancel_handler;
+        }
+        if (local_handler) {
+          local_handler();
+        }
+      };
+
+  HandleModelInferAsyncHooksGuard model_guard{std::move(model_hooks)};
+  HandleAsyncInferCompletionHooksGuard completion_guard{
+      std::move(completion_hooks)};
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+  std::atomic<int> callback_count{0};
+  std::atomic<bool> double_callback{false};
+  auto call_guard = std::make_shared<int>(1);
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&](grpc::Status status) {
+        const int previous = callback_count.fetch_add(1);
+        if (previous == 0) {
+          status_promise.set_value(std::move(status));
+        } else {
+          double_callback.store(true, std::memory_order_relaxed);
+        }
+      },
+      call_guard);
+
+  ASSERT_EQ(
+      status_future.wait_for(std::chrono::seconds(5)),
+      std::future_status::ready);
+  const auto status = status_future.get();
+  worker.join();
+
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::CANCELLED);
+  EXPECT_EQ(callback_count.load(std::memory_order_relaxed), 1);
+  EXPECT_FALSE(double_callback.load(std::memory_order_relaxed));
+
+  const auto metric_families = metrics->registry()->Collect();
+  const auto cancelled_label =
+      starpu_server::monitoring::detail::status_code_label_for_test(
+          static_cast<int>(grpc::StatusCode::CANCELLED));
+  const auto ok_label =
+      starpu_server::monitoring::detail::status_code_label_for_test(
+          static_cast<int>(grpc::StatusCode::OK));
+  EXPECT_DOUBLE_EQ(
+      sum_counter_values_for_label(
+          metric_families, "requests_by_status_total", "code", cancelled_label),
+      1.0);
+  EXPECT_DOUBLE_EQ(
+      sum_counter_values_for_label(
+          metric_families, "requests_by_status_total", "code", ok_label),
+      0.0);
 }
 
 TEST_F(

@@ -336,11 +336,13 @@ class InferenceServiceImpl final
     InferenceServiceImpl* impl = nullptr;
     const std::vector<std::string>* output_names = nullptr;
     std::shared_ptr<std::atomic<bool>> cancel_flag;
+    std::shared_ptr<std::atomic<bool>> terminal_flag;
     std::optional<AsyncFailureInfo> failure_info;
   };
 
   struct AsyncCancellationContext {
     std::shared_ptr<std::atomic<bool>> cancel_flag;
+    std::shared_ptr<std::atomic<bool>> terminal_flag;
     std::shared_ptr<CallbackHandle> callback_handle;
     std::string_view resolved_model_name;
     InferenceServiceImpl* service = nullptr;
@@ -348,6 +350,8 @@ class InferenceServiceImpl final
     MonotonicClock::time_point recv_tp;
   };
 
+  static auto try_mark_terminal(
+      const std::shared_ptr<std::atomic<bool>>& terminal_flag) -> bool;
   static auto is_async_cancelled(const AsyncInferCompletionContext& context)
       -> bool;
   static auto prepare_async_completion(
@@ -377,6 +381,7 @@ class InferenceServiceImpl final
   static auto handle_input_validation_failure(
       const grpc::Status& status,
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+      const std::shared_ptr<std::atomic<bool>>& terminal_flag,
       const std::shared_ptr<CallbackHandle>& callback_handle,
       InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
@@ -385,6 +390,7 @@ class InferenceServiceImpl final
   static auto handle_submit_failure(
       const grpc::Status& status,
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+      const std::shared_ptr<std::atomic<bool>>& terminal_flag,
       const std::shared_ptr<CallbackHandle>& callback_handle,
       InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
@@ -392,6 +398,7 @@ class InferenceServiceImpl final
 
   static void handle_async_internal_error(
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+      const std::shared_ptr<std::atomic<bool>>& terminal_flag,
       const std::shared_ptr<CallbackHandle>& callback_handle,
       InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
