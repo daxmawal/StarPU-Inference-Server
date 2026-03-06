@@ -253,7 +253,7 @@ enable_grpc_health_and_reflection()
 void
 run_grpc_server_impl(
     InferenceServiceImpl& service, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server)
+    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks)
 {
   inference::GRPCInferenceService::AsyncService async_service;
   AsyncServerContext async_context(async_service, service);
@@ -276,10 +276,16 @@ run_grpc_server_impl(
     log_error(
         std::format("Failed to start gRPC server on {}", options.address));
     set_server_health(false);
+    if (hooks.on_stopped) {
+      hooks.on_stopped();
+    }
     return;
   }
   set_server_health(true);
   set_grpc_health_status(server.get(), true);
+  if (hooks.on_started) {
+    hooks.on_started(server.get());
+  }
   async_context.start();
   log_info(
       options.verbosity,
@@ -288,6 +294,9 @@ run_grpc_server_impl(
   set_server_health(false);
   set_grpc_health_status(server.get(), false);
   async_context.shutdown();
+  if (hooks.on_stopped) {
+    hooks.on_stopped();
+  }
   server.reset();
 }
 
@@ -473,7 +482,7 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const GrpcModelSpec& model_spec, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server)
+    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks)
 {
   auto service_options = InferenceServiceImpl::ServiceOptions{
       .default_model_name = options.default_model_name,
@@ -496,7 +505,7 @@ RunGrpcServer(
               model_spec.expected_input_dims.end()),
           model_spec.max_batch_size},
       std::move(service_options));
-  run_grpc_server_impl(service, options, server);
+  run_grpc_server_impl(service, options, server, hooks);
 }
 
 void
@@ -505,7 +514,8 @@ RunGrpcServer(
     const std::vector<at::ScalarType>& expected_input_types,
     const std::vector<std::string>& expected_input_names,
     const std::vector<std::string>& expected_output_names,
-    const GrpcServerOptions& options, std::unique_ptr<Server>& server)
+    const GrpcServerOptions& options, std::unique_ptr<Server>& server,
+    const GrpcServerLifecycleHooks& hooks)
 {
   const GrpcModelSpec model_spec{
       .expected_input_types = expected_input_types,
@@ -513,7 +523,7 @@ RunGrpcServer(
       .expected_input_names = expected_input_names,
       .expected_output_names = expected_output_names,
       .max_batch_size = 0};
-  RunGrpcServer(queue, reference_outputs, model_spec, options, server);
+  RunGrpcServer(queue, reference_outputs, model_spec, options, server, hooks);
 }
 
 void

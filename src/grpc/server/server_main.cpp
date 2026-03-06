@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -38,7 +39,10 @@
 
 namespace {
 struct ServerContext {
-  std::unique_ptr<grpc::Server> server;
+  grpc::Server* server = nullptr;
+  std::mutex server_mutex;
+  std::condition_variable server_cv;
+  bool server_startup_observed = false;
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
   std::atomic<bool> stop_requested{false};
@@ -97,6 +101,44 @@ server_context() -> ServerContext&
 {
   static ServerContext ctx;
   return ctx;
+}
+
+void
+reset_server_state(ServerContext& ctx)
+{
+  std::lock_guard lock(ctx.server_mutex);
+  ctx.server = nullptr;
+  ctx.server_startup_observed = false;
+}
+
+void
+mark_server_started(ServerContext& ctx, grpc::Server* server)
+{
+  {
+    std::lock_guard lock(ctx.server_mutex);
+    ctx.server = server;
+    ctx.server_startup_observed = true;
+  }
+  ctx.server_cv.notify_all();
+}
+
+void
+mark_server_stopped(ServerContext& ctx)
+{
+  {
+    std::lock_guard lock(ctx.server_mutex);
+    ctx.server = nullptr;
+    ctx.server_startup_observed = true;
+  }
+  ctx.server_cv.notify_all();
+}
+
+void
+stop_server_when_available(ServerContext& ctx)
+{
+  std::unique_lock lock(ctx.server_mutex);
+  ctx.server_cv.wait(lock, [&ctx]() { return ctx.server_startup_observed; });
+  starpu_server::StopServer(ctx.server);
 }
 
 constexpr auto kPlotScriptTimeout =
@@ -584,6 +626,7 @@ launch_threads(
   auto& server_ctx = server_context();
   server_ctx.stop_requested.store(false, std::memory_order_relaxed);
   signal_stop_requested_flag() = 0;
+  reset_server_state(server_ctx);
 
   starpu_server::congestion::start(&queue, make_congestion_config(opts));
 
@@ -641,13 +684,20 @@ launch_threads(
   }
 
   std::jthread grpc_thread([&]() {
+    std::unique_ptr<grpc::Server> grpc_server;
+    const auto server_hooks = starpu_server::GrpcServerLifecycleHooks{
+        .on_started =
+            [&server_ctx](grpc::Server* server) {
+              mark_server_started(server_ctx, server);
+            },
+        .on_stopped = [&server_ctx]() { mark_server_stopped(server_ctx); }};
     const auto server_options = make_grpc_server_options(opts);
     const auto model_spec = make_grpc_model_spec(
         opts, expected_input_types, expected_input_dims, expected_input_names,
         expected_output_names);
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, model_spec, server_options,
-        server_ctx.server);
+        queue, reference_outputs, model_spec, server_options, grpc_server,
+        server_hooks);
   });
 
   std::signal(SIGINT, signal_handler);
@@ -659,7 +709,7 @@ launch_threads(
       return server_ctx.stop_requested.load(std::memory_order_relaxed);
     });
   }
-  starpu_server::StopServer(server_ctx.server.get());
+  stop_server_when_available(server_ctx);
   queue.shutdown();
   const auto total_jobs = queue.total_pushed();
   if (total_jobs > 0) {

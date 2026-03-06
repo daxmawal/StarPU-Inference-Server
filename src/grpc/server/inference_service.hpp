@@ -521,17 +521,24 @@ struct GrpcModelSpec {
   int max_batch_size = 0;
 };
 
+struct GrpcServerLifecycleHooks {
+  std::function<void(grpc::Server* server)> on_started;
+  std::function<void()> on_stopped;
+};
+
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const GrpcModelSpec& model_spec, const GrpcServerOptions& options,
-    std::unique_ptr<grpc::Server>& server);
+    std::unique_ptr<grpc::Server>& server,
+    const GrpcServerLifecycleHooks& hooks = {});
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     const std::vector<std::string>& expected_input_names,
     const std::vector<std::string>& expected_output_names,
-    const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
+    const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server,
+    const GrpcServerLifecycleHooks& hooks = {});
 
 void StopServer(grpc::Server* server);
 }  // namespace starpu_server
