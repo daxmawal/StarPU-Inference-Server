@@ -38,7 +38,6 @@
 
 namespace {
 struct ServerContext {
-  starpu_server::InferenceQueue* queue_ptr = nullptr;
   std::unique_ptr<grpc::Server> server;
   std::mutex stop_mutex;
   std::condition_variable stop_cv;
@@ -537,12 +536,13 @@ launch_threads(
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu, torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    std::vector<torch::Tensor>& reference_outputs)
+    std::vector<torch::Tensor>& reference_outputs,
+    starpu_server::InferenceQueue& queue)
 {
-  static starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
   queue.reset_counters();
   auto& server_ctx = server_context();
-  server_ctx.queue_ptr = &queue;
+  server_ctx.stop_requested.store(false, std::memory_order_relaxed);
+  signal_stop_requested_flag() = 0;
 
   starpu_server::congestion::start(&queue, make_congestion_config(opts));
 
@@ -619,9 +619,7 @@ launch_threads(
     });
   }
   starpu_server::StopServer(server_ctx.server.get());
-  if (server_ctx.queue_ptr != nullptr) {
-    server_ctx.queue_ptr->shutdown();
-  }
+  queue.shutdown();
   const auto total_jobs = queue.total_pushed();
   if (total_jobs > 0) {
     std::unique_lock lock(all_done_mutex);
@@ -745,7 +743,9 @@ main(int argc, char* argv[]) -> int
     log_worker_inventory(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);
-    launch_threads(opts, starpu, model_cpu, models_gpu, reference_outputs);
+    starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+    launch_threads(
+        opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
     auto& tracer = starpu_server::BatchingTraceLogger::instance();
     tracer.configure(false, "");
     run_trace_plots_if_enabled(opts);

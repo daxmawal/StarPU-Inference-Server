@@ -13,6 +13,10 @@
 
 #include "test_inference_service.hpp"
 
+namespace {
+auto pick_unused_port() -> int;
+}
+
 TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
 {
   auto req = starpu_server::make_valid_request();
@@ -172,6 +176,63 @@ TEST(GrpcServer, StartAndStop)
   starpu_server::StopServer(server.server.get());
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
+}
+
+TEST(GrpcServer, RunGrpcServerSupportsDoubleStartStopCycle)
+{
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+
+  auto run_cycle = [&](int cycle_index) {
+    const int port = pick_unused_port();
+    ASSERT_GT(port, 0);
+    const std::string address = "127.0.0.1:" + std::to_string(port);
+
+    starpu_server::InferenceQueue queue;
+    std::vector<torch::Tensor> reference_outputs;
+    std::unique_ptr<grpc::Server> server;
+
+    const auto options =
+        starpu_server::GrpcServerOptions{address,
+                                         kMaxMessageSizeMiB * kMiB,
+                                         starpu_server::VerbosityLevel::Info,
+                                         "",
+                                         "",
+                                         ""};
+
+    std::jthread thread([&, options]() {
+      starpu_server::RunGrpcServer(
+          queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+    });
+
+    while (!server) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    auto channel =
+        grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+    ASSERT_TRUE(channel->WaitForConnected(
+        std::chrono::system_clock::now() + std::chrono::seconds(5)))
+        << "cycle " << cycle_index << " failed to connect";
+
+    auto stub = inference::GRPCInferenceService::NewStub(channel);
+    grpc::ClientContext context;
+    inference::ServerLiveRequest request;
+    inference::ServerLiveResponse response;
+    const auto status = stub->ServerLive(&context, request, &response);
+    ASSERT_TRUE(status.ok())
+        << "cycle " << cycle_index
+        << " ServerLive RPC failed: " << status.error_message();
+    EXPECT_TRUE(response.live()) << "cycle " << cycle_index << " not live";
+
+    starpu_server::StopServer(server.get());
+    thread.join();
+    EXPECT_EQ(server, nullptr) << "cycle " << cycle_index << " not released";
+  };
+
+  run_cycle(1);
+  run_cycle(2);
 }
 
 TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
