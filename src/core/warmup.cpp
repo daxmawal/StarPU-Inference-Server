@@ -357,7 +357,24 @@ WarmupRunner::run(int request_nb_per_worker)
     return;
   }
 
-  InferenceQueue queue(std::numeric_limits<std::size_t>::max());
+  const std::size_t warmup_queue_limit = opts_.batching.max_queue_size;
+  const std::size_t warmup_inflight_limit =
+      (opts_.batching.max_inflight_tasks == 0)
+          ? warmup_queue_limit
+          : ((opts_.batching.max_inflight_tasks < warmup_queue_limit)
+                 ? opts_.batching.max_inflight_tasks
+                 : warmup_queue_limit);
+
+  if (opts_.batching.max_inflight_tasks == 0 ||
+      opts_.batching.max_inflight_tasks > warmup_queue_limit) {
+    log_info(
+        opts_.verbosity,
+        std::format(
+            "Warmup guardrail enabled: max_inflight_tasks={} (queue cap={}).",
+            warmup_inflight_limit, warmup_queue_limit));
+  }
+
+  InferenceQueue queue(warmup_queue_limit);
   WarmupSyncState sync_state;
   const auto notify_thread_exception = [&sync_state,
                                         &queue](std::exception_ptr exception) {
@@ -371,8 +388,8 @@ WarmupRunner::run(int request_nb_per_worker)
   config.starpu = &starpu_;
   RuntimeConfig warmup_opts = opts_;
   warmup_opts.batching.trace_enabled = false;
-  warmup_opts.batching.max_inflight_tasks = 0;
-  warmup_opts.batching.max_queue_size = std::numeric_limits<std::size_t>::max();
+  warmup_opts.batching.max_inflight_tasks = warmup_inflight_limit;
+  warmup_opts.batching.max_queue_size = warmup_queue_limit;
   config.opts = &warmup_opts;
   config.completed_jobs = &sync_state.completed_jobs;
   config.all_done_cv = &sync_state.completed_cv;
