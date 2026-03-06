@@ -493,11 +493,21 @@ InferenceTask::create_task(
   }
 
   task->nbuffers = static_cast<int>(num_buffers);
-  task->cl = starpu_->get_codelet();
+  // Some unit tests build tasks without a real StarPUSetup instance because
+  // they only validate cleanup/dependency behavior, not task execution.
+  task->cl = (starpu_ != nullptr) ? starpu_->get_codelet() : nullptr;
   task->synchronous = opts.batching.synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
+  int min_priority = STARPU_DEFAULT_PRIO;
+  int max_priority = STARPU_DEFAULT_PRIO;
+  // Some unit tests call create_task() without bootstrapping StarPU. In that
+  // case, querying scheduler bounds segfaults, so we keep default priority.
+  if (starpu_is_initialized() > 0) {
+    min_priority = starpu_sched_get_min_priority();
+    max_priority = starpu_sched_get_max_priority();
+  }
   task->priority =
-      std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());
+      std::max(min_priority, max_priority - ctx->job->get_request_id());
   task->destroy = 1;
 
   if (ctx != nullptr && ctx->dependencies == nullptr) {

@@ -391,7 +391,13 @@ run_warmup(
   }
 
   const int max_batch_size = std::max(1, opts.batching.max_batch_size);
-  const int min_requests_for_batches = configured_batches * max_batch_size;
+  const auto min_requests_for_batches_wide =
+      static_cast<long long>(configured_batches) * max_batch_size;
+  const int min_requests_for_batches =
+      (min_requests_for_batches_wide >
+       static_cast<long long>(std::numeric_limits<int>::max()))
+          ? 0
+          : static_cast<int>(min_requests_for_batches_wide);
   const int warmup_request_nb =
       std::max(opts.batching.warmup_request_nb, min_requests_for_batches);
   if (warmup_request_nb <= 0) {
