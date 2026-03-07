@@ -352,6 +352,17 @@ class InferenceServiceImpl final
     MonotonicClock::time_point recv_tp;
   };
 
+  struct AsyncTerminalState {
+    std::shared_ptr<std::atomic<bool>> cancel_flag;
+    std::shared_ptr<std::atomic<bool>> terminal_flag;
+  };
+
+  struct AsyncInternalErrorDetails {
+    std::string_view stage;
+    std::string_view reason;
+    std::string_view log_context;
+  };
+
   static auto try_mark_terminal(
       const std::shared_ptr<std::atomic<bool>>& terminal_flag) -> bool;
   static auto is_async_cancelled(const AsyncInferCompletionContext& context)
@@ -381,18 +392,14 @@ class InferenceServiceImpl final
       const AsyncCancellationContext& cancellation_context) -> bool;
 
   static auto handle_input_validation_failure(
-      const grpc::Status& status,
-      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
-      const std::shared_ptr<std::atomic<bool>>& terminal_flag,
+      const grpc::Status& status, const AsyncTerminalState& terminal_state,
       const std::shared_ptr<CallbackHandle>& callback_handle,
       InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
       MonotonicClock::time_point recv_tp) -> bool;
 
   static auto handle_submit_failure(
-      const grpc::Status& status,
-      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
-      const std::shared_ptr<std::atomic<bool>>& terminal_flag,
+      const grpc::Status& status, const AsyncTerminalState& terminal_state,
       const std::shared_ptr<CallbackHandle>& callback_handle,
       InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
@@ -400,13 +407,12 @@ class InferenceServiceImpl final
       const std::optional<AsyncFailureInfo>& failure_info) -> bool;
 
   static void handle_async_internal_error(
-      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
-      const std::shared_ptr<std::atomic<bool>>& terminal_flag,
+      const AsyncTerminalState& terminal_state,
       const std::shared_ptr<CallbackHandle>& callback_handle,
       InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
-      MonotonicClock::time_point recv_tp, std::string_view stage,
-      std::string_view reason, std::string_view log_context);
+      MonotonicClock::time_point recv_tp,
+      const AsyncInternalErrorDetails& details);
 
   static void notify_cancel_flag_created(
       const std::shared_ptr<std::atomic<bool>>& cancel_flag);
