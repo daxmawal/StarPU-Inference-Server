@@ -989,16 +989,15 @@ InferenceServiceImpl::submit_job_async(
       }
     });
 
+    const auto enqueued_now = MonotonicClock::now();
+    job->timing_info().enqueued_time = enqueued_now;
+    job->timing_info().last_enqueued_time = enqueued_now;
+
     bool pushed = false;
     bool queue_full = false;
     {
       NvtxRange queue_scope("grpc_submit_starpu_queue");
       pushed = queue_->push(job, &queue_full);
-      if (pushed) {
-        const auto enqueued_now = MonotonicClock::now();
-        job->timing_info().enqueued_time = enqueued_now;
-        job->timing_info().last_enqueued_time = enqueued_now;
-      }
     }
     if (!pushed) {
       if (queue_full) {
