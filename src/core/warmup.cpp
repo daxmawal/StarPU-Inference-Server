@@ -13,6 +13,7 @@
 #include <mutex>
 #include <numeric>
 #include <random>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -29,6 +30,8 @@
 namespace starpu_server {
 namespace {
 constexpr int kCpuWarmupDeviceId = std::numeric_limits<int>::min();
+constexpr auto kWarmupDrainTimeout = std::chrono::seconds(30);
+constexpr auto kWarmupDrainWaitStep = std::chrono::milliseconds(250);
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 struct WarmupHookState {
@@ -311,22 +314,80 @@ wait_for_warmup_completion(
 {
   std::exception_ptr wait_exception;
   std::unique_lock lock(state.completed_mutex);
+  const auto deadline = std::chrono::steady_clock::now() + kWarmupDrainTimeout;
   try {
-    state.completed_cv.wait(lock, [&]() {
+    while (true) {
       if (completion_observer) {
         completion_observer(state.completed_jobs);
       }
       if (state.load_exception()) {
-        return true;
+        break;
       }
       if (!state.client_done.load(std::memory_order_acquire)) {
-        return false;
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+          const auto completed =
+              state.completed_jobs.load(std::memory_order_acquire);
+          const auto enqueued =
+              state.enqueued_jobs.load(std::memory_order_acquire);
+          const auto remaining =
+              enqueued > completed ? enqueued - completed : 0;
+          const auto timeout_ms =
+              std::chrono::duration_cast<std::chrono::milliseconds>(
+                  kWarmupDrainTimeout)
+                  .count();
+          log_error(std::format(
+              "Warmup drain timeout after {} ms: completed={} enqueued={} "
+              "remaining={} client_done={}",
+              timeout_ms, completed, enqueued, remaining, false));
+          wait_exception =
+              std::make_exception_ptr(std::runtime_error(std::format(
+                  "Warmup drain timeout: completed={} enqueued={} remaining={} "
+                  "client_done={}",
+                  completed, enqueued, remaining, false)));
+          break;
+        }
+        const auto until_deadline = deadline - now;
+        const auto wait_step =
+            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                kWarmupDrainWaitStep);
+        const auto wait_budget =
+            until_deadline < wait_step ? until_deadline : wait_step;
+        static_cast<void>(state.completed_cv.wait_for(lock, wait_budget));
+        continue;
       }
       const auto completed =
           state.completed_jobs.load(std::memory_order_acquire);
       const auto enqueued = state.enqueued_jobs.load(std::memory_order_acquire);
-      return completed >= enqueued;
-    });
+      if (completed >= enqueued) {
+        break;
+      }
+
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
+        const auto remaining = enqueued - completed;
+        const auto timeout_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                kWarmupDrainTimeout)
+                .count();
+        log_error(std::format(
+            "Warmup drain timeout after {} ms: completed={} enqueued={} "
+            "remaining={} client_done={}",
+            timeout_ms, completed, enqueued, remaining, true));
+        wait_exception = std::make_exception_ptr(std::runtime_error(std::format(
+            "Warmup drain timeout: completed={} enqueued={} remaining={} "
+            "client_done={}",
+            completed, enqueued, remaining, true)));
+        break;
+      }
+      const auto until_deadline = deadline - now;
+      const auto wait_step =
+          std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+              kWarmupDrainWaitStep);
+      const auto wait_budget =
+          until_deadline < wait_step ? until_deadline : wait_step;
+      static_cast<void>(state.completed_cv.wait_for(lock, wait_budget));
+    }
   }
   catch (...) {
     wait_exception = std::current_exception();

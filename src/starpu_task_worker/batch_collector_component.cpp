@@ -38,16 +38,19 @@ BatchCollector::wait_for_next_job() -> std::shared_ptr<InferenceJob>
 {
   if (max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr &&
       inflight_mutex_ != nullptr && inflight_cv_ != nullptr) {
+    constexpr auto kInflightWaitFallback = std::chrono::milliseconds(100);
     std::unique_lock lock(*inflight_mutex_);
     while (inflight_tasks_->load(std::memory_order_acquire) >=
            max_inflight_tasks_) {
       if (should_abort_inflight_wait()) {
         return nullptr;
       }
-      // Bounded waiting avoids indefinite blocking when shutdown happens on a
-      // different condition variable.
       static_cast<void>(
-          inflight_cv_->wait_for(lock, std::chrono::milliseconds(10)));
+          inflight_cv_->wait_for(lock, kInflightWaitFallback, [this] {
+            return should_abort_inflight_wait() ||
+                   inflight_tasks_->load(std::memory_order_acquire) <
+                       max_inflight_tasks_;
+          }));
     }
   }
 

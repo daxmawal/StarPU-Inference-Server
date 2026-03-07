@@ -336,10 +336,11 @@ stop_server_when_available(ServerContext& ctx)
   starpu_server::StopServer(ctx.server);
 }
 
-constexpr auto kPlotScriptTimeout =
-    std::chrono::steady_clock::duration::zero();  // Disable timeout.
+constexpr auto kPlotScriptTimeout = std::chrono::steady_clock::duration::zero();
 constexpr auto kPlotScriptPollInterval = std::chrono::milliseconds(50);
 constexpr auto kPlotScriptTerminateTimeout = std::chrono::seconds(1);
+constexpr auto kShutdownDrainTimeout = std::chrono::seconds(30);
+constexpr auto kShutdownDrainWaitStep = std::chrono::milliseconds(250);
 constexpr int kSignalExitCodeOffset = 128;
 constexpr int kExecFailedExitCode = 127;
 constexpr int kPlotScriptSearchDepth = 6;
@@ -957,12 +958,46 @@ launch_threads(
   stop_server_when_available(server_ctx);
   queue.shutdown();
   const auto total_jobs = queue.total_pushed();
+  const auto completed_before_drain =
+      completed_jobs.load(std::memory_order_acquire);
+  if (total_jobs > completed_before_drain) {
+    const auto remaining_before_drain = total_jobs - completed_before_drain;
+    starpu_server::log_info(
+        opts.verbosity,
+        std::format(
+            "Shutdown drain started: completed={} total={} remaining={}.",
+            completed_before_drain, total_jobs, remaining_before_drain));
+  }
   if (total_jobs > 0) {
+    const auto deadline =
+        std::chrono::steady_clock::now() + kShutdownDrainTimeout;
     std::unique_lock lock(all_done_mutex);
-    all_done_cv.wait(lock, [&completed_jobs, total_jobs]() {
+    while (true) {
       const auto completed = completed_jobs.load(std::memory_order_acquire);
-      return completed >= total_jobs;
-    });
+      if (completed >= total_jobs) {
+        break;
+      }
+
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
+        const auto remaining = total_jobs - completed;
+        const auto timeout_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                kShutdownDrainTimeout)
+                .count();
+        starpu_server::log_error(std::format(
+            "Shutdown drain timeout after {} ms: completed={} total={} "
+            "remaining={} queue_size={}.",
+            timeout_ms, completed, total_jobs, remaining, queue.size()));
+        break;
+      }
+
+      const auto until_deadline = deadline - now;
+      const auto wait_budget = until_deadline < kShutdownDrainWaitStep
+                                   ? until_deadline
+                                   : kShutdownDrainWaitStep;
+      static_cast<void>(all_done_cv.wait_for(lock, wait_budget));
+    }
   }
   starpu_server::congestion::shutdown();
   server_ctx.stop_cv.notify_one();
