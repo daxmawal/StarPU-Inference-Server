@@ -427,12 +427,11 @@ WarmupRunner::run(int request_nb_per_worker)
   }
 
   const std::size_t warmup_queue_limit = opts_.batching.max_queue_size;
-  const std::size_t warmup_inflight_limit =
-      (opts_.batching.max_inflight_tasks == 0)
-          ? warmup_queue_limit
-          : ((opts_.batching.max_inflight_tasks < warmup_queue_limit)
-                 ? opts_.batching.max_inflight_tasks
-                 : warmup_queue_limit);
+  std::size_t warmup_inflight_limit = warmup_queue_limit;
+  if (opts_.batching.max_inflight_tasks > 0 &&
+      opts_.batching.max_inflight_tasks < warmup_queue_limit) {
+    warmup_inflight_limit = opts_.batching.max_inflight_tasks;
+  }
 
   if (opts_.batching.max_inflight_tasks == 0 ||
       opts_.batching.max_inflight_tasks > warmup_queue_limit) {

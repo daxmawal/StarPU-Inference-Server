@@ -18,8 +18,8 @@ class ResultDispatcher {
       const RuntimeConfig* opts, std::atomic<std::size_t>* completed_jobs,
       std::condition_variable* all_done_cv);
 
-  void prepare_job_completion_callback(
-      StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job) const;
+  static void prepare_job_completion_callback(
+      StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
 
   static void ensure_callback_timing(detail::TimingInfo& timing);
 

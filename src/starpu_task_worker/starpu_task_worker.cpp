@@ -468,7 +468,6 @@ StarPUTaskRunner::submit_job_or_handle_failure(
           opts_->verbosity,
           std::format("Submitting job ID: {}", submission_info.submission_id));
     }
-    reserve_inflight_slot();
     submit_inference_task(job);
   }
   catch (const InferenceEngineException& exception) {
@@ -823,6 +822,9 @@ StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
 
   ResultDispatcher::clear_batching_state(job);
   ResultDispatcher::cleanup_terminal_job_payload(job);
+  if (has_inflight_limit()) {
+    release_inflight_slot();
+  }
   result_dispatcher_->finalize_job_completion(job);
 }
 

@@ -342,7 +342,7 @@ class InferenceJob : public JobBatchState {
   void set_timing_info(detail::TimingInfo timing)
   {
     const std::scoped_lock lock(timing_info_mutex_);
-    timing_info_ = std::move(timing);
+    timing_info_ = timing;
   }
 
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }

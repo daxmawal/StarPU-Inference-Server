@@ -100,6 +100,8 @@ class RuntimeCleanupGuard {
       tracer.configure(false, "");
     }
     catch (...) {
+      // Best-effort cleanup in noexcept context.
+      return;
     }
   }
 
@@ -109,6 +111,8 @@ class RuntimeCleanupGuard {
       starpu_server::shutdown_metrics();
     }
     catch (...) {
+      // Best-effort cleanup in noexcept context.
+      return;
     }
   }
 
@@ -133,16 +137,16 @@ class SignalNotificationPipe {
  public:
   SignalNotificationPipe()
   {
-    int fds[2]{-1, -1};
-    if (::pipe(fds) != 0) {
+    std::array<int, 2> file_descriptors{-1, -1};
+    if (::pipe(file_descriptors.data()) != 0) {
       starpu_server::log_warning(std::format(
           "Failed to create stop-notification pipe; falling back to polling "
           "signal flag: {}",
           std::strerror(errno)));
       return;
     }
-    read_fd_ = fds[0];
-    write_fd_ = fds[1];
+    read_fd_ = file_descriptors[0];
+    write_fd_ = file_descriptors[1];
     if (!set_non_blocking(write_fd_)) {
       starpu_server::log_warning(std::format(
           "Failed to configure stop-notification pipe write end as "
@@ -188,22 +192,26 @@ class SignalNotificationPipe {
   }
 
  private:
-  static auto set_non_blocking(int fd) -> bool
+  static auto set_non_blocking(int file_descriptor) -> bool
   {
-    if (fd < 0) {
+    if (file_descriptor < 0) {
       return false;
     }
-    const int flags = ::fcntl(fd, F_GETFL);
+    // POSIX `fcntl` is variadic by API contract.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+    const int flags = ::fcntl(file_descriptor, F_GETFL);
     if (flags < 0) {
       return false;
     }
-    return ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+    // POSIX `fcntl` is variadic by API contract.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
+    return ::fcntl(file_descriptor, F_SETFL, flags | O_NONBLOCK) == 0;
   }
 
-  static void close_fd_noexcept(int fd) noexcept
+  static void close_fd_noexcept(int file_descriptor) noexcept
   {
-    if (fd >= 0) {
-      (void)::close(fd);
+    if (file_descriptor >= 0) {
+      (void)::close(file_descriptor);
     }
   }
 
@@ -223,10 +231,10 @@ void
 run_thread_entry_with_exception_capture(
     std::string_view thread_name, ThreadExceptionState& state,
     ServerContext& server_ctx, starpu_server::InferenceQueue* queue,
-    Fn&& fn) noexcept
+    Fn&& thread_entry) noexcept
 {
   try {
-    std::forward<Fn>(fn)();
+    std::forward<Fn>(thread_entry)();
   }
   catch (const std::exception& e) {
     starpu_server::log_error(std::format(
@@ -275,7 +283,8 @@ wait_for_signal_notification(int read_fd)
   if (read_fd < 0) {
     return;
   }
-  std::array<char, 16> buffer{};
+  constexpr std::size_t kSignalNotificationBufferSize = 16;
+  std::array<char, kSignalNotificationBufferSize> buffer{};
   while (true) {
     const ssize_t bytes_read = ::read(read_fd, buffer.data(), buffer.size());
     if (bytes_read > 0 || bytes_read == 0) {
@@ -820,7 +829,7 @@ make_grpc_model_spec(
 }
 
 void
-launch_threads(
+launch_threads(  // NOLINT(readability-function-cognitive-complexity)
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu, torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
@@ -864,6 +873,18 @@ launch_threads(
   });
   struct SignalPipeShutdownGuard {
     SignalNotificationPipe* pipe = nullptr;
+    SignalPipeShutdownGuard() = default;
+    explicit SignalPipeShutdownGuard(
+        SignalNotificationPipe* signal_pipe) noexcept
+        : pipe(signal_pipe)
+    {
+    }
+    SignalPipeShutdownGuard(const SignalPipeShutdownGuard&) = delete;
+    auto operator=(const SignalPipeShutdownGuard&) -> SignalPipeShutdownGuard& =
+                                                          delete;
+    SignalPipeShutdownGuard(SignalPipeShutdownGuard&&) = delete;
+    auto operator=(SignalPipeShutdownGuard&&) -> SignalPipeShutdownGuard& =
+                                                     delete;
     ~SignalPipeShutdownGuard()
     {
       if (pipe != nullptr) {

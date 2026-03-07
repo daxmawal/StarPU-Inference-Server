@@ -546,6 +546,14 @@ BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
     prepared_jobs_->push_back(job);
     set_starpu_prepared_queue_depth(prepared_jobs_->size());
   }
+  if (job != nullptr && max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr) {
+    const auto current =
+        inflight_tasks_->fetch_add(1, std::memory_order_release) + 1;
+    set_inflight_tasks(current);
+    const double ratio =
+        static_cast<double>(current) / static_cast<double>(max_inflight_tasks_);
+    set_starpu_worker_busy_ratio(ratio);
+  }
   prepared_cv_->notify_one();
 }
 

@@ -38,7 +38,7 @@ ResultDispatcher::ResultDispatcher(
 
 void
 ResultDispatcher::prepare_job_completion_callback(
-    StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job) const
+    StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job)
 {
   auto prev_callback = job->get_on_complete();
   auto dispatcher = runner.result_dispatcher_;
