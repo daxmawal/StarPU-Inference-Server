@@ -8,6 +8,19 @@
 
 namespace {
 
+auto
+running_under_tsan() -> bool
+{
+#if defined(__SANITIZE_THREAD__)
+  return true;
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+  return true;
+#endif
+#endif
+  return false;
+}
+
 class AsyncServerContextFixture : public ::testing::Test {
  protected:
   AsyncServerContextFixture() : impl(&queue, &reference_outputs, expected_types)
@@ -35,6 +48,12 @@ TEST_F(AsyncServerContextFixture, StartWithoutConfigureDoesNotLaunch)
 
 TEST_F(AsyncServerContextFixture, StartAfterConfigureIsIdempotent)
 {
+  if (running_under_tsan()) {
+    GTEST_SKIP()
+        << "Skipped under TSAN: gRPC event-engine triggers known external race "
+           "in absl::raw_hash_set";
+  }
+
   starpu_server::AsyncServerContext context(async_service, impl);
 
   grpc::ServerBuilder builder;
@@ -58,6 +77,12 @@ TEST_F(AsyncServerContextFixture, StartAfterConfigureIsIdempotent)
 
 TEST_F(AsyncServerContextFixture, ShutdownBeforeStartIsNoOp)
 {
+  if (running_under_tsan()) {
+    GTEST_SKIP()
+        << "Skipped under TSAN: gRPC event-engine triggers known external race "
+           "in absl::raw_hash_set";
+  }
+
   starpu_server::AsyncServerContext context(async_service, impl);
 
   EXPECT_FALSE(context.started());
