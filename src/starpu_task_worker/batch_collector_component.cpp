@@ -449,7 +449,7 @@ BatchCollector::maybe_build_batched_job(
                          : clock::now();
   }
   if (earliest_batch_collect_start == clock::time_point{}) {
-    earliest_batch_collect_start = master->timing_info().dequeued_time;
+    earliest_batch_collect_start = master->timing_info_snapshot().dequeued_time;
   }
 
   master->set_logical_job_count(batch_info.logical_jobs);
@@ -475,12 +475,15 @@ BatchCollector::maybe_build_batched_job(
   observe_batch_efficiency(efficiency);
 
   master->set_start_time(earliest_start);
-  master->timing_info().enqueued_time = earliest_enqueued;
-  master->timing_info().last_enqueued_time =
-      batch_info.latest_enqueued == clock::time_point{}
-          ? earliest_enqueued
-          : batch_info.latest_enqueued;
-  master->timing_info().batch_collect_start_time = earliest_batch_collect_start;
+  master->update_timing_info(
+      [earliest_enqueued, latest_enqueued = batch_info.latest_enqueued,
+       earliest_batch_collect_start](detail::TimingInfo& timing) {
+        timing.enqueued_time = earliest_enqueued;
+        timing.last_enqueued_time = latest_enqueued == clock::time_point{}
+                                        ? earliest_enqueued
+                                        : latest_enqueued;
+        timing.batch_collect_start_time = earliest_batch_collect_start;
+      });
 
   if (const bool need_materialized_inputs =
           (starpu_ == nullptr || !starpu_->has_input_pool())) {
@@ -586,9 +589,11 @@ BatchCollector::batching_loop()
     }
 
     const auto dequeue_time = MonotonicClock::now();
-    job->timing_info().dequeued_time = dequeue_time;
-    job->timing_info().batch_collect_start_time = dequeue_time;
-    job->timing_info().batch_collect_end_time = dequeue_time;
+    job->update_timing_info([dequeue_time](detail::TimingInfo& timing) {
+      timing.dequeued_time = dequeue_time;
+      timing.batch_collect_start_time = dequeue_time;
+      timing.batch_collect_end_time = dequeue_time;
+    });
 
     auto jobs = collect_batch(job);
     job = maybe_build_batched_job(jobs);
@@ -596,7 +601,10 @@ BatchCollector::batching_loop()
       continue;
     }
 
-    job->timing_info().batch_collect_end_time = MonotonicClock::now();
+    const auto batch_collect_end = MonotonicClock::now();
+    job->update_timing_info([batch_collect_end](detail::TimingInfo& timing) {
+      timing.batch_collect_end_time = batch_collect_end;
+    });
 
     enqueue_prepared_job(job);
   }

@@ -275,8 +275,9 @@ StarPUTaskRunner::trace_batch_if_enabled(
   const auto request_ids =
       task_runner_internal::build_request_ids_for_trace(job);
   const auto request_ids_span = std::span<const int>(request_ids);
-  const auto enqueue_start = job->timing_info().enqueued_time;
-  auto enqueue_end = job->timing_info().last_enqueued_time;
+  const auto timing = job->timing_info_snapshot();
+  const auto enqueue_start = timing.enqueued_time;
+  auto enqueue_end = timing.last_enqueued_time;
   if (const auto zero_tp = clock::time_point{};
       enqueue_end == zero_tp ||
       (enqueue_start != zero_tp && enqueue_end < enqueue_start)) {
@@ -290,8 +291,7 @@ StarPUTaskRunner::trace_batch_if_enabled(
   tracer.log_batch_build_span(
       submission_id, job->model_name(), batch_size,
       BatchingTraceLogger::TimeRange{
-          job->timing_info().batch_collect_start_time,
-          job->timing_info().batch_collect_end_time},
+          timing.batch_collect_start_time, timing.batch_collect_end_time},
       request_ids_span, warmup_job);
 }
 
@@ -758,7 +758,10 @@ StarPUTaskRunner::submit_inference_task(
   starpu_task* task_ptr =
       task.create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
 
-  job->timing_info().before_starpu_submitted_time = MonotonicClock::now();
+  const auto submitted_at = MonotonicClock::now();
+  job->update_timing_info([submitted_at](detail::TimingInfo& timing) {
+    timing.before_starpu_submitted_time = submitted_at;
+  });
 
   const int ret = starpu_task_submit(task_ptr);
   if (ret != 0) {
@@ -881,7 +884,9 @@ StarPUTaskRunner::run()
 
       const auto submission_id = next_submission_id_.fetch_add(1);
       job->set_submission_id(submission_id);
-      job->timing_info().submission_id = submission_id;
+      job->update_timing_info([submission_id](detail::TimingInfo& timing) {
+        timing.submission_id = submission_id;
+      });
 
       const int logical_jobs = job->logical_job_count();
       const auto request_id = job->get_request_id();

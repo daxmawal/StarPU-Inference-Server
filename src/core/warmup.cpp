@@ -205,8 +205,10 @@ WarmupRunner::client_worker(
       job->set_fixed_worker_id(worker_id);
 
       const auto enqueued_now = MonotonicClock::now();
-      job->timing_info().enqueued_time = enqueued_now;
-      job->timing_info().last_enqueued_time = enqueued_now;
+      job->update_timing_info([enqueued_now](detail::TimingInfo& timing) {
+        timing.enqueued_time = enqueued_now;
+        timing.last_enqueued_time = enqueued_now;
+      });
 
       if (bool queue_full = false; !queue.push(std::move(job), &queue_full)) {
         const auto* const reason =

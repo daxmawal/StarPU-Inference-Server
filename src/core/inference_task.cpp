@@ -457,7 +457,10 @@ InferenceTask::submit()
   starpu_task* task =
       create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
 
-  job_->timing_info().before_starpu_submitted_time = MonotonicClock::now();
+  const auto submitted_at = MonotonicClock::now();
+  job_->update_timing_info([submitted_at](detail::TimingInfo& timing) {
+    timing.before_starpu_submitted_time = submitted_at;
+  });
 
   const int ret = starpu_task_submit(task);
   if (ret != 0) {
@@ -638,7 +641,10 @@ InferenceTask::starpu_output_callback(void* arg)
 {
   try {
     auto* ctx = static_cast<InferenceCallbackContext*>(arg);
-    ctx->job->timing_info().callback_start_time = MonotonicClock::now();
+    const auto callback_start = MonotonicClock::now();
+    ctx->job->update_timing_info([callback_start](detail::TimingInfo& timing) {
+      timing.callback_start_time = callback_start;
+    });
 
     ctx->remaining_outputs_to_acquire =
         static_cast<int>(ctx->outputs_handles.size());
@@ -809,7 +815,9 @@ InferenceTask::record_and_run_completion_callback(
                                 end_time - ctx->job->get_start_time())
                                 .count();
 
-  ctx->job->timing_info().callback_end_time = end_time;
+  ctx->job->update_timing_info([end_time](detail::TimingInfo& timing) {
+    timing.callback_end_time = end_time;
+  });
 
   auto callback = ctx->job->take_on_complete();
   if (callback) {

@@ -422,7 +422,7 @@ handle_async_job_completion(
     InferenceJob& job, Callback&& callback, std::vector<torch::Tensor> outs,
     double latency_ms)
 {
-  const auto& info = job.timing_info();
+  const auto info = job.timing_info_snapshot();
   const auto base = detail::compute_latency_breakdown(info, latency_ms);
   InferenceServiceImpl::LatencyBreakdown timing{};
   timing.queue_ms = base.queue_ms;
@@ -1062,8 +1062,10 @@ InferenceServiceImpl::submit_job_async(
     });
 
     const auto enqueued_now = MonotonicClock::now();
-    job->timing_info().enqueued_time = enqueued_now;
-    job->timing_info().last_enqueued_time = enqueued_now;
+    job->update_timing_info([enqueued_now](detail::TimingInfo& timing) {
+      timing.enqueued_time = enqueued_now;
+      timing.last_enqueued_time = enqueued_now;
+    });
 
     bool pushed = false;
     bool queue_full = false;
@@ -1084,9 +1086,10 @@ InferenceServiceImpl::submit_job_async(
       return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
     }
     if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
+      const auto timing = job->timing_info_snapshot();
       tracer.log_request_enqueued(
           job->get_request_id(), job->model_name(), /*is_warmup=*/false,
-          job->timing_info().last_enqueued_time);
+          timing.last_enqueued_time);
     }
     return Status::OK;
   }

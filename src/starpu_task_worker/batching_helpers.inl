@@ -82,33 +82,33 @@ aggregate_batch_metadata(
     return info;
   }
 
+  const auto first_timing = jobs.front()->timing_info_snapshot();
   info.sub_jobs.reserve(jobs.size());
   info.earliest_start = jobs.front()->get_start_time();
-  info.earliest_enqueued = jobs.front()->timing_info().enqueued_time;
-  info.latest_enqueued = jobs.front()->timing_info().enqueued_time;
-  info.earliest_batch_collect_start =
-      jobs.front()->timing_info().batch_collect_start_time;
+  info.earliest_enqueued = first_timing.enqueued_time;
+  info.latest_enqueued = first_timing.enqueued_time;
+  info.earliest_batch_collect_start = first_timing.batch_collect_start_time;
 
   for (const auto& job : jobs) {
+    const auto timing = job->timing_info_snapshot();
     const auto job_batch = resolve_batch_size_for_job(opts, job);
     info.total_samples += job_batch > 0 ? job_batch : 1;
     info.logical_jobs += std::max(1, job->logical_job_count());
     info.earliest_start =
         select_earliest_time(info.earliest_start, job->get_start_time());
-    info.earliest_enqueued = select_earliest_time(
-        info.earliest_enqueued, job->timing_info().enqueued_time);
-    info.latest_enqueued = select_latest_time(
-        info.latest_enqueued, job->timing_info().enqueued_time);
+    info.earliest_enqueued =
+        select_earliest_time(info.earliest_enqueued, timing.enqueued_time);
+    info.latest_enqueued =
+        select_latest_time(info.latest_enqueued, timing.enqueued_time);
     info.earliest_batch_collect_start = select_earliest_time(
-        info.earliest_batch_collect_start,
-        job->timing_info().batch_collect_start_time);
+        info.earliest_batch_collect_start, timing.batch_collect_start_time);
 
     InferenceJob::AggregatedSubJob entry{};
     entry.job = std::weak_ptr<InferenceJob>(job);
     entry.callback = job->get_on_complete();
     entry.batch_size = job_batch;
     entry.request_id = job->get_request_id();
-    entry.arrival_time = job->timing_info().enqueued_time;
+    entry.arrival_time = timing.enqueued_time;
     info.sub_jobs.push_back(std::move(entry));
   }
 
@@ -204,7 +204,7 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
 
   if (!job->has_aggregated_sub_jobs()) {
     return std::vector<int64_t>{
-        to_microseconds(job->timing_info().enqueued_time)};
+        to_microseconds(job->timing_info_snapshot().enqueued_time)};
   }
 
   const auto& aggregated = job->aggregated_sub_jobs();
@@ -214,7 +214,7 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
     auto arrival = sub_job.arrival_time;
     if (arrival == MonotonicClock::time_point{}) {
       if (auto locked = sub_job.job.lock()) {
-        arrival = locked->timing_info().enqueued_time;
+        arrival = locked->timing_info_snapshot().enqueued_time;
       }
     }
     arrivals.push_back(to_microseconds(arrival));

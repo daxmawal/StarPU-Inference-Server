@@ -146,8 +146,6 @@ class JobBatchState {
 class InferenceJob : public JobBatchState {
  public:
   using AggregatedSubJob = JobBatchState::AggregatedSubJob;
-  // Terminal callback contract:
-  // exactly one execution per job across success/error/cancel paths.
   using CompletionCallback =
       std::function<void(std::vector<torch::Tensor>, double)>;
 
@@ -192,8 +190,7 @@ class InferenceJob : public JobBatchState {
     }
   }
   void set_start_time(MonotonicClock::time_point time) { start_time_ = time; }
-  // Register or replace the terminal callback for this job.
-  // The callback must be consumed via take_on_complete() and invoked once.
+
   void set_on_complete(CompletionCallback call_back)
   {
     const std::scoped_lock lock(on_complete_mutex_);
@@ -203,14 +200,25 @@ class InferenceJob : public JobBatchState {
   {
     model_name_ = std::move(model_name);
   }
-  void set_failure_info(FailureInfo info) { failure_info_ = std::move(info); }
-  void clear_failure_info() { failure_info_.reset(); }
-  [[nodiscard]] auto failure_info() const -> const std::optional<FailureInfo>&
+
+  void set_failure_info(FailureInfo info)
   {
+    const std::scoped_lock lock(failure_info_mutex_);
+    failure_info_ = std::move(info);
+  }
+  void clear_failure_info()
+  {
+    const std::scoped_lock lock(failure_info_mutex_);
+    failure_info_.reset();
+  }
+  [[nodiscard]] auto failure_info() const -> std::optional<FailureInfo>
+  {
+    const std::scoped_lock lock(failure_info_mutex_);
     return failure_info_;
   }
   [[nodiscard]] auto take_failure_info() -> std::optional<FailureInfo>
   {
+    const std::scoped_lock lock(failure_info_mutex_);
     return std::exchange(failure_info_, std::nullopt);
   }
   [[nodiscard]] auto model_name() const -> std::string_view
@@ -275,17 +283,11 @@ class InferenceJob : public JobBatchState {
   {
     return fixed_worker_id_;
   }
-  // Snapshot helper for tests/introspection only.
-  // Do not use this in terminal dispatch paths.
   [[nodiscard]] auto get_on_complete() const -> CompletionCallback
   {
     const std::scoped_lock lock(on_complete_mutex_);
     return on_complete_;
   }
-
-  // Consume and clear the callback atomically.
-  // After a successful take, subsequent take/has/get observe an empty slot
-  // unless a new callback is explicitly set.
   [[nodiscard]] auto take_on_complete() -> CompletionCallback
   {
     const std::scoped_lock lock(on_complete_mutex_);
@@ -302,6 +304,38 @@ class InferenceJob : public JobBatchState {
   auto get_worker_id() -> int& { return worker_id_; }
   auto get_executed_on() -> DeviceType& { return executed_on_; }
 
+  // Timing writer contract:
+  // - gRPC ingress thread writes: enqueued_time, last_enqueued_time
+  // - batching thread writes: dequeued_time, batch_collect_* times
+  // - runner submission thread writes: before_starpu_submitted_time,
+  //   submission_id
+  // - StarPU codelet worker writes: codelet_start/end, inference_start,
+  //   executed_on/device_id/worker_id
+  // - StarPU output callback thread writes: callback_start/end
+  //
+  // For cross-thread reads/writes on host-side paths, use
+  // update_timing_info()/timing_info_snapshot()/set_timing_info().
+  // timing_info() is intentionally left for low-level StarPU pointer wiring
+  // and existing tests.
+  template <typename Updater>
+  void update_timing_info(Updater&& updater)
+  {
+    const std::scoped_lock lock(timing_info_mutex_);
+    std::forward<Updater>(updater)(timing_info_);
+  }
+
+  [[nodiscard]] auto timing_info_snapshot() const -> detail::TimingInfo
+  {
+    const std::scoped_lock lock(timing_info_mutex_);
+    return timing_info_;
+  }
+
+  void set_timing_info(detail::TimingInfo timing)
+  {
+    const std::scoped_lock lock(timing_info_mutex_);
+    timing_info_ = std::move(timing);
+  }
+
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }
 
  private:
@@ -315,6 +349,8 @@ class InferenceJob : public JobBatchState {
   int submission_id_ = -1;
   std::optional<int> fixed_worker_id_;
   mutable std::mutex on_complete_mutex_;
+  mutable std::mutex failure_info_mutex_;
+  mutable std::mutex timing_info_mutex_;
   CompletionCallback on_complete_;
   MonotonicClock::time_point start_time_;
   std::string model_name_;

@@ -90,7 +90,12 @@ ResultDispatcher::record_job_metrics(
     const std::shared_ptr<InferenceJob>& job,
     StarPUTaskRunner::DurationMs latency, std::size_t batch_size) const
 {
-  auto& timing = job->timing_info();
+  const int submission_id = job->submission_id();
+  job->update_timing_info([submission_id](detail::TimingInfo& timing) {
+    ResultDispatcher::ensure_callback_timing(timing);
+    timing.submission_id = submission_id;
+  });
+  const auto timing = job->timing_info_snapshot();
   const auto worker_type_label =
       std::string_view(to_string(job->get_executed_on()));
   const int worker_id = job->get_worker_id();
@@ -141,8 +146,6 @@ ResultDispatcher::record_job_metrics(
   perf_observer::record_job(
       timing.enqueued_time, timing.callback_end_time, batch_size, warmup);
 
-  timing.submission_id = job->submission_id();
-  const int submission_id = job->submission_id();
   const int job_id = submission_id >= 0 ? submission_id : job->get_request_id();
   log_job_timings(job_id, latency, timing);
 
@@ -227,7 +230,6 @@ ResultDispatcher::handle_job_completion(
           return;
         }
         static_cast<void>(job->release_input_tensors());
-        ResultDispatcher::ensure_callback_timing(job->timing_info());
         record_job_metrics(
             job, StarPUTaskRunner::DurationMs{latency_ms},
             ResultDispatcher::resolve_batch_size(opts_, job));
@@ -260,6 +262,12 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     return;
   }
 
+  const auto aggregated_timing = aggregated_job->timing_info_snapshot();
+  const auto aggregated_device_id = aggregated_job->get_device_id();
+  const auto aggregated_worker_id = aggregated_job->get_worker_id();
+  const auto aggregated_executed_on = aggregated_job->get_executed_on();
+  const auto aggregated_submission_id = aggregated_job->submission_id();
+
   size_t offset = 0;
   for (const auto& entry : sub_jobs) {
     auto job_sp = entry.job.lock();
@@ -275,11 +283,11 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
         task_runner_internal::SubJobSliceOptions{offset, entry.batch_size});
     auto outputs = std::move(slice_result.outputs);
 
-    job_sp->timing_info() = aggregated_job->timing_info();
-    job_sp->get_device_id() = aggregated_job->get_device_id();
-    job_sp->get_worker_id() = aggregated_job->get_worker_id();
-    job_sp->get_executed_on() = aggregated_job->get_executed_on();
-    job_sp->set_submission_id(aggregated_job->submission_id());
+    job_sp->set_timing_info(aggregated_timing);
+    job_sp->get_device_id() = aggregated_device_id;
+    job_sp->get_worker_id() = aggregated_worker_id;
+    job_sp->get_executed_on() = aggregated_executed_on;
+    job_sp->set_submission_id(aggregated_submission_id);
 
     if (entry.callback) {
       entry.callback(outputs, latency_ms);
@@ -320,7 +328,7 @@ ResultDispatcher::emit_batch_traces(
     return;
   }
   const bool warmup_job = is_warmup_job(job);
-  auto& timing = job->timing_info();
+  const auto timing = job->timing_info_snapshot();
   const auto zero_tp = clock::time_point{};
   auto compute_start = timing.inference_start_time;
   if (compute_start == zero_tp) {
