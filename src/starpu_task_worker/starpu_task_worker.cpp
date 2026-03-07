@@ -829,7 +829,7 @@ StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
 }
 
 void
-StarPUTaskRunner::run()
+StarPUTaskRunner::run()  // NOLINT(readability-function-cognitive-complexity)
 {
   std::mutex thread_exception_mutex;
   std::exception_ptr thread_exception;
