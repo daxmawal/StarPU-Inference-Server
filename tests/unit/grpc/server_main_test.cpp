@@ -373,6 +373,12 @@ TEST(
     ServerMainOrchestration,
     LaunchThreadsStopsWhenGrpcStartupFailsOnOccupiedPort)
 {
+  if (running_under_tsan()) {
+    GTEST_SKIP()
+        << "Skipped under TSAN: gRPC event-engine triggers known external race "
+           "in absl::raw_hash_set";
+  }
+
   constexpr auto kLaunchTimeout = std::chrono::seconds(10);
 
   auto occupied_port = occupy_loopback_port();
