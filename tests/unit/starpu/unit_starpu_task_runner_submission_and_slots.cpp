@@ -1506,7 +1506,16 @@ TEST_F(
   }
   const auto tensor_opts =
       torch::TensorOptions().dtype(torch::kFloat).device(torch::kCUDA);
-  auto gpu_tensor = torch::ones({2, 2}, tensor_opts);
+  (void)cudaGetLastError();
+  torch::Tensor gpu_tensor;
+  try {
+    gpu_tensor = torch::ones({2, 2}, tensor_opts);
+  }
+  catch (const c10::Error& e) {
+    (void)cudaGetLastError();
+    GTEST_SKIP() << "Unable to allocate CUDA tensor for non-CPU output test: "
+                 << e.what();
+  }
   EXPECT_FALSE(gpu_tensor.is_cpu());
 
   auto job = make_job(29, {});

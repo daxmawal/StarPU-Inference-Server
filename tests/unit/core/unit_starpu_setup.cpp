@@ -2110,8 +2110,10 @@ TEST(EstimateNonCpuWorkers, ReturnsMaxUnsignedOnOverflow)
   EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
   EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
   EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+  EnvVarUnsetGuard workers_env_guard{"STARPU_NWORKER_PER_CUDA"};
 
   StarpuInitCaptureStubGuard capture_guard;
+  ScopedStarpuShutdownStubGuard shutdown_stub_guard;
   starpu_server::RuntimeConfig opts;
   opts.devices.group_cpu_by_numa = true;
   opts.devices.use_cuda = true;
