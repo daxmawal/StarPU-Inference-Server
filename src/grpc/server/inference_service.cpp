@@ -1465,6 +1465,15 @@ InferenceServiceImpl::finalize_successful_completion(
     breakdown.preprocess_ms = 0.0;
   }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (async_hooks.before_final_cancel_check && context.cancel_flag != nullptr) {
+    async_hooks.before_final_cancel_check(context.cancel_flag);
+  }
+#endif  // SONAR_IGNORE_END
+  if (is_async_cancelled(context)) {
+    return;
+  }
+
   const auto output_names =
       context.output_names != nullptr
           ? std::span<const std::string>(*context.output_names)
@@ -1537,11 +1546,6 @@ InferenceServiceImpl::finalize_successful_completion(
       breakdown.postprocess_ms,
   });
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (async_hooks.before_final_cancel_check && context.cancel_flag != nullptr) {
-    async_hooks.before_final_cancel_check(context.cancel_flag);
-  }
-#endif  // SONAR_IGNORE_END
   if (is_async_cancelled(context)) {
     return;
   }
