@@ -38,7 +38,6 @@ TEST_F(AsyncServerContextFixture, StartAfterConfigureIsIdempotent)
   starpu_server::AsyncServerContext context(async_service, impl);
 
   grpc::ServerBuilder builder;
-  builder.AddListeningPort("localhost:0", grpc::InsecureServerCredentials());
   context.configure(builder);
   auto server = builder.BuildAndStart();
   ASSERT_NE(server, nullptr);
@@ -70,7 +69,6 @@ TEST_F(AsyncServerContextFixture, ShutdownBeforeStartIsNoOp)
   EXPECT_EQ(context.thread_count(), 0U);
 
   grpc::ServerBuilder builder;
-  builder.AddListeningPort("localhost:0", grpc::InsecureServerCredentials());
   context.configure(builder);
   auto server = builder.BuildAndStart();
   ASSERT_NE(server, nullptr);
