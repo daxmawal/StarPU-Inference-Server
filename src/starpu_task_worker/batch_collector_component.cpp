@@ -538,16 +538,6 @@ BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
       prepared_cv_ == nullptr) {
     return;
   }
-  if (max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr && job != nullptr) {
-    const auto current =
-        inflight_tasks_->fetch_add(1, std::memory_order_release) + 1;
-    set_inflight_tasks(current);
-    if (max_inflight_tasks_ > 0) {
-      const double ratio = static_cast<double>(current) /
-                           static_cast<double>(max_inflight_tasks_);
-      set_starpu_worker_busy_ratio(ratio);
-    }
-  }
   {
     const std::scoped_lock lock(*prepared_mutex_);
     prepared_jobs_->push_back(job);

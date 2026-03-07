@@ -194,11 +194,7 @@ class StarPUTaskRunner {
   void finalize_job_after_exception(
       const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
       std::string_view log_prefix, int job_id);
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   void reserve_inflight_slot();
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
   void release_inflight_slot();
   static void release_inflight_slot(
       const std::shared_ptr<InflightState>& inflight_state);

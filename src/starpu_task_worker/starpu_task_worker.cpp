@@ -339,38 +339,36 @@ StarPUTaskRunner::finalize_job_after_exception(
     job->set_failure_info(std::move(failure_info));
   }
 
-  if (!StarPUTaskRunner::handle_job_exception(job, exception) && job) {
+  const bool completion_invoked =
+      StarPUTaskRunner::handle_job_exception(job, exception);
+  if (!completion_invoked && job) {
     static_cast<void>(job->release_input_tensors());
     job->release_input_memory_holders();
     job->set_output_tensors({});
     result_dispatcher_->finalize_job_completion(job);
+    release_inflight_slot();
   }
-  release_inflight_slot();
 }
 
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 StarPUTaskRunner::reserve_inflight_slot()
 {
-  if (inflight_state_ != nullptr && inflight_state_->max_tasks > 0) {
-    std::unique_lock lock(inflight_state_->mutex);
-    inflight_state_->cv.wait(lock, [this] {
-      return inflight_state_->tasks.load(std::memory_order_acquire) <
-             inflight_state_->max_tasks;
-    });
+  if (inflight_state_ == nullptr || inflight_state_->max_tasks == 0) {
+    return;
   }
+
+  std::unique_lock lock(inflight_state_->mutex);
+  inflight_state_->cv.wait(lock, [this] {
+    return inflight_state_->tasks.load(std::memory_order_acquire) <
+           inflight_state_->max_tasks;
+  });
   const auto current =
       inflight_state_->tasks.fetch_add(1, std::memory_order_release) + 1;
   set_inflight_tasks(current);
-  if (inflight_state_->max_tasks > 0) {
-    const double ratio = static_cast<double>(current) /
-                         static_cast<double>(inflight_state_->max_tasks);
-    set_starpu_worker_busy_ratio(ratio);
-  }
+  const double ratio = static_cast<double>(current) /
+                       static_cast<double>(inflight_state_->max_tasks);
+  set_starpu_worker_busy_ratio(ratio);
 }
-#endif  // SONAR_IGNORE_END
-// GCOVR_EXCL_STOP
 
 void
 StarPUTaskRunner::release_inflight_slot()
@@ -446,6 +444,7 @@ StarPUTaskRunner::submit_job_or_handle_failure(
           opts_->verbosity,
           std::format("Submitting job ID: {}", submission_info.submission_id));
     }
+    reserve_inflight_slot();
     submit_inference_task(job);
   }
   catch (const InferenceEngineException& exception) {
@@ -789,7 +788,6 @@ StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
   ResultDispatcher::clear_batching_state(job);
   ResultDispatcher::cleanup_terminal_job_payload(job);
   result_dispatcher_->finalize_job_completion(job);
-  release_inflight_slot();
 }
 
 void
