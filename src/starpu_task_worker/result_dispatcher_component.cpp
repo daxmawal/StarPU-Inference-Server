@@ -48,15 +48,38 @@ ResultDispatcher::prepare_job_completion_callback(
       [dispatcher, prev_callback, job_sptr = job, inflight_state,
        track_inflight](
           std::vector<torch::Tensor> results, double latency_ms) mutable {
-        if (dispatcher == nullptr) {
+        if (job_sptr == nullptr || !job_sptr->try_mark_terminal_handled()) {
           return;
         }
-        dispatcher->handle_job_completion(
-            job_sptr, prev_callback, results, latency_ms);
+
+        try {
+          if (dispatcher != nullptr) {
+            dispatcher->handle_job_completion(
+                job_sptr, prev_callback, results, latency_ms);
+          } else {
+            ResultDispatcher::cleanup_terminal_job_payload(job_sptr);
+          }
+        }
+        catch (const std::exception& e) {
+          log_error(std::format(
+              "Unhandled exception in terminal completion path: {}", e.what()));
+          ResultDispatcher::cleanup_terminal_job_payload(job_sptr);
+        }
+        catch (...) {
+          log_error("Unhandled non-std exception in terminal completion path");
+          ResultDispatcher::cleanup_terminal_job_payload(job_sptr);
+        }
+
         if (track_inflight) {
           ResultDispatcher::release_inflight_slot(inflight_state);
         }
-        dispatcher->finalize_job_completion(job_sptr);
+        if (dispatcher != nullptr) {
+          dispatcher->finalize_job_completion(job_sptr);
+        } else {
+          log_error(
+              "Missing ResultDispatcher in terminal completion path; "
+              "completion counter may be inconsistent");
+        }
       });
 }
 

@@ -194,6 +194,9 @@ class StarPUTaskRunner {
   void finalize_job_after_exception(
       const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
       std::string_view log_prefix, int job_id);
+  void finalize_job_after_unknown_exception(
+      const std::shared_ptr<InferenceJob>& job, std::string_view log_prefix,
+      int job_id);
   void reserve_inflight_slot();
   void release_inflight_slot();
   static void release_inflight_slot(

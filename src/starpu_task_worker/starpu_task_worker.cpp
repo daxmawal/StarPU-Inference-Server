@@ -339,15 +339,39 @@ StarPUTaskRunner::finalize_job_after_exception(
     job->set_failure_info(std::move(failure_info));
   }
 
-  const bool completion_invoked =
-      StarPUTaskRunner::handle_job_exception(job, exception);
-  if (!completion_invoked && job) {
-    static_cast<void>(job->release_input_tensors());
-    job->release_input_memory_holders();
-    job->set_output_tensors({});
+  static_cast<void>(StarPUTaskRunner::handle_job_exception(job, exception));
+
+  if (!job) {
+    return;
+  }
+
+  ResultDispatcher::clear_pending_sub_job_callbacks(job);
+  auto pending_jobs = job->take_pending_sub_jobs();
+  SlotManager::release_pending_jobs(job, pending_jobs);
+  ResultDispatcher::clear_batching_state(job);
+  ResultDispatcher::cleanup_terminal_job_payload(job);
+
+  if (job->try_mark_terminal_handled()) {
     result_dispatcher_->finalize_job_completion(job);
     release_inflight_slot();
   }
+}
+
+void
+StarPUTaskRunner::finalize_job_after_unknown_exception(
+    const std::shared_ptr<InferenceJob>& job, std::string_view log_prefix,
+    int job_id)
+{
+  class UnknownTerminalException final : public std::exception {
+   public:
+    [[nodiscard]] auto what() const noexcept -> const char* override
+    {
+      return "Unknown non-standard exception";
+    }
+  };
+
+  const UnknownTerminalException unknown;
+  finalize_job_after_exception(job, unknown, log_prefix, job_id);
 }
 
 void
@@ -461,6 +485,14 @@ StarPUTaskRunner::submit_job_or_handle_failure(
   catch (const std::bad_alloc& exception) {
     finalize_job_after_exception(
         job, exception, "Memory allocation failure", submission_info.job_id);
+  }
+  catch (const std::exception& exception) {
+    finalize_job_after_exception(
+        job, exception, "Unexpected std::exception", submission_info.job_id);
+  }
+  catch (...) {
+    finalize_job_after_unknown_exception(
+        job, "Unexpected non-standard exception", submission_info.job_id);
   }
 }
 
@@ -779,6 +811,10 @@ StarPUTaskRunner::submit_inference_task(
 void
 StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
 {
+  if (job == nullptr || !job->try_mark_terminal_handled()) {
+    return;
+  }
+
   static_cast<void>(job->take_on_complete());
   ResultDispatcher::clear_pending_sub_job_callbacks(job);
 
@@ -875,33 +911,48 @@ StarPUTaskRunner::run()
         break;
       }
 
-      if (job->is_cancelled()) {
-        handle_cancelled_job(job);
-        continue;
+      int job_id = job->get_request_id();
+      try {
+        if (job->is_cancelled()) {
+          handle_cancelled_job(job);
+          continue;
+        }
+
+        const auto submission_id = next_submission_id_.fetch_add(1);
+        job->set_submission_id(submission_id);
+        job->update_timing_info([submission_id](detail::TimingInfo& timing) {
+          timing.submission_id = submission_id;
+        });
+
+        const int logical_jobs = job->logical_job_count();
+        const auto request_id = job->get_request_id();
+        job_id = task_runner_internal::job_identifier(*job);
+        if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
+          log_trace(
+              opts_->verbosity,
+              std::format(
+                  "Dequeued job submission {} (request {}), queue size : {}, "
+                  "aggregated requests: {}",
+                  job_id, request_id, queue_->size(), logical_jobs));
+        }
+
+        const bool warmup_job = is_warmup_job(job);
+        trace_batch_if_enabled(job, warmup_job, submission_id);
+        prepare_job_completion_callback(job);
+        submit_job_or_handle_failure(
+            job, SubmissionInfo{submission_id, job_id});
       }
-
-      const auto submission_id = next_submission_id_.fetch_add(1);
-      job->set_submission_id(submission_id);
-      job->update_timing_info([submission_id](detail::TimingInfo& timing) {
-        timing.submission_id = submission_id;
-      });
-
-      const int logical_jobs = job->logical_job_count();
-      const auto request_id = job->get_request_id();
-      const int job_id = task_runner_internal::job_identifier(*job);
-      if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
-        log_trace(
-            opts_->verbosity,
-            std::format(
-                "Dequeued job submission {} (request {}), queue size : {}, "
-                "aggregated requests: {}",
-                job_id, request_id, queue_->size(), logical_jobs));
+      catch (const std::exception& e) {
+        finalize_job_after_exception(
+            job, e, "Unexpected exception while processing dequeued job",
+            job_id);
       }
-
-      const bool warmup_job = is_warmup_job(job);
-      trace_batch_if_enabled(job, warmup_job, submission_id);
-      prepare_job_completion_callback(job);
-      submit_job_or_handle_failure(job, SubmissionInfo{submission_id, job_id});
+      catch (...) {
+        finalize_job_after_unknown_exception(
+            job,
+            "Unexpected non-standard exception while processing dequeued job",
+            job_id);
+      }
     }
 
     if (batching_thread_.joinable()) {

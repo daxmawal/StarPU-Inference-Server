@@ -293,11 +293,20 @@ class InferenceJob : public JobBatchState {
     const std::scoped_lock lock(on_complete_mutex_);
     return std::exchange(on_complete_, CompletionCallback{});
   }
-
   [[nodiscard]] auto has_on_complete() const -> bool
   {
     const std::scoped_lock lock(on_complete_mutex_);
     return static_cast<bool>(on_complete_);
+  }
+  [[nodiscard]] auto try_mark_terminal_handled() -> bool
+  {
+    bool expected = false;
+    return terminal_handled_.compare_exchange_strong(
+        expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
+  }
+  [[nodiscard]] auto terminal_handled() const -> bool
+  {
+    return terminal_handled_.load(std::memory_order_acquire);
   }
 
   auto get_device_id() -> int& { return device_id_; }
@@ -359,6 +368,7 @@ class InferenceJob : public JobBatchState {
   DeviceType executed_on_ = DeviceType::Unknown;
   int device_id_ = -1;
   int worker_id_ = -1;
+  std::atomic<bool> terminal_handled_{false};
 
   detail::TimingInfo timing_info_;
 };
