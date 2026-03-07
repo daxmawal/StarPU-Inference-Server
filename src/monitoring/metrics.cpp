@@ -1748,6 +1748,7 @@ MetricsRegistry::request_stop()
 {
   if (registry_state_.sampler_thread.joinable()) {
     registry_state_.sampler_thread.request_stop();
+    registry_state_.sampler_thread.join();
   }
 }
 
