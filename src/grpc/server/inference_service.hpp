@@ -287,7 +287,9 @@ class InferenceServiceImpl final
       std::vector<std::shared_ptr<const void>> input_lifetimes = {},
       std::shared_ptr<std::atomic<bool>> cancel_flag = {},
       MonotonicClock::time_point receive_time = MonotonicClock::now(),
-      std::string model_name = {}) -> grpc::Status;
+      std::string model_name = {},
+      std::optional<AsyncFailureInfo>* submit_failure_info = nullptr)
+      -> grpc::Status;
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -394,7 +396,8 @@ class InferenceServiceImpl final
       const std::shared_ptr<CallbackHandle>& callback_handle,
       InferenceServiceImpl* service, std::string_view resolved_model_name,
       const inference::ModelInferRequest* request,
-      MonotonicClock::time_point recv_tp) -> bool;
+      MonotonicClock::time_point recv_tp,
+      const std::optional<AsyncFailureInfo>& failure_info) -> bool;
 
   static void handle_async_internal_error(
       const std::shared_ptr<std::atomic<bool>>& cancel_flag,

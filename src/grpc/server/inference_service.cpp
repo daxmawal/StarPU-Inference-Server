@@ -63,6 +63,66 @@ status_reason(const Status& status) -> std::string
   return std::to_string(static_cast<int>(status.error_code()));
 }
 
+struct TerminalFailureMapping {
+  std::string stage;
+  std::string reason;
+  bool report_failure_metric = true;
+};
+
+auto
+resolve_terminal_failure_mapping(
+    const Status& status, std::string_view default_stage,
+    std::string_view default_reason,
+    const std::optional<InferenceServiceImpl::AsyncFailureInfo>& failure_info)
+    -> TerminalFailureMapping
+{
+  TerminalFailureMapping mapping{};
+  if (failure_info && failure_info->metrics_reported) {
+    mapping.report_failure_metric = false;
+    return mapping;
+  }
+
+  if (failure_info && !failure_info->stage.empty()) {
+    mapping.stage = failure_info->stage;
+  } else if (!default_stage.empty()) {
+    mapping.stage = std::string(default_stage);
+  } else {
+    mapping.stage = "execution";
+  }
+
+  if (failure_info && !failure_info->reason.empty()) {
+    mapping.reason = failure_info->reason;
+  } else if (!default_reason.empty()) {
+    mapping.reason = std::string(default_reason);
+  } else {
+    mapping.reason = status_reason(status);
+  }
+
+  return mapping;
+}
+
+void
+record_terminal_metrics(
+    std::string_view model_name, const Status& status,
+    std::string_view default_stage, std::string_view default_reason = {},
+    const std::optional<InferenceServiceImpl::AsyncFailureInfo>& failure_info =
+        std::nullopt,
+    bool record_status_metric = true)
+{
+  if (record_status_metric) {
+    increment_request_status(static_cast<int>(status.error_code()), model_name);
+  }
+  if (status.ok()) {
+    return;
+  }
+
+  const auto mapping = resolve_terminal_failure_mapping(
+      status, default_stage, default_reason, failure_info);
+  if (mapping.report_failure_metric) {
+    increment_inference_failure(mapping.stage, mapping.reason, model_name);
+  }
+}
+
 auto
 unimplemented_rpc_status(std::string_view rpc_name) -> Status
 {
@@ -906,17 +966,29 @@ InferenceServiceImpl::submit_job_async(
     const std::vector<torch::Tensor>& inputs, AsyncJobCallback on_complete,
     std::vector<std::shared_ptr<const void>> input_lifetimes,
     std::shared_ptr<std::atomic<bool>> cancel_flag,
-    MonotonicClock::time_point receive_time, std::string model_name) -> Status
+    MonotonicClock::time_point receive_time, std::string model_name,
+    std::optional<AsyncFailureInfo>* submit_failure_info) -> Status
 {
   auto resolved_model_name = resolve_model_name(std::move(model_name));
+  if (submit_failure_info != nullptr) {
+    *submit_failure_info = std::nullopt;
+  }
+  const auto set_submit_failure_info = [&](std::string_view reason) {
+    if (submit_failure_info == nullptr) {
+      return;
+    }
+    AsyncFailureInfo info{};
+    info.stage = "enqueue";
+    info.reason = std::string(reason);
+    *submit_failure_info = std::move(info);
+  };
+
   if (queue_ == nullptr) {
-    increment_inference_failure(
-        "enqueue", "queue_unavailable", resolved_model_name);
+    set_submit_failure_info("queue_unavailable");
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
   if (reference_outputs_ == nullptr) {
-    increment_inference_failure(
-        "enqueue", "reference_outputs_unavailable", resolved_model_name);
+    set_submit_failure_info("reference_outputs_unavailable");
     return {
         grpc::StatusCode::FAILED_PRECONDITION,
         "Reference outputs are unavailable"};
@@ -1001,15 +1073,14 @@ InferenceServiceImpl::submit_job_async(
     }
     if (!pushed) {
       if (queue_full) {
-        increment_inference_failure("enqueue", "queue_full", job->model_name());
+        set_submit_failure_info("queue_full");
         increment_rejected_requests();
         congestion::record_rejection(1);
         BatchingTraceLogger::instance().log_request_rejected(queue_->size());
         return {
             grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
       }
-      increment_inference_failure(
-          "enqueue", "queue_unavailable", job->model_name());
+      set_submit_failure_info("queue_unavailable");
       return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
     }
     if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
@@ -1022,13 +1093,12 @@ InferenceServiceImpl::submit_job_async(
   catch (const std::exception& e) {
     log_error(std::format(
         "Unhandled exception while submitting inference job: {}", e.what()));
-    increment_inference_failure("enqueue", "exception", resolved_model_name);
+    set_submit_failure_info("exception");
     return {grpc::StatusCode::INTERNAL, "Internal server error"};
   }
   catch (...) {
     log_error("Unhandled non-std exception while submitting inference job");
-    increment_inference_failure(
-        "enqueue", "unknown_exception", resolved_model_name);
+    set_submit_failure_info("unknown_exception");
     return {grpc::StatusCode::INTERNAL, "Internal server error"};
   }
 }
@@ -1404,23 +1474,9 @@ InferenceServiceImpl::handle_job_failure(
   if (!try_mark_terminal(context.terminal_flag)) {
     return true;
   }
-  increment_request_status(
-      static_cast<int>(job_status.error_code()), context.resolved_model_name);
-  const bool metrics_reported =
-      context.failure_info && context.failure_info->metrics_reported;
-  if (!metrics_reported) {
-    std::string stage = "execution";
-    std::string reason = status_reason(job_status);
-    if (context.failure_info) {
-      if (!context.failure_info->stage.empty()) {
-        stage = context.failure_info->stage;
-      }
-      if (!context.failure_info->reason.empty()) {
-        reason = context.failure_info->reason;
-      }
-    }
-    increment_inference_failure(stage, reason, context.resolved_model_name);
-  }
+  record_terminal_metrics(
+      context.resolved_model_name, job_status, "execution", {},
+      context.failure_info);
   if (context.impl != nullptr) {
     context.impl->record_failure(
         context.request, context.recv_tp, context.resolved_model_name);
@@ -1446,8 +1502,11 @@ InferenceServiceImpl::finalize_successful_completion(
       context.impl->record_failure(
           context.request, context.recv_tp, context.resolved_model_name);
     }
-    increment_inference_failure(
-        "postprocess", "missing_callback", context.resolved_model_name);
+    const Status missing_callback_status{
+        grpc::StatusCode::INTERNAL, "Internal server error"};
+    record_terminal_metrics(
+        context.resolved_model_name, missing_callback_status, "postprocess",
+        "missing_callback", std::nullopt, /*record_status_metric=*/false);
     log_error("Missing callback handle during async inference completion");
     return;
   }
@@ -1492,12 +1551,8 @@ InferenceServiceImpl::finalize_successful_completion(
       context.impl->record_failure(
           context.request, context.recv_tp, context.resolved_model_name);
     }
-    increment_request_status(
-        static_cast<int>(populate_status.error_code()),
-        context.resolved_model_name);
-    increment_inference_failure(
-        "postprocess", status_reason(populate_status),
-        context.resolved_model_name);
+    record_terminal_metrics(
+        context.resolved_model_name, populate_status, "postprocess");
     callback_handle->Invoke(populate_status);
     return;
   }
@@ -1557,8 +1612,7 @@ InferenceServiceImpl::finalize_successful_completion(
         context.request, breakdown, context.recv_tp,
         context.resolved_model_name);
   }
-  increment_request_status(
-      static_cast<int>(grpc::StatusCode::OK), context.resolved_model_name);
+  record_terminal_metrics(context.resolved_model_name, Status::OK, "");
   callback_handle->Invoke(Status::OK);
 }
 
@@ -1635,15 +1689,15 @@ InferenceServiceImpl::setup_async_cancellation(
     if (!try_mark_terminal(terminal_flag)) {
       return;
     }
-    const bool invoked = callback_handle->Invoke(
-        {grpc::StatusCode::CANCELLED, "Request cancelled"});
+    const Status cancelled_status{
+        grpc::StatusCode::CANCELLED, "Request cancelled"};
+    const bool invoked = callback_handle->Invoke(cancelled_status);
     if (invoked) {
       if (service != nullptr) {
         service->record_failure(request, recv_tp, model_name);
       }
-      increment_request_status(
-          static_cast<int>(grpc::StatusCode::CANCELLED), model_name);
-      increment_inference_failure("cancel", "client_cancelled", model_name);
+      record_terminal_metrics(
+          model_name, cancelled_status, "cancel", "client_cancelled");
     }
   };
 
@@ -1684,10 +1738,7 @@ InferenceServiceImpl::handle_input_validation_failure(
   if (service != nullptr) {
     service->record_failure(request, recv_tp, resolved_model_name);
   }
-  increment_request_status(
-      static_cast<int>(status.error_code()), resolved_model_name);
-  increment_inference_failure(
-      "preprocess", status_reason(status), resolved_model_name);
+  record_terminal_metrics(resolved_model_name, status, "preprocess");
   if (callback_handle != nullptr) {
     callback_handle->Invoke(status);
   }
@@ -1700,8 +1751,8 @@ InferenceServiceImpl::handle_submit_failure(
     const std::shared_ptr<std::atomic<bool>>& terminal_flag,
     const std::shared_ptr<CallbackHandle>& callback_handle,
     InferenceServiceImpl* service, std::string_view resolved_model_name,
-    const ModelInferRequest* request,
-    MonotonicClock::time_point recv_tp) -> bool
+    const ModelInferRequest* request, MonotonicClock::time_point recv_tp,
+    const std::optional<AsyncFailureInfo>& failure_info) -> bool
 {
   if (status.ok()) {
     return false;
@@ -1715,8 +1766,8 @@ InferenceServiceImpl::handle_submit_failure(
   if (service != nullptr) {
     service->record_failure(request, recv_tp, resolved_model_name);
   }
-  increment_request_status(
-      static_cast<int>(status.error_code()), resolved_model_name);
+  record_terminal_metrics(
+      resolved_model_name, status, "enqueue", {}, failure_info);
   if (callback_handle != nullptr) {
     callback_handle->Invoke(status);
   }
@@ -1750,10 +1801,7 @@ InferenceServiceImpl::handle_async_internal_error(
   if (service != nullptr) {
     service->record_failure(request, recv_tp, resolved_model_name);
   }
-  increment_request_status(
-      static_cast<int>(status.error_code()), resolved_model_name);
-  increment_inference_failure(
-      std::string(stage), std::string(reason), resolved_model_name);
+  record_terminal_metrics(resolved_model_name, status, stage, reason);
   log_error(std::string(log_context));
 }
 
@@ -1863,6 +1911,7 @@ InferenceServiceImpl::HandleModelInferAsync(
 
     std::vector<torch::Tensor> inputs;
     std::vector<std::shared_ptr<const void>> input_lifetimes;
+    std::optional<AsyncFailureInfo> submit_failure_info;
     Status status =
         validate_and_convert_inputs(request, inputs, &input_lifetimes);
     if (handle_input_validation_failure(
@@ -1909,12 +1958,13 @@ InferenceServiceImpl::HandleModelInferAsync(
                 "Unhandled non-std exception in async inference completion");
           }
         },
-        std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name);
+        std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name,
+        &submit_failure_info);
 
     notify_submit_job_async_done(cancel_flag, status);
     if (handle_submit_failure(
             status, cancel_flag, terminal_flag, callback_handle, this,
-            resolved_model_name, request, recv_tp)) {
+            resolved_model_name, request, recv_tp, submit_failure_info)) {
       return;
     }
   }
