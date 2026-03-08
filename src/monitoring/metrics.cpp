@@ -222,6 +222,15 @@ with_metrics_registry(Fn&& callback)
   }
 }
 
+template <auto Method, typename... Args>
+void
+invoke_metrics_registry(Args&&... args)
+{
+  with_metrics_registry([&args...](MetricsRegistry& metrics) {
+    std::invoke(Method, metrics, std::forward<Args>(args)...);
+  });
+}
+
 void
 set_gauge_if_present(prometheus::Gauge* gauge, double value)
 {
@@ -245,6 +254,79 @@ observe_histogram_if_non_negative(
   if (histogram != nullptr && value >= 0.0) {
     histogram->Observe(value);
   }
+}
+
+using GaugeMetrics = MetricsRegistry::GaugeMetrics;
+using CongestionGaugeMetrics = GaugeMetrics::CongestionGaugeMetrics;
+using HistogramMetrics = MetricsRegistry::HistogramMetrics;
+using CounterMetrics = MetricsRegistry::CounterMetrics;
+
+template <typename Value, typename Transform = std::identity>
+void
+set_gauge(
+    prometheus::Gauge* GaugeMetrics::*member, Value value,
+    Transform transform = {})
+{
+  with_metrics_registry([member, value, transform = std::move(transform)](
+                            MetricsRegistry& metrics) mutable {
+    const double metric_value =
+        static_cast<double>(std::invoke(transform, value));
+    set_gauge_if_present(metrics.gauges().*member, metric_value);
+  });
+}
+
+template <typename Value, typename Transform = std::identity>
+void
+set_gauge(
+    CongestionGaugeMetrics GaugeMetrics::*congestion_member,
+    prometheus::Gauge* CongestionGaugeMetrics::*member, Value value,
+    Transform transform = {})
+{
+  with_metrics_registry(
+      [congestion_member, member, value,
+       transform = std::move(transform)](MetricsRegistry& metrics) mutable {
+        const double metric_value =
+            static_cast<double>(std::invoke(transform, value));
+        auto& congestion_metrics = metrics.gauges().*congestion_member;
+        set_gauge_if_present(congestion_metrics.*member, metric_value);
+      });
+}
+
+template <typename Value, typename Transform = std::identity>
+void
+observe_histogram(
+    prometheus::Histogram* HistogramMetrics::*member, Value value,
+    Transform transform = {})
+{
+  with_metrics_registry([member, value, transform = std::move(transform)](
+                            MetricsRegistry& metrics) mutable {
+    const double metric_value =
+        static_cast<double>(std::invoke(transform, value));
+    observe_histogram_if_non_negative(
+        metrics.histograms().*member, metric_value);
+  });
+}
+
+void
+increment_counter(prometheus::Counter* CounterMetrics::*member)
+{
+  with_metrics_registry([member](MetricsRegistry& metrics) {
+    increment_counter_if_present(metrics.counters().*member);
+  });
+}
+
+template <typename Value, typename Transform = std::identity>
+void
+increment_counter(
+    prometheus::Counter* CounterMetrics::*member, Value value,
+    Transform transform = {})
+{
+  with_metrics_registry([member, value, transform = std::move(transform)](
+                            MetricsRegistry& metrics) mutable {
+    const double metric_value =
+        static_cast<double>(std::invoke(transform, value));
+    increment_counter_if_present(metrics.counters().*member, metric_value);
+  });
 }
 
 template <typename Key, typename Map, typename Factory>
@@ -374,28 +456,21 @@ set_queue_size(std::size_t size)
 void
 set_inflight_tasks(std::size_t size)
 {
-  with_metrics_registry([size](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().inflight_tasks, static_cast<double>(size));
-  });
+  set_gauge(&GaugeMetrics::inflight_tasks, size);
 }
 
 void
 set_starpu_worker_busy_ratio(double ratio)
 {
-  with_metrics_registry([ratio](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().starpu_worker_busy_ratio, std::clamp(ratio, 0.0, 1.0));
+  set_gauge(&GaugeMetrics::starpu_worker_busy_ratio, ratio, [](double value) {
+    return std::clamp(value, 0.0, 1.0);
   });
 }
 
 void
 set_max_inflight_tasks(std::size_t max_tasks)
 {
-  with_metrics_registry([max_tasks](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().max_inflight_tasks, static_cast<double>(max_tasks));
-  });
+  set_gauge(&GaugeMetrics::max_inflight_tasks, max_tasks);
 }
 
 void
@@ -438,192 +513,159 @@ set_queue_fill_ratio(std::size_t size, std::size_t capacity)
 void
 set_starpu_prepared_queue_depth(std::size_t depth)
 {
-  with_metrics_registry([depth](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().starpu_prepared_queue_depth,
-        static_cast<double>(depth));
-  });
+  set_gauge(&GaugeMetrics::starpu_prepared_queue_depth, depth);
 }
 
 void
 set_batch_pending_jobs(std::size_t pending)
 {
-  with_metrics_registry([pending](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().batch_pending_jobs, static_cast<double>(pending));
-  });
+  set_gauge(&GaugeMetrics::batch_pending_jobs, pending);
 }
 
 void
 increment_rejected_requests()
 {
-  with_metrics_registry([](MetricsRegistry& metrics) {
-    increment_counter_if_present(metrics.counters().requests_rejected_total);
-  });
+  increment_counter(&CounterMetrics::requests_rejected_total);
 }
 
 void
 set_congestion_flag(bool congested)
 {
-  with_metrics_registry([congested](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.flag, congested ? 1.0 : 0.0);
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::flag, congested,
+      [](bool value) { return value ? 1.0 : 0.0; });
 }
 
 void
 set_congestion_score(double score)
 {
-  with_metrics_registry([score](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.score, std::clamp(score, 0.0, 1.0));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::score, score,
+      [](double value) { return std::clamp(value, 0.0, 1.0); });
 }
 
 void
 set_congestion_arrival_rate(double rps)
 {
-  with_metrics_registry([rps](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.lambda_rps, std::max(0.0, rps));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::lambda_rps, rps,
+      [](double value) { return std::max(0.0, value); });
 }
 
 void
 set_congestion_completion_rate(double rps)
 {
-  with_metrics_registry([rps](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.mu_rps, std::max(0.0, rps));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::mu_rps, rps,
+      [](double value) { return std::max(0.0, value); });
 }
 
 void
 set_congestion_rejection_rate(double rps)
 {
-  with_metrics_registry([rps](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.rejection_rps, std::max(0.0, rps));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::rejection_rps, rps,
+      [](double value) { return std::max(0.0, value); });
 }
 
 void
 set_congestion_rho(double rho)
 {
-  with_metrics_registry([rho](MetricsRegistry& metrics) {
-    const double value = std::isfinite(rho) ? rho : 0.0;
-    set_gauge_if_present(
-        metrics.gauges().congestion.rho_ewma, std::max(0.0, value));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::rho_ewma, rho,
+      [](double value) {
+        const double safe_value = std::isfinite(value) ? value : 0.0;
+        return std::max(0.0, safe_value);
+      });
 }
 
 void
 set_congestion_fill_ewma(double fill)
 {
-  with_metrics_registry([fill](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.queue_fill_ewma,
-        std::clamp(fill, 0.0, 1.0));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::queue_fill_ewma, fill,
+      [](double value) { return std::clamp(value, 0.0, 1.0); });
 }
 
 void
 set_congestion_queue_growth_rate(double rate)
 {
-  with_metrics_registry([rate](MetricsRegistry& metrics) {
-    set_gauge_if_present(metrics.gauges().congestion.queue_growth_rate, rate);
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::queue_growth_rate,
+      rate);
 }
 
 void
 set_congestion_queue_latency_p95(double latency_ms)
 {
-  with_metrics_registry([latency_ms](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.queue_p95_ms, std::max(0.0, latency_ms));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::queue_p95_ms,
+      latency_ms, [](double value) { return std::max(0.0, value); });
 }
 
 void
 set_congestion_queue_latency_p99(double latency_ms)
 {
-  with_metrics_registry([latency_ms](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.queue_p99_ms, std::max(0.0, latency_ms));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::queue_p99_ms,
+      latency_ms, [](double value) { return std::max(0.0, value); });
 }
 
 void
 set_congestion_e2e_latency_p95(double latency_ms)
 {
-  with_metrics_registry([latency_ms](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.e2e_p95_ms, std::max(0.0, latency_ms));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::e2e_p95_ms,
+      latency_ms, [](double value) { return std::max(0.0, value); });
 }
 
 void
 set_congestion_e2e_latency_p99(double latency_ms)
 {
-  with_metrics_registry([latency_ms](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().congestion.e2e_p99_ms, std::max(0.0, latency_ms));
-  });
+  set_gauge(
+      &GaugeMetrics::congestion, &CongestionGaugeMetrics::e2e_p99_ms,
+      latency_ms, [](double value) { return std::max(0.0, value); });
 }
 
 void
 set_server_health(bool ready)
 {
-  with_metrics_registry([ready](MetricsRegistry& metrics) {
-    set_gauge_if_present(
-        metrics.gauges().server_health_state, ready ? 1.0 : 0.0);
+  set_gauge(&GaugeMetrics::server_health_state, ready, [](bool value) {
+    return value ? 1.0 : 0.0;
   });
 }
 
 void
 increment_request_status(int status_code, std::string_view model_name)
 {
-  with_metrics_registry([status_code, model_name](MetricsRegistry& metrics) {
-    metrics.increment_status_counter(
-        MetricsRegistry::StatusCodeLabel{status_code_label(status_code)},
-        MetricsRegistry::ModelLabel{model_name});
-  });
+  invoke_metrics_registry<&MetricsRegistry::increment_status_counter>(
+      MetricsRegistry::StatusCodeLabel{status_code_label(status_code)},
+      MetricsRegistry::ModelLabel{model_name});
 }
 
 void
 increment_requests_received(std::string_view model_name)
 {
-  with_metrics_registry([model_name](MetricsRegistry& metrics) {
-    metrics.increment_received_counter(model_name);
-  });
+  invoke_metrics_registry<&MetricsRegistry::increment_received_counter>(
+      model_name);
 }
 
 void
 observe_batch_size(std::size_t batch_size)
 {
-  with_metrics_registry([batch_size](MetricsRegistry& metrics) {
-    observe_histogram_if_non_negative(
-        metrics.histograms().batch_size, static_cast<double>(batch_size));
-  });
+  observe_histogram(&HistogramMetrics::batch_size, batch_size);
 }
 
 void
 observe_logical_batch_size(std::size_t logical_jobs)
 {
-  with_metrics_registry([logical_jobs](MetricsRegistry& metrics) {
-    observe_histogram_if_non_negative(
-        metrics.histograms().logical_batch_size,
-        static_cast<double>(logical_jobs));
-  });
+  observe_histogram(&HistogramMetrics::logical_batch_size, logical_jobs);
 }
 
 void
 observe_batch_efficiency(double ratio)
 {
-  with_metrics_registry([ratio](MetricsRegistry& metrics) {
-    observe_histogram_if_non_negative(
-        metrics.histograms().batch_efficiency, ratio);
-  });
+  observe_histogram(&HistogramMetrics::batch_efficiency, ratio);
 }
 
 void
@@ -655,39 +697,29 @@ observe_latency_breakdown(const LatencyBreakdownMetrics& breakdown)
 void
 observe_starpu_task_runtime(double runtime_ms)
 {
-  with_metrics_registry([runtime_ms](MetricsRegistry& metrics) {
-    observe_histogram_if_non_negative(
-        metrics.histograms().starpu_task_runtime, runtime_ms);
-  });
+  observe_histogram(&HistogramMetrics::starpu_task_runtime, runtime_ms);
 }
 
 void
 observe_model_load_duration(double duration_ms)
 {
-  with_metrics_registry([duration_ms](MetricsRegistry& metrics) {
-    observe_histogram_if_non_negative(
-        metrics.histograms().model_load_duration, duration_ms);
-  });
+  observe_histogram(&HistogramMetrics::model_load_duration, duration_ms);
 }
 
 void
 set_model_loaded(
     std::string_view model_name, std::string_view device_label, bool loaded)
 {
-  with_metrics_registry(
-      [model_name, device_label, loaded](MetricsRegistry& metrics) {
-        metrics.set_model_loaded_flag(
-            MetricsRegistry::ModelLabel{model_name},
-            MetricsRegistry::DeviceLabel{device_label}, loaded);
-      });
+  invoke_metrics_registry<&MetricsRegistry::set_model_loaded_flag>(
+      MetricsRegistry::ModelLabel{model_name},
+      MetricsRegistry::DeviceLabel{device_label}, loaded);
 }
 
 void
 increment_model_load_failure(std::string_view model_name)
 {
-  with_metrics_registry([model_name](MetricsRegistry& metrics) {
-    metrics.increment_model_load_failure_counter(model_name);
-  });
+  invoke_metrics_registry<
+      &MetricsRegistry::increment_model_load_failure_counter>(model_name);
 }
 
 void
@@ -695,11 +727,8 @@ observe_compute_latency_by_worker(
     int worker_id, int device_id, std::string_view worker_type,
     double latency_ms)
 {
-  with_metrics_registry([worker_id, device_id, worker_type,
-                         latency_ms](MetricsRegistry& metrics) {
-    metrics.observe_compute_latency_by_worker(
-        worker_id, device_id, worker_type, latency_ms);
-  });
+  invoke_metrics_registry<&MetricsRegistry::observe_compute_latency_by_worker>(
+      worker_id, device_id, worker_type, latency_ms);
 }
 
 void
@@ -707,11 +736,8 @@ observe_task_runtime_by_worker(
     int worker_id, int device_id, std::string_view worker_type,
     double latency_ms)
 {
-  with_metrics_registry([worker_id, device_id, worker_type,
-                         latency_ms](MetricsRegistry& metrics) {
-    metrics.observe_task_runtime_by_worker(
-        worker_id, device_id, worker_type, latency_ms);
-  });
+  invoke_metrics_registry<&MetricsRegistry::observe_task_runtime_by_worker>(
+      worker_id, device_id, worker_type, latency_ms);
 }
 
 void
@@ -719,10 +745,8 @@ set_worker_inflight_gauge(
     int worker_id, int device_id, std::string_view worker_type,
     std::size_t value)
 {
-  with_metrics_registry([worker_id, device_id, worker_type,
-                         value](MetricsRegistry& metrics) {
-    metrics.set_worker_inflight_gauge(worker_id, device_id, worker_type, value);
-  });
+  invoke_metrics_registry<&MetricsRegistry::set_worker_inflight_gauge>(
+      worker_id, device_id, worker_type, value);
 }
 
 void
@@ -730,11 +754,8 @@ observe_io_copy_latency(
     std::string_view direction, int worker_id, int device_id,
     std::string_view worker_type, double duration_ms)
 {
-  with_metrics_registry([direction, worker_id, device_id, worker_type,
-                         duration_ms](MetricsRegistry& metrics) {
-    metrics.observe_io_copy_latency(
-        direction, worker_id, device_id, worker_type, duration_ms);
-  });
+  invoke_metrics_registry<&MetricsRegistry::observe_io_copy_latency>(
+      direction, worker_id, device_id, worker_type, duration_ms);
 }
 
 void
@@ -742,11 +763,8 @@ increment_transfer_bytes(
     std::string_view direction, int worker_id, int device_id,
     std::string_view worker_type, std::size_t bytes)
 {
-  with_metrics_registry([direction, worker_id, device_id, worker_type,
-                         bytes](MetricsRegistry& metrics) {
-    metrics.increment_transfer_bytes(
-        direction, worker_id, device_id, worker_type, bytes);
-  });
+  invoke_metrics_registry<&MetricsRegistry::increment_transfer_bytes>(
+      direction, worker_id, device_id, worker_type, bytes);
 }
 
 auto
@@ -1025,9 +1043,8 @@ void
 increment_inference_completed(
     std::string_view model_name, std::size_t logical_jobs)
 {
-  with_metrics_registry([model_name, logical_jobs](MetricsRegistry& metrics) {
-    metrics.increment_completed_counter(model_name, logical_jobs);
-  });
+  invoke_metrics_registry<&MetricsRegistry::increment_completed_counter>(
+      model_name, logical_jobs);
 }
 
 void
@@ -1035,13 +1052,10 @@ increment_inference_failure(
     std::string_view stage, std::string_view reason,
     std::string_view model_name, std::size_t count)
 {
-  with_metrics_registry(
-      [stage, reason, model_name, count](MetricsRegistry& metrics) {
-        metrics.increment_failure_counter(
-            MetricsRegistry::FailureStageLabel{stage},
-            MetricsRegistry::FailureReasonLabel{reason},
-            MetricsRegistry::ModelLabel{model_name}, count);
-      });
+  invoke_metrics_registry<&MetricsRegistry::increment_failure_counter>(
+      MetricsRegistry::FailureStageLabel{stage},
+      MetricsRegistry::FailureReasonLabel{reason},
+      MetricsRegistry::ModelLabel{model_name}, count);
 }
 
 void

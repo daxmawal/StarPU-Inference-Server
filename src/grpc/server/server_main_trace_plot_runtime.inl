@@ -61,22 +61,24 @@ struct WaitPidResult {
 };
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-using WaitPidNoHangOverrideForTestFn = pid_t (*)(pid_t, int*, int);
-
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
-    waitpid_nohang_override_for_test, WaitPidNoHangOverrideForTestFn)
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    WaitPidNoHangOverrideForTestFn, waitpid_nohang_override_for_test,
+    pid_t (*)(pid_t, int*, int))
 #endif  // SONAR_IGNORE_STOP
 
 auto
 read_waitpid_nohang(pid_t pid, int* status, int options) -> pid_t
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = waitpid_nohang_override_for_test();
-      override_fn != nullptr) {
-    return override_fn(pid, status, options);
-  }
-#endif  // SONAR_IGNORE_STOP
+  return ::starpu_server::testing::server_main::detail::call_override_or(
+      waitpid_nohang_override_for_test,
+      [](pid_t child_pid, int* child_status, int wait_options) {
+        return ::waitpid(child_pid, child_status, wait_options);
+      },
+      pid, status, options);
+#else
   return ::waitpid(pid, status, options);
+#endif  // SONAR_IGNORE_STOP
 }
 
 auto
@@ -100,22 +102,24 @@ waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-using WaitPidBlockingOverrideForTestFn = pid_t (*)(pid_t, int*, int);
-
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
-    waitpid_blocking_override_for_test, WaitPidBlockingOverrideForTestFn)
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    WaitPidBlockingOverrideForTestFn, waitpid_blocking_override_for_test,
+    pid_t (*)(pid_t, int*, int))
 #endif  // SONAR_IGNORE_STOP
 
 auto
 read_waitpid_blocking(pid_t pid, int* status) -> pid_t
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = waitpid_blocking_override_for_test();
-      override_fn != nullptr) {
-    return override_fn(pid, status, 0);
-  }
-#endif  // SONAR_IGNORE_STOP
+  return ::starpu_server::testing::server_main::detail::call_override_or(
+      waitpid_blocking_override_for_test,
+      [](pid_t child_pid, int* child_status, int wait_options) {
+        return ::waitpid(child_pid, child_status, wait_options);
+      },
+      pid, status, 0);
+#else
   return ::waitpid(pid, status, 0);
+#endif  // SONAR_IGNORE_STOP
 }
 
 enum class WaitOutcome : std::uint8_t { Exited, TimedOut, Error };
@@ -185,15 +189,13 @@ terminate_and_wait(pid_t pid) -> std::optional<int>
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-using WaitForPlotProcessWaitOverrideForTestFn =
-    WaitOutcomeResult (*)(pid_t, std::chrono::steady_clock::duration);
-using TerminateAndWaitOverrideForTestFn = std::optional<int> (*)(pid_t);
-
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    WaitForPlotProcessWaitOverrideForTestFn,
     wait_for_plot_process_wait_override_for_test,
-    WaitForPlotProcessWaitOverrideForTestFn)
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
-    terminate_and_wait_override_for_test, TerminateAndWaitOverrideForTestFn)
+    WaitOutcomeResult (*)(pid_t, std::chrono::steady_clock::duration))
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    TerminateAndWaitOverrideForTestFn, terminate_and_wait_override_for_test,
+    std::optional<int> (*)(pid_t))
 #endif  // SONAR_IGNORE_STOP
 
 auto
@@ -201,12 +203,15 @@ wait_for_plot_process(pid_t pid) -> std::optional<int>
 {
   const auto result = [&]() {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    if (const auto override_fn = wait_for_plot_process_wait_override_for_test();
-        override_fn != nullptr) {
-      return override_fn(pid, kPlotScriptTimeout);
-    }
-#endif  // SONAR_IGNORE_STOP
+    return ::starpu_server::testing::server_main::detail::call_override_or(
+        wait_for_plot_process_wait_override_for_test,
+        [](pid_t child_pid, std::chrono::steady_clock::duration timeout) {
+          return wait_for_exit_with_timeout(child_pid, timeout);
+        },
+        pid, kPlotScriptTimeout);
+#else
     return wait_for_exit_with_timeout(pid, kPlotScriptTimeout);
+#endif  // SONAR_IGNORE_STOP
   }();
   if (result.outcome == WaitOutcome::Exited) {
     return result.exit_code;
@@ -215,36 +220,31 @@ wait_for_plot_process(pid_t pid) -> std::optional<int>
     return std::nullopt;
   }
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = terminate_and_wait_override_for_test();
-      override_fn != nullptr) {
-    return override_fn(pid);
-  }
-#endif  // SONAR_IGNORE_STOP
+  return ::starpu_server::testing::server_main::detail::call_override_or(
+      terminate_and_wait_override_for_test,
+      [](pid_t child_pid) { return terminate_and_wait(child_pid); }, pid);
+#else
   return terminate_and_wait(pid);
+#endif  // SONAR_IGNORE_STOP
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-using RunPlotScriptOverrideForTestFn = std::optional<int> (*)(
-    const std::filesystem::path&, const std::filesystem::path&,
-    const std::filesystem::path&);
-using RunPlotScriptForkOverrideForTestFn = pid_t (*)();
-
-using LocatePlotScriptOverrideForTestFn =
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    RunPlotScriptOverrideForTestFn, run_plot_script_override_for_test,
+    std::optional<int> (*)(
+        const std::filesystem::path&, const std::filesystem::path&,
+        const std::filesystem::path&))
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    RunPlotScriptForkOverrideForTestFn, run_plot_script_fork_override_for_test,
+    pid_t (*)())
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    LocatePlotScriptOverrideForTestFn, locate_plot_script_override_for_test,
     std::optional<std::filesystem::path> (*)(
-        const starpu_server::RuntimeConfig&);
-
-using TraceSummaryFilePathOverrideForTestFn =
-    std::optional<std::filesystem::path> (*)();
-
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
-    run_plot_script_override_for_test, RunPlotScriptOverrideForTestFn)
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
-    run_plot_script_fork_override_for_test, RunPlotScriptForkOverrideForTestFn)
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
-    locate_plot_script_override_for_test, LocatePlotScriptOverrideForTestFn)
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+        const starpu_server::RuntimeConfig&))
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    TraceSummaryFilePathOverrideForTestFn,
     trace_summary_file_path_override_for_test,
-    TraceSummaryFilePathOverrideForTestFn)
+    std::optional<std::filesystem::path> (*)())
 #endif  // SONAR_IGNORE_STOP
 
 auto
@@ -281,12 +281,11 @@ run_plot_script(
 
   const pid_t pid = [&]() {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    if (const auto override_fn = run_plot_script_fork_override_for_test();
-        override_fn != nullptr) {
-      return override_fn();
-    }
-#endif  // SONAR_IGNORE_STOP
+    return ::starpu_server::testing::server_main::detail::call_override_or(
+        run_plot_script_fork_override_for_test, []() { return fork(); });
+#else
     return fork();
+#endif  // SONAR_IGNORE_STOP
   }();
   if (pid < 0) {
     starpu_server::log_warning(std::format(
@@ -303,17 +302,14 @@ run_plot_script(
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-using CandidatePlotScriptsReadSymlinkOverrideForTestFn =
-    std::filesystem::path (*)(const std::filesystem::path&, std::error_code&);
-using LocatePlotScriptCandidatesOverrideForTestFn =
-    std::vector<std::filesystem::path> (*)();
-
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    CandidatePlotScriptsReadSymlinkOverrideForTestFn,
     candidate_plot_scripts_read_symlink_override_for_test,
-    CandidatePlotScriptsReadSymlinkOverrideForTestFn)
-STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    std::filesystem::path (*)(const std::filesystem::path&, std::error_code&))
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    LocatePlotScriptCandidatesOverrideForTestFn,
     locate_plot_script_candidates_override_for_test,
-    LocatePlotScriptCandidatesOverrideForTestFn)
+    std::vector<std::filesystem::path> (*)())
 #endif  // SONAR_IGNORE_STOP
 
 auto
@@ -322,13 +318,15 @@ read_symlink_for_candidate_plot_scripts(
     std::error_code& ec) -> std::filesystem::path
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn =
-          candidate_plot_scripts_read_symlink_override_for_test();
-      override_fn != nullptr) {
-    return override_fn(path, ec);
-  }
-#endif  // SONAR_IGNORE_STOP
+  return ::starpu_server::testing::server_main::detail::call_override_or(
+      candidate_plot_scripts_read_symlink_override_for_test,
+      [](const std::filesystem::path& candidate, std::error_code& code) {
+        return std::filesystem::read_symlink(candidate, code);
+      },
+      path, ec);
+#else
   return std::filesystem::read_symlink(path, ec);
+#endif  // SONAR_IGNORE_STOP
 }
 
 auto
@@ -365,13 +363,12 @@ locate_plot_script(const starpu_server::RuntimeConfig& opts)
 
   const auto candidates = [&]() {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    if (const auto override_fn =
-            locate_plot_script_candidates_override_for_test();
-        override_fn != nullptr) {
-      return override_fn();
-    }
-#endif  // SONAR_IGNORE_STOP
+    return ::starpu_server::testing::server_main::detail::call_override_or(
+        locate_plot_script_candidates_override_for_test,
+        []() { return candidate_plot_scripts(); });
+#else
     return candidate_plot_scripts();
+#endif  // SONAR_IGNORE_STOP
   }();
 
   for (const auto& candidate : candidates) {
@@ -421,13 +418,12 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
 
   std::optional<std::filesystem::path> summary_path_opt;
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = trace_summary_file_path_override_for_test();
-      override_fn != nullptr) {
-    summary_path_opt = override_fn();
-  } else {
-    const auto& tracer = starpu_server::BatchingTraceLogger::instance();
-    summary_path_opt = tracer.summary_file_path();
-  }
+  summary_path_opt =
+      ::starpu_server::testing::server_main::detail::call_override_or(
+          trace_summary_file_path_override_for_test, []() {
+            const auto& tracer = starpu_server::BatchingTraceLogger::instance();
+            return tracer.summary_file_path();
+          });
 #else
   const auto& tracer = starpu_server::BatchingTraceLogger::instance();
   summary_path_opt = tracer.summary_file_path();

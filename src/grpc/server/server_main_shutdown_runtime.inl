@@ -29,64 +29,50 @@ struct ShutdownDrainProgressForTest {
 };
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-using ShutdownDrainTimeoutOverrideForTestFn =
-    std::chrono::steady_clock::duration (*)();
-using ShutdownDrainWaitStepOverrideForTestFn =
-    std::chrono::steady_clock::duration (*)();
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    ShutdownDrainTimeoutOverrideForTestFn,
+    shutdown_drain_timeout_override_for_test,
+    std::chrono::steady_clock::duration (*)())
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    ShutdownDrainWaitStepOverrideForTestFn,
+    shutdown_drain_wait_step_override_for_test,
+    std::chrono::steady_clock::duration (*)())
 using ShutdownDrainObserverForTestFn = void (*)(
     ShutdownDrainStageForTest, ShutdownDrainProgressForTest,
     std::chrono::steady_clock::duration);
-
-auto
-shutdown_drain_timeout_override_for_test() noexcept
-    -> ShutdownDrainTimeoutOverrideForTestFn&
-{
-  struct ShutdownDrainTimeoutOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      ShutdownDrainTimeoutOverrideTag, ShutdownDrainTimeoutOverrideForTestFn>();
-}
-
-auto
-shutdown_drain_wait_step_override_for_test() noexcept
-    -> ShutdownDrainWaitStepOverrideForTestFn&
-{
-  struct ShutdownDrainWaitStepOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      ShutdownDrainWaitStepOverrideTag,
-      ShutdownDrainWaitStepOverrideForTestFn>();
-}
-
-auto
-shutdown_drain_observer_for_test() noexcept -> ShutdownDrainObserverForTestFn&
-{
-  struct ShutdownDrainObserverOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      ShutdownDrainObserverOverrideTag, ShutdownDrainObserverForTestFn>();
-}
+STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
+    ShutdownDrainObserverForTestFn, shutdown_drain_observer_for_test,
+    void (*)(
+        ShutdownDrainStageForTest, ShutdownDrainProgressForTest,
+        std::chrono::steady_clock::duration))
 #endif  // SONAR_IGNORE_STOP
 
 auto
 resolve_shutdown_drain_timeout() -> std::chrono::steady_clock::duration
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = shutdown_drain_timeout_override_for_test();
-      override_fn != nullptr) {
-    return override_fn();
-  }
-#endif  // SONAR_IGNORE_STOP
+  return ::starpu_server::testing::server_main::detail::call_override_or(
+      shutdown_drain_timeout_override_for_test,
+      []() -> std::chrono::steady_clock::duration {
+        return kShutdownDrainTimeout;
+      });
+#else
   return kShutdownDrainTimeout;
+#endif  // SONAR_IGNORE_STOP
 }
 
 auto
 resolve_shutdown_drain_wait_step() -> std::chrono::steady_clock::duration
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = shutdown_drain_wait_step_override_for_test();
-      override_fn != nullptr) {
-    return override_fn();
-  }
-#endif  // SONAR_IGNORE_STOP
+  return ::starpu_server::testing::server_main::detail::call_override_or(
+      shutdown_drain_wait_step_override_for_test,
+      []() -> std::chrono::steady_clock::duration {
+        return kShutdownDrainWaitStep;
+      });
+#else
   return kShutdownDrainWaitStep;
+#endif  // SONAR_IGNORE_STOP
 }
 
 void
@@ -96,10 +82,11 @@ notify_shutdown_drain_stage_for_test(
         std::chrono::steady_clock::duration::zero())
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto observer_fn = shutdown_drain_observer_for_test();
-      observer_fn != nullptr) {
-    observer_fn(stage, progress, wait_budget);
-  }
+  ::starpu_server::testing::server_main::detail::call_override_or(
+      shutdown_drain_observer_for_test,
+      [](ShutdownDrainStageForTest, ShutdownDrainProgressForTest,
+         std::chrono::steady_clock::duration) {},
+      stage, progress, wait_budget);
 #else
   (void)stage;
   (void)progress;

@@ -31,6 +31,7 @@
 #endif
 
 #include "core/inference_runner.hpp"
+#include "inference_service_runtime_internal.hpp"
 #include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
 #include "utils/batching_trace_logger.hpp"
@@ -439,46 +440,13 @@ is_context_cancelled(ServerContext* context) -> bool
 }
 }  // namespace
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-auto
-starpu_server::testing::inference_service_test_internal::detail::
-    handle_model_infer_async_test_hooks_ref() -> HandleModelInferAsyncTestHooks&
-{
-  static HandleModelInferAsyncTestHooks hooks{};
-  return hooks;
-}
+namespace starpu_server::inference_service_runtime_internal {
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    handle_async_infer_completion_test_hooks_ref()
-        -> HandleAsyncInferCompletionTestHooks&
-{
-  static HandleAsyncInferCompletionTestHooks hooks{};
-  return hooks;
-}
-
-auto
-starpu_server::testing::inference_service_test_internal::detail::
-    submit_job_async_test_hooks_ref() -> SubmitJobAsyncTestHooks&
-{
-  static SubmitJobAsyncTestHooks hooks{};
-  return hooks;
-}
-
-auto
-starpu_server::testing::inference_service_test_internal::detail::
-    model_statistics_force_null_target_flag_ref() -> bool&
-{
-  static bool enabled = false;
-  return enabled;
-}
-
-auto
-starpu_server::testing::inference_service_test_internal::detail::
-    normalize_names_bridge(
-        std::vector<std::string> names, std::size_t expected_size,
-        std::string_view fallback_prefix,
-        std::string_view kind) -> std::vector<std::string>
+normalize_names_runtime(
+    std::vector<std::string> names, std::size_t expected_size,
+    std::string_view fallback_prefix,
+    std::string_view kind) -> std::vector<std::string>
 {
   return normalize_names(
       std::move(names), expected_size,
@@ -486,25 +454,22 @@ starpu_server::testing::inference_service_test_internal::detail::
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    check_missing_named_inputs_bridge(
-        const std::vector<bool>& filled,
-        std::span<const std::string> expected_names) -> grpc::Status
+check_missing_named_inputs_runtime(
+    const std::vector<bool>& filled,
+    std::span<const std::string> expected_names) -> grpc::Status
 {
   return check_missing_named_inputs(filled, expected_names);
 }
 
 void
-starpu_server::testing::inference_service_test_internal::detail::
-    arm_rpc_done_tag_with_null_context_bridge()
+arm_rpc_done_tag_with_null_context_runtime()
 {
   auto tag = RpcDoneTag::Create([] {}, std::make_shared<int>(0));
   tag->Arm(nullptr);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    rpc_done_tag_proceed_bridge(bool is_ok, bool with_on_done) -> bool
+rpc_done_tag_proceed_runtime(bool is_ok, bool with_on_done) -> bool
 {
   bool called = false;
   RpcDoneTag::OnDone on_done =
@@ -515,58 +480,50 @@ starpu_server::testing::inference_service_test_internal::detail::
 }
 
 void
-starpu_server::testing::inference_service_test_internal::detail::
-    set_grpc_health_status_bridge(grpc::Server* server, bool serving)
+set_grpc_health_status_runtime(grpc::Server* server, bool serving)
 {
   set_grpc_health_status(server, serving);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    scalar_type_to_model_dtype_bridge(at::ScalarType type)
-        -> inference::DataType
+scalar_type_to_model_dtype_runtime(at::ScalarType type) -> inference::DataType
 {
   return scalar_type_to_model_dtype(type);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    resolve_tensor_name_bridge(
-        std::size_t index, std::span<const std::string> names,
-        std::string_view fallback_prefix) -> std::string
+resolve_tensor_name_runtime(
+    std::size_t index, std::span<const std::string> names,
+    std::string_view fallback_prefix) -> std::string
 {
   return resolve_tensor_name(index, names, fallback_prefix);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    request_batch_size_bridge(
-        const ModelInferRequest* request, int max_batch_size) -> uint64_t
+request_batch_size_runtime(
+    const inference::ModelInferRequest* request, int max_batch_size) -> uint64_t
 {
   return request_batch_size(request, max_batch_size);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    duration_ms_to_ns_bridge(double duration_ms) -> uint64_t
+duration_ms_to_ns_runtime(double duration_ms) -> uint64_t
 {
   return duration_ms_to_ns(duration_ms);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    elapsed_since_bridge(MonotonicClock::time_point start) -> uint64_t
+elapsed_since_runtime(MonotonicClock::time_point start) -> uint64_t
 {
   return elapsed_since(start);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    resolve_terminal_failure_stage_bridge(
-        const grpc::Status& status, std::string_view default_stage,
-        std::string_view default_reason,
-        const std::optional<InferenceServiceImpl::AsyncFailureInfo>&
-            failure_info) -> std::string
+resolve_terminal_failure_stage_runtime(
+    const grpc::Status& status, std::string_view default_stage,
+    std::string_view default_reason,
+    const std::optional<InferenceServiceImpl::AsyncFailureInfo>& failure_info)
+    -> std::string
 {
   return resolve_terminal_failure_mapping(
              status, default_stage, default_reason, failure_info)
@@ -574,12 +531,11 @@ starpu_server::testing::inference_service_test_internal::detail::
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    should_report_terminal_failure_metric_bridge(
-        const grpc::Status& status, std::string_view default_stage,
-        std::string_view default_reason,
-        const std::optional<InferenceServiceImpl::AsyncFailureInfo>&
-            failure_info) -> bool
+should_report_terminal_failure_metric_runtime(
+    const grpc::Status& status, std::string_view default_stage,
+    std::string_view default_reason,
+    const std::optional<InferenceServiceImpl::AsyncFailureInfo>& failure_info)
+    -> bool
 {
   return resolve_terminal_failure_mapping(
              status, default_stage, default_reason, failure_info)
@@ -587,40 +543,41 @@ starpu_server::testing::inference_service_test_internal::detail::
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    is_context_cancelled_bridge(grpc::ServerContext* context) -> bool
+is_context_cancelled_runtime(grpc::ServerContext* context) -> bool
 {
   return is_context_cancelled(context);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    fill_output_tensor_bridge(
-        inference::ModelInferResponse* reply,
-        const std::vector<torch::Tensor>& outputs,
-        const std::vector<std::size_t>& output_indices,
-        const std::vector<std::string>& output_names) -> grpc::Status
+fill_output_tensor_runtime(
+    inference::ModelInferResponse* reply,
+    const std::vector<torch::Tensor>& outputs,
+    const std::vector<std::size_t>& output_indices,
+    const std::vector<std::string>& output_names) -> grpc::Status
 {
   return fill_output_tensor(reply, outputs, output_indices, output_names);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    validate_configured_shape_bridge(
-        const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
-        bool batching_allowed, int max_batch_size) -> grpc::Status
+validate_configured_shape_runtime(
+    const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
+    bool batching_allowed, int max_batch_size) -> grpc::Status
 {
   return validate_configured_shape(
       shape, expected, batching_allowed, max_batch_size);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::detail::
-    unary_call_data_missing_handler_transitions_to_finish_bridge() -> bool
+unary_call_data_missing_handler_transitions_to_finish_runtime() -> bool
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   return unary_call_data_missing_handler_transitions_to_finish_for_test_impl();
-}
+#else
+  return false;
 #endif  // SONAR_IGNORE_END
+}
+
+}  // namespace starpu_server::inference_service_runtime_internal
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(
     std::function<void(Status)> callback)

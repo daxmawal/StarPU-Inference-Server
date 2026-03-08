@@ -51,15 +51,25 @@ InferenceServiceTestAccessor::ClearSubmitJobAsyncTestHooks()
   inference_service_test_internal::clear_submit_job_async_test_hooks();
 }
 
-auto
-InferenceServiceTestAccessor::NormalizeNamesForTest(
-    std::vector<std::string> names, std::size_t expected_size,
-    std::string_view fallback_prefix,
-    std::string_view kind) -> std::vector<std::string>
-{
-  return inference_service_test_internal::normalize_names_for_test(
-      std::move(names), expected_size, fallback_prefix, kind);
-}
+#define STARPU_INFERENCE_SERVICE_TEST_FORWARDER_RET(                        \
+    return_type, accessor_name, internal_name, runtime_name, params_decl,   \
+    args)                                                                   \
+  auto InferenceServiceTestAccessor::accessor_name params_decl->return_type \
+  {                                                                         \
+    return inference_service_test_internal::internal_name args;             \
+  }
+
+#define STARPU_INFERENCE_SERVICE_TEST_FORWARDER_VOID(              \
+    accessor_name, internal_name, runtime_name, params_decl, args) \
+  void InferenceServiceTestAccessor::accessor_name params_decl     \
+  {                                                                \
+    inference_service_test_internal::internal_name args;           \
+  }
+
+#include "inference_service_test_forwarders.inc"
+
+#undef STARPU_INFERENCE_SERVICE_TEST_FORWARDER_VOID
+#undef STARPU_INFERENCE_SERVICE_TEST_FORWARDER_RET
 
 void
 InferenceServiceTestAccessor::SetExpectedInputTypesForTest(
@@ -83,38 +93,6 @@ InferenceServiceTestAccessor::SetReferenceOutputsForTest(
   service->reference_outputs_ = reference_outputs;
 }
 
-auto
-InferenceServiceTestAccessor::CheckMissingInputsForTest(
-    const std::vector<bool>& filled,
-    std::span<const std::string> expected_names) -> grpc::Status
-{
-  return inference_service_test_internal::check_missing_named_inputs_for_test(
-      filled, expected_names);
-}
-
-void
-InferenceServiceTestAccessor::ArmRpcDoneTagWithNullContextForTest()
-{
-  inference_service_test_internal::
-      arm_rpc_done_tag_with_null_context_for_test();
-}
-
-auto
-InferenceServiceTestAccessor::RpcDoneTagProceedForTest(
-    bool is_ok, bool with_on_done) -> bool
-{
-  return inference_service_test_internal::rpc_done_tag_proceed_for_test(
-      is_ok, with_on_done);
-}
-
-void
-InferenceServiceTestAccessor::SetGrpcHealthStatusForTest(
-    grpc::Server* server, bool serving)
-{
-  inference_service_test_internal::set_grpc_health_status_for_test(
-      server, serving);
-}
-
 void
 InferenceServiceTestAccessor::RecordSuccessForTest(
     InferenceServiceImpl* service, const inference::ModelInferRequest* request,
@@ -132,95 +110,12 @@ InferenceServiceTestAccessor::RecordFailureForTest(
   service->record_failure(request, recv_tp, resolved_model_name);
 }
 
-auto
-InferenceServiceTestAccessor::ScalarTypeToModelDtypeForTest(at::ScalarType type)
-    -> inference::DataType
-{
-  return inference_service_test_internal::scalar_type_to_model_dtype_for_test(
-      type);
-}
-
-auto
-InferenceServiceTestAccessor::ResolveTensorNameForTest(
-    std::size_t index, std::span<const std::string> names,
-    std::string_view fallback_prefix) -> std::string
-{
-  return inference_service_test_internal::resolve_tensor_name_for_test(
-      index, names, fallback_prefix);
-}
-
-auto
-InferenceServiceTestAccessor::RequestBatchSizeForTest(
-    const inference::ModelInferRequest* request, int max_batch_size) -> uint64_t
-{
-  return inference_service_test_internal::request_batch_size_for_test(
-      request, max_batch_size);
-}
-
-auto
-InferenceServiceTestAccessor::DurationMsToNsForTest(double duration_ms)
-    -> uint64_t
-{
-  return inference_service_test_internal::duration_ms_to_ns_for_test(
-      duration_ms);
-}
-
-auto
-InferenceServiceTestAccessor::ElapsedSinceForTest(
-    MonotonicClock::time_point start) -> uint64_t
-{
-  return inference_service_test_internal::elapsed_since_for_test(start);
-}
-
-auto
-InferenceServiceTestAccessor::ResolveTerminalFailureStageForTest(
-    const grpc::Status& status, std::string_view default_stage,
-    std::string_view default_reason,
-    const std::optional<InferenceServiceImpl::AsyncFailureInfo>& failure_info)
-    -> std::string
-{
-  return inference_service_test_internal::
-      resolve_terminal_failure_stage_for_test(
-          status, default_stage, default_reason, failure_info);
-}
-
-auto
-InferenceServiceTestAccessor::ShouldReportTerminalFailureMetricForTest(
-    const grpc::Status& status, std::string_view default_stage,
-    std::string_view default_reason,
-    const std::optional<InferenceServiceImpl::AsyncFailureInfo>& failure_info)
-    -> bool
-{
-  return inference_service_test_internal::
-      should_report_terminal_failure_metric_for_test(
-          status, default_stage, default_reason, failure_info);
-}
-
 void
 InferenceServiceTestAccessor::SetModelStatisticsForceNullTargetForTest(
     bool enable)
 {
   inference_service_test_internal::
       set_model_statistics_force_null_target_for_test(enable);
-}
-
-auto
-InferenceServiceTestAccessor::IsContextCancelledForTest(
-    grpc::ServerContext* context) -> bool
-{
-  return inference_service_test_internal::is_context_cancelled_for_test(
-      context);
-}
-
-auto
-InferenceServiceTestAccessor::FillOutputTensorForTest(
-    inference::ModelInferResponse* reply,
-    const std::vector<torch::Tensor>& outputs,
-    const std::vector<std::size_t>& output_indices,
-    const std::vector<std::string>& output_names) -> grpc::Status
-{
-  return inference_service_test_internal::fill_output_tensor_for_test(
-      reply, outputs, output_indices, output_names);
 }
 
 auto
@@ -440,23 +335,6 @@ InferenceServiceTestAccessor::HandleAsyncInferCompletionForTest(bool cancelled)
   InferenceServiceImpl::handle_async_infer_completion(
       context, grpc::Status::OK, outputs, breakdown, timing_info);
   return called;
-}
-
-auto
-InferenceServiceTestAccessor::ValidateConfiguredShapeForTest(
-    const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
-    bool batching_allowed, int max_batch_size) -> grpc::Status
-{
-  return inference_service_test_internal::validate_configured_shape_for_test(
-      shape, expected, batching_allowed, max_batch_size);
-}
-
-auto
-InferenceServiceTestAccessor::
-    UnaryCallDataMissingHandlerTransitionsToFinishForTest() -> bool
-{
-  return inference_service_test_internal::
-      unary_call_data_missing_handler_transitions_to_finish_for_test();
 }
 
 }  // namespace starpu_server::testing

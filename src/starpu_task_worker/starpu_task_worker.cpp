@@ -59,24 +59,55 @@ job_identifier(const InferenceJob& job) -> int
 namespace {
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+template <typename Hook>
+class TestHookSlot {
+ public:
+  void set(Hook hook) { hook_ = std::move(hook); }
+
+  void reset() { hook_ = Hook{}; }
+
+  template <typename... Args>
+  void invoke(Args&&... args) const
+  {
+    if (hook_) {
+      hook_(std::forward<Args>(args)...);
+    }
+  }
+
+  template <typename... Args>
+  void invoke_once(Args&&... args)
+  {
+    if (!hook_) {
+      return;
+    }
+    auto one_shot_hook = std::move(hook_);
+    hook_ = Hook{};
+    one_shot_hook(std::forward<Args>(args)...);
+  }
+
+ private:
+  Hook hook_{};
+};
+
 auto
-submit_inference_task_hook_storage() -> std::function<void()>&
+submit_inference_task_hook_storage() -> TestHookSlot<std::function<void()>>&
 {
-  static std::function<void()> hook;
+  static TestHookSlot<std::function<void()>> hook;
   return hook;
 }
 
 auto
-run_after_batching_thread_start_hook_storage() -> std::function<void()>&
+run_after_batching_thread_start_hook_storage()
+    -> TestHookSlot<std::function<void()>>&
 {
-  static std::function<void()> hook;
+  static TestHookSlot<std::function<void()>> hook;
   return hook;
 }
 
 auto
-run_before_submit_hook_storage() -> std::function<void()>&
+run_before_submit_hook_storage() -> TestHookSlot<std::function<void()>>&
 {
-  static std::function<void()> hook;
+  static TestHookSlot<std::function<void()>> hook;
   return hook;
 }
 
@@ -95,13 +126,13 @@ duplicate_batching_thread_exception_capture_for_test() -> std::atomic<bool>&
 void
 set_submit_inference_task_hook(std::function<void()> hook)
 {
-  submit_inference_task_hook_storage() = std::move(hook);
+  submit_inference_task_hook_storage().set(std::move(hook));
 }
 
 void
 reset_submit_inference_task_hook()
 {
-  submit_inference_task_hook_storage() = {};
+  submit_inference_task_hook_storage().reset();
 }
 
 void
@@ -120,25 +151,25 @@ reset_duplicate_batching_thread_exception_capture_for_test()
 void
 set_run_after_batching_thread_start_hook(std::function<void()> hook)
 {
-  run_after_batching_thread_start_hook_storage() = std::move(hook);
+  run_after_batching_thread_start_hook_storage().set(std::move(hook));
 }
 
 void
 reset_run_after_batching_thread_start_hook()
 {
-  run_after_batching_thread_start_hook_storage() = {};
+  run_after_batching_thread_start_hook_storage().reset();
 }
 
 void
 set_run_before_submit_hook(std::function<void()> hook)
 {
-  run_before_submit_hook_storage() = std::move(hook);
+  run_before_submit_hook_storage().set(std::move(hook));
 }
 
 void
 reset_run_before_submit_hook()
 {
-  run_before_submit_hook_storage() = {};
+  run_before_submit_hook_storage().reset();
 }
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
@@ -148,10 +179,7 @@ invoke_submit_inference_task_hook()
 {
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  const auto& hook = submit_inference_task_hook_storage();
-  if (hook) {
-    hook();
-  }
+  submit_inference_task_hook_storage().invoke();
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
 }
@@ -174,13 +202,7 @@ invoke_run_after_batching_thread_start_hook()
 {
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& hook = run_after_batching_thread_start_hook_storage();
-  if (!hook) {
-    return;
-  }
-  auto one_shot_hook = std::move(hook);
-  hook = {};
-  one_shot_hook();
+  run_after_batching_thread_start_hook_storage().invoke_once();
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
 }
@@ -190,13 +212,7 @@ invoke_run_before_submit_hook()
 {
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& hook = run_before_submit_hook_storage();
-  if (!hook) {
-    return;
-  }
-  auto one_shot_hook = std::move(hook);
-  hook = {};
-  one_shot_hook();
+  run_before_submit_hook_storage().invoke_once();
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
 }
