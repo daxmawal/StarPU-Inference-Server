@@ -286,6 +286,70 @@ struct ScopedWaitForSignalNotificationReadOverride {
   }
 };
 
+struct WaitPidNoHangOverrideState {
+  std::vector<pid_t> waitpid_results;
+  std::vector<int> statuses;
+  std::vector<int> errnos;
+  std::size_t next_index = 0;
+  int call_count = 0;
+  pid_t last_pid = -1;
+  int last_options = 0;
+};
+
+auto
+waitpid_nohang_override_state() -> WaitPidNoHangOverrideState*&
+{
+  static WaitPidNoHangOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+waitpid_nohang_override_stub(pid_t pid, int* status, int options) -> pid_t
+{
+  auto* state = waitpid_nohang_override_state();
+  if (state == nullptr) {
+    errno = ECHILD;
+    if (status != nullptr) {
+      *status = 0;
+    }
+    return -1;
+  }
+
+  ++state->call_count;
+  state->last_pid = pid;
+  state->last_options = options;
+
+  if (state->next_index >= state->waitpid_results.size()) {
+    errno = 0;
+    if (status != nullptr) {
+      *status = 0;
+    }
+    return 0;
+  }
+
+  const auto index = state->next_index++;
+  errno = index < state->errnos.size() ? state->errnos[index] : 0;
+  if (status != nullptr) {
+    *status = index < state->statuses.size() ? state->statuses[index] : 0;
+  }
+  return state->waitpid_results[index];
+}
+
+struct ScopedWaitPidNoHangOverride {
+  explicit ScopedWaitPidNoHangOverride(
+      WaitPidNoHangOverrideState& state) noexcept
+  {
+    waitpid_nohang_override_state() = &state;
+    waitpid_nohang_override_for_test() = waitpid_nohang_override_stub;
+  }
+
+  ~ScopedWaitPidNoHangOverride()
+  {
+    waitpid_nohang_override_for_test() = nullptr;
+    waitpid_nohang_override_state() = nullptr;
+  }
+};
+
 struct PlotScriptOverrideState {
   std::optional<std::filesystem::path> summary_path_result;
   std::optional<std::filesystem::path> locate_result;
@@ -648,6 +712,142 @@ struct ScopedLogWorkerInventoryOverrides {
     worker_count_override_for_test() = nullptr;
     log_worker_inventory_override_state() = nullptr;
   }
+};
+
+struct ScopedDescribeCpuAffinityInventoryOverride {
+  explicit ScopedDescribeCpuAffinityInventoryOverride(
+      DescribeCpuAffinityOverrideForTestFn override_fn) noexcept
+      : previous_(describe_cpu_affinity_override_for_test())
+  {
+    describe_cpu_affinity_override_for_test() = override_fn;
+  }
+
+  ~ScopedDescribeCpuAffinityInventoryOverride()
+  {
+    describe_cpu_affinity_override_for_test() = previous_;
+  }
+
+ private:
+  DescribeCpuAffinityOverrideForTestFn previous_ = nullptr;
+};
+
+struct ScopedWorkerDeviceIdInventoryOverride {
+  explicit ScopedWorkerDeviceIdInventoryOverride(
+      WorkerDeviceIdOverrideForTestFn override_fn) noexcept
+      : previous_(worker_device_id_override_for_test())
+  {
+    worker_device_id_override_for_test() = override_fn;
+  }
+
+  ~ScopedWorkerDeviceIdInventoryOverride()
+  {
+    worker_device_id_override_for_test() = previous_;
+  }
+
+ private:
+  WorkerDeviceIdOverrideForTestFn previous_ = nullptr;
+};
+
+struct ScopedWorkerTypeInventoryOverride {
+  explicit ScopedWorkerTypeInventoryOverride(
+      WorkerTypeOverrideForTestFn override_fn) noexcept
+      : previous_(worker_type_override_for_test())
+  {
+    worker_type_override_for_test() = override_fn;
+  }
+
+  ~ScopedWorkerTypeInventoryOverride()
+  {
+    worker_type_override_for_test() = previous_;
+  }
+
+ private:
+  WorkerTypeOverrideForTestFn previous_ = nullptr;
+};
+
+struct ScopedWorkerCountInventoryOverride {
+  explicit ScopedWorkerCountInventoryOverride(
+      WorkerCountOverrideForTestFn override_fn) noexcept
+      : previous_(worker_count_override_for_test())
+  {
+    worker_count_override_for_test() = override_fn;
+  }
+
+  ~ScopedWorkerCountInventoryOverride()
+  {
+    worker_count_override_for_test() = previous_;
+  }
+
+ private:
+  WorkerCountOverrideForTestFn previous_ = nullptr;
+};
+
+struct ScopedBitmapFreeAffinityOverride {
+  explicit ScopedBitmapFreeAffinityOverride(
+      HwlocBitmapFreeOverrideForTestFn override_fn) noexcept
+      : previous_(hwloc_bitmap_free_override_for_test())
+  {
+    hwloc_bitmap_free_override_for_test() = override_fn;
+  }
+
+  ~ScopedBitmapFreeAffinityOverride()
+  {
+    hwloc_bitmap_free_override_for_test() = previous_;
+  }
+
+ private:
+  HwlocBitmapFreeOverrideForTestFn previous_ = nullptr;
+};
+
+struct ScopedBitmapNextAffinityOverride {
+  explicit ScopedBitmapNextAffinityOverride(
+      HwlocBitmapNextOverrideForTestFn override_fn) noexcept
+      : previous_(hwloc_bitmap_next_override_for_test())
+  {
+    hwloc_bitmap_next_override_for_test() = override_fn;
+  }
+
+  ~ScopedBitmapNextAffinityOverride()
+  {
+    hwloc_bitmap_next_override_for_test() = previous_;
+  }
+
+ private:
+  HwlocBitmapNextOverrideForTestFn previous_ = nullptr;
+};
+
+struct ScopedBitmapFirstAffinityOverride {
+  explicit ScopedBitmapFirstAffinityOverride(
+      HwlocBitmapFirstOverrideForTestFn override_fn) noexcept
+      : previous_(hwloc_bitmap_first_override_for_test())
+  {
+    hwloc_bitmap_first_override_for_test() = override_fn;
+  }
+
+  ~ScopedBitmapFirstAffinityOverride()
+  {
+    hwloc_bitmap_first_override_for_test() = previous_;
+  }
+
+ private:
+  HwlocBitmapFirstOverrideForTestFn previous_ = nullptr;
+};
+
+struct ScopedWorkerCpusetAffinityOverride {
+  explicit ScopedWorkerCpusetAffinityOverride(
+      WorkerCpusetProviderOverrideForTestFn override_fn) noexcept
+      : previous_(worker_cpuset_provider_override_for_test())
+  {
+    worker_cpuset_provider_override_for_test() = override_fn;
+  }
+
+  ~ScopedWorkerCpusetAffinityOverride()
+  {
+    worker_cpuset_provider_override_for_test() = previous_;
+  }
+
+ private:
+  WorkerCpusetProviderOverrideForTestFn previous_ = nullptr;
 };
 
 struct OccupiedLoopbackPort {
@@ -1175,6 +1375,162 @@ TEST(ServerMainCpuAffinity, FormatsCoresAndFreesCpusetWhenCoresArePresent)
   EXPECT_EQ(override_state.freed_cpuset, override_state.cpuset_to_return);
 }
 
+TEST(ServerMainCpuAffinity, BitmapFreeForAffinityFallsBackToHwlocBitmapFree)
+{
+  ScopedBitmapFreeAffinityOverride free_override_guard(nullptr);
+
+  hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+  ASSERT_NE(cpuset, nullptr);
+  ASSERT_EQ(hwloc_bitmap_set(cpuset, 0), 0);
+
+  EXPECT_NO_THROW(bitmap_free_for_affinity(cpuset));
+}
+
+TEST(ServerMainCpuAffinity, BitmapNextForAffinityFallsBackToHwlocBitmapNext)
+{
+  ScopedBitmapNextAffinityOverride next_override_guard(nullptr);
+
+  hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+  ASSERT_NE(cpuset, nullptr);
+  ASSERT_EQ(hwloc_bitmap_set(cpuset, 1), 0);
+  ASSERT_EQ(hwloc_bitmap_set(cpuset, 4), 0);
+
+  EXPECT_EQ(bitmap_next_for_affinity(cpuset, 1), 4);
+  EXPECT_EQ(bitmap_next_for_affinity(cpuset, 4), -1);
+
+  hwloc_bitmap_free(cpuset);
+}
+
+TEST(ServerMainCpuAffinity, BitmapFirstForAffinityFallsBackToHwlocBitmapFirst)
+{
+  ScopedBitmapFirstAffinityOverride first_override_guard(nullptr);
+
+  hwloc_bitmap_t cpuset = hwloc_bitmap_alloc();
+  ASSERT_NE(cpuset, nullptr);
+  ASSERT_EQ(hwloc_bitmap_set(cpuset, 3), 0);
+  ASSERT_EQ(hwloc_bitmap_set(cpuset, 7), 0);
+
+  EXPECT_EQ(bitmap_first_for_affinity(cpuset), 3);
+
+  hwloc_bitmap_free(cpuset);
+}
+
+TEST(
+    ServerMainCpuAffinity,
+    GetWorkerCpusetForAffinityFallsBackToStarpuWhenNoOverride)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  starpu_server::StarPUSetup starpu(opts);
+  (void)starpu;
+
+  ScopedWorkerCpusetAffinityOverride cpuset_override_guard(nullptr);
+
+  const int worker_count = static_cast<int>(starpu_worker_get_count());
+  if (worker_count <= 0) {
+    GTEST_SKIP() << "No StarPU workers available for cpuset query";
+  }
+
+  constexpr int worker_id = 0;
+  hwloc_cpuset_t expected = starpu_worker_get_hwloc_cpuset(worker_id);
+  hwloc_cpuset_t actual = get_worker_cpuset_for_affinity(worker_id);
+
+  if (expected == nullptr || actual == nullptr) {
+    EXPECT_EQ(actual, expected);
+    if (actual != nullptr) {
+      hwloc_bitmap_free(actual);
+    }
+    if (expected != nullptr && expected != actual) {
+      hwloc_bitmap_free(expected);
+    }
+    return;
+  }
+
+  EXPECT_EQ(hwloc_bitmap_isequal(actual, expected), 1);
+
+  if (actual == expected) {
+    hwloc_bitmap_free(actual);
+  } else {
+    hwloc_bitmap_free(actual);
+    hwloc_bitmap_free(expected);
+  }
+}
+
+TEST(
+    ServerMainWorkerInventory,
+    DescribeCpuAffinityForInventoryFallsBackToDescribeCpuAffinityWhenNoOverride)
+{
+  DescribeCpuAffinityOverrideState override_state;
+  override_state.cpuset_to_return =
+      reinterpret_cast<hwloc_cpuset_t>(static_cast<std::uintptr_t>(0x3));
+  override_state.cores = {1, 2, 3, 8};
+  ScopedDescribeCpuAffinityOverrides affinity_overrides(override_state);
+  ScopedDescribeCpuAffinityInventoryOverride inventory_override_guard(nullptr);
+
+  EXPECT_EQ(describe_cpu_affinity_for_inventory(13), "1-3,8");
+  EXPECT_EQ(override_state.provider_calls, 1);
+  EXPECT_EQ(override_state.requested_worker_id, 13);
+  EXPECT_EQ(override_state.first_calls, 1);
+  EXPECT_EQ(override_state.next_calls, 4);
+  EXPECT_EQ(override_state.free_calls, 1);
+  EXPECT_EQ(override_state.first_cpuset, override_state.cpuset_to_return);
+  EXPECT_EQ(override_state.next_cpuset, override_state.cpuset_to_return);
+  EXPECT_EQ(override_state.freed_cpuset, override_state.cpuset_to_return);
+}
+
+TEST(
+    ServerMainWorkerInventory,
+    WorkerDeviceIdForInventoryFallsBackToStarpuWhenNoOverride)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  starpu_server::StarPUSetup starpu(opts);
+  (void)starpu;
+
+  ScopedWorkerDeviceIdInventoryOverride override_guard(nullptr);
+
+  const int worker_count = static_cast<int>(starpu_worker_get_count());
+  if (worker_count <= 0) {
+    GTEST_SKIP() << "No StarPU workers available for device id query";
+  }
+
+  constexpr int worker_id = 0;
+  const int expected = starpu_worker_get_devid(worker_id);
+  EXPECT_EQ(worker_device_id_for_inventory(worker_id), expected);
+}
+
+TEST(
+    ServerMainWorkerInventory,
+    WorkerTypeForInventoryFallsBackToStarpuWhenNoOverride)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  starpu_server::StarPUSetup starpu(opts);
+  (void)starpu;
+
+  ScopedWorkerTypeInventoryOverride override_guard(nullptr);
+
+  const int worker_count = static_cast<int>(starpu_worker_get_count());
+  if (worker_count <= 0) {
+    GTEST_SKIP() << "No StarPU workers available for type query";
+  }
+
+  constexpr int worker_id = 0;
+  const auto expected = starpu_worker_get_type(worker_id);
+  EXPECT_EQ(worker_type_for_inventory(worker_id), expected);
+}
+
+TEST(
+    ServerMainWorkerInventory,
+    WorkerCountForInventoryFallsBackToStarpuWhenNoOverride)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  starpu_server::StarPUSetup starpu(opts);
+  (void)starpu;
+
+  ScopedWorkerCountInventoryOverride override_guard(nullptr);
+
+  const int expected = static_cast<int>(starpu_worker_get_count());
+  EXPECT_EQ(worker_count_for_inventory(), expected);
+}
+
 TEST(ServerMainWorkerInventory, LogsOnlyHeaderWhenNoWorkersAreConfigured)
 {
   LogWorkerInventoryOverrideState override_state;
@@ -1250,6 +1606,9 @@ static_assert(
 static_assert(std::is_nothrow_invocable_r_v<
               WaitForSignalNotificationReadOverrideForTestFn&,
               decltype(wait_for_signal_notification_read_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              WaitPidNoHangOverrideForTestFn&,
+              decltype(waitpid_nohang_override_for_test)>);
 static_assert(std::is_nothrow_invocable_r_v<
               ResolvePythonCandidatesOverrideForTestFn&,
               decltype(resolve_python_candidates_override_for_test)>);
@@ -2209,6 +2568,60 @@ TEST(ServerMainPlotProcess, WaitForPlotProcessReturnsChildExitCode)
   const auto exit_code = wait_for_plot_process(pid);
   ASSERT_TRUE(exit_code.has_value());
   EXPECT_EQ(*exit_code, 7);
+}
+
+TEST(ServerMainPlotProcess, WaitStatusToExitCodeReturnsNulloptForStoppedStatus)
+{
+  // Typical POSIX wait status encoding for a stopped process.
+  constexpr int stopped_status = 0x7f;
+  EXPECT_TRUE(WIFSTOPPED(stopped_status));
+  EXPECT_FALSE(WIFEXITED(stopped_status));
+  EXPECT_FALSE(WIFSIGNALED(stopped_status));
+
+  const auto exit_code = wait_status_to_exit_code(stopped_status);
+  EXPECT_FALSE(exit_code.has_value());
+}
+
+TEST(ServerMainPlotProcess, WaitpidNohangRetriesWhenInterruptedBySignal)
+{
+  WaitPidNoHangOverrideState override_state;
+  override_state.waitpid_results = {-1, 0};
+  override_state.errnos = {EINTR, 0};
+  ScopedWaitPidNoHangOverride override_guard(override_state);
+
+  int status = 123;
+  const auto result = waitpid_nohang(4242, status);
+
+  EXPECT_EQ(override_state.call_count, 2);
+  EXPECT_EQ(override_state.last_pid, 4242);
+  EXPECT_EQ(override_state.last_options, WNOHANG);
+  EXPECT_EQ(result.state, WaitPidState::StillRunning);
+  EXPECT_FALSE(result.exit_code.has_value());
+}
+
+TEST(
+    ServerMainPlotProcess,
+    WaitpidNohangReturnsErrorAndNulloptWhenWaitpidFailsWithNonEintr)
+{
+  WaitPidNoHangOverrideState override_state;
+  override_state.waitpid_results = {-1};
+  override_state.errnos = {ECHILD};
+  ScopedWaitPidNoHangOverride override_guard(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  int status = 0;
+  const auto result = waitpid_nohang(999999, status);
+
+  EXPECT_EQ(override_state.call_count, 1);
+  EXPECT_EQ(override_state.last_pid, 999999);
+  EXPECT_EQ(override_state.last_options, WNOHANG);
+  EXPECT_EQ(result.state, WaitPidState::Error);
+  EXPECT_FALSE(result.exit_code.has_value());
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          std::string("Failed to wait for plot generation process: ") +
+          std::strerror(ECHILD)));
 }
 
 TEST(ServerMainPlotProcess, LogWaitpidErrorLogsWarningWithErrnoMessage)

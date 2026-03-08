@@ -543,12 +543,31 @@ struct WaitPidResult {
   std::optional<int> exit_code;
 };
 
+using WaitPidNoHangOverrideForTestFn = pid_t (*)(pid_t, int*, int);
+
+auto
+waitpid_nohang_override_for_test() noexcept -> WaitPidNoHangOverrideForTestFn&
+{
+  static WaitPidNoHangOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+read_waitpid_nohang(pid_t pid, int* status, int options) -> pid_t
+{
+  if (const auto override_fn = waitpid_nohang_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(pid, status, options);
+  }
+  return ::waitpid(pid, status, options);
+}
+
 auto
 waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
 {
   using enum WaitPidState;
   while (true) {
-    const pid_t result = waitpid(pid, &status, WNOHANG);
+    const pid_t result = read_waitpid_nohang(pid, &status, WNOHANG);
     if (result == pid) {
       return {Exited, wait_status_to_exit_code(status)};
     }
