@@ -252,6 +252,14 @@ class InferenceServiceImpl final
     static auto DurationMsToNsForTest(double duration_ms) -> uint64_t;
     static auto ElapsedSinceForTest(MonotonicClock::time_point start)
         -> uint64_t;
+    static auto ResolveTerminalFailureStageForTest(
+        const grpc::Status& status, std::string_view default_stage,
+        std::string_view default_reason,
+        const std::optional<AsyncFailureInfo>& failure_info) -> std::string;
+    static auto ShouldReportTerminalFailureMetricForTest(
+        const grpc::Status& status, std::string_view default_stage,
+        std::string_view default_reason,
+        const std::optional<AsyncFailureInfo>& failure_info) -> bool;
     static void SetModelStatisticsForceNullTargetForTest(bool enable);
     static auto IsContextCancelledForTest(grpc::ServerContext* context) -> bool;
     static auto FillOutputTensorForTest(

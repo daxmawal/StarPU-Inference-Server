@@ -301,9 +301,6 @@ process_input(
     const ModelInferRequest* request, int input_index,
     const ProcessInputContext& context) -> Status
 {
-  if (request == nullptr) {
-    return {grpc::StatusCode::INVALID_ARGUMENT, "ModelInfer request is null"};
-  }
   const auto& input = request->inputs(input_index);
   const auto& raw = request->raw_input_contents(input_index);
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());

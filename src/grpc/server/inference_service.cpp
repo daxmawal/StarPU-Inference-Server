@@ -845,9 +845,6 @@ InferenceServiceImpl::validate_and_convert_inputs(
     const ModelInferRequest* request, std::vector<torch::Tensor>& inputs,
     std::vector<std::shared_ptr<const void>>* input_lifetimes) -> Status
 {
-  if (request == nullptr) {
-    return {grpc::StatusCode::INVALID_ARGUMENT, "ModelInfer request is null"};
-  }
   if (auto status =
           validate_input_counts(request, expected_input_types_.size());
       !status.ok()) {
@@ -1320,6 +1317,28 @@ InferenceServiceImpl::TestAccessor::ElapsedSinceForTest(
     MonotonicClock::time_point start) -> uint64_t
 {
   return elapsed_since(start);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::ResolveTerminalFailureStageForTest(
+    const grpc::Status& status, std::string_view default_stage,
+    std::string_view default_reason,
+    const std::optional<AsyncFailureInfo>& failure_info) -> std::string
+{
+  return resolve_terminal_failure_mapping(
+             status, default_stage, default_reason, failure_info)
+      .stage;
+}
+
+auto
+InferenceServiceImpl::TestAccessor::ShouldReportTerminalFailureMetricForTest(
+    const grpc::Status& status, std::string_view default_stage,
+    std::string_view default_reason,
+    const std::optional<AsyncFailureInfo>& failure_info) -> bool
+{
+  return resolve_terminal_failure_mapping(
+             status, default_stage, default_reason, failure_info)
+      .report_failure_metric;
 }
 
 void

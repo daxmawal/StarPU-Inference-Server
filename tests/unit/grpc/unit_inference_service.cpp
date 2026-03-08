@@ -1535,6 +1535,43 @@ TEST(InferenceServiceImpl, IsContextCancelledHandlesNullContext)
                    IsContextCancelledForTest(nullptr));
 }
 
+TEST(
+    InferenceServiceImpl,
+    ResolveTerminalFailureMappingSkipsFailureMetricWhenAlreadyReported)
+{
+  const grpc::Status status{grpc::StatusCode::INTERNAL, "terminal failure"};
+  starpu_server::InferenceServiceImpl::AsyncFailureInfo failure_info{};
+  failure_info.stage = "postprocess";
+  failure_info.reason = "exception";
+  failure_info.metrics_reported = true;
+
+  const auto stage = starpu_server::InferenceServiceImpl::TestAccessor::
+      ResolveTerminalFailureStageForTest(
+          status, "enqueue", "queue_full", failure_info);
+  const bool should_report = starpu_server::InferenceServiceImpl::TestAccessor::
+      ShouldReportTerminalFailureMetricForTest(
+          status, "enqueue", "queue_full", failure_info);
+
+  EXPECT_TRUE(stage.empty());
+  EXPECT_FALSE(should_report);
+}
+
+TEST(
+    InferenceServiceImpl,
+    ResolveTerminalFailureMappingUsesExecutionWhenNoStageProvided)
+{
+  const grpc::Status status{grpc::StatusCode::INTERNAL, "terminal failure"};
+  starpu_server::InferenceServiceImpl::AsyncFailureInfo failure_info{};
+
+  const auto stage = starpu_server::InferenceServiceImpl::TestAccessor::
+      ResolveTerminalFailureStageForTest(status, "", "", failure_info);
+  const bool should_report = starpu_server::InferenceServiceImpl::TestAccessor::
+      ShouldReportTerminalFailureMetricForTest(status, "", "", failure_info);
+
+  EXPECT_EQ(stage, "execution");
+  EXPECT_TRUE(should_report);
+}
+
 TEST(InferenceServiceImpl, ScalarTypeToModelDtypeMapsKnownTypes)
 {
   using DataType = inference::DataType;
@@ -1844,6 +1881,64 @@ TEST_F(InferenceServiceTest, HandleModelInferAsyncRejectsNullReply)
   EXPECT_FALSE(status.ok());
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   EXPECT_EQ(status.error_message(), "ModelInfer response is null");
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncConvertsInternalStdExceptionToInternalError)
+{
+  using namespace std::chrono_literals;
+
+  auto request = starpu_server::make_valid_request();
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_cancel_ready = [](const std::function<void()>&) {
+    throw std::runtime_error("forced internal std exception");
+  };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      },
+      std::make_shared<int>(1));
+
+  ASSERT_EQ(status_future.wait_for(2s), std::future_status::ready);
+  const auto status = status_future.get();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Internal server error");
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncConvertsInternalUnknownExceptionToInternalError)
+{
+  using namespace std::chrono_literals;
+
+  auto request = starpu_server::make_valid_request();
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  starpu_server::InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks;
+  hooks.on_cancel_ready = [](const std::function<void()>&) { throw 123; };
+  HandleModelInferAsyncHooksGuard guard{std::move(hooks)};
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply,
+      [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      },
+      std::make_shared<int>(1));
+
+  ASSERT_EQ(status_future.wait_for(2s), std::future_status::ready);
+  const auto status = status_future.get();
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Internal server error");
 }
 
 TEST_F(
