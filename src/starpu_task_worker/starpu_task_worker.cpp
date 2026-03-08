@@ -217,7 +217,7 @@ invoke_run_before_submit_hook()
   // GCOVR_EXCL_STOP
 }
 
-#include "batching_helpers.inl"
+#include "batching_helpers.hpp"
 
 }  // namespace task_runner_internal
 
@@ -736,7 +736,7 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
-#include "starpu_task_worker_submit_pipeline.inl"
+#include "starpu_task_worker_submit_pipeline.hpp"
 
 // =============================================================================
 // Main run loop: pull jobs, submit them, handle shutdown and errors
@@ -761,7 +761,7 @@ StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
   result_dispatcher_->finalize_job_completion(job);
 }
 
-#include "starpu_task_worker_prepared_job_processor.inl"
+#include "starpu_task_worker_prepared_job_processor.hpp"
 
 struct StarPUTaskRunner::RunPipelineContext {
   RunThreadExceptionState thread_exception_state;

@@ -100,13 +100,13 @@ constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(60);
 #endif  // SONAR_IGNORE_END
 
 // Shared label and series helpers.
-#include "metrics_labels.inl"
+#include "metrics_labels.hpp"
 // CPU/GPU providers and process/system sampling sources.
-#include "metrics_gpu_cpu_providers.inl"
+#include "metrics_gpu_cpu_providers.hpp"
 // Prometheus family/series registration.
-#include "metrics_registration.inl"
+#include "metrics_registration.hpp"
 // Sampler implementation and sampler lifecycle hooks.
-#include "metrics_sampler.inl"
+#include "metrics_sampler.hpp"
 
 MetricsRegistry::MetricsRegistry(int port)
     : MetricsRegistry(
@@ -1073,5 +1073,5 @@ MetricsRegistry::queue_capacity_value() const -> std::size_t
 }  // namespace starpu_server
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-#include "metrics_test_accessor.inl"
+#include "metrics_test_accessor.hpp"
 #endif  // SONAR_IGNORE_END

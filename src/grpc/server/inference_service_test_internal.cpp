@@ -156,7 +156,7 @@ set_model_statistics_force_null_target_for_test(bool enable)
     inference_service_runtime_internal::runtime_name args;         \
   }
 
-#include "inference_service_test_forwarders.inc"
+#include "inference_service_test_forwarders.hpp"
 
 #undef STARPU_INFERENCE_SERVICE_TEST_FORWARDER_VOID
 #undef STARPU_INFERENCE_SERVICE_TEST_FORWARDER_RET

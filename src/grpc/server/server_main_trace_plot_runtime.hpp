@@ -5,7 +5,7 @@ constexpr int kSignalExitCodeOffset = 128;
 constexpr int kExecFailedExitCode = 127;
 constexpr int kPlotScriptSearchDepth = 6;
 
-#include "server_main_python_test_overrides.inc"
+#include "server_main_python_test_overrides.hpp"
 
 auto
 resolve_python_executable() -> std::optional<std::filesystem::path>

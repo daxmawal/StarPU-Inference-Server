@@ -45,7 +45,8 @@ resolve_python_is_regular_file_for_runtime(
     const std::filesystem::path& candidate, std::error_code& status_ec) -> bool
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = resolve_python_is_regular_file_override_for_test();
+  if (const auto override_fn =
+          resolve_python_is_regular_file_override_for_test();
       override_fn != nullptr) {
     return override_fn(candidate, status_ec);
   }

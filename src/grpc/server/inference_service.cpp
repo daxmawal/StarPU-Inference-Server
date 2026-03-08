@@ -362,9 +362,9 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
 namespace {
 
 // Input/output tensor parsing and validation helpers.
-#include "inference_service_io_validation.inl"
+#include "inference_service_io_validation.hpp"
 // Async submission/completion utility helpers.
-#include "inference_service_async_lifecycle.inl"
+#include "inference_service_async_lifecycle.hpp"
 }  // namespace
 
 InferenceServiceImpl::InferenceServiceImpl(
@@ -401,10 +401,10 @@ InferenceServiceImpl::InferenceServiceImpl(
 }
 
 // Readiness/metadata/config/statistics RPC handlers.
-#include "inference_service_rpc_metadata.inl"
+#include "inference_service_rpc_metadata.hpp"
 
 // Infer RPC path: request validation, async orchestration, response shaping.
-#include "inference_service_rpc_infer.inl"
+#include "inference_service_rpc_infer.hpp"
 
 namespace {
 void
@@ -1141,5 +1141,5 @@ InferenceServiceImpl::record_failure(
   stats.inference_stats.fail.ns += total_ns;
 }
 
-#include "inference_service_async_server.inl"
+#include "inference_service_async_server.hpp"
 }  // namespace starpu_server

@@ -66,7 +66,7 @@ InferenceServiceTestAccessor::ClearSubmitJobAsyncTestHooks()
     inference_service_test_internal::internal_name args;           \
   }
 
-#include "inference_service_test_forwarders.inc"
+#include "inference_service_test_forwarders.hpp"
 
 #undef STARPU_INFERENCE_SERVICE_TEST_FORWARDER_VOID
 #undef STARPU_INFERENCE_SERVICE_TEST_FORWARDER_RET
