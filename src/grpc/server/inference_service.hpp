@@ -210,6 +210,12 @@ class InferenceServiceImpl final
         after_try_acquire;
     std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
         before_final_cancel_check;
+    std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+        before_success_terminal_mark;
+  };
+
+  struct SubmitJobAsyncTestHooks {
+    std::function<void()> before_create_job;
   };
 
   struct TestAccessor {
@@ -219,12 +225,19 @@ class InferenceServiceImpl final
     static void SetHandleAsyncInferCompletionTestHooks(
         HandleAsyncInferCompletionTestHooks hooks);
     static void ClearHandleAsyncInferCompletionTestHooks();
+    static void SetSubmitJobAsyncTestHooks(SubmitJobAsyncTestHooks hooks);
+    static void ClearSubmitJobAsyncTestHooks();
     static auto NormalizeNamesForTest(
         std::vector<std::string> names, std::size_t expected_size,
         std::string_view fallback_prefix,
         std::string_view kind) -> std::vector<std::string>;
+    static void SetExpectedInputTypesForTest(
+        InferenceServiceImpl* service, std::vector<at::ScalarType> types);
     static void SetExpectedInputNamesForTest(
         InferenceServiceImpl* service, std::vector<std::string> names);
+    static void SetReferenceOutputsForTest(
+        InferenceServiceImpl* service,
+        const std::vector<torch::Tensor>* reference_outputs);
     static auto CheckMissingInputsForTest(
         const std::vector<bool>& filled,
         std::span<const std::string> expected_names) -> grpc::Status;
@@ -269,6 +282,24 @@ class InferenceServiceImpl final
         const std::vector<std::string>& output_names) -> grpc::Status;
     static auto BuildLatencyBreakdownForTest(
         const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
+    static auto HandleSubmitFailureForTest(
+        const grpc::Status& status, bool cancelled, bool terminal_marked,
+        std::atomic<bool>* callback_invoked,
+        const std::optional<AsyncFailureInfo>& failure_info = std::nullopt)
+        -> bool;
+    static auto HandleInputValidationFailureForTest(
+        const grpc::Status& status, bool cancelled, bool terminal_marked,
+        std::atomic<bool>* callback_invoked) -> bool;
+    static auto FinalizeSuccessfulCompletionForTest(
+        bool cancelled, bool terminal_marked, bool callback_present,
+        bool reply_present, bool with_impl,
+        std::atomic<bool>* callback_invoked) -> bool;
+    static auto HandleJobFailureForTest(
+        const grpc::Status& job_status, bool terminal_marked,
+        bool callback_present, std::atomic<bool>* callback_invoked) -> bool;
+    static auto PrepareAsyncCompletionForTest(
+        bool cancelled, bool callback_present) -> bool;
+    static auto TryMarkTerminalNullFlagForTest() -> bool;
     static auto HandleAsyncInferCompletionForTest(bool cancelled) -> bool;
   };
 #endif  // SONAR_IGNORE_END

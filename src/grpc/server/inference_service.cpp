@@ -357,6 +357,13 @@ handle_async_infer_completion_test_hooks()
 }
 
 auto
+submit_job_async_test_hooks() -> InferenceServiceImpl::SubmitJobAsyncTestHooks&
+{
+  static InferenceServiceImpl::SubmitJobAsyncTestHooks hooks{};
+  return hooks;
+}
+
+auto
 model_statistics_test_hooks() -> ModelStatisticsTestHooks&
 {
   static ModelStatisticsTestHooks hooks{};
@@ -993,6 +1000,12 @@ InferenceServiceImpl::
   }
 
   try {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    auto& submit_hooks = submit_job_async_test_hooks();
+    if (submit_hooks.before_create_job) {
+      submit_hooks.before_create_job();
+    }
+#endif  // SONAR_IGNORE_END
     auto job = client_utils::create_job(
         inputs, *reference_outputs_, next_request_id(),
         std::move(input_lifetimes), receive_time,
@@ -1214,6 +1227,19 @@ InferenceServiceImpl::TestAccessor::ClearHandleAsyncInferCompletionTestHooks()
       HandleAsyncInferCompletionTestHooks{};
 }
 
+void
+InferenceServiceImpl::TestAccessor::SetSubmitJobAsyncTestHooks(
+    SubmitJobAsyncTestHooks hooks)
+{
+  submit_job_async_test_hooks() = std::move(hooks);
+}
+
+void
+InferenceServiceImpl::TestAccessor::ClearSubmitJobAsyncTestHooks()
+{
+  submit_job_async_test_hooks() = SubmitJobAsyncTestHooks{};
+}
+
 auto
 InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
     std::vector<std::string> names, std::size_t expected_size,
@@ -1226,10 +1252,25 @@ InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
 }
 
 void
+InferenceServiceImpl::TestAccessor::SetExpectedInputTypesForTest(
+    InferenceServiceImpl* service, std::vector<at::ScalarType> types)
+{
+  service->expected_input_types_ = std::move(types);
+}
+
+void
 InferenceServiceImpl::TestAccessor::SetExpectedInputNamesForTest(
     InferenceServiceImpl* service, std::vector<std::string> names)
 {
   service->expected_input_names_ = std::move(names);
+}
+
+void
+InferenceServiceImpl::TestAccessor::SetReferenceOutputsForTest(
+    InferenceServiceImpl* service,
+    const std::vector<torch::Tensor>* reference_outputs)
+{
+  service->reference_outputs_ = reference_outputs;
 }
 
 auto
@@ -1370,6 +1411,177 @@ InferenceServiceImpl::TestAccessor::BuildLatencyBreakdownForTest(
     const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown
 {
   return build_latency_breakdown(info, latency_ms);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::HandleSubmitFailureForTest(
+    const grpc::Status& status, bool cancelled, bool terminal_marked,
+    std::atomic<bool>* callback_invoked,
+    const std::optional<AsyncFailureInfo>& failure_info) -> bool
+{
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
+  auto terminal_flag = std::make_shared<std::atomic<bool>>(terminal_marked);
+  std::shared_ptr<CallbackHandle> callback_handle;
+  if (callback_invoked != nullptr) {
+    callback_handle = std::make_shared<CallbackHandle>(
+        [callback_invoked](grpc::Status /*unused*/) {
+          callback_invoked->store(true, std::memory_order_release);
+        });
+  }
+  return handle_submit_failure(
+      status, AsyncTerminalState{cancel_flag, terminal_flag}, callback_handle,
+      nullptr, "model", nullptr, MonotonicClock::now(), failure_info);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::HandleInputValidationFailureForTest(
+    const grpc::Status& status, bool cancelled, bool terminal_marked,
+    std::atomic<bool>* callback_invoked) -> bool
+{
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
+  auto terminal_flag = std::make_shared<std::atomic<bool>>(terminal_marked);
+  std::shared_ptr<CallbackHandle> callback_handle;
+  if (callback_invoked != nullptr) {
+    callback_handle = std::make_shared<CallbackHandle>(
+        [callback_invoked](grpc::Status /*unused*/) {
+          callback_invoked->store(true, std::memory_order_release);
+        });
+  }
+  return handle_input_validation_failure(
+      status, AsyncTerminalState{cancel_flag, terminal_flag}, callback_handle,
+      nullptr, "model", nullptr, MonotonicClock::now());
+}
+
+auto
+InferenceServiceImpl::TestAccessor::FinalizeSuccessfulCompletionForTest(
+    bool cancelled, bool terminal_marked, bool callback_present,
+    bool reply_present, bool with_impl,
+    std::atomic<bool>* callback_invoked) -> bool
+{
+  if (callback_invoked != nullptr) {
+    callback_invoked->store(false, std::memory_order_release);
+  }
+
+  inference::ModelInferRequest request;
+  inference::ModelInferResponse reply;
+  std::vector<torch::Tensor> outputs = {
+      torch::zeros({1}, torch::TensorOptions().dtype(at::kFloat))};
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
+  auto terminal_flag = std::make_shared<std::atomic<bool>>(terminal_marked);
+
+  std::shared_ptr<CallbackHandle> callback_handle;
+  if (callback_present) {
+    callback_handle = std::make_shared<CallbackHandle>(
+        [callback_invoked](grpc::Status /*unused*/) {
+          if (callback_invoked != nullptr) {
+            callback_invoked->store(true, std::memory_order_release);
+          }
+        });
+  }
+
+  InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<InferenceServiceImpl> service;
+  if (with_impl) {
+    service = std::make_unique<InferenceServiceImpl>(
+        &queue, &reference_outputs, std::vector<at::ScalarType>{at::kFloat});
+  }
+
+  LatencyBreakdown breakdown{};
+  detail::TimingInfo timing_info{};
+  const AsyncInferCompletionContext context{
+      .request = &request,
+      .reply = reply_present ? &reply : nullptr,
+      .callback_handle = callback_handle,
+      .metrics = nullptr,
+      .recv_tp = MonotonicClock::now(),
+      .recv_ms = 0,
+      .resolved_model_name = "model",
+      .impl = service.get(),
+      .output_names = nullptr,
+      .cancel_flag = cancel_flag,
+      .terminal_flag = terminal_flag,
+      .failure_info = std::nullopt};
+  finalize_successful_completion(context, outputs, breakdown, timing_info);
+  return terminal_flag->load(std::memory_order_acquire);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::HandleJobFailureForTest(
+    const grpc::Status& job_status, bool terminal_marked, bool callback_present,
+    std::atomic<bool>* callback_invoked) -> bool
+{
+  if (callback_invoked != nullptr) {
+    callback_invoked->store(false, std::memory_order_release);
+  }
+
+  inference::ModelInferRequest request;
+  inference::ModelInferResponse reply;
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
+  auto terminal_flag = std::make_shared<std::atomic<bool>>(terminal_marked);
+
+  std::shared_ptr<CallbackHandle> callback_handle;
+  if (callback_present) {
+    callback_handle = std::make_shared<CallbackHandle>(
+        [callback_invoked](grpc::Status /*unused*/) {
+          if (callback_invoked != nullptr) {
+            callback_invoked->store(true, std::memory_order_release);
+          }
+        });
+  }
+
+  const AsyncInferCompletionContext context{
+      .request = &request,
+      .reply = &reply,
+      .callback_handle = callback_handle,
+      .metrics = nullptr,
+      .recv_tp = MonotonicClock::now(),
+      .recv_ms = 0,
+      .resolved_model_name = "model",
+      .impl = nullptr,
+      .output_names = nullptr,
+      .cancel_flag = cancel_flag,
+      .terminal_flag = terminal_flag,
+      .failure_info = std::nullopt};
+  return handle_job_failure(context, job_status, callback_handle);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::PrepareAsyncCompletionForTest(
+    bool cancelled, bool callback_present) -> bool
+{
+  inference::ModelInferRequest request;
+  inference::ModelInferResponse reply;
+  auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
+  auto terminal_flag = std::make_shared<std::atomic<bool>>(false);
+
+  std::shared_ptr<CallbackHandle> callback_handle;
+  if (callback_present) {
+    callback_handle =
+        std::make_shared<CallbackHandle>([](grpc::Status /*unused*/) {});
+  }
+
+  const AsyncInferCompletionContext context{
+      .request = &request,
+      .reply = &reply,
+      .callback_handle = callback_handle,
+      .metrics = nullptr,
+      .recv_tp = MonotonicClock::now(),
+      .recv_ms = 0,
+      .resolved_model_name = "model",
+      .impl = nullptr,
+      .output_names = nullptr,
+      .cancel_flag = cancel_flag,
+      .terminal_flag = terminal_flag,
+      .failure_info = std::nullopt};
+  return prepare_async_completion(context, callback_handle);
+}
+
+auto
+InferenceServiceImpl::TestAccessor::TryMarkTerminalNullFlagForTest() -> bool
+{
+  const std::shared_ptr<std::atomic<bool>> terminal_flag;
+  return try_mark_terminal(terminal_flag);
 }
 
 auto
@@ -1623,6 +1835,12 @@ InferenceServiceImpl::finalize_successful_completion(
       breakdown.postprocess_ms,
   });
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (async_hooks.before_success_terminal_mark &&
+      context.cancel_flag != nullptr) {
+    async_hooks.before_success_terminal_mark(context.cancel_flag);
+  }
+#endif  // SONAR_IGNORE_END
   if (is_async_cancelled(context)) {
     return;
   }
