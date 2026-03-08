@@ -18,6 +18,10 @@
 #include <utility>
 #include <vector>
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+#include <optional>
+#endif  // SONAR_IGNORE_END
+
 #include "batching_trace_logger.hpp"
 #include "client_utils.hpp"
 #include "inference_queue.hpp"
@@ -38,6 +42,8 @@ struct WarmupHookState {
   std::mutex mutex;
   std::function<void()> server_thread_hook;
   std::function<void()> client_thread_hook;
+  std::optional<std::chrono::milliseconds> drain_timeout_override;
+  std::optional<std::chrono::milliseconds> drain_wait_step_override;
 };
 
 auto
@@ -45,6 +51,32 @@ warmup_hook_state() -> WarmupHookState&
 {
   static WarmupHookState state;
   return state;
+}
+
+auto
+resolve_warmup_drain_timeout_for_test() -> std::chrono::steady_clock::duration
+{
+  auto& state = warmup_hook_state();
+  std::lock_guard lock(state.mutex);
+  if (state.drain_timeout_override.has_value()) {
+    return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        *state.drain_timeout_override);
+  }
+  return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      kWarmupDrainTimeout);
+}
+
+auto
+resolve_warmup_drain_wait_step_for_test() -> std::chrono::steady_clock::duration
+{
+  auto& state = warmup_hook_state();
+  std::lock_guard lock(state.mutex);
+  if (state.drain_wait_step_override.has_value()) {
+    return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        *state.drain_wait_step_override);
+  }
+  return std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      kWarmupDrainWaitStep);
 }
 #endif  // SONAR_IGNORE_END
 
@@ -115,6 +147,30 @@ set_warmup_client_thread_hook(std::function<void()> hook)
   std::lock_guard lock(state.mutex);
   auto previous = std::move(state.client_thread_hook);
   state.client_thread_hook = std::move(hook);
+  return previous;
+}
+
+auto
+set_warmup_drain_timeout_for_test(
+    std::optional<std::chrono::milliseconds> timeout)
+    -> std::optional<std::chrono::milliseconds>
+{
+  auto& state = warmup_hook_state();
+  std::lock_guard lock(state.mutex);
+  auto previous = state.drain_timeout_override;
+  state.drain_timeout_override = timeout;
+  return previous;
+}
+
+auto
+set_warmup_drain_wait_step_for_test(
+    std::optional<std::chrono::milliseconds> wait_step)
+    -> std::optional<std::chrono::milliseconds>
+{
+  auto& state = warmup_hook_state();
+  std::lock_guard lock(state.mutex);
+  auto previous = state.drain_wait_step_override;
+  state.drain_wait_step_override = wait_step;
   return previous;
 }
 
@@ -314,7 +370,21 @@ wait_for_warmup_completion(
 {
   std::exception_ptr wait_exception;
   std::unique_lock lock(state.completed_mutex);
-  const auto deadline = std::chrono::steady_clock::now() + kWarmupDrainTimeout;
+  const auto drain_timeout =
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+      resolve_warmup_drain_timeout_for_test();
+#else
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+          kWarmupDrainTimeout);
+#endif  // SONAR_IGNORE_END
+  const auto drain_wait_step =
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+      resolve_warmup_drain_wait_step_for_test();
+#else
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+          kWarmupDrainWaitStep);
+#endif  // SONAR_IGNORE_END
+  const auto deadline = std::chrono::steady_clock::now() + drain_timeout;
   try {
     while (true) {
       if (completion_observer) {
@@ -334,7 +404,7 @@ wait_for_warmup_completion(
               enqueued > completed ? enqueued - completed : 0;
           const auto timeout_ms =
               std::chrono::duration_cast<std::chrono::milliseconds>(
-                  kWarmupDrainTimeout)
+                  drain_timeout)
                   .count();
           log_error(std::format(
               "Warmup drain timeout after {} ms: completed={} enqueued={} "
@@ -348,11 +418,8 @@ wait_for_warmup_completion(
           break;
         }
         const auto until_deadline = deadline - now;
-        const auto wait_step =
-            std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                kWarmupDrainWaitStep);
         const auto wait_budget =
-            until_deadline < wait_step ? until_deadline : wait_step;
+            until_deadline < drain_wait_step ? until_deadline : drain_wait_step;
         static_cast<void>(state.completed_cv.wait_for(lock, wait_budget));
         continue;
       }
@@ -367,8 +434,7 @@ wait_for_warmup_completion(
       if (now >= deadline) {
         const auto remaining = enqueued - completed;
         const auto timeout_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                kWarmupDrainTimeout)
+            std::chrono::duration_cast<std::chrono::milliseconds>(drain_timeout)
                 .count();
         log_error(std::format(
             "Warmup drain timeout after {} ms: completed={} enqueued={} "
@@ -381,11 +447,8 @@ wait_for_warmup_completion(
         break;
       }
       const auto until_deadline = deadline - now;
-      const auto wait_step =
-          std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-              kWarmupDrainWaitStep);
       const auto wait_budget =
-          until_deadline < wait_step ? until_deadline : wait_step;
+          until_deadline < drain_wait_step ? until_deadline : drain_wait_step;
       static_cast<void>(state.completed_cv.wait_for(lock, wait_budget));
     }
   }
