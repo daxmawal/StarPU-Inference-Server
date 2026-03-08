@@ -243,20 +243,14 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 
 OutputSlotPool::~OutputSlotPool()
 {
-  auto& slots_storage = slots();
-  detail::cleanup_slots(
-      slots_storage, host_buffer_infos_, free_host_buffer,
-      detail::SlotCleanupOrder::UnregisterThenFree,
-      /*reset_buffer_info=*/false);
+  detail::cleanup_pool_slots(slots(), host_buffer_infos_, free_host_buffer);
 }
 
 void
 OutputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
 {
-  auto& slots_storage = this->slots();
-  auto& free_ids_storage = this->free_ids();
-  detail::init_slots(
-      slots, slots_storage, host_buffer_infos_, free_ids_storage,
+  detail::init_pool_slots(
+      slots, this->slots(), host_buffer_infos_, this->free_ids(),
       [this, &opts](int slot_id) {
         allocate_slot_buffers_and_register(slot_id, opts);
       });

@@ -25,6 +25,7 @@ add_executable(
   ${TASK_WORKER_DIR}/result_dispatcher_component.cpp
   ${TASK_WORKER_DIR}/slot_manager_component.cpp
   ${GRPC_SERVER_DIR}/inference_service.cpp
+  ${GRPC_SERVER_DIR}/inference_service_test_internal.cpp
   ${GRPC_SERVER_DIR}/inference_service_test_accessor.cpp
   ${GRPC_CLIENT_DIR}/client_args.cpp
   ${UTILS_DIR}/client_utils.cpp

@@ -203,3 +203,31 @@ MetricsRegistry::Sampler::sampling_loop(const std::stop_token& stop)
     }
   }
 }
+
+void
+MetricsRegistry::request_stop()
+{
+  if (registry_state_.sampler_thread.joinable()) {
+    registry_state_.sampler_thread.request_stop();
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (monitoring::detail::metrics_request_stop_skip_join_for_test()) {
+      return;
+    }
+#endif  // SONAR_IGNORE_END
+    registry_state_.sampler_thread.join();
+  }
+}
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+MetricsRegistry::has_gpu_stats_provider() const -> bool
+{
+  return static_cast<bool>(providers_.gpu_stats_provider);
+}
+
+auto
+MetricsRegistry::has_cpu_usage_provider() const -> bool
+{
+  return static_cast<bool>(providers_.cpu_usage_provider);
+}
+#endif  // SONAR_IGNORE_END

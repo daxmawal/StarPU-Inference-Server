@@ -343,6 +343,33 @@ query_gpu_stats_nvml() -> std::vector<GpuSample>
 namespace monitoring::detail {
 
 auto
+read_total_cpu_times(std::istream& input, CpuTotals& out) -> bool
+{
+  std::string cpu{};
+  if (!(input >> cpu)) {
+    return false;
+  }
+  if (cpu != "cpu") {
+    return false;
+  }
+  if (!(input >> out.user >> out.nice >> out.system >> out.idle >> out.iowait >>
+        out.irq >> out.softirq >> out.steal)) {
+    return false;
+  }
+  return true;
+}
+
+auto
+read_total_cpu_times(const std::filesystem::path& path, CpuTotals& out) -> bool
+{
+  std::ifstream input{path};
+  if (!input.is_open()) {
+    return false;
+  }
+  return read_total_cpu_times(input, out);
+}
+
+auto
 cpu_usage_percent(const CpuTotals& prev, const CpuTotals& curr) -> double
 {
   const unsigned long long prev_idle = prev.idle + prev.iowait;

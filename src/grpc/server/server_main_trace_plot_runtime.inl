@@ -63,13 +63,8 @@ struct WaitPidResult {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using WaitPidNoHangOverrideForTestFn = pid_t (*)(pid_t, int*, int);
 
-auto
-waitpid_nohang_override_for_test() noexcept -> WaitPidNoHangOverrideForTestFn&
-{
-  struct WaitPidNoHangOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      WaitPidNoHangOverrideTag, WaitPidNoHangOverrideForTestFn>();
-}
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    waitpid_nohang_override_for_test, WaitPidNoHangOverrideForTestFn)
 #endif  // SONAR_IGNORE_STOP
 
 auto
@@ -107,14 +102,8 @@ waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using WaitPidBlockingOverrideForTestFn = pid_t (*)(pid_t, int*, int);
 
-auto
-waitpid_blocking_override_for_test() noexcept
-    -> WaitPidBlockingOverrideForTestFn&
-{
-  struct WaitPidBlockingOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      WaitPidBlockingOverrideTag, WaitPidBlockingOverrideForTestFn>();
-}
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    waitpid_blocking_override_for_test, WaitPidBlockingOverrideForTestFn)
 #endif  // SONAR_IGNORE_STOP
 
 auto
@@ -200,24 +189,11 @@ using WaitForPlotProcessWaitOverrideForTestFn =
     WaitOutcomeResult (*)(pid_t, std::chrono::steady_clock::duration);
 using TerminateAndWaitOverrideForTestFn = std::optional<int> (*)(pid_t);
 
-auto
-wait_for_plot_process_wait_override_for_test() noexcept
-    -> WaitForPlotProcessWaitOverrideForTestFn&
-{
-  struct WaitForPlotProcessWaitOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      WaitForPlotProcessWaitOverrideTag,
-      WaitForPlotProcessWaitOverrideForTestFn>();
-}
-
-auto
-terminate_and_wait_override_for_test() noexcept
-    -> TerminateAndWaitOverrideForTestFn&
-{
-  struct TerminateAndWaitOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      TerminateAndWaitOverrideTag, TerminateAndWaitOverrideForTestFn>();
-}
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    wait_for_plot_process_wait_override_for_test,
+    WaitForPlotProcessWaitOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    terminate_and_wait_override_for_test, TerminateAndWaitOverrideForTestFn)
 #endif  // SONAR_IGNORE_STOP
 
 auto
@@ -260,40 +236,15 @@ using LocatePlotScriptOverrideForTestFn =
 using TraceSummaryFilePathOverrideForTestFn =
     std::optional<std::filesystem::path> (*)();
 
-auto
-run_plot_script_override_for_test() noexcept -> RunPlotScriptOverrideForTestFn&
-{
-  struct RunPlotScriptOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      RunPlotScriptOverrideTag, RunPlotScriptOverrideForTestFn>();
-}
-
-auto
-run_plot_script_fork_override_for_test() noexcept
-    -> RunPlotScriptForkOverrideForTestFn&
-{
-  struct RunPlotScriptForkOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      RunPlotScriptForkOverrideTag, RunPlotScriptForkOverrideForTestFn>();
-}
-
-auto
-locate_plot_script_override_for_test() noexcept
-    -> LocatePlotScriptOverrideForTestFn&
-{
-  struct LocatePlotScriptOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      LocatePlotScriptOverrideTag, LocatePlotScriptOverrideForTestFn>();
-}
-
-auto
-trace_summary_file_path_override_for_test() noexcept
-    -> TraceSummaryFilePathOverrideForTestFn&
-{
-  struct TraceSummaryFilePathOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      TraceSummaryFilePathOverrideTag, TraceSummaryFilePathOverrideForTestFn>();
-}
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    run_plot_script_override_for_test, RunPlotScriptOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    run_plot_script_fork_override_for_test, RunPlotScriptForkOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    locate_plot_script_override_for_test, LocatePlotScriptOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    trace_summary_file_path_override_for_test,
+    TraceSummaryFilePathOverrideForTestFn)
 #endif  // SONAR_IGNORE_STOP
 
 auto
@@ -357,25 +308,12 @@ using CandidatePlotScriptsReadSymlinkOverrideForTestFn =
 using LocatePlotScriptCandidatesOverrideForTestFn =
     std::vector<std::filesystem::path> (*)();
 
-auto
-candidate_plot_scripts_read_symlink_override_for_test() noexcept
-    -> CandidatePlotScriptsReadSymlinkOverrideForTestFn&
-{
-  struct CandidatePlotScriptsReadSymlinkOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      CandidatePlotScriptsReadSymlinkOverrideTag,
-      CandidatePlotScriptsReadSymlinkOverrideForTestFn>();
-}
-
-auto
-locate_plot_script_candidates_override_for_test() noexcept
-    -> LocatePlotScriptCandidatesOverrideForTestFn&
-{
-  struct LocatePlotScriptCandidatesOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      LocatePlotScriptCandidatesOverrideTag,
-      LocatePlotScriptCandidatesOverrideForTestFn>();
-}
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    candidate_plot_scripts_read_symlink_override_for_test,
+    CandidatePlotScriptsReadSymlinkOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    locate_plot_script_candidates_override_for_test,
+    LocatePlotScriptCandidatesOverrideForTestFn)
 #endif  // SONAR_IGNORE_STOP
 
 auto

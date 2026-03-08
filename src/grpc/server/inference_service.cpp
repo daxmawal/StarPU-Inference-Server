@@ -24,7 +24,6 @@
 #include <utility>
 #include <vector>
 #if defined(STARPU_TESTING)
-#include "inference_service_test_api.hpp"
 #include "inference_service_test_internal.hpp"
 #endif
 #if defined(STARPU_ENABLE_GRPC_REFLECTION)
@@ -345,40 +344,7 @@ class RpcDoneTag final : public AsyncCallDataBase,
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-struct ModelStatisticsTestHooks {
-  bool force_null_stat_target = false;
-};
-
-auto
-handle_model_infer_async_test_hooks()
-    -> testing::HandleModelInferAsyncTestHooks&
-{
-  static testing::HandleModelInferAsyncTestHooks hooks{};
-  return hooks;
-}
-
-auto
-handle_async_infer_completion_test_hooks()
-    -> testing::HandleAsyncInferCompletionTestHooks&
-{
-  static testing::HandleAsyncInferCompletionTestHooks hooks{};
-  return hooks;
-}
-
-auto
-submit_job_async_test_hooks() -> testing::SubmitJobAsyncTestHooks&
-{
-  static testing::SubmitJobAsyncTestHooks hooks{};
-  return hooks;
-}
-
-auto
-model_statistics_test_hooks() -> ModelStatisticsTestHooks&
-{
-  static ModelStatisticsTestHooks hooks{};
-  return hooks;
-}
-#endif  // SONAR_IGNORE_END
+#endif                       // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 }  // namespace
 
@@ -460,7 +426,8 @@ is_context_cancelled(ServerContext* context) -> bool
     return false;
   }
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& test_hooks = handle_model_infer_async_test_hooks();
+  auto& test_hooks = testing::inference_service_test_internal::detail::
+      handle_model_infer_async_test_hooks_ref();
   if (test_hooks.is_cancelled_override) {
     if (auto decision = test_hooks.is_cancelled_override(context);
         decision.has_value()) {
@@ -472,105 +439,43 @@ is_context_cancelled(ServerContext* context) -> bool
 }
 }  // namespace
 
-// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
-InferenceServiceImpl::submit_job_and_wait(
-    const std::vector<torch::Tensor>& inputs,
-    std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
-    detail::TimingInfo& timing_info,
-    std::vector<std::shared_ptr<const void>> input_lifetimes) -> Status
+starpu_server::testing::inference_service_test_internal::detail::
+    handle_model_infer_async_test_hooks_ref() -> HandleModelInferAsyncTestHooks&
 {
-  struct JobResult {
-    Status status = Status::OK;
-    std::vector<torch::Tensor> outputs;
-    LatencyBreakdown breakdown;
-    detail::TimingInfo timing_info;
-  };
-
-  auto result_promise = std::make_shared<std::promise<JobResult>>();
-  auto result_future = result_promise->get_future();
-
-  const auto receive_time = MonotonicClock::now();
-  if (Status submit_status = submit_job_async(
-          inputs,
-          [result_promise](
-              Status status, std::vector<torch::Tensor> outs,
-              const LatencyBreakdown& cb_breakdown,
-              const detail::TimingInfo& cb_timing_info,
-              std::optional<AsyncFailureInfo> /*failure_info*/) {
-            result_promise->set_value(JobResult{
-                std::move(status), std::move(outs), cb_breakdown,
-                cb_timing_info});
-          },
-          std::move(input_lifetimes), std::shared_ptr<std::atomic<bool>>{},
-          receive_time);
-      !submit_status.ok()) {
-    outputs.clear();
-    return submit_status;
-  }
-
-  JobResult result = result_future.get();
-  if (!result.status.ok()) {
-    outputs.clear();
-    return result.status;
-  }
-
-  outputs = std::move(result.outputs);
-  breakdown = result.breakdown;
-  timing_info = result.timing_info;
-  return Status::OK;
-}
-
-void
-starpu_server::testing::inference_service_test_internal::
-    set_handle_model_infer_async_test_hooks(
-        testing::HandleModelInferAsyncTestHooks hooks)
-{
-  handle_model_infer_async_test_hooks() = std::move(hooks);
-}
-
-void
-starpu_server::testing::inference_service_test_internal::
-    clear_handle_model_infer_async_test_hooks()
-{
-  handle_model_infer_async_test_hooks() =
-      testing::HandleModelInferAsyncTestHooks{};
-}
-
-void
-starpu_server::testing::inference_service_test_internal::
-    set_handle_async_infer_completion_test_hooks(
-        testing::HandleAsyncInferCompletionTestHooks hooks)
-{
-  handle_async_infer_completion_test_hooks() = std::move(hooks);
-}
-
-void
-starpu_server::testing::inference_service_test_internal::
-    clear_handle_async_infer_completion_test_hooks()
-{
-  handle_async_infer_completion_test_hooks() =
-      testing::HandleAsyncInferCompletionTestHooks{};
-}
-
-void
-starpu_server::testing::inference_service_test_internal::
-    set_submit_job_async_test_hooks(testing::SubmitJobAsyncTestHooks hooks)
-{
-  submit_job_async_test_hooks() = std::move(hooks);
-}
-
-void
-starpu_server::testing::inference_service_test_internal::
-    clear_submit_job_async_test_hooks()
-{
-  submit_job_async_test_hooks() = testing::SubmitJobAsyncTestHooks{};
+  static HandleModelInferAsyncTestHooks hooks{};
+  return hooks;
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    normalize_names_for_test(
+starpu_server::testing::inference_service_test_internal::detail::
+    handle_async_infer_completion_test_hooks_ref()
+        -> HandleAsyncInferCompletionTestHooks&
+{
+  static HandleAsyncInferCompletionTestHooks hooks{};
+  return hooks;
+}
+
+auto
+starpu_server::testing::inference_service_test_internal::detail::
+    submit_job_async_test_hooks_ref() -> SubmitJobAsyncTestHooks&
+{
+  static SubmitJobAsyncTestHooks hooks{};
+  return hooks;
+}
+
+auto
+starpu_server::testing::inference_service_test_internal::detail::
+    model_statistics_force_null_target_flag_ref() -> bool&
+{
+  static bool enabled = false;
+  return enabled;
+}
+
+auto
+starpu_server::testing::inference_service_test_internal::detail::
+    normalize_names_bridge(
         std::vector<std::string> names, std::size_t expected_size,
         std::string_view fallback_prefix,
         std::string_view kind) -> std::vector<std::string>
@@ -581,8 +486,8 @@ starpu_server::testing::inference_service_test_internal::
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    check_missing_named_inputs_for_test(
+starpu_server::testing::inference_service_test_internal::detail::
+    check_missing_named_inputs_bridge(
         const std::vector<bool>& filled,
         std::span<const std::string> expected_names) -> grpc::Status
 {
@@ -590,16 +495,16 @@ starpu_server::testing::inference_service_test_internal::
 }
 
 void
-starpu_server::testing::inference_service_test_internal::
-    arm_rpc_done_tag_with_null_context_for_test()
+starpu_server::testing::inference_service_test_internal::detail::
+    arm_rpc_done_tag_with_null_context_bridge()
 {
   auto tag = RpcDoneTag::Create([] {}, std::make_shared<int>(0));
   tag->Arm(nullptr);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    rpc_done_tag_proceed_for_test(bool is_ok, bool with_on_done) -> bool
+starpu_server::testing::inference_service_test_internal::detail::
+    rpc_done_tag_proceed_bridge(bool is_ok, bool with_on_done) -> bool
 {
   bool called = false;
   RpcDoneTag::OnDone on_done =
@@ -610,23 +515,23 @@ starpu_server::testing::inference_service_test_internal::
 }
 
 void
-starpu_server::testing::inference_service_test_internal::
-    set_grpc_health_status_for_test(grpc::Server* server, bool serving)
+starpu_server::testing::inference_service_test_internal::detail::
+    set_grpc_health_status_bridge(grpc::Server* server, bool serving)
 {
   set_grpc_health_status(server, serving);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    scalar_type_to_model_dtype_for_test(at::ScalarType type)
+starpu_server::testing::inference_service_test_internal::detail::
+    scalar_type_to_model_dtype_bridge(at::ScalarType type)
         -> inference::DataType
 {
   return scalar_type_to_model_dtype(type);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    resolve_tensor_name_for_test(
+starpu_server::testing::inference_service_test_internal::detail::
+    resolve_tensor_name_bridge(
         std::size_t index, std::span<const std::string> names,
         std::string_view fallback_prefix) -> std::string
 {
@@ -634,30 +539,30 @@ starpu_server::testing::inference_service_test_internal::
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    request_batch_size_for_test(
+starpu_server::testing::inference_service_test_internal::detail::
+    request_batch_size_bridge(
         const ModelInferRequest* request, int max_batch_size) -> uint64_t
 {
   return request_batch_size(request, max_batch_size);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    duration_ms_to_ns_for_test(double duration_ms) -> uint64_t
+starpu_server::testing::inference_service_test_internal::detail::
+    duration_ms_to_ns_bridge(double duration_ms) -> uint64_t
 {
   return duration_ms_to_ns(duration_ms);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::elapsed_since_for_test(
-    MonotonicClock::time_point start) -> uint64_t
+starpu_server::testing::inference_service_test_internal::detail::
+    elapsed_since_bridge(MonotonicClock::time_point start) -> uint64_t
 {
   return elapsed_since(start);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    resolve_terminal_failure_stage_for_test(
+starpu_server::testing::inference_service_test_internal::detail::
+    resolve_terminal_failure_stage_bridge(
         const grpc::Status& status, std::string_view default_stage,
         std::string_view default_reason,
         const std::optional<InferenceServiceImpl::AsyncFailureInfo>&
@@ -669,8 +574,8 @@ starpu_server::testing::inference_service_test_internal::
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    should_report_terminal_failure_metric_for_test(
+starpu_server::testing::inference_service_test_internal::detail::
+    should_report_terminal_failure_metric_bridge(
         const grpc::Status& status, std::string_view default_stage,
         std::string_view default_reason,
         const std::optional<InferenceServiceImpl::AsyncFailureInfo>&
@@ -681,23 +586,16 @@ starpu_server::testing::inference_service_test_internal::
       .report_failure_metric;
 }
 
-void
-starpu_server::testing::inference_service_test_internal::
-    set_model_statistics_force_null_target_for_test(bool enable)
-{
-  model_statistics_test_hooks().force_null_stat_target = enable;
-}
-
 auto
-starpu_server::testing::inference_service_test_internal::
-    is_context_cancelled_for_test(grpc::ServerContext* context) -> bool
+starpu_server::testing::inference_service_test_internal::detail::
+    is_context_cancelled_bridge(grpc::ServerContext* context) -> bool
 {
   return is_context_cancelled(context);
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    fill_output_tensor_for_test(
+starpu_server::testing::inference_service_test_internal::detail::
+    fill_output_tensor_bridge(
         inference::ModelInferResponse* reply,
         const std::vector<torch::Tensor>& outputs,
         const std::vector<std::size_t>& output_indices,
@@ -707,8 +605,8 @@ starpu_server::testing::inference_service_test_internal::
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    validate_configured_shape_for_test(
+starpu_server::testing::inference_service_test_internal::detail::
+    validate_configured_shape_bridge(
         const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
         bool batching_allowed, int max_batch_size) -> grpc::Status
 {
@@ -717,13 +615,12 @@ starpu_server::testing::inference_service_test_internal::
 }
 
 auto
-starpu_server::testing::inference_service_test_internal::
-    unary_call_data_missing_handler_transitions_to_finish_for_test() -> bool
+starpu_server::testing::inference_service_test_internal::detail::
+    unary_call_data_missing_handler_transitions_to_finish_bridge() -> bool
 {
   return unary_call_data_missing_handler_transitions_to_finish_for_test_impl();
 }
 #endif  // SONAR_IGNORE_END
-// GCOVR_EXCL_STOP
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(
     std::function<void(Status)> callback)
@@ -829,7 +726,8 @@ InferenceServiceImpl::prepare_async_completion(
     return false;
   }
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& async_hooks = handle_async_infer_completion_test_hooks();
+  auto& async_hooks = testing::inference_service_test_internal::detail::
+      handle_async_infer_completion_test_hooks_ref();
   if (async_hooks.after_try_acquire && context.cancel_flag != nullptr) {
     async_hooks.after_try_acquire(context.cancel_flag);
   }
@@ -888,7 +786,8 @@ InferenceServiceImpl::finalize_successful_completion(
     return;
   }
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& async_hooks = handle_async_infer_completion_test_hooks();
+  auto& async_hooks = testing::inference_service_test_internal::detail::
+      handle_async_infer_completion_test_hooks_ref();
 #endif  // SONAR_IGNORE_END
 
   const auto zero_tp = MonotonicClock::time_point{};
@@ -1020,7 +919,8 @@ InferenceServiceImpl::notify_cancel_flag_created(
     const std::shared_ptr<std::atomic<bool>>& cancel_flag)
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& test_hooks = handle_model_infer_async_test_hooks();
+  auto& test_hooks = testing::inference_service_test_internal::detail::
+      handle_model_infer_async_test_hooks_ref();
   if (test_hooks.on_cancel_flag_created) {
     test_hooks.on_cancel_flag_created(cancel_flag);
   }
@@ -1034,7 +934,8 @@ InferenceServiceImpl::notify_submit_job_async_done(
     const std::shared_ptr<std::atomic<bool>>& cancel_flag, const Status& status)
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& test_hooks = handle_model_infer_async_test_hooks();
+  auto& test_hooks = testing::inference_service_test_internal::detail::
+      handle_model_infer_async_test_hooks_ref();
   if (test_hooks.on_submit_job_async_done) {
     test_hooks.on_submit_job_async_done(cancel_flag, status);
   }
@@ -1085,7 +986,8 @@ InferenceServiceImpl::setup_async_cancellation(
   };
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& test_hooks = handle_model_infer_async_test_hooks();
+  auto& test_hooks = testing::inference_service_test_internal::detail::
+      handle_model_infer_async_test_hooks_ref();
   if (test_hooks.on_cancel_ready) {
     test_hooks.on_cancel_ready(on_cancel);
   }

@@ -3,10 +3,20 @@
 #include <exception>
 #include <new>
 #include <stdexcept>
+#include <utility>
 
 #include "exceptions.hpp"
 
 namespace starpu_server {
+
+enum class ExceptionCategory {
+  InferenceEngine,
+  RuntimeError,
+  LogicError,
+  BadAlloc,
+  StdException,
+  Unknown,
+};
 
 template <
     typename OnInferenceEngineException, typename OnRuntimeError,
@@ -50,6 +60,36 @@ classify_and_handle_exception(
   catch (...) {
     on_unknown_exception();
   }
+}
+
+template <typename OnClassifiedException>
+inline void
+classify_and_handle_exception(
+    std::exception_ptr exception,
+    OnClassifiedException&& on_classified_exception)
+{
+  classify_and_handle_exception(
+      std::move(exception),
+      [&](const InferenceEngineException& caught_exception) {
+        on_classified_exception(
+            ExceptionCategory::InferenceEngine, &caught_exception);
+      },
+      [&](const std::runtime_error& caught_exception) {
+        on_classified_exception(
+            ExceptionCategory::RuntimeError, &caught_exception);
+      },
+      [&](const std::logic_error& caught_exception) {
+        on_classified_exception(
+            ExceptionCategory::LogicError, &caught_exception);
+      },
+      [&](const std::bad_alloc& caught_exception) {
+        on_classified_exception(ExceptionCategory::BadAlloc, &caught_exception);
+      },
+      [&](const std::exception& caught_exception) {
+        on_classified_exception(
+            ExceptionCategory::StdException, &caught_exception);
+      },
+      [&]() { on_classified_exception(ExceptionCategory::Unknown, nullptr); });
 }
 
 }  // namespace starpu_server

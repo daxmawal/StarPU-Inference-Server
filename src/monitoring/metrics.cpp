@@ -53,37 +53,6 @@ class TestingExposerHandle : public MetricsRegistry::ExposerHandle {
 };
 #endif  // SONAR_IGNORE_END
 
-namespace monitoring::detail {
-
-auto
-read_total_cpu_times(std::istream& input, CpuTotals& out) -> bool
-{
-  std::string cpu{};
-  if (!(input >> cpu)) {
-    return false;
-  }
-  if (cpu != "cpu") {
-    return false;
-  }
-  if (!(input >> out.user >> out.nice >> out.system >> out.idle >> out.iowait >>
-        out.irq >> out.softirq >> out.steal)) {
-    return false;
-  }
-  return true;
-}
-
-auto
-read_total_cpu_times(const std::filesystem::path& path, CpuTotals& out) -> bool
-{
-  std::ifstream input{path};
-  if (!input.is_open()) {
-    return false;
-  }
-  return read_total_cpu_times(input, out);
-}
-
-}  // namespace monitoring::detail
-
 class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
  public:
   explicit PrometheusExposerHandle(std::unique_ptr<prometheus::Exposer> exposer)
@@ -106,11 +75,6 @@ class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
  private:
   std::unique_ptr<prometheus::Exposer> exposer_;
 };
-
-auto make_default_cpu_usage_provider() -> MetricsRegistry::CpuUsageProvider;
-auto make_default_cpu_usage_provider(
-    std::function<bool(monitoring::detail::CpuTotals&)> reader)
-    -> MetricsRegistry::CpuUsageProvider;
 
 namespace {
 using monitoring::detail::CpuTotals;
@@ -135,9 +99,13 @@ constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(0);
 constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(60);
 #endif  // SONAR_IGNORE_END
 
-#include "metrics_gpu_cpu_providers.inl"
+// Shared label and series helpers.
 #include "metrics_labels.inl"
+// CPU/GPU providers and process/system sampling sources.
+#include "metrics_gpu_cpu_providers.inl"
+// Prometheus family/series registration.
 #include "metrics_registration.inl"
+// Sampler implementation and sampler lifecycle hooks.
 #include "metrics_sampler.inl"
 
 MetricsRegistry::MetricsRegistry(int port)
@@ -781,34 +749,6 @@ increment_transfer_bytes(
   });
 }
 
-void
-MetricsRegistry::request_stop()
-{
-  if (registry_state_.sampler_thread.joinable()) {
-    registry_state_.sampler_thread.request_stop();
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    if (monitoring::detail::metrics_request_stop_skip_join_for_test()) {
-      return;
-    }
-#endif  // SONAR_IGNORE_END
-    registry_state_.sampler_thread.join();
-  }
-}
-
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-auto
-MetricsRegistry::has_gpu_stats_provider() const -> bool
-{
-  return static_cast<bool>(providers_.gpu_stats_provider);
-}
-
-auto
-MetricsRegistry::has_cpu_usage_provider() const -> bool
-{
-  return static_cast<bool>(providers_.cpu_usage_provider);
-}
-#endif  // SONAR_IGNORE_END
-
 auto
 MetricsRegistry::registry() const -> std::shared_ptr<prometheus::Registry>
 {
@@ -1119,307 +1059,5 @@ MetricsRegistry::queue_capacity_value() const -> std::size_t
 }  // namespace starpu_server
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-void
-starpu_server::testing::MetricsRegistryTestAccessor::ClearCpuUsageProvider(
-    starpu_server::MetricsRegistry& metrics)
-{
-  metrics.providers_.cpu_usage_provider = {};
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::ClearSystemCpuUsageGauge(
-    starpu_server::MetricsRegistry& metrics)
-{
-  metrics.gauges_.system_cpu_usage_percent = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::ClearProcessOpenFdsGauge(
-    starpu_server::MetricsRegistry& metrics)
-{
-  metrics.gauges_.process_open_fds = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearProcessResidentMemoryGauge(starpu_server::MetricsRegistry& metrics)
-{
-  metrics.gauges_.process_resident_memory_bytes = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearInferenceThroughputGauge(starpu_server::MetricsRegistry& metrics)
-{
-  metrics.gauges_.inference_throughput = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::ClearGpuStatsProvider(
-    starpu_server::MetricsRegistry& metrics)
-{
-  metrics.providers_.gpu_stats_provider = {};
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::ProcessOpenFdsGauge(
-    starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
-{
-  return metrics.gauges_.process_open_fds;
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::ProcessResidentMemoryGauge(
-    starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
-{
-  return metrics.gauges_.process_resident_memory_bytes;
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::InferenceThroughputGauge(
-    starpu_server::MetricsRegistry& metrics) -> prometheus::Gauge*
-{
-  return metrics.gauges_.inference_throughput;
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::GpuUtilizationGaugeCount(
-    const starpu_server::MetricsRegistry& metrics) -> std::size_t
-{
-  std::scoped_lock<std::mutex> lock(metrics.mutexes_.sampling);
-  return metrics.caches_.gpu.utilization.size();
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::GpuMemoryUsedGaugeCount(
-    const starpu_server::MetricsRegistry& metrics) -> std::size_t
-{
-  std::scoped_lock<std::mutex> lock(metrics.mutexes_.sampling);
-  return metrics.caches_.gpu.memory_used.size();
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::GpuMemoryTotalGaugeCount(
-    const starpu_server::MetricsRegistry& metrics) -> std::size_t
-{
-  std::scoped_lock<std::mutex> lock(metrics.mutexes_.sampling);
-  return metrics.caches_.gpu.memory_total.size();
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::SampleProcessOpenFds(
-    starpu_server::MetricsRegistry& metrics)
-{
-  if (metrics.sampler_ != nullptr) {
-    metrics.sampler_->sample_process_open_fds();
-  }
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    SampleProcessResidentMemory(starpu_server::MetricsRegistry& metrics)
-{
-  if (metrics.sampler_ != nullptr) {
-    metrics.sampler_->sample_process_resident_memory();
-  }
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::SampleInferenceThroughput(
-    starpu_server::MetricsRegistry& metrics)
-{
-  if (metrics.sampler_ != nullptr) {
-    metrics.sampler_->sample_inference_throughput();
-  }
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearStarpuWorkerInflightFamily(starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.starpu_worker_inflight = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearStarpuTaskRuntimeByWorkerFamily(
-        starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.starpu_task_runtime_by_worker = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearInferenceComputeLatencyByWorkerFamily(
-        starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.inference_compute_latency_by_worker = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::ClearIoCopyLatencyFamily(
-    starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.io_copy_latency = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::ClearTransferBytesFamily(
-    starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.transfer_bytes = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::ClearModelsLoadedFamily(
-    starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.models_loaded = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearModelLoadFailuresFamily(starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.model_load_failures = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearInferenceFailuresFamily(starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.inference_failures = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearInferenceCompletedFamily(starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.inference_completed = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearRequestsReceivedFamily(starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.requests_received = nullptr;
-}
-
-void
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ClearRequestsByStatusFamily(starpu_server::MetricsRegistry& metrics)
-{
-  metrics.families_.requests_by_status = nullptr;
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::FailureKeyOverflowIsEmpty()
-    -> bool
-{
-  const auto key = MetricsRegistry::FailureKey::Overflow();
-  return key.overflow && key.stage.empty() && key.reason.empty() &&
-         key.model.empty();
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::FailureKeyEquals(
-    std::string_view stage_lhs, std::string_view reason_lhs,
-    std::string_view model_lhs, bool overflow_lhs, std::string_view stage_rhs,
-    std::string_view reason_rhs, std::string_view model_rhs,
-    bool overflow_rhs) -> bool
-{
-  MetricsRegistry::FailureKey lhs{
-      std::string(stage_lhs), std::string(reason_lhs), std::string(model_lhs),
-      overflow_lhs};
-  MetricsRegistry::FailureKey rhs{
-      std::string(stage_rhs), std::string(reason_rhs), std::string(model_rhs),
-      overflow_rhs};
-  return lhs == rhs;
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::ModelKeyOverflowIsEmpty()
-    -> bool
-{
-  const auto key = MetricsRegistry::ModelKey::Overflow();
-  return key.overflow && key.model.empty();
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::ModelKeyEquals(
-    std::string_view model_lhs, bool overflow_lhs, std::string_view model_rhs,
-    bool overflow_rhs) -> bool
-{
-  MetricsRegistry::ModelKey lhs{std::string(model_lhs), overflow_lhs};
-  MetricsRegistry::ModelKey rhs{std::string(model_rhs), overflow_rhs};
-  return lhs == rhs;
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::
-    ModelDeviceKeyOverflowIsEmpty() -> bool
-{
-  const auto key = MetricsRegistry::ModelDeviceKey::Overflow();
-  return key.overflow && key.model.empty() && key.device.empty();
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::ModelDeviceKeyEquals(
-    std::string_view model_lhs, std::string_view device_lhs, bool overflow_lhs,
-    std::string_view model_rhs, std::string_view device_rhs,
-    bool overflow_rhs) -> bool
-{
-  MetricsRegistry::ModelDeviceKey lhs{
-      std::string(model_lhs), std::string(device_lhs), overflow_lhs};
-  MetricsRegistry::ModelDeviceKey rhs{
-      std::string(model_rhs), std::string(device_rhs), overflow_rhs};
-  return lhs == rhs;
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::IoKeyOverflowIsEmpty()
-    -> bool
-{
-  const auto key = MetricsRegistry::IoKey::Overflow();
-  return key.overflow && key.direction.empty() && key.worker_id == 0 &&
-         key.device_id == 0 && key.worker_type.empty();
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::IoKeyEquals(
-    std::string_view direction_lhs, int worker_id_lhs, int device_id_lhs,
-    std::string_view worker_type_lhs, bool overflow_lhs,
-    std::string_view direction_rhs, int worker_id_rhs, int device_id_rhs,
-    std::string_view worker_type_rhs, bool overflow_rhs) -> bool
-{
-  MetricsRegistry::IoKey lhs{
-      std::string(direction_lhs), worker_id_lhs, device_id_lhs,
-      std::string(worker_type_lhs), overflow_lhs};
-  MetricsRegistry::IoKey rhs{
-      std::string(direction_rhs), worker_id_rhs, device_id_rhs,
-      std::string(worker_type_rhs), overflow_rhs};
-  return lhs == rhs;
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::WorkerKeyOverflowIsEmpty()
-    -> bool
-{
-  const auto key = MetricsRegistry::WorkerKey::Overflow();
-  return key.overflow && key.worker_id == 0 && key.device_id == 0 &&
-         key.worker_type.empty();
-}
-
-auto
-starpu_server::testing::MetricsRegistryTestAccessor::WorkerKeyEquals(
-    int worker_id_lhs, int device_id_lhs, std::string_view worker_type_lhs,
-    bool overflow_lhs, int worker_id_rhs, int device_id_rhs,
-    std::string_view worker_type_rhs, bool overflow_rhs) -> bool
-{
-  MetricsRegistry::WorkerKey lhs{
-      worker_id_lhs, device_id_lhs, std::string(worker_type_lhs), overflow_lhs};
-  MetricsRegistry::WorkerKey rhs{
-      worker_id_rhs, device_id_rhs, std::string(worker_type_rhs), overflow_rhs};
-  return lhs == rhs;
-}
+#include "metrics_test_accessor.inl"
 #endif  // SONAR_IGNORE_END

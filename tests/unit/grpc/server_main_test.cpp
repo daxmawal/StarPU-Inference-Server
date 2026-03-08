@@ -33,6 +33,8 @@
 
 namespace {
 
+using namespace ::starpu_server::testing::server_main_api;
+
 auto
 running_under_tsan() -> bool
 {

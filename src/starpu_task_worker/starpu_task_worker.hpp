@@ -36,7 +36,7 @@ void record_job_metrics(
 void finalize_job_completion(
     StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
 }  // namespace task_runner_helpers
-#endif  // SONAR_IGNORE_END
+#endif  // SONAR_IGNORE_STOP
 // GCOVR_EXCL_STOP
 
 // ============================================================================
@@ -70,44 +70,39 @@ class StarPUTaskRunner {
   using DurationMs = std::chrono::duration<double, std::milli>;
 
   void run();
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
   void prepare_job_completion_callback(
       const std::shared_ptr<InferenceJob>& job);
   void submit_inference_task(const std::shared_ptr<InferenceJob>& job);
   static auto handle_job_exception(
       const std::shared_ptr<InferenceJob>& job,
       const std::exception& exception) -> bool;
-// GCOVR_EXCL_START
+
+  // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  // Test-only API surface.
+  auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
   void log_job_timings(
       int request_id, DurationMs latency,
       const detail::TimingInfo& timing_info) const;
-#endif  // SONAR_IGNORE_END
+#endif  // SONAR_IGNORE_STOP
         // GCOVR_EXCL_STOP
 
  private:
-// GCOVR_EXCL_START
+  friend class SlotManager;
+  friend class ResultDispatcher;
+  friend class BatchCollector;
+
+  // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  friend class StarPUTaskRunnerTestAdapter;
   friend void task_runner_helpers::record_job_metrics(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job,
       std::chrono::duration<double, std::milli> latency,
       std::size_t batch_size);
   friend void task_runner_helpers::finalize_job_completion(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
-#endif  // SONAR_IGNORE_END
+#endif  // SONAR_IGNORE_STOP
   // GCOVR_EXCL_STOP
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  friend class StarPUTaskRunnerTestAdapter;
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
-  friend class SlotManager;
-  friend class ResultDispatcher;
-  friend class BatchCollector;
 
   struct SubmissionInfo {
     int submission_id;
@@ -115,6 +110,7 @@ class StarPUTaskRunner {
   };
 
   struct SubmitPipelineContext;
+  struct PreparedJobProcessingContext;
   struct RunPipelineContext;
 
   struct InflightState;
@@ -139,40 +135,10 @@ class StarPUTaskRunner {
   auto validate_batch_and_copy_inputs(
       const std::shared_ptr<InferenceJob>& job,
       const PoolResources& pools) -> int64_t;
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  [[nodiscard]] auto collect_batch(
-      const std::shared_ptr<InferenceJob>& first_job)
-      -> std::vector<std::shared_ptr<InferenceJob>>;
-  auto maybe_build_batched_job(std::vector<std::shared_ptr<InferenceJob>>& jobs)
-      -> std::shared_ptr<InferenceJob>;
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
   void batching_loop();
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  void enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job);
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
   auto wait_for_prepared_job() -> std::shared_ptr<InferenceJob>;
   void process_prepared_job(const std::shared_ptr<InferenceJob>& job);
   void handle_cancelled_job(const std::shared_ptr<InferenceJob>& job);
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  static auto can_merge_jobs(
-      const std::shared_ptr<InferenceJob>& lhs,
-      const std::shared_ptr<InferenceJob>& rhs) -> bool;
-  static auto merge_input_tensors(
-      const std::vector<std::shared_ptr<InferenceJob>>& jobs,
-      int64_t total_samples) -> std::vector<torch::Tensor>;
-  static auto merge_input_memory_holders(
-      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
-      -> std::vector<std::shared_ptr<const void>>;
-  static void propagate_completion_to_sub_jobs(
-      const std::shared_ptr<InferenceJob>& aggregated_job,
-      const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
   static auto configure_task_context(
       InferenceTask& task, const PoolResources& pools,
       std::vector<starpu_data_handle_t> input_handles,
@@ -183,13 +149,6 @@ class StarPUTaskRunner {
       const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
   [[nodiscard]] auto resolve_batch_size(
       const std::shared_ptr<InferenceJob>& job) const -> int64_t;
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  static void release_pending_jobs(
-      const std::shared_ptr<InferenceJob>& job,
-      std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
   void trace_batch_if_enabled(
       const std::shared_ptr<InferenceJob>& job, bool warmup_job,
       int submission_id) const;
@@ -218,6 +177,33 @@ class StarPUTaskRunner {
   void drain_prepared_jobs_pipeline();
   void finish_run_pipeline(RunPipelineContext& context);
   void abort_run_pipeline(RunPipelineContext& context) noexcept;
+
+  // GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  // Test-only helpers for batching and completion propagation.
+  [[nodiscard]] auto collect_batch(
+      const std::shared_ptr<InferenceJob>& first_job)
+      -> std::vector<std::shared_ptr<InferenceJob>>;
+  auto maybe_build_batched_job(std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::shared_ptr<InferenceJob>;
+  void enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job);
+  static auto can_merge_jobs(
+      const std::shared_ptr<InferenceJob>& lhs,
+      const std::shared_ptr<InferenceJob>& rhs) -> bool;
+  static auto merge_input_tensors(
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs,
+      int64_t total_samples) -> std::vector<torch::Tensor>;
+  static auto merge_input_memory_holders(
+      const std::vector<std::shared_ptr<InferenceJob>>& jobs)
+      -> std::vector<std::shared_ptr<const void>>;
+  static void propagate_completion_to_sub_jobs(
+      const std::shared_ptr<InferenceJob>& aggregated_job,
+      const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
+  static void release_pending_jobs(
+      const std::shared_ptr<InferenceJob>& job,
+      std::vector<std::shared_ptr<InferenceJob>>& pending_jobs);
+#endif  // SONAR_IGNORE_STOP
+  // GCOVR_EXCL_STOP
 
   struct InflightState {
     std::atomic<std::size_t> tasks{0};

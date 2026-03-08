@@ -1,5 +1,5 @@
 auto
-worker_type_label(const enum starpu_worker_archtype type) -> std::string
+worker_type_label(starpu_worker_archtype type) -> std::string
 {
   switch (type) {
     case STARPU_CPU_WORKER:
@@ -11,48 +11,36 @@ worker_type_label(const enum starpu_worker_archtype type) -> std::string
   }
 }
 
+// Test-only runtime hook overrides kept together for readability.
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using WorkerCpusetProviderOverrideForTestFn =
     decltype(&starpu_worker_get_hwloc_cpuset);
 using HwlocBitmapFirstOverrideForTestFn = decltype(&hwloc_bitmap_first);
 using HwlocBitmapNextOverrideForTestFn = decltype(&hwloc_bitmap_next);
 using HwlocBitmapFreeOverrideForTestFn = decltype(&hwloc_bitmap_free);
+using WorkerCountOverrideForTestFn = decltype(&starpu_worker_get_count);
+using WorkerTypeOverrideForTestFn = decltype(&starpu_worker_get_type);
+using WorkerDeviceIdOverrideForTestFn = decltype(&starpu_worker_get_devid);
+using DescribeCpuAffinityOverrideForTestFn = std::string (*)(int);
 
-auto
-worker_cpuset_provider_override_for_test() noexcept
-    -> WorkerCpusetProviderOverrideForTestFn&
-{
-  struct WorkerCpusetProviderOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      WorkerCpusetProviderOverrideTag, WorkerCpusetProviderOverrideForTestFn>();
-}
-
-auto
-hwloc_bitmap_first_override_for_test() noexcept
-    -> HwlocBitmapFirstOverrideForTestFn&
-{
-  struct HwlocBitmapFirstOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      HwlocBitmapFirstOverrideTag, HwlocBitmapFirstOverrideForTestFn>();
-}
-
-auto
-hwloc_bitmap_next_override_for_test() noexcept
-    -> HwlocBitmapNextOverrideForTestFn&
-{
-  struct HwlocBitmapNextOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      HwlocBitmapNextOverrideTag, HwlocBitmapNextOverrideForTestFn>();
-}
-
-auto
-hwloc_bitmap_free_override_for_test() noexcept
-    -> HwlocBitmapFreeOverrideForTestFn&
-{
-  struct HwlocBitmapFreeOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      HwlocBitmapFreeOverrideTag, HwlocBitmapFreeOverrideForTestFn>();
-}
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    worker_cpuset_provider_override_for_test,
+    WorkerCpusetProviderOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    hwloc_bitmap_first_override_for_test, HwlocBitmapFirstOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    hwloc_bitmap_next_override_for_test, HwlocBitmapNextOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    hwloc_bitmap_free_override_for_test, HwlocBitmapFreeOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    worker_count_override_for_test, WorkerCountOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    worker_type_override_for_test, WorkerTypeOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    worker_device_id_override_for_test, WorkerDeviceIdOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    describe_cpu_affinity_override_for_test,
+    DescribeCpuAffinityOverrideForTestFn)
 #endif  // SONAR_IGNORE_STOP
 
 auto
@@ -155,47 +143,6 @@ describe_cpu_affinity(int worker_id) -> std::string
   return format_cpu_core_ranges(cores);
 }
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-using WorkerCountOverrideForTestFn = decltype(&starpu_worker_get_count);
-using WorkerTypeOverrideForTestFn = decltype(&starpu_worker_get_type);
-using WorkerDeviceIdOverrideForTestFn = decltype(&starpu_worker_get_devid);
-using DescribeCpuAffinityOverrideForTestFn = std::string (*)(int);
-
-auto
-worker_count_override_for_test() noexcept -> WorkerCountOverrideForTestFn&
-{
-  struct WorkerCountOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      WorkerCountOverrideTag, WorkerCountOverrideForTestFn>();
-}
-
-auto
-worker_type_override_for_test() noexcept -> WorkerTypeOverrideForTestFn&
-{
-  struct WorkerTypeOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      WorkerTypeOverrideTag, WorkerTypeOverrideForTestFn>();
-}
-
-auto
-worker_device_id_override_for_test() noexcept
-    -> WorkerDeviceIdOverrideForTestFn&
-{
-  struct WorkerDeviceIdOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      WorkerDeviceIdOverrideTag, WorkerDeviceIdOverrideForTestFn>();
-}
-
-auto
-describe_cpu_affinity_override_for_test() noexcept
-    -> DescribeCpuAffinityOverrideForTestFn&
-{
-  struct DescribeCpuAffinityOverrideTag;
-  return ::starpu_server::testing::server_main::detail::override_slot_ref<
-      DescribeCpuAffinityOverrideTag, DescribeCpuAffinityOverrideForTestFn>();
-}
-#endif  // SONAR_IGNORE_STOP
-
 auto
 worker_count_for_inventory() -> int
 {
@@ -208,20 +155,17 @@ worker_count_for_inventory() -> int
   return static_cast<int>(starpu_worker_get_count());
 }
 
-// clang-format off
 auto
-worker_type_for_inventory(int worker_id) -> enum starpu_worker_archtype
+worker_type_for_inventory(int worker_id) -> starpu_worker_archtype
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  const auto override_fn = worker_type_override_for_test();
-  if (override_fn != nullptr) {
-    const auto worker_type = override_fn(worker_id);
-    return worker_type;
+  if (const auto override_fn = worker_type_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(worker_id);
   }
 #endif  // SONAR_IGNORE_STOP
   return starpu_worker_get_type(worker_id);
 }
-// clang-format on
 
 auto
 worker_device_id_for_inventory(int worker_id) -> int

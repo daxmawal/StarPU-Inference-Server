@@ -172,96 +172,16 @@ class RuntimeCleanupGuard {
   bool active_ = true;
 };
 
+#include "server_main_bootstrap.inl"
+#include "server_main_shutdown_runtime.inl"
 #include "server_main_signal_runtime.inl"
 #include "server_main_trace_plot_runtime.inl"
+#include "server_main_worker_inventory.inl"
 #if defined(STARPU_TESTING)
 }  // namespace starpu_server::testing::server_main
-using starpu_server::testing::server_main::candidate_plot_scripts;
-using starpu_server::testing::server_main::
-    candidate_plot_scripts_read_symlink_override_for_test;
-using starpu_server::testing::server_main::
-    CandidatePlotScriptsReadSymlinkOverrideForTestFn;
-using starpu_server::testing::server_main::kExecFailedExitCode;
-using starpu_server::testing::server_main::kPlotScriptPollInterval;
-using starpu_server::testing::server_main::kPlotScriptSearchDepth;
-using starpu_server::testing::server_main::kPlotScriptTerminateTimeout;
-using starpu_server::testing::server_main::kPlotScriptTimeout;
-using starpu_server::testing::server_main::kSignalExitCodeOffset;
-using starpu_server::testing::server_main::locate_plot_script;
-using starpu_server::testing::server_main::
-    locate_plot_script_candidates_override_for_test;
-using starpu_server::testing::server_main::locate_plot_script_override_for_test;
-using starpu_server::testing::server_main::
-    LocatePlotScriptCandidatesOverrideForTestFn;
-using starpu_server::testing::server_main::LocatePlotScriptOverrideForTestFn;
-using starpu_server::testing::server_main::log_waitpid_error;
-using starpu_server::testing::server_main::mark_server_started;
-using starpu_server::testing::server_main::mark_server_stopped;
-using starpu_server::testing::server_main::plots_output_path;
-using starpu_server::testing::server_main::request_server_stop;
-using starpu_server::testing::server_main::reset_server_state;
-using starpu_server::testing::server_main::
-    resolve_python_candidates_override_for_test;
-using starpu_server::testing::server_main::resolve_python_executable;
-using starpu_server::testing::server_main::
-    resolve_python_is_regular_file_override_for_test;
-using starpu_server::testing::server_main::
-    ResolvePythonCandidatesOverrideForTestFn;
-using starpu_server::testing::server_main::
-    ResolvePythonIsRegularFileOverrideForTestFn;
-using starpu_server::testing::server_main::rethrow_thread_exception_if_any;
-using starpu_server::testing::server_main::run_plot_script;
-using starpu_server::testing::server_main::
-    run_plot_script_fork_override_for_test;
-using starpu_server::testing::server_main::run_plot_script_override_for_test;
-using starpu_server::testing::server_main::
-    run_thread_entry_with_exception_capture;
-using starpu_server::testing::server_main::run_trace_plots_if_enabled;
-using starpu_server::testing::server_main::RunPlotScriptForkOverrideForTestFn;
-using starpu_server::testing::server_main::RunPlotScriptOverrideForTestFn;
-using starpu_server::testing::server_main::RuntimeCleanupGuard;
-using starpu_server::testing::server_main::server_context;
-using starpu_server::testing::server_main::ServerContext;
-using starpu_server::testing::server_main::signal_stop_notify_fd;
-using starpu_server::testing::server_main::signal_stop_requested_flag;
-using starpu_server::testing::server_main::SignalNotificationPipe;
-using starpu_server::testing::server_main::stop_server_when_available;
-using starpu_server::testing::server_main::terminate_and_wait;
-using starpu_server::testing::server_main::terminate_and_wait_override_for_test;
-using starpu_server::testing::server_main::TerminateAndWaitOverrideForTestFn;
-using starpu_server::testing::server_main::ThreadExceptionState;
-using starpu_server::testing::server_main::
-    trace_summary_file_path_override_for_test;
-using starpu_server::testing::server_main::
-    TraceSummaryFilePathOverrideForTestFn;
-using starpu_server::testing::server_main::wait_for_exit_blocking;
-using starpu_server::testing::server_main::wait_for_exit_with_timeout;
-using starpu_server::testing::server_main::wait_for_plot_process;
-using starpu_server::testing::server_main::
-    wait_for_plot_process_wait_override_for_test;
-using starpu_server::testing::server_main::wait_for_signal_notification;
-using starpu_server::testing::server_main::
-    wait_for_signal_notification_read_override_for_test;
-using starpu_server::testing::server_main::wait_status_to_exit_code;
-using starpu_server::testing::server_main::
-    WaitForPlotProcessWaitOverrideForTestFn;
-using starpu_server::testing::server_main::
-    WaitForSignalNotificationReadOverrideForTestFn;
-using starpu_server::testing::server_main::WaitOutcome;
-using starpu_server::testing::server_main::WaitOutcomeResult;
-using starpu_server::testing::server_main::waitpid_blocking_override_for_test;
-using starpu_server::testing::server_main::waitpid_nohang;
-using starpu_server::testing::server_main::waitpid_nohang_override_for_test;
-using starpu_server::testing::server_main::WaitPidBlockingOverrideForTestFn;
-using starpu_server::testing::server_main::WaitPidNoHangOverrideForTestFn;
-using starpu_server::testing::server_main::WaitPidResult;
-using starpu_server::testing::server_main::WaitPidState;
 #else
 }  // namespace
 #endif
-
-#include "server_main_bootstrap.inl"
-#include "server_main_worker_inventory.inl"
 
 // Test binary already provides gtest_main.
 #if !defined(STARPU_TESTING)

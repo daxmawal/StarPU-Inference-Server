@@ -144,7 +144,8 @@ InferenceServiceImpl::
 
   try {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    auto& submit_hooks = submit_job_async_test_hooks();
+    auto& submit_hooks = testing::inference_service_test_internal::detail::
+        submit_job_async_test_hooks_ref();
     if (submit_hooks.before_create_job) {
       submit_hooks.before_create_job();
     }

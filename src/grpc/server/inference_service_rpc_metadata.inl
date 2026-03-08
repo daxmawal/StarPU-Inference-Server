@@ -283,7 +283,8 @@ InferenceServiceImpl::ModelStatistics(
 
     auto* infer_stats = stats->mutable_inference_stats();
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    if (model_statistics_test_hooks().force_null_stat_target) {
+    if (testing::inference_service_test_internal::detail::
+            model_statistics_force_null_target_flag_ref()) {
       fill_stat(nullptr, state.inference_stats.success);
     }
 #endif  // SONAR_IGNORE_END

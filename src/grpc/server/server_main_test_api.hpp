@@ -5,3 +5,7 @@
 #endif
 
 #include "grpc/server/server_main.cpp"
+
+namespace starpu_server::testing {
+namespace server_main_api = ::starpu_server::testing::server_main;
+}

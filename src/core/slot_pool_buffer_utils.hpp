@@ -182,4 +182,32 @@ cleanup_slots(
   }
 }
 
+template <
+    typename SlotsStorage, typename BufferInfosStorage, typename FreeIdsStorage,
+    typename AllocateSlotFn>
+void
+init_pool_slots(
+    int requested_slots, SlotsStorage& slots_storage,
+    BufferInfosStorage& host_buffer_infos, FreeIdsStorage& free_ids_storage,
+    AllocateSlotFn&& allocate_slot_fn)
+{
+  init_slots(
+      requested_slots, slots_storage, host_buffer_infos, free_ids_storage,
+      std::forward<AllocateSlotFn>(allocate_slot_fn));
+}
+
+template <
+    typename SlotsStorage, typename BufferInfosStorage, typename FreeBufferFn>
+void
+cleanup_pool_slots(
+    SlotsStorage& slots_storage, BufferInfosStorage& host_buffer_infos,
+    FreeBufferFn&& free_buffer_fn)
+{
+  cleanup_slots(
+      slots_storage, host_buffer_infos,
+      std::forward<FreeBufferFn>(free_buffer_fn),
+      SlotCleanupOrder::UnregisterThenFree,
+      /*reset_buffer_info=*/false);
+}
+
 }  // namespace starpu_server::detail

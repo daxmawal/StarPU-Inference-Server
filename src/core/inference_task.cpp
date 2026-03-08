@@ -802,44 +802,30 @@ InferenceTask::starpu_output_callback(void* arg)
 
       classify_and_handle_exception(
           std::current_exception(),
-          [&](const InferenceEngineException& exception) {
-            log_exception("starpu_output_callback", exception);
-            mark_and_finalize_failure(
-                "output_acquire_failed", exception.what());
-          },
-          [&](const std::runtime_error& exception) {
+          [&](ExceptionCategory category, const std::exception* exception) {
+            if (category == ExceptionCategory::Unknown ||
+                exception == nullptr) {
+              log_error("Unknown exception in starpu_output_callback");
+              mark_and_finalize_failure(
+                  "output_callback_unknown_exception",
+                  "Unknown non-standard exception in output callback.");
+              return;
+            }
+
+            if (category == ExceptionCategory::InferenceEngine) {
+              log_exception(
+                  "starpu_output_callback",
+                  static_cast<const InferenceEngineException&>(*exception));
+              mark_and_finalize_failure(
+                  "output_acquire_failed", exception->what());
+              return;
+            }
+
             log_error(std::format(
                 "std::exception in starpu_output_callback: {}",
-                exception.what()));
+                exception->what()));
             mark_and_finalize_failure(
-                "output_callback_exception", exception.what());
-          },
-          [&](const std::logic_error& exception) {
-            log_error(std::format(
-                "std::exception in starpu_output_callback: {}",
-                exception.what()));
-            mark_and_finalize_failure(
-                "output_callback_exception", exception.what());
-          },
-          [&](const std::bad_alloc& exception) {
-            log_error(std::format(
-                "std::exception in starpu_output_callback: {}",
-                exception.what()));
-            mark_and_finalize_failure(
-                "output_callback_exception", exception.what());
-          },
-          [&](const std::exception& exception) {
-            log_error(std::format(
-                "std::exception in starpu_output_callback: {}",
-                exception.what()));
-            mark_and_finalize_failure(
-                "output_callback_exception", exception.what());
-          },
-          [&]() {
-            log_error("Unknown exception in starpu_output_callback");
-            mark_and_finalize_failure(
-                "output_callback_unknown_exception",
-                "Unknown non-standard exception in output callback.");
+                "output_callback_exception", exception->what());
           });
     }
   }
