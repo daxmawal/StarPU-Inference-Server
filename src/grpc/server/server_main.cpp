@@ -92,6 +92,7 @@ class RuntimeCleanupGuard {
 
   void Dismiss() noexcept { active_ = false; }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   static void ResetTraceLoggerNoexceptForTest() noexcept
   {
     reset_trace_logger_noexcept();
@@ -112,8 +113,10 @@ class RuntimeCleanupGuard {
   {
     shutdown_metrics_noexcept_force_throw_for_test() = enabled;
   }
+#endif  // SONAR_IGNORE_STOP
 
  private:
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   static auto reset_trace_logger_noexcept_force_throw_for_test() noexcept
       -> bool&
   {
@@ -126,13 +129,16 @@ class RuntimeCleanupGuard {
     static bool enabled = false;
     return enabled;
   }
+#endif  // SONAR_IGNORE_STOP
 
   static void reset_trace_logger_noexcept() noexcept
   {
     try {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
       if (reset_trace_logger_noexcept_force_throw_for_test()) {
         throw std::runtime_error("forced reset_trace_logger_noexcept failure");
       }
+#endif  // SONAR_IGNORE_STOP
       auto& tracer = starpu_server::BatchingTraceLogger::instance();
       tracer.configure(false, "");
     }
@@ -145,9 +151,11 @@ class RuntimeCleanupGuard {
   static void shutdown_metrics_noexcept() noexcept
   {
     try {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
       if (shutdown_metrics_noexcept_force_throw_for_test()) {
         throw std::runtime_error("forced shutdown_metrics_noexcept failure");
       }
+#endif  // SONAR_IGNORE_STOP
       starpu_server::shutdown_metrics();
     }
     catch (...) {
@@ -175,6 +183,7 @@ signal_stop_notify_fd() -> volatile std::sig_atomic_t&
 
 class SignalNotificationPipe {
  public:
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   static void SetPipeFailureForTest(bool enabled) noexcept
   {
     pipe_failure_for_test() = enabled;
@@ -189,6 +198,7 @@ class SignalNotificationPipe {
   {
     return set_non_blocking(file_descriptor);
   }
+#endif  // SONAR_IGNORE_STOP
 
   SignalNotificationPipe()
   {
@@ -247,6 +257,7 @@ class SignalNotificationPipe {
   }
 
  private:
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   static auto pipe_failure_for_test() noexcept -> bool&
   {
     static bool enabled = false;
@@ -258,22 +269,27 @@ class SignalNotificationPipe {
     static bool enabled = false;
     return enabled;
   }
+#endif  // SONAR_IGNORE_STOP
 
   static auto create_pipe(std::array<int, 2>& file_descriptors) -> int
   {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
     if (pipe_failure_for_test()) {
       errno = EMFILE;
       return -1;
     }
+#endif  // SONAR_IGNORE_STOP
     return ::pipe(file_descriptors.data());
   }
 
   static auto set_non_blocking(int file_descriptor) -> bool
   {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
     if (set_non_blocking_failure_for_test()) {
       errno = EINVAL;
       return false;
     }
+#endif  // SONAR_IGNORE_STOP
     if (file_descriptor < 0) {
       return false;
     }
@@ -357,6 +373,7 @@ rethrow_thread_exception_if_any(ThreadExceptionState& state)
   }
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using WaitForSignalNotificationReadOverrideForTestFn =
     ssize_t (*)(int, void*, std::size_t);
 
@@ -367,16 +384,19 @@ wait_for_signal_notification_read_override_for_test() noexcept
   static WaitForSignalNotificationReadOverrideForTestFn override_fn = nullptr;
   return override_fn;
 }
+#endif  // SONAR_IGNORE_STOP
 
 auto
 read_signal_notification(int read_fd, void* buffer, std::size_t buffer_size)
     -> ssize_t
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn =
           wait_for_signal_notification_read_override_for_test();
       override_fn != nullptr) {
     return override_fn(read_fd, buffer, buffer_size);
   }
+#endif  // SONAR_IGNORE_STOP
   return ::read(read_fd, buffer, buffer_size);
 }
 
@@ -458,6 +478,92 @@ constexpr int kSignalExitCodeOffset = 128;
 constexpr int kExecFailedExitCode = 127;
 constexpr int kPlotScriptSearchDepth = 6;
 
+enum class ShutdownDrainStageForTest : std::uint8_t {
+  Entered,
+  CompletedReachedTotal,
+  DeadlineReached,
+  BeforeWait,
+};
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+
+using ShutdownDrainTimeoutOverrideForTestFn =
+    std::chrono::steady_clock::duration (*)();
+using ShutdownDrainWaitStepOverrideForTestFn =
+    std::chrono::steady_clock::duration (*)();
+using ShutdownDrainObserverForTestFn = void (*)(
+    ShutdownDrainStageForTest, std::size_t, std::size_t,
+    std::chrono::steady_clock::duration);
+
+auto
+shutdown_drain_timeout_override_for_test() noexcept
+    -> ShutdownDrainTimeoutOverrideForTestFn&
+{
+  static ShutdownDrainTimeoutOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+shutdown_drain_wait_step_override_for_test() noexcept
+    -> ShutdownDrainWaitStepOverrideForTestFn&
+{
+  static ShutdownDrainWaitStepOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+shutdown_drain_observer_for_test() noexcept -> ShutdownDrainObserverForTestFn&
+{
+  static ShutdownDrainObserverForTestFn observer_fn = nullptr;
+  return observer_fn;
+}
+#endif  // SONAR_IGNORE_STOP
+
+auto
+resolve_shutdown_drain_timeout() -> std::chrono::steady_clock::duration
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (const auto override_fn = shutdown_drain_timeout_override_for_test();
+      override_fn != nullptr) {
+    return override_fn();
+  }
+#endif  // SONAR_IGNORE_STOP
+  return kShutdownDrainTimeout;
+}
+
+auto
+resolve_shutdown_drain_wait_step() -> std::chrono::steady_clock::duration
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (const auto override_fn = shutdown_drain_wait_step_override_for_test();
+      override_fn != nullptr) {
+    return override_fn();
+  }
+#endif  // SONAR_IGNORE_STOP
+  return kShutdownDrainWaitStep;
+}
+
+void
+notify_shutdown_drain_stage_for_test(
+    ShutdownDrainStageForTest stage, std::size_t total_jobs,
+    std::size_t completed_jobs,
+    std::chrono::steady_clock::duration wait_budget =
+        std::chrono::steady_clock::duration::zero())
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (const auto observer_fn = shutdown_drain_observer_for_test();
+      observer_fn != nullptr) {
+    observer_fn(stage, total_jobs, completed_jobs, wait_budget);
+  }
+#else
+  (void)stage;
+  (void)total_jobs;
+  (void)completed_jobs;
+  (void)wait_budget;
+#endif  // SONAR_IGNORE_STOP
+}
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using ResolvePythonCandidatesOverrideForTestFn =
     std::vector<std::filesystem::path> (*)();
 
@@ -479,6 +585,7 @@ resolve_python_is_regular_file_override_for_test() noexcept
   static ResolvePythonIsRegularFileOverrideForTestFn override_fn = nullptr;
   return override_fn;
 }
+#endif  // SONAR_IGNORE_STOP
 
 auto
 resolve_python_executable() -> std::optional<std::filesystem::path>
@@ -489,22 +596,26 @@ resolve_python_executable() -> std::optional<std::filesystem::path>
       "/bin/python3",
   };
 
-  std::vector<std::filesystem::path> override_candidates_storage;
   std::span<const std::filesystem::path> candidates = kDefaultCandidates;
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  std::vector<std::filesystem::path> override_candidates_storage;
   if (const auto override_fn = resolve_python_candidates_override_for_test();
       override_fn != nullptr) {
     override_candidates_storage = override_fn();
     candidates = override_candidates_storage;
   }
+#endif  // SONAR_IGNORE_STOP
 
   for (const auto& candidate : candidates) {
     std::error_code status_ec;
     const bool is_regular = [&]() {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
       if (const auto override_fn =
               resolve_python_is_regular_file_override_for_test();
           override_fn != nullptr) {
         return override_fn(candidate, status_ec);
       }
+#endif  // SONAR_IGNORE_STOP
       return std::filesystem::is_regular_file(candidate, status_ec);
     }();
     if (!is_regular || status_ec) {
@@ -543,6 +654,7 @@ struct WaitPidResult {
   std::optional<int> exit_code;
 };
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using WaitPidNoHangOverrideForTestFn = pid_t (*)(pid_t, int*, int);
 
 auto
@@ -551,14 +663,17 @@ waitpid_nohang_override_for_test() noexcept -> WaitPidNoHangOverrideForTestFn&
   static WaitPidNoHangOverrideForTestFn override_fn = nullptr;
   return override_fn;
 }
+#endif  // SONAR_IGNORE_STOP
 
 auto
 read_waitpid_nohang(pid_t pid, int* status, int options) -> pid_t
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = waitpid_nohang_override_for_test();
       override_fn != nullptr) {
     return override_fn(pid, status, options);
   }
+#endif  // SONAR_IGNORE_STOP
   return ::waitpid(pid, status, options);
 }
 
@@ -580,6 +695,30 @@ waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
     log_waitpid_error();
     return {Error, std::nullopt};
   }
+}
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+using WaitPidBlockingOverrideForTestFn = pid_t (*)(pid_t, int*, int);
+
+auto
+waitpid_blocking_override_for_test() noexcept
+    -> WaitPidBlockingOverrideForTestFn&
+{
+  static WaitPidBlockingOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+#endif  // SONAR_IGNORE_STOP
+
+auto
+read_waitpid_blocking(pid_t pid, int* status) -> pid_t
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (const auto override_fn = waitpid_blocking_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(pid, status, 0);
+  }
+#endif  // SONAR_IGNORE_STOP
+  return ::waitpid(pid, status, 0);
 }
 
 enum class WaitOutcome : std::uint8_t { Exited, TimedOut, Error };
@@ -617,7 +756,7 @@ wait_for_exit_blocking(pid_t pid) -> std::optional<int>
 {
   int status = 0;
   while (true) {
-    const pid_t result = waitpid(pid, &status, 0);
+    const pid_t result = read_waitpid_blocking(pid, &status);
     if (result == pid) {
       return wait_status_to_exit_code(status);
     }
@@ -648,22 +787,60 @@ terminate_and_wait(pid_t pid) -> std::optional<int>
   return wait_for_exit_blocking(pid);
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+using WaitForPlotProcessWaitOverrideForTestFn =
+    WaitOutcomeResult (*)(pid_t, std::chrono::steady_clock::duration);
+using TerminateAndWaitOverrideForTestFn = std::optional<int> (*)(pid_t);
+
+auto
+wait_for_plot_process_wait_override_for_test() noexcept
+    -> WaitForPlotProcessWaitOverrideForTestFn&
+{
+  static WaitForPlotProcessWaitOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+terminate_and_wait_override_for_test() noexcept
+    -> TerminateAndWaitOverrideForTestFn&
+{
+  static TerminateAndWaitOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+#endif  // SONAR_IGNORE_STOP
+
 auto
 wait_for_plot_process(pid_t pid) -> std::optional<int>
 {
-  const auto result = wait_for_exit_with_timeout(pid, kPlotScriptTimeout);
+  const auto result = [&]() {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (const auto override_fn = wait_for_plot_process_wait_override_for_test();
+        override_fn != nullptr) {
+      return override_fn(pid, kPlotScriptTimeout);
+    }
+#endif  // SONAR_IGNORE_STOP
+    return wait_for_exit_with_timeout(pid, kPlotScriptTimeout);
+  }();
   if (result.outcome == WaitOutcome::Exited) {
     return result.exit_code;
   }
   if (result.outcome == WaitOutcome::Error) {
     return std::nullopt;
   }
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (const auto override_fn = terminate_and_wait_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(pid);
+  }
+#endif  // SONAR_IGNORE_STOP
   return terminate_and_wait(pid);
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using RunPlotScriptOverrideForTestFn = std::optional<int> (*)(
     const std::filesystem::path&, const std::filesystem::path&,
     const std::filesystem::path&);
+using RunPlotScriptForkOverrideForTestFn = pid_t (*)();
 
 using LocatePlotScriptOverrideForTestFn =
     std::optional<std::filesystem::path> (*)(
@@ -676,6 +853,14 @@ auto
 run_plot_script_override_for_test() noexcept -> RunPlotScriptOverrideForTestFn&
 {
   static RunPlotScriptOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+run_plot_script_fork_override_for_test() noexcept
+    -> RunPlotScriptForkOverrideForTestFn&
+{
+  static RunPlotScriptForkOverrideForTestFn override_fn = nullptr;
   return override_fn;
 }
 
@@ -694,6 +879,7 @@ trace_summary_file_path_override_for_test() noexcept
   static TraceSummaryFilePathOverrideForTestFn override_fn = nullptr;
   return override_fn;
 }
+#endif  // SONAR_IGNORE_STOP
 
 auto
 run_plot_script(
@@ -701,10 +887,12 @@ run_plot_script(
     const std::filesystem::path& summary_path,
     const std::filesystem::path& output_path) -> std::optional<int>
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = run_plot_script_override_for_test();
       override_fn != nullptr) {
     return override_fn(script_path, summary_path, output_path);
   }
+#endif  // SONAR_IGNORE_STOP
 
   const auto python_path = resolve_python_executable();
   if (!python_path) {
@@ -725,7 +913,15 @@ run_plot_script(
   }
   argv.push_back(nullptr);
 
-  const pid_t pid = fork();
+  const pid_t pid = [&]() {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (const auto override_fn = run_plot_script_fork_override_for_test();
+        override_fn != nullptr) {
+      return override_fn();
+    }
+#endif  // SONAR_IGNORE_STOP
+    return fork();
+  }();
   if (pid < 0) {
     starpu_server::log_warning(std::format(
         "Failed to launch python3 for plot generation: {}",
@@ -758,12 +954,51 @@ resolve_starpu_scheduler(const starpu_server::RuntimeConfig& opts)
   return std::format("{} (default)", starpu_server::kDefaultStarpuScheduler);
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+using CandidatePlotScriptsReadSymlinkOverrideForTestFn =
+    std::filesystem::path (*)(const std::filesystem::path&, std::error_code&);
+using LocatePlotScriptCandidatesOverrideForTestFn =
+    std::vector<std::filesystem::path> (*)();
+
+auto
+candidate_plot_scripts_read_symlink_override_for_test() noexcept
+    -> CandidatePlotScriptsReadSymlinkOverrideForTestFn&
+{
+  static CandidatePlotScriptsReadSymlinkOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+locate_plot_script_candidates_override_for_test() noexcept
+    -> LocatePlotScriptCandidatesOverrideForTestFn&
+{
+  static LocatePlotScriptCandidatesOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+#endif  // SONAR_IGNORE_STOP
+
+auto
+read_symlink_for_candidate_plot_scripts(
+    const std::filesystem::path& path,
+    std::error_code& ec) -> std::filesystem::path
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (const auto override_fn =
+          candidate_plot_scripts_read_symlink_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(path, ec);
+  }
+#endif  // SONAR_IGNORE_STOP
+  return std::filesystem::read_symlink(path, ec);
+}
+
 auto
 candidate_plot_scripts() -> std::vector<std::filesystem::path>
 {
   std::vector<std::filesystem::path> candidates;
   std::error_code exe_ec;
-  const auto exe_path = std::filesystem::read_symlink("/proc/self/exe", exe_ec);
+  const auto exe_path =
+      read_symlink_for_candidate_plot_scripts("/proc/self/exe", exe_ec);
   if (exe_ec) {
     return candidates;
   }
@@ -782,12 +1017,25 @@ auto
 locate_plot_script(const starpu_server::RuntimeConfig& opts)
     -> std::optional<std::filesystem::path>
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = locate_plot_script_override_for_test();
       override_fn != nullptr) {
     return override_fn(opts);
   }
+#endif  // SONAR_IGNORE_STOP
 
-  for (const auto& candidate : candidate_plot_scripts()) {
+  const auto candidates = [&]() {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (const auto override_fn =
+            locate_plot_script_candidates_override_for_test();
+        override_fn != nullptr) {
+      return override_fn();
+    }
+#endif  // SONAR_IGNORE_STOP
+    return candidate_plot_scripts();
+  }();
+
+  for (const auto& candidate : candidates) {
     if (candidate.empty()) {
       continue;
     }
@@ -833,6 +1081,7 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
   }
 
   std::optional<std::filesystem::path> summary_path_opt;
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = trace_summary_file_path_override_for_test();
       override_fn != nullptr) {
     summary_path_opt = override_fn();
@@ -840,6 +1089,10 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
     const auto& tracer = starpu_server::BatchingTraceLogger::instance();
     summary_path_opt = tracer.summary_file_path();
   }
+#else
+  const auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  summary_path_opt = tracer.summary_file_path();
+#endif  // SONAR_IGNORE_STOP
   if (!summary_path_opt) {
     starpu_server::log_warning(
         "Tracing was enabled but no trace.csv was produced; "
@@ -959,6 +1212,7 @@ handle_program_arguments(std::span<char const* const> args)
   return cfg;
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 load_model_and_reference_output_override_for_test() noexcept
     -> std::optional<std::tuple<
@@ -985,6 +1239,7 @@ run_warmup_override_for_test() noexcept
       const std::vector<torch::Tensor>&) = nullptr;
   return override_fn;
 }
+#endif  // SONAR_IGNORE_STOP
 
 auto
 prepare_models_and_warmup(
@@ -995,11 +1250,13 @@ prepare_models_and_warmup(
         std::vector<torch::Tensor>>
 {
   auto models = [&]() {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
     if (const auto override_fn =
             load_model_and_reference_output_override_for_test();
         override_fn != nullptr) {
       return override_fn(opts);
     }
+#endif  // SONAR_IGNORE_STOP
     return starpu_server::load_model_and_reference_output(opts);
   }();
   if (!models) {
@@ -1007,6 +1264,7 @@ prepare_models_and_warmup(
         "Failed to load model or reference outputs");
   }
   auto [model_cpu, models_gpu, reference_outputs] = std::move(*models);
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = run_warmup_override_for_test();
       override_fn != nullptr) {
     override_fn(opts, starpu, model_cpu, models_gpu, reference_outputs);
@@ -1014,6 +1272,10 @@ prepare_models_and_warmup(
     starpu_server::run_warmup(
         opts, starpu, model_cpu, models_gpu, reference_outputs);
   }
+#else
+  starpu_server::run_warmup(
+      opts, starpu, model_cpu, models_gpu, reference_outputs);
+#endif  // SONAR_IGNORE_STOP
   return {model_cpu, models_gpu, reference_outputs};
 }
 
@@ -1241,21 +1503,30 @@ launch_threads(  // NOLINT(readability-function-cognitive-complexity)
             completed_before_drain, total_jobs, remaining_before_drain));
   }
   if (total_jobs > 0) {
+    notify_shutdown_drain_stage_for_test(
+        ShutdownDrainStageForTest::Entered, total_jobs, completed_before_drain);
+    const auto shutdown_drain_timeout = resolve_shutdown_drain_timeout();
+    const auto shutdown_drain_wait_step = resolve_shutdown_drain_wait_step();
     const auto deadline =
-        std::chrono::steady_clock::now() + kShutdownDrainTimeout;
+        std::chrono::steady_clock::now() + shutdown_drain_timeout;
     std::unique_lock lock(all_done_mutex);
     while (true) {
       const auto completed = completed_jobs.load(std::memory_order_acquire);
       if (completed >= total_jobs) {
+        notify_shutdown_drain_stage_for_test(
+            ShutdownDrainStageForTest::CompletedReachedTotal, total_jobs,
+            completed);
         break;
       }
 
       const auto now = std::chrono::steady_clock::now();
       if (now >= deadline) {
+        notify_shutdown_drain_stage_for_test(
+            ShutdownDrainStageForTest::DeadlineReached, total_jobs, completed);
         const auto remaining = total_jobs - completed;
         const auto timeout_ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(
-                kShutdownDrainTimeout)
+                shutdown_drain_timeout)
                 .count();
         starpu_server::log_error(std::format(
             "Shutdown drain timeout after {} ms: completed={} total={} "
@@ -1265,9 +1536,12 @@ launch_threads(  // NOLINT(readability-function-cognitive-complexity)
       }
 
       const auto until_deadline = deadline - now;
-      const auto wait_budget = until_deadline < kShutdownDrainWaitStep
+      const auto wait_budget = until_deadline < shutdown_drain_wait_step
                                    ? until_deadline
-                                   : kShutdownDrainWaitStep;
+                                   : shutdown_drain_wait_step;
+      notify_shutdown_drain_stage_for_test(
+          ShutdownDrainStageForTest::BeforeWait, total_jobs, completed,
+          wait_budget);
       static_cast<void>(all_done_cv.wait_for(lock, wait_budget));
     }
   }
@@ -1289,6 +1563,7 @@ worker_type_label(const enum starpu_worker_archtype type) -> std::string
   }
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using WorkerCpusetProviderOverrideForTestFn =
     decltype(&starpu_worker_get_hwloc_cpuset);
 using HwlocBitmapFirstOverrideForTestFn = decltype(&hwloc_bitmap_first);
@@ -1326,45 +1601,54 @@ hwloc_bitmap_free_override_for_test() noexcept
   static HwlocBitmapFreeOverrideForTestFn override_fn = nullptr;
   return override_fn;
 }
+#endif  // SONAR_IGNORE_STOP
 
 auto
 get_worker_cpuset_for_affinity(int worker_id) -> hwloc_cpuset_t
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = worker_cpuset_provider_override_for_test();
       override_fn != nullptr) {
     return override_fn(worker_id);
   }
+#endif  // SONAR_IGNORE_STOP
   return starpu_worker_get_hwloc_cpuset(worker_id);
 }
 
 auto
 bitmap_first_for_affinity(hwloc_const_bitmap_t cpuset) -> int
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = hwloc_bitmap_first_override_for_test();
       override_fn != nullptr) {
     return override_fn(cpuset);
   }
+#endif  // SONAR_IGNORE_STOP
   return hwloc_bitmap_first(cpuset);
 }
 
 auto
 bitmap_next_for_affinity(hwloc_const_bitmap_t cpuset, int previous_core) -> int
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = hwloc_bitmap_next_override_for_test();
       override_fn != nullptr) {
     return override_fn(cpuset, previous_core);
   }
+#endif  // SONAR_IGNORE_STOP
   return hwloc_bitmap_next(cpuset, previous_core);
 }
 
 void
 bitmap_free_for_affinity(hwloc_bitmap_t cpuset)
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = hwloc_bitmap_free_override_for_test();
       override_fn != nullptr) {
     override_fn(cpuset);
     return;
   }
+#endif  // SONAR_IGNORE_STOP
   hwloc_bitmap_free(cpuset);
 }
 
@@ -1419,6 +1703,7 @@ describe_cpu_affinity(int worker_id) -> std::string
   return format_cpu_core_ranges(cores);
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using WorkerCountOverrideForTestFn = decltype(&starpu_worker_get_count);
 using WorkerTypeOverrideForTestFn = decltype(&starpu_worker_get_type);
 using WorkerDeviceIdOverrideForTestFn = decltype(&starpu_worker_get_devid);
@@ -1453,41 +1738,50 @@ describe_cpu_affinity_override_for_test() noexcept
   static DescribeCpuAffinityOverrideForTestFn override_fn = nullptr;
   return override_fn;
 }
+#endif  // SONAR_IGNORE_STOP
 
 auto
 worker_count_for_inventory() -> int
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = worker_count_override_for_test();
       override_fn != nullptr) {
     return static_cast<int>(override_fn());
   }
+#endif  // SONAR_IGNORE_STOP
   return static_cast<int>(starpu_worker_get_count());
 }
 
 auto
 worker_type_for_inventory(int worker_id) -> enum starpu_worker_archtype {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = worker_type_override_for_test();
       override_fn != nullptr){return override_fn(worker_id);}
+#endif  // SONAR_IGNORE_STOP
 return starpu_worker_get_type(worker_id);
 }
 
 auto
 worker_device_id_for_inventory(int worker_id) -> int
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = worker_device_id_override_for_test();
       override_fn != nullptr) {
     return override_fn(worker_id);
   }
+#endif  // SONAR_IGNORE_STOP
   return starpu_worker_get_devid(worker_id);
 }
 
 auto
 describe_cpu_affinity_for_inventory(int worker_id) -> std::string
 {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto override_fn = describe_cpu_affinity_override_for_test();
       override_fn != nullptr) {
     return override_fn(worker_id);
   }
+#endif  // SONAR_IGNORE_STOP
   return describe_cpu_affinity(worker_id);
 }
 

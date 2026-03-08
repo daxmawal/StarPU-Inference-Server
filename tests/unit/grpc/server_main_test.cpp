@@ -16,6 +16,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <latch>
 #include <mutex>
@@ -25,6 +26,9 @@
 #include <thread>
 #include <type_traits>
 #include <vector>
+
+#include "../../../src/starpu_task_worker/result_dispatcher_component.hpp"
+#include "../../../src/starpu_task_worker/task_runner_internal.hpp"
 
 #define main starpu_server_server_main_for_test
 #include "../../../src/grpc/server/server_main.cpp"
@@ -165,6 +169,185 @@ struct ScopedSignalPipeForcedSetNonBlockingFailure {
   }
 };
 
+struct ScopedRunBeforeSubmitHook {
+  explicit ScopedRunBeforeSubmitHook(std::function<void()> hook)
+  {
+    starpu_server::task_runner_internal::set_run_before_submit_hook(
+        std::move(hook));
+  }
+
+  ~ScopedRunBeforeSubmitHook()
+  {
+    starpu_server::task_runner_internal::reset_run_before_submit_hook();
+  }
+};
+
+struct ScopedSubmitInferenceTaskHook {
+  explicit ScopedSubmitInferenceTaskHook(std::function<void()> hook)
+  {
+    starpu_server::task_runner_internal::set_submit_inference_task_hook(
+        std::move(hook));
+  }
+
+  ~ScopedSubmitInferenceTaskHook()
+  {
+    starpu_server::task_runner_internal::reset_submit_inference_task_hook();
+  }
+};
+
+struct ScopedPrepareJobCompletionCallbackHooks {
+  explicit ScopedPrepareJobCompletionCallbackHooks(
+      starpu_server::ResultDispatcher::PrepareJobCompletionCallbackTestHooks
+          hooks)
+  {
+    starpu_server::ResultDispatcher::SetPrepareJobCompletionCallbackTestHooks(
+        std::move(hooks));
+  }
+
+  ~ScopedPrepareJobCompletionCallbackHooks()
+  {
+    starpu_server::ResultDispatcher::
+        ClearPrepareJobCompletionCallbackTestHooks();
+  }
+};
+
+struct ShutdownDrainOverrideState {
+  std::chrono::steady_clock::duration timeout = kShutdownDrainTimeout;
+  std::chrono::steady_clock::duration wait_step = kShutdownDrainWaitStep;
+  int timeout_calls = 0;
+  int wait_step_calls = 0;
+  int entered_calls = 0;
+  int completed_reached_total_calls = 0;
+  int deadline_reached_calls = 0;
+  int before_wait_calls = 0;
+  std::size_t last_total_jobs = 0;
+  std::size_t last_completed_jobs = 0;
+  std::chrono::steady_clock::duration last_wait_budget{};
+  std::mutex mutex;
+  std::condition_variable cv;
+};
+
+auto
+shutdown_drain_override_state() -> ShutdownDrainOverrideState*&
+{
+  static ShutdownDrainOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+shutdown_drain_timeout_override_stub() -> std::chrono::steady_clock::duration
+{
+  auto* state = shutdown_drain_override_state();
+  if (state == nullptr) {
+    return kShutdownDrainTimeout;
+  }
+  ++state->timeout_calls;
+  return state->timeout;
+}
+
+auto
+shutdown_drain_wait_step_override_stub() -> std::chrono::steady_clock::duration
+{
+  auto* state = shutdown_drain_override_state();
+  if (state == nullptr) {
+    return kShutdownDrainWaitStep;
+  }
+  ++state->wait_step_calls;
+  return state->wait_step;
+}
+
+void
+shutdown_drain_observer_stub(
+    ShutdownDrainStageForTest stage, std::size_t total_jobs,
+    std::size_t completed_jobs, std::chrono::steady_clock::duration wait_budget)
+{
+  auto* state = shutdown_drain_override_state();
+  if (state == nullptr) {
+    return;
+  }
+  {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->last_total_jobs = total_jobs;
+    state->last_completed_jobs = completed_jobs;
+    state->last_wait_budget = wait_budget;
+    switch (stage) {
+      case ShutdownDrainStageForTest::Entered:
+        ++state->entered_calls;
+        break;
+      case ShutdownDrainStageForTest::CompletedReachedTotal:
+        ++state->completed_reached_total_calls;
+        break;
+      case ShutdownDrainStageForTest::DeadlineReached:
+        ++state->deadline_reached_calls;
+        break;
+      case ShutdownDrainStageForTest::BeforeWait:
+        ++state->before_wait_calls;
+        break;
+    }
+  }
+  state->cv.notify_all();
+}
+
+struct ScopedShutdownDrainOverrides {
+  explicit ScopedShutdownDrainOverrides(ShutdownDrainOverrideState& state)
+  {
+    shutdown_drain_override_state() = &state;
+    shutdown_drain_timeout_override_for_test() =
+        shutdown_drain_timeout_override_stub;
+    shutdown_drain_wait_step_override_for_test() =
+        shutdown_drain_wait_step_override_stub;
+    shutdown_drain_observer_for_test() = shutdown_drain_observer_stub;
+  }
+
+  ~ScopedShutdownDrainOverrides()
+  {
+    shutdown_drain_observer_for_test() = nullptr;
+    shutdown_drain_wait_step_override_for_test() = nullptr;
+    shutdown_drain_timeout_override_for_test() = nullptr;
+    shutdown_drain_override_state() = nullptr;
+  }
+};
+
+class ScopedEnvironmentVariableUnsetGuard {
+ public:
+  explicit ScopedEnvironmentVariableUnsetGuard(std::string name)
+      : name_(std::move(name))
+  {
+    if (const char* current = std::getenv(name_.c_str()); current != nullptr) {
+      previous_value_ = std::string(current);
+    }
+    if (::unsetenv(name_.c_str()) != 0) {
+      ADD_FAILURE() << "Failed to unset environment variable " << name_;
+    }
+  }
+
+  ~ScopedEnvironmentVariableUnsetGuard()
+  {
+    if (previous_value_.has_value()) {
+      if (::setenv(name_.c_str(), previous_value_->c_str(), 1) != 0) {
+        ADD_FAILURE() << "Failed to restore environment variable " << name_;
+      }
+      return;
+    }
+    if (::unsetenv(name_.c_str()) != 0) {
+      ADD_FAILURE() << "Failed to unset environment variable " << name_;
+    }
+  }
+
+  ScopedEnvironmentVariableUnsetGuard(
+      const ScopedEnvironmentVariableUnsetGuard&) = delete;
+  auto operator=(const ScopedEnvironmentVariableUnsetGuard&)
+      -> ScopedEnvironmentVariableUnsetGuard& = delete;
+  ScopedEnvironmentVariableUnsetGuard(ScopedEnvironmentVariableUnsetGuard&&) =
+      delete;
+  auto operator=(ScopedEnvironmentVariableUnsetGuard&&)
+      -> ScopedEnvironmentVariableUnsetGuard& = delete;
+
+ private:
+  std::string name_;
+  std::optional<std::string> previous_value_;
+};
+
 struct ResolvePythonExecutableOverrideState {
   std::vector<std::filesystem::path> candidates;
   bool is_regular_file_result = false;
@@ -228,6 +411,94 @@ struct ScopedResolvePythonExecutableOverrides {
     resolve_python_is_regular_file_override_for_test() = nullptr;
     resolve_python_candidates_override_for_test() = nullptr;
     resolve_python_executable_override_state() = nullptr;
+  }
+};
+
+struct CandidatePlotScriptsReadSymlinkOverrideState {
+  std::filesystem::path resolved_executable_path;
+  std::error_code error;
+  int call_count = 0;
+  std::filesystem::path observed_link_path;
+};
+
+auto
+candidate_plot_scripts_read_symlink_override_state()
+    -> CandidatePlotScriptsReadSymlinkOverrideState*&
+{
+  static CandidatePlotScriptsReadSymlinkOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+candidate_plot_scripts_read_symlink_override_stub(
+    const std::filesystem::path& path,
+    std::error_code& ec) -> std::filesystem::path
+{
+  auto* state = candidate_plot_scripts_read_symlink_override_state();
+  if (state == nullptr) {
+    ec = std::make_error_code(std::errc::no_such_file_or_directory);
+    return {};
+  }
+  ++state->call_count;
+  state->observed_link_path = path;
+  ec = state->error;
+  return state->resolved_executable_path;
+}
+
+struct ScopedCandidatePlotScriptsReadSymlinkOverride {
+  explicit ScopedCandidatePlotScriptsReadSymlinkOverride(
+      CandidatePlotScriptsReadSymlinkOverrideState& state) noexcept
+  {
+    candidate_plot_scripts_read_symlink_override_state() = &state;
+    candidate_plot_scripts_read_symlink_override_for_test() =
+        candidate_plot_scripts_read_symlink_override_stub;
+  }
+
+  ~ScopedCandidatePlotScriptsReadSymlinkOverride()
+  {
+    candidate_plot_scripts_read_symlink_override_for_test() = nullptr;
+    candidate_plot_scripts_read_symlink_override_state() = nullptr;
+  }
+};
+
+struct LocatePlotScriptCandidatesOverrideState {
+  std::vector<std::filesystem::path> candidates;
+  int call_count = 0;
+};
+
+auto
+locate_plot_script_candidates_override_state()
+    -> LocatePlotScriptCandidatesOverrideState*&
+{
+  static LocatePlotScriptCandidatesOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+locate_plot_script_candidates_override_stub()
+    -> std::vector<std::filesystem::path>
+{
+  auto* state = locate_plot_script_candidates_override_state();
+  if (state == nullptr) {
+    return {};
+  }
+  ++state->call_count;
+  return state->candidates;
+}
+
+struct ScopedLocatePlotScriptCandidatesOverride {
+  explicit ScopedLocatePlotScriptCandidatesOverride(
+      LocatePlotScriptCandidatesOverrideState& state) noexcept
+  {
+    locate_plot_script_candidates_override_state() = &state;
+    locate_plot_script_candidates_override_for_test() =
+        locate_plot_script_candidates_override_stub;
+  }
+
+  ~ScopedLocatePlotScriptCandidatesOverride()
+  {
+    locate_plot_script_candidates_override_for_test() = nullptr;
+    locate_plot_script_candidates_override_state() = nullptr;
   }
 };
 
@@ -347,6 +618,173 @@ struct ScopedWaitPidNoHangOverride {
   {
     waitpid_nohang_override_for_test() = nullptr;
     waitpid_nohang_override_state() = nullptr;
+  }
+};
+
+struct WaitPidBlockingOverrideState {
+  std::vector<pid_t> waitpid_results;
+  std::vector<int> statuses;
+  std::vector<int> errnos;
+  std::size_t next_index = 0;
+  int call_count = 0;
+  pid_t last_pid = -1;
+  int last_options = -1;
+};
+
+auto
+waitpid_blocking_override_state() -> WaitPidBlockingOverrideState*&
+{
+  static WaitPidBlockingOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+waitpid_blocking_override_stub(pid_t pid, int* status, int options) -> pid_t
+{
+  auto* state = waitpid_blocking_override_state();
+  if (state == nullptr) {
+    errno = ECHILD;
+    if (status != nullptr) {
+      *status = 0;
+    }
+    return -1;
+  }
+
+  ++state->call_count;
+  state->last_pid = pid;
+  state->last_options = options;
+
+  if (state->next_index >= state->waitpid_results.size()) {
+    errno = ECHILD;
+    if (status != nullptr) {
+      *status = 0;
+    }
+    return -1;
+  }
+
+  const auto index = state->next_index++;
+  errno = index < state->errnos.size() ? state->errnos[index] : 0;
+  if (status != nullptr) {
+    *status = index < state->statuses.size() ? state->statuses[index] : 0;
+  }
+  return state->waitpid_results[index];
+}
+
+struct ScopedWaitPidBlockingOverride {
+  explicit ScopedWaitPidBlockingOverride(
+      WaitPidBlockingOverrideState& state) noexcept
+  {
+    waitpid_blocking_override_state() = &state;
+    waitpid_blocking_override_for_test() = waitpid_blocking_override_stub;
+  }
+
+  ~ScopedWaitPidBlockingOverride()
+  {
+    waitpid_blocking_override_for_test() = nullptr;
+    waitpid_blocking_override_state() = nullptr;
+  }
+};
+
+struct WaitForPlotProcessOverrideState {
+  WaitOutcomeResult wait_result{WaitOutcome::Error, std::nullopt};
+  std::optional<int> terminate_result = std::nullopt;
+  int wait_calls = 0;
+  int terminate_calls = 0;
+  pid_t wait_pid = -1;
+  pid_t terminate_pid = -1;
+  std::chrono::steady_clock::duration wait_timeout{};
+};
+
+auto
+wait_for_plot_process_override_state() -> WaitForPlotProcessOverrideState*&
+{
+  static WaitForPlotProcessOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+wait_for_plot_process_wait_override_stub(
+    pid_t pid, std::chrono::steady_clock::duration timeout) -> WaitOutcomeResult
+{
+  auto* state = wait_for_plot_process_override_state();
+  if (state == nullptr) {
+    return {WaitOutcome::Error, std::nullopt};
+  }
+  ++state->wait_calls;
+  state->wait_pid = pid;
+  state->wait_timeout = timeout;
+  return state->wait_result;
+}
+
+auto
+terminate_and_wait_override_stub(pid_t pid) -> std::optional<int>
+{
+  auto* state = wait_for_plot_process_override_state();
+  if (state == nullptr) {
+    return std::nullopt;
+  }
+  ++state->terminate_calls;
+  state->terminate_pid = pid;
+  return state->terminate_result;
+}
+
+struct ScopedWaitForPlotProcessOverrides {
+  explicit ScopedWaitForPlotProcessOverrides(
+      WaitForPlotProcessOverrideState& state) noexcept
+  {
+    wait_for_plot_process_override_state() = &state;
+    wait_for_plot_process_wait_override_for_test() =
+        wait_for_plot_process_wait_override_stub;
+    terminate_and_wait_override_for_test() = terminate_and_wait_override_stub;
+  }
+
+  ~ScopedWaitForPlotProcessOverrides()
+  {
+    terminate_and_wait_override_for_test() = nullptr;
+    wait_for_plot_process_wait_override_for_test() = nullptr;
+    wait_for_plot_process_override_state() = nullptr;
+  }
+};
+
+struct RunPlotScriptForkOverrideState {
+  pid_t result = -1;
+  int error_number = EAGAIN;
+  int call_count = 0;
+};
+
+auto
+run_plot_script_fork_override_state() -> RunPlotScriptForkOverrideState*&
+{
+  static RunPlotScriptForkOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+run_plot_script_fork_override_stub() -> pid_t
+{
+  auto* state = run_plot_script_fork_override_state();
+  if (state == nullptr) {
+    errno = EAGAIN;
+    return -1;
+  }
+  ++state->call_count;
+  errno = state->error_number;
+  return state->result;
+}
+
+struct ScopedRunPlotScriptForkOverride {
+  explicit ScopedRunPlotScriptForkOverride(
+      RunPlotScriptForkOverrideState& state) noexcept
+  {
+    run_plot_script_fork_override_state() = &state;
+    run_plot_script_fork_override_for_test() =
+        run_plot_script_fork_override_stub;
+  }
+
+  ~ScopedRunPlotScriptForkOverride()
+  {
+    run_plot_script_fork_override_for_test() = nullptr;
+    run_plot_script_fork_override_state() = nullptr;
   }
 };
 
@@ -506,6 +944,22 @@ struct ScopedPrepareModelsAndWarmupOverrides {
   ~ScopedPrepareModelsAndWarmupOverrides()
   {
     run_warmup_override_for_test() = nullptr;
+    load_model_and_reference_output_override_for_test() = nullptr;
+    prepare_models_and_warmup_override_state() = nullptr;
+  }
+};
+
+struct ScopedLoadModelAndReferenceOutputOverride {
+  explicit ScopedLoadModelAndReferenceOutputOverride(
+      PrepareModelsAndWarmupOverrideState& state) noexcept
+  {
+    prepare_models_and_warmup_override_state() = &state;
+    load_model_and_reference_output_override_for_test() =
+        load_model_and_reference_output_override_stub;
+  }
+
+  ~ScopedLoadModelAndReferenceOutputOverride()
+  {
     load_model_and_reference_output_override_for_test() = nullptr;
     prepare_models_and_warmup_override_state() = nullptr;
   }
@@ -1108,6 +1562,62 @@ TEST(ServerMainArgs, HandleProgramArgumentsParsesShortConfigFlag)
   EXPECT_EQ(cfg.name, "unit_server_main");
 }
 
+TEST(ServerMainArgs, HandleProgramArgumentsDiesWhenConfigValueIsMissing)
+{
+  const std::array<const char*, 2> argv{"starpu_server", "--config"};
+  EXPECT_DEATH(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      "Missing value for --config argument\\.");
+}
+
+TEST(ServerMainArgs, HandleProgramArgumentsDiesWhenConfigValueIsNullptr)
+{
+  const std::array<const char*, 3> argv{"starpu_server", "--config", nullptr};
+  EXPECT_DEATH(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      "Missing value for --config argument\\.");
+}
+
+TEST(ServerMainArgs, HandleProgramArgumentsDiesOnUnexpectedNullRawArgument)
+{
+  const std::array<const char*, 2> argv{"starpu_server", nullptr};
+  EXPECT_DEATH(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      "Unexpected null program argument\\.");
+}
+
+TEST(ServerMainArgs, HandleProgramArgumentsDiesOnUnknownArgument)
+{
+  const std::array<const char*, 2> argv{"starpu_server", "--unknown"};
+  EXPECT_DEATH(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      "Unknown argument '--unknown'");
+}
+
+TEST(ServerMainArgs, HandleProgramArgumentsDiesWhenConfigFlagIsMissing)
+{
+  const std::array<const char*, 1> argv{"starpu_server"};
+  EXPECT_DEATH(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      "Missing required --config argument\\.");
+}
+
+TEST(ServerMainArgs, HandleProgramArgumentsDiesWhenLoadedConfigIsInvalid)
+{
+  const auto missing_config =
+      make_temp_test_path("server_main_missing_config", ".yaml");
+  std::error_code remove_ec;
+  std::filesystem::remove(missing_config, remove_ec);
+  ASSERT_TRUE(remove_ec.value() == 0 || remove_ec.value() == ENOENT);
+
+  const std::string config_path = missing_config.string();
+  const std::array<const char*, 3> argv{
+      "starpu_server", "--config", config_path.c_str()};
+  EXPECT_DEATH(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      "Invalid configuration file\\.");
+}
+
 TEST(ServerMainSignal, SignalHandlerSetsStopFlag)
 {
   signal_stop_requested_flag() = 0;
@@ -1164,6 +1674,113 @@ TEST(
   }
   catch (...) {
     FAIL() << "Expected std::logic_error.";
+  }
+}
+
+TEST(
+    ServerMainThreadExceptionState,
+    RethrowThreadExceptionIfAnyWrapsStdExceptionWithThreadName)
+{
+  ThreadExceptionState state;
+  state.capture(
+      "grpc-server",
+      std::make_exception_ptr(std::runtime_error("grpc thread failure")));
+
+  try {
+    rethrow_thread_exception_if_any(state);
+    FAIL() << "Expected std::runtime_error.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_EQ(
+        std::string(error.what()),
+        "Thread 'grpc-server' terminated with exception: grpc thread failure");
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+}
+
+TEST(
+    ServerMainThreadExceptionState,
+    RethrowThreadExceptionIfAnyWrapsNonStdExceptionWithUnknownMessage)
+{
+  ThreadExceptionState state;
+  state.capture("signal-notifier", std::make_exception_ptr(42));
+
+  try {
+    rethrow_thread_exception_if_any(state);
+    FAIL() << "Expected std::runtime_error.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_EQ(
+        std::string(error.what()),
+        "Thread 'signal-notifier' terminated with unknown exception.");
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+}
+
+TEST(
+    ServerMainThreadEntry,
+    CapturesStdExceptionRequestsStopAndShutsDownQueueWhenQueueProvided)
+{
+  ThreadExceptionState state;
+  ServerContext server_ctx;
+  starpu_server::InferenceQueue queue(4);
+  ASSERT_FALSE(queue.is_shutdown());
+  EXPECT_FALSE(server_ctx.stop_requested.load(std::memory_order_relaxed));
+
+  EXPECT_NO_THROW(run_thread_entry_with_exception_capture(
+      "batching-thread", state, server_ctx, &queue,
+      []() { throw std::runtime_error("std failure"); }));
+
+  EXPECT_TRUE(server_ctx.stop_requested.load(std::memory_order_relaxed));
+  EXPECT_TRUE(queue.is_shutdown());
+
+  auto [captured_exception, thread_name] = state.take();
+  ASSERT_NE(captured_exception, nullptr);
+  EXPECT_EQ(thread_name, "batching-thread");
+  try {
+    std::rethrow_exception(captured_exception);
+    FAIL() << "Expected std::runtime_error to be rethrown.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string(error.what()), "std failure");
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+}
+
+TEST(
+    ServerMainThreadEntry,
+    CapturesNonStdExceptionRequestsStopAndShutsDownQueueWhenQueueProvided)
+{
+  ThreadExceptionState state;
+  ServerContext server_ctx;
+  starpu_server::InferenceQueue queue(4);
+  ASSERT_FALSE(queue.is_shutdown());
+  EXPECT_FALSE(server_ctx.stop_requested.load(std::memory_order_relaxed));
+
+  EXPECT_NO_THROW(run_thread_entry_with_exception_capture(
+      "signal-thread", state, server_ctx, &queue, []() { throw 123; }));
+
+  EXPECT_TRUE(server_ctx.stop_requested.load(std::memory_order_relaxed));
+  EXPECT_TRUE(queue.is_shutdown());
+
+  auto [captured_exception, thread_name] = state.take();
+  ASSERT_NE(captured_exception, nullptr);
+  EXPECT_EQ(thread_name, "signal-thread");
+  try {
+    std::rethrow_exception(captured_exception);
+    FAIL() << "Expected non-standard exception to be rethrown.";
+  }
+  catch (int value) {
+    EXPECT_EQ(value, 123);
+  }
+  catch (...) {
+    FAIL() << "Expected integer exception.";
   }
 }
 
@@ -1258,6 +1875,59 @@ TEST(
   EXPECT_EQ(override_state.warmup_calls, 1);
 }
 
+TEST(
+    ServerMainModelPreparation,
+    PrepareModelsAndWarmupCallsRealLoadModelAndThrowsWhenLoadFails)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  opts.model = starpu_server::ModelConfig{};
+  const auto missing_model =
+      make_temp_test_path("prepare_models_and_warmup_missing_model", ".ts");
+  std::error_code remove_ec;
+  std::filesystem::remove(missing_model, remove_ec);
+  ASSERT_TRUE(remove_ec.value() == 0 || remove_ec.value() == ENOENT);
+  opts.model->path = missing_model.string();
+
+  starpu_server::StarPUSetup starpu(opts);
+  load_model_and_reference_output_override_for_test() = nullptr;
+  run_warmup_override_for_test() = nullptr;
+
+  EXPECT_THROW(
+      (void)prepare_models_and_warmup(opts, starpu),
+      starpu_server::ModelLoadingException);
+}
+
+TEST(
+    ServerMainModelPreparation,
+    PrepareModelsAndWarmupCallsRealRunWarmupWhenOverrideIsUnset)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  opts.batching.warmup_request_nb = 0;
+  opts.batching.warmup_batches_per_worker = 0;
+
+  starpu_server::StarPUSetup starpu(opts);
+  PrepareModelsAndWarmupOverrideState override_state;
+  override_state.load_result = ModelPreparationTuple{
+      torch::jit::script::Module("cpu_model"),
+      std::vector<torch::jit::script::Module>{},
+      std::vector<torch::Tensor>{
+          torch::ones({1, 2}, torch::dtype(torch::kFloat32))}};
+  ScopedLoadModelAndReferenceOutputOverride load_override(override_state);
+  run_warmup_override_for_test() = nullptr;
+
+  auto [model_cpu, models_gpu, reference_outputs] =
+      prepare_models_and_warmup(opts, starpu);
+  (void)model_cpu;
+
+  EXPECT_EQ(override_state.load_calls, 1);
+  EXPECT_EQ(override_state.load_opts, &opts);
+  EXPECT_TRUE(models_gpu.empty());
+  ASSERT_EQ(reference_outputs.size(), 1U);
+  EXPECT_EQ(reference_outputs[0].sizes().size(), 2U);
+  EXPECT_EQ(reference_outputs[0].size(0), 1);
+  EXPECT_EQ(reference_outputs[0].size(1), 2);
+}
+
 TEST(ServerMainModelNameResolution, UsesModelNameWhenConfiguredAndNonEmpty)
 {
   starpu_server::RuntimeConfig opts;
@@ -1285,6 +1955,27 @@ TEST(ServerMainModelNameResolution, FallsBackToConfigNameWhenModelIsNotSet)
   opts.model.reset();
 
   EXPECT_EQ(resolve_default_model_name(opts), "fallback_name");
+}
+
+TEST(ServerMainSchedulerResolution, UsesSchedulerFromStarpuEnvMap)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.starpu_env.emplace(
+      std::string(starpu_server::kStarpuSchedulerEnvVar), "dmda");
+
+  EXPECT_EQ(resolve_starpu_scheduler(opts), "dmda (from starpu_env)");
+}
+
+TEST(ServerMainSchedulerResolution, UsesDefaultSchedulerWhenUnsetEverywhere)
+{
+  ScopedEnvironmentVariableUnsetGuard unset_scheduler_env(
+      std::string(starpu_server::kStarpuSchedulerEnvVar));
+  starpu_server::RuntimeConfig opts;
+  opts.starpu_env.clear();
+
+  EXPECT_EQ(
+      resolve_starpu_scheduler(opts),
+      std::format("{} (default)", starpu_server::kDefaultStarpuScheduler));
 }
 
 TEST(ServerMainWorkerTypeLabel, ReturnsCpuLabelForCpuWorker)
@@ -1610,14 +2301,32 @@ static_assert(std::is_nothrow_invocable_r_v<
               WaitPidNoHangOverrideForTestFn&,
               decltype(waitpid_nohang_override_for_test)>);
 static_assert(std::is_nothrow_invocable_r_v<
+              WaitPidBlockingOverrideForTestFn&,
+              decltype(waitpid_blocking_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              WaitForPlotProcessWaitOverrideForTestFn&,
+              decltype(wait_for_plot_process_wait_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              TerminateAndWaitOverrideForTestFn&,
+              decltype(terminate_and_wait_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
               ResolvePythonCandidatesOverrideForTestFn&,
               decltype(resolve_python_candidates_override_for_test)>);
 static_assert(std::is_nothrow_invocable_r_v<
               ResolvePythonIsRegularFileOverrideForTestFn&,
               decltype(resolve_python_is_regular_file_override_for_test)>);
 static_assert(std::is_nothrow_invocable_r_v<
+              CandidatePlotScriptsReadSymlinkOverrideForTestFn&,
+              decltype(candidate_plot_scripts_read_symlink_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              LocatePlotScriptCandidatesOverrideForTestFn&,
+              decltype(locate_plot_script_candidates_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
               RunPlotScriptOverrideForTestFn&,
               decltype(run_plot_script_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              RunPlotScriptForkOverrideForTestFn&,
+              decltype(run_plot_script_fork_override_for_test)>);
 static_assert(std::is_nothrow_invocable_r_v<
               LocatePlotScriptOverrideForTestFn&,
               decltype(locate_plot_script_override_for_test)>);
@@ -1657,6 +2366,15 @@ static_assert(std::is_nothrow_invocable_r_v<
 static_assert(std::is_nothrow_invocable_r_v<
               DescribeCpuAffinityOverrideForTestFn&,
               decltype(describe_cpu_affinity_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              ShutdownDrainTimeoutOverrideForTestFn&,
+              decltype(shutdown_drain_timeout_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              ShutdownDrainWaitStepOverrideForTestFn&,
+              decltype(shutdown_drain_wait_step_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              ShutdownDrainObserverForTestFn&,
+              decltype(shutdown_drain_observer_for_test)>);
 
 TEST(ServerMainRuntimeCleanupGuard, DestructorPerformsCleanupWhenActive)
 {
@@ -1904,6 +2622,594 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
   ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
       << "launch_threads did not stop within timeout";
   EXPECT_NO_THROW(done_future.get());
+
+  signal_stop_requested_flag() = 0;
+}
+
+TEST(
+    ServerMainOrchestration,
+    LaunchThreadsStopsAfterSignalWhenSignalPipeFallsBackToPolling)
+{
+  if (running_under_tsan()) {
+    GTEST_SKIP()
+        << "Skipped under TSAN: gRPC event-engine triggers known external race "
+           "in absl::raw_hash_set";
+  }
+
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = address;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 8;
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  ScopedSignalPipeForcedPipeFailure forced_pipe_failure;
+  WaitForSignalNotificationReadOverrideState read_override_state;
+  ScopedWaitForSignalNotificationReadOverride read_override_guard(
+      read_override_state);
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs;
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  ASSERT_TRUE(wait_for_channel_ready(address, kServerStartTimeout))
+      << "Timed out waiting for gRPC server startup";
+  EXPECT_EQ(signal_stop_notify_fd(), -1);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  EXPECT_EQ(read_override_state.call_count, 0);
+
+  signal_handler(SIGTERM);
+
+  if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
+    signal_stop_requested_flag() = 1;
+    ctx.stop_requested.store(true, std::memory_order_relaxed);
+    ctx.stop_cv.notify_one();
+  }
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop within timeout in polling fallback mode";
+  EXPECT_NO_THROW(done_future.get());
+  EXPECT_EQ(read_override_state.call_count, 0);
+
+  signal_stop_requested_flag() = 0;
+}
+
+TEST(
+    ServerMainOrchestration,
+    LaunchThreadsPropagatesConfiguredModelInputsAndOutputsToGrpcMetadata)
+{
+  if (running_under_tsan()) {
+    GTEST_SKIP()
+        << "Skipped under TSAN: gRPC event-engine triggers known external race "
+           "in absl::raw_hash_set";
+  }
+
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = address;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 8;
+  opts.batching.max_batch_size = 16;
+  opts.name = "fallback_model_name";
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->name = "configured_model_name";
+  opts.model->inputs = {
+      starpu_server::TensorConfig{
+          .name = "pixels", .dims = {1, 3, 224, 224}, .type = at::kFloat},
+      starpu_server::TensorConfig{
+          .name = "tokens", .dims = {1, 128}, .type = at::kFloat},
+  };
+  opts.model->outputs = {
+      starpu_server::TensorConfig{
+          .name = "logits", .dims = {1, 1000}, .type = at::kFloat},
+      starpu_server::TensorConfig{
+          .name = "labels", .dims = {1}, .type = at::kFloat},
+  };
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs = {
+      torch::zeros({1, 1000}, torch::dtype(torch::kFloat32)),
+      torch::zeros({1}, torch::dtype(torch::kFloat32)),
+  };
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  ASSERT_TRUE(wait_for_channel_ready(address, kServerStartTimeout))
+      << "Timed out waiting for gRPC server startup";
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  auto stub = inference::GRPCInferenceService::NewStub(channel);
+  grpc::ClientContext rpc_ctx;
+  rpc_ctx.set_deadline(
+      std::chrono::system_clock::now() + std::chrono::seconds(2));
+  inference::ModelMetadataRequest request;
+  request.set_name("client_requested_model");
+  inference::ModelMetadataResponse response;
+
+  const auto status = stub->ModelMetadata(&rpc_ctx, request, &response);
+  ASSERT_TRUE(status.ok()) << status.error_message();
+
+  EXPECT_EQ(response.name(), "configured_model_name");
+  ASSERT_EQ(response.inputs_size(), 2);
+  EXPECT_EQ(response.inputs(0).name(), "pixels");
+  EXPECT_EQ(response.inputs(0).datatype(), "FP32");
+  ASSERT_EQ(response.inputs(0).shape_size(), 4);
+  EXPECT_EQ(response.inputs(0).shape(0), 1);
+  EXPECT_EQ(response.inputs(0).shape(1), 3);
+  EXPECT_EQ(response.inputs(0).shape(2), 224);
+  EXPECT_EQ(response.inputs(0).shape(3), 224);
+  EXPECT_EQ(response.inputs(1).name(), "tokens");
+  EXPECT_EQ(response.inputs(1).datatype(), "FP32");
+  ASSERT_EQ(response.inputs(1).shape_size(), 2);
+  EXPECT_EQ(response.inputs(1).shape(0), 1);
+  EXPECT_EQ(response.inputs(1).shape(1), 128);
+
+  ASSERT_EQ(response.outputs_size(), 2);
+  EXPECT_EQ(response.outputs(0).name(), "logits");
+  EXPECT_EQ(response.outputs(0).datatype(), "FP32");
+  ASSERT_EQ(response.outputs(0).shape_size(), 2);
+  EXPECT_EQ(response.outputs(0).shape(0), 1);
+  EXPECT_EQ(response.outputs(0).shape(1), 1000);
+  EXPECT_EQ(response.outputs(1).name(), "labels");
+  EXPECT_EQ(response.outputs(1).datatype(), "FP32");
+  ASSERT_EQ(response.outputs(1).shape_size(), 1);
+  EXPECT_EQ(response.outputs(1).shape(0), 1);
+
+  signal_handler(SIGTERM);
+
+  if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
+    signal_stop_requested_flag() = 1;
+    ctx.stop_requested.store(true, std::memory_order_relaxed);
+    ctx.stop_cv.notify_one();
+  }
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop within timeout after metadata RPC";
+  EXPECT_NO_THROW(done_future.get());
+
+  signal_stop_requested_flag() = 0;
+}
+
+TEST(
+    ServerMainOrchestration,
+    LaunchThreadsLogsShutdownDrainWhenJobsRemainIncompleteAtShutdown)
+{
+  if (running_under_tsan()) {
+    GTEST_SKIP()
+        << "Skipped under TSAN: gRPC event-engine triggers known external race "
+           "in absl::raw_hash_set";
+  }
+
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+  constexpr auto kHookEnteredTimeout = std::chrono::seconds(5);
+  constexpr auto kQueueShutdownTimeout = std::chrono::seconds(5);
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = address;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 8;
+  opts.batching.max_batch_size = 4;
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->name = "shutdown_drain_model";
+  opts.model->inputs = {
+      starpu_server::TensorConfig{
+          .name = "input0", .dims = {2}, .type = at::kFloat},
+  };
+  opts.model->outputs = {
+      starpu_server::TensorConfig{
+          .name = "output0", .dims = {2}, .type = at::kFloat},
+  };
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  std::mutex hook_mutex;
+  std::condition_variable hook_cv;
+  bool hook_entered = false;
+  bool release_hook = false;
+  ScopedRunBeforeSubmitHook run_before_submit_hook([&]() {
+    std::unique_lock<std::mutex> lock(hook_mutex);
+    hook_entered = true;
+    hook_cv.notify_one();
+    hook_cv.wait(lock, [&release_hook]() { return release_hook; });
+  });
+  ScopedSubmitInferenceTaskHook submit_hook([]() {
+    throw std::runtime_error("forced submit failure for shutdown drain test");
+  });
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs;
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  OStreamCapture capture_out(std::cout);
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  ASSERT_TRUE(wait_for_channel_ready(address, kServerStartTimeout))
+      << "Timed out waiting for gRPC server startup";
+
+  auto queued_job = std::make_shared<starpu_server::InferenceJob>(
+      std::vector<torch::Tensor>{
+          torch::ones({1, 2}, torch::dtype(torch::kFloat32))},
+      std::vector<at::ScalarType>{at::kFloat}, 1337);
+  ASSERT_TRUE(queue.push(queued_job));
+
+  {
+    std::unique_lock<std::mutex> lock(hook_mutex);
+    ASSERT_TRUE(hook_cv.wait_for(lock, kHookEnteredTimeout, [&hook_entered]() {
+      return hook_entered;
+    })) << "Timed out waiting for worker to block before submit";
+  }
+
+  signal_handler(SIGTERM);
+
+  const auto queue_shutdown_observed = [&queue, kQueueShutdownTimeout]() {
+    const auto deadline =
+        std::chrono::steady_clock::now() + kQueueShutdownTimeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (queue.is_shutdown()) {
+        return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return queue.is_shutdown();
+  }();
+  ASSERT_TRUE(queue_shutdown_observed)
+      << "Timed out waiting for launch_threads to start shutdown drain";
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  {
+    std::lock_guard<std::mutex> lock(hook_mutex);
+    release_hook = true;
+  }
+  hook_cv.notify_all();
+
+  if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
+    {
+      std::lock_guard<std::mutex> lock(hook_mutex);
+      release_hook = true;
+    }
+    hook_cv.notify_all();
+    signal_stop_requested_flag() = 1;
+    ctx.stop_requested.store(true, std::memory_order_relaxed);
+    ctx.stop_cv.notify_one();
+  }
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop within timeout in shutdown drain path";
+  EXPECT_NO_THROW(done_future.get());
+
+  EXPECT_NE(
+      capture_out.str().find("Shutdown drain started: completed="),
+      std::string::npos);
+
+  signal_stop_requested_flag() = 0;
+}
+
+TEST(
+    ServerMainOrchestration,
+    LaunchThreadsDrainLoopBreaksWhenCompletedReachesTotalJobs)
+{
+  if (running_under_tsan()) {
+    GTEST_SKIP()
+        << "Skipped under TSAN: gRPC event-engine triggers known external race "
+           "in absl::raw_hash_set";
+  }
+
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+  constexpr auto kCompletionObservedTimeout = std::chrono::seconds(5);
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = address;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 8;
+  opts.batching.max_batch_size = 4;
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->name = "drain_completed_model";
+  opts.model->inputs = {
+      starpu_server::TensorConfig{
+          .name = "input0", .dims = {2}, .type = at::kFloat},
+  };
+  opts.model->outputs = {
+      starpu_server::TensorConfig{
+          .name = "output0", .dims = {2}, .type = at::kFloat},
+  };
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  ShutdownDrainOverrideState drain_state;
+  ScopedShutdownDrainOverrides shutdown_drain_overrides(drain_state);
+
+  std::mutex completion_mutex;
+  std::condition_variable completion_cv;
+  bool completion_observed = false;
+  starpu_server::ResultDispatcher::PrepareJobCompletionCallbackTestHooks
+      completion_hooks;
+  completion_hooks.before_dispatch = [&]() {
+    std::lock_guard<std::mutex> lock(completion_mutex);
+    completion_observed = true;
+    completion_cv.notify_one();
+  };
+  ScopedPrepareJobCompletionCallbackHooks completion_hooks_guard(
+      std::move(completion_hooks));
+  ScopedSubmitInferenceTaskHook submit_hook([]() {
+    throw std::runtime_error(
+        "forced submit failure for completed>=total drain test");
+  });
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs = {
+      torch::zeros({1, 2}, torch::dtype(torch::kFloat32))};
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  ASSERT_TRUE(wait_for_channel_ready(address, kServerStartTimeout))
+      << "Timed out waiting for gRPC server startup";
+
+  auto queued_job = std::make_shared<starpu_server::InferenceJob>(
+      std::vector<torch::Tensor>{
+          torch::ones({1, 2}, torch::dtype(torch::kFloat32))},
+      std::vector<at::ScalarType>{at::kFloat}, 2001);
+  ASSERT_TRUE(queue.push(queued_job));
+
+  {
+    std::unique_lock<std::mutex> lock(completion_mutex);
+    ASSERT_TRUE(completion_cv.wait_for(
+        lock, kCompletionObservedTimeout,
+        [&completion_observed]() { return completion_observed; }))
+        << "Timed out waiting for completion callback to be reached";
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  signal_handler(SIGTERM);
+
+  if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
+    signal_stop_requested_flag() = 1;
+    ctx.stop_requested.store(true, std::memory_order_relaxed);
+    ctx.stop_cv.notify_one();
+  }
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop within timeout in completed drain path";
+  EXPECT_NO_THROW(done_future.get());
+
+  EXPECT_GT(drain_state.entered_calls, 0);
+  EXPECT_GT(drain_state.completed_reached_total_calls, 0);
+  EXPECT_EQ(drain_state.deadline_reached_calls, 0);
+
+  signal_stop_requested_flag() = 0;
+}
+
+TEST(
+    ServerMainOrchestration,
+    LaunchThreadsDrainLoopWaitsAndTimesOutWhenJobsRemainIncomplete)
+{
+  if (running_under_tsan()) {
+    GTEST_SKIP()
+        << "Skipped under TSAN: gRPC event-engine triggers known external race "
+           "in absl::raw_hash_set";
+  }
+
+  constexpr auto kLaunchTimeout = std::chrono::seconds(10);
+  constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+  constexpr auto kHookEnteredTimeout = std::chrono::seconds(5);
+  constexpr auto kDeadlineObservedTimeout = std::chrono::seconds(5);
+
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::RuntimeConfig opts;
+  opts.server_address = address;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 8;
+  opts.batching.max_batch_size = 4;
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->name = "drain_timeout_model";
+  opts.model->inputs = {
+      starpu_server::TensorConfig{
+          .name = "input0", .dims = {2}, .type = at::kFloat},
+  };
+  opts.model->outputs = {
+      starpu_server::TensorConfig{
+          .name = "output0", .dims = {2}, .type = at::kFloat},
+  };
+
+  signal_stop_requested_flag() = 0;
+  auto& ctx = server_context();
+  ctx.stop_requested.store(false, std::memory_order_relaxed);
+
+  ShutdownDrainOverrideState drain_state;
+  drain_state.timeout = std::chrono::milliseconds(200);
+  drain_state.wait_step = std::chrono::milliseconds(5);
+  ScopedShutdownDrainOverrides shutdown_drain_overrides(drain_state);
+
+  std::mutex hook_mutex;
+  std::condition_variable hook_cv;
+  bool hook_entered = false;
+  bool release_hook = false;
+  ScopedRunBeforeSubmitHook run_before_submit_hook([&]() {
+    std::unique_lock<std::mutex> lock(hook_mutex);
+    hook_entered = true;
+    hook_cv.notify_one();
+    hook_cv.wait(lock, [&release_hook]() { return release_hook; });
+  });
+  ScopedSubmitInferenceTaskHook submit_hook([]() {
+    throw std::runtime_error(
+        "forced submit failure for timeout drain test after unblock");
+  });
+
+  starpu_server::StarPUSetup starpu(opts);
+  torch::jit::script::Module model_cpu("m");
+  std::vector<torch::jit::script::Module> models_gpu;
+  std::vector<torch::Tensor> reference_outputs = {
+      torch::zeros({1, 2}, torch::dtype(torch::kFloat32))};
+  starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+
+  OStreamCapture capture_err(std::cerr);
+  std::promise<void> done_promise;
+  auto done_future = done_promise.get_future();
+
+  std::jthread launch_thread([&]() {
+    try {
+      launch_threads(
+          opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
+      done_promise.set_value();
+    }
+    catch (...) {
+      done_promise.set_exception(std::current_exception());
+    }
+  });
+
+  ASSERT_TRUE(wait_for_channel_ready(address, kServerStartTimeout))
+      << "Timed out waiting for gRPC server startup";
+
+  auto queued_job = std::make_shared<starpu_server::InferenceJob>(
+      std::vector<torch::Tensor>{
+          torch::ones({1, 2}, torch::dtype(torch::kFloat32))},
+      std::vector<at::ScalarType>{at::kFloat}, 2002);
+  ASSERT_TRUE(queue.push(queued_job));
+
+  {
+    std::unique_lock<std::mutex> lock(hook_mutex);
+    ASSERT_TRUE(hook_cv.wait_for(lock, kHookEnteredTimeout, [&hook_entered]() {
+      return hook_entered;
+    })) << "Timed out waiting for worker to block before submit";
+  }
+
+  signal_handler(SIGTERM);
+
+  {
+    std::unique_lock<std::mutex> lock(drain_state.mutex);
+    ASSERT_TRUE(drain_state.cv.wait_for(
+        lock, kDeadlineObservedTimeout,
+        [&drain_state]() { return drain_state.deadline_reached_calls > 0; }))
+        << "Timed out waiting for shutdown drain deadline branch";
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(hook_mutex);
+    release_hook = true;
+  }
+  hook_cv.notify_all();
+
+  if (done_future.wait_for(kLaunchTimeout) != std::future_status::ready) {
+    {
+      std::lock_guard<std::mutex> lock(hook_mutex);
+      release_hook = true;
+    }
+    hook_cv.notify_all();
+    signal_stop_requested_flag() = 1;
+    ctx.stop_requested.store(true, std::memory_order_relaxed);
+    ctx.stop_cv.notify_one();
+  }
+
+  ASSERT_EQ(done_future.wait_for(kLaunchTimeout), std::future_status::ready)
+      << "launch_threads did not stop within timeout in timeout drain path";
+  EXPECT_NO_THROW(done_future.get());
+
+  EXPECT_GT(drain_state.entered_calls, 0);
+  EXPECT_GT(drain_state.before_wait_calls, 0);
+  EXPECT_GT(drain_state.deadline_reached_calls, 0);
+  EXPECT_NE(
+      capture_err.str().find("Shutdown drain timeout after"),
+      std::string::npos);
 
   signal_stop_requested_flag() = 0;
 }
@@ -2287,6 +3593,145 @@ TEST(
       std::filesystem::path("/tmp/python_candidate_status_error"));
 }
 
+TEST(
+    ServerMainPlotScript,
+    CandidatePlotScriptsReturnsEmptyWhenExecutableSymlinkReadFails)
+{
+  CandidatePlotScriptsReadSymlinkOverrideState override_state;
+  override_state.error = std::make_error_code(std::errc::io_error);
+  override_state.resolved_executable_path = "/tmp/unused";
+  ScopedCandidatePlotScriptsReadSymlinkOverride override_guard(override_state);
+
+  const auto candidates = candidate_plot_scripts();
+
+  EXPECT_TRUE(candidates.empty());
+  EXPECT_EQ(override_state.call_count, 1);
+  EXPECT_EQ(override_state.observed_link_path, "/proc/self/exe");
+}
+
+TEST(
+    ServerMainPlotScript,
+    CandidatePlotScriptsStopsWhenBaseDirectoryHasNoParentPath)
+{
+  CandidatePlotScriptsReadSymlinkOverrideState override_state;
+  override_state.error.clear();
+  override_state.resolved_executable_path = "starpu_server";
+  ScopedCandidatePlotScriptsReadSymlinkOverride override_guard(override_state);
+
+  const auto candidates = candidate_plot_scripts();
+
+  ASSERT_EQ(candidates.size(), 1U);
+  EXPECT_EQ(candidates.front(), "scripts/plot_batch_summary.py");
+  EXPECT_EQ(override_state.call_count, 1);
+  EXPECT_EQ(override_state.observed_link_path, "/proc/self/exe");
+}
+
+TEST(ServerMainPlotScript, LocatePlotScriptSkipsEmptyCandidates)
+{
+  auto temp_directory =
+      make_temp_test_directory("locate_plot_script_empty_candidate");
+  const auto script_path = temp_directory.path / "plot_batch_summary.py";
+  {
+    std::ofstream script_file(script_path);
+    ASSERT_TRUE(script_file.is_open());
+    script_file << "#!/usr/bin/env python3\n";
+  }
+  ASSERT_TRUE(std::filesystem::is_regular_file(script_path));
+
+  LocatePlotScriptCandidatesOverrideState override_state;
+  override_state.candidates = {std::filesystem::path{}, script_path};
+  ScopedLocatePlotScriptCandidatesOverride override_guard(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  const auto located = locate_plot_script(opts);
+
+  ASSERT_TRUE(located.has_value());
+  EXPECT_EQ(*located, script_path);
+  EXPECT_EQ(override_state.call_count, 1);
+}
+
+TEST(ServerMainPlotScript, LocatePlotScriptResolvesRelativeCandidateToAbsolute)
+{
+  auto temp_directory = make_temp_test_directory("locate_plot_script_relative");
+  const auto script_path = temp_directory.path / "plot_batch_summary.py";
+  {
+    std::ofstream script_file(script_path);
+    ASSERT_TRUE(script_file.is_open());
+    script_file << "#!/usr/bin/env python3\n";
+  }
+  ASSERT_TRUE(std::filesystem::is_regular_file(script_path));
+
+  std::error_code rel_ec;
+  const auto relative_candidate = std::filesystem::relative(
+      script_path, std::filesystem::current_path(), rel_ec);
+  ASSERT_FALSE(rel_ec);
+  ASSERT_FALSE(relative_candidate.empty());
+  ASSERT_FALSE(relative_candidate.is_absolute());
+
+  LocatePlotScriptCandidatesOverrideState override_state;
+  override_state.candidates = {relative_candidate};
+  ScopedLocatePlotScriptCandidatesOverride override_guard(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  const auto located = locate_plot_script(opts);
+
+  ASSERT_TRUE(located.has_value());
+  EXPECT_EQ(*located, std::filesystem::absolute(relative_candidate));
+  EXPECT_TRUE(located->is_absolute());
+  EXPECT_EQ(override_state.call_count, 1);
+}
+
+TEST(
+    ServerMainPlotScript,
+    LocatePlotScriptSkipsNonRegularFileCandidatesBeforeReturningAFile)
+{
+  auto temp_directory =
+      make_temp_test_directory("locate_plot_script_type_check");
+  const auto directory_candidate = temp_directory.path / "plot_dir";
+  ASSERT_TRUE(std::filesystem::create_directories(directory_candidate));
+  const auto script_path = temp_directory.path / "plot_batch_summary.py";
+  {
+    std::ofstream script_file(script_path);
+    ASSERT_TRUE(script_file.is_open());
+    script_file << "#!/usr/bin/env python3\n";
+  }
+  ASSERT_TRUE(std::filesystem::is_directory(directory_candidate));
+  ASSERT_TRUE(std::filesystem::is_regular_file(script_path));
+
+  LocatePlotScriptCandidatesOverrideState override_state;
+  override_state.candidates = {directory_candidate, script_path};
+  ScopedLocatePlotScriptCandidatesOverride override_guard(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  const auto located = locate_plot_script(opts);
+
+  ASSERT_TRUE(located.has_value());
+  EXPECT_EQ(*located, script_path);
+  EXPECT_EQ(override_state.call_count, 1);
+}
+
+TEST(
+    ServerMainPlotScript,
+    LocatePlotScriptReturnsNulloptWhenNoCandidateCanBeUsed)
+{
+  auto temp_directory = make_temp_test_directory("locate_plot_script_nullopt");
+  const auto missing_candidate = temp_directory.path / "missing_plot.py";
+  const auto directory_candidate =
+      temp_directory.path / "non_regular_candidate";
+  ASSERT_TRUE(std::filesystem::create_directories(directory_candidate));
+
+  LocatePlotScriptCandidatesOverrideState override_state;
+  override_state.candidates = {
+      std::filesystem::path{}, missing_candidate, directory_candidate};
+  ScopedLocatePlotScriptCandidatesOverride override_guard(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  const auto located = locate_plot_script(opts);
+
+  EXPECT_FALSE(located.has_value());
+  EXPECT_EQ(override_state.call_count, 1);
+}
+
 TEST(ServerMainPlotScript, LocatePlotScriptFindsRepositoryScript)
 {
   starpu_server::RuntimeConfig opts;
@@ -2339,6 +3784,44 @@ TEST(ServerMainPlotPath, RunTracePlotsReturnsImmediatelyWhenTracingDisabled)
   EXPECT_EQ(override_state.locate_calls, 0);
   EXPECT_EQ(override_state.run_calls, 0);
   EXPECT_EQ(capture_err.str(), "");
+  EXPECT_EQ(capture_out.str(), "");
+}
+
+TEST(
+    ServerMainPlotPath,
+    RunTracePlotsUsesTracerSummaryPathWhenSummaryOverrideIsUnset)
+{
+  ScopedTraceLoggerReset trace_logger_reset;
+  trace_summary_file_path_override_for_test() = nullptr;
+  locate_plot_script_override_for_test() = nullptr;
+  run_plot_script_override_for_test() = nullptr;
+
+  auto temp_directory =
+      make_temp_test_directory("run_trace_plots_tracer_summary_path");
+  const auto trace_path = temp_directory.path / "perfetto_trace.json";
+
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(true, trace_path.string());
+  const auto summary_path_opt = tracer.summary_file_path();
+  ASSERT_TRUE(summary_path_opt.has_value());
+  const auto summary_path = *summary_path_opt;
+  ASSERT_TRUE(std::filesystem::exists(summary_path));
+  std::error_code remove_ec;
+  std::filesystem::remove(summary_path, remove_ec);
+  ASSERT_FALSE(remove_ec);
+  ASSERT_FALSE(std::filesystem::exists(summary_path));
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.trace_enabled = true;
+
+  OStreamCapture capture_err(std::cerr);
+  OStreamCapture capture_out(std::cout);
+  run_trace_plots_if_enabled(opts);
+
+  EXPECT_EQ(
+      capture_err.str(), expected_warning_log(
+                             "Tracing summary file '" + summary_path.string() +
+                             "' not found; skipping plot generation."));
   EXPECT_EQ(capture_out.str(), "");
 }
 
@@ -2570,6 +4053,66 @@ TEST(ServerMainPlotProcess, WaitForPlotProcessReturnsChildExitCode)
   EXPECT_EQ(*exit_code, 7);
 }
 
+TEST(ServerMainPlotProcess, WaitForPlotProcessReturnsNulloptOnWaitError)
+{
+  WaitForPlotProcessOverrideState override_state;
+  override_state.wait_result = {WaitOutcome::Error, std::nullopt};
+  override_state.terminate_result = 99;
+  ScopedWaitForPlotProcessOverrides override_guard(override_state);
+
+  const auto exit_code = wait_for_plot_process(4444);
+
+  EXPECT_EQ(override_state.wait_calls, 1);
+  EXPECT_EQ(override_state.wait_pid, 4444);
+  EXPECT_EQ(
+      override_state.wait_timeout, std::chrono::steady_clock::duration::zero());
+  EXPECT_EQ(override_state.terminate_calls, 0);
+  EXPECT_FALSE(exit_code.has_value());
+}
+
+TEST(ServerMainPlotProcess, WaitForPlotProcessDelegatesToTerminateAndWait)
+{
+  WaitForPlotProcessOverrideState override_state;
+  override_state.wait_result = {WaitOutcome::TimedOut, std::nullopt};
+  override_state.terminate_result = 17;
+  ScopedWaitForPlotProcessOverrides override_guard(override_state);
+
+  const auto exit_code = wait_for_plot_process(5555);
+
+  EXPECT_EQ(override_state.wait_calls, 1);
+  EXPECT_EQ(override_state.wait_pid, 5555);
+  EXPECT_EQ(override_state.terminate_calls, 1);
+  EXPECT_EQ(override_state.terminate_pid, 5555);
+  ASSERT_TRUE(exit_code.has_value());
+  EXPECT_EQ(*exit_code, 17);
+}
+
+TEST(
+    ServerMainPlotProcess,
+    WaitForPlotProcessCallsRealTerminateAndWaitWhenTerminateOverrideMissing)
+{
+  const pid_t pid = spawn_sleeping_child(false);
+  ASSERT_GT(pid, 0);
+
+  WaitForPlotProcessOverrideState override_state;
+  override_state.wait_result = {WaitOutcome::TimedOut, std::nullopt};
+  ScopedWaitForPlotProcessOverrides override_guard(override_state);
+  terminate_and_wait_override_for_test() = nullptr;
+
+  OStreamCapture capture_err(std::cerr);
+  const auto exit_code = wait_for_plot_process(pid);
+
+  EXPECT_EQ(override_state.wait_calls, 1);
+  EXPECT_EQ(override_state.wait_pid, pid);
+  EXPECT_EQ(override_state.terminate_calls, 0);
+  ASSERT_TRUE(exit_code.has_value());
+  EXPECT_TRUE(*exit_code == 128 + SIGTERM || *exit_code == 128 + SIGKILL)
+      << "Expected SIGTERM or SIGKILL exit code, got " << *exit_code;
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log("Plot generation timed out; terminating python3."));
+}
+
 TEST(ServerMainPlotProcess, WaitStatusToExitCodeReturnsNulloptForStoppedStatus)
 {
   // Typical POSIX wait status encoding for a stopped process.
@@ -2624,6 +4167,74 @@ TEST(
           std::strerror(ECHILD)));
 }
 
+TEST(
+    ServerMainPlotProcess,
+    WaitForExitWithTimeoutReturnsErrorWhenWaitpidNohangFails)
+{
+  WaitPidNoHangOverrideState override_state;
+  override_state.waitpid_results = {-1};
+  override_state.errnos = {ECHILD};
+  ScopedWaitPidNoHangOverride override_guard(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  const auto result =
+      wait_for_exit_with_timeout(13579, std::chrono::milliseconds(20));
+
+  EXPECT_EQ(override_state.call_count, 1);
+  EXPECT_EQ(override_state.last_pid, 13579);
+  EXPECT_EQ(override_state.last_options, WNOHANG);
+  EXPECT_EQ(result.outcome, WaitOutcome::Error);
+  EXPECT_FALSE(result.exit_code.has_value());
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          std::string("Failed to wait for plot generation process: ") +
+          std::strerror(ECHILD)));
+}
+
+TEST(ServerMainPlotProcess, WaitForExitBlockingRetriesWhenInterruptedBySignal)
+{
+  WaitPidBlockingOverrideState override_state;
+  constexpr pid_t kPid = 24680;
+  constexpr int exited_status = 5 << 8;
+  ASSERT_TRUE(WIFEXITED(exited_status));
+  override_state.waitpid_results = {-1, kPid};
+  override_state.errnos = {EINTR, 0};
+  override_state.statuses = {0, exited_status};
+  ScopedWaitPidBlockingOverride override_guard(override_state);
+
+  const auto exit_code = wait_for_exit_blocking(kPid);
+
+  EXPECT_EQ(override_state.call_count, 2);
+  EXPECT_EQ(override_state.last_pid, kPid);
+  EXPECT_EQ(override_state.last_options, 0);
+  ASSERT_TRUE(exit_code.has_value());
+  EXPECT_EQ(*exit_code, 5);
+}
+
+TEST(
+    ServerMainPlotProcess,
+    WaitForExitBlockingReturnsNulloptWhenWaitpidFailsWithNonEintr)
+{
+  WaitPidBlockingOverrideState override_state;
+  override_state.waitpid_results = {-1};
+  override_state.errnos = {ECHILD};
+  ScopedWaitPidBlockingOverride override_guard(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  const auto exit_code = wait_for_exit_blocking(86420);
+
+  EXPECT_EQ(override_state.call_count, 1);
+  EXPECT_EQ(override_state.last_pid, 86420);
+  EXPECT_EQ(override_state.last_options, 0);
+  EXPECT_FALSE(exit_code.has_value());
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          std::string("Failed to wait for plot generation process: ") +
+          std::strerror(ECHILD)));
+}
+
 TEST(ServerMainPlotProcess, LogWaitpidErrorLogsWarningWithErrnoMessage)
 {
   const int saved_errno = errno;
@@ -2658,6 +4269,56 @@ TEST(ServerMainPlotProcess, WaitForExitWithTimeoutTimesOutThenReapsChild)
 }
 
 TEST(
+    ServerMainPlotProcess,
+    TerminateAndWaitReturnsExitCodeWhenTermWaitReportsExited)
+{
+  WaitPidNoHangOverrideState override_state;
+  constexpr pid_t kPid = 31415;
+  constexpr int exited_status = 3 << 8;
+  ASSERT_TRUE(WIFEXITED(exited_status));
+  override_state.waitpid_results = {kPid};
+  override_state.errnos = {0};
+  override_state.statuses = {exited_status};
+  ScopedWaitPidNoHangOverride override_guard(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  const auto exit_code = terminate_and_wait(kPid);
+
+  EXPECT_EQ(override_state.call_count, 1);
+  EXPECT_EQ(override_state.last_pid, kPid);
+  EXPECT_EQ(override_state.last_options, WNOHANG);
+  ASSERT_TRUE(exit_code.has_value());
+  EXPECT_EQ(*exit_code, 3);
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log("Plot generation timed out; terminating python3."));
+}
+
+TEST(
+    ServerMainPlotProcess,
+    TerminateAndWaitReturnsNulloptWhenTermWaitReportsError)
+{
+  WaitPidNoHangOverrideState override_state;
+  override_state.waitpid_results = {-1};
+  override_state.errnos = {ECHILD};
+  ScopedWaitPidNoHangOverride override_guard(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  const auto exit_code = terminate_and_wait(27182);
+
+  EXPECT_EQ(override_state.call_count, 1);
+  EXPECT_EQ(override_state.last_pid, 27182);
+  EXPECT_EQ(override_state.last_options, WNOHANG);
+  EXPECT_FALSE(exit_code.has_value());
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log("Plot generation timed out; terminating python3.") +
+          expected_warning_log(
+              std::string("Failed to wait for plot generation process: ") +
+              std::strerror(ECHILD)));
+}
+
+TEST(
     ServerMainPlotProcess, TerminateAndWaitEscalatesToSigkillWhenSigtermIgnored)
 {
   const pid_t pid = spawn_sleeping_child(true);
@@ -2666,6 +4327,58 @@ TEST(
   const auto exit_code = terminate_and_wait(pid);
   ASSERT_TRUE(exit_code.has_value());
   EXPECT_EQ(*exit_code, 128 + SIGKILL);
+}
+
+TEST(ServerMainPlotProcess, RunPlotScriptReturnsNulloptWhenPythonNotFound)
+{
+  ResolvePythonExecutableOverrideState override_state;
+  override_state.candidates = {};
+  override_state.is_regular_file_result = false;
+  override_state.force_status_error = false;
+  ScopedResolvePythonExecutableOverrides overrides(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  const auto exit_code = run_plot_script(
+      "/tmp/fake_plot_batch_summary.py", "/tmp/fake_summary.csv",
+      "/tmp/fake_output.png");
+
+  EXPECT_FALSE(exit_code.has_value());
+  EXPECT_EQ(override_state.candidates_calls, 1);
+  EXPECT_EQ(override_state.is_regular_file_calls, 0);
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          "python3 was not found in the allowlist; skipping plot generation."));
+}
+
+TEST(ServerMainPlotProcess, RunPlotScriptReturnsNulloptWhenForkFails)
+{
+  ResolvePythonExecutableOverrideState python_override_state;
+  python_override_state.candidates = {"/bin/sh"};
+  python_override_state.is_regular_file_result = true;
+  python_override_state.force_status_error = false;
+  ScopedResolvePythonExecutableOverrides python_overrides(
+      python_override_state);
+
+  RunPlotScriptForkOverrideState fork_override_state;
+  fork_override_state.result = -1;
+  fork_override_state.error_number = EAGAIN;
+  ScopedRunPlotScriptForkOverride fork_override(fork_override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  const auto exit_code = run_plot_script(
+      "/tmp/fake_plot_batch_summary.py", "/tmp/fake_summary.csv",
+      "/tmp/fake_output.png");
+
+  EXPECT_FALSE(exit_code.has_value());
+  EXPECT_EQ(python_override_state.candidates_calls, 1);
+  EXPECT_EQ(python_override_state.is_regular_file_calls, 1);
+  EXPECT_EQ(fork_override_state.call_count, 1);
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          std::string("Failed to launch python3 for plot generation: ") +
+          std::strerror(EAGAIN)));
 }
 
 TEST(ServerMainPlotProcess, RunPlotScriptReturnsNonZeroForMissingScript)
