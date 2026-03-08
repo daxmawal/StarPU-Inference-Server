@@ -1925,6 +1925,52 @@ TEST(ConfigLoader, CongestionRejectsNonMapping)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, CongestionLatencySloRejectsNegative)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_negative_latency_slo_model.pt");
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += "  latency_slo_ms: -1\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_negative_latency_slo.yaml";
+  std::ofstream(tmp) << yaml;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: latency_slo_ms must be >= 0";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, CongestionQueueLatencyBudgetMsRejectsNegative)
+{
+  const auto model_path = WriteEmptyModelFile(
+      "config_loader_negative_queue_latency_budget_model.pt");
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += "  queue_latency_budget_ms: -1\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_negative_queue_latency_budget.yaml";
+  std::ofstream(tmp) << yaml;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: queue_latency_budget_ms must be >= 0";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, CongestionQueueLatencyBudgetRatioRejectsNegative)
 {
   const auto model_path =
@@ -2180,6 +2226,56 @@ TEST(ConfigLoader, CongestionEwmaRejectsAboveOne)
 
   const std::string expected_error =
       "Failed to load config: alpha_ewma must be in (0, 1]";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, CongestionEntryHorizonRejectsNonPositive)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_entry_horizon_nonpositive_model.pt");
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += "  entry_horizon_ms: 0\n";
+  yaml += "  exit_horizon_ms: 10\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_entry_horizon_nonpositive.yaml";
+  std::ofstream(tmp) << yaml;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: entry_horizon_ms must be > 0 and fit in int";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, CongestionEntryHorizonRejectsValueAboveIntMax)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_entry_horizon_too_large_model.pt");
+  const auto too_large =
+      static_cast<long long>(std::numeric_limits<int>::max()) + 1LL;
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += std::format("  entry_horizon_ms: {}\n", too_large);
+  yaml += "  exit_horizon_ms: 10\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_entry_horizon_too_large.yaml";
+  std::ofstream(tmp) << yaml;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: entry_horizon_ms must be > 0 and fit in int";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);

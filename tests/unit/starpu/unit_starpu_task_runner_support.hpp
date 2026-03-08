@@ -326,6 +326,13 @@ class StarPUTaskRunnerTestAdapter {
     runner->finalize_job_after_exception(job, exception, log_prefix, job_id);
   }
 
+  static void finalize_job_after_unknown_exception(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      std::string_view log_prefix, int job_id)
+  {
+    runner->finalize_job_after_unknown_exception(job, log_prefix, job_id);
+  }
+
   static auto wait_for_prepared_job(StarPUTaskRunner* runner)
       -> std::shared_ptr<InferenceJob>
   {
@@ -468,6 +475,14 @@ class StarPUTaskRunnerTestAdapter {
     }
   }
 
+  static void handle_cancelled_job(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job)
+  {
+    if (runner != nullptr) {
+      runner->handle_cancelled_job(job);
+    }
+  }
+
   static auto should_hold_job(
       const std::shared_ptr<InferenceJob>& candidate,
       const std::shared_ptr<InferenceJob>& reference,
@@ -519,6 +534,13 @@ class StarPUTaskRunnerTestAdapter {
       return 0;
     }
     return runner->inflight_state_->max_tasks;
+  }
+
+  static void set_inflight_state_to_null(StarPUTaskRunner* runner)
+  {
+    if (runner != nullptr) {
+      runner->inflight_state_.reset();
+    }
   }
 
   static void set_result_dispatcher(

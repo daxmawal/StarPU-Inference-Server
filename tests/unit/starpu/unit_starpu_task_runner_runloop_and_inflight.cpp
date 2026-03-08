@@ -546,6 +546,75 @@ TEST_F(StarPUTaskRunnerFixture, TryAcquireNextJobReturnsNullWhenDeadlinePassed)
   EXPECT_EQ(job, nullptr);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture, RunRethrowsStdExceptionEscapedFromBatchingThread)
+{
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  BatchCollectorAfterBuildJobHookGuard hook_guard{
+      [](std::shared_ptr<starpu_server::InferenceJob>&) {
+        throw std::runtime_error("batching thread failure");
+      }};
+
+  try {
+    runner_->run();
+    FAIL() << "Expected run() to rethrow batching thread failure.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_NE(
+        std::string(error.what())
+            .find("Unhandled exception escaped 'starpu-batching' thread: "
+                  "batching thread failure"),
+        std::string::npos);
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    RunRethrowsNonStandardExceptionEscapedFromBatchingThread)
+{
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  BatchCollectorAfterBuildJobHookGuard hook_guard{
+      [](std::shared_ptr<starpu_server::InferenceJob>&) { throw 7; }};
+
+  try {
+    runner_->run();
+    FAIL() << "Expected run() to rethrow batching thread failure.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_NE(
+        std::string(error.what())
+            .find("Unhandled non-standard exception escaped "
+                  "'starpu-batching' thread."),
+        std::string::npos);
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+}
+
 TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
 {
   opts_.batching.dynamic_batching = false;
@@ -648,6 +717,76 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesGenericStdException)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  struct CustomStdException final : std::exception {
+    [[nodiscard]] auto what() const noexcept -> const char* override
+    {
+      return "custom std exception";
+    }
+  };
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw CustomStdException{};
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(
+      failure->message, "Unexpected std::exception: custom std exception");
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
+{
+  opts_.batching.dynamic_batching = false;
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw 42;
+  });
+
+  runner_->run();
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_TRUE(probe.called);
+  EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_EQ(queue_.size(), 0U);
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(
+      failure->message,
+      "Unexpected non-standard exception: Unknown non-standard exception");
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
@@ -801,6 +940,101 @@ TEST_F(StarPUTaskRunnerFixture, RunReleasesPendingSubJobsWhenJobCancelled)
   EXPECT_TRUE(pending_b->get_input_tensors().empty());
   EXPECT_TRUE(pending_b->get_input_memory_holders().empty());
   EXPECT_EQ(completed_jobs_.load(), 1);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, HandleCancelledJobReturnsImmediatelyWhenJobMissing)
+{
+  opts_.batching.max_inflight_tasks = 1;
+  reset_runner_with_model(
+      make_model_config(
+          "cancelled_missing_job",
+          {make_tensor_config("input0", {1}, at::kFloat)},
+          {make_tensor_config("output0", {1}, at::kFloat)}),
+      /*pool_size=*/1);
+
+  completed_jobs_.store(0, std::memory_order_release);
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+  starpu_server::StarPUTaskRunnerTestAdapter::handle_cancelled_job(
+      runner_.get(), missing_job);
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    HandleCancelledJobReturnsWhenTerminalAlreadyHandled)
+{
+  opts_.batching.max_inflight_tasks = 1;
+  reset_runner_with_model(
+      make_model_config(
+          "cancelled_terminal_handled",
+          {make_tensor_config("input0", {1}, at::kFloat)},
+          {make_tensor_config("output0", {1}, at::kFloat)}),
+      /*pool_size=*/1);
+
+  auto job = make_job(901, {torch::tensor({1.0F})});
+  ASSERT_TRUE(job->try_mark_terminal_handled());
+
+  completed_jobs_.store(0, std::memory_order_release);
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::handle_cancelled_job(
+      runner_.get(), job);
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    HandleCancelledJobReleasesInflightSlotWhenLimitIsConfigured)
+{
+  opts_.batching.max_inflight_tasks = 1;
+  reset_runner_with_model(
+      make_model_config(
+          "cancelled_release_inflight",
+          {make_tensor_config("input0", {1}, at::kFloat)},
+          {make_tensor_config("output0", {1}, at::kFloat)}),
+      /*pool_size=*/1);
+
+  auto job = make_job(902, {torch::tensor({1.0F})});
+  completed_jobs_.store(0, std::memory_order_release);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::handle_cancelled_job(
+      runner_.get(), job);
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
 }
 
 TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsFalseWhenCandidateMissing)
@@ -982,6 +1216,46 @@ TEST(StarPUTaskRunnerTestAdapter, CanMergeJobsRejectsNonPositiveRankTensors)
 
   EXPECT_FALSE(
       starpu_server::StarPUTaskRunnerTestAdapter::can_merge_jobs(lhs, rhs));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ReserveInflightSlotReturnsImmediatelyWhenNoLimit)
+{
+  ASSERT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::has_inflight_limit(
+      runner_.get()));
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_max_inflight_tasks(
+          runner_.get()),
+      0U);
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  EXPECT_NO_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+          runner_.get()));
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ReserveInflightSlotReturnsImmediatelyWhenInflightStateMissing)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::set_inflight_state_to_null(
+      runner_.get());
+
+  EXPECT_NO_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+          runner_.get()));
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
 }
 
 TEST_F(

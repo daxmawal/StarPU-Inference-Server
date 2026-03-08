@@ -92,10 +92,47 @@ class RuntimeCleanupGuard {
 
   void Dismiss() noexcept { active_ = false; }
 
+  static void ResetTraceLoggerNoexceptForTest() noexcept
+  {
+    reset_trace_logger_noexcept();
+  }
+
+  static void SetResetTraceLoggerNoexceptForceThrowForTest(
+      bool enabled) noexcept
+  {
+    reset_trace_logger_noexcept_force_throw_for_test() = enabled;
+  }
+
+  static void ShutdownMetricsNoexceptForTest() noexcept
+  {
+    shutdown_metrics_noexcept();
+  }
+
+  static void SetShutdownMetricsNoexceptForceThrowForTest(bool enabled) noexcept
+  {
+    shutdown_metrics_noexcept_force_throw_for_test() = enabled;
+  }
+
  private:
+  static auto reset_trace_logger_noexcept_force_throw_for_test() noexcept
+      -> bool&
+  {
+    static bool enabled = false;
+    return enabled;
+  }
+
+  static auto shutdown_metrics_noexcept_force_throw_for_test() noexcept -> bool&
+  {
+    static bool enabled = false;
+    return enabled;
+  }
+
   static void reset_trace_logger_noexcept() noexcept
   {
     try {
+      if (reset_trace_logger_noexcept_force_throw_for_test()) {
+        throw std::runtime_error("forced reset_trace_logger_noexcept failure");
+      }
       auto& tracer = starpu_server::BatchingTraceLogger::instance();
       tracer.configure(false, "");
     }
@@ -108,6 +145,9 @@ class RuntimeCleanupGuard {
   static void shutdown_metrics_noexcept() noexcept
   {
     try {
+      if (shutdown_metrics_noexcept_force_throw_for_test()) {
+        throw std::runtime_error("forced shutdown_metrics_noexcept failure");
+      }
       starpu_server::shutdown_metrics();
     }
     catch (...) {
@@ -135,10 +175,25 @@ signal_stop_notify_fd() -> volatile std::sig_atomic_t&
 
 class SignalNotificationPipe {
  public:
+  static void SetPipeFailureForTest(bool enabled) noexcept
+  {
+    pipe_failure_for_test() = enabled;
+  }
+
+  static void SetSetNonBlockingFailureForTest(bool enabled) noexcept
+  {
+    set_non_blocking_failure_for_test() = enabled;
+  }
+
+  static auto SetNonBlockingForTest(int file_descriptor) -> bool
+  {
+    return set_non_blocking(file_descriptor);
+  }
+
   SignalNotificationPipe()
   {
     std::array<int, 2> file_descriptors{-1, -1};
-    if (::pipe(file_descriptors.data()) != 0) {
+    if (create_pipe(file_descriptors) != 0) {
       starpu_server::log_warning(std::format(
           "Failed to create stop-notification pipe; falling back to polling "
           "signal flag: {}",
@@ -192,8 +247,33 @@ class SignalNotificationPipe {
   }
 
  private:
+  static auto pipe_failure_for_test() noexcept -> bool&
+  {
+    static bool enabled = false;
+    return enabled;
+  }
+
+  static auto set_non_blocking_failure_for_test() noexcept -> bool&
+  {
+    static bool enabled = false;
+    return enabled;
+  }
+
+  static auto create_pipe(std::array<int, 2>& file_descriptors) -> int
+  {
+    if (pipe_failure_for_test()) {
+      errno = EMFILE;
+      return -1;
+    }
+    return ::pipe(file_descriptors.data());
+  }
+
   static auto set_non_blocking(int file_descriptor) -> bool
   {
+    if (set_non_blocking_failure_for_test()) {
+      errno = EINVAL;
+      return false;
+    }
     if (file_descriptor < 0) {
       return false;
     }
@@ -499,12 +579,51 @@ wait_for_plot_process(pid_t pid) -> std::optional<int>
   return terminate_and_wait(pid);
 }
 
+using RunPlotScriptOverrideForTestFn = std::optional<int> (*)(
+    const std::filesystem::path&, const std::filesystem::path&,
+    const std::filesystem::path&);
+
+using LocatePlotScriptOverrideForTestFn =
+    std::optional<std::filesystem::path> (*)(
+        const starpu_server::RuntimeConfig&);
+
+using TraceSummaryFilePathOverrideForTestFn =
+    std::optional<std::filesystem::path> (*)();
+
+auto
+run_plot_script_override_for_test() noexcept -> RunPlotScriptOverrideForTestFn&
+{
+  static RunPlotScriptOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+locate_plot_script_override_for_test() noexcept
+    -> LocatePlotScriptOverrideForTestFn&
+{
+  static LocatePlotScriptOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+trace_summary_file_path_override_for_test() noexcept
+    -> TraceSummaryFilePathOverrideForTestFn&
+{
+  static TraceSummaryFilePathOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
 auto
 run_plot_script(
     const std::filesystem::path& script_path,
     const std::filesystem::path& summary_path,
     const std::filesystem::path& output_path) -> std::optional<int>
 {
+  if (const auto override_fn = run_plot_script_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(script_path, summary_path, output_path);
+  }
+
   const auto python_path = resolve_python_executable();
   if (!python_path) {
     starpu_server::log_warning(
@@ -578,9 +697,14 @@ candidate_plot_scripts() -> std::vector<std::filesystem::path>
 }
 
 auto
-locate_plot_script(const starpu_server::RuntimeConfig& /*opts*/)
+locate_plot_script(const starpu_server::RuntimeConfig& opts)
     -> std::optional<std::filesystem::path>
 {
+  if (const auto override_fn = locate_plot_script_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(opts);
+  }
+
   for (const auto& candidate : candidate_plot_scripts()) {
     if (candidate.empty()) {
       continue;
@@ -626,8 +750,14 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
     return;
   }
 
-  const auto& tracer = starpu_server::BatchingTraceLogger::instance();
-  const auto summary_path_opt = tracer.summary_file_path();
+  std::optional<std::filesystem::path> summary_path_opt;
+  if (const auto override_fn = trace_summary_file_path_override_for_test();
+      override_fn != nullptr) {
+    summary_path_opt = override_fn();
+  } else {
+    const auto& tracer = starpu_server::BatchingTraceLogger::instance();
+    summary_path_opt = tracer.summary_file_path();
+  }
   if (!summary_path_opt) {
     starpu_server::log_warning(
         "Tracing was enabled but no trace.csv was produced; "
@@ -748,6 +878,33 @@ handle_program_arguments(std::span<char const* const> args)
 }
 
 auto
+load_model_and_reference_output_override_for_test() noexcept
+    -> std::optional<std::tuple<
+        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+        std::vector<torch::Tensor>>> (*&)(const starpu_server::RuntimeConfig&)
+{
+  static std::optional<std::tuple<
+      torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+      std::vector<torch::Tensor>>> (*override_fn)(
+      const starpu_server::RuntimeConfig&) = nullptr;
+  return override_fn;
+}
+
+auto
+run_warmup_override_for_test() noexcept
+    -> void (*&)(
+        const starpu_server::RuntimeConfig&, starpu_server::StarPUSetup&,
+        torch::jit::script::Module&, std::vector<torch::jit::script::Module>&,
+        const std::vector<torch::Tensor>&)
+{
+  static void (*override_fn)(
+      const starpu_server::RuntimeConfig&, starpu_server::StarPUSetup&,
+      torch::jit::script::Module&, std::vector<torch::jit::script::Module>&,
+      const std::vector<torch::Tensor>&) = nullptr;
+  return override_fn;
+}
+
+auto
 prepare_models_and_warmup(
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu)
@@ -755,14 +912,26 @@ prepare_models_and_warmup(
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>
 {
-  auto models = starpu_server::load_model_and_reference_output(opts);
+  auto models = [&]() {
+    if (const auto override_fn =
+            load_model_and_reference_output_override_for_test();
+        override_fn != nullptr) {
+      return override_fn(opts);
+    }
+    return starpu_server::load_model_and_reference_output(opts);
+  }();
   if (!models) {
     throw starpu_server::ModelLoadingException(
         "Failed to load model or reference outputs");
   }
   auto [model_cpu, models_gpu, reference_outputs] = std::move(*models);
-  starpu_server::run_warmup(
-      opts, starpu, model_cpu, models_gpu, reference_outputs);
+  if (const auto override_fn = run_warmup_override_for_test();
+      override_fn != nullptr) {
+    override_fn(opts, starpu, model_cpu, models_gpu, reference_outputs);
+  } else {
+    starpu_server::run_warmup(
+        opts, starpu, model_cpu, models_gpu, reference_outputs);
+  }
   return {model_cpu, models_gpu, reference_outputs};
 }
 
@@ -1038,6 +1207,85 @@ worker_type_label(const enum starpu_worker_archtype type) -> std::string
   }
 }
 
+using WorkerCpusetProviderOverrideForTestFn =
+    decltype(&starpu_worker_get_hwloc_cpuset);
+using HwlocBitmapFirstOverrideForTestFn = decltype(&hwloc_bitmap_first);
+using HwlocBitmapNextOverrideForTestFn = decltype(&hwloc_bitmap_next);
+using HwlocBitmapFreeOverrideForTestFn = decltype(&hwloc_bitmap_free);
+
+auto
+worker_cpuset_provider_override_for_test() noexcept
+    -> WorkerCpusetProviderOverrideForTestFn&
+{
+  static WorkerCpusetProviderOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+hwloc_bitmap_first_override_for_test() noexcept
+    -> HwlocBitmapFirstOverrideForTestFn&
+{
+  static HwlocBitmapFirstOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+hwloc_bitmap_next_override_for_test() noexcept
+    -> HwlocBitmapNextOverrideForTestFn&
+{
+  static HwlocBitmapNextOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+hwloc_bitmap_free_override_for_test() noexcept
+    -> HwlocBitmapFreeOverrideForTestFn&
+{
+  static HwlocBitmapFreeOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+get_worker_cpuset_for_affinity(int worker_id) -> hwloc_cpuset_t
+{
+  if (const auto override_fn = worker_cpuset_provider_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(worker_id);
+  }
+  return starpu_worker_get_hwloc_cpuset(worker_id);
+}
+
+auto
+bitmap_first_for_affinity(hwloc_const_bitmap_t cpuset) -> int
+{
+  if (const auto override_fn = hwloc_bitmap_first_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(cpuset);
+  }
+  return hwloc_bitmap_first(cpuset);
+}
+
+auto
+bitmap_next_for_affinity(hwloc_const_bitmap_t cpuset, int previous_core) -> int
+{
+  if (const auto override_fn = hwloc_bitmap_next_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(cpuset, previous_core);
+  }
+  return hwloc_bitmap_next(cpuset, previous_core);
+}
+
+void
+bitmap_free_for_affinity(hwloc_bitmap_t cpuset)
+{
+  if (const auto override_fn = hwloc_bitmap_free_override_for_test();
+      override_fn != nullptr) {
+    override_fn(cpuset);
+    return;
+  }
+  hwloc_bitmap_free(cpuset);
+}
+
 auto
 format_cpu_core_ranges(const std::vector<int>& cpus) -> std::string
 {
@@ -1075,36 +1323,109 @@ format_cpu_core_ranges(const std::vector<int>& cpus) -> std::string
 auto
 describe_cpu_affinity(int worker_id) -> std::string
 {
-  hwloc_cpuset_t cpuset = starpu_worker_get_hwloc_cpuset(worker_id);
+  hwloc_cpuset_t cpuset = get_worker_cpuset_for_affinity(worker_id);
   if (cpuset == nullptr) {
     return {};
   }
 
   std::vector<int> cores;
-  for (int core = hwloc_bitmap_first(cpuset); core != -1;
-       core = hwloc_bitmap_next(cpuset, core)) {
+  for (int core = bitmap_first_for_affinity(cpuset); core != -1;
+       core = bitmap_next_for_affinity(cpuset, core)) {
     cores.push_back(core);
   }
-  hwloc_bitmap_free(cpuset);
+  bitmap_free_for_affinity(cpuset);
   return format_cpu_core_ranges(cores);
+}
+
+using WorkerCountOverrideForTestFn = decltype(&starpu_worker_get_count);
+using WorkerTypeOverrideForTestFn = decltype(&starpu_worker_get_type);
+using WorkerDeviceIdOverrideForTestFn = decltype(&starpu_worker_get_devid);
+using DescribeCpuAffinityOverrideForTestFn = std::string (*)(int);
+
+auto
+worker_count_override_for_test() noexcept -> WorkerCountOverrideForTestFn&
+{
+  static WorkerCountOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+worker_type_override_for_test() noexcept -> WorkerTypeOverrideForTestFn&
+{
+  static WorkerTypeOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+worker_device_id_override_for_test() noexcept
+    -> WorkerDeviceIdOverrideForTestFn&
+{
+  static WorkerDeviceIdOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+describe_cpu_affinity_override_for_test() noexcept
+    -> DescribeCpuAffinityOverrideForTestFn&
+{
+  static DescribeCpuAffinityOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+worker_count_for_inventory() -> int
+{
+  if (const auto override_fn = worker_count_override_for_test();
+      override_fn != nullptr) {
+    return static_cast<int>(override_fn());
+  }
+  return static_cast<int>(starpu_worker_get_count());
+}
+
+auto
+worker_type_for_inventory(int worker_id) -> enum starpu_worker_archtype {
+  if (const auto override_fn = worker_type_override_for_test();
+      override_fn != nullptr){return override_fn(worker_id);}
+return starpu_worker_get_type(worker_id);
+}
+
+auto
+worker_device_id_for_inventory(int worker_id) -> int
+{
+  if (const auto override_fn = worker_device_id_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(worker_id);
+  }
+  return starpu_worker_get_devid(worker_id);
+}
+
+auto
+describe_cpu_affinity_for_inventory(int worker_id) -> std::string
+{
+  if (const auto override_fn = describe_cpu_affinity_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(worker_id);
+  }
+  return describe_cpu_affinity(worker_id);
 }
 
 void
 log_worker_inventory(const starpu_server::RuntimeConfig& opts)
 {
-  const auto total_workers = static_cast<int>(starpu_worker_get_count());
+  const auto total_workers = worker_count_for_inventory();
   starpu_server::log_info(
       opts.verbosity,
       std::format("Configured {} StarPU worker(s).", total_workers));
 
   for (int worker_id = 0; worker_id < total_workers; ++worker_id) {
-    const auto type = starpu_worker_get_type(worker_id);
-    const int device_id = starpu_worker_get_devid(worker_id);
+    const auto type = worker_type_for_inventory(worker_id);
+    const int device_id = worker_device_id_for_inventory(worker_id);
     const std::string device_label =
         device_id >= 0 ? std::to_string(device_id) : "N/A";
     std::string cpu_affinity;
     if (type == STARPU_CPU_WORKER) {
-      const std::string affinity = describe_cpu_affinity(worker_id);
+      const std::string affinity =
+          describe_cpu_affinity_for_inventory(worker_id);
       if (!affinity.empty()) {
         cpu_affinity = std::format(", cores={}", affinity);
       }

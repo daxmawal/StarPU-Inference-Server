@@ -665,6 +665,37 @@ TEST_F(
   EXPECT_EQ(completed_jobs_.load(), 1);
 }
 
+TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionReturnsWhenJobMissing)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  reset_runner_with_model(
+      make_model_config(
+          "test_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+  completed_jobs_.store(0, std::memory_order_release);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+  const std::runtime_error error("runtime failure");
+
+  EXPECT_NO_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
+          runner_.get(), missing_job, error, "runtime failure", -1));
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+}
+
 TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionUsesGenericReason)
 {
   starpu_server::shutdown_metrics();
@@ -720,6 +751,64 @@ TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionUsesGenericReason)
       find_failure_value(families, "execution", "exception", "demo_model");
   ASSERT_TRUE(value.has_value());
   EXPECT_DOUBLE_EQ(*value, 1.0);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    FinalizeJobAfterUnknownExceptionSetsFailureInfoAndCompletesJob)
+{
+  completed_jobs_.store(0, std::memory_order_release);
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_model_name("unknown_exception_model");
+
+  starpu_server::StarPUTaskRunnerTestAdapter::
+      finalize_job_after_unknown_exception(
+          runner_.get(), job, "Unexpected non-standard exception",
+          job->get_request_id());
+
+  assert_failure_result(probe);
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "execution");
+  EXPECT_EQ(failure->reason, "exception");
+  EXPECT_EQ(
+      failure->message,
+      "Unexpected non-standard exception: Unknown non-standard exception");
+  EXPECT_TRUE(failure->metrics_reported);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    FinalizeJobAfterUnknownExceptionReturnsWhenJobMissing)
+{
+  opts_.batching.max_inflight_tasks = 5;
+  reset_runner_with_model(
+      make_model_config(
+          "test_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+  completed_jobs_.store(0, std::memory_order_release);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+
+  EXPECT_NO_THROW(starpu_server::StarPUTaskRunnerTestAdapter::
+                      finalize_job_after_unknown_exception(
+                          runner_.get(), missing_job,
+                          "Unexpected non-standard exception", -1));
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
 }
 
 TEST_F(StarPUTaskRunnerFixture, TraceBatchIfEnabledLogsAggregatedRequestIds)

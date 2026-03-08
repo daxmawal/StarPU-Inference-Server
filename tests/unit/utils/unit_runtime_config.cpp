@@ -195,3 +195,37 @@ TEST(RuntimeConfigUtils, ComputeMaxMessageBytesWithoutModelUsesMinimum)
       starpu_server::compute_max_message_bytes(4, model, kCustomMinBytes),
       kCustomMinBytes);
 }
+
+TEST(
+    RuntimeConfigUtils,
+    ValidateBatchingSettingsCoherenceRejectsNonPositiveMaxBatchSize)
+{
+  starpu_server::RuntimeConfig::BatchingSettings batching;
+  batching.max_batch_size = 0;
+  batching.pool_size = 1;
+
+  try {
+    starpu_server::validate_batching_settings_coherence(batching);
+    FAIL() << "Expected validate_batching_settings_coherence to throw.";
+  }
+  catch (const std::invalid_argument& error) {
+    EXPECT_EQ(error.what(), std::string("max_batch_size must be > 0"));
+  }
+}
+
+TEST(
+    RuntimeConfigUtils,
+    ValidateBatchingSettingsCoherenceRejectsNonPositivePoolSize)
+{
+  starpu_server::RuntimeConfig::BatchingSettings batching;
+  batching.max_batch_size = 1;
+  batching.pool_size = 0;
+
+  try {
+    starpu_server::validate_batching_settings_coherence(batching);
+    FAIL() << "Expected validate_batching_settings_coherence to throw.";
+  }
+  catch (const std::invalid_argument& error) {
+    EXPECT_EQ(error.what(), std::string("pool_size must be > 0"));
+  }
+}

@@ -18,8 +18,11 @@
 #include <future>
 #include <latch>
 #include <mutex>
+#include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #define main starpu_server_server_main_for_test
@@ -48,6 +51,480 @@ struct TempFileGuard {
   {
     std::error_code ec;
     std::filesystem::remove(path, ec);
+  }
+};
+
+struct TempDirectoryGuard {
+  std::filesystem::path path;
+
+  ~TempDirectoryGuard()
+  {
+    std::error_code ec;
+    std::filesystem::remove_all(path, ec);
+  }
+};
+
+class OStreamCapture {
+ public:
+  explicit OStreamCapture(std::ostream& stream)
+      : stream_(stream), old_buffer_(stream.rdbuf(buffer_.rdbuf()))
+  {
+  }
+
+  ~OStreamCapture() { stream_.rdbuf(old_buffer_); }
+
+  [[nodiscard]] auto str() const -> std::string { return buffer_.str(); }
+
+ private:
+  std::ostream& stream_;
+  std::ostringstream buffer_;
+  std::streambuf* old_buffer_;
+};
+
+auto
+make_temp_test_directory(std::string_view stem) -> TempDirectoryGuard
+{
+  static std::atomic<std::uint64_t> temp_directory_counter{0};
+  const auto id =
+      temp_directory_counter.fetch_add(1, std::memory_order_relaxed);
+  const auto path = std::filesystem::temp_directory_path() /
+                    (std::string(stem) + "_" + std::to_string(id));
+  std::error_code ec;
+  std::filesystem::create_directories(path, ec);
+  EXPECT_FALSE(ec) << "Failed to create temporary directory: " << path;
+  return TempDirectoryGuard{path};
+}
+
+auto
+expected_warning_log(std::string_view message) -> std::string
+{
+  return std::string("\x1b[1;33m[WARNING] ") + std::string(message) +
+         "\x1b[0m\n";
+}
+
+auto
+expected_info_log(std::string_view message) -> std::string
+{
+  return std::string("\x1b[1;32m[INFO] ") + std::string(message) + "\x1b[0m\n";
+}
+
+struct ScopedTraceLoggerReset {
+  ~ScopedTraceLoggerReset()
+  {
+    starpu_server::BatchingTraceLogger::instance().configure(false, "");
+  }
+};
+
+struct ScopedResetTraceLoggerForcedThrow {
+  explicit ScopedResetTraceLoggerForcedThrow(bool enabled = true) noexcept
+  {
+    RuntimeCleanupGuard::SetResetTraceLoggerNoexceptForceThrowForTest(enabled);
+  }
+
+  ~ScopedResetTraceLoggerForcedThrow()
+  {
+    RuntimeCleanupGuard::SetResetTraceLoggerNoexceptForceThrowForTest(false);
+  }
+};
+
+struct ScopedShutdownMetricsForcedThrow {
+  explicit ScopedShutdownMetricsForcedThrow(bool enabled = true) noexcept
+  {
+    RuntimeCleanupGuard::SetShutdownMetricsNoexceptForceThrowForTest(enabled);
+  }
+
+  ~ScopedShutdownMetricsForcedThrow()
+  {
+    RuntimeCleanupGuard::SetShutdownMetricsNoexceptForceThrowForTest(false);
+  }
+};
+
+struct ScopedSignalPipeForcedPipeFailure {
+  explicit ScopedSignalPipeForcedPipeFailure(bool enabled = true) noexcept
+  {
+    SignalNotificationPipe::SetPipeFailureForTest(enabled);
+  }
+
+  ~ScopedSignalPipeForcedPipeFailure()
+  {
+    SignalNotificationPipe::SetPipeFailureForTest(false);
+  }
+};
+
+struct ScopedSignalPipeForcedSetNonBlockingFailure {
+  explicit ScopedSignalPipeForcedSetNonBlockingFailure(
+      bool enabled = true) noexcept
+  {
+    SignalNotificationPipe::SetSetNonBlockingFailureForTest(enabled);
+  }
+
+  ~ScopedSignalPipeForcedSetNonBlockingFailure()
+  {
+    SignalNotificationPipe::SetSetNonBlockingFailureForTest(false);
+  }
+};
+
+struct PlotScriptOverrideState {
+  std::optional<std::filesystem::path> summary_path_result;
+  std::optional<std::filesystem::path> locate_result;
+  std::optional<int> run_result;
+  int summary_path_calls = 0;
+  int locate_calls = 0;
+  int run_calls = 0;
+  std::filesystem::path run_script_path;
+  std::filesystem::path run_summary_path;
+  std::filesystem::path run_output_path;
+};
+
+auto
+plot_script_override_state() -> PlotScriptOverrideState*&
+{
+  static PlotScriptOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+trace_summary_file_path_override_stub() -> std::optional<std::filesystem::path>
+{
+  auto* state = plot_script_override_state();
+  if (state == nullptr) {
+    return std::nullopt;
+  }
+  ++state->summary_path_calls;
+  return state->summary_path_result;
+}
+
+auto
+locate_plot_script_override_stub(const starpu_server::RuntimeConfig&)
+    -> std::optional<std::filesystem::path>
+{
+  auto* state = plot_script_override_state();
+  if (state == nullptr) {
+    return std::nullopt;
+  }
+  ++state->locate_calls;
+  return state->locate_result;
+}
+
+auto
+run_plot_script_override_stub(
+    const std::filesystem::path& script_path,
+    const std::filesystem::path& summary_path,
+    const std::filesystem::path& output_path) -> std::optional<int>
+{
+  auto* state = plot_script_override_state();
+  if (state == nullptr) {
+    return std::nullopt;
+  }
+  ++state->run_calls;
+  state->run_script_path = script_path;
+  state->run_summary_path = summary_path;
+  state->run_output_path = output_path;
+  return state->run_result;
+}
+
+struct ScopedPlotScriptOverrides {
+  explicit ScopedPlotScriptOverrides(PlotScriptOverrideState& state) noexcept
+  {
+    plot_script_override_state() = &state;
+    trace_summary_file_path_override_for_test() =
+        trace_summary_file_path_override_stub;
+    locate_plot_script_override_for_test() = locate_plot_script_override_stub;
+    run_plot_script_override_for_test() = run_plot_script_override_stub;
+  }
+
+  ~ScopedPlotScriptOverrides()
+  {
+    run_plot_script_override_for_test() = nullptr;
+    locate_plot_script_override_for_test() = nullptr;
+    trace_summary_file_path_override_for_test() = nullptr;
+    plot_script_override_state() = nullptr;
+  }
+};
+
+using ModelPreparationTuple = std::tuple<
+    torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+    std::vector<torch::Tensor>>;
+
+struct PrepareModelsAndWarmupOverrideState {
+  std::optional<ModelPreparationTuple> load_result;
+  bool throw_from_warmup = false;
+  std::string warmup_exception_message = "warmup failure";
+  bool append_gpu_model_in_warmup = false;
+  int load_calls = 0;
+  int warmup_calls = 0;
+  const starpu_server::RuntimeConfig* load_opts = nullptr;
+  const starpu_server::RuntimeConfig* warmup_opts = nullptr;
+  starpu_server::StarPUSetup* warmup_starpu = nullptr;
+  size_t warmup_gpu_model_count = 0;
+  size_t warmup_reference_output_count = 0;
+};
+
+auto
+prepare_models_and_warmup_override_state()
+    -> PrepareModelsAndWarmupOverrideState*&
+{
+  static PrepareModelsAndWarmupOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+load_model_and_reference_output_override_stub(
+    const starpu_server::RuntimeConfig& opts)
+    -> std::optional<ModelPreparationTuple>
+{
+  auto* state = prepare_models_and_warmup_override_state();
+  if (state == nullptr) {
+    return std::nullopt;
+  }
+  ++state->load_calls;
+  state->load_opts = &opts;
+  return std::move(state->load_result);
+}
+
+void
+run_warmup_override_stub(
+    const starpu_server::RuntimeConfig& opts,
+    starpu_server::StarPUSetup& starpu,
+    torch::jit::script::Module& /*model_cpu*/,
+    std::vector<torch::jit::script::Module>& models_gpu,
+    const std::vector<torch::Tensor>& reference_outputs)
+{
+  auto* state = prepare_models_and_warmup_override_state();
+  if (state == nullptr) {
+    return;
+  }
+  ++state->warmup_calls;
+  state->warmup_opts = &opts;
+  state->warmup_starpu = &starpu;
+  state->warmup_gpu_model_count = models_gpu.size();
+  state->warmup_reference_output_count = reference_outputs.size();
+  if (state->append_gpu_model_in_warmup) {
+    models_gpu.emplace_back("gpu_added_by_warmup");
+  }
+  if (state->throw_from_warmup) {
+    throw std::runtime_error(state->warmup_exception_message);
+  }
+}
+
+struct ScopedPrepareModelsAndWarmupOverrides {
+  explicit ScopedPrepareModelsAndWarmupOverrides(
+      PrepareModelsAndWarmupOverrideState& state) noexcept
+  {
+    prepare_models_and_warmup_override_state() = &state;
+    load_model_and_reference_output_override_for_test() =
+        load_model_and_reference_output_override_stub;
+    run_warmup_override_for_test() = run_warmup_override_stub;
+  }
+
+  ~ScopedPrepareModelsAndWarmupOverrides()
+  {
+    run_warmup_override_for_test() = nullptr;
+    load_model_and_reference_output_override_for_test() = nullptr;
+    prepare_models_and_warmup_override_state() = nullptr;
+  }
+};
+
+struct DescribeCpuAffinityOverrideState {
+  hwloc_cpuset_t cpuset_to_return = nullptr;
+  std::vector<int> cores;
+  std::size_t next_index = 0;
+  int provider_calls = 0;
+  int first_calls = 0;
+  int next_calls = 0;
+  int free_calls = 0;
+  int requested_worker_id = -1;
+  hwloc_const_bitmap_t first_cpuset = nullptr;
+  hwloc_const_bitmap_t next_cpuset = nullptr;
+  hwloc_bitmap_t freed_cpuset = nullptr;
+};
+
+auto
+describe_cpu_affinity_override_state() -> DescribeCpuAffinityOverrideState*&
+{
+  static DescribeCpuAffinityOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+worker_cpuset_provider_override_stub(int worker_id) -> hwloc_cpuset_t
+{
+  auto* state = describe_cpu_affinity_override_state();
+  if (state == nullptr) {
+    return nullptr;
+  }
+  ++state->provider_calls;
+  state->requested_worker_id = worker_id;
+  state->next_index = 0;
+  return state->cpuset_to_return;
+}
+
+auto
+hwloc_bitmap_first_override_stub(hwloc_const_bitmap_t cpuset) -> int
+{
+  auto* state = describe_cpu_affinity_override_state();
+  if (state == nullptr) {
+    return -1;
+  }
+  ++state->first_calls;
+  state->first_cpuset = cpuset;
+  if (state->cores.empty()) {
+    return -1;
+  }
+  state->next_index = 1;
+  return state->cores.front();
+}
+
+auto
+hwloc_bitmap_next_override_stub(
+    hwloc_const_bitmap_t cpuset, int /*previous_core*/) -> int
+{
+  auto* state = describe_cpu_affinity_override_state();
+  if (state == nullptr) {
+    return -1;
+  }
+  ++state->next_calls;
+  state->next_cpuset = cpuset;
+  if (state->next_index >= state->cores.size()) {
+    return -1;
+  }
+  return state->cores[state->next_index++];
+}
+
+void
+hwloc_bitmap_free_override_stub(hwloc_bitmap_t cpuset)
+{
+  auto* state = describe_cpu_affinity_override_state();
+  if (state == nullptr) {
+    return;
+  }
+  ++state->free_calls;
+  state->freed_cpuset = cpuset;
+}
+
+struct ScopedDescribeCpuAffinityOverrides {
+  explicit ScopedDescribeCpuAffinityOverrides(
+      DescribeCpuAffinityOverrideState& state) noexcept
+  {
+    describe_cpu_affinity_override_state() = &state;
+    worker_cpuset_provider_override_for_test() =
+        worker_cpuset_provider_override_stub;
+    hwloc_bitmap_first_override_for_test() = hwloc_bitmap_first_override_stub;
+    hwloc_bitmap_next_override_for_test() = hwloc_bitmap_next_override_stub;
+    hwloc_bitmap_free_override_for_test() = hwloc_bitmap_free_override_stub;
+  }
+
+  ~ScopedDescribeCpuAffinityOverrides()
+  {
+    hwloc_bitmap_free_override_for_test() = nullptr;
+    hwloc_bitmap_next_override_for_test() = nullptr;
+    hwloc_bitmap_first_override_for_test() = nullptr;
+    worker_cpuset_provider_override_for_test() = nullptr;
+    describe_cpu_affinity_override_state() = nullptr;
+  }
+};
+
+struct LogWorkerInventoryOverrideState {
+  int worker_count = 0;
+  std::vector<enum starpu_worker_archtype> worker_types;
+  std::vector<int> device_ids;
+  std::vector<std::string> cpu_affinities;
+  int worker_count_calls = 0;
+  int worker_type_calls = 0;
+  int worker_device_id_calls = 0;
+  int describe_cpu_affinity_calls = 0;
+  std::vector<int> requested_worker_ids_for_type;
+  std::vector<int> requested_worker_ids_for_device;
+  std::vector<int> requested_worker_ids_for_affinity;
+};
+
+auto
+log_worker_inventory_override_state() -> LogWorkerInventoryOverrideState*&
+{
+  static LogWorkerInventoryOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+worker_count_override_stub() -> decltype(starpu_worker_get_count())
+{
+  auto* state = log_worker_inventory_override_state();
+  if (state == nullptr) {
+    return 0;
+  }
+  ++state->worker_count_calls;
+  return static_cast<decltype(starpu_worker_get_count())>(state->worker_count);
+}
+
+auto
+worker_type_override_stub(int worker_id)
+    -> decltype(starpu_worker_get_type(worker_id))
+{
+  auto* state = log_worker_inventory_override_state();
+  if (state == nullptr) {
+    return STARPU_CPU_WORKER;
+  }
+  ++state->worker_type_calls;
+  state->requested_worker_ids_for_type.push_back(worker_id);
+  if (worker_id < 0 ||
+      static_cast<std::size_t>(worker_id) >= state->worker_types.size()) {
+    return STARPU_CPU_WORKER;
+  }
+  return state->worker_types[static_cast<std::size_t>(worker_id)];
+}
+
+auto
+worker_device_id_override_stub(int worker_id)
+    -> decltype(starpu_worker_get_devid(worker_id))
+{
+  auto* state = log_worker_inventory_override_state();
+  if (state == nullptr) {
+    return -1;
+  }
+  ++state->worker_device_id_calls;
+  state->requested_worker_ids_for_device.push_back(worker_id);
+  if (worker_id < 0 ||
+      static_cast<std::size_t>(worker_id) >= state->device_ids.size()) {
+    return -1;
+  }
+  return state->device_ids[static_cast<std::size_t>(worker_id)];
+}
+
+auto
+describe_cpu_affinity_override_stub(int worker_id) -> std::string
+{
+  auto* state = log_worker_inventory_override_state();
+  if (state == nullptr) {
+    return {};
+  }
+  ++state->describe_cpu_affinity_calls;
+  state->requested_worker_ids_for_affinity.push_back(worker_id);
+  if (worker_id < 0 ||
+      static_cast<std::size_t>(worker_id) >= state->cpu_affinities.size()) {
+    return {};
+  }
+  return state->cpu_affinities[static_cast<std::size_t>(worker_id)];
+}
+
+struct ScopedLogWorkerInventoryOverrides {
+  explicit ScopedLogWorkerInventoryOverrides(
+      LogWorkerInventoryOverrideState& state) noexcept
+  {
+    log_worker_inventory_override_state() = &state;
+    worker_count_override_for_test() = worker_count_override_stub;
+    worker_type_override_for_test() = worker_type_override_stub;
+    worker_device_id_override_for_test() = worker_device_id_override_stub;
+    describe_cpu_affinity_override_for_test() =
+        describe_cpu_affinity_override_stub;
+  }
+
+  ~ScopedLogWorkerInventoryOverrides()
+  {
+    describe_cpu_affinity_override_for_test() = nullptr;
+    worker_device_id_override_for_test() = nullptr;
+    worker_type_override_for_test() = nullptr;
+    worker_count_override_for_test() = nullptr;
+    log_worker_inventory_override_state() = nullptr;
   }
 };
 
@@ -215,6 +692,15 @@ make_temp_test_path(const std::string& stem, const std::string& extension)
 }
 
 auto
+make_runtime_config_for_starpu_setup() -> starpu_server::RuntimeConfig
+{
+  starpu_server::RuntimeConfig opts;
+  opts.congestion.enabled = false;
+  opts.batching.max_queue_size = 8;
+  return opts;
+}
+
+auto
 spawn_exiting_child(int exit_code) -> pid_t
 {
   const pid_t pid = ::fork();
@@ -306,6 +792,521 @@ TEST(ServerMainSignal, SignalHandlerSetsStopFlag)
   signal_handler(SIGINT);
   EXPECT_EQ(signal_stop_requested_flag(), 1);
   signal_stop_requested_flag() = 0;
+}
+
+TEST(ServerMainThreadExceptionState, CaptureStoresFirstExceptionAndThreadName)
+{
+  ThreadExceptionState state;
+  state.capture(
+      "grpc-server",
+      std::make_exception_ptr(std::runtime_error("grpc thread failure")));
+
+  auto [captured_exception, thread_name] = state.take();
+  ASSERT_NE(captured_exception, nullptr);
+  EXPECT_EQ(thread_name, "grpc-server");
+
+  try {
+    std::rethrow_exception(captured_exception);
+    FAIL() << "Expected runtime_error to be rethrown.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string(error.what()), "grpc thread failure");
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+}
+
+TEST(
+    ServerMainThreadExceptionState,
+    CaptureKeepsFirstExceptionWhenCalledMultipleTimes)
+{
+  ThreadExceptionState state;
+  state.capture(
+      "signal-notifier",
+      std::make_exception_ptr(std::logic_error("first failure")));
+  state.capture(
+      "starpu-worker",
+      std::make_exception_ptr(std::runtime_error("second failure")));
+
+  auto [captured_exception, thread_name] = state.take();
+  ASSERT_NE(captured_exception, nullptr);
+  EXPECT_EQ(thread_name, "signal-notifier");
+
+  try {
+    std::rethrow_exception(captured_exception);
+    FAIL() << "Expected logic_error to be rethrown.";
+  }
+  catch (const std::logic_error& error) {
+    EXPECT_EQ(std::string(error.what()), "first failure");
+  }
+  catch (...) {
+    FAIL() << "Expected std::logic_error.";
+  }
+}
+
+TEST(
+    ServerMainModelPreparation,
+    PrepareModelsAndWarmupThrowsModelLoadingExceptionWhenLoadingFails)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  starpu_server::StarPUSetup starpu(opts);
+
+  PrepareModelsAndWarmupOverrideState override_state;
+  ScopedPrepareModelsAndWarmupOverrides overrides(override_state);
+
+  try {
+    (void)prepare_models_and_warmup(opts, starpu);
+    FAIL() << "Expected ModelLoadingException.";
+  }
+  catch (const starpu_server::ModelLoadingException& error) {
+    EXPECT_EQ(
+        std::string(error.what()), "Failed to load model or reference outputs");
+  }
+  catch (...) {
+    FAIL() << "Expected starpu_server::ModelLoadingException.";
+  }
+
+  EXPECT_EQ(override_state.load_calls, 1);
+  EXPECT_EQ(override_state.warmup_calls, 0);
+  EXPECT_EQ(override_state.load_opts, &opts);
+}
+
+TEST(
+    ServerMainModelPreparation,
+    PrepareModelsAndWarmupRunsWarmupAndReturnsModels)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  starpu_server::StarPUSetup starpu(opts);
+
+  PrepareModelsAndWarmupOverrideState override_state;
+  override_state.load_result = ModelPreparationTuple{
+      torch::jit::script::Module("cpu_model"),
+      std::vector<torch::jit::script::Module>{
+          torch::jit::script::Module("gpu_model_0")},
+      std::vector<torch::Tensor>{
+          torch::ones({2, 2}, torch::dtype(torch::kFloat32))}};
+  override_state.append_gpu_model_in_warmup = true;
+  ScopedPrepareModelsAndWarmupOverrides overrides(override_state);
+
+  auto [model_cpu, models_gpu, reference_outputs] =
+      prepare_models_and_warmup(opts, starpu);
+
+  (void)model_cpu;
+  EXPECT_EQ(override_state.load_calls, 1);
+  EXPECT_EQ(override_state.warmup_calls, 1);
+  EXPECT_EQ(override_state.load_opts, &opts);
+  EXPECT_EQ(override_state.warmup_opts, &opts);
+  EXPECT_EQ(override_state.warmup_starpu, &starpu);
+  EXPECT_EQ(override_state.warmup_gpu_model_count, 1U);
+  EXPECT_EQ(override_state.warmup_reference_output_count, 1U);
+  EXPECT_EQ(models_gpu.size(), 2U);
+  ASSERT_EQ(reference_outputs.size(), 1U);
+  EXPECT_TRUE(torch::equal(
+      reference_outputs[0],
+      torch::ones({2, 2}, torch::dtype(torch::kFloat32))));
+}
+
+TEST(
+    ServerMainModelPreparation, PrepareModelsAndWarmupPropagatesWarmupException)
+{
+  auto opts = make_runtime_config_for_starpu_setup();
+  starpu_server::StarPUSetup starpu(opts);
+
+  PrepareModelsAndWarmupOverrideState override_state;
+  override_state.load_result = ModelPreparationTuple{
+      torch::jit::script::Module("cpu_model"),
+      std::vector<torch::jit::script::Module>{}, std::vector<torch::Tensor>{}};
+  override_state.throw_from_warmup = true;
+  override_state.warmup_exception_message = "forced warmup failure";
+  ScopedPrepareModelsAndWarmupOverrides overrides(override_state);
+
+  try {
+    (void)prepare_models_and_warmup(opts, starpu);
+    FAIL() << "Expected runtime_error from warmup.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string(error.what()), "forced warmup failure");
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+
+  EXPECT_EQ(override_state.load_calls, 1);
+  EXPECT_EQ(override_state.warmup_calls, 1);
+}
+
+TEST(ServerMainModelNameResolution, UsesModelNameWhenConfiguredAndNonEmpty)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.name = "fallback_name";
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->name = "configured_model_name";
+
+  EXPECT_EQ(resolve_default_model_name(opts), "configured_model_name");
+}
+
+TEST(ServerMainModelNameResolution, FallsBackToConfigNameWhenModelNameIsEmpty)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.name = "fallback_name";
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->name = "";
+
+  EXPECT_EQ(resolve_default_model_name(opts), "fallback_name");
+}
+
+TEST(ServerMainModelNameResolution, FallsBackToConfigNameWhenModelIsNotSet)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.name = "fallback_name";
+  opts.model.reset();
+
+  EXPECT_EQ(resolve_default_model_name(opts), "fallback_name");
+}
+
+TEST(ServerMainWorkerTypeLabel, ReturnsCpuLabelForCpuWorker)
+{
+  EXPECT_EQ(worker_type_label(STARPU_CPU_WORKER), "CPU");
+}
+
+TEST(ServerMainWorkerTypeLabel, ReturnsCudaLabelForCudaWorker)
+{
+  EXPECT_EQ(worker_type_label(STARPU_CUDA_WORKER), "CUDA");
+}
+
+TEST(ServerMainWorkerTypeLabel, ReturnsOtherLabelForUnknownWorkerType)
+{
+  constexpr auto unknown_worker_type =
+      static_cast<enum starpu_worker_archtype>(-12345);
+  EXPECT_EQ(worker_type_label(unknown_worker_type), "Other(-12345)");
+}
+
+TEST(ServerMainCpuCoreRanges, ReturnsEmptyStringForEmptyInput)
+{
+  EXPECT_EQ(format_cpu_core_ranges({}), "");
+}
+
+TEST(ServerMainCpuCoreRanges, FormatsSingleCpuAsSingleValue)
+{
+  EXPECT_EQ(format_cpu_core_ranges({7}), "7");
+}
+
+TEST(ServerMainCpuCoreRanges, FormatsMixedContiguousAndSingleRanges)
+{
+  EXPECT_EQ(format_cpu_core_ranges({1, 2, 3, 5, 7, 8}), "1-3,5,7-8");
+}
+
+TEST(ServerMainCpuCoreRanges, FormatsMultipleSingleValuesWithCommas)
+{
+  EXPECT_EQ(format_cpu_core_ranges({2, 4, 6}), "2,4,6");
+}
+
+TEST(ServerMainCpuAffinity, ReturnsEmptyStringWhenCpusetIsNull)
+{
+  DescribeCpuAffinityOverrideState override_state;
+  override_state.cpuset_to_return = nullptr;
+  ScopedDescribeCpuAffinityOverrides overrides(override_state);
+
+  EXPECT_EQ(describe_cpu_affinity(11), "");
+  EXPECT_EQ(override_state.provider_calls, 1);
+  EXPECT_EQ(override_state.requested_worker_id, 11);
+  EXPECT_EQ(override_state.first_calls, 0);
+  EXPECT_EQ(override_state.next_calls, 0);
+  EXPECT_EQ(override_state.free_calls, 0);
+}
+
+TEST(ServerMainCpuAffinity, ReturnsEmptyStringWhenCpusetContainsNoCore)
+{
+  DescribeCpuAffinityOverrideState override_state;
+  override_state.cpuset_to_return =
+      reinterpret_cast<hwloc_cpuset_t>(static_cast<std::uintptr_t>(0x1));
+  override_state.cores = {};
+  ScopedDescribeCpuAffinityOverrides overrides(override_state);
+
+  EXPECT_EQ(describe_cpu_affinity(3), "");
+  EXPECT_EQ(override_state.provider_calls, 1);
+  EXPECT_EQ(override_state.requested_worker_id, 3);
+  EXPECT_EQ(override_state.first_calls, 1);
+  EXPECT_EQ(override_state.next_calls, 0);
+  EXPECT_EQ(override_state.free_calls, 1);
+  EXPECT_EQ(override_state.first_cpuset, override_state.cpuset_to_return);
+  EXPECT_EQ(override_state.freed_cpuset, override_state.cpuset_to_return);
+}
+
+TEST(ServerMainCpuAffinity, FormatsCoresAndFreesCpusetWhenCoresArePresent)
+{
+  DescribeCpuAffinityOverrideState override_state;
+  override_state.cpuset_to_return =
+      reinterpret_cast<hwloc_cpuset_t>(static_cast<std::uintptr_t>(0x2));
+  override_state.cores = {0, 1, 2, 4, 6, 7};
+  ScopedDescribeCpuAffinityOverrides overrides(override_state);
+
+  EXPECT_EQ(describe_cpu_affinity(5), "0-2,4,6-7");
+  EXPECT_EQ(override_state.provider_calls, 1);
+  EXPECT_EQ(override_state.requested_worker_id, 5);
+  EXPECT_EQ(override_state.first_calls, 1);
+  EXPECT_EQ(override_state.next_calls, 6);
+  EXPECT_EQ(override_state.free_calls, 1);
+  EXPECT_EQ(override_state.first_cpuset, override_state.cpuset_to_return);
+  EXPECT_EQ(override_state.next_cpuset, override_state.cpuset_to_return);
+  EXPECT_EQ(override_state.freed_cpuset, override_state.cpuset_to_return);
+}
+
+TEST(ServerMainWorkerInventory, LogsOnlyHeaderWhenNoWorkersAreConfigured)
+{
+  LogWorkerInventoryOverrideState override_state;
+  override_state.worker_count = 0;
+  ScopedLogWorkerInventoryOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+
+  OStreamCapture capture_out(std::cout);
+  log_worker_inventory(opts);
+
+  EXPECT_EQ(
+      capture_out.str(), expected_info_log("Configured 0 StarPU worker(s)."));
+  EXPECT_EQ(override_state.worker_count_calls, 1);
+  EXPECT_EQ(override_state.worker_type_calls, 0);
+  EXPECT_EQ(override_state.worker_device_id_calls, 0);
+  EXPECT_EQ(override_state.describe_cpu_affinity_calls, 0);
+}
+
+TEST(
+    ServerMainWorkerInventory,
+    LogsPerWorkerTypeDeviceAndCpuAffinityForMixedWorkers)
+{
+  LogWorkerInventoryOverrideState override_state;
+  override_state.worker_count = 3;
+  override_state.worker_types = {
+      STARPU_CPU_WORKER, STARPU_CPU_WORKER, STARPU_CUDA_WORKER};
+  override_state.device_ids = {0, -1, 2};
+  override_state.cpu_affinities = {"0-3", "", "should_not_be_used"};
+  ScopedLogWorkerInventoryOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+
+  OStreamCapture capture_out(std::cout);
+  log_worker_inventory(opts);
+
+  const auto expected =
+      expected_info_log("Configured 3 StarPU worker(s).") +
+      expected_info_log("Worker  0: type=CPU, device id=0, cores=0-3") +
+      expected_info_log("Worker  1: type=CPU, device id=N/A") +
+      expected_info_log("Worker  2: type=CUDA, device id=2");
+  EXPECT_EQ(capture_out.str(), expected);
+  EXPECT_EQ(override_state.worker_count_calls, 1);
+  EXPECT_EQ(override_state.worker_type_calls, 3);
+  EXPECT_EQ(override_state.worker_device_id_calls, 3);
+  EXPECT_EQ(override_state.describe_cpu_affinity_calls, 2);
+  EXPECT_EQ(
+      override_state.requested_worker_ids_for_type,
+      std::vector<int>({0, 1, 2}));
+  EXPECT_EQ(
+      override_state.requested_worker_ids_for_device,
+      std::vector<int>({0, 1, 2}));
+  EXPECT_EQ(
+      override_state.requested_worker_ids_for_affinity,
+      std::vector<int>({0, 1}));
+}
+
+static_assert(std::is_nothrow_destructible_v<RuntimeCleanupGuard>);
+static_assert(std::is_nothrow_invocable_v<
+              decltype(&RuntimeCleanupGuard::Dismiss), RuntimeCleanupGuard&>);
+static_assert(std::is_nothrow_invocable_v<
+              decltype(&RuntimeCleanupGuard::ResetTraceLoggerNoexceptForTest)>);
+static_assert(std::is_nothrow_invocable_v<
+              decltype(&RuntimeCleanupGuard::ShutdownMetricsNoexceptForTest)>);
+static_assert(std::is_nothrow_invocable_v<
+              decltype(&SignalNotificationPipe::SetPipeFailureForTest), bool>);
+static_assert(
+    std::is_nothrow_invocable_v<
+        decltype(&SignalNotificationPipe::SetSetNonBlockingFailureForTest),
+        bool>);
+static_assert(std::is_nothrow_invocable_r_v<
+              RunPlotScriptOverrideForTestFn&,
+              decltype(run_plot_script_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              LocatePlotScriptOverrideForTestFn&,
+              decltype(locate_plot_script_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              TraceSummaryFilePathOverrideForTestFn&,
+              decltype(trace_summary_file_path_override_for_test)>);
+static_assert(
+    std::is_nothrow_invocable_r_v<
+        std::remove_reference_t<
+            decltype(load_model_and_reference_output_override_for_test())>&,
+        decltype(load_model_and_reference_output_override_for_test)>);
+static_assert(
+    std::is_nothrow_invocable_r_v<
+        std::remove_reference_t<decltype(run_warmup_override_for_test())>&,
+        decltype(run_warmup_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              WorkerCpusetProviderOverrideForTestFn&,
+              decltype(worker_cpuset_provider_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              HwlocBitmapFirstOverrideForTestFn&,
+              decltype(hwloc_bitmap_first_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              HwlocBitmapNextOverrideForTestFn&,
+              decltype(hwloc_bitmap_next_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              HwlocBitmapFreeOverrideForTestFn&,
+              decltype(hwloc_bitmap_free_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              WorkerCountOverrideForTestFn&,
+              decltype(worker_count_override_for_test)>);
+static_assert(
+    std::is_nothrow_invocable_r_v<
+        WorkerTypeOverrideForTestFn&, decltype(worker_type_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              WorkerDeviceIdOverrideForTestFn&,
+              decltype(worker_device_id_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              DescribeCpuAffinityOverrideForTestFn&,
+              decltype(describe_cpu_affinity_override_for_test)>);
+
+TEST(ServerMainRuntimeCleanupGuard, DestructorPerformsCleanupWhenActive)
+{
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(false, "");
+  starpu_server::shutdown_metrics();
+
+  tracer.configure(true, "");
+  ASSERT_TRUE(tracer.enabled());
+  ASSERT_TRUE(starpu_server::init_metrics(0));
+  ASSERT_NE(starpu_server::get_metrics(), nullptr);
+
+  {
+    RuntimeCleanupGuard guard;
+  }
+
+  EXPECT_FALSE(tracer.enabled());
+  EXPECT_EQ(starpu_server::get_metrics(), nullptr);
+}
+
+TEST(ServerMainRuntimeCleanupGuard, DestructorSkipsCleanupAfterDismiss)
+{
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(false, "");
+  starpu_server::shutdown_metrics();
+
+  tracer.configure(true, "");
+  ASSERT_TRUE(tracer.enabled());
+  ASSERT_TRUE(starpu_server::init_metrics(0));
+  ASSERT_NE(starpu_server::get_metrics(), nullptr);
+
+  {
+    RuntimeCleanupGuard guard;
+    EXPECT_NO_THROW(guard.Dismiss());
+    EXPECT_NO_THROW(guard.Dismiss());
+  }
+
+  EXPECT_TRUE(tracer.enabled());
+  EXPECT_NE(starpu_server::get_metrics(), nullptr);
+
+  tracer.configure(false, "");
+  starpu_server::shutdown_metrics();
+}
+
+TEST(ServerMainRuntimeCleanupGuard, ResetTraceLoggerNoexceptDisablesTracer)
+{
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(false, "");
+  tracer.configure(true, "");
+  ASSERT_TRUE(tracer.enabled());
+
+  EXPECT_NO_THROW(RuntimeCleanupGuard::ResetTraceLoggerNoexceptForTest());
+  EXPECT_FALSE(tracer.enabled());
+}
+
+TEST(
+    ServerMainRuntimeCleanupGuard,
+    ResetTraceLoggerNoexceptSwallowsInternalExceptions)
+{
+  auto& tracer = starpu_server::BatchingTraceLogger::instance();
+  tracer.configure(false, "");
+  tracer.configure(true, "");
+  ASSERT_TRUE(tracer.enabled());
+
+  ScopedResetTraceLoggerForcedThrow forced_throw;
+  EXPECT_NO_THROW(RuntimeCleanupGuard::ResetTraceLoggerNoexceptForTest());
+
+  EXPECT_TRUE(tracer.enabled());
+  tracer.configure(false, "");
+}
+
+TEST(ServerMainRuntimeCleanupGuard, ShutdownMetricsNoexceptShutsDownRegistry)
+{
+  starpu_server::shutdown_metrics();
+  ASSERT_TRUE(starpu_server::init_metrics(0));
+  ASSERT_NE(starpu_server::get_metrics(), nullptr);
+
+  EXPECT_NO_THROW(RuntimeCleanupGuard::ShutdownMetricsNoexceptForTest());
+  EXPECT_EQ(starpu_server::get_metrics(), nullptr);
+}
+
+TEST(
+    ServerMainRuntimeCleanupGuard,
+    ShutdownMetricsNoexceptSwallowsInternalExceptions)
+{
+  starpu_server::shutdown_metrics();
+  ASSERT_TRUE(starpu_server::init_metrics(0));
+  ASSERT_NE(starpu_server::get_metrics(), nullptr);
+
+  ScopedShutdownMetricsForcedThrow forced_throw;
+  EXPECT_NO_THROW(RuntimeCleanupGuard::ShutdownMetricsNoexceptForTest());
+
+  EXPECT_NE(starpu_server::get_metrics(), nullptr);
+  starpu_server::shutdown_metrics();
+}
+
+TEST(
+    ServerMainSignalNotificationPipe, ConstructorFallsBackWhenPipeCreationFails)
+{
+  signal_stop_notify_fd() = -1;
+  ScopedSignalPipeForcedPipeFailure forced_failure;
+  SignalNotificationPipe signal_pipe;
+
+  EXPECT_FALSE(signal_pipe.active());
+  EXPECT_EQ(signal_pipe.read_fd(), -1);
+  EXPECT_EQ(signal_stop_notify_fd(), -1);
+}
+
+TEST(
+    ServerMainSignalNotificationPipe,
+    ConstructorFallsBackWhenSetNonBlockingFails)
+{
+  signal_stop_notify_fd() = -1;
+  ScopedSignalPipeForcedSetNonBlockingFailure forced_failure;
+  SignalNotificationPipe signal_pipe;
+
+  EXPECT_FALSE(signal_pipe.active());
+  EXPECT_EQ(signal_pipe.read_fd(), -1);
+  EXPECT_EQ(signal_stop_notify_fd(), -1);
+}
+
+TEST(ServerMainSignalNotificationPipe, SetNonBlockingReturnsFalseForNegativeFd)
+{
+  EXPECT_FALSE(SignalNotificationPipe::SetNonBlockingForTest(-1));
+}
+
+TEST(
+    ServerMainSignalNotificationPipe,
+    SetNonBlockingReturnsFalseWhenFcntlGetFlFails)
+{
+  std::array<int, 2> file_descriptors{-1, -1};
+  ASSERT_EQ(::pipe(file_descriptors.data()), 0);
+
+  const int closed_fd = file_descriptors[1];
+  ASSERT_EQ(::close(file_descriptors[1]), 0);
+  file_descriptors[1] = -1;
+
+  EXPECT_FALSE(SignalNotificationPipe::SetNonBlockingForTest(closed_fd));
+
+  ASSERT_EQ(::close(file_descriptors[0]), 0);
 }
 
 TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
@@ -717,6 +1718,270 @@ TEST(ServerMainPlotScript, LocatePlotScriptFindsRepositoryScript)
   EXPECT_TRUE(script_path->is_absolute());
   EXPECT_EQ(script_path->filename(), "plot_batch_summary.py");
   EXPECT_TRUE(std::filesystem::is_regular_file(*script_path));
+}
+
+TEST(ServerMainPlotPath, PlotsOutputPathRemovesSummarySuffixWhenPresent)
+{
+  const std::filesystem::path summary_path{"/tmp/batch_summary.csv"};
+  const auto output_path = plots_output_path(summary_path);
+  EXPECT_EQ(output_path, std::filesystem::path("/tmp/batch_plots.png"));
+}
+
+TEST(ServerMainPlotPath, PlotsOutputPathKeepsStemWhenSummarySuffixAbsent)
+{
+  const std::filesystem::path summary_path{"/tmp/trace.csv"};
+  const auto output_path = plots_output_path(summary_path);
+  EXPECT_EQ(output_path, std::filesystem::path("/tmp/trace_plots.png"));
+}
+
+TEST(ServerMainPlotPath, PlotsOutputPathUsesLastSummaryOccurrence)
+{
+  const std::filesystem::path summary_path{"/tmp/a_summary_v2_summary.csv"};
+  const auto output_path = plots_output_path(summary_path);
+  EXPECT_EQ(output_path, std::filesystem::path("/tmp/a_summary_v2_plots.png"));
+}
+
+TEST(ServerMainPlotPath, RunTracePlotsReturnsImmediatelyWhenTracingDisabled)
+{
+  ScopedTraceLoggerReset trace_logger_reset;
+
+  PlotScriptOverrideState override_state;
+  override_state.summary_path_result = std::filesystem::path("/tmp/unused.csv");
+  override_state.locate_result = std::filesystem::path("/tmp/fake_plot.py");
+  override_state.run_result = 0;
+  ScopedPlotScriptOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.trace_enabled = false;
+
+  OStreamCapture capture_err(std::cerr);
+  OStreamCapture capture_out(std::cout);
+  run_trace_plots_if_enabled(opts);
+
+  EXPECT_EQ(override_state.summary_path_calls, 0);
+  EXPECT_EQ(override_state.locate_calls, 0);
+  EXPECT_EQ(override_state.run_calls, 0);
+  EXPECT_EQ(capture_err.str(), "");
+  EXPECT_EQ(capture_out.str(), "");
+}
+
+TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenNoSummaryFileIsAvailable)
+{
+  ScopedTraceLoggerReset trace_logger_reset;
+
+  PlotScriptOverrideState override_state;
+  override_state.summary_path_result = std::nullopt;
+  override_state.locate_result = std::filesystem::path("/tmp/fake_plot.py");
+  override_state.run_result = 0;
+  ScopedPlotScriptOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.trace_enabled = true;
+
+  OStreamCapture capture_err(std::cerr);
+  OStreamCapture capture_out(std::cout);
+  run_trace_plots_if_enabled(opts);
+
+  EXPECT_EQ(override_state.summary_path_calls, 1);
+  EXPECT_EQ(override_state.locate_calls, 0);
+  EXPECT_EQ(override_state.run_calls, 0);
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          "Tracing was enabled but no trace.csv was produced; skipping plot "
+          "generation."));
+  EXPECT_EQ(capture_out.str(), "");
+}
+
+TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenSummaryFileIsMissing)
+{
+  ScopedTraceLoggerReset trace_logger_reset;
+  auto temp_directory = make_temp_test_directory("run_trace_plots_missing_csv");
+  const auto summary_path = temp_directory.path / "trace_summary.csv";
+  ASSERT_FALSE(std::filesystem::exists(summary_path));
+
+  PlotScriptOverrideState override_state;
+  override_state.summary_path_result = summary_path;
+  override_state.locate_result = std::filesystem::path("/tmp/fake_plot.py");
+  override_state.run_result = 0;
+  ScopedPlotScriptOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.trace_enabled = true;
+
+  OStreamCapture capture_err(std::cerr);
+  OStreamCapture capture_out(std::cout);
+  run_trace_plots_if_enabled(opts);
+
+  EXPECT_EQ(override_state.summary_path_calls, 1);
+  EXPECT_EQ(override_state.locate_calls, 0);
+  EXPECT_EQ(override_state.run_calls, 0);
+  EXPECT_EQ(
+      capture_err.str(), expected_warning_log(
+                             "Tracing summary file '" + summary_path.string() +
+                             "' not found; skipping plot generation."));
+  EXPECT_EQ(capture_out.str(), "");
+}
+
+TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenPlotScriptCannotBeLocated)
+{
+  ScopedTraceLoggerReset trace_logger_reset;
+  auto temp_directory =
+      make_temp_test_directory("run_trace_plots_missing_script");
+  const auto summary_path = temp_directory.path / "trace_summary.csv";
+  TempFileGuard summary_guard{summary_path};
+  {
+    std::ofstream summary_file(summary_path);
+    ASSERT_TRUE(summary_file.is_open());
+    summary_file << "batch_id\n";
+  }
+  ASSERT_TRUE(std::filesystem::exists(summary_path));
+
+  PlotScriptOverrideState override_state;
+  override_state.summary_path_result = summary_path;
+  override_state.locate_result = std::nullopt;
+  override_state.run_result = 0;
+  ScopedPlotScriptOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.trace_enabled = true;
+
+  OStreamCapture capture_err(std::cerr);
+  OStreamCapture capture_out(std::cout);
+  run_trace_plots_if_enabled(opts);
+
+  EXPECT_EQ(override_state.summary_path_calls, 1);
+  EXPECT_EQ(override_state.locate_calls, 1);
+  EXPECT_EQ(override_state.run_calls, 0);
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          "Unable to locate scripts/plot_batch_summary.py; skipping plot "
+          "generation."));
+  EXPECT_EQ(capture_out.str(), "");
+}
+
+TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenPlotScriptDidNotComplete)
+{
+  ScopedTraceLoggerReset trace_logger_reset;
+  auto temp_directory =
+      make_temp_test_directory("run_trace_plots_script_incomplete");
+  const auto summary_path = temp_directory.path / "trace_summary.csv";
+  TempFileGuard summary_guard{summary_path};
+  {
+    std::ofstream summary_file(summary_path);
+    ASSERT_TRUE(summary_file.is_open());
+    summary_file << "batch_id\n";
+  }
+  ASSERT_TRUE(std::filesystem::exists(summary_path));
+
+  PlotScriptOverrideState override_state;
+  override_state.summary_path_result = summary_path;
+  override_state.locate_result = temp_directory.path / "plot_batch_summary.py";
+  override_state.run_result = std::nullopt;
+  ScopedPlotScriptOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.trace_enabled = true;
+
+  OStreamCapture capture_err(std::cerr);
+  OStreamCapture capture_out(std::cout);
+  run_trace_plots_if_enabled(opts);
+
+  ASSERT_TRUE(override_state.locate_result.has_value());
+  EXPECT_EQ(override_state.summary_path_calls, 1);
+  EXPECT_EQ(override_state.locate_calls, 1);
+  EXPECT_EQ(override_state.run_calls, 1);
+  EXPECT_EQ(override_state.run_script_path, *override_state.locate_result);
+  EXPECT_EQ(override_state.run_summary_path, summary_path);
+  EXPECT_EQ(override_state.run_output_path, plots_output_path(summary_path));
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          "Failed to generate batching latency plots; plot script did not "
+          "complete."));
+  EXPECT_EQ(capture_out.str(), "");
+}
+
+TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenPlotScriptFails)
+{
+  ScopedTraceLoggerReset trace_logger_reset;
+  auto temp_directory =
+      make_temp_test_directory("run_trace_plots_script_failed");
+  const auto summary_path = temp_directory.path / "trace_summary.csv";
+  TempFileGuard summary_guard{summary_path};
+  {
+    std::ofstream summary_file(summary_path);
+    ASSERT_TRUE(summary_file.is_open());
+    summary_file << "batch_id\n";
+  }
+  ASSERT_TRUE(std::filesystem::exists(summary_path));
+
+  PlotScriptOverrideState override_state;
+  override_state.summary_path_result = summary_path;
+  override_state.locate_result = temp_directory.path / "plot_batch_summary.py";
+  override_state.run_result = 42;
+  ScopedPlotScriptOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.trace_enabled = true;
+
+  const auto expected_output_path = plots_output_path(summary_path);
+  const auto expected_message = std::format(
+      "Failed to generate batching latency plots; python3 {} {} --output {} "
+      "exited with code {}.",
+      override_state.locate_result->string(), summary_path.string(),
+      expected_output_path.string(), *override_state.run_result);
+
+  OStreamCapture capture_err(std::cerr);
+  OStreamCapture capture_out(std::cout);
+  run_trace_plots_if_enabled(opts);
+
+  EXPECT_EQ(override_state.summary_path_calls, 1);
+  EXPECT_EQ(override_state.locate_calls, 1);
+  EXPECT_EQ(override_state.run_calls, 1);
+  EXPECT_EQ(override_state.run_output_path, expected_output_path);
+  EXPECT_EQ(capture_err.str(), expected_warning_log(expected_message));
+  EXPECT_EQ(capture_out.str(), "");
+}
+
+TEST(ServerMainPlotPath, RunTracePlotsLogsInfoWhenPlotScriptSucceeds)
+{
+  ScopedTraceLoggerReset trace_logger_reset;
+  auto temp_directory = make_temp_test_directory("run_trace_plots_script_ok");
+  const auto summary_path = temp_directory.path / "trace_summary.csv";
+  TempFileGuard summary_guard{summary_path};
+  {
+    std::ofstream summary_file(summary_path);
+    ASSERT_TRUE(summary_file.is_open());
+    summary_file << "batch_id\n";
+  }
+  ASSERT_TRUE(std::filesystem::exists(summary_path));
+
+  PlotScriptOverrideState override_state;
+  override_state.summary_path_result = summary_path;
+  override_state.locate_result = temp_directory.path / "plot_batch_summary.py";
+  override_state.run_result = 0;
+  ScopedPlotScriptOverrides overrides(override_state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.batching.trace_enabled = true;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+
+  const auto expected_output_path = plots_output_path(summary_path);
+  const auto expected_message = std::format(
+      "Batching latency plots written to '{}'.", expected_output_path.string());
+
+  OStreamCapture capture_err(std::cerr);
+  OStreamCapture capture_out(std::cout);
+  run_trace_plots_if_enabled(opts);
+
+  EXPECT_EQ(override_state.summary_path_calls, 1);
+  EXPECT_EQ(override_state.locate_calls, 1);
+  EXPECT_EQ(override_state.run_calls, 1);
+  EXPECT_EQ(override_state.run_output_path, expected_output_path);
+  EXPECT_EQ(capture_err.str(), "");
+  EXPECT_EQ(capture_out.str(), expected_info_log(expected_message));
 }
 
 TEST(ServerMainPlotProcess, WaitForPlotProcessReturnsChildExitCode)
