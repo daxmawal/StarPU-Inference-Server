@@ -1339,6 +1339,46 @@ struct OccupiedLoopbackPort {
   }
 };
 
+struct HandleProgramArgumentsFatalOverrideState {
+  std::string message;
+  int call_count = 0;
+};
+
+auto
+handle_program_arguments_fatal_override_state()
+    -> HandleProgramArgumentsFatalOverrideState*&
+{
+  static HandleProgramArgumentsFatalOverrideState* state = nullptr;
+  return state;
+}
+
+void
+handle_program_arguments_fatal_override_stub(std::string_view message)
+{
+  auto* state = handle_program_arguments_fatal_override_state();
+  if (state != nullptr) {
+    ++state->call_count;
+    state->message = std::string(message);
+  }
+  throw std::runtime_error(std::string(message));
+}
+
+struct ScopedHandleProgramArgumentsFatalOverride {
+  explicit ScopedHandleProgramArgumentsFatalOverride(
+      HandleProgramArgumentsFatalOverrideState& state) noexcept
+  {
+    handle_program_arguments_fatal_override_state() = &state;
+    handle_program_arguments_fatal_override_for_test() =
+        handle_program_arguments_fatal_override_stub;
+  }
+
+  ~ScopedHandleProgramArgumentsFatalOverride()
+  {
+    handle_program_arguments_fatal_override_for_test() = nullptr;
+    handle_program_arguments_fatal_override_state() = nullptr;
+  }
+};
+
 auto
 fixture_model_path() -> std::filesystem::path
 {
@@ -1560,6 +1600,106 @@ TEST(ServerMainArgs, HandleProgramArgumentsParsesShortConfigFlag)
 
   EXPECT_TRUE(cfg.valid);
   EXPECT_EQ(cfg.name, "unit_server_main");
+}
+
+TEST(
+    ServerMainArgs,
+    HandleProgramArgumentsReportsMissingConfigValueWhenRemainingIsEmpty)
+{
+  HandleProgramArgumentsFatalOverrideState fatal_state;
+  ScopedHandleProgramArgumentsFatalOverride fatal_override(fatal_state);
+  const std::array<const char*, 2> argv{"starpu_server", "--config"};
+
+  EXPECT_THROW(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      std::runtime_error);
+
+  EXPECT_EQ(fatal_state.call_count, 1);
+  EXPECT_EQ(fatal_state.message, "Missing value for --config argument.\n");
+}
+
+TEST(
+    ServerMainArgs,
+    HandleProgramArgumentsReportsMissingConfigValueWhenRemainingFrontIsNullptr)
+{
+  HandleProgramArgumentsFatalOverrideState fatal_state;
+  ScopedHandleProgramArgumentsFatalOverride fatal_override(fatal_state);
+  const std::array<const char*, 3> argv{"starpu_server", "--config", nullptr};
+
+  EXPECT_THROW(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      std::runtime_error);
+
+  EXPECT_EQ(fatal_state.call_count, 1);
+  EXPECT_EQ(fatal_state.message, "Missing value for --config argument.\n");
+}
+
+TEST(ServerMainArgs, HandleProgramArgumentsReportsUnexpectedNullRawArgument)
+{
+  HandleProgramArgumentsFatalOverrideState fatal_state;
+  ScopedHandleProgramArgumentsFatalOverride fatal_override(fatal_state);
+  const std::array<const char*, 2> argv{"starpu_server", nullptr};
+
+  EXPECT_THROW(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      std::runtime_error);
+
+  EXPECT_EQ(fatal_state.call_count, 1);
+  EXPECT_EQ(fatal_state.message, "Unexpected null program argument.\n");
+}
+
+TEST(ServerMainArgs, HandleProgramArgumentsReportsMissingRequiredConfigPath)
+{
+  HandleProgramArgumentsFatalOverrideState fatal_state;
+  ScopedHandleProgramArgumentsFatalOverride fatal_override(fatal_state);
+  const std::array<const char*, 1> argv{"starpu_server"};
+
+  EXPECT_THROW(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      std::runtime_error);
+
+  EXPECT_EQ(fatal_state.call_count, 1);
+  EXPECT_EQ(fatal_state.message, "Missing required --config argument.\n");
+}
+
+TEST(ServerMainArgs, HandleProgramArgumentsReportsInvalidLoadedConfig)
+{
+  HandleProgramArgumentsFatalOverrideState fatal_state;
+  ScopedHandleProgramArgumentsFatalOverride fatal_override(fatal_state);
+  const auto missing_config =
+      make_temp_test_path("server_main_missing_config_non_death", ".yaml");
+  std::error_code remove_ec;
+  std::filesystem::remove(missing_config, remove_ec);
+  ASSERT_TRUE(remove_ec.value() == 0 || remove_ec.value() == ENOENT);
+
+  const std::string config_path = missing_config.string();
+  const std::array<const char*, 3> argv{
+      "starpu_server", "--config", config_path.c_str()};
+
+  EXPECT_THROW(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      std::runtime_error);
+
+  EXPECT_EQ(fatal_state.call_count, 1);
+  EXPECT_EQ(fatal_state.message, "Invalid configuration file.\n");
+}
+
+TEST(
+    ServerMainArgs, HandleProgramArgumentsReportsUnknownArgumentWithFullMessage)
+{
+  HandleProgramArgumentsFatalOverrideState fatal_state;
+  ScopedHandleProgramArgumentsFatalOverride fatal_override(fatal_state);
+  const std::array<const char*, 2> argv{"starpu_server", "--unknown"};
+
+  EXPECT_THROW(
+      { (void)handle_program_arguments({argv.data(), argv.size()}); },
+      std::runtime_error);
+
+  EXPECT_EQ(fatal_state.call_count, 1);
+  EXPECT_EQ(
+      fatal_state.message,
+      "Unknown argument '--unknown'. Only --config/-c is supported; all other "
+      "settings must live in the YAML file.\n");
 }
 
 TEST(ServerMainArgs, HandleProgramArgumentsDiesWhenConfigValueIsMissing)

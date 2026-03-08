@@ -1154,6 +1154,32 @@ signal_handler(int /*signal*/)
   errno = saved_errno;
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+using HandleProgramArgumentsFatalOverrideForTestFn = void (*)(std::string_view);
+
+auto
+handle_program_arguments_fatal_override_for_test() noexcept
+    -> HandleProgramArgumentsFatalOverrideForTestFn&
+{
+  static HandleProgramArgumentsFatalOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+#endif  // SONAR_IGNORE_STOP
+
+[[noreturn]] void
+handle_program_arguments_fatal(std::string_view message)
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  if (const auto override_fn =
+          handle_program_arguments_fatal_override_for_test();
+      override_fn != nullptr) {
+    override_fn(message);
+    std::terminate();
+  }
+#endif  // SONAR_IGNORE_STOP
+  starpu_server::log_fatal(std::string(message));
+}
+
 auto
 handle_program_arguments(std::span<char const* const> args)
     -> starpu_server::RuntimeConfig
@@ -1163,7 +1189,7 @@ handle_program_arguments(std::span<char const* const> args)
   auto remaining = args.subspan(1);
   auto require_value = [&](std::string_view flag) {
     if (remaining.empty() || remaining.front() == nullptr) {
-      starpu_server::log_fatal(
+      handle_program_arguments_fatal(
           std::format("Missing value for {} argument.\n", flag));
     }
     const char* value = remaining.front();
@@ -1176,7 +1202,7 @@ handle_program_arguments(std::span<char const* const> args)
     remaining = remaining.subspan(1);
 
     if (raw_arg == nullptr) {
-      starpu_server::log_fatal("Unexpected null program argument.\n");
+      handle_program_arguments_fatal("Unexpected null program argument.\n");
     }
 
     std::string_view arg{raw_arg};
@@ -1184,20 +1210,20 @@ handle_program_arguments(std::span<char const* const> args)
       config_path = require_value(arg);
       continue;
     }
-    starpu_server::log_fatal(std::format(
+    handle_program_arguments_fatal(std::format(
         "Unknown argument '{}'. Only --config/-c is supported; all other "
         "settings must live in the YAML file.\n",
         arg));
   }
 
   if (config_path == nullptr) {
-    starpu_server::log_fatal("Missing required --config argument.\n");
+    handle_program_arguments_fatal("Missing required --config argument.\n");
   }
 
   starpu_server::RuntimeConfig cfg = starpu_server::load_config(config_path);
 
   if (!cfg.valid) {
-    starpu_server::log_fatal("Invalid configuration file.\n");
+    handle_program_arguments_fatal("Invalid configuration file.\n");
   }
 
   log_info(cfg.verbosity, std::format("__cplusplus = {}", __cplusplus));
