@@ -29,10 +29,7 @@
 
 #include "../../../src/starpu_task_worker/result_dispatcher_component.hpp"
 #include "../../../src/starpu_task_worker/task_runner_internal.hpp"
-
-#define main starpu_server_server_main_for_test
-#include "../../../src/grpc/server/server_main.cpp"
-#undef main
+#include "grpc/server/server_main_test_api.hpp"
 
 namespace {
 
@@ -258,8 +255,8 @@ shutdown_drain_wait_step_override_stub() -> std::chrono::steady_clock::duration
 
 void
 shutdown_drain_observer_stub(
-    ShutdownDrainStageForTest stage, std::size_t total_jobs,
-    std::size_t completed_jobs, std::chrono::steady_clock::duration wait_budget)
+    ShutdownDrainStageForTest stage, ShutdownDrainProgressForTest progress,
+    std::chrono::steady_clock::duration wait_budget)
 {
   auto* state = shutdown_drain_override_state();
   if (state == nullptr) {
@@ -267,8 +264,8 @@ shutdown_drain_observer_stub(
   }
   {
     std::lock_guard<std::mutex> lock(state->mutex);
-    state->last_total_jobs = total_jobs;
-    state->last_completed_jobs = completed_jobs;
+    state->last_total_jobs = progress.total_jobs;
+    state->last_completed_jobs = progress.completed_jobs;
     state->last_wait_budget = wait_budget;
     switch (stage) {
       case ShutdownDrainStageForTest::Entered:

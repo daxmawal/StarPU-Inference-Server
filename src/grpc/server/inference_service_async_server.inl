@@ -77,6 +77,23 @@ class UnaryCallData final
     responder_.Finish(response_, status, this);
   }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+ public:
+  void HandleRequestWithoutResponderForTest()
+  {
+    if (!handler_) {
+      status_ = CallStatus::Finish;
+      return;
+    }
+    HandleRequest();
+  }
+
+  [[nodiscard]] auto StatusIsFinishForTest() const -> bool
+  {
+    return status_ == CallStatus::Finish;
+  }
+#endif  // SONAR_IGNORE_END
+
   inference::GRPCInferenceService::AsyncService* service_;
   grpc::ServerCompletionQueue* cq_;
   grpc::ServerContext ctx_;
@@ -89,6 +106,23 @@ class UnaryCallData final
   CallStatus status_ = CallStatus::Create;
   SharedPtr self_ref_;
 };
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+unary_call_data_missing_handler_transitions_to_finish_for_test_impl() -> bool
+{
+  using ServerLiveUnaryCallData = UnaryCallData<
+      inference::ServerLiveRequest, inference::ServerLiveResponse>;
+  ServerLiveUnaryCallData call_data(
+      /*service=*/nullptr,
+      /*completion_queue=*/nullptr,
+      /*impl=*/nullptr,
+      /*request_method=*/ServerLiveUnaryCallData::RequestMethod{},
+      /*handler=*/ServerLiveUnaryCallData::Handler{});
+  call_data.HandleRequestWithoutResponderForTest();
+  return call_data.StatusIsFinishForTest();
+}
+#endif  // SONAR_IGNORE_END
 
 class ModelInferCallData final
     : public AsyncCallDataBase,

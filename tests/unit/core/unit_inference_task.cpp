@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <format>
 #include <memory>
@@ -631,9 +632,29 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   EXPECT_EQ(params->request_id, 4);
   EXPECT_EQ(params->verbosity, opts_.verbosity);
   EXPECT_EQ(params->models.model_cpu, &model_cpu_);
-  EXPECT_EQ(params->device.device_id, &job->get_device_id());
-  EXPECT_EQ(params->device.worker_id, &job->get_worker_id());
-  EXPECT_EQ(params->device.executed_on, &job->get_executed_on());
+  EXPECT_EQ(params->device.device_id, nullptr);
+  EXPECT_EQ(params->device.worker_id, nullptr);
+  EXPECT_EQ(params->device.executed_on, nullptr);
+  ASSERT_TRUE(static_cast<bool>(params->device.set_runtime_device_info));
+  ASSERT_TRUE(static_cast<bool>(params->timing.set_codelet_start_time));
+  ASSERT_TRUE(static_cast<bool>(params->timing.set_codelet_end_time));
+  ASSERT_TRUE(static_cast<bool>(params->timing.set_inference_start_time));
+
+  const auto codelet_start = starpu_server::MonotonicClock::now();
+  const auto inference_start = codelet_start + std::chrono::microseconds(100);
+  const auto codelet_end = codelet_start + std::chrono::microseconds(250);
+  params->device.set_runtime_device_info(starpu_server::DeviceType::CUDA, 3, 8);
+  params->timing.set_codelet_start_time(codelet_start);
+  params->timing.set_inference_start_time(inference_start);
+  params->timing.set_codelet_end_time(codelet_end);
+
+  const auto timing = job->timing_info_snapshot();
+  EXPECT_EQ(job->get_executed_on(), starpu_server::DeviceType::CUDA);
+  EXPECT_EQ(job->get_device_id(), 3);
+  EXPECT_EQ(job->get_worker_id(), 8);
+  EXPECT_EQ(timing.codelet_start_time, codelet_start);
+  EXPECT_EQ(timing.inference_start_time, inference_start);
+  EXPECT_EQ(timing.codelet_end_time, codelet_end);
   EXPECT_EQ(params->layout.num_dims[0], 2);
   EXPECT_EQ(params->layout.dims[0][0], 2);
   EXPECT_EQ(params->layout.dims[0][1], 3);

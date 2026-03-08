@@ -10,6 +10,9 @@
 #include "device_type.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
+#if defined(STARPU_TESTING)
+#include "utils/batching_trace_logger_test_api.hpp"
+#endif
 
 namespace starpu_server {
 
@@ -174,6 +177,25 @@ close_stream_if_open(std::ofstream& stream)
 }
 
 }  // namespace
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+auto
+EscapeCsvFieldForTest(std::string_view value) -> std::string
+{
+  return escape_csv_field(value);
+}
+
+void
+AppendFlowAnnotationForTest(
+    std::ostringstream& line, FlowDirectionForTest direction, int batch_id,
+    bool is_warmup)
+{
+  append_flow_annotation(
+      line, static_cast<FlowDirection>(direction), batch_id, is_warmup);
+}
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
 
 namespace detail {
 

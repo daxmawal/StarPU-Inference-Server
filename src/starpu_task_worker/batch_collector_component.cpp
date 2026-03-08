@@ -562,6 +562,8 @@ BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
     set_starpu_prepared_queue_depth(prepared_jobs_->size());
   }
   if (job != nullptr && max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr) {
+    // Inflight accounting is owned by prepared-queue enqueue/dequeue terminal
+    // paths: increment here, decrement in ResultDispatcher terminal handling.
     const auto current =
         inflight_tasks_->fetch_add(1, std::memory_order_release) + 1;
     set_inflight_tasks(current);

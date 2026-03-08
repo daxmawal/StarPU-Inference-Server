@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <string>
@@ -541,17 +542,57 @@ class StarPUTaskRunnerTestAdapter {
 
   static void reserve_inflight_slot(StarPUTaskRunner* runner)
   {
-    runner->reserve_inflight_slot();
+    if (runner == nullptr || runner->inflight_state_ == nullptr ||
+        runner->inflight_state_->max_tasks == 0) {
+      return;
+    }
+
+    auto inflight_state = runner->inflight_state_;
+    std::unique_lock lock(inflight_state->mutex);
+    inflight_state->cv.wait(lock, [&inflight_state] {
+      return inflight_state->tasks.load(std::memory_order_acquire) <
+             inflight_state->max_tasks;
+    });
+    const auto current =
+        inflight_state->tasks.fetch_add(1, std::memory_order_release) + 1;
+    set_inflight_tasks(current);
+    const double ratio = static_cast<double>(current) /
+                         static_cast<double>(inflight_state->max_tasks);
+    set_starpu_worker_busy_ratio(ratio);
   }
 
   static void release_inflight_slot(StarPUTaskRunner* runner)
   {
-    runner->release_inflight_slot();
+    if (runner == nullptr || runner->inflight_state_ == nullptr ||
+        runner->inflight_state_->max_tasks == 0) {
+      return;
+    }
+    auto inflight_state = runner->inflight_state_;
+    std::size_t previous =
+        inflight_state->tasks.load(std::memory_order_acquire);
+    while (true) {
+      if (previous == 0) {
+        return;
+      }
+      if (inflight_state->tasks.compare_exchange_weak(
+              previous, previous - 1, std::memory_order_acq_rel)) {
+        break;
+      }
+    }
+    set_inflight_tasks(previous - 1);
+    if (inflight_state->max_tasks > 0 && previous > 0) {
+      const double ratio = static_cast<double>(previous - 1) /
+                           static_cast<double>(inflight_state->max_tasks);
+      set_starpu_worker_busy_ratio(ratio);
+    }
+    std::scoped_lock lock(inflight_state->mutex);
+    inflight_state->cv.notify_one();
   }
 
   static auto has_inflight_limit(const StarPUTaskRunner* runner) -> bool
   {
-    return runner->has_inflight_limit();
+    return runner != nullptr && runner->inflight_state_ != nullptr &&
+           runner->inflight_state_->max_tasks > 0;
   }
 
   static auto get_inflight_tasks(const StarPUTaskRunner* runner) -> std::size_t

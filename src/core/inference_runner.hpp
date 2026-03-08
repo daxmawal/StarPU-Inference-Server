@@ -309,9 +309,50 @@ class InferenceJob : public JobBatchState {
     return terminal_handled_.load(std::memory_order_acquire);
   }
 
-  auto get_device_id() -> int& { return device_id_; }
-  auto get_worker_id() -> int& { return worker_id_; }
-  auto get_executed_on() -> DeviceType& { return executed_on_; }
+  void set_runtime_device_info(
+      DeviceType executed_on, int device_id, int worker_id)
+  {
+    const std::scoped_lock lock(runtime_device_info_mutex_);
+    executed_on_ = executed_on;
+    device_id_ = device_id;
+    worker_id_ = worker_id;
+  }
+
+  void set_device_id(int device_id)
+  {
+    const std::scoped_lock lock(runtime_device_info_mutex_);
+    device_id_ = device_id;
+  }
+
+  void set_worker_id(int worker_id)
+  {
+    const std::scoped_lock lock(runtime_device_info_mutex_);
+    worker_id_ = worker_id;
+  }
+
+  void set_executed_on(DeviceType executed_on)
+  {
+    const std::scoped_lock lock(runtime_device_info_mutex_);
+    executed_on_ = executed_on;
+  }
+
+  [[nodiscard]] auto get_device_id() const -> int
+  {
+    const std::scoped_lock lock(runtime_device_info_mutex_);
+    return device_id_;
+  }
+
+  [[nodiscard]] auto get_worker_id() const -> int
+  {
+    const std::scoped_lock lock(runtime_device_info_mutex_);
+    return worker_id_;
+  }
+
+  [[nodiscard]] auto get_executed_on() const -> DeviceType
+  {
+    const std::scoped_lock lock(runtime_device_info_mutex_);
+    return executed_on_;
+  }
 
   // Timing writer contract:
   // - gRPC ingress thread writes: enqueued_time, last_enqueued_time
@@ -324,8 +365,8 @@ class InferenceJob : public JobBatchState {
   //
   // For cross-thread reads/writes on host-side paths, use
   // update_timing_info()/timing_info_snapshot()/set_timing_info().
-  // timing_info() is intentionally left for low-level StarPU pointer wiring
-  // and existing tests.
+  // timing_info() remains test-only. Runtime paths should only use
+  // update_timing_info()/timing_info_snapshot()/set_timing_info().
   template <typename Updater>
   void update_timing_info(Updater&& updater)
   {
@@ -345,7 +386,9 @@ class InferenceJob : public JobBatchState {
     timing_info_ = timing;
   }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }
+#endif  // SONAR_IGNORE_END
 
  private:
   std::vector<torch::Tensor> input_tensors_;
@@ -360,6 +403,7 @@ class InferenceJob : public JobBatchState {
   mutable std::mutex on_complete_mutex_;
   mutable std::mutex failure_info_mutex_;
   mutable std::mutex timing_info_mutex_;
+  mutable std::mutex runtime_device_info_mutex_;
   CompletionCallback on_complete_;
   MonotonicClock::time_point start_time_;
   std::string model_name_;

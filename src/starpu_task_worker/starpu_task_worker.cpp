@@ -212,6 +212,51 @@ is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
   return job && job->get_fixed_worker_id().has_value();
 }
 
+struct RunThreadExceptionState {
+  std::mutex mutex;
+  std::exception_ptr exception;
+  std::string thread_name;
+
+  void capture(std::string_view source_thread, std::exception_ptr caught)
+  {
+    std::lock_guard lock(mutex);
+    if (exception != nullptr) {
+      return;
+    }
+    exception = std::move(caught);
+    thread_name = source_thread;
+  }
+
+  auto take() -> std::pair<std::exception_ptr, std::string>
+  {
+    std::lock_guard lock(mutex);
+    return {std::move(exception), std::move(thread_name)};
+  }
+};
+
+void
+rethrow_runner_thread_exception_if_any(RunThreadExceptionState& state)
+{
+  auto [captured_exception, captured_thread_name] = state.take();
+  if (captured_exception == nullptr) {
+    return;
+  }
+
+  try {
+    std::rethrow_exception(captured_exception);
+  }
+  catch (const std::exception& e) {
+    throw std::runtime_error(std::format(
+        "Unhandled exception escaped '{}' thread: {}", captured_thread_name,
+        e.what()));
+  }
+  catch (...) {
+    throw std::runtime_error(std::format(
+        "Unhandled non-standard exception escaped '{}' thread.",
+        captured_thread_name));
+  }
+}
+
 void
 log_batch_submitted_if_enabled(
     const std::shared_ptr<InferenceJob>& job, bool warmup_job)
@@ -456,7 +501,7 @@ StarPUTaskRunner::finalize_job_after_exception(
 
   if (job->try_mark_terminal_handled()) {
     result_dispatcher_->finalize_job_completion(job);
-    release_inflight_slot();
+    ResultDispatcher::release_inflight_slot(inflight_state_);
   }
 }
 
@@ -475,59 +520,6 @@ StarPUTaskRunner::finalize_job_after_unknown_exception(
 
   const UnknownTerminalException unknown;
   finalize_job_after_exception(job, unknown, log_prefix, job_id);
-}
-
-void
-StarPUTaskRunner::reserve_inflight_slot()
-{
-  if (inflight_state_ == nullptr || inflight_state_->max_tasks == 0) {
-    return;
-  }
-
-  std::unique_lock lock(inflight_state_->mutex);
-  inflight_state_->cv.wait(lock, [this] {
-    return inflight_state_->tasks.load(std::memory_order_acquire) <
-           inflight_state_->max_tasks;
-  });
-  const auto current =
-      inflight_state_->tasks.fetch_add(1, std::memory_order_release) + 1;
-  set_inflight_tasks(current);
-  const double ratio = static_cast<double>(current) /
-                       static_cast<double>(inflight_state_->max_tasks);
-  set_starpu_worker_busy_ratio(ratio);
-}
-
-void
-StarPUTaskRunner::release_inflight_slot()
-{
-  release_inflight_slot(inflight_state_);
-}
-
-void
-StarPUTaskRunner::release_inflight_slot(
-    const std::shared_ptr<InflightState>& inflight_state)
-{
-  if (inflight_state == nullptr || inflight_state->max_tasks == 0) {
-    return;
-  }
-  std::size_t previous = inflight_state->tasks.load(std::memory_order_acquire);
-  while (true) {
-    if (previous == 0) {
-      return;
-    }
-    if (inflight_state->tasks.compare_exchange_weak(
-            previous, previous - 1, std::memory_order_acq_rel)) {
-      break;
-    }
-  }
-  set_inflight_tasks(previous - 1);
-  if (inflight_state->max_tasks > 0 && previous > 0) {
-    const double ratio = static_cast<double>(previous - 1) /
-                         static_cast<double>(inflight_state->max_tasks);
-    set_starpu_worker_busy_ratio(ratio);
-  }
-  std::scoped_lock lock(inflight_state->mutex);
-  inflight_state->cv.notify_one();
 }
 
 // GCOVR_EXCL_START
@@ -925,28 +917,68 @@ StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
 
   ResultDispatcher::clear_batching_state(job);
   ResultDispatcher::cleanup_terminal_job_payload(job);
-  if (has_inflight_limit()) {
-    release_inflight_slot();
-  }
+  ResultDispatcher::release_inflight_slot(inflight_state_);
   result_dispatcher_->finalize_job_completion(job);
+}
+
+void
+StarPUTaskRunner::process_prepared_job(const std::shared_ptr<InferenceJob>& job)
+{
+  if (job == nullptr) {
+    return;
+  }
+
+  int job_id = job->get_request_id();
+  try {
+    if (job->is_cancelled()) {
+      handle_cancelled_job(job);
+      return;
+    }
+
+    const auto submission_id = next_submission_id_.fetch_add(1);
+    job->set_submission_id(submission_id);
+    job->update_timing_info([submission_id](detail::TimingInfo& timing) {
+      timing.submission_id = submission_id;
+    });
+
+    const int logical_jobs = job->logical_job_count();
+    const auto request_id = job->get_request_id();
+    job_id = task_runner_internal::job_identifier(*job);
+    if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
+      log_trace(
+          opts_->verbosity,
+          std::format(
+              "Dequeued job submission {} (request {}), queue size : {}, "
+              "aggregated requests: {}",
+              job_id, request_id, queue_->size(), logical_jobs));
+    }
+
+    const bool warmup_job = is_warmup_job(job);
+    trace_batch_if_enabled(job, warmup_job, submission_id);
+    prepare_job_completion_callback(job);
+    task_runner_internal::invoke_run_before_submit_hook();
+    submit_job_or_handle_failure(job, SubmissionInfo{submission_id, job_id});
+  }
+  catch (const std::exception& e) {
+    finalize_job_after_exception(
+        job, e, "Unexpected exception while processing dequeued job", job_id);
+  }
+  catch (...) {
+    finalize_job_after_unknown_exception(
+        job, "Unexpected non-standard exception while processing dequeued job",
+        job_id);
+  }
 }
 
 void
 StarPUTaskRunner::run()  // NOLINT(readability-function-cognitive-complexity)
 {
-  std::mutex thread_exception_mutex;
-  std::exception_ptr thread_exception;
-  std::string failing_thread_name;
-  auto capture_thread_exception =
-      [&thread_exception_mutex, &thread_exception, &failing_thread_name](
-          std::string_view thread_name, std::exception_ptr exception) {
-        std::lock_guard lock(thread_exception_mutex);
-        if (thread_exception != nullptr) {
-          return;
-        }
-        thread_exception = std::move(exception);
-        failing_thread_name = thread_name;
-      };
+  RunThreadExceptionState thread_exception_state;
+  auto capture_thread_exception = [&thread_exception_state](
+                                      std::string_view thread_name,
+                                      std::exception_ptr exception) {
+    thread_exception_state.capture(thread_name, std::move(exception));
+  };
 
   const auto notify_batching_thread_failure = [this]() {
     if (queue_ != nullptr) {
@@ -958,35 +990,6 @@ StarPUTaskRunner::run()  // NOLINT(readability-function-cognitive-complexity)
     }
     prepared_state_.cv.notify_all();
   };
-
-  auto rethrow_thread_exception_if_any =
-      [&thread_exception_mutex, &thread_exception, &failing_thread_name]() {
-        std::exception_ptr captured_exception;
-        std::string captured_thread_name;
-        {
-          std::lock_guard lock(thread_exception_mutex);
-          captured_exception = thread_exception;
-          captured_thread_name = failing_thread_name;
-        }
-
-        if (captured_exception == nullptr) {
-          return;
-        }
-
-        try {
-          std::rethrow_exception(captured_exception);
-        }
-        catch (const std::exception& e) {
-          throw std::runtime_error(std::format(
-              "Unhandled exception escaped '{}' thread: {}",
-              captured_thread_name, e.what()));
-        }
-        catch (...) {
-          throw std::runtime_error(std::format(
-              "Unhandled non-standard exception escaped '{}' thread.",
-              captured_thread_name));
-        }
-      };
 
   try {
     log_info(opts_->verbosity, "StarPUTaskRunner started.");
@@ -1024,56 +1027,13 @@ StarPUTaskRunner::run()  // NOLINT(readability-function-cognitive-complexity)
       if (!job) {
         break;
       }
-
-      int job_id = job->get_request_id();
-      try {
-        if (job->is_cancelled()) {
-          handle_cancelled_job(job);
-          continue;
-        }
-
-        const auto submission_id = next_submission_id_.fetch_add(1);
-        job->set_submission_id(submission_id);
-        job->update_timing_info([submission_id](detail::TimingInfo& timing) {
-          timing.submission_id = submission_id;
-        });
-
-        const int logical_jobs = job->logical_job_count();
-        const auto request_id = job->get_request_id();
-        job_id = task_runner_internal::job_identifier(*job);
-        if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {
-          log_trace(
-              opts_->verbosity,
-              std::format(
-                  "Dequeued job submission {} (request {}), queue size : {}, "
-                  "aggregated requests: {}",
-                  job_id, request_id, queue_->size(), logical_jobs));
-        }
-
-        const bool warmup_job = is_warmup_job(job);
-        trace_batch_if_enabled(job, warmup_job, submission_id);
-        prepare_job_completion_callback(job);
-        task_runner_internal::invoke_run_before_submit_hook();
-        submit_job_or_handle_failure(
-            job, SubmissionInfo{submission_id, job_id});
-      }
-      catch (const std::exception& e) {
-        finalize_job_after_exception(
-            job, e, "Unexpected exception while processing dequeued job",
-            job_id);
-      }
-      catch (...) {
-        finalize_job_after_unknown_exception(
-            job,
-            "Unexpected non-standard exception while processing dequeued job",
-            job_id);
-      }
+      process_prepared_job(job);
     }
 
     if (batching_thread_.joinable()) {
       batching_thread_.join();
     }
-    rethrow_thread_exception_if_any();
+    rethrow_runner_thread_exception_if_any(thread_exception_state);
 
     log_info(opts_->verbosity, "StarPUTaskRunner stopped.");
   }

@@ -71,14 +71,15 @@ class ResultDispatcher {
       const std::shared_ptr<InferenceJob>& aggregated_job,
       const std::vector<torch::Tensor>& aggregated_outputs, double latency_ms);
 
+  // Shared inflight accounting primitive used by terminal paths.
+  static void release_inflight_slot(
+      const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state);
+
  private:
   void handle_job_completion(
       const std::shared_ptr<InferenceJob>& job,
       const InferenceJob::CompletionCallback& prev_callback,
       std::vector<torch::Tensor>& results, double latency_ms) const;
-
-  static void release_inflight_slot(
-      const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state);
 
   const RuntimeConfig* opts_;
   std::atomic<std::size_t>* completed_jobs_;

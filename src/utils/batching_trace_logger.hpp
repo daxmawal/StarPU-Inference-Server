@@ -17,6 +17,10 @@
 #include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
+namespace testing {
+class BatchingTraceLoggerTestAccessor;
+class TraceFileWriterTestAccessor;
+}  // namespace testing
 
 struct RuntimeConfig;
 
@@ -88,6 +92,8 @@ class TraceFileWriter {
   void reset_state();
 
  private:
+  friend class starpu_server::testing::TraceFileWriterTestAccessor;
+
   struct ThreadMetadata {
     std::string name;
     bool sort_emitted = false;
@@ -248,6 +254,8 @@ class BatchingTraceLogger {
       -> std::optional<std::filesystem::path>;
 
  private:
+  friend class testing::BatchingTraceLoggerTestAccessor;
+
   void write_record(
       BatchingTraceEvent event, std::string_view model_name,
       const BatchRecordContext& record_context,

@@ -150,9 +150,7 @@ TEST_F(
   job->set_submission_id(901);
   job->set_model_name("trace_model");
   job->set_input_tensors({torch::tensor({1})});
-  job->get_worker_id() = 4;
-  job->get_device_id() = 0;
-  job->get_executed_on() = starpu_server::DeviceType::CPU;
+  job->set_runtime_device_info(starpu_server::DeviceType::CPU, 0, 4);
   populate_trace_timing(*job);
 
   using clock = starpu_server::MonotonicClock;
@@ -199,9 +197,7 @@ TEST_F(
   job->set_submission_id(902);
   job->set_model_name("trace_fallback_model");
   job->set_input_tensors({torch::tensor({1})});
-  job->get_worker_id() = 6;
-  job->get_device_id() = 0;
-  job->get_executed_on() = starpu_server::DeviceType::CPU;
+  job->set_runtime_device_info(starpu_server::DeviceType::CPU, 0, 6);
   populate_trace_timing(*job);
 
   using clock = starpu_server::MonotonicClock;
@@ -246,9 +242,7 @@ TEST_F(
   job->set_submission_id(903);
   job->set_model_name("trace_missing_inference_start");
   job->set_input_tensors({torch::tensor({1})});
-  job->get_worker_id() = 2;
-  job->get_device_id() = 0;
-  job->get_executed_on() = starpu_server::DeviceType::CPU;
+  job->set_runtime_device_info(starpu_server::DeviceType::CPU, 0, 2);
   populate_trace_timing(*job);
 
   using clock = starpu_server::MonotonicClock;

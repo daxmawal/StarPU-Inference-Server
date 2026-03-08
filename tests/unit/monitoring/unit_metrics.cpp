@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "monitoring/metrics.hpp"
+#include "monitoring/metrics_test_api.hpp"
 
 using namespace starpu_server;
 
@@ -337,14 +338,14 @@ TEST(Metrics, MetricsDestructionLogsRemovalFailure)
     }
   };
 
-  testing::internal::CaptureStderr();
+  ::testing::internal::CaptureStderr();
   {
     auto handle = std::make_unique<ThrowingRemoveHandle>();
     MetricsRegistry registry(
         0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
         [] { return std::optional<double>{}; }, false, std::move(handle));
   }
-  const std::string log = testing::internal::GetCapturedStderr();
+  const std::string log = ::testing::internal::GetCapturedStderr();
   EXPECT_NE(
       log.find("Failed to remove metrics registry collectable"),
       std::string::npos);
@@ -562,118 +563,142 @@ TEST(MetricsRegistry, StatusLabelOverflowUsesReservedBucket)
 
 TEST(MetricsRegistry, FailureKeyOverflowSetsFlag)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::FailureKeyOverflowIsEmpty());
+  EXPECT_TRUE(starpu_server::testing::MetricsRegistryTestAccessor::
+                  FailureKeyOverflowIsEmpty());
 }
 
 TEST(MetricsRegistry, FailureKeyEqualityComparesAllFields)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::FailureKeyEquals(
-      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
-      "reason-a", "model-a", /*overflow_rhs=*/false));
+  EXPECT_TRUE(
+      starpu_server::testing::MetricsRegistryTestAccessor::FailureKeyEquals(
+          "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
+          "reason-a", "model-a", /*overflow_rhs=*/false));
 
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::FailureKeyEquals(
-      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-b",
-      "reason-a", "model-a", /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::FailureKeyEquals(
-      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
-      "reason-b", "model-a", /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::FailureKeyEquals(
-      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
-      "reason-a", "model-b", /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::FailureKeyEquals(
-      "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
-      "reason-a", "model-a", /*overflow_rhs=*/true));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::FailureKeyEquals(
+          "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-b",
+          "reason-a", "model-a", /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::FailureKeyEquals(
+          "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
+          "reason-b", "model-a", /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::FailureKeyEquals(
+          "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
+          "reason-a", "model-b", /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::FailureKeyEquals(
+          "stage-a", "reason-a", "model-a", /*overflow_lhs=*/false, "stage-a",
+          "reason-a", "model-a", /*overflow_rhs=*/true));
 }
 
 TEST(MetricsRegistry, ModelKeyOverflowSetsFlag)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::ModelKeyOverflowIsEmpty());
+  EXPECT_TRUE(starpu_server::testing::MetricsRegistryTestAccessor::
+                  ModelKeyOverflowIsEmpty());
 }
 
 TEST(MetricsRegistry, ModelKeyEqualityComparesAllFields)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::ModelKeyEquals(
-      "model-a", /*overflow_lhs=*/false, "model-a", /*overflow_rhs=*/false));
+  EXPECT_TRUE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelKeyEquals(
+          "model-a", /*overflow_lhs=*/false, "model-a",
+          /*overflow_rhs=*/false));
 
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelKeyEquals(
-      "model-a", /*overflow_lhs=*/false, "model-b", /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelKeyEquals(
-      "model-a", /*overflow_lhs=*/false, "model-a", /*overflow_rhs=*/true));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelKeyEquals(
+          "model-a", /*overflow_lhs=*/false, "model-b",
+          /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelKeyEquals(
+          "model-a", /*overflow_lhs=*/false, "model-a", /*overflow_rhs=*/true));
 }
 
 TEST(MetricsRegistry, ModelDeviceKeyOverflowSetsFlag)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::ModelDeviceKeyOverflowIsEmpty());
+  EXPECT_TRUE(starpu_server::testing::MetricsRegistryTestAccessor::
+                  ModelDeviceKeyOverflowIsEmpty());
 }
 
 TEST(MetricsRegistry, ModelDeviceKeyEqualityComparesAllFields)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
-      "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu0",
-      /*overflow_rhs=*/false));
+  EXPECT_TRUE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelDeviceKeyEquals(
+          "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu0",
+          /*overflow_rhs=*/false));
 
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
-      "model-a", "gpu0", /*overflow_lhs=*/false, "model-b", "gpu0",
-      /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
-      "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu1",
-      /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::ModelDeviceKeyEquals(
-      "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu0",
-      /*overflow_rhs=*/true));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelDeviceKeyEquals(
+          "model-a", "gpu0", /*overflow_lhs=*/false, "model-b", "gpu0",
+          /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelDeviceKeyEquals(
+          "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu1",
+          /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelDeviceKeyEquals(
+          "model-a", "gpu0", /*overflow_lhs=*/false, "model-a", "gpu0",
+          /*overflow_rhs=*/true));
 }
 
 TEST(MetricsRegistry, IoKeyOverflowSetsFlag)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::IoKeyOverflowIsEmpty());
+  EXPECT_TRUE(starpu_server::testing::MetricsRegistryTestAccessor::
+                  IoKeyOverflowIsEmpty());
 }
 
 TEST(MetricsRegistry, IoKeyEqualityComparesAllFields)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::IoKeyEquals(
+  EXPECT_TRUE(starpu_server::testing::MetricsRegistryTestAccessor::IoKeyEquals(
       "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 1, 2, "cpu",
       /*overflow_rhs=*/false));
 
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+  EXPECT_FALSE(starpu_server::testing::MetricsRegistryTestAccessor::IoKeyEquals(
       "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "d2h", 1, 2, "cpu",
       /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+  EXPECT_FALSE(starpu_server::testing::MetricsRegistryTestAccessor::IoKeyEquals(
       "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 3, 2, "cpu",
       /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+  EXPECT_FALSE(starpu_server::testing::MetricsRegistryTestAccessor::IoKeyEquals(
       "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 1, 4, "cpu",
       /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+  EXPECT_FALSE(starpu_server::testing::MetricsRegistryTestAccessor::IoKeyEquals(
       "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 1, 2, "gpu",
       /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::IoKeyEquals(
+  EXPECT_FALSE(starpu_server::testing::MetricsRegistryTestAccessor::IoKeyEquals(
       "h2d", 1, 2, "cpu", /*overflow_lhs=*/false, "h2d", 1, 2, "cpu",
       /*overflow_rhs=*/true));
 }
 
 TEST(MetricsRegistry, WorkerKeyOverflowSetsFlag)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::WorkerKeyOverflowIsEmpty());
+  EXPECT_TRUE(starpu_server::testing::MetricsRegistryTestAccessor::
+                  WorkerKeyOverflowIsEmpty());
 }
 
 TEST(MetricsRegistry, WorkerKeyEqualityComparesAllFields)
 {
-  EXPECT_TRUE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
-      1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "cpu",
-      /*overflow_rhs=*/false));
+  EXPECT_TRUE(
+      starpu_server::testing::MetricsRegistryTestAccessor::WorkerKeyEquals(
+          1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "cpu",
+          /*overflow_rhs=*/false));
 
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
-      1, 2, "cpu", /*overflow_lhs=*/false, 3, 2, "cpu",
-      /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
-      1, 2, "cpu", /*overflow_lhs=*/false, 1, 4, "cpu",
-      /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
-      1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "gpu",
-      /*overflow_rhs=*/false));
-  EXPECT_FALSE(MetricsRegistry::TestAccessor::WorkerKeyEquals(
-      1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "cpu",
-      /*overflow_rhs=*/true));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::WorkerKeyEquals(
+          1, 2, "cpu", /*overflow_lhs=*/false, 3, 2, "cpu",
+          /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::WorkerKeyEquals(
+          1, 2, "cpu", /*overflow_lhs=*/false, 1, 4, "cpu",
+          /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::WorkerKeyEquals(
+          1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "gpu",
+          /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::WorkerKeyEquals(
+          1, 2, "cpu", /*overflow_lhs=*/false, 1, 2, "cpu",
+          /*overflow_rhs=*/true));
 }
 
 TEST(Metrics, SetQueueFillRatioUpdatesGauge)
@@ -1022,7 +1047,8 @@ TEST(MetricsRegistry, ClearStarpuTaskRuntimeFamilySkipsObservation)
   MetricsRegistry metrics(
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
-  MetricsRegistry::TestAccessor::ClearStarpuTaskRuntimeByWorkerFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearStarpuTaskRuntimeByWorkerFamily(metrics);
 
   metrics.observe_task_runtime_by_worker(2, 1, "cpu", 2.5);
 
@@ -1037,8 +1063,8 @@ TEST(MetricsRegistry, ClearInferenceComputeLatencyFamilySkipsObservation)
   MetricsRegistry metrics(
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
-  MetricsRegistry::TestAccessor::ClearInferenceComputeLatencyByWorkerFamily(
-      metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearInferenceComputeLatencyByWorkerFamily(metrics);
 
   metrics.observe_compute_latency_by_worker(2, 1, "cpu", 5.1);
 
@@ -1053,7 +1079,8 @@ TEST(MetricsRegistry, ClearIoCopyLatencyFamilySkipsObservation)
   MetricsRegistry metrics(
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
-  MetricsRegistry::TestAccessor::ClearIoCopyLatencyFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearIoCopyLatencyFamily(
+      metrics);
 
   metrics.observe_io_copy_latency("h2d", 2, 1, "cpu", 3.0);
 
@@ -1071,7 +1098,8 @@ TEST(MetricsRegistry, ClearTransferBytesFamilySkipsIncrement)
   MetricsRegistry metrics(
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
-  MetricsRegistry::TestAccessor::ClearTransferBytesFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearTransferBytesFamily(
+      metrics);
 
   metrics.increment_transfer_bytes("h2d", 2, 1, "cpu", 256);
 
@@ -1251,7 +1279,8 @@ TEST(MetricsRegistry, RunSamplingMarksCpuUsageUnknownWhenProviderMissing)
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
   metrics.gauges().system_cpu_usage_percent->Set(7.0);
-  MetricsRegistry::TestAccessor::ClearCpuUsageProvider(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearCpuUsageProvider(
+      metrics);
 
   metrics.run_sampling_request_nb();
 
@@ -1276,7 +1305,8 @@ TEST(MetricsRegistry, RunSamplingSkipsCpuProviderWhenGaugeMissing)
       0, std::move(gpu_provider), std::move(cpu_provider),
       /*start_sampler_thread=*/false);
 
-  MetricsRegistry::TestAccessor::ClearSystemCpuUsageGauge(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearSystemCpuUsageGauge(
+      metrics);
   EXPECT_EQ(metrics.gauges().system_cpu_usage_percent, nullptr);
 
   metrics.run_sampling_request_nb();
@@ -1343,7 +1373,8 @@ TEST(MetricsRegistry, SetWorkerInflightGaugeSkipsWhenFamilyMissing)
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
 
-  MetricsRegistry::TestAccessor::ClearStarpuWorkerInflightFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearStarpuWorkerInflightFamily(metrics);
   metrics.set_worker_inflight_gauge(3, 2, "cpu", 5);
 
   const auto value = FindGaugeValue(
@@ -1386,7 +1417,8 @@ TEST(MetricsRegistry, SetModelLoadedFlagSkipsWhenFamilyMissing)
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
 
-  MetricsRegistry::TestAccessor::ClearModelsLoadedFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearModelsLoadedFamily(
+      metrics);
   metrics.set_model_loaded_flag(
       MetricsRegistry::ModelLabel{"model-x"},
       MetricsRegistry::DeviceLabel{"dev-x"}, true);
@@ -1403,7 +1435,8 @@ TEST(MetricsRegistry, IncrementModelLoadFailureCounterSkipsWhenFamilyMissing)
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
 
-  MetricsRegistry::TestAccessor::ClearModelLoadFailuresFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearModelLoadFailuresFamily(metrics);
   metrics.increment_model_load_failure_counter("model-y");
 
   const auto value = FindCounterValue(
@@ -1418,7 +1451,8 @@ TEST(MetricsRegistry, IncrementFailureCounterSkipsWhenFamilyMissing)
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
 
-  MetricsRegistry::TestAccessor::ClearInferenceFailuresFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearInferenceFailuresFamily(metrics);
   metrics.increment_failure_counter(
       MetricsRegistry::FailureStageLabel{"stage"},
       MetricsRegistry::FailureReasonLabel{"reason"},
@@ -1436,7 +1470,8 @@ TEST(MetricsRegistry, IncrementCompletedCounterSkipsWhenFamilyMissing)
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
 
-  MetricsRegistry::TestAccessor::ClearInferenceCompletedFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearInferenceCompletedFamily(metrics);
   metrics.increment_completed_counter("model-w", 4);
 
   const auto value = FindCounterValue(
@@ -1451,7 +1486,8 @@ TEST(MetricsRegistry, IncrementReceivedCounterSkipsWhenFamilyMissing)
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
 
-  MetricsRegistry::TestAccessor::ClearRequestsReceivedFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearRequestsReceivedFamily(metrics);
   metrics.increment_received_counter("model-recv");
 
   const auto value = FindCounterValue(
@@ -1466,7 +1502,8 @@ TEST(MetricsRegistry, IncrementStatusCounterSkipsWhenFamilyMissing)
       0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
       [] { return std::optional<double>{}; }, false);
 
-  MetricsRegistry::TestAccessor::ClearRequestsByStatusFamily(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearRequestsByStatusFamily(metrics);
   metrics.increment_status_counter(
       MetricsRegistry::StatusCodeLabel{"5"},
       MetricsRegistry::ModelLabel{"model-status"});

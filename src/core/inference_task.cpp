@@ -329,13 +329,28 @@ InferenceTask::bind_runtime_job_info(
     const std::shared_ptr<InferenceParams>& params) const
 {
   params->request_id = job_->get_request_id();
-  params->device.executed_on = &job_->get_executed_on();
-  params->device.device_id = &job_->get_device_id();
-  params->device.worker_id = &job_->get_worker_id();
-  params->timing.codelet_start_time = &job_->timing_info().codelet_start_time;
-  params->timing.codelet_end_time = &job_->timing_info().codelet_end_time;
-  params->timing.inference_start_time =
-      &job_->timing_info().inference_start_time;
+  params->device.set_runtime_device_info =
+      [job = job_](DeviceType executed_on, int device_id, int worker_id) {
+        job->set_runtime_device_info(executed_on, device_id, worker_id);
+      };
+  params->timing.set_codelet_start_time =
+      [job = job_](MonotonicClock::time_point started_at) {
+        job->update_timing_info([started_at](detail::TimingInfo& timing) {
+          timing.codelet_start_time = started_at;
+        });
+      };
+  params->timing.set_codelet_end_time =
+      [job = job_](MonotonicClock::time_point ended_at) {
+        job->update_timing_info([ended_at](detail::TimingInfo& timing) {
+          timing.codelet_end_time = ended_at;
+        });
+      };
+  params->timing.set_inference_start_time =
+      [job = job_](MonotonicClock::time_point started_at) {
+        job->update_timing_info([started_at](detail::TimingInfo& timing) {
+          timing.inference_start_time = started_at;
+        });
+      };
 }
 
 void

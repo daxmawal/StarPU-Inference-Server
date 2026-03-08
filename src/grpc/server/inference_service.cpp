@@ -23,6 +23,9 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#if defined(STARPU_TESTING)
+#include "inference_service_test_api.hpp"
+#endif
 #if defined(STARPU_ENABLE_GRPC_REFLECTION)
 #include <grpcpp/ext/proto_server_reflection_plugin.h>
 #endif
@@ -51,6 +54,11 @@ using inference::ServerReadyRequest;
 using inference::ServerReadyResponse;
 
 namespace {
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto unary_call_data_missing_handler_transitions_to_finish_for_test_impl()
+    -> bool;
+#endif  // SONAR_IGNORE_END
 
 struct NormalizeNamesOptions {
   std::string_view fallback_prefix;
@@ -342,24 +350,24 @@ struct ModelStatisticsTestHooks {
 
 auto
 handle_model_infer_async_test_hooks()
-    -> InferenceServiceImpl::HandleModelInferAsyncTestHooks&
+    -> testing::HandleModelInferAsyncTestHooks&
 {
-  static InferenceServiceImpl::HandleModelInferAsyncTestHooks hooks{};
+  static testing::HandleModelInferAsyncTestHooks hooks{};
   return hooks;
 }
 
 auto
 handle_async_infer_completion_test_hooks()
-    -> InferenceServiceImpl::HandleAsyncInferCompletionTestHooks&
+    -> testing::HandleAsyncInferCompletionTestHooks&
 {
-  static InferenceServiceImpl::HandleAsyncInferCompletionTestHooks hooks{};
+  static testing::HandleAsyncInferCompletionTestHooks hooks{};
   return hooks;
 }
 
 auto
-submit_job_async_test_hooks() -> InferenceServiceImpl::SubmitJobAsyncTestHooks&
+submit_job_async_test_hooks() -> testing::SubmitJobAsyncTestHooks&
 {
-  static InferenceServiceImpl::SubmitJobAsyncTestHooks hooks{};
+  static testing::SubmitJobAsyncTestHooks hooks{};
   return hooks;
 }
 
@@ -451,6 +459,104 @@ handle_async_job_completion(
 
   std::forward<Callback>(callback)(
       Status::OK, std::move(outs), timing, copied_info, std::nullopt);
+}
+
+void
+set_submit_failure_info_if_needed(
+    std::optional<InferenceServiceImpl::AsyncFailureInfo>* submit_failure_info,
+    std::string_view reason)
+{
+  if (submit_failure_info == nullptr) {
+    return;
+  }
+  InferenceServiceImpl::AsyncFailureInfo info{};
+  info.stage = "enqueue";
+  info.reason = std::string(reason);
+  *submit_failure_info = std::move(info);
+}
+
+void
+report_async_completion_failure(
+    InferenceServiceImpl::AsyncJobCallback& callback, std::string_view reason)
+{
+  InferenceServiceImpl::AsyncFailureInfo failure_info{
+      .stage = "completion", .reason = std::string(reason)};
+  try {
+    callback(
+        {grpc::StatusCode::INTERNAL,
+         "Internal server error during async completion"},
+        {}, InferenceServiceImpl::LatencyBreakdown{}, detail::TimingInfo{},
+        std::move(failure_info));
+  }
+  catch (const std::exception& callback_exception) {
+    log_error(std::format(
+        "Unhandled exception while reporting async completion failure: {}",
+        callback_exception.what()));
+  }
+  catch (...) {
+    log_error(
+        "Unhandled non-std exception while reporting async completion failure");
+  }
+}
+
+void
+dispatch_async_completion_safely(
+    InferenceJob& job, InferenceServiceImpl::AsyncJobCallback& callback,
+    std::vector<torch::Tensor> outs, double latency_ms)
+{
+  try {
+    handle_async_job_completion(job, callback, std::move(outs), latency_ms);
+  }
+  catch (const std::exception& e) {
+    log_error(std::format(
+        "Unhandled exception while dispatching async completion: {}",
+        e.what()));
+    report_async_completion_failure(callback, "exception");
+  }
+  catch (...) {
+    log_error("Unhandled non-std exception while dispatching async completion");
+    report_async_completion_failure(callback, "unknown_exception");
+  }
+}
+
+auto
+enqueue_inference_job(
+    InferenceQueue& queue, const std::shared_ptr<InferenceJob>& job,
+    std::optional<InferenceServiceImpl::AsyncFailureInfo>* submit_failure_info)
+    -> std::optional<Status>
+{
+  bool pushed = false;
+  bool queue_full = false;
+  {
+    NvtxRange queue_scope("grpc_submit_starpu_queue");
+    pushed = queue.push(job, &queue_full);
+  }
+  if (pushed) {
+    return std::nullopt;
+  }
+
+  if (queue_full) {
+    set_submit_failure_info_if_needed(submit_failure_info, "queue_full");
+    increment_rejected_requests();
+    congestion::record_rejection(1);
+    BatchingTraceLogger::instance().log_request_rejected(queue.size());
+    return Status{
+        grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
+  }
+
+  set_submit_failure_info_if_needed(submit_failure_info, "queue_unavailable");
+  return Status{grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
+}
+
+void
+trace_enqueued_request_if_enabled(const std::shared_ptr<InferenceJob>& job)
+{
+  if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
+    const auto timing = job->timing_info_snapshot();
+    tracer.log_request_enqueued(
+        job->get_request_id(), job->model_name(), /*is_warmup=*/false,
+        timing.last_enqueued_time);
+  }
 }
 }  // namespace
 
@@ -978,22 +1084,14 @@ InferenceServiceImpl::
   if (submit_failure_info != nullptr) {
     *submit_failure_info = std::nullopt;
   }
-  const auto set_submit_failure_info = [&](std::string_view reason) {
-    if (submit_failure_info == nullptr) {
-      return;
-    }
-    AsyncFailureInfo info{};
-    info.stage = "enqueue";
-    info.reason = std::string(reason);
-    *submit_failure_info = std::move(info);
-  };
 
   if (queue_ == nullptr) {
-    set_submit_failure_info("queue_unavailable");
+    set_submit_failure_info_if_needed(submit_failure_info, "queue_unavailable");
     return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
   }
   if (reference_outputs_ == nullptr) {
-    set_submit_failure_info("reference_outputs_unavailable");
+    set_submit_failure_info_if_needed(
+        submit_failure_info, "reference_outputs_unavailable");
     return {
         grpc::StatusCode::FAILED_PRECONDITION,
         "Reference outputs are unavailable"};
@@ -1014,63 +1112,12 @@ InferenceServiceImpl::
 
     NvtxRange submit_scope("grpc_submit_starpu");
 
-    job->set_on_complete([job, callback = std::move(on_complete)](
-                             std::vector<torch::Tensor> outs,
-                             double latency_ms) mutable {
-      try {
-        handle_async_job_completion(
-            *job, callback, std::move(outs), latency_ms);
-      }
-      catch (const std::exception& e) {
-        log_error(std::format(
-            "Unhandled exception while dispatching async completion: {}",
-            e.what()));
-        InferenceServiceImpl::AsyncFailureInfo failure_info{
-            .stage = "completion", .reason = "exception"};
-        try {
-          callback(
-              {grpc::StatusCode::INTERNAL,
-               "Internal server error during async completion"},
-              {}, InferenceServiceImpl::LatencyBreakdown{},
-              detail::TimingInfo{}, std::move(failure_info));
-        }
-        catch (const std::exception& callback_exception) {
-          log_error(std::format(
-              "Unhandled exception while reporting async completion failure: "
-              "{}",
-              callback_exception.what()));
-        }
-        catch (...) {
-          log_error(
-              "Unhandled non-std exception while reporting async completion "
-              "failure");
-        }
-      }
-      catch (...) {
-        log_error(
-            "Unhandled non-std exception while dispatching async completion");
-        InferenceServiceImpl::AsyncFailureInfo failure_info{
-            .stage = "completion", .reason = "unknown_exception"};
-        try {
-          callback(
-              {grpc::StatusCode::INTERNAL,
-               "Internal server error during async completion"},
-              {}, InferenceServiceImpl::LatencyBreakdown{},
-              detail::TimingInfo{}, std::move(failure_info));
-        }
-        catch (const std::exception& callback_exception) {
-          log_error(std::format(
-              "Unhandled exception while reporting async completion failure: "
-              "{}",
-              callback_exception.what()));
-        }
-        catch (...) {
-          log_error(
-              "Unhandled non-std exception while reporting async completion "
-              "failure");
-        }
-      }
-    });
+    job->set_on_complete(
+        [job, callback = std::move(on_complete)](
+            std::vector<torch::Tensor> outs, double latency_ms) mutable {
+          dispatch_async_completion_safely(
+              *job, callback, std::move(outs), latency_ms);
+        });
 
     const auto enqueued_now = MonotonicClock::now();
     job->update_timing_info([enqueued_now](detail::TimingInfo& timing) {
@@ -1078,41 +1125,23 @@ InferenceServiceImpl::
       timing.last_enqueued_time = enqueued_now;
     });
 
-    bool pushed = false;
-    bool queue_full = false;
-    {
-      NvtxRange queue_scope("grpc_submit_starpu_queue");
-      pushed = queue_->push(job, &queue_full);
+    if (auto enqueue_error =
+            enqueue_inference_job(*queue_, job, submit_failure_info);
+        enqueue_error.has_value()) {
+      return *enqueue_error;
     }
-    if (!pushed) {
-      if (queue_full) {
-        set_submit_failure_info("queue_full");
-        increment_rejected_requests();
-        congestion::record_rejection(1);
-        BatchingTraceLogger::instance().log_request_rejected(queue_->size());
-        return {
-            grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
-      }
-      set_submit_failure_info("queue_unavailable");
-      return {grpc::StatusCode::UNAVAILABLE, "Inference queue unavailable"};
-    }
-    if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
-      const auto timing = job->timing_info_snapshot();
-      tracer.log_request_enqueued(
-          job->get_request_id(), job->model_name(), /*is_warmup=*/false,
-          timing.last_enqueued_time);
-    }
+    trace_enqueued_request_if_enabled(job);
     return Status::OK;
   }
   catch (const std::exception& e) {
     log_error(std::format(
         "Unhandled exception while submitting inference job: {}", e.what()));
-    set_submit_failure_info("exception");
+    set_submit_failure_info_if_needed(submit_failure_info, "exception");
     return {grpc::StatusCode::INTERNAL, "Internal server error"};
   }
   catch (...) {
     log_error("Unhandled non-std exception while submitting inference job");
-    set_submit_failure_info("unknown_exception");
+    set_submit_failure_info_if_needed(submit_failure_info, "unknown_exception");
     return {grpc::StatusCode::INTERNAL, "Internal server error"};
   }
 }
@@ -1201,47 +1230,51 @@ InferenceServiceImpl::submit_job_and_wait(
 }
 
 void
-InferenceServiceImpl::TestAccessor::SetHandleModelInferAsyncTestHooks(
-    HandleModelInferAsyncTestHooks hooks)
+starpu_server::testing::InferenceServiceTestAccessor::
+    SetHandleModelInferAsyncTestHooks(HandleModelInferAsyncTestHooks hooks)
 {
   handle_model_infer_async_test_hooks() = std::move(hooks);
 }
 
 void
-InferenceServiceImpl::TestAccessor::ClearHandleModelInferAsyncTestHooks()
+starpu_server::testing::InferenceServiceTestAccessor::
+    ClearHandleModelInferAsyncTestHooks()
 {
   handle_model_infer_async_test_hooks() = HandleModelInferAsyncTestHooks{};
 }
 
 void
-InferenceServiceImpl::TestAccessor::SetHandleAsyncInferCompletionTestHooks(
-    HandleAsyncInferCompletionTestHooks hooks)
+starpu_server::testing::InferenceServiceTestAccessor::
+    SetHandleAsyncInferCompletionTestHooks(
+        HandleAsyncInferCompletionTestHooks hooks)
 {
   handle_async_infer_completion_test_hooks() = std::move(hooks);
 }
 
 void
-InferenceServiceImpl::TestAccessor::ClearHandleAsyncInferCompletionTestHooks()
+starpu_server::testing::InferenceServiceTestAccessor::
+    ClearHandleAsyncInferCompletionTestHooks()
 {
   handle_async_infer_completion_test_hooks() =
       HandleAsyncInferCompletionTestHooks{};
 }
 
 void
-InferenceServiceImpl::TestAccessor::SetSubmitJobAsyncTestHooks(
-    SubmitJobAsyncTestHooks hooks)
+starpu_server::testing::InferenceServiceTestAccessor::
+    SetSubmitJobAsyncTestHooks(SubmitJobAsyncTestHooks hooks)
 {
   submit_job_async_test_hooks() = std::move(hooks);
 }
 
 void
-InferenceServiceImpl::TestAccessor::ClearSubmitJobAsyncTestHooks()
+starpu_server::testing::InferenceServiceTestAccessor::
+    ClearSubmitJobAsyncTestHooks()
 {
   submit_job_async_test_hooks() = SubmitJobAsyncTestHooks{};
 }
 
 auto
-InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
+starpu_server::testing::InferenceServiceTestAccessor::NormalizeNamesForTest(
     std::vector<std::string> names, std::size_t expected_size,
     std::string_view fallback_prefix,
     std::string_view kind) -> std::vector<std::string>
@@ -1252,29 +1285,32 @@ InferenceServiceImpl::TestAccessor::NormalizeNamesForTest(
 }
 
 void
-InferenceServiceImpl::TestAccessor::SetExpectedInputTypesForTest(
-    InferenceServiceImpl* service, std::vector<at::ScalarType> types)
+starpu_server::testing::InferenceServiceTestAccessor::
+    SetExpectedInputTypesForTest(
+        InferenceServiceImpl* service, std::vector<at::ScalarType> types)
 {
   service->expected_input_types_ = std::move(types);
 }
 
 void
-InferenceServiceImpl::TestAccessor::SetExpectedInputNamesForTest(
-    InferenceServiceImpl* service, std::vector<std::string> names)
+starpu_server::testing::InferenceServiceTestAccessor::
+    SetExpectedInputNamesForTest(
+        InferenceServiceImpl* service, std::vector<std::string> names)
 {
   service->expected_input_names_ = std::move(names);
 }
 
 void
-InferenceServiceImpl::TestAccessor::SetReferenceOutputsForTest(
-    InferenceServiceImpl* service,
-    const std::vector<torch::Tensor>* reference_outputs)
+starpu_server::testing::InferenceServiceTestAccessor::
+    SetReferenceOutputsForTest(
+        InferenceServiceImpl* service,
+        const std::vector<torch::Tensor>* reference_outputs)
 {
   service->reference_outputs_ = reference_outputs;
 }
 
 auto
-InferenceServiceImpl::TestAccessor::CheckMissingInputsForTest(
+starpu_server::testing::InferenceServiceTestAccessor::CheckMissingInputsForTest(
     const std::vector<bool>& filled,
     std::span<const std::string> expected_names) -> grpc::Status
 {
@@ -1282,14 +1318,15 @@ InferenceServiceImpl::TestAccessor::CheckMissingInputsForTest(
 }
 
 void
-InferenceServiceImpl::TestAccessor::ArmRpcDoneTagWithNullContextForTest()
+starpu_server::testing::InferenceServiceTestAccessor::
+    ArmRpcDoneTagWithNullContextForTest()
 {
   auto tag = RpcDoneTag::Create([] {}, std::make_shared<int>(0));
   tag->Arm(nullptr);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::RpcDoneTagProceedForTest(
+starpu_server::testing::InferenceServiceTestAccessor::RpcDoneTagProceedForTest(
     bool is_ok, bool with_on_done) -> bool
 {
   bool called = false;
@@ -1301,23 +1338,23 @@ InferenceServiceImpl::TestAccessor::RpcDoneTagProceedForTest(
 }
 
 void
-InferenceServiceImpl::TestAccessor::SetGrpcHealthStatusForTest(
-    grpc::Server* server, bool serving)
+starpu_server::testing::InferenceServiceTestAccessor::
+    SetGrpcHealthStatusForTest(grpc::Server* server, bool serving)
 {
   set_grpc_health_status(server, serving);
 }
 
 void
-InferenceServiceImpl::TestAccessor::RecordSuccessForTest(
+starpu_server::testing::InferenceServiceTestAccessor::RecordSuccessForTest(
     InferenceServiceImpl* service, const ModelInferRequest* request,
-    const LatencyBreakdown& breakdown, MonotonicClock::time_point recv_tp,
-    std::string_view resolved_model_name)
+    const InferenceServiceImpl::LatencyBreakdown& breakdown,
+    MonotonicClock::time_point recv_tp, std::string_view resolved_model_name)
 {
   service->record_success(request, breakdown, recv_tp, resolved_model_name);
 }
 
 void
-InferenceServiceImpl::TestAccessor::RecordFailureForTest(
+starpu_server::testing::InferenceServiceTestAccessor::RecordFailureForTest(
     InferenceServiceImpl* service, const ModelInferRequest* request,
     MonotonicClock::time_point recv_tp, std::string_view resolved_model_name)
 {
@@ -1325,14 +1362,14 @@ InferenceServiceImpl::TestAccessor::RecordFailureForTest(
 }
 
 auto
-InferenceServiceImpl::TestAccessor::ScalarTypeToModelDtypeForTest(
-    at::ScalarType type) -> inference::DataType
+starpu_server::testing::InferenceServiceTestAccessor::
+    ScalarTypeToModelDtypeForTest(at::ScalarType type) -> inference::DataType
 {
   return scalar_type_to_model_dtype(type);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::ResolveTensorNameForTest(
+starpu_server::testing::InferenceServiceTestAccessor::ResolveTensorNameForTest(
     std::size_t index, std::span<const std::string> names,
     std::string_view fallback_prefix) -> std::string
 {
@@ -1340,31 +1377,33 @@ InferenceServiceImpl::TestAccessor::ResolveTensorNameForTest(
 }
 
 auto
-InferenceServiceImpl::TestAccessor::RequestBatchSizeForTest(
+starpu_server::testing::InferenceServiceTestAccessor::RequestBatchSizeForTest(
     const ModelInferRequest* request, int max_batch_size) -> uint64_t
 {
   return request_batch_size(request, max_batch_size);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::DurationMsToNsForTest(double duration_ms)
-    -> uint64_t
+starpu_server::testing::InferenceServiceTestAccessor::DurationMsToNsForTest(
+    double duration_ms) -> uint64_t
 {
   return duration_ms_to_ns(duration_ms);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::ElapsedSinceForTest(
+starpu_server::testing::InferenceServiceTestAccessor::ElapsedSinceForTest(
     MonotonicClock::time_point start) -> uint64_t
 {
   return elapsed_since(start);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::ResolveTerminalFailureStageForTest(
-    const grpc::Status& status, std::string_view default_stage,
-    std::string_view default_reason,
-    const std::optional<AsyncFailureInfo>& failure_info) -> std::string
+starpu_server::testing::InferenceServiceTestAccessor::
+    ResolveTerminalFailureStageForTest(
+        const grpc::Status& status, std::string_view default_stage,
+        std::string_view default_reason,
+        const std::optional<InferenceServiceImpl::AsyncFailureInfo>&
+            failure_info) -> std::string
 {
   return resolve_terminal_failure_mapping(
              status, default_stage, default_reason, failure_info)
@@ -1372,10 +1411,12 @@ InferenceServiceImpl::TestAccessor::ResolveTerminalFailureStageForTest(
 }
 
 auto
-InferenceServiceImpl::TestAccessor::ShouldReportTerminalFailureMetricForTest(
-    const grpc::Status& status, std::string_view default_stage,
-    std::string_view default_reason,
-    const std::optional<AsyncFailureInfo>& failure_info) -> bool
+starpu_server::testing::InferenceServiceTestAccessor::
+    ShouldReportTerminalFailureMetricForTest(
+        const grpc::Status& status, std::string_view default_stage,
+        std::string_view default_reason,
+        const std::optional<InferenceServiceImpl::AsyncFailureInfo>&
+            failure_info) -> bool
 {
   return resolve_terminal_failure_mapping(
              status, default_stage, default_reason, failure_info)
@@ -1383,21 +1424,21 @@ InferenceServiceImpl::TestAccessor::ShouldReportTerminalFailureMetricForTest(
 }
 
 void
-InferenceServiceImpl::TestAccessor::SetModelStatisticsForceNullTargetForTest(
-    bool enable)
+starpu_server::testing::InferenceServiceTestAccessor::
+    SetModelStatisticsForceNullTargetForTest(bool enable)
 {
   model_statistics_test_hooks().force_null_stat_target = enable;
 }
 
 auto
-InferenceServiceImpl::TestAccessor::IsContextCancelledForTest(
+starpu_server::testing::InferenceServiceTestAccessor::IsContextCancelledForTest(
     grpc::ServerContext* context) -> bool
 {
   return is_context_cancelled(context);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::FillOutputTensorForTest(
+starpu_server::testing::InferenceServiceTestAccessor::FillOutputTensorForTest(
     inference::ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs,
     const std::vector<std::size_t>& output_indices,
@@ -1407,56 +1448,65 @@ InferenceServiceImpl::TestAccessor::FillOutputTensorForTest(
 }
 
 auto
-InferenceServiceImpl::TestAccessor::BuildLatencyBreakdownForTest(
-    const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown
+starpu_server::testing::InferenceServiceTestAccessor::
+    BuildLatencyBreakdownForTest(
+        const detail::TimingInfo& info,
+        double latency_ms) -> InferenceServiceImpl::LatencyBreakdown
 {
-  return build_latency_breakdown(info, latency_ms);
+  return InferenceServiceImpl::build_latency_breakdown(info, latency_ms);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::HandleSubmitFailureForTest(
-    const grpc::Status& status, bool cancelled, bool terminal_marked,
-    std::atomic<bool>* callback_invoked,
-    const std::optional<AsyncFailureInfo>& failure_info) -> bool
+starpu_server::testing::InferenceServiceTestAccessor::
+    HandleSubmitFailureForTest(
+        const grpc::Status& status, bool cancelled, bool terminal_marked,
+        std::atomic<bool>* callback_invoked,
+        const std::optional<InferenceServiceImpl::AsyncFailureInfo>&
+            failure_info) -> bool
 {
   auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
   auto terminal_flag = std::make_shared<std::atomic<bool>>(terminal_marked);
-  std::shared_ptr<CallbackHandle> callback_handle;
+  std::shared_ptr<InferenceServiceImpl::CallbackHandle> callback_handle;
   if (callback_invoked != nullptr) {
-    callback_handle = std::make_shared<CallbackHandle>(
+    callback_handle = std::make_shared<InferenceServiceImpl::CallbackHandle>(
         [callback_invoked](grpc::Status /*unused*/) {
           callback_invoked->store(true, std::memory_order_release);
         });
   }
-  return handle_submit_failure(
-      status, AsyncTerminalState{cancel_flag, terminal_flag}, callback_handle,
-      nullptr, "model", nullptr, MonotonicClock::now(), failure_info);
+  return InferenceServiceImpl::handle_submit_failure(
+      status,
+      InferenceServiceImpl::AsyncTerminalState{cancel_flag, terminal_flag},
+      callback_handle, nullptr, "model", nullptr, MonotonicClock::now(),
+      failure_info);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::HandleInputValidationFailureForTest(
-    const grpc::Status& status, bool cancelled, bool terminal_marked,
-    std::atomic<bool>* callback_invoked) -> bool
+starpu_server::testing::InferenceServiceTestAccessor::
+    HandleInputValidationFailureForTest(
+        const grpc::Status& status, bool cancelled, bool terminal_marked,
+        std::atomic<bool>* callback_invoked) -> bool
 {
   auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
   auto terminal_flag = std::make_shared<std::atomic<bool>>(terminal_marked);
-  std::shared_ptr<CallbackHandle> callback_handle;
+  std::shared_ptr<InferenceServiceImpl::CallbackHandle> callback_handle;
   if (callback_invoked != nullptr) {
-    callback_handle = std::make_shared<CallbackHandle>(
+    callback_handle = std::make_shared<InferenceServiceImpl::CallbackHandle>(
         [callback_invoked](grpc::Status /*unused*/) {
           callback_invoked->store(true, std::memory_order_release);
         });
   }
-  return handle_input_validation_failure(
-      status, AsyncTerminalState{cancel_flag, terminal_flag}, callback_handle,
-      nullptr, "model", nullptr, MonotonicClock::now());
+  return InferenceServiceImpl::handle_input_validation_failure(
+      status,
+      InferenceServiceImpl::AsyncTerminalState{cancel_flag, terminal_flag},
+      callback_handle, nullptr, "model", nullptr, MonotonicClock::now());
 }
 
 auto
-InferenceServiceImpl::TestAccessor::FinalizeSuccessfulCompletionForTest(
-    bool cancelled, bool terminal_marked, bool callback_present,
-    bool reply_present, bool with_impl,
-    std::atomic<bool>* callback_invoked) -> bool
+starpu_server::testing::InferenceServiceTestAccessor::
+    FinalizeSuccessfulCompletionForTest(
+        bool cancelled, bool terminal_marked, bool callback_present,
+        bool reply_present, bool with_impl,
+        std::atomic<bool>* callback_invoked) -> bool
 {
   if (callback_invoked != nullptr) {
     callback_invoked->store(false, std::memory_order_release);
@@ -1469,9 +1519,9 @@ InferenceServiceImpl::TestAccessor::FinalizeSuccessfulCompletionForTest(
   auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
   auto terminal_flag = std::make_shared<std::atomic<bool>>(terminal_marked);
 
-  std::shared_ptr<CallbackHandle> callback_handle;
+  std::shared_ptr<InferenceServiceImpl::CallbackHandle> callback_handle;
   if (callback_present) {
-    callback_handle = std::make_shared<CallbackHandle>(
+    callback_handle = std::make_shared<InferenceServiceImpl::CallbackHandle>(
         [callback_invoked](grpc::Status /*unused*/) {
           if (callback_invoked != nullptr) {
             callback_invoked->store(true, std::memory_order_release);
@@ -1487,9 +1537,9 @@ InferenceServiceImpl::TestAccessor::FinalizeSuccessfulCompletionForTest(
         &queue, &reference_outputs, std::vector<at::ScalarType>{at::kFloat});
   }
 
-  LatencyBreakdown breakdown{};
+  InferenceServiceImpl::LatencyBreakdown breakdown{};
   detail::TimingInfo timing_info{};
-  const AsyncInferCompletionContext context{
+  const InferenceServiceImpl::AsyncInferCompletionContext context{
       .request = &request,
       .reply = reply_present ? &reply : nullptr,
       .callback_handle = callback_handle,
@@ -1502,12 +1552,13 @@ InferenceServiceImpl::TestAccessor::FinalizeSuccessfulCompletionForTest(
       .cancel_flag = cancel_flag,
       .terminal_flag = terminal_flag,
       .failure_info = std::nullopt};
-  finalize_successful_completion(context, outputs, breakdown, timing_info);
+  InferenceServiceImpl::finalize_successful_completion(
+      context, outputs, breakdown, timing_info);
   return terminal_flag->load(std::memory_order_acquire);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::HandleJobFailureForTest(
+starpu_server::testing::InferenceServiceTestAccessor::HandleJobFailureForTest(
     const grpc::Status& job_status, bool terminal_marked, bool callback_present,
     std::atomic<bool>* callback_invoked) -> bool
 {
@@ -1520,9 +1571,9 @@ InferenceServiceImpl::TestAccessor::HandleJobFailureForTest(
   auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
   auto terminal_flag = std::make_shared<std::atomic<bool>>(terminal_marked);
 
-  std::shared_ptr<CallbackHandle> callback_handle;
+  std::shared_ptr<InferenceServiceImpl::CallbackHandle> callback_handle;
   if (callback_present) {
-    callback_handle = std::make_shared<CallbackHandle>(
+    callback_handle = std::make_shared<InferenceServiceImpl::CallbackHandle>(
         [callback_invoked](grpc::Status /*unused*/) {
           if (callback_invoked != nullptr) {
             callback_invoked->store(true, std::memory_order_release);
@@ -1530,7 +1581,7 @@ InferenceServiceImpl::TestAccessor::HandleJobFailureForTest(
         });
   }
 
-  const AsyncInferCompletionContext context{
+  const InferenceServiceImpl::AsyncInferCompletionContext context{
       .request = &request,
       .reply = &reply,
       .callback_handle = callback_handle,
@@ -1543,25 +1594,26 @@ InferenceServiceImpl::TestAccessor::HandleJobFailureForTest(
       .cancel_flag = cancel_flag,
       .terminal_flag = terminal_flag,
       .failure_info = std::nullopt};
-  return handle_job_failure(context, job_status, callback_handle);
+  return InferenceServiceImpl::handle_job_failure(
+      context, job_status, callback_handle);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::PrepareAsyncCompletionForTest(
-    bool cancelled, bool callback_present) -> bool
+starpu_server::testing::InferenceServiceTestAccessor::
+    PrepareAsyncCompletionForTest(bool cancelled, bool callback_present) -> bool
 {
   inference::ModelInferRequest request;
   inference::ModelInferResponse reply;
   auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
   auto terminal_flag = std::make_shared<std::atomic<bool>>(false);
 
-  std::shared_ptr<CallbackHandle> callback_handle;
+  std::shared_ptr<InferenceServiceImpl::CallbackHandle> callback_handle;
   if (callback_present) {
-    callback_handle =
-        std::make_shared<CallbackHandle>([](grpc::Status /*unused*/) {});
+    callback_handle = std::make_shared<InferenceServiceImpl::CallbackHandle>(
+        [](grpc::Status /*unused*/) {});
   }
 
-  const AsyncInferCompletionContext context{
+  const InferenceServiceImpl::AsyncInferCompletionContext context{
       .request = &request,
       .reply = &reply,
       .callback_handle = callback_handle,
@@ -1574,19 +1626,21 @@ InferenceServiceImpl::TestAccessor::PrepareAsyncCompletionForTest(
       .cancel_flag = cancel_flag,
       .terminal_flag = terminal_flag,
       .failure_info = std::nullopt};
-  return prepare_async_completion(context, callback_handle);
+  return InferenceServiceImpl::prepare_async_completion(
+      context, callback_handle);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::TryMarkTerminalNullFlagForTest() -> bool
+starpu_server::testing::InferenceServiceTestAccessor::
+    TryMarkTerminalNullFlagForTest() -> bool
 {
   const std::shared_ptr<std::atomic<bool>> terminal_flag;
-  return try_mark_terminal(terminal_flag);
+  return InferenceServiceImpl::try_mark_terminal(terminal_flag);
 }
 
 auto
-InferenceServiceImpl::TestAccessor::HandleAsyncInferCompletionForTest(
-    bool cancelled) -> bool
+starpu_server::testing::InferenceServiceTestAccessor::
+    HandleAsyncInferCompletionForTest(bool cancelled) -> bool
 {
   inference::ModelInferRequest request;
   inference::ModelInferResponse reply;
@@ -1595,11 +1649,11 @@ InferenceServiceImpl::TestAccessor::HandleAsyncInferCompletionForTest(
   auto cancel_flag = std::make_shared<std::atomic<bool>>(cancelled);
   auto terminal_flag = std::make_shared<std::atomic<bool>>(false);
   bool called = false;
-  auto callback_handle = std::make_shared<CallbackHandle>(
+  auto callback_handle = std::make_shared<InferenceServiceImpl::CallbackHandle>(
       [&called](Status /*unused*/) { called = true; });
-  LatencyBreakdown breakdown{};
+  InferenceServiceImpl::LatencyBreakdown breakdown{};
   detail::TimingInfo timing_info{};
-  AsyncInferCompletionContext context{
+  InferenceServiceImpl::AsyncInferCompletionContext context{
       &request,
       &reply,
       callback_handle,
@@ -1612,9 +1666,26 @@ InferenceServiceImpl::TestAccessor::HandleAsyncInferCompletionForTest(
       cancel_flag,
       terminal_flag,
       std::nullopt};
-  handle_async_infer_completion(
+  InferenceServiceImpl::handle_async_infer_completion(
       context, Status::OK, outputs, breakdown, timing_info);
   return called;
+}
+
+auto
+starpu_server::testing::InferenceServiceTestAccessor::
+    ValidateConfiguredShapeForTest(
+        const std::vector<int64_t>& shape, const std::vector<int64_t>& expected,
+        bool batching_allowed, int max_batch_size) -> grpc::Status
+{
+  return validate_configured_shape(
+      shape, expected, batching_allowed, max_batch_size);
+}
+
+auto
+starpu_server::testing::InferenceServiceTestAccessor::
+    UnaryCallDataMissingHandlerTransitionsToFinishForTest() -> bool
+{
+  return unary_call_data_missing_handler_transitions_to_finish_for_test_impl();
 }
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
@@ -1662,6 +1733,42 @@ InferenceServiceImpl::try_mark_terminal(
   bool expected = false;
   return terminal_flag->compare_exchange_strong(
       expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
+}
+
+auto
+InferenceServiceImpl::enter_async_terminal_once(
+    const AsyncTerminalState& terminal_state, bool check_cancel_flag) -> bool
+{
+  if (check_cancel_flag && terminal_state.cancel_flag != nullptr &&
+      terminal_state.cancel_flag->load(std::memory_order_acquire)) {
+    return false;
+  }
+  return try_mark_terminal(terminal_state.terminal_flag);
+}
+
+auto
+InferenceServiceImpl::invoke_async_callback(
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    const Status& status) -> bool
+{
+  return callback_handle != nullptr && callback_handle->Invoke(status);
+}
+
+void
+InferenceServiceImpl::record_async_terminal_failure(
+    InferenceServiceImpl* service, std::string_view resolved_model_name,
+    const ModelInferRequest* request, MonotonicClock::time_point recv_tp,
+    const Status& status, std::string_view default_stage,
+    std::string_view default_reason,
+    const std::optional<AsyncFailureInfo>& failure_info,
+    bool record_status_metric)
+{
+  if (service != nullptr) {
+    service->record_failure(request, recv_tp, resolved_model_name);
+  }
+  record_terminal_metrics(
+      resolved_model_name, status, default_stage, default_reason, failure_info,
+      record_status_metric);
 }
 
 auto
@@ -1927,19 +2034,19 @@ InferenceServiceImpl::setup_async_cancellation(
     if (cancel_flag->exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-    if (!try_mark_terminal(terminal_flag)) {
+    const AsyncTerminalState terminal_state{cancel_flag, terminal_flag};
+    if (!enter_async_terminal_once(
+            terminal_state, /*check_cancel_flag=*/false)) {
       return;
     }
     const Status cancelled_status{
         grpc::StatusCode::CANCELLED, "Request cancelled"};
-    const bool invoked = callback_handle->Invoke(cancelled_status);
-    if (invoked) {
-      if (service != nullptr) {
-        service->record_failure(request, recv_tp, model_name);
-      }
-      record_terminal_metrics(
-          model_name, cancelled_status, "cancel", "client_cancelled");
+    if (!invoke_async_callback(callback_handle, cancelled_status)) {
+      return;
     }
+    record_async_terminal_failure(
+        service, model_name, request, recv_tp, cancelled_status, "cancel",
+        "client_cancelled");
   };
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -1970,21 +2077,12 @@ InferenceServiceImpl::handle_input_validation_failure(
   if (status.ok()) {
     return false;
   }
-  const auto& cancel_flag = terminal_state.cancel_flag;
-  const auto& terminal_flag = terminal_state.terminal_flag;
-  if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_acquire)) {
+  if (!enter_async_terminal_once(terminal_state)) {
     return true;
   }
-  if (!try_mark_terminal(terminal_flag)) {
-    return true;
-  }
-  if (service != nullptr) {
-    service->record_failure(request, recv_tp, resolved_model_name);
-  }
-  record_terminal_metrics(resolved_model_name, status, "preprocess");
-  if (callback_handle != nullptr) {
-    callback_handle->Invoke(status);
-  }
+  record_async_terminal_failure(
+      service, resolved_model_name, request, recv_tp, status, "preprocess");
+  (void)invoke_async_callback(callback_handle, status);
   return true;
 }
 
@@ -2000,22 +2098,13 @@ InferenceServiceImpl::handle_submit_failure(
   if (status.ok()) {
     return false;
   }
-  const auto& cancel_flag = terminal_state.cancel_flag;
-  const auto& terminal_flag = terminal_state.terminal_flag;
-  if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_acquire)) {
+  if (!enter_async_terminal_once(terminal_state)) {
     return true;
   }
-  if (!try_mark_terminal(terminal_flag)) {
-    return true;
-  }
-  if (service != nullptr) {
-    service->record_failure(request, recv_tp, resolved_model_name);
-  }
-  record_terminal_metrics(
-      resolved_model_name, status, "enqueue", {}, failure_info);
-  if (callback_handle != nullptr) {
-    callback_handle->Invoke(status);
-  }
+  record_async_terminal_failure(
+      service, resolved_model_name, request, recv_tp, status, "enqueue", {},
+      failure_info);
+  (void)invoke_async_callback(callback_handle, status);
   return true;
 }
 
@@ -2027,27 +2116,18 @@ InferenceServiceImpl::handle_async_internal_error(
     const ModelInferRequest* request, MonotonicClock::time_point recv_tp,
     const InferenceServiceImpl::AsyncInternalErrorDetails& details)
 {
-  const auto& cancel_flag = terminal_state.cancel_flag;
-  const auto& terminal_flag = terminal_state.terminal_flag;
-  if (cancel_flag != nullptr && cancel_flag->load(std::memory_order_acquire)) {
-    return;
-  }
-  if (!try_mark_terminal(terminal_flag)) {
+  if (!enter_async_terminal_once(terminal_state)) {
     return;
   }
 
   const Status status{grpc::StatusCode::INTERNAL, "Internal server error"};
-  const bool invoked =
-      callback_handle != nullptr && callback_handle->Invoke(status);
-  if (!invoked) {
+  if (!invoke_async_callback(callback_handle, status)) {
     return;
   }
 
-  if (service != nullptr) {
-    service->record_failure(request, recv_tp, resolved_model_name);
-  }
-  record_terminal_metrics(
-      resolved_model_name, status, details.stage, details.reason);
+  record_async_terminal_failure(
+      service, resolved_model_name, request, recv_tp, status, details.stage,
+      details.reason);
   log_error(std::string(details.log_context));
 }
 

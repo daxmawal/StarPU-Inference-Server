@@ -601,7 +601,9 @@ run_inference(
   const auto& ivalue_inputs =
       TensorBuilder::prepare_input_ivalues(params, buffers, device);
 
-  if (params->timing.inference_start_time != nullptr) {
+  if (params->timing.set_inference_start_time) {
+    params->timing.set_inference_start_time(MonotonicClock::now());
+  } else if (params->timing.inference_start_time != nullptr) {
     *params->timing.inference_start_time = MonotonicClock::now();
   }
 
@@ -640,7 +642,9 @@ run_codelet_inference(
     const torch::Device device, torch::jit::script::Module* model,
     CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
-  if (params->timing.codelet_start_time) {
+  if (params->timing.set_codelet_start_time) {
+    params->timing.set_codelet_start_time(MonotonicClock::now());
+  } else if (params->timing.codelet_start_time) {
     *params->timing.codelet_start_time = MonotonicClock::now();
   }
 
@@ -687,14 +691,25 @@ run_codelet_inference(
             worker_id, params->request_id));
   }
 
-  if (params->device.executed_on) {
-    *params->device.executed_on = executed_on_type;
-  }
-  if (params->device.worker_id) {
-    *params->device.worker_id = worker_id;
-  }
-  if (params->device.device_id) {
-    *params->device.device_id = device_id;
+  if (params->device.set_runtime_device_info) {
+    params->device.set_runtime_device_info(
+        executed_on_type, device_id, worker_id);
+  } else {
+    if (params->device.set_executed_on) {
+      params->device.set_executed_on(executed_on_type);
+    } else if (params->device.executed_on) {
+      *params->device.executed_on = executed_on_type;
+    }
+    if (params->device.set_worker_id) {
+      params->device.set_worker_id(worker_id);
+    } else if (params->device.worker_id) {
+      *params->device.worker_id = worker_id;
+    }
+    if (params->device.set_device_id) {
+      params->device.set_device_id(device_id);
+    } else if (params->device.device_id) {
+      *params->device.device_id = device_id;
+    }
   }
 
   try {
@@ -705,7 +720,9 @@ run_codelet_inference(
         std::format("[ERROR] Codelet failure: {}", e.what()));
   }
 
-  if (params->timing.codelet_end_time) {
+  if (params->timing.set_codelet_end_time) {
+    params->timing.set_codelet_end_time(MonotonicClock::now());
+  } else if (params->timing.codelet_end_time) {
     *params->timing.codelet_end_time = MonotonicClock::now();
   }
 }

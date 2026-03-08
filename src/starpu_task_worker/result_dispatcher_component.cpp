@@ -68,11 +68,9 @@ ResultDispatcher::prepare_job_completion_callback(
 {
   auto prev_callback = job->get_on_complete();
   auto dispatcher = runner.result_dispatcher_;
-  const bool track_inflight = runner.has_inflight_limit();
   auto inflight_state = runner.inflight_state_;
   job->set_on_complete(
-      [dispatcher, prev_callback, job_sptr = job, inflight_state,
-       track_inflight](
+      [dispatcher, prev_callback, job_sptr = job, inflight_state](
           std::vector<torch::Tensor> results, double latency_ms) mutable {
         if (job_sptr == nullptr || !job_sptr->try_mark_terminal_handled()) {
           return;
@@ -102,9 +100,7 @@ ResultDispatcher::prepare_job_completion_callback(
           ResultDispatcher::cleanup_terminal_job_payload(job_sptr);
         }
 
-        if (track_inflight) {
-          ResultDispatcher::release_inflight_slot(inflight_state);
-        }
+        ResultDispatcher::release_inflight_slot(inflight_state);
         if (dispatcher != nullptr) {
           dispatcher->finalize_job_completion(job_sptr);
         } else {
@@ -339,9 +335,8 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     auto outputs = std::move(slice_result.outputs);
 
     job_sp->set_timing_info(aggregated_timing);
-    job_sp->get_device_id() = aggregated_device_id;
-    job_sp->get_worker_id() = aggregated_worker_id;
-    job_sp->get_executed_on() = aggregated_executed_on;
+    job_sp->set_runtime_device_info(
+        aggregated_executed_on, aggregated_device_id, aggregated_worker_id);
     job_sp->set_submission_id(aggregated_submission_id);
 
     if (entry.callback) {
@@ -411,7 +406,27 @@ void
 ResultDispatcher::release_inflight_slot(
     const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state)
 {
-  StarPUTaskRunner::release_inflight_slot(inflight_state);
+  if (inflight_state == nullptr || inflight_state->max_tasks == 0) {
+    return;
+  }
+  std::size_t previous = inflight_state->tasks.load(std::memory_order_acquire);
+  while (true) {
+    if (previous == 0) {
+      return;
+    }
+    if (inflight_state->tasks.compare_exchange_weak(
+            previous, previous - 1, std::memory_order_acq_rel)) {
+      break;
+    }
+  }
+  set_inflight_tasks(previous - 1);
+  if (inflight_state->max_tasks > 0 && previous > 0) {
+    const double ratio = static_cast<double>(previous - 1) /
+                         static_cast<double>(inflight_state->max_tasks);
+    set_starpu_worker_busy_ratio(ratio);
+  }
+  std::scoped_lock lock(inflight_state->mutex);
+  inflight_state->cv.notify_one();
 }
 
 void

@@ -3,6 +3,7 @@
 #include <torch/script.h>
 
 #include <chrono>
+#include <functional>
 
 #include "device_type.hpp"
 #include "inference_limits.hpp"
@@ -20,6 +21,9 @@ struct Timing {
   MonotonicClock::time_point* codelet_start_time = nullptr;
   MonotonicClock::time_point* codelet_end_time = nullptr;
   MonotonicClock::time_point* inference_start_time = nullptr;
+  std::function<void(MonotonicClock::time_point)> set_codelet_start_time;
+  std::function<void(MonotonicClock::time_point)> set_codelet_end_time;
+  std::function<void(MonotonicClock::time_point)> set_inference_start_time;
 };
 
 // =============================================================================
@@ -30,6 +34,10 @@ struct DeviceInfo {
   int* device_id = nullptr;
   int* worker_id = nullptr;
   DeviceType* executed_on = nullptr;
+  std::function<void(DeviceType, int, int)> set_runtime_device_info;
+  std::function<void(int)> set_device_id;
+  std::function<void(int)> set_worker_id;
+  std::function<void(DeviceType)> set_executed_on;
 };
 
 // =============================================================================

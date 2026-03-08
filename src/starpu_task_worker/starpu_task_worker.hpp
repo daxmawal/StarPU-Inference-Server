@@ -152,6 +152,7 @@ class StarPUTaskRunner {
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
   auto wait_for_prepared_job() -> std::shared_ptr<InferenceJob>;
+  void process_prepared_job(const std::shared_ptr<InferenceJob>& job);
   void handle_cancelled_job(const std::shared_ptr<InferenceJob>& job);
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -197,14 +198,6 @@ class StarPUTaskRunner {
   void finalize_job_after_unknown_exception(
       const std::shared_ptr<InferenceJob>& job, std::string_view log_prefix,
       int job_id);
-  void reserve_inflight_slot();
-  void release_inflight_slot();
-  static void release_inflight_slot(
-      const std::shared_ptr<InflightState>& inflight_state);
-  [[nodiscard]] auto has_inflight_limit() const -> bool
-  {
-    return inflight_state_ != nullptr && inflight_state_->max_tasks > 0;
-  }
 
   struct InflightState {
     std::atomic<std::size_t> tasks{0};

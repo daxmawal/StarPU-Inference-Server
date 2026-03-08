@@ -41,7 +41,11 @@
 #include "utils/logger.hpp"
 #include "utils/runtime_config.hpp"
 
+#if defined(STARPU_TESTING)
+namespace starpu_server::testing::server_main {
+#else
 namespace {
+#endif
 struct ServerContext {
   grpc::Server* server = nullptr;
   std::mutex server_mutex;
@@ -485,6 +489,11 @@ enum class ShutdownDrainStageForTest : std::uint8_t {
   BeforeWait,
 };
 
+struct ShutdownDrainProgressForTest {
+  std::size_t total_jobs = 0;
+  std::size_t completed_jobs = 0;
+};
+
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 
 using ShutdownDrainTimeoutOverrideForTestFn =
@@ -492,7 +501,7 @@ using ShutdownDrainTimeoutOverrideForTestFn =
 using ShutdownDrainWaitStepOverrideForTestFn =
     std::chrono::steady_clock::duration (*)();
 using ShutdownDrainObserverForTestFn = void (*)(
-    ShutdownDrainStageForTest, std::size_t, std::size_t,
+    ShutdownDrainStageForTest, ShutdownDrainProgressForTest,
     std::chrono::steady_clock::duration);
 
 auto
@@ -545,47 +554,23 @@ resolve_shutdown_drain_wait_step() -> std::chrono::steady_clock::duration
 
 void
 notify_shutdown_drain_stage_for_test(
-    ShutdownDrainStageForTest stage, std::size_t total_jobs,
-    std::size_t completed_jobs,
+    ShutdownDrainStageForTest stage, ShutdownDrainProgressForTest progress,
     std::chrono::steady_clock::duration wait_budget =
         std::chrono::steady_clock::duration::zero())
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto observer_fn = shutdown_drain_observer_for_test();
       observer_fn != nullptr) {
-    observer_fn(stage, total_jobs, completed_jobs, wait_budget);
+    observer_fn(stage, progress, wait_budget);
   }
 #else
   (void)stage;
-  (void)total_jobs;
-  (void)completed_jobs;
+  (void)progress;
   (void)wait_budget;
 #endif  // SONAR_IGNORE_STOP
 }
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-using ResolvePythonCandidatesOverrideForTestFn =
-    std::vector<std::filesystem::path> (*)();
-
-using ResolvePythonIsRegularFileOverrideForTestFn =
-    bool (*)(const std::filesystem::path&, std::error_code&);
-
-auto
-resolve_python_candidates_override_for_test() noexcept
-    -> ResolvePythonCandidatesOverrideForTestFn&
-{
-  static ResolvePythonCandidatesOverrideForTestFn override_fn = nullptr;
-  return override_fn;
-}
-
-auto
-resolve_python_is_regular_file_override_for_test() noexcept
-    -> ResolvePythonIsRegularFileOverrideForTestFn&
-{
-  static ResolvePythonIsRegularFileOverrideForTestFn override_fn = nullptr;
-  return override_fn;
-}
-#endif  // SONAR_IGNORE_STOP
+#include "server_main_python_test_overrides.inc"
 
 auto
 resolve_python_executable() -> std::optional<std::filesystem::path>
@@ -596,28 +581,14 @@ resolve_python_executable() -> std::optional<std::filesystem::path>
       "/bin/python3",
   };
 
-  std::span<const std::filesystem::path> candidates = kDefaultCandidates;
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   std::vector<std::filesystem::path> override_candidates_storage;
-  if (const auto override_fn = resolve_python_candidates_override_for_test();
-      override_fn != nullptr) {
-    override_candidates_storage = override_fn();
-    candidates = override_candidates_storage;
-  }
-#endif  // SONAR_IGNORE_STOP
+  const auto candidates = resolve_python_candidates_for_runtime(
+      kDefaultCandidates, override_candidates_storage);
 
   for (const auto& candidate : candidates) {
     std::error_code status_ec;
-    const bool is_regular = [&]() {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-      if (const auto override_fn =
-              resolve_python_is_regular_file_override_for_test();
-          override_fn != nullptr) {
-        return override_fn(candidate, status_ec);
-      }
-#endif  // SONAR_IGNORE_STOP
-      return std::filesystem::is_regular_file(candidate, status_ec);
-    }();
+    const bool is_regular =
+        resolve_python_is_regular_file_for_runtime(candidate, status_ec);
     if (!is_regular || status_ec) {
       continue;
     }
@@ -1137,7 +1108,12 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
             "Batching latency plots written to '{}'.", output_path.string()));
   }
 }
+#if defined(STARPU_TESTING)
+}  // namespace starpu_server::testing::server_main
+using namespace starpu_server::testing::server_main;
+#else
 }  // namespace
+#endif
 
 void
 signal_handler(int /*signal*/)
@@ -1367,6 +1343,216 @@ make_grpc_model_spec(
       .max_batch_size = opts.batching.max_batch_size};
 }
 
+struct ExpectedModelMetadata {
+  std::vector<at::ScalarType> input_types;
+  std::vector<std::string> input_names;
+  std::vector<std::vector<int64_t>> input_dims;
+  std::vector<std::string> output_names;
+};
+
+auto
+collect_expected_model_metadata(const starpu_server::RuntimeConfig& opts)
+    -> ExpectedModelMetadata
+{
+  ExpectedModelMetadata metadata{};
+  if (!opts.model.has_value()) {
+    return metadata;
+  }
+
+  metadata.input_types.reserve(opts.model->inputs.size());
+  metadata.input_names.reserve(opts.model->inputs.size());
+  metadata.input_dims.reserve(opts.model->inputs.size());
+  for (const auto& input : opts.model->inputs) {
+    metadata.input_types.push_back(input.type);
+    metadata.input_names.push_back(input.name);
+    metadata.input_dims.push_back(input.dims);
+  }
+
+  metadata.output_names.reserve(opts.model->outputs.size());
+  for (const auto& output : opts.model->outputs) {
+    metadata.output_names.push_back(output.name);
+  }
+  return metadata;
+}
+
+void
+wait_for_stop_signal(int read_fd, bool use_blocking_signal_wait)
+{
+  if (use_blocking_signal_wait) {
+    if (signal_stop_requested_flag() == 0) {
+      wait_for_signal_notification(read_fd);
+    }
+    return;
+  }
+
+  constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
+  while (signal_stop_requested_flag() == 0) {
+    std::this_thread::sleep_for(kNotifierSleep);
+  }
+}
+
+auto
+make_signal_notifier_thread(
+    ServerContext& server_ctx, starpu_server::InferenceQueue& queue,
+    ThreadExceptionState& thread_exception_state, int read_fd,
+    bool use_blocking_signal_wait) -> std::jthread
+{
+  return std::jthread([&server_ctx, &queue, &thread_exception_state, read_fd,
+                       use_blocking_signal_wait]() {
+    run_thread_entry_with_exception_capture(
+        "signal-notifier", thread_exception_state, server_ctx, &queue,
+        [read_fd, use_blocking_signal_wait, &server_ctx]() {
+          wait_for_stop_signal(read_fd, use_blocking_signal_wait);
+          if (signal_stop_requested_flag() != 0) {
+            request_server_stop(server_ctx);
+          }
+        });
+  });
+}
+
+auto
+make_worker_thread(
+    ServerContext& server_ctx, starpu_server::InferenceQueue& queue,
+    ThreadExceptionState& thread_exception_state,
+    starpu_server::StarPUTaskRunner& worker) -> std::jthread
+{
+  return std::jthread(
+      [&server_ctx, &queue, &thread_exception_state, &worker]() {
+        run_thread_entry_with_exception_capture(
+            "starpu-worker", thread_exception_state, server_ctx, &queue,
+            [&worker]() { worker.run(); });
+      });
+}
+
+auto
+make_grpc_thread(
+    ServerContext& server_ctx, starpu_server::InferenceQueue& queue,
+    ThreadExceptionState& thread_exception_state,
+    const starpu_server::RuntimeConfig& opts,
+    std::vector<torch::Tensor>& reference_outputs,
+    const ExpectedModelMetadata& expected_metadata) -> std::jthread
+{
+  return std::jthread([&server_ctx, &queue, &thread_exception_state, &opts,
+                       &reference_outputs, &expected_metadata]() {
+    run_thread_entry_with_exception_capture(
+        "grpc-server", thread_exception_state, server_ctx, &queue, [&]() {
+          std::unique_ptr<grpc::Server> grpc_server;
+          const auto server_hooks = starpu_server::GrpcServerLifecycleHooks{
+              .on_started =
+                  [&server_ctx](grpc::Server* server) {
+                    mark_server_started(server_ctx, server);
+                  },
+              .on_stopped =
+                  [&server_ctx]() {
+                    mark_server_stopped(server_ctx);
+                    request_server_stop(server_ctx);
+                  }};
+          const auto server_options = make_grpc_server_options(opts);
+          const auto model_spec = make_grpc_model_spec(
+              opts, expected_metadata.input_types, expected_metadata.input_dims,
+              expected_metadata.input_names, expected_metadata.output_names);
+          starpu_server::RunGrpcServer(
+              queue, reference_outputs, model_spec, server_options, grpc_server,
+              server_hooks);
+        });
+  });
+}
+
+void
+wait_for_stop_request(ServerContext& server_ctx)
+{
+  std::unique_lock lock(server_ctx.stop_mutex);
+  server_ctx.stop_cv.wait(lock, [&server_ctx] {
+    return server_ctx.stop_requested.load(std::memory_order_relaxed);
+  });
+}
+
+void
+log_shutdown_drain_start(
+    starpu_server::VerbosityLevel verbosity, std::size_t total_jobs,
+    std::size_t completed_before_drain)
+{
+  if (total_jobs <= completed_before_drain) {
+    return;
+  }
+  const auto remaining_before_drain = total_jobs - completed_before_drain;
+  starpu_server::log_info(
+      verbosity,
+      std::format(
+          "Shutdown drain started: completed={} total={} remaining={}.",
+          completed_before_drain, total_jobs, remaining_before_drain));
+}
+
+void
+drain_shutdown_jobs(
+    const starpu_server::InferenceQueue& queue, std::size_t total_jobs,
+    std::atomic<std::size_t>& completed_jobs,
+    std::size_t completed_before_drain, std::condition_variable& all_done_cv,
+    std::mutex& all_done_mutex)
+{
+  if (total_jobs == 0) {
+    return;
+  }
+
+  notify_shutdown_drain_stage_for_test(
+      ShutdownDrainStageForTest::Entered,
+      ShutdownDrainProgressForTest{
+          .total_jobs = total_jobs,
+          .completed_jobs = completed_before_drain,
+      });
+  const auto shutdown_drain_timeout = resolve_shutdown_drain_timeout();
+  const auto shutdown_drain_wait_step = resolve_shutdown_drain_wait_step();
+  const auto deadline =
+      std::chrono::steady_clock::now() + shutdown_drain_timeout;
+
+  std::unique_lock lock(all_done_mutex);
+  while (true) {
+    const auto completed = completed_jobs.load(std::memory_order_acquire);
+    if (completed >= total_jobs) {
+      notify_shutdown_drain_stage_for_test(
+          ShutdownDrainStageForTest::CompletedReachedTotal,
+          ShutdownDrainProgressForTest{
+              .total_jobs = total_jobs,
+              .completed_jobs = completed,
+          });
+      break;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
+      notify_shutdown_drain_stage_for_test(
+          ShutdownDrainStageForTest::DeadlineReached,
+          ShutdownDrainProgressForTest{
+              .total_jobs = total_jobs,
+              .completed_jobs = completed,
+          });
+      const auto remaining = total_jobs - completed;
+      const auto timeout_ms =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              shutdown_drain_timeout)
+              .count();
+      starpu_server::log_error(std::format(
+          "Shutdown drain timeout after {} ms: completed={} total={} "
+          "remaining={} queue_size={}.",
+          timeout_ms, completed, total_jobs, remaining, queue.size()));
+      break;
+    }
+
+    const auto until_deadline = deadline - now;
+    const auto wait_budget = until_deadline < shutdown_drain_wait_step
+                                 ? until_deadline
+                                 : shutdown_drain_wait_step;
+    notify_shutdown_drain_stage_for_test(
+        ShutdownDrainStageForTest::BeforeWait,
+        ShutdownDrainProgressForTest{
+            .total_jobs = total_jobs,
+            .completed_jobs = completed,
+        },
+        wait_budget);
+    static_cast<void>(all_done_cv.wait_for(lock, wait_budget));
+  }
+}
+
 void
 launch_threads(  // NOLINT(readability-function-cognitive-complexity)
     const starpu_server::RuntimeConfig& opts,
@@ -1389,27 +1575,9 @@ launch_threads(  // NOLINT(readability-function-cognitive-complexity)
   starpu_server::congestion::start(&queue, make_congestion_config(opts));
 
   const bool use_blocking_signal_wait = signal_pipe.active();
-  std::jthread notifier_thread([&server_ctx, &queue, &thread_exception_state,
-                                read_fd = signal_pipe.read_fd(),
-                                use_blocking_signal_wait]() {
-    run_thread_entry_with_exception_capture(
-        "signal-notifier", thread_exception_state, server_ctx, &queue,
-        [read_fd, use_blocking_signal_wait, &server_ctx]() {
-          if (use_blocking_signal_wait) {
-            if (signal_stop_requested_flag() == 0) {
-              wait_for_signal_notification(read_fd);
-            }
-          } else {
-            constexpr auto kNotifierSleep = std::chrono::milliseconds(10);
-            while (signal_stop_requested_flag() == 0) {
-              std::this_thread::sleep_for(kNotifierSleep);
-            }
-          }
-          if (signal_stop_requested_flag() != 0) {
-            request_server_stop(server_ctx);
-          }
-        });
-  });
+  std::jthread notifier_thread = make_signal_notifier_thread(
+      server_ctx, queue, thread_exception_state, signal_pipe.read_fd(),
+      use_blocking_signal_wait);
   struct SignalPipeShutdownGuard {
     SignalNotificationPipe* pipe = nullptr;
     SignalPipeShutdownGuard() = default;
@@ -1447,130 +1615,23 @@ launch_threads(  // NOLINT(readability-function-cognitive-complexity)
   config.all_done_cv = &all_done_cv;
   starpu_server::StarPUTaskRunner worker(config);
 
-  std::jthread worker_thread(
-      [&server_ctx, &queue, &thread_exception_state, &worker]() {
-        run_thread_entry_with_exception_capture(
-            "starpu-worker", thread_exception_state, server_ctx, &queue,
-            [&worker]() { worker.run(); });
-      });
-  std::vector<at::ScalarType> expected_input_types;
-  if (opts.model.has_value()) {
-    expected_input_types.reserve(opts.model->inputs.size());
-    for (const auto& input : opts.model->inputs) {
-      expected_input_types.push_back(input.type);
-    }
-  }
-  std::vector<std::string> expected_input_names;
-  if (opts.model.has_value()) {
-    expected_input_names.reserve(opts.model->inputs.size());
-    for (const auto& input : opts.model->inputs) {
-      expected_input_names.push_back(input.name);
-    }
-  }
-  std::vector<std::vector<int64_t>> expected_input_dims;
-  if (opts.model.has_value()) {
-    expected_input_dims.reserve(opts.model->inputs.size());
-    for (const auto& input : opts.model->inputs) {
-      expected_input_dims.push_back(input.dims);
-    }
-  }
-  std::vector<std::string> expected_output_names;
-  if (opts.model.has_value()) {
-    expected_output_names.reserve(opts.model->outputs.size());
-    for (const auto& output : opts.model->outputs) {
-      expected_output_names.push_back(output.name);
-    }
-  }
+  std::jthread worker_thread =
+      make_worker_thread(server_ctx, queue, thread_exception_state, worker);
+  auto expected_model_metadata = collect_expected_model_metadata(opts);
+  std::jthread grpc_thread = make_grpc_thread(
+      server_ctx, queue, thread_exception_state, opts, reference_outputs,
+      expected_model_metadata);
 
-  std::jthread grpc_thread([&server_ctx, &queue, &thread_exception_state, &opts,
-                            &reference_outputs, &expected_input_types,
-                            &expected_input_dims, &expected_input_names,
-                            &expected_output_names]() {
-    run_thread_entry_with_exception_capture(
-        "grpc-server", thread_exception_state, server_ctx, &queue, [&]() {
-          std::unique_ptr<grpc::Server> grpc_server;
-          const auto server_hooks = starpu_server::GrpcServerLifecycleHooks{
-              .on_started =
-                  [&server_ctx](grpc::Server* server) {
-                    mark_server_started(server_ctx, server);
-                  },
-              .on_stopped =
-                  [&server_ctx]() {
-                    mark_server_stopped(server_ctx);
-                    request_server_stop(server_ctx);
-                  }};
-          const auto server_options = make_grpc_server_options(opts);
-          const auto model_spec = make_grpc_model_spec(
-              opts, expected_input_types, expected_input_dims,
-              expected_input_names, expected_output_names);
-          starpu_server::RunGrpcServer(
-              queue, reference_outputs, model_spec, server_options, grpc_server,
-              server_hooks);
-        });
-  });
-
-  {
-    std::unique_lock lock(server_ctx.stop_mutex);
-    server_ctx.stop_cv.wait(lock, [&server_ctx] {
-      return server_ctx.stop_requested.load(std::memory_order_relaxed);
-    });
-  }
+  wait_for_stop_request(server_ctx);
   stop_server_when_available(server_ctx);
   queue.shutdown();
   const auto total_jobs = queue.total_pushed();
   const auto completed_before_drain =
       completed_jobs.load(std::memory_order_acquire);
-  if (total_jobs > completed_before_drain) {
-    const auto remaining_before_drain = total_jobs - completed_before_drain;
-    starpu_server::log_info(
-        opts.verbosity,
-        std::format(
-            "Shutdown drain started: completed={} total={} remaining={}.",
-            completed_before_drain, total_jobs, remaining_before_drain));
-  }
-  if (total_jobs > 0) {
-    notify_shutdown_drain_stage_for_test(
-        ShutdownDrainStageForTest::Entered, total_jobs, completed_before_drain);
-    const auto shutdown_drain_timeout = resolve_shutdown_drain_timeout();
-    const auto shutdown_drain_wait_step = resolve_shutdown_drain_wait_step();
-    const auto deadline =
-        std::chrono::steady_clock::now() + shutdown_drain_timeout;
-    std::unique_lock lock(all_done_mutex);
-    while (true) {
-      const auto completed = completed_jobs.load(std::memory_order_acquire);
-      if (completed >= total_jobs) {
-        notify_shutdown_drain_stage_for_test(
-            ShutdownDrainStageForTest::CompletedReachedTotal, total_jobs,
-            completed);
-        break;
-      }
-
-      const auto now = std::chrono::steady_clock::now();
-      if (now >= deadline) {
-        notify_shutdown_drain_stage_for_test(
-            ShutdownDrainStageForTest::DeadlineReached, total_jobs, completed);
-        const auto remaining = total_jobs - completed;
-        const auto timeout_ms =
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                shutdown_drain_timeout)
-                .count();
-        starpu_server::log_error(std::format(
-            "Shutdown drain timeout after {} ms: completed={} total={} "
-            "remaining={} queue_size={}.",
-            timeout_ms, completed, total_jobs, remaining, queue.size()));
-        break;
-      }
-
-      const auto until_deadline = deadline - now;
-      const auto wait_budget = until_deadline < shutdown_drain_wait_step
-                                   ? until_deadline
-                                   : shutdown_drain_wait_step;
-      notify_shutdown_drain_stage_for_test(
-          ShutdownDrainStageForTest::BeforeWait, total_jobs, completed,
-          wait_budget);
-      static_cast<void>(all_done_cv.wait_for(lock, wait_budget));
-    }
-  }
+  log_shutdown_drain_start(opts.verbosity, total_jobs, completed_before_drain);
+  drain_shutdown_jobs(
+      queue, total_jobs, completed_jobs, completed_before_drain, all_done_cv,
+      all_done_mutex);
   starpu_server::congestion::shutdown();
   server_ctx.stop_cv.notify_one();
   rethrow_thread_exception_if_any(thread_exception_state);
@@ -1840,6 +1901,8 @@ log_worker_inventory(const starpu_server::RuntimeConfig& opts)
   }
 }
 
+// Test binary already provides gtest_main.
+#if !defined(STARPU_TESTING)
 auto
 main(int argc, char* argv[]) -> int
 {
@@ -1877,3 +1940,4 @@ main(int argc, char* argv[]) -> int
 
   return 0;
 }
+#endif
