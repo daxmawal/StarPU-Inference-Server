@@ -1922,6 +1922,54 @@ TEST(
 }
 
 TEST(
+    ServerMainThreadEntry,
+    CapturesStdExceptionInvokesExceptionHookAndMarksServerStopped)
+{
+  ThreadExceptionState state;
+  ServerContext server_ctx;
+  starpu_server::InferenceQueue queue(4);
+  std::atomic<bool> hook_called{false};
+  ASSERT_FALSE(queue.is_shutdown());
+  EXPECT_FALSE(server_ctx.stop_requested.load(std::memory_order_relaxed));
+  {
+    std::lock_guard<std::mutex> lock(server_ctx.server_mutex);
+    EXPECT_FALSE(server_ctx.server_startup_observed);
+    EXPECT_EQ(server_ctx.server, nullptr);
+  }
+
+  EXPECT_NO_THROW(run_thread_entry_with_exception_capture(
+      "grpc-server", state, server_ctx, &queue,
+      []() { throw std::runtime_error("grpc startup failure"); },
+      [&server_ctx, &hook_called]() {
+        hook_called.store(true, std::memory_order_relaxed);
+        mark_server_stopped(server_ctx);
+      }));
+
+  EXPECT_TRUE(hook_called.load(std::memory_order_relaxed));
+  EXPECT_TRUE(server_ctx.stop_requested.load(std::memory_order_relaxed));
+  EXPECT_TRUE(queue.is_shutdown());
+  {
+    std::lock_guard<std::mutex> lock(server_ctx.server_mutex);
+    EXPECT_TRUE(server_ctx.server_startup_observed);
+    EXPECT_EQ(server_ctx.server, nullptr);
+  }
+
+  auto [captured_exception, thread_name] = state.take();
+  ASSERT_NE(captured_exception, nullptr);
+  EXPECT_EQ(thread_name, "grpc-server");
+  try {
+    std::rethrow_exception(captured_exception);
+    FAIL() << "Expected std::runtime_error to be rethrown.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string(error.what()), "grpc startup failure");
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+}
+
+TEST(
     ServerMainModelPreparation,
     PrepareModelsAndWarmupThrowsModelLoadingExceptionWhenLoadingFails)
 {

@@ -268,6 +268,147 @@ compute_thread_count() -> std::size_t
   return compute_thread_count_from(std::thread::hardware_concurrency());
 }
 
+using UnaryRpcRegistrationFn = void (*)(
+    inference::GRPCInferenceService::AsyncService*,
+    grpc::ServerCompletionQueue*, InferenceServiceImpl*);
+
+struct UnaryRpcDescriptor {
+  UnaryRpcRegistrationFn register_fn = nullptr;
+};
+
+template <
+    typename Request, typename Response, auto kRequestMethod,
+    auto kHandlerMethod>
+void
+start_unary_rpc_entry(
+    inference::GRPCInferenceService::AsyncService* service,
+    grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl)
+{
+  UnaryCallData<Request, Response>::Start(
+      service, completion_queue, impl,
+      static_cast<typename UnaryCallData<Request, Response>::RequestMethod>(
+          kRequestMethod),
+      std::mem_fn(kHandlerMethod));
+}
+
+template <
+    typename Request, typename Response, auto kRequestMethod,
+    auto kHandlerMethod>
+constexpr auto
+make_unary_rpc_descriptor() -> UnaryRpcDescriptor
+{
+  return {&start_unary_rpc_entry<
+      Request, Response, kRequestMethod, kHandlerMethod>};
+}
+
+auto
+unary_rpc_descriptors() -> std::span<const UnaryRpcDescriptor>
+{
+  static constexpr UnaryRpcDescriptor kUnaryRpcDescriptors[] = {
+      make_unary_rpc_descriptor<
+          inference::ServerLiveRequest, inference::ServerLiveResponse,
+          &inference::GRPCInferenceService::AsyncService::RequestServerLive,
+          &InferenceServiceImpl::ServerLive>(),
+      make_unary_rpc_descriptor<
+          inference::ServerReadyRequest, inference::ServerReadyResponse,
+          &inference::GRPCInferenceService::AsyncService::RequestServerReady,
+          &InferenceServiceImpl::ServerReady>(),
+      make_unary_rpc_descriptor<
+          inference::ModelReadyRequest, inference::ModelReadyResponse,
+          &inference::GRPCInferenceService::AsyncService::RequestModelReady,
+          &InferenceServiceImpl::ModelReady>(),
+      make_unary_rpc_descriptor<
+          inference::ServerMetadataRequest, inference::ServerMetadataResponse,
+          &inference::GRPCInferenceService::AsyncService::RequestServerMetadata,
+          &InferenceServiceImpl::ServerMetadata>(),
+      make_unary_rpc_descriptor<
+          inference::ModelMetadataRequest, inference::ModelMetadataResponse,
+          &inference::GRPCInferenceService::AsyncService::RequestModelMetadata,
+          &InferenceServiceImpl::ModelMetadata>(),
+      make_unary_rpc_descriptor<
+          inference::ModelConfigRequest, inference::ModelConfigResponse,
+          &inference::GRPCInferenceService::AsyncService::RequestModelConfig,
+          &InferenceServiceImpl::ModelConfig>(),
+      make_unary_rpc_descriptor<
+          inference::ModelStatisticsRequest, inference::ModelStatisticsResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestModelStatistics,
+          &InferenceServiceImpl::ModelStatistics>(),
+      make_unary_rpc_descriptor<
+          inference::RepositoryIndexRequest, inference::RepositoryIndexResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestRepositoryIndex,
+          &InferenceServiceImpl::RepositoryIndex>(),
+      make_unary_rpc_descriptor<
+          inference::RepositoryModelLoadRequest,
+          inference::RepositoryModelLoadResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestRepositoryModelLoad,
+          &InferenceServiceImpl::RepositoryModelLoad>(),
+      make_unary_rpc_descriptor<
+          inference::RepositoryModelUnloadRequest,
+          inference::RepositoryModelUnloadResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestRepositoryModelUnload,
+          &InferenceServiceImpl::RepositoryModelUnload>(),
+      make_unary_rpc_descriptor<
+          inference::SystemSharedMemoryStatusRequest,
+          inference::SystemSharedMemoryStatusResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestSystemSharedMemoryStatus,
+          &InferenceServiceImpl::SystemSharedMemoryStatus>(),
+      make_unary_rpc_descriptor<
+          inference::SystemSharedMemoryRegisterRequest,
+          inference::SystemSharedMemoryRegisterResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestSystemSharedMemoryRegister,
+          &InferenceServiceImpl::SystemSharedMemoryRegister>(),
+      make_unary_rpc_descriptor<
+          inference::SystemSharedMemoryUnregisterRequest,
+          inference::SystemSharedMemoryUnregisterResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestSystemSharedMemoryUnregister,
+          &InferenceServiceImpl::SystemSharedMemoryUnregister>(),
+      make_unary_rpc_descriptor<
+          inference::CudaSharedMemoryStatusRequest,
+          inference::CudaSharedMemoryStatusResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestCudaSharedMemoryStatus,
+          &InferenceServiceImpl::CudaSharedMemoryStatus>(),
+      make_unary_rpc_descriptor<
+          inference::CudaSharedMemoryRegisterRequest,
+          inference::CudaSharedMemoryRegisterResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestCudaSharedMemoryRegister,
+          &InferenceServiceImpl::CudaSharedMemoryRegister>(),
+      make_unary_rpc_descriptor<
+          inference::CudaSharedMemoryUnregisterRequest,
+          inference::CudaSharedMemoryUnregisterResponse,
+          &inference::GRPCInferenceService::AsyncService::
+              RequestCudaSharedMemoryUnregister,
+          &InferenceServiceImpl::CudaSharedMemoryUnregister>(),
+      make_unary_rpc_descriptor<
+          inference::TraceSettingRequest, inference::TraceSettingResponse,
+          &inference::GRPCInferenceService::AsyncService::RequestTraceSetting,
+          &InferenceServiceImpl::TraceSetting>(),
+      make_unary_rpc_descriptor<
+          inference::LogSettingsRequest, inference::LogSettingsResponse,
+          &inference::GRPCInferenceService::AsyncService::RequestLogSettings,
+          &InferenceServiceImpl::LogSettings>(),
+  };
+  return kUnaryRpcDescriptors;
+}
+
+void
+register_async_unary_rpcs(
+    inference::GRPCInferenceService::AsyncService* service,
+    grpc::ServerCompletionQueue* completion_queue, InferenceServiceImpl* impl)
+{
+  for (const auto& descriptor : unary_rpc_descriptors()) {
+    descriptor.register_fn(service, completion_queue, impl);
+  }
+}
+
 namespace {
 
 void
@@ -363,127 +504,7 @@ AsyncServerContext::start()
     threads_.emplace_back([this]() { this->poll_events(); });
   }
 
-  UnaryCallData<inference::ServerLiveRequest, inference::ServerLiveResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::RequestServerLive,
-          std::mem_fn(&InferenceServiceImpl::ServerLive));
-  UnaryCallData<inference::ServerReadyRequest, inference::ServerReadyResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::RequestServerReady,
-          std::mem_fn(&InferenceServiceImpl::ServerReady));
-  UnaryCallData<inference::ModelReadyRequest, inference::ModelReadyResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::RequestModelReady,
-          std::mem_fn(&InferenceServiceImpl::ModelReady));
-  UnaryCallData<
-      inference::ServerMetadataRequest, inference::ServerMetadataResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::RequestServerMetadata,
-          std::mem_fn(&InferenceServiceImpl::ServerMetadata));
-  UnaryCallData<
-      inference::ModelMetadataRequest, inference::ModelMetadataResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::RequestModelMetadata,
-          std::mem_fn(&InferenceServiceImpl::ModelMetadata));
-  UnaryCallData<inference::ModelConfigRequest, inference::ModelConfigResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::RequestModelConfig,
-          std::mem_fn(&InferenceServiceImpl::ModelConfig));
-  UnaryCallData<
-      inference::ModelStatisticsRequest, inference::ModelStatisticsResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestModelStatistics,
-          std::mem_fn(&InferenceServiceImpl::ModelStatistics));
-  UnaryCallData<
-      inference::RepositoryIndexRequest, inference::RepositoryIndexResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestRepositoryIndex,
-          std::mem_fn(&InferenceServiceImpl::RepositoryIndex));
-  UnaryCallData<
-      inference::RepositoryModelLoadRequest,
-      inference::RepositoryModelLoadResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestRepositoryModelLoad,
-          std::mem_fn(&InferenceServiceImpl::RepositoryModelLoad));
-  UnaryCallData<
-      inference::RepositoryModelUnloadRequest,
-      inference::RepositoryModelUnloadResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestRepositoryModelUnload,
-          std::mem_fn(&InferenceServiceImpl::RepositoryModelUnload));
-  UnaryCallData<
-      inference::SystemSharedMemoryStatusRequest,
-      inference::SystemSharedMemoryStatusResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestSystemSharedMemoryStatus,
-          std::mem_fn(&InferenceServiceImpl::SystemSharedMemoryStatus));
-  UnaryCallData<
-      inference::SystemSharedMemoryRegisterRequest,
-      inference::SystemSharedMemoryRegisterResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestSystemSharedMemoryRegister,
-          std::mem_fn(&InferenceServiceImpl::SystemSharedMemoryRegister));
-  UnaryCallData<
-      inference::SystemSharedMemoryUnregisterRequest,
-      inference::SystemSharedMemoryUnregisterResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestSystemSharedMemoryUnregister,
-          std::mem_fn(&InferenceServiceImpl::SystemSharedMemoryUnregister));
-  UnaryCallData<
-      inference::CudaSharedMemoryStatusRequest,
-      inference::CudaSharedMemoryStatusResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestCudaSharedMemoryStatus,
-          std::mem_fn(&InferenceServiceImpl::CudaSharedMemoryStatus));
-  UnaryCallData<
-      inference::CudaSharedMemoryRegisterRequest,
-      inference::CudaSharedMemoryRegisterResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestCudaSharedMemoryRegister,
-          std::mem_fn(&InferenceServiceImpl::CudaSharedMemoryRegister));
-  UnaryCallData<
-      inference::CudaSharedMemoryUnregisterRequest,
-      inference::CudaSharedMemoryUnregisterResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::
-              RequestCudaSharedMemoryUnregister,
-          std::mem_fn(&InferenceServiceImpl::CudaSharedMemoryUnregister));
-  UnaryCallData<
-      inference::TraceSettingRequest, inference::TraceSettingResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::RequestTraceSetting,
-          std::mem_fn(&InferenceServiceImpl::TraceSetting));
-  UnaryCallData<inference::LogSettingsRequest, inference::LogSettingsResponse>::
-      Start(
-          async_service_, completion_queue_.get(), impl_,
-          &inference::GRPCInferenceService::AsyncService::RequestLogSettings,
-          std::mem_fn(&InferenceServiceImpl::LogSettings));
+  register_async_unary_rpcs(async_service_, completion_queue_.get(), impl_);
   ModelStreamInferCallData::Start(async_service_, completion_queue_.get());
   ModelInferCallData::Start(async_service_, completion_queue_.get(), impl_);
 }

@@ -253,6 +253,11 @@ ThrowingDataRelease(starpu_data_handle_t)
       "forced data release failure");
 }
 
+void
+NoopDataRelease(starpu_data_handle_t)
+{
+}
+
 class ScopedDefaultDataAcquireNullifier {
  public:
   ScopedDefaultDataAcquireNullifier()
@@ -754,12 +759,58 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackLogsInferenceEngineException)
   dependencies.starpu_output_callback_hook =
       starpu_server::InferenceTaskDependencies::OutputCallbackHook(
           &ThrowingStarpuOutputCallbackHook);
-  auto ctx = make_callback_context(job, {}, {MakeHandle(0)}, &dependencies);
+  auto ctx = make_callback_context(job, {}, {nullptr}, &dependencies);
   const auto log = CaptureStderr([&] {
     EXPECT_NO_THROW(
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
   });
   EXPECT_NE(log.find("starpu_output_callback"), std::string::npos);
+}
+
+TEST(InferenceTask, StarpuOutputCallbackFinalizesWhenOutputsEmpty)
+{
+  auto ctx = make_callback_context();
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+}
+
+TEST_F(InferenceTaskTest, StarpuOutputCallbackAcquireFailureStillFinalizes)
+{
+  auto job = make_job(11, 1);
+  auto handle = MakeHandle(0);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_data_acquire_fn = &AlwaysFailingAcquire;
+  auto ctx = make_callback_context(job, {}, {handle}, &dependencies);
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &NoopDataRelease);
+
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+  });
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "callback");
+  EXPECT_EQ(failure->reason, "output_acquire_failed");
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+  EXPECT_NE(
+      log.find("starpu_data_acquire_cb failed with code -42"),
+      std::string::npos);
 }
 
 TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)

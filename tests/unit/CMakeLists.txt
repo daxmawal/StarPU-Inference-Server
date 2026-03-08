@@ -11,6 +11,7 @@ target_sources(
             core/unit_run_with_logged_exceptions.cpp
             core/unit_tensor_builder.cpp
             core/unit_warmup_runner.cpp
+            core/unit_slot_pool_base.cpp
             core/unit_starpu_setup.cpp
             core/unit_input_slot_pool_deleter.cpp
             core/robustness/edgecases_inference_queue.cpp

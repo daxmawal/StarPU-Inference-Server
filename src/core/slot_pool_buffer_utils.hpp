@@ -1,0 +1,134 @@
+// Common host-buffer and lifecycle helpers for slot pools
+#pragma once
+
+#include <starpu.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <limits>
+#include <stdexcept>
+#include <utility>
+
+namespace starpu_server::detail {
+
+enum class SlotCleanupOrder : std::uint8_t {
+  UnregisterThenFree,
+  FreeThenUnregister,
+};
+
+template <typename MakeOverflowMessageFn>
+auto
+checked_size_product(
+    std::size_t per_sample_value, std::size_t batch_size,
+    MakeOverflowMessageFn&& make_overflow_message) -> std::size_t
+{
+  constexpr std::size_t kMaxSizeT = std::numeric_limits<std::size_t>::max();
+  if (per_sample_value != 0 && batch_size > kMaxSizeT / per_sample_value) {
+    throw std::overflow_error(std::invoke(
+        std::forward<MakeOverflowMessageFn>(make_overflow_message),
+        per_sample_value, batch_size));
+  }
+  return per_sample_value * batch_size;
+}
+
+template <typename TryCudaPinnedAllocFn, typename FallbackAllocFn>
+auto
+allocate_host_buffer_with_optional_cuda_pinning(
+    std::size_t bytes, bool use_pinned, bool& cuda_pinned_out,
+    TryCudaPinnedAllocFn&& try_cuda_pinned_alloc,
+    FallbackAllocFn&& fallback_alloc) -> std::byte*
+{
+  cuda_pinned_out = false;
+  if (use_pinned) {
+    if (std::byte* ptr = std::invoke(
+            std::forward<TryCudaPinnedAllocFn>(try_cuda_pinned_alloc), bytes);
+        ptr != nullptr) {
+      cuda_pinned_out = true;
+      return ptr;
+    }
+  }
+
+  return std::invoke(std::forward<FallbackAllocFn>(fallback_alloc), bytes);
+}
+
+template <typename HostBufferInfo, typename StarpuMemoryPinFn, typename WarnFn>
+void
+try_pin_host_buffer_for_starpu(
+    std::byte* ptr, bool want_pinned, HostBufferInfo& buffer_info,
+    StarpuMemoryPinFn&& starpu_memory_pin_fn, WarnFn&& warn_on_pin_failure)
+{
+  if (!want_pinned || buffer_info.cuda_pinned || ptr == nullptr) {
+    return;
+  }
+
+  buffer_info.starpu_pin_rc = std::invoke(
+      std::forward<StarpuMemoryPinFn>(starpu_memory_pin_fn),
+      static_cast<void*>(ptr), buffer_info.bytes);
+  if (buffer_info.starpu_pin_rc == 0) {
+    buffer_info.starpu_pinned = true;
+    return;
+  }
+
+  std::invoke(
+      std::forward<WarnFn>(warn_on_pin_failure), buffer_info.starpu_pin_rc);
+}
+
+template <typename HostBufferInfo, typename WarnFn>
+void
+try_unpin_host_buffer_for_starpu(
+    std::byte* ptr, const HostBufferInfo& buffer_info,
+    WarnFn&& warn_on_unpin_failure)
+{
+  if (ptr == nullptr || !buffer_info.starpu_pinned) {
+    return;
+  }
+
+  const int unpin_rc =
+      starpu_memory_unpin(static_cast<void*>(ptr), buffer_info.bytes);
+  if (unpin_rc != 0) {
+    std::invoke(std::forward<WarnFn>(warn_on_unpin_failure), unpin_rc);
+  }
+}
+
+template <typename SlotInfo, typename BufferInfos, typename FreeBufferFn>
+void
+cleanup_slot_resources(
+    SlotInfo& slot, BufferInfos& buffer_infos, std::size_t count,
+    FreeBufferFn&& free_buffer_fn, SlotCleanupOrder cleanup_order,
+    bool reset_buffer_info)
+{
+  auto&& free_buffer_callback = free_buffer_fn;
+  const std::size_t safe_count = std::min(
+      {count, slot.base_ptrs.size(), slot.handles.size(), buffer_infos.size()});
+
+  auto unregister_handle = [&slot](std::size_t idx) {
+    if (slot.handles[idx] != nullptr) {
+      starpu_data_unregister(slot.handles[idx]);
+      slot.handles[idx] = nullptr;
+    }
+  };
+
+  auto free_buffer = [&](std::size_t idx) {
+    if (slot.base_ptrs[idx] != nullptr) {
+      std::invoke(free_buffer_callback, slot.base_ptrs[idx], buffer_infos[idx]);
+      slot.base_ptrs[idx] = nullptr;
+    }
+    if (reset_buffer_info) {
+      buffer_infos[idx] = {};
+    }
+  };
+
+  for (std::size_t idx = 0; idx < safe_count; ++idx) {
+    if (cleanup_order == SlotCleanupOrder::UnregisterThenFree) {
+      unregister_handle(idx);
+      free_buffer(idx);
+    } else {
+      free_buffer(idx);
+      unregister_handle(idx);
+    }
+  }
+}
+
+}  // namespace starpu_server::detail

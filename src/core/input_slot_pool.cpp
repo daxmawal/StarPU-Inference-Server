@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "slot_pool_buffer_utils.hpp"
 #include "utils/logger.hpp"
 
 namespace starpu_server {
@@ -64,16 +65,21 @@ auto
 alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
     -> std::byte*
 {
-  cuda_pinned_out = false;
-  if (use_pinned) {
-    void* cuda_ptr = nullptr;
-    const auto err = cudaHostAlloc(&cuda_ptr, bytes, cudaHostAllocPortable);
-    if (err == cudaSuccess && cuda_ptr != nullptr) {
-      cuda_pinned_out = true;
-      return static_cast<std::byte*>(cuda_ptr);
-    }
-  }
-  return static_cast<std::byte*>(::operator new(bytes, kHostBufferAlignment));
+  return detail::allocate_host_buffer_with_optional_cuda_pinning(
+      bytes, use_pinned, cuda_pinned_out,
+      [](size_t requested_bytes) -> std::byte* {
+        void* cuda_ptr = nullptr;
+        const auto err =
+            cudaHostAlloc(&cuda_ptr, requested_bytes, cudaHostAllocPortable);
+        if (err == cudaSuccess && cuda_ptr != nullptr) {
+          return static_cast<std::byte*>(cuda_ptr);
+        }
+        return nullptr;
+      },
+      [](size_t requested_bytes) -> std::byte* {
+        return static_cast<std::byte*>(
+            ::operator new(requested_bytes, kHostBufferAlignment));
+      });
 }
 
 struct HostBufferDeleter {
@@ -83,15 +89,6 @@ struct HostBufferDeleter {
   {
     if (ptr == nullptr) {
       return;
-    }
-    if (info.starpu_pinned) {
-      const int result_code =
-          starpu_memory_unpin(static_cast<void*>(ptr), info.bytes);
-      if (result_code != 0) {
-        log_warning(std::format(
-            "starpu_memory_unpin failed for input buffer: rc={}",
-            std::to_string(result_code)));
-      }
     }
     if (info.cuda_pinned) {
       cudaFreeHost(static_cast<void*>(ptr));
@@ -108,6 +105,12 @@ free_host_buffer(
   if (ptr == nullptr) {
     return;
   }
+  detail::try_unpin_host_buffer_for_starpu(
+      ptr, buffer_info, [](int result_code) {
+        log_warning(std::format(
+            "starpu_memory_unpin failed for input buffer: rc={}",
+            std::to_string(result_code)));
+      });
   HostBufferDeleter deleter{buffer_info};
   std::unique_ptr<std::byte, HostBufferDeleter> owner(ptr, deleter);
 }
@@ -117,25 +120,27 @@ compute_input_sizes(
     std::size_t per_sample_bytes, std::size_t per_sample_numel,
     std::size_t batch_size, std::size_t input_index) -> ComputedInputSizes
 {
-  constexpr std::size_t kMaxSizeT = std::numeric_limits<std::size_t>::max();
-
-  if (per_sample_bytes != 0 && batch_size > kMaxSizeT / per_sample_bytes) {
-    throw std::overflow_error(std::format(
-        "InputSlotPool: per-sample bytes ({}) times batch size ({}) "
-        "exceeds size_t range for input {}",
-        per_sample_bytes, batch_size, input_index));
-  }
-
-  if (per_sample_numel != 0 && batch_size > kMaxSizeT / per_sample_numel) {
-    throw std::overflow_error(std::format(
-        "InputSlotPool: per-sample numel ({}) times batch size ({}) "
-        "exceeds size_t range for input {}",
-        per_sample_numel, batch_size, input_index));
-  }
-
   return {
-      .total_bytes = per_sample_bytes * batch_size,
-      .total_numel = per_sample_numel * batch_size,
+      .total_bytes = detail::checked_size_product(
+          per_sample_bytes, batch_size,
+          [input_index](
+              std::size_t checked_per_sample_bytes,
+              std::size_t checked_batch_size) {
+            return std::format(
+                "InputSlotPool: per-sample bytes ({}) times batch size ({}) "
+                "exceeds size_t range for input {}",
+                checked_per_sample_bytes, checked_batch_size, input_index);
+          }),
+      .total_numel = detail::checked_size_product(
+          per_sample_numel, batch_size,
+          [input_index](
+              std::size_t checked_per_sample_numel,
+              std::size_t checked_batch_size) {
+            return std::format(
+                "InputSlotPool: per-sample numel ({}) times batch size ({}) "
+                "exceeds size_t range for input {}",
+                checked_per_sample_numel, checked_batch_size, input_index);
+          }),
   };
 }
 
@@ -153,17 +158,13 @@ allocate_and_pin_buffer(
   allocation.info.bytes = bytes;
 
   const bool should_starpu_pin = want_pinned && !cuda_pinned;
-  if (should_starpu_pin) {
-    const int pin_result = starpu_memory_pin(static_cast<void*>(ptr), bytes);
-    allocation.info.starpu_pin_rc = pin_result;
-    if (pin_result == 0) {
-      allocation.info.starpu_pinned = true;
-    } else {
-      log_warning(std::format(
-          "starpu_memory_pin failed for input slot {}, index {}: rc={}",
-          slot_id, input_index, pin_result));
-    }
-  }
+  detail::try_pin_host_buffer_for_starpu(
+      ptr, should_starpu_pin, allocation.info, &starpu_memory_pin,
+      [slot_id, input_index](int pin_result) {
+        log_warning(std::format(
+            "starpu_memory_pin failed for input slot {}, index {}: rc={}",
+            slot_id, input_index, pin_result));
+      });
 
   return allocation;
 }
@@ -173,16 +174,10 @@ cleanup_slot_allocations(
     InputSlotPool::SlotInfo& slot,
     std::vector<InputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
 {
-  for (size_t idx = 0; idx < count; ++idx) {
-    if (slot.handles[idx] != nullptr) {
-      starpu_data_unregister(slot.handles[idx]);
-      slot.handles[idx] = nullptr;
-    }
-    if (slot.base_ptrs[idx] != nullptr) {
-      free_host_buffer(slot.base_ptrs[idx], buffer_infos[idx]);
-      slot.base_ptrs[idx] = nullptr;
-    }
-  }
+  detail::cleanup_slot_resources(
+      slot, buffer_infos, count, free_host_buffer,
+      detail::SlotCleanupOrder::UnregisterThenFree,
+      /*reset_buffer_info=*/false);
 }
 
 auto
@@ -254,16 +249,11 @@ InputSlotPool::~InputSlotPool()
   auto& slots_storage = slots();
   for (size_t slot_index = 0; slot_index < slots_storage.size(); ++slot_index) {
     auto& slot = slots_storage[slot_index];
-    for (auto& handle : slot.handles) {
-      if (handle != nullptr) {
-        starpu_data_unregister(handle);
-        handle = nullptr;
-      }
-    }
-    for (size_t i = 0; i < slot.base_ptrs.size(); ++i) {
-      free_host_buffer(slot.base_ptrs[i], host_buffer_infos_[slot_index][i]);
-      slot.base_ptrs[i] = nullptr;
-    }
+    auto& buffer_infos = host_buffer_infos_[slot_index];
+    detail::cleanup_slot_resources(
+        slot, buffer_infos, slot.base_ptrs.size(), free_host_buffer,
+        detail::SlotCleanupOrder::UnregisterThenFree,
+        /*reset_buffer_info=*/false);
   }
 }
 

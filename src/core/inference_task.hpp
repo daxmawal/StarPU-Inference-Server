@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -21,7 +22,9 @@ struct InferenceCallbackContext {
   std::shared_ptr<void> self_keep_alive;
   std::vector<starpu_data_handle_t> inputs_handles;
   std::vector<starpu_data_handle_t> outputs_handles;
+  std::vector<starpu_data_handle_t> outputs_handles_to_release;
   std::atomic<int> remaining_outputs_to_acquire{0};
+  std::atomic<bool> terminal_path_started{false};
   bool keep_input_handles = false;
   bool keep_output_handles = false;
   OutputSlotPool* output_pool = nullptr;
