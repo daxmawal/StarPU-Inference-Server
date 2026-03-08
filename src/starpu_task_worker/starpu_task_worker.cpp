@@ -64,6 +64,27 @@ submit_inference_task_hook_storage() -> std::function<void()>&
   static std::function<void()> hook;
   return hook;
 }
+
+auto
+run_after_batching_thread_start_hook_storage() -> std::function<void()>&
+{
+  static std::function<void()> hook;
+  return hook;
+}
+
+auto
+run_before_submit_hook_storage() -> std::function<void()>&
+{
+  static std::function<void()> hook;
+  return hook;
+}
+
+auto
+duplicate_batching_thread_exception_capture_for_test() -> std::atomic<bool>&
+{
+  static std::atomic<bool> enabled{false};
+  return enabled;
+}
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 }  // namespace
@@ -81,6 +102,43 @@ reset_submit_inference_task_hook()
 {
   submit_inference_task_hook_storage() = {};
 }
+
+void
+set_duplicate_batching_thread_exception_capture_for_test(bool enable)
+{
+  duplicate_batching_thread_exception_capture_for_test().store(
+      enable, std::memory_order_release);
+}
+
+void
+reset_duplicate_batching_thread_exception_capture_for_test()
+{
+  set_duplicate_batching_thread_exception_capture_for_test(false);
+}
+
+void
+set_run_after_batching_thread_start_hook(std::function<void()> hook)
+{
+  run_after_batching_thread_start_hook_storage() = std::move(hook);
+}
+
+void
+reset_run_after_batching_thread_start_hook()
+{
+  run_after_batching_thread_start_hook_storage() = {};
+}
+
+void
+set_run_before_submit_hook(std::function<void()> hook)
+{
+  run_before_submit_hook_storage() = std::move(hook);
+}
+
+void
+reset_run_before_submit_hook()
+{
+  run_before_submit_hook_storage() = {};
+}
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
@@ -93,6 +151,51 @@ invoke_submit_inference_task_hook()
   if (hook) {
     hook();
   }
+#endif  // SONAR_IGNORE_END
+  // GCOVR_EXCL_STOP
+}
+
+static auto
+consume_duplicate_batching_thread_exception_capture_for_test() -> bool
+{
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  return duplicate_batching_thread_exception_capture_for_test().exchange(
+      false, std::memory_order_acq_rel);
+#else
+  return false;
+#endif  // SONAR_IGNORE_END
+  // GCOVR_EXCL_STOP
+}
+
+static void
+invoke_run_after_batching_thread_start_hook()
+{
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& hook = run_after_batching_thread_start_hook_storage();
+  if (!hook) {
+    return;
+  }
+  auto one_shot_hook = std::move(hook);
+  hook = {};
+  one_shot_hook();
+#endif  // SONAR_IGNORE_END
+  // GCOVR_EXCL_STOP
+}
+
+static void
+invoke_run_before_submit_hook()
+{
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  auto& hook = run_before_submit_hook_storage();
+  if (!hook) {
+    return;
+  }
+  auto one_shot_hook = std::move(hook);
+  hook = {};
+  one_shot_hook();
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
 }
@@ -902,10 +1005,19 @@ StarPUTaskRunner::run()  // NOLINT(readability-function-cognitive-complexity)
         batching_loop();
       }
       catch (...) {
-        capture_thread_exception("starpu-batching", std::current_exception());
+        auto current_exception = std::current_exception();
+        capture_thread_exception("starpu-batching", current_exception);
+        if (task_runner_internal::
+                consume_duplicate_batching_thread_exception_capture_for_test()) {
+          capture_thread_exception(
+              "starpu-batching-secondary",
+              std::make_exception_ptr(
+                  std::runtime_error("secondary batching thread failure")));
+        }
         notify_batching_thread_failure();
       }
     });
+    task_runner_internal::invoke_run_after_batching_thread_start_hook();
 
     while (true) {
       auto job = wait_for_prepared_job();
@@ -941,6 +1053,7 @@ StarPUTaskRunner::run()  // NOLINT(readability-function-cognitive-complexity)
         const bool warmup_job = is_warmup_job(job);
         trace_batch_if_enabled(job, warmup_job, submission_id);
         prepare_job_completion_callback(job);
+        task_runner_internal::invoke_run_before_submit_hook();
         submit_job_or_handle_failure(
             job, SubmissionInfo{submission_id, job_id});
       }

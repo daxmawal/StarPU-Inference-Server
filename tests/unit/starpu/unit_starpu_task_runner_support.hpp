@@ -239,6 +239,41 @@ class StarPUTaskRunnerTestAdapter {
     task_runner_internal::reset_submit_inference_task_hook();
   }
 
+  static void set_duplicate_batching_thread_exception_capture_for_test(
+      bool enable)
+  {
+    task_runner_internal::
+        set_duplicate_batching_thread_exception_capture_for_test(enable);
+  }
+
+  static void reset_duplicate_batching_thread_exception_capture_for_test()
+  {
+    task_runner_internal::
+        reset_duplicate_batching_thread_exception_capture_for_test();
+  }
+
+  static void set_run_after_batching_thread_start_hook(
+      std::function<void()> hook)
+  {
+    task_runner_internal::set_run_after_batching_thread_start_hook(
+        std::move(hook));
+  }
+
+  static void reset_run_after_batching_thread_start_hook()
+  {
+    task_runner_internal::reset_run_after_batching_thread_start_hook();
+  }
+
+  static void set_run_before_submit_hook(std::function<void()> hook)
+  {
+    task_runner_internal::set_run_before_submit_hook(std::move(hook));
+  }
+
+  static void reset_run_before_submit_hook()
+  {
+    task_runner_internal::reset_run_before_submit_hook();
+  }
+
   static auto validate_batch_and_copy_inputs(
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
       InputSlotPool* input_pool, int input_slot) -> int64_t

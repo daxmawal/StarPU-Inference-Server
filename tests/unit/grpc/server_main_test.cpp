@@ -8,6 +8,7 @@
 
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <condition_variable>
 #include <csignal>
@@ -161,6 +162,127 @@ struct ScopedSignalPipeForcedSetNonBlockingFailure {
   ~ScopedSignalPipeForcedSetNonBlockingFailure()
   {
     SignalNotificationPipe::SetSetNonBlockingFailureForTest(false);
+  }
+};
+
+struct ResolvePythonExecutableOverrideState {
+  std::vector<std::filesystem::path> candidates;
+  bool is_regular_file_result = false;
+  bool force_status_error = false;
+  int candidates_calls = 0;
+  int is_regular_file_calls = 0;
+  std::vector<std::filesystem::path> observed_candidates;
+};
+
+auto
+resolve_python_executable_override_state()
+    -> ResolvePythonExecutableOverrideState*&
+{
+  static ResolvePythonExecutableOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+resolve_python_candidates_override_stub() -> std::vector<std::filesystem::path>
+{
+  auto* state = resolve_python_executable_override_state();
+  if (state == nullptr) {
+    return {};
+  }
+  ++state->candidates_calls;
+  return state->candidates;
+}
+
+auto
+resolve_python_is_regular_file_override_stub(
+    const std::filesystem::path& candidate, std::error_code& status_ec) -> bool
+{
+  auto* state = resolve_python_executable_override_state();
+  if (state == nullptr) {
+    status_ec.clear();
+    return false;
+  }
+  ++state->is_regular_file_calls;
+  state->observed_candidates.push_back(candidate);
+  if (state->force_status_error) {
+    status_ec = std::error_code(EIO, std::generic_category());
+  } else {
+    status_ec.clear();
+  }
+  return state->is_regular_file_result;
+}
+
+struct ScopedResolvePythonExecutableOverrides {
+  explicit ScopedResolvePythonExecutableOverrides(
+      ResolvePythonExecutableOverrideState& state) noexcept
+  {
+    resolve_python_executable_override_state() = &state;
+    resolve_python_candidates_override_for_test() =
+        resolve_python_candidates_override_stub;
+    resolve_python_is_regular_file_override_for_test() =
+        resolve_python_is_regular_file_override_stub;
+  }
+
+  ~ScopedResolvePythonExecutableOverrides()
+  {
+    resolve_python_is_regular_file_override_for_test() = nullptr;
+    resolve_python_candidates_override_for_test() = nullptr;
+    resolve_python_executable_override_state() = nullptr;
+  }
+};
+
+struct WaitForSignalNotificationReadOverrideState {
+  std::vector<ssize_t> read_results;
+  std::vector<int> errnos;
+  std::size_t next_index = 0;
+  int call_count = 0;
+  int last_read_fd = -1;
+  std::size_t last_buffer_size = 0;
+};
+
+auto
+wait_for_signal_notification_read_override_state()
+    -> WaitForSignalNotificationReadOverrideState*&
+{
+  static WaitForSignalNotificationReadOverrideState* state = nullptr;
+  return state;
+}
+
+auto
+wait_for_signal_notification_read_override_stub(
+    int read_fd, void* /*buffer*/, std::size_t buffer_size) -> ssize_t
+{
+  auto* state = wait_for_signal_notification_read_override_state();
+  if (state == nullptr) {
+    return 0;
+  }
+  ++state->call_count;
+  state->last_read_fd = read_fd;
+  state->last_buffer_size = buffer_size;
+
+  if (state->next_index >= state->read_results.size()) {
+    errno = 0;
+    return 0;
+  }
+
+  const auto index = state->next_index++;
+  errno = index < state->errnos.size() ? state->errnos[index] : 0;
+  return state->read_results[index];
+}
+
+struct ScopedWaitForSignalNotificationReadOverride {
+  explicit ScopedWaitForSignalNotificationReadOverride(
+      WaitForSignalNotificationReadOverrideState& state) noexcept
+  {
+    wait_for_signal_notification_read_override_state() = &state;
+    wait_for_signal_notification_read_override_for_test() =
+        wait_for_signal_notification_read_override_stub;
+  }
+
+  ~ScopedWaitForSignalNotificationReadOverride()
+  {
+    wait_for_signal_notification_read_override_for_test() = nullptr;
+    wait_for_signal_notification_read_override_state() = nullptr;
   }
 };
 
@@ -1126,6 +1248,15 @@ static_assert(
         decltype(&SignalNotificationPipe::SetSetNonBlockingFailureForTest),
         bool>);
 static_assert(std::is_nothrow_invocable_r_v<
+              WaitForSignalNotificationReadOverrideForTestFn&,
+              decltype(wait_for_signal_notification_read_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              ResolvePythonCandidatesOverrideForTestFn&,
+              decltype(resolve_python_candidates_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
+              ResolvePythonIsRegularFileOverrideForTestFn&,
+              decltype(resolve_python_is_regular_file_override_for_test)>);
+static_assert(std::is_nothrow_invocable_r_v<
               RunPlotScriptOverrideForTestFn&,
               decltype(run_plot_script_override_for_test)>);
 static_assert(std::is_nothrow_invocable_r_v<
@@ -1307,6 +1438,54 @@ TEST(
   EXPECT_FALSE(SignalNotificationPipe::SetNonBlockingForTest(closed_fd));
 
   ASSERT_EQ(::close(file_descriptors[0]), 0);
+}
+
+TEST(ServerMainSignalNotificationWait, ReturnsImmediatelyWhenReadFdIsNegative)
+{
+  WaitForSignalNotificationReadOverrideState override_state;
+  override_state.read_results = {-1};
+  override_state.errnos = {EIO};
+  ScopedWaitForSignalNotificationReadOverride override_guard(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  wait_for_signal_notification(-1);
+
+  EXPECT_EQ(override_state.call_count, 0);
+  EXPECT_TRUE(capture_err.str().empty());
+}
+
+TEST(ServerMainSignalNotificationWait, RetriesReadWhenInterruptedBySignal)
+{
+  WaitForSignalNotificationReadOverrideState override_state;
+  override_state.read_results = {-1, 0};
+  override_state.errnos = {EINTR, 0};
+  ScopedWaitForSignalNotificationReadOverride override_guard(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  wait_for_signal_notification(42);
+
+  EXPECT_EQ(override_state.call_count, 2);
+  EXPECT_EQ(override_state.last_read_fd, 42);
+  EXPECT_EQ(override_state.last_buffer_size, static_cast<std::size_t>(16));
+  EXPECT_TRUE(capture_err.str().empty());
+}
+
+TEST(ServerMainSignalNotificationWait, LogsWarningWhenReadFailsWithNonEintr)
+{
+  WaitForSignalNotificationReadOverrideState override_state;
+  override_state.read_results = {-1};
+  override_state.errnos = {EIO};
+  ScopedWaitForSignalNotificationReadOverride override_guard(override_state);
+
+  OStreamCapture capture_err(std::cerr);
+  wait_for_signal_notification(7);
+
+  EXPECT_EQ(override_state.call_count, 1);
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          std::string("Failed while waiting for stop signal notification: ") +
+          std::strerror(EIO)));
 }
 
 TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
@@ -1710,6 +1889,45 @@ TEST(
   signal_stop_requested_flag() = 0;
 }
 
+TEST(
+    ServerMainPlotScript,
+    ResolvePythonExecutableSkipsCandidatesThatAreNotRegularFiles)
+{
+  ResolvePythonExecutableOverrideState override_state;
+  override_state.candidates = {
+      "/tmp/python_candidate_not_regular_0",
+      "/tmp/python_candidate_not_regular_1"};
+  override_state.is_regular_file_result = false;
+  override_state.force_status_error = false;
+  ScopedResolvePythonExecutableOverrides overrides(override_state);
+
+  const auto python_path = resolve_python_executable();
+  EXPECT_FALSE(python_path.has_value());
+  EXPECT_EQ(override_state.candidates_calls, 1);
+  EXPECT_EQ(override_state.is_regular_file_calls, 2);
+  EXPECT_EQ(override_state.observed_candidates, override_state.candidates);
+}
+
+TEST(
+    ServerMainPlotScript,
+    ResolvePythonExecutableReturnsNulloptWhenFileStatusReportsError)
+{
+  ResolvePythonExecutableOverrideState override_state;
+  override_state.candidates = {"/tmp/python_candidate_status_error"};
+  override_state.is_regular_file_result = true;
+  override_state.force_status_error = true;
+  ScopedResolvePythonExecutableOverrides overrides(override_state);
+
+  const auto python_path = resolve_python_executable();
+  EXPECT_FALSE(python_path.has_value());
+  EXPECT_EQ(override_state.candidates_calls, 1);
+  EXPECT_EQ(override_state.is_regular_file_calls, 1);
+  ASSERT_EQ(override_state.observed_candidates.size(), 1U);
+  EXPECT_EQ(
+      override_state.observed_candidates[0],
+      std::filesystem::path("/tmp/python_candidate_status_error"));
+}
+
 TEST(ServerMainPlotScript, LocatePlotScriptFindsRepositoryScript)
 {
   starpu_server::RuntimeConfig opts;
@@ -1991,6 +2209,23 @@ TEST(ServerMainPlotProcess, WaitForPlotProcessReturnsChildExitCode)
   const auto exit_code = wait_for_plot_process(pid);
   ASSERT_TRUE(exit_code.has_value());
   EXPECT_EQ(*exit_code, 7);
+}
+
+TEST(ServerMainPlotProcess, LogWaitpidErrorLogsWarningWithErrnoMessage)
+{
+  const int saved_errno = errno;
+  errno = ECHILD;
+
+  OStreamCapture capture_err(std::cerr);
+  log_waitpid_error();
+
+  EXPECT_EQ(
+      capture_err.str(),
+      expected_warning_log(
+          std::string("Failed to wait for plot generation process: ") +
+          std::strerror(ECHILD)));
+
+  errno = saved_errno;
 }
 
 TEST(ServerMainPlotProcess, WaitForExitWithTimeoutTimesOutThenReapsChild)

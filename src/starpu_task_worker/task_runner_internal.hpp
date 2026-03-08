@@ -132,6 +132,12 @@ resolve_batch_size_for_job(
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void set_submit_inference_task_hook(std::function<void()> hook);
 void reset_submit_inference_task_hook();
+void set_duplicate_batching_thread_exception_capture_for_test(bool enable);
+void reset_duplicate_batching_thread_exception_capture_for_test();
+void set_run_after_batching_thread_start_hook(std::function<void()> hook);
+void reset_run_after_batching_thread_start_hook();
+void set_run_before_submit_hook(std::function<void()> hook);
+void reset_run_before_submit_hook();
 
 namespace testing {
 struct VectorResizeSpecShim {
@@ -195,8 +201,8 @@ auto batch_collector_should_hold_job(
     const std::shared_ptr<InferenceJob>& reference,
     const std::optional<int>& target_worker) -> bool;
 auto batch_collector_is_batching_done(const BatchCollector* collector) -> bool;
-auto batch_collector_should_abort_inflight_wait(
-    const BatchCollector* collector) -> bool;
+auto batch_collector_should_abort_inflight_wait(const BatchCollector* collector)
+    -> bool;
 void batch_collector_disable_prepared_job_sync(BatchCollector* collector);
 void batch_collector_set_queue(
     BatchCollector* collector, InferenceQueue* queue);

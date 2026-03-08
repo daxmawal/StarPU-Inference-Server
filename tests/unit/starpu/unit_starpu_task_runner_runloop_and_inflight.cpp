@@ -15,6 +15,47 @@ struct BatchCollectorAfterBuildJobHookGuard {
   }
 };
 
+struct DuplicateBatchingThreadExceptionCaptureGuard {
+  explicit DuplicateBatchingThreadExceptionCaptureGuard(bool enable = true)
+  {
+    starpu_server::StarPUTaskRunnerTestAdapter::
+        set_duplicate_batching_thread_exception_capture_for_test(enable);
+  }
+
+  ~DuplicateBatchingThreadExceptionCaptureGuard()
+  {
+    starpu_server::StarPUTaskRunnerTestAdapter::
+        reset_duplicate_batching_thread_exception_capture_for_test();
+  }
+};
+
+struct RunAfterBatchingThreadStartHookGuard {
+  explicit RunAfterBatchingThreadStartHookGuard(std::function<void()> hook)
+  {
+    starpu_server::StarPUTaskRunnerTestAdapter::
+        set_run_after_batching_thread_start_hook(std::move(hook));
+  }
+
+  ~RunAfterBatchingThreadStartHookGuard()
+  {
+    starpu_server::StarPUTaskRunnerTestAdapter::
+        reset_run_after_batching_thread_start_hook();
+  }
+};
+
+struct RunBeforeSubmitHookGuard {
+  explicit RunBeforeSubmitHookGuard(std::function<void()> hook)
+  {
+    starpu_server::StarPUTaskRunnerTestAdapter::set_run_before_submit_hook(
+        std::move(hook));
+  }
+
+  ~RunBeforeSubmitHookGuard()
+  {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_run_before_submit_hook();
+  }
+};
+
 }  // namespace
 
 TEST(
@@ -579,6 +620,129 @@ TEST_F(
   }
 
   EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    RunKeepsFirstThreadExceptionWhenDuplicateCaptureIsRequestedForTest)
+{
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  DuplicateBatchingThreadExceptionCaptureGuard duplicate_capture_guard;
+  BatchCollectorAfterBuildJobHookGuard hook_guard{
+      [](std::shared_ptr<starpu_server::InferenceJob>&) {
+        throw std::runtime_error("primary batching thread failure");
+      }};
+
+  try {
+    runner_->run();
+    FAIL() << "Expected run() to rethrow batching thread failure.";
+  }
+  catch (const std::runtime_error& error) {
+    const std::string message = error.what();
+    EXPECT_NE(
+        message.find("primary batching thread failure"), std::string::npos);
+    EXPECT_EQ(
+        message.find("secondary batching thread failure"), std::string::npos);
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    RunJoinsBatchingThreadWhenExceptionRaisedAfterThreadStart)
+{
+  RunAfterBatchingThreadStartHookGuard hook_guard{
+      [] { throw std::runtime_error("post start failure"); }};
+
+  try {
+    runner_->run();
+    FAIL() << "Expected run() to rethrow post-start failure.";
+  }
+  catch (const std::runtime_error& error) {
+    EXPECT_EQ(std::string(error.what()), "post start failure");
+  }
+  catch (...) {
+    FAIL() << "Expected std::runtime_error.";
+  }
+
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+}
+
+TEST_F(StarPUTaskRunnerFixture, RunFinalizesJobAfterExceptionRaisedBeforeSubmit)
+{
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  RunBeforeSubmitHookGuard hook_guard{
+      [] { throw std::runtime_error("run loop injected failure"); }};
+
+  runner_->run();
+
+  EXPECT_TRUE(probe.called);
+  EXPECT_TRUE(probe.results.empty());
+  EXPECT_EQ(probe.latency, -1);
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "execution");
+  EXPECT_EQ(failure->reason, "runtime_error");
+  EXPECT_TRUE(failure->metrics_reported);
+  EXPECT_EQ(
+      failure->message,
+      "Unexpected exception while processing dequeued job: run loop injected "
+      "failure");
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    RunFinalizesJobAfterUnknownExceptionRaisedBeforeSubmit)
+{
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_input_tensors(
+      {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
+  job->set_input_types({at::kFloat});
+
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  RunBeforeSubmitHookGuard hook_guard{[] { throw 123; }};
+
+  runner_->run();
+
+  EXPECT_TRUE(probe.called);
+  EXPECT_TRUE(probe.results.empty());
+  EXPECT_EQ(probe.latency, -1);
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "execution");
+  EXPECT_EQ(failure->reason, "exception");
+  EXPECT_TRUE(failure->metrics_reported);
+  EXPECT_EQ(
+      failure->message,
+      "Unexpected non-standard exception while processing dequeued job: "
+      "Unknown non-standard exception");
 }
 
 TEST_F(

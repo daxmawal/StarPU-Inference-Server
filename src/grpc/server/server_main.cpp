@@ -357,6 +357,29 @@ rethrow_thread_exception_if_any(ThreadExceptionState& state)
   }
 }
 
+using WaitForSignalNotificationReadOverrideForTestFn =
+    ssize_t (*)(int, void*, std::size_t);
+
+auto
+wait_for_signal_notification_read_override_for_test() noexcept
+    -> WaitForSignalNotificationReadOverrideForTestFn&
+{
+  static WaitForSignalNotificationReadOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+read_signal_notification(int read_fd, void* buffer, std::size_t buffer_size)
+    -> ssize_t
+{
+  if (const auto override_fn =
+          wait_for_signal_notification_read_override_for_test();
+      override_fn != nullptr) {
+    return override_fn(read_fd, buffer, buffer_size);
+  }
+  return ::read(read_fd, buffer, buffer_size);
+}
+
 void
 wait_for_signal_notification(int read_fd)
 {
@@ -366,7 +389,8 @@ wait_for_signal_notification(int read_fd)
   constexpr std::size_t kSignalNotificationBufferSize = 16;
   std::array<char, kSignalNotificationBufferSize> buffer{};
   while (true) {
-    const ssize_t bytes_read = ::read(read_fd, buffer.data(), buffer.size());
+    const ssize_t bytes_read =
+        read_signal_notification(read_fd, buffer.data(), buffer.size());
     if (bytes_read > 0 || bytes_read == 0) {
       return;
     }
@@ -434,17 +458,56 @@ constexpr int kSignalExitCodeOffset = 128;
 constexpr int kExecFailedExitCode = 127;
 constexpr int kPlotScriptSearchDepth = 6;
 
+using ResolvePythonCandidatesOverrideForTestFn =
+    std::vector<std::filesystem::path> (*)();
+
+using ResolvePythonIsRegularFileOverrideForTestFn =
+    bool (*)(const std::filesystem::path&, std::error_code&);
+
+auto
+resolve_python_candidates_override_for_test() noexcept
+    -> ResolvePythonCandidatesOverrideForTestFn&
+{
+  static ResolvePythonCandidatesOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
+auto
+resolve_python_is_regular_file_override_for_test() noexcept
+    -> ResolvePythonIsRegularFileOverrideForTestFn&
+{
+  static ResolvePythonIsRegularFileOverrideForTestFn override_fn = nullptr;
+  return override_fn;
+}
+
 auto
 resolve_python_executable() -> std::optional<std::filesystem::path>
 {
-  static const std::array<std::filesystem::path, 3> kCandidates = {
+  static const std::array<std::filesystem::path, 3> kDefaultCandidates = {
       "/usr/bin/python3",
       "/usr/local/bin/python3",
       "/bin/python3",
   };
-  for (const auto& candidate : kCandidates) {
-    if (std::error_code status_ec;
-        !std::filesystem::is_regular_file(candidate, status_ec) || status_ec) {
+
+  std::vector<std::filesystem::path> override_candidates_storage;
+  std::span<const std::filesystem::path> candidates = kDefaultCandidates;
+  if (const auto override_fn = resolve_python_candidates_override_for_test();
+      override_fn != nullptr) {
+    override_candidates_storage = override_fn();
+    candidates = override_candidates_storage;
+  }
+
+  for (const auto& candidate : candidates) {
+    std::error_code status_ec;
+    const bool is_regular = [&]() {
+      if (const auto override_fn =
+              resolve_python_is_regular_file_override_for_test();
+          override_fn != nullptr) {
+        return override_fn(candidate, status_ec);
+      }
+      return std::filesystem::is_regular_file(candidate, status_ec);
+    }();
+    if (!is_regular || status_ec) {
       continue;
     }
     if (::access(candidate.c_str(), X_OK) == 0) {
