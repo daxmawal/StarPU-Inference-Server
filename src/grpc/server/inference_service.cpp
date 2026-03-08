@@ -661,6 +661,47 @@ InferenceServiceImpl::record_async_terminal_failure(
 }
 
 auto
+InferenceServiceImpl::complete_async_terminal_with_status(
+    const AsyncTerminalState& terminal_state,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    const Status& status, const AsyncTerminalCompletionDetails& details) -> bool
+{
+  if (!enter_async_terminal_once(terminal_state, details.check_cancel_flag)) {
+    return false;
+  }
+
+  const auto record_and_log = [&]() {
+    if (details.failure_info != nullptr) {
+      record_async_terminal_failure(
+          details.service, details.resolved_model_name, details.request,
+          details.recv_tp, status, details.stage, details.reason,
+          *details.failure_info, details.record_status_metric);
+    } else {
+      record_async_terminal_failure(
+          details.service, details.resolved_model_name, details.request,
+          details.recv_tp, status, details.stage, details.reason, std::nullopt,
+          details.record_status_metric);
+    }
+    if (!details.log_context.empty()) {
+      log_error(std::string(details.log_context));
+    }
+  };
+
+  if (details.record_before_callback) {
+    record_and_log();
+    (void)invoke_async_callback(callback_handle, status);
+    return true;
+  }
+
+  const bool callback_invoked = invoke_async_callback(callback_handle, status);
+  if (details.require_callback_invoked_for_record && !callback_invoked) {
+    return true;
+  }
+  record_and_log();
+  return true;
+}
+
+auto
 InferenceServiceImpl::is_async_cancelled(
     const AsyncInferCompletionContext& context) -> bool
 {
@@ -703,19 +744,19 @@ InferenceServiceImpl::handle_job_failure(
   if (job_status.ok()) {
     return false;
   }
-  if (!try_mark_terminal(context.terminal_flag)) {
-    return true;
-  }
-  record_terminal_metrics(
-      context.resolved_model_name, job_status, "execution", {},
-      context.failure_info);
-  if (context.impl != nullptr) {
-    context.impl->record_failure(
-        context.request, context.recv_tp, context.resolved_model_name);
-  }
-  if (callback_handle != nullptr) {
-    callback_handle->Invoke(job_status);
-  }
+
+  (void)complete_async_terminal_with_status(
+      AsyncTerminalState{context.cancel_flag, context.terminal_flag},
+      callback_handle, job_status,
+      AsyncTerminalCompletionDetails{
+          .service = context.impl,
+          .resolved_model_name = context.resolved_model_name,
+          .request = context.request,
+          .recv_tp = context.recv_tp,
+          .stage = "execution",
+          .failure_info = &context.failure_info,
+          .check_cancel_flag = false,
+      });
   return true;
 }
 
@@ -727,19 +768,23 @@ InferenceServiceImpl::finalize_successful_completion(
 {
   const auto& callback_handle = context.callback_handle;
   if (callback_handle == nullptr) {
-    if (!try_mark_terminal(context.terminal_flag)) {
-      return;
-    }
-    if (context.impl != nullptr) {
-      context.impl->record_failure(
-          context.request, context.recv_tp, context.resolved_model_name);
-    }
     const Status missing_callback_status{
         grpc::StatusCode::INTERNAL, "Internal server error"};
-    record_terminal_metrics(
-        context.resolved_model_name, missing_callback_status, "postprocess",
-        "missing_callback", std::nullopt, /*record_status_metric=*/false);
-    log_error("Missing callback handle during async inference completion");
+    (void)complete_async_terminal_with_status(
+        AsyncTerminalState{context.cancel_flag, context.terminal_flag},
+        callback_handle, missing_callback_status,
+        AsyncTerminalCompletionDetails{
+            .service = context.impl,
+            .resolved_model_name = context.resolved_model_name,
+            .request = context.request,
+            .recv_tp = context.recv_tp,
+            .stage = "postprocess",
+            .reason = "missing_callback",
+            .log_context =
+                "Missing callback handle during async inference completion",
+            .check_cancel_flag = false,
+            .record_status_metric = false,
+        });
     return;
   }
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -777,16 +822,17 @@ InferenceServiceImpl::finalize_successful_completion(
       context.request, context.reply, outs, context.recv_ms, breakdown,
       response_options);
   if (!populate_status.ok()) {
-    if (!try_mark_terminal(context.terminal_flag)) {
-      return;
-    }
-    if (context.impl != nullptr) {
-      context.impl->record_failure(
-          context.request, context.recv_tp, context.resolved_model_name);
-    }
-    record_terminal_metrics(
-        context.resolved_model_name, populate_status, "postprocess");
-    callback_handle->Invoke(populate_status);
+    (void)complete_async_terminal_with_status(
+        AsyncTerminalState{context.cancel_flag, context.terminal_flag},
+        callback_handle, populate_status,
+        AsyncTerminalCompletionDetails{
+            .service = context.impl,
+            .resolved_model_name = context.resolved_model_name,
+            .request = context.request,
+            .recv_tp = context.recv_tp,
+            .stage = "postprocess",
+            .check_cancel_flag = false,
+        });
     return;
   }
 
@@ -927,19 +973,22 @@ InferenceServiceImpl::setup_async_cancellation(
     if (cancel_flag->exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-    const AsyncTerminalState terminal_state{cancel_flag, terminal_flag};
-    if (!enter_async_terminal_once(
-            terminal_state, /*check_cancel_flag=*/false)) {
-      return;
-    }
     const Status cancelled_status{
         grpc::StatusCode::CANCELLED, "Request cancelled"};
-    if (!invoke_async_callback(callback_handle, cancelled_status)) {
-      return;
-    }
-    record_async_terminal_failure(
-        service, model_name, request, recv_tp, cancelled_status, "cancel",
-        "client_cancelled");
+    (void)complete_async_terminal_with_status(
+        AsyncTerminalState{cancel_flag, terminal_flag}, callback_handle,
+        cancelled_status,
+        AsyncTerminalCompletionDetails{
+            .service = service,
+            .resolved_model_name = model_name,
+            .request = request,
+            .recv_tp = recv_tp,
+            .stage = "cancel",
+            .reason = "client_cancelled",
+            .check_cancel_flag = false,
+            .record_before_callback = false,
+            .require_callback_invoked_for_record = true,
+        });
   };
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -971,12 +1020,15 @@ InferenceServiceImpl::handle_input_validation_failure(
   if (status.ok()) {
     return false;
   }
-  if (!enter_async_terminal_once(terminal_state)) {
-    return true;
-  }
-  record_async_terminal_failure(
-      service, resolved_model_name, request, recv_tp, status, "preprocess");
-  (void)invoke_async_callback(callback_handle, status);
+  (void)complete_async_terminal_with_status(
+      terminal_state, callback_handle, status,
+      AsyncTerminalCompletionDetails{
+          .service = service,
+          .resolved_model_name = resolved_model_name,
+          .request = request,
+          .recv_tp = recv_tp,
+          .stage = "preprocess",
+      });
   return true;
 }
 
@@ -992,13 +1044,16 @@ InferenceServiceImpl::handle_submit_failure(
   if (status.ok()) {
     return false;
   }
-  if (!enter_async_terminal_once(terminal_state)) {
-    return true;
-  }
-  record_async_terminal_failure(
-      service, resolved_model_name, request, recv_tp, status, "enqueue", {},
-      failure_info);
-  (void)invoke_async_callback(callback_handle, status);
+  (void)complete_async_terminal_with_status(
+      terminal_state, callback_handle, status,
+      AsyncTerminalCompletionDetails{
+          .service = service,
+          .resolved_model_name = resolved_model_name,
+          .request = request,
+          .recv_tp = recv_tp,
+          .stage = "enqueue",
+          .failure_info = &failure_info,
+      });
   return true;
 }
 
@@ -1010,19 +1065,20 @@ InferenceServiceImpl::handle_async_internal_error(
     const ModelInferRequest* request, MonotonicClock::time_point recv_tp,
     const InferenceServiceImpl::AsyncInternalErrorDetails& details)
 {
-  if (!enter_async_terminal_once(terminal_state)) {
-    return;
-  }
-
   const Status status{grpc::StatusCode::INTERNAL, "Internal server error"};
-  if (!invoke_async_callback(callback_handle, status)) {
-    return;
-  }
-
-  record_async_terminal_failure(
-      service, resolved_model_name, request, recv_tp, status, details.stage,
-      details.reason);
-  log_error(std::string(details.log_context));
+  (void)complete_async_terminal_with_status(
+      terminal_state, callback_handle, status,
+      AsyncTerminalCompletionDetails{
+          .service = service,
+          .resolved_model_name = resolved_model_name,
+          .request = request,
+          .recv_tp = recv_tp,
+          .stage = details.stage,
+          .reason = details.reason,
+          .log_context = details.log_context,
+          .record_before_callback = false,
+          .require_callback_invoked_for_record = true,
+      });
 }
 
 void

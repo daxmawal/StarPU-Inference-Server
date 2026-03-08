@@ -294,6 +294,21 @@ class InferenceServiceImpl final
     std::string_view log_context;
   };
 
+  struct AsyncTerminalCompletionDetails {
+    InferenceServiceImpl* service = nullptr;
+    std::string_view resolved_model_name;
+    const inference::ModelInferRequest* request = nullptr;
+    MonotonicClock::time_point recv_tp{};
+    std::string_view stage;
+    std::string_view reason;
+    const std::optional<AsyncFailureInfo>* failure_info = nullptr;
+    std::string_view log_context;
+    bool check_cancel_flag = true;
+    bool record_status_metric = true;
+    bool record_before_callback = true;
+    bool require_callback_invoked_for_record = false;
+  };
+
   static auto try_mark_terminal(
       const std::shared_ptr<std::atomic<bool>>& terminal_flag) -> bool;
   static auto enter_async_terminal_once(
@@ -309,6 +324,11 @@ class InferenceServiceImpl final
       std::string_view default_stage, std::string_view default_reason = {},
       const std::optional<AsyncFailureInfo>& failure_info = std::nullopt,
       bool record_status_metric = true);
+  static auto complete_async_terminal_with_status(
+      const AsyncTerminalState& terminal_state,
+      const std::shared_ptr<CallbackHandle>& callback_handle,
+      const grpc::Status& status,
+      const AsyncTerminalCompletionDetails& details) -> bool;
   static auto is_async_cancelled(const AsyncInferCompletionContext& context)
       -> bool;
   static auto prepare_async_completion(
