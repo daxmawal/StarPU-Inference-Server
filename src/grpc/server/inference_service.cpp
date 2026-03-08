@@ -440,7 +440,7 @@ is_context_cancelled(ServerContext* context) -> bool
 }
 }  // namespace
 
-namespace starpu_server::inference_service_runtime_internal {
+namespace inference_service_runtime_internal {
 
 auto
 normalize_names_runtime(
@@ -577,7 +577,7 @@ unary_call_data_missing_handler_transitions_to_finish_runtime() -> bool
 #endif  // SONAR_IGNORE_END
 }
 
-}  // namespace starpu_server::inference_service_runtime_internal
+}  // namespace inference_service_runtime_internal
 
 InferenceServiceImpl::CallbackHandle::CallbackHandle(
     std::function<void(Status)> callback)
