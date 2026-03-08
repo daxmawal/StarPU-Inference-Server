@@ -131,4 +131,55 @@ cleanup_slot_resources(
   }
 }
 
+template <
+    typename SlotsStorage, typename BufferInfosStorage, typename FreeIdsStorage,
+    typename AllocateSlotFn>
+void
+init_slots(
+    int requested_slots, SlotsStorage& slots_storage,
+    BufferInfosStorage& host_buffer_infos, FreeIdsStorage& free_ids_storage,
+    AllocateSlotFn&& allocate_slot_fn)
+{
+  auto slot_count = requested_slots;
+  if (slot_count <= 0) {
+    const auto workers = static_cast<int>(starpu_worker_get_count());
+    slot_count = std::max(2, workers);
+  }
+
+  const auto slot_count_size = static_cast<std::size_t>(slot_count);
+  slots_storage.reserve(slot_count_size);
+  host_buffer_infos.reserve(slot_count_size);
+  free_ids_storage.reserve(slot_count_size);
+  slots_storage.resize(slot_count_size);
+  host_buffer_infos.resize(slot_count_size);
+
+  for (int i = 0; i < slot_count; ++i) {
+    const auto slot_index = static_cast<std::size_t>(i);
+    slots_storage[slot_index].id = i;
+    std::invoke(allocate_slot_fn, i);
+    free_ids_storage.push_back(i);
+  }
+}
+
+template <
+    typename SlotsStorage, typename BufferInfosStorage, typename FreeBufferFn>
+void
+cleanup_slots(
+    SlotsStorage& slots_storage, BufferInfosStorage& host_buffer_infos,
+    FreeBufferFn&& free_buffer_fn,
+    SlotCleanupOrder cleanup_order = SlotCleanupOrder::UnregisterThenFree,
+    bool reset_buffer_info = false)
+{
+  auto&& free_buffer_callback = free_buffer_fn;
+  const std::size_t slot_count =
+      std::min(slots_storage.size(), host_buffer_infos.size());
+  for (std::size_t slot_index = 0; slot_index < slot_count; ++slot_index) {
+    auto& slot = slots_storage[slot_index];
+    auto& buffer_infos = host_buffer_infos[slot_index];
+    cleanup_slot_resources(
+        slot, buffer_infos, slot.base_ptrs.size(), free_buffer_callback,
+        cleanup_order, reset_buffer_info);
+  }
+}
+
 }  // namespace starpu_server::detail

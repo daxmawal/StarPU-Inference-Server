@@ -29,6 +29,7 @@
 #include "starpu_vector_resize_utils.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/batching_trace_logger.hpp"
+#include "utils/exception_classification.hpp"
 #include "utils/exception_logging.hpp"
 #include "utils/nvtx.hpp"
 
@@ -565,28 +566,36 @@ StarPUTaskRunner::submit_job_or_handle_failure(
     }
     submit_inference_task(job);
   }
-  catch (const InferenceEngineException& exception) {
-    finalize_job_after_exception(job, exception, "", submission_info.job_id);
-  }
-  catch (const std::runtime_error& exception) {
-    finalize_job_after_exception(
-        job, exception, "Unexpected runtime error", submission_info.job_id);
-  }
-  catch (const std::logic_error& exception) {
-    finalize_job_after_exception(
-        job, exception, "Unexpected logic error", submission_info.job_id);
-  }
-  catch (const std::bad_alloc& exception) {
-    finalize_job_after_exception(
-        job, exception, "Memory allocation failure", submission_info.job_id);
-  }
-  catch (const std::exception& exception) {
-    finalize_job_after_exception(
-        job, exception, "Unexpected std::exception", submission_info.job_id);
-  }
   catch (...) {
-    finalize_job_after_unknown_exception(
-        job, "Unexpected non-standard exception", submission_info.job_id);
+    classify_and_handle_exception(
+        std::current_exception(),
+        [&](const InferenceEngineException& exception) {
+          finalize_job_after_exception(
+              job, exception, "", submission_info.job_id);
+        },
+        [&](const std::runtime_error& exception) {
+          finalize_job_after_exception(
+              job, exception, "Unexpected runtime error",
+              submission_info.job_id);
+        },
+        [&](const std::logic_error& exception) {
+          finalize_job_after_exception(
+              job, exception, "Unexpected logic error", submission_info.job_id);
+        },
+        [&](const std::bad_alloc& exception) {
+          finalize_job_after_exception(
+              job, exception, "Memory allocation failure",
+              submission_info.job_id);
+        },
+        [&](const std::exception& exception) {
+          finalize_job_after_exception(
+              job, exception, "Unexpected std::exception",
+              submission_info.job_id);
+        },
+        [&]() {
+          finalize_job_after_unknown_exception(
+              job, "Unexpected non-standard exception", submission_info.job_id);
+        });
   }
 }
 
@@ -624,6 +633,23 @@ StarPUTaskRunner::handle_job_exception(
 // =============================================================================
 // StarPU Task Submission
 // =============================================================================
+
+struct StarPUTaskRunner::SubmitPipelineContext {
+  std::shared_ptr<InferenceJob> job;
+  bool warmup_job = false;
+  PoolResources pools{};
+  int64_t batch_size = 1;
+  std::vector<starpu_data_handle_t> input_handles_storage;
+  std::vector<starpu_data_handle_t> output_handles_storage;
+  std::vector<starpu_data_handle_t> input_handles_for_context;
+  std::vector<starpu_data_handle_t> output_handles_for_context;
+  std::shared_ptr<InferenceCallbackContext> callback_context;
+  starpu_task* task_ptr = nullptr;
+};
+
+struct StarPUTaskRunner::RunPipelineContext {
+  RunThreadExceptionState thread_exception_state;
+};
 
 auto
 StarPUTaskRunner::acquire_pools() -> PoolResources
@@ -786,6 +812,81 @@ StarPUTaskRunner::handle_submission_failure(
       "[ERROR] StarPU task submission failed (code {})", submit_code));
 }
 
+auto
+StarPUTaskRunner::make_submit_pipeline_context(
+    const std::shared_ptr<InferenceJob>& job) const -> SubmitPipelineContext
+{
+  SubmitPipelineContext context{};
+  context.job = job;
+  context.warmup_job = is_warmup_job(job);
+  return context;
+}
+
+void
+StarPUTaskRunner::submit_pipeline_acquire_pools(SubmitPipelineContext& context)
+{
+  context.pools = acquire_pools();
+}
+
+void
+StarPUTaskRunner::submit_pipeline_prepare_batch(SubmitPipelineContext& context)
+{
+  context.batch_size =
+      validate_batch_and_copy_inputs(context.job, context.pools);
+}
+
+void
+StarPUTaskRunner::submit_pipeline_prepare_handles(
+    SubmitPipelineContext& context, InferenceTask& task)
+{
+  if (context.pools.has_input()) {
+    context.input_handles_for_context =
+        context.pools.input_pool->handles(context.pools.input_slot);
+  } else {
+    context.input_handles_storage = task.prepare_input_handles();
+    context.input_handles_for_context = context.input_handles_storage;
+  }
+
+  if (context.pools.has_output()) {
+    context.output_handles_for_context =
+        context.pools.output_pool->handles(context.pools.output_slot);
+  } else {
+    context.output_handles_storage = task.prepare_output_handles();
+    context.output_handles_for_context = context.output_handles_storage;
+  }
+}
+
+void
+StarPUTaskRunner::submit_pipeline_build_task(
+    SubmitPipelineContext& context, InferenceTask& task)
+{
+  context.callback_context = configure_task_context(
+      task, context.pools, std::move(context.input_handles_for_context),
+      std::move(context.output_handles_for_context), context.batch_size);
+
+  context.task_ptr = task.create_task(
+      context.callback_context->inputs_handles,
+      context.callback_context->outputs_handles, context.callback_context);
+}
+
+auto
+StarPUTaskRunner::submit_pipeline_submit(SubmitPipelineContext& context) -> int
+{
+  const auto submitted_at = MonotonicClock::now();
+  context.job->update_timing_info([submitted_at](detail::TimingInfo& timing) {
+    timing.before_starpu_submitted_time = submitted_at;
+  });
+  return starpu_task_submit(context.task_ptr);
+}
+
+void
+StarPUTaskRunner::submit_pipeline_cleanup_on_failure(
+    const SubmitPipelineContext& context, int submit_code)
+{
+  handle_submission_failure(
+      context.pools, context.callback_context, submit_code);
+}
+
 void
 StarPUTaskRunner::submit_inference_task(
     const std::shared_ptr<InferenceJob>& job)
@@ -804,16 +905,20 @@ StarPUTaskRunner::submit_inference_task(
     return;
   }
 
-  auto pools = acquire_pools();
-  struct PoolReleaseGuard {
-    explicit PoolReleaseGuard(const PoolResources& pools_in) : pools(pools_in)
+  auto context = make_submit_pipeline_context(job);
+  submit_pipeline_acquire_pools(context);
+
+  struct SlotPoolReleaseGuard {
+    explicit SlotPoolReleaseGuard(const PoolResources& pools_in)
+        : pools(pools_in)
     {
     }
-    PoolReleaseGuard(const PoolReleaseGuard&) = delete;
-    PoolReleaseGuard(PoolReleaseGuard&&) = delete;
-    auto operator=(const PoolReleaseGuard&) -> PoolReleaseGuard& = delete;
-    auto operator=(PoolReleaseGuard&&) -> PoolReleaseGuard& = delete;
-    ~PoolReleaseGuard() noexcept
+    SlotPoolReleaseGuard(const SlotPoolReleaseGuard&) = delete;
+    SlotPoolReleaseGuard(SlotPoolReleaseGuard&&) = delete;
+    auto operator=(const SlotPoolReleaseGuard&) -> SlotPoolReleaseGuard& =
+                                                       delete;
+    auto operator=(SlotPoolReleaseGuard&&) -> SlotPoolReleaseGuard& = delete;
+    ~SlotPoolReleaseGuard() noexcept
     {
       if (active) {
         release();
@@ -837,64 +942,21 @@ StarPUTaskRunner::submit_inference_task(
     bool active{true};
   };
 
-  PoolReleaseGuard pool_guard(pools);
-
-  const auto batch = validate_batch_and_copy_inputs(job, pools);
+  SlotPoolReleaseGuard pool_guard(context.pools);
+  submit_pipeline_prepare_batch(context);
 
   InferenceTask task(
       starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_);
+  submit_pipeline_prepare_handles(context, task);
+  submit_pipeline_build_task(context, task);
 
-  std::vector<starpu_data_handle_t> input_handles_storage;
-  const std::vector<starpu_data_handle_t>* input_handles = nullptr;
-  if (pools.has_input()) {
-    input_handles = &pools.input_pool->handles(pools.input_slot);
-  } else {
-    input_handles_storage = task.prepare_input_handles();
-    input_handles = &input_handles_storage;
-  }
-
-  std::vector<starpu_data_handle_t> output_handles_storage;
-  const std::vector<starpu_data_handle_t>* output_handles = nullptr;
-  if (pools.has_output()) {
-    output_handles = &pools.output_pool->handles(pools.output_slot);
-  } else {
-    output_handles_storage = task.prepare_output_handles();
-    output_handles = &output_handles_storage;
-  }
-
-  std::vector<starpu_data_handle_t> input_handles_for_ctx;
-  if (pools.has_input()) {
-    input_handles_for_ctx = *input_handles;
-  } else {
-    input_handles_for_ctx = std::move(input_handles_storage);
-  }
-
-  std::vector<starpu_data_handle_t> output_handles_for_ctx;
-  if (pools.has_output()) {
-    output_handles_for_ctx = *output_handles;
-  } else {
-    output_handles_for_ctx = std::move(output_handles_storage);
-  }
-
-  auto ctx = configure_task_context(
-      task, pools, std::move(input_handles_for_ctx),
-      std::move(output_handles_for_ctx), batch);
-
-  starpu_task* task_ptr =
-      task.create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
-
-  const auto submitted_at = MonotonicClock::now();
-  job->update_timing_info([submitted_at](detail::TimingInfo& timing) {
-    timing.before_starpu_submitted_time = submitted_at;
-  });
-
-  const int ret = starpu_task_submit(task_ptr);
-  if (ret != 0) {
+  const int submit_code = submit_pipeline_submit(context);
+  if (submit_code != 0) {
     pool_guard.dismiss();
-    handle_submission_failure(pools, ctx, ret);
+    submit_pipeline_cleanup_on_failure(context, submit_code);
   } else {
     pool_guard.dismiss();
-    log_batch_submitted_if_enabled(job, warmup_job);
+    log_batch_submitted_if_enabled(context.job, context.warmup_job);
   }
 }
 
@@ -971,74 +1033,93 @@ StarPUTaskRunner::process_prepared_job(const std::shared_ptr<InferenceJob>& job)
 }
 
 void
-StarPUTaskRunner::run()  // NOLINT(readability-function-cognitive-complexity)
+StarPUTaskRunner::setup_run_pipeline(RunPipelineContext& /*context*/)
 {
-  RunThreadExceptionState thread_exception_state;
-  auto capture_thread_exception = [&thread_exception_state](
+  const std::scoped_lock lock(prepared_state_.mutex);
+  prepared_state_.jobs.clear();
+  prepared_state_.batching_done = false;
+  set_starpu_prepared_queue_depth(0);
+  set_batch_pending_jobs(0);
+}
+
+void
+StarPUTaskRunner::abort_run_pipeline(RunPipelineContext& /*context*/) noexcept
+{
+  if (queue_ != nullptr) {
+    queue_->shutdown();
+  }
+  {
+    const std::scoped_lock lock(prepared_state_.mutex);
+    prepared_state_.batching_done = true;
+  }
+  prepared_state_.cv.notify_all();
+}
+
+void
+StarPUTaskRunner::launch_batching_thread(RunPipelineContext& context)
+{
+  auto capture_thread_exception = [&context](
                                       std::string_view thread_name,
                                       std::exception_ptr exception) {
-    thread_exception_state.capture(thread_name, std::move(exception));
+    context.thread_exception_state.capture(thread_name, std::move(exception));
   };
 
-  const auto notify_batching_thread_failure = [this]() {
-    if (queue_ != nullptr) {
-      queue_->shutdown();
+  batching_thread_ = std::jthread([this, &context, capture_thread_exception]() {
+    try {
+      batching_loop();
     }
-    {
-      const std::scoped_lock lock(prepared_state_.mutex);
-      prepared_state_.batching_done = true;
+    catch (...) {
+      auto current_exception = std::current_exception();
+      capture_thread_exception("starpu-batching", current_exception);
+      if (task_runner_internal::
+              consume_duplicate_batching_thread_exception_capture_for_test()) {
+        capture_thread_exception(
+            "starpu-batching-secondary",
+            std::make_exception_ptr(
+                std::runtime_error("secondary batching thread failure")));
+      }
+      abort_run_pipeline(context);
     }
-    prepared_state_.cv.notify_all();
-  };
+  });
+  task_runner_internal::invoke_run_after_batching_thread_start_hook();
+}
+
+void
+StarPUTaskRunner::drain_prepared_jobs_pipeline()
+{
+  while (true) {
+    auto job = wait_for_prepared_job();
+    if (!job) {
+      break;
+    }
+    process_prepared_job(job);
+  }
+}
+
+void
+StarPUTaskRunner::finish_run_pipeline(RunPipelineContext& context)
+{
+  if (batching_thread_.joinable()) {
+    batching_thread_.join();
+  }
+  rethrow_runner_thread_exception_if_any(context.thread_exception_state);
+}
+
+void
+StarPUTaskRunner::run()
+{
+  RunPipelineContext context{};
 
   try {
     log_info(opts_->verbosity, "StarPUTaskRunner started.");
-
-    {
-      const std::scoped_lock lock(prepared_state_.mutex);
-      prepared_state_.jobs.clear();
-      prepared_state_.batching_done = false;
-      set_starpu_prepared_queue_depth(0);
-      set_batch_pending_jobs(0);
-    }
-
-    batching_thread_ = std::jthread([this, &capture_thread_exception,
-                                     &notify_batching_thread_failure]() {
-      try {
-        batching_loop();
-      }
-      catch (...) {
-        auto current_exception = std::current_exception();
-        capture_thread_exception("starpu-batching", current_exception);
-        if (task_runner_internal::
-                consume_duplicate_batching_thread_exception_capture_for_test()) {
-          capture_thread_exception(
-              "starpu-batching-secondary",
-              std::make_exception_ptr(
-                  std::runtime_error("secondary batching thread failure")));
-        }
-        notify_batching_thread_failure();
-      }
-    });
-    task_runner_internal::invoke_run_after_batching_thread_start_hook();
-
-    while (true) {
-      auto job = wait_for_prepared_job();
-      if (!job) {
-        break;
-      }
-      process_prepared_job(job);
-    }
-
-    if (batching_thread_.joinable()) {
-      batching_thread_.join();
-    }
-    rethrow_runner_thread_exception_if_any(thread_exception_state);
-
+    setup_run_pipeline(context);
+    launch_batching_thread(context);
+    drain_prepared_jobs_pipeline();
+    finish_run_pipeline(context);
     log_info(opts_->verbosity, "StarPUTaskRunner stopped.");
   }
   catch (...) {
-    notify_batching_thread_failure();
+    abort_run_pipeline(context);
     if (batching_thread_.joinable()) {
       batching_thread_.join();
     }

@@ -42,23 +42,27 @@ auto
 shutdown_drain_timeout_override_for_test() noexcept
     -> ShutdownDrainTimeoutOverrideForTestFn&
 {
-  static ShutdownDrainTimeoutOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct ShutdownDrainTimeoutOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      ShutdownDrainTimeoutOverrideTag, ShutdownDrainTimeoutOverrideForTestFn>();
 }
 
 auto
 shutdown_drain_wait_step_override_for_test() noexcept
     -> ShutdownDrainWaitStepOverrideForTestFn&
 {
-  static ShutdownDrainWaitStepOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct ShutdownDrainWaitStepOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      ShutdownDrainWaitStepOverrideTag,
+      ShutdownDrainWaitStepOverrideForTestFn>();
 }
 
 auto
 shutdown_drain_observer_for_test() noexcept -> ShutdownDrainObserverForTestFn&
 {
-  static ShutdownDrainObserverForTestFn observer_fn = nullptr;
-  return observer_fn;
+  struct ShutdownDrainObserverOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      ShutdownDrainObserverOverrideTag, ShutdownDrainObserverForTestFn>();
 }
 #endif  // SONAR_IGNORE_STOP
 
@@ -129,8 +133,10 @@ auto
 handle_program_arguments_fatal_override_for_test() noexcept
     -> HandleProgramArgumentsFatalOverrideForTestFn&
 {
-  static HandleProgramArgumentsFatalOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct HandleProgramArgumentsFatalOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      HandleProgramArgumentsFatalOverrideTag,
+      HandleProgramArgumentsFatalOverrideForTestFn>();
 }
 #endif  // SONAR_IGNORE_STOP
 
@@ -207,31 +213,31 @@ handle_program_arguments(std::span<char const* const> args)
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+using LoadModelAndReferenceOutputOverrideForTestFn = std::optional<std::tuple<
+    torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+    std::vector<torch::Tensor>>> (*)(const starpu_server::RuntimeConfig&);
+
+using RunWarmupOverrideForTestFn = void (*)(
+    const starpu_server::RuntimeConfig&, starpu_server::StarPUSetup&,
+    torch::jit::script::Module&, std::vector<torch::jit::script::Module>&,
+    const std::vector<torch::Tensor>&);
+
 auto
 load_model_and_reference_output_override_for_test() noexcept
-    -> std::optional<std::tuple<
-        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-        std::vector<torch::Tensor>>> (*&)(const starpu_server::RuntimeConfig&)
+    -> LoadModelAndReferenceOutputOverrideForTestFn&
 {
-  static std::optional<std::tuple<
-      torch::jit::script::Module, std::vector<torch::jit::script::Module>,
-      std::vector<torch::Tensor>>> (*override_fn)(
-      const starpu_server::RuntimeConfig&) = nullptr;
-  return override_fn;
+  struct LoadModelAndReferenceOutputOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      LoadModelAndReferenceOutputOverrideTag,
+      LoadModelAndReferenceOutputOverrideForTestFn>();
 }
 
 auto
-run_warmup_override_for_test() noexcept
-    -> void (*&)(
-        const starpu_server::RuntimeConfig&, starpu_server::StarPUSetup&,
-        torch::jit::script::Module&, std::vector<torch::jit::script::Module>&,
-        const std::vector<torch::Tensor>&)
+run_warmup_override_for_test() noexcept -> RunWarmupOverrideForTestFn&
 {
-  static void (*override_fn)(
-      const starpu_server::RuntimeConfig&, starpu_server::StarPUSetup&,
-      torch::jit::script::Module&, std::vector<torch::jit::script::Module>&,
-      const std::vector<torch::Tensor>&) = nullptr;
-  return override_fn;
+  struct RunWarmupOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      RunWarmupOverrideTag, RunWarmupOverrideForTestFn>();
 }
 #endif  // SONAR_IGNORE_STOP
 
@@ -547,57 +553,106 @@ drain_shutdown_jobs(
   }
 }
 
+namespace {
+
+struct LaunchRuntimeState {
+  ThreadExceptionState thread_exception_state;
+  SignalNotificationPipe signal_pipe;
+  std::atomic<std::size_t> completed_jobs{0};
+  std::condition_variable all_done_cv;
+  std::mutex all_done_mutex;
+};
+
+struct SignalPipeShutdownGuard {
+  SignalNotificationPipe* pipe = nullptr;
+
+  SignalPipeShutdownGuard() = default;
+  explicit SignalPipeShutdownGuard(SignalNotificationPipe* signal_pipe) noexcept
+      : pipe(signal_pipe)
+  {
+  }
+  SignalPipeShutdownGuard(const SignalPipeShutdownGuard&) = delete;
+  auto operator=(const SignalPipeShutdownGuard&) -> SignalPipeShutdownGuard& =
+                                                        delete;
+  SignalPipeShutdownGuard(SignalPipeShutdownGuard&&) = delete;
+  auto operator=(SignalPipeShutdownGuard&&) -> SignalPipeShutdownGuard& =
+                                                   delete;
+  ~SignalPipeShutdownGuard()
+  {
+    if (pipe != nullptr) {
+      pipe->shutdown();
+    }
+  }
+};
+
 void
-launch_threads(  // NOLINT(readability-function-cognitive-complexity)
+setup_runtime_state(
+    const starpu_server::RuntimeConfig& opts, ServerContext& server_ctx,
+    starpu_server::InferenceQueue& queue)
+{
+  queue.reset_counters();
+  server_ctx.stop_requested.store(false, std::memory_order_relaxed);
+  signal_stop_requested_flag() = 0;
+  reset_server_state(server_ctx);
+  std::signal(SIGINT, signal_handler);
+  std::signal(SIGTERM, signal_handler);
+  starpu_server::congestion::start(&queue, make_congestion_config(opts));
+}
+
+void
+start_runtime_threads(
+    const starpu_server::RuntimeConfig& opts, ServerContext& server_ctx,
+    starpu_server::InferenceQueue& queue,
+    std::vector<torch::Tensor>& reference_outputs,
+    const ExpectedModelMetadata& expected_model_metadata,
+    LaunchRuntimeState& runtime_state, starpu_server::StarPUTaskRunner& worker,
+    std::jthread& notifier_thread, std::jthread& worker_thread,
+    std::jthread& grpc_thread)
+{
+  const bool use_blocking_signal_wait = runtime_state.signal_pipe.active();
+  notifier_thread = make_signal_notifier_thread(
+      server_ctx, queue, runtime_state.thread_exception_state,
+      runtime_state.signal_pipe.read_fd(), use_blocking_signal_wait);
+  worker_thread = make_worker_thread(
+      server_ctx, queue, runtime_state.thread_exception_state, worker);
+  grpc_thread = make_grpc_thread(
+      server_ctx, queue, runtime_state.thread_exception_state, opts,
+      reference_outputs, expected_model_metadata);
+}
+
+void
+run_shutdown_sequence(
+    const starpu_server::RuntimeConfig& opts, ServerContext& server_ctx,
+    starpu_server::InferenceQueue& queue, LaunchRuntimeState& runtime_state)
+{
+  wait_for_stop_request(server_ctx);
+  stop_server_when_available(server_ctx);
+  queue.shutdown();
+  const auto total_jobs = queue.total_pushed();
+  const auto completed_before_drain =
+      runtime_state.completed_jobs.load(std::memory_order_acquire);
+  log_shutdown_drain_start(opts.verbosity, total_jobs, completed_before_drain);
+  drain_shutdown_jobs(
+      queue, total_jobs, runtime_state.completed_jobs, completed_before_drain,
+      runtime_state.all_done_cv, runtime_state.all_done_mutex);
+  starpu_server::congestion::shutdown();
+  server_ctx.stop_cv.notify_one();
+  rethrow_thread_exception_if_any(runtime_state.thread_exception_state);
+}
+
+}  // namespace
+
+void
+launch_threads(
     const starpu_server::RuntimeConfig& opts,
     starpu_server::StarPUSetup& starpu, torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
     std::vector<torch::Tensor>& reference_outputs,
     starpu_server::InferenceQueue& queue)
 {
-  queue.reset_counters();
   auto& server_ctx = server_context();
-  ThreadExceptionState thread_exception_state;
-  server_ctx.stop_requested.store(false, std::memory_order_relaxed);
-  signal_stop_requested_flag() = 0;
-  reset_server_state(server_ctx);
-
-  SignalNotificationPipe signal_pipe;
-  std::signal(SIGINT, signal_handler);
-  std::signal(SIGTERM, signal_handler);
-
-  starpu_server::congestion::start(&queue, make_congestion_config(opts));
-
-  const bool use_blocking_signal_wait = signal_pipe.active();
-  std::jthread notifier_thread = make_signal_notifier_thread(
-      server_ctx, queue, thread_exception_state, signal_pipe.read_fd(),
-      use_blocking_signal_wait);
-  struct SignalPipeShutdownGuard {
-    SignalNotificationPipe* pipe = nullptr;
-    SignalPipeShutdownGuard() = default;
-    explicit SignalPipeShutdownGuard(
-        SignalNotificationPipe* signal_pipe) noexcept
-        : pipe(signal_pipe)
-    {
-    }
-    SignalPipeShutdownGuard(const SignalPipeShutdownGuard&) = delete;
-    auto operator=(const SignalPipeShutdownGuard&) -> SignalPipeShutdownGuard& =
-                                                          delete;
-    SignalPipeShutdownGuard(SignalPipeShutdownGuard&&) = delete;
-    auto operator=(SignalPipeShutdownGuard&&) -> SignalPipeShutdownGuard& =
-                                                     delete;
-    ~SignalPipeShutdownGuard()
-    {
-      if (pipe != nullptr) {
-        pipe->shutdown();
-      }
-    }
-  };
-  const SignalPipeShutdownGuard signal_pipe_shutdown_guard{&signal_pipe};
-
-  std::atomic<std::size_t> completed_jobs{0};
-  std::condition_variable all_done_cv;
-  std::mutex all_done_mutex;
+  LaunchRuntimeState runtime_state;
+  setup_runtime_state(opts, server_ctx, queue);
 
   starpu_server::StarPUTaskRunnerConfig config{};
   config.queue = &queue;
@@ -605,28 +660,18 @@ launch_threads(  // NOLINT(readability-function-cognitive-complexity)
   config.models_gpu = &models_gpu;
   config.starpu = &starpu;
   config.opts = &opts;
-  config.completed_jobs = &completed_jobs;
-  config.all_done_cv = &all_done_cv;
+  config.completed_jobs = &runtime_state.completed_jobs;
+  config.all_done_cv = &runtime_state.all_done_cv;
   starpu_server::StarPUTaskRunner worker(config);
-
-  std::jthread worker_thread =
-      make_worker_thread(server_ctx, queue, thread_exception_state, worker);
   auto expected_model_metadata = collect_expected_model_metadata(opts);
-  std::jthread grpc_thread = make_grpc_thread(
-      server_ctx, queue, thread_exception_state, opts, reference_outputs,
-      expected_model_metadata);
 
-  wait_for_stop_request(server_ctx);
-  stop_server_when_available(server_ctx);
-  queue.shutdown();
-  const auto total_jobs = queue.total_pushed();
-  const auto completed_before_drain =
-      completed_jobs.load(std::memory_order_acquire);
-  log_shutdown_drain_start(opts.verbosity, total_jobs, completed_before_drain);
-  drain_shutdown_jobs(
-      queue, total_jobs, completed_jobs, completed_before_drain, all_done_cv,
-      all_done_mutex);
-  starpu_server::congestion::shutdown();
-  server_ctx.stop_cv.notify_one();
-  rethrow_thread_exception_if_any(thread_exception_state);
+  std::jthread notifier_thread;
+  std::jthread worker_thread;
+  std::jthread grpc_thread;
+  const SignalPipeShutdownGuard signal_pipe_shutdown_guard{
+      &runtime_state.signal_pipe};
+  start_runtime_threads(
+      opts, server_ctx, queue, reference_outputs, expected_model_metadata,
+      runtime_state, worker, notifier_thread, worker_thread, grpc_thread);
+  run_shutdown_sequence(opts, server_ctx, queue, runtime_state);
 }

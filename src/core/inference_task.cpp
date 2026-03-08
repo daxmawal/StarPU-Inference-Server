@@ -25,6 +25,7 @@
 #include "output_slot_pool.hpp"
 #include "starpu_setup.hpp"
 #include "utils/device_type.hpp"
+#include "utils/exception_classification.hpp"
 #include "utils/exception_logging.hpp"
 #include "utils/tensor_validation.hpp"
 
@@ -790,29 +791,56 @@ InferenceTask::starpu_output_callback(void* arg)
       }
       InferenceTask::process_output_handle(handle, ctx);
     }
-    catch (const InferenceEngineException& exception) {
-      log_exception("starpu_output_callback", exception);
-      mark_callback_failure(ctx, "output_acquire_failed", exception.what());
-      ctx->outputs_handles_to_release[index] = nullptr;
-      bypass_remaining_handles = true;
-      decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
-    }
-    catch (const std::exception& exception) {
-      log_error(std::format(
-          "std::exception in starpu_output_callback: {}", exception.what()));
-      mark_callback_failure(ctx, "output_callback_exception", exception.what());
-      ctx->outputs_handles_to_release[index] = nullptr;
-      bypass_remaining_handles = true;
-      decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
-    }
     catch (...) {
-      log_error("Unknown exception in starpu_output_callback");
-      mark_callback_failure(
-          ctx, "output_callback_unknown_exception",
-          "Unknown non-standard exception in output callback.");
-      ctx->outputs_handles_to_release[index] = nullptr;
-      bypass_remaining_handles = true;
-      decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
+      const auto mark_and_finalize_failure = [&](std::string_view reason,
+                                                 std::string_view message) {
+        mark_callback_failure(ctx, reason, message);
+        ctx->outputs_handles_to_release[index] = nullptr;
+        bypass_remaining_handles = true;
+        decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
+      };
+
+      classify_and_handle_exception(
+          std::current_exception(),
+          [&](const InferenceEngineException& exception) {
+            log_exception("starpu_output_callback", exception);
+            mark_and_finalize_failure(
+                "output_acquire_failed", exception.what());
+          },
+          [&](const std::runtime_error& exception) {
+            log_error(std::format(
+                "std::exception in starpu_output_callback: {}",
+                exception.what()));
+            mark_and_finalize_failure(
+                "output_callback_exception", exception.what());
+          },
+          [&](const std::logic_error& exception) {
+            log_error(std::format(
+                "std::exception in starpu_output_callback: {}",
+                exception.what()));
+            mark_and_finalize_failure(
+                "output_callback_exception", exception.what());
+          },
+          [&](const std::bad_alloc& exception) {
+            log_error(std::format(
+                "std::exception in starpu_output_callback: {}",
+                exception.what()));
+            mark_and_finalize_failure(
+                "output_callback_exception", exception.what());
+          },
+          [&](const std::exception& exception) {
+            log_error(std::format(
+                "std::exception in starpu_output_callback: {}",
+                exception.what()));
+            mark_and_finalize_failure(
+                "output_callback_exception", exception.what());
+          },
+          [&]() {
+            log_error("Unknown exception in starpu_output_callback");
+            mark_and_finalize_failure(
+                "output_callback_unknown_exception",
+                "Unknown non-standard exception in output callback.");
+          });
     }
   }
 }

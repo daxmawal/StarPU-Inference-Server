@@ -244,36 +244,22 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 OutputSlotPool::~OutputSlotPool()
 {
   auto& slots_storage = slots();
-  for (size_t slot_index = 0; slot_index < slots_storage.size(); ++slot_index) {
-    auto& slot = slots_storage[slot_index];
-    auto& buffer_infos = host_buffer_infos_[slot_index];
-    detail::cleanup_slot_resources(
-        slot, buffer_infos, slot.base_ptrs.size(), free_host_buffer,
-        detail::SlotCleanupOrder::UnregisterThenFree,
-        /*reset_buffer_info=*/false);
-  }
+  detail::cleanup_slots(
+      slots_storage, host_buffer_infos_, free_host_buffer,
+      detail::SlotCleanupOrder::UnregisterThenFree,
+      /*reset_buffer_info=*/false);
 }
 
 void
 OutputSlotPool::allocate_pool(const RuntimeConfig& opts, int slots)
 {
-  auto requested_slots = slots;
-  if (requested_slots <= 0) {
-    auto workers = static_cast<int>(starpu_worker_get_count());
-    requested_slots = std::max(2, workers);
-  }
   auto& slots_storage = this->slots();
   auto& free_ids_storage = this->free_ids();
-  slots_storage.reserve(static_cast<size_t>(requested_slots));
-  host_buffer_infos_.reserve(static_cast<size_t>(requested_slots));
-  free_ids_storage.reserve(static_cast<size_t>(requested_slots));
-  slots_storage.resize(static_cast<size_t>(requested_slots));
-  host_buffer_infos_.resize(static_cast<size_t>(requested_slots));
-  for (int i = 0; i < requested_slots; ++i) {
-    slots_storage[static_cast<size_t>(i)].id = i;
-    allocate_slot_buffers_and_register(i, opts);
-    free_ids_storage.push_back(i);
-  }
+  detail::init_slots(
+      slots, slots_storage, host_buffer_infos_, free_ids_storage,
+      [this, &opts](int slot_id) {
+        allocate_slot_buffers_and_register(slot_id, opts);
+      });
 }
 
 void

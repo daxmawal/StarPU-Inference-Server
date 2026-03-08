@@ -1,3 +1,58 @@
+namespace {
+template <typename AddEntry, typename SetDataType, typename AppendDim>
+auto
+append_input_schema(
+    std::span<const at::ScalarType> expected_input_types,
+    std::span<const std::vector<int64_t>> expected_input_dims,
+    std::span<const std::string> expected_input_names, AddEntry&& add_entry,
+    SetDataType&& set_data_type, AppendDim&& append_dim) -> Status
+{
+  for (std::size_t i = 0; i < expected_input_types.size(); ++i) {
+    auto* input = add_entry();
+    input->set_name(resolve_tensor_name(i, expected_input_names, "input"));
+    if (const Status status = set_data_type(*input, expected_input_types[i]);
+        !status.ok()) {
+      return status;
+    }
+    if (i < expected_input_dims.size()) {
+      for (const auto dim : expected_input_dims[i]) {
+        append_dim(*input, dim);
+      }
+    }
+  }
+  return Status::OK;
+}
+
+template <typename AddEntry, typename SetDataType, typename AppendDim>
+auto
+append_output_schema(
+    const std::vector<torch::Tensor>* reference_outputs,
+    std::span<const std::string> expected_output_names, AddEntry&& add_entry,
+    SetDataType&& set_data_type, AppendDim&& append_dim) -> Status
+{
+  if (reference_outputs == nullptr) {
+    return Status::OK;
+  }
+
+  for (std::size_t i = 0; i < reference_outputs->size(); ++i) {
+    const auto& output = (*reference_outputs)[i];
+    auto* output_entry = add_entry();
+    output_entry->set_name(
+        resolve_tensor_name(i, expected_output_names, "output"));
+    if (const Status status =
+            set_data_type(*output_entry, output.scalar_type());
+        !status.ok()) {
+      return status;
+    }
+    for (const auto dim : output.sizes()) {
+      append_dim(*output_entry, dim);
+    }
+  }
+
+  return Status::OK;
+}
+}  // namespace
+
 void
 InferenceServiceImpl::validate_schema_or_throw() const
 {
@@ -94,39 +149,38 @@ InferenceServiceImpl::ModelMetadata(
     reply->add_versions(request->version());
   }
 
-  for (std::size_t i = 0; i < expected_input_types_.size(); ++i) {
-    auto* input = reply->add_inputs();
-    input->set_name(resolve_tensor_name(i, expected_input_names_, "input"));
-    try {
-      input->set_datatype(scalar_type_to_datatype(expected_input_types_[i]));
-    }
-    catch (const std::invalid_argument& e) {
-      return {grpc::StatusCode::INTERNAL, e.what()};
-    }
-    if (i < expected_input_dims_.size()) {
-      for (const auto dim : expected_input_dims_[i]) {
-        input->add_shape(dim);
-      }
-    }
+  if (const Status input_status = append_input_schema(
+          expected_input_types_, expected_input_dims_, expected_input_names_,
+          [&reply]() { return reply->add_inputs(); },
+          [](auto& input, at::ScalarType type) -> Status {
+            try {
+              input.set_datatype(scalar_type_to_datatype(type));
+              return Status::OK;
+            }
+            catch (const std::invalid_argument& exception) {
+              return {grpc::StatusCode::INTERNAL, exception.what()};
+            }
+          },
+          [](auto& input, int64_t dim) { input.add_shape(dim); });
+      !input_status.ok()) {
+    return input_status;
   }
 
-  if (reference_outputs_ != nullptr) {
-    for (std::size_t i = 0; i < reference_outputs_->size(); ++i) {
-      const auto& output = (*reference_outputs_)[i];
-      auto* output_meta = reply->add_outputs();
-      output_meta->set_name(
-          resolve_tensor_name(i, expected_output_names_, "output"));
-      try {
-        output_meta->set_datatype(
-            scalar_type_to_datatype(output.scalar_type()));
-      }
-      catch (const std::invalid_argument& e) {
-        return {grpc::StatusCode::INTERNAL, e.what()};
-      }
-      for (const auto dim : output.sizes()) {
-        output_meta->add_shape(dim);
-      }
-    }
+  if (const Status output_status = append_output_schema(
+          reference_outputs_, expected_output_names_,
+          [&reply]() { return reply->add_outputs(); },
+          [](auto& output, at::ScalarType type) -> Status {
+            try {
+              output.set_datatype(scalar_type_to_datatype(type));
+              return Status::OK;
+            }
+            catch (const std::invalid_argument& exception) {
+              return {grpc::StatusCode::INTERNAL, exception.what()};
+            }
+          },
+          [](auto& output, int64_t dim) { output.add_shape(dim); });
+      !output_status.ok()) {
+    return output_status;
   }
 
   return Status::OK;
@@ -144,36 +198,37 @@ InferenceServiceImpl::ModelConfig(
   }
   config->set_max_batch_size(max_batch_size_);
 
-  for (std::size_t i = 0; i < expected_input_types_.size(); ++i) {
-    auto* input = config->add_input();
-    input->set_name(resolve_tensor_name(i, expected_input_names_, "input"));
-    const auto dtype = scalar_type_to_model_dtype(expected_input_types_[i]);
-    if (dtype == inference::DataType::TYPE_INVALID) {
-      return {grpc::StatusCode::INTERNAL, "Unsupported input datatype"};
-    }
-    input->set_data_type(dtype);
-    if (i < expected_input_dims_.size()) {
-      for (const auto dim : expected_input_dims_[i]) {
-        input->add_dims(dim);
-      }
-    }
+  if (const Status input_status = append_input_schema(
+          expected_input_types_, expected_input_dims_, expected_input_names_,
+          [&config]() { return config->add_input(); },
+          [](auto& input, at::ScalarType type) -> Status {
+            const auto dtype = scalar_type_to_model_dtype(type);
+            if (dtype == inference::DataType::TYPE_INVALID) {
+              return {grpc::StatusCode::INTERNAL, "Unsupported input datatype"};
+            }
+            input.set_data_type(dtype);
+            return Status::OK;
+          },
+          [](auto& input, int64_t dim) { input.add_dims(dim); });
+      !input_status.ok()) {
+    return input_status;
   }
 
-  if (reference_outputs_ != nullptr) {
-    for (std::size_t i = 0; i < reference_outputs_->size(); ++i) {
-      const auto& output = (*reference_outputs_)[i];
-      auto* output_config = config->add_output();
-      output_config->set_name(
-          resolve_tensor_name(i, expected_output_names_, "output"));
-      const auto dtype = scalar_type_to_model_dtype(output.scalar_type());
-      if (dtype == inference::DataType::TYPE_INVALID) {
-        return {grpc::StatusCode::INTERNAL, "Unsupported output datatype"};
-      }
-      output_config->set_data_type(dtype);
-      for (const auto dim : output.sizes()) {
-        output_config->add_dims(dim);
-      }
-    }
+  if (const Status output_status = append_output_schema(
+          reference_outputs_, expected_output_names_,
+          [&config]() { return config->add_output(); },
+          [](auto& output, at::ScalarType type) -> Status {
+            const auto dtype = scalar_type_to_model_dtype(type);
+            if (dtype == inference::DataType::TYPE_INVALID) {
+              return {
+                  grpc::StatusCode::INTERNAL, "Unsupported output datatype"};
+            }
+            output.set_data_type(dtype);
+            return Status::OK;
+          },
+          [](auto& output, int64_t dim) { output.add_dims(dim); });
+      !output_status.ok()) {
+    return output_status;
   }
 
   return Status::OK;

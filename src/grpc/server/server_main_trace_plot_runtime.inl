@@ -66,8 +66,9 @@ using WaitPidNoHangOverrideForTestFn = pid_t (*)(pid_t, int*, int);
 auto
 waitpid_nohang_override_for_test() noexcept -> WaitPidNoHangOverrideForTestFn&
 {
-  static WaitPidNoHangOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct WaitPidNoHangOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      WaitPidNoHangOverrideTag, WaitPidNoHangOverrideForTestFn>();
 }
 #endif  // SONAR_IGNORE_STOP
 
@@ -110,8 +111,9 @@ auto
 waitpid_blocking_override_for_test() noexcept
     -> WaitPidBlockingOverrideForTestFn&
 {
-  static WaitPidBlockingOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct WaitPidBlockingOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      WaitPidBlockingOverrideTag, WaitPidBlockingOverrideForTestFn>();
 }
 #endif  // SONAR_IGNORE_STOP
 
@@ -202,16 +204,19 @@ auto
 wait_for_plot_process_wait_override_for_test() noexcept
     -> WaitForPlotProcessWaitOverrideForTestFn&
 {
-  static WaitForPlotProcessWaitOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct WaitForPlotProcessWaitOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      WaitForPlotProcessWaitOverrideTag,
+      WaitForPlotProcessWaitOverrideForTestFn>();
 }
 
 auto
 terminate_and_wait_override_for_test() noexcept
     -> TerminateAndWaitOverrideForTestFn&
 {
-  static TerminateAndWaitOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct TerminateAndWaitOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      TerminateAndWaitOverrideTag, TerminateAndWaitOverrideForTestFn>();
 }
 #endif  // SONAR_IGNORE_STOP
 
@@ -258,32 +263,36 @@ using TraceSummaryFilePathOverrideForTestFn =
 auto
 run_plot_script_override_for_test() noexcept -> RunPlotScriptOverrideForTestFn&
 {
-  static RunPlotScriptOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct RunPlotScriptOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      RunPlotScriptOverrideTag, RunPlotScriptOverrideForTestFn>();
 }
 
 auto
 run_plot_script_fork_override_for_test() noexcept
     -> RunPlotScriptForkOverrideForTestFn&
 {
-  static RunPlotScriptForkOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct RunPlotScriptForkOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      RunPlotScriptForkOverrideTag, RunPlotScriptForkOverrideForTestFn>();
 }
 
 auto
 locate_plot_script_override_for_test() noexcept
     -> LocatePlotScriptOverrideForTestFn&
 {
-  static LocatePlotScriptOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct LocatePlotScriptOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      LocatePlotScriptOverrideTag, LocatePlotScriptOverrideForTestFn>();
 }
 
 auto
 trace_summary_file_path_override_for_test() noexcept
     -> TraceSummaryFilePathOverrideForTestFn&
 {
-  static TraceSummaryFilePathOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct TraceSummaryFilePathOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      TraceSummaryFilePathOverrideTag, TraceSummaryFilePathOverrideForTestFn>();
 }
 #endif  // SONAR_IGNORE_STOP
 
@@ -352,16 +361,20 @@ auto
 candidate_plot_scripts_read_symlink_override_for_test() noexcept
     -> CandidatePlotScriptsReadSymlinkOverrideForTestFn&
 {
-  static CandidatePlotScriptsReadSymlinkOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct CandidatePlotScriptsReadSymlinkOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      CandidatePlotScriptsReadSymlinkOverrideTag,
+      CandidatePlotScriptsReadSymlinkOverrideForTestFn>();
 }
 
 auto
 locate_plot_script_candidates_override_for_test() noexcept
     -> LocatePlotScriptCandidatesOverrideForTestFn&
 {
-  static LocatePlotScriptCandidatesOverrideForTestFn override_fn = nullptr;
-  return override_fn;
+  struct LocatePlotScriptCandidatesOverrideTag;
+  return ::starpu_server::testing::server_main::detail::override_slot_ref<
+      LocatePlotScriptCandidatesOverrideTag,
+      LocatePlotScriptCandidatesOverrideForTestFn>();
 }
 #endif  // SONAR_IGNORE_STOP
 

@@ -114,6 +114,9 @@ class StarPUTaskRunner {
     int job_id;
   };
 
+  struct SubmitPipelineContext;
+  struct RunPipelineContext;
+
   struct InflightState;
 
   struct PoolResources {
@@ -198,6 +201,23 @@ class StarPUTaskRunner {
   void finalize_job_after_unknown_exception(
       const std::shared_ptr<InferenceJob>& job, std::string_view log_prefix,
       int job_id);
+  auto make_submit_pipeline_context(
+      const std::shared_ptr<InferenceJob>& job) const -> SubmitPipelineContext;
+  void submit_pipeline_acquire_pools(SubmitPipelineContext& context);
+  void submit_pipeline_prepare_batch(SubmitPipelineContext& context);
+  void submit_pipeline_prepare_handles(
+      SubmitPipelineContext& context, InferenceTask& task);
+  void submit_pipeline_build_task(
+      SubmitPipelineContext& context, InferenceTask& task);
+  [[nodiscard]] auto submit_pipeline_submit(SubmitPipelineContext& context)
+      -> int;
+  [[noreturn]] void submit_pipeline_cleanup_on_failure(
+      const SubmitPipelineContext& context, int submit_code);
+  void setup_run_pipeline(RunPipelineContext& context);
+  void launch_batching_thread(RunPipelineContext& context);
+  void drain_prepared_jobs_pipeline();
+  void finish_run_pipeline(RunPipelineContext& context);
+  void abort_run_pipeline(RunPipelineContext& context) noexcept;
 
   struct InflightState {
     std::atomic<std::size_t> tasks{0};
