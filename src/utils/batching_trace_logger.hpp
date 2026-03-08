@@ -271,6 +271,12 @@ class BatchingTraceLogger {
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
   void write_summary_line_locked(const BatchSummaryLogArgs& args);
   void write_queue_metric_locked(const QueueMetric& metric);
+  void write_trace_line_with_lock(
+      int thread_id, std::string_view thread_name, int sort_index,
+      std::string line);
+  void write_trace_line_locked(
+      int thread_id, std::string_view thread_name, int sort_index,
+      std::string line);
   auto configure_summary_writer(const std::filesystem::path& trace_path)
       -> bool;
   void close_summary_writer();
