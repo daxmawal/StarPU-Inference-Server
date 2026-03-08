@@ -172,11 +172,13 @@ class RuntimeCleanupGuard {
   bool active_ = true;
 };
 
-#include "server_main_bootstrap.hpp"
-#include "server_main_shutdown_runtime.hpp"
+// clang-format off
 #include "server_main_signal_runtime.hpp"
+#include "server_main_shutdown_runtime.hpp"
+#include "server_main_bootstrap.hpp"
 #include "server_main_trace_plot_runtime.hpp"
 #include "server_main_worker_inventory.hpp"
+// clang-format on
 #if defined(STARPU_TESTING)
 }  // namespace starpu_server::testing::server_main
 #else
