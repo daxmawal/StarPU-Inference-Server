@@ -97,6 +97,11 @@ class BatchCollector {
       const std::shared_ptr<InferenceJob>& candidate,
       const std::shared_ptr<InferenceJob>& reference,
       const std::optional<int>& target_worker) -> bool;
+  friend auto task_runner_internal::testing::batch_collector_is_batching_done(
+      const BatchCollector* collector) -> bool;
+  friend auto
+  task_runner_internal::testing::batch_collector_should_abort_inflight_wait(
+      const BatchCollector* collector) -> bool;
   friend void
   task_runner_internal::testing::batch_collector_disable_prepared_job_sync(
       BatchCollector* collector);
@@ -104,6 +109,12 @@ class BatchCollector {
       BatchCollector* collector, InferenceQueue* queue);
   friend auto task_runner_internal::testing::batch_collector_get_queue(
       const BatchCollector* collector) -> InferenceQueue*;
+  friend void
+  task_runner_internal::testing::batch_collector_set_batching_done_ptr(
+      BatchCollector* collector, bool* batching_done);
+  friend void
+  task_runner_internal::testing::batch_collector_set_batching_done_value(
+      BatchCollector* collector, bool batching_done);
   friend void task_runner_internal::testing::batch_collector_set_pending_job(
       BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
 #endif  // SONAR_IGNORE_END

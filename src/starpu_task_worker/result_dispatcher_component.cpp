@@ -25,6 +25,16 @@ is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
   return job && job->get_fixed_worker_id().has_value();
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+prepare_job_completion_callback_test_hooks()
+    -> ResultDispatcher::PrepareJobCompletionCallbackTestHooks&
+{
+  static ResultDispatcher::PrepareJobCompletionCallbackTestHooks hooks{};
+  return hooks;
+}
+#endif  // SONAR_IGNORE_END
+
 }  // namespace
 
 using clock = task_runner_internal::Clock;
@@ -35,6 +45,22 @@ ResultDispatcher::ResultDispatcher(
     : opts_(opts), completed_jobs_(completed_jobs), all_done_cv_(all_done_cv)
 {
 }
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+void
+ResultDispatcher::SetPrepareJobCompletionCallbackTestHooks(
+    PrepareJobCompletionCallbackTestHooks hooks)
+{
+  prepare_job_completion_callback_test_hooks() = std::move(hooks);
+}
+
+void
+ResultDispatcher::ClearPrepareJobCompletionCallbackTestHooks()
+{
+  prepare_job_completion_callback_test_hooks() =
+      PrepareJobCompletionCallbackTestHooks{};
+}
+#endif  // SONAR_IGNORE_END
 
 void
 ResultDispatcher::prepare_job_completion_callback(
@@ -53,6 +79,12 @@ ResultDispatcher::prepare_job_completion_callback(
         }
 
         try {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+          auto& test_hooks = prepare_job_completion_callback_test_hooks();
+          if (test_hooks.before_dispatch) {
+            test_hooks.before_dispatch();
+          }
+#endif  // SONAR_IGNORE_END
           if (dispatcher != nullptr) {
             dispatcher->handle_job_completion(
                 job_sptr, prev_callback, results, latency_ms);

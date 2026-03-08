@@ -1,5 +1,9 @@
 #include "unit_starpu_task_runner_support.hpp"
 
+#define private public
+#include "starpu_task_worker/result_dispatcher_component.hpp"
+#undef private
+
 TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobReturnsNullWhenNoJobs)
 {
   std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs;
@@ -692,6 +696,81 @@ TEST(
       aggregated, outputs, 4.5);
 
   EXPECT_FALSE(callback_invoked);
+}
+
+TEST(ResultDispatcher, CleanupTerminalJobPayloadNoopsWhenJobIsNull)
+{
+  const std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_NO_THROW(
+      starpu_server::ResultDispatcher::cleanup_terminal_job_payload(job));
+}
+
+TEST(ResultDispatcher, ClearBatchingStateNoopsWhenJobIsNull)
+{
+  const std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_NO_THROW(starpu_server::ResultDispatcher::clear_batching_state(job));
+}
+
+TEST(ResultDispatcher, ClearPendingSubJobCallbacksNoopsWhenJobIsNull)
+{
+  const std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_NO_THROW(
+      starpu_server::ResultDispatcher::clear_pending_sub_job_callbacks(job));
+}
+
+TEST(ResultDispatcher, FinalizeJobCompletionNoopsWhenJobIsNull)
+{
+  std::atomic<std::size_t> completed_jobs{0};
+  std::condition_variable all_done_cv;
+  starpu_server::ResultDispatcher dispatcher{
+      nullptr, &completed_jobs, &all_done_cv};
+
+  const std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_NO_THROW(dispatcher.finalize_job_completion(job));
+  EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
+}
+
+TEST(ResultDispatcher, FinalizeJobCompletionNoopsWhenCompletedJobsIsNull)
+{
+  std::condition_variable all_done_cv;
+  starpu_server::ResultDispatcher dispatcher{nullptr, nullptr, &all_done_cv};
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_logical_job_count(3);
+  EXPECT_NO_THROW(dispatcher.finalize_job_completion(job));
+}
+
+TEST(ResultDispatcher, FinalizeJobCompletionNoopsWhenAllDoneCvIsNull)
+{
+  std::atomic<std::size_t> completed_jobs{0};
+  starpu_server::ResultDispatcher dispatcher{nullptr, &completed_jobs, nullptr};
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_logical_job_count(3);
+  EXPECT_NO_THROW(dispatcher.finalize_job_completion(job));
+  EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
+}
+
+TEST(ResultDispatcher, HandleJobCompletionNoopsWhenJobIsNull)
+{
+  std::atomic<std::size_t> completed_jobs{0};
+  std::condition_variable all_done_cv;
+  starpu_server::ResultDispatcher dispatcher{
+      nullptr, &completed_jobs, &all_done_cv};
+
+  bool callback_invoked = false;
+  const starpu_server::InferenceJob::CompletionCallback callback =
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      };
+  auto results = std::vector<torch::Tensor>{
+      torch::tensor({1.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+
+  const std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_NO_THROW(
+      dispatcher.handle_job_completion(job, callback, results, 1.5));
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
 }
 
 TEST(

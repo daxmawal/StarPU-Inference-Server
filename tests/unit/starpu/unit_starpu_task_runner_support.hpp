@@ -358,6 +358,45 @@ class StarPUTaskRunnerTestAdapter {
         runner->batch_collector_.get());
   }
 
+  static auto is_batch_collector_batching_done(StarPUTaskRunner* runner) -> bool
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return false;
+    }
+    return test_api::batch_collector_is_batching_done(
+        runner->batch_collector_.get());
+  }
+
+  static auto should_abort_batch_collector_inflight_wait(
+      StarPUTaskRunner* runner) -> bool
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return false;
+    }
+    return test_api::batch_collector_should_abort_inflight_wait(
+        runner->batch_collector_.get());
+  }
+
+  static void set_batch_collector_batching_done_ptr(
+      StarPUTaskRunner* runner, bool* batching_done)
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return;
+    }
+    test_api::batch_collector_set_batching_done_ptr(
+        runner->batch_collector_.get(), batching_done);
+  }
+
+  static void set_batch_collector_batching_done_value(
+      StarPUTaskRunner* runner, bool batching_done)
+  {
+    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+      return;
+    }
+    test_api::batch_collector_set_batching_done_value(
+        runner->batch_collector_.get(), batching_done);
+  }
+
   static void set_batch_collector_queue_to_null(StarPUTaskRunner* runner)
   {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
@@ -480,6 +519,15 @@ class StarPUTaskRunnerTestAdapter {
       return 0;
     }
     return runner->inflight_state_->max_tasks;
+  }
+
+  static void set_result_dispatcher(
+      StarPUTaskRunner* runner, std::shared_ptr<ResultDispatcher> dispatcher)
+  {
+    if (runner == nullptr) {
+      return;
+    }
+    runner->result_dispatcher_ = std::move(dispatcher);
   }
 };
 }  // namespace starpu_server

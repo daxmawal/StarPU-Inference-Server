@@ -697,6 +697,13 @@ metrics_init_failure_flag() -> std::atomic<bool>&
   return flag;
 }
 
+auto
+metrics_request_stop_skip_join_flag() -> std::atomic<bool>&
+{
+  static std::atomic<bool> flag{false};
+  return flag;
+}
+
 void
 set_metrics_init_failure_for_test(bool fail)
 {
@@ -707,6 +714,19 @@ auto
 metrics_init_failure_for_test() -> bool
 {
   return metrics_init_failure_flag().load(std::memory_order_acquire);
+}
+
+void
+set_metrics_request_stop_skip_join_for_test(bool skip_join)
+{
+  metrics_request_stop_skip_join_flag().store(
+      skip_join, std::memory_order_release);
+}
+
+auto
+metrics_request_stop_skip_join_for_test() -> bool
+{
+  return metrics_request_stop_skip_join_flag().load(std::memory_order_acquire);
 }
 #endif  // SONAR_IGNORE_END
 
@@ -1748,6 +1768,11 @@ MetricsRegistry::request_stop()
 {
   if (registry_state_.sampler_thread.joinable()) {
     registry_state_.sampler_thread.request_stop();
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (monitoring::detail::metrics_request_stop_skip_join_for_test()) {
+      return;
+    }
+#endif  // SONAR_IGNORE_END
     registry_state_.sampler_thread.join();
   }
 }

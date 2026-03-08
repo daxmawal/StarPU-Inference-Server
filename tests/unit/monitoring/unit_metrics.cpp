@@ -80,6 +80,20 @@ class PageSizeProviderGuard {
   }
 };
 
+class RequestStopJoinGuard {
+ public:
+  explicit RequestStopJoinGuard(bool skip_join_in_request_stop)
+  {
+    monitoring::detail::set_metrics_request_stop_skip_join_for_test(
+        skip_join_in_request_stop);
+  }
+
+  ~RequestStopJoinGuard()
+  {
+    monitoring::detail::set_metrics_request_stop_skip_join_for_test(false);
+  }
+};
+
 void
 AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
 {
@@ -334,6 +348,18 @@ TEST(Metrics, MetricsDestructionLogsRemovalFailure)
   EXPECT_NE(
       log.find("Failed to remove metrics registry collectable"),
       std::string::npos);
+}
+
+TEST(Metrics, MetricsDestructionJoinsSamplerThreadWhenStillJoinable)
+{
+  RequestStopJoinGuard guard{/*skip_join_in_request_stop=*/true};
+
+  EXPECT_NO_THROW({
+    MetricsRegistry registry(
+        0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+        [] { return std::optional<double>{}; },
+        /*start_sampler_thread=*/true);
+  });
 }
 
 TEST(Metrics, AccessorsReturnAllocatedFamiliesAndGauges)

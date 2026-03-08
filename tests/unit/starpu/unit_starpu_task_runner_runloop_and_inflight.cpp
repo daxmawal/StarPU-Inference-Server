@@ -1,5 +1,22 @@
 #include "unit_starpu_task_runner_support.hpp"
 
+namespace {
+
+struct BatchCollectorAfterBuildJobHookGuard {
+  explicit BatchCollectorAfterBuildJobHookGuard(
+      std::function<void(std::shared_ptr<starpu_server::InferenceJob>&)> hook)
+  {
+    test_api::batch_collector_set_after_build_job_hook(std::move(hook));
+  }
+
+  ~BatchCollectorAfterBuildJobHookGuard()
+  {
+    test_api::batch_collector_reset_after_build_job_hook();
+  }
+};
+
+}  // namespace
+
 TEST(
     TaskRunnerInternal,
     BuildRequestArrivalUsForTraceReturnsZeroWhenSubJobExpiredAndArrivalIsDefault)
@@ -416,6 +433,100 @@ TEST_F(StarPUTaskRunnerFixture, BatchingLoopStopsWhenNoJobAvailable)
 
   starpu_server::StarPUTaskRunnerTestAdapter::run_batching_loop(runner_.get());
 
+  EXPECT_TRUE(
+      starpu_server::StarPUTaskRunnerTestAdapter::batching_done(runner_.get()));
+  auto dequeued =
+      starpu_server::StarPUTaskRunnerTestAdapter::wait_for_prepared_job(
+          runner_.get());
+  EXPECT_EQ(dequeued, nullptr);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    BatchCollectorIsBatchingDoneReturnsFalseWhenFlagPointerMissing)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::
+      set_batch_collector_batching_done_ptr(runner_.get(), nullptr);
+
+  EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::
+                   is_batch_collector_batching_done(runner_.get()));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    BatchCollectorIsBatchingDoneUsesFlagWhenPreparedMutexMissing)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::disable_prepared_job_sync(
+      runner_.get());
+  starpu_server::StarPUTaskRunnerTestAdapter::
+      set_batch_collector_batching_done_value(runner_.get(), true);
+
+  EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::
+                  is_batch_collector_batching_done(runner_.get()));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::
+      set_batch_collector_batching_done_value(runner_.get(), false);
+
+  EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::
+                   is_batch_collector_batching_done(runner_.get()));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ShouldAbortInflightWaitReturnsTrueWhenBatchingDone)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::
+      set_batch_collector_batching_done_value(runner_.get(), true);
+
+  EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::
+                  should_abort_batch_collector_inflight_wait(runner_.get()));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture, ShouldAbortInflightWaitReturnsTrueWhenQueueMissing)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::
+      set_batch_collector_batching_done_value(runner_.get(), false);
+  starpu_server::StarPUTaskRunnerTestAdapter::set_batch_collector_queue_to_null(
+      runner_.get());
+
+  EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::
+                  should_abort_batch_collector_inflight_wait(runner_.get()));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ShouldAbortInflightWaitReturnsFalseWhenPendingJobIsAvailable)
+{
+  starpu_server::StarPUTaskRunnerTestAdapter::
+      set_batch_collector_batching_done_value(runner_.get(), false);
+  auto pending_job = make_job(
+      903, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  starpu_server::StarPUTaskRunnerTestAdapter::set_batch_collector_pending_job(
+      runner_.get(), pending_job);
+
+  EXPECT_FALSE(starpu_server::StarPUTaskRunnerTestAdapter::
+                   should_abort_batch_collector_inflight_wait(runner_.get()));
+}
+
+TEST_F(StarPUTaskRunnerFixture, BatchingLoopContinuesWhenBuiltJobBecomesNull)
+{
+  auto job = make_job(
+      902, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+      {at::kFloat});
+  ASSERT_TRUE(queue_.push(job));
+  queue_.shutdown();
+
+  std::atomic<int> hook_calls{0};
+  BatchCollectorAfterBuildJobHookGuard hook_guard{
+      [&hook_calls](std::shared_ptr<starpu_server::InferenceJob>& built_job) {
+        hook_calls.fetch_add(1, std::memory_order_acq_rel);
+        built_job.reset();
+      }};
+
+  starpu_server::StarPUTaskRunnerTestAdapter::run_batching_loop(runner_.get());
+
+  EXPECT_EQ(hook_calls.load(std::memory_order_acquire), 1);
   EXPECT_TRUE(
       starpu_server::StarPUTaskRunnerTestAdapter::batching_done(runner_.get()));
   auto dequeued =

@@ -18,6 +18,18 @@ class ResultDispatcher {
       const RuntimeConfig* opts, std::atomic<std::size_t>* completed_jobs,
       std::condition_variable* all_done_cv);
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  struct PrepareJobCompletionCallbackTestHooks {
+    std::function<void()> before_dispatch;
+  };
+
+  static void SetPrepareJobCompletionCallbackTestHooks(
+      PrepareJobCompletionCallbackTestHooks hooks);
+  static void ClearPrepareJobCompletionCallbackTestHooks();
+#endif  // SONAR_IGNORE_END
+  // GCOVR_EXCL_STOP
+
   static void prepare_job_completion_callback(
       StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
 

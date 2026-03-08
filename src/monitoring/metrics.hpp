@@ -674,6 +674,8 @@ void set_process_rss_bytes_reader_override(
     std::function<std::optional<double>()> reader);
 void set_metrics_init_failure_for_test(bool fail);
 auto metrics_init_failure_for_test() -> bool;
+void set_metrics_request_stop_skip_join_for_test(bool skip_join);
+auto metrics_request_stop_skip_join_for_test() -> bool;
 void set_process_fd_path_for_test(std::filesystem::path path);
 void reset_process_fd_path_for_test();
 auto process_fd_path_for_test() -> const std::filesystem::path&;

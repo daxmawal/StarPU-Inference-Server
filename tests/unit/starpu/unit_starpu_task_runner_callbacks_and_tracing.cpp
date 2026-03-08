@@ -1,4 +1,25 @@
+#include "starpu_task_worker/result_dispatcher_component.hpp"
 #include "unit_starpu_task_runner_support.hpp"
+
+namespace {
+
+struct PrepareJobCompletionCallbackHooksGuard {
+  explicit PrepareJobCompletionCallbackHooksGuard(
+      starpu_server::ResultDispatcher::PrepareJobCompletionCallbackTestHooks
+          hooks)
+  {
+    starpu_server::ResultDispatcher::SetPrepareJobCompletionCallbackTestHooks(
+        std::move(hooks));
+  }
+
+  ~PrepareJobCompletionCallbackHooksGuard()
+  {
+    starpu_server::ResultDispatcher::
+        ClearPrepareJobCompletionCallbackTestHooks();
+  }
+};
+
+}  // namespace
 
 TEST(TaskRunnerInternal, ReleaseInputsFromAdditionalJobsSkipsNullEntries)
 {
@@ -358,6 +379,146 @@ TEST_F(
       completion(std::vector<torch::Tensor>{torch::tensor({2.0F})}, 5.0));
   EXPECT_TRUE(callback_invoked);
   EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackReturnsWhenTerminalAlreadyHandled)
+{
+  auto job = make_job(2, {torch::tensor({1.0F})});
+  std::atomic<int> callback_count{0};
+  job->set_on_complete(
+      [&callback_count](const std::vector<torch::Tensor>&, double) {
+        callback_count.fetch_add(1, std::memory_order_acq_rel);
+      });
+
+  runner_->prepare_job_completion_callback(job);
+  auto outputs = std::vector<torch::Tensor>{torch::tensor({2.0F})};
+
+  job->get_on_complete()(outputs, 5.0);
+  job->get_on_complete()(outputs, 5.0);
+
+  EXPECT_EQ(callback_count.load(std::memory_order_acquire), 1);
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackCleansPayloadWhenDispatcherMissing)
+{
+  completed_jobs_.store(0, std::memory_order_release);
+  auto job = make_job(3, {torch::tensor({1.0F})});
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+  auto holder = std::make_shared<int>(7);
+  job->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder, holder.get())});
+  job->set_output_tensors(
+      {torch::tensor({9.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  CaptureStream capture{std::cerr};
+  starpu_server::StarPUTaskRunnerTestAdapter::set_result_dispatcher(
+      runner_.get(), nullptr);
+  runner_->prepare_job_completion_callback(job);
+
+  auto outputs = std::vector<torch::Tensor>{torch::tensor({2.0F})};
+  job->get_on_complete()(outputs, 4.0);
+
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  EXPECT_TRUE(job->get_input_memory_holders().empty());
+  EXPECT_TRUE(job->get_output_tensors().empty());
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel,
+      "Missing ResultDispatcher in terminal completion path; completion "
+      "counter may be inconsistent");
+  EXPECT_NE(logs.find(expected), std::string::npos);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackLogsAndCleansPayloadOnStdException)
+{
+  completed_jobs_.store(0, std::memory_order_release);
+  auto job = make_job(4, {torch::tensor({1.0F})});
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+  auto holder = std::make_shared<int>(9);
+  job->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder, holder.get())});
+  job->set_output_tensors(
+      {torch::tensor({5.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::ResultDispatcher::PrepareJobCompletionCallbackTestHooks hooks;
+  hooks.before_dispatch = []() {
+    throw std::runtime_error("forced std completion exception");
+  };
+  PrepareJobCompletionCallbackHooksGuard guard{std::move(hooks)};
+
+  CaptureStream capture{std::cerr};
+  runner_->prepare_job_completion_callback(job);
+  auto outputs = std::vector<torch::Tensor>{torch::tensor({2.0F})};
+  job->get_on_complete()(outputs, 3.0);
+
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  EXPECT_TRUE(job->get_input_memory_holders().empty());
+  EXPECT_TRUE(job->get_output_tensors().empty());
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel,
+      "Unhandled exception in terminal completion path: forced std completion "
+      "exception");
+  EXPECT_NE(logs.find(expected), std::string::npos);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackLogsAndCleansPayloadOnUnknownException)
+{
+  completed_jobs_.store(0, std::memory_order_release);
+  auto job = make_job(5, {torch::tensor({1.0F})});
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+  auto holder = std::make_shared<int>(11);
+  job->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder, holder.get())});
+  job->set_output_tensors(
+      {torch::tensor({6.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  starpu_server::ResultDispatcher::PrepareJobCompletionCallbackTestHooks hooks;
+  hooks.before_dispatch = []() { throw 42; };
+  PrepareJobCompletionCallbackHooksGuard guard{std::move(hooks)};
+
+  CaptureStream capture{std::cerr};
+  runner_->prepare_job_completion_callback(job);
+  auto outputs = std::vector<torch::Tensor>{torch::tensor({2.0F})};
+  job->get_on_complete()(outputs, 3.0);
+
+  EXPECT_FALSE(callback_invoked);
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  EXPECT_TRUE(job->get_input_memory_holders().empty());
+  EXPECT_TRUE(job->get_output_tensors().empty());
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
+
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel, "Unhandled non-std exception in terminal completion path");
+  EXPECT_NE(logs.find(expected), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, LogJobTimingsComputesComponents)

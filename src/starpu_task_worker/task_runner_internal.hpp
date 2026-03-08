@@ -151,6 +151,10 @@ auto resolve_batch_size_for_job(
     const RuntimeConfig* opts,
     const std::shared_ptr<InferenceJob>& job) -> int64_t;
 
+void batch_collector_set_after_build_job_hook(
+    std::function<void(std::shared_ptr<InferenceJob>&)> hook);
+void batch_collector_reset_after_build_job_hook();
+
 auto cuda_copy_batch_create(bool enable) -> void*;
 void cuda_copy_batch_destroy(void* batch);
 auto cuda_copy_batch_enqueue(
@@ -190,11 +194,18 @@ auto batch_collector_should_hold_job(
     const std::shared_ptr<InferenceJob>& candidate,
     const std::shared_ptr<InferenceJob>& reference,
     const std::optional<int>& target_worker) -> bool;
+auto batch_collector_is_batching_done(const BatchCollector* collector) -> bool;
+auto batch_collector_should_abort_inflight_wait(
+    const BatchCollector* collector) -> bool;
 void batch_collector_disable_prepared_job_sync(BatchCollector* collector);
 void batch_collector_set_queue(
     BatchCollector* collector, InferenceQueue* queue);
 auto batch_collector_get_queue(const BatchCollector* collector)
     -> InferenceQueue*;
+void batch_collector_set_batching_done_ptr(
+    BatchCollector* collector, bool* batching_done);
+void batch_collector_set_batching_done_value(
+    BatchCollector* collector, bool batching_done);
 void batch_collector_set_pending_job(
     BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
 }  // namespace testing

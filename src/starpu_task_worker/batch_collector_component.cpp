@@ -17,6 +17,21 @@ namespace starpu_server {
 
 using clock = task_runner_internal::Clock;
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace {
+struct BatchingLoopTestHooks {
+  std::function<void(std::shared_ptr<InferenceJob>&)> after_build_job;
+};
+
+auto
+batching_loop_test_hooks() -> BatchingLoopTestHooks&
+{
+  static BatchingLoopTestHooks hooks{};
+  return hooks;
+}
+}  // namespace
+#endif  // SONAR_IGNORE_END
+
 BatchCollector::BatchCollector(
     InferenceQueue* queue, const RuntimeConfig* opts, StarPUSetup* starpu,
     std::shared_ptr<InferenceJob>* pending_job,
@@ -598,6 +613,12 @@ BatchCollector::batching_loop()
 
     auto jobs = collect_batch(job);
     job = maybe_build_batched_job(jobs);
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    auto& test_hooks = batching_loop_test_hooks();
+    if (test_hooks.after_build_job) {
+      test_hooks.after_build_job(job);
+    }
+#endif  // SONAR_IGNORE_END
     if (!job) {
       continue;
     }
@@ -675,6 +696,19 @@ batch_collector_should_hold_job(
   return BatchCollector::should_hold_job(candidate, reference, target_worker);
 }
 
+auto
+batch_collector_is_batching_done(const BatchCollector* collector) -> bool
+{
+  return collector != nullptr ? collector->is_batching_done() : false;
+}
+
+auto
+batch_collector_should_abort_inflight_wait(const BatchCollector* collector)
+    -> bool
+{
+  return collector != nullptr ? collector->should_abort_inflight_wait() : false;
+}
+
 void
 batch_collector_disable_prepared_job_sync(BatchCollector* collector)
 {
@@ -702,6 +736,26 @@ batch_collector_get_queue(const BatchCollector* collector) -> InferenceQueue*
 }
 
 void
+batch_collector_set_batching_done_ptr(
+    BatchCollector* collector, bool* batching_done)
+{
+  if (collector == nullptr) {
+    return;
+  }
+  collector->batching_done_ = batching_done;
+}
+
+void
+batch_collector_set_batching_done_value(
+    BatchCollector* collector, bool batching_done)
+{
+  if (collector == nullptr || collector->batching_done_ == nullptr) {
+    return;
+  }
+  *collector->batching_done_ = batching_done;
+}
+
+void
 batch_collector_set_pending_job(
     BatchCollector* collector, const std::shared_ptr<InferenceJob>& job)
 {
@@ -709,6 +763,19 @@ batch_collector_set_pending_job(
     return;
   }
   *collector->pending_job_ = job;
+}
+
+void
+batch_collector_set_after_build_job_hook(
+    std::function<void(std::shared_ptr<InferenceJob>&)> hook)
+{
+  batching_loop_test_hooks().after_build_job = std::move(hook);
+}
+
+void
+batch_collector_reset_after_build_job_hook()
+{
+  batching_loop_test_hooks().after_build_job = {};
 }
 
 }  // namespace task_runner_internal::testing
