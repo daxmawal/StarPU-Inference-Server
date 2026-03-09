@@ -36,7 +36,6 @@ mapfile -t support_include_files < <(
 expected_support_include_files=(
   "src/grpc/server/inference_service.cpp"
   "src/grpc/server/server_main.cpp"
-  "src/grpc/server/server_main_trace_plot_runtime.hpp"
   "src/monitoring/metrics.cpp"
   "src/utils/batching_trace_logger.cpp"
 )

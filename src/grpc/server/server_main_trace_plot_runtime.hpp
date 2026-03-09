@@ -5,44 +5,90 @@ constexpr int kSignalExitCodeOffset = 128;
 constexpr int kExecFailedExitCode = 127;
 constexpr int kPlotScriptSearchDepth = 6;
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-#include "support/grpc/server/server_main_python_test_overrides.hpp"
-#endif  // SONAR_IGNORE_END
+enum class WaitPidState : std::uint8_t { Exited, StillRunning, Error };
+
+struct WaitPidResult {
+  WaitPidState state = WaitPidState::Error;
+  std::optional<int> exit_code;
+};
+
+enum class WaitOutcome : std::uint8_t { Exited, TimedOut, Error };
+
+struct WaitOutcomeResult {
+  WaitOutcome outcome = WaitOutcome::Error;
+  std::optional<int> exit_code;
+};
+
+using ResolvePythonCandidatesOverrideForTestFn =
+    std::vector<std::filesystem::path> (*)();
+using ResolvePythonIsRegularFileOverrideForTestFn =
+    bool (*)(const std::filesystem::path&, std::error_code&);
+using WaitPidNoHangOverrideForTestFn = pid_t (*)(pid_t, int*, int);
+using WaitPidBlockingOverrideForTestFn = pid_t (*)(pid_t, int*, int);
+using WaitForPlotProcessWaitOverrideForTestFn =
+    WaitOutcomeResult (*)(pid_t, std::chrono::steady_clock::duration);
+using TerminateAndWaitOverrideForTestFn = std::optional<int> (*)(pid_t);
+using RunPlotScriptOverrideForTestFn = std::optional<int> (*)(
+    const std::filesystem::path&, const std::filesystem::path&,
+    const std::filesystem::path&);
+using RunPlotScriptForkOverrideForTestFn = pid_t (*)();
+using LocatePlotScriptOverrideForTestFn =
+    std::optional<std::filesystem::path> (*)(
+        const starpu_server::RuntimeConfig&);
+using TraceSummaryFilePathOverrideForTestFn =
+    std::optional<std::filesystem::path> (*)();
+using CandidatePlotScriptsReadSymlinkOverrideForTestFn =
+    std::filesystem::path (*)(const std::filesystem::path&, std::error_code&);
+using LocatePlotScriptCandidatesOverrideForTestFn =
+    std::vector<std::filesystem::path> (*)();
+
+struct TracePlotRuntimeHooks {
+  ResolvePythonCandidatesOverrideForTestFn resolve_python_candidates = nullptr;
+  ResolvePythonIsRegularFileOverrideForTestFn resolve_python_is_regular_file =
+      nullptr;
+  WaitPidNoHangOverrideForTestFn waitpid_nohang = nullptr;
+  WaitPidBlockingOverrideForTestFn waitpid_blocking = nullptr;
+  WaitForPlotProcessWaitOverrideForTestFn wait_for_plot_process_wait = nullptr;
+  TerminateAndWaitOverrideForTestFn terminate_and_wait = nullptr;
+  RunPlotScriptOverrideForTestFn run_plot_script = nullptr;
+  RunPlotScriptForkOverrideForTestFn run_plot_script_fork = nullptr;
+  LocatePlotScriptOverrideForTestFn locate_plot_script = nullptr;
+  TraceSummaryFilePathOverrideForTestFn trace_summary_file_path = nullptr;
+  CandidatePlotScriptsReadSymlinkOverrideForTestFn
+      candidate_plot_scripts_read_symlink = nullptr;
+  LocatePlotScriptCandidatesOverrideForTestFn locate_plot_script_candidates =
+      nullptr;
+};
 
 auto
 resolve_python_candidates_for_runtime(
     std::span<const std::filesystem::path> default_candidates,
-    std::vector<std::filesystem::path>& override_candidates_storage)
+    std::vector<std::filesystem::path>& override_candidates_storage,
+    const TracePlotRuntimeHooks* hooks = nullptr)
     -> std::span<const std::filesystem::path>
 {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = resolve_python_candidates_override_for_test();
-      override_fn != nullptr) {
-    override_candidates_storage = override_fn();
+  if (hooks != nullptr && hooks->resolve_python_candidates != nullptr) {
+    override_candidates_storage = hooks->resolve_python_candidates();
     return override_candidates_storage;
   }
-#else
   (void)override_candidates_storage;
-#endif  // SONAR_IGNORE_END
   return default_candidates;
 }
 
 auto
 resolve_python_is_regular_file_for_runtime(
-    const std::filesystem::path& candidate, std::error_code& status_ec) -> bool
+    const std::filesystem::path& candidate, std::error_code& status_ec,
+    const TracePlotRuntimeHooks* hooks = nullptr) -> bool
 {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn =
-          resolve_python_is_regular_file_override_for_test();
-      override_fn != nullptr) {
-    return override_fn(candidate, status_ec);
+  if (hooks != nullptr && hooks->resolve_python_is_regular_file != nullptr) {
+    return hooks->resolve_python_is_regular_file(candidate, status_ec);
   }
-#endif  // SONAR_IGNORE_END
   return std::filesystem::is_regular_file(candidate, status_ec);
 }
 
 auto
-resolve_python_executable() -> std::optional<std::filesystem::path>
+resolve_python_executable(const TracePlotRuntimeHooks* hooks = nullptr)
+    -> std::optional<std::filesystem::path>
 {
   static const std::array<std::filesystem::path, 3> kDefaultCandidates = {
       "/usr/bin/python3",
@@ -52,12 +98,12 @@ resolve_python_executable() -> std::optional<std::filesystem::path>
 
   std::vector<std::filesystem::path> override_candidates_storage;
   const auto candidates = resolve_python_candidates_for_runtime(
-      kDefaultCandidates, override_candidates_storage);
+      kDefaultCandidates, override_candidates_storage, hooks);
 
   for (const auto& candidate : candidates) {
     std::error_code status_ec;
     const bool is_regular =
-        resolve_python_is_regular_file_for_runtime(candidate, status_ec);
+        resolve_python_is_regular_file_for_runtime(candidate, status_ec, hooks);
     if (!is_regular || status_ec) {
       continue;
     }
@@ -87,40 +133,25 @@ log_waitpid_error()
       "Failed to wait for plot generation process: {}", std::strerror(errno)));
 }
 
-enum class WaitPidState : std::uint8_t { Exited, StillRunning, Error };
-
-struct WaitPidResult {
-  WaitPidState state = WaitPidState::Error;
-  std::optional<int> exit_code;
-};
-
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    WaitPidNoHangOverrideForTestFn, waitpid_nohang_override_for_test,
-    pid_t (*)(pid_t, int*, int))
-#endif  // SONAR_IGNORE_STOP
-
 auto
-read_waitpid_nohang(pid_t pid, int* status, int options) -> pid_t
+read_waitpid_nohang(
+    pid_t pid, int* status, int options,
+    const TracePlotRuntimeHooks* hooks = nullptr) -> pid_t
 {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  return ::starpu_server::testing::server_main::detail::call_override_or(
-      waitpid_nohang_override_for_test,
-      [](pid_t child_pid, int* child_status, int wait_options) {
-        return ::waitpid(child_pid, child_status, wait_options);
-      },
-      pid, status, options);
-#else
+  if (hooks != nullptr && hooks->waitpid_nohang != nullptr) {
+    return hooks->waitpid_nohang(pid, status, options);
+  }
   return ::waitpid(pid, status, options);
-#endif  // SONAR_IGNORE_STOP
 }
 
 auto
-waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
+waitpid_nohang(
+    pid_t pid, int& status,
+    const TracePlotRuntimeHooks* hooks = nullptr) -> WaitPidResult
 {
   using enum WaitPidState;
   while (true) {
-    const pid_t result = read_waitpid_nohang(pid, &status, WNOHANG);
+    const pid_t result = read_waitpid_nohang(pid, &status, WNOHANG, hooks);
     if (result == pid) {
       return {Exited, wait_status_to_exit_code(status)};
     }
@@ -135,44 +166,28 @@ waitpid_nohang(pid_t pid, int& status) -> WaitPidResult
   }
 }
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    WaitPidBlockingOverrideForTestFn, waitpid_blocking_override_for_test,
-    pid_t (*)(pid_t, int*, int))
-#endif  // SONAR_IGNORE_STOP
-
 auto
-read_waitpid_blocking(pid_t pid, int* status) -> pid_t
+read_waitpid_blocking(
+    pid_t pid, int* status,
+    const TracePlotRuntimeHooks* hooks = nullptr) -> pid_t
 {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  return ::starpu_server::testing::server_main::detail::call_override_or(
-      waitpid_blocking_override_for_test,
-      [](pid_t child_pid, int* child_status, int wait_options) {
-        return ::waitpid(child_pid, child_status, wait_options);
-      },
-      pid, status, 0);
-#else
+  if (hooks != nullptr && hooks->waitpid_blocking != nullptr) {
+    return hooks->waitpid_blocking(pid, status, 0);
+  }
   return ::waitpid(pid, status, 0);
-#endif  // SONAR_IGNORE_STOP
 }
-
-enum class WaitOutcome : std::uint8_t { Exited, TimedOut, Error };
-
-struct WaitOutcomeResult {
-  WaitOutcome outcome = WaitOutcome::Error;
-  std::optional<int> exit_code;
-};
 
 auto
 wait_for_exit_with_timeout(
-    pid_t pid, std::chrono::steady_clock::duration timeout) -> WaitOutcomeResult
+    pid_t pid, std::chrono::steady_clock::duration timeout,
+    const TracePlotRuntimeHooks* hooks = nullptr) -> WaitOutcomeResult
 {
   const auto deadline = (timeout == std::chrono::steady_clock::duration::zero())
                             ? std::chrono::steady_clock::time_point::max()
                             : std::chrono::steady_clock::now() + timeout;
   int status = 0;
   while (true) {
-    const auto wait_result = waitpid_nohang(pid, status);
+    const auto wait_result = waitpid_nohang(pid, status, hooks);
     if (wait_result.state == WaitPidState::Exited) {
       return {WaitOutcome::Exited, wait_result.exit_code};
     }
@@ -187,11 +202,12 @@ wait_for_exit_with_timeout(
 }
 
 auto
-wait_for_exit_blocking(pid_t pid) -> std::optional<int>
+wait_for_exit_blocking(pid_t pid, const TracePlotRuntimeHooks* hooks = nullptr)
+    -> std::optional<int>
 {
   int status = 0;
   while (true) {
-    const pid_t result = read_waitpid_blocking(pid, &status);
+    const pid_t result = read_waitpid_blocking(pid, &status, hooks);
     if (result == pid) {
       return wait_status_to_exit_code(status);
     }
@@ -206,12 +222,13 @@ wait_for_exit_blocking(pid_t pid) -> std::optional<int>
 }
 
 auto
-terminate_and_wait(pid_t pid) -> std::optional<int>
+terminate_and_wait(pid_t pid, const TracePlotRuntimeHooks* hooks = nullptr)
+    -> std::optional<int>
 {
   starpu_server::log_warning("Plot generation timed out; terminating python3.");
   (void)::kill(pid, SIGTERM);
   const auto term_result =
-      wait_for_exit_with_timeout(pid, kPlotScriptTerminateTimeout);
+      wait_for_exit_with_timeout(pid, kPlotScriptTerminateTimeout, hooks);
   if (term_result.outcome == WaitOutcome::Exited) {
     return term_result.exit_code;
   }
@@ -219,82 +236,41 @@ terminate_and_wait(pid_t pid) -> std::optional<int>
     return std::nullopt;
   }
   (void)::kill(pid, SIGKILL);
-  return wait_for_exit_blocking(pid);
+  return wait_for_exit_blocking(pid, hooks);
 }
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    WaitForPlotProcessWaitOverrideForTestFn,
-    wait_for_plot_process_wait_override_for_test,
-    WaitOutcomeResult (*)(pid_t, std::chrono::steady_clock::duration))
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    TerminateAndWaitOverrideForTestFn, terminate_and_wait_override_for_test,
-    std::optional<int> (*)(pid_t))
-#endif  // SONAR_IGNORE_STOP
-
 auto
-wait_for_plot_process(pid_t pid) -> std::optional<int>
+wait_for_plot_process(pid_t pid, const TracePlotRuntimeHooks* hooks = nullptr)
+    -> std::optional<int>
 {
-  const auto result = [&]() {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    return ::starpu_server::testing::server_main::detail::call_override_or(
-        wait_for_plot_process_wait_override_for_test,
-        [](pid_t child_pid, std::chrono::steady_clock::duration timeout) {
-          return wait_for_exit_with_timeout(child_pid, timeout);
-        },
-        pid, kPlotScriptTimeout);
-#else
-    return wait_for_exit_with_timeout(pid, kPlotScriptTimeout);
-#endif  // SONAR_IGNORE_STOP
-  }();
+  const auto result =
+      (hooks != nullptr && hooks->wait_for_plot_process_wait != nullptr)
+          ? hooks->wait_for_plot_process_wait(pid, kPlotScriptTimeout)
+          : wait_for_exit_with_timeout(pid, kPlotScriptTimeout, hooks);
   if (result.outcome == WaitOutcome::Exited) {
     return result.exit_code;
   }
   if (result.outcome == WaitOutcome::Error) {
     return std::nullopt;
   }
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  return ::starpu_server::testing::server_main::detail::call_override_or(
-      terminate_and_wait_override_for_test,
-      [](pid_t child_pid) { return terminate_and_wait(child_pid); }, pid);
-#else
-  return terminate_and_wait(pid);
-#endif  // SONAR_IGNORE_STOP
+  if (hooks != nullptr && hooks->terminate_and_wait != nullptr) {
+    return hooks->terminate_and_wait(pid);
+  }
+  return terminate_and_wait(pid, hooks);
 }
-
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    RunPlotScriptOverrideForTestFn, run_plot_script_override_for_test,
-    std::optional<int> (*)(
-        const std::filesystem::path&, const std::filesystem::path&,
-        const std::filesystem::path&))
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    RunPlotScriptForkOverrideForTestFn, run_plot_script_fork_override_for_test,
-    pid_t (*)())
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    LocatePlotScriptOverrideForTestFn, locate_plot_script_override_for_test,
-    std::optional<std::filesystem::path> (*)(
-        const starpu_server::RuntimeConfig&))
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    TraceSummaryFilePathOverrideForTestFn,
-    trace_summary_file_path_override_for_test,
-    std::optional<std::filesystem::path> (*)())
-#endif  // SONAR_IGNORE_STOP
 
 auto
 run_plot_script(
     const std::filesystem::path& script_path,
     const std::filesystem::path& summary_path,
-    const std::filesystem::path& output_path) -> std::optional<int>
+    const std::filesystem::path& output_path,
+    const TracePlotRuntimeHooks* hooks = nullptr) -> std::optional<int>
 {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = run_plot_script_override_for_test();
-      override_fn != nullptr) {
-    return override_fn(script_path, summary_path, output_path);
+  if (hooks != nullptr && hooks->run_plot_script != nullptr) {
+    return hooks->run_plot_script(script_path, summary_path, output_path);
   }
-#endif  // SONAR_IGNORE_STOP
 
-  const auto python_path = resolve_python_executable();
+  const auto python_path = resolve_python_executable(hooks);
   if (!python_path) {
     starpu_server::log_warning(
         "python3 was not found in the allowlist; skipping plot generation.");
@@ -313,14 +289,9 @@ run_plot_script(
   }
   argv.push_back(nullptr);
 
-  const pid_t pid = [&]() {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    return ::starpu_server::testing::server_main::detail::call_override_or(
-        run_plot_script_fork_override_for_test, []() { return fork(); });
-#else
-    return fork();
-#endif  // SONAR_IGNORE_STOP
-  }();
+  const pid_t pid = (hooks != nullptr && hooks->run_plot_script_fork != nullptr)
+                        ? hooks->run_plot_script_fork()
+                        : fork();
   if (pid < 0) {
     starpu_server::log_warning(std::format(
         "Failed to launch python3 for plot generation: {}",
@@ -332,44 +303,29 @@ run_plot_script(
     _exit(kExecFailedExitCode);
   }
 
-  return wait_for_plot_process(pid);
+  return wait_for_plot_process(pid, hooks);
 }
-
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    CandidatePlotScriptsReadSymlinkOverrideForTestFn,
-    candidate_plot_scripts_read_symlink_override_for_test,
-    std::filesystem::path (*)(const std::filesystem::path&, std::error_code&))
-STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
-    LocatePlotScriptCandidatesOverrideForTestFn,
-    locate_plot_script_candidates_override_for_test,
-    std::vector<std::filesystem::path> (*)())
-#endif  // SONAR_IGNORE_STOP
 
 auto
 read_symlink_for_candidate_plot_scripts(
-    const std::filesystem::path& path,
-    std::error_code& ec) -> std::filesystem::path
+    const std::filesystem::path& path, std::error_code& ec,
+    const TracePlotRuntimeHooks* hooks = nullptr) -> std::filesystem::path
 {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  return ::starpu_server::testing::server_main::detail::call_override_or(
-      candidate_plot_scripts_read_symlink_override_for_test,
-      [](const std::filesystem::path& candidate, std::error_code& code) {
-        return std::filesystem::read_symlink(candidate, code);
-      },
-      path, ec);
-#else
+  if (hooks != nullptr &&
+      hooks->candidate_plot_scripts_read_symlink != nullptr) {
+    return hooks->candidate_plot_scripts_read_symlink(path, ec);
+  }
   return std::filesystem::read_symlink(path, ec);
-#endif  // SONAR_IGNORE_STOP
 }
 
 auto
-candidate_plot_scripts() -> std::vector<std::filesystem::path>
+candidate_plot_scripts(const TracePlotRuntimeHooks* hooks = nullptr)
+    -> std::vector<std::filesystem::path>
 {
   std::vector<std::filesystem::path> candidates;
   std::error_code exe_ec;
   const auto exe_path =
-      read_symlink_for_candidate_plot_scripts("/proc/self/exe", exe_ec);
+      read_symlink_for_candidate_plot_scripts("/proc/self/exe", exe_ec, hooks);
   if (exe_ec) {
     return candidates;
   }
@@ -385,25 +341,19 @@ candidate_plot_scripts() -> std::vector<std::filesystem::path>
 }
 
 auto
-locate_plot_script(const starpu_server::RuntimeConfig& opts)
+locate_plot_script(
+    const starpu_server::RuntimeConfig& opts,
+    const TracePlotRuntimeHooks* hooks = nullptr)
     -> std::optional<std::filesystem::path>
 {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  if (const auto override_fn = locate_plot_script_override_for_test();
-      override_fn != nullptr) {
-    return override_fn(opts);
+  if (hooks != nullptr && hooks->locate_plot_script != nullptr) {
+    return hooks->locate_plot_script(opts);
   }
-#endif  // SONAR_IGNORE_STOP
 
-  const auto candidates = [&]() {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-    return ::starpu_server::testing::server_main::detail::call_override_or(
-        locate_plot_script_candidates_override_for_test,
-        []() { return candidate_plot_scripts(); });
-#else
-    return candidate_plot_scripts();
-#endif  // SONAR_IGNORE_STOP
-  }();
+  const auto candidates =
+      (hooks != nullptr && hooks->locate_plot_script_candidates != nullptr)
+          ? hooks->locate_plot_script_candidates()
+          : candidate_plot_scripts(hooks);
 
   for (const auto& candidate : candidates) {
     if (candidate.empty()) {
@@ -444,24 +394,21 @@ plots_output_path(const std::filesystem::path& summary_path)
 }
 
 void
-run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
+run_trace_plots_if_enabled(
+    const starpu_server::RuntimeConfig& opts,
+    const TracePlotRuntimeHooks* hooks = nullptr)
 {
   if (!opts.batching.trace_enabled) {
     return;
   }
 
   std::optional<std::filesystem::path> summary_path_opt;
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  summary_path_opt =
-      ::starpu_server::testing::server_main::detail::call_override_or(
-          trace_summary_file_path_override_for_test, []() {
-            const auto& tracer = starpu_server::BatchingTraceLogger::instance();
-            return tracer.summary_file_path();
-          });
-#else
-  const auto& tracer = starpu_server::BatchingTraceLogger::instance();
-  summary_path_opt = tracer.summary_file_path();
-#endif  // SONAR_IGNORE_STOP
+  if (hooks != nullptr && hooks->trace_summary_file_path != nullptr) {
+    summary_path_opt = hooks->trace_summary_file_path();
+  } else {
+    const auto& tracer = starpu_server::BatchingTraceLogger::instance();
+    summary_path_opt = tracer.summary_file_path();
+  }
   if (!summary_path_opt) {
     starpu_server::log_warning(
         "Tracing was enabled but no trace.csv was produced; "
@@ -478,7 +425,7 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
     return;
   }
 
-  const auto script_path = locate_plot_script(opts);
+  const auto script_path = locate_plot_script(opts, hooks);
   if (!script_path) {
     starpu_server::log_warning(
         "Unable to locate scripts/plot_batch_summary.py; skipping plot "
@@ -488,7 +435,7 @@ run_trace_plots_if_enabled(const starpu_server::RuntimeConfig& opts)
 
   const auto output_path = plots_output_path(summary_path);
   const auto exit_code =
-      run_plot_script(*script_path, summary_path, output_path);
+      run_plot_script(*script_path, summary_path, output_path, hooks);
   if (!exit_code.has_value()) {
     starpu_server::log_warning(
         "Failed to generate batching latency plots; plot script did not "

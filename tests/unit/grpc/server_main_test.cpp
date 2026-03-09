@@ -399,18 +399,21 @@ struct ScopedResolvePythonExecutableOverrides {
       ResolvePythonExecutableOverrideState& state) noexcept
   {
     resolve_python_executable_override_state() = &state;
-    resolve_python_candidates_override_for_test() =
-        resolve_python_candidates_override_stub;
-    resolve_python_is_regular_file_override_for_test() =
+    hooks_.resolve_python_candidates = resolve_python_candidates_override_stub;
+    hooks_.resolve_python_is_regular_file =
         resolve_python_is_regular_file_override_stub;
   }
 
   ~ScopedResolvePythonExecutableOverrides()
   {
-    resolve_python_is_regular_file_override_for_test() = nullptr;
-    resolve_python_candidates_override_for_test() = nullptr;
     resolve_python_executable_override_state() = nullptr;
   }
+
+  auto hooks() noexcept -> TracePlotRuntimeHooks& { return hooks_; }
+  auto hooks() const noexcept -> const TracePlotRuntimeHooks& { return hooks_; }
+
+ private:
+  TracePlotRuntimeHooks hooks_{};
 };
 
 struct CandidatePlotScriptsReadSymlinkOverrideState {
@@ -449,15 +452,20 @@ struct ScopedCandidatePlotScriptsReadSymlinkOverride {
       CandidatePlotScriptsReadSymlinkOverrideState& state) noexcept
   {
     candidate_plot_scripts_read_symlink_override_state() = &state;
-    candidate_plot_scripts_read_symlink_override_for_test() =
+    hooks_.candidate_plot_scripts_read_symlink =
         candidate_plot_scripts_read_symlink_override_stub;
   }
 
   ~ScopedCandidatePlotScriptsReadSymlinkOverride()
   {
-    candidate_plot_scripts_read_symlink_override_for_test() = nullptr;
     candidate_plot_scripts_read_symlink_override_state() = nullptr;
   }
+
+  auto hooks() noexcept -> TracePlotRuntimeHooks& { return hooks_; }
+  auto hooks() const noexcept -> const TracePlotRuntimeHooks& { return hooks_; }
+
+ private:
+  TracePlotRuntimeHooks hooks_{};
 };
 
 struct LocatePlotScriptCandidatesOverrideState {
@@ -490,15 +498,20 @@ struct ScopedLocatePlotScriptCandidatesOverride {
       LocatePlotScriptCandidatesOverrideState& state) noexcept
   {
     locate_plot_script_candidates_override_state() = &state;
-    locate_plot_script_candidates_override_for_test() =
+    hooks_.locate_plot_script_candidates =
         locate_plot_script_candidates_override_stub;
   }
 
   ~ScopedLocatePlotScriptCandidatesOverride()
   {
-    locate_plot_script_candidates_override_for_test() = nullptr;
     locate_plot_script_candidates_override_state() = nullptr;
   }
+
+  auto hooks() noexcept -> TracePlotRuntimeHooks& { return hooks_; }
+  auto hooks() const noexcept -> const TracePlotRuntimeHooks& { return hooks_; }
+
+ private:
+  TracePlotRuntimeHooks hooks_{};
 };
 
 struct WaitForSignalNotificationReadOverrideState {
@@ -610,14 +623,16 @@ struct ScopedWaitPidNoHangOverride {
       WaitPidNoHangOverrideState& state) noexcept
   {
     waitpid_nohang_override_state() = &state;
-    waitpid_nohang_override_for_test() = waitpid_nohang_override_stub;
+    hooks_.waitpid_nohang = waitpid_nohang_override_stub;
   }
 
-  ~ScopedWaitPidNoHangOverride()
-  {
-    waitpid_nohang_override_for_test() = nullptr;
-    waitpid_nohang_override_state() = nullptr;
-  }
+  ~ScopedWaitPidNoHangOverride() { waitpid_nohang_override_state() = nullptr; }
+
+  auto hooks() noexcept -> TracePlotRuntimeHooks& { return hooks_; }
+  auto hooks() const noexcept -> const TracePlotRuntimeHooks& { return hooks_; }
+
+ private:
+  TracePlotRuntimeHooks hooks_{};
 };
 
 struct WaitPidBlockingOverrideState {
@@ -674,14 +689,19 @@ struct ScopedWaitPidBlockingOverride {
       WaitPidBlockingOverrideState& state) noexcept
   {
     waitpid_blocking_override_state() = &state;
-    waitpid_blocking_override_for_test() = waitpid_blocking_override_stub;
+    hooks_.waitpid_blocking = waitpid_blocking_override_stub;
   }
 
   ~ScopedWaitPidBlockingOverride()
   {
-    waitpid_blocking_override_for_test() = nullptr;
     waitpid_blocking_override_state() = nullptr;
   }
+
+  auto hooks() noexcept -> TracePlotRuntimeHooks& { return hooks_; }
+  auto hooks() const noexcept -> const TracePlotRuntimeHooks& { return hooks_; }
+
+ private:
+  TracePlotRuntimeHooks hooks_{};
 };
 
 struct WaitForPlotProcessOverrideState {
@@ -732,17 +752,21 @@ struct ScopedWaitForPlotProcessOverrides {
       WaitForPlotProcessOverrideState& state) noexcept
   {
     wait_for_plot_process_override_state() = &state;
-    wait_for_plot_process_wait_override_for_test() =
+    hooks_.wait_for_plot_process_wait =
         wait_for_plot_process_wait_override_stub;
-    terminate_and_wait_override_for_test() = terminate_and_wait_override_stub;
+    hooks_.terminate_and_wait = terminate_and_wait_override_stub;
   }
 
   ~ScopedWaitForPlotProcessOverrides()
   {
-    terminate_and_wait_override_for_test() = nullptr;
-    wait_for_plot_process_wait_override_for_test() = nullptr;
     wait_for_plot_process_override_state() = nullptr;
   }
+
+  auto hooks() noexcept -> TracePlotRuntimeHooks& { return hooks_; }
+  auto hooks() const noexcept -> const TracePlotRuntimeHooks& { return hooks_; }
+
+ private:
+  TracePlotRuntimeHooks hooks_{};
 };
 
 struct RunPlotScriptForkOverrideState {
@@ -776,15 +800,19 @@ struct ScopedRunPlotScriptForkOverride {
       RunPlotScriptForkOverrideState& state) noexcept
   {
     run_plot_script_fork_override_state() = &state;
-    run_plot_script_fork_override_for_test() =
-        run_plot_script_fork_override_stub;
+    hooks_.run_plot_script_fork = run_plot_script_fork_override_stub;
   }
 
   ~ScopedRunPlotScriptForkOverride()
   {
-    run_plot_script_fork_override_for_test() = nullptr;
     run_plot_script_fork_override_state() = nullptr;
   }
+
+  auto hooks() noexcept -> TracePlotRuntimeHooks& { return hooks_; }
+  auto hooks() const noexcept -> const TracePlotRuntimeHooks& { return hooks_; }
+
+ private:
+  TracePlotRuntimeHooks hooks_{};
 };
 
 struct PlotScriptOverrideState {
@@ -850,20 +878,72 @@ struct ScopedPlotScriptOverrides {
   explicit ScopedPlotScriptOverrides(PlotScriptOverrideState& state) noexcept
   {
     plot_script_override_state() = &state;
-    trace_summary_file_path_override_for_test() =
-        trace_summary_file_path_override_stub;
-    locate_plot_script_override_for_test() = locate_plot_script_override_stub;
-    run_plot_script_override_for_test() = run_plot_script_override_stub;
+    hooks_.trace_summary_file_path = trace_summary_file_path_override_stub;
+    hooks_.locate_plot_script = locate_plot_script_override_stub;
+    hooks_.run_plot_script = run_plot_script_override_stub;
   }
 
-  ~ScopedPlotScriptOverrides()
-  {
-    run_plot_script_override_for_test() = nullptr;
-    locate_plot_script_override_for_test() = nullptr;
-    trace_summary_file_path_override_for_test() = nullptr;
-    plot_script_override_state() = nullptr;
-  }
+  ~ScopedPlotScriptOverrides() { plot_script_override_state() = nullptr; }
+
+  auto hooks() noexcept -> TracePlotRuntimeHooks& { return hooks_; }
+  auto hooks() const noexcept -> const TracePlotRuntimeHooks& { return hooks_; }
+
+ private:
+  TracePlotRuntimeHooks hooks_{};
 };
+
+auto
+merge_trace_plot_runtime_hooks(
+    std::initializer_list<const TracePlotRuntimeHooks*> hook_sets)
+    -> TracePlotRuntimeHooks
+{
+  TracePlotRuntimeHooks merged{};
+  for (const auto* hooks : hook_sets) {
+    if (hooks == nullptr) {
+      continue;
+    }
+    if (hooks->resolve_python_candidates != nullptr) {
+      merged.resolve_python_candidates = hooks->resolve_python_candidates;
+    }
+    if (hooks->resolve_python_is_regular_file != nullptr) {
+      merged.resolve_python_is_regular_file =
+          hooks->resolve_python_is_regular_file;
+    }
+    if (hooks->waitpid_nohang != nullptr) {
+      merged.waitpid_nohang = hooks->waitpid_nohang;
+    }
+    if (hooks->waitpid_blocking != nullptr) {
+      merged.waitpid_blocking = hooks->waitpid_blocking;
+    }
+    if (hooks->wait_for_plot_process_wait != nullptr) {
+      merged.wait_for_plot_process_wait = hooks->wait_for_plot_process_wait;
+    }
+    if (hooks->terminate_and_wait != nullptr) {
+      merged.terminate_and_wait = hooks->terminate_and_wait;
+    }
+    if (hooks->run_plot_script != nullptr) {
+      merged.run_plot_script = hooks->run_plot_script;
+    }
+    if (hooks->run_plot_script_fork != nullptr) {
+      merged.run_plot_script_fork = hooks->run_plot_script_fork;
+    }
+    if (hooks->locate_plot_script != nullptr) {
+      merged.locate_plot_script = hooks->locate_plot_script;
+    }
+    if (hooks->trace_summary_file_path != nullptr) {
+      merged.trace_summary_file_path = hooks->trace_summary_file_path;
+    }
+    if (hooks->candidate_plot_scripts_read_symlink != nullptr) {
+      merged.candidate_plot_scripts_read_symlink =
+          hooks->candidate_plot_scripts_read_symlink;
+    }
+    if (hooks->locate_plot_script_candidates != nullptr) {
+      merged.locate_plot_script_candidates =
+          hooks->locate_plot_script_candidates;
+    }
+  }
+  return merged;
+}
 
 using ModelPreparationTuple = std::tuple<
     torch::jit::script::Module, std::vector<torch::jit::script::Module>,
@@ -2484,42 +2564,43 @@ static_assert(
 static_assert(std::is_nothrow_invocable_r_v<
               WaitForSignalNotificationReadOverrideForTestFn&,
               decltype(wait_for_signal_notification_read_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              WaitPidNoHangOverrideForTestFn&,
-              decltype(waitpid_nohang_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              WaitPidBlockingOverrideForTestFn&,
-              decltype(waitpid_blocking_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              WaitForPlotProcessWaitOverrideForTestFn&,
-              decltype(wait_for_plot_process_wait_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              TerminateAndWaitOverrideForTestFn&,
-              decltype(terminate_and_wait_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              ResolvePythonCandidatesOverrideForTestFn&,
-              decltype(resolve_python_candidates_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              ResolvePythonIsRegularFileOverrideForTestFn&,
-              decltype(resolve_python_is_regular_file_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              CandidatePlotScriptsReadSymlinkOverrideForTestFn&,
-              decltype(candidate_plot_scripts_read_symlink_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              LocatePlotScriptCandidatesOverrideForTestFn&,
-              decltype(locate_plot_script_candidates_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              RunPlotScriptOverrideForTestFn&,
-              decltype(run_plot_script_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              RunPlotScriptForkOverrideForTestFn&,
-              decltype(run_plot_script_fork_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              LocatePlotScriptOverrideForTestFn&,
-              decltype(locate_plot_script_override_for_test)>);
-static_assert(std::is_nothrow_invocable_r_v<
-              TraceSummaryFilePathOverrideForTestFn&,
-              decltype(trace_summary_file_path_override_for_test)>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.waitpid_nohang),
+              WaitPidNoHangOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.waitpid_blocking),
+              WaitPidBlockingOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.wait_for_plot_process_wait),
+              WaitForPlotProcessWaitOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.terminate_and_wait),
+              TerminateAndWaitOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.resolve_python_candidates),
+              ResolvePythonCandidatesOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.resolve_python_is_regular_file),
+              ResolvePythonIsRegularFileOverrideForTestFn>);
+static_assert(
+    std::is_same_v<
+        decltype(TracePlotRuntimeHooks{}.candidate_plot_scripts_read_symlink),
+        CandidatePlotScriptsReadSymlinkOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.locate_plot_script_candidates),
+              LocatePlotScriptCandidatesOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.run_plot_script),
+              RunPlotScriptOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.run_plot_script_fork),
+              RunPlotScriptForkOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.locate_plot_script),
+              LocatePlotScriptOverrideForTestFn>);
+static_assert(std::is_same_v<
+              decltype(TracePlotRuntimeHooks{}.trace_summary_file_path),
+              TraceSummaryFilePathOverrideForTestFn>);
 static_assert(
     std::is_nothrow_invocable_r_v<
         std::remove_reference_t<
@@ -3753,7 +3834,7 @@ TEST(
   override_state.force_status_error = false;
   ScopedResolvePythonExecutableOverrides overrides(override_state);
 
-  const auto python_path = resolve_python_executable();
+  const auto python_path = resolve_python_executable(&overrides.hooks());
   EXPECT_FALSE(python_path.has_value());
   EXPECT_EQ(override_state.candidates_calls, 1);
   EXPECT_EQ(override_state.is_regular_file_calls, 2);
@@ -3770,7 +3851,7 @@ TEST(
   override_state.force_status_error = true;
   ScopedResolvePythonExecutableOverrides overrides(override_state);
 
-  const auto python_path = resolve_python_executable();
+  const auto python_path = resolve_python_executable(&overrides.hooks());
   EXPECT_FALSE(python_path.has_value());
   EXPECT_EQ(override_state.candidates_calls, 1);
   EXPECT_EQ(override_state.is_regular_file_calls, 1);
@@ -3789,7 +3870,7 @@ TEST(
   override_state.resolved_executable_path = "/tmp/unused";
   ScopedCandidatePlotScriptsReadSymlinkOverride override_guard(override_state);
 
-  const auto candidates = candidate_plot_scripts();
+  const auto candidates = candidate_plot_scripts(&override_guard.hooks());
 
   EXPECT_TRUE(candidates.empty());
   EXPECT_EQ(override_state.call_count, 1);
@@ -3805,7 +3886,7 @@ TEST(
   override_state.resolved_executable_path = "starpu_server";
   ScopedCandidatePlotScriptsReadSymlinkOverride override_guard(override_state);
 
-  const auto candidates = candidate_plot_scripts();
+  const auto candidates = candidate_plot_scripts(&override_guard.hooks());
 
   ASSERT_EQ(candidates.size(), 1U);
   EXPECT_EQ(candidates.front(), "scripts/plot_batch_summary.py");
@@ -3830,7 +3911,7 @@ TEST(ServerMainPlotScript, LocatePlotScriptSkipsEmptyCandidates)
   ScopedLocatePlotScriptCandidatesOverride override_guard(override_state);
 
   starpu_server::RuntimeConfig opts;
-  const auto located = locate_plot_script(opts);
+  const auto located = locate_plot_script(opts, &override_guard.hooks());
 
   ASSERT_TRUE(located.has_value());
   EXPECT_EQ(*located, script_path);
@@ -3860,7 +3941,7 @@ TEST(ServerMainPlotScript, LocatePlotScriptResolvesRelativeCandidateToAbsolute)
   ScopedLocatePlotScriptCandidatesOverride override_guard(override_state);
 
   starpu_server::RuntimeConfig opts;
-  const auto located = locate_plot_script(opts);
+  const auto located = locate_plot_script(opts, &override_guard.hooks());
 
   ASSERT_TRUE(located.has_value());
   EXPECT_EQ(*located, std::filesystem::absolute(relative_candidate));
@@ -3890,7 +3971,7 @@ TEST(
   ScopedLocatePlotScriptCandidatesOverride override_guard(override_state);
 
   starpu_server::RuntimeConfig opts;
-  const auto located = locate_plot_script(opts);
+  const auto located = locate_plot_script(opts, &override_guard.hooks());
 
   ASSERT_TRUE(located.has_value());
   EXPECT_EQ(*located, script_path);
@@ -3913,7 +3994,7 @@ TEST(
   ScopedLocatePlotScriptCandidatesOverride override_guard(override_state);
 
   starpu_server::RuntimeConfig opts;
-  const auto located = locate_plot_script(opts);
+  const auto located = locate_plot_script(opts, &override_guard.hooks());
 
   EXPECT_FALSE(located.has_value());
   EXPECT_EQ(override_state.call_count, 1);
@@ -3965,7 +4046,7 @@ TEST(ServerMainPlotPath, RunTracePlotsReturnsImmediatelyWhenTracingDisabled)
 
   OStreamCapture capture_err(std::cerr);
   OStreamCapture capture_out(std::cout);
-  run_trace_plots_if_enabled(opts);
+  run_trace_plots_if_enabled(opts, &overrides.hooks());
 
   EXPECT_EQ(override_state.summary_path_calls, 0);
   EXPECT_EQ(override_state.locate_calls, 0);
@@ -3979,10 +4060,6 @@ TEST(
     RunTracePlotsUsesTracerSummaryPathWhenSummaryOverrideIsUnset)
 {
   ScopedTraceLoggerReset trace_logger_reset;
-  trace_summary_file_path_override_for_test() = nullptr;
-  locate_plot_script_override_for_test() = nullptr;
-  run_plot_script_override_for_test() = nullptr;
-
   auto temp_directory =
       make_temp_test_directory("run_trace_plots_tracer_summary_path");
   const auto trace_path = temp_directory.path / "perfetto_trace.json";
@@ -4027,7 +4104,7 @@ TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenNoSummaryFileIsAvailable)
 
   OStreamCapture capture_err(std::cerr);
   OStreamCapture capture_out(std::cout);
-  run_trace_plots_if_enabled(opts);
+  run_trace_plots_if_enabled(opts, &overrides.hooks());
 
   EXPECT_EQ(override_state.summary_path_calls, 1);
   EXPECT_EQ(override_state.locate_calls, 0);
@@ -4058,7 +4135,7 @@ TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenSummaryFileIsMissing)
 
   OStreamCapture capture_err(std::cerr);
   OStreamCapture capture_out(std::cout);
-  run_trace_plots_if_enabled(opts);
+  run_trace_plots_if_enabled(opts, &overrides.hooks());
 
   EXPECT_EQ(override_state.summary_path_calls, 1);
   EXPECT_EQ(override_state.locate_calls, 0);
@@ -4095,7 +4172,7 @@ TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenPlotScriptCannotBeLocated)
 
   OStreamCapture capture_err(std::cerr);
   OStreamCapture capture_out(std::cout);
-  run_trace_plots_if_enabled(opts);
+  run_trace_plots_if_enabled(opts, &overrides.hooks());
 
   EXPECT_EQ(override_state.summary_path_calls, 1);
   EXPECT_EQ(override_state.locate_calls, 1);
@@ -4133,7 +4210,7 @@ TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenPlotScriptDidNotComplete)
 
   OStreamCapture capture_err(std::cerr);
   OStreamCapture capture_out(std::cout);
-  run_trace_plots_if_enabled(opts);
+  run_trace_plots_if_enabled(opts, &overrides.hooks());
 
   ASSERT_TRUE(override_state.locate_result.has_value());
   EXPECT_EQ(override_state.summary_path_calls, 1);
@@ -4182,7 +4259,7 @@ TEST(ServerMainPlotPath, RunTracePlotsWarnsWhenPlotScriptFails)
 
   OStreamCapture capture_err(std::cerr);
   OStreamCapture capture_out(std::cout);
-  run_trace_plots_if_enabled(opts);
+  run_trace_plots_if_enabled(opts, &overrides.hooks());
 
   EXPECT_EQ(override_state.summary_path_calls, 1);
   EXPECT_EQ(override_state.locate_calls, 1);
@@ -4221,7 +4298,7 @@ TEST(ServerMainPlotPath, RunTracePlotsLogsInfoWhenPlotScriptSucceeds)
 
   OStreamCapture capture_err(std::cerr);
   OStreamCapture capture_out(std::cout);
-  run_trace_plots_if_enabled(opts);
+  run_trace_plots_if_enabled(opts, &overrides.hooks());
 
   EXPECT_EQ(override_state.summary_path_calls, 1);
   EXPECT_EQ(override_state.locate_calls, 1);
@@ -4247,7 +4324,7 @@ TEST(ServerMainPlotProcess, WaitForPlotProcessReturnsNulloptOnWaitError)
   override_state.terminate_result = 99;
   ScopedWaitForPlotProcessOverrides override_guard(override_state);
 
-  const auto exit_code = wait_for_plot_process(4444);
+  const auto exit_code = wait_for_plot_process(4444, &override_guard.hooks());
 
   EXPECT_EQ(override_state.wait_calls, 1);
   EXPECT_EQ(override_state.wait_pid, 4444);
@@ -4264,7 +4341,7 @@ TEST(ServerMainPlotProcess, WaitForPlotProcessDelegatesToTerminateAndWait)
   override_state.terminate_result = 17;
   ScopedWaitForPlotProcessOverrides override_guard(override_state);
 
-  const auto exit_code = wait_for_plot_process(5555);
+  const auto exit_code = wait_for_plot_process(5555, &override_guard.hooks());
 
   EXPECT_EQ(override_state.wait_calls, 1);
   EXPECT_EQ(override_state.wait_pid, 5555);
@@ -4284,10 +4361,10 @@ TEST(
   WaitForPlotProcessOverrideState override_state;
   override_state.wait_result = {WaitOutcome::TimedOut, std::nullopt};
   ScopedWaitForPlotProcessOverrides override_guard(override_state);
-  terminate_and_wait_override_for_test() = nullptr;
+  override_guard.hooks().terminate_and_wait = nullptr;
 
   OStreamCapture capture_err(std::cerr);
-  const auto exit_code = wait_for_plot_process(pid);
+  const auto exit_code = wait_for_plot_process(pid, &override_guard.hooks());
 
   EXPECT_EQ(override_state.wait_calls, 1);
   EXPECT_EQ(override_state.wait_pid, pid);
@@ -4320,7 +4397,7 @@ TEST(ServerMainPlotProcess, WaitpidNohangRetriesWhenInterruptedBySignal)
   ScopedWaitPidNoHangOverride override_guard(override_state);
 
   int status = 123;
-  const auto result = waitpid_nohang(4242, status);
+  const auto result = waitpid_nohang(4242, status, &override_guard.hooks());
 
   EXPECT_EQ(override_state.call_count, 2);
   EXPECT_EQ(override_state.last_pid, 4242);
@@ -4340,7 +4417,7 @@ TEST(
 
   OStreamCapture capture_err(std::cerr);
   int status = 0;
-  const auto result = waitpid_nohang(999999, status);
+  const auto result = waitpid_nohang(999999, status, &override_guard.hooks());
 
   EXPECT_EQ(override_state.call_count, 1);
   EXPECT_EQ(override_state.last_pid, 999999);
@@ -4364,8 +4441,8 @@ TEST(
   ScopedWaitPidNoHangOverride override_guard(override_state);
 
   OStreamCapture capture_err(std::cerr);
-  const auto result =
-      wait_for_exit_with_timeout(13579, std::chrono::milliseconds(20));
+  const auto result = wait_for_exit_with_timeout(
+      13579, std::chrono::milliseconds(20), &override_guard.hooks());
 
   EXPECT_EQ(override_state.call_count, 1);
   EXPECT_EQ(override_state.last_pid, 13579);
@@ -4390,7 +4467,7 @@ TEST(ServerMainPlotProcess, WaitForExitBlockingRetriesWhenInterruptedBySignal)
   override_state.statuses = {0, exited_status};
   ScopedWaitPidBlockingOverride override_guard(override_state);
 
-  const auto exit_code = wait_for_exit_blocking(kPid);
+  const auto exit_code = wait_for_exit_blocking(kPid, &override_guard.hooks());
 
   EXPECT_EQ(override_state.call_count, 2);
   EXPECT_EQ(override_state.last_pid, kPid);
@@ -4409,7 +4486,7 @@ TEST(
   ScopedWaitPidBlockingOverride override_guard(override_state);
 
   OStreamCapture capture_err(std::cerr);
-  const auto exit_code = wait_for_exit_blocking(86420);
+  const auto exit_code = wait_for_exit_blocking(86420, &override_guard.hooks());
 
   EXPECT_EQ(override_state.call_count, 1);
   EXPECT_EQ(override_state.last_pid, 86420);
@@ -4469,7 +4546,7 @@ TEST(
   ScopedWaitPidNoHangOverride override_guard(override_state);
 
   OStreamCapture capture_err(std::cerr);
-  const auto exit_code = terminate_and_wait(kPid);
+  const auto exit_code = terminate_and_wait(kPid, &override_guard.hooks());
 
   EXPECT_EQ(override_state.call_count, 1);
   EXPECT_EQ(override_state.last_pid, kPid);
@@ -4491,7 +4568,7 @@ TEST(
   ScopedWaitPidNoHangOverride override_guard(override_state);
 
   OStreamCapture capture_err(std::cerr);
-  const auto exit_code = terminate_and_wait(27182);
+  const auto exit_code = terminate_and_wait(27182, &override_guard.hooks());
 
   EXPECT_EQ(override_state.call_count, 1);
   EXPECT_EQ(override_state.last_pid, 27182);
@@ -4527,7 +4604,7 @@ TEST(ServerMainPlotProcess, RunPlotScriptReturnsNulloptWhenPythonNotFound)
   OStreamCapture capture_err(std::cerr);
   const auto exit_code = run_plot_script(
       "/tmp/fake_plot_batch_summary.py", "/tmp/fake_summary.csv",
-      "/tmp/fake_output.png");
+      "/tmp/fake_output.png", &overrides.hooks());
 
   EXPECT_FALSE(exit_code.has_value());
   EXPECT_EQ(override_state.candidates_calls, 1);
@@ -4553,9 +4630,11 @@ TEST(ServerMainPlotProcess, RunPlotScriptReturnsNulloptWhenForkFails)
   ScopedRunPlotScriptForkOverride fork_override(fork_override_state);
 
   OStreamCapture capture_err(std::cerr);
+  const auto hooks = merge_trace_plot_runtime_hooks(
+      {&python_overrides.hooks(), &fork_override.hooks()});
   const auto exit_code = run_plot_script(
       "/tmp/fake_plot_batch_summary.py", "/tmp/fake_summary.csv",
-      "/tmp/fake_output.png");
+      "/tmp/fake_output.png", &hooks);
 
   EXPECT_FALSE(exit_code.has_value());
   EXPECT_EQ(python_override_state.candidates_calls, 1);
