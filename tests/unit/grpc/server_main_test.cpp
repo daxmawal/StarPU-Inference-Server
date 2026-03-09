@@ -2235,8 +2235,8 @@ TEST(ServerMainSchedulerResolution, UsesSchedulerFromStarpuEnvMap)
 
 TEST(ServerMainSchedulerResolution, UsesDefaultSchedulerWhenUnsetEverywhere)
 {
-  ScopedEnvironmentVariableUnsetGuard unset_scheduler_env(
-      std::string(starpu_server::kStarpuSchedulerEnvVar));
+  ScopedEnvironmentVariableUnsetGuard unset_scheduler_env{
+      std::string(starpu_server::kStarpuSchedulerEnvVar)};
   starpu_server::RuntimeConfig opts;
   opts.starpu_env.clear();
 
@@ -2257,9 +2257,7 @@ TEST(ServerMainWorkerTypeLabel, ReturnsCudaLabelForCudaWorker)
 
 TEST(ServerMainWorkerTypeLabel, ReturnsOtherLabelForUnknownWorkerType)
 {
-  constexpr auto unknown_worker_type =
-      static_cast<enum starpu_worker_archtype>(-12345);
-  EXPECT_EQ(worker_type_label(unknown_worker_type), "Other(-12345)");
+  EXPECT_EQ(worker_type_label(STARPU_OPENCL_WORKER), "Other(2)");
 }
 
 TEST(ServerMainCpuCoreRanges, ReturnsEmptyStringForEmptyInput)
