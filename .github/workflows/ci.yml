@@ -161,8 +161,20 @@ jobs:
           done
           npx --yes markdownlint-cli@0.43.0 '**/*.md' "${IGNORE_ARGS[@]}"
 
+  structural-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce source/test structure boundaries
+        run: ./scripts/ci_structural_guard.sh
+
   build:
-    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
     runs-on: self-hosted
 
     steps:
@@ -190,7 +202,8 @@ jobs:
           path: build/
 
   build-clang:
-    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
     runs-on: self-hosted
 
     steps:
@@ -222,7 +235,8 @@ jobs:
           path: build-clang/
 
   sanitizers:
-    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
     runs-on: self-hosted
     env:
       CUDA_VISIBLE_DEVICES: ""
@@ -262,7 +276,8 @@ jobs:
         shell: bash
 
   tsan:
-    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
     runs-on: self-hosted
     env:
       CUDA_VISIBLE_DEVICES: ""
