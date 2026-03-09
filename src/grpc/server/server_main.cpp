@@ -33,7 +33,6 @@
 #include "inference_service.hpp"
 #include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
-#include "server_main_override_slot.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
 #include "utils/batching_trace_logger.hpp"
@@ -41,6 +40,9 @@
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 #include "utils/runtime_config.hpp"
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+#include "support/grpc/server/server_main_override_slot.hpp"
+#endif  // SONAR_IGNORE_END
 
 #if defined(STARPU_TESTING)
 namespace starpu_server::testing::server_main {
