@@ -11,7 +11,7 @@
 #include "logger.hpp"
 #include "runtime_config.hpp"
 #if defined(STARPU_TESTING)
-#include "utils/batching_trace_logger_test_api.hpp"
+#include "support/utils/batching_trace_logger_test_api.hpp"
 #endif
 
 namespace starpu_server {

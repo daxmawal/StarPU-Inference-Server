@@ -19,9 +19,9 @@
 #include <string>
 #include <system_error>
 
-#include "grpc/server/inference_service_test_api.hpp"
 #include "monitoring/metrics.hpp"
-#include "monitoring/metrics_test_api.hpp"
+#include "support/grpc/server/inference_service_test_api.hpp"
+#include "support/monitoring/metrics_test_api.hpp"
 #include "test_constants.hpp"
 #include "test_inference_service.hpp"
 #include "utils/batching_trace_logger.hpp"

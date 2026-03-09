@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "grpc/server/inference_service_test_api.hpp"
+#include "support/grpc/server/inference_service_test_api.hpp"
 
 namespace {
 

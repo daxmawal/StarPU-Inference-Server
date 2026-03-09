@@ -24,7 +24,7 @@
 #include <utility>
 #include <vector>
 #if defined(STARPU_TESTING)
-#include "inference_service_test_internal.hpp"
+#include "support/grpc/server/inference_service_test_internal.hpp"
 #endif
 #if defined(STARPU_ENABLE_GRPC_REFLECTION)
 #include <grpcpp/ext/proto_server_reflection_plugin.h>

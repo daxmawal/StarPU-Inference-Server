@@ -1,6 +1,6 @@
 #include "monitoring/metrics.hpp"
 #if defined(STARPU_TESTING)
-#include "monitoring/metrics_test_api.hpp"
+#include "support/monitoring/metrics_test_api.hpp"
 #endif
 
 #include <prometheus/exposer.h>
@@ -1073,5 +1073,5 @@ MetricsRegistry::queue_capacity_value() const -> std::size_t
 }  // namespace starpu_server
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-#include "metrics_test_accessor.hpp"
+#include "support/monitoring/metrics_test_accessor.hpp"
 #endif  // SONAR_IGNORE_END

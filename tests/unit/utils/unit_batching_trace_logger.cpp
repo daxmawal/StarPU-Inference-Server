@@ -12,7 +12,7 @@
 #include <string>
 
 #include "utils/batching_trace_logger.hpp"
-#include "utils/batching_trace_logger_test_api.hpp"
+#include "support/utils/batching_trace_logger_test_api.hpp"
 #include "utils/runtime_config.hpp"
 
 namespace starpu_server { namespace {

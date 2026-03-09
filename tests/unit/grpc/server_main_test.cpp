@@ -29,7 +29,7 @@
 
 #include "../../../src/starpu_task_worker/result_dispatcher_component.hpp"
 #include "../../../src/starpu_task_worker/task_runner_internal.hpp"
-#include "grpc/server/server_main_test_api.hpp"
+#include "support/grpc/server/server_main_test_api.hpp"
 
 namespace {
 
