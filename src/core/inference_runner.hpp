@@ -386,9 +386,11 @@ class InferenceJob : public JobBatchState {
     timing_info_ = timing;
   }
 
+// GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto timing_info() -> detail::TimingInfo& { return timing_info_; }
 #endif  // SONAR_IGNORE_END
+        // GCOVR_EXCL_STOP
 
  private:
   std::vector<torch::Tensor> input_tensors_;

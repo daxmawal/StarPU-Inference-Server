@@ -34,12 +34,16 @@ namespace starpu_server {
 
 namespace {
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 cuda_device_count_override_storage() -> std::optional<int>&
 {
   static std::optional<int> override_storage;
   return override_storage;
 }
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
 
 }  // namespace
 
@@ -78,10 +82,14 @@ sanitize_cuda_device_count(long long raw_count) -> int
 auto
 get_cuda_device_count() -> int
 {
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto& override_storage = cuda_device_count_override_storage();
       override_storage.has_value()) {
     return *override_storage;
   }
+#endif  // SONAR_IGNORE_END
+        // GCOVR_EXCL_STOP
 
   using DeviceCountSigned = long long;
   using RawDeviceCount = decltype(torch::cuda::device_count());

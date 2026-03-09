@@ -1,0 +1,124 @@
+STARPU_TESTING / GCOVR audit (prod files only; filenames without "test")
+outside_starpu_testing=4
+missing_gcovr_blocks=88
+
+Top files by missing GCOVR blocks:
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp: 15
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp: 9
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp: 8
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_shutdown_runtime.hpp: 7
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/warmup.cpp: 6
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main.cpp: 6
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_signal_runtime.hpp: 6
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_gpu_cpu_providers.hpp: 6
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_bootstrap.hpp: 5
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/congestion_monitor.cpp: 3
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/starpu_task_worker/result_dispatcher_component.cpp: 3
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service_async_server.hpp: 2
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/starpu_task_worker/batch_collector_component.cpp: 2
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/input_slot_pool.cpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/starpu_setup.cpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/starpu_setup.hpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service_rpc_infer.hpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service_rpc_metadata.hpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_override_slot.hpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/congestion_monitor.hpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics.cpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_sampler.hpp: 1
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/utils/batching_trace_logger.cpp: 1
+
+Missing block details:
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/input_slot_pool.cpp:323-334:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/starpu_setup.cpp:545-553:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/starpu_setup.hpp:94-99:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/warmup.cpp:40-81:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/warmup.cpp:122-193:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/warmup.cpp:336-340:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/warmup.cpp:353-357:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/warmup.cpp:374-379:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/core/warmup.cpp:381-386:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp:59-62:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp:429-438:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp:573-577:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp:726-732:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp:790-793:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp:924-932:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp:939-948:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.cpp:994-1000:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service_async_server.hpp:80-95:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service_async_server.hpp:110-125:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service_rpc_infer.hpp:146-152:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service_rpc_metadata.hpp:285-290:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main.cpp:45-49:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main.cpp:100-121:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main.cpp:124-137:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main.cpp:142-146:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main.cpp:159-163:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main.cpp:182-186:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_bootstrap.hpp:19-25:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_bootstrap.hpp:30-37:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_bootstrap.hpp:99-114:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_bootstrap.hpp:125-131:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_bootstrap.hpp:139-150:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_override_slot.hpp:3-79:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_shutdown_runtime.hpp:19-48:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_shutdown_runtime.hpp:53-61:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_shutdown_runtime.hpp:67-75:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_shutdown_runtime.hpp:164-171:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_shutdown_runtime.hpp:181-188:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_shutdown_runtime.hpp:194-201:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_shutdown_runtime.hpp:218-226:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_signal_runtime.hpp:17-32:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_signal_runtime.hpp:91-103:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_signal_runtime.hpp:107-112:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_signal_runtime.hpp:118-123:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_signal_runtime.hpp:229-240:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_signal_runtime.hpp:246-252:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:63-67:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:72-81:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:104-108:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:113-122:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:191-199:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:205-214:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:222-228:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:231-248:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:256-261:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:283-288:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:304-313:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:320-329:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:357-362:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:365-371:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_trace_plot_runtime.hpp:420-430:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:15-41:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:46-52:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:58-65:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:71-80:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:86-92:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:149-155:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:161-167:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:173-179:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/server_main_worker_inventory.hpp:185-191:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/congestion_monitor.cpp:136-146:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/congestion_monitor.cpp:184-228:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/congestion_monitor.cpp:716-820:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/congestion_monitor.hpp:73-122:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics.cpp:123-127:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_gpu_cpu_providers.hpp:112-121:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_gpu_cpu_providers.hpp:131-138:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_gpu_cpu_providers.hpp:155-160:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_gpu_cpu_providers.hpp:165-172:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_gpu_cpu_providers.hpp:431-569:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_gpu_cpu_providers.hpp:583-622:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics_sampler.hpp:212-216:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/starpu_task_worker/batch_collector_component.cpp:20-33:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/starpu_task_worker/batch_collector_component.cpp:618-623:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/starpu_task_worker/result_dispatcher_component.cpp:28-36:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/starpu_task_worker/result_dispatcher_component.cpp:49-63:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/starpu_task_worker/result_dispatcher_component.cpp:80-85:start=False,stop=False
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/utils/batching_trace_logger.cpp:256-273:start=False,stop=False
+
+Outside STARPU_TESTING occurrences:
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/grpc/server/inference_service.hpp:247:friend class testing::InferenceServiceTestAccessor;
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/monitoring/metrics.hpp:215:friend class testing::MetricsRegistryTestAccessor;
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/utils/batching_trace_logger.hpp:95:friend class starpu_server::testing::TraceFileWriterTestAccessor;
+  /local/home/jd258565/Workspace/StarPU-Inference-Server/src/utils/batching_trace_logger.hpp:257:friend class testing::BatchingTraceLoggerTestAccessor;

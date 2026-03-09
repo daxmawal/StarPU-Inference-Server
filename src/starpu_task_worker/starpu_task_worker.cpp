@@ -184,18 +184,16 @@ invoke_submit_inference_task_hook()
   // GCOVR_EXCL_STOP
 }
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 static auto
 consume_duplicate_batching_thread_exception_capture_for_test() -> bool
 {
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   return duplicate_batching_thread_exception_capture_for_test().exchange(
       false, std::memory_order_acq_rel);
-#else
-  return false;
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
 }
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
 
 static void
 invoke_run_after_batching_thread_start_hook()
@@ -806,6 +804,8 @@ StarPUTaskRunner::launch_batching_thread(RunPipelineContext& context)
     catch (...) {
       auto current_exception = std::current_exception();
       capture_thread_exception("starpu-batching", current_exception);
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
       if (task_runner_internal::
               consume_duplicate_batching_thread_exception_capture_for_test()) {
         capture_thread_exception(
@@ -813,6 +813,8 @@ StarPUTaskRunner::launch_batching_thread(RunPipelineContext& context)
             std::make_exception_ptr(
                 std::runtime_error("secondary batching thread failure")));
       }
+#endif  // SONAR_IGNORE_END
+        // GCOVR_EXCL_STOP
       abort_run_pipeline(context);
     }
   });
