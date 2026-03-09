@@ -757,6 +757,9 @@ InferenceTask::starpu_output_callback(void* arg)
     return;
   }
 
+  [[maybe_unused]] const auto callback_keep_alive =
+      std::static_pointer_cast<InferenceCallbackContext>(ctx->self_keep_alive);
+
   const auto callback_start = MonotonicClock::now();
   if (ctx->job != nullptr) {
     ctx->job->update_timing_info([callback_start](detail::TimingInfo& timing) {

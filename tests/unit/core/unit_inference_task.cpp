@@ -867,6 +867,33 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackAcquireFailureStillFinalizes)
 
 TEST_F(
     InferenceTaskTest,
+    StarpuOutputCallbackImmediateAcquireKeepsContextAliveUntilLoopEnds)
+{
+  auto job = make_job(15, 1);
+  job->set_output_tensors({torch::zeros({1}), torch::zeros({1})});
+
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_data_acquire_fn = &ImmediateCallbackAcquire;
+
+  auto ctx = make_callback_context(
+      job, {}, {MakeHandle(24), MakeHandle(25)}, &dependencies);
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &NoopDataRelease);
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+}
+
+TEST_F(
+    InferenceTaskTest,
     StarpuOutputCallbackBypassesRemainingHandlesAfterFirstFailure)
 {
   auto job = make_job(12, 1);
