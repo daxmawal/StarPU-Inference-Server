@@ -53,6 +53,8 @@ class OutputSlotPool : public SlotPoolBase<SlotPoolSlot> {
   using OutputRegisterFailureObserverHook =
       void (*)(const SlotInfo&, const std::vector<HostBufferInfo>&);
   using OutputHostAllocatorHook = std::function<int(void**, size_t, size_t)>;
+  using OutputCudaHostAllocHook =
+      std::function<int(void**, size_t, unsigned int)>;
   using OutputCudaPinnedOverrideHook = std::function<bool(size_t, bool, bool)>;
   using OutputHostDeallocatorHook = std::function<void(void*)>;
   using OutputStarpuMemoryPinHook = std::function<int(void*, size_t)>;
@@ -88,6 +90,7 @@ class OutputSlotPool : public SlotPoolBase<SlotPoolSlot> {
   static auto starpu_register_failure_observer()
       -> OutputRegisterFailureObserverHook&;
   static auto output_host_allocator_hook() -> OutputHostAllocatorHook&;
+  static auto output_cuda_host_alloc_hook() -> OutputCudaHostAllocHook&;
   static auto output_cuda_pinned_override_hook()
       -> OutputCudaPinnedOverrideHook&;
   static auto output_host_deallocator_hook() -> OutputHostDeallocatorHook&;

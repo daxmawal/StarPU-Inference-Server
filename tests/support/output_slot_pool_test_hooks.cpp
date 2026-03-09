@@ -1,5 +1,7 @@
 #include "support/output_slot_pool_test_hooks.hpp"
 
+#include <cuda_runtime_api.h>
+
 #include <cstdlib>
 #include <utility>
 
@@ -64,6 +66,13 @@ OutputSlotPoolTestHook::host_allocator_hook_ref()
 }
 
 auto
+OutputSlotPoolTestHook::cuda_host_alloc_hook_ref()
+    -> decltype(OutputSlotPool::output_cuda_host_alloc_hook())
+{
+  return OutputSlotPool::output_cuda_host_alloc_hook();
+}
+
+auto
 OutputSlotPoolTestHook::host_deallocator_hook_ref()
     -> decltype(OutputSlotPool::output_host_deallocator_hook())
 {
@@ -116,6 +125,22 @@ set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
   const auto previous = allocator_hook;
   allocator_hook =
       allocator ? std::move(allocator) : OutputHostAllocatorFn{&posix_memalign};
+  return previous;
+}
+
+auto
+set_output_cuda_host_alloc_for_tests(OutputCudaHostAllocFn allocator)
+    -> OutputCudaHostAllocFn
+{
+  auto& allocator_hook = OutputSlotPoolTestHook::cuda_host_alloc_hook_ref();
+  const auto previous = allocator_hook;
+  allocator_hook = allocator ? std::move(allocator)
+                             : OutputCudaHostAllocFn{[](void** ptr, size_t size,
+                                                        unsigned int flags)
+                                                         -> int {
+                                 return static_cast<int>(
+                                     cudaHostAlloc(ptr, size, flags));
+                               }};
   return previous;
 }
 

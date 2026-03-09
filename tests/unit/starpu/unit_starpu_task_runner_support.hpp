@@ -369,10 +369,29 @@ class StarPUTaskRunnerTestAdapter {
     runner->finalize_job_after_unknown_exception(job, log_prefix, job_id);
   }
 
+  static void submit_job_or_handle_failure(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
+      int submission_id, int job_id)
+  {
+    if (runner == nullptr) {
+      return;
+    }
+    runner->submit_job_or_handle_failure(
+        job, StarPUTaskRunner::SubmissionInfo{submission_id, job_id});
+  }
+
   static auto wait_for_prepared_job(StarPUTaskRunner* runner)
       -> std::shared_ptr<InferenceJob>
   {
     return runner->wait_for_prepared_job();
+  }
+
+  static void process_prepared_job(
+      StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job)
+  {
+    if (runner != nullptr) {
+      runner->process_prepared_job(job);
+    }
   }
 
   static void run_batching_loop(StarPUTaskRunner* runner)
@@ -588,6 +607,9 @@ class StarPUTaskRunnerTestAdapter {
     std::scoped_lock lock(inflight_state->mutex);
     inflight_state->cv.notify_one();
   }
+
+  static void release_inflight_slot_via_result_dispatcher(
+      StarPUTaskRunner* runner);
 
   static auto has_inflight_limit(const StarPUTaskRunner* runner) -> bool
   {

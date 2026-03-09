@@ -749,6 +749,38 @@ TEST(ResultDispatcher, FinalizeJobCompletionNoopsWhenAllDoneCvIsNull)
   EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ResultDispatcherReleaseInflightSlotReturnsWhenCountIsZero)
+{
+  opts_.batching.max_inflight_tasks = 10;
+  runner_.reset();
+  starpu_setup_.reset();
+  starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+  config_.starpu = starpu_setup_.get();
+  config_.opts = &opts_;
+  runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+
+  ASSERT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::has_inflight_limit(
+      runner_.get()));
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_max_inflight_tasks(
+          runner_.get()),
+      10U);
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::
+      release_inflight_slot_via_result_dispatcher(runner_.get());
+
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+}
+
 TEST(ResultDispatcher, HandleJobCompletionNoopsWhenJobIsNull)
 {
   std::atomic<std::size_t> completed_jobs{0};

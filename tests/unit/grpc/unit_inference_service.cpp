@@ -102,6 +102,21 @@ struct SubmitJobAsyncHooksGuard {
   }
 };
 
+struct CheckMissingNamedInputsOverrideGuard {
+  explicit CheckMissingNamedInputsOverrideGuard(
+      starpu_server::testing::CheckMissingNamedInputsOverrideFn fn)
+  {
+    starpu_server::testing::InferenceServiceTestAccessor::
+        SetCheckMissingNamedInputsOverrideForTest(std::move(fn));
+  }
+
+  ~CheckMissingNamedInputsOverrideGuard()
+  {
+    starpu_server::testing::InferenceServiceTestAccessor::
+        ClearCheckMissingNamedInputsOverrideForTest();
+  }
+};
+
 struct ModelStatisticsNullTargetGuard {
   explicit ModelStatisticsNullTargetGuard(bool enable = true)
   {
@@ -493,6 +508,26 @@ TEST_F(InferenceServiceTest, ModelMetadataUsesRequestNameWhenNoDefaultModel)
   EXPECT_EQ(reply.outputs_size(), 0);
 }
 
+TEST(InferenceServiceImpl, ModelMetadataHandlesNullReferenceOutputs)
+{
+  starpu_server::InferenceQueue queue;
+  starpu_server::InferenceServiceImpl service(&queue, nullptr, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelMetadataRequest req;
+  req.set_name("client_model");
+  inference::ModelMetadataResponse reply;
+
+  const auto status = service.ModelMetadata(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(reply.name(), "client_model");
+  ASSERT_EQ(reply.inputs_size(), 1);
+  EXPECT_EQ(reply.inputs(0).name(), "input0");
+  EXPECT_EQ(reply.inputs(0).datatype(), "FP32");
+  EXPECT_EQ(reply.outputs_size(), 0);
+}
+
 TEST_F(InferenceServiceTest, ModelMetadataRejectsUnsupportedInputDatatype)
 {
   starpu_server::testing::InferenceServiceTestAccessor::
@@ -616,6 +651,27 @@ TEST_F(InferenceServiceTest, ModelConfigUsesRequestNameWhenNoDefaultModel)
   const auto& config = reply.config();
   EXPECT_EQ(config.name(), "client_model");
   EXPECT_EQ(config.max_batch_size(), 0);
+  ASSERT_EQ(config.input_size(), 1);
+  EXPECT_EQ(config.input(0).name(), "input0");
+  EXPECT_EQ(config.input(0).data_type(), inference::DataType::TYPE_FP32);
+  EXPECT_EQ(config.output_size(), 0);
+}
+
+TEST(InferenceServiceImpl, ModelConfigHandlesNullReferenceOutputs)
+{
+  starpu_server::InferenceQueue queue;
+  starpu_server::InferenceServiceImpl service(&queue, nullptr, {at::kFloat});
+
+  grpc::ServerContext ctx;
+  inference::ModelConfigRequest req;
+  req.set_name("client_model");
+  inference::ModelConfigResponse reply;
+
+  const auto status = service.ModelConfig(&ctx, &req, &reply);
+
+  ASSERT_TRUE(status.ok());
+  const auto& config = reply.config();
+  EXPECT_EQ(config.name(), "client_model");
   ASSERT_EQ(config.input_size(), 1);
   EXPECT_EQ(config.input(0).name(), "input0");
   EXPECT_EQ(config.input(0).data_type(), inference::DataType::TYPE_FP32);
@@ -1162,6 +1218,36 @@ TEST_F(NamedInputInferenceServiceTest, ValidateInputsReordersKeepAliveByName)
   EXPECT_EQ(inputs[1].scalar_type(), at::kLong);
   EXPECT_EQ(inputs[1].sizes(), (torch::IntArrayRef{3}));
   EXPECT_EQ(inputs[1][0].item<int64_t>(), kI10);
+}
+
+TEST_F(
+    NamedInputInferenceServiceTest,
+    ValidateInputsReturnsStatusWhenMissingNamedInputCheckFails)
+{
+  CheckMissingNamedInputsOverrideGuard hook_guard{
+      [](const std::vector<bool>& /*filled*/,
+         std::span<const std::string> /*expected_names*/) {
+        return grpc::Status{
+            grpc::StatusCode::FAILED_PRECONDITION,
+            "forced_missing_named_input_status"};
+      }};
+
+  std::vector<float> data0 = {kF1, kF2, kF3, kF4};
+  std::vector<int64_t> data1 = {kI10, kI20, kI30};
+  auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data0)},
+      {{3}, at::kLong, starpu_server::to_raw_data(data1)},
+  });
+  req.mutable_inputs(0)->set_name("first");
+  req.mutable_inputs(1)->set_name("second");
+
+  std::vector<torch::Tensor> inputs;
+  auto status = service->validate_and_convert_inputs(&req, inputs);
+
+  ASSERT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::FAILED_PRECONDITION);
+  EXPECT_EQ(status.error_message(), "forced_missing_named_input_status");
+  EXPECT_TRUE(inputs.empty());
 }
 
 TEST_F(
@@ -3119,6 +3205,36 @@ TEST_F(
       [](const std::shared_ptr<std::atomic<bool>>&) {
         throw std::runtime_error("forced async completion failure");
       };
+  HandleAsyncInferCompletionHooksGuard guard{std::move(hooks)};
+
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+
+  service->HandleModelInferAsync(
+      &ctx, &request, &reply, [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      });
+
+  const grpc::Status status = status_future.get();
+  worker.join();
+
+  EXPECT_FALSE(status.ok());
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
+  EXPECT_EQ(status.error_message(), "Internal server error");
+}
+
+TEST_F(
+    InferenceServiceTest,
+    HandleModelInferAsyncConvertsCompletionUnknownExceptionToInternalError)
+{
+  auto request = starpu_server::make_valid_request();
+  auto expected_outputs = std::vector<torch::Tensor>{
+      torch::tensor({kF2}, torch::TensorOptions().dtype(at::kFloat))};
+  auto worker = prepare_job(expected_outputs, expected_outputs);
+
+  starpu_server::testing::HandleAsyncInferCompletionTestHooks hooks;
+  hooks.before_final_cancel_check =
+      [](const std::shared_ptr<std::atomic<bool>>&) { throw 123; };
   HandleAsyncInferCompletionHooksGuard guard{std::move(hooks)};
 
   std::promise<grpc::Status> status_promise;

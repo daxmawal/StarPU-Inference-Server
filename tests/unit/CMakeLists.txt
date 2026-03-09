@@ -52,6 +52,7 @@ target_sources(
             utils/unit_time_utils.cpp
             utils/unit_runtime_config.cpp
             utils/unit_config_loader.cpp
+            utils/unit_exception_classification.cpp
             utils/unit_transparent_hash.cpp
             utils/robustness/edgecases_client_utils.cpp
             ../support/output_slot_pool_test_hooks.cpp

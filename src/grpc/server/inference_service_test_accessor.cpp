@@ -51,6 +51,20 @@ InferenceServiceTestAccessor::ClearSubmitJobAsyncTestHooks()
   inference_service_test_internal::clear_submit_job_async_test_hooks();
 }
 
+void
+InferenceServiceTestAccessor::SetCheckMissingNamedInputsOverrideForTest(
+    CheckMissingNamedInputsOverrideFn fn)
+{
+  inference_service_test_internal::set_check_missing_named_inputs_override(
+      std::move(fn));
+}
+
+void
+InferenceServiceTestAccessor::ClearCheckMissingNamedInputsOverrideForTest()
+{
+  inference_service_test_internal::clear_check_missing_named_inputs_override();
+}
+
 #define STARPU_INFERENCE_SERVICE_TEST_FORWARDER_RET(                        \
     return_type, accessor_name, internal_name, runtime_name, params_decl,   \
     args)                                                                   \

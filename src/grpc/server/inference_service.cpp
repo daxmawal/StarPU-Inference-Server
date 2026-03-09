@@ -177,6 +177,16 @@ check_missing_named_inputs(
     const std::vector<bool>& filled,
     std::span<const std::string> expected_names) -> Status
 {
+#if defined(STARPU_TESTING)
+  auto& override_fn = starpu_server::testing::inference_service_test_internal::
+      detail::check_missing_named_inputs_override_ref();
+  if (override_fn) {
+    if (auto status = override_fn(filled, expected_names); status.has_value()) {
+      return *status;
+    }
+  }
+#endif
+
   for (std::size_t i = 0; i < filled.size(); ++i) {
     if (!filled[i]) {
       return {

@@ -810,6 +810,26 @@ failing_host_allocator(void** ptr, size_t /*alignment*/, size_t /*size*/) -> int
 }
 
 auto
+failing_cuda_host_allocator(void** ptr, size_t /*size*/, unsigned int /*flags*/)
+    -> int
+{
+  if (ptr != nullptr) {
+    *ptr = nullptr;
+  }
+  return static_cast<int>(cudaErrorMemoryAllocation);
+}
+
+auto
+null_cuda_host_allocator(void** ptr, size_t /*size*/, unsigned int /*flags*/)
+    -> int
+{
+  if (ptr != nullptr) {
+    *ptr = nullptr;
+  }
+  return static_cast<int>(cudaSuccess);
+}
+
+auto
 force_cuda_host_alloc_failure(
     size_t /*bytes*/, bool /*use_pinned*/, bool /*default_cuda_pinned*/) -> bool
 {
@@ -2998,6 +3018,104 @@ TEST(OutputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   }
 
   pool.release(slot_id);
+}
+
+TEST(OutputSlotPool_Unit, FallsBackWhenCudaHostAllocReturnsError)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.batching.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "cuda_host_alloc_error";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "cuda_host_alloc_error_model";
+  model.outputs.push_back(tensor);
+  opts.model = model;
+
+  const auto previous_cuda_host_alloc =
+      starpu_server::testing::set_output_cuda_host_alloc_for_tests(
+          &failing_cuda_host_allocator);
+
+  auto restore_hook = [&]() {
+    starpu_server::testing::set_output_cuda_host_alloc_for_tests(
+        previous_cuda_host_alloc);
+  };
+
+  try {
+    starpu_server::OutputSlotPool pool(opts, 1);
+
+    const int slot_id = pool.acquire();
+    const auto& buffer_infos =
+        starpu_server::OutputSlotPoolTestHook::host_buffer_infos(pool, slot_id);
+    ASSERT_EQ(buffer_infos.size(), 1);
+
+    const auto& info = buffer_infos.front();
+    EXPECT_FALSE(info.cuda_pinned);
+    EXPECT_TRUE(info.starpu_pinned || info.starpu_pin_rc != 0)
+        << "Fallback StarPU pinning should report a result";
+
+    pool.release(slot_id);
+    restore_hook();
+  }
+  catch (...) {
+    restore_hook();
+    throw;
+  }
+}
+
+TEST(OutputSlotPool_Unit, FallsBackWhenCudaHostAllocReturnsSuccessNullptr)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.batching.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "cuda_host_alloc_nullptr";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "cuda_host_alloc_nullptr_model";
+  model.outputs.push_back(tensor);
+  opts.model = model;
+
+  const auto previous_cuda_host_alloc =
+      starpu_server::testing::set_output_cuda_host_alloc_for_tests(
+          &null_cuda_host_allocator);
+
+  auto restore_hook = [&]() {
+    starpu_server::testing::set_output_cuda_host_alloc_for_tests(
+        previous_cuda_host_alloc);
+  };
+
+  try {
+    starpu_server::OutputSlotPool pool(opts, 1);
+
+    const int slot_id = pool.acquire();
+    const auto& buffer_infos =
+        starpu_server::OutputSlotPoolTestHook::host_buffer_infos(pool, slot_id);
+    ASSERT_EQ(buffer_infos.size(), 1);
+
+    const auto& info = buffer_infos.front();
+    EXPECT_FALSE(info.cuda_pinned);
+    EXPECT_TRUE(info.starpu_pinned || info.starpu_pin_rc != 0)
+        << "Fallback StarPU pinning should report a result";
+
+    pool.release(slot_id);
+    restore_hook();
+  }
+  catch (...) {
+    restore_hook();
+    throw;
+  }
 }
 
 TEST(

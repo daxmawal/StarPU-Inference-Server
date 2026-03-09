@@ -467,6 +467,23 @@ TEST_F(
   EXPECT_EQ(dequeued, nullptr);
 }
 
+TEST_F(
+    StarPUTaskRunnerFixture, ProcessPreparedJobReturnsImmediatelyWhenJobIsNull)
+{
+  std::atomic<int> submit_hook_calls{0};
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook(
+      [&]() { submit_hook_calls.fetch_add(1, std::memory_order_acq_rel); });
+
+  std::shared_ptr<starpu_server::InferenceJob> missing_job;
+  starpu_server::StarPUTaskRunnerTestAdapter::process_prepared_job(
+      runner_.get(), missing_job);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  EXPECT_EQ(submit_hook_calls.load(std::memory_order_acquire), 0);
+  EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 0U);
+}
+
 TEST_F(StarPUTaskRunnerFixture, BatchingLoopStopsWhenNoJobAvailable)
 {
   starpu_server::StarPUTaskRunnerTestAdapter::set_batch_collector_queue_to_null(
@@ -948,6 +965,34 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
 
   const auto failure = job->failure_info();
   ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(
+      failure->message,
+      "Unexpected non-standard exception: Unknown non-standard exception");
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    SubmitJobOrHandleFailureHandlesUnknownExceptionCategory)
+{
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_request_id(4242);
+
+  starpu_server::StarPUTaskRunnerTestAdapter::set_submit_hook([&]() {
+    starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+    throw 42;
+  });
+
+  starpu_server::StarPUTaskRunnerTestAdapter::submit_job_or_handle_failure(
+      runner_.get(), job, /*submission_id=*/4242, /*job_id=*/4242);
+  starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
+
+  assert_failure_result(probe);
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "execution");
+  EXPECT_EQ(failure->reason, "exception");
+  EXPECT_TRUE(failure->metrics_reported);
   EXPECT_EQ(
       failure->message,
       "Unexpected non-standard exception: Unknown non-standard exception");

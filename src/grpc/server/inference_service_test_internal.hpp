@@ -16,6 +16,11 @@ auto handle_model_infer_async_test_hooks_ref()
 auto handle_async_infer_completion_test_hooks_ref()
     -> HandleAsyncInferCompletionTestHooks&;
 auto submit_job_async_test_hooks_ref() -> SubmitJobAsyncTestHooks&;
+using CheckMissingNamedInputsOverrideFn =
+    std::function<std::optional<grpc::Status>(
+        const std::vector<bool>&, std::span<const std::string>)>;
+auto check_missing_named_inputs_override_ref()
+    -> CheckMissingNamedInputsOverrideFn&;
 auto model_statistics_force_null_target_flag_ref() -> bool&;
 
 }  // namespace detail
@@ -28,6 +33,9 @@ void set_handle_async_infer_completion_test_hooks(
 void clear_handle_async_infer_completion_test_hooks();
 void set_submit_job_async_test_hooks(SubmitJobAsyncTestHooks hooks);
 void clear_submit_job_async_test_hooks();
+void set_check_missing_named_inputs_override(
+    detail::CheckMissingNamedInputsOverrideFn fn);
+void clear_check_missing_named_inputs_override();
 
 auto normalize_names_for_test(
     std::vector<std::string> names, std::size_t expected_size,

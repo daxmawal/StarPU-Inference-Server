@@ -32,6 +32,10 @@ struct SubmitJobAsyncTestHooks {
   std::function<void()> before_create_job;
 };
 
+using CheckMissingNamedInputsOverrideFn =
+    std::function<std::optional<grpc::Status>(
+        const std::vector<bool>&, std::span<const std::string>)>;
+
 class InferenceServiceTestAccessor {
  public:
   static void SetHandleModelInferAsyncTestHooks(
@@ -42,6 +46,9 @@ class InferenceServiceTestAccessor {
   static void ClearHandleAsyncInferCompletionTestHooks();
   static void SetSubmitJobAsyncTestHooks(SubmitJobAsyncTestHooks hooks);
   static void ClearSubmitJobAsyncTestHooks();
+  static void SetCheckMissingNamedInputsOverrideForTest(
+      CheckMissingNamedInputsOverrideFn fn);
+  static void ClearCheckMissingNamedInputsOverrideForTest();
 
   static auto NormalizeNamesForTest(
       std::vector<std::string> names, std::size_t expected_size,

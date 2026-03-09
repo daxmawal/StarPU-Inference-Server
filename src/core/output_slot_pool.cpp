@@ -28,9 +28,9 @@ OutputSlotPool::alloc_host_buffer(
       bytes, use_pinned, cuda_pinned_out,
       [use_pinned](size_t requested_bytes) -> std::byte* {
         void* raw_ptr = nullptr;
-        const auto err =
-            cudaHostAlloc(&raw_ptr, requested_bytes, cudaHostAllocPortable);
-        if (err != cudaSuccess || raw_ptr == nullptr) {
+        const int err = output_cuda_host_alloc_hook()(
+            &raw_ptr, requested_bytes, cudaHostAllocPortable);
+        if (err != static_cast<int>(cudaSuccess) || raw_ptr == nullptr) {
           return nullptr;
         }
 
@@ -122,6 +122,16 @@ OutputSlotPool::output_host_allocator_hook() -> OutputHostAllocatorHook&
 {
   static OutputHostAllocatorHook allocator = &posix_memalign;
   return allocator;
+}
+
+auto
+OutputSlotPool::output_cuda_host_alloc_hook() -> OutputCudaHostAllocHook&
+{
+  static OutputCudaHostAllocHook cuda_host_allocator =
+      [](void** ptr, size_t size, unsigned int flags) -> int {
+    return static_cast<int>(cudaHostAlloc(ptr, size, flags));
+  };
+  return cuda_host_allocator;
 }
 
 auto

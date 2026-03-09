@@ -10,6 +10,8 @@
 #include <iterator>
 #include <system_error>
 
+#include "starpu_task_worker/result_dispatcher_component.hpp"
+
 namespace {
 
 using CudaStreamSynchronizeFn = cudaError_t (*)(cudaStream_t);
@@ -346,6 +348,16 @@ NoOpStarpuDataAcquire(starpu_data_handle_t, starpu_data_access_mode) -> int
 void
 NoOpStarpuDataRelease(starpu_data_handle_t)
 {
+}
+
+void
+starpu_server::StarPUTaskRunnerTestAdapter::
+    release_inflight_slot_via_result_dispatcher(StarPUTaskRunner* runner)
+{
+  if (runner == nullptr) {
+    return;
+  }
+  ResultDispatcher::release_inflight_slot(runner->inflight_state_);
 }
 
 extern "C" cudaError_t

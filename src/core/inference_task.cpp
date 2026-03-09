@@ -1016,4 +1016,21 @@ InferenceTask::log_exception(
   }
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+
+void
+finalize_or_fail_once_for_tests(
+    InferenceCallbackContext* ctx, bool failure, std::string_view context)
+{
+  finalize_or_fail_once(
+      ctx,
+      failure ? CallbackTerminalStatus::kFailure
+              : CallbackTerminalStatus::kSuccess,
+      context);
+}
+
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
+
 }  // namespace starpu_server

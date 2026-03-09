@@ -28,6 +28,19 @@
 
 using namespace starpu_server;
 
+const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
+    1, 5, 10, 25, 50, 100, 250, 500, 1000};
+const prometheus::Histogram::BucketBoundaries kBatchSizeBuckets{
+    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
+const prometheus::Histogram::BucketBoundaries kBatchEfficiencyBuckets{
+    0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0, 8.0};
+const prometheus::Histogram::BucketBoundaries kModelLoadDurationMsBuckets{
+    10, 50, 100, 200, 500, 1000, 2000, 5000, 10000};
+const prometheus::Histogram::BucketBoundaries kTaskRuntimeMsBuckets{
+    1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000};
+
+#include "monitoring/metrics_registration.hpp"
+
 namespace {
 class TemporaryStatmFile {
  public:
@@ -256,6 +269,23 @@ FindHistogramMetric(
   return FindMetric(*family, labels);
 }
 }  // namespace
+
+TEST(MetricsRegistration, RegisterCounterMetricBuildsCounterFamily)
+{
+  prometheus::Registry registry;
+
+  auto* counter = register_counter_metric(
+      registry, "unit_test_counter_total",
+      "Counter used by unit test for registration helper");
+  ASSERT_NE(counter, nullptr);
+  counter->Increment();
+
+  const auto families = registry.Collect();
+  const auto value =
+      FindCounterValue(families, "unit_test_counter_total", /*labels=*/{});
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 1.0);
+}
 
 TEST(Metrics, InitializesPointersAndRegistry)
 {

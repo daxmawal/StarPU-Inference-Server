@@ -584,7 +584,7 @@ StarPUTaskRunner::submit_job_or_handle_failure(
     classify_and_handle_exception(
         std::current_exception(),
         [&](ExceptionCategory category, const std::exception* exception) {
-          if (category == ExceptionCategory::Unknown || exception == nullptr) {
+          if (exception == nullptr && category != ExceptionCategory::Unknown) {
             finalize_job_after_unknown_exception(
                 job, "Unexpected non-standard exception",
                 submission_info.job_id);
@@ -609,7 +609,16 @@ StarPUTaskRunner::submit_job_or_handle_failure(
               log_prefix = "Unexpected std::exception";
               break;
             case ExceptionCategory::Unknown:
+              finalize_job_after_unknown_exception(
+                  job, "Unexpected non-standard exception",
+                  submission_info.job_id);
               return;
+          }
+          if (exception == nullptr) {
+            finalize_job_after_unknown_exception(
+                job, "Unexpected non-standard exception",
+                submission_info.job_id);
+            return;
           }
           finalize_job_after_exception(
               job, *exception, log_prefix, submission_info.job_id);

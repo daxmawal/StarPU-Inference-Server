@@ -88,6 +88,13 @@ submit_job_async_test_hooks_ref() -> SubmitJobAsyncTestHooks&
 }
 
 auto
+check_missing_named_inputs_override_ref() -> CheckMissingNamedInputsOverrideFn&
+{
+  static CheckMissingNamedInputsOverrideFn hook{};
+  return hook;
+}
+
+auto
 model_statistics_force_null_target_flag_ref() -> bool&
 {
   static bool enabled = false;
@@ -133,6 +140,19 @@ void
 clear_submit_job_async_test_hooks()
 {
   detail::submit_job_async_test_hooks_ref() = SubmitJobAsyncTestHooks{};
+}
+
+void
+set_check_missing_named_inputs_override(
+    detail::CheckMissingNamedInputsOverrideFn fn)
+{
+  detail::check_missing_named_inputs_override_ref() = std::move(fn);
+}
+
+void
+clear_check_missing_named_inputs_override()
+{
+  detail::check_missing_named_inputs_override_ref() = {};
 }
 
 void

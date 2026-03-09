@@ -965,6 +965,52 @@ TEST(ConfigLoader, RejectsBooleanUseCudaTrue)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, RejectsUseCudaEnabledWithoutDeviceIdsAfterParsing)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_cross_field_use_cuda_no_ids_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  const auto config_path =
+      WriteTempFile("config_loader_cross_field_use_cuda_no_ids.yaml", yaml);
+
+  ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
+    cfg.devices.use_cuda = true;
+    cfg.devices.ids.clear();
+  });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  const std::string expected_error =
+      "Failed to load config: use_cuda is enabled but no CUDA device_ids are "
+      "configured";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, RejectsDeviceIdsWhenUseCudaDisabledAfterParsing)
+{
+  const auto model_path = WriteEmptyModelFile(
+      "config_loader_cross_field_ids_without_cuda_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  const auto config_path =
+      WriteTempFile("config_loader_cross_field_ids_without_cuda.yaml", yaml);
+
+  ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
+    cfg.devices.use_cuda = false;
+    cfg.devices.ids = {0};
+  });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  const std::string expected_error =
+      "Failed to load config: device_ids are configured but use_cuda is "
+      "disabled";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, RejectsNonMappingRoot)
 {
   const auto config_path =
