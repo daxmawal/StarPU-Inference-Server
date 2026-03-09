@@ -25,6 +25,7 @@ target_sources(
           ${STARPU_TASK_WORKER_DIR}/result_dispatcher_component.cpp
           ${STARPU_TASK_WORKER_DIR}/slot_manager_component.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/inference_service.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/starpu_server_build_guard.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp
           ${MONITORING_DIR}/metrics.cpp)
 
