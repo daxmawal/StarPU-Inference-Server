@@ -69,10 +69,12 @@ class StarPUSetup {
   using WorkerStreamQueryFn =
       std::function<int(unsigned int, int*, enum starpu_worker_archtype)>;
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   static void set_starpu_init_fn(StarpuInitFn hook_fn);
   static void reset_starpu_init_fn();
   static void set_worker_stream_query_fn(WorkerStreamQueryFn hook_fn);
   static void reset_worker_stream_query_fn();
+#endif  // SONAR_IGNORE_END
 
   static auto get_cuda_workers_by_device(const std::vector<int>& device_ids)
       -> std::map<int, std::vector<int>>;

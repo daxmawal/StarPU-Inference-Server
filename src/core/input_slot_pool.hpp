@@ -25,7 +25,17 @@ class InputSlotPool : public SlotPoolBase<SlotPoolSlot> {
     size_t bytes = 0;
   };
 
+  using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
+  using RegisterFailureObserverFn = std::function<void(const SlotInfo& slot)>;
+
+  struct Dependencies {
+    StarpuVectorRegisterFn starpu_vector_register = nullptr;
+    RegisterFailureObserverFn register_failure_observer;
+  };
+
   InputSlotPool(const RuntimeConfig& opts, int slots);
+  InputSlotPool(
+      const RuntimeConfig& opts, int slots, Dependencies dependencies);
   ~InputSlotPool();
 
   InputSlotPool(const InputSlotPool&) = delete;
@@ -62,17 +72,14 @@ class InputSlotPool : public SlotPoolBase<SlotPoolSlot> {
   int bmax_ = 1;
 
   std::vector<std::vector<HostBufferInfo>> host_buffer_infos_;
+  Dependencies dependencies_;
 };
 
-namespace detail {
-
-using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
-using RegisterFailureObserverFn =
-    std::function<void(const InputSlotPool::SlotInfo& slot)>;
-
-auto starpu_vector_register_hook() -> StarpuVectorRegisterFn&;
-auto starpu_register_failure_observer() -> RegisterFailureObserverFn&;
-
-}  // namespace detail
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+auto input_slot_pool_default_dependencies_for_tests()
+    -> InputSlotPool::Dependencies&;
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
 
 }  // namespace starpu_server

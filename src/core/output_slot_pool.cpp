@@ -9,9 +9,9 @@
 #include <cstdlib>
 #include <format>
 #include <limits>
-#include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "slot_pool_buffer_utils.hpp"
 #include "utils/datatype_utils.hpp"
@@ -19,25 +19,92 @@
 #include "utils/logger.hpp"
 
 namespace starpu_server {
+namespace {
+
+auto
+normalize_output_slot_pool_dependencies(
+    OutputSlotPool::Dependencies dependencies) -> OutputSlotPool::Dependencies
+{
+  if (dependencies.starpu_vector_register == nullptr) {
+    dependencies.starpu_vector_register = &starpu_vector_data_register;
+  }
+  if (!dependencies.host_allocator) {
+    dependencies.host_allocator = &posix_memalign;
+  }
+  if (!dependencies.cuda_host_alloc) {
+    dependencies.cuda_host_alloc = [](void** ptr, size_t size,
+                                      unsigned int flags) -> int {
+      return static_cast<int>(cudaHostAlloc(ptr, size, flags));
+    };
+  }
+  if (!dependencies.host_deallocator) {
+    dependencies.host_deallocator = [](void* ptr) noexcept {
+      if (ptr != nullptr) {
+        std::free(ptr);  // NOLINT(cppcoreguidelines-no-malloc)
+      }
+    };
+  }
+  if (!dependencies.starpu_memory_pin) {
+    dependencies.starpu_memory_pin = &starpu_memory_pin;
+  }
+  return dependencies;
+}
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+output_slot_pool_default_dependencies_storage_for_tests()
+    -> OutputSlotPool::Dependencies&
+{
+  static OutputSlotPool::Dependencies dependencies =
+      normalize_output_slot_pool_dependencies({});
+  return dependencies;
+}
+#endif  // SONAR_IGNORE_END
+
+auto
+resolve_output_slot_pool_dependencies_for_construction()
+    -> OutputSlotPool::Dependencies
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  return normalize_output_slot_pool_dependencies(
+      output_slot_pool_default_dependencies_storage_for_tests());
+#else
+  return normalize_output_slot_pool_dependencies({});
+#endif  // SONAR_IGNORE_END
+}
+
+}  // namespace
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+auto
+output_slot_pool_default_dependencies_for_tests()
+    -> OutputSlotPool::Dependencies&
+{
+  return output_slot_pool_default_dependencies_storage_for_tests();
+}
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
 
 auto
 OutputSlotPool::alloc_host_buffer(
-    size_t bytes, bool use_pinned, bool& cuda_pinned_out) -> HostBufferPtr
+    size_t bytes, bool use_pinned, bool& cuda_pinned_out,
+    const Dependencies& dependencies) -> HostBufferPtr
 {
   return detail::allocate_host_buffer_with_optional_cuda_pinning(
       bytes, use_pinned, cuda_pinned_out,
-      [use_pinned](size_t requested_bytes) -> std::byte* {
+      [&dependencies, use_pinned](size_t requested_bytes) -> std::byte* {
         void* raw_ptr = nullptr;
-        const int err = output_cuda_host_alloc_hook()(
+        const int err = dependencies.cuda_host_alloc(
             &raw_ptr, requested_bytes, cudaHostAllocPortable);
         if (err != static_cast<int>(cudaSuccess) || raw_ptr == nullptr) {
           return nullptr;
         }
 
         bool keep_cuda_pinned = true;
-        if (const auto& cuda_override = output_cuda_pinned_override_hook();
-            cuda_override) {
-          keep_cuda_pinned = cuda_override(requested_bytes, use_pinned, true);
+        if (dependencies.cuda_pinned_override) {
+          keep_cuda_pinned = dependencies.cuda_pinned_override(
+              requested_bytes, use_pinned, true);
         }
         if (!keep_cuda_pinned) {
           cudaFreeHost(raw_ptr);
@@ -46,12 +113,12 @@ OutputSlotPool::alloc_host_buffer(
 
         return static_cast<std::byte*>(raw_ptr);
       },
-      [](size_t requested_bytes) -> std::byte* {
+      [&dependencies](size_t requested_bytes) -> std::byte* {
         constexpr size_t kAlign = 64;
         void* raw_ptr = nullptr;
-        if (int alloc_rc =
-                output_host_allocator_hook()(&raw_ptr, kAlign, requested_bytes);
-            alloc_rc != 0 || raw_ptr == nullptr) {
+        const int alloc_rc =
+            dependencies.host_allocator(&raw_ptr, kAlign, requested_bytes);
+        if (alloc_rc != 0 || raw_ptr == nullptr) {
           throw std::bad_alloc();
         }
         return static_cast<std::byte*>(raw_ptr);
@@ -75,15 +142,16 @@ OutputSlotPool::checked_total_bytes(size_t per_sample_bytes, size_t batch_size)
 auto
 OutputSlotPool::prepare_host_buffer(
     size_t per_sample_bytes, size_t batch_size, bool want_pinned, int slot_id,
-    size_t output_index) -> PreparedHostBuffer
+    size_t output_index, const Dependencies& dependencies) -> PreparedHostBuffer
 {
   PreparedHostBuffer prepared;
   prepared.info.bytes = checked_total_bytes(per_sample_bytes, batch_size);
   prepared.ptr = alloc_host_buffer(
-      prepared.info.bytes, want_pinned, prepared.info.cuda_pinned);
+      prepared.info.bytes, want_pinned, prepared.info.cuda_pinned,
+      dependencies);
 
   detail::try_pin_host_buffer_for_starpu(
-      prepared.ptr, want_pinned, prepared.info, starpu_memory_pin_hook(),
+      prepared.ptr, want_pinned, prepared.info, dependencies.starpu_memory_pin,
       [slot_id, output_index](int pin_result) {
         log_warning(std::format(
             "starpu_memory_pin failed for output slot {}, index {}: rc={}",
@@ -94,80 +162,15 @@ OutputSlotPool::prepare_host_buffer(
 }
 
 void
-OutputSlotPool::HostBufferDeleter::operator()(HostBufferPtr ptr) const
-{
-  if (ptr == nullptr) {
-    return;
-  }
-  output_host_deallocator_hook()(static_cast<void*>(ptr));
-}
-
-auto
-OutputSlotPool::starpu_vector_register_hook() -> OutputStarpuVectorRegisterHook&
-{
-  static OutputStarpuVectorRegisterHook hook = &starpu_vector_data_register;
-  return hook;
-}
-
-auto
-OutputSlotPool::starpu_register_failure_observer()
-    -> OutputRegisterFailureObserverHook&
-{
-  static OutputRegisterFailureObserverHook observer = nullptr;
-  return observer;
-}
-
-auto
-OutputSlotPool::output_host_allocator_hook() -> OutputHostAllocatorHook&
-{
-  static OutputHostAllocatorHook allocator = &posix_memalign;
-  return allocator;
-}
-
-auto
-OutputSlotPool::output_cuda_host_alloc_hook() -> OutputCudaHostAllocHook&
-{
-  static OutputCudaHostAllocHook cuda_host_allocator =
-      [](void** ptr, size_t size, unsigned int flags) -> int {
-    return static_cast<int>(cudaHostAlloc(ptr, size, flags));
-  };
-  return cuda_host_allocator;
-}
-
-auto
-OutputSlotPool::output_host_deallocator_hook() -> OutputHostDeallocatorHook&
-{
-  static OutputHostDeallocatorHook deallocator = [](void* ptr) noexcept {
-    if (ptr == nullptr) {
-      return;
-    }
-    using FreeDeleter = decltype(&std::free);
-    std::unique_ptr<void, FreeDeleter> guard(ptr, &std::free);
-  };
-  return deallocator;
-}
-
-auto
-OutputSlotPool::output_cuda_pinned_override_hook()
-    -> OutputCudaPinnedOverrideHook&
-{
-  static OutputCudaPinnedOverrideHook override_hook;
-  return override_hook;
-}
-
-auto
-OutputSlotPool::starpu_memory_pin_hook() -> OutputStarpuMemoryPinHook&
-{
-  static OutputStarpuMemoryPinHook pin_hook = &starpu_memory_pin;
-  return pin_hook;
-}
-
-void
 OutputSlotPool::cleanup_slot_buffers(
-    SlotInfo& slot, std::vector<HostBufferInfo>& buffer_infos, size_t count)
+    SlotInfo& slot, std::vector<HostBufferInfo>& buffer_infos, size_t count,
+    const Dependencies& dependencies)
 {
   detail::cleanup_slot_resources(
-      slot, buffer_infos, count, free_host_buffer,
+      slot, buffer_infos, count,
+      [&dependencies](std::byte* ptr, const HostBufferInfo& buffer_info) {
+        free_host_buffer(ptr, buffer_info, dependencies);
+      },
       detail::SlotCleanupOrder::FreeThenUnregister,
       /*reset_buffer_info=*/true);
 }
@@ -188,31 +191,40 @@ OutputSlotPool::checked_total_numel(size_t per_sample_numel, size_t batch_size)
 
 void
 OutputSlotPool::free_host_buffer(
-    std::byte* ptr, const HostBufferInfo& buffer_info)
+    std::byte* ptr, const HostBufferInfo& buffer_info,
+    const Dependencies& dependencies)
 {
   if (ptr == nullptr) {
     return;
   }
-  HostBufferOwner managed_ptr(ptr);
-  detail::try_unpin_host_buffer_for_starpu(
-      managed_ptr.get(), buffer_info, [](int unpin_rc) {
-        log_warning(std::format(
-            "starpu_memory_unpin failed for output buffer: rc={}",
-            std::to_string(unpin_rc)));
-        (void)cudaGetLastError();
-      });
+  detail::try_unpin_host_buffer_for_starpu(ptr, buffer_info, [](int unpin_rc) {
+    log_warning(std::format(
+        "starpu_memory_unpin failed for output buffer: rc={}",
+        std::to_string(unpin_rc)));
+    (void)cudaGetLastError();
+  });
   if (buffer_info.cuda_pinned) {
-    HostBufferPtr cuda_ptr = managed_ptr.release();
-    cudaError_t cuda_rc = cudaFreeHost(static_cast<void*>(cuda_ptr));
+    cudaError_t cuda_rc = cudaFreeHost(static_cast<void*>(ptr));
     if (cuda_rc != cudaSuccess) {
       log_warning(std::format(
           "cudaFreeHost failed for output buffer: rc={}",
           std::to_string(static_cast<int>(cuda_rc))));
     }
+    return;
   }
+  dependencies.host_deallocator(static_cast<void*>(ptr));
 }
 
 OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
+    : OutputSlotPool(
+          opts, slots, resolve_output_slot_pool_dependencies_for_construction())
+{
+}
+
+OutputSlotPool::OutputSlotPool(
+    const RuntimeConfig& opts, int slots, Dependencies dependencies)
+    : dependencies_(
+          normalize_output_slot_pool_dependencies(std::move(dependencies)))
 {
   bmax_ = std::max(1, opts.batching.max_batch_size);
 
@@ -253,7 +265,11 @@ OutputSlotPool::OutputSlotPool(const RuntimeConfig& opts, int slots)
 
 OutputSlotPool::~OutputSlotPool()
 {
-  detail::cleanup_pool_slots(slots(), host_buffer_infos_, free_host_buffer);
+  detail::cleanup_pool_slots(
+      slots(), host_buffer_infos_,
+      [this](std::byte* ptr, const HostBufferInfo& buffer_info) {
+        free_host_buffer(ptr, buffer_info, dependencies_);
+      });
 }
 
 void
@@ -278,27 +294,27 @@ OutputSlotPool::allocate_slot_buffers_and_register(
   buffer_infos.assign(num_outputs, HostBufferInfo{});
 
   const bool want_pinned = opts.devices.use_cuda;
-
   const auto batch_size = static_cast<size_t>(bmax_);
 
   try {
     for (size_t i = 0; i < num_outputs; ++i) {
       const auto prepared_buffer = prepare_host_buffer(
-          per_output_bytes_single_[i], batch_size, want_pinned, slot_id, i);
+          per_output_bytes_single_[i], batch_size, want_pinned, slot_id, i,
+          dependencies_);
       slot.base_ptrs[i] = prepared_buffer.ptr;
       buffer_infos[i] = prepared_buffer.info;
 
       const size_t total_numel =
           checked_total_numel(per_output_numel_single_[i], batch_size);
       starpu_data_handle_t handle = nullptr;
-      starpu_vector_register_hook()(
+      dependencies_.starpu_vector_register(
           &handle, STARPU_MAIN_RAM,
           std::bit_cast<uintptr_t>(prepared_buffer.ptr), total_numel,
           element_size(output_types_[i]));
       if (handle == nullptr) {
-        cleanup_slot_buffers(slot, buffer_infos, i + 1);
-        if (starpu_register_failure_observer() != nullptr) {
-          starpu_register_failure_observer()(slot, buffer_infos);
+        cleanup_slot_buffers(slot, buffer_infos, i + 1, dependencies_);
+        if (dependencies_.register_failure_observer != nullptr) {
+          dependencies_.register_failure_observer(slot, buffer_infos);
         }
         throw OutputSlotRegistrationError(
             "Failed to register StarPU vector handle for output");
@@ -307,7 +323,7 @@ OutputSlotPool::allocate_slot_buffers_and_register(
     }
   }
   catch (...) {
-    cleanup_slot_buffers(slot, buffer_infos, num_outputs);
+    cleanup_slot_buffers(slot, buffer_infos, num_outputs, dependencies_);
     throw;
   }
 }

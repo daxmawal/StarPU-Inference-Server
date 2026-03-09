@@ -6,50 +6,55 @@
 #include <algorithm>
 #include <bit>
 #include <cstddef>
-#include <cstdlib>
 #include <format>
-#include <functional>
 #include <limits>
 #include <memory>
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "slot_pool_buffer_utils.hpp"
 #include "utils/logger.hpp"
 
 namespace starpu_server {
 
-namespace detail {
-
-using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
-using RegisterFailureObserverFn =
-    std::function<void(const InputSlotPool::SlotInfo& slot)>;
-
-auto
-starpu_vector_register_hook() -> StarpuVectorRegisterFn&
-{
-  static StarpuVectorRegisterFn hook = &starpu_vector_data_register;
-  return hook;
-}
-
-auto
-starpu_register_failure_observer() -> RegisterFailureObserverFn&
-{
-  static RegisterFailureObserverFn observer;
-  return observer;
-}
-
-}  // namespace detail
-
 namespace {
 
-constexpr auto kHostBufferAlignment = std::align_val_t{64};
+auto
+normalize_input_slot_pool_dependencies(InputSlotPool::Dependencies dependencies)
+    -> InputSlotPool::Dependencies
+{
+  if (dependencies.starpu_vector_register == nullptr) {
+    dependencies.starpu_vector_register = &starpu_vector_data_register;
+  }
+  return dependencies;
+}
 
-using detail::RegisterFailureObserverFn;
-using detail::starpu_register_failure_observer;
-using detail::starpu_vector_register_hook;
-using detail::StarpuVectorRegisterFn;
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+input_slot_pool_default_dependencies_storage_for_tests()
+    -> InputSlotPool::Dependencies&
+{
+  static InputSlotPool::Dependencies dependencies =
+      normalize_input_slot_pool_dependencies({});
+  return dependencies;
+}
+#endif  // SONAR_IGNORE_END
+
+auto
+resolve_input_slot_pool_dependencies_for_construction()
+    -> InputSlotPool::Dependencies
+{
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  return normalize_input_slot_pool_dependencies(
+      input_slot_pool_default_dependencies_storage_for_tests());
+#else
+  return normalize_input_slot_pool_dependencies({});
+#endif  // SONAR_IGNORE_END
+}
+
+constexpr auto kHostBufferAlignment = std::align_val_t{64};
 
 struct ComputedInputSizes {
   size_t total_bytes = 0;
@@ -184,18 +189,17 @@ auto
 register_starpu_handle_or_throw(
     std::byte* ptr, const ComputedInputSizes& sizes, at::ScalarType dtype,
     size_t input_index, InputSlotPool::SlotInfo& slot,
-    std::vector<InputSlotPool::HostBufferInfo>& buffer_infos)
-    -> starpu_data_handle_t
+    std::vector<InputSlotPool::HostBufferInfo>& buffer_infos,
+    const InputSlotPool::Dependencies& dependencies) -> starpu_data_handle_t
 {
   starpu_data_handle_t starpu_handle = nullptr;
-  starpu_vector_register_hook()(
+  dependencies.starpu_vector_register(
       &starpu_handle, STARPU_MAIN_RAM, std::bit_cast<uintptr_t>(ptr),
       sizes.total_numel, element_size(dtype));
   if (starpu_handle == nullptr) {
     cleanup_slot_allocations(slot, buffer_infos, input_index + 1);
-    auto& failure_observer = starpu_register_failure_observer();
-    if (failure_observer) {
-      failure_observer(slot);
+    if (dependencies.register_failure_observer) {
+      dependencies.register_failure_observer(slot);
     }
     throw StarPURegistrationException(
         "Failed to register StarPU vector handle");
@@ -205,7 +209,26 @@ register_starpu_handle_or_throw(
 
 }  // namespace
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+auto
+input_slot_pool_default_dependencies_for_tests() -> InputSlotPool::Dependencies&
+{
+  return input_slot_pool_default_dependencies_storage_for_tests();
+}
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
+
 InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
+    : InputSlotPool(
+          opts, slots, resolve_input_slot_pool_dependencies_for_construction())
+{
+}
+
+InputSlotPool::InputSlotPool(
+    const RuntimeConfig& opts, int slots, Dependencies dependencies)
+    : dependencies_(
+          normalize_input_slot_pool_dependencies(std::move(dependencies)))
 {
   bmax_ = std::max(1, opts.batching.max_batch_size);
 
@@ -285,7 +308,8 @@ InputSlotPool::allocate_slot_buffers_and_register(
       buffer_infos[i] = allocation.info;
 
       slot.handles[i] = register_starpu_handle_or_throw(
-          allocation.ptr, sizes, input_types_[i], i, slot, buffer_infos);
+          allocation.ptr, sizes, input_types_[i], i, slot, buffer_infos,
+          dependencies_);
     }
   }
   catch (...) {

@@ -866,6 +866,7 @@ StarPUSetup::~StarPUSetup()
   starpu_shutdown();
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 StarPUSetup::set_starpu_init_fn(StarpuInitFn hook_fn)
 {
@@ -899,6 +900,7 @@ StarPUSetup::reset_worker_stream_query_fn()
 {
   worker_stream_query_fn_ref() = starpu_worker_get_stream_workerids;
 }
+#endif  // SONAR_IGNORE_END
 
 // =============================================================================
 // StarPUSetup: access to codelet and CUDA worker mapping
