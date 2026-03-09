@@ -29,9 +29,22 @@ if ((${#leaked_test_helpers[@]} > 0)); then
   fail=1
 fi
 
-mapfile -t support_include_files < <(
-  rg -l '^\s*#\s*include\s+"support/' src --glob '*.[ch]pp' --glob '*.h' || true
-)
+collect_support_include_files() {
+  if command -v rg >/dev/null 2>&1; then
+    rg -l '^\s*#\s*include\s+"support/' src --glob '*.[ch]pp' --glob '*.h' || true
+    return
+  fi
+
+  while IFS= read -r -d '' file; do
+    if grep -Eq '^[[:space:]]*#[[:space:]]*include[[:space:]]+"support/' "$file"; then
+      printf '%s\n' "$file"
+    fi
+  done < <(
+    find src -type f \( -name '*.cpp' -o -name '*.hpp' -o -name '*.h' \) -print0
+  )
+}
+
+mapfile -t support_include_files < <(collect_support_include_files)
 
 expected_support_include_files=(
   "src/grpc/server/inference_service.cpp"
@@ -44,8 +57,17 @@ tmp_expected="$(mktemp)"
 tmp_actual="$(mktemp)"
 trap 'rm -f "$tmp_expected" "$tmp_actual"' EXIT
 
-printf '%s\n' "${expected_support_include_files[@]}" | sort > "$tmp_expected"
-printf '%s\n' "${support_include_files[@]}" | sort > "$tmp_actual"
+if ((${#expected_support_include_files[@]} > 0)); then
+  printf '%s\n' "${expected_support_include_files[@]}" | sort > "$tmp_expected"
+else
+  : > "$tmp_expected"
+fi
+
+if ((${#support_include_files[@]} > 0)); then
+  printf '%s\n' "${support_include_files[@]}" | sort > "$tmp_actual"
+else
+  : > "$tmp_actual"
+fi
 
 if ! diff -u "$tmp_expected" "$tmp_actual" > /dev/null; then
   echo "::error::Unexpected src/ files include test support headers. Keep includes constrained and update this allowlist intentionally."
