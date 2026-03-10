@@ -836,6 +836,20 @@ force_cuda_host_alloc_failure(
 }
 
 auto
+allocate_output_host_buffer(size_t bytes) -> std::byte*
+{
+  constexpr size_t kDefaultHostAlignment = 64;
+  void* raw_ptr = nullptr;
+  const auto& allocator =
+      starpu_server::OutputSlotPoolTestHook::host_allocator_hook_ref();
+  if (!allocator || allocator(&raw_ptr, kDefaultHostAlignment, bytes) != 0 ||
+      raw_ptr == nullptr) {
+    return nullptr;
+  }
+  return static_cast<std::byte*>(raw_ptr);
+}
+
+auto
 starpu_memory_pin_success(void* /*ptr*/, size_t /*size*/) -> int
 {
   return 0;
@@ -2505,7 +2519,7 @@ TEST(OutputSlotPool_Unit, HostBufferDeleterNoopForNullptr)
 TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
 {
   constexpr size_t kBytes = 32;
-  auto* ptr = static_cast<std::byte*>(std::malloc(kBytes));
+  auto* ptr = allocate_output_host_buffer(kBytes);
   ASSERT_NE(ptr, nullptr);
 
   starpu_server::OutputSlotPool::HostBufferInfo info{};
@@ -3774,17 +3788,17 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersReleasesResources)
   slot.handles.resize(1);
   slot.base_ptrs.resize(1);
 
-  auto* raw_ptr = std::malloc(sizeof(int));
+  auto* raw_ptr = allocate_output_host_buffer(sizeof(int));
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
+  slot.base_ptrs[0] = raw_ptr;
 
   std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
   buffer_infos[0].bytes = sizeof(int);
 
   starpu_data_handle_t handle = nullptr;
   starpu_variable_data_register(
-      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(raw_ptr),
-      sizeof(int));
+      &handle, STARPU_MAIN_RAM,
+      reinterpret_cast<uintptr_t>(static_cast<void*>(raw_ptr)), sizeof(int));
   ASSERT_NE(handle, nullptr);
   slot.handles[0] = handle;
 
@@ -3850,11 +3864,11 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersUnpinsStarpuMemory)
   slot.handles.resize(1);
   slot.base_ptrs.resize(1);
 
-  auto* raw_ptr = std::malloc(sizeof(int));
+  auto* raw_ptr = allocate_output_host_buffer(sizeof(int));
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
+  slot.base_ptrs[0] = raw_ptr;
 
-  ASSERT_EQ(starpu_memory_pin(raw_ptr, sizeof(int)), 0);
+  ASSERT_EQ(starpu_memory_pin(static_cast<void*>(raw_ptr), sizeof(int)), 0);
 
   std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
   buffer_infos[0].bytes = sizeof(int);
@@ -3863,8 +3877,8 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersUnpinsStarpuMemory)
 
   starpu_data_handle_t handle = nullptr;
   starpu_variable_data_register(
-      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(raw_ptr),
-      sizeof(int));
+      &handle, STARPU_MAIN_RAM,
+      reinterpret_cast<uintptr_t>(static_cast<void*>(raw_ptr)), sizeof(int));
   ASSERT_NE(handle, nullptr);
   slot.handles[0] = handle;
 

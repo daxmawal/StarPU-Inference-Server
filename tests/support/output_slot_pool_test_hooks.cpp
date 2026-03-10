@@ -3,6 +3,7 @@
 #include <cuda_runtime_api.h>
 
 #include <cstdlib>
+#include <new>
 #include <utility>
 
 namespace starpu_server {
@@ -138,7 +139,21 @@ set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
   auto& allocator_hook = OutputSlotPoolTestHook::host_allocator_hook_ref();
   const auto previous = allocator_hook;
   allocator_hook =
-      allocator ? std::move(allocator) : OutputHostAllocatorFn{&posix_memalign};
+      allocator ? std::move(allocator)
+                : OutputHostAllocatorFn{[](void** ptr, size_t alignment,
+                                           size_t size) {
+                    if (ptr == nullptr) {
+                      return -1;
+                    }
+                    try {
+                      *ptr = ::operator new(size, std::align_val_t{alignment});
+                      return 0;
+                    }
+                    catch (const std::bad_alloc&) {
+                      *ptr = nullptr;
+                      return -1;
+                    }
+                  }};
   return previous;
 }
 
@@ -161,15 +176,15 @@ auto
 set_output_host_deallocator_for_tests(OutputHostDeallocatorFn deallocator)
     -> OutputHostDeallocatorFn
 {
+  constexpr size_t kDefaultHostAlignment = 64;
   auto& deallocator_hook = OutputSlotPoolTestHook::host_deallocator_hook_ref();
   const auto previous = deallocator_hook;
   deallocator_hook =
-      deallocator ? std::move(deallocator)
-                  : OutputHostDeallocatorFn{[](void* ptr) noexcept {
-                      if (ptr != nullptr) {
-                        std::free(ptr);  // NOLINT(cppcoreguidelines-no-malloc)
-                      }
-                    }};
+      deallocator
+          ? std::move(deallocator)
+          : OutputHostDeallocatorFn{[](void* ptr) {
+              ::operator delete(ptr, std::align_val_t{kDefaultHostAlignment});
+            }};
   return previous;
 }
 
