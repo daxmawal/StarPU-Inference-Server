@@ -2,6 +2,7 @@
 
 #include <torch/torch.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -79,10 +80,69 @@ auto build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
 auto build_request_arrival_us_for_trace(
     const std::shared_ptr<InferenceJob>& job) -> std::vector<int64_t>;
 
+auto job_identifier(const InferenceJob& job) -> int;
+void invoke_submit_inference_task_hook();
+void invoke_run_before_submit_hook();
+void invoke_run_after_batching_thread_start_hook();
+
+[[nodiscard]] inline auto
+batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
+{
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  const auto& first = inputs.front();
+  if (first.dim() <= 0) {
+    return 1;
+  }
+
+  const auto dim0 = first.size(0);
+  return dim0 > 0 ? static_cast<std::size_t>(dim0) : std::size_t{1};
+}
+
+[[nodiscard]] inline auto
+resolve_batch_size_for_job(
+    const RuntimeConfig* opts,
+    const std::shared_ptr<InferenceJob>& job) -> int64_t
+{
+  if (!job) {
+    return 1;
+  }
+  if (const auto effective = job->effective_batch_size();
+      effective.has_value()) {
+    return std::max<int64_t>(1, *effective);
+  }
+
+  const auto& inputs = job->get_input_tensors();
+  if (inputs.empty()) {
+    return 1;
+  }
+
+  if (opts != nullptr && opts->model.has_value() &&
+      !opts->model->inputs.empty()) {
+    const auto per_sample_rank =
+        static_cast<int64_t>(opts->model->inputs[0].dims.size());
+    if (const auto rank0 = inputs[0].dim();
+        rank0 == per_sample_rank + 1 && rank0 > 0) {
+      return std::max<int64_t>(1, inputs[0].size(0));
+    }
+    return 1;
+  }
+
+  return static_cast<int64_t>(batch_size_from_inputs(inputs));
+}
+
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void set_submit_inference_task_hook(std::function<void()> hook);
 void reset_submit_inference_task_hook();
+void set_duplicate_batching_thread_exception_capture_for_test(bool enable);
+void reset_duplicate_batching_thread_exception_capture_for_test();
+void set_run_after_batching_thread_start_hook(std::function<void()> hook);
+void reset_run_after_batching_thread_start_hook();
+void set_run_before_submit_hook(std::function<void()> hook);
+void reset_run_before_submit_hook();
 
 namespace testing {
 struct VectorResizeSpecShim {
@@ -101,6 +161,10 @@ auto batch_size_from_inputs(const std::vector<torch::Tensor>& inputs)
 auto resolve_batch_size_for_job(
     const RuntimeConfig* opts,
     const std::shared_ptr<InferenceJob>& job) -> int64_t;
+
+void batch_collector_set_after_build_job_hook(
+    std::function<void(std::shared_ptr<InferenceJob>&)> hook);
+void batch_collector_reset_after_build_job_hook();
 
 auto cuda_copy_batch_create(bool enable) -> void*;
 void cuda_copy_batch_destroy(void* batch);
@@ -141,11 +205,18 @@ auto batch_collector_should_hold_job(
     const std::shared_ptr<InferenceJob>& candidate,
     const std::shared_ptr<InferenceJob>& reference,
     const std::optional<int>& target_worker) -> bool;
+auto batch_collector_is_batching_done(const BatchCollector* collector) -> bool;
+auto batch_collector_should_abort_inflight_wait(const BatchCollector* collector)
+    -> bool;
 void batch_collector_disable_prepared_job_sync(BatchCollector* collector);
 void batch_collector_set_queue(
     BatchCollector* collector, InferenceQueue* queue);
 auto batch_collector_get_queue(const BatchCollector* collector)
     -> InferenceQueue*;
+void batch_collector_set_batching_done_ptr(
+    BatchCollector* collector, bool* batching_done);
+void batch_collector_set_batching_done_value(
+    BatchCollector* collector, bool batching_done);
 void batch_collector_set_pending_job(
     BatchCollector* collector, const std::shared_ptr<InferenceJob>& job);
 }  // namespace testing

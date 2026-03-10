@@ -11,6 +11,9 @@ permissions:
   checks: write
   pull-requests: write
 
+env:
+  CI_BUILD_JOBS: "16"
+
 jobs:
   cmake-format:
     runs-on: ubuntu-latest
@@ -22,14 +25,8 @@ jobs:
 
       - name: Compute excluded paths
         run: |
-          EXCLUDES="external"
-          if [ -f .gitmodules ]; then
-            while read -r _ path; do
-              EXCLUDES="$EXCLUDES $path"
-            done < <(git config --file .gitmodules --get-regexp path || true)
-          fi
-          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
-          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
+          mapfile -t EXCLUDED_PATHS_ARRAY < <(./scripts/ci_excluded_paths.sh)
+          echo "EXCLUDED_PATHS=${EXCLUDED_PATHS_ARRAY[*]}" >> "$GITHUB_ENV"
 
       - name: Install cmake-format
         run: pip install cmakelang
@@ -64,14 +61,8 @@ jobs:
 
       - name: Compute excluded paths
         run: |
-          EXCLUDES="external"
-          if [ -f .gitmodules ]; then
-            while read -r _ path; do
-              EXCLUDES="$EXCLUDES $path"
-            done < <(git config --file .gitmodules --get-regexp path || true)
-          fi
-          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
-          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
+          mapfile -t EXCLUDED_PATHS_ARRAY < <(./scripts/ci_excluded_paths.sh)
+          echo "EXCLUDED_PATHS=${EXCLUDED_PATHS_ARRAY[*]}" >> "$GITHUB_ENV"
 
       - name: Check trailing whitespace
         run: |
@@ -135,14 +126,8 @@ jobs:
 
       - name: Compute excluded paths
         run: |
-          EXCLUDES="external"
-          if [ -f .gitmodules ]; then
-            while read -r _ path; do
-              EXCLUDES="$EXCLUDES $path"
-            done < <(git config --file .gitmodules --get-regexp path || true)
-          fi
-          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
-          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
+          mapfile -t EXCLUDED_PATHS_ARRAY < <(./scripts/ci_excluded_paths.sh)
+          echo "EXCLUDED_PATHS=${EXCLUDED_PATHS_ARRAY[*]}" >> "$GITHUB_ENV"
 
       - name: Install clang-format
         run: sudo apt-get install -y clang-format
@@ -168,14 +153,8 @@ jobs:
 
       - name: Compute excluded paths
         run: |
-          EXCLUDES="external"
-          if [ -f .gitmodules ]; then
-            while read -r _ path; do
-              EXCLUDES="$EXCLUDES $path"
-            done < <(git config --file .gitmodules --get-regexp path || true)
-          fi
-          EXCLUDES=$(echo "$EXCLUDES" | xargs -n1 | sort -u | tr '\n' ' ')
-          echo "EXCLUDED_PATHS=$EXCLUDES" >> "$GITHUB_ENV"
+          mapfile -t EXCLUDED_PATHS_ARRAY < <(./scripts/ci_excluded_paths.sh)
+          echo "EXCLUDED_PATHS=${EXCLUDED_PATHS_ARRAY[*]}" >> "$GITHUB_ENV"
 
       - name: Run markdownlint
         run: |
@@ -185,8 +164,20 @@ jobs:
           done
           npx --yes markdownlint-cli@0.43.0 '**/*.md' "${IGNORE_ARGS[@]}"
 
+  structural-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce source/test structure boundaries
+        run: ./scripts/ci_structural_guard.sh
+
   build:
-    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
     runs-on: self-hosted
 
     steps:
@@ -204,7 +195,7 @@ jobs:
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=ON \
             -DENABLE_SANITIZERS=OFF
-          cmake --build build -- -j$(nproc)
+          cmake --build build -- -j"$CI_BUILD_JOBS"
         shell: bash
 
       - name: Save build artifacts
@@ -214,7 +205,8 @@ jobs:
           path: build/
 
   build-clang:
-    needs: [clang-format, cmake-format, whitespace, markdownlint]
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
     runs-on: self-hosted
 
     steps:
@@ -236,7 +228,7 @@ jobs:
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
             -DENABLE_SANITIZERS=OFF
-          cmake --build build-clang -- -j$(nproc)
+          cmake --build build-clang -- -j"$CI_BUILD_JOBS"
         shell: bash
 
       - name: Save clang build artifacts
@@ -244,6 +236,88 @@ jobs:
         with:
           name: build-folder-clang
           path: build-clang/
+
+  sanitizers:
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
+    runs-on: self-hosted
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Configure and Build (ASan + UBSan)
+        run: |
+          cmake -S . -B build-sanitizers \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_SANITIZERS=ON
+          cmake --build build-sanitizers -- -j"$CI_BUILD_JOBS"
+        shell: bash
+
+      - name: Run sanitizer unit tests (CPU-only)
+        env:
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1:abort_on_error=1:detect_container_overflow=0
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          SANITIZER_GTEST_FILTER: "*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*:*Cuda*:*CUDA*:*Gpu*:*GPU*:*PopulateResponseHandlesCudaOutputs:*CleanupSlotBuffersUnpinsStarpuMemory"
+          SANITIZER_CRITICAL_PATHS_FILTER: "WarmupRunnerTest.WarmupRunnerRunNoCuda_Integration:WarmupRunnerTest.WarmupRunsOnCpuWhenCudaDisabled_Integration:WarmupRunnerTest.WarmupRunWithMockedWorkers_Integration:WarmupRunnerTest.WarmupRunnerRunZeroRequestNb_Integration:WarmupRunnerEdgesTest.RunNoCudaNoThreads_Integration"
+        run: |
+          chmod +x build-sanitizers/all_tests || true
+          build-sanitizers/all_tests --gtest_filter="$SANITIZER_GTEST_FILTER"
+          build-sanitizers/all_tests --gtest_filter="$SANITIZER_CRITICAL_PATHS_FILTER"
+        shell: bash
+
+  tsan:
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
+    runs-on: self-hosted
+    env:
+      CUDA_VISIBLE_DEVICES: ""
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Configure and Build (TSan targeted)
+        run: |
+          cmake -S . -B build-tsan \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_SANITIZERS=OFF \
+            -DENABLE_TSAN=ON
+          cmake --build build-tsan -- -j"$CI_BUILD_JOBS"
+        shell: bash
+
+      - name: Run targeted TSAN tests (CPU-only)
+        env:
+          TSAN_OPTIONS: halt_on_error=1:abort_on_error=1
+          TSAN_GTEST_FILTER: "*ServerMainOrchestration*:*HandleModelInferAsync*:*AsyncServerContext*:*UnaryCallDataGuard*:*InferenceQueue*:*WarmupRunner*:*PrepareJobCompletionCallback*:*FinalizeJobCompletion*:*RecordJobMetricsUpdatesPerfObserver*:*WaitForNextJob*:*BatchingLoop*:*ReleaseInflightSlot*:*ReserveAndReleaseInflightSlotWorkTogetherWithLimit*:*RunDrainsQueueWhenStarpuSubmitAlwaysFails*-*Integration*:*_Integration*:*E2E*:*EndToEndInference*:*Cuda*:*CUDA*:*Gpu*:*GPU*"
+          TSAN_CRITICAL_PATHS_FILTER: "WarmupRunnerTest.WarmupRunnerRunNoCuda_Integration:WarmupRunnerTest.WarmupRunsOnCpuWhenCudaDisabled_Integration:WarmupRunnerTest.WarmupRunWithMockedWorkers_Integration:WarmupRunnerTest.WarmupRunnerRunZeroRequestNb_Integration:WarmupRunnerEdgesTest.RunNoCudaNoThreads_Integration"
+        run: |
+          chmod +x build-tsan/all_tests || true
+          build-tsan/all_tests --gtest_filter="$TSAN_GTEST_FILTER"
+          build-tsan/all_tests --gtest_filter="$TSAN_CRITICAL_PATHS_FILTER"
+        shell: bash
 
   clang-analyzer:
     needs: build
@@ -267,7 +341,7 @@ jobs:
 
       - name: Run Clang Static Analyzer
         run: |
-          scan-build --status-bugs -o clang-analyzer cmake --build build -- -j"$(nproc)"
+          scan-build --status-bugs -o clang-analyzer cmake --build build -- -j"$CI_BUILD_JOBS"
         shell: bash
 
       - name: Upload analyzer report
@@ -280,6 +354,12 @@ jobs:
   test-and-coverage:
     needs: build
     runs-on: self-hosted
+    env:
+      # Incremental tightening to reduce CI churn while improving quality.
+      COVERAGE_MIN_LINE: "72"
+      CTEST_TIMEOUT_UNIT_SECONDS: "480"
+      CTEST_TIMEOUT_INTEGRATION_SECONDS: "600"
+      CTEST_TIMEOUT_E2E_SECONDS: "600"
 
     steps:
       - name: Checkout code
@@ -305,10 +385,35 @@ jobs:
         working-directory: build
         run: chmod +x all_tests || true
 
-      - name: Run tests and generate JUnit XML
+      - name: Run unit test shards
         run: |
-          ctest --test-dir build --output-on-failure -T Test --no-compress-output
-          cp build/Testing/*/Test.xml build/junit.xml
+          ctest --test-dir build --output-on-failure \
+            --timeout "$CTEST_TIMEOUT_UNIT_SECONDS" \
+            -R '^unit_tests_shard_.*$' \
+            --output-junit build/junit-unit.xml
+
+      - name: Run integration test shards
+        run: |
+          ctest --test-dir build --output-on-failure \
+            --timeout "$CTEST_TIMEOUT_INTEGRATION_SECONDS" \
+            -R '^integration_tests_shard_.*$' \
+            --output-junit build/junit-integration.xml
+
+      - name: Run e2e test shards
+        run: |
+          ctest --test-dir build --output-on-failure \
+            --timeout "$CTEST_TIMEOUT_E2E_SECONDS" \
+            -R '^e2e_tests_shard_.*$' \
+            --output-junit build/junit-e2e.xml
+
+      - name: Upload JUnit reports
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-reports
+          path: |
+            build/junit-unit.xml
+            build/junit-integration.xml
+            build/junit-e2e.xml
 
       - name: Generate coverage report using gcovr in venv
         working-directory: build
@@ -343,6 +448,20 @@ jobs:
             --exclude '^usr/.*' \
             --exclude '^Install/.*' \
             --lcov -o coverage.lcov
+
+      - name: Enforce minimum line coverage
+        working-directory: build
+        run: |
+          ROOTDIR="$(cd .. && pwd)"
+          ../gcovr-venv/bin/gcovr --root "$ROOTDIR" \
+            --filter "$ROOTDIR/src" \
+            --exclude '^build/.*' \
+            --exclude '^build/_deps/.*' \
+            --exclude '^tests/.*' \
+            --exclude '^external/.*' \
+            --exclude '^usr/.*' \
+            --exclude '^Install/.*' \
+            --fail-under-line "$COVERAGE_MIN_LINE"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

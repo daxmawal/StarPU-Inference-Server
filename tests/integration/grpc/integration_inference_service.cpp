@@ -5,13 +5,31 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <future>
+#include <memory>
 #include <string>
 #include <thread>
 
 #include "test_inference_service.hpp"
+
+namespace {
+auto pick_unused_port() -> int;
+
+constexpr auto kServerStartTimeout = std::chrono::seconds(5);
+
+auto
+wait_for_channel_ready(
+    const std::string& address,
+    std::chrono::system_clock::duration timeout = kServerStartTimeout) -> bool
+{
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  return channel->WaitForConnected(std::chrono::system_clock::now() + timeout);
+}
+}  // namespace
 
 TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
 {
@@ -102,6 +120,10 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
 {
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
   std::unique_ptr<grpc::Server> server;
@@ -109,19 +131,18 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
   constexpr std::size_t kMiB =
       static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
   std::jthread thread([&]() {
-    const auto options = starpu_server::GrpcServerOptions{
-        "127.0.0.1:0",
-        kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info,
-        "",
-        "",
-        ""};
+    const auto options =
+        starpu_server::GrpcServerOptions{address,
+                                         kMaxMessageSizeMiB * kMiB,
+                                         starpu_server::VerbosityLevel::Info,
+                                         "",
+                                         "",
+                                         ""};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_channel_ready(address))
+      << "Timed out waiting for gRPC server startup";
   starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
@@ -129,6 +150,10 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
 
 TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
 {
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
   std::unique_ptr<grpc::Server> server;
@@ -140,13 +165,13 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
   const std::vector<std::vector<int64_t>> expected_input_dims = {
       {kMaxBatchSize, 3, 224, 224}};
   std::jthread thread([&]() {
-    const auto options = starpu_server::GrpcServerOptions{
-        "127.0.0.1:0",
-        kMaxMessageSizeMiB * kMiB,
-        starpu_server::VerbosityLevel::Info,
-        "",
-        "",
-        ""};
+    const auto options =
+        starpu_server::GrpcServerOptions{address,
+                                         kMaxMessageSizeMiB * kMiB,
+                                         starpu_server::VerbosityLevel::Info,
+                                         "",
+                                         "",
+                                         ""};
     const auto model_spec = starpu_server::GrpcModelSpec{
         .expected_input_types = expected_input_types,
         .expected_input_dims = expected_input_dims,
@@ -156,9 +181,8 @@ TEST(GrpcServer, RunGrpcServer_WithExpectedDimsResetsServer)
     starpu_server::RunGrpcServer(
         queue, reference_outputs, model_spec, options, server);
   });
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_channel_ready(address))
+      << "Timed out waiting for gRPC server startup";
   starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
@@ -172,6 +196,63 @@ TEST(GrpcServer, StartAndStop)
   starpu_server::StopServer(server.server.get());
   server.thread.join();
   EXPECT_EQ(server.server, nullptr);
+}
+
+TEST(GrpcServer, RunGrpcServerSupportsDoubleStartStopCycle)
+{
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+
+  auto run_cycle = [&](int cycle_index) {
+    const int port = pick_unused_port();
+    ASSERT_GT(port, 0);
+    const std::string address = "127.0.0.1:" + std::to_string(port);
+
+    starpu_server::InferenceQueue queue;
+    std::vector<torch::Tensor> reference_outputs;
+    std::unique_ptr<grpc::Server> server;
+
+    const auto options =
+        starpu_server::GrpcServerOptions{address,
+                                         kMaxMessageSizeMiB * kMiB,
+                                         starpu_server::VerbosityLevel::Info,
+                                         "",
+                                         "",
+                                         ""};
+
+    std::jthread thread([&, options]() {
+      starpu_server::RunGrpcServer(
+          queue, reference_outputs, {at::kFloat}, {}, options, server);
+    });
+
+    ASSERT_TRUE(wait_for_channel_ready(address))
+        << "cycle " << cycle_index
+        << " timed out waiting for gRPC server startup";
+
+    auto channel =
+        grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+    ASSERT_TRUE(channel->WaitForConnected(
+        std::chrono::system_clock::now() + std::chrono::seconds(5)))
+        << "cycle " << cycle_index << " failed to connect";
+
+    auto stub = inference::GRPCInferenceService::NewStub(channel);
+    grpc::ClientContext context;
+    inference::ServerLiveRequest request;
+    inference::ServerLiveResponse response;
+    const auto status = stub->ServerLive(&context, request, &response);
+    ASSERT_TRUE(status.ok())
+        << "cycle " << cycle_index
+        << " ServerLive RPC failed: " << status.error_message();
+    EXPECT_TRUE(response.live()) << "cycle " << cycle_index << " not live";
+
+    starpu_server::StopServer(server.get());
+    thread.join();
+    EXPECT_EQ(server, nullptr) << "cycle " << cycle_index << " not released";
+  };
+
+  run_cycle(1);
+  run_cycle(2);
 }
 
 TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
@@ -208,7 +289,7 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
         "",
         ""};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
   EXPECT_EQ(
@@ -331,12 +412,11 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_channel_ready(address))
+      << "Timed out waiting for gRPC server startup";
 
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
@@ -351,6 +431,102 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
   const auto status = stub->ServerLive(&context, request, &response);
   ASSERT_TRUE(status.ok());
   EXPECT_TRUE(response.live());
+
+  starpu_server::StopServer(server.get());
+  thread.join();
+  EXPECT_EQ(server, nullptr);
+}
+
+TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForRepositoryIndex)
+{
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+
+  const auto options =
+      starpu_server::GrpcServerOptions{address,
+                                       kMaxMessageSizeMiB * kMiB,
+                                       starpu_server::VerbosityLevel::Info,
+                                       "",
+                                       "",
+                                       ""};
+
+  std::jthread thread([&, options]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
+  });
+
+  ASSERT_TRUE(wait_for_channel_ready(address))
+      << "Timed out waiting for gRPC server startup";
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+  auto stub = inference::GRPCInferenceService::NewStub(channel);
+
+  grpc::ClientContext context;
+  inference::RepositoryIndexRequest request;
+  inference::RepositoryIndexResponse response;
+  const auto status = stub->RepositoryIndex(&context, request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNIMPLEMENTED);
+  EXPECT_EQ(status.error_message(), "RPC RepositoryIndex is not implemented");
+
+  starpu_server::StopServer(server.get());
+  thread.join();
+  EXPECT_EQ(server, nullptr);
+}
+
+TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForModelStreamInfer)
+{
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs;
+  std::unique_ptr<grpc::Server> server;
+
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+
+  const auto options =
+      starpu_server::GrpcServerOptions{address,
+                                       kMaxMessageSizeMiB * kMiB,
+                                       starpu_server::VerbosityLevel::Info,
+                                       "",
+                                       "",
+                                       ""};
+
+  std::jthread thread([&, options]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
+  });
+
+  ASSERT_TRUE(wait_for_channel_ready(address))
+      << "Timed out waiting for gRPC server startup";
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+  auto stub = inference::GRPCInferenceService::NewStub(channel);
+
+  grpc::ClientContext context;
+  auto stream = stub->ModelStreamInfer(&context);
+  ASSERT_NE(stream, nullptr);
+  const auto status = stream->Finish();
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNIMPLEMENTED);
+  EXPECT_EQ(status.error_message(), "RPC ModelStreamInfer is not implemented");
 
   starpu_server::StopServer(server.get());
   thread.join();
@@ -390,12 +566,11 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
-  while (!server) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  }
+  ASSERT_TRUE(wait_for_channel_ready(address))
+      << "Timed out waiting for gRPC server startup";
 
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
@@ -441,4 +616,108 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
   starpu_server::StopServer(server.get());
   thread.join();
   EXPECT_EQ(server, nullptr);
+}
+
+TEST(GrpcServer, StopServerWhileHandlingConcurrentLoad)
+{
+  const int port = pick_unused_port();
+  ASSERT_GT(port, 0);
+  const std::string address = "127.0.0.1:" + std::to_string(port);
+
+  starpu_server::InferenceQueue queue;
+  std::vector<torch::Tensor> reference_outputs = {torch::zeros({2, 2})};
+  std::unique_ptr<grpc::Server> server;
+
+  constexpr std::size_t kMaxMessageSizeMiB = 32U;
+  constexpr std::size_t kMiB =
+      static_cast<std::size_t>(1024) * static_cast<std::size_t>(1024);
+  constexpr int kClientThreads = 8;
+  constexpr int kRequestsPerThread = 20;
+
+  const auto options =
+      starpu_server::GrpcServerOptions{address,
+                                       kMaxMessageSizeMiB * kMiB,
+                                       starpu_server::VerbosityLevel::Info,
+                                       "",
+                                       "",
+                                       ""};
+
+  constexpr float kVal1 = 10.0F;
+  constexpr float kVal2 = 20.0F;
+  constexpr float kVal3 = 30.0F;
+  constexpr float kVal4 = 40.0F;
+  const std::vector<torch::Tensor> expected_outputs = {
+      torch::tensor({kVal1, kVal2, kVal3, kVal4}).view({2, 2})};
+
+  std::atomic<bool> stop_worker{false};
+  std::jthread worker_thread([&]() {
+    while (!stop_worker.load(std::memory_order_acquire)) {
+      std::shared_ptr<starpu_server::InferenceJob> job;
+      if (!queue.wait_for_and_pop(job, std::chrono::milliseconds(20))) {
+        if (queue.is_shutdown()) {
+          break;
+        }
+        continue;
+      }
+      if (job != nullptr) {
+        auto outputs_copy = expected_outputs;
+        job->get_on_complete()(outputs_copy, 0.0);
+      }
+    }
+  });
+
+  std::jthread server_thread([&, options]() {
+    starpu_server::RunGrpcServer(
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
+  });
+
+  ASSERT_TRUE(wait_for_channel_ready(address))
+      << "Timed out waiting for gRPC server startup";
+
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  ASSERT_TRUE(channel->WaitForConnected(
+      std::chrono::system_clock::now() + std::chrono::seconds(5)));
+
+  std::atomic<int> started_requests{0};
+  std::atomic<int> successful_requests{0};
+
+  std::vector<std::jthread> clients;
+  clients.reserve(kClientThreads);
+  for (int thread_index = 0; thread_index < kClientThreads; ++thread_index) {
+    clients.emplace_back([&, thread_index]() {
+      auto stub = inference::GRPCInferenceService::NewStub(channel);
+      for (int request_index = 0; request_index < kRequestsPerThread;
+           ++request_index) {
+        auto request = starpu_server::make_valid_request();
+        request.MergeFrom(starpu_server::make_model_request("model", "1"));
+
+        inference::ModelInferResponse response;
+        grpc::ClientContext context;
+        context.set_deadline(
+            std::chrono::system_clock::now() + std::chrono::milliseconds(500));
+
+        started_requests.fetch_add(1, std::memory_order_relaxed);
+        const auto status = stub->ModelInfer(&context, request, &response);
+        if (status.ok()) {
+          successful_requests.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        if (thread_index == 0 && request_index == (kRequestsPerThread / 2)) {
+          starpu_server::StopServer(server.get());
+        }
+      }
+    });
+  }
+
+  clients.clear();
+  queue.shutdown();
+  stop_worker.store(true, std::memory_order_release);
+
+  worker_thread.join();
+  server_thread.join();
+
+  EXPECT_EQ(server, nullptr);
+  EXPECT_GT(started_requests.load(std::memory_order_relaxed), 0);
+  EXPECT_GT(successful_requests.load(std::memory_order_relaxed), 0);
 }

@@ -16,12 +16,12 @@
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace starpu_server {
 struct WarmupRunnerTestHelper {
-  static void client_worker(
+  static auto client_worker(
       WarmupRunner& runner,
       const std::map<int, std::vector<int>>& device_workers,
-      InferenceQueue& queue, int request_nb_per_worker)
+      InferenceQueue& queue, int request_nb_per_worker) -> std::size_t
   {
-    runner.client_worker(device_workers, queue, request_nb_per_worker);
+    return runner.client_worker(device_workers, queue, request_nb_per_worker);
   }
 };
 }  // namespace starpu_server

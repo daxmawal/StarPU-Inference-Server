@@ -20,7 +20,7 @@
 #include "utils/datatype_utils.hpp"
 
 namespace starpu_server {
-namespace {
+inline namespace tensor_builder_detail {
 void
 noop_deleter(void* /*unused*/) noexcept
 {
@@ -121,7 +121,7 @@ refresh_input_cache(
     ivalue_cache[idx] = tensor_cache[idx];
   }
 }
-}  // namespace
+}  // namespace tensor_builder_detail
 
 // =============================================================================
 // Build input tensors from StarPU raw buffers and layout metadata

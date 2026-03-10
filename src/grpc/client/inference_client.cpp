@@ -32,7 +32,7 @@ struct AsyncClientCall {
   std::optional<InferenceClient::OutputSummary> expected_outputs;
 };
 
-namespace {
+inline namespace inference_client_detail {
 constexpr double kOutputComparisonTolerance = 1e-4;
 
 template <typename T>
@@ -131,7 +131,7 @@ decode_output_values(
 
   return decoded;
 }
-}  // namespace
+}  // namespace inference_client_detail
 
 InferenceClient::InferenceClient(
     std::shared_ptr<grpc::Channel>& channel, VerbosityLevel verbosity)

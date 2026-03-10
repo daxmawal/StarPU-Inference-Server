@@ -6,6 +6,7 @@
 #include <bit>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <format>
@@ -25,11 +26,12 @@
 #include "output_slot_pool.hpp"
 #include "starpu_setup.hpp"
 #include "utils/device_type.hpp"
+#include "utils/exception_classification.hpp"
 #include "utils/exception_logging.hpp"
 #include "utils/tensor_validation.hpp"
 
 namespace starpu_server {
-namespace {
+inline namespace inference_task_detail {
 
 auto
 resolve_dependencies(const InferenceTaskDependencies* deps)
@@ -69,6 +71,150 @@ require_runtime_config(const RuntimeConfig* opts) -> const RuntimeConfig&
     throw InferenceExecutionException("RuntimeConfig is null.");
   }
   return *opts;
+}
+
+enum class CallbackTerminalStatus : std::uint8_t {
+  kSuccess,
+  kFailure,
+};
+
+struct CallbackFailureDetails {
+  std::string_view reason;
+  std::string_view message;
+};
+
+void
+mark_callback_failure(
+    InferenceCallbackContext* ctx, const CallbackFailureDetails& failure)
+{
+  if (ctx == nullptr || ctx->job == nullptr) {
+    return;
+  }
+
+  if (!ctx->job->failure_info().has_value()) {
+    const std::string model_name{ctx->job->model_name()};
+    increment_inference_failure("callback", failure.reason, model_name);
+
+    InferenceJob::FailureInfo failure_info{};
+    failure_info.stage = "callback";
+    failure_info.reason = std::string(failure.reason);
+    failure_info.message = std::string(failure.message);
+    failure_info.metrics_reported = true;
+    ctx->job->set_failure_info(std::move(failure_info));
+  }
+
+  // Force downstream async completion to enter the failure path.
+  ctx->job->set_output_tensors({});
+}
+
+auto
+resolve_terminal_status(const InferenceCallbackContext* ctx)
+    -> CallbackTerminalStatus
+{
+  if (ctx != nullptr && ctx->job != nullptr &&
+      ctx->job->failure_info().has_value()) {
+    return CallbackTerminalStatus::kFailure;
+  }
+  return CallbackTerminalStatus::kSuccess;
+}
+
+void
+finalize_or_fail_once(
+    InferenceCallbackContext* ctx, CallbackTerminalStatus status,
+    std::string_view context)
+{
+  if (ctx == nullptr) {
+    log_error(std::format("{} received a null callback context", context));
+    return;
+  }
+
+  if (status == CallbackTerminalStatus::kFailure && ctx->job != nullptr &&
+      !ctx->job->failure_info().has_value()) {
+    InferenceJob::FailureInfo failure_info{};
+    failure_info.stage = "callback";
+    failure_info.reason = "terminal_failure";
+    failure_info.message =
+        "Inference callback finalized after an unrecoverable error.";
+    ctx->job->set_failure_info(std::move(failure_info));
+    ctx->job->set_output_tensors({});
+  }
+
+  if (bool expected = false;
+      !ctx->terminal_path_started.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel,
+          std::memory_order_acquire)) {
+    return;
+  }
+
+  try {
+    InferenceTask::finalize_inference_task(ctx);
+  }
+  catch (const InferenceEngineException& exception) {
+    InferenceTask::log_exception(std::string(context), exception);
+  }
+  catch (const std::exception& exception) {
+    log_error(std::format(
+        "std::exception in {} terminal path: {}", context, exception.what()));
+  }
+  catch (...) {
+    log_error(std::format("Unknown exception in {} terminal path", context));
+  }
+}
+
+void
+decrement_remaining_and_finalize_if_done(
+    InferenceCallbackContext* ctx, std::string_view context)
+{
+  if (ctx == nullptr) {
+    return;
+  }
+  if (--ctx->remaining_outputs_to_acquire == 0) {
+    finalize_or_fail_once(ctx, resolve_terminal_status(ctx), context);
+  }
+}
+
+void
+handle_output_callback_exception(
+    ExceptionCategory category, const std::exception* exception,
+    InferenceCallbackContext* ctx, std::size_t index,
+    bool& bypass_remaining_handles)
+{
+  const auto mark_and_finalize_failure = [&](std::string_view reason,
+                                             std::string_view message) {
+    mark_callback_failure(
+        ctx, CallbackFailureDetails{.reason = reason, .message = message});
+    ctx->outputs_handles_to_release[index] = nullptr;
+    bypass_remaining_handles = true;
+    decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
+  };
+
+  using enum starpu_server::ExceptionCategory;
+  if (category == Unknown || exception == nullptr) {
+    log_error("Unknown exception in starpu_output_callback");
+    mark_and_finalize_failure(
+        "output_callback_unknown_exception",
+        "Unknown non-standard exception in output callback.");
+    return;
+  }
+
+  if (category == InferenceEngine) {
+    if (const auto* inference_engine_exception =
+            dynamic_cast<const InferenceEngineException*>(exception);
+        inference_engine_exception != nullptr) {
+      InferenceTask::log_exception(
+          "starpu_output_callback", *inference_engine_exception);
+    } else {
+      log_error(std::format(
+          "InferenceEngine category mismatch in starpu_output_callback: {}",
+          exception->what()));
+    }
+    mark_and_finalize_failure("output_acquire_failed", exception->what());
+    return;
+  }
+
+  log_error(std::format(
+      "std::exception in starpu_output_callback: {}", exception->what()));
+  mark_and_finalize_failure("output_callback_exception", exception->what());
 }
 
 class StarpuHandleVectorGuard {
@@ -124,7 +270,7 @@ register_tensor_handles(
   unregister_guard.dismiss();
   return handles;
 }
-}  // namespace
+}  // namespace inference_task_detail
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 InferenceTaskDependencies kDefaultInferenceTaskDependencies{
@@ -329,13 +475,33 @@ InferenceTask::bind_runtime_job_info(
     const std::shared_ptr<InferenceParams>& params) const
 {
   params->request_id = job_->get_request_id();
-  params->device.executed_on = &job_->get_executed_on();
-  params->device.device_id = &job_->get_device_id();
-  params->device.worker_id = &job_->get_worker_id();
-  params->timing.codelet_start_time = &job_->timing_info().codelet_start_time;
-  params->timing.codelet_end_time = &job_->timing_info().codelet_end_time;
-  params->timing.inference_start_time =
-      &job_->timing_info().inference_start_time;
+  params->device.set_executed_on = [job = job_](DeviceType executed_on) {
+    job->set_executed_on(executed_on);
+  };
+  params->device.set_device_id = [job = job_](int device_id) {
+    job->set_device_id(device_id);
+  };
+  params->device.set_worker_id = [job = job_](int worker_id) {
+    job->set_worker_id(worker_id);
+  };
+  params->timing.set_codelet_start_time =
+      [job = job_](MonotonicClock::time_point started_at) {
+        job->update_timing_info([started_at](detail::TimingInfo& timing) {
+          timing.codelet_start_time = started_at;
+        });
+      };
+  params->timing.set_codelet_end_time =
+      [job = job_](MonotonicClock::time_point ended_at) {
+        job->update_timing_info([ended_at](detail::TimingInfo& timing) {
+          timing.codelet_end_time = ended_at;
+        });
+      };
+  params->timing.set_inference_start_time =
+      [job = job_](MonotonicClock::time_point started_at) {
+        job->update_timing_info([started_at](detail::TimingInfo& timing) {
+          timing.inference_start_time = started_at;
+        });
+      };
 }
 
 void
@@ -457,7 +623,10 @@ InferenceTask::submit()
   starpu_task* task =
       create_task(ctx->inputs_handles, ctx->outputs_handles, ctx);
 
-  job_->timing_info().before_starpu_submitted_time = MonotonicClock::now();
+  const auto submitted_at = MonotonicClock::now();
+  job_->update_timing_info([submitted_at](detail::TimingInfo& timing) {
+    timing.before_starpu_submitted_time = submitted_at;
+  });
 
   const int ret = starpu_task_submit(task);
   if (ret != 0) {
@@ -493,11 +662,21 @@ InferenceTask::create_task(
   }
 
   task->nbuffers = static_cast<int>(num_buffers);
-  task->cl = starpu_->get_codelet();
+  // Some unit tests build tasks without a real StarPUSetup instance because
+  // they only validate cleanup/dependency behavior, not task execution.
+  task->cl = (starpu_ != nullptr) ? starpu_->get_codelet() : nullptr;
   task->synchronous = opts.batching.synchronous ? 1 : 0;
   task->cl_arg = ctx->inference_params.get();
+  int min_priority = STARPU_DEFAULT_PRIO;
+  int max_priority = STARPU_DEFAULT_PRIO;
+  // Some unit tests call create_task() without bootstrapping StarPU. In that
+  // case, querying scheduler bounds segfaults, so we keep default priority.
+  if (starpu_is_initialized() > 0) {
+    min_priority = starpu_sched_get_min_priority();
+    max_priority = starpu_sched_get_max_priority();
+  }
   task->priority =
-      std::max(STARPU_MIN_PRIO, STARPU_MAX_PRIO - ctx->job->get_request_id());
+      std::max(min_priority, max_priority - ctx->job->get_request_id());
   task->destroy = 1;
 
   if (ctx != nullptr && ctx->dependencies == nullptr) {
@@ -626,25 +805,57 @@ InferenceTask::assign_fixed_worker_if_needed(starpu_task* task) const
 void
 InferenceTask::starpu_output_callback(void* arg)
 {
-  try {
-    auto* ctx = static_cast<InferenceCallbackContext*>(arg);
-    ctx->job->timing_info().callback_start_time = MonotonicClock::now();
+  auto* ctx = static_cast<InferenceCallbackContext*>(arg);
+  if (ctx == nullptr) {
+    log_error("starpu_output_callback received null context");
+    return;
+  }
 
-    ctx->remaining_outputs_to_acquire =
-        static_cast<int>(ctx->outputs_handles.size());
+  [[maybe_unused]] const auto callback_keep_alive =
+      std::static_pointer_cast<InferenceCallbackContext>(ctx->self_keep_alive);
 
-    const auto* dependencies = resolve_dependencies(ctx, nullptr);
+  const auto callback_start = MonotonicClock::now();
+  if (ctx->job != nullptr) {
+    ctx->job->update_timing_info([callback_start](detail::TimingInfo& timing) {
+      timing.callback_start_time = callback_start;
+    });
+  }
 
-    for (const auto& handle : ctx->outputs_handles) {
+  ctx->remaining_outputs_to_acquire =
+      static_cast<int>(ctx->outputs_handles.size());
+  ctx->outputs_handles_to_release = ctx->outputs_handles;
+  if (ctx->outputs_handles.empty()) {
+    finalize_or_fail_once(
+        ctx, resolve_terminal_status(ctx), "starpu_output_callback");
+    return;
+  }
+
+  const auto* dependencies = resolve_dependencies(ctx, nullptr);
+  bool bypass_remaining_handles = false;
+
+  for (std::size_t index = 0; index < ctx->outputs_handles.size(); ++index) {
+    auto* const handle = ctx->outputs_handles[index];
+    if (bypass_remaining_handles) {
+      ctx->outputs_handles_to_release[index] = nullptr;
+      decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
+      continue;
+    }
+
+    try {
       if (dependencies->starpu_output_callback_hook.has_value()) {
         const auto& hook = *dependencies->starpu_output_callback_hook;
         hook(ctx);
       }
       InferenceTask::process_output_handle(handle, ctx);
     }
-  }
-  catch (const InferenceEngineException& e) {
-    log_exception("starpu_output_callback", e);
+    catch (...) {
+      classify_and_handle_exception(
+          std::current_exception(),
+          [&](ExceptionCategory category, const std::exception* exception) {
+            handle_output_callback_exception(
+                category, exception, ctx, index, bypass_remaining_handles);
+          });
+    }
   }
 }
 
@@ -665,15 +876,9 @@ InferenceTask::acquire_output_handle(
   const int ret = data_acquire_fn(
       handle, STARPU_R,
       [](void* cb_arg) {
-        auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);
-        if (--cb_ctx->remaining_outputs_to_acquire == 0) {
-          try {
-            InferenceTask::finalize_inference_task(cb_ctx);
-          }
-          catch (const InferenceEngineException& e) {
-            log_exception("starpu_output_callback", e);
-          }
-        }
+        decrement_remaining_and_finalize_if_done(
+            static_cast<InferenceCallbackContext*>(cb_arg),
+            "starpu_output_callback");
       },
       ctx);
 
@@ -691,13 +896,11 @@ InferenceTask::process_output_handle(
   if (handle != nullptr) {
     InferenceTask::acquire_output_handle(handle, ctx);
   } else {
-    if (--ctx->remaining_outputs_to_acquire == 0) {
-      InferenceTask::finalize_inference_task(ctx);
-    }
+    decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
   }
 }
 
-namespace {
+inline namespace inference_task_detail {
 void
 copy_outputs_from_pool(InferenceCallbackContext* ctx)
 {
@@ -729,7 +932,7 @@ copy_outputs_from_pool(InferenceCallbackContext* ctx)
       "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
       worker_type_label, total_bytes);
 }
-}  // namespace
+}  // namespace inference_task_detail
 
 void
 InferenceTask::finalize_inference_task(void* arg)
@@ -744,7 +947,10 @@ InferenceTask::finalize_inference_task(void* arg)
             "Output copy from pool failed due to an unknown exception."});
   }
 
-  InferenceTask::release_output_data(ctx->outputs_handles);
+  const auto& handles_to_release = ctx->outputs_handles_to_release.empty()
+                                       ? ctx->outputs_handles
+                                       : ctx->outputs_handles_to_release;
+  InferenceTask::release_output_data(handles_to_release);
 
   auto ctx_sptr =
       std::static_pointer_cast<InferenceCallbackContext>(ctx->self_keep_alive);
@@ -799,19 +1005,18 @@ InferenceTask::record_and_run_completion_callback(
                                 end_time - ctx->job->get_start_time())
                                 .count();
 
-  ctx->job->timing_info().callback_end_time = end_time;
+  ctx->job->update_timing_info([end_time](detail::TimingInfo& timing) {
+    timing.callback_end_time = end_time;
+  });
 
-  if (ctx->job->has_on_complete()) {
-    const auto& callback = ctx->job->get_on_complete();
+  if (auto callback = ctx->job->take_on_complete(); callback) {
     run_with_logged_exceptions(
-        [ctx, &callback, latency_ms]() {
+        [ctx, callback = std::move(callback), latency_ms]() mutable {
           callback(ctx->job->get_output_tensors(), latency_ms);
         },
         ExceptionLoggingMessages{
             "Exception in completion callback: ",
             "Unknown exception in completion callback"});
-
-    ctx->job->set_on_complete({});
   }
 
   ctx->job->release_input_memory_holders();
@@ -837,5 +1042,22 @@ InferenceTask::log_exception(
     log_error("std::exception in " + context + ": " + exception.what());
   }
 }
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+
+void
+finalize_or_fail_once_for_tests(
+    InferenceCallbackContext* ctx, bool failure, std::string_view context)
+{
+  finalize_or_fail_once(
+      ctx,
+      failure ? CallbackTerminalStatus::kFailure
+              : CallbackTerminalStatus::kSuccess,
+      context);
+}
+
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
 
 }  // namespace starpu_server

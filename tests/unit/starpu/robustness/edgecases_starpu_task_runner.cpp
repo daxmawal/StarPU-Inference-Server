@@ -47,7 +47,7 @@ TEST_F(
     HandleJobExceptionCallbackLogsUnknownNonStdExceptionMessage)
 {
   auto job = make_job(8, {});
-  job->set_on_complete([](const auto&, double) -> void { throw 42; });
+  job->set_on_complete([](const auto&, double) { throw 42; });
 
   starpu_server::CaptureStream capture{std::cerr};
   EXPECT_NO_THROW(starpu_server::StarPUTaskRunner::handle_job_exception(
@@ -118,7 +118,7 @@ TEST_P(StarPUTaskRunnerConfigInvalidTest, NullPointerThrows)
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   starpu_server::RuntimeConfig opts;
-  std::atomic<int> completed_jobs{0};
+  std::atomic<std::size_t> completed_jobs{0};
   std::condition_variable completion_cv;
   starpu_server::StarPUSetup starpu(opts);
 

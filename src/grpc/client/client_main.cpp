@@ -18,7 +18,7 @@
 #include "utils/input_generator.hpp"
 #include "utils/logger.hpp"
 
-namespace {
+inline namespace client_main_detail {
 using OutputSummary = std::vector<std::vector<double>>;
 
 void
@@ -108,7 +108,7 @@ run_client_reference_inference(
   auto tensors = extract_tensors_from_output(result);
   return summarize_outputs(tensors);
 }
-}  // namespace
+}  // namespace client_main_detail
 
 auto
 main(int argc, char* argv[]) -> int

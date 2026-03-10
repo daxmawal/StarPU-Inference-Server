@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -23,10 +25,25 @@ using namespace starpu_server;
 namespace {
 
 auto
+NextTempArtifactSequence() -> std::uint64_t
+{
+  static std::atomic<std::uint64_t> sequence{0};
+  return sequence.fetch_add(1, std::memory_order_relaxed);
+}
+
+auto
+DeterministicTempPath(const std::string& name) -> std::filesystem::path
+{
+  const auto sequence = NextTempArtifactSequence();
+  return std::filesystem::temp_directory_path() /
+         (std::to_string(sequence) + "_" + name);
+}
+
+auto
 WriteTempFile(const std::string& name, const std::string& contents)
     -> std::filesystem::path
 {
-  const auto path = std::filesystem::temp_directory_path() / name;
+  const auto path = DeterministicTempPath(name);
   std::ofstream(path) << contents;
   return path;
 }
@@ -34,7 +51,7 @@ WriteTempFile(const std::string& name, const std::string& contents)
 auto
 WriteEmptyModelFile(const std::string& name) -> std::filesystem::path
 {
-  const auto path = std::filesystem::temp_directory_path() / name;
+  const auto path = DeterministicTempPath(name);
   std::ofstream(path).put('\0');
   return path;
 }
@@ -74,8 +91,7 @@ struct ScopedPermissionRestorer {
 auto
 MakeUniqueTempDir(const std::string& prefix) -> std::filesystem::path
 {
-  const auto unique_suffix =
-      std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto unique_suffix = NextTempArtifactSequence();
   auto path = std::filesystem::temp_directory_path() /
               (prefix + "_" + std::to_string(unique_suffix));
   std::filesystem::create_directories(path);
@@ -222,6 +238,17 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "Failed to load config: use_cuda[0].device_ids must be a sequence of "
         "integers"},
     InvalidConfigCase{
+        "BothBackendsDisabledInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cpu: false\n";
+          yaml += "use_cuda: false\n";
+          return yaml;
+        }(),
+        "Failed to load config: At least one execution backend must be "
+        "enabled: "
+        "set use_cpu: true and/or configure use_cuda with device_ids"},
+    InvalidConfigCase{
         "UseCudaNegativeDeviceIdInvalid",
         [] {
           auto yaml = base_model_yaml();
@@ -230,6 +257,15 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           return yaml;
         }(),
         "Failed to load config: use_cuda[0].device_ids[0] must be >= 0"},
+    InvalidConfigCase{
+        "UseCudaDuplicatedDeviceIdInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "use_cuda:\n";
+          yaml += "  - { device_ids: [0, 0] }\n";
+          return yaml;
+        }(),
+        "Failed to load config: use_cuda[0].device_ids[1] is duplicated"},
     InvalidConfigCase{
         "UseCudaEmptyDeviceIdsInvalid",
         [] {
@@ -766,6 +802,133 @@ TEST(ConfigLoader, ParseTensorNodesReturnsEmptyWhenUndefined)
   EXPECT_TRUE(tensors.empty());
 }
 
+TEST(ConfigLoader, IOBlockParsesTensorNodesForTest)
+{
+  const YAML::Node nodes = YAML::Load(R"(
+- name: first
+  dims: [1, 4]
+  data_type: float32
+- name: second
+  dims: [2]
+  data_type: int64
+)");
+
+  const auto tensors = parse_tensor_nodes_for_test(nodes, 4U, "inputs", 4U);
+
+  ASSERT_EQ(tensors.size(), 2U);
+  EXPECT_EQ(tensors[0].name, "first");
+  EXPECT_EQ(tensors[0].dims, (std::vector<int64_t>{1, 4}));
+  EXPECT_EQ(tensors[0].type, at::kFloat);
+  EXPECT_EQ(tensors[1].name, "second");
+  EXPECT_EQ(tensors[1].dims, (std::vector<int64_t>{2}));
+  EXPECT_EQ(tensors[1].type, at::kLong);
+}
+
+TEST(ConfigLoader, IOBlockRejectsTooManyTensorEntriesForTest)
+{
+  const YAML::Node nodes = YAML::Load(R"(
+- { name: a, dims: [1], data_type: float32 }
+- { name: b, dims: [1], data_type: float32 }
+)");
+
+  try {
+    static_cast<void>(parse_tensor_nodes_for_test(nodes, 1U, "inputs", 4U));
+    FAIL() << "Expected parse_tensor_nodes_for_test to reject too many entries";
+  }
+  catch (const std::invalid_argument& error) {
+    EXPECT_EQ(error.what(), std::string("inputs must have at most 1 entries"));
+  }
+}
+
+TEST(ConfigLoader, DeviceBlockParsesCpuCudaAndNumaSettings)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_device_block_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "use_cpu: false\n";
+  yaml += "group_cpu_by_numa: true\n";
+  yaml += "use_cuda:\n";
+  yaml += "  - { device_ids: [2, 5] }\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_device_block.yaml", yaml);
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_FALSE(cfg.devices.use_cpu);
+  EXPECT_TRUE(cfg.devices.group_cpu_by_numa);
+  EXPECT_TRUE(cfg.devices.use_cuda);
+  EXPECT_EQ(cfg.devices.ids, (std::vector<int>{2, 5}));
+}
+
+TEST(ConfigLoader, BatchingBlockParsesNetworkQueueAndTraceSettings)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_batching_block_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  const auto trace_dir = MakeUniqueTempDir("config_loader_batching_trace_dir");
+
+  yaml += "address: 0.0.0.0:60061\n";
+  yaml += "metrics_port: 9191\n";
+  yaml += "max_message_bytes: 65536\n";
+  yaml += "max_queue_size: 64\n";
+  yaml += "max_inflight_tasks: 8\n";
+  yaml += "dynamic_batching: false\n";
+  yaml += "trace_enabled: true\n";
+  yaml += "trace_output: " + trace_dir.string() + "\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_batching_block.yaml", yaml);
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.server_address, "0.0.0.0:60061");
+  EXPECT_EQ(cfg.metrics_port, 9191);
+  EXPECT_EQ(cfg.batching.max_message_bytes, 65536U);
+  EXPECT_EQ(cfg.batching.max_queue_size, 64U);
+  EXPECT_EQ(cfg.batching.max_inflight_tasks, 8U);
+  EXPECT_FALSE(cfg.batching.dynamic_batching);
+  EXPECT_TRUE(cfg.batching.trace_enabled);
+  EXPECT_EQ(
+      cfg.batching.trace_output_path,
+      (trace_dir / std::string(kDefaultTraceFileName)).string());
+}
+
+TEST(ConfigLoader, CongestionBlockPartialConfigPreservesUnsetDefaults)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_congestion_partial_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += "  enabled: false\n";
+  yaml += "  tick_interval_ms: 250\n";
+
+  const auto config_path =
+      WriteTempFile("config_loader_congestion_partial.yaml", yaml);
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  ASSERT_TRUE(cfg.valid);
+  EXPECT_FALSE(cfg.congestion.enabled);
+  EXPECT_EQ(cfg.congestion.tick_interval_ms, 250);
+  EXPECT_DOUBLE_EQ(cfg.congestion.fill_high, kDefaultCongestionFillHigh);
+  EXPECT_DOUBLE_EQ(cfg.congestion.fill_low, kDefaultCongestionFillLow);
+  EXPECT_DOUBLE_EQ(cfg.congestion.alpha, kDefaultCongestionEwmaAlpha);
+}
+
+TEST(ConfigLoader, CongestionBlockParseHorizonsForTestAcceptsPositiveValues)
+{
+  YAML::Node congestion_node = YAML::Load(R"(
+entry_horizon_ms: 250
+exit_horizon_ms: 500
+)");
+
+  RuntimeConfig cfg;
+  parse_congestion_horizons_for_test(congestion_node, cfg);
+
+  EXPECT_EQ(cfg.congestion.entry_horizon_ms, 250);
+  EXPECT_EQ(cfg.congestion.exit_horizon_ms, 500);
+}
+
 TEST(ConfigLoader, AcceptsBooleanUseCudaFalse)
 {
   const auto model_path =
@@ -798,6 +961,52 @@ TEST(ConfigLoader, RejectsBooleanUseCudaTrue)
   const std::string expected_error =
       "Failed to load config: use_cuda must be a sequence of device mappings "
       "when enabled (e.g. \"use_cuda: [{ device_ids: [0] }]\")";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, RejectsUseCudaEnabledWithoutDeviceIdsAfterParsing)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_cross_field_use_cuda_no_ids_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  const auto config_path =
+      WriteTempFile("config_loader_cross_field_use_cuda_no_ids.yaml", yaml);
+
+  ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
+    cfg.devices.use_cuda = true;
+    cfg.devices.ids.clear();
+  });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  const std::string expected_error =
+      "Failed to load config: use_cuda is enabled but no CUDA device_ids are "
+      "configured";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, RejectsDeviceIdsWhenUseCudaDisabledAfterParsing)
+{
+  const auto model_path = WriteEmptyModelFile(
+      "config_loader_cross_field_ids_without_cuda_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  const auto config_path =
+      WriteTempFile("config_loader_cross_field_ids_without_cuda.yaml", yaml);
+
+  ConfigLoaderHookGuard hook_guard([](RuntimeConfig& cfg) {
+    cfg.devices.use_cuda = false;
+    cfg.devices.ids = {0};
+  });
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(config_path.string());
+
+  const std::string expected_error =
+      "Failed to load config: device_ids are configured but use_cuda is "
+      "disabled";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
   EXPECT_FALSE(cfg.valid);
 }
@@ -1285,6 +1494,56 @@ TEST(ConfigLoader, FilesystemErrorsMarkConfigInvalid)
       capture.str(), expected_log_line(ErrorLevel, expected_error_message));
 }
 
+TEST(ConfigLoader, RejectsModelPathThatIsDirectory)
+{
+  const auto model_dir = MakeUniqueTempDir("config_loader_model_directory");
+  ScopedPermissionRestorer cleanup(model_dir);
+
+  std::string yaml = base_model_yaml();
+  yaml = ReplaceModelPath(std::move(yaml), model_dir);
+
+  const auto tmp = WriteTempFile("config_loader_model_directory.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Model path must be a regular file: " +
+      model_dir.string();
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, RejectsUnreadableModelPath)
+{
+  const auto model_dir = MakeUniqueTempDir("config_loader_model_unreadable");
+  ScopedPermissionRestorer cleanup(model_dir);
+
+  const auto model_path = model_dir / "model.pt";
+  std::ofstream(model_path).put('\0');
+  std::filesystem::permissions(
+      model_path, std::filesystem::perms::owner_write,
+      std::filesystem::perm_options::replace);
+
+  std::ifstream probe(model_path, std::ios::binary);
+  if (probe.good()) {
+    GTEST_SKIP() << "Model file remains readable under current privileges";
+  }
+
+  std::string yaml = base_model_yaml();
+  yaml = ReplaceModelPath(std::move(yaml), model_path);
+  const auto tmp = WriteTempFile("config_loader_model_unreadable.yaml", yaml);
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Model path is not readable: " +
+      model_path.string();
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
 {
   const auto model_path =
@@ -1712,6 +1971,52 @@ TEST(ConfigLoader, CongestionRejectsNonMapping)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, CongestionLatencySloRejectsNegative)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_negative_latency_slo_model.pt");
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += "  latency_slo_ms: -1\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_negative_latency_slo.yaml";
+  std::ofstream(tmp) << yaml;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: latency_slo_ms must be >= 0";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, CongestionQueueLatencyBudgetMsRejectsNegative)
+{
+  const auto model_path = WriteEmptyModelFile(
+      "config_loader_negative_queue_latency_budget_model.pt");
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += "  queue_latency_budget_ms: -1\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_negative_queue_latency_budget.yaml";
+  std::ofstream(tmp) << yaml;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: queue_latency_budget_ms must be >= 0";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, CongestionQueueLatencyBudgetRatioRejectsNegative)
 {
   const auto model_path =
@@ -1972,6 +2277,56 @@ TEST(ConfigLoader, CongestionEwmaRejectsAboveOne)
   EXPECT_FALSE(cfg.valid);
 }
 
+TEST(ConfigLoader, CongestionEntryHorizonRejectsNonPositive)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_entry_horizon_nonpositive_model.pt");
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += "  entry_horizon_ms: 0\n";
+  yaml += "  exit_horizon_ms: 10\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_entry_horizon_nonpositive.yaml";
+  std::ofstream(tmp) << yaml;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: entry_horizon_ms must be > 0 and fit in int";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, CongestionEntryHorizonRejectsValueAboveIntMax)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_entry_horizon_too_large_model.pt");
+  const auto too_large =
+      static_cast<long long>(std::numeric_limits<int>::max()) + 1LL;
+
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "congestion:\n";
+  yaml += std::format("  entry_horizon_ms: {}\n", too_large);
+  yaml += "  exit_horizon_ms: 10\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_entry_horizon_too_large.yaml";
+  std::ofstream(tmp) << yaml;
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: entry_horizon_ms must be > 0 and fit in int";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+
+  EXPECT_FALSE(cfg.valid);
+}
+
 TEST(ConfigLoader, CongestionHorizonsRejectNonPositiveEntry)
 {
   YAML::Node congestion_node(YAML::NodeType::Map);
@@ -2064,6 +2419,112 @@ TEST(ConfigLoader, MaxQueueSizeRejectsNonPositive)
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, BatchingCoherenceRejectsQueueLowerThanMaxBatch)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_incoherent_queue_batch_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: incoherent_queue_batch\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 8\n";
+  yaml << "pool_size: 2\n";
+  yaml << "max_queue_size: 4\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_incoherent_queue_batch.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Incoherent batching config: max_queue_size (4) "
+      "must be >= max_batch_size (8)";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, BatchingCoherenceRejectsInflightLowerThanPoolSize)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_incoherent_inflight_pool_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: incoherent_inflight_pool\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 4\n";
+  yaml << "pool_size: 8\n";
+  yaml << "max_queue_size: 32\n";
+  yaml << "max_inflight_tasks: 3\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_incoherent_inflight_pool.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  const std::string expected_error =
+      "Failed to load config: Incoherent batching config: max_inflight_tasks "
+      "(3) must be 0 (unbounded) or >= pool_size (8)";
+  EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
+  EXPECT_FALSE(cfg.valid);
+}
+
+TEST(ConfigLoader, BatchingCoherenceAcceptsBoundaryValues)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_coherent_batching_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: coherent_batching\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 8\n";
+  yaml << "pool_size: 4\n";
+  yaml << "max_queue_size: 8\n";
+  yaml << "max_inflight_tasks: 4\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_coherent_batching.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.batching.max_batch_size, 8);
+  EXPECT_EQ(cfg.batching.pool_size, 4);
+  EXPECT_EQ(cfg.batching.max_queue_size, 8U);
+  EXPECT_EQ(cfg.batching.max_inflight_tasks, 4U);
 }
 
 TEST(ConfigLoader, MissingModelSkipsParsingOtherKeys)

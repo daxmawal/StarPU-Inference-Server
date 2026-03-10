@@ -10,10 +10,13 @@
 #include "device_type.hpp"
 #include "logger.hpp"
 #include "runtime_config.hpp"
+#if defined(STARPU_TESTING)
+#include "support/utils/batching_trace_logger_test_api.hpp"
+#endif
 
 namespace starpu_server {
 
-namespace {
+inline namespace batching_trace_logger_detail {
 constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
 constexpr int kRequestEnqueuedTrackId = 1;
@@ -43,6 +46,81 @@ enum class FlowDirection : uint8_t {
   Source,
   Target,
   SourceAndTarget,
+};
+
+void append_flow_annotation(
+    std::ostringstream& line, FlowDirection direction, int batch_id,
+    bool is_warmup);
+
+class TraceEventBuilder {
+ public:
+  TraceEventBuilder(
+      std::string_view event_name, std::string_view category, char phase,
+      int64_t timestamp_us, int process_id, int thread_id,
+      const char* warmup_prefix)
+      : warmup_prefix_(warmup_prefix)
+  {
+    line_ << R"({"name":")" << warmup_prefix_ << event_name << R"(","cat":")"
+          << category << R"(","ph":")" << phase << R"(","ts":)" << timestamp_us
+          << ",\"pid\":" << process_id << ",\"tid\":" << thread_id;
+  }
+
+  void set_duration(int64_t duration_us)
+  {
+    line_ << ",\"dur\":" << duration_us;
+  }
+
+  void append_flow(FlowDirection direction, int batch_id, bool is_warmup)
+  {
+    append_flow_annotation(line_, direction, batch_id, is_warmup);
+  }
+
+  template <typename Numeric>
+  void add_numeric_arg(std::string_view key, Numeric value)
+  {
+    append_arg_separator();
+    line_ << '"' << warmup_prefix_ << key << "\":" << value;
+  }
+
+  void add_string_arg(std::string_view key, std::string_view value)
+  {
+    append_arg_separator();
+    line_ << '"' << warmup_prefix_ << key << "\":\"" << value << '"';
+  }
+
+  void add_int_array_arg(std::string_view key, std::span<const int> values)
+  {
+    append_arg_separator();
+    line_ << '"' << warmup_prefix_ << key << "\":[";
+    for (size_t idx = 0; idx < values.size(); ++idx) {
+      if (idx > 0) {
+        line_ << ',';
+      }
+      line_ << values[idx];
+    }
+    line_ << "]";
+  }
+
+  auto build() -> std::string
+  {
+    line_ << "}}";
+    return line_.str();
+  }
+
+ private:
+  void append_arg_separator()
+  {
+    if (!args_opened_) {
+      line_ << ",\"args\":{";
+      args_opened_ = true;
+      return;
+    }
+    line_ << ',';
+  }
+
+  std::ostringstream line_;
+  const char* warmup_prefix_;
+  bool args_opened_{false};
 };
 
 auto
@@ -173,7 +251,26 @@ close_stream_if_open(std::ofstream& stream)
   }
 }
 
-}  // namespace
+}  // namespace batching_trace_logger_detail
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+auto
+EscapeCsvFieldForTest(std::string_view value) -> std::string
+{
+  return escape_csv_field(value);
+}
+
+void
+AppendFlowAnnotationForTest(
+    std::ostringstream& line, FlowDirectionForTest direction, int batch_id,
+    bool is_warmup)
+{
+  append_flow_annotation(
+      line, static_cast<FlowDirection>(direction), batch_id, is_warmup);
+}
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
 
 namespace detail {
 
@@ -487,6 +584,112 @@ device_type_to_string(DeviceType type) -> std::string_view
 }  // namespace detail
 
 auto
+BatchingTraceLogger::SummaryWriter::open(
+    const std::filesystem::path& trace_path) -> bool
+{
+  close();
+  summary_file_path_ = summary_path_from_trace(trace_path);
+  summary_stream_.open(summary_file_path_, std::ios::out | std::ios::trunc);
+  if (!summary_stream_.is_open()) {
+    log_warning(std::format(
+        "Failed to open batching summary file '{}'; summary export disabled.",
+        summary_file_path_.string()));
+    summary_file_path_.clear();
+    return false;
+  }
+  summary_stream_
+      << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
+         "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
+         "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,"
+         "warmup,congested\n";
+
+  [[maybe_unused]] const bool queue_writer_ready =
+      open_queue_metrics(trace_path);
+  return true;
+}
+
+void
+BatchingTraceLogger::SummaryWriter::close()
+{
+  close_stream_if_open(summary_stream_);
+  close_stream_if_open(queue_metrics_stream_);
+}
+
+void
+BatchingTraceLogger::SummaryWriter::write_summary_line_locked(
+    const BatchSummaryLogArgs& args)
+{
+  if (!summary_stream_.is_open()) {
+    return;
+  }
+  const auto request_ids_string = format_request_ids(args.request_ids);
+  const auto request_arrivals_string =
+      format_request_arrivals(args.request_arrival_us);
+  const auto escaped_model = escape_csv_field(args.model_name);
+  const auto escaped_requests = escape_csv_field(request_ids_string);
+  const auto escaped_arrivals = escape_csv_field(request_arrivals_string);
+  summary_stream_ << args.batch_id << ",\"" << escaped_model << "\","
+                  << args.worker_id << ",\""
+                  << detail::device_type_to_string(args.worker_type) << "\","
+                  << args.device_id << ',' << args.batch_size << ",\""
+                  << escaped_requests << "\",\"" << escaped_arrivals << "\","
+                  << std::format("{:.3f}", args.queue_ms) << ','
+                  << std::format("{:.3f}", args.batch_ms) << ','
+                  << std::format("{:.3f}", args.submit_ms) << ','
+                  << std::format("{:.3f}", args.scheduling_ms) << ','
+                  << std::format("{:.3f}", args.codelet_ms) << ','
+                  << std::format("{:.3f}", args.inference_ms) << ','
+                  << std::format("{:.3f}", args.callback_ms) << ','
+                  << std::format("{:.3f}", args.total_ms) << ','
+                  << (args.is_warmup ? "true" : "false") << ','
+                  << (args.congested ? "true" : "false") << '\n';
+}
+
+void
+BatchingTraceLogger::SummaryWriter::write_queue_metric_locked(
+    const QueueMetric& metric)
+{
+  if (!queue_metrics_stream_.is_open()) {
+    return;
+  }
+  queue_metrics_stream_ << metric.timestamp_us << ',' << metric.queue_size
+                        << ',' << metric.rejected_total << '\n';
+}
+
+auto
+BatchingTraceLogger::SummaryWriter::file_path() const
+    -> const std::filesystem::path&
+{
+  return summary_file_path_;
+}
+
+auto
+BatchingTraceLogger::SummaryWriter::is_summary_open() const -> bool
+{
+  return summary_stream_.is_open();
+}
+
+auto
+BatchingTraceLogger::SummaryWriter::open_queue_metrics(
+    const std::filesystem::path& trace_path) -> bool
+{
+  close_stream_if_open(queue_metrics_stream_);
+  queue_metrics_path_ = metrics_path_from_trace(trace_path);
+  queue_metrics_stream_.open(
+      queue_metrics_path_, std::ios::out | std::ios::trunc);
+  if (!queue_metrics_stream_.is_open()) {
+    log_warning(std::format(
+        "Failed to open queue metrics file '{}'; queue metrics export "
+        "disabled.",
+        queue_metrics_path_.string()));
+    queue_metrics_path_.clear();
+    return false;
+  }
+  queue_metrics_stream_ << "timestamp_us,queue_size,rejected_total\n";
+  return true;
+}
+
+auto
 BatchingTraceLogger::instance() -> BatchingTraceLogger&
 {
   static BatchingTraceLogger logger;
@@ -544,7 +747,7 @@ BatchingTraceLogger::configure(bool enabled, std::string file_path)
     file_path_.clear();
     return;
   }
-  configure_summary_writer(path);
+  summary_writer_.open(path);
 
   trace_start_us_ = now_us();
   trace_start_initialized_ = true;
@@ -630,7 +833,7 @@ BatchingTraceLogger::log_batch_build_span(
 
   const auto duration = std::max<int64_t>(int64_t{1}, *end_ts - *start_ts);
   write_batch_build_span(
-      model_name, batch_id, batch_size,
+      batch_id, model_name, batch_size,
       BatchSpanTiming{.start_ts = *start_ts, .duration_us = duration},
       request_ids, is_warmup);
 }
@@ -657,7 +860,7 @@ BatchingTraceLogger::log_batch_enqueue_span(
   duration = std::max<int64_t>(int64_t{1}, duration);
 
   write_batch_enqueue_span(
-      model_name, batch_id, batch_size,
+      batch_id, model_name, batch_size,
       BatchSpanTiming{.start_ts = *start_ts, .duration_us = duration},
       request_ids, is_warmup);
 }
@@ -744,69 +947,34 @@ BatchingTraceLogger::write_record(
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
   const bool is_batch_span = event == BatchingTraceEvent::BatchSubmitted;
-
-  std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix << detail::event_to_string(event)
-       << R"(","cat":"batching","ph":")" << (is_batch_span ? 'X' : 'i')
-       << R"(","ts":)" << timestamp_us;
+  TraceEventBuilder builder(
+      detail::event_to_string(event), "batching", is_batch_span ? 'X' : 'i',
+      timestamp_us, kTraceProcessId, thread_id, warmup_prefix);
   if (is_batch_span) {
-    line << ",\"dur\":1";
+    builder.set_duration(1);
   }
-  line << ",\"pid\":" << kTraceProcessId << ",\"tid\":" << thread_id;
   const auto span_flow_direction =
       is_batch_span ? FlowDirection::SourceAndTarget : FlowDirection::None;
-  append_flow_annotation(
-      line, span_flow_direction, record_context.batch_id, is_warmup);
-  line << ",\"args\":{";
-
-  bool first_arg = true;
-  const auto append_delimiter = [&]() {
-    if (!first_arg) {
-      line << ',';
-    }
-    first_arg = false;
-  };
-  const auto append_numeric = [&](std::string_view key, auto value) {
-    append_delimiter();
-    line << "\"" << warmup_prefix << key << "\":" << value;
-  };
-  const auto append_string = [&](std::string_view key, std::string_view value) {
-    append_delimiter();
-    line << "\"" << warmup_prefix << key << "\":\"" << value << "\"";
-  };
+  builder.append_flow(span_flow_direction, record_context.batch_id, is_warmup);
 
   switch (event) {
     case BatchingTraceEvent::BatchSubmitted:
-      append_numeric("batch_id", record_context.batch_id);
-      append_numeric("batch_size", record_context.logical_jobs);
-      append_string("model_name", escaped_model);
+      builder.add_numeric_arg("batch_id", record_context.batch_id);
+      builder.add_numeric_arg("batch_size", record_context.logical_jobs);
+      builder.add_string_arg("model_name", escaped_model);
       break;
     case BatchingTraceEvent::RequestQueued:
-      append_numeric("request_id", record_context.request_id);
-      append_string("model_name", escaped_model);
+      builder.add_numeric_arg("request_id", record_context.request_id);
+      builder.add_string_arg("model_name", escaped_model);
       break;
   }
 
   if (!request_ids.empty()) {
-    append_delimiter();
-    line << "\"" << warmup_prefix << "request_ids\":[";
-    for (size_t idx = 0; idx < request_ids.size(); ++idx) {
-      if (idx > 0) {
-        line << ',';
-      }
-      line << request_ids[idx];
-    }
-    line << "]";
+    builder.add_int_array_arg("request_ids", request_ids);
   }
 
-  line << "}}";
-
-  std::lock_guard lock(mutex_);
-  if (!trace_writer_.ready()) {
-    return;
-  }
-  trace_writer_.ensure_thread_metadata(thread_id, thread_name, sort_index);
-  trace_writer_.write_line(line.str());
+  write_trace_line_with_lock(
+      thread_id, thread_name, sort_index, builder.build());
 }
 
 void
@@ -836,30 +1004,27 @@ BatchingTraceLogger::write_batch_compute_span(const BatchComputeWriteArgs& args)
   const std::string worker_label = detail::WorkerLaneManager::format_label(
       args.worker_id, lane_assignment, worker_type_str, args.device_id);
 
-  std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix << escaped_model
-       << R"(","cat":"batching","ph":"X","ts":)" << args.start_ts
-       << ",\"dur\":" << duration_us << ",\"pid\":" << kTraceProcessId
-       << ",\"tid\":" << lane_assignment.thread_id;
-  append_flow_annotation(
-      line, FlowDirection::Target, args.batch_id, args.is_warmup);
-  line << ",\"args\":{" << "\"" << warmup_prefix
-       << "batch_id\":" << args.batch_id << ",\"" << warmup_prefix
-       << "batch_size\":" << args.batch_size << ",\"" << warmup_prefix
-       << "model_name\":\"" << escaped_model << "\"" << ",\"" << warmup_prefix
-       << "worker_id\":" << args.worker_id << ",\"" << warmup_prefix
-       << "worker_type\":\"" << worker_type_str << "\"" << ",\""
-       << warmup_prefix << "start_ts\":" << args.start_ts << ",\""
-       << warmup_prefix << "end_ts\":" << end_ts << "}}";
+  TraceEventBuilder builder(
+      escaped_model, "batching", 'X', args.start_ts, kTraceProcessId,
+      lane_assignment.thread_id, warmup_prefix);
+  builder.set_duration(duration_us);
+  builder.append_flow(FlowDirection::Target, args.batch_id, args.is_warmup);
+  builder.add_numeric_arg("batch_id", args.batch_id);
+  builder.add_numeric_arg("batch_size", args.batch_size);
+  builder.add_string_arg("model_name", escaped_model);
+  builder.add_numeric_arg("worker_id", args.worker_id);
+  builder.add_string_arg("worker_type", worker_type_str);
+  builder.add_numeric_arg("start_ts", args.start_ts);
+  builder.add_numeric_arg("end_ts", end_ts);
 
-  trace_writer_.ensure_thread_metadata(
-      lane_assignment.thread_id, worker_label, lane_assignment.sort_index);
-  trace_writer_.write_line(line.str());
+  write_trace_line_locked(
+      lane_assignment.thread_id, worker_label, lane_assignment.sort_index,
+      builder.build());
 }
 
 void
 BatchingTraceLogger::write_batch_enqueue_span(
-    std::string_view model_name, int batch_id, std::size_t batch_size,
+    int batch_id, std::string_view model_name, std::size_t batch_size,
     BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup)
 {
   if (timing.duration_us <= 0) {
@@ -879,40 +1044,26 @@ BatchingTraceLogger::write_batch_enqueue_span(
   const auto escaped_model = detail::escape_json_string(model_name);
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
-  std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix
-       << R"(batch","cat":"batching","ph":"X","ts":)" << timing.start_ts
-       << ",\"dur\":" << adjusted_duration << ",\"pid\":" << kTraceProcessId
-       << ",\"tid\":" << kBatchEnqueueTrackId;
-  line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
-       << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
-       << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
+  TraceEventBuilder builder(
+      "batch", "batching", 'X', timing.start_ts, kTraceProcessId,
+      kBatchEnqueueTrackId, warmup_prefix);
+  builder.set_duration(adjusted_duration);
+  builder.add_numeric_arg("batch_id", batch_id);
+  builder.add_numeric_arg("batch_size", batch_size);
+  builder.add_string_arg("model_name", escaped_model);
   if (!request_ids.empty()) {
-    line << ",\"" << warmup_prefix << "request_ids\":[";
-    for (size_t idx = 0; idx < request_ids.size(); ++idx) {
-      if (idx > 0) {
-        line << ',';
-      }
-      line << request_ids[idx];
-    }
-    line << "]";
+    builder.add_int_array_arg("request_ids", request_ids);
   }
-  line << ",\"" << warmup_prefix << "start_ts\":" << timing.start_ts << ",\""
-       << warmup_prefix << "end_ts\":" << (timing.start_ts + timing.duration_us)
-       << "}}";
-
-  std::lock_guard lock(mutex_);
-  if (!trace_writer_.ready()) {
-    return;
-  }
-  trace_writer_.ensure_thread_metadata(
-      kBatchEnqueueTrackId, kBatchEnqueueTrackName, kBatchEnqueueSortIndex);
-  trace_writer_.write_line(line.str());
+  builder.add_numeric_arg("start_ts", timing.start_ts);
+  builder.add_numeric_arg("end_ts", timing.start_ts + timing.duration_us);
+  write_trace_line_with_lock(
+      kBatchEnqueueTrackId, kBatchEnqueueTrackName, kBatchEnqueueSortIndex,
+      builder.build());
 }
 
 void
 BatchingTraceLogger::write_batch_build_span(
-    std::string_view model_name, int batch_id, std::size_t batch_size,
+    int batch_id, std::string_view model_name, std::size_t batch_size,
     BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup)
 {
   if (timing.duration_us <= 0) {
@@ -922,36 +1073,43 @@ BatchingTraceLogger::write_batch_build_span(
   const auto escaped_model = detail::escape_json_string(model_name);
   const char* warmup_prefix = is_warmup ? "warming_" : "";
 
-  std::ostringstream line;
-  line << R"({"name":")" << warmup_prefix
-       << R"(batch_build","cat":"batching","ph":"X","ts":)" << timing.start_ts
-       << ",\"dur\":" << timing.duration_us << ",\"pid\":" << kTraceProcessId
-       << ",\"tid\":" << kBatchBuildTrackId;
-  append_flow_annotation(line, FlowDirection::Source, batch_id, is_warmup);
-  line << ",\"args\":{" << "\"" << warmup_prefix << "batch_id\":" << batch_id
-       << ",\"" << warmup_prefix << "batch_size\":" << batch_size << ",\""
-       << warmup_prefix << "model_name\":\"" << escaped_model << "\"";
+  TraceEventBuilder builder(
+      "batch_build", "batching", 'X', timing.start_ts, kTraceProcessId,
+      kBatchBuildTrackId, warmup_prefix);
+  builder.set_duration(timing.duration_us);
+  builder.append_flow(FlowDirection::Source, batch_id, is_warmup);
+  builder.add_numeric_arg("batch_id", batch_id);
+  builder.add_numeric_arg("batch_size", batch_size);
+  builder.add_string_arg("model_name", escaped_model);
   if (!request_ids.empty()) {
-    line << ",\"" << warmup_prefix << "request_ids\":[";
-    for (size_t idx = 0; idx < request_ids.size(); ++idx) {
-      if (idx > 0) {
-        line << ',';
-      }
-      line << request_ids[idx];
-    }
-    line << "]";
+    builder.add_int_array_arg("request_ids", request_ids);
   }
-  line << ",\"" << warmup_prefix << "start_ts\":" << timing.start_ts << ",\""
-       << warmup_prefix << "end_ts\":" << (timing.start_ts + timing.duration_us)
-       << "}}";
+  builder.add_numeric_arg("start_ts", timing.start_ts);
+  builder.add_numeric_arg("end_ts", timing.start_ts + timing.duration_us);
+  write_trace_line_with_lock(
+      kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex,
+      builder.build());
+}
 
+void
+BatchingTraceLogger::write_trace_line_with_lock(
+    int thread_id, std::string_view thread_name, int sort_index,
+    const std::string& line)
+{
   std::lock_guard lock(mutex_);
+  write_trace_line_locked(thread_id, thread_name, sort_index, line);
+}
+
+void
+BatchingTraceLogger::write_trace_line_locked(
+    int thread_id, std::string_view thread_name, int sort_index,
+    const std::string& line)
+{
   if (!trace_writer_.ready()) {
     return;
   }
-  trace_writer_.ensure_thread_metadata(
-      kBatchBuildTrackId, kBatchBuildTrackName, kBatchBuildSortIndex);
-  trace_writer_.write_line(line.str());
+  trace_writer_.ensure_thread_metadata(thread_id, thread_name, sort_index);
+  trace_writer_.write_line(line);
 }
 
 void
@@ -961,10 +1119,7 @@ BatchingTraceLogger::log_batch_summary(const BatchSummaryLogArgs& args)
     return;
   }
   std::lock_guard lock(mutex_);
-  if (!summary_stream_.is_open()) {
-    return;
-  }
-  write_summary_line_locked(args);
+  summary_writer_.write_summary_line_locked(args);
 }
 
 void
@@ -1003,14 +1158,14 @@ BatchingTraceLogger::log_queue_size(std::size_t queue_size)
   }
   const auto timestamp = now_us();
   std::lock_guard lock(mutex_);
-  if (!trace_start_initialized_ || !queue_metrics_stream_.is_open()) {
+  if (!trace_start_initialized_) {
     return;
   }
   const QueueMetric metric{
       .timestamp_us = relative_timestamp_us(timestamp),
       .queue_size = queue_size,
       .rejected_total = rejected_total_.load(std::memory_order_relaxed)};
-  write_queue_metric_locked(metric);
+  summary_writer_.write_queue_metric_locked(metric);
 }
 
 void
@@ -1023,14 +1178,14 @@ BatchingTraceLogger::log_request_rejected(std::size_t queue_size)
   const auto rejected =
       rejected_total_.fetch_add(1, std::memory_order_relaxed) + 1;
   std::lock_guard lock(mutex_);
-  if (!trace_start_initialized_ || !queue_metrics_stream_.is_open()) {
+  if (!trace_start_initialized_) {
     return;
   }
   const QueueMetric metric{
       .timestamp_us = relative_timestamp_us(timestamp),
       .queue_size = queue_size,
       .rejected_total = rejected};
-  write_queue_metric_locked(metric);
+  summary_writer_.write_queue_metric_locked(metric);
 }
 
 auto
@@ -1038,17 +1193,17 @@ BatchingTraceLogger::summary_file_path() const
     -> std::optional<std::filesystem::path>
 {
   std::lock_guard lock(mutex_);
-  if (summary_file_path_.empty()) {
+  if (summary_writer_.file_path().empty()) {
     return std::nullopt;
   }
-  return summary_file_path_;
+  return summary_writer_.file_path();
 }
 
 void
 BatchingTraceLogger::close_stream_locked()
 {
   trace_writer_.close();
-  close_summary_writer();
+  summary_writer_.close();
   trace_start_us_ = 0;
   trace_start_initialized_ = false;
   worker_lane_manager_.reset();
@@ -1087,92 +1242,5 @@ BatchingTraceLogger::logging_enabled() const -> bool
   return enabled() && !warmup_suppressed_.load(std::memory_order_acquire);
 }
 
-void
-BatchingTraceLogger::write_summary_line_locked(const BatchSummaryLogArgs& args)
-{
-  const auto request_ids_string = format_request_ids(args.request_ids);
-  const auto request_arrivals_string =
-      format_request_arrivals(args.request_arrival_us);
-  const auto escaped_model = escape_csv_field(args.model_name);
-  const auto escaped_requests = escape_csv_field(request_ids_string);
-  const auto escaped_arrivals = escape_csv_field(request_arrivals_string);
-  summary_stream_ << args.batch_id << ",\"" << escaped_model << "\","
-                  << args.worker_id << ",\""
-                  << detail::device_type_to_string(args.worker_type) << "\","
-                  << args.device_id << ',' << args.batch_size << ",\""
-                  << escaped_requests << "\",\"" << escaped_arrivals << "\","
-                  << std::format("{:.3f}", args.queue_ms) << ','
-                  << std::format("{:.3f}", args.batch_ms) << ','
-                  << std::format("{:.3f}", args.submit_ms) << ','
-                  << std::format("{:.3f}", args.scheduling_ms) << ','
-                  << std::format("{:.3f}", args.codelet_ms) << ','
-                  << std::format("{:.3f}", args.inference_ms) << ','
-                  << std::format("{:.3f}", args.callback_ms) << ','
-                  << std::format("{:.3f}", args.total_ms) << ','
-                  << (args.is_warmup ? "true" : "false") << ','
-                  << (args.congested ? "true" : "false") << '\n';
-}
-
-auto
-BatchingTraceLogger::configure_summary_writer(
-    const std::filesystem::path& trace_path) -> bool
-{
-  close_summary_writer();
-  summary_file_path_ = summary_path_from_trace(trace_path);
-  summary_stream_.open(summary_file_path_, std::ios::out | std::ios::trunc);
-  if (!summary_stream_.is_open()) {
-    log_warning(std::format(
-        "Failed to open batching summary file '{}'; summary export disabled.",
-        summary_file_path_.string()));
-    summary_file_path_.clear();
-    return false;
-  }
-  summary_stream_
-      << "batch_id,model_name,worker_id,worker_type,device_id,batch_size,"
-         "request_ids,request_arrival_us,queue_ms,batch_ms,submit_ms,"
-         "scheduling_ms,codelet_ms,inference_ms,callback_ms,total_ms,"
-         "warmup,congested\n";
-
-  [[maybe_unused]] const bool queue_writer_ready =
-      configure_queue_metrics_writer(trace_path);
-  return true;
-}
-
-void
-BatchingTraceLogger::close_summary_writer()
-{
-  close_stream_if_open(summary_stream_);
-  close_stream_if_open(queue_metrics_stream_);
-}
-
-auto
-BatchingTraceLogger::configure_queue_metrics_writer(
-    const std::filesystem::path& trace_path) -> bool
-{
-  close_stream_if_open(queue_metrics_stream_);
-  queue_metrics_path_ = metrics_path_from_trace(trace_path);
-  queue_metrics_stream_.open(
-      queue_metrics_path_, std::ios::out | std::ios::trunc);
-  if (!queue_metrics_stream_.is_open()) {
-    log_warning(std::format(
-        "Failed to open queue metrics file '{}'; queue metrics export "
-        "disabled.",
-        queue_metrics_path_.string()));
-    queue_metrics_path_.clear();
-    return false;
-  }
-  queue_metrics_stream_ << "timestamp_us,queue_size,rejected_total\n";
-  return true;
-}
-
-void
-BatchingTraceLogger::write_queue_metric_locked(const QueueMetric& metric)
-{
-  if (!queue_metrics_stream_.is_open()) {
-    return;
-  }
-  queue_metrics_stream_ << metric.timestamp_us << ',' << metric.queue_size
-                        << ',' << metric.rejected_total << '\n';
-}
 
 }  // namespace starpu_server

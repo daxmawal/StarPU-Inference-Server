@@ -4,9 +4,51 @@ project(starpu_server LANGUAGES CXX)
 # === Options ===
 option(ENABLE_COVERAGE "Enable coverage reporting" OFF)
 option(ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(ENABLE_TSAN "Enable thread sanitizer" OFF)
 option(BUILD_TESTS "Build unit tests" OFF)
 option(USE_BUNDLED_DEPS "Build bundled dependencies from external/ submodules"
        ON)
+
+if(ENABLE_SANITIZERS AND ENABLE_TSAN)
+  message(
+    FATAL_ERROR
+      "ENABLE_SANITIZERS (ASan/UBSan) and ENABLE_TSAN cannot be enabled together."
+  )
+endif()
+
+function(starpu_apply_sanitizers target_name)
+  if(NOT ENABLE_SANITIZERS)
+    return()
+  endif()
+
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(
+      FATAL_ERROR
+        "ENABLE_SANITIZERS requires Clang or GCC for target: ${target_name}")
+  endif()
+
+  target_compile_options(
+    ${target_name} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer
+                           -fno-sanitize-recover=all)
+  target_link_options(${target_name} PRIVATE -fsanitize=address,undefined
+                      -fno-sanitize-recover=all)
+endfunction()
+
+function(starpu_apply_tsan target_name)
+  if(NOT ENABLE_TSAN)
+    return()
+  endif()
+
+  if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    message(
+      FATAL_ERROR "ENABLE_TSAN requires Clang or GCC for target: ${target_name}"
+    )
+  endif()
+
+  target_compile_options(${target_name} PRIVATE -fsanitize=thread
+                                                -fno-omit-frame-pointer)
+  target_link_options(${target_name} PRIVATE -fsanitize=thread)
+endfunction()
 
 # === C++ Settings ===
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -142,21 +184,36 @@ else()
   find_package(absl CONFIG REQUIRED)
   find_package(utf8_range CONFIG REQUIRED)
 endif()
-set(HWLOC_LIBRARY "")
-set(_HWLOC_CANDIDATES /usr/local/lib/libhwloc.so.15
-                      /usr/lib/x86_64-linux-gnu/libhwloc.so.15)
-foreach(_hwloc_path IN LISTS _HWLOC_CANDIDATES)
-  if(EXISTS "${_hwloc_path}")
-    set(HWLOC_LIBRARY "${_hwloc_path}")
-    break()
-  endif()
-endforeach()
-if(NOT HWLOC_LIBRARY)
-  find_library(HWLOC_LIBRARY hwloc HINTS /usr/local/lib
-                                         /usr/lib/x86_64-linux-gnu)
+
+# === hwloc ===
+find_package(hwloc CONFIG QUIET)
+if(TARGET hwloc::hwloc AND NOT TARGET HWLOC::hwloc)
+  add_library(HWLOC::hwloc ALIAS hwloc::hwloc)
 endif()
-if(HWLOC_LIBRARY)
-  message(STATUS "hwloc library: ${HWLOC_LIBRARY}")
+
+if(NOT TARGET HWLOC::hwloc)
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(HWLOC QUIET IMPORTED_TARGET hwloc)
+  endif()
+
+  if(TARGET PkgConfig::HWLOC)
+    add_library(HWLOC::hwloc INTERFACE IMPORTED GLOBAL)
+    target_link_libraries(HWLOC::hwloc INTERFACE PkgConfig::HWLOC)
+    message(STATUS "hwloc found via pkg-config")
+  else()
+    find_path(HWLOC_INCLUDE_DIR NAMES hwloc.h REQUIRED)
+    find_library(HWLOC_LIBRARY NAMES hwloc REQUIRED)
+    add_library(HWLOC::hwloc UNKNOWN IMPORTED GLOBAL)
+    set_target_properties(
+      HWLOC::hwloc
+      PROPERTIES IMPORTED_LOCATION "${HWLOC_LIBRARY}"
+                 INTERFACE_INCLUDE_DIRECTORIES "${HWLOC_INCLUDE_DIR}")
+    message(STATUS "hwloc include directory: ${HWLOC_INCLUDE_DIR}")
+    message(STATUS "hwloc library: ${HWLOC_LIBRARY}")
+  endif()
+else()
+  message(STATUS "hwloc found via CMake package")
 endif()
 
 # Optional: NVTX instrumentation (nsys --trace=nvtx)

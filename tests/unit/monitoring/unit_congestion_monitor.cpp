@@ -18,15 +18,17 @@ namespace {
 
 auto
 wait_until(
-    const std::function<bool()>& predicate,
-    std::chrono::milliseconds timeout) -> bool
+    const std::function<bool()>& predicate, std::chrono::milliseconds timeout,
+    std::chrono::milliseconds poll_interval = 20ms) -> bool
 {
+  const auto sleep_interval =
+      poll_interval > std::chrono::milliseconds::zero() ? poll_interval : 1ms;
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
     if (predicate()) {
       return true;
     }
-    std::this_thread::sleep_for(20ms);
+    std::this_thread::sleep_for(sleep_interval);
   }
   return predicate();
 }
@@ -48,13 +50,18 @@ TEST_F(CongestionMonitorTest, PanicOnRejectionSetsCongestionFlag)
   starpu_server::congestion::record_arrival(1);
   starpu_server::congestion::record_rejection(1);
 
+  std::optional<starpu_server::congestion::Snapshot> panic_snapshot;
   EXPECT_TRUE(wait_until(
-      [] { return starpu_server::congestion::is_congested(); }, 500ms));
+      [&panic_snapshot] {
+        panic_snapshot = starpu_server::congestion::snapshot();
+        return panic_snapshot.has_value() && panic_snapshot->congestion &&
+               panic_snapshot->rejection_rps > 0.0;
+      },
+      1s, 5ms));
 
-  const auto snap = starpu_server::congestion::snapshot();
-  ASSERT_TRUE(snap.has_value());
-  EXPECT_GT(snap->rejection_rps, 0.0);
-  EXPECT_TRUE(snap->congestion);
+  ASSERT_TRUE(panic_snapshot.has_value());
+  EXPECT_GT(panic_snapshot->rejection_rps, 0.0);
+  EXPECT_TRUE(panic_snapshot->congestion);
 }
 
 TEST_F(CongestionMonitorTest, ClearsAfterExitConditionsHold)

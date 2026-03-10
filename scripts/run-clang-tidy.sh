@@ -7,6 +7,9 @@
 # Dependency paths:
 #   LIBTORCH_DIR - path to the LibTorch installation
 #   GRPC_DIR     - path to the gRPC installation
+# Quality gate:
+#   CLANG_TIDY_WARNINGS_AS_ERRORS - comma-separated checks treated as errors
+#                                   (default: bugprone-*,clang-analyzer-*)
 #
 # Dependency paths can be supplied via environment variables, positional
 # arguments, or auto-detected from BUILD_DIR/CMakeCache.txt.
@@ -32,6 +35,10 @@ Options:
   --dir <path>            Analyze only files under this directory
   --header-filter <regex> Header filter regex for clang-tidy
   -h, --help              Show this help
+
+Environment:
+  CLANG_TIDY_WARNINGS_AS_ERRORS  Checks promoted to errors
+                                 (default: bugprone-*,clang-analyzer-*)
 EOF
   return 0
 }
@@ -131,6 +138,7 @@ BUILD_DIR=${BUILD_DIR:-"$PROJECT_ROOT/build"}
 LIBTORCH_DIR=${LIBTORCH_DIR:-}
 GRPC_DIR=${GRPC_DIR:-}
 HEADER_FILTER=${HEADER_FILTER:-}
+CLANG_TIDY_WARNINGS_AS_ERRORS=${CLANG_TIDY_WARNINGS_AS_ERRORS:-"bugprone-*,clang-analyzer-*"}
 TARGET_FILE=""
 TARGET_DIR=""
 
@@ -261,7 +269,7 @@ write_clang_tidy_config() {
 ---
 Checks: "performance-*,modernize-*,bugprone-*,readability-*,clang-analyzer-*,cppcoreguidelines-*,portability-*,clang-diagnostic-unused-includes"
 HeaderFilterRegex: "$HEADER_FILTER"
-WarningsAsErrors: ""
+WarningsAsErrors: "$CLANG_TIDY_WARNINGS_AS_ERRORS"
 ExtraArgs:
   - "--target=x86_64-pc-linux-gnu"
   - "--gcc-toolchain=/usr"

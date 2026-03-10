@@ -25,3 +25,6 @@ else()
       "gRPC reflection library not found; client_example will be built without reflection."
   )
 endif()
+
+starpu_apply_sanitizers(client_example)
+starpu_apply_tsan(client_example)

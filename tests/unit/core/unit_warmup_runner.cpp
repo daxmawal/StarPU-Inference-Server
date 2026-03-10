@@ -1,17 +1,21 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <limits>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "core/inference_runner.hpp"
 #include "core/warmup.hpp"
+#include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
@@ -23,6 +27,12 @@ auto collect_device_workers_for_test(const RuntimeConfig& opts)
 using WarmupThreadHook = std::function<void()>;
 auto set_warmup_server_thread_hook(WarmupThreadHook hook) -> WarmupThreadHook;
 auto set_warmup_client_thread_hook(WarmupThreadHook hook) -> WarmupThreadHook;
+auto set_warmup_drain_timeout_for_test(
+    std::optional<std::chrono::milliseconds> timeout)
+    -> std::optional<std::chrono::milliseconds>;
+auto set_warmup_drain_wait_step_for_test(
+    std::optional<std::chrono::milliseconds> wait_step)
+    -> std::optional<std::chrono::milliseconds>;
 }  // namespace starpu_server::testing
 
 namespace {
@@ -84,6 +94,33 @@ class WarmupThreadHookGuard {
   starpu_server::testing::WarmupThreadHook server_prev_;
   starpu_server::testing::WarmupThreadHook client_prev_;
 };
+
+class WarmupTimingOverrideGuard {
+ public:
+  WarmupTimingOverrideGuard(
+      std::optional<std::chrono::milliseconds> timeout,
+      std::optional<std::chrono::milliseconds> wait_step)
+      : timeout_prev_(
+            starpu_server::testing::set_warmup_drain_timeout_for_test(timeout)),
+        wait_step_prev_(
+            starpu_server::testing::set_warmup_drain_wait_step_for_test(
+                wait_step))
+  {
+  }
+  ~WarmupTimingOverrideGuard()
+  {
+    starpu_server::testing::set_warmup_drain_timeout_for_test(timeout_prev_);
+    starpu_server::testing::set_warmup_drain_wait_step_for_test(
+        wait_step_prev_);
+  }
+  WarmupTimingOverrideGuard(const WarmupTimingOverrideGuard&) = delete;
+  auto operator=(const WarmupTimingOverrideGuard&)
+      -> WarmupTimingOverrideGuard& = delete;
+
+ private:
+  std::optional<std::chrono::milliseconds> timeout_prev_;
+  std::optional<std::chrono::milliseconds> wait_step_prev_;
+};
 }  // namespace
 
 TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
@@ -91,8 +128,9 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
   auto device_workers = make_device_workers();
   starpu_server::InferenceQueue queue;
 
-  starpu_server::WarmupRunnerTestHelper::client_worker(
-      *runner, device_workers, queue, 2);
+  const auto enqueued_jobs =
+      starpu_server::WarmupRunnerTestHelper::client_worker(
+          *runner, device_workers, queue, 2);
 
   std::vector<int> request_ids;
   std::vector<int> worker_ids;
@@ -107,6 +145,7 @@ TEST_F(WarmupRunnerTest, ClientWorkerPositiveRequestNb_Unit)
     worker_ids.push_back(worker);
   }
 
+  EXPECT_EQ(enqueued_jobs, 4U);
   ASSERT_EQ(request_ids.size(), 4U);
   EXPECT_EQ(request_ids, (std::vector<int>{0, 1, 2, 3}));
   EXPECT_EQ(worker_ids, (std::vector<int>{1, 1, 2, 2}));
@@ -158,13 +197,34 @@ TEST_F(WarmupRunnerTest, ClientWorkerStopsWhenQueuePushFails)
 
   testing::internal::CaptureStderr();
   queue.shutdown();
-  starpu_server::WarmupRunnerTestHelper::client_worker(
-      *runner, device_workers, queue, request_nb);
+  const auto enqueued_jobs =
+      starpu_server::WarmupRunnerTestHelper::client_worker(
+          *runner, device_workers, queue, request_nb);
   const std::string captured = testing::internal::GetCapturedStderr();
 
+  EXPECT_EQ(enqueued_jobs, 0U);
   EXPECT_NE(captured.find("Failed to enqueue job"), std::string::npos);
 
   std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_FALSE(queue.wait_and_pop(job));
+}
+
+TEST_F(WarmupRunnerTest, ClientWorkerReportsPartialEnqueueWhenQueueIsFull)
+{
+  auto device_workers = make_device_workers();
+  starpu_server::InferenceQueue queue(/*max_size=*/1);
+
+  testing::internal::CaptureStderr();
+  const auto enqueued_jobs =
+      starpu_server::WarmupRunnerTestHelper::client_worker(
+          *runner, device_workers, queue, /*request_nb_per_worker=*/2);
+  const std::string captured = testing::internal::GetCapturedStderr();
+
+  EXPECT_EQ(enqueued_jobs, 1U);
+  EXPECT_NE(captured.find("queue is full"), std::string::npos);
+
+  std::shared_ptr<starpu_server::InferenceJob> job;
+  EXPECT_TRUE(queue.wait_and_pop(job));
   EXPECT_FALSE(queue.wait_and_pop(job));
 }
 
@@ -182,6 +242,23 @@ TEST(WarmupRunnerEdgesTest, CollectDeviceWorkersAddsCudaWorkers)
   const auto it = workers.find(0);
   ASSERT_NE(it, workers.end());
   EXPECT_EQ(it->second, (std::vector<int>{7, 9}));
+}
+
+TEST(WarmupRunnerEdgesTest, CollectDeviceWorkersSkipsCudaDevicesWithoutWorkers)
+{
+  WorkerStreamQueryGuard guard;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cpu = false;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, 1};
+
+  const auto workers =
+      starpu_server::testing::collect_device_workers_for_test(opts);
+
+  const auto present_device = workers.find(0);
+  ASSERT_NE(present_device, workers.end());
+  EXPECT_EQ(present_device->second, (std::vector<int>{7, 9}));
+  EXPECT_EQ(workers.find(1), workers.end());
 }
 
 TEST(WarmupRunnerEdgesTest, RunCapturesClientThreadException)
@@ -219,6 +296,99 @@ TEST(WarmupRunnerEdgesTest, RunCapturesServerThreadException)
 
   EXPECT_THROW(runner.run(1), std::runtime_error);
   EXPECT_TRUE(hook_called.load(std::memory_order_relaxed));
+}
+
+TEST(WarmupRunnerEdgesTest, RunAppliesConfiguredInflightLimitBelowQueueCap)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.max_queue_size = 11;
+  fixture.opts.batching.max_inflight_tasks = 4;
+  fixture.opts.batching.warmup_pregen_inputs = 1;
+  auto runner = fixture.make_runner();
+
+  starpu_server::shutdown_metrics();
+  ASSERT_TRUE(starpu_server::init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { starpu_server::shutdown_metrics(); }
+  } guard;
+
+  EXPECT_NO_THROW(runner.run(0));
+
+  const auto metrics = starpu_server::get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  ASSERT_NE(metrics->gauges().max_inflight_tasks, nullptr);
+  EXPECT_DOUBLE_EQ(
+      metrics->gauges().max_inflight_tasks->Value(),
+      static_cast<double>(fixture.opts.batching.max_inflight_tasks));
+}
+
+TEST(WarmupRunnerEdgesTest, RunTimesOutWhenClientStaysPendingPastDeadline)
+{
+  using namespace std::chrono_literals;
+
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.warmup_pregen_inputs = 1;
+  auto runner = fixture.make_runner();
+
+  WarmupTimingOverrideGuard timing_guard(0ms, 1ms);
+  WarmupThreadHookGuard thread_guard(
+      starpu_server::testing::WarmupThreadHook{},
+      [] { std::this_thread::sleep_for(10ms); });
+
+  try {
+    runner.run(1);
+    FAIL() << "Expected timeout while waiting for client completion.";
+  }
+  catch (const std::runtime_error& e) {
+    const std::string message = e.what();
+    EXPECT_NE(message.find("Warmup drain timeout"), std::string::npos);
+    EXPECT_NE(message.find("client_done=false"), std::string::npos);
+  }
+}
+
+TEST(WarmupRunnerEdgesTest, RunTimesOutWhenCompletionLagsPastDeadline)
+{
+  using namespace std::chrono_literals;
+
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.warmup_pregen_inputs = 1;
+  auto runner = fixture.make_runner();
+
+  WarmupTimingOverrideGuard timing_guard(300ms, 1ms);
+  WarmupThreadHookGuard thread_guard(
+      [] { std::this_thread::sleep_for(600ms); },
+      starpu_server::testing::WarmupThreadHook{});
+
+  try {
+    runner.run(1);
+    FAIL() << "Expected timeout while draining completed warmup jobs.";
+  }
+  catch (const std::runtime_error& e) {
+    const std::string message = e.what();
+    EXPECT_NE(message.find("Warmup drain timeout"), std::string::npos);
+    EXPECT_NE(message.find("client_done=true"), std::string::npos);
+  }
+}
+
+TEST(WarmupRunnerEdgesTest, RunPropagatesCompletionObserverException)
+{
+  WarmupRunnerTestFixture fixture;
+  fixture.init();
+  fixture.opts.batching.warmup_pregen_inputs = 1;
+  auto runner = fixture.make_runner([](std::atomic<std::size_t>&) {
+    throw std::runtime_error("completion observer failure");
+  });
+
+  try {
+    runner.run(1);
+    FAIL() << "Expected completion observer exception.";
+  }
+  catch (const std::runtime_error& e) {
+    EXPECT_EQ(std::string(e.what()), "completion observer failure");
+  }
 }
 
 TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenNoDevicesConfigured)

@@ -25,7 +25,28 @@ class OutputSlotPool : public SlotPoolBase<SlotPoolSlot> {
     size_t bytes = 0;
   };
 
+  using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
+  using RegisterFailureObserverFn =
+      void (*)(const SlotInfo&, const std::vector<HostBufferInfo>&);
+  using HostAllocatorFn = std::function<int(void**, size_t, size_t)>;
+  using CudaHostAllocFn = std::function<int(void**, size_t, unsigned int)>;
+  using CudaPinnedOverrideFn = std::function<bool(size_t, bool, bool)>;
+  using HostDeallocatorFn = std::function<void(void*)>;
+  using StarpuMemoryPinFn = std::function<int(void*, size_t)>;
+
+  struct Dependencies {
+    StarpuVectorRegisterFn starpu_vector_register = nullptr;
+    RegisterFailureObserverFn register_failure_observer = nullptr;
+    HostAllocatorFn host_allocator;
+    CudaHostAllocFn cuda_host_alloc;
+    CudaPinnedOverrideFn cuda_pinned_override;
+    HostDeallocatorFn host_deallocator;
+    StarpuMemoryPinFn starpu_memory_pin;
+  };
+
   OutputSlotPool(const RuntimeConfig& opts, int slots);
+  OutputSlotPool(
+      const RuntimeConfig& opts, int slots, Dependencies dependencies);
   ~OutputSlotPool();
 
   OutputSlotPool(const OutputSlotPool&) = delete;
@@ -49,55 +70,47 @@ class OutputSlotPool : public SlotPoolBase<SlotPoolSlot> {
  private:
   friend struct OutputSlotPoolTestHook;
 
-  using OutputStarpuVectorRegisterHook = decltype(&starpu_vector_data_register);
-  using OutputRegisterFailureObserverHook =
-      void (*)(const SlotInfo&, const std::vector<HostBufferInfo>&);
-  using OutputHostAllocatorHook = std::function<int(void**, size_t, size_t)>;
-  using OutputCudaPinnedOverrideHook = std::function<bool(size_t, bool, bool)>;
-  using OutputHostDeallocatorHook = std::function<void(void*)>;
-  using OutputStarpuMemoryPinHook = std::function<int(void*, size_t)>;
-
   void allocate_pool(const RuntimeConfig& opts, int slots);
   void allocate_slot_buffers_and_register(
       int slot_id, const RuntimeConfig& opts);
   static auto product_dims(const std::vector<int64_t>& dims) -> size_t;
   using HostBufferPtr = std::byte*;
-  struct HostBufferDeleter {
-    void operator()(HostBufferPtr ptr) const;
-  };
-  using HostBufferOwner = std::unique_ptr<std::byte, HostBufferDeleter>;
   struct PreparedHostBuffer {
     HostBufferPtr ptr = nullptr;
     HostBufferInfo info;
   };
 
   static auto alloc_host_buffer(
-      size_t bytes, bool use_pinned, bool& cuda_pinned) -> HostBufferPtr;
+      size_t bytes, bool use_pinned, bool& cuda_pinned,
+      const Dependencies& dependencies) -> HostBufferPtr;
   static auto prepare_host_buffer(
       size_t per_sample_bytes, size_t batch_size, bool want_pinned, int slot_id,
-      size_t output_index) -> PreparedHostBuffer;
+      size_t output_index,
+      const Dependencies& dependencies) -> PreparedHostBuffer;
   static auto checked_total_bytes(size_t per_sample_bytes, size_t batch_size)
       -> size_t;
   static void cleanup_slot_buffers(
-      SlotInfo& slot, std::vector<HostBufferInfo>& buffer_infos, size_t count);
+      SlotInfo& slot, std::vector<HostBufferInfo>& buffer_infos, size_t count,
+      const Dependencies& dependencies);
   static auto checked_total_numel(size_t per_sample_numel, size_t batch_size)
       -> size_t;
   static void free_host_buffer(
-      std::byte* ptr, const HostBufferInfo& buffer_info);
-  static auto starpu_vector_register_hook() -> OutputStarpuVectorRegisterHook&;
-  static auto starpu_register_failure_observer()
-      -> OutputRegisterFailureObserverHook&;
-  static auto output_host_allocator_hook() -> OutputHostAllocatorHook&;
-  static auto output_cuda_pinned_override_hook()
-      -> OutputCudaPinnedOverrideHook&;
-  static auto output_host_deallocator_hook() -> OutputHostDeallocatorHook&;
-  static auto starpu_memory_pin_hook() -> OutputStarpuMemoryPinHook&;
+      std::byte* ptr, const HostBufferInfo& buffer_info,
+      const Dependencies& dependencies);
 
   std::vector<size_t> per_output_numel_single_;
   std::vector<size_t> per_output_bytes_single_;
   std::vector<at::ScalarType> output_types_;
   int bmax_ = 1;
   std::vector<std::vector<HostBufferInfo>> host_buffer_infos_;
+  Dependencies dependencies_;
 };
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing {
+auto output_slot_pool_default_dependencies_for_tests()
+    -> OutputSlotPool::Dependencies&;
+}  // namespace testing
+#endif  // SONAR_IGNORE_END
 
 }  // namespace starpu_server

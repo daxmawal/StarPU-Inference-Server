@@ -21,7 +21,11 @@ target_sources(
           ${UTILS_DIR}/config_loader.cpp
           ${MONITORING_DIR}/congestion_monitor.cpp
           ${STARPU_TASK_WORKER_DIR}/starpu_task_worker.cpp
+          ${STARPU_TASK_WORKER_DIR}/batch_collector_component.cpp
+          ${STARPU_TASK_WORKER_DIR}/result_dispatcher_component.cpp
+          ${STARPU_TASK_WORKER_DIR}/slot_manager_component.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/inference_service.cpp
+          ${CMAKE_CURRENT_SOURCE_DIR}/starpu_server_build_guard.cpp
           ${CMAKE_CURRENT_SOURCE_DIR}/server_main.cpp
           ${MONITORING_DIR}/metrics.cpp)
 
@@ -41,7 +45,7 @@ target_link_libraries(
           StarPU::starpu
           prometheus-cpp::pull
           yaml-cpp::yaml-cpp
-          ${HWLOC_LIBRARY})
+          HWLOC::hwloc)
 
 if(TARGET gRPC::grpc++_reflection)
   target_link_libraries(starpu_server PRIVATE gRPC::grpc++_reflection)
@@ -71,3 +75,6 @@ if(HAVE_NVTX)
                                PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
   endif()
 endif()
+
+starpu_apply_sanitizers(starpu_server)
+starpu_apply_tsan(starpu_server)

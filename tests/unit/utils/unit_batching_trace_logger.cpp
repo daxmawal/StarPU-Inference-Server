@@ -11,13 +11,8 @@
 #include <sstream>
 #include <string>
 
-#define private public
-#define protected public
+#include "support/utils/batching_trace_logger_test_api.hpp"
 #include "utils/batching_trace_logger.hpp"
-#undef protected
-#undef private
-
-#include "utils/batching_trace_logger.cpp"  // NOLINT(bugprone-suspicious-include)
 #include "utils/runtime_config.hpp"
 
 namespace starpu_server { namespace {
@@ -131,9 +126,17 @@ TEST(BatchingTraceLoggerTest, RequestAndBatchLoggingNoOpsWhenDisabled)
   });
 
   EXPECT_FALSE(logger.enabled());
-  EXPECT_TRUE(logger.file_path_.empty());
-  EXPECT_FALSE(logger.trace_writer_.is_open());
-  EXPECT_FALSE(logger.summary_stream_.is_open());
+  EXPECT_TRUE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::file_path(logger)
+          .empty());
+  EXPECT_FALSE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+          logger)
+          .is_open());
+  EXPECT_FALSE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::summary_stream(
+          logger)
+          .is_open());
   EXPECT_FALSE(std::filesystem::exists(trace_path));
 }
 
@@ -142,8 +145,9 @@ TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
   std::ostringstream line;
   line << R"({"prefix":true)";
 
-  const auto invalid_direction = static_cast<FlowDirection>(0xFF);
-  append_flow_annotation(
+  const auto invalid_direction =
+      static_cast<starpu_server::testing::FlowDirectionForTest>(0xFF);
+  starpu_server::testing::AppendFlowAnnotationForTest(
       line, invalid_direction, /*batch_id=*/42, /*is_warmup=*/false);
 
   EXPECT_EQ(line.str(), R"({"prefix":true)");
@@ -154,7 +158,7 @@ TEST(BatchingTraceLoggerTest, FlowAnnotationsIgnoreUnknownDirections)
 TEST(BatchingTraceLoggerTest, EscapeCsvFieldDoublesQuotes)
 {
   const std::string_view input = R"(a"b"c)";
-  EXPECT_EQ(escape_csv_field(input), R"(a""b""c)");
+  EXPECT_EQ(starpu_server::testing::EscapeCsvFieldForTest(input), R"(a""b""c)");
 }
 
 TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
@@ -164,7 +168,10 @@ TEST(BatchingTraceLoggerTest, ConfigureUsesDefaultPathWhenFilePathEmpty)
 
   logger.configure(true, "");
   EXPECT_TRUE(logger.enabled());
-  EXPECT_EQ(logger.file_path_, std::string(kDefaultTraceFileName));
+  EXPECT_EQ(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::file_path(
+          logger),
+      std::string(kDefaultTraceFileName));
 
   {
     std::ifstream stream{std::string(kDefaultTraceFileName)};
@@ -194,7 +201,9 @@ TEST(BatchingTraceLoggerTest, ConfigureHandlesDirectoryCreationFailures)
 
   logger.configure(true, trace_path.string());
   EXPECT_FALSE(logger.enabled());
-  EXPECT_TRUE(logger.file_path_.empty());
+  EXPECT_TRUE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::file_path(logger)
+          .empty());
   EXPECT_FALSE(std::filesystem::exists(trace_path));
 
   std::error_code ec;
@@ -208,11 +217,18 @@ TEST(BatchingTraceLoggerTest, RelativeTimestampBypassesOffsetWhenUninitialized)
   const int64_t sample_timestamp = 123456;
 
   EXPECT_EQ(
-      fresh_logger.relative_timestamp_us(sample_timestamp), sample_timestamp);
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::
+          relative_timestamp_us(fresh_logger, sample_timestamp),
+      sample_timestamp);
 
-  fresh_logger.trace_start_initialized_ = true;
-  fresh_logger.trace_start_us_ = sample_timestamp + 50;
-  EXPECT_EQ(fresh_logger.relative_timestamp_us(sample_timestamp), 0);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(fresh_logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      fresh_logger) = sample_timestamp + 50;
+  EXPECT_EQ(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::
+          relative_timestamp_us(fresh_logger, sample_timestamp),
+      0);
 }
 
 TEST(BatchingTraceLoggerTest, WriteLineLockedNoOpsWithoutHeader)
@@ -221,15 +237,30 @@ TEST(BatchingTraceLoggerTest, WriteLineLockedNoOpsWithoutHeader)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = false;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = false;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
 
-    logger.trace_writer_.write_line(R"({"dummy":"event"})");
-    logger.trace_writer_.stream_.close();
+    starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+        logger)
+        .write_line(R"({"dummy":"event"})");
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -249,14 +280,27 @@ TEST(BatchingTraceLoggerTest, WriteFooterLockedNoOpsWithoutHeader)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = false;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = false;
 
-    logger.trace_writer_.write_footer();
-    logger.trace_writer_.stream_.close();
+    starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+        logger)
+        .write_footer();
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -280,9 +324,10 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanClampsNonPositiveDuration)
       .start_ts = 5000,
       .duration_us = 0,
   };
-  logger.write_batch_build_span(
-      "demo_model", 9, 3, timing, std::span<const int>{},
-      /*is_warmup=*/false);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      write_batch_build_span(
+          logger, 9, "demo_model", 3, timing, std::span<const int>{},
+          /*is_warmup=*/false);
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -317,8 +362,10 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanClampsNonPositiveDuration)
       .start_ts = 2000,
       .duration_us = 0,
   };
-  logger.write_batch_enqueue_span(
-      "demo_model", 7, 2, timing, std::span<const int>{}, /*is_warmup=*/false);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      write_batch_enqueue_span(
+          logger, 7, "demo_model", 2, timing, std::span<const int>{},
+          /*is_warmup=*/false);
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -349,24 +396,40 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = false;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = false;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
 
   BatchingTraceLogger::BatchSpanTiming timing{
       .start_ts = 10,
       .duration_us = 5,
   };
-  logger.write_batch_build_span(
-      "demo_model", 1, 1, timing, std::span<const int>{}, /*is_warmup=*/false);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      write_batch_build_span(
+          logger, 1, "demo_model", 1, timing, std::span<const int>{},
+          /*is_warmup=*/false);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -386,12 +449,22 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = false;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = false;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
 
   BatchingTraceLogger::BatchSpanTiming timing{
@@ -399,13 +472,18 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
       .duration_us = 10,
   };
   const std::array<int, 1> request_ids{42};
-  logger.write_batch_enqueue_span(
-      "demo_model", 3, 1, timing, std::span<const int>(request_ids),
-      /*is_warmup=*/false);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      write_batch_enqueue_span(
+          logger, 3, "demo_model", 1, timing, std::span<const int>(request_ids),
+          /*is_warmup=*/false);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -425,27 +503,44 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWhenDisabled)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1000}};
   const auto end = start + std::chrono::microseconds{10};
   const BatchingTraceLogger::TimeRange queue_times{start, end};
 
-  logger.enabled_.store(false, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(false, std::memory_order_release);
   logger.log_batch_enqueue_span(1, "disabled_model", 1, queue_times);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -465,16 +560,29 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto invalid_start = starpu_server::MonotonicClock::time_point{};
   const auto valid_end = starpu_server::MonotonicClock::time_point{
@@ -484,8 +592,12 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanSkipsWithoutValidTimestamps)
   logger.log_batch_enqueue_span(2, "invalid_timestamps", 1, queue_times);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -506,16 +618,29 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{5000}};
@@ -526,8 +651,12 @@ TEST(BatchingTraceLoggerTest, LogBatchEnqueueSpanClampsNegativeDuration)
   logger.log_batch_enqueue_span(3, "clamped_enqueue", 1, queue_times);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -558,27 +687,44 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsWhenDisabled)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1500}};
   const auto end = start + std::chrono::microseconds{20};
   const BatchingTraceLogger::TimeRange schedule{start, end};
 
-  logger.enabled_.store(false, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(false, std::memory_order_release);
   logger.log_batch_build_span(4, "disabled_build", 1, schedule);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -598,16 +744,29 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{7000}};
@@ -618,8 +777,12 @@ TEST(BatchingTraceLoggerTest, LogBatchBuildSpanSkipsInvalidTimestamps)
   logger.log_batch_build_span(5, "invalid_build_timing", 1, schedule);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -639,16 +802,29 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWithoutValidTimestamps)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto valid_start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1000}};
@@ -661,8 +837,12 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWithoutValidTimestamps)
       valid_start, starpu_server::MonotonicClock::time_point{}});
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -682,16 +862,29 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenEndBeforeStart)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{5000}};
@@ -701,8 +894,12 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenEndBeforeStart)
   logger.log_congestion_span(BatchingTraceLogger::TimeRange{start, end});
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -722,16 +919,29 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenWriterNotReady)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = false;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = false;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{2500}};
@@ -741,8 +951,12 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanSkipsWhenWriterNotReady)
   logger.log_congestion_span(BatchingTraceLogger::TimeRange{start, end});
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -762,16 +976,29 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanWritesWhenReady)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{8000}};
@@ -780,8 +1007,12 @@ TEST(BatchingTraceLoggerTest, LogCongestionSpanWritesWhenReady)
   logger.log_congestion_span(BatchingTraceLogger::TimeRange{start, end});
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -803,17 +1034,19 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsNegativeWorker)
   BatchingTraceLogger logger;
   logger.configure(true, trace_path.string());
 
-  logger.write_batch_compute_span(BatchingTraceLogger::BatchComputeWriteArgs{
-      .model_name = "skip_model",
-      .batch_id = 11,
-      .batch_size = 4,
-      .worker_id = -1,
-      .worker_type = DeviceType::CPU,
-      .start_ts = 100,
-      .duration_us = 10,
-      .is_warmup = false,
-      .device_id = -1,
-  });
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      write_batch_compute_span(
+          logger, BatchingTraceLogger::BatchComputeWriteArgs{
+                      .model_name = "skip_model",
+                      .batch_id = 11,
+                      .batch_size = 4,
+                      .worker_id = -1,
+                      .worker_type = DeviceType::CPU,
+                      .start_ts = 100,
+                      .duration_us = 10,
+                      .is_warmup = false,
+                      .device_id = -1,
+                  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -832,17 +1065,19 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanClampsNonPositiveDuration)
   BatchingTraceLogger logger;
   logger.configure(true, trace_path.string());
 
-  logger.write_batch_compute_span(BatchingTraceLogger::BatchComputeWriteArgs{
-      .model_name = "clamp_model",
-      .batch_id = 12,
-      .batch_size = 5,
-      .worker_id = 2,
-      .worker_type = DeviceType::CPU,
-      .start_ts = 500,
-      .duration_us = 0,
-      .is_warmup = false,
-      .device_id = -1,
-  });
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      write_batch_compute_span(
+          logger, BatchingTraceLogger::BatchComputeWriteArgs{
+                      .model_name = "clamp_model",
+                      .batch_id = 12,
+                      .batch_size = 5,
+                      .worker_id = 2,
+                      .worker_type = DeviceType::CPU,
+                      .start_ts = 500,
+                      .duration_us = 0,
+                      .is_warmup = false,
+                      .device_id = -1,
+                  });
   logger.configure(false, "");
 
   std::ifstream stream(trace_path);
@@ -873,29 +1108,45 @@ TEST(BatchingTraceLoggerTest, WriteBatchComputeSpanSkipsWithoutHeader)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = false;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = false;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
 
-  logger.write_batch_compute_span(BatchingTraceLogger::BatchComputeWriteArgs{
-      .model_name = "demo_model",
-      .batch_id = 13,
-      .batch_size = 2,
-      .worker_id = 3,
-      .worker_type = DeviceType::CPU,
-      .start_ts = 1000,
-      .duration_us = 25,
-      .is_warmup = false,
-      .device_id = -1,
-  });
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      write_batch_compute_span(
+          logger, BatchingTraceLogger::BatchComputeWriteArgs{
+                      .model_name = "demo_model",
+                      .batch_id = 13,
+                      .batch_size = 2,
+                      .worker_id = 3,
+                      .worker_type = DeviceType::CPU,
+                      .start_ts = 1000,
+                      .duration_us = 25,
+                      .is_warmup = false,
+                      .device_id = -1,
+                  });
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -919,10 +1170,15 @@ TEST(BatchingTraceLoggerTest, EventToStringReturnsUnknownForInvalidEvent)
 TEST(BatchingTraceLoggerTest, RememberRequestEnqueueTimestampSkipsNegativeId)
 {
   BatchingTraceLogger logger;
-  logger.request_timeline_.remember(-5, 1234);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::request_timeline(
+      logger)
+      .remember(-5, 1234);
 
   const std::array<int, 1> request_ids{-5};
-  const auto timestamp = logger.request_timeline_.consume_latest(request_ids);
+  const auto timestamp =
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::request_timeline(
+          logger)
+          .consume_latest(request_ids);
   EXPECT_FALSE(timestamp.has_value())
       << "Negative request IDs should be ignored.";
 }
@@ -933,27 +1189,42 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWhenDisabled)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(false, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(false, std::memory_order_release);
 
   const BatchingTraceLogger::BatchRecordContext record_context{
       .request_id = 1, .batch_id = 1, .logical_jobs = 1};
   const BatchingTraceLogger::WorkerThreadInfo worker_info{
       .worker_id = -1, .worker_type = DeviceType::Unknown, .device_id = -1};
 
-  logger.write_record(
-      BatchingTraceEvent::RequestQueued, "demo_model", record_context,
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::write_record(
+      logger, BatchingTraceEvent::RequestQueued, "demo_model", record_context,
       worker_info, std::span<const int>{}, std::nullopt, /*is_warmup=*/false);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -973,27 +1244,42 @@ TEST(BatchingTraceLoggerTest, WriteRecordSkipsWithoutHeader)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = false;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = false;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
 
   const BatchingTraceLogger::BatchRecordContext record_context{
       .request_id = 2, .batch_id = 3, .logical_jobs = 4};
   const BatchingTraceLogger::WorkerThreadInfo worker_info{
       .worker_id = -1, .worker_type = DeviceType::Unknown, .device_id = -1};
 
-  logger.write_record(
-      BatchingTraceEvent::BatchSubmitted, "demo_model", record_context,
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::write_record(
+      logger, BatchingTraceEvent::BatchSubmitted, "demo_model", record_context,
       worker_info, std::span<const int>{}, std::nullopt, /*is_warmup=*/false);
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -1015,22 +1301,35 @@ TEST(
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{1000}};
   const auto end = start + std::chrono::microseconds{10};
   const BatchingTraceLogger::TimeRange codelet_times{start, end};
 
-  logger.enabled_.store(false, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(false, std::memory_order_release);
   logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
       .batch_id = 1,
       .model_name = "disabled_model",
@@ -1042,7 +1341,8 @@ TEST(
       .device_id = -1,
   });
 
-  logger.enabled_.store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
   logger.log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
       .batch_id = 2,
       .model_name = "invalid_worker_model",
@@ -1055,8 +1355,12 @@ TEST(
   });
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -1076,16 +1380,29 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
   BatchingTraceLogger logger;
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.open(
-        trace_path, std::ios::out | std::ios::trunc);
-    ASSERT_TRUE(logger.trace_writer_.stream_.is_open());
-    logger.trace_writer_.header_written_ = true;
-    logger.trace_writer_.first_record_ = true;
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .open(trace_path, std::ios::out | std::ios::trunc);
+    ASSERT_TRUE(starpu_server::testing::TraceFileWriterTestAccessor::stream(
+                    starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                        trace_writer(logger))
+                    .is_open());
+    starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
+    starpu_server::testing::TraceFileWriterTestAccessor::first_record(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger)) = true;
   }
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
 
   const auto start = starpu_server::MonotonicClock::time_point{
       std::chrono::microseconds{2000}};
@@ -1105,8 +1422,12 @@ TEST(BatchingTraceLoggerTest, LogBatchComputeSpanSkipsInvalidTimestamps)
   });
 
   {
-    std::lock_guard<std::mutex> lock(logger.mutex_);
-    logger.trace_writer_.stream_.close();
+    std::lock_guard<std::mutex> lock(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::mutex(logger));
+    starpu_server::testing::TraceFileWriterTestAccessor::stream(
+        starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+            logger))
+        .close();
   }
 
   std::ifstream stream(trace_path);
@@ -1473,7 +1794,7 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
 
-  auto extract_tid = [&](size_t start_pos) -> int {
+  auto extract_tid = [&](size_t start_pos) {
     const auto tid_pos = content.find("\"tid\":", start_pos);
     if (tid_pos == std::string::npos) {
       ADD_FAILURE() << "Missing tid for compute span";
@@ -1709,10 +2030,17 @@ TEST(BatchingTraceLoggerTest, ConfigureSummaryWriterFailsWhenDirectoryMissing)
   std::error_code ec;
   std::filesystem::remove_all(trace_path.parent_path(), ec);
 
-  const auto configured = logger.configure_summary_writer(trace_path);
+  const auto configured =
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::
+          configure_summary_writer(logger, trace_path);
   EXPECT_FALSE(configured);
-  EXPECT_TRUE(logger.summary_file_path_.empty());
-  EXPECT_FALSE(logger.summary_stream_.is_open());
+  EXPECT_TRUE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                  summary_file_path(logger)
+                      .empty());
+  EXPECT_FALSE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::summary_stream(
+          logger)
+          .is_open());
 }
 
 TEST(
@@ -1725,10 +2053,16 @@ TEST(
   std::error_code ec;
   std::filesystem::remove_all(trace_path.parent_path(), ec);
 
-  const auto configured = logger.configure_queue_metrics_writer(trace_path);
+  const auto configured =
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::
+          configure_queue_metrics_writer(logger, trace_path);
   EXPECT_FALSE(configured);
-  EXPECT_TRUE(logger.queue_metrics_path_.empty());
-  EXPECT_FALSE(logger.queue_metrics_stream_.is_open());
+  EXPECT_TRUE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                  queue_metrics_path(logger)
+                      .empty());
+  EXPECT_FALSE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                   queue_metrics_stream(logger)
+                       .is_open());
 }
 
 TEST(BatchingTraceLoggerTest, BatchSummaryNoOpsWhenSummaryStreamClosed)
@@ -1738,9 +2072,13 @@ TEST(BatchingTraceLoggerTest, BatchSummaryNoOpsWhenSummaryStreamClosed)
   remove_trace_outputs(trace_path);
   const auto summary_path = make_summary_path(trace_path);
 
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.warmup_suppressed_.store(false, std::memory_order_release);
-  logger.summary_file_path_ = summary_path;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::warmup_suppressed(
+      logger)
+      .store(false, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::summary_file_path(
+      logger) = summary_path;
 
   const std::array<int, 1> request_ids{1};
   const std::array<int64_t, 1> request_arrivals{100};
@@ -1764,7 +2102,10 @@ TEST(BatchingTraceLoggerTest, BatchSummaryNoOpsWhenSummaryStreamClosed)
       .is_warmup = false,
   });
 
-  EXPECT_FALSE(logger.summary_stream_.is_open());
+  EXPECT_FALSE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::summary_stream(
+          logger)
+          .is_open());
   EXPECT_FALSE(std::filesystem::exists(summary_path));
 }
 
@@ -1777,17 +2118,27 @@ TEST(BatchingTraceLoggerTest, QueueMetricsNoOpsWhenNotReady)
   auto metrics_path = trace_path;
   metrics_path.replace_filename("metrics.csv");
 
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.warmup_suppressed_.store(false, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::warmup_suppressed(
+      logger)
+      .store(false, std::memory_order_release);
 
-  logger.queue_metrics_stream_.open(
-      metrics_path, std::ios::out | std::ios::trunc);
-  ASSERT_TRUE(logger.queue_metrics_stream_.is_open());
-  logger.trace_start_initialized_ = false;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::queue_metrics_stream(
+      logger)
+      .open(metrics_path, std::ios::out | std::ios::trunc);
+  ASSERT_TRUE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                  queue_metrics_stream(logger)
+                      .is_open());
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = false;
   logger.log_queue_size(3);
-  logger.queue_metrics_stream_.close();
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::queue_metrics_stream(
+      logger)
+      .close();
 
-  logger.trace_start_initialized_ = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
   logger.log_queue_size(4);
 
   std::ifstream stream(metrics_path);
@@ -1809,17 +2160,27 @@ TEST(BatchingTraceLoggerTest, RequestRejectedNoOpsWhenMetricsNotReady)
   auto metrics_path = trace_path;
   metrics_path.replace_filename("metrics.csv");
 
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.warmup_suppressed_.store(false, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::warmup_suppressed(
+      logger)
+      .store(false, std::memory_order_release);
 
-  logger.queue_metrics_stream_.open(
-      metrics_path, std::ios::out | std::ios::trunc);
-  ASSERT_TRUE(logger.queue_metrics_stream_.is_open());
-  logger.trace_start_initialized_ = false;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::queue_metrics_stream(
+      logger)
+      .open(metrics_path, std::ios::out | std::ios::trunc);
+  ASSERT_TRUE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                  queue_metrics_stream(logger)
+                      .is_open());
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = false;
   logger.log_request_rejected(5);
-  logger.queue_metrics_stream_.close();
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::queue_metrics_stream(
+      logger)
+      .close();
 
-  logger.trace_start_initialized_ = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
   logger.log_request_rejected(6);
 
   std::ifstream stream(metrics_path);
@@ -1841,17 +2202,29 @@ TEST(BatchingTraceLoggerTest, RequestRejectedWritesQueueMetricsWhenReady)
   auto metrics_path = trace_path;
   metrics_path.replace_filename("metrics.csv");
 
-  logger.enabled_.store(true, std::memory_order_release);
-  logger.warmup_suppressed_.store(false, std::memory_order_release);
-  logger.trace_start_initialized_ = true;
-  logger.trace_start_us_ = 0;
-  logger.rejected_total_.store(0, std::memory_order_relaxed);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::enabled_flag(logger)
+      .store(true, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::warmup_suppressed(
+      logger)
+      .store(false, std::memory_order_release);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      trace_start_initialized(logger) = true;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_start_us(
+      logger) = 0;
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::rejected_total(
+      logger)
+      .store(0, std::memory_order_relaxed);
 
-  logger.queue_metrics_stream_.open(
-      metrics_path, std::ios::out | std::ios::trunc);
-  ASSERT_TRUE(logger.queue_metrics_stream_.is_open());
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::queue_metrics_stream(
+      logger)
+      .open(metrics_path, std::ios::out | std::ios::trunc);
+  ASSERT_TRUE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                  queue_metrics_stream(logger)
+                      .is_open());
   logger.log_request_rejected(7);
-  logger.queue_metrics_stream_.close();
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::queue_metrics_stream(
+      logger)
+      .close();
 
   std::ifstream stream(metrics_path);
   ASSERT_TRUE(stream.is_open());
@@ -1878,9 +2251,12 @@ TEST(BatchingTraceLoggerTest, QueueMetricWriteNoOpsWhenStreamClosed)
       .queue_size = 5,
       .rejected_total = 2,
   };
-  logger.write_queue_metric_locked(metric);
+  starpu_server::testing::BatchingTraceLoggerTestAccessor::
+      write_queue_metric_locked(logger, metric);
 
-  EXPECT_FALSE(logger.queue_metrics_stream_.is_open());
+  EXPECT_FALSE(starpu_server::testing::BatchingTraceLoggerTestAccessor::
+                   queue_metrics_stream(logger)
+                       .is_open());
   EXPECT_FALSE(std::filesystem::exists(metrics_path));
 
   remove_trace_outputs(trace_path);
@@ -1892,9 +2268,14 @@ TEST(BatchingTraceLoggerTest, TraceFileWriterHeaderNoOpsWhenStreamClosed)
   writer.write_header();
 
   EXPECT_FALSE(writer.is_open());
-  EXPECT_FALSE(writer.header_written_);
+  EXPECT_FALSE(
+      starpu_server::testing::TraceFileWriterTestAccessor::header_written(
+          writer));
   EXPECT_FALSE(writer.ready());
-  EXPECT_TRUE(writer.thread_metadata_.empty());
+  EXPECT_TRUE(
+      starpu_server::testing::TraceFileWriterTestAccessor::thread_metadata(
+          writer)
+          .empty());
 }
 
 TEST(BatchingTraceLoggerTest, TraceFileWriterReportsOpenState)
@@ -1903,10 +2284,16 @@ TEST(BatchingTraceLoggerTest, TraceFileWriterReportsOpenState)
   const auto trace_path = make_temp_trace_path();
 
   logger.configure(true, trace_path.string());
-  EXPECT_TRUE(logger.trace_writer_.is_open());
+  EXPECT_TRUE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+          logger)
+          .is_open());
 
   logger.configure(false, "");
-  EXPECT_FALSE(logger.trace_writer_.is_open());
+  EXPECT_FALSE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+          logger)
+          .is_open());
 
   remove_trace_outputs(trace_path);
 }
@@ -1923,14 +2310,19 @@ TEST(BatchingTraceLoggerTest, ConfigureFromRuntimeUsesTraceSettings)
   logger.configure_from_runtime(cfg);
 
   EXPECT_TRUE(logger.enabled());
-  EXPECT_EQ(logger.file_path_, trace_path.string());
+  EXPECT_EQ(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::file_path(
+          logger),
+      trace_path.string());
   EXPECT_TRUE(std::filesystem::exists(trace_path));
 
   cfg.batching.trace_enabled = false;
   logger.configure_from_runtime(cfg);
 
   EXPECT_FALSE(logger.enabled());
-  EXPECT_TRUE(logger.file_path_.empty());
+  EXPECT_TRUE(
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::file_path(logger)
+          .empty());
 
   remove_trace_outputs(trace_path);
 }

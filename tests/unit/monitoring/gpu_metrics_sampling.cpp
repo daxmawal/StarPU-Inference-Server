@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "monitoring/metrics.hpp"
+#include "support/monitoring/metrics_test_api.hpp"
 #include "utils/monotonic_clock.hpp"
 #include "utils/perf_observer.hpp"
 
@@ -307,15 +308,20 @@ TEST(MetricsSampling, SkipsProcessSamplingWhenGaugesNull)
       0, std::move(gpu_provider), std::move(cpu_provider),
       /*start_sampler_thread=*/false);
 
-  MetricsRegistry::TestAccessor::ClearProcessOpenFdsGauge(metrics);
-  MetricsRegistry::TestAccessor::ClearProcessResidentMemoryGauge(metrics);
-  MetricsRegistry::TestAccessor::ClearInferenceThroughputGauge(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearProcessOpenFdsGauge(
+      metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearProcessResidentMemoryGauge(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearInferenceThroughputGauge(metrics);
 
-  EXPECT_NO_THROW(MetricsRegistry::TestAccessor::SampleProcessOpenFds(metrics));
   EXPECT_NO_THROW(
-      MetricsRegistry::TestAccessor::SampleProcessResidentMemory(metrics));
-  EXPECT_NO_THROW(
-      MetricsRegistry::TestAccessor::SampleInferenceThroughput(metrics));
+      starpu_server::testing::MetricsRegistryTestAccessor::SampleProcessOpenFds(
+          metrics));
+  EXPECT_NO_THROW(starpu_server::testing::MetricsRegistryTestAccessor::
+                      SampleProcessResidentMemory(metrics));
+  EXPECT_NO_THROW(starpu_server::testing::MetricsRegistryTestAccessor::
+                      SampleInferenceThroughput(metrics));
 
   metrics.request_stop();
 }
@@ -336,17 +342,20 @@ TEST(MetricsSampling, MarksProcessGaugesUnknownWhenSamplingFails)
       []() { return std::optional<double>{}; });
 
   auto* open_fds_gauge =
-      MetricsRegistry::TestAccessor::ProcessOpenFdsGauge(metrics);
-  auto* rss_gauge =
-      MetricsRegistry::TestAccessor::ProcessResidentMemoryGauge(metrics);
+      starpu_server::testing::MetricsRegistryTestAccessor::ProcessOpenFdsGauge(
+          metrics);
+  auto* rss_gauge = starpu_server::testing::MetricsRegistryTestAccessor::
+      ProcessResidentMemoryGauge(metrics);
   ASSERT_NE(open_fds_gauge, nullptr);
   ASSERT_NE(rss_gauge, nullptr);
 
   open_fds_gauge->Set(42.0);
   rss_gauge->Set(84.0);
 
-  MetricsRegistry::TestAccessor::SampleProcessOpenFds(metrics);
-  MetricsRegistry::TestAccessor::SampleProcessResidentMemory(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::SampleProcessOpenFds(
+      metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      SampleProcessResidentMemory(metrics);
 
   EXPECT_TRUE(std::isnan(open_fds_gauge->Value()));
   EXPECT_TRUE(std::isnan(rss_gauge->Value()));
@@ -376,10 +385,11 @@ TEST(MetricsSampling, UpdatesInferenceThroughputGaugeFromPerfObserver)
   perf_observer::record_job(
       enqueue_time, completion_time, kBatchSize, /*is_warmup_job=*/false);
 
-  MetricsRegistry::TestAccessor::SampleInferenceThroughput(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      SampleInferenceThroughput(metrics);
 
-  auto* gauge =
-      MetricsRegistry::TestAccessor::InferenceThroughputGauge(metrics);
+  auto* gauge = starpu_server::testing::MetricsRegistryTestAccessor::
+      InferenceThroughputGauge(metrics);
   ASSERT_NE(gauge, nullptr);
 
   const double expected_duration =
@@ -413,18 +423,25 @@ TEST(MetricsSampling, SkipsGpuMetricsWhenProviderMissing)
       MetricsRegistry::CpuUsageProvider{},
       /*start_sampler_thread=*/false);
 
-  MetricsRegistry::TestAccessor::ClearGpuStatsProvider(metrics);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearGpuStatsProvider(
+      metrics);
 
   ASSERT_FALSE(metrics.has_gpu_stats_provider());
 
   EXPECT_NO_THROW(metrics.run_sampling_request_nb());
 
   EXPECT_EQ(
-      MetricsRegistry::TestAccessor::GpuUtilizationGaugeCount(metrics), 0U);
+      starpu_server::testing::MetricsRegistryTestAccessor::
+          GpuUtilizationGaugeCount(metrics),
+      0U);
   EXPECT_EQ(
-      MetricsRegistry::TestAccessor::GpuMemoryUsedGaugeCount(metrics), 0U);
+      starpu_server::testing::MetricsRegistryTestAccessor::
+          GpuMemoryUsedGaugeCount(metrics),
+      0U);
   EXPECT_EQ(
-      MetricsRegistry::TestAccessor::GpuMemoryTotalGaugeCount(metrics), 0U);
+      starpu_server::testing::MetricsRegistryTestAccessor::
+          GpuMemoryTotalGaugeCount(metrics),
+      0U);
 
   metrics.request_stop();
 }

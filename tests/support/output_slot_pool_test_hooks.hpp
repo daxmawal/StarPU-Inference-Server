@@ -17,29 +17,32 @@ struct OutputSlotPoolTestHook {
       std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info);
   static void invoke_host_buffer_deleter(std::byte* ptr);
   static auto starpu_vector_register_hook_ref()
-      -> decltype(OutputSlotPool::starpu_vector_register_hook());
+      -> OutputSlotPool::StarpuVectorRegisterFn&;
   static auto register_failure_observer_ref()
-      -> decltype(OutputSlotPool::starpu_register_failure_observer());
-  static auto host_allocator_hook_ref()
-      -> decltype(OutputSlotPool::output_host_allocator_hook());
-  static auto host_deallocator_hook_ref()
-      -> decltype(OutputSlotPool::output_host_deallocator_hook());
+      -> OutputSlotPool::RegisterFailureObserverFn&;
+  static auto host_allocator_hook_ref() -> OutputSlotPool::HostAllocatorFn&;
+  static auto cuda_host_alloc_hook_ref() -> OutputSlotPool::CudaHostAllocFn&;
+  static auto host_deallocator_hook_ref() -> OutputSlotPool::HostDeallocatorFn&;
   static auto cuda_pinned_override_hook_ref()
-      -> decltype(OutputSlotPool::output_cuda_pinned_override_hook());
+      -> OutputSlotPool::CudaPinnedOverrideFn&;
   static auto starpu_memory_pin_hook_ref()
-      -> decltype(OutputSlotPool::starpu_memory_pin_hook());
+      -> OutputSlotPool::StarpuMemoryPinFn&;
 };
 
 namespace testing {
 
-using OutputStarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
-using OutputRegisterFailureObserverFn = void (*)(
+using OutputStarpuVectorRegisterFn = OutputSlotPool::StarpuVectorRegisterFn;
+using OutputRegisterFailureObserverFn =
+    OutputSlotPool::RegisterFailureObserverFn;
+using OutputHostAllocatorFn = OutputSlotPool::HostAllocatorFn;
+using OutputCudaHostAllocFn = OutputSlotPool::CudaHostAllocFn;
+using OutputHostDeallocatorFn = OutputSlotPool::HostDeallocatorFn;
+using OutputCudaPinnedOverrideFn = OutputSlotPool::CudaPinnedOverrideFn;
+using OutputStarpuMemoryPinFn = OutputSlotPool::StarpuMemoryPinFn;
+
+using OutputFailureObserverSignature = void (*)(
     const OutputSlotPool::SlotInfo& slot,
     const std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos);
-using OutputHostAllocatorFn = std::function<int(void**, size_t, size_t)>;
-using OutputHostDeallocatorFn = std::function<void(void*)>;
-using OutputCudaPinnedOverrideFn = std::function<bool(size_t, bool, bool)>;
-using OutputStarpuMemoryPinFn = std::function<int(void*, size_t)>;
 
 auto set_output_starpu_vector_register_hook_for_tests(
     OutputStarpuVectorRegisterFn vector_register_hook)
@@ -51,6 +54,9 @@ auto set_output_register_failure_observer_for_tests(
 
 auto set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
     -> OutputHostAllocatorFn;
+
+auto set_output_cuda_host_alloc_for_tests(OutputCudaHostAllocFn allocator)
+    -> OutputCudaHostAllocFn;
 
 auto set_output_host_deallocator_for_tests(OutputHostDeallocatorFn deallocator)
     -> OutputHostDeallocatorFn;

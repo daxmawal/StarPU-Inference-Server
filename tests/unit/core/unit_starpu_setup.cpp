@@ -122,7 +122,7 @@ failing_setenv_stub(
 auto
 resolve_real_starpu_worker_get_id() -> StarpuWorkerGetIdHook
 {
-  static StarpuWorkerGetIdHook fn = []() -> StarpuWorkerGetIdHook {
+  static StarpuWorkerGetIdHook fn = []() {
     auto candidate = reinterpret_cast<StarpuWorkerGetIdHook>(
         dlsym(RTLD_NEXT, "starpu_worker_get_id"));
     if (candidate == nullptr) {
@@ -137,7 +137,7 @@ resolve_real_starpu_worker_get_id() -> StarpuWorkerGetIdHook
 auto
 resolve_real_starpu_worker_get_devid() -> StarpuWorkerGetDevidHook
 {
-  static StarpuWorkerGetDevidHook fn = []() -> StarpuWorkerGetDevidHook {
+  static StarpuWorkerGetDevidHook fn = []() {
     auto candidate = reinterpret_cast<StarpuWorkerGetDevidHook>(
         dlsym(RTLD_NEXT, "starpu_worker_get_devid"));
     if (candidate == nullptr) {
@@ -152,8 +152,7 @@ resolve_real_starpu_worker_get_devid() -> StarpuWorkerGetDevidHook
 auto
 resolve_real_starpu_cuda_get_local_stream() -> StarpuCudaGetLocalStreamHook
 {
-  static StarpuCudaGetLocalStreamHook fn =
-      []() -> StarpuCudaGetLocalStreamHook {
+  static StarpuCudaGetLocalStreamHook fn = []() {
     auto candidate = reinterpret_cast<StarpuCudaGetLocalStreamHook>(
         dlsym(RTLD_NEXT, "starpu_cuda_get_local_stream"));
     if (candidate == nullptr) {
@@ -168,7 +167,7 @@ resolve_real_starpu_cuda_get_local_stream() -> StarpuCudaGetLocalStreamHook
 auto
 resolve_real_starpu_shutdown() -> StarpuShutdownFn
 {
-  static StarpuShutdownFn fn = []() -> StarpuShutdownFn {
+  static StarpuShutdownFn fn = []() {
     auto candidate =
         reinterpret_cast<StarpuShutdownFn>(dlsym(RTLD_NEXT, "starpu_shutdown"));
     if (candidate == nullptr) {
@@ -183,7 +182,7 @@ resolve_real_starpu_shutdown() -> StarpuShutdownFn
 auto
 resolve_real_hwloc_topology_init() -> HwlocTopologyInitFn
 {
-  static HwlocTopologyInitFn fn = []() -> HwlocTopologyInitFn {
+  static HwlocTopologyInitFn fn = []() {
     return reinterpret_cast<HwlocTopologyInitFn>(
         dlsym(RTLD_NEXT, "hwloc_topology_init"));
   }();
@@ -193,7 +192,7 @@ resolve_real_hwloc_topology_init() -> HwlocTopologyInitFn
 auto
 resolve_real_hwloc_topology_load() -> HwlocTopologyLoadFn
 {
-  static HwlocTopologyLoadFn fn = []() -> HwlocTopologyLoadFn {
+  static HwlocTopologyLoadFn fn = []() {
     return reinterpret_cast<HwlocTopologyLoadFn>(
         dlsym(RTLD_NEXT, "hwloc_topology_load"));
   }();
@@ -203,7 +202,7 @@ resolve_real_hwloc_topology_load() -> HwlocTopologyLoadFn
 auto
 resolve_real_hwloc_topology_destroy() -> HwlocTopologyDestroyFn
 {
-  static HwlocTopologyDestroyFn fn = []() -> HwlocTopologyDestroyFn {
+  static HwlocTopologyDestroyFn fn = []() {
     return reinterpret_cast<HwlocTopologyDestroyFn>(
         dlsym(RTLD_NEXT, "hwloc_topology_destroy"));
   }();
@@ -213,7 +212,7 @@ resolve_real_hwloc_topology_destroy() -> HwlocTopologyDestroyFn
 auto
 resolve_real_hwloc_get_type_depth() -> HwlocGetTypeDepthFn
 {
-  static HwlocGetTypeDepthFn fn = []() -> HwlocGetTypeDepthFn {
+  static HwlocGetTypeDepthFn fn = []() {
     return reinterpret_cast<HwlocGetTypeDepthFn>(
         dlsym(RTLD_NEXT, "hwloc_get_type_depth"));
   }();
@@ -223,7 +222,7 @@ resolve_real_hwloc_get_type_depth() -> HwlocGetTypeDepthFn
 auto
 resolve_real_hwloc_get_depth_type() -> HwlocGetDepthTypeFn
 {
-  static HwlocGetDepthTypeFn fn = []() -> HwlocGetDepthTypeFn {
+  static HwlocGetDepthTypeFn fn = []() {
     return reinterpret_cast<HwlocGetDepthTypeFn>(
         dlsym(RTLD_NEXT, "hwloc_get_depth_type"));
   }();
@@ -233,7 +232,7 @@ resolve_real_hwloc_get_depth_type() -> HwlocGetDepthTypeFn
 auto
 resolve_real_hwloc_get_nbobjs_by_depth() -> HwlocGetNbobjsByDepthFn
 {
-  static HwlocGetNbobjsByDepthFn fn = []() -> HwlocGetNbobjsByDepthFn {
+  static HwlocGetNbobjsByDepthFn fn = []() {
     return reinterpret_cast<HwlocGetNbobjsByDepthFn>(
         dlsym(RTLD_NEXT, "hwloc_get_nbobjs_by_depth"));
   }();
@@ -243,7 +242,7 @@ resolve_real_hwloc_get_nbobjs_by_depth() -> HwlocGetNbobjsByDepthFn
 auto
 resolve_real_hwloc_get_obj_by_depth() -> HwlocGetObjByDepthFn
 {
-  static HwlocGetObjByDepthFn fn = []() -> HwlocGetObjByDepthFn {
+  static HwlocGetObjByDepthFn fn = []() {
     return reinterpret_cast<HwlocGetObjByDepthFn>(
         dlsym(RTLD_NEXT, "hwloc_get_obj_by_depth"));
   }();
@@ -253,7 +252,7 @@ resolve_real_hwloc_get_obj_by_depth() -> HwlocGetObjByDepthFn
 auto
 resolve_real_hwloc_bitmap_first() -> HwlocBitmapFirstFn
 {
-  static HwlocBitmapFirstFn fn = []() -> HwlocBitmapFirstFn {
+  static HwlocBitmapFirstFn fn = []() {
     return reinterpret_cast<HwlocBitmapFirstFn>(
         dlsym(RTLD_NEXT, "hwloc_bitmap_first"));
   }();
@@ -435,7 +434,7 @@ disable_fake_hwloc_mode()
 auto
 resolve_real_setenv() -> SetenvFn
 {
-  static SetenvFn fn = []() -> SetenvFn {
+  static SetenvFn fn = []() {
     return reinterpret_cast<SetenvFn>(dlsym(RTLD_NEXT, "setenv"));
   }();
   return fn;
@@ -810,10 +809,44 @@ failing_host_allocator(void** ptr, size_t /*alignment*/, size_t /*size*/) -> int
 }
 
 auto
+failing_cuda_host_allocator(void** ptr, size_t /*size*/, unsigned int /*flags*/)
+    -> int
+{
+  if (ptr != nullptr) {
+    *ptr = nullptr;
+  }
+  return static_cast<int>(cudaErrorMemoryAllocation);
+}
+
+auto
+null_cuda_host_allocator(void** ptr, size_t /*size*/, unsigned int /*flags*/)
+    -> int
+{
+  if (ptr != nullptr) {
+    *ptr = nullptr;
+  }
+  return static_cast<int>(cudaSuccess);
+}
+
+auto
 force_cuda_host_alloc_failure(
     size_t /*bytes*/, bool /*use_pinned*/, bool /*default_cuda_pinned*/) -> bool
 {
   return false;
+}
+
+auto
+allocate_output_host_buffer(size_t bytes) -> std::byte*
+{
+  constexpr size_t kDefaultHostAlignment = 64;
+  void* raw_ptr = nullptr;
+  const auto& allocator =
+      starpu_server::OutputSlotPoolTestHook::host_allocator_hook_ref();
+  if (!allocator || allocator(&raw_ptr, kDefaultHostAlignment, bytes) != 0 ||
+      raw_ptr == nullptr) {
+    return nullptr;
+  }
+  return static_cast<std::byte*>(raw_ptr);
 }
 
 auto
@@ -2110,8 +2143,10 @@ TEST(EstimateNonCpuWorkers, ReturnsMaxUnsignedOnOverflow)
   EnvVarGuard component_guard{"HWLOC_COMPONENTS", "synthetic"};
   EnvVarGuard synthetic_guard{"HWLOC_SYNTHETIC", "numa:1 pu:1"};
   EnvVarGuard thissystem_guard{"HWLOC_THISSYSTEM", "0"};
+  EnvVarUnsetGuard workers_env_guard{"STARPU_NWORKER_PER_CUDA"};
 
   StarpuInitCaptureStubGuard capture_guard;
+  ScopedStarpuShutdownStubGuard shutdown_stub_guard;
   starpu_server::RuntimeConfig opts;
   opts.devices.group_cpu_by_numa = true;
   opts.devices.use_cuda = true;
@@ -2484,7 +2519,7 @@ TEST(OutputSlotPool_Unit, HostBufferDeleterNoopForNullptr)
 TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
 {
   constexpr size_t kBytes = 32;
-  auto* ptr = static_cast<std::byte*>(std::malloc(kBytes));
+  auto* ptr = allocate_output_host_buffer(kBytes);
   ASSERT_NE(ptr, nullptr);
 
   starpu_server::OutputSlotPool::HostBufferInfo info{};
@@ -2996,6 +3031,104 @@ TEST(OutputSlotPool_Unit, HostBufferInfoIndicatesCudaPinningAttempt)
   }
 
   pool.release(slot_id);
+}
+
+TEST(OutputSlotPool_Unit, FallsBackWhenCudaHostAllocReturnsError)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.batching.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "cuda_host_alloc_error";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "cuda_host_alloc_error_model";
+  model.outputs.push_back(tensor);
+  opts.model = model;
+
+  const auto previous_cuda_host_alloc =
+      starpu_server::testing::set_output_cuda_host_alloc_for_tests(
+          &failing_cuda_host_allocator);
+
+  auto restore_hook = [&]() {
+    starpu_server::testing::set_output_cuda_host_alloc_for_tests(
+        previous_cuda_host_alloc);
+  };
+
+  try {
+    starpu_server::OutputSlotPool pool(opts, 1);
+
+    const int slot_id = pool.acquire();
+    const auto& buffer_infos =
+        starpu_server::OutputSlotPoolTestHook::host_buffer_infos(pool, slot_id);
+    ASSERT_EQ(buffer_infos.size(), 1);
+
+    const auto& info = buffer_infos.front();
+    EXPECT_FALSE(info.cuda_pinned);
+    EXPECT_TRUE(info.starpu_pinned || info.starpu_pin_rc != 0)
+        << "Fallback StarPU pinning should report a result";
+
+    pool.release(slot_id);
+    restore_hook();
+  }
+  catch (...) {
+    restore_hook();
+    throw;
+  }
+}
+
+TEST(OutputSlotPool_Unit, FallsBackWhenCudaHostAllocReturnsSuccessNullptr)
+{
+  StarpuRuntimeGuard starpu_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.batching.max_batch_size = 1;
+
+  starpu_server::TensorConfig tensor;
+  tensor.name = "cuda_host_alloc_nullptr";
+  tensor.dims = {1, 1};
+  tensor.type = at::ScalarType::Float;
+
+  starpu_server::ModelConfig model;
+  model.name = "cuda_host_alloc_nullptr_model";
+  model.outputs.push_back(tensor);
+  opts.model = model;
+
+  const auto previous_cuda_host_alloc =
+      starpu_server::testing::set_output_cuda_host_alloc_for_tests(
+          &null_cuda_host_allocator);
+
+  auto restore_hook = [&]() {
+    starpu_server::testing::set_output_cuda_host_alloc_for_tests(
+        previous_cuda_host_alloc);
+  };
+
+  try {
+    starpu_server::OutputSlotPool pool(opts, 1);
+
+    const int slot_id = pool.acquire();
+    const auto& buffer_infos =
+        starpu_server::OutputSlotPoolTestHook::host_buffer_infos(pool, slot_id);
+    ASSERT_EQ(buffer_infos.size(), 1);
+
+    const auto& info = buffer_infos.front();
+    EXPECT_FALSE(info.cuda_pinned);
+    EXPECT_TRUE(info.starpu_pinned || info.starpu_pin_rc != 0)
+        << "Fallback StarPU pinning should report a result";
+
+    pool.release(slot_id);
+    restore_hook();
+  }
+  catch (...) {
+    restore_hook();
+    throw;
+  }
 }
 
 TEST(
@@ -3655,17 +3788,17 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersReleasesResources)
   slot.handles.resize(1);
   slot.base_ptrs.resize(1);
 
-  auto* raw_ptr = std::malloc(sizeof(int));
+  auto* raw_ptr = allocate_output_host_buffer(sizeof(int));
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
+  slot.base_ptrs[0] = raw_ptr;
 
   std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
   buffer_infos[0].bytes = sizeof(int);
 
   starpu_data_handle_t handle = nullptr;
   starpu_variable_data_register(
-      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(raw_ptr),
-      sizeof(int));
+      &handle, STARPU_MAIN_RAM,
+      reinterpret_cast<uintptr_t>(static_cast<void*>(raw_ptr)), sizeof(int));
   ASSERT_NE(handle, nullptr);
   slot.handles[0] = handle;
 
@@ -3731,11 +3864,11 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersUnpinsStarpuMemory)
   slot.handles.resize(1);
   slot.base_ptrs.resize(1);
 
-  auto* raw_ptr = std::malloc(sizeof(int));
+  auto* raw_ptr = allocate_output_host_buffer(sizeof(int));
   ASSERT_NE(raw_ptr, nullptr);
-  slot.base_ptrs[0] = static_cast<std::byte*>(raw_ptr);
+  slot.base_ptrs[0] = raw_ptr;
 
-  ASSERT_EQ(starpu_memory_pin(raw_ptr, sizeof(int)), 0);
+  ASSERT_EQ(starpu_memory_pin(static_cast<void*>(raw_ptr), sizeof(int)), 0);
 
   std::vector<starpu_server::OutputSlotPool::HostBufferInfo> buffer_infos(1);
   buffer_infos[0].bytes = sizeof(int);
@@ -3744,8 +3877,8 @@ TEST(OutputSlotPool_Unit, CleanupSlotBuffersUnpinsStarpuMemory)
 
   starpu_data_handle_t handle = nullptr;
   starpu_variable_data_register(
-      &handle, STARPU_MAIN_RAM, reinterpret_cast<uintptr_t>(raw_ptr),
-      sizeof(int));
+      &handle, STARPU_MAIN_RAM,
+      reinterpret_cast<uintptr_t>(static_cast<void*>(raw_ptr)), sizeof(int));
   ASSERT_NE(handle, nullptr);
   slot.handles[0] = handle;
 
@@ -3990,7 +4123,7 @@ TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)
   opts.devices.use_cpu = true;
 
   SetenvOverrideGuard guard(
-      [](const char* name, const char* /*value*/, int /*overwrite*/) -> int {
+      [](const char* name, const char* /*value*/, int /*overwrite*/) {
         if (std::string_view(name) == starpu_server::kStarpuSchedulerEnvVar) {
           errno = ENOMEM;
           return -1;
@@ -4012,7 +4145,7 @@ TEST(StarPUSetup, ThrowsWhenSetenvFailsForCustomEnvVar_Robustesse)
   opts.starpu_env["CUSTOM_VAR"] = "value";
 
   SetenvOverrideGuard guard(
-      [](const char* name, const char* /*value*/, int /*overwrite*/) -> int {
+      [](const char* name, const char* /*value*/, int /*overwrite*/) {
         if (std::string_view(name) == "CUSTOM_VAR") {
           errno = ENOMEM;
           return -1;

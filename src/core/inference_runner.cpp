@@ -32,16 +32,20 @@
 
 namespace starpu_server {
 
-namespace {
+inline namespace inference_runner_detail {
 
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto
 cuda_device_count_override_storage() -> std::optional<int>&
 {
   static std::optional<int> override_storage;
   return override_storage;
 }
+#endif  // SONAR_IGNORE_END
+// GCOVR_EXCL_STOP
 
-}  // namespace
+}  // namespace inference_runner_detail
 
 namespace detail {
 
@@ -78,10 +82,14 @@ sanitize_cuda_device_count(long long raw_count) -> int
 auto
 get_cuda_device_count() -> int
 {
+// GCOVR_EXCL_START
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   if (const auto& override_storage = cuda_device_count_override_storage();
       override_storage.has_value()) {
     return *override_storage;
   }
+#endif  // SONAR_IGNORE_END
+        // GCOVR_EXCL_STOP
 
   using DeviceCountSigned = long long;
   using RawDeviceCount = decltype(torch::cuda::device_count());
@@ -164,11 +172,10 @@ compute_latency_breakdown(const TimingInfo& timing, double total_latency_ms)
 
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-    int request_identifier,
-    std::function<void(const std::vector<torch::Tensor>&, double)> callback)
-    : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
-      request_id_(request_identifier), on_complete_(std::move(callback)),
-      start_time_(MonotonicClock::now())
+    int request_identifier, CompletionCallback callback)
+    : InferenceJobPayloadState(
+          std::move(inputs), std::move(types), request_identifier),
+      InferenceJobCompletionState(std::move(callback))
 {
 }
 
@@ -391,7 +398,13 @@ run_warmup(
   }
 
   const int max_batch_size = std::max(1, opts.batching.max_batch_size);
-  const int min_requests_for_batches = configured_batches * max_batch_size;
+  const auto min_requests_for_batches_wide =
+      static_cast<long long>(configured_batches) * max_batch_size;
+  const int min_requests_for_batches =
+      (min_requests_for_batches_wide >
+       static_cast<long long>(std::numeric_limits<int>::max()))
+          ? 0
+          : static_cast<int>(min_requests_for_batches_wide);
   const int warmup_request_nb =
       std::max(opts.batching.warmup_request_nb, min_requests_for_batches);
   if (warmup_request_nb <= 0) {

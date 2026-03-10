@@ -21,7 +21,7 @@
 #include "utils/batching_trace_logger.hpp"
 
 namespace starpu_server::congestion {
-namespace {
+inline namespace congestion_monitor_detail {
 
 constexpr double kEpsilon = 1e-9;
 constexpr double kMaxRho = 1'000.0;
@@ -642,7 +642,7 @@ monitor_atomic() -> std::atomic<std::shared_ptr<CongestionMonitor>>&
   return instance;
 }
 
-}  // namespace
+}  // namespace congestion_monitor_detail
 
 auto
 start(InferenceQueue* queue, Config config) -> bool

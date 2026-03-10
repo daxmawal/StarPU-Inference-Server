@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <format>
 #include <memory>
@@ -18,6 +19,7 @@
 
 #include "core/output_slot_pool.hpp"
 #include "core/starpu_setup.hpp"
+#include "support/inference_task_test_hooks.hpp"
 #include "support/starpu_task_submit_override.hpp"
 #include "test_inference_task.hpp"
 #include "test_utils.hpp"
@@ -145,7 +147,7 @@ using DataUnregisterFn = void (*)(starpu_data_handle_t);
 inline auto
 resolve_real_starpu_data_unregister() -> DataUnregisterFn
 {
-  static DataUnregisterFn fn = []() -> DataUnregisterFn {
+  static DataUnregisterFn fn = []() {
     void* symbol = dlsym(RTLD_NEXT, "starpu_data_unregister");
     if (symbol == nullptr) {
       throw std::runtime_error("Failed to resolve starpu_data_unregister");
@@ -209,6 +211,34 @@ ThrowingStarpuOutputCallbackHook(starpu_server::InferenceCallbackContext*)
   throw starpu_server::StarPURegistrationException("forced failure");
 }
 
+inline auto
+throwing_once_output_callback_calls_ref() -> int&
+{
+  static int value = 0;
+  return value;
+}
+
+void
+ThrowingStdStarpuOutputCallbackHook(starpu_server::InferenceCallbackContext*)
+{
+  throw std::runtime_error("forced std callback failure");
+}
+
+void
+ThrowingUnknownStarpuOutputCallbackHook(
+    starpu_server::InferenceCallbackContext*)
+{
+  throw 42;
+}
+
+void
+ThrowingOnceStdStarpuOutputCallbackHook(
+    starpu_server::InferenceCallbackContext*)
+{
+  ++throwing_once_output_callback_calls_ref();
+  throw std::runtime_error("forced bypass callback failure");
+}
+
 auto
 AlwaysFailingAcquire(
     starpu_data_handle_t, starpu_data_access_mode, void (*)(void*),
@@ -250,6 +280,23 @@ ThrowingDataRelease(starpu_data_handle_t)
   ++data_release_throw_count_ref();
   throw starpu_server::InvalidInferenceJobException(
       "forced data release failure");
+}
+
+void
+ThrowingStdExceptionDataRelease(starpu_data_handle_t)
+{
+  throw std::runtime_error("forced std data release failure");
+}
+
+void
+ThrowingUnknownDataRelease(starpu_data_handle_t)
+{
+  throw 42;
+}
+
+void
+NoopDataRelease(starpu_data_handle_t)
+{
 }
 
 class ScopedDefaultDataAcquireNullifier {
@@ -391,7 +438,7 @@ TEST_F(InferenceTaskTest, CreateTaskCleansUpWhenAssignFixedWorkerThrows)
 
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
-  dependencies.task_create_fn = []() -> starpu_task* {
+  dependencies.task_create_fn = []() {
     return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
   };
 
@@ -426,7 +473,7 @@ TEST_F(
   auto job = make_job(6, 0);
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
-  dependencies.task_create_fn = []() -> starpu_task* {
+  dependencies.task_create_fn = []() {
     return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
   };
   auto task = make_task(job, 0, &dependencies);
@@ -461,7 +508,7 @@ TEST_F(InferenceTaskTest, CreateTaskUsesDependenciesOwnerWhenProvided)
   auto job = make_job(7, 0);
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
-  dependencies.task_create_fn = []() -> starpu_task* {
+  dependencies.task_create_fn = []() {
     return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
   };
   auto task = make_task(job, 0, &dependencies);
@@ -631,9 +678,33 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   EXPECT_EQ(params->request_id, 4);
   EXPECT_EQ(params->verbosity, opts_.verbosity);
   EXPECT_EQ(params->models.model_cpu, &model_cpu_);
-  EXPECT_EQ(params->device.device_id, &job->get_device_id());
-  EXPECT_EQ(params->device.worker_id, &job->get_worker_id());
-  EXPECT_EQ(params->device.executed_on, &job->get_executed_on());
+  EXPECT_EQ(params->device.device_id, nullptr);
+  EXPECT_EQ(params->device.worker_id, nullptr);
+  EXPECT_EQ(params->device.executed_on, nullptr);
+  ASSERT_TRUE(static_cast<bool>(params->device.set_executed_on));
+  ASSERT_TRUE(static_cast<bool>(params->device.set_device_id));
+  ASSERT_TRUE(static_cast<bool>(params->device.set_worker_id));
+  ASSERT_TRUE(static_cast<bool>(params->timing.set_codelet_start_time));
+  ASSERT_TRUE(static_cast<bool>(params->timing.set_codelet_end_time));
+  ASSERT_TRUE(static_cast<bool>(params->timing.set_inference_start_time));
+
+  const auto codelet_start = starpu_server::MonotonicClock::now();
+  const auto inference_start = codelet_start + std::chrono::microseconds(100);
+  const auto codelet_end = codelet_start + std::chrono::microseconds(250);
+  params->device.set_executed_on(starpu_server::DeviceType::CUDA);
+  params->device.set_device_id(3);
+  params->device.set_worker_id(8);
+  params->timing.set_codelet_start_time(codelet_start);
+  params->timing.set_inference_start_time(inference_start);
+  params->timing.set_codelet_end_time(codelet_end);
+
+  const auto timing = job->timing_info_snapshot();
+  EXPECT_EQ(job->get_executed_on(), starpu_server::DeviceType::CUDA);
+  EXPECT_EQ(job->get_device_id(), 3);
+  EXPECT_EQ(job->get_worker_id(), 8);
+  EXPECT_EQ(timing.codelet_start_time, codelet_start);
+  EXPECT_EQ(timing.inference_start_time, inference_start);
+  EXPECT_EQ(timing.codelet_end_time, codelet_end);
   EXPECT_EQ(params->layout.num_dims[0], 2);
   EXPECT_EQ(params->layout.dims[0][0], 2);
   EXPECT_EQ(params->layout.dims[0][1], 3);
@@ -733,12 +804,318 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackLogsInferenceEngineException)
   dependencies.starpu_output_callback_hook =
       starpu_server::InferenceTaskDependencies::OutputCallbackHook(
           &ThrowingStarpuOutputCallbackHook);
-  auto ctx = make_callback_context(job, {}, {MakeHandle(0)}, &dependencies);
+  auto ctx = make_callback_context(job, {}, {nullptr}, &dependencies);
   const auto log = CaptureStderr([&] {
     EXPECT_NO_THROW(
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
   });
   EXPECT_NE(log.find("starpu_output_callback"), std::string::npos);
+}
+
+TEST(InferenceTask, StarpuOutputCallbackLogsWhenContextIsNull)
+{
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::starpu_output_callback(nullptr));
+  });
+  EXPECT_NE(
+      log.find("starpu_output_callback received null context"),
+      std::string::npos);
+}
+
+TEST(InferenceTask, StarpuOutputCallbackFinalizesWhenOutputsEmpty)
+{
+  auto ctx = make_callback_context();
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+}
+
+TEST_F(InferenceTaskTest, StarpuOutputCallbackAcquireFailureStillFinalizes)
+{
+  auto job = make_job(11, 1);
+  auto handle = MakeHandle(0);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_data_acquire_fn = &AlwaysFailingAcquire;
+  auto ctx = make_callback_context(job, {}, {handle}, &dependencies);
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &NoopDataRelease);
+
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+  });
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "callback");
+  EXPECT_EQ(failure->reason, "output_acquire_failed");
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+  EXPECT_NE(
+      log.find("starpu_data_acquire_cb failed with code -42"),
+      std::string::npos);
+}
+
+TEST_F(
+    InferenceTaskTest,
+    StarpuOutputCallbackImmediateAcquireKeepsContextAliveUntilLoopEnds)
+{
+  auto job = make_job(15, 1);
+  job->set_output_tensors({torch::zeros({1}), torch::zeros({1})});
+
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_data_acquire_fn = &ImmediateCallbackAcquire;
+
+  auto ctx = make_callback_context(
+      job, {}, {MakeHandle(24), MakeHandle(25)}, &dependencies);
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &NoopDataRelease);
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+}
+
+TEST_F(
+    InferenceTaskTest,
+    StarpuOutputCallbackBypassesRemainingHandlesAfterFirstFailure)
+{
+  auto job = make_job(12, 1);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_output_callback_hook =
+      starpu_server::InferenceTaskDependencies::OutputCallbackHook(
+          &ThrowingOnceStdStarpuOutputCallbackHook);
+
+  auto ctx = make_callback_context(
+      job, {}, {MakeHandle(20), MakeHandle(21)}, &dependencies);
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+  throwing_once_output_callback_calls_ref() = 0;
+
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+  });
+
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+  EXPECT_EQ(throwing_once_output_callback_calls_ref(), 1);
+  ASSERT_EQ(ctx->outputs_handles_to_release.size(), 2U);
+  EXPECT_EQ(ctx->outputs_handles_to_release[0], nullptr);
+  EXPECT_EQ(ctx->outputs_handles_to_release[1], nullptr);
+  EXPECT_NE(
+      log.find(
+          "std::exception in starpu_output_callback: forced bypass callback "
+          "failure"),
+      std::string::npos);
+}
+
+TEST_F(
+    InferenceTaskTest,
+    StarpuOutputCallbackUnknownExceptionMarksUnknownCallbackFailure)
+{
+  auto job = make_job(13, 1);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_output_callback_hook =
+      starpu_server::InferenceTaskDependencies::OutputCallbackHook(
+          &ThrowingUnknownStarpuOutputCallbackHook);
+
+  auto ctx = make_callback_context(job, {}, {MakeHandle(22)}, &dependencies);
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+  });
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "callback");
+  EXPECT_EQ(failure->reason, "output_callback_unknown_exception");
+  EXPECT_EQ(
+      failure->message, "Unknown non-standard exception in output callback.");
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+  EXPECT_NE(
+      log.find("Unknown exception in starpu_output_callback"),
+      std::string::npos);
+}
+
+TEST_F(
+    InferenceTaskTest,
+    StarpuOutputCallbackStdExceptionMarksOutputCallbackException)
+{
+  auto job = make_job(14, 1);
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_output_callback_hook =
+      starpu_server::InferenceTaskDependencies::OutputCallbackHook(
+          &ThrowingStdStarpuOutputCallbackHook);
+
+  auto ctx = make_callback_context(job, {}, {MakeHandle(23)}, &dependencies);
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(
+        starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+  });
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "callback");
+  EXPECT_EQ(failure->reason, "output_callback_exception");
+  EXPECT_EQ(failure->message, "forced std callback failure");
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+  EXPECT_NE(
+      log.find("std::exception in starpu_output_callback: forced std callback "
+               "failure"),
+      std::string::npos);
+}
+
+TEST_F(InferenceTaskTest, StarpuOutputCallbackHookFailureWithNullJobFinalizes)
+{
+  starpu_server::InferenceTaskDependencies dependencies =
+      starpu_server::kDefaultInferenceTaskDependencies;
+  dependencies.starpu_output_callback_hook =
+      starpu_server::InferenceTaskDependencies::OutputCallbackHook(
+          &ThrowingStarpuOutputCallbackHook);
+
+  auto ctx = make_callback_context(nullptr, {}, {MakeHandle(7)}, &dependencies);
+  ctx->self_keep_alive = ctx;
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  EXPECT_NO_THROW(
+      starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
+
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+}
+
+TEST(InferenceTask, FinalizeOrFailOnceLogsWhenContextIsNull)
+{
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(starpu_server::testing::finalize_or_fail_once_for_tests(
+        nullptr, false, "finalize_or_fail_once_test"));
+  });
+
+  EXPECT_NE(
+      log.find("finalize_or_fail_once_test received a null callback context"),
+      std::string::npos);
+}
+
+TEST(InferenceTask, FinalizeOrFailOnceSetsFailureWhenStatusIsFailure)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_output_tensors({torch::tensor({1.0F})});
+
+  auto ctx = make_callback_context(job);
+  ctx->self_keep_alive = ctx;
+
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  EXPECT_NO_THROW(starpu_server::testing::finalize_or_fail_once_for_tests(
+      ctx.get(), true, "finalize_or_fail_once_test"));
+
+  const auto failure = job->failure_info();
+  ASSERT_TRUE(failure.has_value());
+  EXPECT_EQ(failure->stage, "callback");
+  EXPECT_EQ(failure->reason, "terminal_failure");
+  EXPECT_EQ(
+      failure->message,
+      "Inference callback finalized after an unrecoverable error.");
+  EXPECT_TRUE(job->get_output_tensors().empty());
+  EXPECT_TRUE(finished);
+  EXPECT_EQ(ctx->self_keep_alive, nullptr);
+}
+
+TEST(InferenceTask, FinalizeOrFailOnceSkipsWhenTerminalPathAlreadyStarted)
+{
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_output_tensors({torch::tensor({2.0F})});
+
+  auto ctx = make_callback_context(job);
+  ctx->self_keep_alive = ctx;
+  ctx->terminal_path_started.store(true, std::memory_order_release);
+
+  bool finished = false;
+  ctx->on_finished = [&]() { finished = true; };
+
+  EXPECT_NO_THROW(starpu_server::testing::finalize_or_fail_once_for_tests(
+      ctx.get(), false, "finalize_or_fail_once_test"));
+
+  EXPECT_FALSE(finished);
+  EXPECT_FALSE(job->failure_info().has_value());
+  EXPECT_FALSE(job->get_output_tensors().empty());
+  EXPECT_NE(ctx->self_keep_alive, nullptr);
+}
+
+TEST(InferenceTask, FinalizeOrFailOnceLogsStdExceptionFromTerminalPath)
+{
+  auto ctx = make_callback_context(nullptr, {}, {MakeHandle(10)});
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &ThrowingStdExceptionDataRelease);
+
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(starpu_server::testing::finalize_or_fail_once_for_tests(
+        ctx.get(), false, "finalize_or_fail_once_std_exception_test"));
+  });
+
+  EXPECT_NE(
+      log.find(
+          "std::exception in finalize_or_fail_once_std_exception_test terminal "
+          "path: forced std data release failure"),
+      std::string::npos);
+}
+
+TEST(InferenceTask, FinalizeOrFailOnceLogsUnknownExceptionFromTerminalPath)
+{
+  auto ctx = make_callback_context(nullptr, {}, {MakeHandle(11)});
+  starpu_test::ScopedStarpuDataReleaseOverride release_override(
+      &ThrowingUnknownDataRelease);
+
+  const auto log = CaptureStderr([&] {
+    EXPECT_NO_THROW(starpu_server::testing::finalize_or_fail_once_for_tests(
+        ctx.get(), false, "finalize_or_fail_once_unknown_exception_test"));
+  });
+
+  EXPECT_NE(
+      log.find("Unknown exception in "
+               "finalize_or_fail_once_unknown_exception_test terminal path"),
+      std::string::npos);
 }
 
 TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)

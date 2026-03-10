@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
 
 #include "inference_queue.hpp"
@@ -19,7 +20,7 @@ struct WarmupRunnerTestHelper;
 class WarmupRunner {
  public:
   using CompletionObserver =
-      std::function<void(std::atomic<int>& dummy_completed_jobs)>;
+      std::function<void(std::atomic<std::size_t>& dummy_completed_jobs)>;
 
   WarmupRunner(
       const RuntimeConfig& opts, StarPUSetup& starpu,
@@ -41,9 +42,9 @@ class WarmupRunner {
   friend struct WarmupRunnerTestHelper;
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
-  void client_worker(
+  auto client_worker(
       const std::map<int, std::vector<int>>& device_workers,
-      InferenceQueue& queue, int request_nb_per_worker) const;
+      InferenceQueue& queue, int request_nb_per_worker) const -> std::size_t;
 
   // *****************************************************************************
   // Configuration and model references (owned externally)

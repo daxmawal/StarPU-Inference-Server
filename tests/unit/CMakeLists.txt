@@ -11,6 +11,7 @@ target_sources(
             core/unit_run_with_logged_exceptions.cpp
             core/unit_tensor_builder.cpp
             core/unit_warmup_runner.cpp
+            core/unit_slot_pool_base.cpp
             core/unit_starpu_setup.cpp
             core/unit_input_slot_pool_deleter.cpp
             core/robustness/edgecases_inference_queue.cpp
@@ -20,13 +21,18 @@ target_sources(
             core/robustness/edgecases_tensor_builder.cpp
             grpc/async_server_context_test.cpp
             grpc/resolve_model_name_test.cpp
+            grpc/server_main_test.cpp
             grpc/unary_call_data_guard_test.cpp
             grpc/unit_inference_service.cpp
             grpc/unit_client.cpp
             grpc/inference_client_helpers_test.cpp
             grpc/robustness/edgecases_client.cpp
             grpc/robustness/edgecases_inference_service.cpp
-            starpu/unit_starpu_task_runner.cpp
+            starpu/unit_starpu_task_runner_support.cpp
+            starpu/unit_starpu_task_runner_callbacks_and_tracing.cpp
+            starpu/unit_starpu_task_runner_submission_and_slots.cpp
+            starpu/unit_starpu_task_runner_batching_and_internal.cpp
+            starpu/unit_starpu_task_runner_runloop_and_inflight.cpp
             starpu/unit_tensor_builder_from_starpu.cpp
             starpu/robustness/edgecases_starpu_setup.cpp
             starpu/robustness/edgecases_starpu_task_runner.cpp
@@ -46,6 +52,7 @@ target_sources(
             utils/unit_time_utils.cpp
             utils/unit_runtime_config.cpp
             utils/unit_config_loader.cpp
+            utils/unit_exception_classification.cpp
             utils/unit_transparent_hash.cpp
             utils/robustness/edgecases_client_utils.cpp
             ../support/output_slot_pool_test_hooks.cpp

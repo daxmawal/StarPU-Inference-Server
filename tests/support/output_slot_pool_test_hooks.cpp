@@ -1,16 +1,30 @@
 #include "support/output_slot_pool_test_hooks.hpp"
 
+#include <cuda_runtime_api.h>
+
 #include <cstdlib>
+#include <new>
 #include <utility>
 
 namespace starpu_server {
+namespace {
+
+auto
+output_dependencies_for_tests() -> OutputSlotPool::Dependencies&
+{
+  return ::starpu_server::testing::
+      output_slot_pool_default_dependencies_for_tests();
+}
+
+}  // namespace
 
 void
 OutputSlotPoolTestHook::cleanup_slot_buffers(
     OutputSlotPool::SlotInfo& slot,
     std::vector<OutputSlotPool::HostBufferInfo>& buffer_infos, size_t count)
 {
-  OutputSlotPool::cleanup_slot_buffers(slot, buffer_infos, count);
+  OutputSlotPool::cleanup_slot_buffers(
+      slot, buffer_infos, count, output_dependencies_for_tests());
 }
 
 auto
@@ -32,56 +46,66 @@ void
 OutputSlotPoolTestHook::free_host_buffer_for_tests(
     std::byte* ptr, const OutputSlotPool::HostBufferInfo& buffer_info)
 {
-  OutputSlotPool::free_host_buffer(ptr, buffer_info);
+  OutputSlotPool::free_host_buffer(
+      ptr, buffer_info, output_dependencies_for_tests());
 }
 
 void
 OutputSlotPoolTestHook::invoke_host_buffer_deleter(std::byte* ptr)
 {
-  OutputSlotPool::HostBufferDeleter deleter;
-  deleter(ptr);
+  if (ptr == nullptr) {
+    return;
+  }
+  output_dependencies_for_tests().host_deallocator(static_cast<void*>(ptr));
 }
 
 auto
 OutputSlotPoolTestHook::starpu_vector_register_hook_ref()
-    -> decltype(OutputSlotPool::starpu_vector_register_hook())
+    -> OutputSlotPool::StarpuVectorRegisterFn&
 {
-  return OutputSlotPool::starpu_vector_register_hook();
+  return output_dependencies_for_tests().starpu_vector_register;
 }
 
 auto
 OutputSlotPoolTestHook::register_failure_observer_ref()
-    -> decltype(OutputSlotPool::starpu_register_failure_observer())
+    -> OutputSlotPool::RegisterFailureObserverFn&
 {
-  return OutputSlotPool::starpu_register_failure_observer();
+  return output_dependencies_for_tests().register_failure_observer;
 }
 
 auto
 OutputSlotPoolTestHook::host_allocator_hook_ref()
-    -> decltype(OutputSlotPool::output_host_allocator_hook())
+    -> OutputSlotPool::HostAllocatorFn&
 {
-  return OutputSlotPool::output_host_allocator_hook();
+  return output_dependencies_for_tests().host_allocator;
+}
+
+auto
+OutputSlotPoolTestHook::cuda_host_alloc_hook_ref()
+    -> OutputSlotPool::CudaHostAllocFn&
+{
+  return output_dependencies_for_tests().cuda_host_alloc;
 }
 
 auto
 OutputSlotPoolTestHook::host_deallocator_hook_ref()
-    -> decltype(OutputSlotPool::output_host_deallocator_hook())
+    -> OutputSlotPool::HostDeallocatorFn&
 {
-  return OutputSlotPool::output_host_deallocator_hook();
+  return output_dependencies_for_tests().host_deallocator;
 }
 
 auto
 OutputSlotPoolTestHook::cuda_pinned_override_hook_ref()
-    -> decltype(OutputSlotPool::output_cuda_pinned_override_hook())
+    -> OutputSlotPool::CudaPinnedOverrideFn&
 {
-  return OutputSlotPool::output_cuda_pinned_override_hook();
+  return output_dependencies_for_tests().cuda_pinned_override;
 }
 
 auto
 OutputSlotPoolTestHook::starpu_memory_pin_hook_ref()
-    -> decltype(OutputSlotPool::starpu_memory_pin_hook())
+    -> OutputSlotPool::StarpuMemoryPinFn&
 {
-  return OutputSlotPool::starpu_memory_pin_hook();
+  return output_dependencies_for_tests().starpu_memory_pin;
 }
 
 namespace testing {
@@ -115,7 +139,36 @@ set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
   auto& allocator_hook = OutputSlotPoolTestHook::host_allocator_hook_ref();
   const auto previous = allocator_hook;
   allocator_hook =
-      allocator ? std::move(allocator) : OutputHostAllocatorFn{&posix_memalign};
+      allocator ? std::move(allocator)
+                : OutputHostAllocatorFn{[](void** ptr, size_t alignment,
+                                           size_t size) {
+                    if (ptr == nullptr) {
+                      return -1;
+                    }
+                    try {
+                      *ptr = ::operator new(size, std::align_val_t{alignment});
+                      return 0;
+                    }
+                    catch (const std::bad_alloc&) {
+                      *ptr = nullptr;
+                      return -1;
+                    }
+                  }};
+  return previous;
+}
+
+auto
+set_output_cuda_host_alloc_for_tests(OutputCudaHostAllocFn allocator)
+    -> OutputCudaHostAllocFn
+{
+  auto& allocator_hook = OutputSlotPoolTestHook::cuda_host_alloc_hook_ref();
+  const auto previous = allocator_hook;
+  allocator_hook =
+      allocator ? std::move(allocator)
+                : OutputCudaHostAllocFn{[](void** ptr, size_t size,
+                                           unsigned int flags) {
+                    return static_cast<int>(cudaHostAlloc(ptr, size, flags));
+                  }};
   return previous;
 }
 
@@ -123,13 +176,15 @@ auto
 set_output_host_deallocator_for_tests(OutputHostDeallocatorFn deallocator)
     -> OutputHostDeallocatorFn
 {
+  constexpr size_t kDefaultHostAlignment = 64;
   auto& deallocator_hook = OutputSlotPoolTestHook::host_deallocator_hook_ref();
   const auto previous = deallocator_hook;
   deallocator_hook =
-      deallocator ? std::move(deallocator)
-                  : OutputHostDeallocatorFn{[](void* ptr) noexcept {
-                      std::free(ptr);  // NOLINT(cppcoreguidelines-no-malloc)
-                    }};
+      deallocator
+          ? std::move(deallocator)
+          : OutputHostDeallocatorFn{[](void* ptr) {
+              ::operator delete(ptr, std::align_val_t{kDefaultHostAlignment});
+            }};
   return previous;
 }
 

@@ -27,6 +27,9 @@ namespace starpu_server {
 namespace detail {
 struct TimingInfo;
 }
+namespace testing {
+class InferenceServiceTestAccessor;
+}
 
 class MetricsRegistry;
 
@@ -91,6 +94,73 @@ class InferenceServiceImpl final
       const inference::ModelStatisticsRequest* request,
       inference::ModelStatisticsResponse* reply) -> grpc::Status override;
 
+  auto ModelStreamInfer(
+      grpc::ServerContext* context,
+      grpc::ServerReaderWriter<
+          inference::ModelStreamInferResponse, inference::ModelInferRequest>*
+          stream) -> grpc::Status override;
+
+  auto RepositoryIndex(
+      grpc::ServerContext* context,
+      const inference::RepositoryIndexRequest* request,
+      inference::RepositoryIndexResponse* reply) -> grpc::Status override;
+
+  auto RepositoryModelLoad(
+      grpc::ServerContext* context,
+      const inference::RepositoryModelLoadRequest* request,
+      inference::RepositoryModelLoadResponse* reply) -> grpc::Status override;
+
+  auto RepositoryModelUnload(
+      grpc::ServerContext* context,
+      const inference::RepositoryModelUnloadRequest* request,
+      inference::RepositoryModelUnloadResponse* reply) -> grpc::Status override;
+
+  auto SystemSharedMemoryStatus(
+      grpc::ServerContext* context,
+      const inference::SystemSharedMemoryStatusRequest* request,
+      inference::SystemSharedMemoryStatusResponse* reply)
+      -> grpc::Status override;
+
+  auto SystemSharedMemoryRegister(
+      grpc::ServerContext* context,
+      const inference::SystemSharedMemoryRegisterRequest* request,
+      inference::SystemSharedMemoryRegisterResponse* reply)
+      -> grpc::Status override;
+
+  auto SystemSharedMemoryUnregister(
+      grpc::ServerContext* context,
+      const inference::SystemSharedMemoryUnregisterRequest* request,
+      inference::SystemSharedMemoryUnregisterResponse* reply)
+      -> grpc::Status override;
+
+  auto CudaSharedMemoryStatus(
+      grpc::ServerContext* context,
+      const inference::CudaSharedMemoryStatusRequest* request,
+      inference::CudaSharedMemoryStatusResponse* reply)
+      -> grpc::Status override;
+
+  auto CudaSharedMemoryRegister(
+      grpc::ServerContext* context,
+      const inference::CudaSharedMemoryRegisterRequest* request,
+      inference::CudaSharedMemoryRegisterResponse* reply)
+      -> grpc::Status override;
+
+  auto CudaSharedMemoryUnregister(
+      grpc::ServerContext* context,
+      const inference::CudaSharedMemoryUnregisterRequest* request,
+      inference::CudaSharedMemoryUnregisterResponse* reply)
+      -> grpc::Status override;
+
+  auto TraceSetting(
+      grpc::ServerContext* context,
+      const inference::TraceSettingRequest* request,
+      inference::TraceSettingResponse* reply) -> grpc::Status override;
+
+  auto LogSettings(
+      grpc::ServerContext* context,
+      const inference::LogSettingsRequest* request,
+      inference::LogSettingsResponse* reply) -> grpc::Status override;
+
 // Sync wrapper used by in-process tests; async server uses
 // HandleModelInferAsync.
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -125,80 +195,6 @@ class InferenceServiceImpl final
     bool metrics_reported = false;
   };
 
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  struct HandleModelInferAsyncTestHooks {
-    std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
-        on_cancel_flag_created;
-    std::function<void(const std::function<void()>&)> on_cancel_ready;
-    std::function<std::optional<bool>(grpc::ServerContext*)>
-        is_cancelled_override;
-    std::function<void(
-        const std::shared_ptr<std::atomic<bool>>&, const grpc::Status&)>
-        on_submit_job_async_done;
-  };
-
-  struct HandleAsyncInferCompletionTestHooks {
-    std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
-        after_try_acquire;
-    std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
-        before_final_cancel_check;
-  };
-
-  struct TestAccessor {
-    static void SetHandleModelInferAsyncTestHooks(
-        HandleModelInferAsyncTestHooks hooks);
-    static void ClearHandleModelInferAsyncTestHooks();
-    static void SetHandleAsyncInferCompletionTestHooks(
-        HandleAsyncInferCompletionTestHooks hooks);
-    static void ClearHandleAsyncInferCompletionTestHooks();
-    static auto NormalizeNamesForTest(
-        std::vector<std::string> names, std::size_t expected_size,
-        std::string_view fallback_prefix,
-        std::string_view kind) -> std::vector<std::string>;
-    static void SetExpectedInputNamesForTest(
-        InferenceServiceImpl* service, std::vector<std::string> names);
-    static auto CheckMissingInputsForTest(
-        const std::vector<bool>& filled,
-        std::span<const std::string> expected_names) -> grpc::Status;
-    static void ArmRpcDoneTagWithNullContextForTest();
-    static auto RpcDoneTagProceedForTest(bool is_ok, bool with_on_done) -> bool;
-    static void SetGrpcHealthStatusForTest(grpc::Server* server, bool serving);
-    static void RecordSuccessForTest(
-        InferenceServiceImpl* service,
-        const inference::ModelInferRequest* request,
-        const LatencyBreakdown& breakdown, MonotonicClock::time_point recv_tp,
-        std::string_view resolved_model_name);
-    static void RecordFailureForTest(
-        InferenceServiceImpl* service,
-        const inference::ModelInferRequest* request,
-        MonotonicClock::time_point recv_tp,
-        std::string_view resolved_model_name);
-    static auto ScalarTypeToModelDtypeForTest(at::ScalarType type)
-        -> inference::DataType;
-    static auto ResolveTensorNameForTest(
-        std::size_t index, std::span<const std::string> names,
-        std::string_view fallback_prefix) -> std::string;
-    static auto RequestBatchSizeForTest(
-        const inference::ModelInferRequest* request,
-        int max_batch_size) -> uint64_t;
-    static auto DurationMsToNsForTest(double duration_ms) -> uint64_t;
-    static auto ElapsedSinceForTest(MonotonicClock::time_point start)
-        -> uint64_t;
-    static void SetModelStatisticsForceNullTargetForTest(bool enable);
-    static auto IsContextCancelledForTest(grpc::ServerContext* context) -> bool;
-    static auto FillOutputTensorForTest(
-        inference::ModelInferResponse* reply,
-        const std::vector<torch::Tensor>& outputs,
-        const std::vector<std::size_t>& output_indices,
-        const std::vector<std::string>& output_names) -> grpc::Status;
-    static auto BuildLatencyBreakdownForTest(
-        const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
-    static auto HandleAsyncInferCompletionForTest(bool cancelled) -> bool;
-  };
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
-
   static auto populate_response(
       const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
@@ -220,7 +216,9 @@ class InferenceServiceImpl final
       std::vector<std::shared_ptr<const void>> input_lifetimes = {},
       std::shared_ptr<std::atomic<bool>> cancel_flag = {},
       MonotonicClock::time_point receive_time = MonotonicClock::now(),
-      std::string model_name = {}) -> grpc::Status;
+      std::string model_name = {},
+      std::optional<AsyncFailureInfo>* submit_failure_info = nullptr)
+      -> grpc::Status;
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -246,6 +244,8 @@ class InferenceServiceImpl final
       -> grpc::Status;
 
  private:
+  friend class testing::InferenceServiceTestAccessor;
+
   class CallbackHandle {
    public:
     explicit CallbackHandle(std::function<void(grpc::Status)> callback);
@@ -269,11 +269,13 @@ class InferenceServiceImpl final
     InferenceServiceImpl* impl = nullptr;
     const std::vector<std::string>* output_names = nullptr;
     std::shared_ptr<std::atomic<bool>> cancel_flag;
+    std::shared_ptr<std::atomic<bool>> terminal_flag;
     std::optional<AsyncFailureInfo> failure_info;
   };
 
   struct AsyncCancellationContext {
     std::shared_ptr<std::atomic<bool>> cancel_flag;
+    std::shared_ptr<std::atomic<bool>> terminal_flag;
     std::shared_ptr<CallbackHandle> callback_handle;
     std::string_view resolved_model_name;
     InferenceServiceImpl* service = nullptr;
@@ -281,54 +283,115 @@ class InferenceServiceImpl final
     MonotonicClock::time_point recv_tp;
   };
 
-  static auto is_async_cancelled(const AsyncInferCompletionContext& context)
-      -> bool;
-  static auto prepare_async_completion(
-      const AsyncInferCompletionContext& context,
-      const std::shared_ptr<CallbackHandle>& callback_handle) -> bool;
-  static auto handle_job_failure(
-      const AsyncInferCompletionContext& context,
-      const grpc::Status& job_status,
-      const std::shared_ptr<CallbackHandle>& callback_handle) -> bool;
-  static void finalize_successful_completion(
-      const AsyncInferCompletionContext& context,
-      const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
-      const detail::TimingInfo& timing_info);
+  struct AsyncTerminalState {
+    std::shared_ptr<std::atomic<bool>> cancel_flag;
+    std::shared_ptr<std::atomic<bool>> terminal_flag;
+  };
 
-  static void handle_async_infer_completion(
-      const AsyncInferCompletionContext& context,
-      const grpc::Status& job_status, const std::vector<torch::Tensor>& outs,
-      LatencyBreakdown breakdown, detail::TimingInfo timing_info);
+  struct AsyncInternalErrorDetails {
+    std::string_view stage;
+    std::string_view reason;
+    std::string_view log_context;
+  };
 
-  static auto build_latency_breakdown(
-      const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
+  struct AsyncTerminalCompletionDetails {
+    InferenceServiceImpl* service = nullptr;
+    std::string_view resolved_model_name;
+    const inference::ModelInferRequest* request = nullptr;
+    MonotonicClock::time_point recv_tp;
+    std::string_view stage;
+    std::string_view reason;
+    const std::optional<AsyncFailureInfo>* failure_info = nullptr;
+    std::string_view log_context;
+    bool check_cancel_flag = true;
+    bool record_status_metric = true;
+    bool record_before_callback = true;
+    bool require_callback_invoked_for_record = false;
+  };
 
-  static auto setup_async_cancellation(
-      grpc::ServerContext* context, std::shared_ptr<void>& call_guard,
-      const AsyncCancellationContext& cancellation_context) -> bool;
+  class AsyncOps {
+   public:
+    static auto try_mark_terminal(
+        const std::shared_ptr<std::atomic<bool>>& terminal_flag) -> bool;
+    static auto enter_async_terminal_once(
+        const AsyncTerminalState& terminal_state,
+        bool check_cancel_flag = true) -> bool;
+    static auto invoke_async_callback(
+        const std::shared_ptr<CallbackHandle>& callback_handle,
+        const grpc::Status& status) -> bool;
+    static void record_async_terminal_failure(
+        const AsyncTerminalCompletionDetails& details,
+        const grpc::Status& status);
+    static auto complete_async_terminal_with_status(
+        const AsyncTerminalState& terminal_state,
+        const std::shared_ptr<CallbackHandle>& callback_handle,
+        const grpc::Status& status,
+        const AsyncTerminalCompletionDetails& details) -> bool;
+    static auto is_async_cancelled(const AsyncInferCompletionContext& context)
+        -> bool;
+    static auto prepare_async_completion(
+        const AsyncInferCompletionContext& context,
+        const std::shared_ptr<CallbackHandle>& callback_handle) -> bool;
+    static auto handle_job_failure(
+        const AsyncInferCompletionContext& context,
+        const grpc::Status& job_status,
+        const std::shared_ptr<CallbackHandle>& callback_handle) -> bool;
+    static void finalize_successful_completion(
+        const AsyncInferCompletionContext& context,
+        const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
+        const detail::TimingInfo& timing_info);
 
-  static auto handle_input_validation_failure(
-      const grpc::Status& status,
-      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
-      const std::shared_ptr<CallbackHandle>& callback_handle,
-      InferenceServiceImpl* service, std::string_view resolved_model_name,
-      const inference::ModelInferRequest* request,
-      MonotonicClock::time_point recv_tp) -> bool;
+    static void handle_async_infer_completion(
+        const AsyncInferCompletionContext& context,
+        const grpc::Status& job_status, const std::vector<torch::Tensor>& outs,
+        LatencyBreakdown breakdown, detail::TimingInfo timing_info);
+    static void handle_submit_job_completion(
+        const AsyncInferCompletionContext& context,
+        const grpc::Status& job_status, const std::vector<torch::Tensor>& outs,
+        LatencyBreakdown breakdown, detail::TimingInfo timing_info,
+        std::optional<AsyncFailureInfo> failure_info);
 
-  static auto handle_submit_failure(
-      const grpc::Status& status,
-      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
-      const std::shared_ptr<CallbackHandle>& callback_handle,
-      InferenceServiceImpl* service, std::string_view resolved_model_name,
-      const inference::ModelInferRequest* request,
-      MonotonicClock::time_point recv_tp) -> bool;
+    static auto build_latency_breakdown(
+        const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown;
 
-  static void notify_cancel_flag_created(
-      const std::shared_ptr<std::atomic<bool>>& cancel_flag);
+    static auto setup_async_cancellation(
+        grpc::ServerContext* context, std::shared_ptr<void>& call_guard,
+        const AsyncCancellationContext& cancellation_context) -> bool;
+    static void handle_async_cancellation(
+        const grpc::ServerContext* context,
+        const AsyncTerminalState& terminal_state,
+        const std::shared_ptr<CallbackHandle>& callback_handle,
+        InferenceServiceImpl* service, std::string_view resolved_model_name,
+        const inference::ModelInferRequest* request,
+        MonotonicClock::time_point recv_tp);
 
-  static void notify_submit_job_async_done(
-      const std::shared_ptr<std::atomic<bool>>& cancel_flag,
-      const grpc::Status& status);
+    static auto handle_input_validation_failure(
+        const grpc::Status& status, const AsyncTerminalState& terminal_state,
+        const std::shared_ptr<CallbackHandle>& callback_handle,
+        InferenceServiceImpl* service, std::string_view resolved_model_name,
+        const inference::ModelInferRequest* request,
+        MonotonicClock::time_point recv_tp) -> bool;
+
+    static auto handle_submit_failure(
+        const grpc::Status& status, const AsyncTerminalState& terminal_state,
+        const std::shared_ptr<CallbackHandle>& callback_handle,
+        const AsyncTerminalCompletionDetails& details) -> bool;
+
+    static void handle_async_internal_error(
+        const AsyncTerminalState& terminal_state,
+        const std::shared_ptr<CallbackHandle>& callback_handle,
+        InferenceServiceImpl* service, std::string_view resolved_model_name,
+        const inference::ModelInferRequest* request,
+        MonotonicClock::time_point recv_tp,
+        const AsyncInternalErrorDetails& details);
+
+    static void notify_cancel_flag_created(
+        const std::shared_ptr<std::atomic<bool>>& cancel_flag);
+
+    static void notify_submit_job_async_done(
+        const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+        const grpc::Status& status);
+  };
 
   void record_success(
       const inference::ModelInferRequest* request,
@@ -338,6 +401,8 @@ class InferenceServiceImpl final
   void record_failure(
       const inference::ModelInferRequest* request,
       MonotonicClock::time_point recv_tp, std::string_view resolved_model_name);
+
+  void validate_schema_or_throw() const;
 
   [[nodiscard]] auto resolve_model_name(std::string model_name) const
       -> std::string;
@@ -444,17 +509,28 @@ struct GrpcModelSpec {
   int max_batch_size = 0;
 };
 
+struct GrpcModelNamesSpec {
+  std::span<const std::string> expected_input_names;
+  std::span<const std::string> expected_output_names;
+};
+
+struct GrpcServerLifecycleHooks {
+  std::function<void(grpc::Server* server)> on_started;
+  std::function<void()> on_stopped;
+};
+
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const GrpcModelSpec& model_spec, const GrpcServerOptions& options,
-    std::unique_ptr<grpc::Server>& server);
+    std::unique_ptr<grpc::Server>& server,
+    const GrpcServerLifecycleHooks& hooks = {});
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::vector<std::string>& expected_input_names,
-    const std::vector<std::string>& expected_output_names,
-    const GrpcServerOptions& options, std::unique_ptr<grpc::Server>& server);
+    GrpcModelNamesSpec model_names, const GrpcServerOptions& options,
+    std::unique_ptr<grpc::Server>& server,
+    const GrpcServerLifecycleHooks& hooks = {});
 
 void StopServer(grpc::Server* server);
 }  // namespace starpu_server

@@ -47,7 +47,7 @@
 #include "utils/nvtx.hpp"
 
 namespace starpu_server {
-namespace {
+inline namespace starpu_setup_detail {
 void append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs);
 
 auto
@@ -464,8 +464,8 @@ initialize_output_pool(const RuntimeConfig& opts)
     throw;
   }
 }
-}  // namespace
-namespace {
+}  // namespace starpu_setup_detail
+inline namespace starpu_setup_detail {
 void
 append_from_tuple(
     const c10::IValue& tuple_value, std::vector<at::Tensor>& outputs)
@@ -540,7 +540,7 @@ buffer_byte_size(const StarpuBufferInterface* buffer_iface) -> size_t
           static_cast<int>(buffer_iface->id)));
   }
 }
-}  // namespace
+}  // namespace starpu_setup_detail
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace testing {
@@ -601,7 +601,9 @@ run_inference(
   const auto& ivalue_inputs =
       TensorBuilder::prepare_input_ivalues(params, buffers, device);
 
-  if (params->timing.inference_start_time != nullptr) {
+  if (params->timing.set_inference_start_time) {
+    params->timing.set_inference_start_time(MonotonicClock::now());
+  } else if (params->timing.inference_start_time != nullptr) {
     *params->timing.inference_start_time = MonotonicClock::now();
   }
 
@@ -640,7 +642,9 @@ run_codelet_inference(
     const torch::Device device, torch::jit::script::Module* model,
     CopyOutputFn copy_output_fn, const DeviceType executed_on_type)
 {
-  if (params->timing.codelet_start_time) {
+  if (params->timing.set_codelet_start_time) {
+    params->timing.set_codelet_start_time(MonotonicClock::now());
+  } else if (params->timing.codelet_start_time) {
     *params->timing.codelet_start_time = MonotonicClock::now();
   }
 
@@ -687,13 +691,19 @@ run_codelet_inference(
             worker_id, params->request_id));
   }
 
-  if (params->device.executed_on) {
+  if (params->device.set_executed_on) {
+    params->device.set_executed_on(executed_on_type);
+  } else if (params->device.executed_on) {
     *params->device.executed_on = executed_on_type;
   }
-  if (params->device.worker_id) {
+  if (params->device.set_worker_id) {
+    params->device.set_worker_id(worker_id);
+  } else if (params->device.worker_id) {
     *params->device.worker_id = worker_id;
   }
-  if (params->device.device_id) {
+  if (params->device.set_device_id) {
+    params->device.set_device_id(device_id);
+  } else if (params->device.device_id) {
     *params->device.device_id = device_id;
   }
 
@@ -705,7 +715,9 @@ run_codelet_inference(
         std::format("[ERROR] Codelet failure: {}", e.what()));
   }
 
-  if (params->timing.codelet_end_time) {
+  if (params->timing.set_codelet_end_time) {
+    params->timing.set_codelet_end_time(MonotonicClock::now());
+  } else if (params->timing.codelet_end_time) {
     *params->timing.codelet_end_time = MonotonicClock::now();
   }
 }
@@ -849,6 +861,7 @@ StarPUSetup::~StarPUSetup()
   starpu_shutdown();
 }
 
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 void
 StarPUSetup::set_starpu_init_fn(StarpuInitFn hook_fn)
 {
@@ -882,6 +895,7 @@ StarPUSetup::reset_worker_stream_query_fn()
 {
   worker_stream_query_fn_ref() = starpu_worker_get_stream_workerids;
 }
+#endif  // SONAR_IGNORE_END
 
 // =============================================================================
 // StarPUSetup: access to codelet and CUDA worker mapping
