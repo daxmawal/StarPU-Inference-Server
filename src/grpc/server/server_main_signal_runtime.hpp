@@ -217,11 +217,11 @@ rethrow_thread_exception_if_any(ThreadExceptionState& state)
     std::rethrow_exception(thread_exception);
   }
   catch (const std::exception& e) {
-    throw std::runtime_error(std::format(
+    throw starpu_server::WorkerThreadException(std::format(
         "Thread '{}' terminated with exception: {}", thread_name, e.what()));
   }
   catch (...) {
-    throw std::runtime_error(std::format(
+    throw starpu_server::WorkerThreadException(std::format(
         "Thread '{}' terminated with unknown exception.", thread_name));
   }
 }

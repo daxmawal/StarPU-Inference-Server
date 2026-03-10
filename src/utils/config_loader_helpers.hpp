@@ -13,7 +13,7 @@
 
 #include "config_loader.hpp"
 
-namespace starpu_server { inline namespace config_loader_detail {
+namespace starpu_server::inline config_loader_detail {
 
 constexpr int kMinPort = 1;
 constexpr int kMaxPort = 65535;
@@ -92,4 +92,4 @@ resolve_trace_output_directory(std::string directory) -> std::string
   return (directory_path / kDefaultTraceOutputFile).string();
 }
 
-}}  // namespace starpu_server::config_loader_detail
+}  // namespace starpu_server::inline config_loader_detail

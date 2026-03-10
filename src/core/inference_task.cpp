@@ -173,6 +173,50 @@ decrement_remaining_and_finalize_if_done(
   }
 }
 
+void
+handle_output_callback_exception(
+    ExceptionCategory category, const std::exception* exception,
+    InferenceCallbackContext* ctx, std::size_t index,
+    bool& bypass_remaining_handles)
+{
+  const auto mark_and_finalize_failure = [&](std::string_view reason,
+                                             std::string_view message) {
+    mark_callback_failure(
+        ctx, CallbackFailureDetails{.reason = reason, .message = message});
+    ctx->outputs_handles_to_release[index] = nullptr;
+    bypass_remaining_handles = true;
+    decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
+  };
+
+  using enum starpu_server::ExceptionCategory;
+  if (category == Unknown || exception == nullptr) {
+    log_error("Unknown exception in starpu_output_callback");
+    mark_and_finalize_failure(
+        "output_callback_unknown_exception",
+        "Unknown non-standard exception in output callback.");
+    return;
+  }
+
+  if (category == InferenceEngine) {
+    if (const auto* inference_engine_exception =
+            dynamic_cast<const InferenceEngineException*>(exception);
+        inference_engine_exception != nullptr) {
+      InferenceTask::log_exception(
+          "starpu_output_callback", *inference_engine_exception);
+    } else {
+      log_error(std::format(
+          "InferenceEngine category mismatch in starpu_output_callback: {}",
+          exception->what()));
+    }
+    mark_and_finalize_failure("output_acquire_failed", exception->what());
+    return;
+  }
+
+  log_error(std::format(
+      "std::exception in starpu_output_callback: {}", exception->what()));
+  mark_and_finalize_failure("output_callback_exception", exception->what());
+}
+
 class StarpuHandleVectorGuard {
  public:
   explicit StarpuHandleVectorGuard(
@@ -805,49 +849,11 @@ InferenceTask::starpu_output_callback(void* arg)
       InferenceTask::process_output_handle(handle, ctx);
     }
     catch (...) {
-      const auto mark_and_finalize_failure = [&](std::string_view reason,
-                                                 std::string_view message) {
-        mark_callback_failure(
-            ctx, CallbackFailureDetails{.reason = reason, .message = message});
-        ctx->outputs_handles_to_release[index] = nullptr;
-        bypass_remaining_handles = true;
-        decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
-      };
-
       classify_and_handle_exception(
           std::current_exception(),
           [&](ExceptionCategory category, const std::exception* exception) {
-            if (category == ExceptionCategory::Unknown ||
-                exception == nullptr) {
-              log_error("Unknown exception in starpu_output_callback");
-              mark_and_finalize_failure(
-                  "output_callback_unknown_exception",
-                  "Unknown non-standard exception in output callback.");
-              return;
-            }
-
-            if (category == ExceptionCategory::InferenceEngine) {
-              if (const auto* inference_engine_exception =
-                      dynamic_cast<const InferenceEngineException*>(exception);
-                  inference_engine_exception != nullptr) {
-                log_exception(
-                    "starpu_output_callback", *inference_engine_exception);
-              } else {
-                log_error(std::format(
-                    "InferenceEngine category mismatch in "
-                    "starpu_output_callback: {}",
-                    exception->what()));
-              }
-              mark_and_finalize_failure(
-                  "output_acquire_failed", exception->what());
-              return;
-            }
-
-            log_error(std::format(
-                "std::exception in starpu_output_callback: {}",
-                exception->what()));
-            mark_and_finalize_failure(
-                "output_callback_exception", exception->what());
+            handle_output_callback_exception(
+                category, exception, ctx, index, bypass_remaining_handles);
           });
     }
   }

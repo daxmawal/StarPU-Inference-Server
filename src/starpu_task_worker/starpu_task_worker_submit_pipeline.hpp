@@ -1,3 +1,14 @@
+namespace starpu_server::inline starpu_task_worker_detail {
+auto is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool;
+void resize_output_handles_for_job(
+    const std::vector<torch::Tensor>& outputs,
+    const std::vector<starpu_data_handle_t>& handles);
+void log_batch_submitted_if_enabled(
+    const std::shared_ptr<InferenceJob>& job, bool warmup_job);
+}  // namespace starpu_server::inline starpu_task_worker_detail
+
+namespace starpu_server {
+
 struct StarPUTaskRunner::SubmitPipelineContext {
   std::shared_ptr<InferenceJob> job;
   bool warmup_job = false;
@@ -8,7 +19,8 @@ struct StarPUTaskRunner::SubmitPipelineContext {
     std::vector<starpu_data_handle_t> output_storage;
     std::vector<starpu_data_handle_t> input_for_context;
     std::vector<starpu_data_handle_t> output_for_context;
-  } handles{};
+  };
+  Handles handles{};
   std::shared_ptr<InferenceCallbackContext> callback_context;
   starpu_task* task_ptr = nullptr;
 };
@@ -239,3 +251,5 @@ StarPUTaskRunner::submit_inference_task(
   pool_guard.dismiss();
   log_batch_submitted_if_enabled(context.job, context.warmup_job);
 }
+
+}  // namespace starpu_server

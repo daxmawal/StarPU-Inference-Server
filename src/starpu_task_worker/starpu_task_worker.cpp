@@ -20,12 +20,15 @@
 #include <vector>
 
 #include "batch_collector_component.hpp"
+#include "batching_helpers.hpp"
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
 #include "monitoring/metrics.hpp"
 #include "result_dispatcher_component.hpp"
 #include "slot_manager_component.hpp"
+#include "starpu_task_worker_prepared_job_processor.hpp"
+#include "starpu_task_worker_submit_pipeline.hpp"
 #include "starpu_vector_resize_utils.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/batching_trace_logger.hpp"
@@ -174,7 +177,7 @@ reset_run_before_submit_hook()
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
-static void
+void
 invoke_submit_inference_task_hook()
 {
 // GCOVR_EXCL_START
@@ -195,7 +198,7 @@ consume_duplicate_batching_thread_exception_capture_for_test() -> bool
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
-static void
+void
 invoke_run_after_batching_thread_start_hook()
 {
 // GCOVR_EXCL_START
@@ -205,7 +208,7 @@ invoke_run_after_batching_thread_start_hook()
   // GCOVR_EXCL_STOP
 }
 
-static void
+void
 invoke_run_before_submit_hook()
 {
 // GCOVR_EXCL_START
@@ -214,8 +217,6 @@ invoke_run_before_submit_hook()
 #endif  // SONAR_IGNORE_END
   // GCOVR_EXCL_STOP
 }
-
-#include "batching_helpers.hpp"
 
 }  // namespace task_runner_internal
 
@@ -238,14 +239,14 @@ struct RunThreadExceptionState {
     if (exception != nullptr) {
       return;
     }
-    exception = std::move(caught);
+    exception = caught;
     thread_name = source_thread;
   }
 
   auto take() -> std::pair<std::exception_ptr, std::string>
   {
     std::lock_guard lock(mutex);
-    return {std::move(exception), std::move(thread_name)};
+    return {exception, std::move(thread_name)};
   }
 };
 
@@ -261,12 +262,12 @@ rethrow_runner_thread_exception_if_any(RunThreadExceptionState& state)
     std::rethrow_exception(captured_exception);
   }
   catch (const std::exception& e) {
-    throw std::runtime_error(std::format(
+    throw WorkerThreadException(std::format(
         "Unhandled exception escaped '{}' thread: {}", captured_thread_name,
         e.what()));
   }
   catch (...) {
-    throw std::runtime_error(std::format(
+    throw WorkerThreadException(std::format(
         "Unhandled non-standard exception escaped '{}' thread.",
         captured_thread_name));
   }
@@ -346,7 +347,6 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       dependencies_(
           config.dependencies != nullptr ? *config.dependencies
                                          : kDefaultInferenceTaskDependencies),
-      inflight_state_(std::make_shared<InflightState>()),
       slot_manager_(std::make_unique<SlotManager>(starpu_, opts_)),
       result_dispatcher_(std::make_shared<ResultDispatcher>(
           opts_, completed_jobs_, all_done_cv_))
@@ -420,7 +420,7 @@ void
 StarPUTaskRunner::prepare_job_completion_callback(
     const std::shared_ptr<InferenceJob>& job)
 {
-  result_dispatcher_->prepare_job_completion_callback(*this, job);
+  ResultDispatcher::prepare_job_completion_callback(*this, job);
 }
 
 void
@@ -568,6 +568,27 @@ finalize_job_completion(
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
+auto
+submit_exception_log_prefix(ExceptionCategory category) -> std::string_view
+{
+  using enum starpu_server::ExceptionCategory;
+  switch (category) {
+    case InferenceEngine:
+      return "";
+    case RuntimeError:
+      return "Unexpected runtime error";
+    case LogicError:
+      return "Unexpected logic error";
+    case BadAlloc:
+      return "Memory allocation failure";
+    case StdException:
+      return "Unexpected std::exception";
+    case Unknown:
+      return {};
+  }
+  return {};
+}
+
 void
 StarPUTaskRunner::submit_job_or_handle_failure(
     const std::shared_ptr<InferenceJob>& job, SubmissionInfo submission_info)
@@ -583,45 +604,15 @@ StarPUTaskRunner::submit_job_or_handle_failure(
   catch (...) {
     classify_and_handle_exception(
         std::current_exception(),
-        [&](ExceptionCategory category, const std::exception* exception) {
-          if (exception == nullptr && category != ExceptionCategory::Unknown) {
+        [this, job, job_id = submission_info.job_id](
+            ExceptionCategory category, const std::exception* exception) {
+          if (exception == nullptr || category == ExceptionCategory::Unknown) {
             finalize_job_after_unknown_exception(
-                job, "Unexpected non-standard exception",
-                submission_info.job_id);
-            return;
-          }
-
-          std::string_view log_prefix;
-          switch (category) {
-            case ExceptionCategory::InferenceEngine:
-              log_prefix = "";
-              break;
-            case ExceptionCategory::RuntimeError:
-              log_prefix = "Unexpected runtime error";
-              break;
-            case ExceptionCategory::LogicError:
-              log_prefix = "Unexpected logic error";
-              break;
-            case ExceptionCategory::BadAlloc:
-              log_prefix = "Memory allocation failure";
-              break;
-            case ExceptionCategory::StdException:
-              log_prefix = "Unexpected std::exception";
-              break;
-            case ExceptionCategory::Unknown:
-              finalize_job_after_unknown_exception(
-                  job, "Unexpected non-standard exception",
-                  submission_info.job_id);
-              return;
-          }
-          if (exception == nullptr) {
-            finalize_job_after_unknown_exception(
-                job, "Unexpected non-standard exception",
-                submission_info.job_id);
+                job, "Unexpected non-standard exception", job_id);
             return;
           }
           finalize_job_after_exception(
-              job, *exception, log_prefix, submission_info.job_id);
+              job, *exception, submit_exception_log_prefix(category), job_id);
         });
   }
 }
@@ -743,8 +734,6 @@ StarPUTaskRunner::propagate_completion_to_sub_jobs(
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
-#include "starpu_task_worker_submit_pipeline.hpp"
-
 // =============================================================================
 // Main run loop: pull jobs, submit them, handle shutdown and errors
 // =============================================================================
@@ -767,8 +756,6 @@ StarPUTaskRunner::handle_cancelled_job(const std::shared_ptr<InferenceJob>& job)
   ResultDispatcher::release_inflight_slot(inflight_state_);
   result_dispatcher_->finalize_job_completion(job);
 }
-
-#include "starpu_task_worker_prepared_job_processor.hpp"
 
 struct StarPUTaskRunner::RunPipelineContext {
   RunThreadExceptionState thread_exception_state;
@@ -800,11 +787,10 @@ StarPUTaskRunner::abort_run_pipeline(RunPipelineContext& /*context*/) noexcept
 void
 StarPUTaskRunner::launch_batching_thread(RunPipelineContext& context)
 {
-  auto capture_thread_exception = [&context](
-                                      std::string_view thread_name,
-                                      std::exception_ptr exception) {
-    context.thread_exception_state.capture(thread_name, std::move(exception));
-  };
+  auto capture_thread_exception =
+      [&context](std::string_view thread_name, std::exception_ptr exception) {
+        context.thread_exception_state.capture(thread_name, exception);
+      };
 
   batching_thread_ = std::jthread([this, &context, capture_thread_exception]() {
     try {

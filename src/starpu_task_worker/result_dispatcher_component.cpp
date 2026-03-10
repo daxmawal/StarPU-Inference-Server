@@ -63,6 +63,52 @@ ResultDispatcher::ClearPrepareJobCompletionCallbackTestHooks()
 #endif  // SONAR_IGNORE_END
 
 void
+ResultDispatcher::dispatch_terminal_completion(
+    const std::shared_ptr<ResultDispatcher>& dispatcher,
+    const InferenceJob::CompletionCallback& prev_callback,
+    const std::shared_ptr<InferenceJob>& job,
+    const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state,
+    std::vector<torch::Tensor>& results, double latency_ms)
+{
+  if (job == nullptr || !job->try_mark_terminal_handled()) {
+    return;
+  }
+
+  try {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    auto& test_hooks = prepare_job_completion_callback_test_hooks();
+    if (test_hooks.before_dispatch) {
+      test_hooks.before_dispatch();
+    }
+#endif  // SONAR_IGNORE_END
+    if (dispatcher != nullptr) {
+      dispatcher->handle_job_completion(
+          job, prev_callback, results, latency_ms);
+    } else {
+      ResultDispatcher::cleanup_terminal_job_payload(job);
+    }
+  }
+  catch (const std::exception& e) {
+    log_error(std::format(
+        "Unhandled exception in terminal completion path: {}", e.what()));
+    ResultDispatcher::cleanup_terminal_job_payload(job);
+  }
+  catch (...) {
+    log_error("Unhandled non-std exception in terminal completion path");
+    ResultDispatcher::cleanup_terminal_job_payload(job);
+  }
+
+  ResultDispatcher::release_inflight_slot(inflight_state);
+  if (dispatcher != nullptr) {
+    dispatcher->finalize_job_completion(job);
+  } else {
+    log_error(
+        "Missing ResultDispatcher in terminal completion path; "
+        "completion counter may be inconsistent");
+  }
+}
+
+void
 ResultDispatcher::prepare_job_completion_callback(
     StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job)
 {
@@ -72,42 +118,9 @@ ResultDispatcher::prepare_job_completion_callback(
   job->set_on_complete(
       [dispatcher, prev_callback, job_sptr = job, inflight_state](
           std::vector<torch::Tensor> results, double latency_ms) mutable {
-        if (job_sptr == nullptr || !job_sptr->try_mark_terminal_handled()) {
-          return;
-        }
-
-        try {
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-          auto& test_hooks = prepare_job_completion_callback_test_hooks();
-          if (test_hooks.before_dispatch) {
-            test_hooks.before_dispatch();
-          }
-#endif  // SONAR_IGNORE_END
-          if (dispatcher != nullptr) {
-            dispatcher->handle_job_completion(
-                job_sptr, prev_callback, results, latency_ms);
-          } else {
-            ResultDispatcher::cleanup_terminal_job_payload(job_sptr);
-          }
-        }
-        catch (const std::exception& e) {
-          log_error(std::format(
-              "Unhandled exception in terminal completion path: {}", e.what()));
-          ResultDispatcher::cleanup_terminal_job_payload(job_sptr);
-        }
-        catch (...) {
-          log_error("Unhandled non-std exception in terminal completion path");
-          ResultDispatcher::cleanup_terminal_job_payload(job_sptr);
-        }
-
-        ResultDispatcher::release_inflight_slot(inflight_state);
-        if (dispatcher != nullptr) {
-          dispatcher->finalize_job_completion(job_sptr);
-        } else {
-          log_error(
-              "Missing ResultDispatcher in terminal completion path; "
-              "completion counter may be inconsistent");
-        }
+        ResultDispatcher::dispatch_terminal_completion(
+            dispatcher, prev_callback, job_sptr, inflight_state, results,
+            latency_ms);
       });
 }
 
@@ -263,7 +276,7 @@ ResultDispatcher::finalize_job_completion(
   if (job == nullptr || completed_jobs_ == nullptr || all_done_cv_ == nullptr) {
     return;
   }
-  const std::size_t logical_jobs =
+  const auto logical_jobs =
       static_cast<std::size_t>(std::max(1, job->logical_job_count()));
   completed_jobs_->fetch_add(logical_jobs, std::memory_order_release);
   all_done_cv_->notify_all();

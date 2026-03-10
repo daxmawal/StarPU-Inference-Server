@@ -13,7 +13,7 @@
 #include "config_loader_helpers.hpp"
 #include "datatype_utils.hpp"
 
-namespace starpu_server { inline namespace config_loader_detail {
+namespace starpu_server::inline config_loader_detail {
 
 void
 parse_tensor_name(
@@ -151,4 +151,4 @@ parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-}}  // namespace starpu_server::config_loader_detail
+}  // namespace starpu_server::inline config_loader_detail

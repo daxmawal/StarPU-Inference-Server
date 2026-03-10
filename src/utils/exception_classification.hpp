@@ -71,28 +71,29 @@ classify_and_handle_exception(
     OnClassifiedException&& on_classified_exception)
 {
   classify_and_handle_exception(
-      std::move(exception),
-      [&](const InferenceEngineException& caught_exception) {
+      exception,
+      [&on_classified_exception](
+          const InferenceEngineException& caught_exception) {
         std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::InferenceEngine, &caught_exception);
       },
-      [&](const std::runtime_error& caught_exception) {
+      [&on_classified_exception](const std::runtime_error& caught_exception) {
         std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::RuntimeError, &caught_exception);
       },
-      [&](const std::logic_error& caught_exception) {
+      [&on_classified_exception](const std::logic_error& caught_exception) {
         std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::LogicError, &caught_exception);
       },
-      [&](const std::bad_alloc& caught_exception) {
+      [&on_classified_exception](const std::bad_alloc& caught_exception) {
         std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::BadAlloc, &caught_exception);
       },
-      [&](const std::exception& caught_exception) {
+      [&on_classified_exception](const std::exception& caught_exception) {
         std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::StdException, &caught_exception);
       },
-      [&]() {
+      [&on_classified_exception]() {
         std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::Unknown, nullptr);
       });

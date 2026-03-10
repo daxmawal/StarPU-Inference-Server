@@ -1,3 +1,9 @@
+namespace starpu_server::inline starpu_task_worker_detail {
+auto is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool;
+}  // namespace starpu_server::inline starpu_task_worker_detail
+
+namespace starpu_server {
+
 struct StarPUTaskRunner::PreparedJobProcessingContext {
   std::shared_ptr<InferenceJob> job;
   int job_id = -1;
@@ -63,3 +69,5 @@ StarPUTaskRunner::process_prepared_job(const std::shared_ptr<InferenceJob>& job)
         context.job_id);
   }
 }
+
+}  // namespace starpu_server

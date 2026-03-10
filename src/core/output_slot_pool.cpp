@@ -6,9 +6,9 @@
 #include <algorithm>
 #include <bit>
 #include <cstddef>
-#include <cstdlib>
 #include <format>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -25,11 +25,25 @@ auto
 normalize_output_slot_pool_dependencies(
     OutputSlotPool::Dependencies dependencies) -> OutputSlotPool::Dependencies
 {
+  constexpr size_t kDefaultHostAlignment = 64;
   if (dependencies.starpu_vector_register == nullptr) {
     dependencies.starpu_vector_register = &starpu_vector_data_register;
   }
   if (!dependencies.host_allocator) {
-    dependencies.host_allocator = &posix_memalign;
+    dependencies.host_allocator = [](void** ptr, size_t alignment,
+                                     size_t size) {
+      if (ptr == nullptr) {
+        return -1;
+      }
+      try {
+        *ptr = ::operator new(size, std::align_val_t{alignment});
+        return 0;
+      }
+      catch (const std::bad_alloc&) {
+        *ptr = nullptr;
+        return -1;
+      }
+    };
   }
   if (!dependencies.cuda_host_alloc) {
     dependencies.cuda_host_alloc = [](void** ptr, size_t size,
@@ -38,7 +52,9 @@ normalize_output_slot_pool_dependencies(
     };
   }
   if (!dependencies.host_deallocator) {
-    dependencies.host_deallocator = [](void* ptr) { std::free(ptr); };
+    dependencies.host_deallocator = [](void* ptr) {
+      ::operator delete(ptr, std::align_val_t{kDefaultHostAlignment});
+    };
   }
   if (!dependencies.starpu_memory_pin) {
     dependencies.starpu_memory_pin = &starpu_memory_pin;
@@ -109,7 +125,7 @@ OutputSlotPool::alloc_host_buffer(
 
         return static_cast<std::byte*>(raw_ptr);
       },
-      [&dependencies](size_t requested_bytes) -> std::byte* {
+      [&dependencies](size_t requested_bytes) {
         constexpr size_t kAlign = 64;
         void* raw_ptr = nullptr;
         const int alloc_rc =

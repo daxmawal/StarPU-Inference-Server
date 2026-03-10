@@ -1,3 +1,5 @@
+namespace starpu_server::task_runner_internal {
+
 inline auto
 select_earliest_time(Clock::time_point current, Clock::time_point candidate)
     -> Clock::time_point
@@ -221,3 +223,5 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
   }
   return arrivals;
 }
+
+}  // namespace starpu_server::task_runner_internal

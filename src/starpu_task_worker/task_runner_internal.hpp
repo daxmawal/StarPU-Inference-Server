@@ -80,6 +80,11 @@ auto build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
 auto build_request_arrival_us_for_trace(
     const std::shared_ptr<InferenceJob>& job) -> std::vector<int64_t>;
 
+auto job_identifier(const InferenceJob& job) -> int;
+void invoke_submit_inference_task_hook();
+void invoke_run_before_submit_hook();
+void invoke_run_after_batching_thread_start_hook();
+
 [[nodiscard]] inline auto
 batch_size_from_inputs(const std::vector<torch::Tensor>& inputs) -> std::size_t
 {

@@ -232,7 +232,8 @@ class StarPUTaskRunner {
   std::atomic<int> next_submission_id_{0};
   std::jthread batching_thread_;
 
-  std::shared_ptr<InflightState> inflight_state_;
+  std::shared_ptr<InflightState> inflight_state_ =
+      std::make_shared<InflightState>();
   PreparedState prepared_state_;
 
   std::unique_ptr<BatchCollector> batch_collector_;

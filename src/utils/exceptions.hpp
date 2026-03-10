@@ -148,4 +148,10 @@ class InvalidDimensionException : public InferenceEngineException {
   using InferenceEngineException::InferenceEngineException;
 };
 
+/// Thrown when a worker thread exits with an uncaught exception
+class WorkerThreadException : public InferenceEngineException {
+ public:
+  using InferenceEngineException::InferenceEngineException;
+};
+
 }  // namespace starpu_server

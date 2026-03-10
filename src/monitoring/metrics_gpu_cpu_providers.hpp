@@ -29,7 +29,7 @@
 #include "metrics_labels.hpp"
 #include "utils/logger.hpp"
 
-namespace starpu_server { inline namespace metrics_internal_detail {
+namespace starpu_server::inline metrics_internal_detail {
 
 using monitoring::detail::CpuTotals;
 
@@ -373,7 +373,7 @@ query_gpu_stats_nvml() -> std::vector<GpuSample>
 }
 
 #endif  // STARPU_HAVE_NVML
-}}  // namespace starpu_server::metrics_internal_detail
+}  // namespace starpu_server::inline metrics_internal_detail
 
 namespace starpu_server::monitoring::detail {
 

@@ -70,14 +70,14 @@ struct ThreadExceptionState {
     if (exception != nullptr) {
       return;
     }
-    exception = std::move(caught_exception);
+    exception = caught_exception;
     thread_name = name;
   }
 
   auto take() -> std::pair<std::exception_ptr, std::string>
   {
     std::lock_guard lock(mutex);
-    return {std::move(exception), std::move(thread_name)};
+    return {exception, std::move(thread_name)};
   }
 };
 

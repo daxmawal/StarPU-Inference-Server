@@ -76,6 +76,13 @@ class ResultDispatcher {
       const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state);
 
  private:
+  static void dispatch_terminal_completion(
+      const std::shared_ptr<ResultDispatcher>& dispatcher,
+      const InferenceJob::CompletionCallback& prev_callback,
+      const std::shared_ptr<InferenceJob>& job,
+      const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state,
+      std::vector<torch::Tensor>& results, double latency_ms);
+
   void handle_job_completion(
       const std::shared_ptr<InferenceJob>& job,
       const InferenceJob::CompletionCallback& prev_callback,

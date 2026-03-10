@@ -9,7 +9,7 @@
 
 #include "config_loader_helpers.hpp"
 
-namespace starpu_server { inline namespace config_loader_detail {
+namespace starpu_server::inline config_loader_detail {
 
 auto
 parse_non_negative_ms(const YAML::Node& congestion_node, std::string_view key)
@@ -194,4 +194,4 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
   parse_congestion_tick(congestion_node, cfg);
 }
 
-}}  // namespace starpu_server::config_loader_detail
+}  // namespace starpu_server::inline config_loader_detail

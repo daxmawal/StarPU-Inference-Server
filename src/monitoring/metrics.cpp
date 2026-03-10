@@ -838,8 +838,7 @@ MetricsRegistry::increment_failure_counter(
   std::scoped_lock lock(mutexes_.model_metrics);
   auto* counter = get_or_create_cached_series(
       caches_.model.inference_failures, std::move(key),
-      [this, stage_label, reason_label,
-       model_label](bool overflow) -> prometheus::Counter* {
+      [this, stage_label, reason_label, model_label](bool overflow) {
         const std::string stage_label_value =
             overflow ? kOverflowLabel : escape_label_value(stage_label.value);
         const std::string reason_label_value =
@@ -911,8 +910,7 @@ MetricsRegistry::observe_compute_latency_by_worker(
   std::scoped_lock lock(mutexes_.worker_metrics);
   auto* histogram = get_or_create_cached_series(
       caches_.worker.compute_latency, std::move(key),
-      [this, worker_id, device_id,
-       worker_type](bool overflow) -> prometheus::Histogram* {
+      [this, worker_id, device_id, worker_type](bool overflow) {
         const auto labels = make_worker_metric_labels(
             overflow, worker_id, device_id, worker_type);
         return &families_.inference_compute_latency_by_worker->Add(
@@ -936,8 +934,7 @@ MetricsRegistry::observe_task_runtime_by_worker(
   std::scoped_lock lock(mutexes_.worker_metrics);
   auto* histogram = get_or_create_cached_series(
       caches_.worker.task_runtime, std::move(key),
-      [this, worker_id, device_id,
-       worker_type](bool overflow) -> prometheus::Histogram* {
+      [this, worker_id, device_id, worker_type](bool overflow) {
         const auto labels = make_worker_metric_labels(
             overflow, worker_id, device_id, worker_type);
         return &families_.starpu_task_runtime_by_worker->Add(
@@ -961,8 +958,7 @@ MetricsRegistry::set_worker_inflight_gauge(
   std::scoped_lock lock(mutexes_.worker_metrics);
   auto* gauge = get_or_create_cached_series(
       caches_.worker.inflight, std::move(key),
-      [this, worker_id, device_id,
-       worker_type](bool overflow) -> prometheus::Gauge* {
+      [this, worker_id, device_id, worker_type](bool overflow) {
         const auto labels = make_worker_metric_labels(
             overflow, worker_id, device_id, worker_type);
         return &families_.starpu_worker_inflight->Add(
@@ -986,8 +982,7 @@ MetricsRegistry::observe_io_copy_latency(
   std::scoped_lock lock(mutexes_.io_metrics);
   auto* histogram = get_or_create_cached_series(
       caches_.io.copy_latency, std::move(key),
-      [this, direction, worker_id, device_id,
-       worker_type](bool overflow) -> prometheus::Histogram* {
+      [this, direction, worker_id, device_id, worker_type](bool overflow) {
         const auto labels = make_io_metric_labels(
             overflow, direction, worker_id, device_id, worker_type);
         return &families_.io_copy_latency->Add(
@@ -1013,8 +1008,7 @@ MetricsRegistry::increment_transfer_bytes(
   std::scoped_lock lock(mutexes_.io_metrics);
   auto* counter = get_or_create_cached_series(
       caches_.io.transfer_bytes, std::move(key),
-      [this, direction, worker_id, device_id,
-       worker_type](bool overflow) -> prometheus::Counter* {
+      [this, direction, worker_id, device_id, worker_type](bool overflow) {
         const auto labels = make_io_metric_labels(
             overflow, direction, worker_id, device_id, worker_type);
         return &families_.transfer_bytes->Add(

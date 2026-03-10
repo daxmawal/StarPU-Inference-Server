@@ -3,7 +3,7 @@
 #include <string>
 #include <string_view>
 
-namespace starpu_server { inline namespace metrics_internal_detail {
+namespace starpu_server::inline metrics_internal_detail {
 
 const std::string kOverflowLabel{"__overflow__"};
 constexpr std::string_view kLabelEscapePrefix{"__label__"};
@@ -82,4 +82,4 @@ escape_label_value(std::string_view value) -> std::string
   return std::string(value);
 }
 
-}}  // namespace starpu_server::metrics_internal_detail
+}  // namespace starpu_server::inline metrics_internal_detail
