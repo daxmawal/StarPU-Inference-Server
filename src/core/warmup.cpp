@@ -363,6 +363,75 @@ run_warmup_client_thread(Fn&& task_fn, Notify&& notify_exception)
   }
 }
 
+struct WarmupProgress {
+  std::size_t completed = 0;
+  std::size_t enqueued = 0;
+};
+
+auto
+read_warmup_progress(const WarmupSyncState& state) -> WarmupProgress
+{
+  return WarmupProgress{
+      .completed = state.completed_jobs.load(std::memory_order_acquire),
+      .enqueued = state.enqueued_jobs.load(std::memory_order_acquire)};
+}
+
+auto
+remaining_warmup_jobs(const WarmupProgress& progress) -> std::size_t
+{
+  return progress.enqueued > progress.completed
+             ? progress.enqueued - progress.completed
+             : 0;
+}
+
+auto
+make_warmup_timeout_exception(
+    const WarmupProgress& progress, bool client_done,
+    long long timeout_ms) -> std::exception_ptr
+{
+  const auto remaining = remaining_warmup_jobs(progress);
+  log_error(std::format(
+      "Warmup drain timeout after {} ms: completed={} enqueued={} "
+      "remaining={} client_done={}",
+      timeout_ms, progress.completed, progress.enqueued, remaining,
+      client_done));
+  return std::make_exception_ptr(std::runtime_error(std::format(
+      "Warmup drain timeout: completed={} enqueued={} remaining={} "
+      "client_done={}",
+      progress.completed, progress.enqueued, remaining, client_done)));
+}
+
+auto
+advance_warmup_wait_iteration(
+    WarmupSyncState& state, std::unique_lock<std::mutex>& lock,
+    std::chrono::steady_clock::time_point deadline,
+    std::chrono::steady_clock::duration drain_wait_step, long long timeout_ms,
+    std::exception_ptr& wait_exception) -> bool
+{
+  if (state.load_exception()) {
+    return true;
+  }
+
+  const bool client_done = state.client_done.load(std::memory_order_acquire);
+  const auto progress = read_warmup_progress(state);
+  if (client_done && progress.completed >= progress.enqueued) {
+    return true;
+  }
+
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= deadline) {
+    wait_exception =
+        make_warmup_timeout_exception(progress, client_done, timeout_ms);
+    return true;
+  }
+
+  const auto until_deadline = deadline - now;
+  const auto wait_budget =
+      until_deadline < drain_wait_step ? until_deadline : drain_wait_step;
+  static_cast<void>(state.completed_cv.wait_for(lock, wait_budget));
+  return false;
+}
+
 auto
 wait_for_warmup_completion(
     WarmupSyncState& state,
@@ -389,72 +458,14 @@ wait_for_warmup_completion(
   const auto timeout_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(drain_timeout)
           .count();
-  const auto build_timeout_exception =
-      [](std::size_t completed, std::size_t enqueued, std::size_t remaining,
-         bool client_done) {
-        return std::make_exception_ptr(std::runtime_error(std::format(
-            "Warmup drain timeout: completed={} enqueued={} remaining={} "
-            "client_done={}",
-            completed, enqueued, remaining, client_done)));
-      };
   try {
     bool done = false;
     while (!done) {
       if (completion_observer) {
         completion_observer(state.completed_jobs);
       }
-      if (state.load_exception()) {
-        done = true;
-      } else if (!state.client_done.load(std::memory_order_acquire)) {
-        const auto now = std::chrono::steady_clock::now();
-        if (now >= deadline) {
-          const auto completed =
-              state.completed_jobs.load(std::memory_order_acquire);
-          const auto enqueued =
-              state.enqueued_jobs.load(std::memory_order_acquire);
-          const auto remaining =
-              enqueued > completed ? enqueued - completed : 0;
-          log_error(std::format(
-              "Warmup drain timeout after {} ms: completed={} enqueued={} "
-              "remaining={} client_done={}",
-              timeout_ms, completed, enqueued, remaining, false));
-          wait_exception =
-              build_timeout_exception(completed, enqueued, remaining, false);
-          done = true;
-        } else {
-          const auto until_deadline = deadline - now;
-          const auto wait_budget = until_deadline < drain_wait_step
-                                       ? until_deadline
-                                       : drain_wait_step;
-          static_cast<void>(state.completed_cv.wait_for(lock, wait_budget));
-        }
-      } else {
-        const auto completed =
-            state.completed_jobs.load(std::memory_order_acquire);
-        const auto enqueued =
-            state.enqueued_jobs.load(std::memory_order_acquire);
-        if (completed >= enqueued) {
-          done = true;
-        } else {
-          const auto now = std::chrono::steady_clock::now();
-          if (now >= deadline) {
-            const auto remaining = enqueued - completed;
-            log_error(std::format(
-                "Warmup drain timeout after {} ms: completed={} enqueued={} "
-                "remaining={} client_done={}",
-                timeout_ms, completed, enqueued, remaining, true));
-            wait_exception =
-                build_timeout_exception(completed, enqueued, remaining, true);
-            done = true;
-          } else {
-            const auto until_deadline = deadline - now;
-            const auto wait_budget = until_deadline < drain_wait_step
-                                         ? until_deadline
-                                         : drain_wait_step;
-            static_cast<void>(state.completed_cv.wait_for(lock, wait_budget));
-          }
-        }
-      }
+      done = advance_warmup_wait_iteration(
+          state, lock, deadline, drain_wait_step, timeout_ms, wait_exception);
     }
   }
   catch (...) {
