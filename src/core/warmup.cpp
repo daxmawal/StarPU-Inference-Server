@@ -32,7 +32,7 @@
 #include "utils/monotonic_clock.hpp"
 
 namespace starpu_server {
-namespace {
+inline namespace warmup_detail {
 constexpr int kCpuWarmupDeviceId = std::numeric_limits<int>::min();
 constexpr auto kWarmupDrainTimeout = std::chrono::seconds(30);
 constexpr auto kWarmupDrainWaitStep = std::chrono::milliseconds(250);
@@ -114,7 +114,7 @@ collect_device_workers(const RuntimeConfig& opts)
   return workers;
 }
 
-}  // namespace
+}  // namespace warmup_detail
 // =============================================================================
 // Constructor
 // =============================================================================
@@ -288,7 +288,7 @@ WarmupRunner::client_worker(
   return enqueued_jobs;
 }
 
-namespace {
+inline namespace warmup_detail {
 
 struct WarmupSyncState {
   std::atomic<std::size_t> completed_jobs{0};
@@ -458,7 +458,7 @@ wait_for_warmup_completion(
   return wait_exception;
 }
 
-}  // namespace
+}  // namespace warmup_detail
 
 // =============================================================================
 // Warmup execution: launch server and client threads and wait for completion

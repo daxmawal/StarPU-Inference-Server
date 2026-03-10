@@ -26,7 +26,7 @@
 
 namespace starpu_server {
 
-namespace {
+inline namespace config_loader_detail {
 
 struct TransparentStringHash {
   using is_transparent = void;
@@ -276,7 +276,7 @@ parse_seed_tolerances_and_flags(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-}  // namespace
+}  // namespace config_loader_detail
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -309,7 +309,7 @@ parse_congestion_horizons_for_test(
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
-namespace {
+inline namespace config_loader_detail {
 
 void
 mark_config_invalid(RuntimeConfig& cfg, const std::string& message)
@@ -439,7 +439,7 @@ finalize_config(RuntimeConfig& cfg, bool max_message_bytes_configured)
   }
 }
 
-}  // namespace
+}  // namespace config_loader_detail
 
 auto
 load_config(const std::string& path) -> RuntimeConfig

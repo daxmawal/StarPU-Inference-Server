@@ -56,7 +56,7 @@ job_identifier(const InferenceJob& job) -> int
   return (submission_id >= 0) ? submission_id : job.get_request_id();
 }
 
-namespace {
+inline namespace starpu_task_worker_detail {
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 template <typename Hook>
@@ -119,7 +119,7 @@ duplicate_batching_thread_exception_capture_for_test() -> std::atomic<bool>&
 }
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
-}  // namespace
+}  // namespace starpu_task_worker_detail
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -219,7 +219,7 @@ invoke_run_before_submit_hook()
 
 }  // namespace task_runner_internal
 
-namespace {
+inline namespace starpu_task_worker_detail {
 
 inline auto
 is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
@@ -330,7 +330,7 @@ resize_output_handles_for_job(
   }
 }
 
-}  // namespace
+}  // namespace starpu_task_worker_detail
 
 using clock = task_runner_internal::Clock;
 

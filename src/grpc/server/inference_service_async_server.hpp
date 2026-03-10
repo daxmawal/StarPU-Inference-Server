@@ -1,4 +1,4 @@
-namespace {
+inline namespace inference_service_detail {
 
 template <typename Request, typename Response>
 class UnaryCallData final
@@ -409,7 +409,7 @@ register_async_unary_rpcs(
   }
 }
 
-namespace {
+inline namespace inference_service_detail {
 
 void
 enable_grpc_health_and_reflection()
@@ -423,7 +423,7 @@ enable_grpc_health_and_reflection()
   });
 }
 
-}  // namespace
+}  // namespace inference_service_detail
 
 void
 run_grpc_server_impl(
@@ -475,7 +475,7 @@ run_grpc_server_impl(
   server.reset();
 }
 
-}  // namespace
+}  // namespace inference_service_detail
 
 AsyncServerContext::AsyncServerContext(
     inference::GRPCInferenceService::AsyncService& async_service,

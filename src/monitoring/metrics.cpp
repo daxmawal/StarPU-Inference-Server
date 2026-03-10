@@ -166,7 +166,7 @@ MetricsRegistry::~MetricsRegistry() noexcept
   }
 }
 
-namespace {
+inline namespace metrics_file_detail {
 auto
 metrics_atomic() -> std::atomic<std::shared_ptr<MetricsRegistry>>&
 {
@@ -360,7 +360,7 @@ make_io_metric_labels(
       escape_label_value(direction),
       make_worker_metric_labels(false, worker_id, device_id, worker_type)};
 }
-}  // namespace
+}  // namespace metrics_file_detail
 
 auto
 init_metrics(int port) -> bool
@@ -644,7 +644,7 @@ observe_batch_efficiency(double ratio)
   observe_histogram(&HistogramMetrics::batch_efficiency, ratio);
 }
 
-namespace {
+inline namespace metrics_file_detail {
 
 void
 record_latency_breakdown(
@@ -671,7 +671,7 @@ record_latency_breakdown(
       histograms.postprocess_latency, breakdown.postprocess_ms);
 }
 
-}  // namespace
+}  // namespace metrics_file_detail
 
 void
 observe_latency_breakdown(const LatencyBreakdownMetrics& breakdown)

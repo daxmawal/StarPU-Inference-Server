@@ -17,7 +17,7 @@
 
 namespace starpu_server {
 
-namespace {
+inline namespace result_dispatcher_component_detail {
 
 inline auto
 is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool
@@ -35,7 +35,7 @@ prepare_job_completion_callback_test_hooks()
 }
 #endif  // SONAR_IGNORE_END
 
-}  // namespace
+}  // namespace result_dispatcher_component_detail
 
 using clock = task_runner_internal::Clock;
 

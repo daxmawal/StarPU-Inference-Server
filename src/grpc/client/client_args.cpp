@@ -14,7 +14,7 @@
 #include "utils/transparent_hash.hpp"
 
 namespace starpu_server {
-namespace {
+inline namespace client_args_detail {
 
 auto
 parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
@@ -47,7 +47,7 @@ parse_shape_string(const std::string& shape_str) -> std::vector<int64_t>
   return shape;
 }
 
-}  // namespace
+}  // namespace client_args_detail
 
 void
 display_client_help(const char* prog_name)
@@ -140,7 +140,7 @@ parse_delay(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
   });
 }
 
-namespace {
+inline namespace client_args_detail {
 
 void
 append_input_config(ClientConfig& cfg, const char* val)
@@ -162,7 +162,7 @@ append_input_config(ClientConfig& cfg, const char* val)
   cfg.inputs.push_back(std::move(input));
 }
 
-}  // namespace
+}  // namespace client_args_detail
 
 auto
 parse_input(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool

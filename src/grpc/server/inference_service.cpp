@@ -55,7 +55,7 @@ using inference::ServerLiveResponse;
 using inference::ServerReadyRequest;
 using inference::ServerReadyResponse;
 
-namespace {
+inline namespace inference_service_detail {
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto unary_call_data_missing_handler_transitions_to_finish_for_test_impl()
@@ -297,9 +297,9 @@ elapsed_since(const MonotonicClock::time_point start) -> uint64_t
   return static_cast<uint64_t>(elapsed);
 }
 
-}  // namespace
+}  // namespace inference_service_detail
 
-namespace {
+inline namespace inference_service_detail {
 
 class AsyncCallDataBase {
  public:
@@ -358,7 +358,7 @@ class RpcDoneTag final : public AsyncCallDataBase,
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 #endif                       // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
-}  // namespace
+}  // namespace inference_service_detail
 
 
 auto
@@ -370,13 +370,13 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
   return std::clamp<std::size_t>(concurrency, kMinGrpcThreads, kMaxGrpcThreads);
 }
 
-namespace {
+inline namespace inference_service_detail {
 
 // Input/output tensor parsing and validation helpers.
 #include "inference_service_io_validation.hpp"
 // Async submission/completion utility helpers.
 #include "inference_service_async_lifecycle.hpp"
-}  // namespace
+}  // namespace inference_service_detail
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
@@ -417,7 +417,7 @@ InferenceServiceImpl::InferenceServiceImpl(
 // Infer RPC path: request validation, async orchestration, response shaping.
 #include "inference_service_rpc_infer.hpp"
 
-namespace {
+inline namespace inference_service_detail {
 void
 set_grpc_health_status(const Server* server, bool serving)
 {
@@ -449,7 +449,7 @@ is_context_cancelled(ServerContext* context) -> bool
 #endif  // SONAR_IGNORE_END
   return context->IsCancelled();
 }
-}  // namespace
+}  // namespace inference_service_detail
 
 namespace inference_service_runtime_internal {
 

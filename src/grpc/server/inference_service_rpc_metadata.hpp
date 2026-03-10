@@ -1,4 +1,4 @@
-namespace {
+inline namespace inference_service_detail {
 template <typename AddEntry, typename SetDataType, typename AppendDim>
 auto
 append_input_schema(
@@ -59,7 +59,7 @@ append_output_schema(
 
   return Status::OK;
 }
-}  // namespace
+}  // namespace inference_service_detail
 
 void
 InferenceServiceImpl::validate_schema_or_throw() const

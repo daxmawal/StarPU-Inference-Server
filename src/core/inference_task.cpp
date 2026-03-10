@@ -31,7 +31,7 @@
 #include "utils/tensor_validation.hpp"
 
 namespace starpu_server {
-namespace {
+inline namespace inference_task_detail {
 
 auto
 resolve_dependencies(const InferenceTaskDependencies* deps)
@@ -226,7 +226,7 @@ register_tensor_handles(
   unregister_guard.dismiss();
   return handles;
 }
-}  // namespace
+}  // namespace inference_task_detail
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 InferenceTaskDependencies kDefaultInferenceTaskDependencies{
@@ -894,7 +894,7 @@ InferenceTask::process_output_handle(
   }
 }
 
-namespace {
+inline namespace inference_task_detail {
 void
 copy_outputs_from_pool(InferenceCallbackContext* ctx)
 {
@@ -926,7 +926,7 @@ copy_outputs_from_pool(InferenceCallbackContext* ctx)
       "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
       worker_type_label, total_bytes);
 }
-}  // namespace
+}  // namespace inference_task_detail
 
 void
 InferenceTask::finalize_inference_task(void* arg)

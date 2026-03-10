@@ -304,7 +304,7 @@ make_grpc_thread(
   });
 }
 
-namespace {
+inline namespace server_main_bootstrap_detail {
 
 struct LaunchRuntimeState {
   ThreadExceptionState thread_exception_state;
@@ -362,7 +362,7 @@ start_runtime_threads(
       reference_outputs, expected_model_metadata);
 }
 
-}  // namespace
+}  // namespace server_main_bootstrap_detail
 
 void
 launch_threads(

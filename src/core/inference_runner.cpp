@@ -32,7 +32,7 @@
 
 namespace starpu_server {
 
-namespace {
+inline namespace inference_runner_detail {
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -45,7 +45,7 @@ cuda_device_count_override_storage() -> std::optional<int>&
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 
-}  // namespace
+}  // namespace inference_runner_detail
 
 namespace detail {
 

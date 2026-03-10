@@ -24,8 +24,8 @@ checked_size_product(
     std::size_t per_sample_value, std::size_t batch_size,
     MakeOverflowMessageFn&& make_overflow_message) -> std::size_t
 {
-  constexpr std::size_t kMaxSizeT = std::numeric_limits<std::size_t>::max();
-  if (per_sample_value != 0 && batch_size > kMaxSizeT / per_sample_value) {
+  if (const std::size_t kMaxSizeT = std::numeric_limits<std::size_t>::max();
+      per_sample_value != 0 && batch_size > kMaxSizeT / per_sample_value) {
     throw std::overflow_error(std::invoke(
         std::forward<MakeOverflowMessageFn>(make_overflow_message),
         per_sample_value, batch_size));

@@ -19,7 +19,7 @@
 
 namespace starpu_server {
 
-namespace {
+inline namespace input_slot_pool_detail {
 
 auto
 normalize_input_slot_pool_dependencies(InputSlotPool::Dependencies dependencies)
@@ -212,7 +212,7 @@ register_starpu_handle_or_throw(
   return starpu_handle;
 }
 
-}  // namespace
+}  // namespace input_slot_pool_detail
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace testing {

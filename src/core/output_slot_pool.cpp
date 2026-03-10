@@ -19,7 +19,7 @@
 #include "utils/logger.hpp"
 
 namespace starpu_server {
-namespace {
+inline namespace output_slot_pool_detail {
 
 auto
 normalize_output_slot_pool_dependencies(
@@ -33,12 +33,12 @@ normalize_output_slot_pool_dependencies(
   }
   if (!dependencies.cuda_host_alloc) {
     dependencies.cuda_host_alloc = [](void** ptr, size_t size,
-                                      unsigned int flags) -> int {
+                                      unsigned int flags) {
       return static_cast<int>(cudaHostAlloc(ptr, size, flags));
     };
   }
   if (!dependencies.host_deallocator) {
-    dependencies.host_deallocator = &std::free;
+    dependencies.host_deallocator = [](void* ptr) { std::free(ptr); };
   }
   if (!dependencies.starpu_memory_pin) {
     dependencies.starpu_memory_pin = &starpu_memory_pin;
@@ -69,7 +69,7 @@ resolve_output_slot_pool_dependencies_for_construction()
 #endif  // SONAR_IGNORE_END
 }
 
-}  // namespace
+}  // namespace output_slot_pool_detail
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace testing {

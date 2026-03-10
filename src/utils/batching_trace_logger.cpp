@@ -16,7 +16,7 @@
 
 namespace starpu_server {
 
-namespace {
+inline namespace batching_trace_logger_detail {
 constexpr int kInvalidId = -1;
 constexpr int kTraceProcessId = 1;
 constexpr int kRequestEnqueuedTrackId = 1;
@@ -251,7 +251,7 @@ close_stream_if_open(std::ofstream& stream)
   }
 }
 
-}  // namespace
+}  // namespace batching_trace_logger_detail
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace testing {

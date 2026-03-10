@@ -32,7 +32,7 @@ namespace starpu_server {
 
 using clock = task_runner_internal::Clock;
 
-namespace {
+inline namespace slot_manager_component_detail {
 
 template <typename Func>
 void
@@ -72,7 +72,7 @@ parallel_for_each_index(std::size_t count, Func&& func)
   }
 }
 
-}  // namespace
+}  // namespace slot_manager_component_detail
 
 class SlotHandleLease {
  public:

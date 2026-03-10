@@ -47,7 +47,7 @@
 #include "utils/nvtx.hpp"
 
 namespace starpu_server {
-namespace {
+inline namespace starpu_setup_detail {
 void append_ivalue(const c10::IValue& value, std::vector<at::Tensor>& outputs);
 
 auto
@@ -464,8 +464,8 @@ initialize_output_pool(const RuntimeConfig& opts)
     throw;
   }
 }
-}  // namespace
-namespace {
+}  // namespace starpu_setup_detail
+inline namespace starpu_setup_detail {
 void
 append_from_tuple(
     const c10::IValue& tuple_value, std::vector<at::Tensor>& outputs)
@@ -540,7 +540,7 @@ buffer_byte_size(const StarpuBufferInterface* buffer_iface) -> size_t
           static_cast<int>(buffer_iface->id)));
   }
 }
-}  // namespace
+}  // namespace starpu_setup_detail
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 namespace testing {

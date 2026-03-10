@@ -3,7 +3,7 @@
 #include <mutex>
 
 namespace starpu_server::perf_observer {
-namespace {
+inline namespace perf_observer_detail {
 struct State {
   std::mutex mutex;
   std::optional<MonotonicClock::time_point> first_enqueue;
@@ -17,7 +17,7 @@ state() -> State&
   static State state_instance{};
   return state_instance;
 }
-}  // namespace
+}  // namespace perf_observer_detail
 
 void
 reset()

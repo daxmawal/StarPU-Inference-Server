@@ -7,7 +7,7 @@
 
 #include "config_loader_helpers.hpp"
 
-namespace starpu_server { namespace {
+namespace starpu_server { inline namespace config_loader_detail {
 
 void
 parse_network_and_delay(const YAML::Node& root, RuntimeConfig& cfg)
@@ -98,4 +98,4 @@ parse_message_and_batching(const YAML::Node& root, RuntimeConfig& cfg)
   }
 }
 
-}}  // namespace starpu_server
+}}  // namespace starpu_server::config_loader_detail

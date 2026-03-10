@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <filesystem>
 
-namespace starpu_server { namespace {
+namespace starpu_server { inline namespace metrics_internal_detail {
 
 const std::filesystem::path kProcStatm{"/proc/self/statm"};
 
@@ -29,4 +29,4 @@ constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(0);
 constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(60);
 #endif  // SONAR_IGNORE_END
 
-}}  // namespace starpu_server
+}}  // namespace starpu_server::metrics_internal_detail

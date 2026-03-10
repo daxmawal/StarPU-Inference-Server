@@ -18,7 +18,7 @@ namespace starpu_server {
 using clock = task_runner_internal::Clock;
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-namespace {
+inline namespace batch_collector_component_detail {
 struct BatchingLoopTestHooks {
   std::function<void(std::shared_ptr<InferenceJob>&)> after_build_job;
 };
@@ -29,7 +29,7 @@ batching_loop_test_hooks() -> BatchingLoopTestHooks&
   static BatchingLoopTestHooks hooks{};
   return hooks;
 }
-}  // namespace
+}  // namespace batch_collector_component_detail
 #endif  // SONAR_IGNORE_END
 
 BatchCollector::BatchCollector(
@@ -281,7 +281,7 @@ BatchCollector::can_merge_jobs(
   return true;
 }
 
-namespace {
+inline namespace batch_collector_component_detail {
 void
 validate_prototype_tensor_impl(const torch::Tensor& tensor)
 {
@@ -352,7 +352,7 @@ copy_tensor_slices_to_merged(
   }
 }
 
-}  // namespace
+}  // namespace batch_collector_component_detail
 
 auto
 BatchCollector::merge_input_tensors(

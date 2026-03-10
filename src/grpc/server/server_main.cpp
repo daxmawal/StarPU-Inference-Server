@@ -47,7 +47,7 @@
 #if defined(STARPU_TESTING)
 namespace starpu_server::testing::server_main {
 #else
-namespace {
+inline namespace server_main_detail {
 #endif
 struct ServerContext {
   grpc::Server* server = nullptr;
