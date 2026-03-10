@@ -335,8 +335,9 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     auto outputs = std::move(slice_result.outputs);
 
     job_sp->set_timing_info(aggregated_timing);
-    job_sp->set_runtime_device_info(
-        aggregated_executed_on, aggregated_device_id, aggregated_worker_id);
+    job_sp->set_executed_on(aggregated_executed_on);
+    job_sp->set_device_id(aggregated_device_id);
+    job_sp->set_worker_id(aggregated_worker_id);
     job_sp->set_submission_id(aggregated_submission_id);
 
     if (entry.callback) {

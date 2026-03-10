@@ -6,6 +6,7 @@
 #include <bit>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <format>
@@ -72,15 +73,19 @@ require_runtime_config(const RuntimeConfig* opts) -> const RuntimeConfig&
   return *opts;
 }
 
-enum class CallbackTerminalStatus {
+enum class CallbackTerminalStatus : std::uint8_t {
   kSuccess,
   kFailure,
 };
 
+struct CallbackFailureDetails {
+  std::string_view reason;
+  std::string_view message;
+};
+
 void
 mark_callback_failure(
-    InferenceCallbackContext* ctx, std::string_view reason,
-    std::string_view message)
+    InferenceCallbackContext* ctx, CallbackFailureDetails failure)
 {
   if (ctx == nullptr || ctx->job == nullptr) {
     return;
@@ -88,12 +93,12 @@ mark_callback_failure(
 
   if (!ctx->job->failure_info().has_value()) {
     const std::string model_name{ctx->job->model_name()};
-    increment_inference_failure("callback", reason, model_name);
+    increment_inference_failure("callback", failure.reason, model_name);
 
     InferenceJob::FailureInfo failure_info{};
     failure_info.stage = "callback";
-    failure_info.reason = std::string(reason);
-    failure_info.message = std::string(message);
+    failure_info.reason = std::string(failure.reason);
+    failure_info.message = std::string(failure.message);
     failure_info.metrics_reported = true;
     ctx->job->set_failure_info(std::move(failure_info));
   }
@@ -426,10 +431,15 @@ InferenceTask::bind_runtime_job_info(
     const std::shared_ptr<InferenceParams>& params) const
 {
   params->request_id = job_->get_request_id();
-  params->device.set_runtime_device_info =
-      [job = job_](DeviceType executed_on, int device_id, int worker_id) {
-        job->set_runtime_device_info(executed_on, device_id, worker_id);
-      };
+  params->device.set_executed_on = [job = job_](DeviceType executed_on) {
+    job->set_executed_on(executed_on);
+  };
+  params->device.set_device_id = [job = job_](int device_id) {
+    job->set_device_id(device_id);
+  };
+  params->device.set_worker_id = [job = job_](int worker_id) {
+    job->set_worker_id(worker_id);
+  };
   params->timing.set_codelet_start_time =
       [job = job_](MonotonicClock::time_point started_at) {
         job->update_timing_info([started_at](detail::TimingInfo& timing) {
@@ -780,7 +790,7 @@ InferenceTask::starpu_output_callback(void* arg)
   bool bypass_remaining_handles = false;
 
   for (std::size_t index = 0; index < ctx->outputs_handles.size(); ++index) {
-    const auto handle = ctx->outputs_handles[index];
+    auto* const handle = ctx->outputs_handles[index];
     if (bypass_remaining_handles) {
       ctx->outputs_handles_to_release[index] = nullptr;
       decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
@@ -797,7 +807,8 @@ InferenceTask::starpu_output_callback(void* arg)
     catch (...) {
       const auto mark_and_finalize_failure = [&](std::string_view reason,
                                                  std::string_view message) {
-        mark_callback_failure(ctx, reason, message);
+        mark_callback_failure(
+            ctx, CallbackFailureDetails{.reason = reason, .message = message});
         ctx->outputs_handles_to_release[index] = nullptr;
         bypass_remaining_handles = true;
         decrement_remaining_and_finalize_if_done(ctx, "starpu_output_callback");
@@ -816,9 +827,17 @@ InferenceTask::starpu_output_callback(void* arg)
             }
 
             if (category == ExceptionCategory::InferenceEngine) {
-              log_exception(
-                  "starpu_output_callback",
-                  static_cast<const InferenceEngineException&>(*exception));
+              if (const auto* inference_engine_exception =
+                      dynamic_cast<const InferenceEngineException*>(exception);
+                  inference_engine_exception != nullptr) {
+                log_exception(
+                    "starpu_output_callback", *inference_engine_exception);
+              } else {
+                log_error(std::format(
+                    "InferenceEngine category mismatch in "
+                    "starpu_output_callback: {}",
+                    exception->what()));
+              }
               mark_and_finalize_failure(
                   "output_acquire_failed", exception->what());
               return;

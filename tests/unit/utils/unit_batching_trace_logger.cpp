@@ -326,7 +326,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanClampsNonPositiveDuration)
   };
   starpu_server::testing::BatchingTraceLoggerTestAccessor::
       write_batch_build_span(
-          logger, "demo_model", 9, 3, timing, std::span<const int>{},
+          logger, 9, "demo_model", 3, timing, std::span<const int>{},
           /*is_warmup=*/false);
   logger.configure(false, "");
 
@@ -364,7 +364,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanClampsNonPositiveDuration)
   };
   starpu_server::testing::BatchingTraceLoggerTestAccessor::
       write_batch_enqueue_span(
-          logger, "demo_model", 7, 2, timing, std::span<const int>{},
+          logger, 7, "demo_model", 2, timing, std::span<const int>{},
           /*is_warmup=*/false);
   logger.configure(false, "");
 
@@ -420,7 +420,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchBuildSpanSkipsWithoutHeader)
   };
   starpu_server::testing::BatchingTraceLoggerTestAccessor::
       write_batch_build_span(
-          logger, "demo_model", 1, 1, timing, std::span<const int>{},
+          logger, 1, "demo_model", 1, timing, std::span<const int>{},
           /*is_warmup=*/false);
 
   {
@@ -474,7 +474,7 @@ TEST(BatchingTraceLoggerTest, WriteBatchEnqueueSpanSkipsWithoutHeader)
   const std::array<int, 1> request_ids{42};
   starpu_server::testing::BatchingTraceLoggerTestAccessor::
       write_batch_enqueue_span(
-          logger, "demo_model", 3, 1, timing, std::span<const int>(request_ids),
+          logger, 3, "demo_model", 1, timing, std::span<const int>(request_ids),
           /*is_warmup=*/false);
 
   {
@@ -1794,7 +1794,7 @@ TEST(BatchingTraceLoggerTest, SplitsOverlappingComputeSpansIntoWorkerLanes)
       (std::istreambuf_iterator<char>(stream)),
       std::istreambuf_iterator<char>());
 
-  auto extract_tid = [&](size_t start_pos) -> int {
+  auto extract_tid = [&](size_t start_pos) {
     const auto tid_pos = content.find("\"tid\":", start_pos);
     if (tid_pos == std::string::npos) {
       ADD_FAILURE() << "Missing tid for compute span";

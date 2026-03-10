@@ -53,10 +53,10 @@ InferenceServiceTestAccessor::ClearSubmitJobAsyncTestHooks()
 
 void
 InferenceServiceTestAccessor::SetCheckMissingNamedInputsOverrideForTest(
-    CheckMissingNamedInputsOverrideFn fn)
+    CheckMissingNamedInputsOverrideFn override_fn)
 {
   inference_service_test_internal::set_check_missing_named_inputs_override(
-      std::move(fn));
+      std::move(override_fn));
 }
 
 void

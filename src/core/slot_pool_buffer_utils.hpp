@@ -96,10 +96,9 @@ template <typename SlotInfo, typename BufferInfos, typename FreeBufferFn>
 void
 cleanup_slot_resources(
     SlotInfo& slot, BufferInfos& buffer_infos, std::size_t count,
-    FreeBufferFn&& free_buffer_fn, SlotCleanupOrder cleanup_order,
+    const FreeBufferFn& free_buffer_fn, SlotCleanupOrder cleanup_order,
     bool reset_buffer_info)
 {
-  auto&& free_buffer_callback = free_buffer_fn;
   const std::size_t safe_count = std::min(
       {count, slot.base_ptrs.size(), slot.handles.size(), buffer_infos.size()});
 
@@ -112,7 +111,7 @@ cleanup_slot_resources(
 
   auto free_buffer = [&](std::size_t idx) {
     if (slot.base_ptrs[idx] != nullptr) {
-      std::invoke(free_buffer_callback, slot.base_ptrs[idx], buffer_infos[idx]);
+      std::invoke(free_buffer_fn, slot.base_ptrs[idx], buffer_infos[idx]);
       slot.base_ptrs[idx] = nullptr;
     }
     if (reset_buffer_info) {
@@ -138,7 +137,7 @@ void
 init_slots(
     int requested_slots, SlotsStorage& slots_storage,
     BufferInfosStorage& host_buffer_infos, FreeIdsStorage& free_ids_storage,
-    AllocateSlotFn&& allocate_slot_fn)
+    AllocateSlotFn allocate_slot_fn)
 {
   auto slot_count = requested_slots;
   if (slot_count <= 0) {
@@ -166,18 +165,17 @@ template <
 void
 cleanup_slots(
     SlotsStorage& slots_storage, BufferInfosStorage& host_buffer_infos,
-    FreeBufferFn&& free_buffer_fn,
+    FreeBufferFn free_buffer_fn,
     SlotCleanupOrder cleanup_order = SlotCleanupOrder::UnregisterThenFree,
     bool reset_buffer_info = false)
 {
-  auto&& free_buffer_callback = free_buffer_fn;
   const std::size_t slot_count =
       std::min(slots_storage.size(), host_buffer_infos.size());
   for (std::size_t slot_index = 0; slot_index < slot_count; ++slot_index) {
     auto& slot = slots_storage[slot_index];
     auto& buffer_infos = host_buffer_infos[slot_index];
     cleanup_slot_resources(
-        slot, buffer_infos, slot.base_ptrs.size(), free_buffer_callback,
+        slot, buffer_infos, slot.base_ptrs.size(), free_buffer_fn,
         cleanup_order, reset_buffer_info);
   }
 }

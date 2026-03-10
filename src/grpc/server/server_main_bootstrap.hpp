@@ -314,6 +314,12 @@ struct LaunchRuntimeState {
   std::mutex all_done_mutex;
 };
 
+struct RuntimeThreads {
+  std::jthread notifier;
+  std::jthread worker;
+  std::jthread grpc;
+};
+
 struct SignalPipeShutdownGuard {
   SignalNotificationPipe* pipe = nullptr;
 
@@ -343,16 +349,15 @@ start_runtime_threads(
     std::vector<torch::Tensor>& reference_outputs,
     const ExpectedModelMetadata& expected_model_metadata,
     LaunchRuntimeState& runtime_state, starpu_server::StarPUTaskRunner& worker,
-    std::jthread& notifier_thread, std::jthread& worker_thread,
-    std::jthread& grpc_thread)
+    RuntimeThreads& runtime_threads)
 {
   const bool use_blocking_signal_wait = runtime_state.signal_pipe.active();
-  notifier_thread = make_signal_notifier_thread(
+  runtime_threads.notifier = make_signal_notifier_thread(
       server_ctx, queue, runtime_state.thread_exception_state,
       runtime_state.signal_pipe.read_fd(), use_blocking_signal_wait);
-  worker_thread = make_worker_thread(
+  runtime_threads.worker = make_worker_thread(
       server_ctx, queue, runtime_state.thread_exception_state, worker);
-  grpc_thread = make_grpc_thread(
+  runtime_threads.grpc = make_grpc_thread(
       server_ctx, queue, runtime_state.thread_exception_state, opts,
       reference_outputs, expected_model_metadata);
 }
@@ -382,16 +387,16 @@ launch_threads(
   starpu_server::StarPUTaskRunner worker(config);
   auto expected_model_metadata = collect_expected_model_metadata(opts);
 
-  std::jthread notifier_thread;
-  std::jthread worker_thread;
-  std::jthread grpc_thread;
+  RuntimeThreads runtime_threads;
   const SignalPipeShutdownGuard signal_pipe_shutdown_guard{
       &runtime_state.signal_pipe};
   start_runtime_threads(
       opts, server_ctx, queue, reference_outputs, expected_model_metadata,
-      runtime_state, worker, notifier_thread, worker_thread, grpc_thread);
+      runtime_state, worker, runtime_threads);
   const ShutdownRuntimeContext shutdown_context{
-      runtime_state.thread_exception_state, runtime_state.completed_jobs,
-      runtime_state.all_done_cv, runtime_state.all_done_mutex};
+      .thread_exception_state = &runtime_state.thread_exception_state,
+      .completed_jobs = &runtime_state.completed_jobs,
+      .all_done_cv = &runtime_state.all_done_cv,
+      .all_done_mutex = &runtime_state.all_done_mutex};
   run_shutdown_sequence(opts, server_ctx, queue, shutdown_context);
 }

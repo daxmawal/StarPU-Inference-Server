@@ -47,7 +47,7 @@ TEST_F(
     HandleJobExceptionCallbackLogsUnknownNonStdExceptionMessage)
 {
   auto job = make_job(8, {});
-  job->set_on_complete([](const auto&, double) -> void { throw 42; });
+  job->set_on_complete([](const auto&, double) { throw 42; });
 
   starpu_server::CaptureStream capture{std::cerr};
   EXPECT_NO_THROW(starpu_server::StarPUTaskRunner::handle_job_exception(

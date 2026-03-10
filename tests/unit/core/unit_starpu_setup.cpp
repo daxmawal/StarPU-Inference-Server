@@ -122,7 +122,7 @@ failing_setenv_stub(
 auto
 resolve_real_starpu_worker_get_id() -> StarpuWorkerGetIdHook
 {
-  static StarpuWorkerGetIdHook fn = []() -> StarpuWorkerGetIdHook {
+  static StarpuWorkerGetIdHook fn = []() {
     auto candidate = reinterpret_cast<StarpuWorkerGetIdHook>(
         dlsym(RTLD_NEXT, "starpu_worker_get_id"));
     if (candidate == nullptr) {
@@ -137,7 +137,7 @@ resolve_real_starpu_worker_get_id() -> StarpuWorkerGetIdHook
 auto
 resolve_real_starpu_worker_get_devid() -> StarpuWorkerGetDevidHook
 {
-  static StarpuWorkerGetDevidHook fn = []() -> StarpuWorkerGetDevidHook {
+  static StarpuWorkerGetDevidHook fn = []() {
     auto candidate = reinterpret_cast<StarpuWorkerGetDevidHook>(
         dlsym(RTLD_NEXT, "starpu_worker_get_devid"));
     if (candidate == nullptr) {
@@ -152,8 +152,7 @@ resolve_real_starpu_worker_get_devid() -> StarpuWorkerGetDevidHook
 auto
 resolve_real_starpu_cuda_get_local_stream() -> StarpuCudaGetLocalStreamHook
 {
-  static StarpuCudaGetLocalStreamHook fn =
-      []() -> StarpuCudaGetLocalStreamHook {
+  static StarpuCudaGetLocalStreamHook fn = []() {
     auto candidate = reinterpret_cast<StarpuCudaGetLocalStreamHook>(
         dlsym(RTLD_NEXT, "starpu_cuda_get_local_stream"));
     if (candidate == nullptr) {
@@ -168,7 +167,7 @@ resolve_real_starpu_cuda_get_local_stream() -> StarpuCudaGetLocalStreamHook
 auto
 resolve_real_starpu_shutdown() -> StarpuShutdownFn
 {
-  static StarpuShutdownFn fn = []() -> StarpuShutdownFn {
+  static StarpuShutdownFn fn = []() {
     auto candidate =
         reinterpret_cast<StarpuShutdownFn>(dlsym(RTLD_NEXT, "starpu_shutdown"));
     if (candidate == nullptr) {
@@ -183,7 +182,7 @@ resolve_real_starpu_shutdown() -> StarpuShutdownFn
 auto
 resolve_real_hwloc_topology_init() -> HwlocTopologyInitFn
 {
-  static HwlocTopologyInitFn fn = []() -> HwlocTopologyInitFn {
+  static HwlocTopologyInitFn fn = []() {
     return reinterpret_cast<HwlocTopologyInitFn>(
         dlsym(RTLD_NEXT, "hwloc_topology_init"));
   }();
@@ -193,7 +192,7 @@ resolve_real_hwloc_topology_init() -> HwlocTopologyInitFn
 auto
 resolve_real_hwloc_topology_load() -> HwlocTopologyLoadFn
 {
-  static HwlocTopologyLoadFn fn = []() -> HwlocTopologyLoadFn {
+  static HwlocTopologyLoadFn fn = []() {
     return reinterpret_cast<HwlocTopologyLoadFn>(
         dlsym(RTLD_NEXT, "hwloc_topology_load"));
   }();
@@ -203,7 +202,7 @@ resolve_real_hwloc_topology_load() -> HwlocTopologyLoadFn
 auto
 resolve_real_hwloc_topology_destroy() -> HwlocTopologyDestroyFn
 {
-  static HwlocTopologyDestroyFn fn = []() -> HwlocTopologyDestroyFn {
+  static HwlocTopologyDestroyFn fn = []() {
     return reinterpret_cast<HwlocTopologyDestroyFn>(
         dlsym(RTLD_NEXT, "hwloc_topology_destroy"));
   }();
@@ -213,7 +212,7 @@ resolve_real_hwloc_topology_destroy() -> HwlocTopologyDestroyFn
 auto
 resolve_real_hwloc_get_type_depth() -> HwlocGetTypeDepthFn
 {
-  static HwlocGetTypeDepthFn fn = []() -> HwlocGetTypeDepthFn {
+  static HwlocGetTypeDepthFn fn = []() {
     return reinterpret_cast<HwlocGetTypeDepthFn>(
         dlsym(RTLD_NEXT, "hwloc_get_type_depth"));
   }();
@@ -223,7 +222,7 @@ resolve_real_hwloc_get_type_depth() -> HwlocGetTypeDepthFn
 auto
 resolve_real_hwloc_get_depth_type() -> HwlocGetDepthTypeFn
 {
-  static HwlocGetDepthTypeFn fn = []() -> HwlocGetDepthTypeFn {
+  static HwlocGetDepthTypeFn fn = []() {
     return reinterpret_cast<HwlocGetDepthTypeFn>(
         dlsym(RTLD_NEXT, "hwloc_get_depth_type"));
   }();
@@ -233,7 +232,7 @@ resolve_real_hwloc_get_depth_type() -> HwlocGetDepthTypeFn
 auto
 resolve_real_hwloc_get_nbobjs_by_depth() -> HwlocGetNbobjsByDepthFn
 {
-  static HwlocGetNbobjsByDepthFn fn = []() -> HwlocGetNbobjsByDepthFn {
+  static HwlocGetNbobjsByDepthFn fn = []() {
     return reinterpret_cast<HwlocGetNbobjsByDepthFn>(
         dlsym(RTLD_NEXT, "hwloc_get_nbobjs_by_depth"));
   }();
@@ -243,7 +242,7 @@ resolve_real_hwloc_get_nbobjs_by_depth() -> HwlocGetNbobjsByDepthFn
 auto
 resolve_real_hwloc_get_obj_by_depth() -> HwlocGetObjByDepthFn
 {
-  static HwlocGetObjByDepthFn fn = []() -> HwlocGetObjByDepthFn {
+  static HwlocGetObjByDepthFn fn = []() {
     return reinterpret_cast<HwlocGetObjByDepthFn>(
         dlsym(RTLD_NEXT, "hwloc_get_obj_by_depth"));
   }();
@@ -253,7 +252,7 @@ resolve_real_hwloc_get_obj_by_depth() -> HwlocGetObjByDepthFn
 auto
 resolve_real_hwloc_bitmap_first() -> HwlocBitmapFirstFn
 {
-  static HwlocBitmapFirstFn fn = []() -> HwlocBitmapFirstFn {
+  static HwlocBitmapFirstFn fn = []() {
     return reinterpret_cast<HwlocBitmapFirstFn>(
         dlsym(RTLD_NEXT, "hwloc_bitmap_first"));
   }();
@@ -435,7 +434,7 @@ disable_fake_hwloc_mode()
 auto
 resolve_real_setenv() -> SetenvFn
 {
-  static SetenvFn fn = []() -> SetenvFn {
+  static SetenvFn fn = []() {
     return reinterpret_cast<SetenvFn>(dlsym(RTLD_NEXT, "setenv"));
   }();
   return fn;
@@ -4110,7 +4109,7 @@ TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)
   opts.devices.use_cpu = true;
 
   SetenvOverrideGuard guard(
-      [](const char* name, const char* /*value*/, int /*overwrite*/) -> int {
+      [](const char* name, const char* /*value*/, int /*overwrite*/) {
         if (std::string_view(name) == starpu_server::kStarpuSchedulerEnvVar) {
           errno = ENOMEM;
           return -1;
@@ -4132,7 +4131,7 @@ TEST(StarPUSetup, ThrowsWhenSetenvFailsForCustomEnvVar_Robustesse)
   opts.starpu_env["CUSTOM_VAR"] = "value";
 
   SetenvOverrideGuard guard(
-      [](const char* name, const char* /*value*/, int /*overwrite*/) -> int {
+      [](const char* name, const char* /*value*/, int /*overwrite*/) {
         if (std::string_view(name) == "CUSTOM_VAR") {
           errno = ENOMEM;
           return -1;

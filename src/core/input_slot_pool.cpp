@@ -61,6 +61,11 @@ struct ComputedInputSizes {
   size_t total_numel = 0;
 };
 
+struct PerSampleInputSizes {
+  size_t bytes = 0;
+  size_t numel = 0;
+};
+
 struct AllocatedHostBuffer {
   std::byte* ptr = nullptr;
   InputSlotPool::HostBufferInfo info;
@@ -74,14 +79,14 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
       bytes, use_pinned, cuda_pinned_out,
       [](size_t requested_bytes) -> std::byte* {
         void* cuda_ptr = nullptr;
-        const auto err =
-            cudaHostAlloc(&cuda_ptr, requested_bytes, cudaHostAllocPortable);
-        if (err == cudaSuccess && cuda_ptr != nullptr) {
+        if (const auto err = cudaHostAlloc(
+                &cuda_ptr, requested_bytes, cudaHostAllocPortable);
+            err == cudaSuccess && cuda_ptr != nullptr) {
           return static_cast<std::byte*>(cuda_ptr);
         }
         return nullptr;
       },
-      [](size_t requested_bytes) -> std::byte* {
+      [](size_t requested_bytes) {
         return static_cast<std::byte*>(
             ::operator new(requested_bytes, kHostBufferAlignment));
       });
@@ -122,12 +127,12 @@ free_host_buffer(
 
 auto
 compute_input_sizes(
-    std::size_t per_sample_bytes, std::size_t per_sample_numel,
-    std::size_t batch_size, std::size_t input_index) -> ComputedInputSizes
+    PerSampleInputSizes per_sample_sizes, size_t batch_size,
+    size_t input_index) -> ComputedInputSizes
 {
   return {
       .total_bytes = detail::checked_size_product(
-          per_sample_bytes, batch_size,
+          per_sample_sizes.bytes, batch_size,
           [input_index](
               std::size_t checked_per_sample_bytes,
               std::size_t checked_batch_size) {
@@ -137,7 +142,7 @@ compute_input_sizes(
                 checked_per_sample_bytes, checked_batch_size, input_index);
           }),
       .total_numel = detail::checked_size_product(
-          per_sample_numel, batch_size,
+          per_sample_sizes.numel, batch_size,
           [input_index](
               std::size_t checked_per_sample_numel,
               std::size_t checked_batch_size) {
@@ -299,8 +304,11 @@ InputSlotPool::allocate_slot_buffers_and_register(
   try {
     for (size_t i = 0; i < n_in; ++i) {
       const auto sizes = compute_input_sizes(
-          per_input_bytes_single_[i], per_input_numel_single_[i], batch_size,
-          i);
+          PerSampleInputSizes{
+              .bytes = per_input_bytes_single_[i],
+              .numel = per_input_numel_single_[i],
+          },
+          batch_size, i);
 
       auto allocation =
           allocate_and_pin_buffer(sizes.total_bytes, want_pinned, slot_id, i);
@@ -352,7 +360,11 @@ compute_input_sizes_for_tests(
     std::size_t batch_size, std::size_t input_index)
 {
   [[maybe_unused]] const auto sizes = compute_input_sizes(
-      per_sample_bytes, per_sample_numel, batch_size, input_index);
+      PerSampleInputSizes{
+          .bytes = per_sample_bytes,
+          .numel = per_sample_numel,
+      },
+      batch_size, input_index);
 }
 }  // namespace testing
 #endif  // SONAR_IGNORE_END

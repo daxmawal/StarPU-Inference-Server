@@ -119,10 +119,10 @@ make_congestion_config(const starpu_server::RuntimeConfig& cfg)
 }
 
 struct ShutdownRuntimeContext {
-  ThreadExceptionState& thread_exception_state;
-  std::atomic<std::size_t>& completed_jobs;
-  std::condition_variable& all_done_cv;
-  std::mutex& all_done_mutex;
+  ThreadExceptionState* thread_exception_state = nullptr;
+  std::atomic<std::size_t>* completed_jobs = nullptr;
+  std::condition_variable* all_done_cv = nullptr;
+  std::mutex* all_done_mutex = nullptr;
 };
 
 void
@@ -248,17 +248,26 @@ run_shutdown_sequence(
     starpu_server::InferenceQueue& queue,
     const ShutdownRuntimeContext& runtime_context)
 {
+  if (runtime_context.thread_exception_state == nullptr ||
+      runtime_context.completed_jobs == nullptr ||
+      runtime_context.all_done_cv == nullptr ||
+      runtime_context.all_done_mutex == nullptr) {
+    throw std::invalid_argument(
+        "ShutdownRuntimeContext is not fully initialized.");
+  }
+
   wait_for_stop_request(server_ctx);
   stop_server_when_available(server_ctx);
   queue.shutdown();
   const auto total_jobs = queue.total_pushed();
   const auto completed_before_drain =
-      runtime_context.completed_jobs.load(std::memory_order_acquire);
+      runtime_context.completed_jobs->load(std::memory_order_acquire);
   log_shutdown_drain_start(opts.verbosity, total_jobs, completed_before_drain);
   drain_shutdown_jobs(
-      queue, total_jobs, runtime_context.completed_jobs, completed_before_drain,
-      runtime_context.all_done_cv, runtime_context.all_done_mutex);
+      queue, total_jobs, *runtime_context.completed_jobs,
+      completed_before_drain, *runtime_context.all_done_cv,
+      *runtime_context.all_done_mutex);
   starpu_server::congestion::shutdown();
   server_ctx.stop_cv.notify_one();
-  rethrow_thread_exception_if_any(runtime_context.thread_exception_state);
+  rethrow_thread_exception_if_any(*runtime_context.thread_exception_state);
 }

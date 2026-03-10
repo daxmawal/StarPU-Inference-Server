@@ -34,7 +34,6 @@ struct DeviceInfo {
   int* device_id = nullptr;
   int* worker_id = nullptr;
   DeviceType* executed_on = nullptr;
-  std::function<void(DeviceType, int, int)> set_runtime_device_info;
   std::function<void(int)> set_device_id;
   std::function<void(int)> set_worker_id;
   std::function<void(DeviceType)> set_executed_on;

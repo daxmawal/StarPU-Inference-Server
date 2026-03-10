@@ -298,7 +298,7 @@ class InferenceServiceImpl final
     InferenceServiceImpl* service = nullptr;
     std::string_view resolved_model_name;
     const inference::ModelInferRequest* request = nullptr;
-    MonotonicClock::time_point recv_tp{};
+    MonotonicClock::time_point recv_tp;
     std::string_view stage;
     std::string_view reason;
     const std::optional<AsyncFailureInfo>* failure_info = nullptr;

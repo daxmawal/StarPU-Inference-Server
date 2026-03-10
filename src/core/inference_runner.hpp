@@ -143,24 +143,27 @@ class JobBatchState {
   std::vector<std::shared_ptr<InferenceJob>> pending_sub_jobs_;
 };
 
-class InferenceJob : public JobBatchState {
+using InferenceJobCompletionCallback =
+    std::function<void(std::vector<torch::Tensor>, double)>;
+
+struct InferenceJobFailureInfo {
+  std::string stage;
+  std::string reason;
+  std::string message;
+  bool metrics_reported = false;
+};
+
+class InferenceJobPayloadState : public JobBatchState {
  public:
-  using AggregatedSubJob = JobBatchState::AggregatedSubJob;
-  using CompletionCallback =
-      std::function<void(std::vector<torch::Tensor>, double)>;
+  InferenceJobPayloadState() noexcept = default;
 
-  struct FailureInfo {
-    std::string stage;
-    std::string reason;
-    std::string message;
-    bool metrics_reported = false;
-  };
-
-  InferenceJob() noexcept = default;
-
-  InferenceJob(
+  InferenceJobPayloadState(
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
-      int request_identifier, CompletionCallback callback = nullptr);
+      int request_identifier)
+      : input_tensors_(std::move(inputs)), input_types_(std::move(types)),
+        request_id_(request_identifier), start_time_(MonotonicClock::now())
+  {
+  }
 
   void set_request_id(int request_id) { request_id_ = request_id; }
   void set_fixed_worker_id(int worker_id) { fixed_worker_id_ = worker_id; }
@@ -190,41 +193,6 @@ class InferenceJob : public JobBatchState {
     }
   }
   void set_start_time(MonotonicClock::time_point time) { start_time_ = time; }
-
-  void set_on_complete(CompletionCallback call_back)
-  {
-    const std::scoped_lock lock(on_complete_mutex_);
-    on_complete_ = std::move(call_back);
-  }
-  void set_model_name(std::string model_name)
-  {
-    model_name_ = std::move(model_name);
-  }
-
-  void set_failure_info(FailureInfo info)
-  {
-    const std::scoped_lock lock(failure_info_mutex_);
-    failure_info_ = std::move(info);
-  }
-  void clear_failure_info()
-  {
-    const std::scoped_lock lock(failure_info_mutex_);
-    failure_info_.reset();
-  }
-  [[nodiscard]] auto failure_info() const -> std::optional<FailureInfo>
-  {
-    const std::scoped_lock lock(failure_info_mutex_);
-    return failure_info_;
-  }
-  [[nodiscard]] auto take_failure_info() -> std::optional<FailureInfo>
-  {
-    const std::scoped_lock lock(failure_info_mutex_);
-    return std::exchange(failure_info_, std::nullopt);
-  }
-  [[nodiscard]] auto model_name() const -> std::string_view
-  {
-    return model_name_;
-  }
 
   void set_input_memory_holders(
       std::vector<std::shared_ptr<const void>> holders)
@@ -283,15 +251,75 @@ class InferenceJob : public JobBatchState {
   {
     return fixed_worker_id_;
   }
-  [[nodiscard]] auto get_on_complete() const -> CompletionCallback
+
+ private:
+  std::vector<torch::Tensor> input_tensors_;
+  std::vector<at::ScalarType> input_types_;
+  std::vector<torch::Tensor> output_tensors_;
+  std::vector<std::shared_ptr<const void>> input_memory_holders_;
+  std::shared_ptr<std::atomic<bool>> cancelled_flag_;
+
+  int request_id_ = 0;
+  int submission_id_ = -1;
+  std::optional<int> fixed_worker_id_;
+  MonotonicClock::time_point start_time_;
+};
+
+class InferenceJobCompletionState {
+ public:
+  InferenceJobCompletionState() noexcept = default;
+
+  explicit InferenceJobCompletionState(InferenceJobCompletionCallback callback)
+      : on_complete_(std::move(callback))
+  {
+  }
+
+  void set_on_complete(InferenceJobCompletionCallback call_back)
+  {
+    const std::scoped_lock lock(on_complete_mutex_);
+    on_complete_ = std::move(call_back);
+  }
+  void set_model_name(std::string model_name)
+  {
+    model_name_ = std::move(model_name);
+  }
+
+  void set_failure_info(InferenceJobFailureInfo info)
+  {
+    const std::scoped_lock lock(failure_info_mutex_);
+    failure_info_ = std::move(info);
+  }
+  void clear_failure_info()
+  {
+    const std::scoped_lock lock(failure_info_mutex_);
+    failure_info_.reset();
+  }
+  [[nodiscard]] auto failure_info() const
+      -> std::optional<InferenceJobFailureInfo>
+  {
+    const std::scoped_lock lock(failure_info_mutex_);
+    return failure_info_;
+  }
+  [[nodiscard]] auto take_failure_info()
+      -> std::optional<InferenceJobFailureInfo>
+  {
+    const std::scoped_lock lock(failure_info_mutex_);
+    return std::exchange(failure_info_, std::nullopt);
+  }
+  [[nodiscard]] auto model_name() const -> std::string_view
+  {
+    return model_name_;
+  }
+
+  [[nodiscard]] auto get_on_complete() const -> InferenceJobCompletionCallback
   {
     const std::scoped_lock lock(on_complete_mutex_);
     return on_complete_;
   }
-  [[nodiscard]] auto take_on_complete() -> CompletionCallback
+  [[nodiscard]] auto take_on_complete() -> InferenceJobCompletionCallback
   {
     const std::scoped_lock lock(on_complete_mutex_);
-    return std::exchange(on_complete_, CompletionCallback{});
+    return std::exchange(on_complete_, InferenceJobCompletionCallback{});
   }
   [[nodiscard]] auto has_on_complete() const -> bool
   {
@@ -309,49 +337,51 @@ class InferenceJob : public JobBatchState {
     return terminal_handled_.load(std::memory_order_acquire);
   }
 
-  void set_runtime_device_info(
-      DeviceType executed_on, int device_id, int worker_id)
-  {
-    const std::scoped_lock lock(runtime_device_info_mutex_);
-    executed_on_ = executed_on;
-    device_id_ = device_id;
-    worker_id_ = worker_id;
-  }
+ private:
+  mutable std::mutex on_complete_mutex_;
+  mutable std::mutex failure_info_mutex_;
+  InferenceJobCompletionCallback on_complete_;
+  std::string model_name_;
+  std::optional<InferenceJobFailureInfo> failure_info_;
+  std::atomic<bool> terminal_handled_{false};
+};
 
+class InferenceJobRuntimeState {
+ public:
   void set_device_id(int device_id)
   {
-    const std::scoped_lock lock(runtime_device_info_mutex_);
-    device_id_ = device_id;
+    const std::scoped_lock lock(runtime_device_state_.mutex);
+    runtime_device_state_.device_id = device_id;
   }
 
   void set_worker_id(int worker_id)
   {
-    const std::scoped_lock lock(runtime_device_info_mutex_);
-    worker_id_ = worker_id;
+    const std::scoped_lock lock(runtime_device_state_.mutex);
+    runtime_device_state_.worker_id = worker_id;
   }
 
   void set_executed_on(DeviceType executed_on)
   {
-    const std::scoped_lock lock(runtime_device_info_mutex_);
-    executed_on_ = executed_on;
+    const std::scoped_lock lock(runtime_device_state_.mutex);
+    runtime_device_state_.executed_on = executed_on;
   }
 
   [[nodiscard]] auto get_device_id() const -> int
   {
-    const std::scoped_lock lock(runtime_device_info_mutex_);
-    return device_id_;
+    const std::scoped_lock lock(runtime_device_state_.mutex);
+    return runtime_device_state_.device_id;
   }
 
   [[nodiscard]] auto get_worker_id() const -> int
   {
-    const std::scoped_lock lock(runtime_device_info_mutex_);
-    return worker_id_;
+    const std::scoped_lock lock(runtime_device_state_.mutex);
+    return runtime_device_state_.worker_id;
   }
 
   [[nodiscard]] auto get_executed_on() const -> DeviceType
   {
-    const std::scoped_lock lock(runtime_device_info_mutex_);
-    return executed_on_;
+    const std::scoped_lock lock(runtime_device_state_.mutex);
+    return runtime_device_state_.executed_on;
   }
 
   // Timing writer contract:
@@ -380,7 +410,7 @@ class InferenceJob : public JobBatchState {
     return timing_info_;
   }
 
-  void set_timing_info(detail::TimingInfo timing)
+  void set_timing_info(const detail::TimingInfo& timing)
   {
     const std::scoped_lock lock(timing_info_mutex_);
     timing_info_ = timing;
@@ -393,30 +423,32 @@ class InferenceJob : public JobBatchState {
         // GCOVR_EXCL_STOP
 
  private:
-  std::vector<torch::Tensor> input_tensors_;
-  std::vector<at::ScalarType> input_types_;
-  std::vector<torch::Tensor> output_tensors_;
-  std::vector<std::shared_ptr<const void>> input_memory_holders_;
-  std::shared_ptr<std::atomic<bool>> cancelled_flag_;
-
-  int request_id_ = 0;
-  int submission_id_ = -1;
-  std::optional<int> fixed_worker_id_;
-  mutable std::mutex on_complete_mutex_;
-  mutable std::mutex failure_info_mutex_;
   mutable std::mutex timing_info_mutex_;
-  mutable std::mutex runtime_device_info_mutex_;
-  CompletionCallback on_complete_;
-  MonotonicClock::time_point start_time_;
-  std::string model_name_;
-  std::optional<FailureInfo> failure_info_;
 
-  DeviceType executed_on_ = DeviceType::Unknown;
-  int device_id_ = -1;
-  int worker_id_ = -1;
-  std::atomic<bool> terminal_handled_{false};
+  struct RuntimeDeviceState {
+    mutable std::mutex mutex;
+    DeviceType executed_on = DeviceType::Unknown;
+    int device_id = -1;
+    int worker_id = -1;
+  };
 
+  RuntimeDeviceState runtime_device_state_;
   detail::TimingInfo timing_info_;
+};
+
+class InferenceJob : public InferenceJobPayloadState,
+                     public InferenceJobCompletionState,
+                     public InferenceJobRuntimeState {
+ public:
+  using AggregatedSubJob = JobBatchState::AggregatedSubJob;
+  using CompletionCallback = InferenceJobCompletionCallback;
+  using FailureInfo = InferenceJobFailureInfo;
+
+  InferenceJob() noexcept = default;
+
+  InferenceJob(
+      std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
+      int request_identifier, CompletionCallback callback = nullptr);
 };
 
 // =============================================================================

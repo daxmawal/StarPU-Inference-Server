@@ -62,7 +62,7 @@ class BatchingTraceLoggerTestAccessor {
 
   static auto summary_stream(BatchingTraceLogger& logger) -> std::ofstream&
   {
-    return logger.summary_stream_;
+    return logger.summary_writer_.summary_stream_;
   }
 
   static auto mutex(BatchingTraceLogger& logger) -> std::mutex&
@@ -84,19 +84,19 @@ class BatchingTraceLoggerTestAccessor {
   static auto summary_file_path(BatchingTraceLogger& logger)
       -> std::filesystem::path&
   {
-    return logger.summary_file_path_;
+    return logger.summary_writer_.summary_file_path_;
   }
 
   static auto queue_metrics_stream(BatchingTraceLogger& logger)
       -> std::ofstream&
   {
-    return logger.queue_metrics_stream_;
+    return logger.summary_writer_.queue_metrics_stream_;
   }
 
   static auto queue_metrics_path(BatchingTraceLogger& logger)
       -> std::filesystem::path&
   {
-    return logger.queue_metrics_path_;
+    return logger.summary_writer_.queue_metrics_path_;
   }
 
   static auto rejected_total(BatchingTraceLogger& logger)
@@ -121,24 +121,24 @@ class BatchingTraceLoggerTestAccessor {
     return logger.trace_start_initialized_;
   }
 
-  static auto relative_timestamp_us(BatchingTraceLogger& logger, int64_t ts)
-      -> int64_t
+  static auto relative_timestamp_us(
+      BatchingTraceLogger& logger, int64_t timestamp_us) -> int64_t
   {
-    return logger.relative_timestamp_us(ts);
+    return logger.relative_timestamp_us(timestamp_us);
   }
 
   static auto configure_summary_writer(
       BatchingTraceLogger& logger,
       const std::filesystem::path& trace_path) -> bool
   {
-    return logger.configure_summary_writer(trace_path);
+    return logger.summary_writer_.open(trace_path);
   }
 
   static auto configure_queue_metrics_writer(
       BatchingTraceLogger& logger,
       const std::filesystem::path& trace_path) -> bool
   {
-    return logger.configure_queue_metrics_writer(trace_path);
+    return logger.summary_writer_.open_queue_metrics(trace_path);
   }
 
   static void write_batch_compute_span(
@@ -149,21 +149,21 @@ class BatchingTraceLoggerTestAccessor {
   }
 
   static void write_batch_enqueue_span(
-      BatchingTraceLogger& logger, std::string_view model_name, int batch_id,
+      BatchingTraceLogger& logger, int batch_id, std::string_view model_name,
       std::size_t batch_size, BatchingTraceLogger::BatchSpanTiming timing,
       std::span<const int> request_ids, bool is_warmup)
   {
     logger.write_batch_enqueue_span(
-        model_name, batch_id, batch_size, timing, request_ids, is_warmup);
+        batch_id, model_name, batch_size, timing, request_ids, is_warmup);
   }
 
   static void write_batch_build_span(
-      BatchingTraceLogger& logger, std::string_view model_name, int batch_id,
+      BatchingTraceLogger& logger, int batch_id, std::string_view model_name,
       std::size_t batch_size, BatchingTraceLogger::BatchSpanTiming timing,
       std::span<const int> request_ids, bool is_warmup)
   {
     logger.write_batch_build_span(
-        model_name, batch_id, batch_size, timing, request_ids, is_warmup);
+        batch_id, model_name, batch_size, timing, request_ids, is_warmup);
   }
 
   static void write_record(
@@ -183,7 +183,7 @@ class BatchingTraceLoggerTestAccessor {
       BatchingTraceLogger& logger,
       const BatchingTraceLogger::QueueMetric& metric)
   {
-    logger.write_queue_metric_locked(metric);
+    logger.summary_writer_.write_queue_metric_locked(metric);
   }
 };
 

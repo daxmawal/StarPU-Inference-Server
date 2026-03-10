@@ -1,3 +1,16 @@
+#pragma once
+
+#include <yaml-cpp/yaml.h>
+
+#include <format>
+#include <limits>
+#include <stdexcept>
+#include <string_view>
+
+#include "config_loader_helpers.hpp"
+
+namespace starpu_server { namespace {
+
 auto
 parse_non_negative_ms(const YAML::Node& congestion_node, std::string_view key)
     -> double
@@ -180,3 +193,5 @@ parse_congestion(const YAML::Node& root, RuntimeConfig& cfg)
   parse_congestion_horizons(congestion_node, cfg);
   parse_congestion_tick(congestion_node, cfg);
 }
+
+}}  // namespace starpu_server

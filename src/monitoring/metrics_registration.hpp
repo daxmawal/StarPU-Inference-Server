@@ -1,6 +1,14 @@
-namespace {
+#pragma once
 
-auto
+#include <string>
+#include <string_view>
+
+#include "metrics_constants.hpp"
+#include "monitoring/metrics.hpp"
+
+namespace starpu_server::detail {
+
+inline auto
 register_counter_metric(
     prometheus::Registry& registry, std::string_view name,
     std::string_view help) -> prometheus::Counter*
@@ -12,7 +20,7 @@ register_counter_metric(
   return &family.Add({});
 }
 
-auto
+inline auto
 register_gauge_metric(
     prometheus::Registry& registry, std::string_view name,
     std::string_view help) -> prometheus::Gauge*
@@ -24,7 +32,7 @@ register_gauge_metric(
   return &family.Add({});
 }
 
-auto
+inline auto
 register_histogram_metric(
     prometheus::Registry& registry, std::string_view name,
     std::string_view help,
@@ -38,7 +46,7 @@ register_histogram_metric(
   return &family.Add({}, buckets);
 }
 
-void
+inline void
 register_request_counters_and_families(
     prometheus::Registry& registry, MetricsRegistry::CounterMetrics& counters,
     MetricsRegistry::FamilyMetrics& families)
@@ -93,7 +101,7 @@ register_request_counters_and_families(
   counters.requests_rejected_total = &rejected_family.Add({});
 }
 
-void
+inline void
 register_queue_runtime_and_batching_metrics(
     prometheus::Registry& registry, MetricsRegistry::GaugeMetrics& gauges,
     MetricsRegistry::HistogramMetrics& histograms)
@@ -152,7 +160,7 @@ register_queue_runtime_and_batching_metrics(
       kInferenceLatencyMsBuckets);
 }
 
-void
+inline void
 register_congestion_gauges(
     prometheus::Registry& registry,
     MetricsRegistry::GaugeMetrics::CongestionGaugeMetrics& congestion_gauges)
@@ -194,7 +202,7 @@ register_congestion_gauges(
       "Request rejection rate (requests/s)");
 }
 
-void
+inline void
 register_latency_histograms(
     prometheus::Registry& registry,
     MetricsRegistry::HistogramMetrics& histograms)
@@ -230,7 +238,7 @@ register_latency_histograms(
       "Number of logical requests aggregated into a batch", kBatchSizeBuckets);
 }
 
-void
+inline void
 register_model_gpu_and_worker_metrics(
     prometheus::Registry& registry,
     MetricsRegistry::HistogramMetrics& histograms,
@@ -330,4 +338,4 @@ register_model_gpu_and_worker_metrics(
           .Register(registry);
   families.transfer_bytes = &transfer_bytes_family;
 }
-}  // namespace
+}  // namespace starpu_server::detail

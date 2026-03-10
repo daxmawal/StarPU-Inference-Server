@@ -51,11 +51,11 @@ compute_latency_statistics(
       };
   std::ranges::sort(order, comparator);
 
-  const auto sorted_value = [&](std::size_t rank) -> double {
+  const auto sorted_value = [&](std::size_t rank) {
     return projected_value(order[rank]);
   };
 
-  const auto percentile_value = [&](double percentile) -> double {
+  const auto percentile_value = [&](double percentile) {
     if (percentile <= 0.0) {
       return sorted_value(0);
     }

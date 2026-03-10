@@ -38,11 +38,7 @@ normalize_output_slot_pool_dependencies(
     };
   }
   if (!dependencies.host_deallocator) {
-    dependencies.host_deallocator = [](void* ptr) noexcept {
-      if (ptr != nullptr) {
-        std::free(ptr);  // NOLINT(cppcoreguidelines-no-malloc)
-      }
-    };
+    dependencies.host_deallocator = &std::free;
   }
   if (!dependencies.starpu_memory_pin) {
     dependencies.starpu_memory_pin = &starpu_memory_pin;

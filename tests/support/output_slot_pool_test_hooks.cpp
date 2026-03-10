@@ -149,12 +149,11 @@ set_output_cuda_host_alloc_for_tests(OutputCudaHostAllocFn allocator)
   auto& allocator_hook = OutputSlotPoolTestHook::cuda_host_alloc_hook_ref();
   const auto previous = allocator_hook;
   allocator_hook =
-      allocator
-          ? std::move(allocator)
-          : OutputCudaHostAllocFn{
-                [](void** ptr, size_t size, unsigned int flags) -> int {
-                  return static_cast<int>(cudaHostAlloc(ptr, size, flags));
-                }};
+      allocator ? std::move(allocator)
+                : OutputCudaHostAllocFn{[](void** ptr, size_t size,
+                                           unsigned int flags) {
+                    return static_cast<int>(cudaHostAlloc(ptr, size, flags));
+                  }};
   return previous;
 }
 

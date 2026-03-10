@@ -34,7 +34,7 @@ void clear_handle_async_infer_completion_test_hooks();
 void set_submit_job_async_test_hooks(SubmitJobAsyncTestHooks hooks);
 void clear_submit_job_async_test_hooks();
 void set_check_missing_named_inputs_override(
-    detail::CheckMissingNamedInputsOverrideFn fn);
+    detail::CheckMissingNamedInputsOverrideFn override_fn);
 void clear_check_missing_named_inputs_override();
 
 auto normalize_names_for_test(

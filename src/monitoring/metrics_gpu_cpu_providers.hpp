@@ -1,3 +1,38 @@
+#pragma once
+
+#include <unistd.h>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <functional>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+#include "monitoring/metrics.hpp"
+
+#ifdef STARPU_HAVE_NVML
+#include <nvml.h>
+#endif
+
+#include "metrics_constants.hpp"
+#include "metrics_labels.hpp"
+#include "utils/logger.hpp"
+
+namespace starpu_server { namespace {
+
+using monitoring::detail::CpuTotals;
+
 auto
 ensure_gpu_gauge(
     std::unordered_map<int, prometheus::Gauge*>& gauges,
@@ -338,9 +373,9 @@ query_gpu_stats_nvml() -> std::vector<GpuSample>
 }
 
 #endif  // STARPU_HAVE_NVML
-}  // namespace
+}}  // namespace starpu_server
 
-namespace monitoring::detail {
+namespace starpu_server::monitoring::detail {
 
 auto
 read_total_cpu_times(std::istream& input, CpuTotals& out) -> bool
@@ -621,7 +656,9 @@ metrics_request_stop_skip_join_for_test() -> bool
 }
 #endif  // SONAR_IGNORE_END
 
-}  // namespace monitoring::detail
+}  // namespace starpu_server::monitoring::detail
+
+namespace starpu_server {
 
 auto
 make_default_cpu_usage_provider(
@@ -639,3 +676,5 @@ make_default_cpu_usage_provider() -> CpuUsageProvider
         return read_total_cpu_times(totals);
       });
 }
+
+}  // namespace starpu_server

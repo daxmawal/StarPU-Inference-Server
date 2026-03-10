@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <exception>
 #include <new>
 #include <stdexcept>
@@ -9,7 +10,7 @@
 
 namespace starpu_server {
 
-enum class ExceptionCategory {
+enum class ExceptionCategory : std::uint8_t {
   InferenceEngine,
   RuntimeError,
   LogicError,
@@ -35,7 +36,7 @@ classify_and_handle_exception(
   }
 
   if (exception == nullptr) {
-    on_unknown_exception();
+    std::forward<OnUnknownException>(on_unknown_exception)();
     return;
   }
 
@@ -43,22 +44,23 @@ classify_and_handle_exception(
     std::rethrow_exception(exception);
   }
   catch (const InferenceEngineException& caught_exception) {
-    on_inference_engine_exception(caught_exception);
+    std::forward<OnInferenceEngineException>(on_inference_engine_exception)(
+        caught_exception);
   }
   catch (const std::runtime_error& caught_exception) {
-    on_runtime_error(caught_exception);
+    std::forward<OnRuntimeError>(on_runtime_error)(caught_exception);
   }
   catch (const std::logic_error& caught_exception) {
-    on_logic_error(caught_exception);
+    std::forward<OnLogicError>(on_logic_error)(caught_exception);
   }
   catch (const std::bad_alloc& caught_exception) {
-    on_bad_alloc(caught_exception);
+    std::forward<OnBadAlloc>(on_bad_alloc)(caught_exception);
   }
   catch (const std::exception& caught_exception) {
-    on_std_exception(caught_exception);
+    std::forward<OnStdException>(on_std_exception)(caught_exception);
   }
   catch (...) {
-    on_unknown_exception();
+    std::forward<OnUnknownException>(on_unknown_exception)();
   }
 }
 
@@ -71,25 +73,29 @@ classify_and_handle_exception(
   classify_and_handle_exception(
       std::move(exception),
       [&](const InferenceEngineException& caught_exception) {
-        on_classified_exception(
+        std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::InferenceEngine, &caught_exception);
       },
       [&](const std::runtime_error& caught_exception) {
-        on_classified_exception(
+        std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::RuntimeError, &caught_exception);
       },
       [&](const std::logic_error& caught_exception) {
-        on_classified_exception(
+        std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::LogicError, &caught_exception);
       },
       [&](const std::bad_alloc& caught_exception) {
-        on_classified_exception(ExceptionCategory::BadAlloc, &caught_exception);
+        std::forward<OnClassifiedException>(on_classified_exception)(
+            ExceptionCategory::BadAlloc, &caught_exception);
       },
       [&](const std::exception& caught_exception) {
-        on_classified_exception(
+        std::forward<OnClassifiedException>(on_classified_exception)(
             ExceptionCategory::StdException, &caught_exception);
       },
-      [&]() { on_classified_exception(ExceptionCategory::Unknown, nullptr); });
+      [&]() {
+        std::forward<OnClassifiedException>(on_classified_exception)(
+            ExceptionCategory::Unknown, nullptr);
+      });
 }
 
 }  // namespace starpu_server

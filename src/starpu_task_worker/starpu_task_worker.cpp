@@ -471,7 +471,7 @@ StarPUTaskRunner::finalize_job_after_exception(
   const std::string model_label = job != nullptr
                                       ? std::string{job->model_name()}
                                       : std::string{"<unknown>"};
-  const std::string_view reason = [&exception]() -> std::string_view {
+  const std::string_view reason = [&exception]() {
     if (dynamic_cast<const std::bad_alloc*>(&exception) != nullptr) {
       return "bad_alloc";
     }

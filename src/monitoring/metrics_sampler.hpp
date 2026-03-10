@@ -1,3 +1,21 @@
+#pragma once
+
+#include <chrono>
+#include <exception>
+#include <format>
+#include <limits>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_set>
+
+#include "metrics_gpu_cpu_providers.hpp"
+#include "monitoring/metrics.hpp"
+#include "utils/logger.hpp"
+#include "utils/perf_observer.hpp"
+
+namespace starpu_server {
+
 class MetricsRegistry::Sampler {
  public:
   explicit Sampler(MetricsRegistry& registry) : registry_(&registry) {}
@@ -231,3 +249,5 @@ MetricsRegistry::has_cpu_usage_provider() const -> bool
   return static_cast<bool>(providers_.cpu_usage_provider);
 }
 #endif  // SONAR_IGNORE_END
+
+}  // namespace starpu_server

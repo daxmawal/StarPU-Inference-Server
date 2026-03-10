@@ -229,7 +229,9 @@ TEST_F(
   EXPECT_TRUE(job1->get_input_tensors().empty());
   EXPECT_TRUE(job2->get_input_tensors().empty());
 
-  master->set_runtime_device_info(starpu_server::DeviceType::CUDA, 11, 13);
+  master->set_executed_on(starpu_server::DeviceType::CUDA);
+  master->set_device_id(11);
+  master->set_worker_id(13);
   master->set_submission_id(99);
   master->timing_info().submission_id = 99;
 
@@ -814,7 +816,9 @@ TEST(
 
   aggregated->set_submission_id(77);
   aggregated->timing_info().submission_id = 77;
-  aggregated->set_runtime_device_info(starpu_server::DeviceType::CUDA, 5, 7);
+  aggregated->set_executed_on(starpu_server::DeviceType::CUDA);
+  aggregated->set_device_id(5);
+  aggregated->set_worker_id(7);
 
   const auto base = internal::Clock::now();
   aggregated->set_start_time(base + std::chrono::milliseconds(10));

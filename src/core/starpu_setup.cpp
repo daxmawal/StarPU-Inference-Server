@@ -691,25 +691,20 @@ run_codelet_inference(
             worker_id, params->request_id));
   }
 
-  if (params->device.set_runtime_device_info) {
-    params->device.set_runtime_device_info(
-        executed_on_type, device_id, worker_id);
-  } else {
-    if (params->device.set_executed_on) {
-      params->device.set_executed_on(executed_on_type);
-    } else if (params->device.executed_on) {
-      *params->device.executed_on = executed_on_type;
-    }
-    if (params->device.set_worker_id) {
-      params->device.set_worker_id(worker_id);
-    } else if (params->device.worker_id) {
-      *params->device.worker_id = worker_id;
-    }
-    if (params->device.set_device_id) {
-      params->device.set_device_id(device_id);
-    } else if (params->device.device_id) {
-      *params->device.device_id = device_id;
-    }
+  if (params->device.set_executed_on) {
+    params->device.set_executed_on(executed_on_type);
+  } else if (params->device.executed_on) {
+    *params->device.executed_on = executed_on_type;
+  }
+  if (params->device.set_worker_id) {
+    params->device.set_worker_id(worker_id);
+  } else if (params->device.worker_id) {
+    *params->device.worker_id = worker_id;
+  }
+  if (params->device.set_device_id) {
+    params->device.set_device_id(device_id);
+  } else if (params->device.device_id) {
+    *params->device.device_id = device_id;
   }
 
   try {

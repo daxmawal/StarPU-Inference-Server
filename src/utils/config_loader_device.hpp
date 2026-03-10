@@ -1,3 +1,15 @@
+#pragma once
+
+#include <yaml-cpp/yaml.h>
+
+#include <format>
+#include <stdexcept>
+#include <unordered_set>
+
+#include "config_loader_helpers.hpp"
+
+namespace starpu_server { namespace {
+
 void
 parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
 {
@@ -86,3 +98,5 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
         "entry");
   }
 }
+
+}}  // namespace starpu_server

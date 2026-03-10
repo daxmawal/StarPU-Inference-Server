@@ -1,3 +1,20 @@
+#pragma once
+
+#include <yaml-cpp/yaml.h>
+
+#include <cstddef>
+#include <format>
+#include <limits>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "config_loader_helpers.hpp"
+#include "datatype_utils.hpp"
+
+namespace starpu_server { namespace {
+
 void
 parse_tensor_name(
     const YAML::Node& node, std::size_t index, std::string_view label,
@@ -133,3 +150,5 @@ parse_io_nodes(const YAML::Node& root, RuntimeConfig& cfg)
         root["outputs"], cfg.limits.max_inputs, "outputs", cfg.limits.max_dims);
   }
 }
+
+}}  // namespace starpu_server

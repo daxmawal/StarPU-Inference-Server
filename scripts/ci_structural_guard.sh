@@ -24,7 +24,7 @@ done
 
 mapfile -t leaked_test_helpers < <(find src -type f \( "${find_args[@]}" \) | sort)
 if ((${#leaked_test_helpers[@]} > 0)); then
-  echo "::error::Test-only helper files must live under tests/support, not src/."
+  echo "::error::Test-only helper files must live under tests/support, not src/." >&2
   printf '  - %s\n' "${leaked_test_helpers[@]}"
   fail=1
 fi
@@ -70,13 +70,12 @@ else
 fi
 
 if ! diff -u "$tmp_expected" "$tmp_actual" > /dev/null; then
-  echo "::error::Unexpected src/ files include test support headers. Keep includes constrained and update this allowlist intentionally."
+  echo "::error::Unexpected src/ files include test support headers. Keep includes constrained and update this allowlist intentionally." >&2
   diff -u "$tmp_expected" "$tmp_actual" || true
   fail=1
 fi
 
-if ((${#support_include_files[@]} > 0)); then
-  if ! python3 - "${support_include_files[@]}" <<'PY'
+if ((${#support_include_files[@]} > 0)) && ! python3 - "${support_include_files[@]}" <<'PY'
 import pathlib
 import re
 import sys
@@ -144,9 +143,8 @@ for file_path in sys.argv[1:]:
 if had_error:
     sys.exit(1)
 PY
-  then
-    fail=1
-  fi
+then
+  fail=1
 fi
 
 if ((fail != 0)); then

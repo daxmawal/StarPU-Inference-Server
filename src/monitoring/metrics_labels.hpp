@@ -1,3 +1,10 @@
+#pragma once
+
+#include <string>
+#include <string_view>
+
+namespace starpu_server { namespace {
+
 const std::string kOverflowLabel{"__overflow__"};
 constexpr std::string_view kLabelEscapePrefix{"__label__"};
 
@@ -74,3 +81,5 @@ escape_label_value(std::string_view value) -> std::string
   }
   return std::string(value);
 }
+
+}}  // namespace starpu_server

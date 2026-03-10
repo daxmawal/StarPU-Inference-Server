@@ -304,7 +304,7 @@ make_unary_rpc_descriptor() -> UnaryRpcDescriptor
 auto
 unary_rpc_descriptors() -> std::span<const UnaryRpcDescriptor>
 {
-  static constexpr UnaryRpcDescriptor kUnaryRpcDescriptors[] = {
+  static constexpr std::array kUnaryRpcDescriptors = {
       make_unary_rpc_descriptor<
           inference::ServerLiveRequest, inference::ServerLiveResponse,
           &inference::GRPCInferenceService::AsyncService::RequestServerLive,

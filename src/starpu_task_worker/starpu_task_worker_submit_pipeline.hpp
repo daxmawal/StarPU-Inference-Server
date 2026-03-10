@@ -94,7 +94,7 @@ StarPUTaskRunner::handle_submission_failure(
 
 auto
 StarPUTaskRunner::make_submit_pipeline_context(
-    const std::shared_ptr<InferenceJob>& job) const -> SubmitPipelineContext
+    const std::shared_ptr<InferenceJob>& job) -> SubmitPipelineContext
 {
   SubmitPipelineContext context{};
   context.job = job;

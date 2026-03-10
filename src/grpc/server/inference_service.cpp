@@ -3,6 +3,7 @@
 #include <grpcpp/health_check_service_interface.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>

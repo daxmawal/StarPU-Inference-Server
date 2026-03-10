@@ -256,6 +256,27 @@ class BatchingTraceLogger {
  private:
   friend class testing::BatchingTraceLoggerTestAccessor;
 
+  class SummaryWriter {
+   public:
+    auto open(const std::filesystem::path& trace_path) -> bool;
+    void close();
+    void write_summary_line_locked(const BatchSummaryLogArgs& args);
+    void write_queue_metric_locked(const QueueMetric& metric);
+    [[nodiscard]] auto file_path() const -> const std::filesystem::path&;
+    [[nodiscard]] auto is_summary_open() const -> bool;
+
+   private:
+    friend class testing::BatchingTraceLoggerTestAccessor;
+
+    [[nodiscard]] auto open_queue_metrics(
+        const std::filesystem::path& trace_path) -> bool;
+
+    std::ofstream summary_stream_;
+    std::filesystem::path summary_file_path_;
+    std::ofstream queue_metrics_stream_;
+    std::filesystem::path queue_metrics_path_;
+  };
+
   void write_record(
       BatchingTraceEvent event, std::string_view model_name,
       const BatchRecordContext& record_context,
@@ -264,24 +285,17 @@ class BatchingTraceLogger {
       bool is_warmup = false);
   void write_batch_compute_span(const BatchComputeWriteArgs& args);
   void write_batch_enqueue_span(
-      std::string_view model_name, int batch_id, std::size_t batch_size,
+      int batch_id, std::string_view model_name, std::size_t batch_size,
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
   void write_batch_build_span(
-      std::string_view model_name, int batch_id, std::size_t batch_size,
+      int batch_id, std::string_view model_name, std::size_t batch_size,
       BatchSpanTiming timing, std::span<const int> request_ids, bool is_warmup);
-  void write_summary_line_locked(const BatchSummaryLogArgs& args);
-  void write_queue_metric_locked(const QueueMetric& metric);
   void write_trace_line_with_lock(
       int thread_id, std::string_view thread_name, int sort_index,
-      std::string line);
+      const std::string& line);
   void write_trace_line_locked(
       int thread_id, std::string_view thread_name, int sort_index,
-      std::string line);
-  auto configure_summary_writer(const std::filesystem::path& trace_path)
-      -> bool;
-  void close_summary_writer();
-  [[nodiscard]] auto configure_queue_metrics_writer(
-      const std::filesystem::path& trace_path) -> bool;
+      const std::string& line);
   [[nodiscard]] auto relative_timestamp_from_time_point(
       MonotonicClock::time_point time_point) const -> std::optional<int64_t>;
   [[nodiscard]] auto logging_enabled() const -> bool;
@@ -299,10 +313,7 @@ class BatchingTraceLogger {
   detail::TraceFileWriter trace_writer_;
   detail::RequestTimelineTracker request_timeline_;
   detail::WorkerLaneManager worker_lane_manager_;
-  std::ofstream summary_stream_;
-  std::filesystem::path summary_file_path_;
-  std::ofstream queue_metrics_stream_;
-  std::filesystem::path queue_metrics_path_;
+  SummaryWriter summary_writer_;
   std::atomic<std::size_t> rejected_total_{0};
   std::atomic<bool> warmup_suppressed_{false};
 };

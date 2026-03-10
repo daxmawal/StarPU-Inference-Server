@@ -33,6 +33,11 @@
 #include <nvml.h>
 #endif
 
+#include "metrics_constants.hpp"
+#include "metrics_gpu_cpu_providers.hpp"
+#include "metrics_labels.hpp"
+#include "metrics_registration.hpp"
+#include "metrics_sampler.hpp"
 #include "utils/logger.hpp"
 #include "utils/perf_observer.hpp"
 
@@ -75,38 +80,6 @@ class PrometheusExposerHandle : public MetricsRegistry::ExposerHandle {
  private:
   std::unique_ptr<prometheus::Exposer> exposer_;
 };
-
-namespace {
-using monitoring::detail::CpuTotals;
-
-const std::filesystem::path kProcStatm{"/proc/self/statm"};
-
-const prometheus::Histogram::BucketBoundaries kInferenceLatencyMsBuckets{
-    1, 5, 10, 25, 50, 100, 250, 500, 1000};
-const prometheus::Histogram::BucketBoundaries kBatchSizeBuckets{
-    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024};
-const prometheus::Histogram::BucketBoundaries kBatchEfficiencyBuckets{
-    0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0, 8.0};
-const prometheus::Histogram::BucketBoundaries kModelLoadDurationMsBuckets{
-    10, 50, 100, 200, 500, 1000, 2000, 5000, 10000};
-const prometheus::Histogram::BucketBoundaries kTaskRuntimeMsBuckets{
-    1, 5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000};
-
-constexpr std::size_t kMaxLabelSeries = 10000;
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(0);
-#else
-constexpr auto kSamplingErrorLogThrottle = std::chrono::seconds(60);
-#endif  // SONAR_IGNORE_END
-
-// Shared label and series helpers.
-#include "metrics_labels.hpp"
-// CPU/GPU providers and process/system sampling sources.
-#include "metrics_gpu_cpu_providers.hpp"
-// Prometheus family/series registration.
-#include "metrics_registration.hpp"
-// Sampler implementation and sampler lifecycle hooks.
-#include "metrics_sampler.hpp"
 
 MetricsRegistry::MetricsRegistry(int port)
     : MetricsRegistry(
@@ -160,11 +133,14 @@ MetricsRegistry::initialize(
   }
 
   auto& registry = *registry_state_.registry;
-  register_request_counters_and_families(registry, counters_, families_);
-  register_queue_runtime_and_batching_metrics(registry, gauges_, histograms_);
-  register_congestion_gauges(registry, gauges_.congestion);
-  register_latency_histograms(registry, histograms_);
-  register_model_gpu_and_worker_metrics(registry, histograms_, families_);
+  detail::register_request_counters_and_families(
+      registry, counters_, families_);
+  detail::register_queue_runtime_and_batching_metrics(
+      registry, gauges_, histograms_);
+  detail::register_congestion_gauges(registry, gauges_.congestion);
+  detail::register_latency_histograms(registry, histograms_);
+  detail::register_model_gpu_and_worker_metrics(
+      registry, histograms_, families_);
 
   if (start_sampler_thread) {
     registry_state_.sampler_thread = std::jthread(
@@ -269,7 +245,7 @@ set_gauge(
 {
   with_metrics_registry([member, value, transform = std::move(transform)](
                             MetricsRegistry& metrics) mutable {
-    const double metric_value =
+    const auto metric_value =
         static_cast<double>(std::invoke(transform, value));
     set_gauge_if_present(metrics.gauges().*member, metric_value);
   });
@@ -285,9 +261,9 @@ set_gauge(
   with_metrics_registry(
       [congestion_member, member, value,
        transform = std::move(transform)](MetricsRegistry& metrics) mutable {
-        const double metric_value =
+        const auto metric_value =
             static_cast<double>(std::invoke(transform, value));
-        auto& congestion_metrics = metrics.gauges().*congestion_member;
+        const auto& congestion_metrics = metrics.gauges().*congestion_member;
         set_gauge_if_present(congestion_metrics.*member, metric_value);
       });
 }
@@ -300,7 +276,7 @@ observe_histogram(
 {
   with_metrics_registry([member, value, transform = std::move(transform)](
                             MetricsRegistry& metrics) mutable {
-    const double metric_value =
+    const auto metric_value =
         static_cast<double>(std::invoke(transform, value));
     observe_histogram_if_non_negative(
         metrics.histograms().*member, metric_value);
@@ -323,7 +299,7 @@ increment_counter(
 {
   with_metrics_registry([member, value, transform = std::move(transform)](
                             MetricsRegistry& metrics) mutable {
-    const double metric_value =
+    const auto metric_value =
         static_cast<double>(std::invoke(transform, value));
     increment_counter_if_present(metrics.counters().*member, metric_value);
   });
@@ -342,7 +318,7 @@ get_or_create_cached_series(Map& cache, Key lookup_key, Factory&& create_metric)
         cache.try_emplace(std::move(map_key), nullptr);
     entry = inserted_it;
     if (inserted) {
-      entry->second = create_metric(overflow);
+      entry->second = std::forward<Factory>(create_metric)(overflow);
     }
   }
   return entry->second;
@@ -668,29 +644,40 @@ observe_batch_efficiency(double ratio)
   observe_histogram(&HistogramMetrics::batch_efficiency, ratio);
 }
 
+namespace {
+
+void
+record_latency_breakdown(
+    MetricsRegistry::HistogramMetrics& histograms,
+    const LatencyBreakdownMetrics& breakdown)
+{
+  observe_histogram_if_non_negative(
+      histograms.queue_latency, breakdown.queue_ms);
+  observe_histogram_if_non_negative(
+      histograms.batch_collect_latency, breakdown.batch_ms);
+  observe_histogram_if_non_negative(
+      histograms.submit_latency, breakdown.submit_ms);
+  observe_histogram_if_non_negative(
+      histograms.scheduling_latency, breakdown.scheduling_ms);
+  observe_histogram_if_non_negative(
+      histograms.codelet_latency, breakdown.codelet_ms);
+  observe_histogram_if_non_negative(
+      histograms.inference_compute_latency, breakdown.inference_ms);
+  observe_histogram_if_non_negative(
+      histograms.callback_latency, breakdown.callback_ms);
+  observe_histogram_if_non_negative(
+      histograms.preprocess_latency, breakdown.preprocess_ms);
+  observe_histogram_if_non_negative(
+      histograms.postprocess_latency, breakdown.postprocess_ms);
+}
+
+}  // namespace
+
 void
 observe_latency_breakdown(const LatencyBreakdownMetrics& breakdown)
 {
   with_metrics_registry([&breakdown](MetricsRegistry& metrics) {
-    auto& histograms = metrics.histograms();
-    observe_histogram_if_non_negative(
-        histograms.queue_latency, breakdown.queue_ms);
-    observe_histogram_if_non_negative(
-        histograms.batch_collect_latency, breakdown.batch_ms);
-    observe_histogram_if_non_negative(
-        histograms.submit_latency, breakdown.submit_ms);
-    observe_histogram_if_non_negative(
-        histograms.scheduling_latency, breakdown.scheduling_ms);
-    observe_histogram_if_non_negative(
-        histograms.codelet_latency, breakdown.codelet_ms);
-    observe_histogram_if_non_negative(
-        histograms.inference_compute_latency, breakdown.inference_ms);
-    observe_histogram_if_non_negative(
-        histograms.callback_latency, breakdown.callback_ms);
-    observe_histogram_if_non_negative(
-        histograms.preprocess_latency, breakdown.preprocess_ms);
-    observe_histogram_if_non_negative(
-        histograms.postprocess_latency, breakdown.postprocess_ms);
+    record_latency_breakdown(metrics.histograms(), breakdown);
   });
 }
 
@@ -787,7 +774,7 @@ MetricsRegistry::increment_status_counter(
   std::scoped_lock lock(mutexes_.status);
   auto* counter = get_or_create_cached_series(
       caches_.status.counters, std::move(key),
-      [this, code_label, model_label](bool overflow) -> prometheus::Counter* {
+      [this, code_label, model_label](bool overflow) {
         const std::string code_label_value =
             overflow ? kOverflowLabel : escape_label_value(code_label.value);
         const std::string model_label_value =
@@ -808,7 +795,7 @@ MetricsRegistry::increment_completed_counter(
   std::scoped_lock lock(mutexes_.model_metrics);
   auto* counter = get_or_create_cached_series(
       caches_.model.inference_completed, ModelKey{std::string(model_label)},
-      [this, model_label](bool overflow) -> prometheus::Counter* {
+      [this, model_label](bool overflow) {
         const std::string model_label_value =
             overflow ? kOverflowLabel : escape_label_value(model_label);
         return &families_.inference_completed->Add(
@@ -826,7 +813,7 @@ MetricsRegistry::increment_received_counter(std::string_view model_label)
   std::scoped_lock lock(mutexes_.model_metrics);
   auto* counter = get_or_create_cached_series(
       caches_.model.requests_received, ModelKey{std::string(model_label)},
-      [this, model_label](bool overflow) -> prometheus::Counter* {
+      [this, model_label](bool overflow) {
         const std::string model_label_value =
             overflow ? kOverflowLabel : escape_label_value(model_label);
         return &families_.requests_received->Add(
@@ -877,7 +864,7 @@ MetricsRegistry::increment_model_load_failure_counter(
   std::scoped_lock lock(mutexes_.model_metrics);
   auto* counter = get_or_create_cached_series(
       caches_.model.model_load_failures, ModelKey{std::string(model_label)},
-      [this, model_label](bool overflow) -> prometheus::Counter* {
+      [this, model_label](bool overflow) {
         const std::string model_label_value =
             overflow ? kOverflowLabel : escape_label_value(model_label);
         return &families_.model_load_failures->Add(
@@ -900,7 +887,7 @@ MetricsRegistry::set_model_loaded_flag(
   std::scoped_lock lock(mutexes_.model_metrics);
   auto* gauge = get_or_create_cached_series(
       caches_.model.models_loaded, std::move(key),
-      [this, model_label, device_label](bool overflow) -> prometheus::Gauge* {
+      [this, model_label, device_label](bool overflow) {
         const std::string model_label_value =
             overflow ? kOverflowLabel : escape_label_value(model_label.value);
         const std::string device_label_value =

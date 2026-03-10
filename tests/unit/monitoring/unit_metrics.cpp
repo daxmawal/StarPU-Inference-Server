@@ -274,7 +274,7 @@ TEST(MetricsRegistration, RegisterCounterMetricBuildsCounterFamily)
 {
   prometheus::Registry registry;
 
-  auto* counter = register_counter_metric(
+  auto* counter = detail::register_counter_metric(
       registry, "unit_test_counter_total",
       "Counter used by unit test for registration helper");
   ASSERT_NE(counter, nullptr);

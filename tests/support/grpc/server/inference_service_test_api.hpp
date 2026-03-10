@@ -47,7 +47,7 @@ class InferenceServiceTestAccessor {
   static void SetSubmitJobAsyncTestHooks(SubmitJobAsyncTestHooks hooks);
   static void ClearSubmitJobAsyncTestHooks();
   static void SetCheckMissingNamedInputsOverrideForTest(
-      CheckMissingNamedInputsOverrideFn fn);
+      CheckMissingNamedInputsOverrideFn override_fn);
   static void ClearCheckMissingNamedInputsOverrideForTest();
 
   static auto NormalizeNamesForTest(

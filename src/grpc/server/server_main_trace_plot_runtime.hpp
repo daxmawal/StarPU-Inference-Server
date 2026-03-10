@@ -308,14 +308,14 @@ run_plot_script(
 
 auto
 read_symlink_for_candidate_plot_scripts(
-    const std::filesystem::path& path, std::error_code& ec,
+    const std::filesystem::path& path, std::error_code& error_code,
     const TracePlotRuntimeHooks* hooks = nullptr) -> std::filesystem::path
 {
   if (hooks != nullptr &&
       hooks->candidate_plot_scripts_read_symlink != nullptr) {
-    return hooks->candidate_plot_scripts_read_symlink(path, ec);
+    return hooks->candidate_plot_scripts_read_symlink(path, error_code);
   }
-  return std::filesystem::read_symlink(path, ec);
+  return std::filesystem::read_symlink(path, error_code);
 }
 
 auto

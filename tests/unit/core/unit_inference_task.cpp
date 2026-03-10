@@ -147,7 +147,7 @@ using DataUnregisterFn = void (*)(starpu_data_handle_t);
 inline auto
 resolve_real_starpu_data_unregister() -> DataUnregisterFn
 {
-  static DataUnregisterFn fn = []() -> DataUnregisterFn {
+  static DataUnregisterFn fn = []() {
     void* symbol = dlsym(RTLD_NEXT, "starpu_data_unregister");
     if (symbol == nullptr) {
       throw std::runtime_error("Failed to resolve starpu_data_unregister");
@@ -438,7 +438,7 @@ TEST_F(InferenceTaskTest, CreateTaskCleansUpWhenAssignFixedWorkerThrows)
 
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
-  dependencies.task_create_fn = []() -> starpu_task* {
+  dependencies.task_create_fn = []() {
     return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
   };
 
@@ -473,7 +473,7 @@ TEST_F(
   auto job = make_job(6, 0);
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
-  dependencies.task_create_fn = []() -> starpu_task* {
+  dependencies.task_create_fn = []() {
     return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
   };
   auto task = make_task(job, 0, &dependencies);
@@ -508,7 +508,7 @@ TEST_F(InferenceTaskTest, CreateTaskUsesDependenciesOwnerWhenProvided)
   auto job = make_job(7, 0);
   starpu_server::InferenceTaskDependencies dependencies =
       starpu_server::kDefaultInferenceTaskDependencies;
-  dependencies.task_create_fn = []() -> starpu_task* {
+  dependencies.task_create_fn = []() {
     return static_cast<starpu_task*>(std::calloc(1, sizeof(starpu_task)));
   };
   auto task = make_task(job, 0, &dependencies);
@@ -681,7 +681,9 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   EXPECT_EQ(params->device.device_id, nullptr);
   EXPECT_EQ(params->device.worker_id, nullptr);
   EXPECT_EQ(params->device.executed_on, nullptr);
-  ASSERT_TRUE(static_cast<bool>(params->device.set_runtime_device_info));
+  ASSERT_TRUE(static_cast<bool>(params->device.set_executed_on));
+  ASSERT_TRUE(static_cast<bool>(params->device.set_device_id));
+  ASSERT_TRUE(static_cast<bool>(params->device.set_worker_id));
   ASSERT_TRUE(static_cast<bool>(params->timing.set_codelet_start_time));
   ASSERT_TRUE(static_cast<bool>(params->timing.set_codelet_end_time));
   ASSERT_TRUE(static_cast<bool>(params->timing.set_inference_start_time));
@@ -689,7 +691,9 @@ TEST_F(InferenceTaskTest, CreateInferenceParamsPopulatesFields)
   const auto codelet_start = starpu_server::MonotonicClock::now();
   const auto inference_start = codelet_start + std::chrono::microseconds(100);
   const auto codelet_end = codelet_start + std::chrono::microseconds(250);
-  params->device.set_runtime_device_info(starpu_server::DeviceType::CUDA, 3, 8);
+  params->device.set_executed_on(starpu_server::DeviceType::CUDA);
+  params->device.set_device_id(3);
+  params->device.set_worker_id(8);
   params->timing.set_codelet_start_time(codelet_start);
   params->timing.set_inference_start_time(inference_start);
   params->timing.set_codelet_end_time(codelet_end);

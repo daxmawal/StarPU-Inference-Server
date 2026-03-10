@@ -7,16 +7,20 @@ append_input_schema(
     std::span<const std::string> expected_input_names, AddEntry&& add_entry,
     SetDataType&& set_data_type, AppendDim&& append_dim) -> Status
 {
+  auto add_entry_fn = std::forward<AddEntry>(add_entry);
+  auto set_data_type_fn = std::forward<SetDataType>(set_data_type);
+  auto append_dim_fn = std::forward<AppendDim>(append_dim);
+
   for (std::size_t i = 0; i < expected_input_types.size(); ++i) {
-    auto* input = add_entry();
+    auto* input = add_entry_fn();
     input->set_name(resolve_tensor_name(i, expected_input_names, "input"));
-    if (const Status status = set_data_type(*input, expected_input_types[i]);
+    if (const Status status = set_data_type_fn(*input, expected_input_types[i]);
         !status.ok()) {
       return status;
     }
     if (i < expected_input_dims.size()) {
       for (const auto dim : expected_input_dims[i]) {
-        append_dim(*input, dim);
+        append_dim_fn(*input, dim);
       }
     }
   }
@@ -30,22 +34,26 @@ append_output_schema(
     std::span<const std::string> expected_output_names, AddEntry&& add_entry,
     SetDataType&& set_data_type, AppendDim&& append_dim) -> Status
 {
+  auto add_entry_fn = std::forward<AddEntry>(add_entry);
+  auto set_data_type_fn = std::forward<SetDataType>(set_data_type);
+  auto append_dim_fn = std::forward<AppendDim>(append_dim);
+
   if (reference_outputs == nullptr) {
     return Status::OK;
   }
 
   for (std::size_t i = 0; i < reference_outputs->size(); ++i) {
     const auto& output = (*reference_outputs)[i];
-    auto* output_entry = add_entry();
+    auto* output_entry = add_entry_fn();
     output_entry->set_name(
         resolve_tensor_name(i, expected_output_names, "output"));
     if (const Status status =
-            set_data_type(*output_entry, output.scalar_type());
+            set_data_type_fn(*output_entry, output.scalar_type());
         !status.ok()) {
       return status;
     }
     for (const auto dim : output.sizes()) {
-      append_dim(*output_entry, dim);
+      append_dim_fn(*output_entry, dim);
     }
   }
 

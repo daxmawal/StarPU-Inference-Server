@@ -144,9 +144,9 @@ clear_submit_job_async_test_hooks()
 
 void
 set_check_missing_named_inputs_override(
-    detail::CheckMissingNamedInputsOverrideFn fn)
+    detail::CheckMissingNamedInputsOverrideFn override_fn)
 {
-  detail::check_missing_named_inputs_override_ref() = std::move(fn);
+  detail::check_missing_named_inputs_override_ref() = std::move(override_fn);
 }
 
 void
