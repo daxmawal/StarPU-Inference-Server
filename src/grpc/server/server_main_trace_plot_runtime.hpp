@@ -102,9 +102,9 @@ resolve_python_executable(const TracePlotRuntimeHooks* hooks = nullptr)
 
   for (const auto& candidate : candidates) {
     std::error_code status_ec;
-    const bool is_regular =
-        resolve_python_is_regular_file_for_runtime(candidate, status_ec, hooks);
-    if (!is_regular || status_ec) {
+    if (const bool is_regular = resolve_python_is_regular_file_for_runtime(
+            candidate, status_ec, hooks);
+        !is_regular || status_ec) {
       continue;
     }
     if (::access(candidate.c_str(), X_OK) == 0) {

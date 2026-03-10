@@ -137,7 +137,8 @@ InferenceServiceTestAccessor::BuildLatencyBreakdownForTest(
     const starpu_server::detail::TimingInfo& info,
     double latency_ms) -> InferenceServiceImpl::LatencyBreakdown
 {
-  return InferenceServiceImpl::build_latency_breakdown(info, latency_ms);
+  return InferenceServiceImpl::AsyncOps::build_latency_breakdown(
+      info, latency_ms);
 }
 
 auto
@@ -156,11 +157,18 @@ InferenceServiceTestAccessor::HandleSubmitFailureForTest(
           callback_invoked->store(true, std::memory_order_release);
         });
   }
-  return InferenceServiceImpl::handle_submit_failure(
+  return InferenceServiceImpl::AsyncOps::handle_submit_failure(
       status,
       InferenceServiceImpl::AsyncTerminalState{cancel_flag, terminal_flag},
-      callback_handle, nullptr, "model", nullptr, MonotonicClock::now(),
-      failure_info);
+      callback_handle,
+      InferenceServiceImpl::AsyncTerminalCompletionDetails{
+          .service = nullptr,
+          .resolved_model_name = "model",
+          .request = nullptr,
+          .recv_tp = MonotonicClock::now(),
+          .stage = "enqueue",
+          .failure_info = &failure_info,
+      });
 }
 
 auto
@@ -177,7 +185,7 @@ InferenceServiceTestAccessor::HandleInputValidationFailureForTest(
           callback_invoked->store(true, std::memory_order_release);
         });
   }
-  return InferenceServiceImpl::handle_input_validation_failure(
+  return InferenceServiceImpl::AsyncOps::handle_input_validation_failure(
       status,
       InferenceServiceImpl::AsyncTerminalState{cancel_flag, terminal_flag},
       callback_handle, nullptr, "model", nullptr, MonotonicClock::now());
@@ -233,7 +241,7 @@ InferenceServiceTestAccessor::FinalizeSuccessfulCompletionForTest(
       .cancel_flag = cancel_flag,
       .terminal_flag = terminal_flag,
       .failure_info = std::nullopt};
-  InferenceServiceImpl::finalize_successful_completion(
+  InferenceServiceImpl::AsyncOps::finalize_successful_completion(
       context, outputs, breakdown, timing_info);
   return terminal_flag->load(std::memory_order_acquire);
 }
@@ -275,7 +283,7 @@ InferenceServiceTestAccessor::HandleJobFailureForTest(
       .cancel_flag = cancel_flag,
       .terminal_flag = terminal_flag,
       .failure_info = std::nullopt};
-  return InferenceServiceImpl::handle_job_failure(
+  return InferenceServiceImpl::AsyncOps::handle_job_failure(
       context, job_status, callback_handle);
 }
 
@@ -307,7 +315,7 @@ InferenceServiceTestAccessor::PrepareAsyncCompletionForTest(
       .cancel_flag = cancel_flag,
       .terminal_flag = terminal_flag,
       .failure_info = std::nullopt};
-  return InferenceServiceImpl::prepare_async_completion(
+  return InferenceServiceImpl::AsyncOps::prepare_async_completion(
       context, callback_handle);
 }
 
@@ -315,7 +323,7 @@ auto
 InferenceServiceTestAccessor::TryMarkTerminalNullFlagForTest() -> bool
 {
   const std::shared_ptr<std::atomic<bool>> terminal_flag;
-  return InferenceServiceImpl::try_mark_terminal(terminal_flag);
+  return InferenceServiceImpl::AsyncOps::try_mark_terminal(terminal_flag);
 }
 
 auto
@@ -346,7 +354,7 @@ InferenceServiceTestAccessor::HandleAsyncInferCompletionForTest(bool cancelled)
       cancel_flag,
       terminal_flag,
       std::nullopt};
-  InferenceServiceImpl::handle_async_infer_completion(
+  InferenceServiceImpl::AsyncOps::handle_async_infer_completion(
       context, grpc::Status::OK, outputs, breakdown, timing_info);
   return called;
 }

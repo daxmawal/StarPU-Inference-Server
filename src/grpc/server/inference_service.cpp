@@ -41,7 +41,8 @@
 #include "utils/logger.hpp"
 #include "utils/nvtx.hpp"
 
-namespace starpu_server {
+namespace starpu_server {  // NOSONAR: this translation unit includes
+                           // implementation fragments.
 using grpc::Server;
 using grpc::ServerBuilder;
 using grpc::ServerContext;
@@ -432,7 +433,7 @@ set_grpc_health_status(const Server* server, bool serving)
 }
 
 auto
-is_context_cancelled(ServerContext* context) -> bool
+is_context_cancelled(const ServerContext* context) -> bool
 {
   if (context == nullptr) {
     return false;
@@ -441,7 +442,8 @@ is_context_cancelled(ServerContext* context) -> bool
   auto& test_hooks = testing::inference_service_test_internal::detail::
       handle_model_infer_async_test_hooks_ref();
   if (test_hooks.is_cancelled_override) {
-    if (auto decision = test_hooks.is_cancelled_override(context);
+    if (auto decision = test_hooks.is_cancelled_override(
+            const_cast<ServerContext*>(context));
         decision.has_value()) {
       return *decision;
     }
@@ -475,7 +477,11 @@ check_missing_named_inputs_runtime(
 void
 arm_rpc_done_tag_with_null_context_runtime()
 {
-  auto tag = RpcDoneTag::Create([] {}, std::make_shared<int>(0));
+  auto tag = RpcDoneTag::Create(
+      [] {
+        // Intentionally empty: this helper only verifies Arm(nullptr).
+      },
+      std::make_shared<int>(0));
   tag->Arm(nullptr);
 }
 
@@ -491,7 +497,7 @@ rpc_done_tag_proceed_runtime(bool is_ok, bool with_on_done) -> bool
 }
 
 void
-set_grpc_health_status_runtime(grpc::Server* server, bool serving)
+set_grpc_health_status_runtime(const grpc::Server* server, bool serving)
 {
   set_grpc_health_status(server, serving);
 }
@@ -554,7 +560,7 @@ should_report_terminal_failure_metric_runtime(
 }
 
 auto
-is_context_cancelled_runtime(grpc::ServerContext* context) -> bool
+is_context_cancelled_runtime(const grpc::ServerContext* context) -> bool
 {
   return is_context_cancelled(context);
 }
@@ -624,7 +630,7 @@ InferenceServiceImpl::CallbackHandle::Invoke(Status status) -> bool
 }
 
 auto
-InferenceServiceImpl::try_mark_terminal(
+InferenceServiceImpl::AsyncOps::try_mark_terminal(
     const std::shared_ptr<std::atomic<bool>>& terminal_flag) -> bool
 {
   if (terminal_flag == nullptr) {
@@ -636,7 +642,7 @@ InferenceServiceImpl::try_mark_terminal(
 }
 
 auto
-InferenceServiceImpl::enter_async_terminal_once(
+InferenceServiceImpl::AsyncOps::enter_async_terminal_once(
     const AsyncTerminalState& terminal_state, bool check_cancel_flag) -> bool
 {
   if (check_cancel_flag && terminal_state.cancel_flag != nullptr &&
@@ -647,7 +653,7 @@ InferenceServiceImpl::enter_async_terminal_once(
 }
 
 auto
-InferenceServiceImpl::invoke_async_callback(
+InferenceServiceImpl::AsyncOps::invoke_async_callback(
     const std::shared_ptr<CallbackHandle>& callback_handle,
     const Status& status) -> bool
 {
@@ -655,24 +661,23 @@ InferenceServiceImpl::invoke_async_callback(
 }
 
 void
-InferenceServiceImpl::record_async_terminal_failure(
-    InferenceServiceImpl* service, std::string_view resolved_model_name,
-    const ModelInferRequest* request, MonotonicClock::time_point recv_tp,
-    const Status& status, std::string_view default_stage,
-    std::string_view default_reason,
-    const std::optional<AsyncFailureInfo>& failure_info,
-    bool record_status_metric)
+InferenceServiceImpl::AsyncOps::record_async_terminal_failure(
+    const AsyncTerminalCompletionDetails& details, const Status& status)
 {
-  if (service != nullptr) {
-    service->record_failure(request, recv_tp, resolved_model_name);
+  if (details.service != nullptr) {
+    details.service->record_failure(
+        details.request, details.recv_tp, details.resolved_model_name);
   }
+  const auto no_failure_info = std::optional<AsyncFailureInfo>{};
+  const auto& failure_info =
+      details.failure_info != nullptr ? *details.failure_info : no_failure_info;
   record_terminal_metrics(
-      resolved_model_name, status, default_stage, default_reason, failure_info,
-      record_status_metric);
+      details.resolved_model_name, status, details.stage, details.reason,
+      failure_info, details.record_status_metric);
 }
 
 auto
-InferenceServiceImpl::complete_async_terminal_with_status(
+InferenceServiceImpl::AsyncOps::complete_async_terminal_with_status(
     const AsyncTerminalState& terminal_state,
     const std::shared_ptr<CallbackHandle>& callback_handle,
     const Status& status, const AsyncTerminalCompletionDetails& details) -> bool
@@ -682,17 +687,7 @@ InferenceServiceImpl::complete_async_terminal_with_status(
   }
 
   const auto record_and_log = [&]() {
-    if (details.failure_info != nullptr) {
-      record_async_terminal_failure(
-          details.service, details.resolved_model_name, details.request,
-          details.recv_tp, status, details.stage, details.reason,
-          *details.failure_info, details.record_status_metric);
-    } else {
-      record_async_terminal_failure(
-          details.service, details.resolved_model_name, details.request,
-          details.recv_tp, status, details.stage, details.reason, std::nullopt,
-          details.record_status_metric);
-    }
+    record_async_terminal_failure(details, status);
     if (!details.log_context.empty()) {
       log_error(std::string(details.log_context));
     }
@@ -713,7 +708,7 @@ InferenceServiceImpl::complete_async_terminal_with_status(
 }
 
 auto
-InferenceServiceImpl::is_async_cancelled(
+InferenceServiceImpl::AsyncOps::is_async_cancelled(
     const AsyncInferCompletionContext& context) -> bool
 {
   return context.cancel_flag != nullptr &&
@@ -721,7 +716,7 @@ InferenceServiceImpl::is_async_cancelled(
 }
 
 auto
-InferenceServiceImpl::prepare_async_completion(
+InferenceServiceImpl::AsyncOps::prepare_async_completion(
     const AsyncInferCompletionContext& context,
     const std::shared_ptr<CallbackHandle>& callback_handle) -> bool
 {
@@ -748,7 +743,7 @@ InferenceServiceImpl::prepare_async_completion(
 }
 
 auto
-InferenceServiceImpl::handle_job_failure(
+InferenceServiceImpl::AsyncOps::handle_job_failure(
     const AsyncInferCompletionContext& context, const Status& job_status,
     const std::shared_ptr<CallbackHandle>& callback_handle) -> bool
 {
@@ -772,7 +767,7 @@ InferenceServiceImpl::handle_job_failure(
 }
 
 void
-InferenceServiceImpl::finalize_successful_completion(
+InferenceServiceImpl::AsyncOps::finalize_successful_completion(
     const AsyncInferCompletionContext& context,
     const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
     const detail::TimingInfo& timing_info)
@@ -913,7 +908,7 @@ InferenceServiceImpl::finalize_successful_completion(
 }
 
 void
-InferenceServiceImpl::handle_async_infer_completion(
+InferenceServiceImpl::AsyncOps::handle_async_infer_completion(
     const AsyncInferCompletionContext& context, const Status& job_status,
     const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
     detail::TimingInfo timing_info)
@@ -929,7 +924,45 @@ InferenceServiceImpl::handle_async_infer_completion(
 }
 
 void
-InferenceServiceImpl::notify_cancel_flag_created(
+InferenceServiceImpl::AsyncOps::handle_submit_job_completion(
+    const AsyncInferCompletionContext& context, const Status& job_status,
+    const std::vector<torch::Tensor>& outs, LatencyBreakdown breakdown,
+    detail::TimingInfo timing_info,
+    std::optional<AsyncFailureInfo> failure_info)
+{
+  try {
+    auto completion_context = context;
+    completion_context.failure_info = std::move(failure_info);
+    handle_async_infer_completion(
+        completion_context, job_status, outs, breakdown, timing_info);
+  }
+  catch (const std::exception& e) {
+    handle_async_internal_error(
+        AsyncTerminalState{context.cancel_flag, context.terminal_flag},
+        context.callback_handle, context.impl, context.resolved_model_name,
+        context.request, context.recv_tp,
+        AsyncInternalErrorDetails{
+            .stage = "postprocess",
+            .reason = "exception",
+            .log_context = std::format(
+                "Unhandled exception in async inference completion: {}",
+                e.what())});
+  }
+  catch (...) {
+    handle_async_internal_error(
+        AsyncTerminalState{context.cancel_flag, context.terminal_flag},
+        context.callback_handle, context.impl, context.resolved_model_name,
+        context.request, context.recv_tp,
+        AsyncInternalErrorDetails{
+            .stage = "postprocess",
+            .reason = "unknown_exception",
+            .log_context =
+                "Unhandled non-std exception in async inference completion"});
+  }
+}
+
+void
+InferenceServiceImpl::AsyncOps::notify_cancel_flag_created(
     const std::shared_ptr<std::atomic<bool>>& cancel_flag)
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -944,7 +977,7 @@ InferenceServiceImpl::notify_cancel_flag_created(
 }
 
 void
-InferenceServiceImpl::notify_submit_job_async_done(
+InferenceServiceImpl::AsyncOps::notify_submit_job_async_done(
     const std::shared_ptr<std::atomic<bool>>& cancel_flag, const Status& status)
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -960,7 +993,7 @@ InferenceServiceImpl::notify_submit_job_async_done(
 }
 
 auto
-InferenceServiceImpl::setup_async_cancellation(
+InferenceServiceImpl::AsyncOps::setup_async_cancellation(
     ServerContext* context, std::shared_ptr<void>& call_guard,
     const AsyncCancellationContext& cancellation_context) -> bool
 {
@@ -970,36 +1003,19 @@ InferenceServiceImpl::setup_async_cancellation(
     return false;
   }
 
-  auto on_cancel = [context, cancel_flag = cancellation_context.cancel_flag,
-                    terminal_flag = cancellation_context.terminal_flag,
+  const AsyncTerminalState terminal_state{
+      cancellation_context.cancel_flag, cancellation_context.terminal_flag};
+
+  auto on_cancel = [context, terminal_state,
                     callback_handle = cancellation_context.callback_handle,
                     model_name =
                         std::string(cancellation_context.resolved_model_name),
                     service = cancellation_context.service,
                     request = cancellation_context.request,
                     recv_tp = cancellation_context.recv_tp]() {
-    if (!is_context_cancelled(context)) {
-      return;
-    }
-    if (cancel_flag->exchange(true, std::memory_order_acq_rel)) {
-      return;
-    }
-    const Status cancelled_status{
-        grpc::StatusCode::CANCELLED, "Request cancelled"};
-    (void)complete_async_terminal_with_status(
-        AsyncTerminalState{cancel_flag, terminal_flag}, callback_handle,
-        cancelled_status,
-        AsyncTerminalCompletionDetails{
-            .service = service,
-            .resolved_model_name = model_name,
-            .request = request,
-            .recv_tp = recv_tp,
-            .stage = "cancel",
-            .reason = "client_cancelled",
-            .check_cancel_flag = false,
-            .record_before_callback = false,
-            .require_callback_invoked_for_record = true,
-        });
+    handle_async_cancellation(
+        context, terminal_state, callback_handle, service, model_name, request,
+        recv_tp);
   };
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -1019,8 +1035,39 @@ InferenceServiceImpl::setup_async_cancellation(
   return false;
 }
 
+void
+InferenceServiceImpl::AsyncOps::handle_async_cancellation(
+    const ServerContext* context, const AsyncTerminalState& terminal_state,
+    const std::shared_ptr<CallbackHandle>& callback_handle,
+    InferenceServiceImpl* service, std::string_view resolved_model_name,
+    const ModelInferRequest* request, MonotonicClock::time_point recv_tp)
+{
+  if (!is_context_cancelled(context) || terminal_state.cancel_flag == nullptr) {
+    return;
+  }
+  if (terminal_state.cancel_flag->exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+
+  const Status cancelled_status{
+      grpc::StatusCode::CANCELLED, "Request cancelled"};
+  (void)complete_async_terminal_with_status(
+      terminal_state, callback_handle, cancelled_status,
+      AsyncTerminalCompletionDetails{
+          .service = service,
+          .resolved_model_name = resolved_model_name,
+          .request = request,
+          .recv_tp = recv_tp,
+          .stage = "cancel",
+          .reason = "client_cancelled",
+          .check_cancel_flag = false,
+          .record_before_callback = false,
+          .require_callback_invoked_for_record = true,
+      });
+}
+
 auto
-InferenceServiceImpl::handle_input_validation_failure(
+InferenceServiceImpl::AsyncOps::handle_input_validation_failure(
     const Status& status,
     const InferenceServiceImpl::AsyncTerminalState& terminal_state,
     const std::shared_ptr<CallbackHandle>& callback_handle,
@@ -1044,32 +1091,22 @@ InferenceServiceImpl::handle_input_validation_failure(
 }
 
 auto
-InferenceServiceImpl::handle_submit_failure(
+InferenceServiceImpl::AsyncOps::handle_submit_failure(
     const Status& status,
     const InferenceServiceImpl::AsyncTerminalState& terminal_state,
     const std::shared_ptr<CallbackHandle>& callback_handle,
-    InferenceServiceImpl* service, std::string_view resolved_model_name,
-    const ModelInferRequest* request, MonotonicClock::time_point recv_tp,
-    const std::optional<AsyncFailureInfo>& failure_info) -> bool
+    const InferenceServiceImpl::AsyncTerminalCompletionDetails& details) -> bool
 {
   if (status.ok()) {
     return false;
   }
   (void)complete_async_terminal_with_status(
-      terminal_state, callback_handle, status,
-      AsyncTerminalCompletionDetails{
-          .service = service,
-          .resolved_model_name = resolved_model_name,
-          .request = request,
-          .recv_tp = recv_tp,
-          .stage = "enqueue",
-          .failure_info = &failure_info,
-      });
+      terminal_state, callback_handle, status, details);
   return true;
 }
 
 void
-InferenceServiceImpl::handle_async_internal_error(
+InferenceServiceImpl::AsyncOps::handle_async_internal_error(
     const InferenceServiceImpl::AsyncTerminalState& terminal_state,
     const std::shared_ptr<CallbackHandle>& callback_handle,
     InferenceServiceImpl* service, std::string_view resolved_model_name,

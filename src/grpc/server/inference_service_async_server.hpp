@@ -567,16 +567,14 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
-    const std::vector<std::string>& expected_input_names,
-    const std::vector<std::string>& expected_output_names,
-    const GrpcServerOptions& options, std::unique_ptr<Server>& server,
-    const GrpcServerLifecycleHooks& hooks)
+    GrpcModelNamesSpec model_names, const GrpcServerOptions& options,
+    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks)
 {
   const GrpcModelSpec model_spec{
       .expected_input_types = expected_input_types,
       .expected_input_dims = {},
-      .expected_input_names = expected_input_names,
-      .expected_output_names = expected_output_names,
+      .expected_input_names = model_names.expected_input_names,
+      .expected_output_names = model_names.expected_output_names,
       .max_batch_size = 0};
   RunGrpcServer(queue, reference_outputs, model_spec, options, server, hooks);
 }

@@ -78,9 +78,10 @@ set_submit_failure_info_if_needed(
   *submit_failure_info = std::move(info);
 }
 
+template <typename Callback>
 void
 report_async_completion_failure(
-    InferenceServiceImpl::AsyncJobCallback& callback, std::string_view reason)
+    const Callback& callback, std::string_view reason)
 {
   InferenceServiceImpl::AsyncFailureInfo failure_info{
       .stage = "completion", .reason = std::string(reason)};
@@ -104,7 +105,7 @@ report_async_completion_failure(
 
 void
 dispatch_async_completion_safely(
-    InferenceJob& job, InferenceServiceImpl::AsyncJobCallback& callback,
+    InferenceJob& job, const InferenceServiceImpl::AsyncJobCallback& callback,
     std::vector<torch::Tensor> outs, double latency_ms)
 {
   try {

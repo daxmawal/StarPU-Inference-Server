@@ -139,7 +139,7 @@ TEST(GrpcServer, RunGrpcServer_StartsAndResetsServer)
                                          "",
                                          ""};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
   ASSERT_TRUE(wait_for_channel_ready(address))
       << "Timed out waiting for gRPC server startup";
@@ -223,7 +223,7 @@ TEST(GrpcServer, RunGrpcServerSupportsDoubleStartStopCycle)
 
     std::jthread thread([&, options]() {
       starpu_server::RunGrpcServer(
-          queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+          queue, reference_outputs, {at::kFloat}, {}, options, server);
     });
 
     ASSERT_TRUE(wait_for_channel_ready(address))
@@ -289,7 +289,7 @@ TEST(GrpcServer, RunGrpcServer_FailsWhenPortUnavailable)
         "",
         ""};
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
   EXPECT_EQ(
@@ -412,7 +412,7 @@ TEST(GrpcServer, RunGrpcServerProcessesUnaryRequest)
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
   ASSERT_TRUE(wait_for_channel_ready(address))
@@ -461,7 +461,7 @@ TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForRepositoryIndex)
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
   ASSERT_TRUE(wait_for_channel_ready(address))
@@ -509,7 +509,7 @@ TEST(GrpcServer, RunGrpcServerReturnsUnimplementedForModelStreamInfer)
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
   ASSERT_TRUE(wait_for_channel_ready(address))
@@ -566,7 +566,7 @@ TEST(GrpcServer, RunGrpcServerProcessesModelInferRequest)
 
   std::jthread thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
   ASSERT_TRUE(wait_for_channel_ready(address))
@@ -668,7 +668,7 @@ TEST(GrpcServer, StopServerWhileHandlingConcurrentLoad)
 
   std::jthread server_thread([&, options]() {
     starpu_server::RunGrpcServer(
-        queue, reference_outputs, {at::kFloat}, {}, {}, options, server);
+        queue, reference_outputs, {at::kFloat}, {}, options, server);
   });
 
   ASSERT_TRUE(wait_for_channel_ready(address))

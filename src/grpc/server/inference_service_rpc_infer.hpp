@@ -64,7 +64,7 @@ InferenceServiceImpl::validate_and_convert_inputs(
 }
 
 auto
-InferenceServiceImpl::build_latency_breakdown(
+InferenceServiceImpl::AsyncOps::build_latency_breakdown(
     const detail::TimingInfo& info, double latency_ms) -> LatencyBreakdown
 {
   const auto base = detail::compute_latency_breakdown(info, latency_ms);
@@ -203,7 +203,7 @@ InferenceServiceImpl::HandleModelInferAsync(
   auto terminal_flag = std::make_shared<std::atomic<bool>>(false);
   const AsyncTerminalState terminal_state{
       .cancel_flag = cancel_flag, .terminal_flag = terminal_flag};
-  notify_cancel_flag_created(cancel_flag);
+  AsyncOps::notify_cancel_flag_created(cancel_flag);
   if (auto guard_status = validate_model_infer_io(request, reply);
       !guard_status.ok()) {
     callback_handle->Invoke(guard_status);
@@ -225,7 +225,7 @@ InferenceServiceImpl::HandleModelInferAsync(
     int64_t recv_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                           std::chrono::system_clock::now().time_since_epoch())
                           .count();
-    if (setup_async_cancellation(
+    if (AsyncOps::setup_async_cancellation(
             context, call_guard,
             AsyncCancellationContext{
                 .cancel_flag = cancel_flag,
@@ -243,7 +243,7 @@ InferenceServiceImpl::HandleModelInferAsync(
     std::optional<AsyncFailureInfo> submit_failure_info;
     Status status =
         validate_and_convert_inputs(request, inputs, &input_lifetimes);
-    if (handle_input_validation_failure(
+    if (AsyncOps::handle_input_validation_failure(
             status, terminal_state, callback_handle, this, resolved_model_name,
             request, recv_tp)) {
       return;
@@ -254,57 +254,48 @@ InferenceServiceImpl::HandleModelInferAsync(
     }
 
     const auto* output_names = &expected_output_names_;
+    const AsyncInferCompletionContext completion_context{
+        .request = request,
+        .reply = reply,
+        .callback_handle = callback_handle,
+        .metrics = metrics,
+        .recv_tp = recv_tp,
+        .recv_ms = recv_ms,
+        .resolved_model_name = resolved_model_name,
+        .impl = this,
+        .output_names = output_names,
+        .cancel_flag = cancel_flag,
+        .terminal_flag = terminal_flag,
+        .failure_info = std::nullopt};
     status = submit_job_async(
         inputs,
-        [request, reply, recv_tp, recv_ms, metrics, callback_handle,
-         resolved_model_name, cancel_flag, terminal_flag, terminal_state,
-         output_names, service = this](
+        [completion_context](
             Status const& job_status, const std::vector<torch::Tensor>& outs,
             LatencyBreakdown breakdown, detail::TimingInfo timing_info,
-            std::optional<AsyncFailureInfo> failure_info) mutable {
-          try {
-            handle_async_infer_completion(
-                AsyncInferCompletionContext{
-                    request, reply, callback_handle, metrics, recv_tp, recv_ms,
-                    resolved_model_name, service, output_names, cancel_flag,
-                    terminal_flag, std::move(failure_info)},
-                job_status, outs, breakdown, timing_info);
-          }
-          catch (const std::exception& e) {
-            handle_async_internal_error(
-                terminal_state, callback_handle, service, resolved_model_name,
-                request, recv_tp,
-                AsyncInternalErrorDetails{
-                    .stage = "postprocess",
-                    .reason = "exception",
-                    .log_context = std::format(
-                        "Unhandled exception in async inference completion: {}",
-                        e.what())});
-          }
-          catch (...) {
-            handle_async_internal_error(
-                terminal_state, callback_handle, service, resolved_model_name,
-                request, recv_tp,
-                AsyncInternalErrorDetails{
-                    .stage = "postprocess",
-                    .reason = "unknown_exception",
-                    .log_context =
-                        "Unhandled non-std exception in async inference "
-                        "completion"});
-          }
+            std::optional<AsyncFailureInfo> failure_info) {
+          AsyncOps::handle_submit_job_completion(
+              completion_context, job_status, outs, std::move(breakdown),
+              std::move(timing_info), std::move(failure_info));
         },
         std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name,
         &submit_failure_info);
 
-    notify_submit_job_async_done(cancel_flag, status);
-    if (handle_submit_failure(
-            status, terminal_state, callback_handle, this, resolved_model_name,
-            request, recv_tp, submit_failure_info)) {
+    AsyncOps::notify_submit_job_async_done(cancel_flag, status);
+    if (AsyncOps::handle_submit_failure(
+            status, terminal_state, callback_handle,
+            AsyncTerminalCompletionDetails{
+                .service = this,
+                .resolved_model_name = resolved_model_name,
+                .request = request,
+                .recv_tp = recv_tp,
+                .stage = "enqueue",
+                .failure_info = &submit_failure_info,
+            })) {
       return;
     }
   }
   catch (const std::exception& e) {
-    handle_async_internal_error(
+    AsyncOps::handle_async_internal_error(
         terminal_state, callback_handle, this, resolved_model_name, request,
         recv_tp,
         AsyncInternalErrorDetails{
@@ -314,7 +305,7 @@ InferenceServiceImpl::HandleModelInferAsync(
                 "Unhandled exception in HandleModelInferAsync: {}", e.what())});
   }
   catch (...) {
-    handle_async_internal_error(
+    AsyncOps::handle_async_internal_error(
         terminal_state, callback_handle, this, resolved_model_name, request,
         recv_tp,
         AsyncInternalErrorDetails{

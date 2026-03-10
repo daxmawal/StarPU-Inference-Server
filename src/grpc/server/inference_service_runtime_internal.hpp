@@ -13,7 +13,7 @@ auto check_missing_named_inputs_runtime(
     std::span<const std::string> expected_names) -> grpc::Status;
 void arm_rpc_done_tag_with_null_context_runtime();
 auto rpc_done_tag_proceed_runtime(bool is_ok, bool with_on_done) -> bool;
-void set_grpc_health_status_runtime(grpc::Server* server, bool serving);
+void set_grpc_health_status_runtime(const grpc::Server* server, bool serving);
 auto scalar_type_to_model_dtype_runtime(at::ScalarType type)
     -> inference::DataType;
 auto resolve_tensor_name_runtime(
@@ -34,7 +34,7 @@ auto should_report_terminal_failure_metric_runtime(
     std::string_view default_reason,
     const std::optional<InferenceServiceImpl::AsyncFailureInfo>& failure_info)
     -> bool;
-auto is_context_cancelled_runtime(grpc::ServerContext* context) -> bool;
+auto is_context_cancelled_runtime(const grpc::ServerContext* context) -> bool;
 auto fill_output_tensor_runtime(
     inference::ModelInferResponse* reply,
     const std::vector<torch::Tensor>& outputs,

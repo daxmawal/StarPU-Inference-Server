@@ -85,7 +85,7 @@ struct CallbackFailureDetails {
 
 void
 mark_callback_failure(
-    InferenceCallbackContext* ctx, CallbackFailureDetails failure)
+    InferenceCallbackContext* ctx, const CallbackFailureDetails& failure)
 {
   if (ctx == nullptr || ctx->job == nullptr) {
     return;
@@ -139,8 +139,8 @@ finalize_or_fail_once(
     ctx->job->set_output_tensors({});
   }
 
-  bool expected = false;
-  if (!ctx->terminal_path_started.compare_exchange_strong(
+  if (bool expected = false;
+      !ctx->terminal_path_started.compare_exchange_strong(
           expected, true, std::memory_order_acq_rel,
           std::memory_order_acquire)) {
     return;
@@ -876,9 +876,11 @@ InferenceTask::acquire_output_handle(
   const int ret = data_acquire_fn(
       handle, STARPU_R,
       [](void* cb_arg) {
-        auto* cb_ctx = static_cast<InferenceCallbackContext*>(cb_arg);
+        const auto* cb_ctx =
+            static_cast<const InferenceCallbackContext*>(cb_arg);
         decrement_remaining_and_finalize_if_done(
-            cb_ctx, "starpu_output_callback");
+            const_cast<InferenceCallbackContext*>(cb_ctx),
+            "starpu_output_callback");
       },
       ctx);
 
@@ -1009,8 +1011,7 @@ InferenceTask::record_and_run_completion_callback(
     timing.callback_end_time = end_time;
   });
 
-  auto callback = ctx->job->take_on_complete();
-  if (callback) {
+  if (auto callback = ctx->job->take_on_complete(); callback) {
     run_with_logged_exceptions(
         [ctx, callback = std::move(callback), latency_ms]() mutable {
           callback(ctx->job->get_output_tensors(), latency_ms);

@@ -3,11 +3,9 @@ signal_handler(int /*signal*/)
 {
   const int saved_errno = errno;
   signal_stop_requested_flag() = 1;
-  const auto notify_fd = signal_stop_notify_fd();
-  if (notify_fd >= 0) {
+  if (const auto notify_fd = signal_stop_notify_fd(); notify_fd >= 0) {
     const std::uint8_t byte = 1;
-    const ssize_t write_result =
-        ::write(static_cast<int>(notify_fd), &byte, sizeof(byte));
+    const ssize_t write_result = ::write(notify_fd, &byte, sizeof(byte));
     (void)write_result;
   }
   errno = saved_errno;
