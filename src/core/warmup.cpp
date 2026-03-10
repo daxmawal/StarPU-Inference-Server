@@ -303,7 +303,7 @@ struct WarmupSyncState {
   {
     std::lock_guard lock(thread_exception_mutex);
     if (!thread_exception) {
-      thread_exception = exception;
+      thread_exception = std::move(exception);
     }
   }
 
@@ -315,7 +315,7 @@ struct WarmupSyncState {
 
   void notify_exception(std::exception_ptr exception, InferenceQueue& queue)
   {
-    store_exception(exception);
+    store_exception(std::move(exception));
     queue.shutdown();
     completed_cv.notify_all();
   }
@@ -509,7 +509,7 @@ WarmupRunner::run(int request_nb_per_worker)
   WarmupSyncState sync_state;
   const auto notify_thread_exception = [&sync_state,
                                         &queue](std::exception_ptr exception) {
-    sync_state.notify_exception(exception, queue);
+    sync_state.notify_exception(std::move(exception), queue);
   };
 
   StarPUTaskRunnerConfig config{};

@@ -876,10 +876,8 @@ InferenceTask::acquire_output_handle(
   const int ret = data_acquire_fn(
       handle, STARPU_R,
       [](void* cb_arg) {
-        const auto* cb_ctx =
-            static_cast<const InferenceCallbackContext*>(cb_arg);
         decrement_remaining_and_finalize_if_done(
-            const_cast<InferenceCallbackContext*>(cb_ctx),
+            static_cast<InferenceCallbackContext*>(cb_arg),
             "starpu_output_callback");
       },
       ctx);

@@ -12,7 +12,7 @@ struct HandleModelInferAsyncTestHooks {
   std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
       on_cancel_flag_created;
   std::function<void(const std::function<void()>&)> on_cancel_ready;
-  std::function<std::optional<bool>(grpc::ServerContext*)>
+  std::function<std::optional<bool>(const grpc::ServerContext*)>
       is_cancelled_override;
   std::function<void(
       const std::shared_ptr<std::atomic<bool>>&, const grpc::Status&)>

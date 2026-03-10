@@ -2923,7 +2923,7 @@ TEST_F(
 
   starpu_server::testing::HandleModelInferAsyncTestHooks hooks;
   hooks.is_cancelled_override =
-      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+      [&force_cancelled](const grpc::ServerContext*) -> std::optional<bool> {
     return force_cancelled;
   };
   hooks.on_cancel_ready =
@@ -2963,7 +2963,7 @@ TEST_F(
 
   starpu_server::testing::HandleModelInferAsyncTestHooks hooks;
   hooks.is_cancelled_override =
-      [](grpc::ServerContext*) -> std::optional<bool> { return false; };
+      [](const grpc::ServerContext*) -> std::optional<bool> { return false; };
   hooks.on_cancel_ready =
       [&on_cancel](const std::function<void()>& cancel_handler) {
         on_cancel = cancel_handler;
@@ -3079,7 +3079,7 @@ TEST_F(
 
   starpu_server::testing::HandleModelInferAsyncTestHooks model_hooks;
   model_hooks.is_cancelled_override =
-      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+      [&force_cancelled](const grpc::ServerContext*) -> std::optional<bool> {
     return force_cancelled.load(std::memory_order_acquire);
   };
   model_hooks.on_cancel_ready = [&cancel_handler_mutex, &cancel_handler](
@@ -3329,7 +3329,7 @@ TEST_F(
 
   starpu_server::testing::HandleModelInferAsyncTestHooks hooks;
   hooks.is_cancelled_override =
-      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+      [&force_cancelled](const grpc::ServerContext*) -> std::optional<bool> {
     return force_cancelled.load(std::memory_order_acquire);
   };
   hooks.on_cancel_ready =
@@ -3434,7 +3434,7 @@ TEST_F(
 
   starpu_server::testing::HandleModelInferAsyncTestHooks hooks;
   hooks.is_cancelled_override =
-      [&force_cancelled](grpc::ServerContext*) -> std::optional<bool> {
+      [&force_cancelled](const grpc::ServerContext*) -> std::optional<bool> {
     return force_cancelled.load(std::memory_order_acquire);
   };
   hooks.on_cancel_ready =

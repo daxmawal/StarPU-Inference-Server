@@ -70,7 +70,7 @@ struct ThreadExceptionState {
     if (exception != nullptr) {
       return;
     }
-    exception = caught_exception;
+    exception = std::move(caught_exception);
     thread_name = name;
   }
 

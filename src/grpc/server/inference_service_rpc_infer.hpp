@@ -274,8 +274,8 @@ InferenceServiceImpl::HandleModelInferAsync(
             LatencyBreakdown breakdown, detail::TimingInfo timing_info,
             std::optional<AsyncFailureInfo> failure_info) {
           AsyncOps::handle_submit_job_completion(
-              completion_context, job_status, outs, std::move(breakdown),
-              std::move(timing_info), std::move(failure_info));
+              completion_context, job_status, outs, breakdown, timing_info,
+              std::move(failure_info));
         },
         std::move(input_lifetimes), cancel_flag, recv_tp, resolved_model_name,
         &submit_failure_info);

@@ -442,8 +442,7 @@ is_context_cancelled(const ServerContext* context) -> bool
   auto& test_hooks = testing::inference_service_test_internal::detail::
       handle_model_infer_async_test_hooks_ref();
   if (test_hooks.is_cancelled_override) {
-    if (auto decision = test_hooks.is_cancelled_override(
-            const_cast<ServerContext*>(context));
+    if (auto decision = test_hooks.is_cancelled_override(context);
         decision.has_value()) {
       return *decision;
     }

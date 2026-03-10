@@ -239,7 +239,7 @@ struct RunThreadExceptionState {
     if (exception != nullptr) {
       return;
     }
-    exception = caught;
+    exception = std::move(caught);
     thread_name = source_thread;
   }
 
@@ -787,10 +787,11 @@ StarPUTaskRunner::abort_run_pipeline(RunPipelineContext& /*context*/) noexcept
 void
 StarPUTaskRunner::launch_batching_thread(RunPipelineContext& context)
 {
-  auto capture_thread_exception =
-      [&context](std::string_view thread_name, std::exception_ptr exception) {
-        context.thread_exception_state.capture(thread_name, exception);
-      };
+  auto capture_thread_exception = [&context](
+                                      std::string_view thread_name,
+                                      std::exception_ptr exception) {
+    context.thread_exception_state.capture(thread_name, std::move(exception));
+  };
 
   batching_thread_ = std::jthread([this, &context, capture_thread_exception]() {
     try {
