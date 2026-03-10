@@ -1,3 +1,5 @@
+#include "utils/nvtx.hpp"
+
 namespace starpu_server::inline starpu_task_worker_detail {
 auto is_warmup_job(const std::shared_ptr<InferenceJob>& job) -> bool;
 void resize_output_handles_for_job(
