@@ -64,13 +64,14 @@ struct ThreadExceptionState {
   std::exception_ptr exception;
   std::string thread_name;
 
-  void capture(std::string_view name, std::exception_ptr caught_exception)
+  void capture(
+      std::string_view name, const std::exception_ptr& caught_exception)
   {
     std::lock_guard lock(mutex);
     if (exception != nullptr) {
       return;
     }
-    exception = std::move(caught_exception);
+    exception = caught_exception;
     thread_name = name;
   }
 

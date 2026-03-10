@@ -233,13 +233,13 @@ struct RunThreadExceptionState {
   std::exception_ptr exception;
   std::string thread_name;
 
-  void capture(std::string_view source_thread, std::exception_ptr caught)
+  void capture(std::string_view source_thread, const std::exception_ptr& caught)
   {
     std::lock_guard lock(mutex);
     if (exception != nullptr) {
       return;
     }
-    exception = std::move(caught);
+    exception = caught;
     thread_name = source_thread;
   }
 
@@ -789,8 +789,8 @@ StarPUTaskRunner::launch_batching_thread(RunPipelineContext& context)
 {
   auto capture_thread_exception = [&context](
                                       std::string_view thread_name,
-                                      std::exception_ptr exception) {
-    context.thread_exception_state.capture(thread_name, std::move(exception));
+                                      const std::exception_ptr& exception) {
+    context.thread_exception_state.capture(thread_name, exception);
   };
 
   batching_thread_ = std::jthread([this, &context, capture_thread_exception]() {
