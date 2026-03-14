@@ -82,6 +82,54 @@ TEST(InferenceQueue_Robustesse, RejectsNullJob)
   EXPECT_EQ(queue.size(), 0U);
 }
 
+TEST(
+    InferenceQueue_Robustesse,
+    CloseForPushRejectsNewJobsButKeepsPendingJobsAvailable)
+{
+  starpu_server::InferenceQueue queue(4);
+
+  auto job0 = std::make_shared<starpu_server::InferenceJob>();
+  job0->set_request_id(10);
+  auto job1 = std::make_shared<starpu_server::InferenceJob>();
+  job1->set_request_id(11);
+
+  ASSERT_TRUE(queue.push(job0));
+  ASSERT_TRUE(queue.push(job1));
+  EXPECT_TRUE(queue.is_accepting());
+
+  queue.close_for_push();
+  EXPECT_FALSE(queue.is_accepting());
+  EXPECT_FALSE(queue.is_shutdown());
+
+  auto rejected = std::make_shared<starpu_server::InferenceJob>();
+  EXPECT_FALSE(queue.push(rejected));
+
+  std::shared_ptr<starpu_server::InferenceJob> popped_job;
+  ASSERT_TRUE(queue.try_pop(popped_job));
+  ASSERT_NE(popped_job, nullptr);
+  EXPECT_EQ(popped_job->get_request_id(), 10);
+
+  ASSERT_TRUE(queue.try_pop(popped_job));
+  ASSERT_NE(popped_job, nullptr);
+  EXPECT_EQ(popped_job->get_request_id(), 11);
+
+  popped_job.reset();
+  EXPECT_FALSE(
+      queue.wait_for_and_pop(popped_job, std::chrono::milliseconds(20)));
+  EXPECT_EQ(popped_job, nullptr);
+}
+
+TEST(InferenceQueue_Robustesse, ShutdownTurnsAcceptanceOff)
+{
+  starpu_server::InferenceQueue queue;
+  EXPECT_TRUE(queue.is_accepting());
+
+  queue.shutdown();
+
+  EXPECT_TRUE(queue.is_shutdown());
+  EXPECT_FALSE(queue.is_accepting());
+}
+
 TEST(InferenceQueue_Robustesse, TryPopEmptyQueueReturnsFalse)
 {
   starpu_server::InferenceQueue queue;

@@ -43,7 +43,7 @@ class InferenceQueue {
     std::size_t size = 0;
     {
       const std::scoped_lock lock(mutex_);
-      if (shutdown_) {
+      if (!accepting_ || shutdown_) {
         return false;
       }
       if (queue_.size() >= max_size_) {
@@ -107,11 +107,17 @@ class InferenceQueue {
     return false;
   }
 
+  void close_for_push()
+  {
+    const std::scoped_lock lock(mutex_);
+    accepting_ = false;
+  }
 
   void shutdown()
   {
     {
       const std::scoped_lock lock(mutex_);
+      accepting_ = false;
       shutdown_ = true;
     }
     cv_.notify_all();
@@ -138,6 +144,12 @@ class InferenceQueue {
     return shutdown_;
   }
 
+  [[nodiscard]] auto is_accepting() const -> bool
+  {
+    const std::scoped_lock lock(mutex_);
+    return accepting_;
+  }
+
  private:
   static void update_queue_metrics(std::size_t size)
   {
@@ -149,6 +161,7 @@ class InferenceQueue {
   const std::size_t max_size_;
   mutable std::mutex mutex_;
   std::queue<std::shared_ptr<InferenceJob>> queue_;
+  bool accepting_ = true;
   bool shutdown_ = false;
   std::condition_variable cv_;
   std::atomic<std::size_t> total_pushed_{0};

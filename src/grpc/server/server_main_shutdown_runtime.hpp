@@ -255,6 +255,7 @@ run_shutdown_sequence(
   }
 
   wait_for_stop_request(server_ctx);
+  queue.close_for_push();
   stop_server_when_available(server_ctx);
   queue.shutdown();
   const auto total_jobs = queue.total_pushed();
