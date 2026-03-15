@@ -3,6 +3,7 @@
 #include <torch/torch.h>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -66,16 +67,22 @@ class BatchCollector {
     bool low = false;
     bool severe = false;
   };
+  struct BatchPressureSample {
+    BatchPressureState state{};
+    std::optional<task_runner_internal::Clock::time_point> monitor_tick{};
+  };
 
   [[nodiscard]] auto job_sample_size(
       const std::shared_ptr<InferenceJob>& job) const -> int64_t;
   [[nodiscard]] auto sample_limit_per_batch() const -> int;
   [[nodiscard]] auto effective_batch_limit() -> int;
   void update_adaptive_batch_target(int batch_limit);
+  [[nodiscard]] auto should_refresh_adaptive_target(
+      const BatchPressureSample& pressure) -> bool;
   [[nodiscard]] auto high_pressure_step(int batch_limit, bool severe) const
       -> int;
   [[nodiscard]] auto low_pressure_streak_threshold() const -> int;
-  [[nodiscard]] auto sample_batch_pressure() const -> BatchPressureState;
+  [[nodiscard]] auto sample_batch_pressure() const -> BatchPressureSample;
   [[nodiscard]] auto try_acquire_next_job(
       bool enable_wait,
       task_runner_internal::Clock::time_point coalesce_deadline)
@@ -148,6 +155,8 @@ class BatchCollector {
   int adaptive_target_batch_size_ = 1;
   bool adaptive_target_initialized_ = false;
   int low_pressure_streak_ = 0;
+  std::optional<task_runner_internal::Clock::time_point>
+      last_adaptive_update_marker_{};
 };
 
 }  // namespace starpu_server
