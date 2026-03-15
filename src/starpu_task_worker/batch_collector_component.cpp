@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <limits>
 #include <optional>
 #include <utility>
 
 #include "exceptions.hpp"
 #include "logger.hpp"
+#include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
 #include "result_dispatcher_component.hpp"
 #include "task_runner_internal.hpp"
@@ -100,7 +102,7 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     return jobs;
   }
 
-  const int max_job_count = std::max(1, opts_->batching.max_batch_size);
+  const int max_job_count = effective_batch_limit();
   if (max_job_count <= 1) {
     set_batch_pending_jobs(jobs.size());
     return jobs;
@@ -109,9 +111,22 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
   const int64_t max_samples_cap = sample_limit_per_batch();
   int64_t accumulated_samples = job_sample_size(first_job);
 
-  const bool enable_wait = opts_->batching.batch_coalesce_timeout_ms > 0;
+  const auto pressure = sample_batch_pressure();
+  int coalesce_timeout_ms =
+      std::max(0, opts_->batching.batch_coalesce_timeout_ms);
+  if (pressure.congested && opts_->congestion.enabled) {
+    // Under congestion, keep a short coalescing window even when the
+    // configured timeout is 0 so the collector can fill toward max batch size.
+    const int tick_interval_ms =
+        std::max(1, opts_->congestion.tick_interval_ms);
+    const int per_slot_wait_ms =
+        std::max(1, tick_interval_ms / std::max(1, max_job_count));
+    coalesce_timeout_ms = std::max(coalesce_timeout_ms, per_slot_wait_ms);
+  }
+
+  const bool enable_wait = coalesce_timeout_ms > 0;
   const auto batch_coalesce_timeout =
-      std::chrono::milliseconds(opts_->batching.batch_coalesce_timeout_ms);
+      std::chrono::milliseconds(coalesce_timeout_ms);
   const auto coalesce_deadline =
       enable_wait ? clock::now() + batch_coalesce_timeout : clock::time_point{};
   const auto& target_worker = first_job->get_fixed_worker_id();
@@ -436,6 +451,158 @@ BatchCollector::sample_limit_per_batch() const -> int
   }
 
   return configured_limit;
+}
+
+auto
+BatchCollector::effective_batch_limit() -> int
+{
+  const int batch_limit =
+      opts_ != nullptr ? std::max(1, opts_->batching.max_batch_size) : 1;
+  if (batch_limit <= 1 || opts_ == nullptr ||
+      !opts_->batching.dynamic_batching || !opts_->congestion.enabled) {
+    return batch_limit;
+  }
+
+  if (!adaptive_target_initialized_) {
+    adaptive_target_batch_size_ = batch_limit;
+    adaptive_target_initialized_ = true;
+  }
+
+  update_adaptive_batch_target(batch_limit);
+  return std::clamp(adaptive_target_batch_size_, 1, batch_limit);
+}
+
+void
+BatchCollector::update_adaptive_batch_target(int batch_limit)
+{
+  if (batch_limit <= 1) {
+    adaptive_target_batch_size_ = 1;
+    adaptive_target_initialized_ = true;
+    low_pressure_streak_ = 0;
+    return;
+  }
+
+  adaptive_target_batch_size_ =
+      std::clamp(adaptive_target_batch_size_, 1, batch_limit);
+
+  const auto pressure = sample_batch_pressure();
+  if (pressure.congested) {
+    adaptive_target_batch_size_ = batch_limit;
+    low_pressure_streak_ = 0;
+    return;
+  }
+
+  if (pressure.high) {
+    low_pressure_streak_ = 0;
+    const int step = high_pressure_step(batch_limit, pressure.severe);
+    adaptive_target_batch_size_ =
+        std::min(batch_limit, adaptive_target_batch_size_ + step);
+    return;
+  }
+
+  if (pressure.low) {
+    if (low_pressure_streak_ < std::numeric_limits<int>::max()) {
+      ++low_pressure_streak_;
+    }
+    if (low_pressure_streak_ >= low_pressure_streak_threshold()) {
+      adaptive_target_batch_size_ =
+          std::max(1, adaptive_target_batch_size_ - 1);
+      low_pressure_streak_ = 0;
+    }
+    return;
+  }
+
+  low_pressure_streak_ = 0;
+}
+
+auto
+BatchCollector::high_pressure_step(int batch_limit, bool severe) const -> int
+{
+  if (batch_limit <= 1 || opts_ == nullptr || !opts_->congestion.enabled) {
+    return 1;
+  }
+
+  const int tick_interval_ms = std::max(1, opts_->congestion.tick_interval_ms);
+  const int entry_horizon_ms =
+      std::max(tick_interval_ms, opts_->congestion.entry_horizon_ms);
+  const int entry_ticks = std::max(1, entry_horizon_ms / tick_interval_ms);
+
+  const int base_step = std::max(1, batch_limit / entry_ticks);
+  if (!severe) {
+    return base_step;
+  }
+
+  const int low_ticks = low_pressure_streak_threshold();
+  const int severe_step = std::max(1, batch_limit / std::max(1, low_ticks));
+  return std::max(base_step, severe_step);
+}
+
+auto
+BatchCollector::low_pressure_streak_threshold() const -> int
+{
+  if (opts_ == nullptr || !opts_->congestion.enabled) {
+    return 1;
+  }
+
+  const int tick_interval_ms = std::max(1, opts_->congestion.tick_interval_ms);
+  const int exit_horizon_ms =
+      std::max(tick_interval_ms, opts_->congestion.exit_horizon_ms);
+  return std::max(1, exit_horizon_ms / tick_interval_ms);
+}
+
+auto
+BatchCollector::sample_batch_pressure() const -> BatchPressureState
+{
+  BatchPressureState state{};
+  if (opts_ == nullptr || !opts_->congestion.enabled) {
+    return state;
+  }
+
+  const auto fill_high = std::clamp(opts_->congestion.fill_high, 0.0, 1.0);
+  const auto fill_low = std::clamp(
+      std::min(opts_->congestion.fill_low, opts_->congestion.fill_high), 0.0,
+      fill_high);
+  const auto rho_high = std::max(0.0, opts_->congestion.rho_high);
+  const auto rho_low = std::clamp(opts_->congestion.rho_low, 0.0, rho_high);
+
+  if (const auto snapshot = congestion::snapshot(); snapshot.has_value()) {
+    const auto& values = *snapshot;
+    const bool live_congested = congestion::is_congested();
+    const bool queue_high =
+        values.queue_capacity > 0 &&
+        static_cast<double>(values.queue_size) /
+                static_cast<double>(values.queue_capacity) >=
+            fill_high;
+    const bool queue_low = values.queue_capacity == 0 ||
+                           static_cast<double>(values.queue_size) /
+                                   static_cast<double>(values.queue_capacity) <=
+                               fill_low;
+
+    state.congested = values.congestion || live_congested;
+    state.severe = state.congested || values.rejection_rps > 0.0;
+    state.high = state.severe || values.fill_ewma >= fill_high ||
+                 values.rho_ewma >= rho_high || queue_high;
+    state.low = !state.congested && values.rejection_rps <= 0.0 &&
+                values.fill_ewma <= fill_low && values.rho_ewma <= rho_low &&
+                queue_low;
+    return state;
+  }
+
+  if (queue_ == nullptr) {
+    return state;
+  }
+
+  const auto queue_capacity = queue_->capacity();
+  const auto queue_size = queue_->size();
+  const double queue_fill = queue_capacity == 0
+                                ? 0.0
+                                : static_cast<double>(queue_size) /
+                                      static_cast<double>(queue_capacity);
+  state.congested = congestion::is_congested();
+  state.high = queue_fill >= fill_high;
+  state.low = !state.congested && queue_fill <= fill_low;
+  state.severe = state.congested;
+  return state;
 }
 
 auto

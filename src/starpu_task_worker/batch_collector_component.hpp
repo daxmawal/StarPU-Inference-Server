@@ -60,9 +60,22 @@ class BatchCollector {
       -> std::vector<std::shared_ptr<const void>>;
 
  private:
+  struct BatchPressureState {
+    bool congested = false;
+    bool high = false;
+    bool low = false;
+    bool severe = false;
+  };
+
   [[nodiscard]] auto job_sample_size(
       const std::shared_ptr<InferenceJob>& job) const -> int64_t;
   [[nodiscard]] auto sample_limit_per_batch() const -> int;
+  [[nodiscard]] auto effective_batch_limit() -> int;
+  void update_adaptive_batch_target(int batch_limit);
+  [[nodiscard]] auto high_pressure_step(int batch_limit, bool severe) const
+      -> int;
+  [[nodiscard]] auto low_pressure_streak_threshold() const -> int;
+  [[nodiscard]] auto sample_batch_pressure() const -> BatchPressureState;
   [[nodiscard]] auto try_acquire_next_job(
       bool enable_wait,
       task_runner_internal::Clock::time_point coalesce_deadline)
@@ -132,6 +145,9 @@ class BatchCollector {
   std::condition_variable* prepared_cv_;
   std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs_;
   bool* batching_done_;
+  int adaptive_target_batch_size_ = 1;
+  bool adaptive_target_initialized_ = false;
+  int low_pressure_streak_ = 0;
 };
 
 }  // namespace starpu_server

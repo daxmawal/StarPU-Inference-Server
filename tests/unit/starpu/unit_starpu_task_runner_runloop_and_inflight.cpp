@@ -1,6 +1,39 @@
+#include "monitoring/congestion_monitor.hpp"
 #include "unit_starpu_task_runner_support.hpp"
 
 namespace {
+
+auto
+wait_until(
+    const std::function<bool()>& predicate, std::chrono::milliseconds timeout,
+    std::chrono::milliseconds poll_interval = std::chrono::milliseconds(10))
+    -> bool
+{
+  const auto sleep_interval = poll_interval > std::chrono::milliseconds::zero()
+                                  ? poll_interval
+                                  : std::chrono::milliseconds(1);
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(sleep_interval);
+  }
+  return predicate();
+}
+
+struct ScopedCongestionMonitor {
+  explicit ScopedCongestionMonitor(
+      starpu_server::InferenceQueue* queue,
+      starpu_server::congestion::Config config)
+  {
+    started = starpu_server::congestion::start(queue, std::move(config));
+  }
+
+  ~ScopedCongestionMonitor() { starpu_server::congestion::shutdown(); }
+
+  bool started = false;
+};
 
 struct BatchCollectorAfterBuildJobHookGuard {
   explicit BatchCollectorAfterBuildJobHookGuard(
@@ -220,6 +253,165 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchStopsWhenCoalesceDeadlineExpires)
 
   ASSERT_EQ(collected.size(), 1U);
   EXPECT_EQ(collected[0], first);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    CollectBatchAdaptsTargetWithQueuePressureByShrinkingThenGrowing)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+  opts_.congestion.enabled = true;
+
+  auto make_compatible_job = [this](int request_id) {
+    return make_job(
+        request_id,
+        {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+        {at::kFloat});
+  };
+
+  int request_id = 700;
+  for (int i = 0; i < 8; ++i) {
+    auto first = make_compatible_job(request_id++);
+    auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+        runner_.get(), first);
+    ASSERT_EQ(collected.size(), 1U);
+  }
+
+  auto low_pressure_first = make_compatible_job(request_id++);
+  auto low_pressure_queued = make_compatible_job(request_id++);
+  ASSERT_TRUE(queue_.push(low_pressure_queued));
+
+  auto low_pressure_collected =
+      starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+          runner_.get(), low_pressure_first);
+  ASSERT_EQ(low_pressure_collected.size(), 1U);
+  auto low_pressure_remaining = runner_->wait_for_next_job();
+  ASSERT_EQ(low_pressure_remaining, low_pressure_queued);
+
+  constexpr std::size_t kHighPressureQueueDepth = 90;
+  for (std::size_t i = 0; i < kHighPressureQueueDepth; ++i) {
+    ASSERT_TRUE(queue_.push(make_compatible_job(request_id++)));
+  }
+
+  auto high_pressure_first = make_compatible_job(request_id++);
+  auto high_pressure_collected =
+      starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+          runner_.get(), high_pressure_first);
+
+  EXPECT_GE(high_pressure_collected.size(), 2U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    CollectBatchUsesConfiguredMaximumWhenCongestionDetected)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+  opts_.congestion.enabled = true;
+  opts_.congestion.tick_interval_ms = 20;
+  opts_.congestion.entry_horizon_ms = 40;
+  opts_.congestion.exit_horizon_ms = 40;
+
+  starpu_server::congestion::shutdown();
+  starpu_server::congestion::Config monitor_cfg;
+  monitor_cfg.enabled = true;
+  monitor_cfg.tick_interval = std::chrono::milliseconds(20);
+  monitor_cfg.entry_horizon = std::chrono::milliseconds(40);
+  monitor_cfg.exit_horizon = std::chrono::milliseconds(60);
+  ScopedCongestionMonitor monitor(&queue_, monitor_cfg);
+  ASSERT_TRUE(monitor.started);
+
+  auto make_compatible_job = [this](int request_id) {
+    return make_job(
+        request_id,
+        {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+        {at::kFloat});
+  };
+
+  int request_id = 800;
+  for (int i = 0; i < 8; ++i) {
+    auto first = make_compatible_job(request_id++);
+    auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+        runner_.get(), first);
+    ASSERT_EQ(collected.size(), 1U);
+  }
+
+  starpu_server::congestion::record_arrival(1);
+  starpu_server::congestion::record_rejection(1);
+  ASSERT_TRUE(wait_until(
+      [] { return starpu_server::congestion::is_congested(); },
+      std::chrono::milliseconds(1000), std::chrono::milliseconds(5)));
+
+  for (int i = 0; i < opts_.batching.max_batch_size - 1; ++i) {
+    ASSERT_TRUE(queue_.push(make_compatible_job(request_id++)));
+  }
+
+  auto first = make_compatible_job(request_id++);
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  EXPECT_EQ(
+      collected.size(),
+      static_cast<std::size_t>(opts_.batching.max_batch_size));
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    CollectBatchWaitsToFillWhenCongestedAndCoalesceTimeoutIsZero)
+{
+  opts_.batching.dynamic_batching = true;
+  opts_.batching.max_batch_size = 4;
+  opts_.batching.batch_coalesce_timeout_ms = 0;
+  opts_.congestion.enabled = true;
+  opts_.congestion.tick_interval_ms = 80;
+  opts_.congestion.entry_horizon_ms = 40;
+  opts_.congestion.exit_horizon_ms = 40;
+
+  starpu_server::congestion::shutdown();
+  starpu_server::congestion::Config monitor_cfg;
+  monitor_cfg.enabled = true;
+  monitor_cfg.tick_interval = std::chrono::milliseconds(10);
+  monitor_cfg.entry_horizon = std::chrono::milliseconds(20);
+  monitor_cfg.exit_horizon = std::chrono::milliseconds(60);
+  ScopedCongestionMonitor monitor(&queue_, monitor_cfg);
+  ASSERT_TRUE(monitor.started);
+
+  auto make_compatible_job = [this](int request_id) {
+    return make_job(
+        request_id,
+        {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
+        {at::kFloat});
+  };
+
+  starpu_server::congestion::record_arrival(1);
+  starpu_server::congestion::record_rejection(1);
+  ASSERT_TRUE(wait_until(
+      [] { return starpu_server::congestion::is_congested(); },
+      std::chrono::milliseconds(1000), std::chrono::milliseconds(5)));
+
+  auto first = make_compatible_job(900);
+  auto second = make_compatible_job(901);
+  auto third = make_compatible_job(902);
+  auto fourth = make_compatible_job(903);
+
+  std::atomic<bool> pushed_all{true};
+  std::jthread async_pusher([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const bool all_ok =
+        queue_.push(second) && queue_.push(third) && queue_.push(fourth);
+    pushed_all.store(all_ok, std::memory_order_release);
+  });
+
+  auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
+      runner_.get(), first);
+
+  EXPECT_TRUE(pushed_all.load(std::memory_order_acquire));
+  EXPECT_EQ(
+      collected.size(),
+      static_cast<std::size_t>(opts_.batching.max_batch_size));
 }
 
 TEST_F(
