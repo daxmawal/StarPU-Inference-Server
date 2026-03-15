@@ -101,6 +101,35 @@ python3 -m grpc_tools.protoc \
 The same proto files underpin the C++ client, CMake handles codegen through
 `protobuf_generate` during the normal build.
 
+## 6. Replay a variable request cadence with the C++ client
+
+`client_example` supports schedule replay from a compact CSV of segments:
+
+```csv
+delta_us,repeat,input_id
+1700,5000,0
+300,120,0
+9000,800,0
+```
+
+- `delta_us`: delay between two sends, in microseconds.
+- `repeat`: number of consecutive requests for that segment.
+- `input_id` (optional): index of the pre-generated input tensor (0..4).
+  If omitted, each send picks a random entry from the pool.
+
+Run with:
+
+```bash
+./build/client_example \
+  --server 127.0.0.1:50051 \
+  --input input0:1x3x224x224:float32 \
+  --model resnet152 \
+  --schedule-csv /path/to/schedule.csv
+```
+
+When `--schedule-csv` is set, the schedule drives request timing and `--delay`
+is ignored. If `--request-number` is passed, it caps the replay length.
+
 ---
 
 You now have an end-to-end loop that uses real data to validate the StarPU
