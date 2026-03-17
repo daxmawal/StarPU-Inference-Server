@@ -13,6 +13,7 @@ permissions:
 
 env:
   CI_BUILD_JOBS: "16"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   cmake-format:
@@ -386,27 +387,31 @@ jobs:
         run: chmod +x all_tests || true
 
       - name: Run unit test shards
+        working-directory: build
         run: |
-          ctest --test-dir build --output-on-failure \
+          ctest --output-on-failure \
             --timeout "$CTEST_TIMEOUT_UNIT_SECONDS" \
             -R '^unit_tests_shard_.*$' \
-            --output-junit build/junit-unit.xml
+            --output-junit junit-unit.xml
 
       - name: Run integration test shards
+        working-directory: build
         run: |
-          ctest --test-dir build --output-on-failure \
+          ctest --output-on-failure \
             --timeout "$CTEST_TIMEOUT_INTEGRATION_SECONDS" \
             -R '^integration_tests_shard_.*$' \
-            --output-junit build/junit-integration.xml
+            --output-junit junit-integration.xml
 
       - name: Run e2e test shards
+        working-directory: build
         run: |
-          ctest --test-dir build --output-on-failure \
+          ctest --output-on-failure \
             --timeout "$CTEST_TIMEOUT_E2E_SECONDS" \
             -R '^e2e_tests_shard_.*$' \
-            --output-junit build/junit-e2e.xml
+            --output-junit junit-e2e.xml
 
       - name: Upload JUnit reports
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: junit-reports
