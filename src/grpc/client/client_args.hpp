@@ -22,8 +22,10 @@ struct ClientConfig {
   std::string model_name = "example";
   std::string model_version = "1";
   std::string client_model_path;
+  std::string schedule_csv_path;
   int request_nb = 1;
   int delay_us = 0;
+  bool request_nb_explicit = false;
   VerbosityLevel verbosity = VerbosityLevel::Info;
   bool show_help = false;
   bool valid = true;

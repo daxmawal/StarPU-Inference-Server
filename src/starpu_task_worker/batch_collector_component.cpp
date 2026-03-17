@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <chrono>
 #include <format>
+#include <limits>
 #include <optional>
 #include <utility>
 
 #include "exceptions.hpp"
 #include "logger.hpp"
+#include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
 #include "result_dispatcher_component.hpp"
 #include "task_runner_internal.hpp"
@@ -31,6 +33,181 @@ batching_loop_test_hooks() -> BatchingLoopTestHooks&
 }
 }  // namespace batch_collector_component_detail
 #endif  // SONAR_IGNORE_END
+
+namespace {
+
+struct BatchPressureThresholds {
+  double fill_high = 0.0;
+  double fill_low = 0.0;
+  double rho_high = 0.0;
+  double rho_low = 0.0;
+};
+
+struct InternalPressureSnapshot {
+  bool high = false;
+  bool low = false;
+  bool severe = false;
+};
+
+struct InternalPressureConfig {
+  std::size_t max_inflight_tasks = 0;
+  int max_batch_size = 1;
+};
+
+struct ResolvedBatchPressure {
+  bool congested = false;
+  bool high = false;
+  bool low = false;
+  bool severe = false;
+  std::optional<clock::time_point> monitor_tick;
+};
+
+constexpr double kInternalHighRatio = 0.75;
+constexpr double kInternalLowRatio = 0.25;
+constexpr double kInternalSevereRatio = 0.95;
+constexpr double kPreparedBacklogHighRatio = 1.0;
+constexpr double kPreparedBacklogSevereRatio = 2.0;
+
+auto
+make_batch_pressure_thresholds(const RuntimeConfig::CongestionSettings&
+                                   congestion) -> BatchPressureThresholds
+{
+  BatchPressureThresholds thresholds{};
+  thresholds.fill_high = std::clamp(congestion.fill_high, 0.0, 1.0);
+  thresholds.fill_low = std::clamp(
+      std::min(congestion.fill_low, congestion.fill_high), 0.0,
+      thresholds.fill_high);
+  thresholds.rho_high = std::max(0.0, congestion.rho_high);
+  thresholds.rho_low = std::clamp(congestion.rho_low, 0.0, thresholds.rho_high);
+  return thresholds;
+}
+
+auto
+load_prepared_depth(
+    const std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs,
+    std::mutex* prepared_mutex) -> std::size_t
+{
+  if (prepared_jobs == nullptr) {
+    return 0;
+  }
+  if (prepared_mutex == nullptr) {
+    return prepared_jobs->size();
+  }
+
+  const std::scoped_lock lock(*prepared_mutex);
+  return prepared_jobs->size();
+}
+
+auto
+load_inflight_tasks(const std::atomic<std::size_t>* inflight_tasks)
+    -> std::size_t
+{
+  if (inflight_tasks == nullptr) {
+    return 0;
+  }
+  return inflight_tasks->load(std::memory_order_acquire);
+}
+
+auto
+compute_queue_fill(std::size_t queue_size, std::size_t queue_capacity) -> double
+{
+  if (queue_capacity == 0) {
+    return 0.0;
+  }
+  return static_cast<double>(queue_size) / static_cast<double>(queue_capacity);
+}
+
+auto
+sample_internal_pressure(
+    std::size_t prepared_depth, std::size_t inflight_tasks,
+    const InternalPressureConfig& config) -> InternalPressureSnapshot
+{
+  InternalPressureSnapshot pressure{};
+  const std::size_t total_internal_backlog = prepared_depth + inflight_tasks;
+
+  if (config.max_inflight_tasks > 0) {
+    const double inflight_ratio =
+        static_cast<double>(inflight_tasks) /
+        static_cast<double>(config.max_inflight_tasks);
+    const double backlog_ratio = static_cast<double>(total_internal_backlog) /
+                                 static_cast<double>(config.max_inflight_tasks);
+    pressure.high = inflight_ratio >= kInternalHighRatio ||
+                    backlog_ratio >= kInternalHighRatio;
+    pressure.low = inflight_ratio <= kInternalLowRatio &&
+                   backlog_ratio <= kInternalLowRatio;
+    pressure.severe = inflight_ratio >= kInternalSevereRatio ||
+                      backlog_ratio >= kInternalSevereRatio;
+    return pressure;
+  }
+
+  const auto local_backlog_ref =
+      static_cast<std::size_t>(std::max(1, config.max_batch_size));
+  const double prepared_ratio = static_cast<double>(prepared_depth) /
+                                static_cast<double>(local_backlog_ref);
+  pressure.high = prepared_ratio >= kPreparedBacklogHighRatio;
+  pressure.low = prepared_depth == 0;
+  pressure.severe = prepared_ratio >= kPreparedBacklogSevereRatio;
+  return pressure;
+}
+
+auto
+sample_monitor_pressure(
+    const BatchPressureThresholds& thresholds,
+    const InternalPressureSnapshot& internal_pressure)
+    -> std::optional<ResolvedBatchPressure>
+{
+  const auto snapshot = congestion::snapshot();
+  if (!snapshot.has_value()) {
+    return std::nullopt;
+  }
+
+  const auto& values = *snapshot;
+  const double queue_fill =
+      compute_queue_fill(values.queue_size, values.queue_capacity);
+  const bool queue_high =
+      values.queue_capacity > 0 && queue_fill >= thresholds.fill_high;
+  const bool queue_low =
+      values.queue_capacity == 0 || queue_fill <= thresholds.fill_low;
+
+  ResolvedBatchPressure pressure{};
+  pressure.monitor_tick = values.last_tick;
+  pressure.congested = values.congestion || congestion::is_congested();
+  pressure.severe = pressure.congested || values.rejection_rps > 0.0 ||
+                    internal_pressure.severe;
+  pressure.high = pressure.severe || values.fill_ewma >= thresholds.fill_high ||
+                  values.rho_ewma >= thresholds.rho_high || queue_high ||
+                  internal_pressure.high;
+  pressure.low = !pressure.congested && values.rejection_rps <= 0.0 &&
+                 values.fill_ewma <= thresholds.fill_low &&
+                 values.rho_ewma <= thresholds.rho_low && queue_low &&
+                 internal_pressure.low;
+  return pressure;
+}
+
+auto
+sample_queue_pressure(
+    const InferenceQueue* queue, const BatchPressureThresholds& thresholds,
+    const InternalPressureSnapshot& internal_pressure) -> ResolvedBatchPressure
+{
+  ResolvedBatchPressure pressure{};
+  if (queue == nullptr) {
+    pressure.high = internal_pressure.high;
+    pressure.low = internal_pressure.low;
+    pressure.severe = internal_pressure.severe;
+    return pressure;
+  }
+
+  const double queue_fill =
+      compute_queue_fill(queue->size(), queue->capacity());
+  pressure.congested = congestion::is_congested();
+  pressure.high = queue_fill >= thresholds.fill_high || internal_pressure.high;
+  pressure.low = !pressure.congested && queue_fill <= thresholds.fill_low &&
+                 internal_pressure.low;
+  pressure.severe = pressure.congested || internal_pressure.severe;
+  return pressure;
+}
+
+}  // namespace
 
 BatchCollector::BatchCollector(
     InferenceQueue* queue, const RuntimeConfig* opts, StarPUSetup* starpu,
@@ -100,7 +277,7 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     return jobs;
   }
 
-  const int max_job_count = std::max(1, opts_->batching.max_batch_size);
+  const int max_job_count = effective_batch_limit();
   if (max_job_count <= 1) {
     set_batch_pending_jobs(jobs.size());
     return jobs;
@@ -109,9 +286,23 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
   const int64_t max_samples_cap = sample_limit_per_batch();
   int64_t accumulated_samples = job_sample_size(first_job);
 
-  const bool enable_wait = opts_->batching.batch_coalesce_timeout_ms > 0;
+  const auto pressure_sample = sample_batch_pressure();
+  const auto& pressure = pressure_sample.state;
+  int coalesce_timeout_ms =
+      std::max(0, opts_->batching.batch_coalesce_timeout_ms);
+  if (pressure.congested && opts_->congestion.enabled) {
+    // Under congestion, keep a short coalescing window even when the
+    // configured timeout is 0 so the collector can fill toward max batch size.
+    const int tick_interval_ms =
+        std::max(1, opts_->congestion.tick_interval_ms);
+    const int per_slot_wait_ms =
+        std::max(1, tick_interval_ms / std::max(1, max_job_count));
+    coalesce_timeout_ms = std::max(coalesce_timeout_ms, per_slot_wait_ms);
+  }
+
+  const bool enable_wait = coalesce_timeout_ms > 0;
   const auto batch_coalesce_timeout =
-      std::chrono::milliseconds(opts_->batching.batch_coalesce_timeout_ms);
+      std::chrono::milliseconds(coalesce_timeout_ms);
   const auto coalesce_deadline =
       enable_wait ? clock::now() + batch_coalesce_timeout : clock::time_point{};
   const auto& target_worker = first_job->get_fixed_worker_id();
@@ -436,6 +627,165 @@ BatchCollector::sample_limit_per_batch() const -> int
   }
 
   return configured_limit;
+}
+
+auto
+BatchCollector::effective_batch_limit() -> int
+{
+  const int batch_limit =
+      opts_ != nullptr ? std::max(1, opts_->batching.max_batch_size) : 1;
+  if (batch_limit <= 1 || opts_ == nullptr ||
+      !opts_->batching.dynamic_batching || !opts_->congestion.enabled) {
+    return batch_limit;
+  }
+
+  if (!adaptive_target_initialized_) {
+    adaptive_target_batch_size_ = batch_limit;
+    adaptive_target_initialized_ = true;
+  }
+
+  update_adaptive_batch_target(batch_limit);
+  return std::clamp(adaptive_target_batch_size_, 1, batch_limit);
+}
+
+void
+BatchCollector::update_adaptive_batch_target(int batch_limit)
+{
+  if (batch_limit <= 1) {
+    adaptive_target_batch_size_ = 1;
+    adaptive_target_initialized_ = true;
+    low_pressure_streak_ = 0;
+    return;
+  }
+
+  adaptive_target_batch_size_ =
+      std::clamp(adaptive_target_batch_size_, 1, batch_limit);
+
+  const auto pressure_sample = sample_batch_pressure();
+  if (!should_refresh_adaptive_target(pressure_sample)) {
+    return;
+  }
+  const auto& pressure = pressure_sample.state;
+  if (pressure.congested) {
+    adaptive_target_batch_size_ = batch_limit;
+    low_pressure_streak_ = 0;
+    return;
+  }
+
+  if (pressure.high) {
+    low_pressure_streak_ = 0;
+    const int step = high_pressure_step(batch_limit, pressure.severe);
+    adaptive_target_batch_size_ =
+        std::min(batch_limit, adaptive_target_batch_size_ + step);
+    return;
+  }
+
+  if (pressure.low) {
+    if (low_pressure_streak_ < std::numeric_limits<int>::max()) {
+      ++low_pressure_streak_;
+    }
+    if (low_pressure_streak_ >= low_pressure_streak_threshold()) {
+      adaptive_target_batch_size_ =
+          std::max(1, adaptive_target_batch_size_ - 1);
+      low_pressure_streak_ = 0;
+    }
+    return;
+  }
+
+  low_pressure_streak_ = 0;
+}
+
+auto
+BatchCollector::should_refresh_adaptive_target(
+    const BatchPressureSample& pressure) -> bool
+{
+  if (opts_ == nullptr || !opts_->congestion.enabled) {
+    return true;
+  }
+
+  if (pressure.monitor_tick.has_value()) {
+    const auto monitor_tick = *pressure.monitor_tick;
+    if (last_adaptive_update_marker_.has_value() &&
+        monitor_tick <= *last_adaptive_update_marker_) {
+      return false;
+    }
+    last_adaptive_update_marker_ = monitor_tick;
+    return true;
+  }
+
+  const auto now = clock::now();
+
+  if (const auto tick_interval = std::chrono::milliseconds(
+          std::max(1, opts_->congestion.tick_interval_ms));
+      last_adaptive_update_marker_.has_value() &&
+      now - *last_adaptive_update_marker_ < tick_interval) {
+    return false;
+  }
+  last_adaptive_update_marker_ = now;
+  return true;
+}
+
+auto
+BatchCollector::high_pressure_step(int batch_limit, bool severe) const -> int
+{
+  if (batch_limit <= 1 || opts_ == nullptr || !opts_->congestion.enabled) {
+    return 1;
+  }
+
+  const int tick_interval_ms = std::max(1, opts_->congestion.tick_interval_ms);
+  const int entry_horizon_ms =
+      std::max(tick_interval_ms, opts_->congestion.entry_horizon_ms);
+  const int entry_ticks = std::max(1, entry_horizon_ms / tick_interval_ms);
+
+  const int base_step = std::max(1, batch_limit / entry_ticks);
+  if (!severe) {
+    return base_step;
+  }
+
+  const int low_ticks = low_pressure_streak_threshold();
+  const int severe_step = std::max(1, batch_limit / std::max(1, low_ticks));
+  return std::max(base_step, severe_step);
+}
+
+auto
+BatchCollector::low_pressure_streak_threshold() const -> int
+{
+  if (opts_ == nullptr || !opts_->congestion.enabled) {
+    return 1;
+  }
+
+  const int tick_interval_ms = std::max(1, opts_->congestion.tick_interval_ms);
+  const int exit_horizon_ms =
+      std::max(tick_interval_ms, opts_->congestion.exit_horizon_ms);
+  return std::max(1, exit_horizon_ms / tick_interval_ms);
+}
+
+auto
+BatchCollector::sample_batch_pressure() const -> BatchPressureSample
+{
+  BatchPressureSample sample{};
+  if (opts_ == nullptr || !opts_->congestion.enabled) {
+    return sample;
+  }
+
+  const auto thresholds = make_batch_pressure_thresholds(opts_->congestion);
+  InternalPressureConfig internal_pressure_config{};
+  internal_pressure_config.max_inflight_tasks = max_inflight_tasks_;
+  internal_pressure_config.max_batch_size = opts_->batching.max_batch_size;
+  const auto internal_pressure = sample_internal_pressure(
+      load_prepared_depth(prepared_jobs_, prepared_mutex_),
+      load_inflight_tasks(inflight_tasks_), internal_pressure_config);
+
+  ResolvedBatchPressure pressure =
+      sample_monitor_pressure(thresholds, internal_pressure)
+          .value_or(
+              sample_queue_pressure(queue_, thresholds, internal_pressure));
+  sample.state.congested = pressure.congested;
+  sample.state.high = pressure.high;
+  sample.state.low = pressure.low;
+  sample.state.severe = pressure.severe;
+  sample.monitor_tick = pressure.monitor_tick;
+  return sample;
 }
 
 auto

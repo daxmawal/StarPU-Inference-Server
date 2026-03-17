@@ -43,7 +43,7 @@ class InferenceQueue {
     std::size_t size = 0;
     {
       const std::scoped_lock lock(mutex_);
-      if (shutdown_) {
+      if (!accepting_ || shutdown_) {
         return false;
       }
       if (queue_.size() >= max_size_) {
@@ -53,7 +53,7 @@ class InferenceQueue {
         return false;
       }
       queue_.push(std::move(job));
-      total_pushed_.fetch_add(1, std::memory_order_release);
+      total_pushed_.fetch_add(1);
       size = queue_.size();
     }
     update_queue_metrics(size);
@@ -107,11 +107,17 @@ class InferenceQueue {
     return false;
   }
 
+  void close_for_push()
+  {
+    const std::scoped_lock lock(mutex_);
+    accepting_ = false;
+  }
 
   void shutdown()
   {
     {
       const std::scoped_lock lock(mutex_);
+      accepting_ = false;
       shutdown_ = true;
     }
     cv_.notify_all();
@@ -119,10 +125,10 @@ class InferenceQueue {
 
   [[nodiscard]] auto total_pushed() const -> std::size_t
   {
-    return total_pushed_.load(std::memory_order_acquire);
+    return total_pushed_.load();
   }
 
-  void reset_counters() { total_pushed_.store(0, std::memory_order_release); }
+  void reset_counters() { total_pushed_.store(0); }
 
   [[nodiscard]] auto size() const -> std::size_t
   {
@@ -138,6 +144,12 @@ class InferenceQueue {
     return shutdown_;
   }
 
+  [[nodiscard]] auto is_accepting() const -> bool
+  {
+    const std::scoped_lock lock(mutex_);
+    return accepting_;
+  }
+
  private:
   static void update_queue_metrics(std::size_t size)
   {
@@ -149,6 +161,7 @@ class InferenceQueue {
   const std::size_t max_size_;
   mutable std::mutex mutex_;
   std::queue<std::shared_ptr<InferenceJob>> queue_;
+  bool accepting_ = true;
   bool shutdown_ = false;
   std::condition_variable cv_;
   std::atomic<std::size_t> total_pushed_{0};

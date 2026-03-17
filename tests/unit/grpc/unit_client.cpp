@@ -21,7 +21,8 @@ TEST(ClientArgs, ParsesValidArguments)
   auto argv = std::to_array<const char*>(
       {"prog", "--input", "input:1x3x224x224:float32", "--server",
        "localhost:1234", "--model", "my_model", "--request-number", "5",
-       "--delay", "10", "--verbose", "2"});
+       "--delay", "10", "--schedule-csv", "/tmp/schedule.csv", "--verbose",
+       "2"});
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_TRUE(cfg.valid);
   ASSERT_EQ(cfg.inputs.size(), 1U);
@@ -31,7 +32,9 @@ TEST(ClientArgs, ParsesValidArguments)
   EXPECT_EQ(cfg.model_name, "my_model");
   EXPECT_EQ(cfg.model_version, "1");
   EXPECT_EQ(cfg.request_nb, 5);
+  EXPECT_TRUE(cfg.request_nb_explicit);
   EXPECT_EQ(cfg.delay_us, 10);
+  EXPECT_EQ(cfg.schedule_csv_path, "/tmp/schedule.csv");
   EXPECT_EQ(cfg.verbosity, starpu_server::VerbosityLevel::Stats);
 }
 
@@ -116,6 +119,25 @@ TEST(ClientArgs, MissingModelVersionValueFailsParsing)
   EXPECT_EQ(cfg.model_version, "1");
 }
 
+TEST(ClientArgs, ParsesScheduleCsvPathWhenProvided)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--schedule-csv",
+       "/tmp/traffic.csv"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.schedule_csv_path, "/tmp/traffic.csv");
+}
+
+TEST(ClientArgs, MissingScheduleCsvValueFailsParsing)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--schedule-csv"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_TRUE(cfg.schedule_csv_path.empty());
+}
+
 TEST(ClientArgs, RejectsNegativeDelay)
 {
   auto argv = std::to_array<const char*>(
@@ -174,6 +196,7 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
   const std::string out = testing::internal::GetCapturedStdout();
   EXPECT_NE(out.find("--request-number"), std::string::npos);
   EXPECT_NE(out.find("--delay"), std::string::npos);
+  EXPECT_NE(out.find("--schedule-csv"), std::string::npos);
   EXPECT_NE(out.find("--input"), std::string::npos);
   EXPECT_NE(out.find("--server"), std::string::npos);
   EXPECT_NE(out.find("--model"), std::string::npos);

@@ -57,6 +57,9 @@ display_client_help(const char* prog_name)
       << "  --request-number N Number of requests to send (default: 1)\n"
       << "  --delay US        Delay between requests in microseconds (default: "
          "0)\n"
+      << "  --schedule-csv PATH  Segment schedule CSV: "
+         "delta_us,repeat[,input_id] (input_id omitted => random pool pick). "
+         "Overrides --delay; --request-number caps the replay.\n"
       << "  --input NAME:SHAPE:TYPE  Specify an input (may be repeated)\n"
       << "  --server ADDR     gRPC server address (default: localhost:50051)\n"
       << "  --model NAME      Model name (default: example)\n"
@@ -126,6 +129,7 @@ parse_request_nb(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
       throw std::invalid_argument("Must be > 0.");
     }
     cfg.request_nb = tmp;
+    cfg.request_nb_explicit = true;
   });
 }
 
@@ -138,6 +142,14 @@ parse_delay(ClientConfig& cfg, size_t& idx, std::span<const char*> args) -> bool
       throw std::invalid_argument("Must be >= 0.");
     }
   });
+}
+
+auto
+parse_schedule_csv(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
+    -> bool
+{
+  return expect_and_parse(
+      idx, args, [&cfg](const char* val) { cfg.schedule_csv_path = val; });
 }
 
 inline namespace client_args_detail {
@@ -225,6 +237,7 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
       dispatch = {
           {"--request-number", parse_request_nb},
           {"--delay", parse_delay},
+          {"--schedule-csv", parse_schedule_csv},
           {"--input", parse_input},
           {"--server", parse_server},
           {"--model", parse_model},
