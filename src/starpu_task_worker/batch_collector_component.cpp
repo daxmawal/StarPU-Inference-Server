@@ -49,6 +49,11 @@ struct InternalPressureSnapshot {
   bool severe = false;
 };
 
+struct InternalPressureConfig {
+  std::size_t max_inflight_tasks = 0;
+  int max_batch_size = 1;
+};
+
 struct ResolvedBatchPressure {
   bool congested = false;
   bool high = false;
@@ -115,17 +120,17 @@ compute_queue_fill(std::size_t queue_size, std::size_t queue_capacity) -> double
 auto
 sample_internal_pressure(
     std::size_t prepared_depth, std::size_t inflight_tasks,
-    std::size_t max_inflight_tasks,
-    int max_batch_size) -> InternalPressureSnapshot
+    const InternalPressureConfig& config) -> InternalPressureSnapshot
 {
   InternalPressureSnapshot pressure{};
   const std::size_t total_internal_backlog = prepared_depth + inflight_tasks;
 
-  if (max_inflight_tasks > 0) {
-    const double inflight_ratio = static_cast<double>(inflight_tasks) /
-                                  static_cast<double>(max_inflight_tasks);
+  if (config.max_inflight_tasks > 0) {
+    const double inflight_ratio =
+        static_cast<double>(inflight_tasks) /
+        static_cast<double>(config.max_inflight_tasks);
     const double backlog_ratio = static_cast<double>(total_internal_backlog) /
-                                 static_cast<double>(max_inflight_tasks);
+                                 static_cast<double>(config.max_inflight_tasks);
     pressure.high = inflight_ratio >= kInternalHighRatio ||
                     backlog_ratio >= kInternalHighRatio;
     pressure.low = inflight_ratio <= kInternalLowRatio &&
@@ -136,7 +141,7 @@ sample_internal_pressure(
   }
 
   const auto local_backlog_ref =
-      static_cast<std::size_t>(std::max(1, max_batch_size));
+      static_cast<std::size_t>(std::max(1, config.max_batch_size));
   const double prepared_ratio = static_cast<double>(prepared_depth) /
                                 static_cast<double>(local_backlog_ref);
   pressure.high = prepared_ratio >= kPreparedBacklogHighRatio;
@@ -763,10 +768,12 @@ BatchCollector::sample_batch_pressure() const -> BatchPressureSample
   }
 
   const auto thresholds = make_batch_pressure_thresholds(opts_->congestion);
+  InternalPressureConfig internal_pressure_config{};
+  internal_pressure_config.max_inflight_tasks = max_inflight_tasks_;
+  internal_pressure_config.max_batch_size = opts_->batching.max_batch_size;
   const auto internal_pressure = sample_internal_pressure(
       load_prepared_depth(prepared_jobs_, prepared_mutex_),
-      load_inflight_tasks(inflight_tasks_), max_inflight_tasks_,
-      opts_->batching.max_batch_size);
+      load_inflight_tasks(inflight_tasks_), internal_pressure_config);
 
   ResolvedBatchPressure pressure =
       sample_monitor_pressure(thresholds, internal_pressure)
