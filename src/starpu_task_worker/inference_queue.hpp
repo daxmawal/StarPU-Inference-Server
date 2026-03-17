@@ -53,7 +53,7 @@ class InferenceQueue {
         return false;
       }
       queue_.push(std::move(job));
-      total_pushed_.fetch_add(1, std::memory_order_release);
+      total_pushed_.fetch_add(1);
       size = queue_.size();
     }
     update_queue_metrics(size);
@@ -125,10 +125,10 @@ class InferenceQueue {
 
   [[nodiscard]] auto total_pushed() const -> std::size_t
   {
-    return total_pushed_.load(std::memory_order_acquire);
+    return total_pushed_.load();
   }
 
-  void reset_counters() { total_pushed_.store(0, std::memory_order_release); }
+  void reset_counters() { total_pushed_.store(0); }
 
   [[nodiscard]] auto size() const -> std::size_t
   {

@@ -84,7 +84,7 @@ make_batch_pressure_thresholds(const RuntimeConfig::CongestionSettings&
 
 auto
 load_prepared_depth(
-    std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs,
+    const std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs,
     std::mutex* prepared_mutex) -> std::size_t
 {
   if (prepared_jobs == nullptr) {
@@ -186,7 +186,7 @@ sample_monitor_pressure(
 
 auto
 sample_queue_pressure(
-    InferenceQueue* queue, const BatchPressureThresholds& thresholds,
+    const InferenceQueue* queue, const BatchPressureThresholds& thresholds,
     const InternalPressureSnapshot& internal_pressure) -> ResolvedBatchPressure
 {
   ResolvedBatchPressure pressure{};
@@ -714,9 +714,10 @@ BatchCollector::should_refresh_adaptive_target(
   }
 
   const auto now = clock::now();
-  const auto tick_interval = std::chrono::milliseconds(
-      std::max(1, opts_->congestion.tick_interval_ms));
-  if (last_adaptive_update_marker_.has_value() &&
+
+  if (const auto tick_interval = std::chrono::milliseconds(
+          std::max(1, opts_->congestion.tick_interval_ms));
+      last_adaptive_update_marker_.has_value() &&
       now - *last_adaptive_update_marker_ < tick_interval) {
     return false;
   }
