@@ -69,7 +69,7 @@ class BatchCollector {
   };
   struct BatchPressureSample {
     BatchPressureState state{};
-    std::optional<task_runner_internal::Clock::time_point> monitor_tick{};
+    std::optional<task_runner_internal::Clock::time_point> monitor_tick;
   };
 
   [[nodiscard]] auto job_sample_size(
@@ -156,7 +156,7 @@ class BatchCollector {
   bool adaptive_target_initialized_ = false;
   int low_pressure_streak_ = 0;
   std::optional<task_runner_internal::Clock::time_point>
-      last_adaptive_update_marker_{};
+      last_adaptive_update_marker_;
 };
 
 }  // namespace starpu_server
