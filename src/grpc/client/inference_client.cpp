@@ -7,8 +7,12 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <format>
+#include <fstream>
+#include <iomanip>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -131,6 +135,39 @@ decode_output_values(
 
   return decoded;
 }
+
+auto
+json_number(double value) -> std::string
+{
+  std::ostringstream stream;
+  stream << std::setprecision(10) << value;
+  return stream.str();
+}
+
+void
+append_latency_summary_json(
+    std::string& json, std::string_view key,
+    const std::optional<InferenceClient::LatencySummary>& summary,
+    bool& first_field)
+{
+  if (!first_field) {
+    json += ",\n";
+  }
+  first_field = false;
+  json += std::format("  \"{}\": ", key);
+
+  if (!summary.has_value()) {
+    json += "null";
+    return;
+  }
+
+  json += std::format(
+      "{{\"mean_ms\": {}, \"p50_ms\": {}, \"p85_ms\": {}, \"p95_ms\": {}, "
+      "\"p100_ms\": {}}}",
+      json_number(summary->mean_ms), json_number(summary->p50_ms),
+      json_number(summary->p85_ms), json_number(summary->p95_ms),
+      json_number(summary->p100_ms));
+}
 }  // namespace inference_client_detail
 
 InferenceClient::InferenceClient(
@@ -161,67 +198,233 @@ InferenceClient::record_latency(const LatencySample& sample)
   latency_records_.client_overhead_ms.push_back(sample.client_overhead_ms);
 }
 
+auto
+InferenceClient::summarize_latencies(const std::vector<double>& values)
+    -> std::optional<LatencySummary>
+{
+  const auto stats = compute_latency_statistics(values);
+  if (!stats.has_value()) {
+    return std::nullopt;
+  }
+
+  return LatencySummary{
+      .mean_ms = stats->mean,
+      .p50_ms = stats->p50,
+      .p85_ms = stats->p85,
+      .p95_ms = stats->p95,
+      .p100_ms = stats->p100,
+  };
+}
+
+auto
+InferenceClient::summary() const -> Summary
+{
+  Summary result{};
+  result.requests_sent = total_requests_sent_;
+  result.requests_ok = success_requests_;
+  result.requests_rejected = rejected_requests_;
+  result.requests_handled = success_requests_ + rejected_requests_;
+  result.inference_count = total_inference_count_;
+  result.response_count = latency_records_.roundtrip_ms.size();
+  result.roundtrip_latency = summarize_latencies(latency_records_.roundtrip_ms);
+  result.server_overall_latency =
+      summarize_latencies(latency_records_.server_overall_ms);
+  result.server_preprocess_latency =
+      summarize_latencies(latency_records_.server_preprocess_ms);
+  result.server_queue_latency =
+      summarize_latencies(latency_records_.server_queue_ms);
+  result.server_batching_latency =
+      summarize_latencies(latency_records_.server_batch_ms);
+  result.server_submit_latency =
+      summarize_latencies(latency_records_.server_submit_ms);
+  result.server_scheduling_latency =
+      summarize_latencies(latency_records_.server_scheduling_ms);
+  result.server_codelet_latency =
+      summarize_latencies(latency_records_.server_codelet_ms);
+  result.server_inference_latency =
+      summarize_latencies(latency_records_.server_inference_ms);
+  result.server_callback_latency =
+      summarize_latencies(latency_records_.server_callback_ms);
+  result.server_postprocess_latency =
+      summarize_latencies(latency_records_.server_postprocess_ms);
+  result.server_job_total_latency =
+      summarize_latencies(latency_records_.server_job_total_ms);
+  result.request_latency =
+      summarize_latencies(latency_records_.request_latency_ms);
+  result.response_latency =
+      summarize_latencies(latency_records_.response_latency_ms);
+  result.client_overhead_latency =
+      summarize_latencies(latency_records_.client_overhead_ms);
+
+  if (first_request_time_.has_value() && last_response_time_.has_value() &&
+      total_inference_count_ > 0) {
+    const double elapsed_seconds =
+        std::chrono::duration<double>(
+            *last_response_time_ - *first_request_time_)
+            .count();
+    if (elapsed_seconds > 0.0) {
+      result.elapsed_seconds = elapsed_seconds;
+      result.throughput_rps =
+          static_cast<double>(total_inference_count_) / elapsed_seconds;
+    }
+  }
+
+  return result;
+}
+
+auto
+InferenceClient::write_summary_json(const std::filesystem::path& path) const
+    -> bool
+{
+  std::error_code status_ec;
+  const auto parent = path.parent_path();
+  if (!parent.empty()) {
+    std::filesystem::create_directories(parent, status_ec);
+    if (status_ec) {
+      log_error(std::format(
+          "Failed to create summary directory '{}': {}", parent.string(),
+          status_ec.message()));
+      return false;
+    }
+  }
+
+  std::ofstream stream(path);
+  if (!stream.is_open()) {
+    log_error(
+        std::format("Failed to open summary JSON file '{}'", path.string()));
+    return false;
+  }
+
+  const auto report = summary();
+  std::string json;
+  json += "{\n";
+  json += std::format(
+      "  \"requests\": {{\"sent\": {}, \"handled\": {}, \"ok\": {}, "
+      "\"rejected\": {}}},\n",
+      report.requests_sent, report.requests_handled, report.requests_ok,
+      report.requests_rejected);
+  json += std::format(
+      "  \"response_count\": {},\n"
+      "  \"inference_count\": {},\n",
+      report.response_count, report.inference_count);
+  json += "  \"elapsed_seconds\": ";
+  json += report.elapsed_seconds.has_value()
+              ? json_number(*report.elapsed_seconds)
+              : "null";
+  json += ",\n";
+  json += "  \"throughput_rps\": ";
+  json += report.throughput_rps.has_value()
+              ? json_number(*report.throughput_rps)
+              : "null";
+  json += ",\n";
+  json += "  \"latency_ms\": {\n";
+
+  bool first_latency_field = true;
+  append_latency_summary_json(
+      json, "roundtrip", report.roundtrip_latency, first_latency_field);
+  append_latency_summary_json(
+      json, "server_overall", report.server_overall_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "server_preprocess", report.server_preprocess_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "server_queue", report.server_queue_latency, first_latency_field);
+  append_latency_summary_json(
+      json, "server_batching", report.server_batching_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "server_submit", report.server_submit_latency, first_latency_field);
+  append_latency_summary_json(
+      json, "server_scheduling", report.server_scheduling_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "server_codelet", report.server_codelet_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "server_inference", report.server_inference_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "server_callback", report.server_callback_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "server_postprocess", report.server_postprocess_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "server_job_total", report.server_job_total_latency,
+      first_latency_field);
+  append_latency_summary_json(
+      json, "request", report.request_latency, first_latency_field);
+  append_latency_summary_json(
+      json, "response", report.response_latency, first_latency_field);
+  append_latency_summary_json(
+      json, "client_overhead", report.client_overhead_latency,
+      first_latency_field);
+  json += "\n  }\n";
+  json += "}\n";
+
+  stream << json;
+  if (!stream.good()) {
+    log_error(
+        std::format("Failed to write summary JSON file '{}'", path.string()));
+    return false;
+  }
+  return true;
+}
+
 void
 InferenceClient::log_latency_summary() const
 {
-  if (latency_records_.empty()) {
+  const auto report = summary();
+  if (!report.roundtrip_latency.has_value()) {
     return;
   }
 
-  const auto sample_count = latency_records_.roundtrip_ms.size();
+  const auto sample_count = report.response_count;
   std::string stats_msg = std::format(
       "Processed {} inference responses. Latency statistics (ms):",
       sample_count);
 
   const auto append_stats =
-      [&stats_msg](const char* label, const std::vector<double>& latencies) {
-        if (latencies.empty()) {
+      [&stats_msg](
+          const char* label, const std::optional<LatencySummary>& latencies) {
+        if (!latencies.has_value()) {
           return;
         }
 
-        if (const auto stats = compute_latency_statistics(latencies)) {
-          stats_msg += std::format(
-              "\n  - {}: mean={:.3f}, p50={:.3f}, p85={:.3f}, p95={:.3f}, "
-              "p100={:.3f}",
-              label, stats->mean, stats->p50, stats->p85, stats->p95,
-              stats->p100);
-        }
+        stats_msg += std::format(
+            "\n  - {}: mean={:.3f}, p50={:.3f}, p85={:.3f}, p95={:.3f}, "
+            "p100={:.3f}",
+            label, latencies->mean_ms, latencies->p50_ms, latencies->p85_ms,
+            latencies->p95_ms, latencies->p100_ms);
       };
 
-  append_stats("latency", latency_records_.roundtrip_ms);
-  append_stats("server overall", latency_records_.server_overall_ms);
-  append_stats("preprocess", latency_records_.server_preprocess_ms);
-  append_stats("queue", latency_records_.server_queue_ms);
-  append_stats("batching", latency_records_.server_batch_ms);
-  append_stats("submit", latency_records_.server_submit_ms);
-  append_stats("scheduling", latency_records_.server_scheduling_ms);
-  append_stats("codelet", latency_records_.server_codelet_ms);
-  append_stats("inference", latency_records_.server_inference_ms);
-  append_stats("callback", latency_records_.server_callback_ms);
-  append_stats("postprocess", latency_records_.server_postprocess_ms);
-  append_stats("job_total", latency_records_.server_job_total_ms);
-  append_stats("request_latency", latency_records_.request_latency_ms);
-  append_stats("response_latency", latency_records_.response_latency_ms);
-  append_stats("client_overhead", latency_records_.client_overhead_ms);
+  append_stats("latency", report.roundtrip_latency);
+  append_stats("server overall", report.server_overall_latency);
+  append_stats("preprocess", report.server_preprocess_latency);
+  append_stats("queue", report.server_queue_latency);
+  append_stats("batching", report.server_batching_latency);
+  append_stats("submit", report.server_submit_latency);
+  append_stats("scheduling", report.server_scheduling_latency);
+  append_stats("codelet", report.server_codelet_latency);
+  append_stats("inference", report.server_inference_latency);
+  append_stats("callback", report.server_callback_latency);
+  append_stats("postprocess", report.server_postprocess_latency);
+  append_stats("job_total", report.server_job_total_latency);
+  append_stats("request_latency", report.request_latency);
+  append_stats("response_latency", report.response_latency);
+  append_stats("client_overhead", report.client_overhead_latency);
 
-  if (first_request_time_.has_value() && last_response_time_.has_value() &&
-      total_inference_count_ > 0) {
-    const auto elapsed_seconds =
-        std::chrono::duration<double>(
-            *last_response_time_ - *first_request_time_)
-            .count();
-    if (elapsed_seconds > 0.0) {
-      const double throughput =
-          static_cast<double>(total_inference_count_) / elapsed_seconds;
-      stats_msg += std::format(
-          "\n  - throughput: {:.3f} inferences/s ({} inferences over {:.3f} s)",
-          throughput, total_inference_count_, elapsed_seconds);
-    } else {
-      stats_msg += std::format(
-          "\n  - throughput: {} inferences (elapsed time too small to compute "
-          "rate)",
-          total_inference_count_);
-    }
+  if (report.throughput_rps.has_value() && report.elapsed_seconds.has_value()) {
+    stats_msg += std::format(
+        "\n  - throughput: {:.3f} inferences/s ({} inferences over {:.3f} s)",
+        *report.throughput_rps, report.inference_count,
+        *report.elapsed_seconds);
+  } else if (report.inference_count > 0) {
+    stats_msg += std::format(
+        "\n  - throughput: {} inferences (elapsed time too small to compute "
+        "rate)",
+        report.inference_count);
   }
 
   log_info(verbosity_, stats_msg);

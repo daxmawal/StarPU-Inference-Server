@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,6 +33,40 @@ class InferenceClient {
  public:
   using OutputSummary = std::vector<std::vector<double>>;
 
+  struct LatencySummary {
+    double mean_ms;
+    double p50_ms;
+    double p85_ms;
+    double p95_ms;
+    double p100_ms;
+  };
+
+  struct Summary {
+    std::size_t requests_sent = 0;
+    std::size_t requests_handled = 0;
+    std::size_t requests_ok = 0;
+    std::size_t requests_rejected = 0;
+    std::size_t inference_count = 0;
+    std::size_t response_count = 0;
+    std::optional<double> elapsed_seconds;
+    std::optional<double> throughput_rps;
+    std::optional<LatencySummary> roundtrip_latency;
+    std::optional<LatencySummary> server_overall_latency;
+    std::optional<LatencySummary> server_preprocess_latency;
+    std::optional<LatencySummary> server_queue_latency;
+    std::optional<LatencySummary> server_batching_latency;
+    std::optional<LatencySummary> server_submit_latency;
+    std::optional<LatencySummary> server_scheduling_latency;
+    std::optional<LatencySummary> server_codelet_latency;
+    std::optional<LatencySummary> server_inference_latency;
+    std::optional<LatencySummary> server_callback_latency;
+    std::optional<LatencySummary> server_postprocess_latency;
+    std::optional<LatencySummary> server_job_total_latency;
+    std::optional<LatencySummary> request_latency;
+    std::optional<LatencySummary> response_latency;
+    std::optional<LatencySummary> client_overhead_latency;
+  };
+
   explicit InferenceClient(
       std::shared_ptr<grpc::Channel>& channel, VerbosityLevel verbosity);
 
@@ -43,6 +78,8 @@ class InferenceClient {
       std::optional<OutputSummary> expected_outputs = std::nullopt);
   void AsyncCompleteRpc();
   void Shutdown();
+  [[nodiscard]] auto summary() const -> Summary;
+  auto write_summary_json(const std::filesystem::path& path) const -> bool;
 
  private:
 // GCOVR_EXCL_START
@@ -102,6 +139,8 @@ class InferenceClient {
   std::size_t rejected_requests_ = 0;
 
   void record_latency(const LatencySample& sample);
+  [[nodiscard]] static auto summarize_latencies(
+      const std::vector<double>& values) -> std::optional<LatencySummary>;
   void log_latency_summary() const;
   void log_request_totals() const;
   static auto determine_inference_count(const ClientConfig& cfg) -> std::size_t;
@@ -144,6 +183,22 @@ struct InferenceClientTestAccess {
       InferenceClient& client, std::size_t count)
   {
     client.total_inference_count_ = count;
+  }
+
+  static void set_total_requests_sent(
+      InferenceClient& client, std::size_t count)
+  {
+    client.total_requests_sent_ = count;
+  }
+
+  static void set_success_requests(InferenceClient& client, std::size_t count)
+  {
+    client.success_requests_ = count;
+  }
+
+  static void set_rejected_requests(InferenceClient& client, std::size_t count)
+  {
+    client.rejected_requests_ = count;
   }
 
   static void record_latency(

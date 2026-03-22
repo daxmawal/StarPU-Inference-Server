@@ -1,0 +1,42 @@
+name: resnet152
+starpu_env:
+  STARPU_SCHED: "eager"
+  STARPU_CUDA_THREAD_PER_WORKER: "1"
+  STARPU_CUDA_PIPELINE: "4"
+  STARPU_NWORKER_PER_CUDA: "4"
+  STARPU_WORKERS_GETBIND: "0"
+model: ../models/resnet152.pt
+inputs:
+  - { name: "input0", data_type: "TYPE_FP32", dims: [1, 3, 224, 224] }
+outputs:
+  - { name: "output0", data_type: "TYPE_FP32", dims: [1, 1000] }
+verbosity: 0
+address: 127.0.0.1:50061
+metrics_port: 19090
+max_batch_size: 16
+max_inflight_tasks: 100
+max_queue_size: 100
+batch_coalesce_timeout_ms: 10
+dynamic_batching: true
+sync: false
+use_cpu: true
+group_cpu_by_numa: true
+use_cuda:
+  - { device_ids: [0] }
+pool_size: 12
+warmup_batches_per_worker: 2
+seed: 0
+congestion:
+  enabled: true
+  latency_slo_ms: 150
+  queue_latency_budget_ratio: 0.25
+  e2e_warn_ratio: 0.90
+  e2e_ok_ratio: 0.80
+  fill_high: 0.85
+  fill_low: 0.65
+  rho_high: 1.10
+  rho_low: 0.90
+  alpha_ewma: 0.4
+  entry_horizon_ms: 3000
+  exit_horizon_ms: 7000
+  tick_interval_ms: 500

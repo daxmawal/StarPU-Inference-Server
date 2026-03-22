@@ -634,6 +634,14 @@ main(int argc, char* argv[]) -> int
   }
 
   client.Shutdown();
+  if (cq_thread.joinable()) {
+    cq_thread.join();
+  }
+
+  if (!config.summary_json_path.empty() &&
+      !client.write_summary_json(config.summary_json_path)) {
+    return 1;
+  }
 
   return 0;
 }

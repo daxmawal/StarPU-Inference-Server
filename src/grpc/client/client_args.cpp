@@ -60,6 +60,7 @@ display_client_help(const char* prog_name)
       << "  --schedule-csv PATH  Segment schedule CSV: "
          "delta_us,repeat[,input_id] (input_id omitted => random pool pick). "
          "Overrides --delay; --request-number caps the replay.\n"
+      << "  --summary-json PATH  Write latency/throughput summary to JSON\n"
       << "  --input NAME:SHAPE:TYPE  Specify an input (may be repeated)\n"
       << "  --server ADDR     gRPC server address (default: localhost:50051)\n"
       << "  --model NAME      Model name (default: example)\n"
@@ -152,6 +153,14 @@ parse_schedule_csv(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
       idx, args, [&cfg](const char* val) { cfg.schedule_csv_path = val; });
 }
 
+auto
+parse_summary_json(ClientConfig& cfg, size_t& idx, std::span<const char*> args)
+    -> bool
+{
+  return expect_and_parse(
+      idx, args, [&cfg](const char* val) { cfg.summary_json_path = val; });
+}
+
 inline namespace client_args_detail {
 
 void
@@ -238,6 +247,7 @@ parse_argument_values(std::span<const char*> args_span, ClientConfig& cfg)
           {"--request-number", parse_request_nb},
           {"--delay", parse_delay},
           {"--schedule-csv", parse_schedule_csv},
+          {"--summary-json", parse_summary_json},
           {"--input", parse_input},
           {"--server", parse_server},
           {"--model", parse_model},
