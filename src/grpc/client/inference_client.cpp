@@ -38,6 +38,7 @@ struct AsyncClientCall {
 
 inline namespace inference_client_detail {
 constexpr double kOutputComparisonTolerance = 1e-4;
+constexpr auto kJsonNumberPrecision = std::streamsize{10};
 
 template <typename T>
 void
@@ -140,7 +141,7 @@ auto
 json_number(double value) -> std::string
 {
   std::ostringstream stream;
-  stream << std::setprecision(10) << value;
+  stream << std::setprecision(kJsonNumberPrecision) << value;
   return stream.str();
 }
 
