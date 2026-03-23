@@ -14,7 +14,7 @@ Usage:
     [--model <name>] \
     [--input <spec>]
 EOF
-  exit 2
+  return 2
 }
 
 BUILD_DIR=""
@@ -58,12 +58,14 @@ while [[ $# -gt 0 ]]; do
     *)
       echo "Unknown argument: $1" >&2
       usage
+      exit 2
       ;;
   esac
 done
 
 if [[ -z "$BUILD_DIR" || -z "$SERVER_ADDR" || -z "$CONFIG_PATH" || -z "$SCHEDULE_CSV" || -z "$OUTPUT_DIR" ]]; then
   usage
+  exit 2
 fi
 
 if [[ ! -d "$BUILD_DIR" ]]; then
@@ -83,6 +85,7 @@ SERVER_PID=$!
 cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true
   wait "$SERVER_PID" 2>/dev/null || true
+  return 0
 }
 
 trap cleanup EXIT

@@ -163,8 +163,7 @@ append_latency_summary_json(
   }
 
   json += std::format(
-      "{{\"mean_ms\": {}, \"p50_ms\": {}, \"p85_ms\": {}, \"p95_ms\": {}, "
-      "\"p100_ms\": {}}}",
+      R"({{"mean_ms": {}, "p50_ms": {}, "p85_ms": {}, "p95_ms": {}, "p100_ms": {}}})",
       json_number(summary->mean_ms), json_number(summary->p50_ms),
       json_number(summary->p85_ms), json_number(summary->p95_ms),
       json_number(summary->p100_ms));
@@ -228,27 +227,27 @@ InferenceClient::summary() const -> Summary
   result.inference_count = total_inference_count_;
   result.response_count = latency_records_.roundtrip_ms.size();
   result.roundtrip_latency = summarize_latencies(latency_records_.roundtrip_ms);
-  result.server_overall_latency =
+  result.server_latency.overall =
       summarize_latencies(latency_records_.server_overall_ms);
-  result.server_preprocess_latency =
+  result.server_latency.preprocess =
       summarize_latencies(latency_records_.server_preprocess_ms);
-  result.server_queue_latency =
+  result.server_latency.queue =
       summarize_latencies(latency_records_.server_queue_ms);
-  result.server_batching_latency =
+  result.server_latency.batching =
       summarize_latencies(latency_records_.server_batch_ms);
-  result.server_submit_latency =
+  result.server_latency.submit =
       summarize_latencies(latency_records_.server_submit_ms);
-  result.server_scheduling_latency =
+  result.server_latency.scheduling =
       summarize_latencies(latency_records_.server_scheduling_ms);
-  result.server_codelet_latency =
+  result.server_latency.codelet =
       summarize_latencies(latency_records_.server_codelet_ms);
-  result.server_inference_latency =
+  result.server_latency.inference =
       summarize_latencies(latency_records_.server_inference_ms);
-  result.server_callback_latency =
+  result.server_latency.callback =
       summarize_latencies(latency_records_.server_callback_ms);
-  result.server_postprocess_latency =
+  result.server_latency.postprocess =
       summarize_latencies(latency_records_.server_postprocess_ms);
-  result.server_job_total_latency =
+  result.server_latency.job_total =
       summarize_latencies(latency_records_.server_job_total_ms);
   result.request_latency =
       summarize_latencies(latency_records_.request_latency_ms);
@@ -278,8 +277,7 @@ InferenceClient::write_summary_json(const std::filesystem::path& path) const
     -> bool
 {
   std::error_code status_ec;
-  const auto parent = path.parent_path();
-  if (!parent.empty()) {
+  if (const auto parent = path.parent_path(); !parent.empty()) {
     std::filesystem::create_directories(parent, status_ec);
     if (status_ec) {
       log_error(std::format(
@@ -324,35 +322,35 @@ InferenceClient::write_summary_json(const std::filesystem::path& path) const
   append_latency_summary_json(
       json, "roundtrip", report.roundtrip_latency, first_latency_field);
   append_latency_summary_json(
-      json, "server_overall", report.server_overall_latency,
+      json, "server_overall", report.server_latency.overall,
       first_latency_field);
   append_latency_summary_json(
-      json, "server_preprocess", report.server_preprocess_latency,
+      json, "server_preprocess", report.server_latency.preprocess,
       first_latency_field);
   append_latency_summary_json(
-      json, "server_queue", report.server_queue_latency, first_latency_field);
+      json, "server_queue", report.server_latency.queue, first_latency_field);
   append_latency_summary_json(
-      json, "server_batching", report.server_batching_latency,
+      json, "server_batching", report.server_latency.batching,
       first_latency_field);
   append_latency_summary_json(
-      json, "server_submit", report.server_submit_latency, first_latency_field);
+      json, "server_submit", report.server_latency.submit, first_latency_field);
   append_latency_summary_json(
-      json, "server_scheduling", report.server_scheduling_latency,
+      json, "server_scheduling", report.server_latency.scheduling,
       first_latency_field);
   append_latency_summary_json(
-      json, "server_codelet", report.server_codelet_latency,
+      json, "server_codelet", report.server_latency.codelet,
       first_latency_field);
   append_latency_summary_json(
-      json, "server_inference", report.server_inference_latency,
+      json, "server_inference", report.server_latency.inference,
       first_latency_field);
   append_latency_summary_json(
-      json, "server_callback", report.server_callback_latency,
+      json, "server_callback", report.server_latency.callback,
       first_latency_field);
   append_latency_summary_json(
-      json, "server_postprocess", report.server_postprocess_latency,
+      json, "server_postprocess", report.server_latency.postprocess,
       first_latency_field);
   append_latency_summary_json(
-      json, "server_job_total", report.server_job_total_latency,
+      json, "server_job_total", report.server_latency.job_total,
       first_latency_field);
   append_latency_summary_json(
       json, "request", report.request_latency, first_latency_field);
@@ -401,17 +399,17 @@ InferenceClient::log_latency_summary() const
       };
 
   append_stats("latency", report.roundtrip_latency);
-  append_stats("server overall", report.server_overall_latency);
-  append_stats("preprocess", report.server_preprocess_latency);
-  append_stats("queue", report.server_queue_latency);
-  append_stats("batching", report.server_batching_latency);
-  append_stats("submit", report.server_submit_latency);
-  append_stats("scheduling", report.server_scheduling_latency);
-  append_stats("codelet", report.server_codelet_latency);
-  append_stats("inference", report.server_inference_latency);
-  append_stats("callback", report.server_callback_latency);
-  append_stats("postprocess", report.server_postprocess_latency);
-  append_stats("job_total", report.server_job_total_latency);
+  append_stats("server overall", report.server_latency.overall);
+  append_stats("preprocess", report.server_latency.preprocess);
+  append_stats("queue", report.server_latency.queue);
+  append_stats("batching", report.server_latency.batching);
+  append_stats("submit", report.server_latency.submit);
+  append_stats("scheduling", report.server_latency.scheduling);
+  append_stats("codelet", report.server_latency.codelet);
+  append_stats("inference", report.server_latency.inference);
+  append_stats("callback", report.server_latency.callback);
+  append_stats("postprocess", report.server_latency.postprocess);
+  append_stats("job_total", report.server_latency.job_total);
   append_stats("request_latency", report.request_latency);
   append_stats("response_latency", report.response_latency);
   append_stats("client_overhead", report.client_overhead_latency);

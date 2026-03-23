@@ -42,6 +42,20 @@ class InferenceClient {
   };
 
   struct Summary {
+    struct ServerLatencySummary {
+      std::optional<LatencySummary> overall;
+      std::optional<LatencySummary> preprocess;
+      std::optional<LatencySummary> queue;
+      std::optional<LatencySummary> batching;
+      std::optional<LatencySummary> submit;
+      std::optional<LatencySummary> scheduling;
+      std::optional<LatencySummary> codelet;
+      std::optional<LatencySummary> inference;
+      std::optional<LatencySummary> callback;
+      std::optional<LatencySummary> postprocess;
+      std::optional<LatencySummary> job_total;
+    };
+
     std::size_t requests_sent = 0;
     std::size_t requests_handled = 0;
     std::size_t requests_ok = 0;
@@ -51,17 +65,7 @@ class InferenceClient {
     std::optional<double> elapsed_seconds;
     std::optional<double> throughput_rps;
     std::optional<LatencySummary> roundtrip_latency;
-    std::optional<LatencySummary> server_overall_latency;
-    std::optional<LatencySummary> server_preprocess_latency;
-    std::optional<LatencySummary> server_queue_latency;
-    std::optional<LatencySummary> server_batching_latency;
-    std::optional<LatencySummary> server_submit_latency;
-    std::optional<LatencySummary> server_scheduling_latency;
-    std::optional<LatencySummary> server_codelet_latency;
-    std::optional<LatencySummary> server_inference_latency;
-    std::optional<LatencySummary> server_callback_latency;
-    std::optional<LatencySummary> server_postprocess_latency;
-    std::optional<LatencySummary> server_job_total_latency;
+    ServerLatencySummary server_latency;
     std::optional<LatencySummary> request_latency;
     std::optional<LatencySummary> response_latency;
     std::optional<LatencySummary> client_overhead_latency;

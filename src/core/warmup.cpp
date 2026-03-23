@@ -330,8 +330,8 @@ struct WarmupSyncState {
 
   void set_client_enqueued_jobs(std::size_t value)
   {
-    enqueued_jobs.store(value, std::memory_order_release);
-    client_done.store(true, std::memory_order_release);
+    enqueued_jobs.store(value);
+    client_done.store(true);
     completed_cv.notify_all();
   }
 };
@@ -379,8 +379,8 @@ auto
 read_warmup_progress(const WarmupSyncState& state) -> WarmupProgress
 {
   return WarmupProgress{
-      .completed = state.completed_jobs.load(std::memory_order_acquire),
-      .enqueued = state.enqueued_jobs.load(std::memory_order_acquire)};
+      .completed = state.completed_jobs.load(),
+      .enqueued = state.enqueued_jobs.load()};
 }
 
 auto
@@ -419,7 +419,7 @@ advance_warmup_wait_iteration(
     return true;
   }
 
-  const bool client_done = state.client_done.load(std::memory_order_acquire);
+  const bool client_done = state.client_done.load();
   const auto progress = read_warmup_progress(state);
   if (client_done && progress.completed >= progress.enqueued) {
     return true;
