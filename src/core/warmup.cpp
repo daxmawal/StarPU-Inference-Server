@@ -114,6 +114,17 @@ collect_device_workers(const RuntimeConfig& opts)
   return workers;
 }
 
+auto
+count_device_workers(const std::map<int, std::vector<int>>& device_workers)
+    -> std::size_t
+{
+  return std::accumulate(
+      device_workers.begin(), device_workers.end(), std::size_t{0},
+      [](std::size_t sum, const auto& pair) {
+        return sum + pair.second.size();
+      });
+}
+
 }  // namespace warmup_detail
 // =============================================================================
 // Constructor
@@ -228,11 +239,7 @@ WarmupRunner::client_worker(
   auto pregen_inputs = client_utils::pre_generate_inputs(
       opts_, opts_.batching.warmup_pregen_inputs);
 
-  const size_t worker_count = std::accumulate(
-      device_workers.begin(), device_workers.end(), std::size_t{0},
-      [](std::size_t sum, const auto& pair) {
-        return sum + pair.second.size();
-      });
+  const size_t worker_count = count_device_workers(device_workers);
   const size_t total_size_t =
       worker_count * static_cast<std::size_t>(request_nb_per_worker);
 
@@ -505,11 +512,24 @@ WarmupRunner::run(int request_nb_per_worker)
     return;
   }
 
-  const std::size_t warmup_queue_limit = opts_.batching.max_queue_size;
+  const std::size_t total_warmup_jobs =
+      count_device_workers(device_workers) *
+      static_cast<std::size_t>(request_nb_per_worker);
+  const std::size_t warmup_queue_limit =
+      std::max(opts_.batching.max_queue_size, total_warmup_jobs);
   std::size_t warmup_inflight_limit = warmup_queue_limit;
   if (opts_.batching.max_inflight_tasks > 0 &&
       opts_.batching.max_inflight_tasks < warmup_queue_limit) {
     warmup_inflight_limit = opts_.batching.max_inflight_tasks;
+  }
+
+  if (warmup_queue_limit > opts_.batching.max_queue_size) {
+    log_info(
+        opts_.verbosity,
+        std::format(
+            "Warmup queue capacity raised from {} to {} to fit all warmup "
+            "jobs.",
+            opts_.batching.max_queue_size, warmup_queue_limit));
   }
 
   if (opts_.batching.max_inflight_tasks == 0 ||
