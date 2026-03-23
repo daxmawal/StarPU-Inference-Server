@@ -4,7 +4,10 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -21,8 +24,8 @@ TEST(ClientArgs, ParsesValidArguments)
   auto argv = std::to_array<const char*>(
       {"prog", "--input", "input:1x3x224x224:float32", "--server",
        "localhost:1234", "--model", "my_model", "--request-number", "5",
-       "--delay", "10", "--schedule-csv", "/tmp/schedule.csv", "--verbose",
-       "2"});
+       "--delay", "10", "--schedule-csv", "/tmp/schedule.csv", "--summary-json",
+       "/tmp/client-summary.json", "--verbose", "2"});
   auto cfg = starpu_server::parse_client_args(std::span{argv});
   EXPECT_TRUE(cfg.valid);
   ASSERT_EQ(cfg.inputs.size(), 1U);
@@ -35,6 +38,7 @@ TEST(ClientArgs, ParsesValidArguments)
   EXPECT_TRUE(cfg.request_nb_explicit);
   EXPECT_EQ(cfg.delay_us, 10);
   EXPECT_EQ(cfg.schedule_csv_path, "/tmp/schedule.csv");
+  EXPECT_EQ(cfg.summary_json_path, "/tmp/client-summary.json");
   EXPECT_EQ(cfg.verbosity, starpu_server::VerbosityLevel::Stats);
 }
 
@@ -138,6 +142,25 @@ TEST(ClientArgs, MissingScheduleCsvValueFailsParsing)
   EXPECT_TRUE(cfg.schedule_csv_path.empty());
 }
 
+TEST(ClientArgs, ParsesSummaryJsonPathWhenProvided)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--summary-json",
+       "/tmp/perf-summary.json"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  ASSERT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.summary_json_path, "/tmp/perf-summary.json");
+}
+
+TEST(ClientArgs, MissingSummaryJsonValueFailsParsing)
+{
+  auto argv = std::to_array<const char*>(
+      {"prog", "--input", "input:1:float32", "--summary-json"});
+  auto cfg = starpu_server::parse_client_args(std::span{argv});
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_TRUE(cfg.summary_json_path.empty());
+}
+
 TEST(ClientArgs, RejectsNegativeDelay)
 {
   auto argv = std::to_array<const char*>(
@@ -197,6 +220,7 @@ TEST(ClientArgsHelp, ContainsKeyOptions)
   EXPECT_NE(out.find("--request-number"), std::string::npos);
   EXPECT_NE(out.find("--delay"), std::string::npos);
   EXPECT_NE(out.find("--schedule-csv"), std::string::npos);
+  EXPECT_NE(out.find("--summary-json"), std::string::npos);
   EXPECT_NE(out.find("--input"), std::string::npos);
   EXPECT_NE(out.find("--server"), std::string::npos);
   EXPECT_NE(out.find("--model"), std::string::npos);
@@ -375,6 +399,61 @@ TEST(InferenceClientLatencySummary, HandlesZeroElapsedTime)
       output.find(
           "throughput: 3 inferences (elapsed time too small to compute rate)"),
       std::string::npos);
+}
+
+TEST(InferenceClientSummaryJson, WritesExpectedFields)
+{
+  auto channel = grpc::CreateChannel(
+      "localhost:59994", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  const auto start =
+      std::chrono::system_clock::time_point{std::chrono::seconds{10}};
+  const auto end = start + std::chrono::milliseconds(250);
+  starpu_server::InferenceClientTestAccess::set_first_request_time(
+      client, start);
+  starpu_server::InferenceClientTestAccess::set_last_response_time(client, end);
+  starpu_server::InferenceClientTestAccess::set_total_inference_count(
+      client, 5);
+  starpu_server::InferenceClientTestAccess::set_total_requests_sent(client, 4);
+  starpu_server::InferenceClientTestAccess::set_success_requests(client, 3);
+  starpu_server::InferenceClientTestAccess::set_rejected_requests(client, 1);
+
+  const starpu_server::InferenceClientTestAccess::LatencySample sample{
+      3.0, 2.5, 0.8,  0.7, 0.6,  0.5,  0.4, 0.3,
+      0.2, 0.1, 0.05, 1.5, 0.04, 0.03, 0.02};
+  starpu_server::InferenceClientTestAccess::record_latency(client, sample);
+
+  const auto summary_path =
+      std::filesystem::temp_directory_path() /
+      std::format(
+          "starpu_client_summary_test_{}.json",
+          std::chrono::steady_clock::now().time_since_epoch().count());
+  std::error_code remove_ec;
+  std::filesystem::remove(summary_path, remove_ec);
+
+  ASSERT_TRUE(client.write_summary_json(summary_path));
+
+  std::ifstream stream(summary_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string json{
+      std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+
+  EXPECT_NE(
+      json.find("\"requests\": {\"sent\": 4, \"handled\": 4"),
+      std::string::npos);
+  EXPECT_NE(json.find("\"ok\": 3"), std::string::npos);
+  EXPECT_NE(json.find("\"rejected\": 1"), std::string::npos);
+  EXPECT_NE(json.find("\"inference_count\": 5"), std::string::npos);
+  EXPECT_NE(json.find("\"response_count\": 1"), std::string::npos);
+  EXPECT_NE(json.find("\"elapsed_seconds\": 0.25"), std::string::npos);
+  EXPECT_NE(json.find("\"throughput_rps\": 20"), std::string::npos);
+  EXPECT_NE(json.find("\"roundtrip\": {\"mean_ms\": 3"), std::string::npos);
+  EXPECT_NE(
+      json.find("\"server_queue\": {\"mean_ms\": 0.7"), std::string::npos);
+
+  std::filesystem::remove(summary_path, remove_ec);
 }
 
 TEST(InferenceClient, RejectsMismatchedTensorCount)

@@ -238,6 +238,41 @@ jobs:
           name: build-folder-clang
           path: build-clang/
 
+  build-clang-baseline:
+    if: github.event_name == 'pull_request'
+    needs:
+      [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout base code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          submodules: recursive
+
+      - name: Configure and Build baseline (Clang)
+        run: |
+          cmake -S . -B build-clang-baseline \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
+            -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DBUILD_TESTS=ON \
+            -DENABLE_COVERAGE=OFF \
+            -DENABLE_SANITIZERS=OFF
+          cmake --build build-clang-baseline -- -j"$CI_BUILD_JOBS"
+        shell: bash
+
+      - name: Save baseline clang build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-folder-clang-baseline
+          path: build-clang-baseline/
+
   sanitizers:
     needs:
       [clang-format, cmake-format, whitespace, markdownlint, structural-guard]
@@ -489,3 +524,109 @@ jobs:
         with:
           name: coverage-summary
           path: build/coverage.txt
+
+  perf-smoke:
+    if: github.event_name == 'pull_request'
+    needs: [build-clang, build-clang-baseline, test-and-coverage]
+    runs-on: self-hosted
+    timeout-minutes: 45
+    env:
+      PERF_SERVER_ADDR: "127.0.0.1:50062"
+      PERF_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_gpu_only.yml"
+      PERF_SCHEDULE_CSV: "../ci/perf/ci_perf_resnet.csv"
+      PERF_EXPECTED_REQUESTS: "6300"
+      PERF_MAX_THROUGHPUT_DROP_PCT: "10"
+      PERF_MAX_SERVER_OVERALL_P95_REGRESSION_PCT: "15"
+      PERF_MODEL_PATH: "models/resnet152.pt"
+      PERF_TORCH_VERSION: "2.2.2"
+      PERF_TORCHVISION_VERSION: "0.17.2"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download clang build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: build-folder-clang
+          path: build-clang/
+
+      - name: Download baseline clang build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: build-folder-clang-baseline
+          path: build-clang-baseline/
+
+      - name: Export ResNet152 TorchScript model for perf CI
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf perf-model-venv
+          python3 -m venv perf-model-venv
+          ./perf-model-venv/bin/pip install --upgrade pip
+          ./perf-model-venv/bin/pip install \
+            "torch==${PERF_TORCH_VERSION}" \
+            "torchvision==${PERF_TORCHVISION_VERSION}"
+
+          ./perf-model-venv/bin/python models/import_resnet.py \
+            --model resnet152 \
+            --no-pretrained \
+            --out "$PERF_MODEL_PATH"
+
+          test -s "$PERF_MODEL_PATH"
+
+      - name: Run baseline perf benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/run_perf_smoke.sh \
+            --build-dir build-clang-baseline \
+            --server "$PERF_SERVER_ADDR" \
+            --config "$PERF_SERVER_CONFIG" \
+            --schedule-csv "$PERF_SCHEDULE_CSV" \
+            --output-dir perf-artifacts
+
+      - name: Run candidate perf benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bash scripts/run_perf_smoke.sh \
+            --build-dir build-clang \
+            --server "$PERF_SERVER_ADDR" \
+            --config "$PERF_SERVER_CONFIG" \
+            --schedule-csv "$PERF_SCHEDULE_CSV" \
+            --output-dir perf-artifacts
+
+      - name: Compare candidate perf against baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 scripts/compare_perf_summaries.py \
+            --baseline build-clang-baseline/perf-artifacts/resnet152-summary.json \
+            --candidate build-clang/perf-artifacts/resnet152-summary.json \
+            --latency-metric server_overall \
+            --max-latency-regression-pct "$PERF_MAX_SERVER_OVERALL_P95_REGRESSION_PCT" \
+            --max-throughput-drop-pct "$PERF_MAX_THROUGHPUT_DROP_PCT" \
+            --max-rejected 0 \
+            --expected-requests "$PERF_EXPECTED_REQUESTS"
+
+      - name: Upload perf smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-smoke-artifacts
+          path: |
+            build-clang-baseline/perf-artifacts/server.log
+            build-clang-baseline/perf-artifacts/client.log
+            build-clang-baseline/perf-artifacts/readiness.log
+            build-clang-baseline/perf-artifacts/resnet152-summary.json
+            build-clang/perf-artifacts/server.log
+            build-clang/perf-artifacts/client.log
+            build-clang/perf-artifacts/readiness.log
+            build-clang/perf-artifacts/resnet152-summary.json
+          if-no-files-found: ignore

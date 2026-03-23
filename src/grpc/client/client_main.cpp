@@ -74,18 +74,14 @@ split_csv_fields(const std::string& line) -> std::vector<std::string_view>
   std::vector<std::string_view> fields;
   const std::string_view view(line);
   std::size_t begin = 0;
-  while (true) {
+  while (begin <= view.size()) {
     const auto comma = view.find(',', begin);
     if (comma == std::string_view::npos) {
       fields.push_back(trim_ascii(view.substr(begin)));
-      break;
+      return fields;
     }
     fields.push_back(trim_ascii(view.substr(begin, comma - begin)));
     begin = comma + 1;
-    if (begin == view.size()) {
-      fields.emplace_back();
-      break;
-    }
   }
   return fields;
 }
@@ -210,8 +206,8 @@ load_schedule_csv(const std::string& path, const std::size_t num_inputs)
 
   while (std::getline(stream, line)) {
     ++line_no;
-    const std::string_view stripped = trim_ascii(line);
-    if (stripped.empty() || stripped.starts_with('#')) {
+    if (const std::string_view stripped = trim_ascii(line);
+        stripped.empty() || stripped.starts_with('#')) {
       continue;
     }
 
@@ -609,7 +605,7 @@ main(int argc, char* argv[]) -> int
       prepare_client_inputs(config, reference_model.get());
 
   std::mt19937 rng(std::random_device{}());
-  std::uniform_int_distribution<int> input_distribution(
+  std::uniform_int_distribution input_distribution(
       0, static_cast<int>(prepared_inputs.tensor_pool.size() - 1));
 
   std::jthread cq_thread(
@@ -634,6 +630,14 @@ main(int argc, char* argv[]) -> int
   }
 
   client.Shutdown();
+  if (cq_thread.joinable()) {
+    cq_thread.join();
+  }
+
+  if (!config.summary_json_path.empty() &&
+      !client.write_summary_json(config.summary_json_path)) {
+    return 1;
+  }
 
   return 0;
 }
