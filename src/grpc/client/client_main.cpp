@@ -74,18 +74,14 @@ split_csv_fields(const std::string& line) -> std::vector<std::string_view>
   std::vector<std::string_view> fields;
   const std::string_view view(line);
   std::size_t begin = 0;
-  while (true) {
+  while (begin <= view.size()) {
     const auto comma = view.find(',', begin);
     if (comma == std::string_view::npos) {
       fields.push_back(trim_ascii(view.substr(begin)));
-      break;
+      return fields;
     }
     fields.push_back(trim_ascii(view.substr(begin, comma - begin)));
     begin = comma + 1;
-    if (begin == view.size()) {
-      fields.emplace_back();
-      break;
-    }
   }
   return fields;
 }
