@@ -674,6 +674,33 @@ TEST(MetricsRegistry, ModelDeviceKeyEqualityComparesAllFields)
           /*overflow_rhs=*/true));
 }
 
+TEST(MetricsRegistry, ModelPolicyKeyOverflowSetsFlag)
+{
+  EXPECT_TRUE(starpu_server::testing::MetricsRegistryTestAccessor::
+                  ModelPolicyKeyOverflowIsEmpty());
+}
+
+TEST(MetricsRegistry, ModelPolicyKeyEqualityComparesAllFields)
+{
+  EXPECT_TRUE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelPolicyKeyEquals(
+          "model-a", "per_worker", /*overflow_lhs=*/false, "model-a",
+          "per_worker", /*overflow_rhs=*/false));
+
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelPolicyKeyEquals(
+          "model-a", "per_worker", /*overflow_lhs=*/false, "model-b",
+          "per_worker", /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelPolicyKeyEquals(
+          "model-a", "per_worker", /*overflow_lhs=*/false, "model-a", "shared",
+          /*overflow_rhs=*/false));
+  EXPECT_FALSE(
+      starpu_server::testing::MetricsRegistryTestAccessor::ModelPolicyKeyEquals(
+          "model-a", "per_worker", /*overflow_lhs=*/false, "model-a",
+          "per_worker", /*overflow_rhs=*/true));
+}
+
 TEST(MetricsRegistry, IoKeyOverflowSetsFlag)
 {
   EXPECT_TRUE(starpu_server::testing::MetricsRegistryTestAccessor::
@@ -1364,6 +1391,385 @@ TEST(Metrics, IncrementInferenceCompletedUpdatesCounter)
       families, "inference_completed_total", {{"model", model_name}});
   ASSERT_TRUE(count.has_value());
   EXPECT_DOUBLE_EQ(*count, 3.0);
+}
+
+TEST(MetricsRecorder, DefaultRecorderIsDisabledAndNoopsWithoutRegistry)
+{
+  const MetricsRecorder recorder;
+
+  EXPECT_FALSE(recorder.enabled());
+  EXPECT_EQ(recorder.registry(), nullptr);
+
+  recorder.increment_requests_total();
+  recorder.observe_inference_latency(1.0);
+  recorder.set_queue_size(1);
+  recorder.set_inflight_tasks(2);
+  recorder.set_starpu_worker_busy_ratio(0.5);
+  recorder.set_max_inflight_tasks(3);
+  recorder.set_queue_capacity(4);
+  recorder.set_server_health(true);
+  recorder.set_starpu_prepared_queue_depth(5);
+  recorder.set_batch_pending_jobs(6);
+  recorder.set_congestion_flag(true);
+  recorder.set_congestion_score(0.7);
+  recorder.set_congestion_arrival_rate(8.0);
+  recorder.set_congestion_completion_rate(9.0);
+  recorder.set_congestion_rejection_rate(1.0);
+  recorder.set_congestion_rho(0.8);
+  recorder.set_congestion_fill_ewma(0.9);
+  recorder.set_congestion_queue_growth_rate(1.1);
+  recorder.set_congestion_queue_latency_p95(12.0);
+  recorder.set_congestion_queue_latency_p99(13.0);
+  recorder.set_congestion_e2e_latency_p95(14.0);
+  recorder.set_congestion_e2e_latency_p99(15.0);
+  recorder.increment_request_status(
+      static_cast<int>(grpc::StatusCode::UNAVAILABLE), "null-model");
+  recorder.increment_requests_received("null-model");
+  recorder.increment_inference_completed("null-model", 2);
+  recorder.increment_inference_failure("submit", "no-registry", "null-model");
+  recorder.observe_batch_size(7);
+  recorder.observe_logical_batch_size(8);
+  recorder.observe_batch_efficiency(0.5);
+  recorder.observe_latency_breakdown(
+      LatencyBreakdownMetrics{1, 2, 3, 4, 5, 6, 7, 8, 9});
+  recorder.observe_starpu_task_runtime(16.0);
+  recorder.observe_model_load_duration(17.0);
+  recorder.set_model_loaded("null-model", "gpu:0", true);
+  recorder.set_gpu_model_replication_policy("null-model", "per_worker");
+  recorder.set_gpu_model_replicas_total("null-model", 4);
+  recorder.set_starpu_cuda_worker_info(1, 0, true);
+  recorder.increment_model_load_failure("null-model");
+  recorder.increment_rejected_requests();
+  recorder.observe_compute_latency_by_worker(1, 0, "cpu", 18.0);
+  recorder.observe_task_runtime_by_worker(1, 0, "cpu", 19.0);
+  recorder.set_worker_inflight_gauge(1, 0, "cpu", 3);
+  recorder.observe_io_copy_latency("h2d", 1, 0, "cpu", 20.0);
+  recorder.increment_transfer_bytes("h2d", 1, 0, "cpu", 256);
+}
+
+TEST(MetricsRecorder, CreateMetricsRecorderInitializesAndRecordsMetrics)
+{
+  auto recorder = create_metrics_recorder(0);
+  ASSERT_NE(recorder, nullptr);
+  ASSERT_TRUE(recorder->enabled());
+
+  auto metrics = recorder->registry();
+  ASSERT_NE(metrics, nullptr);
+  EXPECT_DOUBLE_EQ(metrics->gauges().queue_size->Value(), 0.0);
+  EXPECT_DOUBLE_EQ(metrics->gauges().inflight_tasks->Value(), 0.0);
+  EXPECT_DOUBLE_EQ(metrics->gauges().max_inflight_tasks->Value(), 0.0);
+
+  const std::string model_name = "recorder-model";
+  recorder->increment_requests_total();
+  recorder->observe_inference_latency(11.5);
+  recorder->set_queue_capacity(4);
+  recorder->set_queue_size(2);
+  recorder->set_inflight_tasks(3);
+  recorder->set_starpu_worker_busy_ratio(1.5);
+  recorder->set_max_inflight_tasks(9);
+  recorder->set_server_health(true);
+  recorder->set_starpu_prepared_queue_depth(5);
+  recorder->set_batch_pending_jobs(6);
+  recorder->set_congestion_flag(true);
+  recorder->set_congestion_score(-0.25);
+  recorder->set_congestion_arrival_rate(-1.0);
+  recorder->set_congestion_completion_rate(7.25);
+  recorder->set_congestion_rejection_rate(-2.0);
+  recorder->set_congestion_rho(std::nan(""));
+  recorder->set_congestion_fill_ewma(1.2);
+  recorder->set_congestion_queue_growth_rate(2.5);
+  recorder->set_congestion_queue_latency_p95(-3.0);
+  recorder->set_congestion_queue_latency_p99(8.0);
+  recorder->set_congestion_e2e_latency_p95(-4.0);
+  recorder->set_congestion_e2e_latency_p99(9.0);
+  recorder->increment_request_status(
+      static_cast<int>(grpc::StatusCode::UNAVAILABLE), model_name);
+  recorder->increment_requests_received(model_name);
+  recorder->increment_inference_completed(model_name, 2);
+  recorder->increment_inference_failure("submit", "oom", model_name, 3);
+  recorder->observe_batch_size(4);
+  recorder->observe_logical_batch_size(7);
+  recorder->observe_batch_efficiency(1.25);
+  recorder->observe_latency_breakdown(
+      LatencyBreakdownMetrics{1, 2, 3, 4, 5, 6, 7, 8, 9});
+  recorder->observe_starpu_task_runtime(14.0);
+  recorder->observe_model_load_duration(150.0);
+  recorder->set_model_loaded(model_name, "gpu:0", true);
+  recorder->set_gpu_model_replication_policy(model_name, "per_worker");
+  recorder->set_gpu_model_replicas_total(model_name, 4);
+  recorder->set_starpu_cuda_worker_info(7, 0, true);
+  recorder->increment_model_load_failure(model_name);
+  recorder->increment_rejected_requests();
+  recorder->observe_compute_latency_by_worker(7, 0, "cuda", 6.5);
+  recorder->observe_task_runtime_by_worker(7, 0, "cuda", 3.25);
+  recorder->set_worker_inflight_gauge(7, 0, "cuda", 2);
+  recorder->observe_io_copy_latency("h2d", 7, 0, "cuda", 1.75);
+  recorder->increment_transfer_bytes("h2d", 7, 0, "cuda", 512);
+
+  const auto families = metrics->registry()->Collect();
+
+  const auto requests_total = FindCounterValue(families, "requests_total", {});
+  ASSERT_TRUE(requests_total.has_value());
+  EXPECT_DOUBLE_EQ(*requests_total, 1.0);
+
+  const auto rejected_total =
+      FindCounterValue(families, "requests_rejected_total", {});
+  ASSERT_TRUE(rejected_total.has_value());
+  EXPECT_DOUBLE_EQ(*rejected_total, 1.0);
+
+  const auto queue_size = FindGaugeValue(families, "inference_queue_size", {});
+  ASSERT_TRUE(queue_size.has_value());
+  EXPECT_DOUBLE_EQ(*queue_size, 2.0);
+
+  const auto queue_capacity =
+      FindGaugeValue(families, "inference_max_queue_size", {});
+  ASSERT_TRUE(queue_capacity.has_value());
+  EXPECT_DOUBLE_EQ(*queue_capacity, 4.0);
+
+  const auto queue_ratio =
+      FindGaugeValue(families, "inference_queue_fill_ratio", {});
+  ASSERT_TRUE(queue_ratio.has_value());
+  EXPECT_DOUBLE_EQ(*queue_ratio, 0.5);
+
+  const auto inflight =
+      FindGaugeValue(families, "inference_inflight_tasks", {});
+  ASSERT_TRUE(inflight.has_value());
+  EXPECT_DOUBLE_EQ(*inflight, 3.0);
+
+  const auto max_inflight =
+      FindGaugeValue(families, "inference_max_inflight_tasks", {});
+  ASSERT_TRUE(max_inflight.has_value());
+  EXPECT_DOUBLE_EQ(*max_inflight, 9.0);
+
+  const auto busy_ratio =
+      FindGaugeValue(families, "starpu_worker_busy_ratio", {});
+  ASSERT_TRUE(busy_ratio.has_value());
+  EXPECT_DOUBLE_EQ(*busy_ratio, 1.0);
+
+  const auto server_health =
+      FindGaugeValue(families, "server_health_state", {});
+  ASSERT_TRUE(server_health.has_value());
+  EXPECT_DOUBLE_EQ(*server_health, 1.0);
+
+  const auto prepared_depth =
+      FindGaugeValue(families, "starpu_prepared_queue_depth", {});
+  ASSERT_TRUE(prepared_depth.has_value());
+  EXPECT_DOUBLE_EQ(*prepared_depth, 5.0);
+
+  const auto pending_jobs =
+      FindGaugeValue(families, "inference_batch_collect_pending_jobs", {});
+  ASSERT_TRUE(pending_jobs.has_value());
+  EXPECT_DOUBLE_EQ(*pending_jobs, 6.0);
+
+  const auto congestion_flag =
+      FindGaugeValue(families, "inference_congestion_flag", {});
+  ASSERT_TRUE(congestion_flag.has_value());
+  EXPECT_DOUBLE_EQ(*congestion_flag, 1.0);
+
+  const auto congestion_score =
+      FindGaugeValue(families, "inference_congestion_score", {});
+  ASSERT_TRUE(congestion_score.has_value());
+  EXPECT_DOUBLE_EQ(*congestion_score, 0.0);
+
+  const auto lambda_rps = FindGaugeValue(families, "inference_lambda_rps", {});
+  ASSERT_TRUE(lambda_rps.has_value());
+  EXPECT_DOUBLE_EQ(*lambda_rps, 0.0);
+
+  const auto mu_rps = FindGaugeValue(families, "inference_mu_rps", {});
+  ASSERT_TRUE(mu_rps.has_value());
+  EXPECT_DOUBLE_EQ(*mu_rps, 7.25);
+
+  const auto rejection_rps =
+      FindGaugeValue(families, "inference_rejection_rate_rps", {});
+  ASSERT_TRUE(rejection_rps.has_value());
+  EXPECT_DOUBLE_EQ(*rejection_rps, 0.0);
+
+  const auto rho_ewma = FindGaugeValue(families, "inference_rho_ewma", {});
+  ASSERT_TRUE(rho_ewma.has_value());
+  EXPECT_DOUBLE_EQ(*rho_ewma, 0.0);
+
+  const auto fill_ewma =
+      FindGaugeValue(families, "inference_queue_fill_ratio_ewma", {});
+  ASSERT_TRUE(fill_ewma.has_value());
+  EXPECT_DOUBLE_EQ(*fill_ewma, 1.0);
+
+  const auto growth_rate =
+      FindGaugeValue(families, "inference_queue_growth_rate", {});
+  ASSERT_TRUE(growth_rate.has_value());
+  EXPECT_DOUBLE_EQ(*growth_rate, 2.5);
+
+  const auto queue_p95 =
+      FindGaugeValue(families, "inference_queue_latency_p95_ms", {});
+  ASSERT_TRUE(queue_p95.has_value());
+  EXPECT_DOUBLE_EQ(*queue_p95, 0.0);
+
+  const auto queue_p99 =
+      FindGaugeValue(families, "inference_queue_latency_p99_ms", {});
+  ASSERT_TRUE(queue_p99.has_value());
+  EXPECT_DOUBLE_EQ(*queue_p99, 8.0);
+
+  const auto e2e_p95 =
+      FindGaugeValue(families, "inference_e2e_latency_p95_ms", {});
+  ASSERT_TRUE(e2e_p95.has_value());
+  EXPECT_DOUBLE_EQ(*e2e_p95, 0.0);
+
+  const auto e2e_p99 =
+      FindGaugeValue(families, "inference_e2e_latency_p99_ms", {});
+  ASSERT_TRUE(e2e_p99.has_value());
+  EXPECT_DOUBLE_EQ(*e2e_p99, 9.0);
+
+  const auto requests_by_status = FindCounterValue(
+      families, "requests_by_status_total",
+      {{"code", "UNAVAILABLE"}, {"model", model_name}});
+  ASSERT_TRUE(requests_by_status.has_value());
+  EXPECT_DOUBLE_EQ(*requests_by_status, 1.0);
+
+  const auto requests_received = FindCounterValue(
+      families, "requests_received_total", {{"model", model_name}});
+  ASSERT_TRUE(requests_received.has_value());
+  EXPECT_DOUBLE_EQ(*requests_received, 1.0);
+
+  const auto completed = FindCounterValue(
+      families, "inference_completed_total", {{"model", model_name}});
+  ASSERT_TRUE(completed.has_value());
+  EXPECT_DOUBLE_EQ(*completed, 2.0);
+
+  const auto failures = FindCounterValue(
+      families, "inference_failures_total",
+      {{"stage", "submit"}, {"reason", "oom"}, {"model", model_name}});
+  ASSERT_TRUE(failures.has_value());
+  EXPECT_DOUBLE_EQ(*failures, 3.0);
+
+  const auto model_load_failures = FindCounterValue(
+      families, "model_load_failures_total", {{"model", model_name}});
+  ASSERT_TRUE(model_load_failures.has_value());
+  EXPECT_DOUBLE_EQ(*model_load_failures, 1.0);
+
+  const auto model_loaded = FindGaugeValue(
+      families, "models_loaded", {{"model", model_name}, {"device", "gpu:0"}});
+  ASSERT_TRUE(model_loaded.has_value());
+  EXPECT_DOUBLE_EQ(*model_loaded, 1.0);
+
+  const auto replication_policy = FindGaugeValue(
+      families, "gpu_model_replication_policy_info",
+      {{"model", model_name}, {"policy", "per_worker"}});
+  ASSERT_TRUE(replication_policy.has_value());
+  EXPECT_DOUBLE_EQ(*replication_policy, 1.0);
+
+  const auto replicas_total = FindGaugeValue(
+      families, "gpu_model_replicas_total", {{"model", model_name}});
+  ASSERT_TRUE(replicas_total.has_value());
+  EXPECT_DOUBLE_EQ(*replicas_total, 4.0);
+
+  const auto cuda_worker = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "0"}, {"worker_id", "7"}});
+  ASSERT_TRUE(cuda_worker.has_value());
+  EXPECT_DOUBLE_EQ(*cuda_worker, 1.0);
+
+  const auto* inference_latency =
+      FindHistogramMetric(families, "inference_latency_ms", {});
+  ASSERT_NE(inference_latency, nullptr);
+  EXPECT_EQ(inference_latency->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(inference_latency->histogram.sample_sum, 11.5);
+
+  const auto* batch_size_metric =
+      FindHistogramMetric(families, "inference_batch_size", {});
+  ASSERT_NE(batch_size_metric, nullptr);
+  EXPECT_EQ(batch_size_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(batch_size_metric->histogram.sample_sum, 4.0);
+
+  const auto* logical_batch_metric =
+      FindHistogramMetric(families, "inference_logical_batch_size", {});
+  ASSERT_NE(logical_batch_metric, nullptr);
+  EXPECT_EQ(logical_batch_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(logical_batch_metric->histogram.sample_sum, 7.0);
+
+  const auto* batch_efficiency_metric =
+      FindHistogramMetric(families, "inference_batch_efficiency_ratio", {});
+  ASSERT_NE(batch_efficiency_metric, nullptr);
+  EXPECT_EQ(batch_efficiency_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(batch_efficiency_metric->histogram.sample_sum, 1.25);
+
+  const auto* model_load_metric =
+      FindHistogramMetric(families, "model_load_duration_ms", {});
+  ASSERT_NE(model_load_metric, nullptr);
+  EXPECT_EQ(model_load_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(model_load_metric->histogram.sample_sum, 150.0);
+
+  const auto* task_runtime_metric =
+      FindHistogramMetric(families, "starpu_task_runtime_ms", {});
+  ASSERT_NE(task_runtime_metric, nullptr);
+  EXPECT_EQ(task_runtime_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(task_runtime_metric->histogram.sample_sum, 14.0);
+
+  const auto* queue_latency_metric =
+      FindHistogramMetric(families, "inference_queue_latency_ms", {});
+  ASSERT_NE(queue_latency_metric, nullptr);
+  EXPECT_EQ(queue_latency_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(queue_latency_metric->histogram.sample_sum, 1.0);
+
+  const auto* postprocess_metric =
+      FindHistogramMetric(families, "inference_postprocess_latency_ms", {});
+  ASSERT_NE(postprocess_metric, nullptr);
+  EXPECT_EQ(postprocess_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(postprocess_metric->histogram.sample_sum, 9.0);
+
+  const auto* compute_metric = FindHistogramMetric(
+      families, "inference_compute_latency_ms_by_worker",
+      {{"worker_id", "7"}, {"device", "0"}, {"worker_type", "cuda"}});
+  ASSERT_NE(compute_metric, nullptr);
+  EXPECT_EQ(compute_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(compute_metric->histogram.sample_sum, 6.5);
+
+  const auto* worker_runtime_metric = FindHistogramMetric(
+      families, "starpu_task_runtime_ms_by_worker",
+      {{"worker_id", "7"}, {"device", "0"}, {"worker_type", "cuda"}});
+  ASSERT_NE(worker_runtime_metric, nullptr);
+  EXPECT_EQ(worker_runtime_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(worker_runtime_metric->histogram.sample_sum, 3.25);
+
+  const auto worker_inflight = FindGaugeValue(
+      families, "starpu_worker_inflight_tasks",
+      {{"worker_id", "7"}, {"device", "0"}, {"worker_type", "cuda"}});
+  ASSERT_TRUE(worker_inflight.has_value());
+  EXPECT_DOUBLE_EQ(*worker_inflight, 2.0);
+
+  const auto* io_metric = FindHistogramMetric(
+      families, "inference_io_copy_ms",
+      {{"direction", "h2d"},
+       {"worker_id", "7"},
+       {"device", "0"},
+       {"worker_type", "cuda"}});
+  ASSERT_NE(io_metric, nullptr);
+  EXPECT_EQ(io_metric->histogram.sample_count, 1);
+  EXPECT_DOUBLE_EQ(io_metric->histogram.sample_sum, 1.75);
+
+  const auto transfer_bytes = FindCounterValue(
+      families, "inference_transfer_bytes_total",
+      {{"direction", "h2d"},
+       {"worker_id", "7"},
+       {"device", "0"},
+       {"worker_type", "cuda"}});
+  ASSERT_TRUE(transfer_bytes.has_value());
+  EXPECT_DOUBLE_EQ(*transfer_bytes, 512.0);
+}
+
+TEST(MetricsRecorder, CreateMetricsRecorderReturnsNullWhenMetricsRegistryThrows)
+{
+  struct FailureGuard {
+    FailureGuard()
+    {
+      monitoring::detail::set_metrics_init_failure_for_test(true);
+    }
+
+    ~FailureGuard()
+    {
+      monitoring::detail::set_metrics_init_failure_for_test(false);
+    }
+  } guard;
+
+  EXPECT_EQ(create_metrics_recorder(0), nullptr);
 }
 
 TEST(MetricsRegistry, IncrementTransferBytesSkipsZero)

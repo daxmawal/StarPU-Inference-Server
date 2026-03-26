@@ -237,6 +237,27 @@ starpu_server::testing::MetricsRegistryTestAccessor::ModelKeyEquals(
 
 auto
 starpu_server::testing::MetricsRegistryTestAccessor::
+    ModelPolicyKeyOverflowIsEmpty() -> bool
+{
+  const auto key = MetricsRegistry::ModelPolicyKey::Overflow();
+  return key.overflow && key.model.empty() && key.policy.empty();
+}
+
+auto
+starpu_server::testing::MetricsRegistryTestAccessor::ModelPolicyKeyEquals(
+    std::string_view model_lhs, std::string_view policy_lhs, bool overflow_lhs,
+    std::string_view model_rhs, std::string_view policy_rhs,
+    bool overflow_rhs) -> bool
+{
+  MetricsRegistry::ModelPolicyKey lhs{
+      std::string(model_lhs), std::string(policy_lhs), overflow_lhs};
+  MetricsRegistry::ModelPolicyKey rhs{
+      std::string(model_rhs), std::string(policy_rhs), overflow_rhs};
+  return lhs == rhs;
+}
+
+auto
+starpu_server::testing::MetricsRegistryTestAccessor::
     ModelDeviceKeyOverflowIsEmpty() -> bool
 {
   const auto key = MetricsRegistry::ModelDeviceKey::Overflow();

@@ -53,6 +53,11 @@ class MetricsRegistryTestAccessor {
   static auto ModelKeyEquals(
       std::string_view model_lhs, bool overflow_lhs, std::string_view model_rhs,
       bool overflow_rhs) -> bool;
+  static auto ModelPolicyKeyOverflowIsEmpty() -> bool;
+  static auto ModelPolicyKeyEquals(
+      std::string_view model_lhs, std::string_view policy_lhs,
+      bool overflow_lhs, std::string_view model_rhs,
+      std::string_view policy_rhs, bool overflow_rhs) -> bool;
   static auto ModelDeviceKeyOverflowIsEmpty() -> bool;
   static auto ModelDeviceKeyEquals(
       std::string_view model_lhs, std::string_view device_lhs,
