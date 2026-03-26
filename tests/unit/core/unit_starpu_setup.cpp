@@ -2516,6 +2516,30 @@ TEST(OutputSlotPool_Unit, HostBufferDeleterNoopForNullptr)
       previous_deallocator);
 }
 
+TEST(OutputSlotPool_Unit, DefaultHostAllocatorRejectsNullDestinationPointer)
+{
+  auto& dependencies =
+      starpu_server::testing::output_slot_pool_default_dependencies_for_tests();
+  ASSERT_TRUE(static_cast<bool>(dependencies.host_allocator));
+
+  EXPECT_EQ(dependencies.host_allocator(nullptr, 64, 16), -1);
+}
+
+TEST(OutputSlotPool_Unit, DefaultHostAllocatorReturnsFailureOnBadAlloc)
+{
+  auto& dependencies =
+      starpu_server::testing::output_slot_pool_default_dependencies_for_tests();
+  ASSERT_TRUE(static_cast<bool>(dependencies.host_allocator));
+  ASSERT_TRUE(static_cast<bool>(dependencies.host_deallocator));
+
+  void* ptr = reinterpret_cast<void*>(0x1);
+  const int rc =
+      dependencies.host_allocator(&ptr, 64, std::numeric_limits<size_t>::max());
+
+  EXPECT_EQ(rc, -1);
+  EXPECT_EQ(ptr, nullptr);
+}
+
 TEST(OutputSlotPool_Unit, FreeHostBufferStarpuUnpinFailureLogsWarning)
 {
   constexpr size_t kBytes = 32;
