@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "monitoring/metrics.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "utils/batching_trace_logger.hpp"
 #include "utils/runtime_config.hpp"
 
@@ -22,13 +23,19 @@ class InferenceJob;
 
 class InferenceQueue {
  public:
-  explicit InferenceQueue(std::size_t max_size = kDefaultMaxQueueSize)
-      : max_size_(max_size)
+  explicit InferenceQueue(
+      std::size_t max_size = kDefaultMaxQueueSize,
+      std::shared_ptr<RuntimeObservability> observability = {})
+      : max_size_(max_size), observability_(std::move(observability))
   {
     if (max_size_ == 0) {
       throw std::invalid_argument("max_queue_size must be > 0");
     }
-    set_queue_capacity(max_size_);
+    if (observability_ != nullptr && observability_->metrics != nullptr) {
+      observability_->metrics->set_queue_capacity(max_size_);
+    } else {
+      set_queue_capacity(max_size_);
+    }
   }
 
   [[nodiscard]] auto push(
@@ -151,14 +158,22 @@ class InferenceQueue {
   }
 
  private:
-  static void update_queue_metrics(std::size_t size)
+  void update_queue_metrics(std::size_t size) const
   {
-    set_queue_size(size);
-    auto& tracer = BatchingTraceLogger::instance();
-    tracer.log_queue_size(size);
+    if (observability_ != nullptr && observability_->metrics != nullptr) {
+      observability_->metrics->set_queue_size(size);
+    } else {
+      set_queue_size(size);
+    }
+    if (observability_ != nullptr && observability_->tracer != nullptr) {
+      observability_->tracer->log_queue_size(size);
+    } else {
+      BatchingTraceLogger::instance().log_queue_size(size);
+    }
   }
 
   const std::size_t max_size_;
+  std::shared_ptr<RuntimeObservability> observability_;
   mutable std::mutex mutex_;
   std::queue<std::shared_ptr<InferenceJob>> queue_;
   bool accepting_ = true;

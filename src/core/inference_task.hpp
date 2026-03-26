@@ -15,6 +15,7 @@ namespace starpu_server {
 
 class OutputSlotPool;
 struct InferenceTaskDependencies;
+struct RuntimeObservability;
 
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
@@ -55,6 +56,7 @@ struct InferenceTaskDependencies {
   TaskCreateFn task_create_fn = nullptr;
   DataAcquireFn starpu_data_acquire_fn = nullptr;
   std::optional<OutputCallbackHook> starpu_output_callback_hook;
+  std::shared_ptr<RuntimeObservability> observability;
 };
 
 // NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)

@@ -8,6 +8,19 @@
 
 namespace starpu_server::testing {
 
+auto ModelInferForTest(
+    InferenceServiceImpl& service, grpc::ServerContext* context,
+    const inference::ModelInferRequest* request,
+    inference::ModelInferResponse* reply) -> grpc::Status;
+
+auto SubmitJobAndWaitForTest(
+    InferenceServiceImpl& service, const std::vector<torch::Tensor>& inputs,
+    std::vector<torch::Tensor>& outputs,
+    InferenceServiceImpl::LatencyBreakdown& breakdown,
+    detail::TimingInfo& timing_info,
+    std::vector<std::shared_ptr<const void>> input_lifetimes = {})
+    -> grpc::Status;
+
 struct HandleModelInferAsyncTestHooks {
   std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
       on_cancel_flag_created;

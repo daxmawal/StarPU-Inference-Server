@@ -31,7 +31,15 @@ TEST(GrpcClientServer, EndToEndInference)
   inference::ModelInferResponse response;
   grpc::ClientContext context;
   auto status = stub->ModelInfer(&context, request, &response);
-  ASSERT_TRUE(status.ok());
+  if (!status.ok()) {
+    queue.shutdown();
+    starpu_server::StopServer(server.server.get());
+    server.thread.join();
+    worker.join();
+    FAIL() << "ModelInfer failed with code "
+           << static_cast<int>(status.error_code()) << ": "
+           << status.error_message();
+  }
 
   EXPECT_GT(response.server_receive_ms(), 0);
   EXPECT_GT(response.server_send_ms(), 0);
@@ -43,5 +51,6 @@ TEST(GrpcClientServer, EndToEndInference)
 
   starpu_server::StopServer(server.server.get());
   server.thread.join();
+  queue.shutdown();
   EXPECT_EQ(server.server, nullptr);
 }

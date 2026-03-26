@@ -126,7 +126,8 @@ dispatch_async_completion_safely(
 auto
 enqueue_inference_job(
     InferenceQueue& queue, const std::shared_ptr<InferenceJob>& job,
-    std::optional<InferenceServiceImpl::AsyncFailureInfo>* submit_failure_info)
+    std::optional<InferenceServiceImpl::AsyncFailureInfo>* submit_failure_info,
+    InferenceServiceImpl* service)
     -> std::optional<Status>
 {
   bool pushed = false;
@@ -141,9 +142,30 @@ enqueue_inference_job(
 
   if (queue_full) {
     set_submit_failure_info_if_needed(submit_failure_info, "queue_full");
-    increment_rejected_requests();
-    congestion::record_rejection(1);
-    BatchingTraceLogger::instance().log_request_rejected(queue.size());
+    if (service != nullptr) {
+      if (auto metrics = service->metrics_recorder(); metrics != nullptr) {
+        metrics->increment_rejected_requests();
+      } else {
+        increment_rejected_requests();
+      }
+      if (const auto& observability = service->observability();
+          observability != nullptr &&
+          observability->congestion_monitor != nullptr) {
+        observability->congestion_monitor->record_rejection(1);
+      } else {
+        congestion::record_rejection(1);
+      }
+      if (const auto& observability = service->observability();
+          observability != nullptr && observability->tracer != nullptr) {
+        observability->tracer->log_request_rejected(queue.size());
+      } else {
+        BatchingTraceLogger::instance().log_request_rejected(queue.size());
+      }
+    } else {
+      increment_rejected_requests();
+      congestion::record_rejection(1);
+      BatchingTraceLogger::instance().log_request_rejected(queue.size());
+    }
     return Status{
         grpc::StatusCode::RESOURCE_EXHAUSTED, "Inference queue is full"};
   }
@@ -153,11 +175,16 @@ enqueue_inference_job(
 }
 
 void
-trace_enqueued_request_if_enabled(const std::shared_ptr<InferenceJob>& job)
+trace_enqueued_request_if_enabled(
+    const std::shared_ptr<InferenceJob>& job, InferenceServiceImpl* service)
 {
-  if (auto& tracer = BatchingTraceLogger::instance(); tracer.enabled()) {
+  auto* tracer = service != nullptr && service->observability() != nullptr &&
+                         service->observability()->tracer != nullptr
+                     ? service->observability()->tracer.get()
+                     : &BatchingTraceLogger::instance();
+  if (tracer->enabled()) {
     const auto timing = job->timing_info_snapshot();
-    tracer.log_request_enqueued(
+    tracer->log_request_enqueued(
         job->get_request_id(), job->model_name(), /*is_warmup=*/false,
         timing.last_enqueued_time);
   }

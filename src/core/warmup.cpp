@@ -26,6 +26,7 @@
 #include "client_utils.hpp"
 #include "inference_queue.hpp"
 #include "logger.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "starpu_task_worker.hpp"
@@ -208,10 +209,12 @@ WarmupRunner::WarmupRunner(
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
     const std::vector<torch::Tensor>& outputs_ref,
-    CompletionObserver completion_observer)
+    CompletionObserver completion_observer,
+    std::shared_ptr<RuntimeObservability> observability)
     : opts_(opts), starpu_(starpu), model_cpu_(model_cpu),
       models_gpu_(models_gpu), outputs_ref_(outputs_ref),
-      completion_observer_(std::move(completion_observer))
+      completion_observer_(std::move(completion_observer)),
+      observability_(std::move(observability))
 {
 }
 
@@ -501,8 +504,10 @@ WarmupRunner::run(int request_nb_per_worker)
     return;
   }
 
-  auto& tracer = BatchingTraceLogger::instance();
-  auto suppression_guard = tracer.scoped_warmup_suppression(true);
+  auto* tracer = observability_ != nullptr && observability_->tracer != nullptr
+                     ? observability_->tracer.get()
+                     : &BatchingTraceLogger::instance();
+  auto suppression_guard = tracer->scoped_warmup_suppression(true);
 
   auto device_workers = collect_device_workers(opts_);
   if (device_workers.empty()) {
@@ -541,7 +546,7 @@ WarmupRunner::run(int request_nb_per_worker)
             warmup_inflight_limit, warmup_queue_limit));
   }
 
-  InferenceQueue queue(warmup_queue_limit);
+  InferenceQueue queue(warmup_queue_limit, observability_);
   WarmupSyncState sync_state;
   const auto notify_thread_exception =
       [&sync_state, &queue](const std::exception_ptr& exception) {
@@ -566,6 +571,7 @@ WarmupRunner::run(int request_nb_per_worker)
   config.opts = &warmup_opts;
   config.completed_jobs = &sync_state.completed_jobs;
   config.all_done_cv = &sync_state.completed_cv;
+  config.observability = observability_;
   StarPUTaskRunner worker(config);
 
   std::jthread server([&]() {

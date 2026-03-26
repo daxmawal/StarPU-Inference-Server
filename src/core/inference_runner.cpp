@@ -25,6 +25,7 @@
 #include "exceptions.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
+#include "monitoring/metrics.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "utils/nvtx.hpp"
@@ -230,9 +231,8 @@ compute_latency_breakdown(const TimingInfo& timing, double total_latency_ms)
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
     int request_identifier, CompletionCallback callback)
-    : InferenceJobPayloadState(
-          std::move(inputs), std::move(types), request_identifier),
-      InferenceJobCompletionState(std::move(callback))
+    : request_payload_(std::move(inputs), std::move(types), request_identifier),
+      completion_state_(std::move(callback))
 {
 }
 
@@ -365,6 +365,16 @@ load_model_and_reference_output(const RuntimeConfig& opts)
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>>
 {
+  return load_model_and_reference_output(opts, nullptr);
+}
+
+auto
+load_model_and_reference_output(
+    const RuntimeConfig& opts, MetricsRecorder* metrics)
+    -> std::optional<std::tuple<
+        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+        std::vector<torch::Tensor>>>
+{
   const auto load_start = MonotonicClock::now();
   const auto model_label = [&opts]() -> std::string {
     if (!opts.model.has_value()) {
@@ -376,11 +386,22 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     return opts.model->path;
   }();
   auto mark_failure = [&]() {
-    increment_model_load_failure(model_label);
-    set_model_loaded(model_label, "cpu", false);
+    if (metrics != nullptr) {
+      metrics->increment_model_load_failure(model_label);
+      metrics->set_model_loaded(model_label, "cpu", false);
+    } else {
+      increment_model_load_failure(model_label);
+      set_model_loaded(model_label, "cpu", false);
+    }
     if (opts.devices.use_cuda) {
       for (const auto device_id : opts.devices.ids) {
-        set_model_loaded(model_label, std::format("cuda:{}", device_id), false);
+        if (metrics != nullptr) {
+          metrics->set_model_loaded(
+              model_label, std::format("cuda:{}", device_id), false);
+        } else {
+          set_model_loaded(
+              model_label, std::format("cuda:{}", device_id), false);
+        }
       }
     }
   };
@@ -414,11 +435,22 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     const double duration_ms = std::chrono::duration<double, std::milli>(
                                    MonotonicClock::now() - load_start)
                                    .count();
-    observe_model_load_duration(duration_ms);
-    set_model_loaded(model_label, "cpu", true);
+    if (metrics != nullptr) {
+      metrics->observe_model_load_duration(duration_ms);
+      metrics->set_model_loaded(model_label, "cpu", true);
+    } else {
+      observe_model_load_duration(duration_ms);
+      set_model_loaded(model_label, "cpu", true);
+    }
     if (opts.devices.use_cuda) {
       for (const auto device_id : opts.devices.ids) {
-        set_model_loaded(model_label, std::format("cuda:{}", device_id), true);
+        if (metrics != nullptr) {
+          metrics->set_model_loaded(
+              model_label, std::format("cuda:{}", device_id), true);
+        } else {
+          set_model_loaded(
+              model_label, std::format("cuda:{}", device_id), true);
+        }
       }
     }
 
@@ -447,7 +479,8 @@ run_warmup(
     const RuntimeConfig& opts, StarPUSetup& starpu,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<torch::Tensor>& outputs_ref)
+    const std::vector<torch::Tensor>& outputs_ref,
+    std::shared_ptr<RuntimeObservability> observability)
 {
   NvtxRange nvtx_scope("warmup");
   if (!opts.devices.use_cpu && !opts.devices.use_cuda) {
@@ -488,7 +521,9 @@ run_warmup(
                           "(configured batch runs per worker: {})",
                           warmup_request_nb, target_desc, configured_batches));
 
-  WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+  WarmupRunner warmup_runner(
+      opts, starpu, model_cpu, models_gpu, outputs_ref, {},
+      std::move(observability));
   warmup_runner.run(warmup_request_nb);
 
   log_info(opts.verbosity, "Warmup complete.");

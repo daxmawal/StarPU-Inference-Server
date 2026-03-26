@@ -2469,8 +2469,8 @@ TEST_F(
 
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   starpu_server::detail::TimingInfo timing_info{};
-  auto status =
-      service->submit_job_and_wait(inputs, outputs, breakdown, timing_info);
+  auto status = starpu_server::testing::SubmitJobAndWaitForTest(
+      *service, inputs, outputs, breakdown, timing_info);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
   EXPECT_TRUE(outputs.empty());

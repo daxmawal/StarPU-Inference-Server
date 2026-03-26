@@ -2,11 +2,16 @@
 
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <optional>
+#include <stop_token>
+#include <thread>
 #include <vector>
 
 namespace starpu_server {
 class InferenceQueue;
+class MetricsRecorder;
+class BatchingTraceLogger;
 }  // namespace starpu_server
 
 namespace starpu_server::congestion {
@@ -62,14 +67,6 @@ struct CompletionLatencies {
   double e2e_latency_ms{0.0};
 };
 
-auto start(InferenceQueue* queue, Config config = {}) -> bool;
-void shutdown();
-void record_arrival(std::size_t count = 1);
-void record_completion(std::size_t logical_jobs, CompletionLatencies latencies);
-void record_rejection(std::size_t count = 1);
-auto snapshot() -> std::optional<Snapshot>;
-auto is_congested() -> bool;
-
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 struct LatencyFlagResult {
   bool danger;
@@ -100,7 +97,88 @@ struct CapacityPressureScoreTestArgs {
   double rho_low{0.0};
   double rho_smoothed{0.0};
 };
+#endif  // SONAR_IGNORE_END
 
+class Monitor {
+ public:
+  class Impl {
+   public:
+    virtual ~Impl() = default;
+    virtual void start() = 0;
+    virtual void shutdown() = 0;
+    virtual void record_arrival(std::size_t count) = 0;
+    virtual void record_completion(
+        std::size_t logical_jobs, CompletionLatencies latencies) = 0;
+    virtual void record_rejection(std::size_t count) = 0;
+    [[nodiscard]] virtual auto snapshot() const -> Snapshot = 0;
+    [[nodiscard]] virtual auto congested() const -> bool = 0;
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    [[nodiscard]] virtual auto arrivals_for_test() const -> std::size_t = 0;
+    [[nodiscard]] virtual auto rejections_for_test() const -> std::size_t = 0;
+    virtual auto evaluate_latency_flags_for_test(
+        std::optional<double> queue_p95,
+        std::optional<double> e2e_p95) -> LatencyFlagResult = 0;
+    [[nodiscard]] virtual auto compute_queue_pressure_score_for_test(
+        double fill_smoothed) const -> double = 0;
+    [[nodiscard]] virtual auto compute_latency_pressure_score_for_test(
+        std::optional<double> e2e_p95,
+        std::optional<double> queue_p95) const -> double = 0;
+    [[nodiscard]] virtual auto normalized_config_for_test() const
+        -> NormalizedConfigResult = 0;
+    [[nodiscard]] virtual auto compute_capacity_pressure_score_for_test(
+        double rho_smoothed) const -> double = 0;
+#endif  // SONAR_IGNORE_END
+  };
+
+  Monitor(
+      InferenceQueue* queue, Config config = {},
+      std::shared_ptr<MetricsRecorder> metrics = {},
+      std::shared_ptr<BatchingTraceLogger> tracer = {});
+  ~Monitor() = default;
+  Monitor(const Monitor&) = delete;
+  auto operator=(const Monitor&) -> Monitor& = delete;
+  Monitor(Monitor&&) = delete;
+  auto operator=(Monitor&&) -> Monitor& = delete;
+
+  void start();
+  void shutdown();
+  void record_arrival(std::size_t count = 1);
+  void record_completion(
+      std::size_t logical_jobs, CompletionLatencies latencies);
+  void record_rejection(std::size_t count = 1);
+  [[nodiscard]] auto snapshot() const -> Snapshot;
+  [[nodiscard]] auto congested() const -> bool;
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+  [[nodiscard]] auto arrivals_for_test() const -> std::size_t;
+  [[nodiscard]] auto rejections_for_test() const -> std::size_t;
+  auto evaluate_latency_flags_for_test(
+      std::optional<double> queue_p95,
+      std::optional<double> e2e_p95 = std::nullopt) -> LatencyFlagResult;
+  [[nodiscard]] auto compute_queue_pressure_score_for_test(
+      double fill_smoothed) const -> double;
+  [[nodiscard]] auto compute_latency_pressure_score_for_test(
+      std::optional<double> e2e_p95,
+      std::optional<double> queue_p95 = std::nullopt) const -> double;
+  [[nodiscard]] auto normalized_config_for_test() const
+      -> NormalizedConfigResult;
+  [[nodiscard]] auto compute_capacity_pressure_score_for_test(
+      double rho_smoothed) const -> double;
+#endif  // SONAR_IGNORE_END
+
+ private:
+  std::shared_ptr<Impl> impl_;
+};
+
+auto start(InferenceQueue* queue, Config config = {}) -> bool;
+void shutdown();
+void record_arrival(std::size_t count = 1);
+void record_completion(std::size_t logical_jobs, CompletionLatencies latencies);
+void record_rejection(std::size_t count = 1);
+auto snapshot() -> std::optional<Snapshot>;
+auto is_congested() -> bool;
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 auto percentile_for_test(std::vector<double> samples, double pct)
     -> std::optional<double>;
 auto update_ewma_for_test(

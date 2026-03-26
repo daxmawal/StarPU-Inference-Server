@@ -899,6 +899,118 @@ TEST(
 }
 
 TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionToSubJobsCleansEachSubJobWhenCallbackThrows)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto job_one = std::make_shared<starpu_server::InferenceJob>();
+  auto job_two = std::make_shared<starpu_server::InferenceJob>();
+  auto pending_job = std::make_shared<starpu_server::InferenceJob>();
+
+  aggregated->set_request_id(100);
+  job_one->set_request_id(101);
+  job_two->set_request_id(102);
+
+  auto make_holder = [](int value) {
+    auto holder = std::make_shared<int>(value);
+    return std::shared_ptr<const void>(holder, holder.get());
+  };
+
+  aggregated->set_input_tensors({torch::tensor({9})});
+  aggregated->set_input_memory_holders({make_holder(9)});
+  aggregated->set_output_tensors(
+      {torch::tensor({9.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  job_one->set_input_tensors({torch::tensor({1})});
+  job_one->set_input_memory_holders({make_holder(1)});
+  job_one->set_output_tensors(
+      {torch::tensor({1.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  job_two->set_input_tensors({torch::tensor({2})});
+  job_two->set_input_memory_holders({make_holder(2)});
+  job_two->set_output_tensors(
+      {torch::tensor({2.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  bool pending_callback_invoked = false;
+  pending_job->set_on_complete(
+      [&pending_callback_invoked](const std::vector<torch::Tensor>&, double) {
+        pending_callback_invoked = true;
+      });
+  aggregated->set_pending_sub_jobs({pending_job});
+
+  bool job_one_called = false;
+  double job_one_latency = 0.0;
+  std::vector<torch::Tensor> job_one_outputs;
+  job_one->set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        job_one_called = true;
+        job_one_latency = latency_ms;
+        job_one_outputs = outputs;
+        throw std::runtime_error("sub-job callback failure");
+      });
+
+  bool job_two_called = false;
+  double job_two_latency = 0.0;
+  std::vector<torch::Tensor> job_two_outputs;
+  job_two->set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        job_two_called = true;
+        job_two_latency = latency_ms;
+        job_two_outputs = outputs;
+      });
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.emplace_back(job_one, job_one->get_on_complete(), 1);
+  sub_jobs.back().request_id = job_one->get_request_id();
+  sub_jobs.emplace_back(job_two, job_two->get_on_complete(), 1);
+  sub_jobs.back().request_id = job_two->get_request_id();
+  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto primary = torch::tensor(
+      {{1.0F, 2.0F}, {3.0F, 4.0F}},
+      torch::TensorOptions().dtype(torch::kFloat));
+  const auto secondary = torch::tensor(
+      {{10.0F}, {20.0F}}, torch::TensorOptions().dtype(torch::kFloat));
+  const double latency_ms = 8.5;
+
+  EXPECT_NO_THROW(starpu_server::StarPUTaskRunnerTestAdapter::
+                      propagate_completion_to_sub_jobs(
+                          aggregated, {primary, secondary}, latency_ms));
+
+  EXPECT_TRUE(job_one_called);
+  EXPECT_TRUE(job_two_called);
+  EXPECT_EQ(job_one_latency, latency_ms);
+  EXPECT_EQ(job_two_latency, latency_ms);
+
+  ASSERT_EQ(job_one_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      job_one_outputs[0], primary.narrow(/*dim=*/0, /*start=*/0, 1)));
+  EXPECT_TRUE(torch::equal(
+      job_one_outputs[1], secondary.narrow(/*dim=*/0, /*start=*/0, 1)));
+
+  ASSERT_EQ(job_two_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      job_two_outputs[0], primary.narrow(/*dim=*/0, /*start=*/1, 1)));
+  EXPECT_TRUE(torch::equal(
+      job_two_outputs[1], secondary.narrow(/*dim=*/0, /*start=*/1, 1)));
+
+  EXPECT_TRUE(job_one->get_input_tensors().empty());
+  EXPECT_TRUE(job_one->get_input_memory_holders().empty());
+  EXPECT_TRUE(job_one->get_output_tensors().empty());
+  EXPECT_TRUE(job_two->get_input_tensors().empty());
+  EXPECT_TRUE(job_two->get_input_memory_holders().empty());
+  EXPECT_TRUE(job_two->get_output_tensors().empty());
+  EXPECT_TRUE(aggregated->get_input_tensors().empty());
+  EXPECT_TRUE(aggregated->get_input_memory_holders().empty());
+  EXPECT_TRUE(aggregated->get_output_tensors().empty());
+
+  EXPECT_FALSE(pending_callback_invoked);
+  EXPECT_FALSE(pending_job->has_on_complete());
+  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+  EXPECT_TRUE(aggregated->aggregated_sub_jobs().empty());
+}
+
+TEST(
     StarPUTaskRunnerTestAdapter, PropagateCompletionReleasesAggregatedJobInputs)
 {
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();

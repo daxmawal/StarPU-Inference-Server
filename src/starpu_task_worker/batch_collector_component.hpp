@@ -39,6 +39,7 @@ class BatchCollector {
   BatchCollector(
       InferenceQueue* queue, const RuntimeConfig* opts, StarPUSetup* starpu,
       std::shared_ptr<InferenceJob>* pending_job,
+      std::shared_ptr<RuntimeObservability> observability,
       const PreparedBatchingContext& prepared, const InflightContext& inflight);
 
   auto wait_for_next_job() -> std::shared_ptr<InferenceJob>;
@@ -46,6 +47,8 @@ class BatchCollector {
       -> std::vector<std::shared_ptr<InferenceJob>>;
   auto maybe_build_batched_job(std::vector<std::shared_ptr<InferenceJob>>& jobs)
       -> std::shared_ptr<InferenceJob>;
+  void reset_prepared_queue_state();
+  void abort_prepared_queue();
   void enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job);
   auto wait_for_prepared_job() -> std::shared_ptr<InferenceJob>;
   void batching_loop();
@@ -144,6 +147,7 @@ class BatchCollector {
   const RuntimeConfig* opts_;
   StarPUSetup* starpu_;
   std::shared_ptr<InferenceJob>* pending_job_;
+  std::shared_ptr<RuntimeObservability> observability_;
   std::atomic<std::size_t>* inflight_tasks_;
   std::condition_variable* inflight_cv_;
   std::mutex* inflight_mutex_;

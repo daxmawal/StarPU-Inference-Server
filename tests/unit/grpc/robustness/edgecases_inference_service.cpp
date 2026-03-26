@@ -91,7 +91,8 @@ TEST_F(InferenceServiceTest, ModelInferReturnsValidationError)
   auto req = starpu_server::make_valid_request();
   req.add_raw_input_contents()->assign("", 0);
   req.MergeFrom(starpu_server::make_model_request("m", "1"));
-  auto status = service->ModelInfer(&ctx, &req, &reply);
+  auto status =
+      starpu_server::testing::ModelInferForTest(*service, &ctx, &req, &reply);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   expect_empty_infer_response(reply);
 }
@@ -101,14 +102,16 @@ TEST_F(InferenceServiceTest, InvalidDatatypeDoesNotShutdownServer)
   auto req = starpu_server::make_valid_request();
   req.mutable_inputs(0)->set_datatype("INT32");
   req.MergeFrom(starpu_server::make_model_request("m", "1"));
-  auto status = service->ModelInfer(&ctx, &req, &reply);
+  auto status =
+      starpu_server::testing::ModelInferForTest(*service, &ctx, &req, &reply);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   expect_empty_infer_response(reply);
 
   auto valid_req = starpu_server::make_valid_request();
   valid_req.MergeFrom(starpu_server::make_model_request("m", "1"));
   auto worker = prepare_job({torch::zeros({2, 2})}, {torch::zeros({2, 2})});
-  status = service->ModelInfer(&ctx, &valid_req, &reply);
+  status = starpu_server::testing::ModelInferForTest(
+      *service, &ctx, &valid_req, &reply);
   EXPECT_TRUE(status.ok());
 }
 
@@ -147,7 +150,8 @@ TEST(InferenceService, ModelInferRejectsWhenQueueIsFull)
   auto req = starpu_server::make_valid_request();
   grpc::ServerContext ctx;
   inference::ModelInferResponse reply;
-  auto status = service.ModelInfer(&ctx, &req, &reply);
+  auto status =
+      starpu_server::testing::ModelInferForTest(service, &ctx, &req, &reply);
 
   EXPECT_EQ(status.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
   expect_empty_infer_response(reply);

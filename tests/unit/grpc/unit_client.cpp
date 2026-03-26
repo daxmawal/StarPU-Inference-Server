@@ -17,6 +17,7 @@
 #include "grpc/client/client_args.hpp"
 #include "grpc/client/inference_client.hpp"
 #include "grpc/server/inference_service.hpp"
+#include "support/grpc/client/inference_client_test_api.hpp"
 #include "test_helpers.hpp"
 
 TEST(ClientArgs, ParsesValidArguments)

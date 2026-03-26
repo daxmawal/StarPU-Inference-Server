@@ -357,7 +357,8 @@ starpu_server::StarPUTaskRunnerTestAdapter::
   if (runner == nullptr) {
     return;
   }
-  ResultDispatcher::release_inflight_slot(runner->inflight_state_);
+  ResultDispatcher::release_inflight_slot(
+      runner->result_dispatcher_, runner->inflight_state_);
 }
 
 extern "C" cudaError_t

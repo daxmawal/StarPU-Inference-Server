@@ -23,6 +23,7 @@
 #include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "monitoring/metrics.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "output_slot_pool.hpp"
 #include "starpu_setup.hpp"
 #include "utils/device_type.hpp"
@@ -949,12 +950,23 @@ copy_outputs_from_pool(InferenceCallbackContext* ctx)
       std::chrono::duration<double, std::milli>(copy_end - copy_start).count();
   const auto worker_type_label =
       std::string_view(to_string(ctx->job->get_executed_on()));
-  observe_io_copy_latency(
-      "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-      worker_type_label, copy_ms);
-  increment_transfer_bytes(
-      "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-      worker_type_label, total_bytes);
+  if (ctx->dependencies != nullptr &&
+      ctx->dependencies->observability != nullptr &&
+      ctx->dependencies->observability->metrics != nullptr) {
+    ctx->dependencies->observability->metrics->observe_io_copy_latency(
+        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+        worker_type_label, copy_ms);
+    ctx->dependencies->observability->metrics->increment_transfer_bytes(
+        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+        worker_type_label, total_bytes);
+  } else {
+    observe_io_copy_latency(
+        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+        worker_type_label, copy_ms);
+    increment_transfer_bytes(
+        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+        worker_type_label, total_bytes);
+  }
 }
 }  // namespace inference_task_detail
 

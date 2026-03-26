@@ -537,7 +537,8 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const GrpcModelSpec& model_spec, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks)
+    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks,
+    std::shared_ptr<RuntimeObservability> observability)
 {
   auto service_options = InferenceServiceImpl::ServiceOptions{
       .default_model_name = options.default_model_name,
@@ -559,7 +560,7 @@ RunGrpcServer(
               model_spec.expected_input_dims.begin(),
               model_spec.expected_input_dims.end()),
           model_spec.max_batch_size},
-      std::move(service_options));
+      std::move(service_options), std::move(observability));
   run_grpc_server_impl(service, options, server, hooks);
 }
 
@@ -568,7 +569,8 @@ RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     GrpcModelNamesSpec model_names, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks)
+    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks,
+    std::shared_ptr<RuntimeObservability> observability)
 {
   const GrpcModelSpec model_spec{
       .expected_input_types = expected_input_types,
@@ -576,7 +578,9 @@ RunGrpcServer(
       .expected_input_names = model_names.expected_input_names,
       .expected_output_names = model_names.expected_output_names,
       .max_batch_size = 0};
-  RunGrpcServer(queue, reference_outputs, model_spec, options, server, hooks);
+  RunGrpcServer(
+      queue, reference_outputs, model_spec, options, server, hooks,
+      std::move(observability));
 }
 
 void

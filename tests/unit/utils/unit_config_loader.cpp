@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "support/utils/config_loader_test_api.hpp"
 #include "test_helpers.hpp"
 #include "utils/config_loader.hpp"
 #include "utils/datatype_utils.hpp"

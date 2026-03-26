@@ -40,6 +40,8 @@ struct TransparentStringHash {
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+using ConfigLoaderPostParseHook = std::function<void(RuntimeConfig&)>;
+
 auto
 config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
 {

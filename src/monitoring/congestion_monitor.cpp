@@ -97,10 +97,14 @@ compute_rho_sample(double lambda_rps, double mu_rps) -> double
   return 0.0;
 }
 
-class CongestionMonitor {
+class MonitorImpl final : public Monitor::Impl {
  public:
-  CongestionMonitor(InferenceQueue* queue, const Config& cfg)
-      : queue_(queue), cfg_(cfg)
+  MonitorImpl(
+      InferenceQueue* queue, const Config& cfg,
+      std::shared_ptr<MetricsRecorder> metrics,
+      std::shared_ptr<BatchingTraceLogger> tracer)
+      : queue_(queue), cfg_(cfg), metrics_(std::move(metrics)),
+        tracer_(std::move(tracer))
   {
     runtime_state_.last_queue_size = queue_ != nullptr ? queue_->size() : 0;
     normalize_config();
@@ -521,21 +525,28 @@ class CongestionMonitor {
     return snap;
   }
 
-  static void publish_metrics(
-      const TickStats& stats, double score, bool congested_state)
+  void publish_metrics(
+      const TickStats& stats, double score, bool congested_state) const
   {
-    set_congestion_flag(congested_state);
-    set_congestion_score(score);
-    set_congestion_arrival_rate(stats.lambda_rps);
-    set_congestion_completion_rate(stats.mu_rps);
-    set_congestion_rejection_rate(stats.rejection_rps);
-    set_congestion_rho(stats.rho_smoothed);
-    set_congestion_fill_ewma(stats.fill_smoothed);
-    set_congestion_queue_growth_rate(stats.dqueue_smoothed);
-    set_congestion_queue_latency_p95(stats.queue_p95_smoothed.value_or(0.0));
-    set_congestion_queue_latency_p99(stats.queue_p99_smoothed.value_or(0.0));
-    set_congestion_e2e_latency_p95(stats.e2e_p95_smoothed.value_or(0.0));
-    set_congestion_e2e_latency_p99(stats.e2e_p99_smoothed.value_or(0.0));
+    if (metrics_ == nullptr) {
+      return;
+    }
+    metrics_->set_congestion_flag(congested_state);
+    metrics_->set_congestion_score(score);
+    metrics_->set_congestion_arrival_rate(stats.lambda_rps);
+    metrics_->set_congestion_completion_rate(stats.mu_rps);
+    metrics_->set_congestion_rejection_rate(stats.rejection_rps);
+    metrics_->set_congestion_rho(stats.rho_smoothed);
+    metrics_->set_congestion_fill_ewma(stats.fill_smoothed);
+    metrics_->set_congestion_queue_growth_rate(stats.dqueue_smoothed);
+    metrics_->set_congestion_queue_latency_p95(
+        stats.queue_p95_smoothed.value_or(0.0));
+    metrics_->set_congestion_queue_latency_p99(
+        stats.queue_p99_smoothed.value_or(0.0));
+    metrics_->set_congestion_e2e_latency_p95(
+        stats.e2e_p95_smoothed.value_or(0.0));
+    metrics_->set_congestion_e2e_latency_p99(
+        stats.e2e_p99_smoothed.value_or(0.0));
   }
 
   void normalize_config()
@@ -612,11 +623,10 @@ class CongestionMonitor {
 
   void flush_congestion_span(std::chrono::steady_clock::time_point end_time)
   {
-    if (!runtime_state_.congestion_start.has_value()) {
+    if (!runtime_state_.congestion_start.has_value() || tracer_ == nullptr) {
       return;
     }
-    auto& tracer = BatchingTraceLogger::instance();
-    tracer.log_congestion_span(BatchingTraceLogger::TimeRange{
+    tracer_->log_congestion_span(BatchingTraceLogger::TimeRange{
         .start = *runtime_state_.congestion_start,
         .end = end_time,
     });
@@ -625,6 +635,8 @@ class CongestionMonitor {
 
   InferenceQueue* queue_;
   Config cfg_;
+  std::shared_ptr<MetricsRecorder> metrics_;
+  std::shared_ptr<BatchingTraceLogger> tracer_;
   std::jthread worker_;
   std::atomic<bool> congested_flag_{false};
   Counters counters_{};
@@ -636,13 +648,153 @@ class CongestionMonitor {
 };
 
 auto
-monitor_atomic() -> std::atomic<std::shared_ptr<CongestionMonitor>>&
+monitor_atomic() -> std::atomic<std::shared_ptr<Monitor>>&
 {
-  static std::atomic<std::shared_ptr<CongestionMonitor>> instance{nullptr};
+  static std::atomic<std::shared_ptr<Monitor>> instance{nullptr};
   return instance;
 }
 
+auto
+make_global_metrics_recorder() -> std::shared_ptr<MetricsRecorder>
+{
+  auto metrics = get_metrics();
+  if (metrics == nullptr) {
+    return nullptr;
+  }
+  return std::make_shared<MetricsRecorder>(std::move(metrics));
+}
+
+auto
+make_global_tracer() -> std::shared_ptr<BatchingTraceLogger>
+{
+  return {
+      &BatchingTraceLogger::instance(),
+      [](BatchingTraceLogger* /*tracer*/) noexcept {},
+  };
+}
+
 }  // namespace congestion_monitor_detail
+
+Monitor::Monitor(
+    InferenceQueue* queue, Config config,
+    std::shared_ptr<MetricsRecorder> metrics,
+    std::shared_ptr<BatchingTraceLogger> tracer)
+    : impl_(std::make_shared<MonitorImpl>(
+          queue, config, std::move(metrics), std::move(tracer)))
+{
+}
+
+void
+Monitor::start()
+{
+  if (impl_ != nullptr) {
+    impl_->start();
+  }
+}
+
+void
+Monitor::shutdown()
+{
+  if (impl_ != nullptr) {
+    impl_->shutdown();
+  }
+}
+
+void
+Monitor::record_arrival(std::size_t count)
+{
+  if (impl_ != nullptr) {
+    impl_->record_arrival(count);
+  }
+}
+
+void
+Monitor::record_completion(
+    std::size_t logical_jobs, CompletionLatencies latencies)
+{
+  if (impl_ != nullptr) {
+    impl_->record_completion(logical_jobs, latencies);
+  }
+}
+
+void
+Monitor::record_rejection(std::size_t count)
+{
+  if (impl_ != nullptr) {
+    impl_->record_rejection(count);
+  }
+}
+
+auto
+Monitor::snapshot() const -> Snapshot
+{
+  return impl_ != nullptr ? impl_->snapshot() : Snapshot{};
+}
+
+auto
+Monitor::congested() const -> bool
+{
+  return impl_ != nullptr && impl_->congested();
+}
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+auto
+Monitor::arrivals_for_test() const -> std::size_t
+{
+  return impl_ != nullptr ? impl_->arrivals_for_test() : 0;
+}
+
+auto
+Monitor::rejections_for_test() const -> std::size_t
+{
+  return impl_ != nullptr ? impl_->rejections_for_test() : 0;
+}
+
+auto
+Monitor::evaluate_latency_flags_for_test(
+    std::optional<double> queue_p95,
+    std::optional<double> e2e_p95) -> LatencyFlagResult
+{
+  return impl_ != nullptr
+             ? impl_->evaluate_latency_flags_for_test(queue_p95, e2e_p95)
+             : LatencyFlagResult{false, true};
+}
+
+auto
+Monitor::compute_queue_pressure_score_for_test(double fill_smoothed) const
+    -> double
+{
+  return impl_ != nullptr
+             ? impl_->compute_queue_pressure_score_for_test(fill_smoothed)
+             : 0.0;
+}
+
+auto
+Monitor::compute_latency_pressure_score_for_test(
+    std::optional<double> e2e_p95,
+    std::optional<double> queue_p95) const -> double
+{
+  return impl_ != nullptr ? impl_->compute_latency_pressure_score_for_test(
+                                e2e_p95, queue_p95)
+                          : 0.0;
+}
+
+auto
+Monitor::normalized_config_for_test() const -> NormalizedConfigResult
+{
+  return impl_ != nullptr ? impl_->normalized_config_for_test()
+                          : NormalizedConfigResult{};
+}
+
+auto
+Monitor::compute_capacity_pressure_score_for_test(double rho_smoothed) const
+    -> double
+{
+  return impl_ != nullptr
+             ? impl_->compute_capacity_pressure_score_for_test(rho_smoothed)
+             : 0.0;
+}
+#endif  // SONAR_IGNORE_END
 
 auto
 start(InferenceQueue* queue, Config config) -> bool
@@ -654,7 +806,8 @@ start(InferenceQueue* queue, Config config) -> bool
     }
     return false;
   }
-  auto monitor = std::make_shared<CongestionMonitor>(queue, config);
+  auto monitor = std::make_shared<Monitor>(
+      queue, config, make_global_metrics_recorder(), make_global_tracer());
   monitor->start();
   monitor_atomic().store(monitor, std::memory_order_release);
   return true;
@@ -733,7 +886,7 @@ record_arrival_for_test(std::size_t count) -> std::size_t
 {
   InferenceQueue queue(1);
   Config cfg;
-  CongestionMonitor monitor(&queue, cfg);
+  Monitor monitor(&queue, cfg);
   monitor.record_arrival(count);
   return monitor.arrivals_for_test();
 }
@@ -743,7 +896,7 @@ record_rejection_for_test(std::size_t count) -> std::size_t
 {
   InferenceQueue queue(1);
   Config cfg;
-  CongestionMonitor monitor(&queue, cfg);
+  Monitor monitor(&queue, cfg);
   monitor.record_rejection(count);
   return monitor.rejections_for_test();
 }
@@ -757,7 +910,7 @@ evaluate_latency_flags_for_test(
   Config cfg;
   cfg.latency_slo_ms = 0.0;
   cfg.queue_latency_budget_ms = queue_budget_ms;
-  CongestionMonitor monitor(&queue, cfg);
+  Monitor monitor(&queue, cfg);
   return monitor.evaluate_latency_flags_for_test(queue_p95);
 }
 
@@ -769,7 +922,7 @@ compute_queue_pressure_score_for_test(const QueuePressureScoreTestArgs& args)
   Config cfg;
   cfg.fill_high = args.fill_high;
   cfg.fill_low = args.fill_low;
-  CongestionMonitor monitor(&queue, cfg);
+  Monitor monitor(&queue, cfg);
   return monitor.compute_queue_pressure_score_for_test(args.fill_smoothed);
 }
 
@@ -781,7 +934,7 @@ compute_latency_pressure_score_for_test(
   Config cfg;
   cfg.latency_slo_ms = args.latency_slo_ms;
   cfg.e2e_ok_ratio = args.e2e_ok_ratio;
-  CongestionMonitor monitor(&queue, cfg);
+  Monitor monitor(&queue, cfg);
   return monitor.compute_latency_pressure_score_for_test(args.e2e_p95);
 }
 
@@ -793,7 +946,7 @@ compute_latency_pressure_score_queue_budget_for_test(
   Config cfg;
   cfg.latency_slo_ms = 0.0;
   cfg.queue_latency_budget_ms = queue_budget_ms;
-  CongestionMonitor monitor(&queue, cfg);
+  Monitor monitor(&queue, cfg);
   return monitor.compute_latency_pressure_score_for_test(
       std::nullopt, queue_p95);
 }
@@ -802,7 +955,7 @@ auto
 normalize_config_for_test(Config cfg) -> NormalizedConfigResult
 {
   InferenceQueue queue(1);
-  CongestionMonitor monitor(&queue, cfg);
+  Monitor monitor(&queue, cfg);
   return monitor.normalized_config_for_test();
 }
 
@@ -814,7 +967,7 @@ compute_capacity_pressure_score_for_test(
   Config cfg;
   cfg.rho_high = args.rho_high;
   cfg.rho_low = args.rho_low;
-  CongestionMonitor monitor(&queue, cfg);
+  Monitor monitor(&queue, cfg);
   return monitor.compute_capacity_pressure_score_for_test(args.rho_smoothed);
 }
 #endif  // SONAR_IGNORE_END

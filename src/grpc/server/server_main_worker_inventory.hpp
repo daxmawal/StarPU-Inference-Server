@@ -252,7 +252,9 @@ log_worker_inventory(const starpu_server::RuntimeConfig& opts)
 
 void
 report_gpu_replication_startup(
-    const starpu_server::RuntimeConfig& opts, std::size_t loaded_gpu_replicas)
+    const starpu_server::RuntimeConfig& opts, std::size_t loaded_gpu_replicas,
+    const std::shared_ptr<starpu_server::RuntimeObservability>& observability =
+        {})
 {
   if (!opts.devices.use_cuda || opts.devices.ids.empty()) {
     return;
@@ -262,9 +264,17 @@ report_gpu_replication_startup(
   const std::string replication_policy =
       std::string(to_string(opts.devices.gpu_model_replication));
 
-  starpu_server::set_gpu_model_replication_policy(
-      model_label, replication_policy);
-  starpu_server::set_gpu_model_replicas_total(model_label, loaded_gpu_replicas);
+  if (observability != nullptr && observability->metrics != nullptr) {
+    observability->metrics->set_gpu_model_replication_policy(
+        model_label, replication_policy);
+    observability->metrics->set_gpu_model_replicas_total(
+        model_label, loaded_gpu_replicas);
+  } else {
+    starpu_server::set_gpu_model_replication_policy(
+        model_label, replication_policy);
+    starpu_server::set_gpu_model_replicas_total(
+        model_label, loaded_gpu_replicas);
+  }
 
   try {
     const auto assignments =
@@ -301,7 +311,13 @@ report_gpu_replication_startup(
                                             ? replicas_by_device[device_id]
                                             : 0U;
       for (const int worker_id : workers) {
-        starpu_server::set_starpu_cuda_worker_info(worker_id, device_id, true);
+        if (observability != nullptr && observability->metrics != nullptr) {
+          observability->metrics->set_starpu_cuda_worker_info(
+              worker_id, device_id, true);
+        } else {
+          starpu_server::set_starpu_cuda_worker_info(
+              worker_id, device_id, true);
+        }
       }
 
       starpu_server::log_info(

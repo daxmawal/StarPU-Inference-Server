@@ -11,6 +11,7 @@
 #include "logger.hpp"
 #include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "result_dispatcher_component.hpp"
 #include "task_runner_internal.hpp"
 #include "utils/monotonic_clock.hpp"
@@ -35,6 +36,21 @@ batching_loop_test_hooks() -> BatchingLoopTestHooks&
 #endif  // SONAR_IGNORE_END
 
 namespace {
+
+auto
+active_metrics(const std::shared_ptr<RuntimeObservability>& observability)
+    -> MetricsRecorder*
+{
+  return observability != nullptr ? observability->metrics.get() : nullptr;
+}
+
+auto
+active_congestion_monitor(const std::shared_ptr<RuntimeObservability>&
+                              observability) -> congestion::Monitor*
+{
+  return observability != nullptr ? observability->congestion_monitor.get()
+                                  : nullptr;
+}
 
 struct BatchPressureThresholds {
   double fill_high = 0.0;
@@ -152,11 +168,16 @@ sample_internal_pressure(
 
 auto
 sample_monitor_pressure(
+    const std::shared_ptr<RuntimeObservability>& observability,
     const BatchPressureThresholds& thresholds,
     const InternalPressureSnapshot& internal_pressure)
     -> std::optional<ResolvedBatchPressure>
 {
-  const auto snapshot = congestion::snapshot();
+  const auto* monitor = active_congestion_monitor(observability);
+  const auto snapshot =
+      monitor != nullptr
+          ? std::optional<congestion::Snapshot>(monitor->snapshot())
+          : congestion::snapshot();
   if (!snapshot.has_value()) {
     return std::nullopt;
   }
@@ -171,7 +192,9 @@ sample_monitor_pressure(
 
   ResolvedBatchPressure pressure{};
   pressure.monitor_tick = values.last_tick;
-  pressure.congested = values.congestion || congestion::is_congested();
+  pressure.congested =
+      values.congestion ||
+      (monitor != nullptr ? monitor->congested() : congestion::is_congested());
   pressure.severe = pressure.congested || values.rejection_rps > 0.0 ||
                     internal_pressure.severe;
   pressure.high = pressure.severe || values.fill_ewma >= thresholds.fill_high ||
@@ -186,6 +209,7 @@ sample_monitor_pressure(
 
 auto
 sample_queue_pressure(
+    const std::shared_ptr<RuntimeObservability>& observability,
     const InferenceQueue* queue, const BatchPressureThresholds& thresholds,
     const InternalPressureSnapshot& internal_pressure) -> ResolvedBatchPressure
 {
@@ -199,7 +223,12 @@ sample_queue_pressure(
 
   const double queue_fill =
       compute_queue_fill(queue->size(), queue->capacity());
-  pressure.congested = congestion::is_congested();
+  if (const auto* monitor = active_congestion_monitor(observability);
+      monitor != nullptr) {
+    pressure.congested = monitor->congested();
+  } else {
+    pressure.congested = congestion::is_congested();
+  }
   pressure.high = queue_fill >= thresholds.fill_high || internal_pressure.high;
   pressure.low = !pressure.congested && queue_fill <= thresholds.fill_low &&
                  internal_pressure.low;
@@ -212,8 +241,10 @@ sample_queue_pressure(
 BatchCollector::BatchCollector(
     InferenceQueue* queue, const RuntimeConfig* opts, StarPUSetup* starpu,
     std::shared_ptr<InferenceJob>* pending_job,
+    std::shared_ptr<RuntimeObservability> observability,
     const PreparedBatchingContext& prepared, const InflightContext& inflight)
     : queue_(queue), opts_(opts), starpu_(starpu), pending_job_(pending_job),
+      observability_(std::move(observability)),
       inflight_tasks_(inflight.inflight_tasks),
       inflight_cv_(inflight.inflight_cv),
       inflight_mutex_(inflight.inflight_mutex),
@@ -262,24 +293,40 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
 {
   std::vector<std::shared_ptr<InferenceJob>> jobs;
   if (first_job == nullptr) {
-    set_batch_pending_jobs(0);
+    if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+      metrics->set_batch_pending_jobs(0);
+    } else {
+      set_batch_pending_jobs(0);
+    }
     return jobs;
   }
 
   jobs.push_back(first_job);
   if (!opts_->batching.dynamic_batching) {
-    set_batch_pending_jobs(jobs.size());
+    if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+      metrics->set_batch_pending_jobs(jobs.size());
+    } else {
+      set_batch_pending_jobs(jobs.size());
+    }
     return jobs;
   }
   if (first_job->has_aggregated_sub_jobs() ||
       first_job->logical_job_count() > 1) {
-    set_batch_pending_jobs(jobs.size());
+    if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+      metrics->set_batch_pending_jobs(jobs.size());
+    } else {
+      set_batch_pending_jobs(jobs.size());
+    }
     return jobs;
   }
 
   const int max_job_count = effective_batch_limit();
   if (max_job_count <= 1) {
-    set_batch_pending_jobs(jobs.size());
+    if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+      metrics->set_batch_pending_jobs(jobs.size());
+    } else {
+      set_batch_pending_jobs(jobs.size());
+    }
     return jobs;
   }
 
@@ -322,7 +369,11 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     jobs.push_back(std::move(next));
   }
 
-  set_batch_pending_jobs(jobs.size());
+  if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+    metrics->set_batch_pending_jobs(jobs.size());
+  } else {
+    set_batch_pending_jobs(jobs.size());
+  }
   return jobs;
 }
 
@@ -777,9 +828,9 @@ BatchCollector::sample_batch_pressure() const -> BatchPressureSample
       load_inflight_tasks(inflight_tasks_), internal_pressure_config);
 
   ResolvedBatchPressure pressure =
-      sample_monitor_pressure(thresholds, internal_pressure)
-          .value_or(
-              sample_queue_pressure(queue_, thresholds, internal_pressure));
+      sample_monitor_pressure(observability_, thresholds, internal_pressure)
+          .value_or(sample_queue_pressure(
+              observability_, queue_, thresholds, internal_pressure));
   sample.state.congested = pressure.congested;
   sample.state.high = pressure.high;
   sample.state.low = pressure.low;
@@ -800,7 +851,11 @@ BatchCollector::maybe_build_batched_job(
   auto master = jobs.front();
   if (jobs.size() == 1) {
     const auto samples = std::max<int64_t>(1, job_sample_size(master));
-    observe_batch_efficiency(static_cast<double>(samples));
+    if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+      metrics->observe_batch_efficiency(static_cast<double>(samples));
+    } else {
+      observe_batch_efficiency(static_cast<double>(samples));
+    }
     master->set_logical_job_count(1);
     master->set_aggregated_sub_jobs({});
     return master;
@@ -840,7 +895,11 @@ BatchCollector::maybe_build_batched_job(
                                 ? static_cast<double>(effective_batch) /
                                       static_cast<double>(logical_jobs)
                                 : 0.0;
-  observe_batch_efficiency(efficiency);
+  if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+    metrics->observe_batch_efficiency(efficiency);
+  } else {
+    observe_batch_efficiency(efficiency);
+  }
 
   master->set_start_time(earliest_start);
   master->update_timing_info(
@@ -900,6 +959,44 @@ BatchCollector::maybe_build_batched_job(
 }
 
 void
+BatchCollector::reset_prepared_queue_state()
+{
+  if (prepared_mutex_ != nullptr && prepared_jobs_ != nullptr) {
+    const std::scoped_lock lock(*prepared_mutex_);
+    prepared_jobs_->clear();
+    if (batching_done_ != nullptr) {
+      *batching_done_ = false;
+    }
+  } else if (batching_done_ != nullptr) {
+    *batching_done_ = false;
+  }
+  if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+    metrics->set_starpu_prepared_queue_depth(0);
+    metrics->set_batch_pending_jobs(0);
+  } else {
+    set_starpu_prepared_queue_depth(0);
+    set_batch_pending_jobs(0);
+  }
+}
+
+void
+BatchCollector::abort_prepared_queue()
+{
+  if (prepared_mutex_ != nullptr && batching_done_ != nullptr) {
+    {
+      const std::scoped_lock lock(*prepared_mutex_);
+      *batching_done_ = true;
+    }
+  } else if (batching_done_ != nullptr) {
+    *batching_done_ = true;
+  }
+
+  if (prepared_cv_ != nullptr) {
+    prepared_cv_->notify_all();
+  }
+}
+
+void
 BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
 {
   if (prepared_mutex_ == nullptr || prepared_jobs_ == nullptr ||
@@ -909,17 +1006,29 @@ BatchCollector::enqueue_prepared_job(const std::shared_ptr<InferenceJob>& job)
   {
     const std::scoped_lock lock(*prepared_mutex_);
     prepared_jobs_->push_back(job);
-    set_starpu_prepared_queue_depth(prepared_jobs_->size());
+    if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+      metrics->set_starpu_prepared_queue_depth(prepared_jobs_->size());
+    } else {
+      set_starpu_prepared_queue_depth(prepared_jobs_->size());
+    }
   }
   if (job != nullptr && max_inflight_tasks_ > 0 && inflight_tasks_ != nullptr) {
     // Inflight accounting is owned by prepared-queue enqueue/dequeue terminal
     // paths: increment here, decrement in ResultDispatcher terminal handling.
     const auto current =
         inflight_tasks_->fetch_add(1, std::memory_order_release) + 1;
-    set_inflight_tasks(current);
+    if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+      metrics->set_inflight_tasks(current);
+    } else {
+      set_inflight_tasks(current);
+    }
     const double ratio =
         static_cast<double>(current) / static_cast<double>(max_inflight_tasks_);
-    set_starpu_worker_busy_ratio(ratio);
+    if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+      metrics->set_starpu_worker_busy_ratio(ratio);
+    } else {
+      set_starpu_worker_busy_ratio(ratio);
+    }
   }
   prepared_cv_->notify_one();
 }
@@ -941,7 +1050,11 @@ BatchCollector::wait_for_prepared_job() -> std::shared_ptr<InferenceJob>
   }
   auto job = prepared_jobs_->front();
   prepared_jobs_->pop_front();
-  set_starpu_prepared_queue_depth(prepared_jobs_->size());
+  if (auto* metrics = active_metrics(observability_); metrics != nullptr) {
+    metrics->set_starpu_prepared_queue_depth(prepared_jobs_->size());
+  } else {
+    set_starpu_prepared_queue_depth(prepared_jobs_->size());
+  }
   return job;
 }
 
@@ -983,14 +1096,7 @@ BatchCollector::batching_loop()
     enqueue_prepared_job(job);
   }
 
-  if (prepared_mutex_ != nullptr && prepared_cv_ != nullptr &&
-      batching_done_ != nullptr) {
-    {
-      const std::scoped_lock lock(*prepared_mutex_);
-      *batching_done_ = true;
-    }
-    prepared_cv_->notify_all();
-  }
+  abort_prepared_queue();
 }
 
 // GCOVR_EXCL_START

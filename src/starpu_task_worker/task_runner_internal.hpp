@@ -80,7 +80,12 @@ auto build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
 auto build_request_arrival_us_for_trace(
     const std::shared_ptr<InferenceJob>& job) -> std::vector<int64_t>;
 
-auto job_identifier(const InferenceJob& job) -> int;
+[[nodiscard]] inline auto
+job_identifier(const InferenceJob& job) -> int
+{
+  const int submission_id = job.submission_id();
+  return (submission_id >= 0) ? submission_id : job.get_request_id();
+}
 void invoke_submit_inference_task_hook();
 void invoke_run_before_submit_hook();
 void invoke_run_after_batching_thread_start_hook();
