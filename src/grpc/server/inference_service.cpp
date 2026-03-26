@@ -1,61 +1,7 @@
-#include "inference_service.hpp"
-
-#include <grpcpp/health_check_service_interface.h>
-
-#include <algorithm>
-#include <array>
-#include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <cstring>
-#include <format>
-#include <functional>
-#include <future>
-#include <limits>
-#include <memory>
-#include <mutex>
-#include <optional>
-#include <span>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <thread>
-#include <unordered_map>
-#include <unordered_set>
-#include <utility>
-#include <vector>
-#if defined(STARPU_TESTING)
-#include "support/grpc/server/inference_service_test_internal.hpp"
-#endif
-#if defined(STARPU_ENABLE_GRPC_REFLECTION)
-#include <grpcpp/ext/proto_server_reflection_plugin.h>
-#endif
-
-#include "core/inference_runner.hpp"
+#include "inference_service_internal.hpp"
 #include "inference_service_runtime_internal.hpp"
-#include "monitoring/congestion_monitor.hpp"
-#include "monitoring/metrics.hpp"
-#include "monitoring/runtime_observability.hpp"
-#include "utils/batching_trace_logger.hpp"
-#include "utils/client_utils.hpp"
-#include "utils/datatype_utils.hpp"
-#include "utils/logger.hpp"
-#include "utils/nvtx.hpp"
 
-namespace starpu_server {  // NOSONAR: this translation unit includes
-                           // implementation fragments.
-using grpc::Server;
-using grpc::ServerBuilder;
-using grpc::ServerContext;
-using grpc::Status;
-using inference::ModelInferRequest;
-using inference::ModelInferResponse;
-using inference::ModelReadyRequest;
-using inference::ModelReadyResponse;
-using inference::ServerLiveRequest;
-using inference::ServerLiveResponse;
-using inference::ServerReadyRequest;
-using inference::ServerReadyResponse;
+namespace starpu_server {
 
 inline namespace inference_service_detail {
 
@@ -280,68 +226,6 @@ elapsed_since(const MonotonicClock::time_point start) -> uint64_t
 
 }  // namespace inference_service_detail
 
-inline namespace inference_service_detail {
-
-class AsyncCallDataBase {
- public:
-  explicit AsyncCallDataBase() = default;
-  AsyncCallDataBase(const AsyncCallDataBase&) = delete;
-  auto operator=(const AsyncCallDataBase&) -> AsyncCallDataBase& = delete;
-  AsyncCallDataBase(AsyncCallDataBase&&) = default;
-  auto operator=(AsyncCallDataBase&&) -> AsyncCallDataBase& = default;
-  virtual ~AsyncCallDataBase() = default;
-  virtual void Proceed(bool is_ok) = 0;
-};
-
-class RpcDoneTag final : public AsyncCallDataBase,
-                         public std::enable_shared_from_this<RpcDoneTag> {
- public:
-  using OnDone = std::function<void()>;
-
-  static auto Create(OnDone on_done, std::shared_ptr<void> call_guard)
-      -> std::shared_ptr<RpcDoneTag>
-  {
-    return std::make_shared<RpcDoneTag>(
-        std::move(on_done), std::move(call_guard));
-  }
-
-  void Arm(grpc::ServerContext* context)
-  {
-    if (context == nullptr) {
-      return;
-    }
-    self_ref_ = this->shared_from_this();
-    context->AsyncNotifyWhenDone(this);
-  }
-
-  void Proceed(bool is_ok) override
-  {
-    if (is_ok && on_done_) {
-      on_done_();
-    }
-    on_done_ = {};
-    call_guard_.reset();
-    self_ref_.reset();
-  }
-
-  RpcDoneTag(OnDone on_done, std::shared_ptr<void> call_guard)
-      : on_done_(std::move(on_done)), call_guard_(std::move(call_guard))
-  {
-  }
-
- private:
-  OnDone on_done_;
-  std::shared_ptr<void> call_guard_;
-  std::shared_ptr<RpcDoneTag> self_ref_;
-};
-
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-#endif                       // SONAR_IGNORE_END
-// GCOVR_EXCL_STOP
-}  // namespace inference_service_detail
-
-
 auto
 compute_thread_count_from(unsigned concurrency) -> std::size_t
 {
@@ -351,13 +235,6 @@ compute_thread_count_from(unsigned concurrency) -> std::size_t
   return std::clamp<std::size_t>(concurrency, kMinGrpcThreads, kMaxGrpcThreads);
 }
 
-inline namespace inference_service_detail {
-
-// Input/output tensor parsing and validation helpers.
-#include "inference_service_validation_convert_helpers.inc"
-// Async submission/completion utility helpers.
-#include "inference_service_async_coordination_helpers.inc"
-}  // namespace inference_service_detail
 
 InferenceServiceImpl::InferenceServiceImpl(
     InferenceQueue* queue, const std::vector<torch::Tensor>* reference_outputs,
@@ -436,14 +313,6 @@ InferenceServiceImpl::record_terminal_metrics(
   }
 }
 
-// Validation and response conversion block.
-#include "inference_service_validation_convert.inc"
-
-// Readiness/metadata/config/statistics RPC handlers.
-#include "inference_service_rpc_metadata.inc"
-
-// Async inference coordination block.
-#include "inference_service_async_coordination.inc"
 
 inline namespace inference_service_detail {
 void
@@ -621,5 +490,5 @@ unary_call_data_missing_handler_transitions_to_finish_runtime() -> bool
 }
 
 }  // namespace inference_service_runtime_internal
-#include "inference_service_async_server.inc"
+
 }  // namespace starpu_server

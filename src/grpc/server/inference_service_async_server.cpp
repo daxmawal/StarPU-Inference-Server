@@ -1,3 +1,11 @@
+#include "inference_service_internal.hpp"
+
+#if defined(STARPU_ENABLE_GRPC_REFLECTION)
+#include <grpcpp/ext/proto_server_reflection_plugin.h>
+#endif
+
+namespace starpu_server {
+
 inline namespace inference_service_detail {
 
 template <typename Request, typename Response>
@@ -591,3 +599,5 @@ StopServer(Server* server)
     server->Shutdown();
   }
 }
+
+}  // namespace starpu_server

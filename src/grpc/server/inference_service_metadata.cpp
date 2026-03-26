@@ -1,3 +1,8 @@
+#include "inference_service_internal.hpp"
+
+namespace starpu_server {
+
+// Readiness/metadata/config/statistics RPC handlers.
 inline namespace inference_service_detail {
 template <typename AddEntry, typename SetDataType, typename AppendDim>
 auto
@@ -393,3 +398,5 @@ InferenceServiceImpl::LogSettings(
 {
   return unimplemented_rpc_status("LogSettings");
 }
+
+}  // namespace starpu_server

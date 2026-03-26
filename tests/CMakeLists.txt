@@ -106,6 +106,10 @@ set(STARPU_TEST_RUNTIME_SOURCES
     ${TASK_WORKER_DIR}/result_dispatcher_component.cpp
     ${TASK_WORKER_DIR}/slot_manager_component.cpp
     ${GRPC_SERVER_DIR}/inference_service.cpp
+    ${GRPC_SERVER_DIR}/inference_service_io.cpp
+    ${GRPC_SERVER_DIR}/inference_service_metadata.cpp
+    ${GRPC_SERVER_DIR}/inference_service_async.cpp
+    ${GRPC_SERVER_DIR}/inference_service_async_server.cpp
     ${GRPC_CLIENT_DIR}/client_args.cpp
     ${GRPC_CLIENT_DIR}/inference_client.cpp
     ${UTILS_DIR}/client_utils.cpp
