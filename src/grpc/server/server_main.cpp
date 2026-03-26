@@ -207,6 +207,7 @@ main(int argc, char* argv[]) -> int
     log_worker_inventory(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
         prepare_models_and_warmup(opts, starpu);
+    report_gpu_replication_startup(opts, models_gpu.size());
     starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
     launch_threads(
         opts, starpu, model_cpu, models_gpu, reference_outputs, queue);

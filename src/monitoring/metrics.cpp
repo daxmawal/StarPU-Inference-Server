@@ -703,6 +703,29 @@ set_model_loaded(
 }
 
 void
+set_gpu_model_replication_policy(
+    std::string_view model_name, std::string_view policy_label)
+{
+  invoke_metrics_registry<
+      &MetricsRegistry::set_gpu_model_replication_policy_flag>(
+      MetricsRegistry::ModelLabel{model_name}, policy_label);
+}
+
+void
+set_gpu_model_replicas_total(std::string_view model_name, std::size_t replicas)
+{
+  invoke_metrics_registry<&MetricsRegistry::set_gpu_model_replicas_total_gauge>(
+      MetricsRegistry::ModelLabel{model_name}, replicas);
+}
+
+void
+set_starpu_cuda_worker_info(int worker_id, int device_id, bool active)
+{
+  invoke_metrics_registry<&MetricsRegistry::set_starpu_cuda_worker_info_gauge>(
+      worker_id, device_id, active);
+}
+
+void
 increment_model_load_failure(std::string_view model_name)
 {
   invoke_metrics_registry<
@@ -895,6 +918,73 @@ MetricsRegistry::set_model_loaded_flag(
             {{"model", model_label_value}, {"device", device_label_value}});
       });
   set_gauge_if_present(gauge, loaded ? 1.0 : 0.0);
+}
+
+void
+MetricsRegistry::set_gpu_model_replication_policy_flag(
+    MetricsRegistry::ModelLabel model_label, std::string_view policy_label)
+{
+  if (families_.gpu_model_replication_policy_info == nullptr) {
+    return;
+  }
+  ModelPolicyKey key{std::string(model_label.value), std::string(policy_label)};
+
+  std::scoped_lock lock(mutexes_.model_metrics);
+  auto* gauge = get_or_create_cached_series(
+      caches_.model.gpu_replication_policy, std::move(key),
+      [this, model_label, policy_label](bool overflow) {
+        const std::string model_label_value =
+            overflow ? kOverflowLabel : escape_label_value(model_label.value);
+        const std::string policy_label_value =
+            overflow ? kOverflowLabel : escape_label_value(policy_label);
+        return &families_.gpu_model_replication_policy_info->Add(
+            {{"model", model_label_value}, {"policy", policy_label_value}});
+      });
+  set_gauge_if_present(gauge, 1.0);
+}
+
+void
+MetricsRegistry::set_gpu_model_replicas_total_gauge(
+    MetricsRegistry::ModelLabel model_label, std::size_t replicas)
+{
+  if (families_.gpu_model_replicas_total == nullptr) {
+    return;
+  }
+
+  std::scoped_lock lock(mutexes_.model_metrics);
+  auto* gauge = get_or_create_cached_series(
+      caches_.model.gpu_replicas_total,
+      ModelKey{std::string(model_label.value)},
+      [this, model_label](bool overflow) {
+        const std::string model_label_value =
+            overflow ? kOverflowLabel : escape_label_value(model_label.value);
+        return &families_.gpu_model_replicas_total->Add(
+            {{"model", model_label_value}});
+      });
+  set_gauge_if_present(gauge, static_cast<double>(replicas));
+}
+
+void
+MetricsRegistry::set_starpu_cuda_worker_info_gauge(
+    int worker_id, int device_id, bool active)
+{
+  if (families_.starpu_cuda_worker_info == nullptr) {
+    return;
+  }
+
+  WorkerKey key{worker_id, device_id, "cuda"};
+  std::scoped_lock lock(mutexes_.worker_metrics);
+  auto* gauge = get_or_create_cached_series(
+      caches_.worker.cuda_worker_info, std::move(key),
+      [this, worker_id, device_id](bool overflow) {
+        const std::string device_label =
+            overflow ? kOverflowLabel : std::to_string(device_id);
+        const std::string worker_label =
+            overflow ? kOverflowLabel : std::to_string(worker_id);
+        return &families_.starpu_cuda_worker_info->Add(
+            {{"device", device_label}, {"worker_id", worker_label}});
+      });
+  set_gauge_if_present(gauge, active ? 1.0 : 0.0);
 }
 
 void

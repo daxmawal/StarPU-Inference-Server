@@ -3,6 +3,8 @@
 #include <grpcpp/security/credentials.h>
 #include <gtest/gtest.h>
 #include <netinet/in.h>
+#include <prometheus/client_metric.h>
+#include <prometheus/metric_family.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -20,6 +22,7 @@
 #include <future>
 #include <latch>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -110,6 +113,59 @@ auto
 expected_info_log(std::string_view message) -> std::string
 {
   return std::string("\x1b[1;32m[INFO] ") + std::string(message) + "\x1b[0m\n";
+}
+
+auto
+FindFamily(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view name) -> const prometheus::MetricFamily*
+{
+  for (const auto& family : families) {
+    if (family.name == name) {
+      return &family;
+    }
+  }
+  return nullptr;
+}
+
+auto
+MetricMatchesLabels(
+    const prometheus::ClientMetric& metric,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> bool
+{
+  for (const auto& [label_name, label_value] : labels) {
+    bool matched = false;
+    for (const auto& label : metric.label) {
+      if (label.name == label_name && label.value == label_value) {
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      return false;
+    }
+  }
+  return true;
+}
+
+auto
+FindGaugeValue(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> std::optional<double>
+{
+  const auto* family = FindFamily(families, family_name);
+  if (family == nullptr) {
+    return std::nullopt;
+  }
+  for (const auto& metric : family->metric) {
+    if (MetricMatchesLabels(metric, labels)) {
+      return metric.gauge.value;
+    }
+  }
+  return std::nullopt;
 }
 
 struct ScopedTraceLoggerReset {
@@ -1262,6 +1318,39 @@ struct ScopedDescribeCpuAffinityInventoryOverride {
 
  private:
   DescribeCpuAffinityOverrideForTestFn previous_ = nullptr;
+};
+
+auto
+gpu_replication_worker_query_stub(
+    unsigned int device_id, int* worker_ids,
+    enum starpu_worker_archtype worker_type) -> int
+{
+  if (worker_type != STARPU_CUDA_WORKER || worker_ids == nullptr) {
+    return 0;
+  }
+  if (device_id == 0U) {
+    worker_ids[0] = 7;
+    worker_ids[1] = 9;
+    return 2;
+  }
+  if (device_id == 1U) {
+    worker_ids[0] = 11;
+    return 1;
+  }
+  return 0;
+}
+
+struct ScopedWorkerStreamQueryOverride {
+  ScopedWorkerStreamQueryOverride()
+  {
+    starpu_server::StarPUSetup::set_worker_stream_query_fn(
+        &gpu_replication_worker_query_stub);
+  }
+
+  ~ScopedWorkerStreamQueryOverride()
+  {
+    starpu_server::StarPUSetup::reset_worker_stream_query_fn();
+  }
 };
 
 struct ScopedWorkerDeviceIdInventoryOverride {
@@ -2544,6 +2633,72 @@ TEST(
   EXPECT_EQ(
       override_state.requested_worker_ids_for_affinity,
       std::vector<int>({0, 1}));
+}
+
+TEST(
+    ServerMainWorkerInventory,
+    ReportsGpuReplicationStartupSummaryAndMetricsForPerWorkerPolicy)
+{
+  starpu_server::shutdown_metrics();
+  ASSERT_TRUE(starpu_server::init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { starpu_server::shutdown_metrics(); }
+  } metrics_guard;
+
+  ScopedWorkerStreamQueryOverride worker_query_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, 1};
+  opts.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->name = "resnet152";
+
+  OStreamCapture capture_out(std::cout);
+  report_gpu_replication_startup(opts, 3);
+
+  const auto expected =
+      expected_info_log(
+          "GPU model replication summary: policy=per_worker, "
+          "total_replicas=3, configured_cuda_devices=2.") +
+      expected_info_log("CUDA device 0 -> workers=[7,9], model replicas=2") +
+      expected_info_log("CUDA device 1 -> workers=[11], model replicas=1");
+  EXPECT_EQ(capture_out.str(), expected);
+
+  const auto metrics = starpu_server::get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+
+  const auto policy_value = FindGaugeValue(
+      families, "gpu_model_replication_policy_info",
+      {{"model", "resnet152"}, {"policy", "per_worker"}});
+  ASSERT_TRUE(policy_value.has_value());
+  EXPECT_DOUBLE_EQ(*policy_value, 1.0);
+
+  const auto replica_total = FindGaugeValue(
+      families, "gpu_model_replicas_total", {{"model", "resnet152"}});
+  ASSERT_TRUE(replica_total.has_value());
+  EXPECT_DOUBLE_EQ(*replica_total, 3.0);
+
+  const auto worker_7 = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "0"}, {"worker_id", "7"}});
+  ASSERT_TRUE(worker_7.has_value());
+  EXPECT_DOUBLE_EQ(*worker_7, 1.0);
+
+  const auto worker_9 = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "0"}, {"worker_id", "9"}});
+  ASSERT_TRUE(worker_9.has_value());
+  EXPECT_DOUBLE_EQ(*worker_9, 1.0);
+
+  const auto worker_11 = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "1"}, {"worker_id", "11"}});
+  ASSERT_TRUE(worker_11.has_value());
+  EXPECT_DOUBLE_EQ(*worker_11, 1.0);
 }
 
 static_assert(std::is_nothrow_destructible_v<RuntimeCleanupGuard>);

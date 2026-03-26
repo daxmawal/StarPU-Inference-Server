@@ -156,6 +156,9 @@ AssertMetricsInitialized(const std::shared_ptr<MetricsRegistry>& metrics)
   ASSERT_NE(families.inference_failures, nullptr);
   ASSERT_NE(families.model_load_failures, nullptr);
   ASSERT_NE(families.models_loaded, nullptr);
+  ASSERT_NE(families.gpu_model_replication_policy_info, nullptr);
+  ASSERT_NE(families.gpu_model_replicas_total, nullptr);
+  ASSERT_NE(families.starpu_cuda_worker_info, nullptr);
   ASSERT_NE(families.gpu_temperature, nullptr);
   ASSERT_NE(families.gpu_power, nullptr);
 }
@@ -1457,6 +1460,45 @@ TEST(MetricsRegistry, SetModelLoadedFlagSkipsWhenFamilyMissing)
       metrics.registry()->Collect(), "models_loaded",
       {{"model", "model-x"}, {"device", "dev-x"}});
   EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, RecordsGpuReplicationStartupMetrics)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  metrics.set_gpu_model_replication_policy_flag(
+      MetricsRegistry::ModelLabel{"model-x"}, "per_worker");
+  metrics.set_gpu_model_replicas_total_gauge(
+      MetricsRegistry::ModelLabel{"model-x"}, 3);
+  metrics.set_starpu_cuda_worker_info_gauge(7, 0, true);
+  metrics.set_starpu_cuda_worker_info_gauge(9, 0, true);
+
+  const auto families = metrics.registry()->Collect();
+
+  const auto policy_value = FindGaugeValue(
+      families, "gpu_model_replication_policy_info",
+      {{"model", "model-x"}, {"policy", "per_worker"}});
+  ASSERT_TRUE(policy_value.has_value());
+  EXPECT_DOUBLE_EQ(*policy_value, 1.0);
+
+  const auto replica_total = FindGaugeValue(
+      families, "gpu_model_replicas_total", {{"model", "model-x"}});
+  ASSERT_TRUE(replica_total.has_value());
+  EXPECT_DOUBLE_EQ(*replica_total, 3.0);
+
+  const auto worker_7 = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "0"}, {"worker_id", "7"}});
+  ASSERT_TRUE(worker_7.has_value());
+  EXPECT_DOUBLE_EQ(*worker_7, 1.0);
+
+  const auto worker_9 = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "0"}, {"worker_id", "9"}});
+  ASSERT_TRUE(worker_9.has_value());
+  EXPECT_DOUBLE_EQ(*worker_9, 1.0);
 }
 
 TEST(MetricsRegistry, IncrementModelLoadFailureCounterSkipsWhenFamilyMissing)

@@ -139,6 +139,10 @@ class MetricsRegistry {
     prometheus::Family<prometheus::Histogram>* starpu_task_runtime_by_worker{
         nullptr};
     prometheus::Family<prometheus::Gauge>* starpu_worker_inflight{nullptr};
+    prometheus::Family<prometheus::Gauge>* gpu_model_replication_policy_info{
+        nullptr};
+    prometheus::Family<prometheus::Gauge>* gpu_model_replicas_total{nullptr};
+    prometheus::Family<prometheus::Gauge>* starpu_cuda_worker_info{nullptr};
     prometheus::Family<prometheus::Histogram>* io_copy_latency{nullptr};
     prometheus::Family<prometheus::Counter>* transfer_bytes{nullptr};
     prometheus::Family<prometheus::Gauge>* gpu_utilization{nullptr};
@@ -193,6 +197,12 @@ class MetricsRegistry {
   void increment_model_load_failure_counter(std::string_view model_label);
   void set_model_loaded_flag(
       ModelLabel model_label, DeviceLabel device_label, bool loaded);
+  void set_gpu_model_replication_policy_flag(
+      ModelLabel model_label, std::string_view policy_label);
+  void set_gpu_model_replicas_total_gauge(
+      ModelLabel model_label, std::size_t replicas);
+  void set_starpu_cuda_worker_info_gauge(
+      int worker_id, int device_id, bool active);
   void set_queue_capacity(std::size_t capacity);
   [[nodiscard]] auto queue_capacity_value() const -> std::size_t;
   void observe_compute_latency_by_worker(
@@ -318,6 +328,32 @@ class MetricsRegistry {
     }
   };
 
+  struct ModelPolicyKey {
+    std::string model;
+    std::string policy;
+    bool overflow{false};
+
+    static auto Overflow() -> ModelPolicyKey
+    {
+      ModelPolicyKey key;
+      key.overflow = true;
+      return key;
+    }
+
+    auto operator==(const ModelPolicyKey& other) const noexcept -> bool
+    {
+      return overflow == other.overflow && model == other.model &&
+             policy == other.policy;
+    }
+  };
+
+  struct ModelPolicyKeyHash {
+    auto operator()(const ModelPolicyKey& key) const noexcept -> std::size_t
+    {
+      return MetricsRegistry::HashMany(key.model, key.policy, key.overflow);
+    }
+  };
+
   struct ModelDeviceKey {
     std::string model;
     std::string device;
@@ -438,6 +474,10 @@ class MetricsRegistry {
         model_load_failures;
     std::unordered_map<ModelDeviceKey, prometheus::Gauge*, ModelDeviceKeyHash>
         models_loaded;
+    std::unordered_map<ModelPolicyKey, prometheus::Gauge*, ModelPolicyKeyHash>
+        gpu_replication_policy;
+    std::unordered_map<ModelKey, prometheus::Gauge*, ModelKeyHash>
+        gpu_replicas_total;
   };
 
   struct WorkerMetricsCache {
@@ -446,6 +486,8 @@ class MetricsRegistry {
     std::unordered_map<WorkerKey, prometheus::Histogram*, WorkerKeyHash>
         task_runtime;
     std::unordered_map<WorkerKey, prometheus::Gauge*, WorkerKeyHash> inflight;
+    std::unordered_map<WorkerKey, prometheus::Gauge*, WorkerKeyHash>
+        cuda_worker_info;
   };
 
   struct IoMetricsCache {
@@ -532,6 +574,11 @@ void observe_starpu_task_runtime(double runtime_ms);
 void observe_model_load_duration(double duration_ms);
 void set_model_loaded(
     std::string_view model_name, std::string_view device_label, bool loaded);
+void set_gpu_model_replication_policy(
+    std::string_view model_name, std::string_view policy_label);
+void set_gpu_model_replicas_total(
+    std::string_view model_name, std::size_t replicas);
+void set_starpu_cuda_worker_info(int worker_id, int device_id, bool active);
 void increment_model_load_failure(std::string_view model_name);
 void increment_rejected_requests();
 void observe_compute_latency_by_worker(
