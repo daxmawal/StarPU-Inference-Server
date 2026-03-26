@@ -121,10 +121,21 @@ Behavior of `use_cpu` and `use_cuda`:
 - `use_cpu: false`, `use_cuda: [{ ... }]` → pipeline runs on GPU workers only.
 - Setting `group_cpu_by_numa: true` keeps CPU workers enabled but collapses them to one worker per NUMA node so that each inference shares the full socket instead of a single core.
 
-`gpu_model_replication: per_worker` is useful only when a GPU exposes more than
-one StarPU CUDA worker, for example with `STARPU_NWORKER_PER_CUDA > 1`. It can
-improve concurrency, but it multiplies TorchScript model memory usage on that
+`gpu_model_replication: per_device` is the default and should be the normal
+choice for LibTorch inference when the model is used read-only, for example
+after `eval()` with no mutation of internal state during `forward()`. In that
+case, multiple CUDA streams on the same GPU can safely reuse the same model
+instance.
+
+Use `gpu_model_replication: per_worker` only when `forward()` can mutate model
+state and access must be isolated between StarPU CUDA workers, for example when
+writing shared buffers, performing in-place updates on shared state, or running
+in training mode. This policy multiplies TorchScript model memory usage on that
 GPU by the number of workers.
+
+Not replicating per stream does not guarantee better performance on its own:
+observed throughput still depends on stream synchronization, memory bandwidth,
+and CUDA kernel scheduling.
 
 When the queue reaches `max_queue_size`, the server refuses new requests
 immediately and responds with gRPC `RESOURCE_EXHAUSTED` instead of letting the
@@ -249,7 +260,7 @@ use_cpu: true
 group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }
-gpu_model_replication: per_worker
+gpu_model_replication: per_device
 pool_size: 12
 ```
 

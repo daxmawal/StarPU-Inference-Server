@@ -54,10 +54,11 @@ Start the server from `build/`:
 The logs should confirm that the model is loaded and the service is listening
 on `127.0.0.1:50051`. The sample configuration enables one CPU worker and one
 CUDA worker (device `0`). Adjust the `use_cuda` section if you prefer different
-GPU IDs or a CPU-only setup ([Server Configuration](./server_guide.md)). If
-you keep `STARPU_NWORKER_PER_CUDA: "4"` from the sample, set
-`gpu_model_replication: per_worker` to create one model replica per CUDA
-worker.
+GPU IDs or a CPU-only setup ([Server Configuration](./server_guide.md)).
+`gpu_model_replication` defaults to `per_device`, which is the recommended
+policy for LibTorch inference when the model is used read-only during
+`forward()`. Switch to `per_worker` only if your `forward()` can mutate shared
+model state.
 
 ---
 
