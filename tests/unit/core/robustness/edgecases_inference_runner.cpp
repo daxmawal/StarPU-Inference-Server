@@ -71,18 +71,16 @@ TEST_F(ConstantModelConfigTest, LoadModelAndReferenceOutputUnsupported)
   opts.devices.use_cuda = false;
 
   torch::manual_seed(3);
-  EXPECT_THROW(
-      (void)starpu_server::load_model_and_reference_output(opts),
-      starpu_server::UnsupportedModelOutputTypeException);
+  const auto result = starpu_server::load_model_and_reference_output(opts);
+  EXPECT_FALSE(result.has_value());
 }
 
 TEST_F(ConstantModelConfigTest, CloneModelToGpus_InvalidDeviceIdThrows)
 {
   auto opts = cuda_config(std::vector<int>{-1});
 
-  EXPECT_THROW(
-      (void)starpu_server::load_model_and_reference_output(opts),
-      std::runtime_error);
+  const auto result = starpu_server::load_model_and_reference_output(opts);
+  EXPECT_FALSE(result.has_value());
 }
 
 namespace starpu_server {
