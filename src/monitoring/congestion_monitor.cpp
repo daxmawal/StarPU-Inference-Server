@@ -99,6 +99,12 @@ compute_rho_sample(double lambda_rps, double mu_rps) -> double
 
 class MonitorImpl final : public Monitor::Impl {
  public:
+  MonitorImpl(const MonitorImpl&) = delete;
+  auto operator=(const MonitorImpl&) -> MonitorImpl& = delete;
+  MonitorImpl(MonitorImpl&&) = delete;
+  auto operator=(MonitorImpl&&) -> MonitorImpl& = delete;
+  ~MonitorImpl() override = default;
+
   MonitorImpl(
       InferenceQueue* queue, const Config& cfg,
       std::shared_ptr<MetricsRecorder> metrics,
@@ -114,13 +120,13 @@ class MonitorImpl final : public Monitor::Impl {
     snapshot_state_.value.last_tick = runtime_state_.last_tick;
   }
 
-  void start()
+  void start() override
   {
     worker_ =
         std::jthread([this](const std::stop_token& stop) { tick_loop(stop); });
   }
 
-  void shutdown()
+  void shutdown() override
   {
     if (worker_.joinable()) {
       worker_.request_stop();
@@ -129,7 +135,7 @@ class MonitorImpl final : public Monitor::Impl {
     flush_congestion_span(std::chrono::steady_clock::now());
   }
 
-  void record_arrival(std::size_t count)
+  void record_arrival(std::size_t count) override
   {
     if (count == 0) {
       return;
@@ -138,19 +144,19 @@ class MonitorImpl final : public Monitor::Impl {
   }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  [[nodiscard]] auto arrivals_for_test() const -> std::size_t
+  [[nodiscard]] auto arrivals_for_test() const -> std::size_t override
   {
     return counters_.arrivals.load(std::memory_order_acquire);
   }
 
-  [[nodiscard]] auto rejections_for_test() const -> std::size_t
+  [[nodiscard]] auto rejections_for_test() const -> std::size_t override
   {
     return counters_.rejections.load(std::memory_order_acquire);
   }
 #endif  // SONAR_IGNORE_END
 
   void record_completion(
-      std::size_t logical_jobs, CompletionLatencies latencies)
+      std::size_t logical_jobs, CompletionLatencies latencies) override
   {
     if (logical_jobs > 0) {
       counters_.completions.fetch_add(logical_jobs, std::memory_order_release);
@@ -166,7 +172,7 @@ class MonitorImpl final : public Monitor::Impl {
     }
   }
 
-  void record_rejection(std::size_t count)
+  void record_rejection(std::size_t count) override
   {
     if (count == 0) {
       return;
@@ -174,13 +180,13 @@ class MonitorImpl final : public Monitor::Impl {
     counters_.rejections.fetch_add(count, std::memory_order_release);
   }
 
-  [[nodiscard]] auto snapshot() const -> Snapshot
+  [[nodiscard]] auto snapshot() const -> Snapshot override
   {
     std::scoped_lock lock(snapshot_state_.mutex);
     return snapshot_state_.value;
   }
 
-  [[nodiscard]] auto congested() const -> bool
+  [[nodiscard]] auto congested() const -> bool override
   {
     return congested_flag_.load(std::memory_order_acquire);
   }
@@ -188,7 +194,8 @@ class MonitorImpl final : public Monitor::Impl {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   auto evaluate_latency_flags_for_test(
       std::optional<double> queue_p95,
-      std::optional<double> e2e_p95 = std::nullopt) -> LatencyFlagResult
+      std::optional<double> e2e_p95 = std::nullopt)
+      -> LatencyFlagResult override
   {
     TickStats stats{};
     stats.queue_p95_smoothed = queue_p95;
@@ -198,14 +205,14 @@ class MonitorImpl final : public Monitor::Impl {
   }
 
   [[nodiscard]] auto compute_queue_pressure_score_for_test(
-      double fill_smoothed) const -> double
+      double fill_smoothed) const -> double override
   {
     return compute_queue_pressure_score(fill_smoothed);
   }
 
   [[nodiscard]] auto compute_latency_pressure_score_for_test(
       std::optional<double> e2e_p95,
-      std::optional<double> queue_p95 = std::nullopt) const -> double
+      std::optional<double> queue_p95 = std::nullopt) const -> double override
   {
     TickStats stats{};
     stats.e2e_p95_smoothed = e2e_p95;
@@ -214,7 +221,7 @@ class MonitorImpl final : public Monitor::Impl {
   }
 
   [[nodiscard]] auto normalized_config_for_test() const
-      -> NormalizedConfigResult
+      -> NormalizedConfigResult override
   {
     return NormalizedConfigResult{
         .tick_interval = cfg_.tick_interval,
@@ -225,7 +232,7 @@ class MonitorImpl final : public Monitor::Impl {
   }
 
   [[nodiscard]] auto compute_capacity_pressure_score_for_test(
-      double rho_smoothed) const -> double
+      double rho_smoothed) const -> double override
   {
     return compute_capacity_pressure_score(rho_smoothed);
   }

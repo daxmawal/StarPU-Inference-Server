@@ -286,7 +286,7 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
         dependencies.observability = config.observability;
         return dependencies;
       }()),
-      observability_(std::move(config.observability)),
+      observability_(config.observability),
       slot_manager_(std::make_unique<SlotManager>(
           starpu_, opts_, model_cpu_, models_gpu_, gpu_replica_assignments_,
           dependencies_, observability_)),

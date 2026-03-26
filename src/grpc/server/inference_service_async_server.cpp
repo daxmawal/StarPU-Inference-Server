@@ -8,6 +8,29 @@ namespace starpu_server {
 
 inline namespace inference_service_detail {
 
+template <typename Response>
+void
+finish_unary_response(
+    grpc::ServerAsyncResponseWriter<Response>* responder, Response* response,
+    const Status& status, void* tag)
+{
+  if (responder == nullptr || response == nullptr) {
+    return;
+  }
+
+#if defined(__clang_analyzer__)
+  // False positives in gRPC/protobuf serialization internals:
+  // the analyzer reports uninitialized-object and virtual-call issues while
+  // expanding ServerAsyncResponseWriter::Finish through third-party headers.
+  static_cast<void>(responder);
+  static_cast<void>(response);
+  static_cast<void>(status);
+  static_cast<void>(tag);
+  return;
+#endif
+  responder->Finish(*response, status, tag);
+}
+
 template <typename Request, typename Response>
 class UnaryCallData final
     : public AsyncCallDataBase,
@@ -75,14 +98,15 @@ class UnaryCallData final
   {
     if (!handler_) {
       status_ = CallStatus::Finish;
-      responder_.Finish(
-          response_,
-          {grpc::StatusCode::INTERNAL, "Unary handler not configured"}, this);
+      const Status missing_handler_status{
+          grpc::StatusCode::INTERNAL, "Unary handler not configured"};
+      finish_unary_response(
+          &responder_, &response_, missing_handler_status, this);
       return;
     }
     auto status = handler_(impl_, &ctx_, &request_, &response_);
     status_ = CallStatus::Finish;
-    responder_.Finish(response_, status, this);
+    finish_unary_response(&responder_, &response_, status, this);
   }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -194,7 +218,7 @@ class ModelInferCallData final
   void OnInferenceComplete(const Status& status)
   {
     status_ = CallStatus::Finish;
-    responder_.Finish(response_, status, this);
+    finish_unary_response(&responder_, &response_, status, this);
   }
 
   inference::GRPCInferenceService::AsyncService* service_;

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <format>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 #include <utility>
@@ -21,6 +22,8 @@
 #include "utils/perf_observer.hpp"
 
 namespace starpu_server {
+
+using clock = task_runner_internal::Clock;
 
 inline namespace result_dispatcher_component_detail {
 
@@ -62,9 +65,191 @@ active_congestion_monitor(const std::shared_ptr<RuntimeObservability>&
                                   : nullptr;
 }
 
-}  // namespace result_dispatcher_component_detail
+auto
+active_batch_tracer(const std::shared_ptr<RuntimeObservability>& observability)
+    -> BatchingTraceLogger*
+{
+  auto* tracer = active_tracer(observability);
+  return tracer != nullptr ? tracer : &BatchingTraceLogger::instance();
+}
 
-using clock = task_runner_internal::Clock;
+struct BatchMetricsCounts {
+  std::size_t batch_size{0};
+  std::size_t logical_jobs{0};
+};
+
+struct WorkerExecutionIdentity {
+  int worker_id{-1};
+  int device_id{-1};
+  std::string_view worker_type_label;
+};
+
+void
+observe_batch_metrics(
+    MetricsRecorder* metrics, const BatchMetricsCounts& counts)
+{
+  if (metrics != nullptr) {
+    metrics->observe_batch_size(counts.batch_size);
+    metrics->observe_logical_batch_size(counts.logical_jobs);
+    return;
+  }
+  observe_batch_size(counts.batch_size);
+  observe_logical_batch_size(counts.logical_jobs);
+}
+
+void
+record_completed_inference(
+    MetricsRecorder* metrics, std::string_view model_name,
+    std::size_t logical_jobs)
+{
+  if (metrics != nullptr) {
+    metrics->increment_inference_completed(model_name, logical_jobs);
+    return;
+  }
+  increment_inference_completed(model_name, logical_jobs);
+}
+
+auto
+resolve_codelet_runtime_ms(const detail::TimingInfo& timing)
+    -> std::optional<double>
+{
+  const auto codelet_start = timing.codelet_start_time;
+  const auto codelet_end = timing.codelet_end_time;
+  if (codelet_start == clock::time_point{} ||
+      codelet_end == clock::time_point{} || codelet_end <= codelet_start) {
+    return std::nullopt;
+  }
+  return std::chrono::duration<double, std::milli>(codelet_end - codelet_start)
+      .count();
+}
+
+void
+observe_task_runtime_metrics(
+    MetricsRecorder* metrics, const WorkerExecutionIdentity& worker,
+    double task_runtime_ms)
+{
+  if (metrics != nullptr) {
+    metrics->observe_starpu_task_runtime(task_runtime_ms);
+    metrics->observe_task_runtime_by_worker(
+        worker.worker_id, worker.device_id, worker.worker_type_label,
+        task_runtime_ms);
+    return;
+  }
+  observe_starpu_task_runtime(task_runtime_ms);
+  observe_task_runtime_by_worker(
+      worker.worker_id, worker.device_id, worker.worker_type_label,
+      task_runtime_ms);
+}
+
+auto
+resolve_compute_time_range(const detail::TimingInfo& timing)
+    -> BatchingTraceLogger::TimeRange
+{
+  auto compute_start = timing.inference_start_time;
+  if (compute_start == clock::time_point{}) {
+    compute_start = timing.codelet_start_time;
+  }
+  auto compute_end = timing.callback_start_time;
+  if (compute_end == clock::time_point{} || compute_end < compute_start) {
+    compute_end = timing.codelet_end_time;
+  }
+  return BatchingTraceLogger::TimeRange{compute_start, compute_end};
+}
+
+auto
+has_valid_time_range(const BatchingTraceLogger::TimeRange& time_range) -> bool
+{
+  return time_range.start != clock::time_point{} &&
+         time_range.end > time_range.start;
+}
+
+void
+observe_compute_latency_metrics(
+    MetricsRecorder* metrics, const WorkerExecutionIdentity& worker,
+    const BatchingTraceLogger::TimeRange& compute_time_range)
+{
+  if (!has_valid_time_range(compute_time_range)) {
+    return;
+  }
+  const double compute_ms =
+      std::chrono::duration<double, std::milli>(
+          compute_time_range.end - compute_time_range.start)
+          .count();
+  if (metrics != nullptr) {
+    metrics->observe_compute_latency_by_worker(
+        worker.worker_id, worker.device_id, worker.worker_type_label,
+        compute_ms);
+    return;
+  }
+  observe_compute_latency_by_worker(
+      worker.worker_id, worker.device_id, worker.worker_type_label, compute_ms);
+}
+
+void
+record_completion_metrics(
+    congestion::Monitor* monitor, std::size_t logical_jobs,
+    const detail::BaseLatencyBreakdown& breakdown, double latency_ms)
+{
+  const auto latencies = congestion::CompletionLatencies{
+      .queue_latency_ms = breakdown.queue_ms,
+      .e2e_latency_ms = latency_ms,
+  };
+  if (monitor != nullptr) {
+    monitor->record_completion(logical_jobs, latencies);
+    return;
+  }
+  congestion::record_completion(logical_jobs, latencies);
+}
+
+auto
+current_congestion_state(
+    const std::shared_ptr<RuntimeObservability>& observability) -> bool
+{
+  if (auto* monitor = active_congestion_monitor(observability);
+      monitor != nullptr) {
+    return monitor->congested();
+  }
+  return congestion::is_congested();
+}
+
+void
+log_batch_summary_if_enabled(
+    BatchingTraceLogger* tracer,
+    const std::shared_ptr<RuntimeObservability>& observability,
+    const std::shared_ptr<InferenceJob>& job,
+    const detail::BaseLatencyBreakdown& breakdown, int job_id,
+    std::size_t batch_size, bool warmup)
+{
+  if (!tracer->enabled()) {
+    return;
+  }
+  const auto request_ids =
+      task_runner_internal::build_request_ids_for_trace(job);
+  const auto request_arrivals =
+      task_runner_internal::build_request_arrival_us_for_trace(job);
+  tracer->log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
+      .batch_id = job_id,
+      .model_name = job->model_name(),
+      .batch_size = batch_size,
+      .request_ids = request_ids,
+      .request_arrival_us = request_arrivals,
+      .worker_id = job->get_worker_id(),
+      .worker_type = job->get_executed_on(),
+      .device_id = job->get_device_id(),
+      .queue_ms = breakdown.queue_ms,
+      .batch_ms = breakdown.batch_ms,
+      .submit_ms = breakdown.submit_ms,
+      .scheduling_ms = breakdown.scheduling_ms,
+      .codelet_ms = breakdown.codelet_ms,
+      .inference_ms = breakdown.inference_ms,
+      .callback_ms = breakdown.callback_ms,
+      .total_ms = breakdown.total_ms,
+      .is_warmup = warmup,
+      .congested = current_congestion_state(observability),
+  });
+}
+
+}  // namespace result_dispatcher_component_detail
 
 ResultDispatcher::ResultDispatcher(
     const RuntimeConfig* opts, std::atomic<std::size_t>* completed_jobs,
@@ -169,8 +354,8 @@ ResultDispatcher::trace_batch_if_enabled(
     return;
   }
 
-  const auto batch_size = std::max<std::size_t>(
-      std::size_t{1}, static_cast<std::size_t>(resolve_batch_size(opts_, job)));
+  const auto batch_size =
+      std::max<std::size_t>(std::size_t{1}, resolve_batch_size(opts_, job));
   const auto request_ids =
       task_runner_internal::build_request_ids_for_trace(job);
   const auto request_ids_span = std::span<const int>(request_ids);
@@ -230,85 +415,33 @@ ResultDispatcher::record_job_metrics(
     timing.submission_id = submission_id;
   });
   const auto timing = job->timing_info_snapshot();
-  const auto worker_type_label =
-      std::string_view(to_string(job->get_executed_on()));
-  const int worker_id = job->get_worker_id();
-  const int device_id = job->get_device_id();
-  const auto zero_tp = clock::time_point{};
+  const auto worker = WorkerExecutionIdentity{
+      .worker_id = job->get_worker_id(),
+      .device_id = job->get_device_id(),
+      .worker_type_label = std::string_view(to_string(job->get_executed_on())),
+  };
   const bool warmup = is_warmup_job(job);
   auto* metrics = active_metrics(observability_);
-  if (metrics != nullptr) {
-    metrics->observe_batch_size(batch_size);
-  } else {
-    observe_batch_size(batch_size);
-  }
   const auto logical_jobs =
       static_cast<std::size_t>(std::max(1, job->logical_job_count()));
-  if (metrics != nullptr) {
-    metrics->observe_logical_batch_size(logical_jobs);
-  } else {
-    observe_logical_batch_size(logical_jobs);
-  }
+  observe_batch_metrics(
+      metrics, BatchMetricsCounts{
+                   .batch_size = batch_size,
+                   .logical_jobs = logical_jobs,
+               });
   const auto breakdown =
       detail::compute_latency_breakdown(timing, latency.count());
   if (!warmup) {
-    if (metrics != nullptr) {
-      metrics->increment_inference_completed(job->model_name(), logical_jobs);
-    } else {
-      increment_inference_completed(job->model_name(), logical_jobs);
+    record_completed_inference(metrics, job->model_name(), logical_jobs);
+    if (const auto task_runtime_ms = resolve_codelet_runtime_ms(timing);
+        task_runtime_ms.has_value()) {
+      observe_task_runtime_metrics(metrics, worker, *task_runtime_ms);
     }
-    const auto codelet_end = timing.codelet_end_time;
-    if (const auto codelet_start = timing.codelet_start_time;
-        codelet_end > codelet_start && codelet_start != clock::time_point{} &&
-        codelet_end != clock::time_point{}) {
-      const double task_runtime_ms =
-          std::chrono::duration<double, std::milli>(codelet_end - codelet_start)
-              .count();
-      if (metrics != nullptr) {
-        metrics->observe_starpu_task_runtime(task_runtime_ms);
-        metrics->observe_task_runtime_by_worker(
-            worker_id, device_id, worker_type_label, task_runtime_ms);
-      } else {
-        observe_starpu_task_runtime(task_runtime_ms);
-        observe_task_runtime_by_worker(
-            worker_id, device_id, worker_type_label, task_runtime_ms);
-      }
-    }
-
-    auto compute_start = timing.inference_start_time;
-    if (compute_start == zero_tp) {
-      compute_start = timing.codelet_start_time;
-    }
-    auto compute_end = timing.callback_start_time;
-    if (compute_end == zero_tp || compute_end < compute_start) {
-      compute_end = timing.codelet_end_time;
-    }
-    if (compute_start != zero_tp && compute_end > compute_start) {
-      const double compute_ms =
-          std::chrono::duration<double, std::milli>(compute_end - compute_start)
-              .count();
-      if (metrics != nullptr) {
-        metrics->observe_compute_latency_by_worker(
-            worker_id, device_id, worker_type_label, compute_ms);
-      } else {
-        observe_compute_latency_by_worker(
-            worker_id, device_id, worker_type_label, compute_ms);
-      }
-    }
-    if (auto* monitor = active_congestion_monitor(observability_);
-        monitor != nullptr) {
-      monitor->record_completion(
-          logical_jobs, congestion::CompletionLatencies{
-                            .queue_latency_ms = breakdown.queue_ms,
-                            .e2e_latency_ms = latency.count(),
-                        });
-    } else {
-      congestion::record_completion(
-          logical_jobs, congestion::CompletionLatencies{
-                            .queue_latency_ms = breakdown.queue_ms,
-                            .e2e_latency_ms = latency.count(),
-                        });
-    }
+    observe_compute_latency_metrics(
+        metrics, worker, resolve_compute_time_range(timing));
+    record_completion_metrics(
+        active_congestion_monitor(observability_), logical_jobs, breakdown,
+        latency.count());
   }
   perf_observer::record_job(
       timing.enqueued_time, timing.callback_end_time, batch_size, warmup);
@@ -316,43 +449,9 @@ ResultDispatcher::record_job_metrics(
   const int job_id = submission_id >= 0 ? submission_id : job->get_request_id();
   log_job_timings(job_id, latency, timing);
 
-  auto* tracer = active_tracer(observability_);
-  if (tracer == nullptr) {
-    tracer = &BatchingTraceLogger::instance();
-  }
-  if (tracer->enabled()) {
-    const auto request_ids =
-        task_runner_internal::build_request_ids_for_trace(job);
-    const auto request_arrivals =
-        task_runner_internal::build_request_arrival_us_for_trace(job);
-    const bool congested = [this]() {
-      if (auto* monitor = active_congestion_monitor(observability_);
-          monitor != nullptr) {
-        return monitor->congested();
-      }
-      return congestion::is_congested();
-    }();
-    tracer->log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
-        .batch_id = job_id,
-        .model_name = job->model_name(),
-        .batch_size = batch_size,
-        .request_ids = request_ids,
-        .request_arrival_us = request_arrivals,
-        .worker_id = job->get_worker_id(),
-        .worker_type = job->get_executed_on(),
-        .device_id = job->get_device_id(),
-        .queue_ms = breakdown.queue_ms,
-        .batch_ms = breakdown.batch_ms,
-        .submit_ms = breakdown.submit_ms,
-        .scheduling_ms = breakdown.scheduling_ms,
-        .codelet_ms = breakdown.codelet_ms,
-        .inference_ms = breakdown.inference_ms,
-        .callback_ms = breakdown.callback_ms,
-        .total_ms = breakdown.total_ms,
-        .is_warmup = is_warmup_job(job),
-        .congested = congested,
-    });
-  }
+  log_batch_summary_if_enabled(
+      active_batch_tracer(observability_), observability_, job, breakdown,
+      job_id, batch_size, warmup);
 }
 
 void
@@ -656,24 +755,13 @@ ResultDispatcher::emit_batch_traces(
   if (!job) {
     return;
   }
-  auto* tracer = active_tracer(observability_);
-  if (tracer == nullptr) {
-    tracer = &BatchingTraceLogger::instance();
-  }
+  auto* tracer = active_batch_tracer(observability_);
   if (!tracer->enabled()) {
     return;
   }
   const bool warmup_job = is_warmup_job(job);
   const auto timing = job->timing_info_snapshot();
-  const auto zero_tp = clock::time_point{};
-  auto compute_start = timing.inference_start_time;
-  if (compute_start == zero_tp) {
-    compute_start = timing.codelet_start_time;
-  }
-  auto compute_end = timing.callback_start_time;
-  if (compute_end == zero_tp || compute_end < compute_start) {
-    compute_end = timing.codelet_end_time;
-  }
+  const auto compute_time_range = resolve_compute_time_range(timing);
 
   tracer->log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
       .batch_id = job->submission_id(),
@@ -681,8 +769,7 @@ ResultDispatcher::emit_batch_traces(
       .batch_size = resolve_batch_size(opts_, job),
       .worker_id = job->get_worker_id(),
       .worker_type = job->get_executed_on(),
-      .codelet_times =
-          BatchingTraceLogger::TimeRange{compute_start, compute_end},
+      .codelet_times = compute_time_range,
       .is_warmup = warmup_job,
       .device_id = job->get_device_id(),
   });

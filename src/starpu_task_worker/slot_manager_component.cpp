@@ -297,12 +297,13 @@ SlotManager::SlotManager(
     torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu,
     const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments,
-    const InferenceTaskDependencies& dependencies,
+    InferenceTaskDependencies dependencies,
     std::shared_ptr<RuntimeObservability> observability)
     : starpu_(starpu), opts_(opts), model_cpu_(model_cpu),
       models_gpu_(models_gpu),
       gpu_replica_assignments_(gpu_replica_assignments),
-      dependencies_(dependencies), observability_(std::move(observability))
+      dependencies_(std::move(dependencies)),
+      observability_(std::move(observability))
 {
 }
 

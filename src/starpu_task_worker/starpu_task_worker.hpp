@@ -57,7 +57,7 @@ struct StarPUTaskRunnerConfig {
   std::atomic<std::size_t>* completed_jobs{};
   std::condition_variable* all_done_cv{};
   const InferenceTaskDependencies* dependencies{};
-  std::shared_ptr<RuntimeObservability> observability{};
+  std::shared_ptr<RuntimeObservability> observability;
 };
 
 class StarPUTaskRunner {

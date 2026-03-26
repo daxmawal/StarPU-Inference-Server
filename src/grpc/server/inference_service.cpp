@@ -5,12 +5,6 @@ namespace starpu_server {
 
 inline namespace inference_service_detail {
 
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-auto unary_call_data_missing_handler_transitions_to_finish_for_test_impl()
-    -> bool;
-#endif  // SONAR_IGNORE_END
-auto is_context_cancelled(const ServerContext* context) -> bool;
-
 struct NormalizeNamesOptions {
   std::string_view fallback_prefix;
   std::string_view kind;

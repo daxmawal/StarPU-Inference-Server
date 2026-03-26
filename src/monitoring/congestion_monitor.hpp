@@ -103,7 +103,12 @@ class Monitor {
  public:
   class Impl {
    public:
+    Impl() = default;
     virtual ~Impl() = default;
+    Impl(const Impl&) = delete;
+    auto operator=(const Impl&) -> Impl& = delete;
+    Impl(Impl&&) = delete;
+    auto operator=(Impl&&) -> Impl& = delete;
     virtual void start() = 0;
     virtual void shutdown() = 0;
     virtual void record_arrival(std::size_t count) = 0;

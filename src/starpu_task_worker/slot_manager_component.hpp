@@ -21,10 +21,10 @@ class SlotManager {
       torch::jit::script::Module* model_cpu,
       std::vector<torch::jit::script::Module>* models_gpu,
       const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments,
-      const InferenceTaskDependencies& dependencies,
+      InferenceTaskDependencies dependencies,
       std::shared_ptr<RuntimeObservability> observability);
 
-  auto acquire_pools() const -> StarPUTaskRunner::PoolResources;
+  [[nodiscard]] auto acquire_pools() const -> StarPUTaskRunner::PoolResources;
 
   [[nodiscard]] auto validate_batch_and_copy_inputs(
       const std::shared_ptr<InferenceJob>& job, int64_t batch,
