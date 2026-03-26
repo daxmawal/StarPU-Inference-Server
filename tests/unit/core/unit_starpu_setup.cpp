@@ -4072,7 +4072,7 @@ TEST(InferenceCodelet, SelectGpuModuleThrowsWhenReplicaMissing)
   const int device_id = 0;
 
   EXPECT_THROW(
-      starpu_server::select_gpu_module(params, device_id),
+      starpu_server::select_gpu_module(params, /*worker_id=*/-1, device_id),
       starpu_server::StarPUCodeletException);
 }
 
@@ -4088,7 +4088,7 @@ TEST(InferenceCodelet, SelectGpuModuleReturnsMatchingReplica)
   params.models.models_gpu[0] = module.get();
 
   torch::jit::script::Module* selected =
-      starpu_server::select_gpu_module(params, device_id);
+      starpu_server::select_gpu_module(params, /*worker_id=*/-1, device_id);
 
   EXPECT_EQ(selected, module.get());
 }
@@ -4105,9 +4105,42 @@ TEST(InferenceCodelet, SelectGpuModuleUsesDeviceIdMapping)
   params.models.models_gpu[1] = module1.get();
 
   torch::jit::script::Module* selected =
-      starpu_server::select_gpu_module(params, 2);
+      starpu_server::select_gpu_module(params, /*worker_id=*/-1, 2);
 
   EXPECT_EQ(selected, module1.get());
+}
+
+TEST(InferenceCodelet, SelectGpuModuleUsesWorkerIdMapping)
+{
+  auto params = starpu_server::make_basic_params(1);
+  params.models.device_ids = {0, 0};
+  params.models.worker_ids = {7, 9};
+
+  auto module0 = std::make_unique<torch::jit::script::Module>("m0");
+  auto module1 = std::make_unique<torch::jit::script::Module>("m1");
+  params.models.models_gpu.resize(2);
+  params.models.models_gpu[0] = module0.get();
+  params.models.models_gpu[1] = module1.get();
+
+  torch::jit::script::Module* selected =
+      starpu_server::select_gpu_module(params, 9, 0);
+
+  EXPECT_EQ(selected, module1.get());
+}
+
+TEST(InferenceCodelet, SelectGpuModuleThrowsWhenWorkerReplicaMissing)
+{
+  auto params = starpu_server::make_basic_params(1);
+  params.models.device_ids = {0};
+  params.models.worker_ids = {7};
+
+  auto module = std::make_unique<torch::jit::script::Module>("m0");
+  params.models.models_gpu.resize(1);
+  params.models.models_gpu[0] = module.get();
+
+  EXPECT_THROW(
+      starpu_server::select_gpu_module(params, 9, 0),
+      starpu_server::StarPUCodeletException);
 }
 
 TEST(StarPUSetup, ThrowsWhenSetenvFailsForDefaultScheduler_Robustesse)

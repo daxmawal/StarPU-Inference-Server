@@ -192,7 +192,8 @@ StarPUTaskRunner::submit_inference_task(
   const bool warmup_job = is_warmup_job(job);
   if (!(starpu_->has_input_pool() || starpu_->has_output_pool())) {
     InferenceTask task(
-        starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_);
+        starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_,
+        gpu_replica_assignments_);
     task.submit();
     log_batch_submitted_if_enabled(job, warmup_job);
     return;
@@ -239,7 +240,8 @@ StarPUTaskRunner::submit_inference_task(
   submit_pipeline_prepare_batch(context);
 
   InferenceTask task(
-      starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_);
+      starpu_, job, model_cpu_, models_gpu_, opts_, dependencies_,
+      gpu_replica_assignments_);
   submit_pipeline_prepare_handles(context, task);
   submit_pipeline_build_task(context, task);
 

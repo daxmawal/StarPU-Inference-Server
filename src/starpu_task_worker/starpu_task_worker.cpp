@@ -341,9 +341,10 @@ using clock = task_runner_internal::Clock;
 
 StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
     : queue_(config.queue), model_cpu_(config.model_cpu),
-      models_gpu_(config.models_gpu), starpu_(config.starpu),
-      opts_(config.opts), completed_jobs_(config.completed_jobs),
-      all_done_cv_(config.all_done_cv),
+      models_gpu_(config.models_gpu),
+      gpu_replica_assignments_(config.gpu_replica_assignments),
+      starpu_(config.starpu), opts_(config.opts),
+      completed_jobs_(config.completed_jobs), all_done_cv_(config.all_done_cv),
       dependencies_(
           config.dependencies != nullptr ? *config.dependencies
                                          : kDefaultInferenceTaskDependencies),

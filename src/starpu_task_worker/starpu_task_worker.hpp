@@ -51,6 +51,7 @@ struct StarPUTaskRunnerConfig {
   InferenceQueue* queue{};
   torch::jit::script::Module* model_cpu{};
   std::vector<torch::jit::script::Module>* models_gpu{};
+  const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments{};
   StarPUSetup* starpu{};
   const RuntimeConfig* opts{};
   std::atomic<std::size_t>* completed_jobs{};
@@ -222,6 +223,7 @@ class StarPUTaskRunner {
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
+  const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments_;
   StarPUSetup* starpu_;
   const RuntimeConfig* opts_;
 

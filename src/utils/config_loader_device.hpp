@@ -26,6 +26,13 @@ parse_device_nodes(const YAML::Node& root, RuntimeConfig& cfg)
     cfg.devices.group_cpu_by_numa = parse_scalar<bool>(
         root["group_cpu_by_numa"], "group_cpu_by_numa", "a boolean");
   }
+  if (root["gpu_model_replication"]) {
+    const auto policy = parse_scalar<std::string>(
+        root["gpu_model_replication"], "gpu_model_replication",
+        "a scalar string");
+    cfg.devices.gpu_model_replication =
+        parse_gpu_model_replication_policy(policy);
+  }
 
   const YAML::Node use_cuda_node = root["use_cuda"];
   if (!use_cuda_node) {

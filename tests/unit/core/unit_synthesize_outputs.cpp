@@ -370,9 +370,10 @@ TEST(InferenceRunner, LoadModelLoadsTorchScriptModule)
 TEST(InferenceRunner, CloneModelToGpusReturnsEmptyWhenNoDeviceIds)
 {
   auto cpu_model = make_add_one_model();
-  const std::vector<int> device_ids;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
 
-  const auto gpu_models = clone_model_to_gpus(cpu_model, device_ids);
+  const auto gpu_models = clone_model_to_gpus(cpu_model, opts);
 
   EXPECT_TRUE(gpu_models.empty());
 }

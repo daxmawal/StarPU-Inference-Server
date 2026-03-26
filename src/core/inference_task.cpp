@@ -291,11 +291,13 @@ InferenceTask::InferenceTask(
     StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu,
-    const RuntimeConfig* opts,
-    const InferenceTaskDependencies& dependencies) noexcept
+    const RuntimeConfig* opts, const InferenceTaskDependencies& dependencies,
+    const std::vector<detail::GpuReplicaAssignment>*
+        gpu_replica_assignments) noexcept
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
       models_gpu_(models_gpu), opts_(opts),
-      dependencies_(std::make_shared<InferenceTaskDependencies>(dependencies))
+      dependencies_(std::make_shared<InferenceTaskDependencies>(dependencies)),
+      gpu_replica_assignments_(gpu_replica_assignments)
 {
 }
 
@@ -416,7 +418,7 @@ InferenceTask::check_limits(size_t num_inputs) const
 
   if (models_gpu_->size() > opts.limits.max_models_gpu) {
     throw TooManyGpuModelsException(
-        "Too many GPU models for the current configuration.");
+        "Too many GPU model replicas for the current configuration.");
   }
 }
 
@@ -451,8 +453,30 @@ InferenceTask::fill_model_pointers(
   params->models.model_cpu = model_cpu_;
   params->models.models_gpu.clear();
   params->models.device_ids.clear();
+  params->models.worker_ids.clear();
 
   if (opts.devices.ids.empty() || models_gpu_->empty()) {
+    return;
+  }
+
+  if (opts.devices.gpu_model_replication ==
+      GpuModelReplicationPolicy::PerWorker) {
+    std::vector<detail::GpuReplicaAssignment> assignment_storage;
+    const auto* assignments = gpu_replica_assignments_;
+    if (assignments == nullptr) {
+      assignment_storage = detail::build_gpu_replica_assignments(opts);
+      assignments = &assignment_storage;
+    }
+
+    const size_t replicas = std::min(models_gpu_->size(), assignments->size());
+    params->models.device_ids.reserve(replicas);
+    params->models.worker_ids.reserve(replicas);
+    params->models.models_gpu.reserve(replicas);
+    for (size_t i = 0; i < replicas; ++i) {
+      params->models.device_ids.push_back(assignments->at(i).device_id);
+      params->models.worker_ids.push_back(assignments->at(i).worker_id);
+      params->models.models_gpu.push_back(&(models_gpu_->at(i)));
+    }
     return;
   }
 

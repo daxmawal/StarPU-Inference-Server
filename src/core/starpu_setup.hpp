@@ -39,8 +39,9 @@ class InferenceCodelet {
 auto extract_tensors_from_output(const c10::IValue& result)
     -> std::vector<at::Tensor>;
 
-auto select_gpu_module(const InferenceParams& params, int device_id)
-    -> torch::jit::script::Module*;
+auto select_gpu_module(
+    const InferenceParams& params, int worker_id,
+    int device_id) -> torch::jit::script::Module*;
 
 // =============================================================================
 // Handles StarPU global configuration and codelet setup

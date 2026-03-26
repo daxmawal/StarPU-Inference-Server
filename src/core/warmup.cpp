@@ -552,6 +552,12 @@ WarmupRunner::run(int request_nb_per_worker)
   config.queue = &queue;
   config.model_cpu = &model_cpu_;
   config.models_gpu = &models_gpu_;
+  std::vector<detail::GpuReplicaAssignment> gpu_replica_assignments;
+  if (opts_.devices.gpu_model_replication ==
+      GpuModelReplicationPolicy::PerWorker) {
+    gpu_replica_assignments = detail::build_gpu_replica_assignments(opts_);
+  }
+  config.gpu_replica_assignments = &gpu_replica_assignments;
   config.starpu = &starpu_;
   RuntimeConfig warmup_opts = opts_;
   warmup_opts.batching.trace_enabled = false;

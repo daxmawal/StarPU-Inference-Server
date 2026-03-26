@@ -123,6 +123,40 @@ MakeCudaTensor() -> torch::Tensor
   return tensor;
 }
 
+auto
+gpu_replica_worker_query_stub(
+    unsigned int device_id, int* worker_ids,
+    enum starpu_worker_archtype worker_type) -> int
+{
+  if (worker_type != STARPU_CUDA_WORKER || worker_ids == nullptr) {
+    return 0;
+  }
+  if (device_id == 0U) {
+    worker_ids[0] = 7;
+    worker_ids[1] = 9;
+    return 2;
+  }
+  return 0;
+}
+
+class WorkerStreamQueryGuard {
+ public:
+  WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::set_worker_stream_query_fn(
+        &gpu_replica_worker_query_stub);
+  }
+
+  ~WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::reset_worker_stream_query_fn();
+  }
+
+  WorkerStreamQueryGuard(const WorkerStreamQueryGuard&) = delete;
+  auto operator=(const WorkerStreamQueryGuard&) -> WorkerStreamQueryGuard& =
+                                                       delete;
+};
+
 template <typename Func>
 auto
 CaptureStderr(Func&& func) -> std::string
@@ -391,6 +425,46 @@ TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
 
   ASSERT_EQ(params->models.models_gpu.size(), 1U);
   EXPECT_EQ(params->models.models_gpu.at(0), &models_gpu_.at(0));
+  EXPECT_TRUE(params->models.worker_ids.empty());
+}
+
+TEST_F(InferenceTaskTest, FillModelPointersPerWorkerReplicationUsesWorkers)
+{
+  WorkerStreamQueryGuard query_guard;
+
+  auto job = make_job(4, 1);
+  auto task = make_task(job, 2);
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  opts_.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+
+  auto params = task.create_inference_params();
+
+  ASSERT_EQ(params->models.models_gpu.size(), 2U);
+  EXPECT_EQ(params->models.device_ids, (std::vector<int>{0, 0}));
+  EXPECT_EQ(params->models.worker_ids, (std::vector<int>{7, 9}));
+  EXPECT_EQ(params->models.models_gpu.at(0), &models_gpu_.at(0));
+  EXPECT_EQ(params->models.models_gpu.at(1), &models_gpu_.at(1));
+}
+
+TEST_F(InferenceTaskTest, FillModelPointersUsesProvidedReplicaAssignments)
+{
+  const std::vector<starpu_server::detail::GpuReplicaAssignment> assignments = {
+      {.device_id = 0, .worker_id = 11}, {.device_id = 0, .worker_id = 13}};
+
+  auto job = make_job(5, 1);
+  auto task = make_task(job, 2, nullptr, &assignments);
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  opts_.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+
+  auto params = task.create_inference_params();
+
+  ASSERT_EQ(params->models.models_gpu.size(), 2U);
+  EXPECT_EQ(params->models.device_ids, (std::vector<int>{0, 0}));
+  EXPECT_EQ(params->models.worker_ids, (std::vector<int>{11, 13}));
 }
 
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)

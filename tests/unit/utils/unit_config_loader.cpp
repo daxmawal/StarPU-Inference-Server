@@ -1123,6 +1123,81 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(seed_value, 123U);
   EXPECT_TRUE(cfg.devices.use_cuda);
   EXPECT_FALSE(cfg.devices.group_cpu_by_numa);
+  EXPECT_EQ(
+      cfg.devices.gpu_model_replication,
+      starpu_server::GpuModelReplicationPolicy::PerDevice);
+}
+
+TEST(ConfigLoader, ParsesGpuModelReplicationPolicy)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_gpu_model_replication_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: gpu_model_replication\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
+  yaml << "use_cuda:\n";
+  yaml << "  - { device_ids: [0] }\n";
+  yaml << "gpu_model_replication: per_worker\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_gpu_model_replication.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(
+      cfg.devices.gpu_model_replication,
+      starpu_server::GpuModelReplicationPolicy::PerWorker);
+}
+
+TEST(ConfigLoader, RejectsInvalidGpuModelReplicationPolicy)
+{
+  const auto model_path = WriteEmptyModelFile(
+      "config_loader_invalid_gpu_model_replication_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: invalid_gpu_model_replication\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "batch_coalesce_timeout_ms: 1\n";
+  yaml << "max_batch_size: 1\n";
+  yaml << "pool_size: 1\n";
+  yaml << "gpu_model_replication: invalid_policy\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_invalid_gpu_model_replication.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(),
+      expected_log_line(
+          ErrorLevel,
+          "Failed to load config: gpu_model_replication must be 'per_device' "
+          "or 'per_worker' (got 'invalid_policy')"));
 }
 
 TEST(ConfigLoader, RejectsNonSequenceInput)

@@ -39,8 +39,9 @@ class InferenceTaskTest : public ::testing::Test {
   auto make_task(
       const std::shared_ptr<starpu_server::InferenceJob>& job,
       size_t num_gpu_models = 0,
-      const starpu_server::InferenceTaskDependencies* dependencies = nullptr)
-      -> starpu_server::InferenceTask
+      const starpu_server::InferenceTaskDependencies* dependencies = nullptr,
+      const std::vector<starpu_server::detail::GpuReplicaAssignment>*
+          gpu_replica_assignments = nullptr) -> starpu_server::InferenceTask
   {
     model_cpu_ = starpu_server::make_add_one_model();
     models_gpu_.clear();
@@ -52,7 +53,8 @@ class InferenceTaskTest : public ::testing::Test {
                            ? *dependencies
                            : starpu_server::kDefaultInferenceTaskDependencies;
     return starpu_server::InferenceTask(
-        nullptr, job, &model_cpu_, &models_gpu_, &opts_, deps);
+        nullptr, job, &model_cpu_, &models_gpu_, &opts_, deps,
+        gpu_replica_assignments);
   }
 
   torch::jit::script::Module model_cpu_;

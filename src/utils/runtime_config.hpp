@@ -69,6 +69,38 @@ struct ModelConfig {
   std::vector<TensorConfig> outputs;
 };
 
+enum class GpuModelReplicationPolicy : std::uint8_t {
+  PerDevice,
+  PerWorker,
+};
+
+inline auto
+to_string(GpuModelReplicationPolicy policy) -> std::string_view
+{
+  switch (policy) {
+    case GpuModelReplicationPolicy::PerDevice:
+      return "per_device";
+    case GpuModelReplicationPolicy::PerWorker:
+      return "per_worker";
+  }
+  return "per_device";
+}
+
+inline auto
+parse_gpu_model_replication_policy(std::string_view value)
+    -> GpuModelReplicationPolicy
+{
+  if (value == "per_device") {
+    return GpuModelReplicationPolicy::PerDevice;
+  }
+  if (value == "per_worker") {
+    return GpuModelReplicationPolicy::PerWorker;
+  }
+  throw std::invalid_argument(std::format(
+      "gpu_model_replication must be 'per_device' or 'per_worker' (got '{}')",
+      value));
+}
+
 // =============================================================================
 // RuntimeConfig
 // -----------------------------------------------------------------------------
@@ -86,6 +118,8 @@ struct RuntimeConfig {
     bool use_cpu = true;
     bool use_cuda = false;
     bool group_cpu_by_numa = false;
+    GpuModelReplicationPolicy gpu_model_replication =
+        GpuModelReplicationPolicy::PerDevice;
   };
 
   struct BatchingSettings {
@@ -138,7 +172,7 @@ struct RuntimeConfig {
   struct Limits {
     size_t max_inputs = InferLimits::MaxInputs;
     size_t max_dims = InferLimits::MaxDims;
-    size_t max_models_gpu = InferLimits::MaxModelsGPU;
+    size_t max_models_gpu = InferLimits::MaxModelsGPU;  // Total GPU replicas.
   };
 
   std::string name;

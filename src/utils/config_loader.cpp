@@ -125,6 +125,7 @@ validate_allowed_keys(const YAML::Node& root)
           "starpu_env",
           "device_ids",
           "group_cpu_by_numa",
+          "gpu_model_replication",
           "inputs",
           "outputs",
           "batch_coalesce_timeout_ms",

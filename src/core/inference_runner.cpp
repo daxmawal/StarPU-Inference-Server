@@ -125,6 +125,63 @@ validate_device_ids(std::span<const int> device_ids, int available_device_count)
 }
 
 auto
+build_gpu_replica_assignments(const RuntimeConfig& opts)
+    -> std::vector<GpuReplicaAssignment>
+{
+  std::vector<GpuReplicaAssignment> assignments;
+  if (!opts.devices.use_cuda || opts.devices.ids.empty()) {
+    return assignments;
+  }
+
+  if (opts.devices.gpu_model_replication ==
+      GpuModelReplicationPolicy::PerDevice) {
+    assignments.reserve(opts.devices.ids.size());
+    for (const int device_id : opts.devices.ids) {
+      if (device_id < 0) {
+        continue;
+      }
+      assignments.push_back(
+          GpuReplicaAssignment{.device_id = device_id, .worker_id = -1});
+    }
+    return assignments;
+  }
+
+  const auto workers_by_device =
+      StarPUSetup::get_cuda_workers_by_device(opts.devices.ids);
+  std::size_t total_workers = 0;
+  for (const int device_id : opts.devices.ids) {
+    if (device_id < 0) {
+      continue;
+    }
+    const auto workers_it = workers_by_device.find(device_id);
+    if (workers_it == workers_by_device.end() || workers_it->second.empty()) {
+      throw StarPUWorkerQueryException(std::format(
+          "No CUDA workers available for device {} while "
+          "gpu_model_replication='{}'",
+          device_id, to_string(opts.devices.gpu_model_replication)));
+    }
+    total_workers += workers_it->second.size();
+  }
+
+  assignments.reserve(total_workers);
+  for (const int device_id : opts.devices.ids) {
+    if (device_id < 0) {
+      continue;
+    }
+    const auto workers_it = workers_by_device.find(device_id);
+    if (workers_it == workers_by_device.end()) {
+      continue;
+    }
+    for (const int worker_id : workers_it->second) {
+      assignments.push_back(
+          GpuReplicaAssignment{.device_id = device_id, .worker_id = worker_id});
+    }
+  }
+
+  return assignments;
+}
+
+auto
 compute_latency_breakdown(const TimingInfo& timing, double total_latency_ms)
     -> BaseLatencyBreakdown
 {
@@ -194,23 +251,23 @@ load_model(const std::string& model_path) -> torch::jit::script::Module
 static auto
 clone_model_to_gpus(
     const torch::jit::script::Module& model_cpu,
-    const std::vector<int>& device_ids)
-    -> std::vector<torch::jit::script::Module>
+    const RuntimeConfig& opts) -> std::vector<torch::jit::script::Module>
 {
-  if (device_ids.empty()) {
+  if (!opts.devices.use_cuda || opts.devices.ids.empty()) {
     return {};
   }
 
   const auto device_count = detail::get_cuda_device_count();
-  detail::validate_device_ids(device_ids, device_count);
+  detail::validate_device_ids(opts.devices.ids, device_count);
+  const auto assignments = detail::build_gpu_replica_assignments(opts);
 
   std::vector<torch::jit::script::Module> models_gpu;
-  models_gpu.reserve(device_ids.size());
+  models_gpu.reserve(assignments.size());
 
-  for (const auto& device_id : device_ids) {
+  for (const auto& assignment : assignments) {
     torch::jit::script::Module model_gpu = model_cpu.clone();
-    model_gpu.to(
-        torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)));
+    model_gpu.to(torch::Device(
+        torch::kCUDA, static_cast<c10::DeviceIndex>(assignment.device_id)));
     models_gpu.emplace_back(std::move(model_gpu));
   }
 
@@ -332,7 +389,7 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     auto model_cpu =
         load_model(opts.model.has_value() ? opts.model->path : std::string{});
     auto models_gpu = opts.devices.use_cuda
-                          ? clone_model_to_gpus(model_cpu, opts.devices.ids)
+                          ? clone_model_to_gpus(model_cpu, opts)
                           : std::vector<torch::jit::script::Module>{};
     auto synthetic_outputs = synthesize_outputs_from_config(opts);
 
@@ -368,6 +425,12 @@ load_model_and_reference_output(const RuntimeConfig& opts)
     return std::tuple{model_cpu, models_gpu, output_refs};
   }
   catch (const c10::Error& e) {
+    mark_failure();
+    log_error(std::format(
+        "Failed to load model or run reference inference: {}", e.what()));
+    return std::nullopt;
+  }
+  catch (const std::exception& e) {
     mark_failure();
     log_error(std::format(
         "Failed to load model or run reference inference: {}", e.what()));

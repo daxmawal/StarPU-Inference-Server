@@ -58,6 +58,14 @@ void set_cuda_device_count_override(std::optional<int> override_count);
 // GCOVR_EXCL_STOP
 auto get_cuda_device_count() -> int;
 void validate_device_ids(std::span<const int> device_ids, int device_count);
+struct GpuReplicaAssignment {
+  int device_id = -1;
+  int worker_id = -1;
+
+  auto operator==(const GpuReplicaAssignment&) const -> bool = default;
+};
+auto build_gpu_replica_assignments(const RuntimeConfig& opts)
+    -> std::vector<GpuReplicaAssignment>;
 auto compute_latency_breakdown(
     const TimingInfo& timing, double total_latency_ms) -> BaseLatencyBreakdown;
 }  // namespace detail

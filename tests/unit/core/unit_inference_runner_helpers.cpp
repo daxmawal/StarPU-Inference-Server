@@ -48,6 +48,44 @@ class CudaDeviceCountOverrideGuard {
   }
 };
 
+auto
+gpu_replica_test_worker_query(
+    unsigned int device_id, int* worker_ids,
+    enum starpu_worker_archtype worker_type) -> int
+{
+  if (worker_type != STARPU_CUDA_WORKER || worker_ids == nullptr) {
+    return 0;
+  }
+  if (device_id == 0U) {
+    worker_ids[0] = 3;
+    worker_ids[1] = 5;
+    return 2;
+  }
+  if (device_id == 1U) {
+    worker_ids[0] = 8;
+    return 1;
+  }
+  return 0;
+}
+
+class WorkerStreamQueryGuard {
+ public:
+  WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::set_worker_stream_query_fn(
+        &gpu_replica_test_worker_query);
+  }
+
+  ~WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::reset_worker_stream_query_fn();
+  }
+
+  WorkerStreamQueryGuard(const WorkerStreamQueryGuard&) = delete;
+  auto operator=(const WorkerStreamQueryGuard&) -> WorkerStreamQueryGuard& =
+                                                       delete;
+};
+
 }  // namespace
 
 class InferenceRunnerHelpersTest
@@ -117,6 +155,62 @@ TEST(InferenceRunnerDeviceValidationTest, HandlesMockedLargeCudaDeviceCount)
       starpu_server::detail::validate_device_ids(
           invalid_ids, starpu_server::detail::get_cuda_device_count()),
       starpu_server::InvalidGpuDeviceException);
+}
+
+TEST(
+    InferenceRunnerDeviceValidationTest,
+    BuildGpuReplicaAssignmentsUsesConfiguredDevicesByDefault)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, 2};
+
+  const auto assignments =
+      starpu_server::detail::build_gpu_replica_assignments(opts);
+
+  EXPECT_EQ(
+      assignments, (std::vector<starpu_server::detail::GpuReplicaAssignment>{
+                       {.device_id = 0, .worker_id = -1},
+                       {.device_id = 2, .worker_id = -1}}));
+}
+
+TEST(
+    InferenceRunnerDeviceValidationTest,
+    BuildGpuReplicaAssignmentsUsesWorkersWhenPerWorkerIsEnabled)
+{
+  WorkerStreamQueryGuard query_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, 1};
+  opts.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+
+  const auto assignments =
+      starpu_server::detail::build_gpu_replica_assignments(opts);
+
+  EXPECT_EQ(
+      assignments, (std::vector<starpu_server::detail::GpuReplicaAssignment>{
+                       {.device_id = 0, .worker_id = 3},
+                       {.device_id = 0, .worker_id = 5},
+                       {.device_id = 1, .worker_id = 8}}));
+}
+
+TEST(
+    InferenceRunnerDeviceValidationTest,
+    BuildGpuReplicaAssignmentsPerWorkerThrowsWhenWorkersAreMissing)
+{
+  WorkerStreamQueryGuard query_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {2};
+  opts.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+
+  EXPECT_THROW(
+      (void)starpu_server::detail::build_gpu_replica_assignments(opts),
+      starpu_server::StarPUWorkerQueryException);
 }
 
 TEST(

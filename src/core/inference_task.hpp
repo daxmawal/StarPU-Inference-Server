@@ -75,7 +75,9 @@ class InferenceTask {
       std::vector<torch::jit::script::Module>* models_gpu,
       const RuntimeConfig* opts,
       const InferenceTaskDependencies& dependencies =
-          kDefaultInferenceTaskDependencies) noexcept;
+          kDefaultInferenceTaskDependencies,
+      const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments =
+          nullptr) noexcept;
 
   static auto safe_register_tensor_vector(
       const torch::Tensor& tensor,
@@ -153,5 +155,6 @@ class InferenceTask {
   std::vector<torch::jit::script::Module>* models_gpu_;
   const RuntimeConfig* opts_;
   std::shared_ptr<const InferenceTaskDependencies> dependencies_;
+  const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments_;
 };
 }  // namespace starpu_server

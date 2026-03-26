@@ -181,6 +181,7 @@ use_cpu: true
 group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }
+gpu_model_replication: per_worker
 pool_size: 12
 ```
 

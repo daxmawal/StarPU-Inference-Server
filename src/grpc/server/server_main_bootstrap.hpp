@@ -380,6 +380,14 @@ launch_threads(
   config.queue = &queue;
   config.model_cpu = &model_cpu;
   config.models_gpu = &models_gpu;
+  std::vector<starpu_server::detail::GpuReplicaAssignment>
+      gpu_replica_assignments;
+  if (opts.devices.gpu_model_replication ==
+      starpu_server::GpuModelReplicationPolicy::PerWorker) {
+    gpu_replica_assignments =
+        starpu_server::detail::build_gpu_replica_assignments(opts);
+  }
+  config.gpu_replica_assignments = &gpu_replica_assignments;
   config.starpu = &starpu;
   config.opts = &opts;
   config.completed_jobs = &runtime_state.completed_jobs;
