@@ -96,7 +96,7 @@ void set_metrics_request_stop_skip_join_for_test(bool skip_join);
 auto metrics_request_stop_skip_join_for_test() -> bool;
 void set_process_fd_path_for_test(std::filesystem::path path);
 void reset_process_fd_path_for_test();
-auto process_fd_path_for_test() -> const std::filesystem::path&;
+auto process_fd_path_for_test() -> std::filesystem::path;
 using ProcessFdDirectoryIteratorFactory =
     std::function<std::filesystem::directory_iterator(
         const std::filesystem::path&)>;
@@ -107,11 +107,11 @@ auto process_fd_directory_iterator_for_test()
     -> ProcessFdDirectoryIteratorFactory;
 void set_process_rss_bytes_path_for_test(std::filesystem::path path);
 void reset_process_rss_bytes_path_for_test();
-auto process_rss_bytes_path_for_test() -> const std::filesystem::path&;
+auto process_rss_bytes_path_for_test() -> std::filesystem::path;
 using ProcessPageSizeProvider = std::function<long()>;
 void set_process_page_size_provider_for_test(ProcessPageSizeProvider provider);
 void reset_process_page_size_provider_for_test();
-auto process_page_size_provider_for_test() -> const ProcessPageSizeProvider&;
+auto process_page_size_provider_for_test() -> ProcessPageSizeProvider;
 auto should_log_sampling_error_for_test(std::atomic<std::int64_t>& last_log)
     -> bool;
 auto status_code_label_for_test(int code) -> std::string;

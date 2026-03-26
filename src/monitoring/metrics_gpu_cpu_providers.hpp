@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -11,6 +12,7 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -120,24 +122,39 @@ nvml_warning_flag() -> std::once_flag&
 auto
 read_total_cpu_times(CpuTotals& out) -> bool
 {
-  static const std::filesystem::path kProcStat{"/proc/stat"};
-  return monitoring::detail::read_total_cpu_times(kProcStat, out);
+  static const auto* kProcStat = new std::filesystem::path{"/proc/stat"};
+  return monitoring::detail::read_total_cpu_times(*kProcStat, out);
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using ProcessSampleReader = std::function<std::optional<double>()>;
-auto
-process_open_fds_reader_override_storage() -> ProcessSampleReader&
-{
-  static ProcessSampleReader reader;
-  return reader;
-}
+using ProcessFdDirectoryIteratorFactory =
+    std::function<std::filesystem::directory_iterator(
+        const std::filesystem::path&)>;
+using ProcessPageSizeProvider = std::function<long()>;
+
+struct MetricsTestingOverrideState {
+  std::mutex mutex;
+  ProcessSampleReader process_open_fds_reader_override;
+  ProcessSampleReader process_rss_bytes_reader_override;
+  std::optional<std::filesystem::path> process_fd_path_override;
+  ProcessFdDirectoryIteratorFactory process_fd_directory_iterator_factory;
+  std::optional<std::filesystem::path> process_rss_bytes_path_override;
+  ProcessPageSizeProvider process_page_size_provider;
+};
 
 auto
-process_rss_bytes_reader_override_storage() -> ProcessSampleReader&
+metrics_testing_override_state() -> MetricsTestingOverrideState&
 {
-  static ProcessSampleReader reader;
-  return reader;
+  // Keep test override storage alive until process exit to avoid atexit races
+  // when sanitizer-induced aborts stop the test binary before background
+  // sampler threads have fully unwound.
+  alignas(MetricsTestingOverrideState) static std::array<
+      std::byte, sizeof(MetricsTestingOverrideState)>
+      storage;
+  static MetricsTestingOverrideState& state = *std::construct_at(
+      reinterpret_cast<MetricsTestingOverrideState*>(storage.data()));
+  return state;
 }
 #endif  // SONAR_IGNORE_END
 
@@ -145,14 +162,19 @@ auto
 read_process_rss_bytes_impl() -> std::optional<double>
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& override_reader = process_rss_bytes_reader_override_storage();
+  ProcessSampleReader override_reader;
+  {
+    auto& state = metrics_testing_override_state();
+    std::scoped_lock lock(state.mutex);
+    override_reader = state.process_rss_bytes_reader_override;
+  }
   if (override_reader) {
     return override_reader();
   }
-  const std::filesystem::path& path =
+  const std::filesystem::path path =
       monitoring::detail::process_rss_bytes_path_for_test();
 #else
-  const std::filesystem::path& path = kProcStatm;
+  const std::filesystem::path path{"/proc/self/statm"};
 #endif  // SONAR_IGNORE_END
   std::ifstream statm{path};
   if (!statm.is_open()) {
@@ -164,7 +186,7 @@ read_process_rss_bytes_impl() -> std::optional<double>
     return std::nullopt;
   }
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  const auto& page_size_provider =
+  const auto page_size_provider =
       monitoring::detail::process_page_size_provider_for_test();
   const long page_size =
       page_size_provider ? page_size_provider() : sysconf(_SC_PAGESIZE);
@@ -181,17 +203,22 @@ auto
 read_process_open_fds_impl() -> std::optional<double>
 {
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto& override_reader = process_open_fds_reader_override_storage();
+  ProcessSampleReader override_reader;
+  {
+    auto& state = metrics_testing_override_state();
+    std::scoped_lock lock(state.mutex);
+    override_reader = state.process_open_fds_reader_override;
+  }
   if (override_reader) {
     return override_reader();
   }
 #endif  // SONAR_IGNORE_END
-  static const std::filesystem::path kProcFd{"/proc/self/fd"};
+  static const auto* kProcFd = new std::filesystem::path{"/proc/self/fd"};
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  const std::filesystem::path& path =
+  const std::filesystem::path path =
       monitoring::detail::process_fd_path_for_test();
 #else
-  const std::filesystem::path& path = kProcFd;
+  const std::filesystem::path path = *kProcFd;
 #endif  // SONAR_IGNORE_END
   try {
     if (!std::filesystem::exists(path)) {
@@ -210,7 +237,7 @@ read_process_open_fds_impl() -> std::optional<double>
     for (; iter != end; ++iter) {
       ++count;
     }
-    if (count > 0 && path == kProcFd) {
+    if (count > 0 && path == *kProcFd) {
       --count;
     }
     return static_cast<double>(count);
@@ -468,126 +495,121 @@ void
 set_process_open_fds_reader_override(
     std::function<std::optional<double>()> reader)
 {
-  process_open_fds_reader_override_storage() = std::move(reader);
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_open_fds_reader_override = std::move(reader);
 }
 
 void
 set_process_rss_bytes_reader_override(
     std::function<std::optional<double>()> reader)
 {
-  process_rss_bytes_reader_override_storage() = std::move(reader);
-}
-
-auto
-process_fd_path_override_storage() -> std::optional<std::filesystem::path>&
-{
-  static std::optional<std::filesystem::path> path;
-  return path;
-}
-
-auto
-process_fd_directory_iterator_factory_storage()
-    -> ProcessFdDirectoryIteratorFactory&
-{
-  static ProcessFdDirectoryIteratorFactory factory;
-  return factory;
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_rss_bytes_reader_override = std::move(reader);
 }
 
 void
 set_process_fd_path_for_test(std::filesystem::path path)
 {
-  process_fd_path_override_storage() = std::move(path);
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_fd_path_override = std::move(path);
 }
 
 void
 reset_process_fd_path_for_test()
 {
-  process_fd_path_override_storage().reset();
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_fd_path_override.reset();
 }
 
 auto
-process_fd_path_for_test() -> const std::filesystem::path&
+process_fd_path_for_test() -> std::filesystem::path
 {
-  static const std::filesystem::path kDefaultProcFd{"/proc/self/fd"};
-  auto& override_path = process_fd_path_override_storage();
-  if (override_path.has_value()) {
-    return *override_path;
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  if (state.process_fd_path_override.has_value()) {
+    return *state.process_fd_path_override;
   }
-  return kDefaultProcFd;
+  return std::filesystem::path{"/proc/self/fd"};
 }
 
 void
 set_process_fd_directory_iterator_for_test(
     ProcessFdDirectoryIteratorFactory factory)
 {
-  process_fd_directory_iterator_factory_storage() = std::move(factory);
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_fd_directory_iterator_factory = std::move(factory);
 }
 
 void
 reset_process_fd_directory_iterator_for_test()
 {
-  process_fd_directory_iterator_factory_storage() = nullptr;
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_fd_directory_iterator_factory = nullptr;
 }
 
 auto
 process_fd_directory_iterator_for_test() -> ProcessFdDirectoryIteratorFactory
 {
-  return process_fd_directory_iterator_factory_storage();
-}
-
-auto
-process_rss_bytes_path_override_storage()
-    -> std::optional<std::filesystem::path>&
-{
-  static std::optional<std::filesystem::path> path;
-  return path;
-}
-
-auto
-process_page_size_provider_storage() -> ProcessPageSizeProvider&
-{
-  static ProcessPageSizeProvider provider;
-  return provider;
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  return state.process_fd_directory_iterator_factory;
 }
 
 void
 set_process_rss_bytes_path_for_test(std::filesystem::path path)
 {
-  process_rss_bytes_path_override_storage() = std::move(path);
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_rss_bytes_path_override = std::move(path);
 }
 
 void
 reset_process_rss_bytes_path_for_test()
 {
-  process_rss_bytes_path_override_storage().reset();
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_rss_bytes_path_override.reset();
 }
 
 auto
-process_rss_bytes_path_for_test() -> const std::filesystem::path&
+process_rss_bytes_path_for_test() -> std::filesystem::path
 {
-  auto& override_path = process_rss_bytes_path_override_storage();
-  if (override_path.has_value()) {
-    return *override_path;
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  if (state.process_rss_bytes_path_override.has_value()) {
+    return *state.process_rss_bytes_path_override;
   }
-  return kProcStatm;
+  return std::filesystem::path{"/proc/self/statm"};
 }
 
 void
 set_process_page_size_provider_for_test(ProcessPageSizeProvider provider)
 {
-  process_page_size_provider_storage() = std::move(provider);
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_page_size_provider = std::move(provider);
 }
 
 void
 reset_process_page_size_provider_for_test()
 {
-  process_page_size_provider_storage() = nullptr;
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  state.process_page_size_provider = nullptr;
 }
 
 auto
-process_page_size_provider_for_test() -> const ProcessPageSizeProvider&
+process_page_size_provider_for_test() -> ProcessPageSizeProvider
 {
-  return process_page_size_provider_storage();
+  auto& state = metrics_testing_override_state();
+  std::scoped_lock lock(state.mutex);
+  return state.process_page_size_provider;
 }
 
 auto
