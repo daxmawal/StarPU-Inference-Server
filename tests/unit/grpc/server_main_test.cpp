@@ -15,6 +15,7 @@
 #include <condition_variable>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -33,10 +34,26 @@
 #include "../../../src/starpu_task_worker/result_dispatcher_component.hpp"
 #include "../../../src/starpu_task_worker/task_runner_internal.hpp"
 #include "support/grpc/server/server_main_test_api.hpp"
+#include "support/utils/batching_trace_logger_test_api.hpp"
 
 namespace {
 
 using namespace ::starpu_server::testing::server_main_api;
+
+struct ResetInjectedObservabilityNoexceptTag {
+  using type = void (*)(
+      const std::shared_ptr<starpu_server::RuntimeObservability>&) noexcept;
+  friend type get(ResetInjectedObservabilityNoexceptTag);
+};
+
+template <typename Tag, typename Tag::type Member>
+struct PrivateMemberAccess {
+  friend typename Tag::type get(Tag) { return Member; }
+};
+
+template struct PrivateMemberAccess<
+    ResetInjectedObservabilityNoexceptTag,
+    &RuntimeCleanupGuard::reset_injected_observability_noexcept>;
 
 auto
 running_under_tsan() -> bool
@@ -1531,6 +1548,30 @@ handle_program_arguments_fatal_override_stub(std::string_view message)
   throw std::runtime_error(std::string(message));
 }
 
+void
+handle_program_arguments_fatal_override_noop(std::string_view)
+{
+}
+
+[[noreturn]] void
+handle_program_arguments_fatal_with_exit_terminate_handler(
+    std::string_view message)
+{
+  handle_program_arguments_fatal_override_for_test() = nullptr;
+  std::set_terminate([] { std::exit(87); });
+  handle_program_arguments_fatal(message);
+}
+
+[[noreturn]] void
+handle_program_arguments_fatal_override_with_exit_terminate_handler(
+    std::string_view message)
+{
+  handle_program_arguments_fatal_override_for_test() =
+      handle_program_arguments_fatal_override_noop;
+  std::set_terminate([] { std::exit(88); });
+  handle_program_arguments_fatal(message);
+}
+
 struct ScopedHandleProgramArgumentsFatalOverride {
   explicit ScopedHandleProgramArgumentsFatalOverride(
       HandleProgramArgumentsFatalOverrideState& state) noexcept
@@ -1926,6 +1967,26 @@ TEST(ServerMainArgs, HandleProgramArgumentsDiesWhenLoadedConfigIsInvalid)
       "Invalid configuration file\\.");
 }
 
+TEST(
+    ServerMainArgs,
+    HandleProgramArgumentsFatalLogsFatalMessageWhenOverrideIsNotInstalled)
+{
+  EXPECT_EXIT(
+      handle_program_arguments_fatal_with_exit_terminate_handler(
+          "fatal without override"),
+      ::testing::ExitedWithCode(87), "fatal without override");
+}
+
+TEST(
+    ServerMainArgs,
+    HandleProgramArgumentsFatalTerminatesAfterReturningTestOverride)
+{
+  EXPECT_EXIT(
+      handle_program_arguments_fatal_override_with_exit_terminate_handler(
+          "fatal through override"),
+      ::testing::ExitedWithCode(88), ".*");
+}
+
 TEST(ServerMainSignal, SignalHandlerSetsStopFlag)
 {
   signal_stop_requested_flag() = 0;
@@ -2141,6 +2202,60 @@ TEST(
 }
 
 TEST(
+    ServerMainThreadEntry,
+    CapturesStdExceptionLogsStdExceptionThrownByExceptionHook)
+{
+  ThreadExceptionState state;
+  ServerContext server_ctx;
+  starpu_server::InferenceQueue queue(4);
+  OStreamCapture capture_err(std::cerr);
+
+  EXPECT_NO_THROW(run_thread_entry_with_exception_capture(
+      "grpc-server", state, server_ctx, &queue,
+      []() { throw std::runtime_error("grpc startup failure"); },
+      []() { throw std::logic_error("hook failure"); }));
+
+  EXPECT_TRUE(server_ctx.stop_requested.load(std::memory_order_relaxed));
+  EXPECT_TRUE(queue.is_shutdown());
+
+  auto [captured_exception, thread_name] = state.take();
+  ASSERT_NE(captured_exception, nullptr);
+  EXPECT_EQ(thread_name, "grpc-server");
+  EXPECT_NE(
+      capture_err.str().find(
+          "Unhandled exception escaped 'grpc-server' exception hook: "
+          "hook failure"),
+      std::string::npos);
+}
+
+TEST(
+    ServerMainThreadEntry,
+    CapturesStdExceptionLogsNonStdExceptionThrownByExceptionHook)
+{
+  ThreadExceptionState state;
+  ServerContext server_ctx;
+  starpu_server::InferenceQueue queue(4);
+  OStreamCapture capture_err(std::cerr);
+
+  EXPECT_NO_THROW(run_thread_entry_with_exception_capture(
+      "grpc-server", state, server_ctx, &queue,
+      []() { throw std::runtime_error("grpc startup failure"); },
+      []() { throw 99; }));
+
+  EXPECT_TRUE(server_ctx.stop_requested.load(std::memory_order_relaxed));
+  EXPECT_TRUE(queue.is_shutdown());
+
+  auto [captured_exception, thread_name] = state.take();
+  ASSERT_NE(captured_exception, nullptr);
+  EXPECT_EQ(thread_name, "grpc-server");
+  EXPECT_NE(
+      capture_err.str().find(
+          "Unhandled non-standard exception escaped 'grpc-server' "
+          "exception hook."),
+      std::string::npos);
+}
+
+TEST(
     ServerMainModelPreparation,
     PrepareModelsAndWarmupThrowsModelLoadingExceptionWhenLoadingFails)
 {
@@ -2347,6 +2462,28 @@ TEST(ServerMainWorkerTypeLabel, ReturnsCudaLabelForCudaWorker)
 TEST(ServerMainWorkerTypeLabel, ReturnsOtherLabelForUnknownWorkerType)
 {
   EXPECT_EQ(worker_type_label(STARPU_OPENCL_WORKER), "Other(2)");
+}
+
+TEST(ServerMainWorkerInventory, FormatIntListReturnsNoneWhenEmpty)
+{
+  EXPECT_EQ(format_int_list({}), "none");
+}
+
+TEST(ServerMainWorkerInventory, ResolveModelLabelDefaultsWithoutModel)
+{
+  starpu_server::RuntimeConfig opts;
+  EXPECT_EQ(resolve_model_label_for_startup_metrics(opts), "default");
+}
+
+TEST(ServerMainWorkerInventory, ResolveModelLabelFallsBackToPathWhenNameEmpty)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->path = "/tmp/model_for_startup_metrics.ts";
+
+  EXPECT_EQ(
+      resolve_model_label_for_startup_metrics(opts),
+      "/tmp/model_for_startup_metrics.ts");
 }
 
 TEST(ServerMainCpuCoreRanges, ReturnsEmptyStringForEmptyInput)
@@ -2701,6 +2838,142 @@ TEST(
   EXPECT_DOUBLE_EQ(*worker_11, 1.0);
 }
 
+TEST(
+    ServerMainWorkerInventory,
+    ReportsGpuReplicationStartupReturnsWhenCudaDisabled)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.devices.use_cuda = false;
+  opts.devices.ids = {0, 1};
+
+  OStreamCapture capture_out(std::cout);
+  report_gpu_replication_startup(opts, 3);
+
+  EXPECT_TRUE(capture_out.str().empty());
+}
+
+TEST(
+    ServerMainWorkerInventory,
+    ReportsGpuReplicationStartupUsesObservabilityMetrics)
+{
+  ScopedWorkerStreamQueryOverride worker_query_guard;
+
+  auto metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(metrics, nullptr);
+  ASSERT_TRUE(metrics->enabled());
+
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = metrics;
+
+  starpu_server::RuntimeConfig opts;
+  opts.verbosity = starpu_server::VerbosityLevel::Info;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, 1};
+  opts.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+  opts.model = starpu_server::ModelConfig{};
+  opts.model->path = "/tmp/resnet50_observability.ts";
+
+  OStreamCapture capture_out(std::cout);
+  report_gpu_replication_startup(opts, 3, observability);
+
+  const auto expected =
+      expected_info_log(
+          "GPU model replication summary: policy=per_worker, "
+          "total_replicas=3, configured_cuda_devices=2.") +
+      expected_info_log("CUDA device 0 -> workers=[7,9], model replicas=2") +
+      expected_info_log("CUDA device 1 -> workers=[11], model replicas=1");
+  EXPECT_EQ(capture_out.str(), expected);
+
+  const auto families = metrics->registry()->registry()->Collect();
+
+  const auto policy_value = FindGaugeValue(
+      families, "gpu_model_replication_policy_info",
+      {{"model", "/tmp/resnet50_observability.ts"}, {"policy", "per_worker"}});
+  ASSERT_TRUE(policy_value.has_value());
+  EXPECT_DOUBLE_EQ(*policy_value, 1.0);
+
+  const auto replica_total = FindGaugeValue(
+      families, "gpu_model_replicas_total",
+      {{"model", "/tmp/resnet50_observability.ts"}});
+  ASSERT_TRUE(replica_total.has_value());
+  EXPECT_DOUBLE_EQ(*replica_total, 3.0);
+
+  const auto worker_7 = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "0"}, {"worker_id", "7"}});
+  ASSERT_TRUE(worker_7.has_value());
+  EXPECT_DOUBLE_EQ(*worker_7, 1.0);
+
+  const auto worker_9 = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "0"}, {"worker_id", "9"}});
+  ASSERT_TRUE(worker_9.has_value());
+  EXPECT_DOUBLE_EQ(*worker_9, 1.0);
+
+  const auto worker_11 = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "1"}, {"worker_id", "11"}});
+  ASSERT_TRUE(worker_11.has_value());
+  EXPECT_DOUBLE_EQ(*worker_11, 1.0);
+}
+
+TEST(
+    ServerMainWorkerInventory,
+    ReportsGpuReplicationStartupWarnsWhenAssignmentsThrow)
+{
+  ScopedWorkerStreamQueryOverride worker_query_guard;
+
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0, -1, 1};
+  opts.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+
+  OStreamCapture capture_err(std::cerr);
+  report_gpu_replication_startup(opts, 3);
+
+  EXPECT_NE(
+      capture_err.str().find(
+          "Failed to summarize GPU model replication startup state"),
+      std::string::npos);
+}
+
+TEST(
+    ServerMainShutdownRuntime,
+    SetupRuntimeStateCreatesObservabilityMonitorWhenProvided)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.congestion.enabled = false;
+
+  ServerContext ctx;
+  ctx.stop_requested.store(true, std::memory_order_relaxed);
+  mark_server_stopped(ctx);
+  starpu_server::InferenceQueue queue(4);
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+
+  setup_runtime_state(opts, ctx, queue, observability);
+
+  ASSERT_NE(observability->congestion_monitor, nullptr);
+  EXPECT_FALSE(ctx.stop_requested.load(std::memory_order_relaxed));
+  EXPECT_EQ(signal_stop_requested_flag(), 0);
+
+  observability->congestion_monitor->shutdown();
+  observability->congestion_monitor.reset();
+}
+
+TEST(ServerMainShutdownRuntime, RunShutdownSequenceRejectsIncompleteContext)
+{
+  starpu_server::RuntimeConfig opts;
+  ServerContext ctx;
+  starpu_server::InferenceQueue queue(4);
+
+  EXPECT_THROW(
+      run_shutdown_sequence(opts, ctx, queue, ShutdownRuntimeContext{}, {}),
+      std::invalid_argument);
+}
+
 static_assert(std::is_nothrow_destructible_v<RuntimeCleanupGuard>);
 static_assert(std::is_nothrow_invocable_v<
               decltype(&RuntimeCleanupGuard::Dismiss), RuntimeCleanupGuard&>);
@@ -2840,6 +3113,72 @@ TEST(ServerMainRuntimeCleanupGuard, DestructorSkipsCleanupAfterDismiss)
   starpu_server::shutdown_metrics();
 }
 
+TEST(
+    ServerMainRuntimeCleanupGuard,
+    DestructorResetsInjectedObservabilityMembersWhenActive)
+{
+  auto temp_dir = make_temp_test_directory("runtime_cleanup_guard_injected");
+  auto tracer = std::make_shared<starpu_server::BatchingTraceLogger>();
+  tracer->configure(true, (temp_dir.path / "trace.json").string());
+  ASSERT_TRUE(tracer->enabled());
+
+  auto metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(metrics, nullptr);
+  ASSERT_TRUE(metrics->enabled());
+
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->tracer = tracer;
+  observability->metrics = metrics;
+  observability->congestion_monitor =
+      std::make_shared<starpu_server::congestion::Monitor>(nullptr);
+
+  {
+    RuntimeCleanupGuard guard(observability);
+  }
+
+  ASSERT_NE(observability->tracer, nullptr);
+  EXPECT_FALSE(observability->tracer->enabled());
+  EXPECT_EQ(observability->metrics, nullptr);
+  EXPECT_EQ(observability->congestion_monitor, nullptr);
+}
+
+TEST(
+    ServerMainRuntimeCleanupGuard,
+    DestructorSwallowsInjectedObservabilityTracerExceptions)
+{
+  auto temp_dir = make_temp_test_directory("runtime_cleanup_guard_throw");
+  auto tracer = std::make_shared<starpu_server::BatchingTraceLogger>();
+  tracer->configure(true, (temp_dir.path / "trace.json").string());
+  ASSERT_TRUE(tracer->enabled());
+
+  auto& trace_writer =
+      starpu_server::testing::BatchingTraceLoggerTestAccessor::trace_writer(
+          *tracer);
+  auto& trace_stream =
+      starpu_server::testing::TraceFileWriterTestAccessor::stream(trace_writer);
+  trace_stream.setstate(std::ios::badbit);
+  try {
+    trace_stream.exceptions(std::ios::badbit);
+  }
+  catch (const std::ios_base::failure&) {
+  }
+
+  auto metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(metrics, nullptr);
+
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->tracer = tracer;
+  observability->metrics = metrics;
+
+  EXPECT_NO_THROW({ RuntimeCleanupGuard guard(observability); });
+
+  EXPECT_NE(observability->metrics, nullptr);
+
+  trace_stream.exceptions(std::ios::goodbit);
+  trace_stream.clear();
+  EXPECT_NO_THROW(tracer->configure(false, ""));
+}
+
 TEST(ServerMainRuntimeCleanupGuard, ResetTraceLoggerNoexceptDisablesTracer)
 {
   auto& tracer = starpu_server::BatchingTraceLogger::instance();
@@ -2890,6 +3229,16 @@ TEST(
 
   EXPECT_NE(starpu_server::get_metrics(), nullptr);
   starpu_server::shutdown_metrics();
+}
+
+TEST(
+    ServerMainRuntimeCleanupGuard,
+    ResetInjectedObservabilityNoexceptReturnsWhenObservabilityNull)
+{
+  const auto reset_injected_observability =
+      get(ResetInjectedObservabilityNoexceptTag{});
+
+  EXPECT_NO_THROW(reset_injected_observability(nullptr));
 }
 
 TEST(
@@ -3005,6 +3354,8 @@ TEST(ServerMainOrchestration, LaunchThreadsStopsAfterSignal)
   opts.server_address = address;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
+  opts.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
 
   signal_stop_requested_flag() = 0;
   auto& ctx = server_context();

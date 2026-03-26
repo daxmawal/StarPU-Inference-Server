@@ -229,3 +229,36 @@ TEST(
     EXPECT_EQ(error.what(), std::string("pool_size must be > 0"));
   }
 }
+
+TEST(RuntimeConfigUtils, GpuModelReplicationPolicyToStringHandlesAllBranches)
+{
+  using starpu_server::GpuModelReplicationPolicy;
+
+  EXPECT_EQ(
+      starpu_server::to_string(GpuModelReplicationPolicy::PerDevice),
+      "per_device");
+  EXPECT_EQ(
+      starpu_server::to_string(GpuModelReplicationPolicy::PerWorker),
+      "per_worker");
+
+  const auto invalid_policy = static_cast<GpuModelReplicationPolicy>(
+      std::numeric_limits<std::uint8_t>::max());
+  EXPECT_EQ(starpu_server::to_string(invalid_policy), "per_device");
+}
+
+TEST(RuntimeConfigUtils, ParseGpuModelReplicationPolicyParsesKnownValues)
+{
+  EXPECT_EQ(
+      starpu_server::parse_gpu_model_replication_policy("per_device"),
+      starpu_server::GpuModelReplicationPolicy::PerDevice);
+  EXPECT_EQ(
+      starpu_server::parse_gpu_model_replication_policy("per_worker"),
+      starpu_server::GpuModelReplicationPolicy::PerWorker);
+}
+
+TEST(RuntimeConfigUtils, ParseGpuModelReplicationPolicyRejectsUnknownValue)
+{
+  EXPECT_THROW(
+      starpu_server::parse_gpu_model_replication_policy("invalid_policy"),
+      std::invalid_argument);
+}

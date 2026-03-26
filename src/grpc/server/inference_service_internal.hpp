@@ -24,13 +24,8 @@
 #include <utility>
 #include <vector>
 
-#include "inference_service.hpp"
-
-#if defined(STARPU_TESTING)
-#include "support/grpc/server/inference_service_test_internal.hpp"
-#endif
-
 #include "core/inference_runner.hpp"
+#include "inference_service.hpp"
 #include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
 #include "monitoring/runtime_observability.hpp"
@@ -41,6 +36,19 @@
 #include "utils/nvtx.hpp"
 
 namespace starpu_server {
+
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+namespace testing::inference_service_test_internal::detail {
+auto handle_model_infer_async_test_hooks_ref()
+    -> testing::HandleModelInferAsyncTestHooks&;
+auto handle_async_infer_completion_test_hooks_ref()
+    -> testing::HandleAsyncInferCompletionTestHooks&;
+auto submit_job_async_test_hooks_ref() -> testing::SubmitJobAsyncTestHooks&;
+auto check_missing_named_inputs_override_ref()
+    -> testing::CheckMissingNamedInputsOverrideFn&;
+auto model_statistics_force_null_target_flag_ref() -> bool&;
+}  // namespace testing::inference_service_test_internal::detail
+#endif  // SONAR_IGNORE_END
 
 using grpc::Server;
 using grpc::ServerBuilder;

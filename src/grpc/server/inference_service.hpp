@@ -29,7 +29,36 @@ struct TimingInfo;
 }
 namespace testing {
 class InferenceServiceTestAccessor;
-}
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+struct HandleModelInferAsyncTestHooks {
+  std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+      on_cancel_flag_created;
+  std::function<void(const std::function<void()>&)> on_cancel_ready;
+  std::function<std::optional<bool>(const grpc::ServerContext*)>
+      is_cancelled_override;
+  std::function<void(
+      const std::shared_ptr<std::atomic<bool>>&, const grpc::Status&)>
+      on_submit_job_async_done;
+};
+
+struct HandleAsyncInferCompletionTestHooks {
+  std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+      after_try_acquire;
+  std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+      before_final_cancel_check;
+  std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+      before_success_terminal_mark;
+};
+
+struct SubmitJobAsyncTestHooks {
+  std::function<void()> before_create_job;
+};
+
+using CheckMissingNamedInputsOverrideFn =
+    std::function<std::optional<grpc::Status>(
+        const std::vector<bool>&, std::span<const std::string>)>;
+#endif  // SONAR_IGNORE_END
+}  // namespace testing
 
 class MetricsRegistry;
 class MetricsRecorder;

@@ -3,6 +3,8 @@
 #include <bit>
 #include <csignal>
 #include <cstdint>
+#include <cstdlib>
+#include <exception>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -15,6 +17,17 @@
 #include "utils/logger.hpp"
 
 using namespace starpu_server;
+
+namespace {
+
+[[noreturn]] void
+log_fatal_with_exit_terminate_handler()
+{
+  std::set_terminate([] { std::exit(86); });
+  log_fatal("fatal flush");
+}
+
+}  // namespace
 
 TEST(Logger, VerbosityStyle)
 {
@@ -167,6 +180,13 @@ TEST(Logger, LogFatalExit)
   EXPECT_EXIT(
       log_fatal("fatal test"), ::testing::KilledBySignal(SIGABRT),
       "fatal test");
+}
+
+TEST(Logger, LogFatalFlushesCoverageWhenTerminateHandlerExitsNormally)
+{
+  EXPECT_EXIT(
+      log_fatal_with_exit_terminate_handler(), ::testing::ExitedWithCode(86),
+      "\\[FATAL\\] fatal flush");
 }
 
 struct ExceptionCase {
