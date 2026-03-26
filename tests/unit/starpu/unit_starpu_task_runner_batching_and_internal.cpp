@@ -1,8 +1,126 @@
+#include <thread>
+
+#include "monitoring/congestion_monitor.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "unit_starpu_task_runner_support.hpp"
+#include "utils/exception_classification.hpp"
+
+#define private public
+#include "starpu_task_worker/batch_collector_component.hpp"
+#undef private
 
 #define private public
 #include "starpu_task_worker/result_dispatcher_component.hpp"
 #undef private
+
+namespace starpu_server {
+auto submit_exception_log_prefix(ExceptionCategory category)
+    -> std::string_view;
+}
+
+namespace {
+
+auto
+wait_until(
+    const std::function<bool()>& predicate, std::chrono::milliseconds timeout,
+    std::chrono::milliseconds poll_interval = std::chrono::milliseconds(5))
+    -> bool
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(poll_interval);
+  }
+  return predicate();
+}
+
+auto
+find_family(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view name) -> const prometheus::MetricFamily*
+{
+  for (const auto& family : families) {
+    if (family.name == name) {
+      return &family;
+    }
+  }
+  return nullptr;
+}
+
+auto
+find_gauge_value(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name) -> std::optional<double>
+{
+  const auto* family = find_family(families, family_name);
+  if (family == nullptr || family->metric.empty()) {
+    return std::nullopt;
+  }
+  return family->metric.front().gauge.value;
+}
+
+auto
+family_has_histogram_samples(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name) -> bool
+{
+  const auto* family = find_family(families, family_name);
+  if (family == nullptr) {
+    return false;
+  }
+  return std::ranges::any_of(
+      family->metric, [](const prometheus::ClientMetric& metric) {
+        return metric.histogram.sample_count > 0;
+      });
+}
+
+struct BatchCollectorHarness {
+  std::shared_ptr<starpu_server::RuntimeObservability> observability{};
+  starpu_server::RuntimeConfig opts{};
+  std::shared_ptr<starpu_server::InferenceJob> pending_job{};
+  std::deque<std::shared_ptr<starpu_server::InferenceJob>> prepared_jobs{};
+  std::mutex prepared_mutex;
+  std::condition_variable prepared_cv;
+  bool batching_done{false};
+  std::atomic<std::size_t> inflight_tasks{0};
+  std::mutex inflight_mutex;
+  std::condition_variable inflight_cv;
+  std::unique_ptr<starpu_server::BatchCollector> collector;
+
+  explicit BatchCollectorHarness(
+      std::shared_ptr<starpu_server::RuntimeObservability> observability_arg =
+          {},
+      starpu_server::InferenceQueue* queue = nullptr,
+      std::size_t max_inflight_tasks = 0)
+      : observability(std::move(observability_arg))
+  {
+    opts.batching.dynamic_batching = true;
+    opts.batching.max_batch_size = 4;
+    opts.congestion.enabled = true;
+    opts.congestion.tick_interval_ms = 10;
+    opts.congestion.entry_horizon_ms = 40;
+    opts.congestion.exit_horizon_ms = 30;
+
+    collector = std::make_unique<starpu_server::BatchCollector>(
+        queue, &opts, nullptr, &pending_job, observability,
+        starpu_server::PreparedBatchingContext{
+            .prepared_mutex = &prepared_mutex,
+            .prepared_cv = &prepared_cv,
+            .prepared_jobs = &prepared_jobs,
+            .batching_done = &batching_done,
+        },
+        starpu_server::InflightContext{
+            .inflight_tasks = &inflight_tasks,
+            .inflight_cv = &inflight_cv,
+            .inflight_mutex = &inflight_mutex,
+            .max_inflight_tasks = max_inflight_tasks,
+        });
+  }
+};
+
+}  // namespace
 
 TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobReturnsNullWhenNoJobs)
 {
@@ -645,6 +763,333 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchIgnoresNullFirstJob)
   EXPECT_TRUE(collected.empty());
 }
 
+TEST(BatchCollector, MergeInputMemoryHoldersAggregatesAllHolders)
+{
+  auto job0 = std::make_shared<starpu_server::InferenceJob>();
+  auto job1 = std::make_shared<starpu_server::InferenceJob>();
+
+  auto holder0 = std::make_shared<int>(10);
+  auto holder1 = std::make_shared<int>(11);
+  auto holder2 = std::make_shared<int>(12);
+  job0->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder0, holder0.get()),
+       std::shared_ptr<const void>(holder1, holder1.get())});
+  job1->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder2, holder2.get())});
+
+  const auto merged =
+      starpu_server::BatchCollector::merge_input_memory_holders({job0, job1});
+
+  ASSERT_EQ(merged.size(), 3U);
+  EXPECT_EQ(merged[0].get(), static_cast<const void*>(holder0.get()));
+  EXPECT_EQ(merged[1].get(), static_cast<const void*>(holder1.get()));
+  EXPECT_EQ(merged[2].get(), static_cast<const void*>(holder2.get()));
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetSetsSingleSlotForBatchLimitOne)
+{
+  BatchCollectorHarness harness;
+
+  harness.collector->adaptive_target_batch_size_ = 7;
+  harness.collector->adaptive_target_initialized_ = false;
+  harness.collector->low_pressure_streak_ = 9;
+
+  harness.collector->update_adaptive_batch_target(1);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 1);
+  EXPECT_TRUE(harness.collector->adaptive_target_initialized_);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetResetsStreakWhenCongestionDisabled)
+{
+  BatchCollectorHarness harness;
+  harness.opts.congestion.enabled = false;
+  harness.collector->adaptive_target_batch_size_ = 2;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ = 3;
+
+  harness.collector->update_adaptive_batch_target(4);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetExpandsOnHighPressure)
+{
+  BatchCollectorHarness harness;
+  harness.prepared_jobs.resize(4);
+  harness.collector->adaptive_target_batch_size_ = 1;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ = 5;
+  harness.collector->last_adaptive_update_marker_.reset();
+
+  harness.collector->update_adaptive_batch_target(4);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetShrinksOnLowPressureThreshold)
+{
+  BatchCollectorHarness harness;
+  harness.collector->adaptive_target_batch_size_ = 3;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ =
+      harness.collector->low_pressure_streak_threshold() - 1;
+  harness.collector->last_adaptive_update_marker_.reset();
+
+  harness.collector->update_adaptive_batch_target(4);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetResetsWhenCongested)
+{
+  starpu_server::InferenceQueue queue(4);
+  starpu_server::congestion::Config cfg;
+  cfg.tick_interval = std::chrono::milliseconds(10);
+  cfg.entry_horizon = std::chrono::milliseconds(20);
+  cfg.exit_horizon = std::chrono::milliseconds(20);
+
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->congestion_monitor =
+      std::make_shared<starpu_server::congestion::Monitor>(&queue, cfg);
+  observability->congestion_monitor->start();
+
+  BatchCollectorHarness harness{observability, &queue};
+  harness.collector->adaptive_target_batch_size_ = 1;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ = 6;
+
+  observability->congestion_monitor->record_arrival(1);
+  observability->congestion_monitor->record_rejection(1);
+  ASSERT_TRUE(wait_until(
+      [&] { return observability->congestion_monitor->congested(); },
+      std::chrono::milliseconds(500)));
+
+  harness.collector->last_adaptive_update_marker_.reset();
+  harness.collector->update_adaptive_batch_target(4);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 4);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+
+  observability->congestion_monitor->shutdown();
+}
+
+TEST(BatchCollector, ShouldRefreshAdaptiveTargetRejectsDuplicateMonitorTick)
+{
+  BatchCollectorHarness harness;
+  const auto tick = starpu_server::task_runner_internal::Clock::now();
+  harness.collector->last_adaptive_update_marker_ = tick;
+
+  starpu_server::BatchCollector::BatchPressureSample pressure{};
+  pressure.monitor_tick = tick;
+
+  EXPECT_FALSE(harness.collector->should_refresh_adaptive_target(pressure));
+  EXPECT_EQ(harness.collector->last_adaptive_update_marker_, tick);
+}
+
+TEST(BatchCollector, ShouldRefreshAdaptiveTargetRateLimitsWithoutMonitorTick)
+{
+  BatchCollectorHarness harness;
+  harness.collector->last_adaptive_update_marker_ =
+      starpu_server::task_runner_internal::Clock::now();
+
+  starpu_server::BatchCollector::BatchPressureSample pressure{};
+
+  EXPECT_FALSE(harness.collector->should_refresh_adaptive_target(pressure));
+}
+
+TEST(BatchCollector, HighPressureStepReturnsOneWhenCongestionDisabled)
+{
+  BatchCollectorHarness harness;
+  harness.opts.congestion.enabled = false;
+
+  EXPECT_EQ(harness.collector->high_pressure_step(8, true), 1);
+}
+
+TEST(BatchCollector, LowPressureStreakThresholdReturnsOneWhenDisabled)
+{
+  BatchCollectorHarness harness;
+  harness.opts.congestion.enabled = false;
+
+  EXPECT_EQ(harness.collector->low_pressure_streak_threshold(), 1);
+}
+
+TEST(BatchCollector, CollectBatchNullFirstJobUsesObservabilityPendingMetric)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability};
+
+  const auto jobs = harness.collector->collect_batch(nullptr);
+  EXPECT_TRUE(jobs.empty());
+
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto pending =
+      find_gauge_value(families, "inference_batch_collect_pending_jobs");
+  ASSERT_TRUE(pending.has_value());
+  EXPECT_DOUBLE_EQ(*pending, 0.0);
+}
+
+TEST(
+    BatchCollector,
+    MaybeBuildBatchedJobSingleJobUsesObservabilityEfficiencyMetric)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability};
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_input_tensors(
+      {torch::ones({2, 1}, torch::TensorOptions().dtype(torch::kFloat))});
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job};
+
+  auto master = harness.collector->maybe_build_batched_job(jobs);
+
+  ASSERT_EQ(master, job);
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  EXPECT_TRUE(family_has_histogram_samples(
+      families, "inference_batch_efficiency_ratio"));
+}
+
+TEST(BatchCollector, SampleBatchPressureHandlesNullPreparedAndInflightState)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->congestion_monitor =
+      std::make_shared<starpu_server::congestion::Monitor>(nullptr);
+
+  BatchCollectorHarness harness{observability};
+  harness.collector->prepared_jobs_ = nullptr;
+  harness.collector->prepared_mutex_ = nullptr;
+  harness.collector->inflight_tasks_ = nullptr;
+
+  const auto sample = harness.collector->sample_batch_pressure();
+
+  EXPECT_FALSE(sample.state.congested);
+  EXPECT_TRUE(sample.state.low);
+}
+
+TEST(BatchCollector, SampleBatchPressureUsesPreparedDepthWithoutMutex)
+{
+  BatchCollectorHarness harness;
+  harness.prepared_jobs.resize(4);
+  harness.collector->prepared_mutex_ = nullptr;
+
+  const auto sample = harness.collector->sample_batch_pressure();
+
+  EXPECT_TRUE(sample.state.high);
+  EXPECT_FALSE(sample.state.low);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetUsesSevereHighPressureStep)
+{
+  BatchCollectorHarness harness;
+  harness.opts.batching.max_batch_size = 6;
+  harness.prepared_jobs.resize(12);
+  harness.collector->adaptive_target_batch_size_ = 1;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ = 0;
+  harness.collector->last_adaptive_update_marker_.reset();
+
+  harness.collector->update_adaptive_batch_target(6);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 3);
+}
+
+TEST(
+    BatchCollector, ResetPreparedQueueStateUsesObservabilityMetricsWithoutMutex)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability};
+  harness.batching_done = true;
+  harness.collector->prepared_mutex_ = nullptr;
+  harness.collector->prepared_jobs_ = nullptr;
+
+  harness.collector->reset_prepared_queue_state();
+
+  EXPECT_FALSE(harness.batching_done);
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto prepared_depth =
+      find_gauge_value(families, "starpu_prepared_queue_depth");
+  const auto pending =
+      find_gauge_value(families, "inference_batch_collect_pending_jobs");
+  ASSERT_TRUE(prepared_depth.has_value());
+  ASSERT_TRUE(pending.has_value());
+  EXPECT_DOUBLE_EQ(*prepared_depth, 0.0);
+  EXPECT_DOUBLE_EQ(*pending, 0.0);
+}
+
+TEST(BatchCollector, AbortPreparedQueueSetsFlagWithoutMutex)
+{
+  BatchCollectorHarness harness;
+  harness.collector->prepared_mutex_ = nullptr;
+  harness.batching_done = false;
+
+  harness.collector->abort_prepared_queue();
+
+  EXPECT_TRUE(harness.batching_done);
+}
+
+TEST(BatchCollector, EnqueuePreparedJobUsesObservabilityMetrics)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability, nullptr, 4};
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+
+  harness.collector->enqueue_prepared_job(job);
+
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto prepared_depth =
+      find_gauge_value(families, "starpu_prepared_queue_depth");
+  const auto inflight = find_gauge_value(families, "inference_inflight_tasks");
+  const auto busy_ratio =
+      find_gauge_value(families, "starpu_worker_busy_ratio");
+  ASSERT_TRUE(prepared_depth.has_value());
+  ASSERT_TRUE(inflight.has_value());
+  ASSERT_TRUE(busy_ratio.has_value());
+  EXPECT_DOUBLE_EQ(*prepared_depth, 1.0);
+  EXPECT_DOUBLE_EQ(*inflight, 1.0);
+  EXPECT_DOUBLE_EQ(*busy_ratio, 0.25);
+}
+
+TEST(BatchCollector, WaitForPreparedJobUsesObservabilityMetrics)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability};
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  harness.collector->enqueue_prepared_job(job);
+
+  const auto dequeued = harness.collector->wait_for_prepared_job();
+
+  ASSERT_EQ(dequeued, job);
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto prepared_depth =
+      find_gauge_value(families, "starpu_prepared_queue_depth");
+  ASSERT_TRUE(prepared_depth.has_value());
+  EXPECT_DOUBLE_EQ(*prepared_depth, 0.0);
+}
+
 TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionToSubJobsNoopsWhenAggregatedJobNull)
@@ -803,6 +1248,126 @@ TEST(ResultDispatcher, HandleJobCompletionNoopsWhenJobIsNull)
       dispatcher.handle_job_completion(job, callback, results, 1.5));
   EXPECT_FALSE(callback_invoked);
   EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
+}
+
+TEST(ResultDispatcher, PrepareJobCompletionCallbackReturnsWhenJobIsNull)
+{
+  auto dispatcher = std::make_shared<starpu_server::ResultDispatcher>(
+      nullptr, nullptr, nullptr);
+
+  EXPECT_NO_THROW(
+      starpu_server::ResultDispatcher::prepare_job_completion_callback(
+          dispatcher, nullptr, nullptr));
+}
+
+TEST(ResultDispatcher, HandleJobCompletionRecordsMetricsAndInvokesCallback)
+{
+  starpu_server::RuntimeConfig opts{};
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  std::atomic<std::size_t> completed_jobs{0};
+  std::condition_variable all_done_cv;
+  starpu_server::ResultDispatcher dispatcher{
+      &opts, &completed_jobs, &all_done_cv, observability};
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_request_id(27);
+  job->set_submission_id(72);
+  job->set_model_name("dispatcher-model");
+  job->set_input_tensors({torch::tensor({1.0F})});
+  job->set_executed_on(starpu_server::DeviceType::CPU);
+  job->set_worker_id(2);
+  job->set_device_id(0);
+
+  bool callback_invoked = false;
+  double observed_latency = 0.0;
+  const starpu_server::InferenceJob::CompletionCallback callback =
+      [&callback_invoked, &observed_latency](
+          const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        callback_invoked = !outputs.empty();
+        observed_latency = latency_ms;
+      };
+  auto results = std::vector<torch::Tensor>{
+      torch::tensor({2.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+
+  dispatcher.handle_job_completion(job, callback, results, 1.5);
+
+  EXPECT_TRUE(callback_invoked);
+  EXPECT_DOUBLE_EQ(observed_latency, 1.5);
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
+
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto completed_counter = [&families]() -> std::optional<double> {
+    const auto* family = find_family(families, "inference_completed_total");
+    if (family == nullptr) {
+      return std::nullopt;
+    }
+    for (const auto& metric : family->metric) {
+      for (const auto& label : metric.label) {
+        if (label.name == "model" && label.value == "dispatcher-model") {
+          return metric.counter.value;
+        }
+      }
+    }
+    return std::nullopt;
+  }();
+  ASSERT_TRUE(completed_counter.has_value());
+  EXPECT_DOUBLE_EQ(*completed_counter, 1.0);
+}
+
+TEST(StarPUTaskWorkerInternals, SubmitExceptionLogPrefixMapsKnownCategories)
+{
+  using starpu_server::ExceptionCategory;
+  using starpu_server::submit_exception_log_prefix;
+
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::InferenceEngine), "");
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::RuntimeError),
+      "Unexpected runtime error");
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::LogicError),
+      "Unexpected logic error");
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::BadAlloc),
+      "Memory allocation failure");
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::StdException),
+      "Unexpected std::exception");
+  EXPECT_EQ(submit_exception_log_prefix(ExceptionCategory::Unknown), "");
+  EXPECT_EQ(
+      submit_exception_log_prefix(static_cast<ExceptionCategory>(255)), "");
+}
+
+TEST_F(StarPUTaskRunnerFixture, AcquirePoolsReturnsInputAndOutputSlots)
+{
+  auto pools =
+      starpu_server::StarPUTaskRunnerTestAdapter::acquire_pools(runner_.get());
+
+  if (pools.has_input()) {
+    EXPECT_GE(pools.input_slot, 0);
+    pools.input_pool->release(pools.input_slot);
+  }
+  if (pools.has_output()) {
+    EXPECT_GE(pools.output_slot, 0);
+    pools.output_pool->release(pools.output_slot);
+  }
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsReturnsResolvedBatchWhenInputPoolMissing)
+{
+  auto job = make_job(91, {torch::ones({3, 1})}, {at::kFloat});
+
+  const auto batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs_without_input_pool(runner_.get(), job);
+
+  EXPECT_EQ(batch, 3);
 }
 
 TEST(

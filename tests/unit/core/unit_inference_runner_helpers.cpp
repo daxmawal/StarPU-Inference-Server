@@ -176,6 +176,23 @@ TEST(
 
 TEST(
     InferenceRunnerDeviceValidationTest,
+    BuildGpuReplicaAssignmentsPerDeviceSkipsNegativeConfiguredIds)
+{
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {-1, 0, -2, 2};
+
+  const auto assignments =
+      starpu_server::detail::build_gpu_replica_assignments(opts);
+
+  EXPECT_EQ(
+      assignments, (std::vector<starpu_server::detail::GpuReplicaAssignment>{
+                       {.device_id = 0, .worker_id = -1},
+                       {.device_id = 2, .worker_id = -1}}));
+}
+
+TEST(
+    InferenceRunnerDeviceValidationTest,
     BuildGpuReplicaAssignmentsUsesWorkersWhenPerWorkerIsEnabled)
 {
   WorkerStreamQueryGuard query_guard;

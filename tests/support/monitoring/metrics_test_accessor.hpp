@@ -7,6 +7,20 @@ starpu_server::testing::MetricsRegistryTestAccessor::ClearCpuUsageProvider(
 }
 
 void
+starpu_server::testing::MetricsRegistryTestAccessor::ClearQueueSizeGauge(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.gauges_.queue_size = nullptr;
+}
+
+void
+starpu_server::testing::MetricsRegistryTestAccessor::ClearQueueFillRatioGauge(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.gauges_.queue_fill_ratio = nullptr;
+}
+
+void
 starpu_server::testing::MetricsRegistryTestAccessor::ClearSystemCpuUsageGauge(
     starpu_server::MetricsRegistry& metrics)
 {
@@ -155,6 +169,28 @@ starpu_server::testing::MetricsRegistryTestAccessor::ClearModelsLoadedFamily(
     starpu_server::MetricsRegistry& metrics)
 {
   metrics.families_.models_loaded = nullptr;
+}
+
+void
+starpu_server::testing::MetricsRegistryTestAccessor::
+    ClearGpuModelReplicationPolicyInfoFamily(
+        starpu_server::MetricsRegistry& metrics)
+{
+  metrics.families_.gpu_model_replication_policy_info = nullptr;
+}
+
+void
+starpu_server::testing::MetricsRegistryTestAccessor::
+    ClearGpuModelReplicasTotalFamily(starpu_server::MetricsRegistry& metrics)
+{
+  metrics.families_.gpu_model_replicas_total = nullptr;
+}
+
+void
+starpu_server::testing::MetricsRegistryTestAccessor::
+    ClearStarpuCudaWorkerInfoFamily(starpu_server::MetricsRegistry& metrics)
+{
+  metrics.families_.starpu_cuda_worker_info = nullptr;
 }
 
 void

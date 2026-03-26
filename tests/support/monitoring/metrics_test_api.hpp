@@ -11,6 +11,8 @@ namespace starpu_server::testing {
 class MetricsRegistryTestAccessor {
  public:
   static void ClearCpuUsageProvider(MetricsRegistry& metrics);
+  static void ClearQueueSizeGauge(MetricsRegistry& metrics);
+  static void ClearQueueFillRatioGauge(MetricsRegistry& metrics);
   static void ClearSystemCpuUsageGauge(MetricsRegistry& metrics);
   static void ClearProcessOpenFdsGauge(MetricsRegistry& metrics);
   static void ClearProcessResidentMemoryGauge(MetricsRegistry& metrics);
@@ -38,6 +40,10 @@ class MetricsRegistryTestAccessor {
   static void ClearIoCopyLatencyFamily(MetricsRegistry& metrics);
   static void ClearTransferBytesFamily(MetricsRegistry& metrics);
   static void ClearModelsLoadedFamily(MetricsRegistry& metrics);
+  static void ClearGpuModelReplicationPolicyInfoFamily(
+      MetricsRegistry& metrics);
+  static void ClearGpuModelReplicasTotalFamily(MetricsRegistry& metrics);
+  static void ClearStarpuCudaWorkerInfoFamily(MetricsRegistry& metrics);
   static void ClearModelLoadFailuresFamily(MetricsRegistry& metrics);
   static void ClearInferenceFailuresFamily(MetricsRegistry& metrics);
   static void ClearInferenceCompletedFamily(MetricsRegistry& metrics);

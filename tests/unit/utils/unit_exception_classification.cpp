@@ -108,4 +108,23 @@ TEST(
   }
 }
 
+TEST(
+    ExceptionClassification,
+    SingleCallbackOverloadFallsBackToUnknownForNonStdExceptions)
+{
+  ExceptionCategory observed_category = ExceptionCategory::InferenceEngine;
+  const std::exception* observed_exception =
+      reinterpret_cast<const std::exception*>(0x1);
+
+  classify_and_handle_exception(
+      std::make_exception_ptr(42),
+      [&](ExceptionCategory category, const std::exception* exception) {
+        observed_category = category;
+        observed_exception = exception;
+      });
+
+  EXPECT_EQ(observed_category, ExceptionCategory::Unknown);
+  EXPECT_EQ(observed_exception, nullptr);
+}
+
 }}  // namespace starpu_server

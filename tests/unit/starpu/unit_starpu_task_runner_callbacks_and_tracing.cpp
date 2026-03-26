@@ -1,3 +1,5 @@
+#include "monitoring/congestion_monitor.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "starpu_task_worker/result_dispatcher_component.hpp"
 #include "unit_starpu_task_runner_support.hpp"
 
@@ -18,6 +20,87 @@ struct PrepareJobCompletionCallbackHooksGuard {
         ClearPrepareJobCompletionCallbackTestHooks();
   }
 };
+
+auto
+find_family(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view name) -> const prometheus::MetricFamily*
+{
+  for (const auto& family : families) {
+    if (family.name == name) {
+      return &family;
+    }
+  }
+  return nullptr;
+}
+
+auto
+labels_match(
+    const prometheus::ClientMetric& metric,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> bool
+{
+  for (const auto& [name, value] : labels) {
+    bool matched = false;
+    for (const auto& label : metric.label) {
+      if (label.name == name && label.value == value) {
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      return false;
+    }
+  }
+  return true;
+}
+
+auto
+find_metric(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels)
+    -> const prometheus::ClientMetric*
+{
+  const auto* family = find_family(families, family_name);
+  if (family == nullptr) {
+    return nullptr;
+  }
+  for (const auto& metric : family->metric) {
+    if (labels_match(metric, labels)) {
+      return &metric;
+    }
+  }
+  return nullptr;
+}
+
+auto
+find_gauge_value(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels =
+        {}) -> std::optional<double>
+{
+  const auto* metric = find_metric(families, family_name, labels);
+  if (metric == nullptr) {
+    return std::nullopt;
+  }
+  return metric->gauge.value;
+}
+
+auto
+find_counter_value(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name,
+    const std::vector<std::pair<std::string_view, std::string_view>>& labels =
+        {}) -> std::optional<double>
+{
+  const auto* metric = find_metric(families, family_name, labels);
+  if (metric == nullptr) {
+    return std::nullopt;
+  }
+  return metric->counter.value;
+}
 
 }  // namespace
 
@@ -348,6 +431,115 @@ TEST_F(
       starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
           runner_.get()),
       0U);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    PrepareJobCompletionCallbackUsesObservabilityMetricsWhenConfigured)
+{
+  TraceLoggerSession session;
+
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+  observability->congestion_monitor =
+      std::make_shared<starpu_server::congestion::Monitor>(nullptr);
+
+  opts_.batching.max_inflight_tasks = 4;
+  config_.observability = observability;
+  reset_runner_with_model(
+      make_model_config(
+          "metrics_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+
+  auto job = make_job(44, {torch::tensor({1.0F})});
+  job->set_model_name("metrics_model");
+  job->set_submission_id(444);
+  job->timing_info().submission_id = 444;
+  job->set_executed_on(starpu_server::DeviceType::CPU);
+  job->set_worker_id(3);
+  job->set_device_id(0);
+  populate_trace_timing(*job);
+
+  using clock = starpu_server::MonotonicClock;
+  const auto base = clock::now();
+  auto& timing = job->timing_info();
+  timing.enqueued_time = base - std::chrono::milliseconds(6);
+  timing.last_enqueued_time = timing.enqueued_time;
+  timing.batch_collect_start_time = base - std::chrono::milliseconds(5);
+  timing.batch_collect_end_time = base - std::chrono::milliseconds(4);
+  timing.codelet_start_time = base - std::chrono::milliseconds(3);
+  timing.inference_start_time = base - std::chrono::milliseconds(2);
+  timing.codelet_end_time = base - std::chrono::milliseconds(1);
+  timing.callback_start_time = base;
+  timing.callback_end_time = base + std::chrono::milliseconds(1);
+
+  bool callback_invoked = false;
+  job->set_on_complete(
+      [&callback_invoked](const std::vector<torch::Tensor>&, double) {
+        callback_invoked = true;
+      });
+
+  starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
+      runner_.get());
+  ASSERT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      1U);
+
+  runner_->prepare_job_completion_callback(job);
+  job->get_on_complete()(
+      std::vector<torch::Tensor>{torch::tensor({2.0F})}, 7.5);
+
+  EXPECT_TRUE(callback_invoked);
+  EXPECT_EQ(
+      starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
+          runner_.get()),
+      0U);
+
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto batch_metric =
+      find_metric(families, "inference_batch_size", /*labels=*/{});
+  ASSERT_NE(batch_metric, nullptr);
+  EXPECT_EQ(batch_metric->histogram.sample_count, 1);
+
+  const auto logical_batch_metric =
+      find_metric(families, "inference_logical_batch_size", /*labels=*/{});
+  ASSERT_NE(logical_batch_metric, nullptr);
+  EXPECT_EQ(logical_batch_metric->histogram.sample_count, 1);
+
+  const auto completed = find_counter_value(
+      families, "inference_completed_total", {{"model", "metrics_model"}});
+  ASSERT_TRUE(completed.has_value());
+  EXPECT_DOUBLE_EQ(*completed, 1.0);
+
+  const auto* runtime_family =
+      find_family(families, "starpu_task_runtime_ms_by_worker");
+  ASSERT_NE(runtime_family, nullptr);
+  EXPECT_TRUE(std::ranges::any_of(
+      runtime_family->metric, [](const prometheus::ClientMetric& metric) {
+        return metric.histogram.sample_count > 0;
+      }));
+
+  const auto* compute_family =
+      find_family(families, "inference_compute_latency_ms_by_worker");
+  ASSERT_NE(compute_family, nullptr);
+  EXPECT_TRUE(std::ranges::any_of(
+      compute_family->metric, [](const prometheus::ClientMetric& metric) {
+        return metric.histogram.sample_count > 0;
+      }));
+
+  const auto inflight =
+      find_gauge_value(families, "inference_inflight_tasks", {});
+  ASSERT_TRUE(inflight.has_value());
+  EXPECT_DOUBLE_EQ(*inflight, 0.0);
+
+  const auto busy_ratio =
+      find_gauge_value(families, "starpu_worker_busy_ratio", {});
+  ASSERT_TRUE(busy_ratio.has_value());
+  EXPECT_DOUBLE_EQ(*busy_ratio, 0.0);
 }
 
 TEST_F(
@@ -751,6 +943,62 @@ TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionUsesGenericReason)
       find_failure_value(families, "execution", "exception", "demo_model");
   ASSERT_TRUE(value.has_value());
   EXPECT_DOUBLE_EQ(*value, 1.0);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    FinalizeJobAfterExceptionUsesObservabilityMetricsRecorder)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  config_.observability = observability;
+  reset_runner_with_model(
+      make_model_config(
+          "failure_model", {make_tensor_config("input", {1}, c10::kFloat)},
+          {make_tensor_config("output", {1}, c10::kFloat)}),
+      1);
+
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  job->set_model_name("failure_model");
+  const std::logic_error error("logic failure");
+
+  starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
+      runner_.get(), job, error, "logic prefix", job->get_request_id());
+
+  assert_failure_result(probe);
+
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto failures = find_counter_value(
+      families, "inference_failures_total",
+      {{"stage", "execution"},
+       {"reason", "logic_error"},
+       {"model", "failure_model"}});
+  ASSERT_TRUE(failures.has_value());
+  EXPECT_DOUBLE_EQ(*failures, 1.0);
+}
+
+TEST(ResultDispatcher, FinalizeJobAfterExceptionLogsWhenDispatcherMissing)
+{
+  auto probe = starpu_server::make_callback_probe();
+  auto job = probe.job;
+  const std::logic_error error("logic failure");
+
+  CaptureStream capture{std::cerr};
+  starpu_server::ResultDispatcher::finalize_job_after_exception(
+      /*dispatcher=*/nullptr, /*inflight_state=*/nullptr, job, error, "",
+      job->get_request_id());
+
+  EXPECT_TRUE(probe.called);
+  const auto logs = capture.str();
+  const auto expected = expected_log_line(
+      ErrorLevel,
+      "Missing ResultDispatcher in terminal completion path; completion "
+      "counter may be inconsistent");
+  EXPECT_NE(logs.find(expected), std::string::npos);
 }
 
 TEST_F(

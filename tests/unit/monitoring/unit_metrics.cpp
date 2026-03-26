@@ -946,6 +946,23 @@ TEST(Metrics, SetQueueFillAndStarpuGauges)
   EXPECT_DOUBLE_EQ(pending_gauge->Value(), 13.0);
 }
 
+TEST(Metrics, SetQueueCapacityReturnsWhenQueueFillRatioGaugeMissing)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearQueueFillRatioGauge(
+      *metrics);
+
+  set_queue_capacity(8);
+
+  EXPECT_EQ(metrics->queue_capacity_value(), 8U);
+}
+
 TEST(Metrics, CongestionSettersNoOpWhenMetricsMissing)
 {
   shutdown_metrics();
@@ -1393,6 +1410,89 @@ TEST(Metrics, IncrementInferenceCompletedUpdatesCounter)
   EXPECT_DOUBLE_EQ(*count, 3.0);
 }
 
+TEST(Metrics, GlobalModelMetricWrappersRecordExpectedSeries)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  const std::string model_name = "global-model";
+  increment_inference_failure("submit", "timeout", model_name, 4);
+  set_model_loaded(model_name, "gpu:1", true);
+  set_gpu_model_replication_policy(model_name, "shared");
+  set_gpu_model_replicas_total(model_name, 2);
+  set_starpu_cuda_worker_info(5, 1, true);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto families = metrics->registry()->Collect();
+
+  const auto failure_count = FindCounterValue(
+      families, "inference_failures_total",
+      {{"stage", "submit"}, {"reason", "timeout"}, {"model", model_name}});
+  ASSERT_TRUE(failure_count.has_value());
+  EXPECT_DOUBLE_EQ(*failure_count, 4.0);
+
+  const auto model_loaded = FindGaugeValue(
+      families, "models_loaded", {{"model", model_name}, {"device", "gpu:1"}});
+  ASSERT_TRUE(model_loaded.has_value());
+  EXPECT_DOUBLE_EQ(*model_loaded, 1.0);
+
+  const auto replication_policy = FindGaugeValue(
+      families, "gpu_model_replication_policy_info",
+      {{"model", model_name}, {"policy", "shared"}});
+  ASSERT_TRUE(replication_policy.has_value());
+  EXPECT_DOUBLE_EQ(*replication_policy, 1.0);
+
+  const auto replicas = FindGaugeValue(
+      families, "gpu_model_replicas_total", {{"model", model_name}});
+  ASSERT_TRUE(replicas.has_value());
+  EXPECT_DOUBLE_EQ(*replicas, 2.0);
+
+  const auto worker = FindGaugeValue(
+      families, "starpu_cuda_worker_info",
+      {{"device", "1"}, {"worker_id", "5"}});
+  ASSERT_TRUE(worker.has_value());
+  EXPECT_DOUBLE_EQ(*worker, 1.0);
+}
+
+TEST(Metrics, IncrementInferenceFailureWrapperRecordsCounter)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  increment_inference_failure("dispatch", "retry", "wrapper-model", 2);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto value = FindCounterValue(
+      metrics->registry()->Collect(), "inference_failures_total",
+      {{"stage", "dispatch"}, {"reason", "retry"}, {"model", "wrapper-model"}});
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 2.0);
+}
+
+TEST(Metrics, SetModelLoadedWrapperRecordsGauge)
+{
+  ASSERT_TRUE(init_metrics(0));
+  struct MetricsGuard {
+    ~MetricsGuard() { shutdown_metrics(); }
+  } guard;
+
+  set_model_loaded("wrapper-model", "gpu:2", true);
+
+  const auto metrics = get_metrics();
+  ASSERT_NE(metrics, nullptr);
+  const auto value = FindGaugeValue(
+      metrics->registry()->Collect(), "models_loaded",
+      {{"model", "wrapper-model"}, {"device", "gpu:2"}});
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 1.0);
+}
+
 TEST(MetricsRecorder, DefaultRecorderIsDisabledAndNoopsWithoutRegistry)
 {
   const MetricsRecorder recorder;
@@ -1755,6 +1855,82 @@ TEST(MetricsRecorder, CreateMetricsRecorderInitializesAndRecordsMetrics)
   EXPECT_DOUBLE_EQ(*transfer_bytes, 512.0);
 }
 
+TEST(MetricsRecorder, SetQueueCapacityReturnsWhenQueueFillRatioGaugeMissing)
+{
+  auto recorder = create_metrics_recorder(0);
+  ASSERT_NE(recorder, nullptr);
+
+  auto metrics = recorder->registry();
+  ASSERT_NE(metrics, nullptr);
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearQueueFillRatioGauge(
+      *metrics);
+
+  recorder->set_queue_capacity(8);
+
+  EXPECT_EQ(metrics->queue_capacity_value(), 8U);
+}
+
+TEST(MetricsRecorder, SetQueueCapacityResetsRatioWhenQueueSizeGaugeMissing)
+{
+  auto recorder = create_metrics_recorder(0);
+  ASSERT_NE(recorder, nullptr);
+
+  auto metrics = recorder->registry();
+  ASSERT_NE(metrics, nullptr);
+
+  recorder->set_queue_capacity(4);
+  recorder->set_queue_size(2);
+
+  const auto ratio_before = FindGaugeValue(
+      metrics->registry()->Collect(), "inference_queue_fill_ratio", {});
+  ASSERT_TRUE(ratio_before.has_value());
+  EXPECT_DOUBLE_EQ(*ratio_before, 0.5);
+
+  starpu_server::testing::MetricsRegistryTestAccessor::ClearQueueSizeGauge(
+      *metrics);
+  recorder->set_queue_capacity(8);
+
+  const auto ratio_after = FindGaugeValue(
+      metrics->registry()->Collect(), "inference_queue_fill_ratio", {});
+  ASSERT_TRUE(ratio_after.has_value());
+  EXPECT_DOUBLE_EQ(*ratio_after, 0.0);
+}
+
+TEST(MetricsRecorder, IncrementInferenceFailureRecordsCounter)
+{
+  auto recorder = create_metrics_recorder(0);
+  ASSERT_NE(recorder, nullptr);
+
+  recorder->increment_inference_failure(
+      "dispatch", "retry", "recorder-model", 2);
+
+  const auto metrics = recorder->registry();
+  ASSERT_NE(metrics, nullptr);
+  const auto value = FindCounterValue(
+      metrics->registry()->Collect(), "inference_failures_total",
+      {{"stage", "dispatch"},
+       {"reason", "retry"},
+       {"model", "recorder-model"}});
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 2.0);
+}
+
+TEST(MetricsRecorder, SetModelLoadedRecordsGauge)
+{
+  auto recorder = create_metrics_recorder(0);
+  ASSERT_NE(recorder, nullptr);
+
+  recorder->set_model_loaded("recorder-model", "gpu:2", true);
+
+  const auto metrics = recorder->registry();
+  ASSERT_NE(metrics, nullptr);
+  const auto value = FindGaugeValue(
+      metrics->registry()->Collect(), "models_loaded",
+      {{"model", "recorder-model"}, {"device", "gpu:2"}});
+  ASSERT_TRUE(value.has_value());
+  EXPECT_DOUBLE_EQ(*value, 1.0);
+}
+
 TEST(MetricsRecorder, CreateMetricsRecorderReturnsNullWhenMetricsRegistryThrows)
 {
   struct FailureGuard {
@@ -1905,6 +2081,101 @@ TEST(MetricsRegistry, RecordsGpuReplicationStartupMetrics)
       {{"device", "0"}, {"worker_id", "9"}});
   ASSERT_TRUE(worker_9.has_value());
   EXPECT_DOUBLE_EQ(*worker_9, 1.0);
+}
+
+TEST(MetricsRegistry, GpuReplicationPolicySkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearGpuModelReplicationPolicyInfoFamily(metrics);
+  metrics.set_gpu_model_replication_policy_flag(
+      MetricsRegistry::ModelLabel{"model-x"}, "per_worker");
+
+  const auto value = FindGaugeValue(
+      metrics.registry()->Collect(), "gpu_model_replication_policy_info",
+      {{"model", "model-x"}, {"policy", "per_worker"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, GpuReplicasTotalSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearGpuModelReplicasTotalFamily(metrics);
+  metrics.set_gpu_model_replicas_total_gauge(
+      MetricsRegistry::ModelLabel{"model-x"}, 3);
+
+  const auto value = FindGaugeValue(
+      metrics.registry()->Collect(), "gpu_model_replicas_total",
+      {{"model", "model-x"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, StarpuCudaWorkerInfoSkipsWhenFamilyMissing)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  starpu_server::testing::MetricsRegistryTestAccessor::
+      ClearStarpuCudaWorkerInfoFamily(metrics);
+  metrics.set_starpu_cuda_worker_info_gauge(7, 0, true);
+
+  const auto value = FindGaugeValue(
+      metrics.registry()->Collect(), "starpu_cuda_worker_info",
+      {{"device", "0"}, {"worker_id", "7"}});
+  EXPECT_FALSE(value.has_value());
+}
+
+TEST(MetricsRegistry, WorkerMetricOverflowUsesReservedBucket)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  constexpr std::size_t kMaxLabelSeriesForTest = 10000;
+  constexpr std::size_t kOverflowSamples = 2;
+  for (std::size_t i = 0; i < kMaxLabelSeriesForTest + kOverflowSamples; ++i) {
+    metrics.set_worker_inflight_gauge(static_cast<int>(i), 0, "cpu", i + 1);
+  }
+
+  const auto overflow_value = FindGaugeValue(
+      metrics.registry()->Collect(), "starpu_worker_inflight_tasks",
+      {{"worker_id", "__overflow__"},
+       {"device", "__overflow__"},
+       {"worker_type", "__overflow__"}});
+  ASSERT_TRUE(overflow_value.has_value());
+  EXPECT_DOUBLE_EQ(
+      *overflow_value,
+      static_cast<double>(kMaxLabelSeriesForTest + kOverflowSamples));
+}
+
+TEST(MetricsRegistry, IoMetricOverflowUsesReservedBucket)
+{
+  MetricsRegistry metrics(
+      0, [] { return std::vector<MetricsRegistry::GpuSample>{}; },
+      [] { return std::optional<double>{}; }, false);
+
+  constexpr std::size_t kMaxLabelSeriesForTest = 10000;
+  constexpr std::size_t kOverflowSamples = 2;
+  for (std::size_t i = 0; i < kMaxLabelSeriesForTest + kOverflowSamples; ++i) {
+    metrics.increment_transfer_bytes("h2d", static_cast<int>(i), 0, "cpu", 1);
+  }
+
+  const auto overflow_value = FindCounterValue(
+      metrics.registry()->Collect(), "inference_transfer_bytes_total",
+      {{"direction", "__overflow__"},
+       {"worker_id", "__overflow__"},
+       {"device", "__overflow__"},
+       {"worker_type", "__overflow__"}});
+  ASSERT_TRUE(overflow_value.has_value());
+  EXPECT_DOUBLE_EQ(*overflow_value, static_cast<double>(kOverflowSamples));
 }
 
 TEST(MetricsRegistry, IncrementModelLoadFailureCounterSkipsWhenFamilyMissing)

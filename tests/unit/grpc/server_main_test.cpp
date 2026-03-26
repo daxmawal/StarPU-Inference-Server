@@ -2974,6 +2974,38 @@ TEST(ServerMainShutdownRuntime, RunShutdownSequenceRejectsIncompleteContext)
       std::invalid_argument);
 }
 
+TEST(
+    ServerMainShutdownRuntime,
+    RunShutdownSequenceShutsDownInjectedCongestionMonitor)
+{
+  starpu_server::RuntimeConfig opts;
+  ServerContext ctx;
+  ctx.stop_requested.store(true, std::memory_order_relaxed);
+  mark_server_stopped(ctx);
+
+  starpu_server::InferenceQueue queue(4);
+  std::atomic<std::size_t> completed_jobs{0};
+  std::condition_variable all_done_cv;
+  std::mutex all_done_mutex;
+  ThreadExceptionState thread_exception_state;
+  const ShutdownRuntimeContext runtime_context{
+      .thread_exception_state = &thread_exception_state,
+      .completed_jobs = &completed_jobs,
+      .all_done_cv = &all_done_cv,
+      .all_done_mutex = &all_done_mutex,
+  };
+
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->congestion_monitor =
+      std::make_shared<starpu_server::congestion::Monitor>(nullptr);
+
+  EXPECT_NO_THROW(
+      run_shutdown_sequence(opts, ctx, queue, runtime_context, observability));
+  EXPECT_EQ(observability->congestion_monitor, nullptr);
+  EXPECT_TRUE(queue.is_shutdown());
+  EXPECT_FALSE(queue.is_accepting());
+}
+
 static_assert(std::is_nothrow_destructible_v<RuntimeCleanupGuard>);
 static_assert(std::is_nothrow_invocable_v<
               decltype(&RuntimeCleanupGuard::Dismiss), RuntimeCleanupGuard&>);
