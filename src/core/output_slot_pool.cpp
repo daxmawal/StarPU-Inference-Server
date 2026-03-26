@@ -32,17 +32,7 @@ normalize_output_slot_pool_dependencies(
   if (!dependencies.host_allocator) {
     dependencies.host_allocator = [](void** ptr, size_t alignment,
                                      size_t size) {
-      if (ptr == nullptr) {
-        return -1;
-      }
-      try {
-        *ptr = ::operator new(size, std::align_val_t{alignment});
-        return 0;
-      }
-      catch (const std::bad_alloc&) {
-        *ptr = nullptr;
-        return -1;
-      }
+      return detail::try_allocate_aligned_host_buffer(ptr, alignment, size);
     };
   }
   if (!dependencies.cuda_host_alloc) {

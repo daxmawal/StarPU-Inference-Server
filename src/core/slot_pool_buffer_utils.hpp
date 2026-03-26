@@ -4,10 +4,12 @@
 #include <starpu.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <utility>
 
@@ -31,6 +33,53 @@ checked_size_product(
         per_sample_value, batch_size));
   }
   return per_sample_value * batch_size;
+}
+
+[[nodiscard]] constexpr auto
+is_safe_aligned_allocation_request(
+    std::size_t alignment, std::size_t bytes) noexcept -> bool
+{
+  if (alignment == 0 || !std::has_single_bit(alignment)) {
+    return false;
+  }
+
+  constexpr std::size_t kMaxSize = std::numeric_limits<std::size_t>::max();
+  // Leave room for worst-case alignment rounding before calling aligned new.
+  return bytes <= (kMaxSize - (alignment - 1));
+}
+
+inline auto
+try_allocate_aligned_host_buffer(
+    void** ptr, std::size_t alignment, std::size_t bytes) -> int
+{
+  if (ptr == nullptr) {
+    return -1;
+  }
+  if (!is_safe_aligned_allocation_request(alignment, bytes)) {
+    *ptr = nullptr;
+    return -1;
+  }
+
+  try {
+    *ptr = ::operator new(bytes, std::align_val_t{alignment});
+    return 0;
+  }
+  catch (const std::bad_alloc&) {
+    *ptr = nullptr;
+    return -1;
+  }
+}
+
+inline auto
+allocate_aligned_host_buffer_or_throw(std::size_t alignment, std::size_t bytes)
+    -> std::byte*
+{
+  if (!is_safe_aligned_allocation_request(alignment, bytes)) {
+    throw std::bad_alloc();
+  }
+
+  return static_cast<std::byte*>(
+      ::operator new(bytes, std::align_val_t{alignment}));
 }
 
 template <typename TryCudaPinnedAllocFn, typename FallbackAllocFn>

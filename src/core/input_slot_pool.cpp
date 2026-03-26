@@ -54,7 +54,9 @@ resolve_input_slot_pool_dependencies_for_construction()
 #endif  // SONAR_IGNORE_END
 }
 
-constexpr auto kHostBufferAlignment = std::align_val_t{64};
+constexpr std::size_t kHostBufferAlignmentBytes = 64;
+constexpr auto kHostBufferAlignment =
+    std::align_val_t{kHostBufferAlignmentBytes};
 
 struct ComputedInputSizes {
   size_t total_bytes = 0;
@@ -87,8 +89,8 @@ alloc_host_buffer(size_t bytes, bool use_pinned, bool& cuda_pinned_out)
         return nullptr;
       },
       [](size_t requested_bytes) {
-        return static_cast<std::byte*>(
-            ::operator new(requested_bytes, kHostBufferAlignment));
+        return detail::allocate_aligned_host_buffer_or_throw(
+            kHostBufferAlignmentBytes, requested_bytes);
       });
 }
 
