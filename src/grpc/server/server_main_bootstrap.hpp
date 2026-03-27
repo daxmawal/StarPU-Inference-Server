@@ -116,7 +116,9 @@ STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
 auto
 prepare_models_and_warmup(
     const starpu_server::RuntimeConfig& opts,
-    starpu_server::StarPUSetup& starpu)
+    starpu_server::StarPUSetup& starpu,
+    const std::shared_ptr<starpu_server::RuntimeObservability>& observability =
+        {})
     -> std::tuple<
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>
@@ -129,7 +131,9 @@ prepare_models_and_warmup(
       return override_fn(opts);
     }
 #endif  // SONAR_IGNORE_STOP
-    return starpu_server::load_model_and_reference_output(opts);
+    return starpu_server::load_model_and_reference_output(
+        opts,
+        observability != nullptr ? observability->metrics.get() : nullptr);
   }();
   if (!models) {
     throw starpu_server::ModelLoadingException(
@@ -142,11 +146,11 @@ prepare_models_and_warmup(
     override_fn(opts, starpu, model_cpu, models_gpu, reference_outputs);
   } else {
     starpu_server::run_warmup(
-        opts, starpu, model_cpu, models_gpu, reference_outputs);
+        opts, starpu, model_cpu, models_gpu, reference_outputs, observability);
   }
 #else
   starpu_server::run_warmup(
-      opts, starpu, model_cpu, models_gpu, reference_outputs);
+      opts, starpu, model_cpu, models_gpu, reference_outputs, observability);
 #endif  // SONAR_IGNORE_STOP
   return {model_cpu, models_gpu, reference_outputs};
 }
@@ -274,10 +278,13 @@ make_grpc_thread(
     ThreadExceptionState& thread_exception_state,
     const starpu_server::RuntimeConfig& opts,
     std::vector<torch::Tensor>& reference_outputs,
-    const ExpectedModelMetadata& expected_metadata) -> std::jthread
+    const ExpectedModelMetadata& expected_metadata,
+    const std::shared_ptr<starpu_server::RuntimeObservability>& observability)
+    -> std::jthread
 {
   return std::jthread([&server_ctx, &queue, &thread_exception_state, &opts,
-                       &reference_outputs, &expected_metadata]() {
+                       &reference_outputs, &expected_metadata,
+                       observability]() {
     run_thread_entry_with_exception_capture(
         "grpc-server", thread_exception_state, server_ctx, &queue,
         [&]() {
@@ -298,7 +305,7 @@ make_grpc_thread(
               expected_metadata.input_names, expected_metadata.output_names);
           starpu_server::RunGrpcServer(
               queue, reference_outputs, model_spec, server_options, grpc_server,
-              server_hooks);
+              server_hooks, observability);
         },
         [&server_ctx]() { mark_server_stopped(server_ctx); });
   });
@@ -349,7 +356,8 @@ start_runtime_threads(
     std::vector<torch::Tensor>& reference_outputs,
     const ExpectedModelMetadata& expected_model_metadata,
     LaunchRuntimeState& runtime_state, starpu_server::StarPUTaskRunner& worker,
-    RuntimeThreads& runtime_threads)
+    RuntimeThreads& runtime_threads,
+    const std::shared_ptr<starpu_server::RuntimeObservability>& observability)
 {
   const bool use_blocking_signal_wait = runtime_state.signal_pipe.active();
   runtime_threads.notifier = make_signal_notifier_thread(
@@ -359,7 +367,7 @@ start_runtime_threads(
       server_ctx, queue, runtime_state.thread_exception_state, worker);
   runtime_threads.grpc = make_grpc_thread(
       server_ctx, queue, runtime_state.thread_exception_state, opts,
-      reference_outputs, expected_model_metadata);
+      reference_outputs, expected_model_metadata, observability);
 }
 
 }  // namespace server_main_bootstrap_detail
@@ -370,20 +378,31 @@ launch_threads(
     starpu_server::StarPUSetup& starpu, torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
     std::vector<torch::Tensor>& reference_outputs,
-    starpu_server::InferenceQueue& queue)
+    starpu_server::InferenceQueue& queue,
+    const std::shared_ptr<starpu_server::RuntimeObservability>& observability =
+        {})
 {
   auto& server_ctx = server_context();
   LaunchRuntimeState runtime_state;
-  setup_runtime_state(opts, server_ctx, queue);
+  setup_runtime_state(opts, server_ctx, queue, observability);
 
   starpu_server::StarPUTaskRunnerConfig config{};
   config.queue = &queue;
   config.model_cpu = &model_cpu;
   config.models_gpu = &models_gpu;
+  std::vector<starpu_server::detail::GpuReplicaAssignment>
+      gpu_replica_assignments;
+  if (opts.devices.gpu_model_replication ==
+      starpu_server::GpuModelReplicationPolicy::PerWorker) {
+    gpu_replica_assignments =
+        starpu_server::detail::build_gpu_replica_assignments(opts);
+  }
+  config.gpu_replica_assignments = &gpu_replica_assignments;
   config.starpu = &starpu;
   config.opts = &opts;
   config.completed_jobs = &runtime_state.completed_jobs;
   config.all_done_cv = &runtime_state.all_done_cv;
+  config.observability = observability;
   starpu_server::StarPUTaskRunner worker(config);
   auto expected_model_metadata = collect_expected_model_metadata(opts);
 
@@ -392,11 +411,12 @@ launch_threads(
       &runtime_state.signal_pipe};
   start_runtime_threads(
       opts, server_ctx, queue, reference_outputs, expected_model_metadata,
-      runtime_state, worker, runtime_threads);
+      runtime_state, worker, runtime_threads, observability);
   const ShutdownRuntimeContext shutdown_context{
       .thread_exception_state = &runtime_state.thread_exception_state,
       .completed_jobs = &runtime_state.completed_jobs,
       .all_done_cv = &runtime_state.all_done_cv,
       .all_done_mutex = &runtime_state.all_done_mutex};
-  run_shutdown_sequence(opts, server_ctx, queue, shutdown_context);
+  run_shutdown_sequence(
+      opts, server_ctx, queue, shutdown_context, observability);
 }

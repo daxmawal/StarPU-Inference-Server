@@ -27,7 +27,7 @@ TEST_F(
     StarPUTaskRunnerFixture, HandleJobExceptionCallbackLogsStdExceptionMessage)
 {
   auto job = make_job(7, {});
-  job->set_on_complete([](const auto&, double) {
+  job->completion().set_on_complete([](const auto&, double) {
     throw std::runtime_error("callback failure");
   });
 
@@ -47,7 +47,7 @@ TEST_F(
     HandleJobExceptionCallbackLogsUnknownNonStdExceptionMessage)
 {
   auto job = make_job(8, {});
-  job->set_on_complete([](const auto&, double) { throw 42; });
+  job->completion().set_on_complete([](const auto&, double) { throw 42; });
 
   starpu_server::CaptureStream capture{std::cerr};
   EXPECT_NO_THROW(starpu_server::StarPUTaskRunner::handle_job_exception(
@@ -65,11 +65,12 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesSubmissionException)
   models_gpu.resize(starpu_server::InferLimits::MaxModelsGPU + 1);
   auto probe = starpu_server::make_callback_probe();
   auto job = make_job(1, {torch::tensor({1})});
-  job->set_on_complete([&probe](const auto& results, double latency) {
-    probe.called = true;
-    probe.results = results;
-    probe.latency = latency;
-  });
+  job->completion().set_on_complete(
+      [&probe](const auto& results, double latency) {
+        probe.called = true;
+        probe.results = results;
+        probe.latency = latency;
+      });
   probe.job = job;
   ASSERT_TRUE(queue_.push(job));
   queue_.shutdown();
@@ -88,11 +89,12 @@ TEST_F(StarPUTaskRunnerFixture, RunHandlesUnexpectedStdException)
   auto probe = starpu_server::make_callback_probe();
   auto job = make_job(
       9, {torch::ones({3}), torch::ones({3})}, {at::kFloat, at::kFloat});
-  job->set_on_complete([&probe](const auto& results, double latency) {
-    probe.called = true;
-    probe.results = results;
-    probe.latency = latency;
-  });
+  job->completion().set_on_complete(
+      [&probe](const auto& results, double latency) {
+        probe.called = true;
+        probe.results = results;
+        probe.latency = latency;
+      });
   probe.job = job;
 
   ASSERT_TRUE(queue_.push(job));

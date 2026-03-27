@@ -40,6 +40,8 @@ struct TransparentStringHash {
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+using ConfigLoaderPostParseHook = std::function<void(RuntimeConfig&)>;
+
 auto
 config_loader_post_parse_hook() -> ConfigLoaderPostParseHook&
 {
@@ -125,6 +127,7 @@ validate_allowed_keys(const YAML::Node& root)
           "starpu_env",
           "device_ids",
           "group_cpu_by_numa",
+          "gpu_model_replication",
           "inputs",
           "outputs",
           "batch_coalesce_timeout_ms",

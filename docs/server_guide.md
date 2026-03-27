@@ -107,6 +107,7 @@ Optional keys unlock batching, logging, and runtime controls:
 |`use_cpu`|Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution.|`true`|
 |`group_cpu_by_numa`|Spawn one StarPU CPU worker per NUMA node instead of per core.|`false`|
 |`use_cuda`|Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`.|`false`|
+|`gpu_model_replication`|GPU model replica policy: `per_device` keeps one model instance per CUDA device, `per_worker` creates one instance per StarPU CUDA worker on each configured device.|`per_device`|
 |`address`|gRPC listen address (host:port).|`127.0.0.1:50051`|
 |`metrics_port`|Port for the Prometheus metrics endpoint.|`9090`|
 |`max_message_bytes`|Maximum gRPC message size (bytes) for request/response payloads. If omitted, computed from model I/O and `max_batch_size` (minimum 32 MiB).|`auto (>= 32 MiB)`|
@@ -119,6 +120,22 @@ Behavior of `use_cpu` and `use_cuda`:
 - `use_cuda: false` or omitted → pipeline runs on CPU workers only (unless the CLI overrides the setting).
 - `use_cpu: false`, `use_cuda: [{ ... }]` → pipeline runs on GPU workers only.
 - Setting `group_cpu_by_numa: true` keeps CPU workers enabled but collapses them to one worker per NUMA node so that each inference shares the full socket instead of a single core.
+
+`gpu_model_replication: per_device` is the default and should be the normal
+choice for LibTorch inference when the model is used read-only, for example
+after `eval()` with no mutation of internal state during `forward()`. In that
+case, multiple CUDA streams on the same GPU can safely reuse the same model
+instance.
+
+Use `gpu_model_replication: per_worker` only when `forward()` can mutate model
+state and access must be isolated between StarPU CUDA workers, for example when
+writing shared buffers, performing in-place updates on shared state, or running
+in training mode. This policy multiplies TorchScript model memory usage on that
+GPU by the number of workers.
+
+Not replicating per stream does not guarantee better performance on its own:
+observed throughput still depends on stream synchronization, memory bandwidth,
+and CUDA kernel scheduling.
 
 When the queue reaches `max_queue_size`, the server refuses new requests
 immediately and responds with gRPC `RESOURCE_EXHAUSTED` instead of letting the
@@ -243,6 +260,7 @@ use_cpu: true
 group_cpu_by_numa: true
 use_cuda:
   - { device_ids: [0] }
+gpu_model_replication: per_device
 pool_size: 12
 ```
 

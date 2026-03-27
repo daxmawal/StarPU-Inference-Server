@@ -23,6 +23,7 @@
 #include "exceptions.hpp"
 #include "inference_params.hpp"
 #include "monitoring/metrics.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "output_slot_pool.hpp"
 #include "starpu_setup.hpp"
 #include "utils/device_type.hpp"
@@ -91,8 +92,8 @@ mark_callback_failure(
     return;
   }
 
-  if (!ctx->job->failure_info().has_value()) {
-    const std::string model_name{ctx->job->model_name()};
+  if (!ctx->job->completion().failure_info().has_value()) {
+    const std::string model_name{ctx->job->completion().model_name()};
     increment_inference_failure("callback", failure.reason, model_name);
 
     InferenceJob::FailureInfo failure_info{};
@@ -100,7 +101,7 @@ mark_callback_failure(
     failure_info.reason = std::string(failure.reason);
     failure_info.message = std::string(failure.message);
     failure_info.metrics_reported = true;
-    ctx->job->set_failure_info(std::move(failure_info));
+    ctx->job->completion().set_failure_info(std::move(failure_info));
   }
 
   // Force downstream async completion to enter the failure path.
@@ -112,7 +113,7 @@ resolve_terminal_status(const InferenceCallbackContext* ctx)
     -> CallbackTerminalStatus
 {
   if (ctx != nullptr && ctx->job != nullptr &&
-      ctx->job->failure_info().has_value()) {
+      ctx->job->completion().failure_info().has_value()) {
     return CallbackTerminalStatus::kFailure;
   }
   return CallbackTerminalStatus::kSuccess;
@@ -129,13 +130,13 @@ finalize_or_fail_once(
   }
 
   if (status == CallbackTerminalStatus::kFailure && ctx->job != nullptr &&
-      !ctx->job->failure_info().has_value()) {
+      !ctx->job->completion().failure_info().has_value()) {
     InferenceJob::FailureInfo failure_info{};
     failure_info.stage = "callback";
     failure_info.reason = "terminal_failure";
     failure_info.message =
         "Inference callback finalized after an unrecoverable error.";
-    ctx->job->set_failure_info(std::move(failure_info));
+    ctx->job->completion().set_failure_info(std::move(failure_info));
     ctx->job->set_output_tensors({});
   }
 
@@ -291,11 +292,13 @@ InferenceTask::InferenceTask(
     StarPUSetup* starpu, std::shared_ptr<InferenceJob> job,
     torch::jit::script::Module* model_cpu,
     std::vector<torch::jit::script::Module>* models_gpu,
-    const RuntimeConfig* opts,
-    const InferenceTaskDependencies& dependencies) noexcept
+    const RuntimeConfig* opts, const InferenceTaskDependencies& dependencies,
+    const std::vector<detail::GpuReplicaAssignment>*
+        gpu_replica_assignments) noexcept
     : starpu_(starpu), job_(std::move(job)), model_cpu_(model_cpu),
       models_gpu_(models_gpu), opts_(opts),
-      dependencies_(std::make_shared<InferenceTaskDependencies>(dependencies))
+      dependencies_(std::make_shared<InferenceTaskDependencies>(dependencies)),
+      gpu_replica_assignments_(gpu_replica_assignments)
 {
 }
 
@@ -416,7 +419,7 @@ InferenceTask::check_limits(size_t num_inputs) const
 
   if (models_gpu_->size() > opts.limits.max_models_gpu) {
     throw TooManyGpuModelsException(
-        "Too many GPU models for the current configuration.");
+        "Too many GPU model replicas for the current configuration.");
   }
 }
 
@@ -451,8 +454,30 @@ InferenceTask::fill_model_pointers(
   params->models.model_cpu = model_cpu_;
   params->models.models_gpu.clear();
   params->models.device_ids.clear();
+  params->models.worker_ids.clear();
 
   if (opts.devices.ids.empty() || models_gpu_->empty()) {
+    return;
+  }
+
+  if (opts.devices.gpu_model_replication ==
+      GpuModelReplicationPolicy::PerWorker) {
+    std::vector<detail::GpuReplicaAssignment> assignment_storage;
+    const auto* assignments = gpu_replica_assignments_;
+    if (assignments == nullptr) {
+      assignment_storage = detail::build_gpu_replica_assignments(opts);
+      assignments = &assignment_storage;
+    }
+
+    const size_t replicas = std::min(models_gpu_->size(), assignments->size());
+    params->models.device_ids.reserve(replicas);
+    params->models.worker_ids.reserve(replicas);
+    params->models.models_gpu.reserve(replicas);
+    for (size_t i = 0; i < replicas; ++i) {
+      params->models.device_ids.push_back(assignments->at(i).device_id);
+      params->models.worker_ids.push_back(assignments->at(i).worker_id);
+      params->models.models_gpu.push_back(&(models_gpu_->at(i)));
+    }
     return;
   }
 
@@ -559,7 +584,7 @@ InferenceTask::fill_input_layout(
     }
 
     if (!dims.empty()) {
-      if (const auto effective = job_->effective_batch_size();
+      if (const auto effective = job_->batch().effective_batch_size();
           effective.has_value()) {
         dims.front() = std::max<int64_t>(1, *effective);
       } else if (used_config_dims) {
@@ -925,12 +950,23 @@ copy_outputs_from_pool(InferenceCallbackContext* ctx)
       std::chrono::duration<double, std::milli>(copy_end - copy_start).count();
   const auto worker_type_label =
       std::string_view(to_string(ctx->job->get_executed_on()));
-  observe_io_copy_latency(
-      "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-      worker_type_label, copy_ms);
-  increment_transfer_bytes(
-      "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-      worker_type_label, total_bytes);
+  if (ctx->dependencies != nullptr &&
+      ctx->dependencies->observability != nullptr &&
+      ctx->dependencies->observability->metrics != nullptr) {
+    ctx->dependencies->observability->metrics->observe_io_copy_latency(
+        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+        worker_type_label, copy_ms);
+    ctx->dependencies->observability->metrics->increment_transfer_bytes(
+        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+        worker_type_label, total_bytes);
+  } else {
+    observe_io_copy_latency(
+        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+        worker_type_label, copy_ms);
+    increment_transfer_bytes(
+        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
+        worker_type_label, total_bytes);
+  }
 }
 }  // namespace inference_task_detail
 
@@ -1009,7 +1045,7 @@ InferenceTask::record_and_run_completion_callback(
     timing.callback_end_time = end_time;
   });
 
-  if (auto callback = ctx->job->take_on_complete(); callback) {
+  if (auto callback = ctx->job->completion().take_on_complete(); callback) {
     run_with_logged_exceptions(
         [ctx, callback = std::move(callback), latency_ms]() mutable {
           callback(ctx->job->get_output_tensors(), latency_ms);

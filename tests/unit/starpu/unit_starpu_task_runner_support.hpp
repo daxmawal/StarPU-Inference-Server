@@ -285,6 +285,23 @@ class StarPUTaskRunnerTestAdapter {
     return runner->validate_batch_and_copy_inputs(job, pools);
   }
 
+  static auto validate_batch_and_copy_inputs_without_input_pool(
+      StarPUTaskRunner* runner,
+      const std::shared_ptr<InferenceJob>& job) -> int64_t
+  {
+    StarPUTaskRunner::PoolResources pools{};
+    return runner->validate_batch_and_copy_inputs(job, pools);
+  }
+
+  static auto acquire_pools(StarPUTaskRunner* runner)
+      -> StarPUTaskRunner::PoolResources
+  {
+    if (runner == nullptr) {
+      return {};
+    }
+    return runner->acquire_pools();
+  }
+
   static auto validate_batch_and_copy_inputs_with_pools(
       StarPUTaskRunner* runner, const std::shared_ptr<InferenceJob>& job,
       int64_t batch, const StarPUTaskRunner::PoolResources& pools) -> int64_t

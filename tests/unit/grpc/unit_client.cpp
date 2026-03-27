@@ -17,6 +17,7 @@
 #include "grpc/client/client_args.hpp"
 #include "grpc/client/inference_client.hpp"
 #include "grpc/server/inference_service.hpp"
+#include "support/grpc/client/inference_client_test_api.hpp"
 #include "test_helpers.hpp"
 
 TEST(ClientArgs, ParsesValidArguments)
@@ -454,6 +455,88 @@ TEST(InferenceClientSummaryJson, WritesExpectedFields)
       json.find("\"server_queue\": {\"mean_ms\": 0.7"), std::string::npos);
 
   std::filesystem::remove(summary_path, remove_ec);
+}
+
+TEST(InferenceClientSummaryJson, WritesNullLatencyFieldsWhenNoResponsesRecorded)
+{
+  auto channel = grpc::CreateChannel(
+      "localhost:59993", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  const auto summary_path =
+      std::filesystem::temp_directory_path() /
+      std::format(
+          "starpu_client_summary_nulls_{}.json",
+          std::chrono::steady_clock::now().time_since_epoch().count());
+  std::error_code remove_ec;
+  std::filesystem::remove(summary_path, remove_ec);
+
+  ASSERT_TRUE(client.write_summary_json(summary_path));
+
+  std::ifstream stream(summary_path);
+  ASSERT_TRUE(stream.is_open());
+  const std::string json{
+      std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+
+  EXPECT_NE(json.find("\"roundtrip\": null"), std::string::npos);
+  EXPECT_NE(json.find("\"server_overall\": null"), std::string::npos);
+  EXPECT_NE(json.find("\"client_overhead\": null"), std::string::npos);
+
+  std::filesystem::remove(summary_path, remove_ec);
+}
+
+TEST(InferenceClientSummaryJson, ReturnsFalseWhenCreatingParentDirectoryFails)
+{
+  auto channel = grpc::CreateChannel(
+      "localhost:59992", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  const auto blocker_path =
+      std::filesystem::temp_directory_path() /
+      std::format(
+          "starpu_client_summary_blocker_{}",
+          std::chrono::steady_clock::now().time_since_epoch().count());
+  {
+    std::ofstream blocker(blocker_path);
+    ASSERT_TRUE(blocker.is_open());
+    blocker << "not a directory";
+  }
+
+  const auto summary_path = blocker_path / "nested" / "summary.json";
+  testing::internal::CaptureStderr();
+  EXPECT_FALSE(client.write_summary_json(summary_path));
+  const std::string err = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(err.find("Failed to create summary directory"), std::string::npos);
+
+  std::error_code remove_ec;
+  std::filesystem::remove(blocker_path, remove_ec);
+}
+
+TEST(InferenceClientSummaryJson, ReturnsFalseWhenSummaryPathCannotBeOpened)
+{
+  auto channel = grpc::CreateChannel(
+      "localhost:59991", grpc::InsecureChannelCredentials());
+  starpu_server::InferenceClient client(
+      channel, starpu_server::VerbosityLevel::Silent);
+
+  const auto summary_dir =
+      std::filesystem::temp_directory_path() /
+      std::format(
+          "starpu_client_summary_dir_{}",
+          std::chrono::steady_clock::now().time_since_epoch().count());
+  std::filesystem::create_directories(summary_dir);
+
+  testing::internal::CaptureStderr();
+  EXPECT_FALSE(client.write_summary_json(summary_dir));
+  const std::string err = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(err.find("Failed to open summary JSON file"), std::string::npos);
+
+  std::error_code remove_ec;
+  std::filesystem::remove_all(summary_dir, remove_ec);
 }
 
 TEST(InferenceClient, RejectsMismatchedTensorCount)

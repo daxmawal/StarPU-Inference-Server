@@ -18,11 +18,12 @@ make_job_with_callback(
     double& latency) -> std::shared_ptr<InferenceJob>
 {
   auto job = std::make_shared<InferenceJob>();
-  job->set_on_complete([&](const std::vector<torch::Tensor>& res, double lat) {
-    called = true;
-    results = res;
-    latency = lat;
-  });
+  job->completion().set_on_complete(
+      [&](const std::vector<torch::Tensor>& res, double lat) {
+        called = true;
+        results = res;
+        latency = lat;
+      });
   return job;
 }
 

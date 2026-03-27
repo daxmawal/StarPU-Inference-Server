@@ -115,7 +115,7 @@ create_job(
   job->set_output_tensors(outputs);
 
   job->set_request_id(request_id);
-  job->set_model_name(std::move(model_name));
+  job->completion().set_model_name(std::move(model_name));
 
   auto start_time = start_time_arg;
   if (start_time == MonotonicClock::time_point{}) {

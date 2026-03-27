@@ -229,7 +229,8 @@ drain_shutdown_jobs(
 void
 setup_runtime_state(
     const starpu_server::RuntimeConfig& opts, ServerContext& server_ctx,
-    starpu_server::InferenceQueue& queue)
+    starpu_server::InferenceQueue& queue,
+    const std::shared_ptr<starpu_server::RuntimeObservability>& observability)
 {
   queue.reset_counters();
   server_ctx.stop_requested.store(false, std::memory_order_relaxed);
@@ -237,14 +238,25 @@ setup_runtime_state(
   reset_server_state(server_ctx);
   std::signal(SIGINT, signal_handler);
   std::signal(SIGTERM, signal_handler);
-  starpu_server::congestion::start(&queue, make_congestion_config(opts));
+  if (observability != nullptr) {
+    observability->congestion_monitor =
+        std::make_shared<starpu_server::congestion::Monitor>(
+            &queue, make_congestion_config(opts), observability->metrics,
+            observability->tracer);
+    if (observability->congestion_monitor != nullptr) {
+      observability->congestion_monitor->start();
+    }
+  } else {
+    starpu_server::congestion::start(&queue, make_congestion_config(opts));
+  }
 }
 
 void
 run_shutdown_sequence(
     const starpu_server::RuntimeConfig& opts, ServerContext& server_ctx,
     starpu_server::InferenceQueue& queue,
-    const ShutdownRuntimeContext& runtime_context)
+    const ShutdownRuntimeContext& runtime_context,
+    const std::shared_ptr<starpu_server::RuntimeObservability>& observability)
 {
   if (runtime_context.thread_exception_state == nullptr ||
       runtime_context.completed_jobs == nullptr ||
@@ -266,7 +278,13 @@ run_shutdown_sequence(
       queue, total_jobs, *runtime_context.completed_jobs,
       completed_before_drain, *runtime_context.all_done_cv,
       *runtime_context.all_done_mutex);
-  starpu_server::congestion::shutdown();
+  if (observability != nullptr &&
+      observability->congestion_monitor != nullptr) {
+    observability->congestion_monitor->shutdown();
+    observability->congestion_monitor.reset();
+  } else {
+    starpu_server::congestion::shutdown();
+  }
   server_ctx.stop_cv.notify_one();
   rethrow_thread_exception_if_any(*runtime_context.thread_exception_state);
 }

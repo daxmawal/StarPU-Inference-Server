@@ -1,3 +1,8 @@
+#include "inference_service_internal.hpp"
+
+namespace starpu_server {
+
+// Readiness/metadata/config/statistics RPC handlers.
 inline namespace inference_service_detail {
 template <typename AddEntry, typename SetDataType, typename AppendDim>
 auto
@@ -60,34 +65,6 @@ append_output_schema(
   return Status::OK;
 }
 }  // namespace inference_service_detail
-
-void
-InferenceServiceImpl::validate_schema_or_throw() const
-{
-  for (std::size_t i = 0; i < expected_input_types_.size(); ++i) {
-    const at::ScalarType dtype = expected_input_types_[i];
-    if (scalar_type_to_model_dtype(dtype) ==
-        inference::DataType::TYPE_INVALID) {
-      throw std::invalid_argument(std::format(
-          "Invalid schema: unsupported input datatype at index {}", i));
-    }
-    (void)scalar_type_to_datatype(dtype);
-  }
-
-  if (reference_outputs_ == nullptr) {
-    return;
-  }
-
-  for (std::size_t i = 0; i < reference_outputs_->size(); ++i) {
-    const at::ScalarType dtype = (*reference_outputs_)[i].scalar_type();
-    if (scalar_type_to_model_dtype(dtype) ==
-        inference::DataType::TYPE_INVALID) {
-      throw std::invalid_argument(std::format(
-          "Invalid schema: unsupported output datatype at index {}", i));
-    }
-    (void)scalar_type_to_datatype(dtype);
-  }
-}
 
 auto
 InferenceServiceImpl::ServerLive(
@@ -421,3 +398,5 @@ InferenceServiceImpl::LogSettings(
 {
   return unimplemented_rpc_status("LogSettings");
 }
+
+}  // namespace starpu_server

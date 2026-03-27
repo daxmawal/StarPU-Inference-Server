@@ -267,6 +267,32 @@ register_model_gpu_and_worker_metrics(
   (void)families.models_loaded->Add(
       {{"model", "unlabeled"}, {"device", "unknown"}});
 
+  auto& gpu_replication_policy_family =
+      prometheus::BuildGauge()
+          .Name("gpu_model_replication_policy_info")
+          .Help("Active GPU model replication policy for a model")
+          .Register(registry);
+  families.gpu_model_replication_policy_info = &gpu_replication_policy_family;
+  (void)families.gpu_model_replication_policy_info->Add(
+      {{"model", "unlabeled"}, {"policy", "per_device"}});
+
+  auto& gpu_replicas_total_family =
+      prometheus::BuildGauge()
+          .Name("gpu_model_replicas_total")
+          .Help("Total number of GPU model replicas created for a model")
+          .Register(registry);
+  families.gpu_model_replicas_total = &gpu_replicas_total_family;
+  (void)families.gpu_model_replicas_total->Add({{"model", "unlabeled"}});
+
+  auto& cuda_worker_info_family =
+      prometheus::BuildGauge()
+          .Name("starpu_cuda_worker_info")
+          .Help("Static mapping between CUDA devices and StarPU CUDA workers")
+          .Register(registry);
+  families.starpu_cuda_worker_info = &cuda_worker_info_family;
+  (void)families.starpu_cuda_worker_info->Add(
+      {{"device", "unknown"}, {"worker_id", "-1"}});
+
   families.gpu_utilization =
       &prometheus::BuildGauge()
            .Name("gpu_utilization_percent")

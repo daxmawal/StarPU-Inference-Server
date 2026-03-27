@@ -1,8 +1,126 @@
+#include <thread>
+
+#include "monitoring/congestion_monitor.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "unit_starpu_task_runner_support.hpp"
+#include "utils/exception_classification.hpp"
+
+#define private public
+#include "starpu_task_worker/batch_collector_component.hpp"
+#undef private
 
 #define private public
 #include "starpu_task_worker/result_dispatcher_component.hpp"
 #undef private
+
+namespace starpu_server {
+auto submit_exception_log_prefix(ExceptionCategory category)
+    -> std::string_view;
+}
+
+namespace {
+
+auto
+wait_until(
+    const std::function<bool()>& predicate, std::chrono::milliseconds timeout,
+    std::chrono::milliseconds poll_interval = std::chrono::milliseconds(5))
+    -> bool
+{
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) {
+      return true;
+    }
+    std::this_thread::sleep_for(poll_interval);
+  }
+  return predicate();
+}
+
+auto
+find_family(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view name) -> const prometheus::MetricFamily*
+{
+  for (const auto& family : families) {
+    if (family.name == name) {
+      return &family;
+    }
+  }
+  return nullptr;
+}
+
+auto
+find_gauge_value(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name) -> std::optional<double>
+{
+  const auto* family = find_family(families, family_name);
+  if (family == nullptr || family->metric.empty()) {
+    return std::nullopt;
+  }
+  return family->metric.front().gauge.value;
+}
+
+auto
+family_has_histogram_samples(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name) -> bool
+{
+  const auto* family = find_family(families, family_name);
+  if (family == nullptr) {
+    return false;
+  }
+  return std::ranges::any_of(
+      family->metric, [](const prometheus::ClientMetric& metric) {
+        return metric.histogram.sample_count > 0;
+      });
+}
+
+struct BatchCollectorHarness {
+  std::shared_ptr<starpu_server::RuntimeObservability> observability{};
+  starpu_server::RuntimeConfig opts{};
+  std::shared_ptr<starpu_server::InferenceJob> pending_job{};
+  std::deque<std::shared_ptr<starpu_server::InferenceJob>> prepared_jobs{};
+  std::mutex prepared_mutex;
+  std::condition_variable prepared_cv;
+  bool batching_done{false};
+  std::atomic<std::size_t> inflight_tasks{0};
+  std::mutex inflight_mutex;
+  std::condition_variable inflight_cv;
+  std::unique_ptr<starpu_server::BatchCollector> collector;
+
+  explicit BatchCollectorHarness(
+      std::shared_ptr<starpu_server::RuntimeObservability> observability_arg =
+          {},
+      starpu_server::InferenceQueue* queue = nullptr,
+      std::size_t max_inflight_tasks = 0)
+      : observability(std::move(observability_arg))
+  {
+    opts.batching.dynamic_batching = true;
+    opts.batching.max_batch_size = 4;
+    opts.congestion.enabled = true;
+    opts.congestion.tick_interval_ms = 10;
+    opts.congestion.entry_horizon_ms = 40;
+    opts.congestion.exit_horizon_ms = 30;
+
+    collector = std::make_unique<starpu_server::BatchCollector>(
+        queue, &opts, nullptr, &pending_job, observability,
+        starpu_server::PreparedBatchingContext{
+            .prepared_mutex = &prepared_mutex,
+            .prepared_cv = &prepared_cv,
+            .prepared_jobs = &prepared_jobs,
+            .batching_done = &batching_done,
+        },
+        starpu_server::InflightContext{
+            .inflight_tasks = &inflight_tasks,
+            .inflight_cv = &inflight_cv,
+            .inflight_mutex = &inflight_mutex,
+            .max_inflight_tasks = max_inflight_tasks,
+        });
+  }
+};
+
+}  // namespace
 
 TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobReturnsNullWhenNoJobs)
 {
@@ -17,18 +135,17 @@ TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobSingleJobResetsState)
 {
   auto job = make_job(
       5, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))});
-  job->set_logical_job_count(4);
+  job->batch().set_logical_job_count(4);
   starpu_server::InferenceJob::AggregatedSubJob sub_job{};
   sub_job.job = job;
   sub_job.callback = [](const std::vector<torch::Tensor>&, double) {};
   sub_job.batch_size = 3;
   sub_job.request_id = job->get_request_id();
-  job->set_aggregated_sub_jobs({sub_job});
+  job->batch().set_aggregated_sub_jobs({sub_job});
 
   bool callback_called = false;
-  job->set_on_complete([&](const std::vector<torch::Tensor>&, double) {
-    callback_called = true;
-  });
+  job->completion().set_on_complete([&](const std::vector<torch::Tensor>&,
+                                        double) { callback_called = true; });
 
   std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job};
 
@@ -37,10 +154,10 @@ TEST_F(StarPUTaskRunnerFixture, MaybeBuildBatchedJobSingleJobResetsState)
           runner_.get(), jobs);
 
   ASSERT_EQ(master, job);
-  EXPECT_EQ(master->logical_job_count(), 1);
-  EXPECT_TRUE(master->aggregated_sub_jobs().empty());
+  EXPECT_EQ(master->batch().logical_job_count(), 1);
+  EXPECT_TRUE(master->batch().aggregated_sub_jobs().empty());
 
-  master->get_on_complete()({}, 0.0);
+  master->completion().get_on_complete()({}, 0.0);
   EXPECT_TRUE(callback_called);
 }
 
@@ -82,7 +199,7 @@ TEST_F(
   job1->timing_info().batch_collect_start_time = internal::Clock::time_point{};
 
   bool job1_called = false;
-  job1->set_on_complete(
+  job1->completion().set_on_complete(
       [&](const std::vector<torch::Tensor>&, double) { job1_called = true; });
 
   std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job0, job1};
@@ -92,8 +209,8 @@ TEST_F(
           runner_.get(), jobs);
 
   ASSERT_EQ(master, job0);
-  EXPECT_EQ(master->logical_job_count(), 2);
-  EXPECT_EQ(master->aggregated_sub_jobs().size(), 2U);
+  EXPECT_EQ(master->batch().logical_job_count(), 2);
+  EXPECT_EQ(master->batch().aggregated_sub_jobs().size(), 2U);
 
   EXPECT_EQ(master->get_start_time(), job1->timing_info().enqueued_time);
   EXPECT_EQ(
@@ -115,7 +232,7 @@ TEST_F(
 
   const std::vector<torch::Tensor> aggregated_outputs = {
       torch::zeros({2, 2}, torch::TensorOptions().dtype(torch::kFloat))};
-  master->get_on_complete()(aggregated_outputs, 3.4);
+  master->completion().get_on_complete()(aggregated_outputs, 3.4);
   EXPECT_TRUE(job1_called);
 }
 
@@ -171,7 +288,7 @@ TEST_F(
   bool master_called = false;
   double master_latency = 0.0;
   std::vector<torch::Tensor> master_outputs;
-  job0->set_on_complete(
+  job0->completion().set_on_complete(
       [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
         master_called = true;
         master_latency = latency_ms;
@@ -181,7 +298,7 @@ TEST_F(
   bool job1_called = false;
   double job1_latency = 0.0;
   std::vector<torch::Tensor> job1_outputs;
-  job1->set_on_complete(
+  job1->completion().set_on_complete(
       [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
         job1_called = true;
         job1_latency = latency_ms;
@@ -191,7 +308,7 @@ TEST_F(
   bool job2_called = false;
   double job2_latency = 0.0;
   std::vector<torch::Tensor> job2_outputs;
-  job2->set_on_complete(
+  job2->completion().set_on_complete(
       [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
         job2_called = true;
         job2_latency = latency_ms;
@@ -206,8 +323,8 @@ TEST_F(
           runner_.get(), jobs);
 
   ASSERT_EQ(master, job0);
-  EXPECT_EQ(master->logical_job_count(), 3);
-  const auto& aggregated_sub_jobs = master->aggregated_sub_jobs();
+  EXPECT_EQ(master->batch().logical_job_count(), 3);
+  const auto& aggregated_sub_jobs = master->batch().aggregated_sub_jobs();
   ASSERT_EQ(aggregated_sub_jobs.size(), 3U);
 
   ASSERT_EQ(master->get_input_tensors().size(), 1U);
@@ -242,7 +359,8 @@ TEST_F(
       {{1.0F}, {2.0F}, {3.0F}}, torch::TensorOptions().dtype(torch::kFloat));
   const double latency_ms = 9.5;
 
-  master->get_on_complete()({aggregated_primary, aggregated_aux}, latency_ms);
+  master->completion().get_on_complete()(
+      {aggregated_primary, aggregated_aux}, latency_ms);
 
   EXPECT_TRUE(master_called);
   EXPECT_TRUE(job1_called);
@@ -311,8 +429,8 @@ TEST_F(
           runner_.get(), jobs);
 
   ASSERT_EQ(master, job0);
-  ASSERT_TRUE(master->effective_batch_size().has_value());
-  EXPECT_EQ(*master->effective_batch_size(), 3);
+  ASSERT_TRUE(master->batch().effective_batch_size().has_value());
+  EXPECT_EQ(*master->batch().effective_batch_size(), 3);
 }
 
 TEST_F(
@@ -340,7 +458,7 @@ TEST_F(
           runner_.get(), jobs);
 
   ASSERT_EQ(master, job0);
-  const auto& pending = master->pending_sub_jobs();
+  const auto& pending = master->batch().pending_sub_jobs();
   ASSERT_EQ(pending.size(), 2U);
   EXPECT_EQ(pending[0], job1);
   EXPECT_EQ(pending[1], job2);
@@ -442,7 +560,7 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchLimitsUsingEffectiveBatchSize)
   auto first = make_job(
       10, {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))},
       {at::kFloat});
-  first->set_effective_batch_size(5);
+  first->batch().set_effective_batch_size(5);
   auto second = make_job(
       11, {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))},
       {at::kFloat});
@@ -517,7 +635,7 @@ TEST_F(
   std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
   sub_jobs.push_back(
       make_aggregated_sub_job(sub_job, sub_job->get_request_id()));
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   auto queued = make_job(
       26, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
@@ -543,7 +661,7 @@ TEST_F(
   auto first = make_job(
       40, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
       {at::kFloat});
-  first->set_logical_job_count(2);
+  first->batch().set_logical_job_count(2);
 
   auto queued = make_job(
       41, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
@@ -576,8 +694,8 @@ TEST_F(
   std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
   sub_jobs.push_back(
       make_aggregated_sub_job(sub_job, sub_job->get_request_id()));
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
-  ASSERT_TRUE(aggregated->has_aggregated_sub_jobs());
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
+  ASSERT_TRUE(aggregated->batch().has_aggregated_sub_jobs());
 
   auto follower = make_job(
       29, {torch::ones({1, 2}, torch::TensorOptions().dtype(torch::kFloat))},
@@ -587,7 +705,7 @@ TEST_F(
 
   auto first = runner_->wait_for_next_job();
   ASSERT_EQ(first, aggregated);
-  ASSERT_TRUE(first->has_aggregated_sub_jobs());
+  ASSERT_TRUE(first->batch().has_aggregated_sub_jobs());
 
   auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
       runner_.get(), first);
@@ -645,6 +763,333 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchIgnoresNullFirstJob)
   EXPECT_TRUE(collected.empty());
 }
 
+TEST(BatchCollector, MergeInputMemoryHoldersAggregatesAllHolders)
+{
+  auto job0 = std::make_shared<starpu_server::InferenceJob>();
+  auto job1 = std::make_shared<starpu_server::InferenceJob>();
+
+  auto holder0 = std::make_shared<int>(10);
+  auto holder1 = std::make_shared<int>(11);
+  auto holder2 = std::make_shared<int>(12);
+  job0->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder0, holder0.get()),
+       std::shared_ptr<const void>(holder1, holder1.get())});
+  job1->set_input_memory_holders(
+      {std::shared_ptr<const void>(holder2, holder2.get())});
+
+  const auto merged =
+      starpu_server::BatchCollector::merge_input_memory_holders({job0, job1});
+
+  ASSERT_EQ(merged.size(), 3U);
+  EXPECT_EQ(merged[0].get(), static_cast<const void*>(holder0.get()));
+  EXPECT_EQ(merged[1].get(), static_cast<const void*>(holder1.get()));
+  EXPECT_EQ(merged[2].get(), static_cast<const void*>(holder2.get()));
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetSetsSingleSlotForBatchLimitOne)
+{
+  BatchCollectorHarness harness;
+
+  harness.collector->adaptive_target_batch_size_ = 7;
+  harness.collector->adaptive_target_initialized_ = false;
+  harness.collector->low_pressure_streak_ = 9;
+
+  harness.collector->update_adaptive_batch_target(1);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 1);
+  EXPECT_TRUE(harness.collector->adaptive_target_initialized_);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetResetsStreakWhenCongestionDisabled)
+{
+  BatchCollectorHarness harness;
+  harness.opts.congestion.enabled = false;
+  harness.collector->adaptive_target_batch_size_ = 2;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ = 3;
+
+  harness.collector->update_adaptive_batch_target(4);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetExpandsOnHighPressure)
+{
+  BatchCollectorHarness harness;
+  harness.prepared_jobs.resize(4);
+  harness.collector->adaptive_target_batch_size_ = 1;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ = 5;
+  harness.collector->last_adaptive_update_marker_.reset();
+
+  harness.collector->update_adaptive_batch_target(4);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetShrinksOnLowPressureThreshold)
+{
+  BatchCollectorHarness harness;
+  harness.collector->adaptive_target_batch_size_ = 3;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ =
+      harness.collector->low_pressure_streak_threshold() - 1;
+  harness.collector->last_adaptive_update_marker_.reset();
+
+  harness.collector->update_adaptive_batch_target(4);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetResetsWhenCongested)
+{
+  starpu_server::InferenceQueue queue(4);
+  starpu_server::congestion::Config cfg;
+  cfg.tick_interval = std::chrono::milliseconds(10);
+  cfg.entry_horizon = std::chrono::milliseconds(20);
+  cfg.exit_horizon = std::chrono::milliseconds(20);
+
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->congestion_monitor =
+      std::make_shared<starpu_server::congestion::Monitor>(&queue, cfg);
+  observability->congestion_monitor->start();
+
+  BatchCollectorHarness harness{observability, &queue};
+  harness.collector->adaptive_target_batch_size_ = 1;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ = 6;
+
+  observability->congestion_monitor->record_arrival(1);
+  observability->congestion_monitor->record_rejection(1);
+  ASSERT_TRUE(wait_until(
+      [&] { return observability->congestion_monitor->congested(); },
+      std::chrono::milliseconds(500)));
+
+  harness.collector->last_adaptive_update_marker_.reset();
+  harness.collector->update_adaptive_batch_target(4);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 4);
+  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+
+  observability->congestion_monitor->shutdown();
+}
+
+TEST(BatchCollector, ShouldRefreshAdaptiveTargetRejectsDuplicateMonitorTick)
+{
+  BatchCollectorHarness harness;
+  const auto tick = starpu_server::task_runner_internal::Clock::now();
+  harness.collector->last_adaptive_update_marker_ = tick;
+
+  starpu_server::BatchCollector::BatchPressureSample pressure{};
+  pressure.monitor_tick = tick;
+
+  EXPECT_FALSE(harness.collector->should_refresh_adaptive_target(pressure));
+  EXPECT_EQ(harness.collector->last_adaptive_update_marker_, tick);
+}
+
+TEST(BatchCollector, ShouldRefreshAdaptiveTargetRateLimitsWithoutMonitorTick)
+{
+  BatchCollectorHarness harness;
+  harness.collector->last_adaptive_update_marker_ =
+      starpu_server::task_runner_internal::Clock::now();
+
+  starpu_server::BatchCollector::BatchPressureSample pressure{};
+
+  EXPECT_FALSE(harness.collector->should_refresh_adaptive_target(pressure));
+}
+
+TEST(BatchCollector, HighPressureStepReturnsOneWhenCongestionDisabled)
+{
+  BatchCollectorHarness harness;
+  harness.opts.congestion.enabled = false;
+
+  EXPECT_EQ(harness.collector->high_pressure_step(8, true), 1);
+}
+
+TEST(BatchCollector, LowPressureStreakThresholdReturnsOneWhenDisabled)
+{
+  BatchCollectorHarness harness;
+  harness.opts.congestion.enabled = false;
+
+  EXPECT_EQ(harness.collector->low_pressure_streak_threshold(), 1);
+}
+
+TEST(BatchCollector, CollectBatchNullFirstJobUsesObservabilityPendingMetric)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability};
+
+  const auto jobs = harness.collector->collect_batch(nullptr);
+  EXPECT_TRUE(jobs.empty());
+
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto pending =
+      find_gauge_value(families, "inference_batch_collect_pending_jobs");
+  ASSERT_TRUE(pending.has_value());
+  EXPECT_DOUBLE_EQ(*pending, 0.0);
+}
+
+TEST(
+    BatchCollector,
+    MaybeBuildBatchedJobSingleJobUsesObservabilityEfficiencyMetric)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability};
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_input_tensors(
+      {torch::ones({2, 1}, torch::TensorOptions().dtype(torch::kFloat))});
+  std::vector<std::shared_ptr<starpu_server::InferenceJob>> jobs{job};
+
+  auto master = harness.collector->maybe_build_batched_job(jobs);
+
+  ASSERT_EQ(master, job);
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  EXPECT_TRUE(family_has_histogram_samples(
+      families, "inference_batch_efficiency_ratio"));
+}
+
+TEST(BatchCollector, SampleBatchPressureHandlesNullPreparedAndInflightState)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->congestion_monitor =
+      std::make_shared<starpu_server::congestion::Monitor>(nullptr);
+
+  BatchCollectorHarness harness{observability};
+  harness.collector->prepared_jobs_ = nullptr;
+  harness.collector->prepared_mutex_ = nullptr;
+  harness.collector->inflight_tasks_ = nullptr;
+
+  const auto sample = harness.collector->sample_batch_pressure();
+
+  EXPECT_FALSE(sample.state.congested);
+  EXPECT_TRUE(sample.state.low);
+}
+
+TEST(BatchCollector, SampleBatchPressureUsesPreparedDepthWithoutMutex)
+{
+  BatchCollectorHarness harness;
+  harness.prepared_jobs.resize(4);
+  harness.collector->prepared_mutex_ = nullptr;
+
+  const auto sample = harness.collector->sample_batch_pressure();
+
+  EXPECT_TRUE(sample.state.high);
+  EXPECT_FALSE(sample.state.low);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetUsesSevereHighPressureStep)
+{
+  BatchCollectorHarness harness;
+  harness.opts.batching.max_batch_size = 6;
+  harness.prepared_jobs.resize(12);
+  harness.collector->adaptive_target_batch_size_ = 1;
+  harness.collector->adaptive_target_initialized_ = true;
+  harness.collector->low_pressure_streak_ = 0;
+  harness.collector->last_adaptive_update_marker_.reset();
+
+  harness.collector->update_adaptive_batch_target(6);
+
+  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 3);
+}
+
+TEST(
+    BatchCollector, ResetPreparedQueueStateUsesObservabilityMetricsWithoutMutex)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability};
+  harness.batching_done = true;
+  harness.collector->prepared_mutex_ = nullptr;
+  harness.collector->prepared_jobs_ = nullptr;
+
+  harness.collector->reset_prepared_queue_state();
+
+  EXPECT_FALSE(harness.batching_done);
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto prepared_depth =
+      find_gauge_value(families, "starpu_prepared_queue_depth");
+  const auto pending =
+      find_gauge_value(families, "inference_batch_collect_pending_jobs");
+  ASSERT_TRUE(prepared_depth.has_value());
+  ASSERT_TRUE(pending.has_value());
+  EXPECT_DOUBLE_EQ(*prepared_depth, 0.0);
+  EXPECT_DOUBLE_EQ(*pending, 0.0);
+}
+
+TEST(BatchCollector, AbortPreparedQueueSetsFlagWithoutMutex)
+{
+  BatchCollectorHarness harness;
+  harness.collector->prepared_mutex_ = nullptr;
+  harness.batching_done = false;
+
+  harness.collector->abort_prepared_queue();
+
+  EXPECT_TRUE(harness.batching_done);
+}
+
+TEST(BatchCollector, EnqueuePreparedJobUsesObservabilityMetrics)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability, nullptr, 4};
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+
+  harness.collector->enqueue_prepared_job(job);
+
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto prepared_depth =
+      find_gauge_value(families, "starpu_prepared_queue_depth");
+  const auto inflight = find_gauge_value(families, "inference_inflight_tasks");
+  const auto busy_ratio =
+      find_gauge_value(families, "starpu_worker_busy_ratio");
+  ASSERT_TRUE(prepared_depth.has_value());
+  ASSERT_TRUE(inflight.has_value());
+  ASSERT_TRUE(busy_ratio.has_value());
+  EXPECT_DOUBLE_EQ(*prepared_depth, 1.0);
+  EXPECT_DOUBLE_EQ(*inflight, 1.0);
+  EXPECT_DOUBLE_EQ(*busy_ratio, 0.25);
+}
+
+TEST(BatchCollector, WaitForPreparedJobUsesObservabilityMetrics)
+{
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  BatchCollectorHarness harness{observability};
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  harness.collector->enqueue_prepared_job(job);
+
+  const auto dequeued = harness.collector->wait_for_prepared_job();
+
+  ASSERT_EQ(dequeued, job);
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto prepared_depth =
+      find_gauge_value(families, "starpu_prepared_queue_depth");
+  ASSERT_TRUE(prepared_depth.has_value());
+  EXPECT_DOUBLE_EQ(*prepared_depth, 0.0);
+}
+
 TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionToSubJobsNoopsWhenAggregatedJobNull)
@@ -659,7 +1104,7 @@ TEST(
     StarPUTaskRunnerTestAdapter, PropagateCompletionToSubJobsNoopsWhenNoSubJobs)
 {
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
-  aggregated->set_aggregated_sub_jobs({});
+  aggregated->batch().set_aggregated_sub_jobs({});
 
   const auto outputs = std::vector<torch::Tensor>{
       torch::tensor({2.0F}, torch::TensorOptions().dtype(torch::kFloat))};
@@ -667,7 +1112,7 @@ TEST(
   starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
       aggregated, outputs, 3.5);
 
-  EXPECT_TRUE(aggregated->aggregated_sub_jobs().empty());
+  EXPECT_TRUE(aggregated->batch().aggregated_sub_jobs().empty());
 }
 
 TEST(
@@ -687,7 +1132,7 @@ TEST(
     entry.batch_size = 2;
     sub_jobs.push_back(entry);
   }  // expired shared_ptr goes out of scope and invalidates weak_ptr
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   const auto outputs = std::vector<torch::Tensor>{
       torch::tensor({3.0F, 4.0F}, torch::TensorOptions().dtype(torch::kFloat))};
@@ -736,7 +1181,7 @@ TEST(ResultDispatcher, FinalizeJobCompletionNoopsWhenCompletedJobsIsNull)
   starpu_server::ResultDispatcher dispatcher{nullptr, nullptr, &all_done_cv};
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_logical_job_count(3);
+  job->batch().set_logical_job_count(3);
   EXPECT_NO_THROW(dispatcher.finalize_job_completion(job));
 }
 
@@ -746,7 +1191,7 @@ TEST(ResultDispatcher, FinalizeJobCompletionNoopsWhenAllDoneCvIsNull)
   starpu_server::ResultDispatcher dispatcher{nullptr, &completed_jobs, nullptr};
 
   auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_logical_job_count(3);
+  job->batch().set_logical_job_count(3);
   EXPECT_NO_THROW(dispatcher.finalize_job_completion(job));
   EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
 }
@@ -805,6 +1250,126 @@ TEST(ResultDispatcher, HandleJobCompletionNoopsWhenJobIsNull)
   EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
 }
 
+TEST(ResultDispatcher, PrepareJobCompletionCallbackReturnsWhenJobIsNull)
+{
+  auto dispatcher = std::make_shared<starpu_server::ResultDispatcher>(
+      nullptr, nullptr, nullptr);
+
+  EXPECT_NO_THROW(
+      starpu_server::ResultDispatcher::prepare_job_completion_callback(
+          dispatcher, nullptr, nullptr));
+}
+
+TEST(ResultDispatcher, HandleJobCompletionRecordsMetricsAndInvokesCallback)
+{
+  starpu_server::RuntimeConfig opts{};
+  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
+  observability->metrics = starpu_server::create_metrics_recorder(0);
+  ASSERT_NE(observability->metrics, nullptr);
+
+  std::atomic<std::size_t> completed_jobs{0};
+  std::condition_variable all_done_cv;
+  starpu_server::ResultDispatcher dispatcher{
+      &opts, &completed_jobs, &all_done_cv, observability};
+
+  auto job = std::make_shared<starpu_server::InferenceJob>();
+  job->set_request_id(27);
+  job->set_submission_id(72);
+  job->completion().set_model_name("dispatcher-model");
+  job->set_input_tensors({torch::tensor({1.0F})});
+  job->set_executed_on(starpu_server::DeviceType::CPU);
+  job->set_worker_id(2);
+  job->set_device_id(0);
+
+  bool callback_invoked = false;
+  double observed_latency = 0.0;
+  const starpu_server::InferenceJob::CompletionCallback callback =
+      [&callback_invoked, &observed_latency](
+          const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        callback_invoked = !outputs.empty();
+        observed_latency = latency_ms;
+      };
+  auto results = std::vector<torch::Tensor>{
+      torch::tensor({2.0F}, torch::TensorOptions().dtype(torch::kFloat))};
+
+  dispatcher.handle_job_completion(job, callback, results, 1.5);
+
+  EXPECT_TRUE(callback_invoked);
+  EXPECT_DOUBLE_EQ(observed_latency, 1.5);
+  EXPECT_TRUE(job->get_input_tensors().empty());
+  EXPECT_EQ(completed_jobs.load(std::memory_order_acquire), 0U);
+
+  const auto families =
+      observability->metrics->registry()->registry()->Collect();
+  const auto completed_counter = [&families]() -> std::optional<double> {
+    const auto* family = find_family(families, "inference_completed_total");
+    if (family == nullptr) {
+      return std::nullopt;
+    }
+    for (const auto& metric : family->metric) {
+      for (const auto& label : metric.label) {
+        if (label.name == "model" && label.value == "dispatcher-model") {
+          return metric.counter.value;
+        }
+      }
+    }
+    return std::nullopt;
+  }();
+  ASSERT_TRUE(completed_counter.has_value());
+  EXPECT_DOUBLE_EQ(*completed_counter, 1.0);
+}
+
+TEST(StarPUTaskWorkerInternals, SubmitExceptionLogPrefixMapsKnownCategories)
+{
+  using starpu_server::ExceptionCategory;
+  using starpu_server::submit_exception_log_prefix;
+
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::InferenceEngine), "");
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::RuntimeError),
+      "Unexpected runtime error");
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::LogicError),
+      "Unexpected logic error");
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::BadAlloc),
+      "Memory allocation failure");
+  EXPECT_EQ(
+      submit_exception_log_prefix(ExceptionCategory::StdException),
+      "Unexpected std::exception");
+  EXPECT_EQ(submit_exception_log_prefix(ExceptionCategory::Unknown), "");
+  EXPECT_EQ(
+      submit_exception_log_prefix(static_cast<ExceptionCategory>(255)), "");
+}
+
+TEST_F(StarPUTaskRunnerFixture, AcquirePoolsReturnsInputAndOutputSlots)
+{
+  auto pools =
+      starpu_server::StarPUTaskRunnerTestAdapter::acquire_pools(runner_.get());
+
+  if (pools.has_input()) {
+    EXPECT_GE(pools.input_slot, 0);
+    pools.input_pool->release(pools.input_slot);
+  }
+  if (pools.has_output()) {
+    EXPECT_GE(pools.output_slot, 0);
+    pools.output_pool->release(pools.output_slot);
+  }
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    ValidateBatchAndCopyInputsReturnsResolvedBatchWhenInputPoolMissing)
+{
+  auto job = make_job(91, {torch::ones({3, 1})}, {at::kFloat});
+
+  const auto batch = starpu_server::StarPUTaskRunnerTestAdapter::
+      validate_batch_and_copy_inputs_without_input_pool(runner_.get(), job);
+
+  EXPECT_EQ(batch, 3);
+}
+
 TEST(
     StarPUTaskRunnerTestAdapter,
     PropagateCompletionToSubJobsDistributesSlicesAndMetadata)
@@ -831,7 +1396,7 @@ TEST(
   bool job_one_called = false;
   double job_one_latency = 0.0;
   std::vector<torch::Tensor> job_one_outputs;
-  job_one->set_on_complete(
+  job_one->completion().set_on_complete(
       [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
         job_one_called = true;
         job_one_latency = latency_ms;
@@ -841,7 +1406,7 @@ TEST(
   bool job_two_called = false;
   double job_two_latency = 0.0;
   std::vector<torch::Tensor> job_two_outputs;
-  job_two->set_on_complete(
+  job_two->completion().set_on_complete(
       [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
         job_two_called = true;
         job_two_latency = latency_ms;
@@ -849,11 +1414,11 @@ TEST(
       });
 
   std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
-  sub_jobs.emplace_back(job_one, job_one->get_on_complete(), 1);
+  sub_jobs.emplace_back(job_one, job_one->completion().get_on_complete(), 1);
   sub_jobs.back().request_id = job_one->get_request_id();
-  sub_jobs.emplace_back(job_two, job_two->get_on_complete(), 2);
+  sub_jobs.emplace_back(job_two, job_two->completion().get_on_complete(), 2);
   sub_jobs.back().request_id = job_two->get_request_id();
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   const auto primary = torch::tensor(
       {{1.0F, 2.0F}, {3.0F, 4.0F}, {5.0F, 6.0F}},
@@ -899,6 +1464,118 @@ TEST(
 }
 
 TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionToSubJobsCleansEachSubJobWhenCallbackThrows)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto job_one = std::make_shared<starpu_server::InferenceJob>();
+  auto job_two = std::make_shared<starpu_server::InferenceJob>();
+  auto pending_job = std::make_shared<starpu_server::InferenceJob>();
+
+  aggregated->set_request_id(100);
+  job_one->set_request_id(101);
+  job_two->set_request_id(102);
+
+  auto make_holder = [](int value) {
+    auto holder = std::make_shared<int>(value);
+    return std::shared_ptr<const void>(holder, holder.get());
+  };
+
+  aggregated->set_input_tensors({torch::tensor({9})});
+  aggregated->set_input_memory_holders({make_holder(9)});
+  aggregated->set_output_tensors(
+      {torch::tensor({9.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  job_one->set_input_tensors({torch::tensor({1})});
+  job_one->set_input_memory_holders({make_holder(1)});
+  job_one->set_output_tensors(
+      {torch::tensor({1.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  job_two->set_input_tensors({torch::tensor({2})});
+  job_two->set_input_memory_holders({make_holder(2)});
+  job_two->set_output_tensors(
+      {torch::tensor({2.0F}, torch::TensorOptions().dtype(torch::kFloat))});
+
+  bool pending_callback_invoked = false;
+  pending_job->completion().set_on_complete(
+      [&pending_callback_invoked](const std::vector<torch::Tensor>&, double) {
+        pending_callback_invoked = true;
+      });
+  aggregated->batch().set_pending_sub_jobs({pending_job});
+
+  bool job_one_called = false;
+  double job_one_latency = 0.0;
+  std::vector<torch::Tensor> job_one_outputs;
+  job_one->completion().set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        job_one_called = true;
+        job_one_latency = latency_ms;
+        job_one_outputs = outputs;
+        throw std::runtime_error("sub-job callback failure");
+      });
+
+  bool job_two_called = false;
+  double job_two_latency = 0.0;
+  std::vector<torch::Tensor> job_two_outputs;
+  job_two->completion().set_on_complete(
+      [&](const std::vector<torch::Tensor>& outputs, double latency_ms) {
+        job_two_called = true;
+        job_two_latency = latency_ms;
+        job_two_outputs = outputs;
+      });
+
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.emplace_back(job_one, job_one->completion().get_on_complete(), 1);
+  sub_jobs.back().request_id = job_one->get_request_id();
+  sub_jobs.emplace_back(job_two, job_two->completion().get_on_complete(), 1);
+  sub_jobs.back().request_id = job_two->get_request_id();
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  const auto primary = torch::tensor(
+      {{1.0F, 2.0F}, {3.0F, 4.0F}},
+      torch::TensorOptions().dtype(torch::kFloat));
+  const auto secondary = torch::tensor(
+      {{10.0F}, {20.0F}}, torch::TensorOptions().dtype(torch::kFloat));
+  const double latency_ms = 8.5;
+
+  EXPECT_NO_THROW(starpu_server::StarPUTaskRunnerTestAdapter::
+                      propagate_completion_to_sub_jobs(
+                          aggregated, {primary, secondary}, latency_ms));
+
+  EXPECT_TRUE(job_one_called);
+  EXPECT_TRUE(job_two_called);
+  EXPECT_EQ(job_one_latency, latency_ms);
+  EXPECT_EQ(job_two_latency, latency_ms);
+
+  ASSERT_EQ(job_one_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      job_one_outputs[0], primary.narrow(/*dim=*/0, /*start=*/0, 1)));
+  EXPECT_TRUE(torch::equal(
+      job_one_outputs[1], secondary.narrow(/*dim=*/0, /*start=*/0, 1)));
+
+  ASSERT_EQ(job_two_outputs.size(), 2U);
+  EXPECT_TRUE(torch::equal(
+      job_two_outputs[0], primary.narrow(/*dim=*/0, /*start=*/1, 1)));
+  EXPECT_TRUE(torch::equal(
+      job_two_outputs[1], secondary.narrow(/*dim=*/0, /*start=*/1, 1)));
+
+  EXPECT_TRUE(job_one->get_input_tensors().empty());
+  EXPECT_TRUE(job_one->get_input_memory_holders().empty());
+  EXPECT_TRUE(job_one->get_output_tensors().empty());
+  EXPECT_TRUE(job_two->get_input_tensors().empty());
+  EXPECT_TRUE(job_two->get_input_memory_holders().empty());
+  EXPECT_TRUE(job_two->get_output_tensors().empty());
+  EXPECT_TRUE(aggregated->get_input_tensors().empty());
+  EXPECT_TRUE(aggregated->get_input_memory_holders().empty());
+  EXPECT_TRUE(aggregated->get_output_tensors().empty());
+
+  EXPECT_FALSE(pending_callback_invoked);
+  EXPECT_FALSE(pending_job->completion().has_on_complete());
+  EXPECT_TRUE(aggregated->batch().pending_sub_jobs().empty());
+  EXPECT_TRUE(aggregated->batch().aggregated_sub_jobs().empty());
+}
+
+TEST(
     StarPUTaskRunnerTestAdapter, PropagateCompletionReleasesAggregatedJobInputs)
 {
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
@@ -908,7 +1585,7 @@ TEST(
   sub_jobs.push_back(
       {sub_job,
        std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   aggregated->set_input_tensors({torch::tensor({1})});
   auto holder = std::make_shared<int>(12);
@@ -938,18 +1615,18 @@ TEST(
   sub_jobs.push_back(
       {aggregated_sub_job,
        std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   auto pending_job1 = std::make_shared<starpu_server::InferenceJob>();
   bool callback1_invoked = false;
-  pending_job1->set_on_complete(
+  pending_job1->completion().set_on_complete(
       [&callback1_invoked](const std::vector<torch::Tensor>&, double) {
         callback1_invoked = true;
       });
 
   auto pending_job2 = std::make_shared<starpu_server::InferenceJob>();
   bool callback2_invoked = false;
-  pending_job2->set_on_complete(
+  pending_job2->completion().set_on_complete(
       [&callback2_invoked](const std::vector<torch::Tensor>&, double) {
         callback2_invoked = true;
       });
@@ -957,21 +1634,21 @@ TEST(
   std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
   pending_jobs.push_back(pending_job1);
   pending_jobs.push_back(pending_job2);
-  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+  aggregated->batch().set_pending_sub_jobs(std::move(pending_jobs));
 
-  ASSERT_TRUE(pending_job1->has_on_complete());
-  ASSERT_TRUE(pending_job2->has_on_complete());
+  ASSERT_TRUE(pending_job1->completion().has_on_complete());
+  ASSERT_TRUE(pending_job2->completion().has_on_complete());
 
   const auto outputs = std::vector<torch::Tensor>{
       torch::tensor({1.0F}, torch::TensorOptions().dtype(torch::kFloat))};
   starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
       aggregated, outputs, 5.0);
 
-  EXPECT_FALSE(pending_job1->has_on_complete());
-  EXPECT_FALSE(pending_job2->has_on_complete());
+  EXPECT_FALSE(pending_job1->completion().has_on_complete());
+  EXPECT_FALSE(pending_job2->completion().has_on_complete());
   EXPECT_FALSE(callback1_invoked);
   EXPECT_FALSE(callback2_invoked);
-  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+  EXPECT_TRUE(aggregated->batch().pending_sub_jobs().empty());
 }
 
 TEST(StarPUTaskRunnerTestAdapter, PropagateCompletionSkipsNullPendingSubJobs)
@@ -983,11 +1660,11 @@ TEST(StarPUTaskRunnerTestAdapter, PropagateCompletionSkipsNullPendingSubJobs)
   sub_jobs.push_back(
       {aggregated_sub_job,
        std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   auto valid_pending_job = std::make_shared<starpu_server::InferenceJob>();
   bool callback_invoked = false;
-  valid_pending_job->set_on_complete(
+  valid_pending_job->completion().set_on_complete(
       [&callback_invoked](const std::vector<torch::Tensor>&, double) {
         callback_invoked = true;
       });
@@ -996,17 +1673,17 @@ TEST(StarPUTaskRunnerTestAdapter, PropagateCompletionSkipsNullPendingSubJobs)
   pending_jobs.push_back(nullptr);
   pending_jobs.push_back(valid_pending_job);
   pending_jobs.push_back(nullptr);
-  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+  aggregated->batch().set_pending_sub_jobs(std::move(pending_jobs));
 
-  ASSERT_TRUE(valid_pending_job->has_on_complete());
+  ASSERT_TRUE(valid_pending_job->completion().has_on_complete());
 
   const auto outputs = std::vector<torch::Tensor>{};
   starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
       aggregated, outputs, 5.0);
 
-  EXPECT_FALSE(valid_pending_job->has_on_complete());
+  EXPECT_FALSE(valid_pending_job->completion().has_on_complete());
   EXPECT_FALSE(callback_invoked);
-  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+  EXPECT_TRUE(aggregated->batch().pending_sub_jobs().empty());
 }
 
 TEST(
@@ -1020,12 +1697,12 @@ TEST(
   sub_jobs.push_back(
       {aggregated_sub_job,
        std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   auto job_without_callback = std::make_shared<starpu_server::InferenceJob>();
   auto job_with_callback = std::make_shared<starpu_server::InferenceJob>();
   bool callback_invoked = false;
-  job_with_callback->set_on_complete(
+  job_with_callback->completion().set_on_complete(
       [&callback_invoked](const std::vector<torch::Tensor>&, double) {
         callback_invoked = true;
       });
@@ -1033,19 +1710,19 @@ TEST(
   std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
   pending_jobs.push_back(job_without_callback);
   pending_jobs.push_back(job_with_callback);
-  aggregated->set_pending_sub_jobs(std::move(pending_jobs));
+  aggregated->batch().set_pending_sub_jobs(std::move(pending_jobs));
 
-  ASSERT_FALSE(job_without_callback->has_on_complete());
-  ASSERT_TRUE(job_with_callback->has_on_complete());
+  ASSERT_FALSE(job_without_callback->completion().has_on_complete());
+  ASSERT_TRUE(job_with_callback->completion().has_on_complete());
 
   const auto outputs = std::vector<torch::Tensor>{};
   starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
       aggregated, outputs, 5.0);
 
-  EXPECT_FALSE(job_without_callback->has_on_complete());
-  EXPECT_FALSE(job_with_callback->has_on_complete());
+  EXPECT_FALSE(job_without_callback->completion().has_on_complete());
+  EXPECT_FALSE(job_with_callback->completion().has_on_complete());
   EXPECT_FALSE(callback_invoked);
-  EXPECT_TRUE(aggregated->pending_sub_jobs().empty());
+  EXPECT_TRUE(aggregated->batch().pending_sub_jobs().empty());
 }
 
 TEST(TaskRunnerInternal, SliceOutputsForSubJobReturnsDefaultLengthWhenEmpty)
@@ -1151,16 +1828,16 @@ TEST(TaskRunnerInternal, AggregateBatchMetadataCollectsEarliestTimings)
 
   job_one->set_input_tensors({torch::ones({2, 1})});
   job_two->set_input_tensors({torch::ones({3, 1})});
-  job_one->set_logical_job_count(2);
-  job_two->set_logical_job_count(0);
+  job_one->batch().set_logical_job_count(2);
+  job_two->batch().set_logical_job_count(0);
 
   bool first_called = false;
   bool second_called = false;
-  job_one->set_on_complete(
+  job_one->completion().set_on_complete(
       [&first_called](const std::vector<torch::Tensor>&, double) {
         first_called = true;
       });
-  job_two->set_on_complete(
+  job_two->completion().set_on_complete(
       [&second_called](const std::vector<torch::Tensor>&, double) {
         second_called = true;
       });
@@ -1239,9 +1916,10 @@ TEST(
 TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsInferenceEngineException)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
-    throw starpu_server::InferenceEngineException("inference failure");
-  });
+  job->completion().set_on_complete(
+      [](const std::vector<torch::Tensor>&, double) {
+        throw starpu_server::InferenceEngineException("inference failure");
+      });
 
   CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunner::handle_job_exception(
@@ -1271,9 +1949,10 @@ TEST(TaskRunnerInternal, HandleJobExceptionWithoutJobReturnsFalse)
 TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsLogicError)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
-    throw std::logic_error("logic failure");
-  });
+  job->completion().set_on_complete(
+      [](const std::vector<torch::Tensor>&, double) {
+        throw std::logic_error("logic failure");
+      });
 
   CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunner::handle_job_exception(
@@ -1288,9 +1967,8 @@ TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsLogicError)
 TEST(TaskRunnerInternal, RunWithLoggedExceptionsLogsBadAlloc)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
-  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
-    throw std::bad_alloc();
-  });
+  job->completion().set_on_complete([](const std::vector<torch::Tensor>&,
+                                       double) { throw std::bad_alloc(); });
 
   CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunner::handle_job_exception(
@@ -1426,7 +2104,7 @@ TEST(
        std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
   sub_jobs.back().arrival_time = arrival2;
 
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   const auto result = internal::build_request_arrival_us_for_trace(aggregated);
 
@@ -1455,7 +2133,7 @@ TEST(
        std::function<void(const std::vector<torch::Tensor>&, double)>{}, 1});
   sub_jobs.back().arrival_time = Clock::time_point{};
 
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   const auto result = internal::build_request_arrival_us_for_trace(aggregated);
 

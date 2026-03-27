@@ -123,6 +123,40 @@ MakeCudaTensor() -> torch::Tensor
   return tensor;
 }
 
+auto
+gpu_replica_worker_query_stub(
+    unsigned int device_id, int* worker_ids,
+    enum starpu_worker_archtype worker_type) -> int
+{
+  if (worker_type != STARPU_CUDA_WORKER || worker_ids == nullptr) {
+    return 0;
+  }
+  if (device_id == 0U) {
+    worker_ids[0] = 7;
+    worker_ids[1] = 9;
+    return 2;
+  }
+  return 0;
+}
+
+class WorkerStreamQueryGuard {
+ public:
+  WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::set_worker_stream_query_fn(
+        &gpu_replica_worker_query_stub);
+  }
+
+  ~WorkerStreamQueryGuard()
+  {
+    starpu_server::StarPUSetup::reset_worker_stream_query_fn();
+  }
+
+  WorkerStreamQueryGuard(const WorkerStreamQueryGuard&) = delete;
+  auto operator=(const WorkerStreamQueryGuard&) -> WorkerStreamQueryGuard& =
+                                                       delete;
+};
+
 template <typename Func>
 auto
 CaptureStderr(Func&& func) -> std::string
@@ -391,6 +425,46 @@ TEST_F(InferenceTaskTest, FillModelPointersSkipsNegativeDeviceIds)
 
   ASSERT_EQ(params->models.models_gpu.size(), 1U);
   EXPECT_EQ(params->models.models_gpu.at(0), &models_gpu_.at(0));
+  EXPECT_TRUE(params->models.worker_ids.empty());
+}
+
+TEST_F(InferenceTaskTest, FillModelPointersPerWorkerReplicationUsesWorkers)
+{
+  WorkerStreamQueryGuard query_guard;
+
+  auto job = make_job(4, 1);
+  auto task = make_task(job, 2);
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  opts_.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+
+  auto params = task.create_inference_params();
+
+  ASSERT_EQ(params->models.models_gpu.size(), 2U);
+  EXPECT_EQ(params->models.device_ids, (std::vector<int>{0, 0}));
+  EXPECT_EQ(params->models.worker_ids, (std::vector<int>{7, 9}));
+  EXPECT_EQ(params->models.models_gpu.at(0), &models_gpu_.at(0));
+  EXPECT_EQ(params->models.models_gpu.at(1), &models_gpu_.at(1));
+}
+
+TEST_F(InferenceTaskTest, FillModelPointersUsesProvidedReplicaAssignments)
+{
+  const std::vector<starpu_server::detail::GpuReplicaAssignment> assignments = {
+      {.device_id = 0, .worker_id = 11}, {.device_id = 0, .worker_id = 13}};
+
+  auto job = make_job(5, 1);
+  auto task = make_task(job, 2, nullptr, &assignments);
+  opts_.devices.use_cuda = true;
+  opts_.devices.ids = {0};
+  opts_.devices.gpu_model_replication =
+      starpu_server::GpuModelReplicationPolicy::PerWorker;
+
+  auto params = task.create_inference_params();
+
+  ASSERT_EQ(params->models.models_gpu.size(), 2U);
+  EXPECT_EQ(params->models.device_ids, (std::vector<int>{0, 0}));
+  EXPECT_EQ(params->models.worker_ids, (std::vector<int>{11, 13}));
 }
 
 TEST_F(InferenceTaskTest, AssignFixedWorkerValid)
@@ -775,7 +849,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
   bool called = false;
   std::vector<torch::Tensor> results_arg;
   double latency_ms = -1.0;
-  job->set_on_complete(
+  job->completion().set_on_complete(
       [&called, &results_arg, &latency_ms](
           const std::vector<torch::Tensor>& results, double latency) {
         called = true;
@@ -857,7 +931,7 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackAcquireFailureStillFinalizes)
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
   });
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "callback");
   EXPECT_EQ(failure->reason, "output_acquire_failed");
@@ -954,7 +1028,7 @@ TEST_F(
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
   });
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "callback");
   EXPECT_EQ(failure->reason, "output_callback_unknown_exception");
@@ -989,7 +1063,7 @@ TEST_F(
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
   });
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "callback");
   EXPECT_EQ(failure->reason, "output_callback_exception");
@@ -1050,7 +1124,7 @@ TEST(InferenceTask, FinalizeOrFailOnceSetsFailureWhenStatusIsFailure)
   EXPECT_NO_THROW(starpu_server::testing::finalize_or_fail_once_for_tests(
       ctx.get(), true, "finalize_or_fail_once_test"));
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "callback");
   EXPECT_EQ(failure->reason, "terminal_failure");
@@ -1078,7 +1152,7 @@ TEST(InferenceTask, FinalizeOrFailOnceSkipsWhenTerminalPathAlreadyStarted)
       ctx.get(), false, "finalize_or_fail_once_test"));
 
   EXPECT_FALSE(finished);
-  EXPECT_FALSE(job->failure_info().has_value());
+  EXPECT_FALSE(job->completion().failure_info().has_value());
   EXPECT_FALSE(job->get_output_tensors().empty());
   EXPECT_NE(ctx->self_keep_alive, nullptr);
 }
@@ -1122,9 +1196,10 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_output_tensors({torch::tensor({1})});
-  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
-    throw std::runtime_error("callback failure");
-  });
+  job->completion().set_on_complete(
+      [](const std::vector<torch::Tensor>&, double) {
+        throw std::runtime_error("callback failure");
+      });
   const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
@@ -1143,7 +1218,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_output_tensors({torch::tensor({1})});
-  job->set_on_complete(
+  job->completion().set_on_complete(
       [](const std::vector<torch::Tensor>&, double) { throw 42; });
   const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::milliseconds(5);

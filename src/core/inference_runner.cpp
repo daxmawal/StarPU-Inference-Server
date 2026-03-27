@@ -25,6 +25,7 @@
 #include "exceptions.hpp"
 #include "input_generator.hpp"
 #include "logger.hpp"
+#include "monitoring/metrics.hpp"
 #include "runtime_config.hpp"
 #include "starpu_setup.hpp"
 #include "utils/nvtx.hpp"
@@ -125,6 +126,63 @@ validate_device_ids(std::span<const int> device_ids, int available_device_count)
 }
 
 auto
+build_gpu_replica_assignments(const RuntimeConfig& opts)
+    -> std::vector<GpuReplicaAssignment>
+{
+  std::vector<GpuReplicaAssignment> assignments;
+  if (!opts.devices.use_cuda || opts.devices.ids.empty()) {
+    return assignments;
+  }
+
+  if (opts.devices.gpu_model_replication ==
+      GpuModelReplicationPolicy::PerDevice) {
+    assignments.reserve(opts.devices.ids.size());
+    for (const int device_id : opts.devices.ids) {
+      if (device_id < 0) {
+        continue;
+      }
+      assignments.push_back(
+          GpuReplicaAssignment{.device_id = device_id, .worker_id = -1});
+    }
+    return assignments;
+  }
+
+  const auto workers_by_device =
+      StarPUSetup::get_cuda_workers_by_device(opts.devices.ids);
+  std::size_t total_workers = 0;
+  for (const int device_id : opts.devices.ids) {
+    if (device_id < 0) {
+      continue;
+    }
+    const auto workers_it = workers_by_device.find(device_id);
+    if (workers_it == workers_by_device.end() || workers_it->second.empty()) {
+      throw StarPUWorkerQueryException(std::format(
+          "No CUDA workers available for device {} while "
+          "gpu_model_replication='{}'",
+          device_id, to_string(opts.devices.gpu_model_replication)));
+    }
+    total_workers += workers_it->second.size();
+  }
+
+  assignments.reserve(total_workers);
+  for (const int device_id : opts.devices.ids) {
+    if (device_id < 0) {
+      continue;
+    }
+    const auto workers_it = workers_by_device.find(device_id);
+    if (workers_it == workers_by_device.end()) {
+      continue;
+    }
+    for (const int worker_id : workers_it->second) {
+      assignments.push_back(
+          GpuReplicaAssignment{.device_id = device_id, .worker_id = worker_id});
+    }
+  }
+
+  return assignments;
+}
+
+auto
 compute_latency_breakdown(const TimingInfo& timing, double total_latency_ms)
     -> BaseLatencyBreakdown
 {
@@ -173,9 +231,8 @@ compute_latency_breakdown(const TimingInfo& timing, double total_latency_ms)
 InferenceJob::InferenceJob(
     std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
     int request_identifier, CompletionCallback callback)
-    : InferenceJobPayloadState(
-          std::move(inputs), std::move(types), request_identifier),
-      InferenceJobCompletionState(std::move(callback))
+    : request_payload_(std::move(inputs), std::move(types), request_identifier),
+      completion_state_(std::move(callback))
 {
 }
 
@@ -194,27 +251,102 @@ load_model(const std::string& model_path) -> torch::jit::script::Module
 static auto
 clone_model_to_gpus(
     const torch::jit::script::Module& model_cpu,
-    const std::vector<int>& device_ids)
-    -> std::vector<torch::jit::script::Module>
+    const RuntimeConfig& opts) -> std::vector<torch::jit::script::Module>
 {
-  if (device_ids.empty()) {
+  if (!opts.devices.use_cuda || opts.devices.ids.empty()) {
     return {};
   }
 
   const auto device_count = detail::get_cuda_device_count();
-  detail::validate_device_ids(device_ids, device_count);
+  detail::validate_device_ids(opts.devices.ids, device_count);
+  const auto assignments = detail::build_gpu_replica_assignments(opts);
 
   std::vector<torch::jit::script::Module> models_gpu;
-  models_gpu.reserve(device_ids.size());
+  models_gpu.reserve(assignments.size());
 
-  for (const auto& device_id : device_ids) {
+  for (const auto& assignment : assignments) {
     torch::jit::script::Module model_gpu = model_cpu.clone();
-    model_gpu.to(
-        torch::Device(torch::kCUDA, static_cast<c10::DeviceIndex>(device_id)));
+    model_gpu.to(torch::Device(
+        torch::kCUDA, static_cast<c10::DeviceIndex>(assignment.device_id)));
     models_gpu.emplace_back(std::move(model_gpu));
   }
 
   return models_gpu;
+}
+
+static auto
+resolve_model_label(const RuntimeConfig& opts) -> std::string
+{
+  if (!opts.model.has_value()) {
+    return "default";
+  }
+  if (!opts.model->name.empty()) {
+    return opts.model->name;
+  }
+  return opts.model->path;
+}
+
+static auto
+resolve_model_path(const RuntimeConfig& opts) -> std::string
+{
+  return opts.model.has_value() ? opts.model->path : std::string{};
+}
+
+static void
+set_model_loaded_metric(
+    MetricsRecorder* metrics, std::string_view model_label,
+    std::string_view device, bool loaded)
+{
+  if (metrics != nullptr) {
+    metrics->set_model_loaded(model_label, device, loaded);
+    return;
+  }
+  set_model_loaded(model_label, device, loaded);
+}
+
+static void
+set_gpu_model_loaded_metrics(
+    const RuntimeConfig& opts, MetricsRecorder* metrics,
+    std::string_view model_label, bool loaded)
+{
+  if (!opts.devices.use_cuda) {
+    return;
+  }
+  for (const auto device_id : opts.devices.ids) {
+    set_model_loaded_metric(
+        metrics, model_label, std::format("cuda:{}", device_id), loaded);
+  }
+}
+
+static void
+mark_model_load_failure(
+    const RuntimeConfig& opts, MetricsRecorder* metrics,
+    std::string_view model_label)
+{
+  if (metrics != nullptr) {
+    metrics->increment_model_load_failure(model_label);
+  } else {
+    increment_model_load_failure(model_label);
+  }
+  set_model_loaded_metric(metrics, model_label, "cpu", false);
+  set_gpu_model_loaded_metrics(opts, metrics, model_label, false);
+}
+
+static void
+record_model_load_success(
+    const RuntimeConfig& opts, MetricsRecorder* metrics,
+    std::string_view model_label, MonotonicClock::time_point load_start)
+{
+  const double duration_ms = std::chrono::duration<double, std::milli>(
+                                 MonotonicClock::now() - load_start)
+                                 .count();
+  if (metrics != nullptr) {
+    metrics->observe_model_load_duration(duration_ms);
+  } else {
+    observe_model_load_duration(duration_ms);
+  }
+  set_model_loaded_metric(metrics, model_label, "cpu", true);
+  set_gpu_model_loaded_metrics(opts, metrics, model_label, true);
 }
 
 // =============================================================================
@@ -297,6 +429,30 @@ synthesize_outputs_from_config(const RuntimeConfig& opts)
   return outputs;
 }
 
+static auto
+build_reference_outputs(
+    torch::jit::script::Module& model_cpu,
+    const RuntimeConfig& opts) -> std::vector<torch::Tensor>
+{
+  if (auto synthetic_outputs = synthesize_outputs_from_config(opts);
+      synthetic_outputs.has_value()) {
+    log_debug(
+        opts.verbosity,
+        "Using configured output schema instead of running CPU reference "
+        "inference.");
+    return std::move(*synthetic_outputs);
+  }
+
+  log_debug(
+      opts.verbosity,
+      "No usable output schema provided; running reference inference once "
+      "to infer output sizes.");
+  auto inputs = generate_inputs(
+      opts.model.has_value() ? opts.model->inputs
+                             : std::vector<TensorConfig>{});
+  return run_reference_inference(model_cpu, inputs);
+}
+
 // =============================================================================
 // Model and Reference Output Loader: returns CPU model, GPU clones, and ref
 // outputs
@@ -308,67 +464,36 @@ load_model_and_reference_output(const RuntimeConfig& opts)
         torch::jit::script::Module, std::vector<torch::jit::script::Module>,
         std::vector<torch::Tensor>>>
 {
+  return load_model_and_reference_output(opts, nullptr);
+}
+
+auto
+load_model_and_reference_output(
+    const RuntimeConfig& opts, MetricsRecorder* metrics)
+    -> std::optional<std::tuple<
+        torch::jit::script::Module, std::vector<torch::jit::script::Module>,
+        std::vector<torch::Tensor>>>
+{
   const auto load_start = MonotonicClock::now();
-  const auto model_label = [&opts]() -> std::string {
-    if (!opts.model.has_value()) {
-      return "default";
-    }
-    if (!opts.model->name.empty()) {
-      return opts.model->name;
-    }
-    return opts.model->path;
-  }();
-  auto mark_failure = [&]() {
-    increment_model_load_failure(model_label);
-    set_model_loaded(model_label, "cpu", false);
-    if (opts.devices.use_cuda) {
-      for (const auto device_id : opts.devices.ids) {
-        set_model_loaded(model_label, std::format("cuda:{}", device_id), false);
-      }
-    }
-  };
+  const auto model_label = resolve_model_label(opts);
 
   try {
-    auto model_cpu =
-        load_model(opts.model.has_value() ? opts.model->path : std::string{});
+    auto model_cpu = load_model(resolve_model_path(opts));
     auto models_gpu = opts.devices.use_cuda
-                          ? clone_model_to_gpus(model_cpu, opts.devices.ids)
+                          ? clone_model_to_gpus(model_cpu, opts)
                           : std::vector<torch::jit::script::Module>{};
-    auto synthetic_outputs = synthesize_outputs_from_config(opts);
-
-    std::vector<torch::Tensor> output_refs;
-    if (synthetic_outputs.has_value()) {
-      log_debug(
-          opts.verbosity,
-          "Using configured output schema instead of running CPU reference "
-          "inference.");
-      output_refs = std::move(*synthetic_outputs);
-    } else {
-      log_debug(
-          opts.verbosity,
-          "No usable output schema provided; running reference inference once "
-          "to infer output sizes.");
-      auto inputs = generate_inputs(
-          opts.model.has_value() ? opts.model->inputs
-                                 : std::vector<TensorConfig>{});
-      output_refs = run_reference_inference(model_cpu, inputs);
-    }
-
-    const double duration_ms = std::chrono::duration<double, std::milli>(
-                                   MonotonicClock::now() - load_start)
-                                   .count();
-    observe_model_load_duration(duration_ms);
-    set_model_loaded(model_label, "cpu", true);
-    if (opts.devices.use_cuda) {
-      for (const auto device_id : opts.devices.ids) {
-        set_model_loaded(model_label, std::format("cuda:{}", device_id), true);
-      }
-    }
-
+    auto output_refs = build_reference_outputs(model_cpu, opts);
+    record_model_load_success(opts, metrics, model_label, load_start);
     return std::tuple{model_cpu, models_gpu, output_refs};
   }
   catch (const c10::Error& e) {
-    mark_failure();
+    mark_model_load_failure(opts, metrics, model_label);
+    log_error(std::format(
+        "Failed to load model or run reference inference: {}", e.what()));
+    return std::nullopt;
+  }
+  catch (const std::exception& e) {
+    mark_model_load_failure(opts, metrics, model_label);
     log_error(std::format(
         "Failed to load model or run reference inference: {}", e.what()));
     return std::nullopt;
@@ -384,7 +509,8 @@ run_warmup(
     const RuntimeConfig& opts, StarPUSetup& starpu,
     torch::jit::script::Module& model_cpu,
     std::vector<torch::jit::script::Module>& models_gpu,
-    const std::vector<torch::Tensor>& outputs_ref)
+    const std::vector<torch::Tensor>& outputs_ref,
+    std::shared_ptr<RuntimeObservability> observability)
 {
   NvtxRange nvtx_scope("warmup");
   if (!opts.devices.use_cpu && !opts.devices.use_cuda) {
@@ -425,7 +551,9 @@ run_warmup(
                           "(configured batch runs per worker: {})",
                           warmup_request_nb, target_desc, configured_batches));
 
-  WarmupRunner warmup_runner(opts, starpu, model_cpu, models_gpu, outputs_ref);
+  WarmupRunner warmup_runner(
+      opts, starpu, model_cpu, models_gpu, outputs_ref, {},
+      std::move(observability));
   warmup_runner.run(warmup_request_nb);
 
   log_info(opts.verbosity, "Warmup complete.");

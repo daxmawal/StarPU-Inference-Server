@@ -396,7 +396,8 @@ plots_output_path(const std::filesystem::path& summary_path)
 void
 run_trace_plots_if_enabled(
     const starpu_server::RuntimeConfig& opts,
-    const TracePlotRuntimeHooks* hooks = nullptr)
+    const TracePlotRuntimeHooks* hooks = nullptr,
+    const starpu_server::BatchingTraceLogger* injected_tracer = nullptr)
 {
   if (!opts.batching.trace_enabled) {
     return;
@@ -406,8 +407,10 @@ run_trace_plots_if_enabled(
   if (hooks != nullptr && hooks->trace_summary_file_path != nullptr) {
     summary_path_opt = hooks->trace_summary_file_path();
   } else {
-    const auto& tracer = starpu_server::BatchingTraceLogger::instance();
-    summary_path_opt = tracer.summary_file_path();
+    const auto* tracer = injected_tracer != nullptr
+                             ? injected_tracer
+                             : &starpu_server::BatchingTraceLogger::instance();
+    summary_path_opt = tracer->summary_file_path();
   }
   if (!summary_path_opt) {
     starpu_server::log_warning(

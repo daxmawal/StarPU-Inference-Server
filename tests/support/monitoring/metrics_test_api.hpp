@@ -11,6 +11,8 @@ namespace starpu_server::testing {
 class MetricsRegistryTestAccessor {
  public:
   static void ClearCpuUsageProvider(MetricsRegistry& metrics);
+  static void ClearQueueSizeGauge(MetricsRegistry& metrics);
+  static void ClearQueueFillRatioGauge(MetricsRegistry& metrics);
   static void ClearSystemCpuUsageGauge(MetricsRegistry& metrics);
   static void ClearProcessOpenFdsGauge(MetricsRegistry& metrics);
   static void ClearProcessResidentMemoryGauge(MetricsRegistry& metrics);
@@ -38,6 +40,10 @@ class MetricsRegistryTestAccessor {
   static void ClearIoCopyLatencyFamily(MetricsRegistry& metrics);
   static void ClearTransferBytesFamily(MetricsRegistry& metrics);
   static void ClearModelsLoadedFamily(MetricsRegistry& metrics);
+  static void ClearGpuModelReplicationPolicyInfoFamily(
+      MetricsRegistry& metrics);
+  static void ClearGpuModelReplicasTotalFamily(MetricsRegistry& metrics);
+  static void ClearStarpuCudaWorkerInfoFamily(MetricsRegistry& metrics);
   static void ClearModelLoadFailuresFamily(MetricsRegistry& metrics);
   static void ClearInferenceFailuresFamily(MetricsRegistry& metrics);
   static void ClearInferenceCompletedFamily(MetricsRegistry& metrics);
@@ -53,6 +59,11 @@ class MetricsRegistryTestAccessor {
   static auto ModelKeyEquals(
       std::string_view model_lhs, bool overflow_lhs, std::string_view model_rhs,
       bool overflow_rhs) -> bool;
+  static auto ModelPolicyKeyOverflowIsEmpty() -> bool;
+  static auto ModelPolicyKeyEquals(
+      std::string_view model_lhs, std::string_view policy_lhs,
+      bool overflow_lhs, std::string_view model_rhs,
+      std::string_view policy_rhs, bool overflow_rhs) -> bool;
   static auto ModelDeviceKeyOverflowIsEmpty() -> bool;
   static auto ModelDeviceKeyEquals(
       std::string_view model_lhs, std::string_view device_lhs,
@@ -85,7 +96,7 @@ void set_metrics_request_stop_skip_join_for_test(bool skip_join);
 auto metrics_request_stop_skip_join_for_test() -> bool;
 void set_process_fd_path_for_test(std::filesystem::path path);
 void reset_process_fd_path_for_test();
-auto process_fd_path_for_test() -> const std::filesystem::path&;
+auto process_fd_path_for_test() -> std::filesystem::path;
 using ProcessFdDirectoryIteratorFactory =
     std::function<std::filesystem::directory_iterator(
         const std::filesystem::path&)>;
@@ -96,11 +107,11 @@ auto process_fd_directory_iterator_for_test()
     -> ProcessFdDirectoryIteratorFactory;
 void set_process_rss_bytes_path_for_test(std::filesystem::path path);
 void reset_process_rss_bytes_path_for_test();
-auto process_rss_bytes_path_for_test() -> const std::filesystem::path&;
+auto process_rss_bytes_path_for_test() -> std::filesystem::path;
 using ProcessPageSizeProvider = std::function<long()>;
 void set_process_page_size_provider_for_test(ProcessPageSizeProvider provider);
 void reset_process_page_size_provider_for_test();
-auto process_page_size_provider_for_test() -> const ProcessPageSizeProvider&;
+auto process_page_size_provider_for_test() -> ProcessPageSizeProvider;
 auto should_log_sampling_error_for_test(std::atomic<std::int64_t>& last_log)
     -> bool;
 auto status_code_label_for_test(int code) -> std::string;

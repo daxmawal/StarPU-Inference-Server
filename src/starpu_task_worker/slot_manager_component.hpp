@@ -16,13 +16,32 @@ class CudaCopyBatch;
 
 class SlotManager {
  public:
-  SlotManager(StarPUSetup* starpu, const RuntimeConfig* opts);
+  SlotManager(
+      StarPUSetup* starpu, const RuntimeConfig* opts,
+      torch::jit::script::Module* model_cpu,
+      std::vector<torch::jit::script::Module>* models_gpu,
+      const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments,
+      InferenceTaskDependencies dependencies,
+      std::shared_ptr<RuntimeObservability> observability);
 
-  auto acquire_pools() -> StarPUTaskRunner::PoolResources;
+  [[nodiscard]] auto acquire_pools() const -> StarPUTaskRunner::PoolResources;
 
   [[nodiscard]] auto validate_batch_and_copy_inputs(
       const std::shared_ptr<InferenceJob>& job, int64_t batch,
       const StarPUTaskRunner::PoolResources& pools) const -> int64_t;
+
+  auto submit_inference_task(const std::shared_ptr<InferenceJob>& job) const
+      -> void;
+
+  static auto configure_task_context(
+      InferenceTask& task, const StarPUTaskRunner::PoolResources& pools,
+      std::vector<starpu_data_handle_t> input_handles,
+      std::vector<starpu_data_handle_t> output_handles,
+      int64_t batch_size) -> std::shared_ptr<InferenceCallbackContext>;
+
+  [[noreturn]] static void handle_submission_failure(
+      const StarPUTaskRunner::PoolResources& pools,
+      const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code);
 
   static auto copy_job_inputs_to_slot(
       const std::shared_ptr<InferenceJob>& job,
@@ -48,6 +67,14 @@ class SlotManager {
  private:
   StarPUSetup* starpu_;
   const RuntimeConfig* opts_;
+  torch::jit::script::Module* model_cpu_;
+  std::vector<torch::jit::script::Module>* models_gpu_;
+  const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments_;
+  InferenceTaskDependencies dependencies_;
+  std::shared_ptr<RuntimeObservability> observability_;
+
+  [[nodiscard]] auto resolve_batch_size(
+      const std::shared_ptr<InferenceJob>& job) const -> int64_t;
 };
 
 }  // namespace starpu_server

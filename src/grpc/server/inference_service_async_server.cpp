@@ -1,4 +1,35 @@
+#include "inference_service_internal.hpp"
+
+#if defined(STARPU_ENABLE_GRPC_REFLECTION)
+#include <grpcpp/ext/proto_server_reflection_plugin.h>
+#endif
+
+namespace starpu_server {
+
 inline namespace inference_service_detail {
+
+template <typename Response>
+void
+finish_unary_response(
+    grpc::ServerAsyncResponseWriter<Response>* responder, Response* response,
+    const Status& status, void* tag)
+{
+  if (responder == nullptr || response == nullptr) {
+    return;
+  }
+
+#if defined(__clang_analyzer__)
+  // False positives in gRPC/protobuf serialization internals:
+  // the analyzer reports uninitialized-object and virtual-call issues while
+  // expanding ServerAsyncResponseWriter::Finish through third-party headers.
+  static_cast<void>(responder);
+  static_cast<void>(response);
+  static_cast<void>(status);
+  static_cast<void>(tag);
+  return;
+#endif
+  responder->Finish(*response, status, tag);
+}
 
 template <typename Request, typename Response>
 class UnaryCallData final
@@ -67,14 +98,15 @@ class UnaryCallData final
   {
     if (!handler_) {
       status_ = CallStatus::Finish;
-      responder_.Finish(
-          response_,
-          {grpc::StatusCode::INTERNAL, "Unary handler not configured"}, this);
+      const Status missing_handler_status{
+          grpc::StatusCode::INTERNAL, "Unary handler not configured"};
+      finish_unary_response(
+          &responder_, &response_, missing_handler_status, this);
       return;
     }
     auto status = handler_(impl_, &ctx_, &request_, &response_);
     status_ = CallStatus::Finish;
-    responder_.Finish(response_, status, this);
+    finish_unary_response(&responder_, &response_, status, this);
   }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -186,7 +218,7 @@ class ModelInferCallData final
   void OnInferenceComplete(const Status& status)
   {
     status_ = CallStatus::Finish;
-    responder_.Finish(response_, status, this);
+    finish_unary_response(&responder_, &response_, status, this);
   }
 
   inference::GRPCInferenceService::AsyncService* service_;
@@ -537,7 +569,8 @@ void
 RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const GrpcModelSpec& model_spec, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks)
+    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks,
+    std::shared_ptr<RuntimeObservability> observability)
 {
   auto service_options = InferenceServiceImpl::ServiceOptions{
       .default_model_name = options.default_model_name,
@@ -559,7 +592,7 @@ RunGrpcServer(
               model_spec.expected_input_dims.begin(),
               model_spec.expected_input_dims.end()),
           model_spec.max_batch_size},
-      std::move(service_options));
+      std::move(service_options), std::move(observability));
   run_grpc_server_impl(service, options, server, hooks);
 }
 
@@ -568,7 +601,8 @@ RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     GrpcModelNamesSpec model_names, const GrpcServerOptions& options,
-    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks)
+    std::unique_ptr<Server>& server, const GrpcServerLifecycleHooks& hooks,
+    std::shared_ptr<RuntimeObservability> observability)
 {
   const GrpcModelSpec model_spec{
       .expected_input_types = expected_input_types,
@@ -576,7 +610,9 @@ RunGrpcServer(
       .expected_input_names = model_names.expected_input_names,
       .expected_output_names = model_names.expected_output_names,
       .max_batch_size = 0};
-  RunGrpcServer(queue, reference_outputs, model_spec, options, server, hooks);
+  RunGrpcServer(
+      queue, reference_outputs, model_spec, options, server, hooks,
+      std::move(observability));
 }
 
 void
@@ -587,3 +623,5 @@ StopServer(Server* server)
     server->Shutdown();
   }
 }
+
+}  // namespace starpu_server

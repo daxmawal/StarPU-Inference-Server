@@ -723,8 +723,9 @@ run_codelet_inference(
 }
 
 auto
-select_gpu_module(const InferenceParams& params, const int device_id)
-    -> torch::jit::script::Module*
+select_gpu_module(
+    const InferenceParams& params, const int worker_id,
+    const int device_id) -> torch::jit::script::Module*
 {
   const auto invalid_index = std::numeric_limits<size_t>::max();
   const auto fetch_model = [&](size_t index) -> torch::jit::script::Module* {
@@ -733,6 +734,24 @@ select_gpu_module(const InferenceParams& params, const int device_id)
     }
     return params.models.models_gpu[index];
   };
+
+  if (!params.models.worker_ids.empty()) {
+    if (worker_id >= 0) {
+      const auto found_worker =
+          std::ranges::find(params.models.worker_ids, worker_id);
+      if (found_worker != params.models.worker_ids.end()) {
+        const auto module_index = static_cast<size_t>(
+            found_worker - params.models.worker_ids.begin());
+        if (auto* model_instance = fetch_model(module_index)) {
+          return model_instance;
+        }
+      }
+    }
+
+    throw StarPUCodeletException(std::format(
+        "[ERROR] No GPU model replica available for worker {} on device {}",
+        worker_id, device_id));
+  }
 
   size_t module_index = invalid_index;
   if (device_id >= 0) {
@@ -806,7 +825,7 @@ InferenceCodelet::cuda_inference_func(void** buffers, void* cl_arg)
   const at::cuda::CUDAStreamGuard guard(torch_stream);
 
   torch::jit::script::Module* model_instance =
-      select_gpu_module(*params, device_id);
+      select_gpu_module(*params, worker_id, device_id);
 
   run_codelet_inference(
       params, buffers_span,

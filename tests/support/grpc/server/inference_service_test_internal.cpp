@@ -14,16 +14,17 @@
 namespace starpu_server {
 
 auto
-InferenceServiceImpl::submit_job_and_wait(
-    const std::vector<torch::Tensor>& inputs,
-    std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
+submit_job_and_wait_for_test_impl(
+    InferenceServiceImpl& service, const std::vector<torch::Tensor>& inputs,
+    std::vector<torch::Tensor>& outputs,
+    InferenceServiceImpl::LatencyBreakdown& breakdown,
     detail::TimingInfo& timing_info,
     std::vector<std::shared_ptr<const void>> input_lifetimes) -> grpc::Status
 {
   struct JobResult {
     grpc::Status status = grpc::Status::OK;
     std::vector<torch::Tensor> outputs;
-    LatencyBreakdown breakdown;
+    InferenceServiceImpl::LatencyBreakdown breakdown;
     detail::TimingInfo timing_info;
   };
 
@@ -31,13 +32,14 @@ InferenceServiceImpl::submit_job_and_wait(
   auto result_future = result_promise->get_future();
 
   const auto receive_time = MonotonicClock::now();
-  if (grpc::Status submit_status = submit_job_async(
+  if (grpc::Status submit_status = service.submit_job_async(
           inputs,
           [result_promise](
               grpc::Status status, std::vector<torch::Tensor> outs,
-              const LatencyBreakdown& cb_breakdown,
+              const InferenceServiceImpl::LatencyBreakdown& cb_breakdown,
               const detail::TimingInfo& cb_timing_info,
-              std::optional<AsyncFailureInfo> /*failure_info*/) {
+              std::optional<InferenceServiceImpl::AsyncFailureInfo>
+              /*failure_info*/) {
             result_promise->set_value(JobResult{
                 std::move(status), std::move(outs), cb_breakdown,
                 cb_timing_info});
@@ -61,7 +63,41 @@ InferenceServiceImpl::submit_job_and_wait(
   return grpc::Status::OK;
 }
 
-namespace testing::inference_service_test_internal {
+}  // namespace starpu_server
+
+namespace starpu_server::testing {
+
+auto
+ModelInferForTest(
+    InferenceServiceImpl& service, grpc::ServerContext* context,
+    const inference::ModelInferRequest* request,
+    inference::ModelInferResponse* reply) -> grpc::Status
+{
+  std::promise<grpc::Status> status_promise;
+  auto status_future = status_promise.get_future();
+  service.HandleModelInferAsync(
+      context, request, reply, [&status_promise](grpc::Status status) {
+        status_promise.set_value(std::move(status));
+      });
+  return status_future.get();
+}
+
+auto
+SubmitJobAndWaitForTest(
+    InferenceServiceImpl& service, const std::vector<torch::Tensor>& inputs,
+    std::vector<torch::Tensor>& outputs,
+    InferenceServiceImpl::LatencyBreakdown& breakdown,
+    detail::TimingInfo& timing_info,
+    std::vector<std::shared_ptr<const void>> input_lifetimes) -> grpc::Status
+{
+  return submit_job_and_wait_for_test_impl(
+      service, inputs, outputs, breakdown, timing_info,
+      std::move(input_lifetimes));
+}
+
+}  // namespace starpu_server::testing
+
+namespace starpu_server { namespace testing::inference_service_test_internal {
 
 namespace detail {
 
@@ -181,6 +217,4 @@ set_model_statistics_force_null_target_for_test(bool enable)
 #undef STARPU_INFERENCE_SERVICE_TEST_FORWARDER_VOID
 #undef STARPU_INFERENCE_SERVICE_TEST_FORWARDER_RET
 
-}  // namespace testing::inference_service_test_internal
-
-}  // namespace starpu_server
+}}  // namespace starpu_server::testing::inference_service_test_internal

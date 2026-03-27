@@ -4,8 +4,10 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <exception>
 #include <functional>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 #include "starpu_task_worker.hpp"
@@ -16,7 +18,8 @@ class ResultDispatcher {
  public:
   ResultDispatcher(
       const RuntimeConfig* opts, std::atomic<std::size_t>* completed_jobs,
-      std::condition_variable* all_done_cv);
+      std::condition_variable* all_done_cv,
+      std::shared_ptr<RuntimeObservability> observability = {});
 
 // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -31,9 +34,15 @@ class ResultDispatcher {
   // GCOVR_EXCL_STOP
 
   static void prepare_job_completion_callback(
-      StarPUTaskRunner& runner, const std::shared_ptr<InferenceJob>& job);
+      const std::shared_ptr<ResultDispatcher>& dispatcher,
+      const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state,
+      const std::shared_ptr<InferenceJob>& job);
 
   static void ensure_callback_timing(detail::TimingInfo& timing);
+
+  void trace_batch_if_enabled(
+      const std::shared_ptr<InferenceJob>& job, bool warmup_job,
+      int submission_id) const;
 
   void record_job_metrics(
       const std::shared_ptr<InferenceJob>& job,
@@ -49,8 +58,7 @@ class ResultDispatcher {
       const RuntimeConfig* opts,
       const std::shared_ptr<InferenceJob>& job) -> std::size_t;
 
-  static void emit_batch_traces(
-      const RuntimeConfig* opts, const std::shared_ptr<InferenceJob>& job);
+  void emit_batch_traces(const std::shared_ptr<InferenceJob>& job) const;
 
   // Invoke the callback captured before dispatcher wrapping.
   // Terminal callback contract: success/error/cancel must converge to one
@@ -73,7 +81,25 @@ class ResultDispatcher {
 
   // Shared inflight accounting primitive used by terminal paths.
   static void release_inflight_slot(
+      const std::shared_ptr<ResultDispatcher>& dispatcher,
       const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state);
+
+  static void handle_cancelled_job(
+      const std::shared_ptr<ResultDispatcher>& dispatcher,
+      const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state,
+      const std::shared_ptr<InferenceJob>& job);
+
+  static void finalize_job_after_exception(
+      const std::shared_ptr<ResultDispatcher>& dispatcher,
+      const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state,
+      const std::shared_ptr<InferenceJob>& job, const std::exception& exception,
+      std::string_view log_prefix, int job_id);
+
+  static void finalize_job_after_unknown_exception(
+      const std::shared_ptr<ResultDispatcher>& dispatcher,
+      const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state,
+      const std::shared_ptr<InferenceJob>& job, std::string_view log_prefix,
+      int job_id);
 
  private:
   static void dispatch_terminal_completion(
@@ -88,9 +114,14 @@ class ResultDispatcher {
       const InferenceJob::CompletionCallback& prev_callback,
       std::vector<torch::Tensor>& results, double latency_ms) const;
 
+  static auto handle_job_exception(
+      const std::shared_ptr<InferenceJob>& job,
+      const std::exception& exception) -> bool;
+
   const RuntimeConfig* opts_;
   std::atomic<std::size_t>* completed_jobs_;
   std::condition_variable* all_done_cv_;
+  std::shared_ptr<RuntimeObservability> observability_;
 };
 
 }  // namespace starpu_server

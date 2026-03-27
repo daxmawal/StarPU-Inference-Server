@@ -51,11 +51,13 @@ struct StarPUTaskRunnerConfig {
   InferenceQueue* queue{};
   torch::jit::script::Module* model_cpu{};
   std::vector<torch::jit::script::Module>* models_gpu{};
+  const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments{};
   StarPUSetup* starpu{};
   const RuntimeConfig* opts{};
   std::atomic<std::size_t>* completed_jobs{};
   std::condition_variable* all_done_cv{};
   const InferenceTaskDependencies* dependencies{};
+  std::shared_ptr<RuntimeObservability> observability;
 };
 
 class StarPUTaskRunner {
@@ -68,6 +70,29 @@ class StarPUTaskRunner {
   auto operator=(StarPUTaskRunner&&) -> StarPUTaskRunner& = delete;
 
   using DurationMs = std::chrono::duration<double, std::milli>;
+
+  struct PoolResources {
+    InputSlotPool* input_pool = nullptr;
+    OutputSlotPool* output_pool = nullptr;
+    int input_slot = -1;
+    int output_slot = -1;
+
+    [[nodiscard]] auto has_input() const -> bool
+    {
+      return input_pool != nullptr;
+    }
+    [[nodiscard]] auto has_output() const -> bool
+    {
+      return output_pool != nullptr;
+    }
+  };
+
+  struct InflightState {
+    std::atomic<std::size_t> tasks{0};
+    std::size_t max_tasks{0};
+    std::mutex mutex;
+    std::condition_variable cv;
+  };
 
   void run();
   void prepare_job_completion_callback(
@@ -88,10 +113,6 @@ class StarPUTaskRunner {
         // GCOVR_EXCL_STOP
 
  private:
-  friend class SlotManager;
-  friend class ResultDispatcher;
-  friend class BatchCollector;
-
   // GCOVR_EXCL_START
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   friend class StarPUTaskRunnerTestAdapter;
@@ -109,27 +130,8 @@ class StarPUTaskRunner {
     int job_id;
   };
 
-  struct SubmitPipelineContext;
   struct PreparedJobProcessingContext;
   struct RunPipelineContext;
-
-  struct InflightState;
-
-  struct PoolResources {
-    InputSlotPool* input_pool = nullptr;
-    OutputSlotPool* output_pool = nullptr;
-    int input_slot = -1;
-    int output_slot = -1;
-
-    [[nodiscard]] auto has_input() const -> bool
-    {
-      return input_pool != nullptr;
-    }
-    [[nodiscard]] auto has_output() const -> bool
-    {
-      return output_pool != nullptr;
-    }
-  };
 
   [[nodiscard]] auto acquire_pools() -> PoolResources;
   auto validate_batch_and_copy_inputs(
@@ -160,18 +162,6 @@ class StarPUTaskRunner {
   void finalize_job_after_unknown_exception(
       const std::shared_ptr<InferenceJob>& job, std::string_view log_prefix,
       int job_id);
-  [[nodiscard]] static auto make_submit_pipeline_context(
-      const std::shared_ptr<InferenceJob>& job) -> SubmitPipelineContext;
-  void submit_pipeline_acquire_pools(SubmitPipelineContext& context);
-  void submit_pipeline_prepare_batch(SubmitPipelineContext& context);
-  static void submit_pipeline_prepare_handles(
-      SubmitPipelineContext& context, InferenceTask& task);
-  static void submit_pipeline_build_task(
-      SubmitPipelineContext& context, InferenceTask& task);
-  [[nodiscard]] static auto submit_pipeline_submit(
-      SubmitPipelineContext& context) -> int;
-  [[noreturn]] static void submit_pipeline_cleanup_on_failure(
-      const SubmitPipelineContext& context, int submit_code);
   void setup_run_pipeline(RunPipelineContext& context);
   void launch_batching_thread(RunPipelineContext& context);
   void drain_prepared_jobs_pipeline();
@@ -205,13 +195,6 @@ class StarPUTaskRunner {
 #endif  // SONAR_IGNORE_STOP
   // GCOVR_EXCL_STOP
 
-  struct InflightState {
-    std::atomic<std::size_t> tasks{0};
-    std::size_t max_tasks{0};
-    std::mutex mutex;
-    std::condition_variable cv;
-  };
-
   struct PreparedState {
     std::mutex mutex;
     std::condition_variable cv;
@@ -222,12 +205,14 @@ class StarPUTaskRunner {
   InferenceQueue* queue_;
   torch::jit::script::Module* model_cpu_;
   std::vector<torch::jit::script::Module>* models_gpu_;
+  const std::vector<detail::GpuReplicaAssignment>* gpu_replica_assignments_;
   StarPUSetup* starpu_;
   const RuntimeConfig* opts_;
 
   std::atomic<std::size_t>* completed_jobs_;
   std::condition_variable* all_done_cv_;
   InferenceTaskDependencies dependencies_;
+  std::shared_ptr<RuntimeObservability> observability_;
   std::shared_ptr<InferenceJob> pending_job_;
   std::atomic<int> next_submission_id_{0};
   std::jthread batching_thread_;

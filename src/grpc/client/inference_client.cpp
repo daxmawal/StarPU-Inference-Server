@@ -220,11 +220,12 @@ auto
 InferenceClient::summary() const -> Summary
 {
   Summary result{};
-  result.requests_sent = total_requests_sent_;
-  result.requests_ok = success_requests_;
-  result.requests_rejected = rejected_requests_;
-  result.requests_handled = success_requests_ + rejected_requests_;
-  result.inference_count = total_inference_count_;
+  result.requests_sent = total_requests_sent_.load(std::memory_order_relaxed);
+  result.requests_ok = success_requests_.load(std::memory_order_relaxed);
+  result.requests_rejected = rejected_requests_.load(std::memory_order_relaxed);
+  result.requests_handled = result.requests_ok + result.requests_rejected;
+  result.inference_count =
+      total_inference_count_.load(std::memory_order_relaxed);
   result.response_count = latency_records_.roundtrip_ms.size();
   result.roundtrip_latency = summarize_latencies(latency_records_.roundtrip_ms);
   result.server_latency.overall =
@@ -257,7 +258,7 @@ InferenceClient::summary() const -> Summary
       summarize_latencies(latency_records_.client_overhead_ms);
 
   if (first_request_time_.has_value() && last_response_time_.has_value() &&
-      total_inference_count_ > 0) {
+      result.inference_count > 0) {
     const double elapsed_seconds =
         std::chrono::duration<double>(
             *last_response_time_ - *first_request_time_)
@@ -541,7 +542,7 @@ InferenceClient::AsyncModelInfer(
   call->start_time = std::chrono::system_clock::now();
   call->inference_count = determine_inference_count(cfg);
   call->expected_outputs = std::move(expected_outputs);
-  ++total_requests_sent_;
+  total_requests_sent_.fetch_add(1, std::memory_order_relaxed);
 
   if (!first_request_time_) {
     first_request_time_ = call->start_time;
@@ -726,7 +727,7 @@ InferenceClient::AsyncCompleteRpc()
       log_warning(std::format(
           "Request ID {} completion not ok at {}; treating as failure",
           call->request_id, recv_time_str));
-      ++rejected_requests_;
+      rejected_requests_.fetch_add(1, std::memory_order_relaxed);
       continue;
     }
     auto latency = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -817,15 +818,16 @@ InferenceClient::AsyncCompleteRpc()
       }
 
       validate_server_response(*call);
-      total_inference_count_ += call->inference_count;
+      total_inference_count_.fetch_add(
+          call->inference_count, std::memory_order_relaxed);
       last_response_time_ = end;
-      ++success_requests_;
+      success_requests_.fetch_add(1, std::memory_order_relaxed);
     } else {
       auto recv_time_str = time_utils::format_timestamp(end);
       log_error(std::format(
           "Request ID {} failed at {}: {}", call->request_id, recv_time_str,
           call->status.error_message()));
-      ++rejected_requests_;
+      rejected_requests_.fetch_add(1, std::memory_order_relaxed);
     }
   }
 
@@ -842,12 +844,16 @@ InferenceClient::Shutdown()
 void
 InferenceClient::log_request_totals() const
 {
-  const std::size_t completed = success_requests_ + rejected_requests_;
-  const std::size_t total = std::max(total_requests_sent_, completed);
+  const std::size_t success = success_requests_.load(std::memory_order_relaxed);
+  const std::size_t rejected =
+      rejected_requests_.load(std::memory_order_relaxed);
+  const std::size_t completed = success + rejected;
+  const std::size_t total =
+      std::max(total_requests_sent_.load(std::memory_order_relaxed), completed);
   log_info(
       verbosity_,
       std::format(
           "Requests summary: {} handled ({} ok, {} rejected) out of {} sent",
-          completed, success_requests_, rejected_requests_, total));
+          completed, success, rejected, total));
 }
 }  // namespace starpu_server

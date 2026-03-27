@@ -29,9 +29,40 @@ struct TimingInfo;
 }
 namespace testing {
 class InferenceServiceTestAccessor;
-}
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+struct HandleModelInferAsyncTestHooks {
+  std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+      on_cancel_flag_created;
+  std::function<void(const std::function<void()>&)> on_cancel_ready;
+  std::function<std::optional<bool>(const grpc::ServerContext*)>
+      is_cancelled_override;
+  std::function<void(
+      const std::shared_ptr<std::atomic<bool>>&, const grpc::Status&)>
+      on_submit_job_async_done;
+};
+
+struct HandleAsyncInferCompletionTestHooks {
+  std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+      after_try_acquire;
+  std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+      before_final_cancel_check;
+  std::function<void(const std::shared_ptr<std::atomic<bool>>&)>
+      before_success_terminal_mark;
+};
+
+struct SubmitJobAsyncTestHooks {
+  std::function<void()> before_create_job;
+};
+
+using CheckMissingNamedInputsOverrideFn =
+    std::function<std::optional<grpc::Status>(
+        const std::vector<bool>&, std::span<const std::string>)>;
+#endif  // SONAR_IGNORE_END
+}  // namespace testing
 
 class MetricsRegistry;
+class MetricsRecorder;
+struct RuntimeObservability;
 
 class InferenceServiceImpl final
     : public inference::GRPCInferenceService::Service {
@@ -53,13 +84,15 @@ class InferenceServiceImpl final
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      InputShapeConfig input_shape_config, ServiceOptions service_options = {});
+      InputShapeConfig input_shape_config, ServiceOptions service_options = {},
+      std::shared_ptr<RuntimeObservability> observability = {});
 
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      ServiceOptions service_options = {});
+      ServiceOptions service_options = {},
+      std::shared_ptr<RuntimeObservability> observability = {});
 
   auto ServerLive(
       grpc::ServerContext* context, const inference::ServerLiveRequest* request,
@@ -161,14 +194,7 @@ class InferenceServiceImpl final
       const inference::LogSettingsRequest* request,
       inference::LogSettingsResponse* reply) -> grpc::Status override;
 
-// Sync wrapper used by in-process tests; async server uses
-// HandleModelInferAsync.
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto ModelInfer(
-      grpc::ServerContext* context, const inference::ModelInferRequest* request,
-      inference::ModelInferResponse* reply) -> grpc::Status override;
-#endif  // SONAR_IGNORE_END
-
+  // Validation / convert block.
   struct LatencyBreakdown {
     double preprocess_ms = 0.0;
     double queue_ms = 0.0;
@@ -189,6 +215,7 @@ class InferenceServiceImpl final
     std::span<const std::string> output_names;
   };
 
+  // Async coordination block.
   struct AsyncFailureInfo {
     std::string stage;
     std::string reason;
@@ -220,17 +247,6 @@ class InferenceServiceImpl final
       std::optional<AsyncFailureInfo>* submit_failure_info = nullptr)
       -> grpc::Status;
 
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
-  auto submit_job_and_wait(
-      const std::vector<torch::Tensor>& inputs,
-      std::vector<torch::Tensor>& outputs, LatencyBreakdown& breakdown,
-      detail::TimingInfo& timing_info,
-      std::vector<std::shared_ptr<const void>> input_lifetimes = {})
-      -> grpc::Status;
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
-
   void HandleModelInferAsync(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
@@ -246,6 +262,7 @@ class InferenceServiceImpl final
  private:
   friend class testing::InferenceServiceTestAccessor;
 
+  // Async coordination internals.
   class CallbackHandle {
    public:
     explicit CallbackHandle(std::function<void(grpc::Status)> callback);
@@ -262,7 +279,7 @@ class InferenceServiceImpl final
     const inference::ModelInferRequest* request;
     inference::ModelInferResponse* reply;
     std::shared_ptr<CallbackHandle> callback_handle;
-    std::shared_ptr<MetricsRegistry> metrics;
+    std::shared_ptr<MetricsRecorder> metrics;
     MonotonicClock::time_point recv_tp;
     int64_t recv_ms;
     std::string resolved_model_name;
@@ -402,12 +419,27 @@ class InferenceServiceImpl final
       const inference::ModelInferRequest* request,
       MonotonicClock::time_point recv_tp, std::string_view resolved_model_name);
 
+ public:
   void validate_schema_or_throw() const;
+  [[nodiscard]] auto metrics_recorder() const
+      -> std::shared_ptr<MetricsRecorder>;
+  [[nodiscard]] auto observability() const
+      -> const std::shared_ptr<RuntimeObservability>&
+  {
+    return observability_;
+  }
+  void record_terminal_metrics(
+      std::string_view model_name, const grpc::Status& status,
+      std::string_view default_stage, std::string_view default_reason = {},
+      const std::optional<AsyncFailureInfo>& failure_info = std::nullopt,
+      bool record_status_metric = true) const;
 
+ private:
   [[nodiscard]] auto resolve_model_name(std::string model_name) const
       -> std::string;
   auto next_request_id() -> int;
 
+  // Shared service state.
   InferenceQueue* queue_;
   const std::vector<torch::Tensor>* reference_outputs_;
   std::vector<at::ScalarType> expected_input_types_;
@@ -418,6 +450,7 @@ class InferenceServiceImpl final
   std::string default_model_name_;
   std::string server_name_;
   std::string server_version_;
+  std::shared_ptr<RuntimeObservability> observability_;
   struct StatisticDurationState {
     uint64_t count = 0;
     uint64_t ns = 0;
@@ -461,6 +494,7 @@ class InferenceServiceImpl final
   std::atomic<int> next_request_id_{0};
 };
 
+// Async server block.
 class AsyncServerContext {
  public:
   AsyncServerContext(
@@ -523,14 +557,16 @@ void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const GrpcModelSpec& model_spec, const GrpcServerOptions& options,
     std::unique_ptr<grpc::Server>& server,
-    const GrpcServerLifecycleHooks& hooks = {});
+    const GrpcServerLifecycleHooks& hooks = {},
+    std::shared_ptr<RuntimeObservability> observability = {});
 
 void RunGrpcServer(
     InferenceQueue& queue, const std::vector<torch::Tensor>& reference_outputs,
     const std::vector<at::ScalarType>& expected_input_types,
     GrpcModelNamesSpec model_names, const GrpcServerOptions& options,
     std::unique_ptr<grpc::Server>& server,
-    const GrpcServerLifecycleHooks& hooks = {});
+    const GrpcServerLifecycleHooks& hooks = {},
+    std::shared_ptr<RuntimeObservability> observability = {});
 
 void StopServer(grpc::Server* server);
 }  // namespace starpu_server

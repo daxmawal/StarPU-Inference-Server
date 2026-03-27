@@ -7,6 +7,20 @@ starpu_server::testing::MetricsRegistryTestAccessor::ClearCpuUsageProvider(
 }
 
 void
+starpu_server::testing::MetricsRegistryTestAccessor::ClearQueueSizeGauge(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.gauges_.queue_size = nullptr;
+}
+
+void
+starpu_server::testing::MetricsRegistryTestAccessor::ClearQueueFillRatioGauge(
+    starpu_server::MetricsRegistry& metrics)
+{
+  metrics.gauges_.queue_fill_ratio = nullptr;
+}
+
+void
 starpu_server::testing::MetricsRegistryTestAccessor::ClearSystemCpuUsageGauge(
     starpu_server::MetricsRegistry& metrics)
 {
@@ -159,6 +173,28 @@ starpu_server::testing::MetricsRegistryTestAccessor::ClearModelsLoadedFamily(
 
 void
 starpu_server::testing::MetricsRegistryTestAccessor::
+    ClearGpuModelReplicationPolicyInfoFamily(
+        starpu_server::MetricsRegistry& metrics)
+{
+  metrics.families_.gpu_model_replication_policy_info = nullptr;
+}
+
+void
+starpu_server::testing::MetricsRegistryTestAccessor::
+    ClearGpuModelReplicasTotalFamily(starpu_server::MetricsRegistry& metrics)
+{
+  metrics.families_.gpu_model_replicas_total = nullptr;
+}
+
+void
+starpu_server::testing::MetricsRegistryTestAccessor::
+    ClearStarpuCudaWorkerInfoFamily(starpu_server::MetricsRegistry& metrics)
+{
+  metrics.families_.starpu_cuda_worker_info = nullptr;
+}
+
+void
+starpu_server::testing::MetricsRegistryTestAccessor::
     ClearModelLoadFailuresFamily(starpu_server::MetricsRegistry& metrics)
 {
   metrics.families_.model_load_failures = nullptr;
@@ -232,6 +268,27 @@ starpu_server::testing::MetricsRegistryTestAccessor::ModelKeyEquals(
 {
   MetricsRegistry::ModelKey lhs{std::string(model_lhs), overflow_lhs};
   MetricsRegistry::ModelKey rhs{std::string(model_rhs), overflow_rhs};
+  return lhs == rhs;
+}
+
+auto
+starpu_server::testing::MetricsRegistryTestAccessor::
+    ModelPolicyKeyOverflowIsEmpty() -> bool
+{
+  const auto key = MetricsRegistry::ModelPolicyKey::Overflow();
+  return key.overflow && key.model.empty() && key.policy.empty();
+}
+
+auto
+starpu_server::testing::MetricsRegistryTestAccessor::ModelPolicyKeyEquals(
+    std::string_view model_lhs, std::string_view policy_lhs, bool overflow_lhs,
+    std::string_view model_rhs, std::string_view policy_rhs,
+    bool overflow_rhs) -> bool
+{
+  MetricsRegistry::ModelPolicyKey lhs{
+      std::string(model_lhs), std::string(policy_lhs), overflow_lhs};
+  MetricsRegistry::ModelPolicyKey rhs{
+      std::string(model_rhs), std::string(policy_rhs), overflow_rhs};
   return lhs == rhs;
 }
 

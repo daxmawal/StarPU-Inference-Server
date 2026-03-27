@@ -124,6 +124,18 @@ FindCounterValue(
   return std::nullopt;
 }
 
+auto
+FindHistogramSampleCount(
+    const std::vector<prometheus::MetricFamily>& families,
+    std::string_view family_name) -> std::optional<std::uint64_t>
+{
+  const auto* family = FindFamily(families, family_name);
+  if (family == nullptr || family->metric.empty()) {
+    return std::nullopt;
+  }
+  return family->metric.front().histogram.sample_count;
+}
+
 TEST(SynthesizeOutputsFromConfig, ReturnsNulloptWhenNoModels)
 {
   RuntimeConfig opts;
@@ -310,6 +322,71 @@ TEST(LoadModelAndReferenceOutput, MetricsSetGpuLoadedFlagsOnSuccess)
   EXPECT_DOUBLE_EQ(*gpu_loaded, 1.0);
 }
 
+TEST(InferenceRunnerMetrics, SetModelLoadedMetricUsesRecorderWhenProvided)
+{
+  shutdown_metrics();
+  auto recorder = create_metrics_recorder(0);
+  ASSERT_NE(recorder, nullptr);
+  ASSERT_TRUE(recorder->enabled());
+
+  set_model_loaded_metric(
+      recorder.get(), "recorder-model", "cuda:2", /*loaded=*/true);
+
+  const auto families = recorder->registry()->registry()->Collect();
+  const auto loaded = FindGaugeValue(
+      families, "models_loaded",
+      {{"model", "recorder-model"}, {"device", "cuda:2"}});
+  ASSERT_TRUE(loaded.has_value());
+  EXPECT_DOUBLE_EQ(*loaded, 1.0);
+
+  shutdown_metrics();
+}
+
+TEST(
+    InferenceRunnerMetrics,
+    ModelLoadRecorderHelpersRecordFailureFlagsAndLoadDuration)
+{
+  shutdown_metrics();
+  auto recorder = create_metrics_recorder(0);
+  ASSERT_NE(recorder, nullptr);
+  ASSERT_TRUE(recorder->enabled());
+
+  RuntimeConfig opts;
+  opts.devices.use_cuda = true;
+  opts.devices.ids = {0};
+
+  mark_model_load_failure(opts, recorder.get(), "recorder-model");
+  record_model_load_success(
+      opts, recorder.get(), "recorder-model",
+      MonotonicClock::now() - std::chrono::milliseconds(5));
+
+  const auto families = recorder->registry()->registry()->Collect();
+
+  const auto failure_value = FindCounterValue(
+      families, "model_load_failures_total", {{"model", "recorder-model"}});
+  ASSERT_TRUE(failure_value.has_value());
+  EXPECT_DOUBLE_EQ(*failure_value, 1.0);
+
+  const auto cpu_loaded = FindGaugeValue(
+      families, "models_loaded",
+      {{"model", "recorder-model"}, {"device", "cpu"}});
+  ASSERT_TRUE(cpu_loaded.has_value());
+  EXPECT_DOUBLE_EQ(*cpu_loaded, 1.0);
+
+  const auto gpu_loaded = FindGaugeValue(
+      families, "models_loaded",
+      {{"model", "recorder-model"}, {"device", "cuda:0"}});
+  ASSERT_TRUE(gpu_loaded.has_value());
+  EXPECT_DOUBLE_EQ(*gpu_loaded, 1.0);
+
+  const auto load_duration_samples =
+      FindHistogramSampleCount(families, "model_load_duration_ms");
+  ASSERT_TRUE(load_duration_samples.has_value());
+  EXPECT_GE(*load_duration_samples, 1U);
+
+  shutdown_metrics();
+}
+
 TEST(LoadModelAndReferenceOutput, LogsFallbackWhenSyntheticMissing)
 {
   TemporaryModelFile model_file{"load_model_missing", make_add_one_model()};
@@ -370,9 +447,10 @@ TEST(InferenceRunner, LoadModelLoadsTorchScriptModule)
 TEST(InferenceRunner, CloneModelToGpusReturnsEmptyWhenNoDeviceIds)
 {
   auto cpu_model = make_add_one_model();
-  const std::vector<int> device_ids;
+  starpu_server::RuntimeConfig opts;
+  opts.devices.use_cuda = true;
 
-  const auto gpu_models = clone_model_to_gpus(cpu_model, device_ids);
+  const auto gpu_models = clone_model_to_gpus(cpu_model, opts);
 
   EXPECT_TRUE(gpu_models.empty());
 }

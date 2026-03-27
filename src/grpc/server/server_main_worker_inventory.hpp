@@ -11,6 +11,36 @@ worker_type_label(starpu_worker_archtype type) -> std::string
   }
 }
 
+auto
+format_int_list(const std::vector<int>& values) -> std::string
+{
+  if (values.empty()) {
+    return "none";
+  }
+
+  std::string result;
+  for (std::size_t idx = 0; idx < values.size(); ++idx) {
+    if (idx > 0) {
+      result += ',';
+    }
+    result += std::to_string(values[idx]);
+  }
+  return result;
+}
+
+auto
+resolve_model_label_for_startup_metrics(
+    const starpu_server::RuntimeConfig& opts) -> std::string
+{
+  if (!opts.model.has_value()) {
+    return "default";
+  }
+  if (!opts.model->name.empty()) {
+    return opts.model->name;
+  }
+  return opts.model->path;
+}
+
 // Test-only runtime hook overrides kept together for readability.
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 STARPU_SERVER_DECLARE_TEST_OVERRIDE_SLOT(
@@ -217,5 +247,89 @@ log_worker_inventory(const starpu_server::RuntimeConfig& opts)
         std::format(
             "Worker {:2d}: type={}, device id={}{}", worker_id,
             worker_type_label(type), device_label, cpu_affinity));
+  }
+}
+
+void
+report_gpu_replication_startup(
+    const starpu_server::RuntimeConfig& opts, std::size_t loaded_gpu_replicas,
+    const std::shared_ptr<starpu_server::RuntimeObservability>& observability =
+        {})
+{
+  if (!opts.devices.use_cuda || opts.devices.ids.empty()) {
+    return;
+  }
+
+  const std::string model_label = resolve_model_label_for_startup_metrics(opts);
+  const std::string replication_policy =
+      std::string(to_string(opts.devices.gpu_model_replication));
+
+  if (observability != nullptr && observability->metrics != nullptr) {
+    observability->metrics->set_gpu_model_replication_policy(
+        model_label, replication_policy);
+    observability->metrics->set_gpu_model_replicas_total(
+        model_label, loaded_gpu_replicas);
+  } else {
+    starpu_server::set_gpu_model_replication_policy(
+        model_label, replication_policy);
+    starpu_server::set_gpu_model_replicas_total(
+        model_label, loaded_gpu_replicas);
+  }
+
+  try {
+    const auto assignments =
+        starpu_server::detail::build_gpu_replica_assignments(opts);
+    const auto workers_by_device =
+        starpu_server::StarPUSetup::get_cuda_workers_by_device(
+            opts.devices.ids);
+
+    std::map<int, std::size_t> replicas_by_device;
+    const std::size_t replica_limit = loaded_gpu_replicas < assignments.size()
+                                          ? loaded_gpu_replicas
+                                          : assignments.size();
+    for (std::size_t idx = 0; idx < replica_limit; ++idx) {
+      ++replicas_by_device[assignments[idx].device_id];
+    }
+
+    starpu_server::log_info(
+        opts.verbosity,
+        std::format(
+            "GPU model replication summary: policy={}, total_replicas={}, "
+            "configured_cuda_devices={}.",
+            replication_policy, loaded_gpu_replicas, workers_by_device.size()));
+
+    for (const int device_id : opts.devices.ids) {
+      if (device_id < 0) {
+        continue;
+      }
+
+      const auto workers_it = workers_by_device.find(device_id);
+      const std::vector<int> workers = workers_it != workers_by_device.end()
+                                           ? workers_it->second
+                                           : std::vector<int>{};
+      const std::size_t replica_count = replicas_by_device.contains(device_id)
+                                            ? replicas_by_device[device_id]
+                                            : 0U;
+      for (const int worker_id : workers) {
+        if (observability != nullptr && observability->metrics != nullptr) {
+          observability->metrics->set_starpu_cuda_worker_info(
+              worker_id, device_id, true);
+        } else {
+          starpu_server::set_starpu_cuda_worker_info(
+              worker_id, device_id, true);
+        }
+      }
+
+      starpu_server::log_info(
+          opts.verbosity,
+          std::format(
+              "CUDA device {} -> workers=[{}], model replicas={}", device_id,
+              format_int_list(workers), replica_count));
+    }
+  }
+  catch (const std::exception& error) {
+    starpu_server::log_warning(std::format(
+        "Failed to summarize GPU model replication startup state: {}",
+        error.what()));
   }
 }

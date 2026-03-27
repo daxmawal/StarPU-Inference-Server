@@ -3,16 +3,14 @@
 #include <atomic>
 #include <cstddef>
 #include <functional>
+#include <memory>
 
 #include "inference_queue.hpp"
 #include "starpu_setup.hpp"
 
 namespace starpu_server {
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+struct RuntimeObservability;
 struct WarmupRunnerTestHelper;
-#endif  // SONAR_IGNORE_END
-// GCOVR_EXCL_STOP
 // =============================================================================
 // Runs a warmup phase by simulating inference jobs across StarPU workers
 // =============================================================================
@@ -27,7 +25,8 @@ class WarmupRunner {
       torch::jit::script::Module& model_cpu,
       std::vector<torch::jit::script::Module>& models_gpu,
       const std::vector<torch::Tensor>& outputs_ref,
-      CompletionObserver completion_observer = {});
+      CompletionObserver completion_observer = {},
+      std::shared_ptr<RuntimeObservability> observability = {});
   ~WarmupRunner() = default;
   WarmupRunner(const WarmupRunner&) = delete;
   auto operator=(const WarmupRunner&) -> WarmupRunner& = delete;
@@ -37,11 +36,7 @@ class WarmupRunner {
   void run(int request_nb_per_worker);
 
  private:
-// GCOVR_EXCL_START
-#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   friend struct WarmupRunnerTestHelper;
-#endif  // SONAR_IGNORE_END
-  // GCOVR_EXCL_STOP
   auto client_worker(
       const std::map<int, std::vector<int>>& device_workers,
       InferenceQueue& queue, int request_nb_per_worker) const -> std::size_t;
@@ -55,5 +50,6 @@ class WarmupRunner {
   std::vector<torch::jit::script::Module>& models_gpu_;
   const std::vector<torch::Tensor>& outputs_ref_;
   CompletionObserver completion_observer_;
+  std::shared_ptr<RuntimeObservability> observability_;
 };
 }  // namespace starpu_server

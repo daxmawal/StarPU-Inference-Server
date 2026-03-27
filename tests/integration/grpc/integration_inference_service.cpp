@@ -36,7 +36,8 @@ TEST_F(InferenceServiceTest, ModelInferPropagatesSubmitError)
   auto req = starpu_server::make_valid_request();
   req.MergeFrom(starpu_server::make_model_request("m", "1"));
   auto worker = prepare_job({torch::zeros({1})});
-  auto status = service->ModelInfer(&ctx, &req, &reply);
+  auto status =
+      starpu_server::testing::ModelInferForTest(*service, &ctx, &req, &reply);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INTERNAL);
   expect_empty_infer_response(reply);
 }
@@ -52,7 +53,8 @@ TEST_F(InferenceServiceTest, ModelInferReturnsOutputs)
   std::vector<torch::Tensor> outs = {
       torch::tensor({kVal1, kVal2, kVal3, kVal4}).view({2, 2})};
   auto worker = prepare_job({torch::zeros({2, 2})}, outs);
-  auto status = service->ModelInfer(&ctx, &req, &reply);
+  auto status =
+      starpu_server::testing::ModelInferForTest(*service, &ctx, &req, &reply);
   ASSERT_TRUE(status.ok());
   EXPECT_GT(reply.server_receive_ms(), 0);
   EXPECT_GT(reply.server_send_ms(), 0);
@@ -68,7 +70,8 @@ TEST_F(InferenceServiceTest, ModelInferDetectsInputSizeMismatch)
   auto req = starpu_server::make_valid_request();
   req.MergeFrom(starpu_server::make_model_request("m", "1"));
   req.mutable_raw_input_contents(0)->append("0", 1);
-  auto status = service->ModelInfer(&ctx, &req, &reply);
+  auto status =
+      starpu_server::testing::ModelInferForTest(*service, &ctx, &req, &reply);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
   expect_empty_infer_response(reply);
 }
@@ -99,8 +102,8 @@ TEST_P(SubmitJobAndWaitTest, ReturnsExpectedStatus)
   auto worker = prepare_job(GetParam().ref_outputs, GetParam().worker_outputs);
   starpu_server::InferenceServiceImpl::LatencyBreakdown breakdown;
   starpu_server::detail::TimingInfo timing_info{};
-  auto status =
-      service->submit_job_and_wait(inputs, outputs, breakdown, timing_info);
+  auto status = starpu_server::testing::SubmitJobAndWaitForTest(
+      *service, inputs, outputs, breakdown, timing_info);
   EXPECT_EQ(status.error_code(), GetParam().expected_status);
   if (status.ok()) {
     ASSERT_EQ(outputs.size(), GetParam().worker_outputs.size());
@@ -661,7 +664,7 @@ TEST(GrpcServer, StopServerWhileHandlingConcurrentLoad)
       }
       if (job != nullptr) {
         auto outputs_copy = expected_outputs;
-        job->get_on_complete()(outputs_copy, 0.0);
+        job->completion().get_on_complete()(outputs_copy, 0.0);
       }
     }
   });

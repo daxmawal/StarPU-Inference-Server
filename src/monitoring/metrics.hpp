@@ -34,6 +34,8 @@ namespace testing {
 class MetricsRegistryTestAccessor;
 }
 
+class MetricsRecorder;
+
 class MetricsRegistry {
  public:
   struct ExposerHandle {
@@ -139,6 +141,10 @@ class MetricsRegistry {
     prometheus::Family<prometheus::Histogram>* starpu_task_runtime_by_worker{
         nullptr};
     prometheus::Family<prometheus::Gauge>* starpu_worker_inflight{nullptr};
+    prometheus::Family<prometheus::Gauge>* gpu_model_replication_policy_info{
+        nullptr};
+    prometheus::Family<prometheus::Gauge>* gpu_model_replicas_total{nullptr};
+    prometheus::Family<prometheus::Gauge>* starpu_cuda_worker_info{nullptr};
     prometheus::Family<prometheus::Histogram>* io_copy_latency{nullptr};
     prometheus::Family<prometheus::Counter>* transfer_bytes{nullptr};
     prometheus::Family<prometheus::Gauge>* gpu_utilization{nullptr};
@@ -193,6 +199,12 @@ class MetricsRegistry {
   void increment_model_load_failure_counter(std::string_view model_label);
   void set_model_loaded_flag(
       ModelLabel model_label, DeviceLabel device_label, bool loaded);
+  void set_gpu_model_replication_policy_flag(
+      ModelLabel model_label, std::string_view policy_label);
+  void set_gpu_model_replicas_total_gauge(
+      ModelLabel model_label, std::size_t replicas);
+  void set_starpu_cuda_worker_info_gauge(
+      int worker_id, int device_id, bool active);
   void set_queue_capacity(std::size_t capacity);
   [[nodiscard]] auto queue_capacity_value() const -> std::size_t;
   void observe_compute_latency_by_worker(
@@ -318,6 +330,32 @@ class MetricsRegistry {
     }
   };
 
+  struct ModelPolicyKey {
+    std::string model;
+    std::string policy;
+    bool overflow{false};
+
+    static auto Overflow() -> ModelPolicyKey
+    {
+      ModelPolicyKey key;
+      key.overflow = true;
+      return key;
+    }
+
+    auto operator==(const ModelPolicyKey& other) const noexcept -> bool
+    {
+      return overflow == other.overflow && model == other.model &&
+             policy == other.policy;
+    }
+  };
+
+  struct ModelPolicyKeyHash {
+    auto operator()(const ModelPolicyKey& key) const noexcept -> std::size_t
+    {
+      return MetricsRegistry::HashMany(key.model, key.policy, key.overflow);
+    }
+  };
+
   struct ModelDeviceKey {
     std::string model;
     std::string device;
@@ -438,6 +476,10 @@ class MetricsRegistry {
         model_load_failures;
     std::unordered_map<ModelDeviceKey, prometheus::Gauge*, ModelDeviceKeyHash>
         models_loaded;
+    std::unordered_map<ModelPolicyKey, prometheus::Gauge*, ModelPolicyKeyHash>
+        gpu_replication_policy;
+    std::unordered_map<ModelKey, prometheus::Gauge*, ModelKeyHash>
+        gpu_replicas_total;
   };
 
   struct WorkerMetricsCache {
@@ -446,6 +488,8 @@ class MetricsRegistry {
     std::unordered_map<WorkerKey, prometheus::Histogram*, WorkerKeyHash>
         task_runtime;
     std::unordered_map<WorkerKey, prometheus::Gauge*, WorkerKeyHash> inflight;
+    std::unordered_map<WorkerKey, prometheus::Gauge*, WorkerKeyHash>
+        cuda_worker_info;
   };
 
   struct IoMetricsCache {
@@ -492,6 +536,164 @@ struct LatencyBreakdownMetrics {
   double postprocess_ms{0.0};
 };
 
+namespace metrics_recorder_detail {
+
+class Access {
+ protected:
+  Access() = default;
+  explicit Access(std::shared_ptr<MetricsRegistry> registry)
+      : registry_(std::move(registry))
+  {
+  }
+
+  [[nodiscard]] auto registry_ptr() const
+      -> const std::shared_ptr<MetricsRegistry>&
+  {
+    return registry_;
+  }
+
+ private:
+  std::shared_ptr<MetricsRegistry> registry_;
+};
+
+class Core : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
+ public:
+  [[nodiscard]] auto enabled() const -> bool
+  {
+    return registry_ptr() != nullptr;
+  }
+  [[nodiscard]] auto registry() const -> std::shared_ptr<MetricsRegistry>
+  {
+    return registry_ptr();
+  }
+
+  void increment_requests_total() const;
+  void observe_inference_latency(double latency_ms) const;
+};
+
+class QueueRuntime : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
+ public:
+  void set_queue_size(std::size_t size) const;
+  void set_inflight_tasks(std::size_t size) const;
+  void set_starpu_worker_busy_ratio(double ratio) const;
+  void set_max_inflight_tasks(std::size_t max_tasks) const;
+  void set_queue_capacity(std::size_t capacity) const;
+  void set_server_health(bool ready) const;
+  void set_starpu_prepared_queue_depth(std::size_t depth) const;
+  void set_batch_pending_jobs(std::size_t pending) const;
+};
+
+class Congestion : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
+ public:
+  void set_congestion_flag(bool congested) const;
+  void set_congestion_score(double score) const;
+  void set_congestion_arrival_rate(double rps) const;
+  void set_congestion_completion_rate(double rps) const;
+  void set_congestion_rejection_rate(double rps) const;
+  void set_congestion_rho(double rho) const;
+  void set_congestion_fill_ewma(double fill) const;
+  void set_congestion_queue_growth_rate(double rate) const;
+  void set_congestion_queue_latency_p95(double latency_ms) const;
+  void set_congestion_queue_latency_p99(double latency_ms) const;
+  void set_congestion_e2e_latency_p95(double latency_ms) const;
+  void set_congestion_e2e_latency_p99(double latency_ms) const;
+};
+
+class Requests : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
+ public:
+  void increment_request_status(
+      int status_code, std::string_view model_name) const;
+  void increment_requests_received(std::string_view model_name) const;
+  void increment_inference_completed(
+      std::string_view model_name, std::size_t logical_jobs) const;
+  void increment_inference_failure(
+      std::string_view stage, std::string_view reason,
+      std::string_view model_name, std::size_t count = 1) const;
+  void observe_batch_size(std::size_t batch_size) const;
+  void observe_logical_batch_size(std::size_t logical_jobs) const;
+  void observe_batch_efficiency(double ratio) const;
+  void observe_latency_breakdown(
+      const LatencyBreakdownMetrics& breakdown) const;
+  void observe_starpu_task_runtime(double runtime_ms) const;
+  void observe_model_load_duration(double duration_ms) const;
+  void increment_rejected_requests() const;
+};
+
+class Models : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
+ public:
+  void set_model_loaded(
+      std::string_view model_name, std::string_view device_label,
+      bool loaded) const;
+  void set_gpu_model_replication_policy(
+      std::string_view model_name, std::string_view policy_label) const;
+  void set_gpu_model_replicas_total(
+      std::string_view model_name, std::size_t replicas) const;
+  void increment_model_load_failure(std::string_view model_name) const;
+};
+
+class Workers : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
+ public:
+  void set_starpu_cuda_worker_info(
+      int worker_id, int device_id, bool active) const;
+  void observe_compute_latency_by_worker(
+      int worker_id, int device_id, std::string_view worker_type,
+      double latency_ms) const;
+  void observe_task_runtime_by_worker(
+      int worker_id, int device_id, std::string_view worker_type,
+      double latency_ms) const;
+  void set_worker_inflight_gauge(
+      int worker_id, int device_id, std::string_view worker_type,
+      std::size_t value) const;
+  void observe_io_copy_latency(
+      std::string_view direction, int worker_id, int device_id,
+      std::string_view worker_type, double duration_ms) const;
+  void increment_transfer_bytes(
+      std::string_view direction, int worker_id, int device_id,
+      std::string_view worker_type, std::size_t bytes) const;
+};
+
+}  // namespace metrics_recorder_detail
+
+class MetricsRecorder : public metrics_recorder_detail::Core,
+                        public metrics_recorder_detail::QueueRuntime,
+                        public metrics_recorder_detail::Congestion,
+                        public metrics_recorder_detail::Requests,
+                        public metrics_recorder_detail::Models,
+                        public metrics_recorder_detail::Workers {
+ public:
+  MetricsRecorder() = default;
+  explicit MetricsRecorder(std::shared_ptr<MetricsRegistry> registry)
+      : Core(registry), QueueRuntime(registry), Congestion(registry),
+        Requests(registry), Models(registry), Workers(std::move(registry))
+  {
+  }
+};
+
+auto create_metrics_recorder(int port) -> std::shared_ptr<MetricsRecorder>;
 auto init_metrics(int port) -> bool;
 void shutdown_metrics();
 void set_queue_size(std::size_t size);
@@ -527,11 +729,17 @@ void increment_inference_failure(
 void observe_batch_size(std::size_t batch_size);
 void observe_logical_batch_size(std::size_t logical_jobs);
 void observe_batch_efficiency(double ratio);
+void observe_inference_latency(double latency_ms);
 void observe_latency_breakdown(const LatencyBreakdownMetrics& breakdown);
 void observe_starpu_task_runtime(double runtime_ms);
 void observe_model_load_duration(double duration_ms);
 void set_model_loaded(
     std::string_view model_name, std::string_view device_label, bool loaded);
+void set_gpu_model_replication_policy(
+    std::string_view model_name, std::string_view policy_label);
+void set_gpu_model_replicas_total(
+    std::string_view model_name, std::size_t replicas);
+void set_starpu_cuda_worker_info(int worker_id, int device_id, bool active);
 void increment_model_load_failure(std::string_view model_name);
 void increment_rejected_requests();
 void observe_compute_latency_by_worker(

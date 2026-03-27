@@ -33,6 +33,7 @@
 #include "inference_service.hpp"
 #include "monitoring/congestion_monitor.hpp"
 #include "monitoring/metrics.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
 #include "utils/batching_trace_logger.hpp"
@@ -85,6 +86,11 @@ struct ThreadExceptionState {
 class RuntimeCleanupGuard {
  public:
   RuntimeCleanupGuard() = default;
+  explicit RuntimeCleanupGuard(
+      std::shared_ptr<starpu_server::RuntimeObservability> observability)
+      : observability_(std::move(observability))
+  {
+  }
   RuntimeCleanupGuard(const RuntimeCleanupGuard&) = delete;
   auto operator=(const RuntimeCleanupGuard&) -> RuntimeCleanupGuard& = delete;
   RuntimeCleanupGuard(RuntimeCleanupGuard&&) = delete;
@@ -92,6 +98,10 @@ class RuntimeCleanupGuard {
   ~RuntimeCleanupGuard() noexcept
   {
     if (!active_) {
+      return;
+    }
+    if (observability_ != nullptr) {
+      reset_injected_observability_noexcept(observability_);
       return;
     }
     reset_trace_logger_noexcept();
@@ -172,6 +182,29 @@ class RuntimeCleanupGuard {
     }
   }
 
+  static void reset_injected_observability_noexcept(
+      const std::shared_ptr<starpu_server::RuntimeObservability>&
+          observability) noexcept
+  {
+    try {
+      if (observability == nullptr) {
+        return;
+      }
+      if (observability->congestion_monitor != nullptr) {
+        observability->congestion_monitor->shutdown();
+        observability->congestion_monitor.reset();
+      }
+      if (observability->tracer != nullptr) {
+        observability->tracer->configure(false, "");
+      }
+      observability->metrics.reset();
+    }
+    catch (...) {
+      return;
+    }
+  }
+
+  std::shared_ptr<starpu_server::RuntimeObservability> observability_;
   bool active_ = true;
 };
 
@@ -196,24 +229,31 @@ main(int argc, char* argv[]) -> int
   try {
     starpu_server::RuntimeConfig opts =
         handle_program_arguments({argv, static_cast<size_t>(argc)});
-    RuntimeCleanupGuard cleanup_guard;
-    starpu_server::BatchingTraceLogger::instance().configure_from_runtime(opts);
-    const bool metrics_ok = starpu_server::init_metrics(opts.metrics_port);
-    if (!metrics_ok) {
+    auto observability =
+        std::make_shared<starpu_server::RuntimeObservability>();
+    observability->tracer =
+        std::make_shared<starpu_server::BatchingTraceLogger>();
+    observability->tracer->configure_from_runtime(opts);
+    observability->metrics =
+        starpu_server::create_metrics_recorder(opts.metrics_port);
+    if (observability->metrics == nullptr) {
       starpu_server::log_warning(
           "Metrics server failed to start; continuing without metrics.");
     }
+    RuntimeCleanupGuard cleanup_guard(observability);
     starpu_server::StarPUSetup starpu(opts);
     log_worker_inventory(opts);
     auto [model_cpu, models_gpu, reference_outputs] =
-        prepare_models_and_warmup(opts, starpu);
-    starpu_server::InferenceQueue queue(opts.batching.max_queue_size);
+        prepare_models_and_warmup(opts, starpu, observability);
+    report_gpu_replication_startup(opts, models_gpu.size(), observability);
+    starpu_server::InferenceQueue queue(
+        opts.batching.max_queue_size, observability);
     launch_threads(
-        opts, starpu, model_cpu, models_gpu, reference_outputs, queue);
-    auto& tracer = starpu_server::BatchingTraceLogger::instance();
-    tracer.configure(false, "");
-    run_trace_plots_if_enabled(opts);
-    starpu_server::shutdown_metrics();
+        opts, starpu, model_cpu, models_gpu, reference_outputs, queue,
+        observability);
+    observability->tracer->configure(false, "");
+    run_trace_plots_if_enabled(opts, nullptr, observability->tracer.get());
+    observability->metrics.reset();
     cleanup_guard.Dismiss();
   }
   catch (const starpu_server::InferenceEngineException& e) {

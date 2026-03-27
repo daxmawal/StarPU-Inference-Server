@@ -11,6 +11,7 @@
 
 #include "core/inference_runner.hpp"
 #include "grpc/server/inference_service.hpp"
+#include "support/grpc/server/inference_service_test_api.hpp"
 #include "test_constants.hpp"
 #include "test_helpers.hpp"
 

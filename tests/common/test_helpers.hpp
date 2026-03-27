@@ -1,8 +1,14 @@
 #pragma once
 
+#include <arpa/inet.h>
+#include <grpcpp/create_channel.h>
+#include <grpcpp/security/credentials.h>
 #include <gtest/gtest.h>
+#include <netinet/in.h>
 #include <starpu.h>
+#include <sys/socket.h>
 #include <torch/script.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <bit>
@@ -53,6 +59,36 @@ MakeTempModelPath(const char* base) -> std::filesystem::path
 }
 
 namespace starpu_server {
+inline constexpr auto kTestGrpcServerStartTimeout = std::chrono::seconds(5);
+
+inline auto
+pick_unused_test_port() -> int
+{
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return -1;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+
+  if (::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    ::close(fd);
+    return -1;
+  }
+
+  socklen_t addr_len = sizeof(addr);
+  if (::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &addr_len) != 0) {
+    ::close(fd);
+    return -1;
+  }
+
+  const int selected_port = ntohs(addr.sin_port);
+  ::close(fd);
+  return selected_port;
+}
 
 class TemporaryModelFile {
  public:
@@ -311,7 +347,7 @@ run_single_job(
       if (job_mutator) {
         job_mutator(*job);
       }
-      job->get_on_complete()(outputs, latency);
+      job->completion().get_on_complete()(outputs, latency);
     }
   });
 }
@@ -328,35 +364,52 @@ start_test_grpc_server(
     std::vector<at::ScalarType> expected_input_types = {kValidInputSpec.dtype},
     int port = 0) -> TestGrpcServer
 {
+  const int resolved_port = port > 0 ? port : pick_unused_test_port();
+  EXPECT_GT(resolved_port, 0);
+
   TestGrpcServer handle;
   std::promise<int> port_promise;
   std::promise<void> server_ready_promise;
   auto port_future = port_promise.get_future();
   auto server_ready_future = server_ready_promise.get_future();
   handle.thread =
-      std::jthread([&queue, &reference_outputs, port, &handle,
-                    expected_input_types, p = std::move(port_promise),
+      std::jthread([&queue, &reference_outputs, resolved_port, &handle,
+                    expected_input_types = std::move(expected_input_types),
+                    p = std::move(port_promise),
                     ready = std::move(server_ready_promise)]() mutable {
-        InferenceServiceImpl service(
-            &queue, &reference_outputs, expected_input_types);
-        grpc::ServerBuilder builder;
-        std::string address = std::format("0.0.0.0:{}", port);
-        int selected_port = 0;
-        builder.AddListeningPort(
-            address, grpc::InsecureServerCredentials(), &selected_port);
-        builder.RegisterService(&service);
-        builder.SetMaxReceiveMessageSize(32 * 1024 * 1024);
-        builder.SetMaxSendMessageSize(32 * 1024 * 1024);
-        handle.server = builder.BuildAndStart();
-        p.set_value(selected_port);
-        ready.set_value();
-        if (handle.server != nullptr) {
-          handle.server->Wait();
-          handle.server.reset();
-        }
+        const std::string address = std::format("127.0.0.1:{}", resolved_port);
+        const auto options = GrpcServerOptions{
+            address,
+            32U * static_cast<std::size_t>(1024) *
+                static_cast<std::size_t>(1024),
+            VerbosityLevel::Info,
+            "",
+            "",
+            ""};
+        GrpcServerLifecycleHooks hooks;
+        hooks.on_started = [resolved_port, &p, &ready](grpc::Server*) {
+          p.set_value(resolved_port);
+          ready.set_value();
+        };
+        RunGrpcServer(
+            queue, reference_outputs, expected_input_types, {}, options,
+            handle.server, hooks);
       });
   handle.port = port_future.get();
   server_ready_future.get();
+  const std::string address = std::format("127.0.0.1:{}", handle.port);
+  auto channel =
+      grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+  const bool connected = channel->WaitForConnected(
+      std::chrono::system_clock::now() + kTestGrpcServerStartTimeout);
+  if (!connected) {
+    if (handle.server != nullptr) {
+      StopServer(handle.server.get());
+    }
+    handle.thread.join();
+    ADD_FAILURE() << "Timed out waiting for test gRPC server startup on "
+                  << address;
+  }
   return handle;
 }
 

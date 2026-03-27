@@ -2,7 +2,9 @@
 
 #include "core/inference_runner.hpp"
 #include "monitoring/metrics.hpp"
+#include "monitoring/runtime_observability.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "utils/batching_trace_logger.hpp"
 
 using namespace starpu_server;
 
@@ -65,4 +67,29 @@ TEST(Metrics, RejectedRequestsCounterIncrements)
   EXPECT_DOUBLE_EQ(metrics->counters().requests_rejected_total->Value(), 1);
 
   shutdown_metrics();
+}
+
+TEST(Metrics, QueueObservabilityUsesRecorderAndTracerWhenProvided)
+{
+  auto observability = std::make_shared<RuntimeObservability>();
+  observability->metrics = create_metrics_recorder(0);
+  observability->tracer = std::make_shared<BatchingTraceLogger>();
+  ASSERT_NE(observability->metrics, nullptr);
+  ASSERT_NE(observability->tracer, nullptr);
+
+  InferenceQueue queue(4, observability);
+  auto metrics = observability->metrics->registry();
+  ASSERT_NE(metrics, nullptr);
+  EXPECT_EQ(metrics->queue_capacity_value(), 4U);
+
+  auto job = std::make_shared<InferenceJob>();
+  ASSERT_TRUE(queue.push(job));
+  EXPECT_DOUBLE_EQ(metrics->gauges().queue_size->Value(), 1.0);
+
+  std::shared_ptr<InferenceJob> popped;
+  ASSERT_TRUE(queue.wait_and_pop(popped));
+  EXPECT_EQ(popped, job);
+  EXPECT_DOUBLE_EQ(metrics->gauges().queue_size->Value(), 0.0);
+
+  queue.shutdown();
 }
