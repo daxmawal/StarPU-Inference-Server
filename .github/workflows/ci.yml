@@ -419,30 +419,35 @@ jobs:
 
       - name: Restore execute permission on test binaries
         working-directory: build
-        run: chmod +x all_tests || true
+        run: |
+          find . -maxdepth 1 -type f \( -name '*_tests' -o -name 'all_tests' \) \
+            -exec chmod +x {} +
 
-      - name: Run unit test shards
+      - name: Run unit tests
         working-directory: build
         run: |
           ctest --output-on-failure \
+            --no-tests=error \
             --timeout "$CTEST_TIMEOUT_UNIT_SECONDS" \
-            -R '^unit_tests_shard_.*$' \
+            -L '^unit$' \
             --output-junit junit-unit.xml
 
-      - name: Run integration test shards
+      - name: Run integration tests
         working-directory: build
         run: |
           ctest --output-on-failure \
+            --no-tests=error \
             --timeout "$CTEST_TIMEOUT_INTEGRATION_SECONDS" \
-            -R '^integration_tests_shard_.*$' \
+            -L '^integration$' \
             --output-junit junit-integration.xml
 
-      - name: Run e2e test shards
+      - name: Run e2e tests
         working-directory: build
         run: |
           ctest --output-on-failure \
+            --no-tests=error \
             --timeout "$CTEST_TIMEOUT_E2E_SECONDS" \
-            -R '^e2e_tests_shard_.*$' \
+            -L '^e2e$' \
             --output-junit junit-e2e.xml
 
       - name: Upload JUnit reports
