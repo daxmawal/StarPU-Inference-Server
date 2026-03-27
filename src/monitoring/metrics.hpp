@@ -556,7 +556,11 @@ class Access {
   std::shared_ptr<MetricsRegistry> registry_;
 };
 
-class Core : public virtual Access {
+class Core : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
  public:
   [[nodiscard]] auto enabled() const -> bool
   {
@@ -571,7 +575,11 @@ class Core : public virtual Access {
   void observe_inference_latency(double latency_ms) const;
 };
 
-class QueueRuntime : public virtual Access {
+class QueueRuntime : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
  public:
   void set_queue_size(std::size_t size) const;
   void set_inflight_tasks(std::size_t size) const;
@@ -583,7 +591,11 @@ class QueueRuntime : public virtual Access {
   void set_batch_pending_jobs(std::size_t pending) const;
 };
 
-class Congestion : public virtual Access {
+class Congestion : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
  public:
   void set_congestion_flag(bool congested) const;
   void set_congestion_score(double score) const;
@@ -599,7 +611,11 @@ class Congestion : public virtual Access {
   void set_congestion_e2e_latency_p99(double latency_ms) const;
 };
 
-class Requests : public virtual Access {
+class Requests : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
  public:
   void increment_request_status(
       int status_code, std::string_view model_name) const;
@@ -619,7 +635,11 @@ class Requests : public virtual Access {
   void increment_rejected_requests() const;
 };
 
-class Models : public virtual Access {
+class Models : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
  public:
   void set_model_loaded(
       std::string_view model_name, std::string_view device_label,
@@ -631,7 +651,11 @@ class Models : public virtual Access {
   void increment_model_load_failure(std::string_view model_name) const;
 };
 
-class Workers : public virtual Access {
+class Workers : protected Access {
+ protected:
+  using Access::Access;
+  using Access::registry_ptr;
+
  public:
   void set_starpu_cuda_worker_info(
       int worker_id, int device_id, bool active) const;
@@ -663,7 +687,8 @@ class MetricsRecorder : public metrics_recorder_detail::Core,
  public:
   MetricsRecorder() = default;
   explicit MetricsRecorder(std::shared_ptr<MetricsRegistry> registry)
-      : metrics_recorder_detail::Access(std::move(registry))
+      : Core(registry), QueueRuntime(registry), Congestion(registry),
+        Requests(registry), Models(registry), Workers(std::move(registry))
   {
   }
 };

@@ -421,7 +421,7 @@ ResultDispatcher::record_job_metrics(
       .worker_type_label = std::string_view(to_string(job->get_executed_on())),
   };
   const bool warmup = is_warmup_job(job);
-  auto* metrics = active_metrics(observability_);
+  const auto* metrics = active_metrics(observability_);
   const auto logical_jobs =
       static_cast<std::size_t>(std::max(1, job->batch().logical_job_count()));
   observe_batch_metrics(
