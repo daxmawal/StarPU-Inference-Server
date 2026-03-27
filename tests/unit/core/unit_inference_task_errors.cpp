@@ -26,7 +26,7 @@ TEST(InferenceTask_Unit, RecordAndRunCompletionCallbackNoCallback)
       starpu_server::InferenceTask::record_and_run_completion_callback(
           ctx.get(), end));
   EXPECT_EQ(job->timing_info().callback_end_time, end);
-  EXPECT_FALSE(job->has_on_complete());
+  EXPECT_FALSE(job->completion().has_on_complete());
 }
 
 TEST(InferenceTask_Unit, RecordAndRunCompletionCallbackNullJob)

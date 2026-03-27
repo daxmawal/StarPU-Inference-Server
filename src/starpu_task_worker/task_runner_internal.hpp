@@ -114,7 +114,7 @@ resolve_batch_size_for_job(
   if (!job) {
     return 1;
   }
-  if (const auto effective = job->effective_batch_size();
+  if (const auto effective = job->batch().effective_batch_size();
       effective.has_value()) {
     return std::max<int64_t>(1, *effective);
   }

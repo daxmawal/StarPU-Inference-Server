@@ -3,7 +3,6 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -21,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/base/no_destructor.h"
 #include "monitoring/metrics.hpp"
 
 #ifdef STARPU_HAVE_NVML
@@ -34,6 +34,17 @@
 namespace starpu_server::inline metrics_internal_detail {
 
 using monitoring::detail::CpuTotals;
+
+template <typename Tag>
+auto
+process_lifetime_path(const char* value) -> const std::filesystem::path&
+{
+  static const absl::NoDestructor<std::filesystem::path> path(value);
+  return *path;
+}
+
+struct ProcStatPathTag {};
+struct ProcFdPathTag {};
 
 auto
 ensure_gpu_gauge(
@@ -122,8 +133,8 @@ nvml_warning_flag() -> std::once_flag&
 auto
 read_total_cpu_times(CpuTotals& out) -> bool
 {
-  static const auto* kProcStat = new std::filesystem::path{"/proc/stat"};
-  return monitoring::detail::read_total_cpu_times(*kProcStat, out);
+  return monitoring::detail::read_total_cpu_times(
+      process_lifetime_path<ProcStatPathTag>("/proc/stat"), out);
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
@@ -149,12 +160,8 @@ metrics_testing_override_state() -> MetricsTestingOverrideState&
   // Keep test override storage alive until process exit to avoid atexit races
   // when sanitizer-induced aborts stop the test binary before background
   // sampler threads have fully unwound.
-  alignas(MetricsTestingOverrideState) static std::array<
-      std::byte, sizeof(MetricsTestingOverrideState)>
-      storage;
-  static MetricsTestingOverrideState& state = *std::construct_at(
-      reinterpret_cast<MetricsTestingOverrideState*>(storage.data()));
-  return state;
+  static absl::NoDestructor<MetricsTestingOverrideState> state;
+  return *state;
 }
 #endif  // SONAR_IGNORE_END
 
@@ -212,13 +219,13 @@ read_process_open_fds_impl() -> std::optional<double>
   if (override_reader) {
     return override_reader();
   }
-#endif  // SONAR_IGNORE_END
-  static const auto* kProcFd = new std::filesystem::path{"/proc/self/fd"};
+#endif                       // SONAR_IGNORE_END
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
   const std::filesystem::path path =
       monitoring::detail::process_fd_path_for_test();
 #else
-  const std::filesystem::path path = *kProcFd;
+  const std::filesystem::path path =
+      process_lifetime_path<ProcFdPathTag>("/proc/self/fd");
 #endif  // SONAR_IGNORE_END
   try {
     if (!std::filesystem::exists(path)) {
@@ -237,7 +244,8 @@ read_process_open_fds_impl() -> std::optional<double>
     for (; iter != end; ++iter) {
       ++count;
     }
-    if (count > 0 && path == *kProcFd) {
+    if (count > 0 &&
+        path == process_lifetime_path<ProcFdPathTag>("/proc/self/fd")) {
       --count;
     }
     return static_cast<double>(count);

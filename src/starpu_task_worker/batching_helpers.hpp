@@ -95,7 +95,7 @@ aggregate_batch_metadata(
     const auto timing = job->timing_info_snapshot();
     const auto job_batch = resolve_batch_size_for_job(opts, job);
     info.total_samples += job_batch > 0 ? job_batch : 1;
-    info.logical_jobs += std::max(1, job->logical_job_count());
+    info.logical_jobs += std::max(1, job->batch().logical_job_count());
     info.earliest_start =
         select_earliest_time(info.earliest_start, job->get_start_time());
     info.earliest_enqueued =
@@ -107,7 +107,7 @@ aggregate_batch_metadata(
 
     InferenceJob::AggregatedSubJob entry{};
     entry.job = std::weak_ptr<InferenceJob>(job);
-    entry.callback = job->get_on_complete();
+    entry.callback = job->completion().get_on_complete();
     entry.batch_size = job_batch;
     entry.request_id = job->get_request_id();
     entry.arrival_time = timing.enqueued_time;
@@ -172,11 +172,11 @@ build_request_ids_for_trace(const std::shared_ptr<InferenceJob>& job)
     return {};
   }
 
-  if (!job->has_aggregated_sub_jobs()) {
+  if (!job->batch().has_aggregated_sub_jobs()) {
     return std::vector<int>{job->get_request_id()};
   }
 
-  const auto& aggregated = job->aggregated_sub_jobs();
+  const auto& aggregated = job->batch().aggregated_sub_jobs();
   std::vector<int> ids;
   ids.reserve(aggregated.size());
   for (const auto& sub_job : aggregated) {
@@ -204,12 +204,12 @@ build_request_arrival_us_for_trace(const std::shared_ptr<InferenceJob>& job)
     return {};
   }
 
-  if (!job->has_aggregated_sub_jobs()) {
+  if (!job->batch().has_aggregated_sub_jobs()) {
     return std::vector<int64_t>{
         to_microseconds(job->timing_info_snapshot().enqueued_time)};
   }
 
-  const auto& aggregated = job->aggregated_sub_jobs();
+  const auto& aggregated = job->batch().aggregated_sub_jobs();
   std::vector<int64_t> arrivals;
   arrivals.reserve(aggregated.size());
   for (const auto& sub_job : aggregated) {

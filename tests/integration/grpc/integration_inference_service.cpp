@@ -664,7 +664,7 @@ TEST(GrpcServer, StopServerWhileHandlingConcurrentLoad)
       }
       if (job != nullptr) {
         auto outputs_copy = expected_outputs;
-        job->get_on_complete()(outputs_copy, 0.0);
+        job->completion().get_on_complete()(outputs_copy, 0.0);
       }
     }
   });

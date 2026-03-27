@@ -800,7 +800,8 @@ succeed_then_fail_starpu_vector_register(
 }
 
 auto
-failing_host_allocator(void** ptr, size_t /*alignment*/, size_t /*size*/) -> int
+failing_host_allocator(std::byte** ptr, size_t /*alignment*/, size_t /*size*/)
+    -> int
 {
   if (ptr != nullptr) {
     *ptr = nullptr;
@@ -839,14 +840,14 @@ auto
 allocate_output_host_buffer(size_t bytes) -> std::byte*
 {
   constexpr size_t kDefaultHostAlignment = 64;
-  void* raw_ptr = nullptr;
+  std::byte* raw_ptr = nullptr;
   const auto& allocator =
       starpu_server::OutputSlotPoolTestHook::host_allocator_hook_ref();
   if (!allocator || allocator(&raw_ptr, kDefaultHostAlignment, bytes) != 0 ||
       raw_ptr == nullptr) {
     return nullptr;
   }
-  return static_cast<std::byte*>(raw_ptr);
+  return raw_ptr;
 }
 
 auto
@@ -2532,7 +2533,7 @@ TEST(OutputSlotPool_Unit, DefaultHostAllocatorReturnsFailureOnBadAlloc)
   ASSERT_TRUE(static_cast<bool>(dependencies.host_allocator));
   ASSERT_TRUE(static_cast<bool>(dependencies.host_deallocator));
 
-  void* ptr = reinterpret_cast<void*>(0x1);
+  auto* ptr = reinterpret_cast<std::byte*>(0x1);
   const int rc =
       dependencies.host_allocator(&ptr, 64, std::numeric_limits<size_t>::max());
 

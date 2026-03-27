@@ -86,7 +86,7 @@ struct WorkerExecutionIdentity {
 
 void
 observe_batch_metrics(
-    MetricsRecorder* metrics, const BatchMetricsCounts& counts)
+    const MetricsRecorder* metrics, const BatchMetricsCounts& counts)
 {
   if (metrics != nullptr) {
     metrics->observe_batch_size(counts.batch_size);
@@ -99,7 +99,7 @@ observe_batch_metrics(
 
 void
 record_completed_inference(
-    MetricsRecorder* metrics, std::string_view model_name,
+    const MetricsRecorder* metrics, std::string_view model_name,
     std::size_t logical_jobs)
 {
   if (metrics != nullptr) {
@@ -125,7 +125,7 @@ resolve_codelet_runtime_ms(const detail::TimingInfo& timing)
 
 void
 observe_task_runtime_metrics(
-    MetricsRecorder* metrics, const WorkerExecutionIdentity& worker,
+    const MetricsRecorder* metrics, const WorkerExecutionIdentity& worker,
     double task_runtime_ms)
 {
   if (metrics != nullptr) {
@@ -165,7 +165,7 @@ has_valid_time_range(const BatchingTraceLogger::TimeRange& time_range) -> bool
 
 void
 observe_compute_latency_metrics(
-    MetricsRecorder* metrics, const WorkerExecutionIdentity& worker,
+    const MetricsRecorder* metrics, const WorkerExecutionIdentity& worker,
     const BatchingTraceLogger::TimeRange& compute_time_range)
 {
   if (!has_valid_time_range(compute_time_range)) {
@@ -205,7 +205,7 @@ auto
 current_congestion_state(
     const std::shared_ptr<RuntimeObservability>& observability) -> bool
 {
-  if (auto* monitor = active_congestion_monitor(observability);
+  if (const auto* monitor = active_congestion_monitor(observability);
       monitor != nullptr) {
     return monitor->congested();
   }
@@ -229,7 +229,7 @@ log_batch_summary_if_enabled(
       task_runner_internal::build_request_arrival_us_for_trace(job);
   tracer->log_batch_summary(BatchingTraceLogger::BatchSummaryLogArgs{
       .batch_id = job_id,
-      .model_name = job->model_name(),
+      .model_name = job->completion().model_name(),
       .batch_size = batch_size,
       .request_ids = request_ids,
       .request_arrival_us = request_arrivals,
@@ -284,7 +284,7 @@ ResultDispatcher::dispatch_terminal_completion(
     const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state,
     std::vector<torch::Tensor>& results, double latency_ms)
 {
-  if (job == nullptr || !job->try_mark_terminal_handled()) {
+  if (job == nullptr || !job->completion().try_mark_terminal_handled()) {
     return;
   }
 
@@ -331,8 +331,8 @@ ResultDispatcher::prepare_job_completion_callback(
   if (job == nullptr) {
     return;
   }
-  auto prev_callback = job->get_on_complete();
-  job->set_on_complete(
+  auto prev_callback = job->completion().get_on_complete();
+  job->completion().set_on_complete(
       [dispatcher, prev_callback, job_sptr = job, inflight_state](
           std::vector<torch::Tensor> results, double latency_ms) mutable {
         ResultDispatcher::dispatch_terminal_completion(
@@ -369,11 +369,11 @@ ResultDispatcher::trace_batch_if_enabled(
   }
 
   tracer->log_batch_enqueue_span(
-      submission_id, job->model_name(), batch_size,
+      submission_id, job->completion().model_name(), batch_size,
       BatchingTraceLogger::TimeRange{enqueue_start, enqueue_end},
       request_ids_span, warmup_job);
   tracer->log_batch_build_span(
-      submission_id, job->model_name(), batch_size,
+      submission_id, job->completion().model_name(), batch_size,
       BatchingTraceLogger::TimeRange{
           timing.batch_collect_start_time, timing.batch_collect_end_time},
       request_ids_span, warmup_job);
@@ -423,7 +423,7 @@ ResultDispatcher::record_job_metrics(
   const bool warmup = is_warmup_job(job);
   auto* metrics = active_metrics(observability_);
   const auto logical_jobs =
-      static_cast<std::size_t>(std::max(1, job->logical_job_count()));
+      static_cast<std::size_t>(std::max(1, job->batch().logical_job_count()));
   observe_batch_metrics(
       metrics, BatchMetricsCounts{
                    .batch_size = batch_size,
@@ -432,7 +432,8 @@ ResultDispatcher::record_job_metrics(
   const auto breakdown =
       detail::compute_latency_breakdown(timing, latency.count());
   if (!warmup) {
-    record_completed_inference(metrics, job->model_name(), logical_jobs);
+    record_completed_inference(
+        metrics, job->completion().model_name(), logical_jobs);
     if (const auto task_runtime_ms = resolve_codelet_runtime_ms(timing);
         task_runtime_ms.has_value()) {
       observe_task_runtime_metrics(metrics, worker, *task_runtime_ms);
@@ -489,7 +490,7 @@ ResultDispatcher::finalize_job_completion(
     return;
   }
   const auto logical_jobs =
-      static_cast<std::size_t>(std::max(1, job->logical_job_count()));
+      static_cast<std::size_t>(std::max(1, job->batch().logical_job_count()));
   completed_jobs_->fetch_add(logical_jobs, std::memory_order_release);
   all_done_cv_->notify_all();
 }
@@ -507,7 +508,7 @@ ResultDispatcher::handle_job_exception(
   }
 
   bool completion_invoked = false;
-  if (auto completion = job->take_on_complete(); completion) {
+  if (auto completion = job->completion().take_on_complete(); completion) {
     run_with_logged_exceptions(
         [completion = std::move(completion), &completion_invoked]() mutable {
           completion({}, -1);
@@ -527,14 +528,14 @@ ResultDispatcher::handle_cancelled_job(
     const std::shared_ptr<StarPUTaskRunner::InflightState>& inflight_state,
     const std::shared_ptr<InferenceJob>& job)
 {
-  if (job == nullptr || !job->try_mark_terminal_handled()) {
+  if (job == nullptr || !job->completion().try_mark_terminal_handled()) {
     return;
   }
 
-  static_cast<void>(job->take_on_complete());
+  static_cast<void>(job->completion().take_on_complete());
   clear_pending_sub_job_callbacks(job);
 
-  auto pending_jobs = job->take_pending_sub_jobs();
+  auto pending_jobs = job->batch().take_pending_sub_jobs();
   SlotManager::release_pending_jobs(job, pending_jobs);
 
   clear_batching_state(job);
@@ -558,9 +559,9 @@ ResultDispatcher::finalize_job_after_exception(
         std::format("{} for job {}: {}", log_prefix, job_id, exception.what()));
   }
 
-  const std::string model_label = job != nullptr
-                                      ? std::string{job->model_name()}
-                                      : std::string{"<unknown>"};
+  const std::string model_label =
+      job != nullptr ? std::string{job->completion().model_name()}
+                     : std::string{"<unknown>"};
   const std::string_view reason = [&exception]() {
     if (dynamic_cast<const std::bad_alloc*>(&exception) != nullptr) {
       return "bad_alloc";
@@ -595,7 +596,7 @@ ResultDispatcher::finalize_job_after_exception(
       failure_info.message = exception.what();
     }
     failure_info.metrics_reported = true;
-    job->set_failure_info(std::move(failure_info));
+    job->completion().set_failure_info(std::move(failure_info));
   }
 
   static_cast<void>(handle_job_exception(job, exception));
@@ -605,12 +606,12 @@ ResultDispatcher::finalize_job_after_exception(
   }
 
   clear_pending_sub_job_callbacks(job);
-  auto pending_jobs = job->take_pending_sub_jobs();
+  auto pending_jobs = job->batch().take_pending_sub_jobs();
   SlotManager::release_pending_jobs(job, pending_jobs);
   clear_batching_state(job);
   cleanup_terminal_job_payload(job);
 
-  if (!job->try_mark_terminal_handled()) {
+  if (!job->completion().try_mark_terminal_handled()) {
     return;
   }
 
@@ -683,7 +684,7 @@ ResultDispatcher::propagate_completion_to_sub_jobs(
     return;
   }
 
-  const auto& sub_jobs = aggregated_job->aggregated_sub_jobs();
+  const auto& sub_jobs = aggregated_job->batch().aggregated_sub_jobs();
   if (sub_jobs.empty()) {
     return;
   }
@@ -765,7 +766,7 @@ ResultDispatcher::emit_batch_traces(
 
   tracer->log_batch_compute_span(BatchingTraceLogger::BatchComputeLogArgs{
       .batch_id = job->submission_id(),
-      .model_name = job->model_name(),
+      .model_name = job->completion().model_name(),
       .batch_size = resolve_batch_size(opts_, job),
       .worker_id = job->get_worker_id(),
       .worker_type = job->get_executed_on(),
@@ -831,10 +832,10 @@ ResultDispatcher::clear_pending_sub_job_callbacks(
   if (job == nullptr) {
     return;
   }
-  const auto& pending = job->pending_sub_jobs();
+  const auto& pending = job->batch().pending_sub_jobs();
   for (const auto& sub_job : pending) {
     if (sub_job != nullptr) {
-      static_cast<void>(sub_job->take_on_complete());
+      static_cast<void>(sub_job->completion().take_on_complete());
     }
   }
 }
@@ -845,8 +846,8 @@ ResultDispatcher::clear_batching_state(const std::shared_ptr<InferenceJob>& job)
   if (job == nullptr) {
     return;
   }
-  job->set_aggregated_sub_jobs({});
-  job->clear_pending_sub_jobs();
+  job->batch().set_aggregated_sub_jobs({});
+  job->batch().clear_pending_sub_jobs();
 }
 
 void

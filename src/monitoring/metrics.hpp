@@ -536,23 +536,43 @@ struct LatencyBreakdownMetrics {
   double postprocess_ms{0.0};
 };
 
-class MetricsRecorder {
- public:
-  MetricsRecorder() = default;
-  explicit MetricsRecorder(std::shared_ptr<MetricsRegistry> registry)
+namespace metrics_recorder_detail {
+
+class Access {
+ protected:
+  Access() = default;
+  explicit Access(std::shared_ptr<MetricsRegistry> registry)
       : registry_(std::move(registry))
   {
   }
 
-  [[nodiscard]] auto enabled() const -> bool { return registry_ != nullptr; }
-  [[nodiscard]] auto registry() const -> std::shared_ptr<MetricsRegistry>
+  [[nodiscard]] auto registry_ptr() const
+      -> const std::shared_ptr<MetricsRegistry>&
   {
     return registry_;
   }
 
+ private:
+  std::shared_ptr<MetricsRegistry> registry_;
+};
+
+class Core : public virtual Access {
+ public:
+  [[nodiscard]] auto enabled() const -> bool
+  {
+    return registry_ptr() != nullptr;
+  }
+  [[nodiscard]] auto registry() const -> std::shared_ptr<MetricsRegistry>
+  {
+    return registry_ptr();
+  }
+
   void increment_requests_total() const;
   void observe_inference_latency(double latency_ms) const;
+};
 
+class QueueRuntime : public virtual Access {
+ public:
   void set_queue_size(std::size_t size) const;
   void set_inflight_tasks(std::size_t size) const;
   void set_starpu_worker_busy_ratio(double ratio) const;
@@ -561,6 +581,10 @@ class MetricsRecorder {
   void set_server_health(bool ready) const;
   void set_starpu_prepared_queue_depth(std::size_t depth) const;
   void set_batch_pending_jobs(std::size_t pending) const;
+};
+
+class Congestion : public virtual Access {
+ public:
   void set_congestion_flag(bool congested) const;
   void set_congestion_score(double score) const;
   void set_congestion_arrival_rate(double rps) const;
@@ -573,6 +597,10 @@ class MetricsRecorder {
   void set_congestion_queue_latency_p99(double latency_ms) const;
   void set_congestion_e2e_latency_p95(double latency_ms) const;
   void set_congestion_e2e_latency_p99(double latency_ms) const;
+};
+
+class Requests : public virtual Access {
+ public:
   void increment_request_status(
       int status_code, std::string_view model_name) const;
   void increment_requests_received(std::string_view model_name) const;
@@ -588,6 +616,11 @@ class MetricsRecorder {
       const LatencyBreakdownMetrics& breakdown) const;
   void observe_starpu_task_runtime(double runtime_ms) const;
   void observe_model_load_duration(double duration_ms) const;
+  void increment_rejected_requests() const;
+};
+
+class Models : public virtual Access {
+ public:
   void set_model_loaded(
       std::string_view model_name, std::string_view device_label,
       bool loaded) const;
@@ -595,10 +628,13 @@ class MetricsRecorder {
       std::string_view model_name, std::string_view policy_label) const;
   void set_gpu_model_replicas_total(
       std::string_view model_name, std::size_t replicas) const;
+  void increment_model_load_failure(std::string_view model_name) const;
+};
+
+class Workers : public virtual Access {
+ public:
   void set_starpu_cuda_worker_info(
       int worker_id, int device_id, bool active) const;
-  void increment_model_load_failure(std::string_view model_name) const;
-  void increment_rejected_requests() const;
   void observe_compute_latency_by_worker(
       int worker_id, int device_id, std::string_view worker_type,
       double latency_ms) const;
@@ -614,9 +650,22 @@ class MetricsRecorder {
   void increment_transfer_bytes(
       std::string_view direction, int worker_id, int device_id,
       std::string_view worker_type, std::size_t bytes) const;
+};
 
- private:
-  std::shared_ptr<MetricsRegistry> registry_;
+}  // namespace metrics_recorder_detail
+
+class MetricsRecorder : public metrics_recorder_detail::Core,
+                        public metrics_recorder_detail::QueueRuntime,
+                        public metrics_recorder_detail::Congestion,
+                        public metrics_recorder_detail::Requests,
+                        public metrics_recorder_detail::Models,
+                        public metrics_recorder_detail::Workers {
+ public:
+  MetricsRecorder() = default;
+  explicit MetricsRecorder(std::shared_ptr<MetricsRegistry> registry)
+      : metrics_recorder_detail::Access(std::move(registry))
+  {
+  }
 };
 
 auto create_metrics_recorder(int port) -> std::shared_ptr<MetricsRecorder>;

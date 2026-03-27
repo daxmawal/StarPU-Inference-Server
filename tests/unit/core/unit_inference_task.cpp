@@ -849,7 +849,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallback)
   bool called = false;
   std::vector<torch::Tensor> results_arg;
   double latency_ms = -1.0;
-  job->set_on_complete(
+  job->completion().set_on_complete(
       [&called, &results_arg, &latency_ms](
           const std::vector<torch::Tensor>& results, double latency) {
         called = true;
@@ -931,7 +931,7 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackAcquireFailureStillFinalizes)
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
   });
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "callback");
   EXPECT_EQ(failure->reason, "output_acquire_failed");
@@ -1028,7 +1028,7 @@ TEST_F(
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
   });
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "callback");
   EXPECT_EQ(failure->reason, "output_callback_unknown_exception");
@@ -1063,7 +1063,7 @@ TEST_F(
         starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
   });
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "callback");
   EXPECT_EQ(failure->reason, "output_callback_exception");
@@ -1124,7 +1124,7 @@ TEST(InferenceTask, FinalizeOrFailOnceSetsFailureWhenStatusIsFailure)
   EXPECT_NO_THROW(starpu_server::testing::finalize_or_fail_once_for_tests(
       ctx.get(), true, "finalize_or_fail_once_test"));
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "callback");
   EXPECT_EQ(failure->reason, "terminal_failure");
@@ -1152,7 +1152,7 @@ TEST(InferenceTask, FinalizeOrFailOnceSkipsWhenTerminalPathAlreadyStarted)
       ctx.get(), false, "finalize_or_fail_once_test"));
 
   EXPECT_FALSE(finished);
-  EXPECT_FALSE(job->failure_info().has_value());
+  EXPECT_FALSE(job->completion().failure_info().has_value());
   EXPECT_FALSE(job->get_output_tensors().empty());
   EXPECT_NE(ctx->self_keep_alive, nullptr);
 }
@@ -1196,9 +1196,10 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsStdException)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_output_tensors({torch::tensor({1})});
-  job->set_on_complete([](const std::vector<torch::Tensor>&, double) {
-    throw std::runtime_error("callback failure");
-  });
+  job->completion().set_on_complete(
+      [](const std::vector<torch::Tensor>&, double) {
+        throw std::runtime_error("callback failure");
+      });
   const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::milliseconds(5);
   job->set_start_time(start);
@@ -1217,7 +1218,7 @@ TEST(InferenceTask, RecordAndRunCompletionCallbackLogsUnknownException)
 {
   auto job = std::make_shared<starpu_server::InferenceJob>();
   job->set_output_tensors({torch::tensor({1})});
-  job->set_on_complete(
+  job->completion().set_on_complete(
       [](const std::vector<torch::Tensor>&, double) { throw 42; });
   const auto start = starpu_server::MonotonicClock::now();
   const auto end = start + std::chrono::milliseconds(5);

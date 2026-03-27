@@ -17,7 +17,7 @@ TEST_F(StarPUTaskRunnerFixture, SubmitInferenceTaskHandlesStarpuSubmitFailures)
 
   const auto tensor_opts = torch::TensorOptions().dtype(torch::kFloat);
   auto job = make_job(703, {torch::ones({1}, tensor_opts)}, {at::kFloat});
-  job->set_model_name("trace_model");
+  job->completion().set_model_name("trace_model");
   job->set_output_tensors({torch::zeros({1}, tensor_opts)});
 
   EXPECT_THROW(
@@ -416,7 +416,7 @@ TEST(BuildRequestIdsForTraceTest, ReturnsStoredRequestIdWhenSubJobExpired)
     sub_jobs.push_back(entry);
   }
 
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   const auto ids = internal::build_request_ids_for_trace(aggregated);
   ASSERT_EQ(ids.size(), 1U);
@@ -627,7 +627,7 @@ TEST_F(
           torch::TensorOptions().dtype(torch::kFloat))},
       {at::kFloat});
 
-  job->set_pending_sub_jobs({pending});
+  job->batch().set_pending_sub_jobs({pending});
 
   auto& input_pool = starpu_setup_->input_pool();
   const int slot = input_pool.acquire();
@@ -683,7 +683,7 @@ TEST_F(
       {at::kFloat});
   auto pending = make_job(33, {}, {});
 
-  job->set_pending_sub_jobs({pending});
+  job->batch().set_pending_sub_jobs({pending});
 
   auto& input_pool = starpu_setup_->input_pool();
   const int slot = input_pool.acquire();
@@ -716,7 +716,7 @@ TEST_F(
   auto pending = make_job(35, {}, {at::kFloat});
   torch::Tensor undefined;
   pending->set_input_tensors({undefined});
-  job->set_pending_sub_jobs({pending});
+  job->batch().set_pending_sub_jobs({pending});
 
   auto& input_pool = starpu_setup_->input_pool();
   const int slot = input_pool.acquire();
@@ -752,7 +752,7 @@ TEST_F(
           std::vector<float>{3.0F, 4.0F},
           torch::TensorOptions().dtype(torch::kFloat))},
       {at::kFloat});
-  job->set_pending_sub_jobs({pending});
+  job->batch().set_pending_sub_jobs({pending});
 
   auto& input_pool = starpu_setup_->input_pool();
   const int slot = input_pool.acquire();
@@ -793,7 +793,7 @@ TEST_F(StarPUTaskRunnerFixture, ValidateBatchAndCopyInputsSkipsNullPendingJobs)
   std::shared_ptr<starpu_server::InferenceJob> pending_null;
   auto pending_b = make_job(40, {tensor_from(5.0F, 6.0F)}, {at::kFloat});
 
-  job->set_pending_sub_jobs({pending_a, pending_null, pending_b});
+  job->batch().set_pending_sub_jobs({pending_a, pending_null, pending_b});
 
   auto& input_pool = starpu_setup_->input_pool();
   const int slot = input_pool.acquire();

@@ -43,9 +43,9 @@ parse_device_flags(const YAML::Node& root, RuntimeConfig& cfg)
 void
 handle_scalar_use_cuda(const YAML::Node& use_cuda_node, RuntimeConfig& cfg)
 {
-  const bool enabled =
-      parse_scalar<bool>(use_cuda_node, "use_cuda", "a boolean");
-  if (!enabled) {
+  if (const bool enabled =
+          parse_scalar<bool>(use_cuda_node, "use_cuda", "a boolean");
+      !enabled) {
     cfg.devices.use_cuda = false;
     cfg.devices.ids.clear();
     return;

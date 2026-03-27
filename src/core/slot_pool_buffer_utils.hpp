@@ -50,7 +50,7 @@ is_safe_aligned_allocation_request(
 
 inline auto
 try_allocate_aligned_host_buffer(
-    void** ptr, std::size_t alignment, std::size_t bytes) -> int
+    std::byte** ptr, std::size_t alignment, std::size_t bytes) -> int
 {
   if (ptr == nullptr) {
     return -1;
@@ -61,7 +61,8 @@ try_allocate_aligned_host_buffer(
   }
 
   try {
-    *ptr = ::operator new(bytes, std::align_val_t{alignment});
+    *ptr = static_cast<std::byte*>(
+        ::operator new(bytes, std::align_val_t{alignment}));
     return 0;
   }
   catch (const std::bad_alloc&) {

@@ -140,13 +140,13 @@ set_output_host_allocator_for_tests(OutputHostAllocatorFn allocator)
 {
   auto& allocator_hook = OutputSlotPoolTestHook::host_allocator_hook_ref();
   const auto previous = allocator_hook;
-  allocator_hook = allocator
-                       ? std::move(allocator)
-                       : OutputHostAllocatorFn{
-                             [](void** ptr, size_t alignment, size_t size) {
-                               return detail::try_allocate_aligned_host_buffer(
-                                   ptr, alignment, size);
-                             }};
+  allocator_hook =
+      allocator ? std::move(allocator)
+                : OutputHostAllocatorFn{[](OutputSlotPool::HostBufferPtr* ptr,
+                                           size_t alignment, size_t size) {
+                    return detail::try_allocate_aligned_host_buffer(
+                        ptr, alignment, size);
+                  }};
   return previous;
 }
 

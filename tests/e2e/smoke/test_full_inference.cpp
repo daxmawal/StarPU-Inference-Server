@@ -31,7 +31,7 @@ start_worker(
         job->get_input_tensors().begin(), job->get_input_tensors().end());
     auto out_value = model.forward(value);
     std::vector<torch::Tensor> outs{out_value.toTensor()};
-    job->get_on_complete()(outs, 0.0);
+    job->completion().get_on_complete()(outs, 0.0);
   });
 }
 

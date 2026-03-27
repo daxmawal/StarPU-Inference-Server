@@ -365,7 +365,7 @@ attach_materialized_inputs_or_pending_jobs(
       master->set_input_tensors(merged_inputs);
     }
     task_runner_internal::release_inputs_from_additional_jobs(jobs);
-    master->clear_pending_sub_jobs();
+    master->batch().clear_pending_sub_jobs();
     return;
   }
 
@@ -375,14 +375,14 @@ attach_materialized_inputs_or_pending_jobs(
     pending_jobs.push_back(jobs[idx]);
     jobs[idx]->set_output_tensors({});
   }
-  master->set_pending_sub_jobs(std::move(pending_jobs));
+  master->batch().set_pending_sub_jobs(std::move(pending_jobs));
 }
 
 void
 install_sub_job_completion_callback(const std::shared_ptr<InferenceJob>& master)
 {
   auto master_wp = std::weak_ptr<InferenceJob>(master);
-  master->set_on_complete(
+  master->completion().set_on_complete(
       [master_wp](
           const std::vector<torch::Tensor>& aggregated_outputs,
           double latency_ms) {
@@ -479,8 +479,8 @@ BatchCollector::collect_batch(const std::shared_ptr<InferenceJob>& first_job)
     set_batch_pending_jobs_metric(observability_, jobs.size());
     return jobs;
   }
-  if (first_job->has_aggregated_sub_jobs() ||
-      first_job->logical_job_count() > 1) {
+  if (first_job->batch().has_aggregated_sub_jobs() ||
+      first_job->batch().logical_job_count() > 1) {
     set_batch_pending_jobs_metric(observability_, jobs.size());
     return jobs;
   }
@@ -596,8 +596,8 @@ BatchCollector::should_hold_job(
   if (!candidate) {
     return false;
   }
-  if (candidate->has_aggregated_sub_jobs() ||
-      candidate->logical_job_count() > 1) {
+  if (candidate->batch().has_aggregated_sub_jobs() ||
+      candidate->batch().logical_job_count() > 1) {
     return true;
   }
   if (target_worker != candidate->get_fixed_worker_id()) {
@@ -999,8 +999,8 @@ BatchCollector::maybe_build_batched_job(
     const auto samples = std::max<int64_t>(1, job_sample_size(master));
     observe_batch_efficiency_metric(
         observability_, static_cast<double>(samples));
-    master->set_logical_job_count(1);
-    master->set_aggregated_sub_jobs({});
+    master->batch().set_logical_job_count(1);
+    master->batch().set_aggregated_sub_jobs({});
     return master;
   }
 
@@ -1018,8 +1018,8 @@ BatchCollector::maybe_build_batched_job(
           .master_dequeued_time = master->timing_info_snapshot().dequeued_time,
       });
 
-  master->set_logical_job_count(batch_info.logical_jobs);
-  master->set_aggregated_sub_jobs(std::move(batch_info.sub_jobs));
+  master->batch().set_logical_job_count(batch_info.logical_jobs);
+  master->batch().set_aggregated_sub_jobs(std::move(batch_info.sub_jobs));
   attach_input_memory_holders(master, jobs);
 
   const auto prototype_outputs = master->get_output_tensors();
@@ -1046,7 +1046,7 @@ BatchCollector::maybe_build_batched_job(
   attach_materialized_inputs_or_pending_jobs(
       starpu_, jobs, master, effective_batch);
 
-  master->set_effective_batch_size(effective_batch);
+  master->batch().set_effective_batch_size(effective_batch);
   install_sub_job_completion_callback(master);
   trace_formed_batch_if_enabled(
       opts_, queue_, master, jobs.size(), effective_batch);

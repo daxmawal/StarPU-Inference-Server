@@ -92,7 +92,7 @@ JobStateMatches(
   if (fixed.value() != expected.worker_id) {
     return ::testing::AssertionFailure() << "fixed worker mismatch";
   }
-  if (!job->has_on_complete()) {
+  if (!job->completion().has_on_complete()) {
     return ::testing::AssertionFailure() << "on_complete not set";
   }
   return ::testing::AssertionSuccess();
@@ -146,11 +146,11 @@ TEST(InferenceJobTest, ConstructorInitializesState)
   EXPECT_TRUE(job->get_input_tensors()[0].equal(inputs[0]));
   ASSERT_EQ(job->get_input_types().size(), types.size());
   EXPECT_EQ(job->get_input_types()[0], types[0]);
-  EXPECT_TRUE(job->has_on_complete());
+  EXPECT_TRUE(job->completion().has_on_complete());
   EXPECT_LE(before, job->get_start_time());
   EXPECT_GE(after, job->get_start_time());
 
-  job->get_on_complete()(outputs, kLatencyMs);
+  job->completion().get_on_complete()(outputs, kLatencyMs);
 
   EXPECT_TRUE(callback_called);
   ASSERT_EQ(callback_tensors.size(), outputs.size());
@@ -166,13 +166,13 @@ TEST(InferenceJobTest, SetPendingSubJobsStoresJobs)
   child1->set_request_id(10);
   child2->set_request_id(11);
 
-  parent->set_pending_sub_jobs({child1, child2});
+  parent->batch().set_pending_sub_jobs({child1, child2});
 
-  const auto& pending = parent->pending_sub_jobs();
+  const auto& pending = parent->batch().pending_sub_jobs();
   ASSERT_EQ(pending.size(), 2U);
   EXPECT_EQ(pending[0], child1);
   EXPECT_EQ(pending[1], child2);
-  EXPECT_TRUE(parent->has_pending_sub_jobs());
+  EXPECT_TRUE(parent->batch().has_pending_sub_jobs());
 }
 
 TEST(InferenceJobTest, TakePendingSubJobsReturnsAndClears)
@@ -181,14 +181,14 @@ TEST(InferenceJobTest, TakePendingSubJobsReturnsAndClears)
   auto child = std::make_shared<starpu_server::InferenceJob>();
   child->set_request_id(99);
 
-  parent->set_pending_sub_jobs({child});
+  parent->batch().set_pending_sub_jobs({child});
 
-  auto taken = parent->take_pending_sub_jobs();
+  auto taken = parent->batch().take_pending_sub_jobs();
 
   ASSERT_EQ(taken.size(), 1U);
   EXPECT_EQ(taken[0], child);
-  EXPECT_TRUE(parent->pending_sub_jobs().empty());
-  EXPECT_FALSE(parent->has_pending_sub_jobs());
+  EXPECT_TRUE(parent->batch().pending_sub_jobs().empty());
+  EXPECT_FALSE(parent->batch().has_pending_sub_jobs());
 }
 
 TEST(InferenceJobTest, SettersGettersAndCallback)
@@ -211,7 +211,7 @@ TEST(InferenceJobTest, SettersGettersAndCallback)
   std::vector<torch::Tensor> cb_tensors;
   double cb_latency = 0.0;
 
-  job->set_on_complete(
+  job->completion().set_on_complete(
       [&](const std::vector<torch::Tensor>& tensor, double lat) {
         callback_called = true;
         cb_tensors = tensor;
@@ -223,7 +223,7 @@ TEST(InferenceJobTest, SettersGettersAndCallback)
       ExpectedJobInfo{
           .request_id = kJobId, .worker_id = static_cast<int>(kWorkerId)}));
 
-  job->get_on_complete()(job->get_output_tensors(), kLatencyMs);
+  job->completion().get_on_complete()(job->get_output_tensors(), kLatencyMs);
   EXPECT_TRUE(CallbackResultsMatch(
       callback_called, cb_tensors, cb_latency, outputs, kLatencyMs));
 }
@@ -233,16 +233,17 @@ TEST(InferenceJobTest, TakeOnCompleteConsumesCallbackSlotOnce)
   auto job = std::make_shared<starpu_server::InferenceJob>();
   int callback_calls = 0;
 
-  job->set_on_complete([&callback_calls](std::vector<torch::Tensor>, double) {
-    ++callback_calls;
-  });
+  job->completion().set_on_complete(
+      [&callback_calls](std::vector<torch::Tensor>, double) {
+        ++callback_calls;
+      });
 
-  ASSERT_TRUE(job->has_on_complete());
-  auto callback = job->take_on_complete();
+  ASSERT_TRUE(job->completion().has_on_complete());
+  auto callback = job->completion().take_on_complete();
   ASSERT_TRUE(static_cast<bool>(callback));
-  EXPECT_FALSE(job->has_on_complete());
-  EXPECT_FALSE(static_cast<bool>(job->get_on_complete()));
-  EXPECT_FALSE(static_cast<bool>(job->take_on_complete()));
+  EXPECT_FALSE(job->completion().has_on_complete());
+  EXPECT_FALSE(static_cast<bool>(job->completion().get_on_complete()));
+  EXPECT_FALSE(static_cast<bool>(job->completion().take_on_complete()));
 
   callback({}, kLatencyMs);
   EXPECT_EQ(callback_calls, 1);

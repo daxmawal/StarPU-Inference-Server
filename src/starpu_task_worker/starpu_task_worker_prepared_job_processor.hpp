@@ -36,7 +36,7 @@ StarPUTaskRunner::process_prepared_job(const std::shared_ptr<InferenceJob>& job)
           timing.submission_id = submission_id;
         });
 
-    context.logical_jobs = context.job->logical_job_count();
+    context.logical_jobs = context.job->batch().logical_job_count();
     context.request_id = context.job->get_request_id();
     context.job_id = task_runner_internal::job_identifier(*context.job);
     if (should_log(VerbosityLevel::Trace, opts_->verbosity)) {

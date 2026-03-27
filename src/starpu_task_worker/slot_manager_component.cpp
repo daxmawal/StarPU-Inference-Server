@@ -118,11 +118,11 @@ log_batch_submitted_if_enabled(
   const auto request_ids =
       task_runner_internal::build_request_ids_for_trace(job);
   const std::size_t logical_jobs = std::max(
-      static_cast<std::size_t>(std::max(1, job->logical_job_count())),
+      static_cast<std::size_t>(std::max(1, job->batch().logical_job_count())),
       request_ids.size());
   tracer->log_batch_submitted(BatchingTraceLogger::BatchSubmittedLogArgs{
       .batch_id = job->submission_id(),
-      .model_name = job->model_name(),
+      .model_name = job->completion().model_name(),
       .logical_job_count = logical_jobs,
       .worker_type = job->get_executed_on(),
       .worker_id = job->get_worker_id(),
@@ -460,8 +460,8 @@ SlotManager::validate_batch_and_copy_inputs(
     copy_input_data(input_idx, tensor, spec);
   };
 
-  if (job->has_pending_sub_jobs()) {
-    auto pending_jobs = job->take_pending_sub_jobs();
+  if (job->batch().has_pending_sub_jobs()) {
+    auto pending_jobs = job->batch().take_pending_sub_jobs();
     total_bytes_copied.fetch_add(
         copy_job_inputs_to_slot(
             job, pending_jobs, handles, base_ptrs, buffer_infos, copy_batch),

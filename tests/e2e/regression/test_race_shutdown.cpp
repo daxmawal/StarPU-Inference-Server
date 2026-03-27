@@ -133,7 +133,7 @@ TEST(E2ERegression, QueueFullUnderConcurrentLoadReturnsResourceExhausted)
   ASSERT_TRUE(queue.wait_for_and_pop(blocked_job, std::chrono::seconds(1)));
   ASSERT_NE(blocked_job, nullptr);
   auto outputs_copy = reference_outputs;
-  blocked_job->get_on_complete()(outputs_copy, 0.0);
+  blocked_job->completion().get_on_complete()(outputs_copy, 0.0);
 
   ASSERT_EQ(
       first_status_future.wait_for(std::chrono::seconds(2)),

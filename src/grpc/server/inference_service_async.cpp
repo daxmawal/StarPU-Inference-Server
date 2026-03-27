@@ -11,7 +11,7 @@ build_job_failure_result(InferenceJob& job)
 {
   std::optional<InferenceServiceImpl::AsyncFailureInfo> failure_info;
   Status status = Status::OK;
-  if (auto job_failure = job.take_failure_info()) {
+  if (auto job_failure = job.completion().take_failure_info()) {
     const std::string reason = job_failure->reason;
     const std::string detail_message = job_failure->message;
     std::string message;
@@ -191,8 +191,8 @@ trace_enqueued_request_if_enabled(
   if (tracer->enabled()) {
     const auto timing = job->timing_info_snapshot();
     tracer->log_request_enqueued(
-        job->get_request_id(), job->model_name(), /*is_warmup=*/false,
-        timing.last_enqueued_time);
+        job->get_request_id(), job->completion().model_name(),
+        /*is_warmup=*/false, timing.last_enqueued_time);
   }
 }
 }  // namespace inference_service_detail
@@ -326,7 +326,7 @@ InferenceServiceImpl::
 
     NvtxRange submit_scope("grpc_submit_starpu");
 
-    job->set_on_complete(
+    job->completion().set_on_complete(
         [job, callback = std::move(on_complete)](
             std::vector<torch::Tensor> outs, double latency_ms) mutable {
           dispatch_async_completion_safely(

@@ -97,6 +97,30 @@ compute_rho_sample(double lambda_rps, double mu_rps) -> double
   return 0.0;
 }
 
+template <typename TickStats>
+auto
+build_congestion_snapshot(
+    const TickStats& stats, double score, bool congested_state) -> Snapshot
+{
+  Snapshot snap{};
+  snap.congestion = congested_state;
+  snap.lambda_rps = stats.lambda_rps;
+  snap.mu_rps = stats.mu_rps;
+  snap.rho_ewma = stats.rho_smoothed;
+  snap.fill_ewma = stats.fill_smoothed;
+  snap.dqueue_ewma = stats.dqueue_smoothed;
+  snap.queue_p95_ms = stats.queue_p95_smoothed.value_or(0.0);
+  snap.queue_p99_ms = stats.queue_p99_smoothed.value_or(0.0);
+  snap.e2e_p95_ms = stats.e2e_p95_smoothed.value_or(0.0);
+  snap.e2e_p99_ms = stats.e2e_p99_smoothed.value_or(0.0);
+  snap.rejection_rps = stats.rejection_rps;
+  snap.score = score;
+  snap.queue_size = stats.queue_size;
+  snap.queue_capacity = stats.queue_capacity;
+  snap.last_tick = stats.now;
+  return snap;
+}
+
 class MonitorImpl final : public Monitor::Impl {
  public:
   MonitorImpl(const MonitorImpl&) = delete;
@@ -510,28 +534,6 @@ class MonitorImpl final : public Monitor::Impl {
          capacity_pressure_score});
   }
 
-  static auto build_snapshot(
-      const TickStats& stats, double score, bool congested_state) -> Snapshot
-  {
-    Snapshot snap{};
-    snap.congestion = congested_state;
-    snap.lambda_rps = stats.lambda_rps;
-    snap.mu_rps = stats.mu_rps;
-    snap.rho_ewma = stats.rho_smoothed;
-    snap.fill_ewma = stats.fill_smoothed;
-    snap.dqueue_ewma = stats.dqueue_smoothed;
-    snap.queue_p95_ms = stats.queue_p95_smoothed.value_or(0.0);
-    snap.queue_p99_ms = stats.queue_p99_smoothed.value_or(0.0);
-    snap.e2e_p95_ms = stats.e2e_p95_smoothed.value_or(0.0);
-    snap.e2e_p99_ms = stats.e2e_p99_smoothed.value_or(0.0);
-    snap.rejection_rps = stats.rejection_rps;
-    snap.score = score;
-    snap.queue_size = stats.queue_size;
-    snap.queue_capacity = stats.queue_capacity;
-    snap.last_tick = stats.now;
-    return snap;
-  }
-
   void publish_metrics(
       const TickStats& stats, double score, bool congested_state) const
   {
@@ -608,7 +610,8 @@ class MonitorImpl final : public Monitor::Impl {
     const bool congested_state = congested();
     const double score = compute_pressure_score(stats);
 
-    const Snapshot snap = build_snapshot(stats, score, congested_state);
+    const Snapshot snap =
+        build_congestion_snapshot(stats, score, congested_state);
     {
       std::scoped_lock lock(snapshot_state_.mutex);
       snapshot_state_.value = snap;
@@ -676,7 +679,10 @@ make_global_tracer() -> std::shared_ptr<BatchingTraceLogger>
 {
   return {
       &BatchingTraceLogger::instance(),
-      [](BatchingTraceLogger* /*tracer*/) noexcept {},
+      [](BatchingTraceLogger* /*tracer*/) noexcept {
+        // This shared_ptr aliases the process-wide singleton tracer.
+        // Ownership stays with BatchingTraceLogger::instance().
+      },
   };
 }
 

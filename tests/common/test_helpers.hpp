@@ -347,7 +347,7 @@ run_single_job(
       if (job_mutator) {
         job_mutator(*job);
       }
-      job->get_on_complete()(outputs, latency);
+      job->completion().get_on_complete()(outputs, latency);
     }
   });
 }

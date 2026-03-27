@@ -457,69 +457,7 @@ class InferenceJob {
       std::vector<torch::Tensor> inputs, std::vector<at::ScalarType> types,
       int request_identifier, CompletionCallback callback = nullptr);
 
-  void set_logical_job_count(int count)
-  {
-    batch_state_.set_logical_job_count(count);
-  }
-  [[nodiscard]] auto logical_job_count() const -> int
-  {
-    return batch_state_.logical_job_count();
-  }
-
-  void set_aggregated_sub_jobs(std::vector<AggregatedSubJob> jobs)
-  {
-    batch_state_.set_aggregated_sub_jobs(std::move(jobs));
-  }
-
-  [[nodiscard]] auto aggregated_sub_jobs() const
-      -> const std::vector<AggregatedSubJob>&
-  {
-    return batch_state_.aggregated_sub_jobs();
-  }
-
-  [[nodiscard]] auto has_aggregated_sub_jobs() const -> bool
-  {
-    return batch_state_.has_aggregated_sub_jobs();
-  }
-
-  void set_effective_batch_size(int64_t batch)
-  {
-    batch_state_.set_effective_batch_size(batch);
-  }
-
-  void reset_effective_batch_size()
-  {
-    batch_state_.reset_effective_batch_size();
-  }
-
-  [[nodiscard]] auto effective_batch_size() const -> std::optional<int64_t>
-  {
-    return batch_state_.effective_batch_size();
-  }
-
-  void set_pending_sub_jobs(std::vector<std::shared_ptr<InferenceJob>> jobs)
-  {
-    batch_state_.set_pending_sub_jobs(std::move(jobs));
-  }
-
-  void clear_pending_sub_jobs() { batch_state_.clear_pending_sub_jobs(); }
-
-  [[nodiscard]] auto pending_sub_jobs() const
-      -> const std::vector<std::shared_ptr<InferenceJob>>&
-  {
-    return batch_state_.pending_sub_jobs();
-  }
-
-  [[nodiscard]] auto has_pending_sub_jobs() const -> bool
-  {
-    return batch_state_.has_pending_sub_jobs();
-  }
-
-  [[nodiscard]] auto take_pending_sub_jobs()
-      -> std::vector<std::shared_ptr<InferenceJob>>
-  {
-    return batch_state_.take_pending_sub_jobs();
-  }
+  auto batch() -> BatchState& { return batch_state_; }
 
   void set_request_id(int request_id)
   {
@@ -597,62 +535,7 @@ class InferenceJob {
     request_payload_.release_input_memory_holders();
   }
 
-  void set_on_complete(CompletionCallback callback)
-  {
-    completion_state_.set_on_complete(std::move(callback));
-  }
-
-  [[nodiscard]] auto get_on_complete() const -> CompletionCallback
-  {
-    return completion_state_.get_on_complete();
-  }
-
-  [[nodiscard]] auto take_on_complete() -> CompletionCallback
-  {
-    return completion_state_.take_on_complete();
-  }
-
-  [[nodiscard]] auto has_on_complete() const -> bool
-  {
-    return completion_state_.has_on_complete();
-  }
-
-  void set_model_name(std::string model_name)
-  {
-    completion_state_.set_model_name(std::move(model_name));
-  }
-
-  [[nodiscard]] auto model_name() const -> std::string_view
-  {
-    return completion_state_.model_name();
-  }
-
-  void set_failure_info(FailureInfo info)
-  {
-    completion_state_.set_failure_info(std::move(info));
-  }
-
-  void clear_failure_info() { completion_state_.clear_failure_info(); }
-
-  [[nodiscard]] auto failure_info() const -> std::optional<FailureInfo>
-  {
-    return completion_state_.failure_info();
-  }
-
-  [[nodiscard]] auto take_failure_info() -> std::optional<FailureInfo>
-  {
-    return completion_state_.take_failure_info();
-  }
-
-  [[nodiscard]] auto try_mark_terminal_handled() -> bool
-  {
-    return completion_state_.try_mark_terminal_handled();
-  }
-
-  [[nodiscard]] auto terminal_handled() const -> bool
-  {
-    return completion_state_.terminal_handled();
-  }
+  auto completion() -> CompletionState& { return completion_state_; }
 
   void set_cancelled_flag(std::shared_ptr<std::atomic<bool>> flag)
   {

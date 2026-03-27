@@ -30,8 +30,8 @@ normalize_output_slot_pool_dependencies(
     dependencies.starpu_vector_register = &starpu_vector_data_register;
   }
   if (!dependencies.host_allocator) {
-    dependencies.host_allocator = [](void** ptr, size_t alignment,
-                                     size_t size) {
+    dependencies.host_allocator = [](OutputSlotPool::HostBufferPtr* ptr,
+                                     size_t alignment, size_t size) {
       return detail::try_allocate_aligned_host_buffer(ptr, alignment, size);
     };
   }
@@ -117,13 +117,13 @@ OutputSlotPool::alloc_host_buffer(
       },
       [&dependencies](size_t requested_bytes) {
         constexpr size_t kAlign = 64;
-        void* raw_ptr = nullptr;
+        std::byte* raw_ptr = nullptr;
         const int alloc_rc =
             dependencies.host_allocator(&raw_ptr, kAlign, requested_bytes);
         if (alloc_rc != 0 || raw_ptr == nullptr) {
           throw std::bad_alloc();
         }
-        return static_cast<std::byte*>(raw_ptr);
+        return raw_ptr;
       });
 }
 

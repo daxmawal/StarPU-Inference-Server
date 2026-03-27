@@ -92,7 +92,7 @@ TEST_F(
   auto tensor = torch::ones({2, 3});
   Job()->set_input_tensors({tensor});
   Job()->set_input_types({tensor.scalar_type()});
-  Job()->set_effective_batch_size(7);
+  Job()->batch().set_effective_batch_size(7);
 
   starpu_server::TensorConfig tensor_config;
   tensor_config.dims = {4, 5};

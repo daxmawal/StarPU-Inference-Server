@@ -92,8 +92,8 @@ mark_callback_failure(
     return;
   }
 
-  if (!ctx->job->failure_info().has_value()) {
-    const std::string model_name{ctx->job->model_name()};
+  if (!ctx->job->completion().failure_info().has_value()) {
+    const std::string model_name{ctx->job->completion().model_name()};
     increment_inference_failure("callback", failure.reason, model_name);
 
     InferenceJob::FailureInfo failure_info{};
@@ -101,7 +101,7 @@ mark_callback_failure(
     failure_info.reason = std::string(failure.reason);
     failure_info.message = std::string(failure.message);
     failure_info.metrics_reported = true;
-    ctx->job->set_failure_info(std::move(failure_info));
+    ctx->job->completion().set_failure_info(std::move(failure_info));
   }
 
   // Force downstream async completion to enter the failure path.
@@ -113,7 +113,7 @@ resolve_terminal_status(const InferenceCallbackContext* ctx)
     -> CallbackTerminalStatus
 {
   if (ctx != nullptr && ctx->job != nullptr &&
-      ctx->job->failure_info().has_value()) {
+      ctx->job->completion().failure_info().has_value()) {
     return CallbackTerminalStatus::kFailure;
   }
   return CallbackTerminalStatus::kSuccess;
@@ -130,13 +130,13 @@ finalize_or_fail_once(
   }
 
   if (status == CallbackTerminalStatus::kFailure && ctx->job != nullptr &&
-      !ctx->job->failure_info().has_value()) {
+      !ctx->job->completion().failure_info().has_value()) {
     InferenceJob::FailureInfo failure_info{};
     failure_info.stage = "callback";
     failure_info.reason = "terminal_failure";
     failure_info.message =
         "Inference callback finalized after an unrecoverable error.";
-    ctx->job->set_failure_info(std::move(failure_info));
+    ctx->job->completion().set_failure_info(std::move(failure_info));
     ctx->job->set_output_tensors({});
   }
 
@@ -584,7 +584,7 @@ InferenceTask::fill_input_layout(
     }
 
     if (!dims.empty()) {
-      if (const auto effective = job_->effective_batch_size();
+      if (const auto effective = job_->batch().effective_batch_size();
           effective.has_value()) {
         dims.front() = std::max<int64_t>(1, *effective);
       } else if (used_config_dims) {
@@ -1045,7 +1045,7 @@ InferenceTask::record_and_run_completion_callback(
     timing.callback_end_time = end_time;
   });
 
-  if (auto callback = ctx->job->take_on_complete(); callback) {
+  if (auto callback = ctx->job->completion().take_on_complete(); callback) {
     run_with_logged_exceptions(
         [ctx, callback = std::move(callback), latency_ms]() mutable {
           callback(ctx->job->get_output_tensors(), latency_ms);

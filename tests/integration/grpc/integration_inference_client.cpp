@@ -86,14 +86,15 @@ TEST(InferenceClient, DISABLED_AsyncCompleteRpcSuccess)
   auto worker = starpu_server::run_single_job(
       queue, worker_outputs, 0.0,
       [&response_sent_promise](starpu_server::InferenceJob& job) {
-        auto on_complete = job.get_on_complete();
-        job.set_on_complete([on_complete = std::move(on_complete),
-                             promise = &response_sent_promise](
-                                const std::vector<torch::Tensor>& outputs,
-                                double latency) mutable {
-          on_complete(outputs, latency);
-          promise->set_value();
-        });
+        auto on_complete = job.completion().get_on_complete();
+        job.completion().set_on_complete(
+            [on_complete = std::move(on_complete),
+             promise = &response_sent_promise](
+                const std::vector<torch::Tensor>& outputs,
+                double latency) mutable {
+              on_complete(outputs, latency);
+              promise->set_value();
+            });
       });
 
   auto channel = grpc::CreateChannel(

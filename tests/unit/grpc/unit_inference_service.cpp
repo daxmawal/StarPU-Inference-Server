@@ -2609,7 +2609,7 @@ TEST_F(
   std::shared_ptr<starpu_server::InferenceJob> job;
   ASSERT_TRUE(queue.try_pop(job));
   ASSERT_NE(job, nullptr);
-  EXPECT_NO_THROW(job->get_on_complete()(outputs, 0.0));
+  EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
   EXPECT_EQ(callback_count.load(std::memory_order_acquire), 2);
 }
 
@@ -2642,7 +2642,7 @@ TEST_F(
   std::shared_ptr<starpu_server::InferenceJob> job;
   ASSERT_TRUE(queue.try_pop(job));
   ASSERT_NE(job, nullptr);
-  EXPECT_NO_THROW(job->get_on_complete()(outputs, 0.0));
+  EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
   EXPECT_EQ(callback_count.load(std::memory_order_acquire), 2);
 }
 
@@ -2675,7 +2675,7 @@ TEST_F(
   std::shared_ptr<starpu_server::InferenceJob> job;
   ASSERT_TRUE(queue.try_pop(job));
   ASSERT_NE(job, nullptr);
-  EXPECT_NO_THROW(job->get_on_complete()(outputs, 0.0));
+  EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
   EXPECT_EQ(callback_count.load(std::memory_order_acquire), 2);
 }
 
@@ -2704,7 +2704,7 @@ TEST_F(
   std::shared_ptr<starpu_server::InferenceJob> job;
   ASSERT_TRUE(queue.try_pop(job));
   ASSERT_NE(job, nullptr);
-  EXPECT_NO_THROW(job->get_on_complete()(outputs, 0.0));
+  EXPECT_NO_THROW(job->completion().get_on_complete()(outputs, 0.0));
   EXPECT_EQ(callback_count.load(std::memory_order_acquire), 2);
 }
 
@@ -2755,7 +2755,7 @@ TEST_F(InferenceServiceTest, SubmitJobAsyncReportsFailureInfoWhenJobFailed)
 
   auto worker = prepare_job(
       {}, {}, [failure_info](starpu_server::InferenceJob& job) mutable {
-        job.set_failure_info(std::move(failure_info));
+        job.completion().set_failure_info(std::move(failure_info));
       });
 
   std::vector<torch::Tensor> inputs = {
@@ -2825,7 +2825,7 @@ TEST_F(
 
     auto worker = prepare_job(
         {}, {}, [failure_info](starpu_server::InferenceJob& job) mutable {
-          job.set_failure_info(std::move(failure_info));
+          job.completion().set_failure_info(std::move(failure_info));
         });
 
     struct CallbackResult {
@@ -3271,8 +3271,8 @@ TEST_F(InferenceServiceTest, HandleModelInferAsyncIgnoresRepeatedCompletion)
       return;
     }
     auto worker_outputs = expected_outputs;
-    job->get_on_complete()(worker_outputs, 0.0);
-    job->get_on_complete()(worker_outputs, 0.0);
+    job->completion().get_on_complete()(worker_outputs, 0.0);
+    job->completion().get_on_complete()(worker_outputs, 0.0);
   });
 
   service->HandleModelInferAsync(
@@ -3394,7 +3394,7 @@ TEST_F(
       [&job, &worker_outputs, start_signal]() mutable {
         start_signal.wait();
         auto outputs_copy = worker_outputs;
-        job->get_on_complete()(outputs_copy, 0.0);
+        job->completion().get_on_complete()(outputs_copy, 0.0);
       });
 
   start_promise->set_value();
@@ -3405,7 +3405,7 @@ TEST_F(
   const auto status = status_future.get();
 
   auto outputs_copy = worker_outputs;
-  job->get_on_complete()(outputs_copy, 0.0);
+  job->completion().get_on_complete()(outputs_copy, 0.0);
   local_cancel_handler();
   local_cancel_handler();
 
@@ -3569,7 +3569,7 @@ TEST_F(
     std::shared_ptr<starpu_server::InferenceJob> job;
     ASSERT_TRUE(queue.wait_for_and_pop(job, std::chrono::milliseconds(500)));
     ASSERT_NE(job, nullptr);
-    job->get_on_complete()({}, 0.0);
+    job->completion().get_on_complete()({}, 0.0);
     ++handled_jobs;
   }
 
@@ -3620,7 +3620,7 @@ TEST_F(
     ASSERT_TRUE(queue.wait_for_and_pop(job, std::chrono::milliseconds(500)));
     ASSERT_NE(job, nullptr);
     auto outputs_copy = worker_outputs;
-    job->get_on_complete()(outputs_copy, 0.0);
+    job->completion().get_on_complete()(outputs_copy, 0.0);
     ++handled_jobs;
   }
 

@@ -109,7 +109,7 @@ TEST(
     sub_jobs.back().arrival_time = Clock::time_point{};
   }
 
-  aggregated->set_aggregated_sub_jobs(std::move(sub_jobs));
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
 
   const auto result = internal::build_request_arrival_us_for_trace(aggregated);
 
@@ -1007,7 +1007,7 @@ TEST_F(StarPUTaskRunnerFixture, RunFinalizesJobAfterExceptionRaisedBeforeSubmit)
   EXPECT_EQ(probe.latency, -1);
   EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "execution");
   EXPECT_EQ(failure->reason, "runtime_error");
@@ -1040,7 +1040,7 @@ TEST_F(
   EXPECT_EQ(probe.latency, -1);
   EXPECT_EQ(completed_jobs_.load(std::memory_order_acquire), 1U);
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "execution");
   EXPECT_EQ(failure->reason, "exception");
@@ -1221,7 +1221,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesGenericStdException)
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(
       failure->message, "Unexpected std::exception: custom std exception");
@@ -1252,7 +1252,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
 
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(
       failure->message,
@@ -1277,7 +1277,7 @@ TEST_F(
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   assert_failure_result(probe);
-  const auto failure = job->failure_info();
+  const auto failure = job->completion().failure_info();
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(failure->stage, "execution");
   EXPECT_EQ(failure->reason, "exception");
@@ -1306,7 +1306,7 @@ TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
 
   auto configure_job = [](starpu_server::CallbackProbe& probe, int request_id) {
     probe.job->set_request_id(request_id);
-    probe.job->set_model_name("submit_fail_model");
+    probe.job->completion().set_model_name("submit_fail_model");
     probe.job->set_input_tensors(
         {torch::ones({1}, torch::TensorOptions().dtype(torch::kFloat))});
     probe.job->set_input_types({at::kFloat});
@@ -1377,7 +1377,7 @@ TEST_F(StarPUTaskRunnerFixture, RunClearsOnCompleteWhenJobCancelled)
 
   bool callback_invoked = false;
   auto job = make_job(1, {torch::tensor({1.0F})});
-  job->set_on_complete(
+  job->completion().set_on_complete(
       [&callback_invoked](const std::vector<torch::Tensor>&, double) {
         callback_invoked = true;
       });
@@ -1395,7 +1395,7 @@ TEST_F(StarPUTaskRunnerFixture, RunClearsOnCompleteWhenJobCancelled)
 
   runner_->run();
 
-  EXPECT_FALSE(job->has_on_complete());
+  EXPECT_FALSE(job->completion().has_on_complete());
   EXPECT_FALSE(callback_invoked);
   EXPECT_TRUE(job->get_input_tensors().empty());
   EXPECT_TRUE(job->get_input_memory_holders().empty());
@@ -1424,15 +1424,15 @@ TEST_F(StarPUTaskRunnerFixture, RunReleasesPendingSubJobsWhenJobCancelled)
   std::vector<std::shared_ptr<starpu_server::InferenceJob>> pending_jobs;
   pending_jobs.push_back(pending_a);
   pending_jobs.push_back(pending_b);
-  job->set_pending_sub_jobs(std::move(pending_jobs));
+  job->batch().set_pending_sub_jobs(std::move(pending_jobs));
 
-  ASSERT_TRUE(job->has_pending_sub_jobs());
+  ASSERT_TRUE(job->batch().has_pending_sub_jobs());
   ASSERT_TRUE(queue_.push(job));
   queue_.shutdown();
 
   runner_->run();
 
-  EXPECT_FALSE(job->has_pending_sub_jobs());
+  EXPECT_FALSE(job->batch().has_pending_sub_jobs());
   EXPECT_TRUE(pending_a->get_input_tensors().empty());
   EXPECT_TRUE(pending_a->get_input_memory_holders().empty());
   EXPECT_TRUE(pending_b->get_input_tensors().empty());
@@ -1483,7 +1483,7 @@ TEST_F(
       /*pool_size=*/1);
 
   auto job = make_job(901, {torch::tensor({1.0F})});
-  ASSERT_TRUE(job->try_mark_terminal_handled());
+  ASSERT_TRUE(job->completion().try_mark_terminal_handled());
 
   completed_jobs_.store(0, std::memory_order_release);
   starpu_server::StarPUTaskRunnerTestAdapter::reserve_inflight_slot(
@@ -1553,7 +1553,7 @@ TEST(StarPUTaskRunnerTestAdapter, ShouldHoldJobReturnsTrueForAggregatedSubJobs)
   sub.job = aggregated;
   sub.batch_size = 1;
   sub.request_id = 42;
-  candidate->set_aggregated_sub_jobs({sub});
+  candidate->batch().set_aggregated_sub_jobs({sub});
 
   EXPECT_TRUE(starpu_server::StarPUTaskRunnerTestAdapter::should_hold_job(
       candidate, reference, std::nullopt));

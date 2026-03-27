@@ -135,7 +135,7 @@ class Monitor {
 #endif  // SONAR_IGNORE_END
   };
 
-  Monitor(
+  explicit Monitor(
       InferenceQueue* queue, Config config = {},
       std::shared_ptr<MetricsRecorder> metrics = {},
       std::shared_ptr<BatchingTraceLogger> tracer = {});

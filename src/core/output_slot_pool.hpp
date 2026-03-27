@@ -25,10 +25,11 @@ class OutputSlotPool : public SlotPoolBase<SlotPoolSlot> {
     size_t bytes = 0;
   };
 
+  using HostBufferPtr = std::byte*;
   using StarpuVectorRegisterFn = decltype(&starpu_vector_data_register);
   using RegisterFailureObserverFn =
       void (*)(const SlotInfo&, const std::vector<HostBufferInfo>&);
-  using HostAllocatorFn = std::function<int(void**, size_t, size_t)>;
+  using HostAllocatorFn = std::function<int(HostBufferPtr*, size_t, size_t)>;
   using CudaHostAllocFn = std::function<int(void**, size_t, unsigned int)>;
   using CudaPinnedOverrideFn = std::function<bool(size_t, bool, bool)>;
   using HostDeallocatorFn = std::function<void(void*)>;
@@ -74,7 +75,6 @@ class OutputSlotPool : public SlotPoolBase<SlotPoolSlot> {
   void allocate_slot_buffers_and_register(
       int slot_id, const RuntimeConfig& opts);
   static auto product_dims(const std::vector<int64_t>& dims) -> size_t;
-  using HostBufferPtr = std::byte*;
   struct PreparedHostBuffer {
     HostBufferPtr ptr = nullptr;
     HostBufferInfo info;

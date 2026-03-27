@@ -305,11 +305,10 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
       opts_ != nullptr ? opts_->batching.max_inflight_tasks : 0;
   if (observability_ != nullptr && observability_->metrics != nullptr) {
     observability_->metrics->set_max_inflight_tasks(inflight_state_->max_tasks);
-    observability_->metrics->set_inflight_tasks(
-        inflight_state_->tasks.load(std::memory_order_relaxed));
+    observability_->metrics->set_inflight_tasks(inflight_state_->tasks.load());
   } else {
     set_max_inflight_tasks(inflight_state_->max_tasks);
-    set_inflight_tasks(inflight_state_->tasks.load(std::memory_order_relaxed));
+    set_inflight_tasks(inflight_state_->tasks.load());
   }
   if (inflight_state_->max_tasks > 0) {
     if (observability_ != nullptr && observability_->metrics != nullptr) {
@@ -501,7 +500,7 @@ StarPUTaskRunner::handle_job_exception(
   }
 
   bool completion_invoked = false;
-  if (auto completion = job->take_on_complete(); completion) {
+  if (auto completion = job->completion().take_on_complete(); completion) {
     run_with_logged_exceptions(
         [completion = std::move(completion), &completion_invoked]() mutable {
           completion({}, -1);
