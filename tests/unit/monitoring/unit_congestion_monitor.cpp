@@ -56,6 +56,11 @@ class CongestionMonitorTest : public ::testing::Test {
   void TearDown() override { starpu_server::congestion::shutdown(); }
 };
 
+class CongestionShutdownGuard {
+ public:
+  ~CongestionShutdownGuard() { starpu_server::congestion::shutdown(); }
+};
+
 TEST_F(CongestionMonitorTest, PanicOnRejectionSetsCongestionFlag)
 {
   starpu_server::InferenceQueue queue(8);
@@ -64,6 +69,7 @@ TEST_F(CongestionMonitorTest, PanicOnRejectionSetsCongestionFlag)
   cfg.entry_horizon = 40ms;
   cfg.exit_horizon = 60ms;
   ASSERT_TRUE(starpu_server::congestion::start(&queue, cfg));
+  CongestionShutdownGuard shutdown_guard;
 
   starpu_server::congestion::record_arrival(1);
   starpu_server::congestion::record_rejection(1);
@@ -91,6 +97,7 @@ TEST_F(CongestionMonitorTest, ClearsAfterExitConditionsHold)
   cfg.exit_horizon = 120ms;
   cfg.latency_slo_ms = 100.0;
   ASSERT_TRUE(starpu_server::congestion::start(&queue, cfg));
+  CongestionShutdownGuard shutdown_guard;
 
   for (int i = 0; i < 8; ++i) {
     ASSERT_TRUE(queue.push(std::make_shared<starpu_server::InferenceJob>()));
@@ -155,6 +162,7 @@ TEST_F(CongestionMonitorTest, StartPublishesMetricsWhenGlobalMetricsAvailable)
   cfg.exit_horizon = 60ms;
   cfg.latency_slo_ms = 10.0;
   ASSERT_TRUE(starpu_server::congestion::start(&queue, cfg));
+  CongestionShutdownGuard shutdown_guard;
 
   for (int i = 0; i < 3; ++i) {
     ASSERT_TRUE(queue.push(std::make_shared<starpu_server::InferenceJob>()));
