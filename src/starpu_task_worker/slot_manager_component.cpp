@@ -361,10 +361,19 @@ SlotManager::handle_submission_failure(
     const std::shared_ptr<InferenceCallbackContext>& ctx, int submit_code)
 {
   InferenceTask::cleanup(ctx);
+  bool output_slot_released = false;
+  if (ctx != nullptr) {
+    if (ctx->output_slot_release_guard) {
+      ctx->output_slot_release_guard->release();
+      ctx->output_slot_release_guard.reset();
+      output_slot_released = true;
+    }
+    ctx->self_keep_alive.reset();
+  }
   if (pools.has_input() && pools.input_slot >= 0) {
     pools.input_pool->release(pools.input_slot);
   }
-  if (pools.has_output() && pools.output_slot >= 0) {
+  if (!output_slot_released && pools.has_output() && pools.output_slot >= 0) {
     pools.output_pool->release(pools.output_slot);
   }
   throw StarPUTaskSubmissionException(std::format(
@@ -559,6 +568,7 @@ SlotManager::submit_inference_task(
     }
 
     void dismiss() noexcept { active = false; }
+    void release_output_ownership() noexcept { release_output_ = false; }
 
    private:
     void release() noexcept
@@ -566,13 +576,14 @@ SlotManager::submit_inference_task(
       if (pools.has_input() && pools.input_slot >= 0) {
         pools.input_pool->release(pools.input_slot);
       }
-      if (pools.has_output() && pools.output_slot >= 0) {
+      if (release_output_ && pools.has_output() && pools.output_slot >= 0) {
         pools.output_pool->release(pools.output_slot);
       }
     }
 
     const StarPUTaskRunner::PoolResources& pools;
     bool active{true};
+    bool release_output_{true};
   };
 
   SubmitPipelineContext context{};
@@ -609,6 +620,9 @@ SlotManager::submit_inference_task(
   context.callback_context = configure_task_context(
       task, context.pools, std::move(context.handles.input_for_context),
       std::move(context.handles.output_for_context), context.batch_size);
+  if (context.pools.has_output()) {
+    pool_guard.release_output_ownership();
+  }
   context.task_ptr = task.create_task(
       context.callback_context->inputs_handles,
       context.callback_context->outputs_handles, context.callback_context);
