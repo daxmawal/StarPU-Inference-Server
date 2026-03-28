@@ -199,7 +199,7 @@ class ModelInferCallData final
         auto self = this->shared_from_this();
         auto call_guard = self;
         impl_->HandleModelInferAsync(
-            &ctx_, &request_, &response_,
+            &ctx_, request_, &response_,
             [self = std::move(self)](const Status& status) {
               self->OnInferenceComplete(status);
             },

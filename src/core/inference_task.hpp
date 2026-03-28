@@ -24,8 +24,14 @@ struct OutputSlotReleaseGuard {
   {
   }
 
+  OutputSlotReleaseGuard(const OutputSlotReleaseGuard&) = delete;
+  auto operator=(const OutputSlotReleaseGuard&) -> OutputSlotReleaseGuard& =
+                                                       delete;
+  OutputSlotReleaseGuard(OutputSlotReleaseGuard&&) = delete;
+  auto operator=(OutputSlotReleaseGuard&&) -> OutputSlotReleaseGuard& = delete;
+
   void release() noexcept;
-  ~OutputSlotReleaseGuard();
+  ~OutputSlotReleaseGuard() noexcept;
 
   OutputSlotPool* pool = nullptr;
   int slot_id = -1;

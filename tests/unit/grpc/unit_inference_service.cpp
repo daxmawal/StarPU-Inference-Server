@@ -981,7 +981,7 @@ TEST_F(
   std::vector<std::shared_ptr<const void>> keep_alive;
   auto request_owner = std::make_shared<int>(1);
   auto status = request_backed_service.validate_and_convert_inputs(
-      &req, inputs, &keep_alive, request_owner);
+      req, inputs, &keep_alive, request_owner);
 
   ASSERT_TRUE(status.ok());
   ASSERT_EQ(inputs.size(), 1U);
@@ -994,6 +994,37 @@ TEST_F(
   EXPECT_EQ(
       inputs[0].nbytes(),
       static_cast<int64_t>(req.raw_input_contents(0).size()));
+  EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
+}
+
+TEST_F(
+    InferenceServiceTest,
+    ValidateInputsCopiesConstRequestBufferWhenRequestBackedViewIsEnabled)
+{
+  std::vector<float> data = {kF1, kF2, kF3, kF4};
+  const auto req = starpu_server::make_model_infer_request({
+      {{2, 2}, at::kFloat, starpu_server::to_raw_data(data)},
+  });
+  starpu_server::InferenceServiceImpl request_backed_service(
+      &queue, &ref_outputs, std::vector<at::ScalarType>{at::kFloat},
+      starpu_server::InferenceServiceImpl::ServiceOptions{
+          .prefer_request_backed_input_views = true});
+
+  std::vector<torch::Tensor> inputs;
+  std::vector<std::shared_ptr<const void>> keep_alive;
+  auto request_owner = std::make_shared<int>(1);
+  auto status = request_backed_service.validate_and_convert_inputs(
+      &req, inputs, &keep_alive, request_owner);
+
+  ASSERT_TRUE(status.ok());
+  ASSERT_EQ(inputs.size(), 1U);
+  ASSERT_EQ(keep_alive.size(), 1U);
+  const auto* raw_ptr =
+      static_cast<const void*>(req.raw_input_contents(0).data());
+  EXPECT_EQ(
+      static_cast<const void*>(inputs[0].data_ptr()), keep_alive[0].get());
+  EXPECT_NE(static_cast<const void*>(inputs[0].data_ptr()), raw_ptr);
+  EXPECT_NE(keep_alive[0].get(), raw_ptr);
   EXPECT_FLOAT_EQ(inputs[0][0][0].item<float>(), kF1);
 }
 

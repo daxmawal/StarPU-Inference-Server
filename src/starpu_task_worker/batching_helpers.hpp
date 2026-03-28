@@ -33,7 +33,9 @@ slice_contiguous_output_for_sub_job(
   const auto sample_bytes = total_bytes_size / available_size;
   const auto slice_offset =
       static_cast<std::size_t>(slice_start) * sample_bytes;
-  auto* slice_data = static_cast<std::byte*>(tensor.data_ptr()) + slice_offset;
+  auto tensor_bytes = std::span<std::byte>(
+      static_cast<std::byte*>(tensor.data_ptr()), total_bytes_size);
+  auto* slice_data = tensor_bytes.subspan(slice_offset).data();
 
   std::vector<int64_t> shape(tensor.sizes().begin(), tensor.sizes().end());
   shape.front() = length;

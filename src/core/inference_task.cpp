@@ -333,7 +333,7 @@ OutputSlotReleaseGuard::release() noexcept
   pool->release(slot_id);
 }
 
-OutputSlotReleaseGuard::~OutputSlotReleaseGuard()
+OutputSlotReleaseGuard::~OutputSlotReleaseGuard() noexcept
 {
   release();
 }
