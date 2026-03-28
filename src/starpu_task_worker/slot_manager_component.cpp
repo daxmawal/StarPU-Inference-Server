@@ -336,8 +336,6 @@ SlotManager::configure_task_context(
   if (pools.has_output()) {
     ctx->output_pool = pools.output_pool;
     ctx->output_slot_id = pools.output_slot;
-    ctx->output_slot_release_guard = std::make_shared<OutputSlotReleaseGuard>(
-        pools.output_pool, pools.output_slot);
   }
   ctx->on_finished = [input_pool = pools.input_pool,
                       input_slot = pools.input_slot]() {
@@ -351,6 +349,10 @@ SlotManager::configure_task_context(
   }
   if (ctx->inference_params) {
     ctx->inference_params->batch_size = batch_size;
+  }
+  if (pools.has_output()) {
+    ctx->output_slot_release_guard = std::make_shared<OutputSlotReleaseGuard>(
+        pools.output_pool, pools.output_slot);
   }
   return ctx;
 }
