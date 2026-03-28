@@ -17,6 +17,21 @@ class OutputSlotPool;
 struct InferenceTaskDependencies;
 struct RuntimeObservability;
 
+struct OutputSlotReleaseGuard {
+  OutputSlotReleaseGuard() noexcept = default;
+  OutputSlotReleaseGuard(OutputSlotPool* pool_, int slot_id_) noexcept
+      : pool(pool_), slot_id(slot_id_)
+  {
+  }
+
+  void release() noexcept;
+  ~OutputSlotReleaseGuard();
+
+  OutputSlotPool* pool = nullptr;
+  int slot_id = -1;
+  std::atomic<bool> released{false};
+};
+
 struct InferenceCallbackContext {
   std::shared_ptr<InferenceJob> job;
   std::shared_ptr<InferenceParams> inference_params;
@@ -31,6 +46,7 @@ struct InferenceCallbackContext {
   OutputSlotPool* output_pool = nullptr;
   int output_slot_id = -1;
   std::function<void()> on_finished;
+  std::shared_ptr<OutputSlotReleaseGuard> output_slot_release_guard;
   std::shared_ptr<const struct InferenceTaskDependencies> dependencies_owner;
   const struct InferenceTaskDependencies* dependencies = nullptr;
 

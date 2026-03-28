@@ -318,6 +318,26 @@ InferenceCallbackContext::InferenceCallbackContext(
 {
 }
 
+void
+OutputSlotReleaseGuard::release() noexcept
+{
+  if (pool == nullptr || slot_id < 0) {
+    return;
+  }
+  bool expected = false;
+  if (!released.compare_exchange_strong(
+          expected, true, std::memory_order_acq_rel,
+          std::memory_order_acquire)) {
+    return;
+  }
+  pool->release(slot_id);
+}
+
+OutputSlotReleaseGuard::~OutputSlotReleaseGuard()
+{
+  release();
+}
+
 // =============================================================================
 // Handle Registration
 // Register input/output tensors as StarPU data handles.
@@ -927,46 +947,45 @@ InferenceTask::process_output_handle(
 
 inline namespace inference_task_detail {
 void
-copy_outputs_from_pool(InferenceCallbackContext* ctx)
+bind_output_views_from_pool(InferenceCallbackContext* ctx)
 {
-  const auto copy_start = MonotonicClock::now();
-  std::size_t total_bytes = 0;
   const auto& base_ptrs = ctx->output_pool->base_ptrs(ctx->output_slot_id);
-  const auto& job_outs = ctx->job->get_output_tensors();
-  const size_t tensor_count = std::min(base_ptrs.size(), job_outs.size());
+  const auto& prototype_outputs = ctx->job->get_output_tensors();
+  const size_t tensor_count =
+      std::min(base_ptrs.size(), prototype_outputs.size());
+  if (tensor_count == 0) {
+    return;
+  }
+
+  std::vector<torch::Tensor> bound_outputs;
+  bound_outputs.reserve(prototype_outputs.size());
+  auto release_guard = ctx->output_slot_release_guard;
+  if (!release_guard) {
+    release_guard = std::make_shared<OutputSlotReleaseGuard>(
+        ctx->output_pool, ctx->output_slot_id);
+    ctx->output_slot_release_guard = release_guard;
+  }
+
   for (size_t i = 0; i < tensor_count; ++i) {
-    const auto& job_output_tensor = job_outs[i];
-    if (!job_output_tensor.defined() || !job_output_tensor.is_cpu() ||
-        !job_output_tensor.is_contiguous()) {
+    const auto& prototype_output = prototype_outputs[i];
+    if (!prototype_output.defined() || !prototype_output.is_cpu() ||
+        !prototype_output.is_contiguous()) {
       throw InvalidInferenceJobException(
           "Job output tensor must be defined, CPU and contiguous");
     }
-    std::memcpy(
-        job_output_tensor.data_ptr(), base_ptrs[i], job_output_tensor.nbytes());
-    total_bytes += job_output_tensor.nbytes();
+    std::vector<int64_t> shape(
+        prototype_output.sizes().begin(), prototype_output.sizes().end());
+    auto deleter = [guard = release_guard](void* /*unused*/) mutable {
+      guard.reset();
+    };
+    bound_outputs.push_back(torch::from_blob(
+        base_ptrs[i], shape, std::move(deleter), prototype_output.options()));
   }
-  const auto copy_end = MonotonicClock::now();
-  const double copy_ms =
-      std::chrono::duration<double, std::milli>(copy_end - copy_start).count();
-  const auto worker_type_label =
-      std::string_view(to_string(ctx->job->get_executed_on()));
-  if (ctx->dependencies != nullptr &&
-      ctx->dependencies->observability != nullptr &&
-      ctx->dependencies->observability->metrics != nullptr) {
-    ctx->dependencies->observability->metrics->observe_io_copy_latency(
-        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-        worker_type_label, copy_ms);
-    ctx->dependencies->observability->metrics->increment_transfer_bytes(
-        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-        worker_type_label, total_bytes);
-  } else {
-    observe_io_copy_latency(
-        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-        worker_type_label, copy_ms);
-    increment_transfer_bytes(
-        "d2h", ctx->job->get_worker_id(), ctx->job->get_device_id(),
-        worker_type_label, total_bytes);
+
+  for (size_t i = tensor_count; i < prototype_outputs.size(); ++i) {
+    bound_outputs.push_back(prototype_outputs[i]);
   }
+  ctx->job->adopt_output_tensors(std::move(bound_outputs));
 }
 }  // namespace inference_task_detail
 
@@ -975,12 +994,19 @@ InferenceTask::finalize_inference_task(void* arg)
 {
   auto* ctx = static_cast<InferenceCallbackContext*>(arg);
 
+  if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 &&
+      !ctx->output_slot_release_guard) {
+    ctx->output_slot_release_guard = std::make_shared<OutputSlotReleaseGuard>(
+        ctx->output_pool, ctx->output_slot_id);
+  }
+
   if (ctx->output_pool != nullptr && ctx->output_slot_id >= 0 && ctx->job) {
     run_with_logged_exceptions(
-        [ctx]() { copy_outputs_from_pool(ctx); },
+        [ctx]() { bind_output_views_from_pool(ctx); },
         ExceptionLoggingMessages{
-            "Output copy from pool failed: ",
-            "Output copy from pool failed due to an unknown exception."});
+            "Output view binding from pool failed: ",
+            "Output view binding from pool failed due to an unknown "
+            "exception."});
   }
 
   const auto& handles_to_release = ctx->outputs_handles_to_release.empty()
@@ -1001,6 +1027,7 @@ InferenceTask::finalize_inference_task(void* arg)
   }
 
   InferenceTask::finalize_context(ctx_sptr);
+  ctx->output_slot_release_guard.reset();
 
   const auto end_time = MonotonicClock::now();
 

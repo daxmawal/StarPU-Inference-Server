@@ -18,6 +18,7 @@
 #endif  // SONAR_IGNORE_END
 // GCOVR_EXCL_STOP
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "core/inference_runner.hpp"

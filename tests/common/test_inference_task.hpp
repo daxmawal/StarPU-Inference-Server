@@ -120,8 +120,6 @@ struct OutputContextFixture {
     ctx->on_finished = [on_finished, pool_ptr = &pool, slot = slot_id]() {
       if (on_finished) {
         on_finished(*pool_ptr, slot);
-      } else {
-        pool_ptr->release(slot);
       }
     };
 

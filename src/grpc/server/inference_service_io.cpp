@@ -144,6 +144,7 @@ convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input,
     const std::vector<int64_t>& shape, const std::string& raw,
     at::ScalarType dtype, torch::Tensor& tensor,
+    const std::shared_ptr<const void>* request_owner,
     std::shared_ptr<const void>* keep_alive) -> Status
 {
   auto options = torch::TensorOptions().dtype(dtype);
@@ -166,6 +167,18 @@ convert_input_to_tensor(
     return {
         grpc::StatusCode::INVALID_ARGUMENT,
         "Raw input size does not match tensor size"};
+  }
+
+  if (request_owner != nullptr && *request_owner) {
+    auto owner = *request_owner;
+    auto deleter = [owner](auto* /*unused*/) mutable { owner.reset(); };
+    auto* tensor_data = const_cast<char*>(raw.data());
+    tensor = torch::from_blob(tensor_data, shape, deleter, options);
+    if (keep_alive != nullptr) {
+      *keep_alive = std::shared_ptr<const void>(
+          owner, static_cast<const void*>(raw.data()));
+    }
+    return Status::OK;
   }
 
   auto buffer = std::make_shared<std::vector<TensorDataByte>>(raw.size());
@@ -300,6 +313,7 @@ struct ProcessInputContext {
   int max_batch_size;
   std::vector<torch::Tensor>* ordered_inputs;
   std::vector<std::shared_ptr<const void>>* ordered_lifetimes;
+  const std::shared_ptr<const void>* request_owner;
   std::vector<bool>* filled;
 };
 
@@ -330,7 +344,7 @@ process_input(
   torch::Tensor tensor;
   std::shared_ptr<const void> tensor_guard;
   status = convert_input_to_tensor(
-      input, shape, raw, dtype, tensor,
+      input, shape, raw, dtype, tensor, context.request_owner,
       context.ordered_lifetimes != nullptr ? &tensor_guard : nullptr);
   if (!status.ok()) {
     return status;
@@ -431,7 +445,8 @@ InferenceServiceImpl::validate_schema_or_throw() const
 auto
 InferenceServiceImpl::validate_and_convert_inputs(
     const ModelInferRequest* request, std::vector<torch::Tensor>& inputs,
-    std::vector<std::shared_ptr<const void>>* input_lifetimes) -> Status
+    std::vector<std::shared_ptr<const void>>* input_lifetimes,
+    std::shared_ptr<const void> request_owner) -> Status
 {
   if (auto status =
           validate_input_counts(request, expected_input_types_.size());
@@ -470,6 +485,8 @@ InferenceServiceImpl::validate_and_convert_inputs(
       max_batch_size_,
       &ordered_inputs,
       input_lifetimes != nullptr ? &ordered_lifetimes : nullptr,
+      prefer_request_backed_input_views_ && request_owner ? &request_owner
+                                                          : nullptr,
       &filled};
 
   for (int i = 0; i < request->inputs_size(); ++i) {

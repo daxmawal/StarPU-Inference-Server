@@ -336,17 +336,15 @@ SlotManager::configure_task_context(
   if (pools.has_output()) {
     ctx->output_pool = pools.output_pool;
     ctx->output_slot_id = pools.output_slot;
+    ctx->output_slot_release_guard = std::make_shared<OutputSlotReleaseGuard>(
+        pools.output_pool, pools.output_slot);
   }
-  ctx->on_finished =
-      [input_pool = pools.input_pool, input_slot = pools.input_slot,
-       output_pool = pools.output_pool, output_slot = pools.output_slot]() {
-        if (input_pool != nullptr && input_slot >= 0) {
-          input_pool->release(input_slot);
-        }
-        if (output_pool != nullptr && output_slot >= 0) {
-          output_pool->release(output_slot);
-        }
-      };
+  ctx->on_finished = [input_pool = pools.input_pool,
+                      input_slot = pools.input_slot]() {
+    if (input_pool != nullptr && input_slot >= 0) {
+      input_pool->release(input_slot);
+    }
+  };
   if (ctx->job) {
     resize_output_handles_for_job(
         ctx->job->get_output_tensors(), ctx->outputs_handles);

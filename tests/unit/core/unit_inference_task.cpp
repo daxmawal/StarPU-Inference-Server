@@ -1323,7 +1323,7 @@ TEST(InferenceTask, CleanupUnregistersAndNullsHandles)
   EXPECT_EQ(ctx->outputs_handles[1], nullptr);
 }
 
-TEST(InferenceTask, FinalizeInferenceTaskCopiesOutputs)
+TEST(InferenceTask, FinalizeInferenceTaskBindsOutputViewsFromPool)
 {
   constexpr float kSentinelValue = 42.0F;
   OutputContextFixture fixture({.sentinel_value = kSentinelValue});
@@ -1334,7 +1334,13 @@ TEST(InferenceTask, FinalizeInferenceTaskCopiesOutputs)
   const auto& job_outputs = fixture.job->get_output_tensors();
   ASSERT_EQ(job_outputs.size(), 1U);
   ASSERT_TRUE(job_outputs[0].defined());
+  EXPECT_EQ(
+      job_outputs[0].data_ptr(), fixture.pool.base_ptrs(fixture.slot_id)[0]);
   EXPECT_FLOAT_EQ(job_outputs[0].item<float>(), kSentinelValue);
+
+  EXPECT_FALSE(fixture.pool.try_acquire().has_value());
+
+  fixture.job->set_output_tensors({});
 
   auto reacquired = fixture.pool.try_acquire();
   ASSERT_TRUE(reacquired.has_value());
@@ -1342,7 +1348,7 @@ TEST(InferenceTask, FinalizeInferenceTaskCopiesOutputs)
   fixture.pool.release(*reacquired);
 }
 
-TEST(InferenceTask, FinalizeInferenceTaskHandlesCopyFailure)
+TEST(InferenceTask, FinalizeInferenceTaskHandlesOutputViewBindingFailure)
 {
   OutputContextFixture fixture({.mutate_job_outputs = [](auto& outputs) {
     outputs[0] = torch::Tensor();
@@ -1351,7 +1357,8 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesCopyFailure)
     EXPECT_NO_THROW(starpu_server::InferenceTask::finalize_inference_task(
         fixture.ctx.get()));
   });
-  EXPECT_NE(log.find("Output copy from pool failed"), std::string::npos);
+  EXPECT_NE(
+      log.find("Output view binding from pool failed"), std::string::npos);
 
   auto reacquired = fixture.pool.try_acquire();
   ASSERT_TRUE(reacquired.has_value());
@@ -1364,11 +1371,7 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesOnFinishedException)
   constexpr float kSentinelValue = 7.0F;
   OutputContextFixture fixture({
       .sentinel_value = kSentinelValue,
-      .on_finished =
-          [](auto& pool, int slot_id) {
-            pool.release(slot_id);
-            throw std::runtime_error("boom");
-          },
+      .on_finished = [](auto&, int) { throw std::runtime_error("boom"); },
   });
   const auto log = CaptureStderr([&] {
     EXPECT_NO_THROW(starpu_server::InferenceTask::finalize_inference_task(
@@ -1380,6 +1383,39 @@ TEST(InferenceTask, FinalizeInferenceTaskHandlesOnFinishedException)
   ASSERT_EQ(job_outputs.size(), 1U);
   ASSERT_TRUE(job_outputs[0].defined());
   EXPECT_FLOAT_EQ(job_outputs[0].item<float>(), kSentinelValue);
+
+  EXPECT_FALSE(fixture.pool.try_acquire().has_value());
+
+  fixture.job->set_output_tensors({});
+
+  auto reacquired = fixture.pool.try_acquire();
+  ASSERT_TRUE(reacquired.has_value());
+  EXPECT_EQ(*reacquired, fixture.slot_id);
+  fixture.pool.release(*reacquired);
+}
+
+TEST(InferenceTask, FinalizeInferenceTaskKeepsOutputSlotAliveForCallbackCopies)
+{
+  constexpr float kSentinelValue = 13.0F;
+  OutputContextFixture fixture({.sentinel_value = kSentinelValue});
+
+  std::vector<torch::Tensor> callback_outputs;
+  fixture.job->completion().set_on_complete(
+      [&callback_outputs](std::vector<torch::Tensor> outputs, double) {
+        callback_outputs = std::move(outputs);
+      });
+
+  ASSERT_NO_THROW(
+      starpu_server::InferenceTask::finalize_inference_task(fixture.ctx.get()));
+
+  ASSERT_EQ(callback_outputs.size(), 1U);
+  EXPECT_FLOAT_EQ(callback_outputs[0].item<float>(), kSentinelValue);
+  EXPECT_FALSE(fixture.pool.try_acquire().has_value());
+
+  fixture.job->set_output_tensors({});
+  EXPECT_FALSE(fixture.pool.try_acquire().has_value());
+
+  callback_outputs.clear();
 
   auto reacquired = fixture.pool.try_acquire();
   ASSERT_TRUE(reacquired.has_value());

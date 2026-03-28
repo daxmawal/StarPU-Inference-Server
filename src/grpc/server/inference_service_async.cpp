@@ -372,6 +372,10 @@ InferenceServiceImpl::HandleModelInferAsync(
   const AsyncTerminalState terminal_state{
       .cancel_flag = cancel_flag, .terminal_flag = terminal_flag};
   AsyncOps::notify_cancel_flag_created(cancel_flag);
+  std::shared_ptr<const void> request_owner;
+  if (prefer_request_backed_input_views_) {
+    request_owner = call_guard;
+  }
   if (auto guard_status = validate_model_infer_io(request, reply);
       !guard_status.ok()) {
     callback_handle->Invoke(guard_status);
@@ -420,8 +424,8 @@ InferenceServiceImpl::HandleModelInferAsync(
     std::vector<torch::Tensor> inputs;
     std::vector<std::shared_ptr<const void>> input_lifetimes;
     std::optional<AsyncFailureInfo> submit_failure_info;
-    Status status =
-        validate_and_convert_inputs(request, inputs, &input_lifetimes);
+    Status status = validate_and_convert_inputs(
+        request, inputs, &input_lifetimes, std::move(request_owner));
     if (AsyncOps::handle_input_validation_failure(
             status, terminal_state, callback_handle, this, resolved_model_name,
             request, recv_tp)) {

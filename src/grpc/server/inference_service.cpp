@@ -239,6 +239,8 @@ InferenceServiceImpl::InferenceServiceImpl(
       expected_input_types_(std::move(expected_input_types)),
       expected_input_dims_(std::move(input_shape_config.expected_input_dims)),
       max_batch_size_(input_shape_config.max_batch_size),
+      prefer_request_backed_input_views_(
+          service_options.prefer_request_backed_input_views),
       default_model_name_(std::move(service_options.default_model_name)),
       server_name_(std::move(service_options.server_name)),
       server_version_(std::move(service_options.server_version)),

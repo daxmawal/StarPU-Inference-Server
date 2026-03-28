@@ -581,7 +581,8 @@ RunGrpcServer(
           model_spec.expected_output_names.begin(),
           model_spec.expected_output_names.end()),
       .server_name = options.server_name,
-      .server_version = options.server_version};
+      .server_version = options.server_version,
+      .prefer_request_backed_input_views = true};
   InferenceServiceImpl service(
       &queue, &reference_outputs,
       std::vector<at::ScalarType>(
