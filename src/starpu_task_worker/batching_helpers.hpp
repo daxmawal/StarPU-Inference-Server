@@ -16,16 +16,13 @@ slice_contiguous_output_for_sub_job(
   }
 
   const auto total_bytes = tensor.nbytes();
-  if (total_bytes < 0) {
-    return std::nullopt;
-  }
 
   const auto available_size = static_cast<std::size_t>(available);
   if (available_size == 0) {
     return std::nullopt;
   }
 
-  const auto total_bytes_size = static_cast<std::size_t>(total_bytes);
+  const auto total_bytes_size = total_bytes;
   if (total_bytes_size % available_size != 0) {
     return std::nullopt;
   }
@@ -40,7 +37,7 @@ slice_contiguous_output_for_sub_job(
   std::vector<int64_t> shape(tensor.sizes().begin(), tensor.sizes().end());
   shape.front() = length;
 
-  auto deleter = [source_tensor = tensor](void* /*unused*/) mutable {
+  auto deleter = [source_tensor = tensor](auto* /*unused*/) mutable {
     source_tensor = torch::Tensor();
   };
 
