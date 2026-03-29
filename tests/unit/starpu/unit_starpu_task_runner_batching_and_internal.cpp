@@ -1651,6 +1651,48 @@ TEST(
   EXPECT_TRUE(aggregated->batch().pending_sub_jobs().empty());
 }
 
+TEST(
+    StarPUTaskRunnerTestAdapter,
+    PropagateCompletionSlicesKeepSourceOutputsAliveAfterAggregatedCleanup)
+{
+  auto aggregated = std::make_shared<starpu_server::InferenceJob>();
+  auto sub_job = std::make_shared<starpu_server::InferenceJob>();
+
+  std::vector<torch::Tensor> callback_outputs;
+  std::vector<starpu_server::InferenceJob::AggregatedSubJob> sub_jobs;
+  sub_jobs.push_back(
+      {sub_job,
+       [&callback_outputs](const std::vector<torch::Tensor>& outputs, double) {
+         callback_outputs = outputs;
+       },
+       2});
+  aggregated->batch().set_aggregated_sub_jobs(std::move(sub_jobs));
+
+  auto storage_owner = std::make_shared<int>(7);
+  const std::weak_ptr<int> weak_owner = storage_owner;
+  std::vector<float> storage{0.0F, 1.0F, 2.0F, 3.0F, 4.0F, 5.0F};
+  auto aggregated_output = torch::from_blob(
+      storage.data(), {3, 2},
+      [keep_alive = std::move(storage_owner)](void* /*unused*/) mutable {
+        keep_alive.reset();
+      },
+      torch::TensorOptions().dtype(torch::kFloat32));
+
+  starpu_server::StarPUTaskRunnerTestAdapter::propagate_completion_to_sub_jobs(
+      aggregated, {aggregated_output}, 5.0);
+
+  aggregated_output = torch::Tensor();
+
+  ASSERT_EQ(callback_outputs.size(), 1U);
+  EXPECT_FALSE(weak_owner.expired());
+  EXPECT_TRUE(torch::equal(
+      callback_outputs[0], torch::tensor({{0.0F, 1.0F}, {2.0F, 3.0F}})));
+  EXPECT_TRUE(aggregated->get_output_tensors().empty());
+
+  callback_outputs.clear();
+  EXPECT_TRUE(weak_owner.expired());
+}
+
 TEST(StarPUTaskRunnerTestAdapter, PropagateCompletionSkipsNullPendingSubJobs)
 {
   auto aggregated = std::make_shared<starpu_server::InferenceJob>();
@@ -1756,8 +1798,12 @@ TEST(TaskRunnerInternal, SliceOutputsForSubJobExtractsContiguousRows)
   auto expected_second = second.narrow(0, 1, 2).contiguous();
   EXPECT_TRUE(torch::equal(result.outputs[0], expected_first));
   EXPECT_TRUE(result.outputs[0].is_contiguous());
+  EXPECT_EQ(
+      result.outputs[0].data_ptr<int64_t>(), first.data_ptr<int64_t>() + 3);
   EXPECT_TRUE(torch::equal(result.outputs[1], expected_second));
   EXPECT_TRUE(result.outputs[1].is_contiguous());
+  EXPECT_EQ(
+      result.outputs[1].data_ptr<int64_t>(), second.data_ptr<int64_t>() + 3);
 }
 
 TEST(

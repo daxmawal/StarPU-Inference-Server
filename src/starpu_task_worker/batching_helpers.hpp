@@ -1,6 +1,51 @@
 namespace starpu_server::task_runner_internal {
 
 inline auto
+slice_contiguous_output_for_sub_job(
+    const torch::Tensor& tensor, int64_t slice_start,
+    int64_t length) -> std::optional<torch::Tensor>
+{
+  if (!tensor.defined() || tensor.dim() <= 0 || !tensor.is_cpu() ||
+      !tensor.is_contiguous() || slice_start < 0 || length <= 0) {
+    return std::nullopt;
+  }
+
+  const int64_t available = tensor.size(0);
+  if (available <= 0 || slice_start >= available) {
+    return std::nullopt;
+  }
+
+  const auto total_bytes = tensor.nbytes();
+
+  const auto available_size = static_cast<std::size_t>(available);
+  if (available_size == 0) {
+    return std::nullopt;
+  }
+
+  const auto total_bytes_size = total_bytes;
+  if (total_bytes_size % available_size != 0) {
+    return std::nullopt;
+  }
+
+  const auto sample_bytes = total_bytes_size / available_size;
+  const auto slice_offset =
+      static_cast<std::size_t>(slice_start) * sample_bytes;
+  auto tensor_bytes = std::span<std::byte>(
+      static_cast<std::byte*>(tensor.data_ptr()), total_bytes_size);
+  auto* slice_data = tensor_bytes.subspan(slice_offset).data();
+
+  std::vector<int64_t> shape(tensor.sizes().begin(), tensor.sizes().end());
+  shape.front() = length;
+
+  auto deleter = [source_tensor = tensor](auto* /*unused*/) mutable {
+    source_tensor = torch::Tensor();
+  };
+
+  return torch::from_blob(
+      slice_data, shape, std::move(deleter), tensor.options());
+}
+
+inline auto
 select_earliest_time(Clock::time_point current, Clock::time_point candidate)
     -> Clock::time_point
 {
@@ -62,6 +107,13 @@ slice_outputs_for_sub_job(
     if (!determined_length) {
       result.processed_length = length;
       determined_length = true;
+    }
+
+    if (auto direct_view =
+            slice_contiguous_output_for_sub_job(tensor, slice_start, length);
+        direct_view.has_value()) {
+      result.outputs.push_back(std::move(*direct_view));
+      continue;
     }
 
     auto slice_view = tensor.narrow(0, slice_start, length);

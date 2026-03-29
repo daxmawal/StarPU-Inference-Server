@@ -1267,8 +1267,13 @@ TEST_F(
           /*batch_size=*/1),
       starpu_server::InvalidInferenceJobException);
 
+  EXPECT_FALSE(output_pool.try_acquire().has_value());
   restore_vector_interfaces(snapshots);
   output_pool.release(slot);
+  auto reacquired_slot = output_pool.try_acquire();
+  ASSERT_TRUE(reacquired_slot.has_value());
+  EXPECT_EQ(*reacquired_slot, slot);
+  output_pool.release(*reacquired_slot);
 }
 
 TEST_F(
@@ -1313,8 +1318,13 @@ TEST_F(
           /*batch_size=*/1),
       starpu_server::InvalidInferenceJobException);
 
+  EXPECT_FALSE(output_pool.try_acquire().has_value());
   restore_vector_interfaces(snapshots);
   output_pool.release(slot);
+  auto reacquired_slot = output_pool.try_acquire();
+  ASSERT_TRUE(reacquired_slot.has_value());
+  EXPECT_EQ(*reacquired_slot, slot);
+  output_pool.release(*reacquired_slot);
 }
 
 TEST_F(
@@ -1349,7 +1359,12 @@ TEST_F(
           /*batch_size=*/1),
       starpu_server::InvalidInferenceJobException);
 
+  EXPECT_FALSE(output_pool.try_acquire().has_value());
   output_pool.release(slot);
+  auto reacquired_slot = output_pool.try_acquire();
+  ASSERT_TRUE(reacquired_slot.has_value());
+  EXPECT_EQ(*reacquired_slot, slot);
+  output_pool.release(*reacquired_slot);
 }
 
 TEST_F(StarPUTaskRunnerFixture, ConfigureTaskContextThrowsWhenOutputHandleNull)
@@ -1442,6 +1457,7 @@ TEST_F(
   missing_interface_override_hits = 0;
 
   std::vector<starpu_data_handle_t> input_handles;
+  std::shared_ptr<starpu_server::InferenceCallbackContext> ctx;
   {
     starpu_test::ScopedStarpuMemoryNodesGetCountOverride nodes_override(
         two_memory_nodes_override);
@@ -1449,15 +1465,23 @@ TEST_F(
         missing_interface_override);
 
     EXPECT_NO_THROW(
-        starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
-            task, nullptr, -1, &output_pool, slot, input_handles,
-            output_handles, /*batch_size=*/1));
+        ctx =
+            starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+                task, nullptr, -1, &output_pool, slot, input_handles,
+                output_handles, /*batch_size=*/1));
   }
 
+  ASSERT_TRUE(ctx);
+  EXPECT_TRUE(ctx->output_slot_release_guard);
   EXPECT_GT(missing_interface_override_hits.load(), 0);
+  EXPECT_FALSE(output_pool.try_acquire().has_value());
 
   missing_interface_override_handle = nullptr;
-  output_pool.release(slot);
+  ctx.reset();
+  auto reacquired_slot = output_pool.try_acquire();
+  ASSERT_TRUE(reacquired_slot.has_value());
+  EXPECT_EQ(*reacquired_slot, slot);
+  output_pool.release(*reacquired_slot);
 }
 
 TEST_F(
@@ -1483,12 +1507,20 @@ TEST_F(
   ASSERT_EQ(output_handles.size(), 1U);
 
   std::vector<starpu_data_handle_t> input_handles;
+  std::shared_ptr<starpu_server::InferenceCallbackContext> ctx;
   EXPECT_NO_THROW(
-      starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+      ctx = starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
           task, nullptr, -1, &output_pool, slot, input_handles, output_handles,
           /*batch_size=*/1));
 
-  output_pool.release(slot);
+  ASSERT_TRUE(ctx);
+  EXPECT_TRUE(ctx->output_slot_release_guard);
+  EXPECT_FALSE(output_pool.try_acquire().has_value());
+  ctx.reset();
+  auto reacquired_slot = output_pool.try_acquire();
+  ASSERT_TRUE(reacquired_slot.has_value());
+  EXPECT_EQ(*reacquired_slot, slot);
+  output_pool.release(*reacquired_slot);
 }
 
 TEST_F(
@@ -1537,7 +1569,12 @@ TEST_F(
           /*batch_size=*/1),
       starpu_server::InvalidInferenceJobException);
 
+  EXPECT_FALSE(output_pool.try_acquire().has_value());
   output_pool.release(slot);
+  auto reacquired_slot = output_pool.try_acquire();
+  ASSERT_TRUE(reacquired_slot.has_value());
+  EXPECT_EQ(*reacquired_slot, slot);
+  output_pool.release(*reacquired_slot);
 }
 
 TEST_F(
@@ -1565,6 +1602,48 @@ TEST_F(
   ASSERT_TRUE(reacquired_input.has_value());
   EXPECT_EQ(*reacquired_input, input_slot);
   input_pool.release(*reacquired_input);
+
+  auto reacquired_output = output_pool.try_acquire();
+  ASSERT_TRUE(reacquired_output.has_value());
+  EXPECT_EQ(*reacquired_output, output_slot);
+  output_pool.release(*reacquired_output);
+}
+
+TEST_F(
+    StarPUTaskRunnerFixture,
+    HandleSubmissionFailureResetsOutputGuardAndSelfKeepAlive)
+{
+  auto model_config = make_model_config(
+      "output_only", {}, {make_tensor_config("output0", {3}, at::kFloat)});
+
+  reset_runner_with_model(model_config, /*pool_size=*/1);
+  ASSERT_FALSE(starpu_setup_->has_input_pool());
+  ASSERT_TRUE(starpu_setup_->has_output_pool());
+
+  auto job = make_job(41, {});
+  starpu_server::InferenceTask task(
+      starpu_setup_.get(), job, &model_cpu_, &models_gpu_, &opts_,
+      dependencies_);
+
+  auto& output_pool = starpu_setup_->output_pool();
+  const int output_slot = output_pool.acquire();
+  const auto& output_handles = output_pool.handles(output_slot);
+  ASSERT_EQ(output_handles.size(), 1U);
+
+  std::vector<starpu_data_handle_t> input_handles;
+  auto ctx = starpu_server::StarPUTaskRunnerTestAdapter::configure_task_context(
+      task, nullptr, -1, &output_pool, output_slot, input_handles,
+      output_handles, /*batch_size=*/1);
+  ASSERT_TRUE(ctx->output_slot_release_guard);
+  ctx->self_keep_alive = ctx;
+
+  EXPECT_THROW(
+      starpu_server::StarPUTaskRunnerTestAdapter::handle_submission_failure(
+          nullptr, -1, &output_pool, output_slot, ctx, -1),
+      starpu_server::StarPUTaskSubmissionException);
+
+  EXPECT_FALSE(ctx->output_slot_release_guard);
+  EXPECT_FALSE(ctx->self_keep_alive);
 
   auto reacquired_output = output_pool.try_acquire();
   ASSERT_TRUE(reacquired_output.has_value());

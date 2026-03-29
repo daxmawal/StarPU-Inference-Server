@@ -143,7 +143,8 @@ auto
 convert_input_to_tensor(
     const ModelInferRequest::InferInputTensor& input,
     const std::vector<int64_t>& shape, const std::string& raw,
-    at::ScalarType dtype, torch::Tensor& tensor,
+    std::string* mutable_raw, at::ScalarType dtype, torch::Tensor& tensor,
+    const std::shared_ptr<const void>* request_owner,
     std::shared_ptr<const void>* keep_alive) -> Status
 {
   auto options = torch::TensorOptions().dtype(dtype);
@@ -166,6 +167,18 @@ convert_input_to_tensor(
     return {
         grpc::StatusCode::INVALID_ARGUMENT,
         "Raw input size does not match tensor size"};
+  }
+
+  if (request_owner != nullptr && *request_owner && mutable_raw != nullptr) {
+    auto owner = *request_owner;
+    auto deleter = [owner](auto* /*unused*/) mutable { owner.reset(); };
+    auto* tensor_data = mutable_raw->data();
+    tensor = torch::from_blob(tensor_data, shape, deleter, options);
+    if (keep_alive != nullptr) {
+      *keep_alive = std::shared_ptr<const void>(
+          owner, static_cast<const void*>(mutable_raw->data()));
+    }
+    return Status::OK;
   }
 
   auto buffer = std::make_shared<std::vector<TensorDataByte>>(raw.size());
@@ -300,16 +313,23 @@ struct ProcessInputContext {
   int max_batch_size;
   std::vector<torch::Tensor>* ordered_inputs;
   std::vector<std::shared_ptr<const void>>* ordered_lifetimes;
+  const std::shared_ptr<const void>* request_owner;
   std::vector<bool>* filled;
 };
 
 auto
 process_input(
-    const ModelInferRequest* request, int input_index,
-    const ProcessInputContext& context) -> Status
+    const ModelInferRequest* request, ModelInferRequest* mutable_request,
+    int input_index, const ProcessInputContext& context) -> Status
 {
   const auto& input = request->inputs(input_index);
-  const auto& raw = request->raw_input_contents(input_index);
+  std::string* mutable_raw = nullptr;
+  if (mutable_request != nullptr) {
+    mutable_raw = mutable_request->mutable_raw_input_contents(input_index);
+  }
+  const auto& raw = mutable_raw != nullptr
+                        ? *mutable_raw
+                        : request->raw_input_contents(input_index);
   std::vector<int64_t> shape(input.shape().begin(), input.shape().end());
 
   std::size_t expected_index = 0;
@@ -330,7 +350,7 @@ process_input(
   torch::Tensor tensor;
   std::shared_ptr<const void> tensor_guard;
   status = convert_input_to_tensor(
-      input, shape, raw, dtype, tensor,
+      input, shape, raw, mutable_raw, dtype, tensor, context.request_owner,
       context.ordered_lifetimes != nullptr ? &tensor_guard : nullptr);
   if (!status.ok()) {
     return status;
@@ -429,9 +449,11 @@ InferenceServiceImpl::validate_schema_or_throw() const
 }
 
 auto
-InferenceServiceImpl::validate_and_convert_inputs(
-    const ModelInferRequest* request, std::vector<torch::Tensor>& inputs,
-    std::vector<std::shared_ptr<const void>>* input_lifetimes) -> Status
+InferenceServiceImpl::validate_and_convert_inputs_impl(
+    const ModelInferRequest* request, ModelInferRequest* mutable_request,
+    std::vector<torch::Tensor>& inputs,
+    std::vector<std::shared_ptr<const void>>* input_lifetimes,
+    std::shared_ptr<const void> request_owner) -> Status
 {
   if (auto status =
           validate_input_counts(request, expected_input_types_.size());
@@ -470,10 +492,12 @@ InferenceServiceImpl::validate_and_convert_inputs(
       max_batch_size_,
       &ordered_inputs,
       input_lifetimes != nullptr ? &ordered_lifetimes : nullptr,
+      prefer_request_backed_input_views_ && request_owner ? &request_owner
+                                                          : nullptr,
       &filled};
 
   for (int i = 0; i < request->inputs_size(); ++i) {
-    Status status = process_input(request, i, process_context);
+    Status status = process_input(request, mutable_request, i, process_context);
     if (!status.ok()) {
       return status;
     }
@@ -491,6 +515,26 @@ InferenceServiceImpl::validate_and_convert_inputs(
     *input_lifetimes = std::move(ordered_lifetimes);
   }
   return Status::OK;
+}
+
+auto
+InferenceServiceImpl::validate_and_convert_inputs(
+    ModelInferRequest& request, std::vector<torch::Tensor>& inputs,
+    std::vector<std::shared_ptr<const void>>* input_lifetimes,
+    std::shared_ptr<const void> request_owner) -> Status
+{
+  return validate_and_convert_inputs_impl(
+      &request, &request, inputs, input_lifetimes, std::move(request_owner));
+}
+
+auto
+InferenceServiceImpl::validate_and_convert_inputs(
+    const ModelInferRequest* request, std::vector<torch::Tensor>& inputs,
+    std::vector<std::shared_ptr<const void>>* input_lifetimes,
+    std::shared_ptr<const void> request_owner) -> Status
+{
+  return validate_and_convert_inputs_impl(
+      request, nullptr, inputs, input_lifetimes, std::move(request_owner));
 }
 
 auto

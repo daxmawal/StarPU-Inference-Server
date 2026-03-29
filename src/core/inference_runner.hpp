@@ -200,6 +200,10 @@ class RequestPayload {
       output_tensors_.push_back(output_tensor.contiguous());
     }
   }
+  void adopt_output_tensors(std::vector<torch::Tensor> outputs)
+  {
+    output_tensors_ = std::move(outputs);
+  }
   void set_start_time(MonotonicClock::time_point time) { start_time_ = time; }
 
   void set_input_memory_holders(
@@ -500,6 +504,10 @@ class InferenceJob {
   void set_output_tensors(const std::vector<torch::Tensor>& outputs)
   {
     request_payload_.set_output_tensors(outputs);
+  }
+  void adopt_output_tensors(std::vector<torch::Tensor> outputs)
+  {
+    request_payload_.adopt_output_tensors(std::move(outputs));
   }
 
   [[nodiscard]] auto get_output_tensors() const

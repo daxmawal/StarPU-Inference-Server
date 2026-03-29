@@ -199,7 +199,7 @@ class ModelInferCallData final
         auto self = this->shared_from_this();
         auto call_guard = self;
         impl_->HandleModelInferAsync(
-            &ctx_, &request_, &response_,
+            &ctx_, request_, &response_,
             [self = std::move(self)](const Status& status) {
               self->OnInferenceComplete(status);
             },
@@ -581,7 +581,8 @@ RunGrpcServer(
           model_spec.expected_output_names.begin(),
           model_spec.expected_output_names.end()),
       .server_name = options.server_name,
-      .server_version = options.server_version};
+      .server_version = options.server_version,
+      .prefer_request_backed_input_views = true};
   InferenceServiceImpl service(
       &queue, &reference_outputs,
       std::vector<at::ScalarType>(

@@ -362,9 +362,31 @@ InferenceServiceImpl::
 
 void
 InferenceServiceImpl::HandleModelInferAsync(
+    ServerContext* context, ModelInferRequest& request,
+    ModelInferResponse* reply, std::function<void(Status)> on_done,
+    std::shared_ptr<void> call_guard)
+{
+  HandleModelInferAsyncImpl(
+      context, &request, &request, reply, std::move(on_done),
+      std::move(call_guard));
+}
+
+void
+InferenceServiceImpl::HandleModelInferAsync(
     ServerContext* context, const ModelInferRequest* request,
     ModelInferResponse* reply, std::function<void(Status)> on_done,
     std::shared_ptr<void> call_guard)
+{
+  HandleModelInferAsyncImpl(
+      context, request, nullptr, reply, std::move(on_done),
+      std::move(call_guard));
+}
+
+void
+InferenceServiceImpl::HandleModelInferAsyncImpl(
+    ServerContext* context, const ModelInferRequest* request,
+    ModelInferRequest* mutable_request, ModelInferResponse* reply,
+    std::function<void(Status)> on_done, std::shared_ptr<void> call_guard)
 {
   auto callback_handle = std::make_shared<CallbackHandle>(std::move(on_done));
   auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
@@ -372,6 +394,10 @@ InferenceServiceImpl::HandleModelInferAsync(
   const AsyncTerminalState terminal_state{
       .cancel_flag = cancel_flag, .terminal_flag = terminal_flag};
   AsyncOps::notify_cancel_flag_created(cancel_flag);
+  std::shared_ptr<const void> request_owner;
+  if (prefer_request_backed_input_views_) {
+    request_owner = call_guard;
+  }
   if (auto guard_status = validate_model_infer_io(request, reply);
       !guard_status.ok()) {
     callback_handle->Invoke(guard_status);
@@ -420,8 +446,14 @@ InferenceServiceImpl::HandleModelInferAsync(
     std::vector<torch::Tensor> inputs;
     std::vector<std::shared_ptr<const void>> input_lifetimes;
     std::optional<AsyncFailureInfo> submit_failure_info;
-    Status status =
-        validate_and_convert_inputs(request, inputs, &input_lifetimes);
+    Status status = Status::OK;
+    if (mutable_request != nullptr) {
+      status = validate_and_convert_inputs(
+          *mutable_request, inputs, &input_lifetimes, std::move(request_owner));
+    } else {
+      status = validate_and_convert_inputs(
+          request, inputs, &input_lifetimes, std::move(request_owner));
+    }
     if (AsyncOps::handle_input_validation_failure(
             status, terminal_state, callback_handle, this, resolved_model_name,
             request, recv_tp)) {

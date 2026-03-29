@@ -78,20 +78,22 @@ class InferenceServiceImpl final
     std::vector<std::string> expected_output_names;
     std::string server_name;
     std::string server_version;
+    bool prefer_request_backed_input_views;
   };
 
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      InputShapeConfig input_shape_config, ServiceOptions service_options = {},
+      InputShapeConfig input_shape_config,
+      ServiceOptions service_options = ServiceOptions{},
       std::shared_ptr<RuntimeObservability> observability = {});
 
   InferenceServiceImpl(
       InferenceQueue* queue,
       const std::vector<torch::Tensor>* reference_outputs,
       std::vector<at::ScalarType> expected_input_types,
-      ServiceOptions service_options = {},
+      ServiceOptions service_options = ServiceOptions{},
       std::shared_ptr<RuntimeObservability> observability = {});
 
   auto ServerLive(
@@ -248,19 +250,44 @@ class InferenceServiceImpl final
       -> grpc::Status;
 
   void HandleModelInferAsync(
+      grpc::ServerContext* context, inference::ModelInferRequest& request,
+      inference::ModelInferResponse* reply,
+      std::function<void(grpc::Status)> on_done,
+      std::shared_ptr<void> call_guard = {});
+
+  void HandleModelInferAsync(
       grpc::ServerContext* context, const inference::ModelInferRequest* request,
       inference::ModelInferResponse* reply,
       std::function<void(grpc::Status)> on_done,
       std::shared_ptr<void> call_guard = {});
 
   auto validate_and_convert_inputs(
+      inference::ModelInferRequest& request, std::vector<torch::Tensor>& inputs,
+      std::vector<std::shared_ptr<const void>>* input_lifetimes = nullptr,
+      std::shared_ptr<const void> request_owner = {}) -> grpc::Status;
+
+  auto validate_and_convert_inputs(
       const inference::ModelInferRequest* request,
       std::vector<torch::Tensor>& inputs,
-      std::vector<std::shared_ptr<const void>>* input_lifetimes = nullptr)
-      -> grpc::Status;
+      std::vector<std::shared_ptr<const void>>* input_lifetimes = nullptr,
+      std::shared_ptr<const void> request_owner = {}) -> grpc::Status;
 
  private:
   friend class testing::InferenceServiceTestAccessor;
+
+  void HandleModelInferAsyncImpl(
+      grpc::ServerContext* context, const inference::ModelInferRequest* request,
+      inference::ModelInferRequest* mutable_request,
+      inference::ModelInferResponse* reply,
+      std::function<void(grpc::Status)> on_done,
+      std::shared_ptr<void> call_guard);
+
+  auto validate_and_convert_inputs_impl(
+      const inference::ModelInferRequest* request,
+      inference::ModelInferRequest* mutable_request,
+      std::vector<torch::Tensor>& inputs,
+      std::vector<std::shared_ptr<const void>>* input_lifetimes,
+      std::shared_ptr<const void> request_owner) -> grpc::Status;
 
   // Async coordination internals.
   class CallbackHandle {
@@ -447,6 +474,7 @@ class InferenceServiceImpl final
   std::vector<std::string> expected_input_names_;
   std::vector<std::string> expected_output_names_;
   int max_batch_size_ = 0;
+  bool prefer_request_backed_input_views_ = false;
   std::string default_model_name_;
   std::string server_name_;
   std::string server_version_;
