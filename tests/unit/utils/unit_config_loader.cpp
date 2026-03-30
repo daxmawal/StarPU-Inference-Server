@@ -307,6 +307,37 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
         "Failed to load config: starpu_env entry 'VAR' must have a scalar "
         "value"},
     InvalidConfigCase{
+        "LibtorchNotMapInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "libtorch: 1\n";
+          return yaml;
+        }(),
+        "Failed to load config: libtorch must be a mapping"},
+    InvalidConfigCase{
+        "LibtorchIntraopThreadsNonPositiveInvalid",
+        [] {
+          auto yaml = base_model_yaml();
+          yaml += "libtorch:\n";
+          yaml += "  intraop_threads: 0\n";
+          return yaml;
+        }(),
+        "Failed to load config: libtorch.intraop_threads must be > 0 and fit "
+        "in int"},
+    InvalidConfigCase{
+        "LibtorchInteropThreadsTooLargeInvalid",
+        [] {
+          std::ostringstream yaml;
+          yaml << base_model_yaml();
+          yaml << "libtorch:\n";
+          yaml << "  interop_threads: "
+               << static_cast<long long>(std::numeric_limits<int>::max()) + 1
+               << "\n";
+          return yaml.str();
+        }(),
+        "Failed to load config: libtorch.interop_threads must be > 0 and fit "
+        "in int"},
+    InvalidConfigCase{
         "NegativeBatchCoalesceTimeoutSetsValidFalse",
         [] {
           std::string yaml;
@@ -2815,4 +2846,41 @@ TEST(StringToScalarType, UnknownTypeThrows)
   EXPECT_THROW(
       starpu_server::string_to_scalar_type("unknown_type"),
       std::invalid_argument);
+}
+
+TEST(ConfigLoader, ParsesLibtorchThreadSettings)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_libtorch_thread_settings_model.pt");
+  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  yaml += "libtorch:\n";
+  yaml += "  intraop_threads: 2\n";
+  yaml += "  interop_threads: 3\n";
+
+  const auto tmp =
+      WriteTempFile("config_loader_libtorch_thread_settings.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  ASSERT_TRUE(cfg.libtorch.intraop_threads.has_value());
+  ASSERT_TRUE(cfg.libtorch.interop_threads.has_value());
+  EXPECT_EQ(*cfg.libtorch.intraop_threads, 2);
+  EXPECT_EQ(*cfg.libtorch.interop_threads, 3);
+}
+
+TEST(ConfigLoader, LeavesLibtorchThreadSettingsUnsetByDefault)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_default_libtorch_threads_model.pt");
+  const std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+
+  const auto tmp =
+      WriteTempFile("config_loader_default_libtorch_threads.yaml", yaml);
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_FALSE(cfg.libtorch.intraop_threads.has_value());
+  EXPECT_FALSE(cfg.libtorch.interop_threads.has_value());
 }

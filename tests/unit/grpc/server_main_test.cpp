@@ -420,6 +420,60 @@ class ScopedEnvironmentVariableUnsetGuard {
   std::optional<std::string> previous_value_;
 };
 
+struct LibtorchThreadOverrideState {
+  int intraop_calls = 0;
+  int interop_calls = 0;
+  std::optional<int> last_intraop;
+  std::optional<int> last_interop;
+};
+
+auto
+libtorch_thread_override_state() -> LibtorchThreadOverrideState*&
+{
+  static LibtorchThreadOverrideState* state = nullptr;
+  return state;
+}
+
+void
+set_libtorch_intraop_threads_override_stub(int value)
+{
+  auto* state = libtorch_thread_override_state();
+  if (state == nullptr) {
+    return;
+  }
+  ++state->intraop_calls;
+  state->last_intraop = value;
+}
+
+void
+set_libtorch_interop_threads_override_stub(int value)
+{
+  auto* state = libtorch_thread_override_state();
+  if (state == nullptr) {
+    return;
+  }
+  ++state->interop_calls;
+  state->last_interop = value;
+}
+
+struct ScopedLibtorchThreadOverrides {
+  explicit ScopedLibtorchThreadOverrides(LibtorchThreadOverrideState& state)
+  {
+    libtorch_thread_override_state() = &state;
+    set_libtorch_intraop_threads_override_for_test() =
+        set_libtorch_intraop_threads_override_stub;
+    set_libtorch_interop_threads_override_for_test() =
+        set_libtorch_interop_threads_override_stub;
+  }
+
+  ~ScopedLibtorchThreadOverrides()
+  {
+    set_libtorch_interop_threads_override_for_test() = nullptr;
+    set_libtorch_intraop_threads_override_for_test() = nullptr;
+    libtorch_thread_override_state() = nullptr;
+  }
+};
+
 struct ResolvePythonExecutableOverrideState {
   std::vector<std::filesystem::path> candidates;
   bool is_regular_file_result = false;
@@ -2447,6 +2501,40 @@ TEST(ServerMainSchedulerResolution, UsesDefaultSchedulerWhenUnsetEverywhere)
   EXPECT_EQ(
       resolve_starpu_scheduler(opts),
       std::format("{} (default)", starpu_server::kDefaultStarpuScheduler));
+}
+
+TEST(ServerMainLibtorchSettings, AppliesConfiguredThreadCounts)
+{
+  LibtorchThreadOverrideState state;
+  const ScopedLibtorchThreadOverrides overrides(state);
+
+  starpu_server::RuntimeConfig opts;
+  opts.libtorch.intraop_threads = 2;
+  opts.libtorch.interop_threads = 3;
+
+  apply_libtorch_runtime_settings(opts);
+
+  EXPECT_EQ(state.intraop_calls, 1);
+  EXPECT_EQ(state.interop_calls, 1);
+  ASSERT_TRUE(state.last_intraop.has_value());
+  ASSERT_TRUE(state.last_interop.has_value());
+  EXPECT_EQ(*state.last_intraop, 2);
+  EXPECT_EQ(*state.last_interop, 3);
+}
+
+TEST(ServerMainLibtorchSettings, SkipsUnsetThreadCounts)
+{
+  LibtorchThreadOverrideState state;
+  const ScopedLibtorchThreadOverrides overrides(state);
+
+  starpu_server::RuntimeConfig opts;
+
+  apply_libtorch_runtime_settings(opts);
+
+  EXPECT_EQ(state.intraop_calls, 0);
+  EXPECT_EQ(state.interop_calls, 0);
+  EXPECT_FALSE(state.last_intraop.has_value());
+  EXPECT_FALSE(state.last_interop.has_value());
 }
 
 TEST(ServerMainWorkerTypeLabel, ReturnsCpuLabelForCpuWorker)

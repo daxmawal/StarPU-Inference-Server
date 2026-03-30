@@ -106,6 +106,7 @@ Optional keys unlock batching, logging, and runtime controls:
 |`model_name`|Model name exposed through gRPC. If omitted, defaults to `name`.|`name`|
 |`use_cpu`|Enable CPU workers. Combine with `use_cuda` for heterogeneous (CPU+GPU) execution.|`true`|
 |`group_cpu_by_numa`|Spawn one StarPU CPU worker per NUMA node instead of per core.|`false`|
+|`libtorch`|Optional process-wide LibTorch CPU threading settings. Accepts a mapping with `intraop_threads` and/or `interop_threads` positive integers.|unset|
 |`use_cuda`|Enable GPU workers. Accepts either `false` or a sequence of mappings such as `[{ device_ids: [0,1] }]`.|`false`|
 |`gpu_model_replication`|GPU model replica policy: `per_device` keeps one model instance per CUDA device, `per_worker` creates one instance per StarPU CUDA worker on each configured device.|`per_device`|
 |`address`|gRPC listen address (host:port).|`127.0.0.1:50051`|
@@ -120,6 +121,21 @@ Behavior of `use_cpu` and `use_cuda`:
 - `use_cuda: false` or omitted → pipeline runs on CPU workers only (unless the CLI overrides the setting).
 - `use_cpu: false`, `use_cuda: [{ ... }]` → pipeline runs on GPU workers only.
 - Setting `group_cpu_by_numa: true` keeps CPU workers enabled but collapses them to one worker per NUMA node so that each inference shares the full socket instead of a single core.
+
+The optional `libtorch:` block configures LibTorch's process-wide CPU threading
+runtime. The server applies it once during startup, before StarPU workers are
+created and before the TorchScript model is loaded.
+
+```yaml
+libtorch:
+  intraop_threads: 8
+  interop_threads: 1
+```
+
+- `intraop_threads`: number of CPU threads LibTorch may use inside a single
+  operator.
+- `interop_threads`: number of CPU threads LibTorch may use to run independent
+  operators in parallel.
 
 `gpu_model_replication: per_device` is the default and should be the normal
 choice for LibTorch inference when the model is used read-only, for example
@@ -258,6 +274,9 @@ dynamic_batching: true
 sync: false
 use_cpu: true
 group_cpu_by_numa: true
+libtorch:
+  intraop_threads: 1
+  interop_threads: 1
 use_cuda:
   - { device_ids: [0] }
 gpu_model_replication: per_device
@@ -270,7 +289,8 @@ logs and metrics identify which configuration is running.
 Update `model:` to match the absolute path of your TorchScript model and adjust
 the tensor shapes to the sequence length and hidden size exported by your
 training pipeline. **The sample assumes batches of size 1 and lets the runtime expand
-to `max_batch_size`.**
+to `max_batch_size`.** If you enable CPU workers, tune the optional `libtorch`
+block to match your CPU topology and StarPU worker layout.
 
 ## 4. Launch the inference server
 
