@@ -509,7 +509,7 @@ jobs:
             --fail-under-line "$COVERAGE_MIN_LINE"
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: build/coverage.lcov
           fail_ci_if_error: true
