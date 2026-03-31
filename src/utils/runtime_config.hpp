@@ -122,6 +122,11 @@ struct RuntimeConfig {
         GpuModelReplicationPolicy::PerDevice;
   };
 
+  struct LibTorchSettings {
+    std::optional<int> intraop_threads;
+    std::optional<int> interop_threads;
+  };
+
   struct BatchingSettings {
     int batch_coalesce_timeout_ms = 0;
     int max_batch_size = 1;
@@ -183,6 +188,7 @@ struct RuntimeConfig {
   std::optional<ModelConfig> model;
   VerbosityLevel verbosity = VerbosityLevel::Silent;
   DeviceSettings devices{};
+  LibTorchSettings libtorch{};
   BatchingSettings batching{};
   Limits limits{};
   std::optional<uint64_t> seed;

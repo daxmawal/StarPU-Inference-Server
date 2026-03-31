@@ -18,10 +18,17 @@ resolve_starpu_scheduler(const starpu_server::RuntimeConfig& opts)
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START
 using HandleProgramArgumentsFatalOverrideForTestFn = void (*)(std::string_view);
+using SetLibTorchThreadCountOverrideForTestFn = void (*)(int);
 
 STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
     handle_program_arguments_fatal_override_for_test,
     HandleProgramArgumentsFatalOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    set_libtorch_intraop_threads_override_for_test,
+    SetLibTorchThreadCountOverrideForTestFn)
+STARPU_SERVER_DEFINE_TEST_OVERRIDE_SLOT(
+    set_libtorch_interop_threads_override_for_test,
+    SetLibTorchThreadCountOverrideForTestFn)
 #endif  // SONAR_IGNORE_STOP
 
 [[noreturn]] void
@@ -94,6 +101,52 @@ handle_program_arguments(std::span<char const* const> args)
   }
 
   return cfg;
+}
+
+void
+apply_libtorch_runtime_settings(const starpu_server::RuntimeConfig& opts)
+{
+  if (opts.libtorch.interop_threads.has_value()) {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (const auto override_fn =
+            set_libtorch_interop_threads_override_for_test();
+        override_fn != nullptr) {
+      override_fn(*opts.libtorch.interop_threads);
+    } else {
+      at::set_num_interop_threads(*opts.libtorch.interop_threads);
+    }
+#else
+    at::set_num_interop_threads(*opts.libtorch.interop_threads);
+#endif  // SONAR_IGNORE_STOP
+  }
+
+  if (opts.libtorch.intraop_threads.has_value()) {
+#if defined(STARPU_TESTING)  // SONAR_IGNORE_START
+    if (const auto override_fn =
+            set_libtorch_intraop_threads_override_for_test();
+        override_fn != nullptr) {
+      override_fn(*opts.libtorch.intraop_threads);
+    } else {
+      at::set_num_threads(*opts.libtorch.intraop_threads);
+    }
+#else
+    at::set_num_threads(*opts.libtorch.intraop_threads);
+#endif  // SONAR_IGNORE_STOP
+  }
+
+  if (!opts.libtorch.interop_threads.has_value() &&
+      !opts.libtorch.intraop_threads.has_value()) {
+    return;
+  }
+
+  const auto describe = [](const std::optional<int>& value) -> std::string {
+    return value.has_value() ? std::to_string(*value) : std::string("default");
+  };
+  log_info(
+      opts.verbosity, std::format(
+                          "LibTorch thread settings: intraop={}, interop={}",
+                          describe(opts.libtorch.intraop_threads),
+                          describe(opts.libtorch.interop_threads)));
 }
 
 #if defined(STARPU_TESTING)  // SONAR_IGNORE_START

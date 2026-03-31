@@ -21,6 +21,7 @@
 #include "config_loader_congestion.hpp"
 #include "config_loader_device.hpp"
 #include "config_loader_io.hpp"
+#include "config_loader_libtorch.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/logger.hpp"
 
@@ -125,6 +126,7 @@ validate_allowed_keys(const YAML::Node& root)
           "model",
           "model_name",
           "starpu_env",
+          "libtorch",
           "device_ids",
           "group_cpu_by_numa",
           "gpu_model_replication",
@@ -364,6 +366,7 @@ parse_config_file(
     parse_congestion(root, cfg);
     parse_generation_nodes(root, cfg);
     parse_device_nodes(root, cfg);
+    parse_libtorch(root, cfg);
     parse_seed_tolerances_and_flags(root, cfg);
     parse_starpu_env(root, cfg);
 // GCOVR_EXCL_START
