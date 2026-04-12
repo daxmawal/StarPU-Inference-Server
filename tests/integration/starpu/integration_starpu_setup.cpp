@@ -24,6 +24,7 @@ class StarPUSetupCodelet_Integration : public ::testing::Test {
   }
 
  private:
+  starpu_server::testing::ScopedStarpuSilent starpu_silent_{};
   std::unique_ptr<starpu_server::StarPUSetup> starpu_;
 };
 

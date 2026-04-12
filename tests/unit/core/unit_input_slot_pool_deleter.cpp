@@ -113,6 +113,8 @@ TEST(AllocateAndPinBuffer, MarksStarpuPinnedOnSuccess)
 {
   g_starpu_memory_pin_rc = 0;
   g_starpu_memory_pin_calls = 0;
+  g_starpu_memory_unpin_rc = 0;
+  g_starpu_memory_unpin_calls = 0;
 
   auto allocation = input_slot_pool_test_copy::allocate_and_pin_buffer(
       /*bytes=*/64, /*want_pinned=*/true, /*slot_id=*/2, /*input_index=*/1);
@@ -125,6 +127,7 @@ TEST(AllocateAndPinBuffer, MarksStarpuPinnedOnSuccess)
   ASSERT_NE(allocation.ptr, nullptr);
 
   input_slot_pool_test_copy::free_host_buffer(allocation.ptr, allocation.info);
+  EXPECT_EQ(g_starpu_memory_unpin_calls, 1);
 }
 
 TEST(AllocateAndPinBuffer, LeavesStarpuUnpinnedOnFailure)
@@ -132,15 +135,26 @@ TEST(AllocateAndPinBuffer, LeavesStarpuUnpinnedOnFailure)
   g_starpu_memory_pin_rc = -7;
   g_starpu_memory_pin_calls = 0;
 
-  auto allocation = input_slot_pool_test_copy::allocate_and_pin_buffer(
-      /*bytes=*/128, /*want_pinned=*/true, /*slot_id=*/3, /*input_index=*/0);
+  std::string log;
+  {
+    StreamCapture capture{std::cerr};
+    auto allocation = input_slot_pool_test_copy::allocate_and_pin_buffer(
+        /*bytes=*/128, /*want_pinned=*/true, /*slot_id=*/3,
+        /*input_index=*/0);
 
-  EXPECT_EQ(g_starpu_memory_pin_calls, 1);
-  EXPECT_FALSE(allocation.info.starpu_pinned);
-  EXPECT_EQ(allocation.info.starpu_pin_rc, -7);
-  EXPECT_FALSE(allocation.info.cuda_pinned);
-  EXPECT_EQ(allocation.info.bytes, 128U);
-  ASSERT_NE(allocation.ptr, nullptr);
+    EXPECT_EQ(g_starpu_memory_pin_calls, 1);
+    EXPECT_FALSE(allocation.info.starpu_pinned);
+    EXPECT_EQ(allocation.info.starpu_pin_rc, -7);
+    EXPECT_FALSE(allocation.info.cuda_pinned);
+    EXPECT_EQ(allocation.info.bytes, 128U);
+    ASSERT_NE(allocation.ptr, nullptr);
 
-  input_slot_pool_test_copy::free_host_buffer(allocation.ptr, allocation.info);
+    input_slot_pool_test_copy::free_host_buffer(
+        allocation.ptr, allocation.info);
+    log = capture.str();
+  }
+
+  EXPECT_NE(
+      log.find("starpu_memory_pin failed for input slot 3, index 0"),
+      std::string::npos);
 }

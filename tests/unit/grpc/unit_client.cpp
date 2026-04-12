@@ -192,13 +192,23 @@ TEST(ClientArgs, RejectsNonPositiveShapeDims)
 {
   auto argv_neg =
       std::to_array<const char*>({"prog", "--input", "input:1x-3x224:float32"});
+  testing::internal::CaptureStderr();
   auto cfg_neg = starpu_server::parse_client_args(std::span{argv_neg});
+  const std::string neg_err = testing::internal::GetCapturedStderr();
   EXPECT_FALSE(cfg_neg.valid);
+  EXPECT_NE(
+      neg_err.find("Shape contains non-positive dimension: -3"),
+      std::string::npos);
 
   auto argv_zero =
       std::to_array<const char*>({"prog", "--input", "input:1x0x224:float32"});
+  testing::internal::CaptureStderr();
   auto cfg_zero = starpu_server::parse_client_args(std::span{argv_zero});
+  const std::string zero_err = testing::internal::GetCapturedStderr();
   EXPECT_FALSE(cfg_zero.valid);
+  EXPECT_NE(
+      zero_err.find("Shape contains non-positive dimension: 0"),
+      std::string::npos);
 }
 
 TEST(ClientArgs, RejectsMalformedShapeTokens)
@@ -208,8 +218,11 @@ TEST(ClientArgs, RejectsMalformedShapeTokens)
   for (const auto* shape : cases) {
     const std::string spec = std::string{"input:"} + shape + ":float32";
     auto argv = std::to_array<const char*>({"prog", "--input", spec.c_str()});
+    testing::internal::CaptureStderr();
     auto cfg = starpu_server::parse_client_args(std::span{argv});
+    const std::string err = testing::internal::GetCapturedStderr();
     EXPECT_FALSE(cfg.valid);
+    EXPECT_FALSE(err.empty());
   }
 }
 
@@ -277,7 +290,12 @@ TEST(InferenceClientDetermineInferenceCount, HandlesEdgeCases)
     input.shape = {3, 3};
     cfg.inputs.push_back(input);
   }
+  testing::internal::CaptureStderr();
   EXPECT_EQ(determine(cfg), 8U);
+  const std::string warning = testing::internal::GetCapturedStderr();
+  EXPECT_NE(
+      warning.find("Inconsistent batch dimension across inputs (8 vs 3)"),
+      std::string::npos);
 
   cfg.inputs.clear();
   {
@@ -349,7 +367,10 @@ TEST(InferenceClient, ModelIsReadyReturnsFalseWhenUnavailable)
       "127.0.0.1:59997", grpc::InsecureChannelCredentials());
   starpu_server::InferenceClient client(
       channel, starpu_server::VerbosityLevel::Silent);
+  testing::internal::CaptureStderr();
   EXPECT_FALSE(client.ModelIsReady({"example", "1"}));
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_NE(err.find("RPC failed"), std::string::npos);
 }
 
 TEST(InferenceClientLatencySummary, SkipsEmptyMetric)
@@ -357,7 +378,7 @@ TEST(InferenceClientLatencySummary, SkipsEmptyMetric)
   auto channel = grpc::CreateChannel(
       "localhost:59998", grpc::InsecureChannelCredentials());
   starpu_server::InferenceClient client(
-      channel, starpu_server::VerbosityLevel::Silent);
+      channel, starpu_server::VerbosityLevel::Info);
 
   starpu_server::InferenceClientTestAccess::set_verbosity(
       client, starpu_server::VerbosityLevel::Info);
@@ -553,7 +574,12 @@ TEST(InferenceClient, RejectsMismatchedTensorCount)
 
   std::vector<torch::Tensor> tensors = {torch::zeros({1}), torch::zeros({1})};
 
+  testing::internal::CaptureStderr();
   EXPECT_THROW(client.AsyncModelInfer(tensors, cfg), std::invalid_argument);
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_NE(
+      err.find("Mismatched number of input tensors: expected 1, got 2"),
+      std::string::npos);
 }
 
 TEST(InferenceClient, RejectsUnsupportedTensorType)
@@ -571,6 +597,7 @@ TEST(InferenceClient, RejectsUnsupportedTensorType)
   std::vector<torch::Tensor> tensors = {
       torch::zeros({1}, torch::dtype(at::kDouble))};
 
+  testing::internal::CaptureStderr();
   EXPECT_THROW(
       {
         try {
@@ -583,6 +610,11 @@ TEST(InferenceClient, RejectsUnsupportedTensorType)
         }
       },
       std::invalid_argument);
+  const std::string err = testing::internal::GetCapturedStderr();
+  EXPECT_NE(
+      err.find(
+          "Unsupported tensor type for input input0: expected FP32, got FP64"),
+      std::string::npos);
 }
 
 TEST(InferenceClient, ConvertsNonContiguousCpuTensor)

@@ -151,10 +151,12 @@ TEST(InferenceRunnerDeviceValidationTest, HandlesMockedLargeCudaDeviceCount)
       valid_ids, starpu_server::detail::get_cuda_device_count()));
 
   const std::vector<int> invalid_ids{512};
+  starpu_server::CaptureStream capture{std::cerr};
   EXPECT_THROW(
       starpu_server::detail::validate_device_ids(
           invalid_ids, starpu_server::detail::get_cuda_device_count()),
       starpu_server::InvalidGpuDeviceException);
+  EXPECT_NE(capture.str().find("GPU ID 512 out of range"), std::string::npos);
 }
 
 TEST(
@@ -316,9 +318,13 @@ TEST(InferenceRunnerHelpers, RunReferenceInferenceUnsupportedOutput)
 {
   auto model = starpu_server::make_constant_model();
   std::vector<torch::Tensor> inputs{torch::ones({1})};
+  starpu_server::CaptureStream capture{std::cerr};
   EXPECT_THROW(
       starpu_server::run_reference_inference(model, inputs),
       starpu_server::UnsupportedModelOutputTypeException);
+  EXPECT_NE(
+      capture.str().find("Unsupported output type from model."),
+      std::string::npos);
 }
 
 class LoadModelAndReferenceOutputError

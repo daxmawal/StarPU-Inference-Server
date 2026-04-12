@@ -27,9 +27,13 @@ TEST(InferenceClient, ShutdownClosesCompletionQueue)
   torch::Tensor tensor = torch::zeros(
       cfg.inputs[0].shape, torch::TensorOptions().dtype(cfg.inputs[0].type));
 
+  ::testing::internal::CaptureStderr();
   client.AsyncModelInfer({tensor}, cfg);
   client.Shutdown();
+  cq_thread.join();
+  const std::string err = ::testing::internal::GetCapturedStderr();
 
+  EXPECT_NE(err.find("Connection refused"), std::string::npos);
   SUCCEED();
 }
 
@@ -37,7 +41,9 @@ TEST(InferenceClient, ServerIsLiveReturnsTrue)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
-  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, {at::kFloat}, 0,
+      starpu_server::VerbosityLevel::Silent);
 
   auto channel = grpc::CreateChannel(
       "127.0.0.1:" + std::to_string(server.port),
@@ -55,7 +61,9 @@ TEST(InferenceClient, ServerIsReadyReturnsTrue)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs;
-  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, {at::kFloat}, 0,
+      starpu_server::VerbosityLevel::Silent);
 
   auto channel = grpc::CreateChannel(
       "127.0.0.1:" + std::to_string(server.port),
@@ -73,7 +81,9 @@ TEST(InferenceClient, DISABLED_AsyncCompleteRpcSuccess)
 {
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs = {torch::zeros({2, 2})};
-  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, {at::kFloat}, 0,
+      starpu_server::VerbosityLevel::Silent);
 
   constexpr float kVal1 = 10.0F;
   constexpr float kVal2 = 20.0F;

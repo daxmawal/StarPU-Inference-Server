@@ -1538,12 +1538,16 @@ TEST(
       {{10.0F}, {20.0F}}, torch::TensorOptions().dtype(torch::kFloat));
   const double latency_ms = 8.5;
 
+  CaptureStream capture{std::cerr};
   EXPECT_NO_THROW(starpu_server::StarPUTaskRunnerTestAdapter::
                       propagate_completion_to_sub_jobs(
                           aggregated, {primary, secondary}, latency_ms));
 
   EXPECT_TRUE(job_one_called);
   EXPECT_TRUE(job_two_called);
+  EXPECT_NE(
+      capture.str().find("Exception in sub-job completion callback"),
+      std::string::npos);
   EXPECT_EQ(job_one_latency, latency_ms);
   EXPECT_EQ(job_two_latency, latency_ms);
 

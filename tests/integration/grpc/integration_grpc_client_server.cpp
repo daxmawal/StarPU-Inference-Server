@@ -10,7 +10,9 @@ TEST(GrpcClientServer, EndToEndInference)
   starpu_server::InferenceQueue queue;
   std::vector<torch::Tensor> reference_outputs = {torch::zeros({2, 2})};
 
-  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, {at::kFloat}, 0,
+      starpu_server::VerbosityLevel::Silent);
 
   constexpr float kVal1 = 10.0F;
   constexpr float kVal2 = 20.0F;
