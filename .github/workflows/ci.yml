@@ -227,6 +227,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
@@ -262,6 +263,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
@@ -297,6 +299,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
@@ -338,6 +341,7 @@ jobs:
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc \
             -DCUDAToolkit_ROOT=/usr/local/cuda-12.8 \
+            -DCUDA_TOOLKIT_ROOT_DIR=/usr/local/cuda-12.8 \
             -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DBUILD_TESTS=ON \
             -DENABLE_COVERAGE=OFF \
