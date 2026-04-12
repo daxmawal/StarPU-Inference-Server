@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-if [ "$#" -eq 0 ]; then
+if [[ $# -eq 0 ]]; then
   exit 0
 fi
 
