@@ -373,7 +373,7 @@ TEST(InferenceClientHelpers, AsyncCompleteRpcRejectsCompletionWhenNotOk)
 TEST(InferenceClientHelpers, AsyncCompleteRpcClampsNegativeLatencies)
 {
   auto channel = make_test_channel();
-  InferenceClient client(channel, VerbosityLevel::Info);
+  InferenceClient client(channel, VerbosityLevel::Silent);
 
   std::thread runner([&] { client.AsyncCompleteRpc(); });
 

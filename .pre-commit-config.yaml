@@ -1,0 +1,28 @@
+exclude: |
+  (?x)^(
+    external/|
+    build/|
+    build-sanitizers/|
+    \.git/
+  )
+
+repos:
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        entry: bash scripts/pre-commit/clang-format.sh
+        language: system
+        files: \.(c|cc|cpp|cxx|h|hh|hpp|hxx)$
+
+      - id: cmake-format
+        name: cmake-format
+        entry: bash scripts/pre-commit/cmake-format.sh
+        language: system
+        files: (^|/)(CMakeLists\.txt|.+\.cmake)$
+
+      - id: normalize-text
+        name: normalize text files
+        entry: python3 scripts/pre-commit/normalize_text.py
+        language: system
+        types: [text]

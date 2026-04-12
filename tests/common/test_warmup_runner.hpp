@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "core/warmup.hpp"
+#include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 
 namespace starpu_server {
@@ -43,11 +44,12 @@ make_device_workers() -> std::map<int, std::vector<int>>
 }
 
 struct WarmupRunnerTestFixture {
+  starpu_server::testing::ScopedStarpuSilent starpu_silent_;
   starpu_server::RuntimeConfig opts;
-  std::unique_ptr<starpu_server::StarPUSetup> starpu;
   torch::jit::script::Module model_cpu;
   std::vector<torch::jit::script::Module> models_gpu;
   std::vector<torch::Tensor> outputs_ref;
+  std::unique_ptr<starpu_server::StarPUSetup> starpu;
   void init(bool use_cuda = false)
   {
     opts = starpu_server::RuntimeConfig{};

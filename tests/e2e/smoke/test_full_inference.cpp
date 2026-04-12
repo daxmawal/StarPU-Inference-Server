@@ -70,7 +70,9 @@ TEST(E2E, FullInference)
 
   auto worker = start_worker(queue, model);
 
-  auto server = starpu_server::start_test_grpc_server(queue, reference_outputs);
+  auto server = starpu_server::start_test_grpc_server(
+      queue, reference_outputs, {at::kFloat}, 0,
+      starpu_server::VerbosityLevel::Silent);
   std::string address = "127.0.0.1:" + std::to_string(server.port);
   auto channel =
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials());

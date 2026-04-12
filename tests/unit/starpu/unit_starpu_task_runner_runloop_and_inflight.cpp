@@ -1000,6 +1000,7 @@ TEST_F(StarPUTaskRunnerFixture, RunFinalizesJobAfterExceptionRaisedBeforeSubmit)
   RunBeforeSubmitHookGuard hook_guard{
       [] { throw std::runtime_error("run loop injected failure"); }};
 
+  CaptureStream capture{std::cerr};
   runner_->run();
 
   EXPECT_TRUE(probe.called);
@@ -1016,6 +1017,7 @@ TEST_F(StarPUTaskRunnerFixture, RunFinalizesJobAfterExceptionRaisedBeforeSubmit)
       failure->message,
       "Unexpected exception while processing dequeued job: run loop injected "
       "failure");
+  EXPECT_NE(capture.str().find("run loop injected failure"), std::string::npos);
 }
 
 TEST_F(
@@ -1033,6 +1035,7 @@ TEST_F(
 
   RunBeforeSubmitHookGuard hook_guard{[] { throw 123; }};
 
+  CaptureStream capture{std::cerr};
   runner_->run();
 
   EXPECT_TRUE(probe.called);
@@ -1049,6 +1052,8 @@ TEST_F(
       failure->message,
       "Unexpected non-standard exception while processing dequeued job: "
       "Unknown non-standard exception");
+  EXPECT_NE(
+      capture.str().find("Unknown non-standard exception"), std::string::npos);
 }
 
 TEST_F(
@@ -1103,12 +1108,14 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesInferenceEngineException)
     throw starpu_server::InferenceEngineException("test inference failure");
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_NE(capture.str().find("test inference failure"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
@@ -1129,12 +1136,14 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesRuntimeError)
     throw std::runtime_error("runtime failure");
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_NE(capture.str().find("runtime failure"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
@@ -1155,12 +1164,14 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesLogicError)
     throw std::logic_error("logic failure");
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_NE(capture.str().find("logic failure"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
@@ -1181,12 +1192,14 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesBadAlloc)
     throw std::bad_alloc();
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
   EXPECT_TRUE(probe.called);
   EXPECT_EQ(completed_jobs_.load(), 1);
   EXPECT_EQ(queue_.size(), 0U);
+  EXPECT_NE(capture.str().find("std::bad_alloc"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesGenericStdException)
@@ -1214,6 +1227,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesGenericStdException)
     throw CustomStdException{};
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
@@ -1225,6 +1239,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesGenericStdException)
   ASSERT_TRUE(failure.has_value());
   EXPECT_EQ(
       failure->message, "Unexpected std::exception: custom std exception");
+  EXPECT_NE(capture.str().find("custom std exception"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
@@ -1245,6 +1260,7 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
     throw 42;
   });
 
+  CaptureStream capture{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
@@ -1257,6 +1273,8 @@ TEST_F(StarPUTaskRunnerFixture, RunCatchesNonStandardException)
   EXPECT_EQ(
       failure->message,
       "Unexpected non-standard exception: Unknown non-standard exception");
+  EXPECT_NE(
+      capture.str().find("Unknown non-standard exception"), std::string::npos);
 }
 
 TEST_F(
@@ -1272,6 +1290,7 @@ TEST_F(
     throw 42;
   });
 
+  CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunnerTestAdapter::submit_job_or_handle_failure(
       runner_.get(), job, /*submission_id=*/4242, /*job_id=*/4242);
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
@@ -1285,6 +1304,8 @@ TEST_F(
   EXPECT_EQ(
       failure->message,
       "Unexpected non-standard exception: Unknown non-standard exception");
+  EXPECT_NE(
+      capture.str().find("Unknown non-standard exception"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
@@ -1323,6 +1344,7 @@ TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
   ASSERT_TRUE(queue_.push(second_probe.job));
   queue_.shutdown();
 
+  CaptureStream capture{std::cerr};
   runner_->run();
 
   EXPECT_TRUE(first_probe.called);
@@ -1334,6 +1356,7 @@ TEST_F(StarPUTaskRunnerFixture, RunDrainsQueueWhenStarpuSubmitAlwaysFails)
   EXPECT_EQ(completed_jobs_.load(), 2U);
   EXPECT_EQ(queue_.size(), 0U);
   EXPECT_EQ(submit_override_calls.load(std::memory_order_relaxed), 2);
+  static_cast<void>(capture.str());
 }
 
 TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
@@ -1358,6 +1381,7 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
   });
 
   CaptureStream capture{std::cout};
+  CaptureStream capture_err{std::cerr};
   runner_->run();
   starpu_server::StarPUTaskRunnerTestAdapter::reset_submit_hook();
 
@@ -1366,6 +1390,7 @@ TEST_F(StarPUTaskRunnerFixture, RunLogsDequeuedJobsAtTraceVerbosity)
   EXPECT_NE(
       logs.find(std::format("(request {})", kRequestId)), std::string::npos);
   EXPECT_NE(logs.find("aggregated requests: 1"), std::string::npos);
+  EXPECT_NE(capture_err.str().find("trace guard"), std::string::npos);
 
   assert_failure_result(probe);
   EXPECT_EQ(queue_.size(), 0U);

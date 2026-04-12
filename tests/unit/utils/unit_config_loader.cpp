@@ -807,17 +807,14 @@ TEST_P(InvalidConfigTest, MarksConfigInvalid)
   const auto config_path = WriteTempFile(
       std::string{"config_loader_invalid_"} + test_case.name + ".yaml", yaml);
 
-  std::unique_ptr<starpu_server::CaptureStream> capture;
-  if (test_case.expected_error.has_value()) {
-    capture = std::make_unique<starpu_server::CaptureStream>(std::cerr);
-  }
+  starpu_server::CaptureStream capture{std::cerr};
 
   const RuntimeConfig cfg = load_config(config_path.string());
 
-  if (capture) {
+  if (test_case.expected_error.has_value()) {
     const std::string expected =
         expected_log_line(ErrorLevel, *test_case.expected_error);
-    EXPECT_EQ(capture->str(), expected);
+    EXPECT_EQ(capture.str(), expected);
   }
 
   EXPECT_FALSE(cfg.valid);
@@ -2654,9 +2651,16 @@ pool_size: 1
                    "config_loader_no_model_skip.yaml";
   std::ofstream(tmp) << yaml;
 
-  const RuntimeConfig cfg = load_config(tmp.string());
+  RuntimeConfig cfg;
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    cfg = load_config(tmp.string());
+    log = capture.str();
+  }
   EXPECT_FALSE(cfg.valid);
   EXPECT_EQ(cfg.batching.max_batch_size, 1);
+  EXPECT_NE(log.find("Missing required key: model"), std::string::npos);
 }
 
 TEST(ConfigLoader, MissingInputSkipsParsingOtherKeys)
@@ -2677,9 +2681,16 @@ pool_size: 1
                    "config_loader_no_input_skip.yaml";
   std::ofstream(tmp) << yaml;
 
-  const RuntimeConfig cfg = load_config(tmp.string());
+  RuntimeConfig cfg;
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    cfg = load_config(tmp.string());
+    log = capture.str();
+  }
   EXPECT_FALSE(cfg.valid);
   EXPECT_EQ(cfg.batching.max_queue_size, kDefaultMaxQueueSize);
+  EXPECT_NE(log.find("Missing required key: inputs"), std::string::npos);
 }
 
 TEST(ConfigLoader, MissingOutputSkipsParsingOtherKeys)
@@ -2699,9 +2710,16 @@ pool_size: 1
                    "config_loader_no_output_skip.yaml";
   std::ofstream(tmp) << yaml;
 
-  const RuntimeConfig cfg = load_config(tmp.string());
+  RuntimeConfig cfg;
+  std::string log;
+  {
+    starpu_server::CaptureStream capture{std::cerr};
+    cfg = load_config(tmp.string());
+    log = capture.str();
+  }
   EXPECT_FALSE(cfg.valid);
   EXPECT_EQ(cfg.batching.max_batch_size, 1);
+  EXPECT_NE(log.find("Missing required key: outputs"), std::string::npos);
 }
 
 TEST(

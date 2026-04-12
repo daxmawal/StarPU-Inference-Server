@@ -44,6 +44,7 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
   torch::jit::script::Module model_cpu_;
   std::vector<torch::jit::script::Module> models_gpu_;
   starpu_server::RuntimeConfig opts_;
+  starpu_server::testing::ScopedStarpuSilent starpu_silent_{};
   std::atomic<std::size_t> completed_jobs_;
   std::condition_variable cv_;
   std::unique_ptr<starpu_server::StarPUSetup> starpu_setup_;

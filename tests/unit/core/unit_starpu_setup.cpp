@@ -34,6 +34,8 @@
 
 namespace {
 
+starpu_server::testing::ScopedStarpuSilent g_starpu_silent{};
+
 std::vector<std::byte*> g_observed_base_ptrs;
 std::vector<starpu_data_handle_t> g_observed_handles;
 bool g_failure_observer_called = false;
@@ -3086,6 +3088,7 @@ TEST(OutputSlotPool_Unit, FallsBackWhenCudaHostAllocReturnsError)
   };
 
   try {
+    starpu_server::CaptureStream capture{std::cerr};
     starpu_server::OutputSlotPool pool(opts, 1);
 
     const int slot_id = pool.acquire();
@@ -3135,6 +3138,7 @@ TEST(OutputSlotPool_Unit, FallsBackWhenCudaHostAllocReturnsSuccessNullptr)
   };
 
   try {
+    starpu_server::CaptureStream capture{std::cerr};
     starpu_server::OutputSlotPool pool(opts, 1);
 
     const int slot_id = pool.acquire();
@@ -3191,6 +3195,7 @@ TEST(
   };
 
   try {
+    starpu_server::CaptureStream capture{std::cerr};
     starpu_server::OutputSlotPool pool(opts, 1);
 
     const int slot_id = pool.acquire();
@@ -3204,6 +3209,7 @@ TEST(
     EXPECT_EQ(info.starpu_pin_rc, 0);
 
     pool.release(slot_id);
+    static_cast<void>(capture.str());
     restore_hooks();
   }
   catch (...) {
@@ -3247,6 +3253,7 @@ TEST(
   };
 
   try {
+    starpu_server::CaptureStream capture{std::cerr};
     starpu_server::OutputSlotPool pool(opts, 1);
 
     const int slot_id = pool.acquire();
@@ -3258,6 +3265,10 @@ TEST(
     EXPECT_FALSE(info.cuda_pinned);
     EXPECT_FALSE(info.starpu_pinned);
     EXPECT_EQ(info.starpu_pin_rc, kStarpuPinTestError);
+    EXPECT_NE(
+        capture.str().find(
+            "starpu_memory_pin failed for output slot 0, index 0"),
+        std::string::npos);
 
     pool.release(slot_id);
     restore_hooks();

@@ -81,6 +81,7 @@ struct StarpuRuntimeGuard {
   auto operator=(StarpuRuntimeGuard&&) -> StarpuRuntimeGuard& = delete;
 
  private:
+  starpu_server::testing::ScopedStarpuSilent starpu_silent_{};
   int initial_level_ = 0;
 };
 

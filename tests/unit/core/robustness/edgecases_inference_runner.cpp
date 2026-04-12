@@ -70,17 +70,23 @@ TEST_F(ConstantModelConfigTest, LoadModelAndReferenceOutputUnsupported)
   opts.devices.ids = {0};
   opts.devices.use_cuda = false;
 
+  starpu_server::CaptureStream capture{std::cerr};
   torch::manual_seed(3);
   const auto result = starpu_server::load_model_and_reference_output(opts);
   EXPECT_FALSE(result.has_value());
+  EXPECT_NE(
+      capture.str().find("Unsupported output type from model."),
+      std::string::npos);
 }
 
 TEST_F(ConstantModelConfigTest, CloneModelToGpus_InvalidDeviceIdThrows)
 {
   auto opts = cuda_config(std::vector<int>{-1});
 
+  starpu_server::CaptureStream capture{std::cerr};
   const auto result = starpu_server::load_model_and_reference_output(opts);
   EXPECT_FALSE(result.has_value());
+  EXPECT_NE(capture.str().find("Invalid GPU device ID -1"), std::string::npos);
 }
 
 namespace starpu_server {
@@ -129,6 +135,7 @@ TEST(InferenceRunner_Robustesse, LoadModelMissingFile)
   auto opts = starpu_server::make_single_model_runtime_config(
       "nonexistent_model.pt", std::vector<int64_t>{1}, at::kFloat);
 
+  starpu_server::CaptureStream capture{std::cerr};
   try {
     auto result = starpu_server::load_model_and_reference_output(opts);
     EXPECT_EQ(result, std::nullopt);
@@ -136,4 +143,7 @@ TEST(InferenceRunner_Robustesse, LoadModelMissingFile)
   catch (const std::exception&) {
     SUCCEED();
   }
+  EXPECT_NE(
+      capture.str().find("Failed to load model or run reference inference"),
+      std::string::npos);
 }

@@ -294,8 +294,12 @@ TEST(WarmupRunnerEdgesTest, RunCapturesServerThreadException)
       },
       starpu_server::testing::WarmupThreadHook{});
 
+  starpu_server::CaptureStream capture{std::cerr};
   EXPECT_THROW(runner.run(1), std::runtime_error);
   EXPECT_TRUE(hook_called.load(std::memory_order_relaxed));
+  EXPECT_NE(
+      capture.str().find("[Warmup] Failed to enqueue job 0"),
+      std::string::npos);
 }
 
 TEST(WarmupRunnerEdgesTest, RunAppliesConfiguredInflightLimitBelowQueueCap)
@@ -337,6 +341,7 @@ TEST(WarmupRunnerEdgesTest, RunTimesOutWhenClientStaysPendingPastDeadline)
       starpu_server::testing::WarmupThreadHook{},
       [] { std::this_thread::sleep_for(10ms); });
 
+  starpu_server::CaptureStream capture{std::cerr};
   try {
     runner.run(1);
     FAIL() << "Expected timeout while waiting for client completion.";
@@ -346,6 +351,7 @@ TEST(WarmupRunnerEdgesTest, RunTimesOutWhenClientStaysPendingPastDeadline)
     EXPECT_NE(message.find("Warmup drain timeout"), std::string::npos);
     EXPECT_NE(message.find("client_done=false"), std::string::npos);
   }
+  EXPECT_NE(capture.str().find("Warmup drain timeout"), std::string::npos);
 }
 
 TEST(WarmupRunnerEdgesTest, RunTimesOutWhenCompletionLagsPastDeadline)
@@ -362,6 +368,7 @@ TEST(WarmupRunnerEdgesTest, RunTimesOutWhenCompletionLagsPastDeadline)
       [] { std::this_thread::sleep_for(600ms); },
       starpu_server::testing::WarmupThreadHook{});
 
+  starpu_server::CaptureStream capture{std::cerr};
   try {
     runner.run(1);
     FAIL() << "Expected timeout while draining completed warmup jobs.";
@@ -371,6 +378,7 @@ TEST(WarmupRunnerEdgesTest, RunTimesOutWhenCompletionLagsPastDeadline)
     EXPECT_NE(message.find("Warmup drain timeout"), std::string::npos);
     EXPECT_NE(message.find("client_done=true"), std::string::npos);
   }
+  EXPECT_NE(capture.str().find("Warmup drain timeout"), std::string::npos);
 }
 
 TEST(WarmupRunnerEdgesTest, RunPropagatesCompletionObserverException)
@@ -382,6 +390,7 @@ TEST(WarmupRunnerEdgesTest, RunPropagatesCompletionObserverException)
     throw std::runtime_error("completion observer failure");
   });
 
+  starpu_server::CaptureStream capture{std::cerr};
   try {
     runner.run(1);
     FAIL() << "Expected completion observer exception.";
@@ -389,6 +398,9 @@ TEST(WarmupRunnerEdgesTest, RunPropagatesCompletionObserverException)
   catch (const std::runtime_error& e) {
     EXPECT_EQ(std::string(e.what()), "completion observer failure");
   }
+  EXPECT_NE(
+      capture.str().find("[Warmup] Failed to enqueue job 0"),
+      std::string::npos);
 }
 
 TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenNoDevicesConfigured)

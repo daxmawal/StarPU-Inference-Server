@@ -852,10 +852,12 @@ TEST_F(
   auto job = make_job(88, {});
   const std::runtime_error error("runtime failure");
 
+  CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
       runner_.get(), job, error, "runtime failure", job->get_request_id());
 
   EXPECT_EQ(completed_jobs_.load(), 1);
+  EXPECT_NE(capture.str().find("runtime failure"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionReturnsWhenJobMissing)
@@ -878,6 +880,7 @@ TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionReturnsWhenJobMissing)
   std::shared_ptr<starpu_server::InferenceJob> missing_job;
   const std::runtime_error error("runtime failure");
 
+  CaptureStream capture{std::cerr};
   EXPECT_NO_THROW(
       starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
           runner_.get(), missing_job, error, "runtime failure", -1));
@@ -887,6 +890,7 @@ TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionReturnsWhenJobMissing)
       starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
           runner_.get()),
       1U);
+  EXPECT_NE(capture.str().find("runtime failure"), std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionUsesGenericReason)
@@ -905,6 +909,7 @@ TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionUsesGenericReason)
   };
   const CustomException error;
 
+  CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
       runner_.get(), job, error, "", job->get_request_id());
 
@@ -944,6 +949,7 @@ TEST_F(StarPUTaskRunnerFixture, FinalizeJobAfterExceptionUsesGenericReason)
       find_failure_value(families, "execution", "exception", "demo_model");
   ASSERT_TRUE(value.has_value());
   EXPECT_DOUBLE_EQ(*value, 1.0);
+  EXPECT_NE(capture.str().find("custom failure"), std::string::npos);
 }
 
 TEST_F(
@@ -966,6 +972,7 @@ TEST_F(
   job->completion().set_model_name("failure_model");
   const std::logic_error error("logic failure");
 
+  CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunnerTestAdapter::finalize_job_after_exception(
       runner_.get(), job, error, "logic prefix", job->get_request_id());
 
@@ -980,6 +987,7 @@ TEST_F(
        {"model", "failure_model"}});
   ASSERT_TRUE(failures.has_value());
   EXPECT_DOUBLE_EQ(*failures, 1.0);
+  EXPECT_NE(capture.str().find("logic prefix"), std::string::npos);
 }
 
 TEST(ResultDispatcher, FinalizeJobAfterExceptionLogsWhenDispatcherMissing)
@@ -1011,6 +1019,7 @@ TEST_F(
   auto job = probe.job;
   job->completion().set_model_name("unknown_exception_model");
 
+  CaptureStream capture{std::cerr};
   starpu_server::StarPUTaskRunnerTestAdapter::
       finalize_job_after_unknown_exception(
           runner_.get(), job, "Unexpected non-standard exception",
@@ -1025,6 +1034,9 @@ TEST_F(
       failure->message,
       "Unexpected non-standard exception: Unknown non-standard exception");
   EXPECT_TRUE(failure->metrics_reported);
+  EXPECT_NE(
+      capture.str().find("Unexpected non-standard exception"),
+      std::string::npos);
 }
 
 TEST_F(
@@ -1048,6 +1060,7 @@ TEST_F(
 
   std::shared_ptr<starpu_server::InferenceJob> missing_job;
 
+  CaptureStream capture{std::cerr};
   EXPECT_NO_THROW(starpu_server::StarPUTaskRunnerTestAdapter::
                       finalize_job_after_unknown_exception(
                           runner_.get(), missing_job,
@@ -1058,6 +1071,9 @@ TEST_F(
       starpu_server::StarPUTaskRunnerTestAdapter::get_inflight_tasks(
           runner_.get()),
       1U);
+  EXPECT_NE(
+      capture.str().find("Unexpected non-standard exception"),
+      std::string::npos);
 }
 
 TEST_F(StarPUTaskRunnerFixture, TraceBatchIfEnabledLogsAggregatedRequestIds)

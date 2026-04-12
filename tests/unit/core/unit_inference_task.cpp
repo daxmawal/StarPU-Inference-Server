@@ -25,6 +25,9 @@
 #include "test_utils.hpp"
 
 namespace {
+
+starpu_server::testing::ScopedStarpuSilent g_starpu_silent{};
+
 inline auto
 unregister_call_count_ref() -> int&
 {
@@ -1090,12 +1093,16 @@ TEST_F(InferenceTaskTest, StarpuOutputCallbackHookFailureWithNullJobFinalizes)
   bool finished = false;
   ctx->on_finished = [&]() { finished = true; };
 
+  starpu_server::CaptureStream capture{std::cerr};
   EXPECT_NO_THROW(
       starpu_server::InferenceTask::starpu_output_callback(ctx.get()));
 
   EXPECT_TRUE(finished);
   EXPECT_EQ(ctx->remaining_outputs_to_acquire.load(), 0);
   EXPECT_EQ(ctx->self_keep_alive, nullptr);
+  EXPECT_NE(
+      capture.str().find("std::exception in starpu_output_callback"),
+      std::string::npos);
 }
 
 TEST(InferenceTask, FinalizeOrFailOnceLogsWhenContextIsNull)
