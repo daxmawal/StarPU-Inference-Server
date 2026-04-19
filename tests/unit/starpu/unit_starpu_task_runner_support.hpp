@@ -21,6 +21,8 @@
 #include "core/inference_task.hpp"
 #include "exceptions.hpp"
 #include "monitoring/metrics.hpp"
+#include "starpu_task_worker/batch_capacity_policy.hpp"
+#include "starpu_task_worker/batch_composition_policy.hpp"
 #include "starpu_task_worker/task_runner_internal.hpp"
 #include "support/starpu_data_interface_override.hpp"
 #include "support/starpu_task_submit_override.hpp"
@@ -352,11 +354,11 @@ class StarPUTaskRunnerTestAdapter {
       StarPUTaskRunner* runner,
       const std::shared_ptr<InferenceJob>& job) -> int64_t
   {
-    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+    if (runner == nullptr) {
       return -1;
     }
-    return test_api::batch_collector_job_sample_size(
-        runner->batch_collector_.get(), job);
+    starpu_server::RuntimeBatchCapacityPolicy policy{};
+    return policy.job_sample_size(runner->opts_, job);
   }
 
   static void enqueue_prepared_job(
@@ -433,7 +435,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    test_api::batch_collector_disable_prepared_job_sync(
+    test_api::BatchCollectorTestAdapter::disable_prepared_job_sync(
         runner->batch_collector_.get());
   }
 
@@ -442,7 +444,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return false;
     }
-    return test_api::batch_collector_is_batching_done(
+    return test_api::BatchCollectorTestAdapter::is_batching_done(
         runner->batch_collector_.get());
   }
 
@@ -452,7 +454,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return false;
     }
-    return test_api::batch_collector_should_abort_inflight_wait(
+    return test_api::BatchCollectorTestAdapter::should_abort_inflight_wait(
         runner->batch_collector_.get());
   }
 
@@ -462,7 +464,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    test_api::batch_collector_set_batching_done_ptr(
+    test_api::BatchCollectorTestAdapter::set_batching_done_ptr(
         runner->batch_collector_.get(), batching_done);
   }
 
@@ -472,7 +474,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    test_api::batch_collector_set_batching_done_value(
+    test_api::BatchCollectorTestAdapter::set_batching_done_value(
         runner->batch_collector_.get(), batching_done);
   }
 
@@ -481,7 +483,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    test_api::batch_collector_set_queue(
+    test_api::BatchCollectorTestAdapter::set_queue(
         runner->batch_collector_.get(), nullptr);
   }
 
@@ -491,7 +493,8 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return nullptr;
     }
-    return test_api::batch_collector_get_queue(runner->batch_collector_.get());
+    return test_api::BatchCollectorTestAdapter::get_queue(
+        runner->batch_collector_.get());
   }
 
   static void set_batch_collector_pending_job(
@@ -501,7 +504,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return;
     }
-    test_api::batch_collector_set_pending_job(
+    test_api::BatchCollectorTestAdapter::set_pending_job(
         runner->batch_collector_.get(), job);
   }
 
@@ -513,7 +516,7 @@ class StarPUTaskRunnerTestAdapter {
     if (runner == nullptr || runner->batch_collector_ == nullptr) {
       return nullptr;
     }
-    return test_api::batch_collector_try_acquire_next_job(
+    return test_api::BatchCollectorTestAdapter::try_acquire_next_job(
         runner->batch_collector_.get(), enable_wait, coalesce_deadline);
   }
 
@@ -560,20 +563,20 @@ class StarPUTaskRunnerTestAdapter {
       const std::shared_ptr<InferenceJob>& reference,
       const std::optional<int>& target_worker) -> bool
   {
-    return test_api::batch_collector_should_hold_job(
-        candidate, reference, target_worker);
+    starpu_server::TensorBatchCompositionPolicy policy{};
+    return policy.should_hold_job(candidate, reference, target_worker);
   }
 
   static auto exceeds_sample_limit(
       StarPUTaskRunner* runner, int64_t accumulated_samples,
       const std::shared_ptr<InferenceJob>& job, int64_t max_samples_cap) -> bool
   {
-    if (runner == nullptr || runner->batch_collector_ == nullptr) {
+    if (runner == nullptr) {
       return false;
     }
-    return test_api::batch_collector_exceeds_sample_limit(
-        runner->batch_collector_.get(), accumulated_samples, job,
-        max_samples_cap);
+    starpu_server::RuntimeBatchCapacityPolicy policy{};
+    return policy.exceeds_sample_limit(
+        runner->opts_, accumulated_samples, job, max_samples_cap);
   }
 
   static void reserve_inflight_slot(StarPUTaskRunner* runner)

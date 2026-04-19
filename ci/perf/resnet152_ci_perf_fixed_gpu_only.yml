@@ -1,10 +1,6 @@
 name: resnet152
-trace_enabled: true
-trace_output: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build/"
 starpu_env:
   STARPU_SCHED: "eager"
-  STARPU_FXT_TRACE: "1"
-  STARPU_FXT_PREFIX: "/local/home/jd258565/Workspace/StarPU-Inference-Server/build"
   STARPU_CUDA_THREAD_PER_WORKER: "1"
   STARPU_CUDA_PIPELINE: "4"
   STARPU_NWORKER_PER_CUDA: "4"
@@ -14,26 +10,23 @@ inputs:
   - { name: "input0", data_type: "TYPE_FP32", dims: [1, 3, 224, 224] }
 outputs:
   - { name: "output0", data_type: "TYPE_FP32", dims: [1, 1000] }
-warmup_batches_per_worker: 2
-verbosity: 1
-address: 127.0.0.1:50051
-batching_strategy: adaptive
-adaptive_batching:
-  max_batch_size: 16
-  min_batch_size: 1
+verbosity: 0
+address: 127.0.0.1:50062
+metrics_port: 19091
+batching_strategy: fixed
+fixed_batching:
+  batch_size: 16
 max_inflight_tasks: 100
 max_queue_size: 100
 batch_coalesce_timeout_ms: 10
 sync: false
 use_cpu: false
 group_cpu_by_numa: true
-libtorch:
-  intraop_threads: 8
-  interop_threads: 1
 use_cuda:
   - { device_ids: [0] }
-gpu_model_replication: per_device
 pool_size: 12
+warmup_batches_per_worker: 2
+seed: 0
 congestion:
   enabled: true
   latency_slo_ms: 150

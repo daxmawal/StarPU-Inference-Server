@@ -102,6 +102,10 @@ set(STARPU_TEST_RUNTIME_SOURCES
     ${MONITORING_DIR}/metrics.cpp
     ${MONITORING_DIR}/congestion_monitor.cpp
     ${TASK_WORKER_DIR}/starpu_task_worker.cpp
+    ${TASK_WORKER_DIR}/batch_capacity_policy.cpp
+    ${TASK_WORKER_DIR}/batch_composition_policy.cpp
+    ${TASK_WORKER_DIR}/batching_strategy.cpp
+    ${TASK_WORKER_DIR}/batching_strategy_input_provider.cpp
     ${TASK_WORKER_DIR}/batch_collector_component.cpp
     ${TASK_WORKER_DIR}/result_dispatcher_component.cpp
     ${TASK_WORKER_DIR}/slot_manager_component.cpp

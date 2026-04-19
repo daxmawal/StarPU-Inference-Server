@@ -15,10 +15,24 @@
 #include "core/inference_runner.hpp"
 #include "core/inference_task.hpp"
 #include "starpu_task_worker/starpu_task_worker.hpp"
+#include "test_batching_config.hpp"
 #include "test_utils.hpp"
 
 class StarPUTaskRunnerFixture : public ::testing::Test {
  protected:
+  void rebuild_runner_from_current_opts()
+  {
+    runner_.reset();
+    starpu_setup_.reset();
+
+    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
+    config_.starpu = starpu_setup_.get();
+    config_.opts = &opts_;
+    config_.dependencies = &dependencies_;
+
+    runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+  }
+
   static starpu_server::TensorConfig make_tensor_config(
       std::string name, std::vector<int64_t> dims, c10::ScalarType type)
   {
@@ -38,6 +52,33 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     config.inputs = std::move(inputs);
     config.outputs = std::move(outputs);
     return config;
+  }
+
+  void set_effective_batch_capacity(int batch_size)
+  {
+    starpu_server::testing::set_effective_batch_capacity_for_tests(
+        opts_, batch_size);
+  }
+
+  void configure_adaptive_batching(
+      int max_batch_size, std::optional<int> min_batch_size = std::nullopt)
+  {
+    starpu_server::testing::configure_adaptive_batching_for_tests(
+        opts_, max_batch_size, min_batch_size);
+    rebuild_runner_from_current_opts();
+  }
+
+  void configure_fixed_batching(int batch_size)
+  {
+    starpu_server::testing::configure_fixed_batching_for_tests(
+        opts_, batch_size);
+    rebuild_runner_from_current_opts();
+  }
+
+  void configure_disabled_batching()
+  {
+    starpu_server::testing::configure_disabled_batching_for_tests(opts_);
+    rebuild_runner_from_current_opts();
   }
 
   starpu_server::InferenceQueue queue_;
@@ -62,17 +103,13 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
   void SetUp() override
   {
     completed_jobs_ = 0;
-    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
     config_.queue = &queue_;
     config_.model_cpu = &model_cpu_;
     config_.models_gpu = &models_gpu_;
-    config_.starpu = starpu_setup_.get();
-    config_.opts = &opts_;
     config_.completed_jobs = &completed_jobs_;
     config_.all_done_cv = &cv_;
     dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;
-    config_.dependencies = &dependencies_;
-    runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+    rebuild_runner_from_current_opts();
   }
 
   std::shared_ptr<starpu_server::InferenceJob> make_job(
@@ -97,17 +134,11 @@ class StarPUTaskRunnerFixture : public ::testing::Test {
     opts_.model = model;
     opts_.batching.pool_size = pool_size;
 
-    starpu_setup_ = std::make_unique<starpu_server::StarPUSetup>(opts_);
-    config_.starpu = starpu_setup_.get();
-    config_.opts = &opts_;
-
     if (deps.has_value()) {
       dependencies_ = *deps;
     } else {
       dependencies_ = starpu_server::kDefaultInferenceTaskDependencies;
     }
-    config_.dependencies = &dependencies_;
-
-    runner_ = std::make_unique<starpu_server::StarPUTaskRunner>(config_);
+    rebuild_runner_from_current_opts();
   }
 };

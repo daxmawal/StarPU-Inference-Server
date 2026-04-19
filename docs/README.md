@@ -13,7 +13,7 @@ This directory collects the documentation needed to install, run, and tune the S
 ## Configuration Reference
 
 - Use [server configuration](./server_guide.md) to review runtime options, environment variables, and parameters.
-- For instrumentation, the [tracing guide](./tracing.md) explains how to emit and visualise batching traces (Perfetto) and StarPU FXT traces when debugging dynamic batching (use NVIDIA `nsys` for GPU-wide timelines).
+- For instrumentation, the [tracing guide](./tracing.md) explains how to emit and visualise batching traces (Perfetto) and StarPU FXT traces when debugging batching behavior (use NVIDIA `nsys` for GPU-wide timelines).
 
 ## Client Guide: Examples & Custom Implementations
 

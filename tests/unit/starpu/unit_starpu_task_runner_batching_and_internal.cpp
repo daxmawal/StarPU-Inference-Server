@@ -6,6 +6,10 @@
 #include "utils/exception_classification.hpp"
 
 #define private public
+#include "starpu_task_worker/batching_strategy.hpp"
+#undef private
+
+#define private public
 #include "starpu_task_worker/batch_collector_component.hpp"
 #undef private
 
@@ -96,8 +100,7 @@ struct BatchCollectorHarness {
       std::size_t max_inflight_tasks = 0)
       : observability(std::move(observability_arg))
   {
-    opts.batching.dynamic_batching = true;
-    opts.batching.max_batch_size = 4;
+    starpu_server::testing::configure_adaptive_batching_for_tests(opts, 4);
     opts.congestion.enabled = true;
     opts.congestion.tick_interval_ms = 10;
     opts.congestion.entry_horizon_ms = 40;
@@ -116,9 +119,65 @@ struct BatchCollectorHarness {
             .inflight_cv = &inflight_cv,
             .inflight_mutex = &inflight_mutex,
             .max_inflight_tasks = max_inflight_tasks,
+        },
+        starpu_server::BatchCollectorBatchingDependencies{
+            .capacity_policy =
+                std::make_unique<starpu_server::RuntimeBatchCapacityPolicy>(),
+            .composition_policy =
+                std::make_unique<starpu_server::TensorBatchCompositionPolicy>(),
+            .strategy_input_provider = std::make_unique<
+                starpu_server::RuntimeBatchingStrategyInputProvider>(
+                &opts, queue, observability, &prepared_jobs, &prepared_mutex,
+                &inflight_tasks, max_inflight_tasks),
+            .strategy = starpu_server::make_batching_strategy(
+                starpu_server::resolved_batching_strategy_kind(opts.batching)),
         });
   }
 };
+
+auto
+adaptive_strategy(BatchCollectorHarness& harness)
+    -> starpu_server::AdaptiveBatchingStrategy*
+{
+  return dynamic_cast<starpu_server::AdaptiveBatchingStrategy*>(
+      harness.collector->batching_strategy_.get());
+}
+
+auto
+strategy_input_provider(BatchCollectorHarness& harness)
+    -> starpu_server::RuntimeBatchingStrategyInputProvider*
+{
+  return dynamic_cast<starpu_server::RuntimeBatchingStrategyInputProvider*>(
+      harness.collector->batching_strategy_input_provider_.get());
+}
+
+auto
+make_strategy_config(const BatchCollectorHarness& harness, int batch_limit)
+    -> starpu_server::BatchingStrategyConfig
+{
+  return starpu_server::BatchingStrategyConfig{
+      .min_batch_limit = harness.opts.batching.adaptive.min_batch_size,
+      .batch_limit = batch_limit,
+      .coalesce_timeout_ms = harness.opts.batching.batch_coalesce_timeout_ms,
+      .congestion_enabled = harness.opts.congestion.enabled,
+      .congestion_fill_high = harness.opts.congestion.fill_high,
+      .congestion_fill_low = harness.opts.congestion.fill_low,
+      .congestion_rho_high = harness.opts.congestion.rho_high,
+      .congestion_rho_low = harness.opts.congestion.rho_low,
+      .congestion_tick_interval_ms = harness.opts.congestion.tick_interval_ms,
+      .congestion_entry_horizon_ms = harness.opts.congestion.entry_horizon_ms,
+      .congestion_exit_horizon_ms = harness.opts.congestion.exit_horizon_ms,
+  };
+}
+
+auto
+make_strategy_input(const BatchCollectorHarness& harness, int batch_limit)
+    -> starpu_server::BatchingStrategyInput
+{
+  return starpu_server::BatchingStrategyInput{
+      .config = make_strategy_config(harness, batch_limit),
+  };
+}
 
 }  // namespace
 
@@ -500,17 +559,19 @@ TEST_F(
   EXPECT_NE(logs.find("requests (2 samples)"), std::string::npos) << logs;
 }
 
-TEST_F(StarPUTaskRunnerFixture, SampleLimitPerBatchRespectsInputPoolCapacity)
+TEST_F(StarPUTaskRunnerFixture, SampleLimitPerBatchUsesRebuiltInputPoolCapacity)
 {
   auto model_config = make_model_config(
       "pooled_model", {make_tensor_config("input0", {1, 1}, at::kFloat)},
       {make_tensor_config("output0", {1, 1}, at::kFloat)});
-  constexpr int kPoolSize = 1;
-  reset_runner_with_model(model_config, /*pool_size=*/kPoolSize);
+  reset_runner_with_model(model_config, /*pool_size=*/1);
 
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
+  ASSERT_TRUE(starpu_setup_->has_input_pool());
+  EXPECT_EQ(
+      starpu_setup_->input_pool().max_batch_size(),
+      resolved_batch_capacity(opts_.batching));
 
   auto first = make_job(
       0, {torch::ones({1, 1}, torch::TensorOptions().dtype(torch::kFloat))},
@@ -524,12 +585,10 @@ TEST_F(StarPUTaskRunnerFixture, SampleLimitPerBatchRespectsInputPoolCapacity)
   auto collected = starpu_server::StarPUTaskRunnerTestAdapter::collect_batch(
       runner_.get(), first);
 
-  ASSERT_EQ(collected.size(), static_cast<std::size_t>(kPoolSize));
+  ASSERT_EQ(collected.size(), 2U);
   EXPECT_EQ(collected[0], first);
+  EXPECT_EQ(collected[1], second);
   EXPECT_EQ(queue_.size(), 0U);
-
-  auto pending = runner_->wait_for_next_job();
-  ASSERT_EQ(pending, second);
 }
 
 TEST_F(
@@ -553,8 +612,7 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchLimitsUsingEffectiveBatchSize)
   auto model_config = make_model_config("eff_model", {}, {});
   reset_runner_with_model(model_config, /*pool_size=*/0);
 
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 5;
+  configure_adaptive_batching(5);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(
@@ -579,8 +637,7 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchDefaultsSampleSizeToOneWhenNoInputs)
   auto model_config = make_model_config("no_input_model", {}, {});
   reset_runner_with_model(model_config, /*pool_size=*/0);
 
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 1;
+  configure_adaptive_batching(1);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(20, {});
@@ -602,8 +659,7 @@ TEST_F(
   auto model_config = make_model_config("no_input_model", {}, {});
   reset_runner_with_model(model_config, /*pool_size=*/0);
 
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 2;
+  configure_adaptive_batching(2);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(22, {});
@@ -622,8 +678,7 @@ TEST_F(
 TEST_F(
     StarPUTaskRunnerFixture, CollectBatchReturnsAggregatedJobWithoutCoalescing)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto aggregated = make_job(
@@ -654,8 +709,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     CollectBatchReturnsFirstWhenLogicalJobCountExceedsOne)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(
@@ -680,8 +734,7 @@ TEST_F(
     StarPUTaskRunnerFixture,
     WaitForNextJobDeliversAggregatedJobWithoutCoalescing)
 {
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 4;
+  configure_adaptive_batching(4);
   opts_.batching.batch_coalesce_timeout_ms = 10;
 
   auto aggregated = make_job(
@@ -736,8 +789,7 @@ TEST_F(StarPUTaskRunnerFixture, CollectBatchInfersSampleCountFromInputRank)
       {make_tensor_config("output0", {1, 2}, at::kFloat)});
   reset_runner_with_model(model_config, /*pool_size=*/4);
 
-  opts_.batching.dynamic_batching = true;
-  opts_.batching.max_batch_size = 3;
+  configure_adaptive_batching(3);
   opts_.batching.batch_coalesce_timeout_ms = 0;
 
   auto first = make_job(
@@ -778,7 +830,8 @@ TEST(BatchCollector, MergeInputMemoryHoldersAggregatesAllHolders)
       {std::shared_ptr<const void>(holder2, holder2.get())});
 
   const auto merged =
-      starpu_server::BatchCollector::merge_input_memory_holders({job0, job1});
+      starpu_server::StarPUTaskRunnerTestAdapter::merge_input_memory_holders(
+          {job0, job1});
 
   ASSERT_EQ(merged.size(), 3U);
   EXPECT_EQ(merged[0].get(), static_cast<const void*>(holder0.get()));
@@ -789,133 +842,173 @@ TEST(BatchCollector, MergeInputMemoryHoldersAggregatesAllHolders)
 TEST(BatchCollector, UpdateAdaptiveTargetSetsSingleSlotForBatchLimitOne)
 {
   BatchCollectorHarness harness;
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
 
-  harness.collector->adaptive_target_batch_size_ = 7;
-  harness.collector->adaptive_target_initialized_ = false;
-  harness.collector->low_pressure_streak_ = 9;
+  strategy->adaptive_target_batch_size_ = 7;
+  strategy->adaptive_target_initialized_ = false;
+  strategy->low_pressure_streak_ = 9;
 
-  harness.collector->update_adaptive_batch_target(1);
+  const auto decision = strategy->decide(make_strategy_input(harness, 1));
 
-  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 1);
-  EXPECT_TRUE(harness.collector->adaptive_target_initialized_);
-  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+  EXPECT_EQ(decision.target_batch_limit, 1);
+  EXPECT_EQ(strategy->adaptive_target_batch_size_, 1);
+  EXPECT_TRUE(strategy->adaptive_target_initialized_);
+  EXPECT_EQ(strategy->low_pressure_streak_, 0);
 }
 
 TEST(BatchCollector, UpdateAdaptiveTargetResetsStreakWhenCongestionDisabled)
 {
   BatchCollectorHarness harness;
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
+
   harness.opts.congestion.enabled = false;
-  harness.collector->adaptive_target_batch_size_ = 2;
-  harness.collector->adaptive_target_initialized_ = true;
-  harness.collector->low_pressure_streak_ = 3;
+  strategy->adaptive_target_batch_size_ = 2;
+  strategy->adaptive_target_initialized_ = true;
+  strategy->low_pressure_streak_ = 3;
 
-  harness.collector->update_adaptive_batch_target(4);
+  const auto decision = strategy->decide(make_strategy_input(harness, 4));
 
-  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
-  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+  EXPECT_EQ(decision.target_batch_limit, 4);
+  EXPECT_EQ(strategy->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(strategy->low_pressure_streak_, 0);
 }
 
 TEST(BatchCollector, UpdateAdaptiveTargetExpandsOnHighPressure)
 {
   BatchCollectorHarness harness;
-  harness.prepared_jobs.resize(4);
-  harness.collector->adaptive_target_batch_size_ = 1;
-  harness.collector->adaptive_target_initialized_ = true;
-  harness.collector->low_pressure_streak_ = 5;
-  harness.collector->last_adaptive_update_marker_.reset();
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
 
-  harness.collector->update_adaptive_batch_target(4);
+  strategy->adaptive_target_batch_size_ = 1;
+  strategy->adaptive_target_initialized_ = true;
+  strategy->low_pressure_streak_ = 5;
+  strategy->last_adaptive_update_marker_.reset();
 
-  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
-  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+  auto input = make_strategy_input(harness, 4);
+  input.runtime.prepared_depth = 4;
+  const auto decision = strategy->decide(input);
+
+  EXPECT_EQ(decision.target_batch_limit, 2);
+  EXPECT_EQ(strategy->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(strategy->low_pressure_streak_, 0);
 }
 
 TEST(BatchCollector, UpdateAdaptiveTargetShrinksOnLowPressureThreshold)
 {
   BatchCollectorHarness harness;
-  harness.collector->adaptive_target_batch_size_ = 3;
-  harness.collector->adaptive_target_initialized_ = true;
-  harness.collector->low_pressure_streak_ =
-      harness.collector->low_pressure_streak_threshold() - 1;
-  harness.collector->last_adaptive_update_marker_.reset();
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
 
-  harness.collector->update_adaptive_batch_target(4);
+  strategy->adaptive_target_batch_size_ = 3;
+  strategy->adaptive_target_initialized_ = true;
+  strategy->low_pressure_streak_ = strategy->low_pressure_streak_threshold(
+                                       make_strategy_config(harness, 4)) -
+                                   1;
+  strategy->last_adaptive_update_marker_.reset();
 
-  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 2);
-  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
+  const auto decision = strategy->decide(make_strategy_input(harness, 4));
+
+  EXPECT_EQ(decision.target_batch_limit, 2);
+  EXPECT_EQ(strategy->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(strategy->low_pressure_streak_, 0);
+}
+
+TEST(BatchCollector, UpdateAdaptiveTargetDoesNotShrinkBelowConfiguredMinimum)
+{
+  BatchCollectorHarness harness;
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
+
+  harness.opts.batching.adaptive.min_batch_size = 2;
+  strategy->adaptive_target_batch_size_ = 2;
+  strategy->adaptive_target_initialized_ = true;
+  strategy->low_pressure_streak_ = strategy->low_pressure_streak_threshold(
+                                       make_strategy_config(harness, 4)) -
+                                   1;
+  strategy->last_adaptive_update_marker_.reset();
+
+  const auto decision = strategy->decide(make_strategy_input(harness, 4));
+
+  EXPECT_EQ(decision.target_batch_limit, 2);
+  EXPECT_EQ(strategy->adaptive_target_batch_size_, 2);
+  EXPECT_EQ(strategy->low_pressure_streak_, 0);
 }
 
 TEST(BatchCollector, UpdateAdaptiveTargetResetsWhenCongested)
 {
-  starpu_server::InferenceQueue queue(4);
-  starpu_server::congestion::Config cfg;
-  cfg.tick_interval = std::chrono::milliseconds(10);
-  cfg.entry_horizon = std::chrono::milliseconds(20);
-  cfg.exit_horizon = std::chrono::milliseconds(20);
+  BatchCollectorHarness harness;
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
 
-  auto observability = std::make_shared<starpu_server::RuntimeObservability>();
-  observability->congestion_monitor =
-      std::make_shared<starpu_server::congestion::Monitor>(&queue, cfg);
-  observability->congestion_monitor->start();
+  strategy->adaptive_target_batch_size_ = 1;
+  strategy->adaptive_target_initialized_ = true;
+  strategy->low_pressure_streak_ = 6;
+  strategy->last_adaptive_update_marker_.reset();
 
-  BatchCollectorHarness harness{observability, &queue};
-  harness.collector->adaptive_target_batch_size_ = 1;
-  harness.collector->adaptive_target_initialized_ = true;
-  harness.collector->low_pressure_streak_ = 6;
+  auto input = make_strategy_input(harness, 4);
+  input.congested = true;
+  const auto decision = strategy->decide(input);
 
-  observability->congestion_monitor->record_arrival(1);
-  observability->congestion_monitor->record_rejection(1);
-  ASSERT_TRUE(wait_until(
-      [&] { return observability->congestion_monitor->congested(); },
-      std::chrono::milliseconds(500)));
-
-  harness.collector->last_adaptive_update_marker_.reset();
-  harness.collector->update_adaptive_batch_target(4);
-
-  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 4);
-  EXPECT_EQ(harness.collector->low_pressure_streak_, 0);
-
-  observability->congestion_monitor->shutdown();
+  EXPECT_EQ(decision.target_batch_limit, 4);
+  EXPECT_EQ(strategy->adaptive_target_batch_size_, 4);
+  EXPECT_EQ(strategy->low_pressure_streak_, 0);
 }
 
 TEST(BatchCollector, ShouldRefreshAdaptiveTargetRejectsDuplicateMonitorTick)
 {
   BatchCollectorHarness harness;
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
+
   const auto tick = starpu_server::task_runner_internal::Clock::now();
-  harness.collector->last_adaptive_update_marker_ = tick;
+  strategy->last_adaptive_update_marker_ = tick;
 
-  starpu_server::BatchCollector::BatchPressureSample pressure{};
-  pressure.monitor_tick = tick;
+  auto input = make_strategy_input(harness, 4);
+  input.monitor = starpu_server::BatchingStrategyMonitorSnapshot{.tick = tick};
 
-  EXPECT_FALSE(harness.collector->should_refresh_adaptive_target(pressure));
-  EXPECT_EQ(harness.collector->last_adaptive_update_marker_, tick);
+  EXPECT_FALSE(strategy->should_refresh_target(input));
+  EXPECT_EQ(strategy->last_adaptive_update_marker_, tick);
 }
 
 TEST(BatchCollector, ShouldRefreshAdaptiveTargetRateLimitsWithoutMonitorTick)
 {
   BatchCollectorHarness harness;
-  harness.collector->last_adaptive_update_marker_ =
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
+
+  strategy->last_adaptive_update_marker_ =
       starpu_server::task_runner_internal::Clock::now();
 
-  starpu_server::BatchCollector::BatchPressureSample pressure{};
-
-  EXPECT_FALSE(harness.collector->should_refresh_adaptive_target(pressure));
+  EXPECT_FALSE(
+      strategy->should_refresh_target(make_strategy_input(harness, 4)));
 }
 
 TEST(BatchCollector, HighPressureStepReturnsOneWhenCongestionDisabled)
 {
   BatchCollectorHarness harness;
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
+
   harness.opts.congestion.enabled = false;
 
-  EXPECT_EQ(harness.collector->high_pressure_step(8, true), 1);
+  EXPECT_EQ(
+      strategy->high_pressure_step(make_strategy_config(harness, 8), 8, true),
+      1);
 }
 
 TEST(BatchCollector, LowPressureStreakThresholdReturnsOneWhenDisabled)
 {
   BatchCollectorHarness harness;
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
+
   harness.opts.congestion.enabled = false;
 
-  EXPECT_EQ(harness.collector->low_pressure_streak_threshold(), 1);
+  EXPECT_EQ(
+      strategy->low_pressure_streak_threshold(make_strategy_config(harness, 4)),
+      1);
 }
 
 TEST(BatchCollector, CollectBatchNullFirstJobUsesObservabilityPendingMetric)
@@ -961,48 +1054,62 @@ TEST(
       families, "inference_batch_efficiency_ratio"));
 }
 
-TEST(BatchCollector, SampleBatchPressureHandlesNullPreparedAndInflightState)
+TEST(BatchCollector, SampleBatchingInputHandlesNullPreparedAndInflightState)
 {
   auto observability = std::make_shared<starpu_server::RuntimeObservability>();
   observability->congestion_monitor =
       std::make_shared<starpu_server::congestion::Monitor>(nullptr);
 
   BatchCollectorHarness harness{observability};
-  harness.collector->prepared_jobs_ = nullptr;
-  harness.collector->prepared_mutex_ = nullptr;
-  harness.collector->inflight_tasks_ = nullptr;
+  auto* input_provider = strategy_input_provider(harness);
+  ASSERT_NE(input_provider, nullptr);
+  input_provider->prepared_jobs_ = nullptr;
+  input_provider->prepared_mutex_ = nullptr;
+  input_provider->inflight_tasks_ = nullptr;
 
-  const auto sample = harness.collector->sample_batch_pressure();
+  const auto input = input_provider->sample();
 
-  EXPECT_FALSE(sample.state.congested);
-  EXPECT_TRUE(sample.state.low);
+  EXPECT_FALSE(input.congested);
+  EXPECT_EQ(input.runtime.prepared_depth, 0U);
+  EXPECT_EQ(input.runtime.inflight_tasks, 0U);
+  ASSERT_TRUE(input.monitor.has_value());
+  EXPECT_EQ(input.monitor->queue_size, 0U);
+  EXPECT_EQ(input.monitor->queue_capacity, 0U);
 }
 
-TEST(BatchCollector, SampleBatchPressureUsesPreparedDepthWithoutMutex)
+TEST(BatchCollector, SampleBatchingInputUsesPreparedDepthWithoutMutex)
 {
   BatchCollectorHarness harness;
   harness.prepared_jobs.resize(4);
-  harness.collector->prepared_mutex_ = nullptr;
+  auto* input_provider = strategy_input_provider(harness);
+  ASSERT_NE(input_provider, nullptr);
+  input_provider->prepared_mutex_ = nullptr;
 
-  const auto sample = harness.collector->sample_batch_pressure();
+  const auto input = input_provider->sample();
 
-  EXPECT_TRUE(sample.state.high);
-  EXPECT_FALSE(sample.state.low);
+  EXPECT_EQ(input.runtime.prepared_depth, 4U);
+  EXPECT_EQ(input.runtime.inflight_tasks, 0U);
 }
 
 TEST(BatchCollector, UpdateAdaptiveTargetUsesSevereHighPressureStep)
 {
   BatchCollectorHarness harness;
-  harness.opts.batching.max_batch_size = 6;
-  harness.prepared_jobs.resize(12);
-  harness.collector->adaptive_target_batch_size_ = 1;
-  harness.collector->adaptive_target_initialized_ = true;
-  harness.collector->low_pressure_streak_ = 0;
-  harness.collector->last_adaptive_update_marker_.reset();
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
 
-  harness.collector->update_adaptive_batch_target(6);
+  starpu_server::testing::set_effective_batch_capacity_for_tests(
+      harness.opts, 6);
+  strategy->adaptive_target_batch_size_ = 1;
+  strategy->adaptive_target_initialized_ = true;
+  strategy->low_pressure_streak_ = 0;
+  strategy->last_adaptive_update_marker_.reset();
 
-  EXPECT_EQ(harness.collector->adaptive_target_batch_size_, 3);
+  auto input = make_strategy_input(harness, 6);
+  input.runtime.prepared_depth = 12;
+  const auto decision = strategy->decide(input);
+
+  EXPECT_EQ(decision.target_batch_limit, 3);
+  EXPECT_EQ(strategy->adaptive_target_batch_size_, 3);
 }
 
 TEST(
@@ -1016,10 +1123,21 @@ TEST(
   harness.batching_done = true;
   harness.collector->prepared_mutex_ = nullptr;
   harness.collector->prepared_jobs_ = nullptr;
+  auto* strategy = adaptive_strategy(harness);
+  ASSERT_NE(strategy, nullptr);
+  strategy->adaptive_target_batch_size_ = 3;
+  strategy->adaptive_target_initialized_ = true;
+  strategy->low_pressure_streak_ = 2;
+  strategy->last_adaptive_update_marker_ =
+      starpu_server::task_runner_internal::Clock::now();
 
   harness.collector->reset_prepared_queue_state();
 
   EXPECT_FALSE(harness.batching_done);
+  EXPECT_EQ(strategy->adaptive_target_batch_size_, 1);
+  EXPECT_FALSE(strategy->adaptive_target_initialized_);
+  EXPECT_EQ(strategy->low_pressure_streak_, 0);
+  EXPECT_FALSE(strategy->last_adaptive_update_marker_.has_value());
   const auto families =
       observability->metrics->registry()->registry()->Collect();
   const auto prepared_depth =

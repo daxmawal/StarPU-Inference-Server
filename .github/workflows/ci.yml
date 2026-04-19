@@ -544,7 +544,9 @@ jobs:
     env:
       PERF_SERVER_ADDR: "127.0.0.1:50062"
       PERF_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_gpu_only.yml"
+      PERF_FIXED_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_fixed_gpu_only.yml"
       PERF_SCHEDULE_CSV: "../ci/perf/ci_perf_resnet.csv"
+      PERF_FIXED_SCHEDULE_CSV: "../ci/perf/ci_perf_resnet_smoke.csv"
       PERF_EXPECTED_REQUESTS: "6300"
       PERF_MAX_THROUGHPUT_DROP_PCT: "10"
       PERF_MAX_SERVER_OVERALL_P95_REGRESSION_PCT: "15"
@@ -612,6 +614,18 @@ jobs:
             --schedule-csv "$PERF_SCHEDULE_CSV" \
             --output-dir perf-artifacts
 
+      - name: Run fixed batching config smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bash scripts/run_perf_smoke.sh \
+            --build-dir build-clang \
+            --server "$PERF_SERVER_ADDR" \
+            --config "$PERF_FIXED_SERVER_CONFIG" \
+            --schedule-csv "$PERF_FIXED_SCHEDULE_CSV" \
+            --output-dir perf-fixed-artifacts
+
       - name: Compare candidate perf against baseline
         shell: bash
         run: |
@@ -640,4 +654,8 @@ jobs:
             build-clang/perf-artifacts/client.log
             build-clang/perf-artifacts/readiness.log
             build-clang/perf-artifacts/resnet152-summary.json
+            build-clang/perf-fixed-artifacts/server.log
+            build-clang/perf-fixed-artifacts/client.log
+            build-clang/perf-fixed-artifacts/readiness.log
+            build-clang/perf-fixed-artifacts/resnet152-summary.json
           if-no-files-found: ignore

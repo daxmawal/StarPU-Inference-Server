@@ -17,6 +17,7 @@
 #include "core/warmup.hpp"
 #include "monitoring/metrics.hpp"
 #include "starpu_task_worker/inference_queue.hpp"
+#include "test_batching_config.hpp"
 #include "test_helpers.hpp"
 #include "test_inference_runner.hpp"
 #include "test_warmup_runner.hpp"
@@ -449,12 +450,14 @@ TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenComputedRequestsNonPositive)
   fixture.opts.batching.warmup_request_nb = -1;
   fixture.opts.batching.warmup_batches_per_worker =
       std::numeric_limits<int>::max();
-  fixture.opts.batching.max_batch_size = std::numeric_limits<int>::max() - 1;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(
+      fixture.opts, std::numeric_limits<int>::max() - 1);
 
   const int configured_batches =
       std::max(0, fixture.opts.batching.warmup_batches_per_worker);
   ASSERT_GT(configured_batches, 0);
-  const int max_batch_size = std::max(1, fixture.opts.batching.max_batch_size);
+  const int max_batch_size =
+      std::max(1, fixture.opts.batching.resolved_max_batch_size);
   const auto product =
       static_cast<long long>(configured_batches) * max_batch_size;
   ASSERT_GT(product, static_cast<long long>(std::numeric_limits<int>::max()));

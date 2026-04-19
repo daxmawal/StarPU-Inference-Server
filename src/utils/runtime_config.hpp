@@ -101,6 +101,49 @@ parse_gpu_model_replication_policy(std::string_view value)
       value));
 }
 
+enum class BatchingStrategyKind : std::uint8_t {
+  Disabled,
+  Adaptive,
+  Fixed,
+};
+
+inline auto
+to_string(BatchingStrategyKind strategy) -> std::string_view
+{
+  switch (strategy) {
+    case BatchingStrategyKind::Disabled:
+      return "disabled";
+    case BatchingStrategyKind::Adaptive:
+      return "adaptive";
+    case BatchingStrategyKind::Fixed:
+      return "fixed";
+  }
+  return "disabled";
+}
+
+inline auto
+parse_batching_strategy_kind(std::string_view value) -> BatchingStrategyKind
+{
+  if (value == "disabled") {
+    return BatchingStrategyKind::Disabled;
+  }
+  if (value == "adaptive") {
+    return BatchingStrategyKind::Adaptive;
+  }
+  if (value == "fixed") {
+    return BatchingStrategyKind::Fixed;
+  }
+  throw std::invalid_argument(std::format(
+      "batching_strategy must be 'disabled', 'adaptive' or 'fixed' (got '{}')",
+      value));
+}
+
+inline auto
+batching_enabled(BatchingStrategyKind strategy) -> bool
+{
+  return strategy != BatchingStrategyKind::Disabled;
+}
+
 // =============================================================================
 // RuntimeConfig
 // -----------------------------------------------------------------------------
@@ -128,8 +171,19 @@ struct RuntimeConfig {
   };
 
   struct BatchingSettings {
+    struct AdaptiveSettings {
+      int min_batch_size = 1;
+      int max_batch_size = 1;
+    };
+
+    struct FixedSettings {
+      int batch_size = 1;
+    };
+
     int batch_coalesce_timeout_ms = 0;
-    int max_batch_size = 1;
+    // Resolved effective batch capacity used by the runtime pools and request
+    // validation after strategy-specific config is loaded.
+    int resolved_max_batch_size = 1;
     int pool_size = 0;
     std::size_t max_message_bytes = kDefaultMinMessageBytes;
     std::size_t max_queue_size = kDefaultMaxQueueSize;
@@ -138,7 +192,11 @@ struct RuntimeConfig {
     int warmup_request_nb = 2;
     int warmup_batches_per_worker = 1;
     bool synchronous = false;
-    bool dynamic_batching = true;
+    // Safe runtime default for programmatic construction. The YAML loader
+    // requires an explicit batching_strategy and overwrites this field.
+    BatchingStrategyKind strategy = BatchingStrategyKind::Disabled;
+    AdaptiveSettings adaptive{};
+    FixedSettings fixed{};
     bool trace_enabled = false;
     std::string trace_output_path = std::string(kDefaultTraceFileName);
   };
@@ -196,24 +254,86 @@ struct RuntimeConfig {
   bool valid = true;
 };
 
+inline auto
+resolved_batching_strategy_kind(const RuntimeConfig::BatchingSettings& batching)
+    -> BatchingStrategyKind
+{
+  return batching.strategy;
+}
+
+inline auto
+resolved_batch_capacity(const RuntimeConfig::BatchingSettings& batching) -> int
+{
+  switch (resolved_batching_strategy_kind(batching)) {
+    case BatchingStrategyKind::Disabled:
+      return std::max(1, batching.resolved_max_batch_size);
+    case BatchingStrategyKind::Adaptive:
+      return std::max(
+          {1, batching.resolved_max_batch_size,
+           batching.adaptive.max_batch_size});
+    case BatchingStrategyKind::Fixed:
+      return std::max(
+          {1, batching.resolved_max_batch_size, batching.fixed.batch_size});
+  }
+  return std::max(1, batching.resolved_max_batch_size);
+}
+
+inline auto
+resolved_adaptive_min_batch_size(
+    const RuntimeConfig::BatchingSettings& batching) -> int
+{
+  const int max_batch = resolved_batch_capacity(batching);
+  if (resolved_batching_strategy_kind(batching) !=
+      BatchingStrategyKind::Adaptive) {
+    return 1;
+  }
+  return std::clamp(batching.adaptive.min_batch_size, 1, max_batch);
+}
+
 inline void
 validate_batching_settings_coherence(
     const RuntimeConfig::BatchingSettings& batching)
 {
-  if (batching.max_batch_size <= 0) {
-    throw std::invalid_argument("max_batch_size must be > 0");
+  switch (resolved_batching_strategy_kind(batching)) {
+    case BatchingStrategyKind::Disabled:
+      break;
+    case BatchingStrategyKind::Adaptive:
+      if (batching.adaptive.min_batch_size <= 0) {
+        throw std::invalid_argument(
+            "adaptive_batching.min_batch_size must be > 0");
+      }
+      if (batching.adaptive.max_batch_size <= 0) {
+        throw std::invalid_argument(
+            "adaptive_batching.max_batch_size must be > 0");
+      }
+      if (batching.adaptive.min_batch_size > batching.adaptive.max_batch_size) {
+        throw std::invalid_argument(
+            "adaptive_batching.min_batch_size must be <= "
+            "adaptive_batching.max_batch_size");
+      }
+      break;
+    case BatchingStrategyKind::Fixed:
+      if (batching.fixed.batch_size <= 0) {
+        throw std::invalid_argument("fixed_batching.batch_size must be > 0");
+      }
+      break;
+  }
+
+  const int resolved_max_batch = resolved_batch_capacity(batching);
+  if (batching.resolved_max_batch_size <= 0) {
+    throw std::invalid_argument("resolved_max_batch_size must be > 0");
   }
   if (batching.pool_size <= 0) {
     throw std::invalid_argument("pool_size must be > 0");
   }
 
-  const auto max_batch = static_cast<std::size_t>(batching.max_batch_size);
+  const auto max_batch = static_cast<std::size_t>(resolved_max_batch);
   const auto pool_size = static_cast<std::size_t>(batching.pool_size);
   if (batching.max_queue_size < max_batch) {
     throw std::invalid_argument(std::format(
         "Incoherent batching config: max_queue_size ({}) must be >= "
         "max_batch_size ({})",
-        batching.max_queue_size, batching.max_batch_size));
+        batching.max_queue_size, resolved_max_batch));
   }
 
   if (batching.max_inflight_tasks > 0 &&
