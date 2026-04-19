@@ -99,9 +99,9 @@ sample_internal_pressure(const BatchingStrategyInput& input)
     const double inflight_ratio =
         static_cast<double>(input.runtime.inflight_tasks) /
         static_cast<double>(input.runtime.max_inflight_tasks);
-    const double backlog_ratio = static_cast<double>(total_internal_backlog) /
-                                 static_cast<double>(
-                                     input.runtime.max_inflight_tasks);
+    const double backlog_ratio =
+        static_cast<double>(total_internal_backlog) /
+        static_cast<double>(input.runtime.max_inflight_tasks);
     pressure.high = inflight_ratio >= kInternalHighRatio ||
                     backlog_ratio >= kInternalHighRatio;
     pressure.low = inflight_ratio <= kInternalLowRatio &&
@@ -113,8 +113,9 @@ sample_internal_pressure(const BatchingStrategyInput& input)
 
   const auto local_backlog_ref =
       static_cast<std::size_t>(std::max(1, input.config.batch_limit));
-  const double prepared_ratio = static_cast<double>(input.runtime.prepared_depth) /
-                                static_cast<double>(local_backlog_ref);
+  const double prepared_ratio =
+      static_cast<double>(input.runtime.prepared_depth) /
+      static_cast<double>(local_backlog_ref);
   pressure.high = prepared_ratio >= kPreparedBacklogHighRatio;
   pressure.low = input.runtime.prepared_depth == 0;
   pressure.severe = prepared_ratio >= kPreparedBacklogSevereRatio;
@@ -139,10 +140,10 @@ resolve_monitor_pressure(
   pressure.congested = input.congested;
   pressure.severe = pressure.congested || monitor.rejection_rps > 0.0 ||
                     internal_pressure.severe;
-  pressure.high =
-      pressure.severe || monitor.fill_ewma >= thresholds.fill_high ||
-      monitor.rho_ewma >= thresholds.rho_high || queue_high ||
-      internal_pressure.high;
+  pressure.high = pressure.severe ||
+                  monitor.fill_ewma >= thresholds.fill_high ||
+                  monitor.rho_ewma >= thresholds.rho_high || queue_high ||
+                  internal_pressure.high;
   pressure.low = !pressure.congested && monitor.rejection_rps <= 0.0 &&
                  monitor.fill_ewma <= thresholds.fill_low &&
                  monitor.rho_ewma <= thresholds.rho_low && queue_low &&
@@ -161,8 +162,7 @@ resolve_runtime_pressure(
 
   ResolvedBatchPressure pressure{};
   pressure.congested = input.congested;
-  pressure.high =
-      queue_fill >= thresholds.fill_high || internal_pressure.high;
+  pressure.high = queue_fill >= thresholds.fill_high || internal_pressure.high;
   pressure.low = !pressure.congested && queue_fill <= thresholds.fill_low &&
                  internal_pressure.low;
   pressure.severe = pressure.congested || internal_pressure.severe;
@@ -287,8 +287,8 @@ AdaptiveBatchingStrategy::update_target_batch_limit(
 }
 
 auto
-AdaptiveBatchingStrategy::should_refresh_target(const BatchingStrategyInput& input)
-    -> bool
+AdaptiveBatchingStrategy::should_refresh_target(
+    const BatchingStrategyInput& input) -> bool
 {
   const auto& config = input.config;
   if (!config.congestion_enabled) {
@@ -318,8 +318,7 @@ AdaptiveBatchingStrategy::should_refresh_target(const BatchingStrategyInput& inp
 
 auto
 AdaptiveBatchingStrategy::high_pressure_step(
-    const BatchingStrategyConfig& config, int batch_limit,
-    bool severe) -> int
+    const BatchingStrategyConfig& config, int batch_limit, bool severe) -> int
 {
   if (batch_limit <= 1 || !config.congestion_enabled) {
     return 1;

@@ -9,8 +9,8 @@ namespace starpu_server {
 
 auto
 RuntimeBatchCapacityPolicy::job_sample_size(
-    const RuntimeConfig* opts, const std::shared_ptr<InferenceJob>& job) const
-    -> int64_t
+    const RuntimeConfig* opts,
+    const std::shared_ptr<InferenceJob>& job) const -> int64_t
 {
   if (!job) {
     return 0;
@@ -36,8 +36,8 @@ RuntimeBatchCapacityPolicy::sample_limit_per_batch(
 auto
 RuntimeBatchCapacityPolicy::exceeds_sample_limit(
     const RuntimeConfig* opts, int64_t accumulated_samples,
-    const std::shared_ptr<InferenceJob>& job, int64_t max_samples_cap) const
-    -> bool
+    const std::shared_ptr<InferenceJob>& job,
+    int64_t max_samples_cap) const -> bool
 {
   if (max_samples_cap <= 0) {
     return false;

@@ -59,10 +59,11 @@ load_inflight_tasks(const std::atomic<std::size_t>* inflight_tasks)
 }
 
 auto
-current_congested(
-    const std::shared_ptr<RuntimeObservability>& observability) -> bool
+current_congested(const std::shared_ptr<RuntimeObservability>& observability)
+    -> bool
 {
-  if (observability != nullptr && observability->congestion_monitor != nullptr) {
+  if (observability != nullptr &&
+      observability->congestion_monitor != nullptr) {
     return observability->congestion_monitor->congested();
   }
   return congestion::is_congested();
@@ -73,9 +74,9 @@ sample_monitor_snapshot(
     const std::shared_ptr<RuntimeObservability>& observability)
     -> std::optional<BatchingStrategyMonitorSnapshot>
 {
-  const auto* monitor =
-      observability != nullptr ? observability->congestion_monitor.get()
-                               : nullptr;
+  const auto* monitor = observability != nullptr
+                            ? observability->congestion_monitor.get()
+                            : nullptr;
   const auto snapshot =
       monitor != nullptr
           ? std::optional<congestion::Snapshot>(monitor->snapshot())
@@ -101,13 +102,11 @@ RuntimeBatchingStrategyInputProvider::RuntimeBatchingStrategyInputProvider(
     const RuntimeConfig* opts, InferenceQueue* queue,
     std::shared_ptr<RuntimeObservability> observability,
     const std::deque<std::shared_ptr<InferenceJob>>* prepared_jobs,
-    std::mutex* prepared_mutex,
-    const std::atomic<std::size_t>* inflight_tasks,
+    std::mutex* prepared_mutex, const std::atomic<std::size_t>* inflight_tasks,
     std::size_t max_inflight_tasks)
     : opts_(opts), queue_(queue), observability_(std::move(observability)),
       prepared_jobs_(prepared_jobs), prepared_mutex_(prepared_mutex),
-      inflight_tasks_(inflight_tasks),
-      max_inflight_tasks_(max_inflight_tasks)
+      inflight_tasks_(inflight_tasks), max_inflight_tasks_(max_inflight_tasks)
 {
 }
 

@@ -61,16 +61,16 @@ class BatchingStrategy {
   BatchingStrategy(BatchingStrategy&&) = default;
   auto operator=(BatchingStrategy&&) -> BatchingStrategy& = default;
 
-  [[nodiscard]] virtual auto decide(
-      const BatchingStrategyInput& input) -> BatchingStrategyDecision = 0;
+  [[nodiscard]] virtual auto decide(const BatchingStrategyInput& input)
+      -> BatchingStrategyDecision = 0;
 
   virtual void reset() = 0;
 };
 
 class AdaptiveBatchingStrategy final : public BatchingStrategy {
  public:
-  [[nodiscard]] auto decide(
-      const BatchingStrategyInput& input) -> BatchingStrategyDecision override;
+  [[nodiscard]] auto decide(const BatchingStrategyInput& input)
+      -> BatchingStrategyDecision override;
 
   void reset() override;
 
@@ -97,8 +97,8 @@ class AdaptiveBatchingStrategy final : public BatchingStrategy {
 
 class FixedBatchingStrategy final : public BatchingStrategy {
  public:
-  [[nodiscard]] auto decide(
-      const BatchingStrategyInput& input) -> BatchingStrategyDecision override;
+  [[nodiscard]] auto decide(const BatchingStrategyInput& input)
+      -> BatchingStrategyDecision override;
 
   void reset() override {}
 };

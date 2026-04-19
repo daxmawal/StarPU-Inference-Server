@@ -15,11 +15,10 @@ class BatchCompositionPolicy {
   BatchCompositionPolicy() = default;
   virtual ~BatchCompositionPolicy() = default;
   BatchCompositionPolicy(const BatchCompositionPolicy&) = default;
-  auto operator=(const BatchCompositionPolicy&)
-      -> BatchCompositionPolicy& = default;
+  auto operator=(const BatchCompositionPolicy&) -> BatchCompositionPolicy& =
+                                                       default;
   BatchCompositionPolicy(BatchCompositionPolicy&&) = default;
-  auto operator=(BatchCompositionPolicy&&) -> BatchCompositionPolicy& =
-      default;
+  auto operator=(BatchCompositionPolicy&&) -> BatchCompositionPolicy& = default;
 
   [[nodiscard]] virtual auto should_hold_job(
       const std::shared_ptr<InferenceJob>& candidate,
