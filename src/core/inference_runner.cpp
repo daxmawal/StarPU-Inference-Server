@@ -294,7 +294,7 @@ resolve_model_path(const RuntimeConfig& opts) -> std::string
 
 static void
 set_model_loaded_metric(
-    MetricsRecorder* metrics, std::string_view model_label,
+    const MetricsRecorder* metrics, std::string_view model_label,
     std::string_view device, bool loaded)
 {
   if (metrics != nullptr) {

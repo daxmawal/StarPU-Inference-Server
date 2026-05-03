@@ -7,6 +7,10 @@ set(GRPC_CLIENT_DIR ${SRC_DIR}/grpc/client)
 set(MONITORING_DIR ${SRC_DIR}/monitoring)
 set(TESTS_DIR ${PROJECT_SOURCE_DIR}/tests)
 
+if(ENABLE_TSAN AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_program(SETARCH_EXECUTABLE setarch)
+endif()
+
 function(starpu_configure_test_compile_target target_name)
   target_compile_features(${target_name} PRIVATE cxx_std_23)
   target_compile_definitions(${target_name} PRIVATE _GLIBCXX_USE_CXX11_ABI=1
@@ -82,7 +86,13 @@ endfunction()
 
 function(starpu_add_domain_ctest target_name timeout_seconds)
   set(labels "${ARGN}")
-  add_test(NAME ${target_name} COMMAND $<TARGET_FILE:${target_name}>)
+  if(ENABLE_TSAN AND SETARCH_EXECUTABLE)
+    add_test(NAME ${target_name}
+             COMMAND ${SETARCH_EXECUTABLE} ${CMAKE_SYSTEM_PROCESSOR} -R
+                     $<TARGET_FILE:${target_name}>)
+  else()
+    add_test(NAME ${target_name} COMMAND $<TARGET_FILE:${target_name}>)
+  endif()
   set_tests_properties(${target_name} PROPERTIES TIMEOUT ${timeout_seconds}
                                                  LABELS "${labels}")
 endfunction()
