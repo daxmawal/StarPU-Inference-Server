@@ -100,7 +100,10 @@ class FixedBatchingStrategy final : public BatchingStrategy {
   [[nodiscard]] auto decide(const BatchingStrategyInput& input)
       -> BatchingStrategyDecision override;
 
-  void reset() override {}
+  void reset() override
+  {
+    // Fixed batching is stateless, so reset has no work to perform.
+  }
 };
 
 [[nodiscard]] auto make_batching_strategy(BatchingStrategyKind kind)

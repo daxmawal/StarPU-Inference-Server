@@ -959,6 +959,8 @@ TEST(ConfigLoader, DeviceBlockParsesCpuCudaAndNumaSettings)
 
 TEST(ConfigLoader, BatchingBlockParsesNetworkQueueAndTraceSettings)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   const auto model_path =
       WriteEmptyModelFile("config_loader_batching_block_model.pt");
   std::string yaml = ReplaceModelPath(
@@ -996,8 +998,7 @@ TEST(ConfigLoader, BatchingBlockParsesNetworkQueueAndTraceSettings)
   EXPECT_EQ(cfg.batching.max_message_bytes, 65536U);
   EXPECT_EQ(cfg.batching.max_queue_size, 64U);
   EXPECT_EQ(cfg.batching.max_inflight_tasks, 8U);
-  EXPECT_EQ(
-      cfg.batching.strategy, starpu_server::BatchingStrategyKind::Disabled);
+  EXPECT_EQ(cfg.batching.strategy, Disabled);
   EXPECT_TRUE(cfg.batching.trace_enabled);
   EXPECT_EQ(
       cfg.batching.trace_output_path,
@@ -1168,6 +1169,8 @@ TEST(ConfigLoader, LoadsStarpuEnvVariables)
 
 TEST(ConfigLoader, LoadsValidConfig)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   const auto model_path = WriteEmptyModelFile("config_loader_valid_model.pt");
 
   std::ostringstream yaml;
@@ -1224,8 +1227,7 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(cfg.model->outputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
   EXPECT_EQ(cfg.batching.resolved_max_batch_size, 4);
-  EXPECT_EQ(
-      cfg.batching.strategy, starpu_server::BatchingStrategyKind::Adaptive);
+  EXPECT_EQ(cfg.batching.strategy, Adaptive);
   EXPECT_EQ(cfg.batching.adaptive.min_batch_size, 2);
   EXPECT_EQ(cfg.batching.adaptive.max_batch_size, 4);
   EXPECT_EQ(cfg.batching.batch_coalesce_timeout_ms, 15);
@@ -1280,6 +1282,8 @@ TEST(ConfigLoader, ParsesGpuModelReplicationPolicy)
 
 TEST(ConfigLoader, ParsesBatchingStrategy)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   const auto model_path =
       WriteEmptyModelFile("config_loader_batching_strategy_model.pt");
 
@@ -1307,7 +1311,7 @@ TEST(ConfigLoader, ParsesBatchingStrategy)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.strategy, starpu_server::BatchingStrategyKind::Fixed);
+  EXPECT_EQ(cfg.batching.strategy, Fixed);
   EXPECT_EQ(cfg.batching.fixed.batch_size, 4);
   EXPECT_EQ(cfg.batching.resolved_max_batch_size, 4);
 }

@@ -107,7 +107,13 @@ struct BatchCollectorHarness {
     opts.congestion.exit_horizon_ms = 30;
 
     collector = std::make_unique<starpu_server::BatchCollector>(
-        queue, &opts, nullptr, &pending_job, observability,
+        starpu_server::BatchCollectorRuntimeContext{
+            .queue = queue,
+            .opts = &opts,
+            .starpu = nullptr,
+            .pending_job = &pending_job,
+            .observability = observability,
+        },
         starpu_server::PreparedBatchingContext{
             .prepared_mutex = &prepared_mutex,
             .prepared_cv = &prepared_cv,
@@ -837,6 +843,23 @@ TEST(BatchCollector, MergeInputMemoryHoldersAggregatesAllHolders)
   EXPECT_EQ(merged[0].get(), static_cast<const void*>(holder0.get()));
   EXPECT_EQ(merged[1].get(), static_cast<const void*>(holder1.get()));
   EXPECT_EQ(merged[2].get(), static_cast<const void*>(holder2.get()));
+}
+
+TEST(BatchCollector, FixedBatchingStrategyResetDoesNotChangeDecision)
+{
+  starpu_server::FixedBatchingStrategy strategy;
+  starpu_server::BatchingStrategyInput input;
+  input.config.batch_limit = 4;
+  input.config.coalesce_timeout_ms = 7;
+
+  const auto before_reset = strategy.decide(input);
+  strategy.reset();
+  const auto after_reset = strategy.decide(input);
+
+  EXPECT_EQ(before_reset.target_batch_limit, 4);
+  EXPECT_EQ(before_reset.coalesce_timeout_ms, 7);
+  EXPECT_EQ(after_reset.target_batch_limit, before_reset.target_batch_limit);
+  EXPECT_EQ(after_reset.coalesce_timeout_ms, before_reset.coalesce_timeout_ms);
 }
 
 TEST(BatchCollector, UpdateAdaptiveTargetSetsSingleSlotForBatchLimitOne)

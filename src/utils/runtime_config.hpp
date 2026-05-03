@@ -110,12 +110,14 @@ enum class BatchingStrategyKind : std::uint8_t {
 inline auto
 to_string(BatchingStrategyKind strategy) -> std::string_view
 {
+  using enum BatchingStrategyKind;
+
   switch (strategy) {
-    case BatchingStrategyKind::Disabled:
+    case Disabled:
       return "disabled";
-    case BatchingStrategyKind::Adaptive:
+    case Adaptive:
       return "adaptive";
-    case BatchingStrategyKind::Fixed:
+    case Fixed:
       return "fixed";
   }
   return "disabled";
@@ -124,14 +126,16 @@ to_string(BatchingStrategyKind strategy) -> std::string_view
 inline auto
 parse_batching_strategy_kind(std::string_view value) -> BatchingStrategyKind
 {
+  using enum BatchingStrategyKind;
+
   if (value == "disabled") {
-    return BatchingStrategyKind::Disabled;
+    return Disabled;
   }
   if (value == "adaptive") {
-    return BatchingStrategyKind::Adaptive;
+    return Adaptive;
   }
   if (value == "fixed") {
-    return BatchingStrategyKind::Fixed;
+    return Fixed;
   }
   throw std::invalid_argument(std::format(
       "batching_strategy must be 'disabled', 'adaptive' or 'fixed' (got '{}')",
@@ -141,7 +145,9 @@ parse_batching_strategy_kind(std::string_view value) -> BatchingStrategyKind
 inline auto
 batching_enabled(BatchingStrategyKind strategy) -> bool
 {
-  return strategy != BatchingStrategyKind::Disabled;
+  using enum BatchingStrategyKind;
+
+  return strategy != Disabled;
 }
 
 // =============================================================================
@@ -264,14 +270,16 @@ resolved_batching_strategy_kind(const RuntimeConfig::BatchingSettings& batching)
 inline auto
 resolved_batch_capacity(const RuntimeConfig::BatchingSettings& batching) -> int
 {
+  using enum BatchingStrategyKind;
+
   switch (resolved_batching_strategy_kind(batching)) {
-    case BatchingStrategyKind::Disabled:
+    case Disabled:
       return std::max(1, batching.resolved_max_batch_size);
-    case BatchingStrategyKind::Adaptive:
+    case Adaptive:
       return std::max(
           {1, batching.resolved_max_batch_size,
            batching.adaptive.max_batch_size});
-    case BatchingStrategyKind::Fixed:
+    case Fixed:
       return std::max(
           {1, batching.resolved_max_batch_size, batching.fixed.batch_size});
   }
@@ -282,9 +290,10 @@ inline auto
 resolved_adaptive_min_batch_size(
     const RuntimeConfig::BatchingSettings& batching) -> int
 {
+  using enum BatchingStrategyKind;
+
   const int max_batch = resolved_batch_capacity(batching);
-  if (resolved_batching_strategy_kind(batching) !=
-      BatchingStrategyKind::Adaptive) {
+  if (resolved_batching_strategy_kind(batching) != Adaptive) {
     return 1;
   }
   return std::clamp(batching.adaptive.min_batch_size, 1, max_batch);
@@ -294,10 +303,12 @@ inline void
 validate_batching_settings_coherence(
     const RuntimeConfig::BatchingSettings& batching)
 {
+  using enum BatchingStrategyKind;
+
   switch (resolved_batching_strategy_kind(batching)) {
-    case BatchingStrategyKind::Disabled:
+    case Disabled:
       break;
-    case BatchingStrategyKind::Adaptive:
+    case Adaptive:
       if (batching.adaptive.min_batch_size <= 0) {
         throw std::invalid_argument(
             "adaptive_batching.min_batch_size must be > 0");
@@ -312,7 +323,7 @@ validate_batching_settings_coherence(
             "adaptive_batching.max_batch_size");
       }
       break;
-    case BatchingStrategyKind::Fixed:
+    case Fixed:
       if (batching.fixed.batch_size <= 0) {
         throw std::invalid_argument("fixed_batching.batch_size must be > 0");
       }

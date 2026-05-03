@@ -234,8 +234,10 @@ TEST(
     RuntimeConfigUtils,
     ValidateBatchingSettingsCoherenceIgnoresInactiveAdaptiveSettingsForFixed)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   starpu_server::RuntimeConfig::BatchingSettings batching;
-  batching.strategy = starpu_server::BatchingStrategyKind::Fixed;
+  batching.strategy = Fixed;
   batching.resolved_max_batch_size = 4;
   batching.fixed.batch_size = 4;
   batching.pool_size = 1;
@@ -250,8 +252,10 @@ TEST(
     RuntimeConfigUtils,
     ValidateBatchingSettingsCoherenceIgnoresInactiveFixedSettingsForAdaptive)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   starpu_server::RuntimeConfig::BatchingSettings batching;
-  batching.strategy = starpu_server::BatchingStrategyKind::Adaptive;
+  batching.strategy = Adaptive;
   batching.resolved_max_batch_size = 4;
   batching.adaptive.min_batch_size = 1;
   batching.adaptive.max_batch_size = 4;
@@ -266,8 +270,10 @@ TEST(
     RuntimeConfigUtils,
     ValidateBatchingSettingsCoherenceRejectsNonPositiveFixedBatchSizeWhenActive)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   starpu_server::RuntimeConfig::BatchingSettings batching;
-  batching.strategy = starpu_server::BatchingStrategyKind::Fixed;
+  batching.strategy = Fixed;
   batching.resolved_max_batch_size = 1;
   batching.fixed.batch_size = 0;
   batching.pool_size = 1;
@@ -318,12 +324,11 @@ TEST(RuntimeConfigUtils, ParseGpuModelReplicationPolicyRejectsUnknownValue)
 TEST(RuntimeConfigUtils, BatchingStrategyKindToStringHandlesAllBranches)
 {
   using starpu_server::BatchingStrategyKind;
+  using enum starpu_server::BatchingStrategyKind;
 
-  EXPECT_EQ(
-      starpu_server::to_string(BatchingStrategyKind::Disabled), "disabled");
-  EXPECT_EQ(
-      starpu_server::to_string(BatchingStrategyKind::Adaptive), "adaptive");
-  EXPECT_EQ(starpu_server::to_string(BatchingStrategyKind::Fixed), "fixed");
+  EXPECT_EQ(starpu_server::to_string(Disabled), "disabled");
+  EXPECT_EQ(starpu_server::to_string(Adaptive), "adaptive");
+  EXPECT_EQ(starpu_server::to_string(Fixed), "fixed");
 
   const auto invalid_strategy = static_cast<BatchingStrategyKind>(
       std::numeric_limits<std::uint8_t>::max());
@@ -332,15 +337,11 @@ TEST(RuntimeConfigUtils, BatchingStrategyKindToStringHandlesAllBranches)
 
 TEST(RuntimeConfigUtils, ParseBatchingStrategyKindParsesKnownValues)
 {
-  EXPECT_EQ(
-      starpu_server::parse_batching_strategy_kind("disabled"),
-      starpu_server::BatchingStrategyKind::Disabled);
-  EXPECT_EQ(
-      starpu_server::parse_batching_strategy_kind("adaptive"),
-      starpu_server::BatchingStrategyKind::Adaptive);
-  EXPECT_EQ(
-      starpu_server::parse_batching_strategy_kind("fixed"),
-      starpu_server::BatchingStrategyKind::Fixed);
+  using enum starpu_server::BatchingStrategyKind;
+
+  EXPECT_EQ(starpu_server::parse_batching_strategy_kind("disabled"), Disabled);
+  EXPECT_EQ(starpu_server::parse_batching_strategy_kind("adaptive"), Adaptive);
+  EXPECT_EQ(starpu_server::parse_batching_strategy_kind("fixed"), Fixed);
 }
 
 TEST(RuntimeConfigUtils, ParseBatchingStrategyKindRejectsUnknownValue)
@@ -352,25 +353,29 @@ TEST(RuntimeConfigUtils, ParseBatchingStrategyKindRejectsUnknownValue)
 
 TEST(RuntimeConfigUtils, DefaultBatchingStrategyIsDisabled)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   starpu_server::RuntimeConfig::BatchingSettings batching;
-  EXPECT_EQ(batching.strategy, starpu_server::BatchingStrategyKind::Disabled);
+  EXPECT_EQ(batching.strategy, Disabled);
 }
 
 TEST(RuntimeConfigUtils, ResolvedBatchCapacityPrefersEffectiveStrategyLimit)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   starpu_server::RuntimeConfig::BatchingSettings batching;
 
-  batching.strategy = starpu_server::BatchingStrategyKind::Adaptive;
+  batching.strategy = Adaptive;
   batching.resolved_max_batch_size = 4;
   batching.adaptive.max_batch_size = 1;
   EXPECT_EQ(starpu_server::resolved_batch_capacity(batching), 4);
 
-  batching.strategy = starpu_server::BatchingStrategyKind::Fixed;
+  batching.strategy = Fixed;
   batching.resolved_max_batch_size = 6;
   batching.fixed.batch_size = 1;
   EXPECT_EQ(starpu_server::resolved_batch_capacity(batching), 6);
 
-  batching.strategy = starpu_server::BatchingStrategyKind::Disabled;
+  batching.strategy = Disabled;
   batching.resolved_max_batch_size = 3;
   EXPECT_EQ(starpu_server::resolved_batch_capacity(batching), 3);
 }

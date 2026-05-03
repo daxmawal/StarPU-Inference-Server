@@ -36,6 +36,14 @@ struct InflightContext {
   std::size_t max_inflight_tasks{0};
 };
 
+struct BatchCollectorRuntimeContext {
+  InferenceQueue* queue{};
+  const RuntimeConfig* opts{};
+  StarPUSetup* starpu{};
+  std::shared_ptr<InferenceJob>* pending_job{};
+  std::shared_ptr<RuntimeObservability> observability;
+};
+
 struct BatchCollectorBatchingDependencies {
   std::unique_ptr<BatchCapacityPolicy> capacity_policy;
   std::unique_ptr<BatchCompositionPolicy> composition_policy;
@@ -46,9 +54,7 @@ struct BatchCollectorBatchingDependencies {
 class BatchCollector {
  public:
   BatchCollector(
-      InferenceQueue* queue, const RuntimeConfig* opts, StarPUSetup* starpu,
-      std::shared_ptr<InferenceJob>* pending_job,
-      std::shared_ptr<RuntimeObservability> observability,
+      BatchCollectorRuntimeContext runtime,
       const PreparedBatchingContext& prepared, const InflightContext& inflight,
       BatchCollectorBatchingDependencies batching_dependencies);
 

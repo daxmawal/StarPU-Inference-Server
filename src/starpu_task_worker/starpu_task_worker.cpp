@@ -322,11 +322,19 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
     }
   }
 
+  using enum BatchingStrategyKind;
+
   const auto strategy_kind =
       opts_ != nullptr ? resolved_batching_strategy_kind(opts_->batching)
-                       : BatchingStrategyKind::Disabled;
+                       : Disabled;
   batch_collector_ = std::make_unique<BatchCollector>(
-      queue_, opts_, starpu_, &pending_job_, observability_,
+      BatchCollectorRuntimeContext{
+          .queue = queue_,
+          .opts = opts_,
+          .starpu = starpu_,
+          .pending_job = &pending_job_,
+          .observability = observability_,
+      },
       PreparedBatchingContext{
           .prepared_mutex = &prepared_state_.mutex,
           .prepared_cv = &prepared_state_.cv,

@@ -54,7 +54,10 @@ class DisabledBatchingStrategy final : public BatchingStrategy {
     return {.target_batch_limit = 1, .coalesce_timeout_ms = 0};
   }
 
-  void reset() override {}
+  void reset() override
+  {
+    // Disabled batching is stateless, so reset has no work to perform.
+  }
 };
 
 constexpr double kInternalHighRatio = 0.75;
@@ -195,9 +198,9 @@ AdaptiveBatchingStrategy::decide(const BatchingStrategyInput& input)
   const auto& config = input.config;
   const auto pressure = resolve_batch_pressure(input);
   const int batch_limit = std::max(1, config.batch_limit);
-  const int min_batch_limit =
-      std::clamp(config.min_batch_limit, 1, batch_limit);
-  if (batch_limit <= min_batch_limit) {
+  if (const int min_batch_limit =
+          std::clamp(config.min_batch_limit, 1, batch_limit);
+      batch_limit <= min_batch_limit) {
     adaptive_target_batch_size_ = min_batch_limit;
     adaptive_target_initialized_ = true;
     low_pressure_streak_ = 0;
@@ -306,9 +309,9 @@ AdaptiveBatchingStrategy::should_refresh_target(
   }
 
   const auto now = MonotonicClock::now();
-  const auto tick_interval = std::chrono::milliseconds(
-      std::max(1, config.congestion_tick_interval_ms));
-  if (last_adaptive_update_marker_.has_value() &&
+  if (const auto tick_interval = std::chrono::milliseconds(
+          std::max(1, config.congestion_tick_interval_ms));
+      last_adaptive_update_marker_.has_value() &&
       now - *last_adaptive_update_marker_ < tick_interval) {
     return false;
   }
@@ -368,12 +371,14 @@ auto
 make_batching_strategy(BatchingStrategyKind kind)
     -> std::unique_ptr<BatchingStrategy>
 {
+  using enum BatchingStrategyKind;
+
   switch (kind) {
-    case BatchingStrategyKind::Disabled:
+    case Disabled:
       return std::make_unique<DisabledBatchingStrategy>();
-    case BatchingStrategyKind::Adaptive:
+    case Adaptive:
       return std::make_unique<AdaptiveBatchingStrategy>();
-    case BatchingStrategyKind::Fixed:
+    case Fixed:
       return std::make_unique<FixedBatchingStrategy>();
   }
   return std::make_unique<DisabledBatchingStrategy>();

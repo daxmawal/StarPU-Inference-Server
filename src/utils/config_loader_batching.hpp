@@ -211,14 +211,16 @@ parse_batching_strategy_settings(
   parse_adaptive_batching(root, batching);
   parse_fixed_batching(root, batching);
 
+  using enum BatchingStrategyKind;
+
   switch (batching.strategy) {
-    case BatchingStrategyKind::Disabled:
+    case Disabled:
       resolve_disabled_batching(presence, batching);
       break;
-    case BatchingStrategyKind::Adaptive:
+    case Adaptive:
       resolve_adaptive_batching(root, presence, batching);
       break;
-    case BatchingStrategyKind::Fixed:
+    case Fixed:
       resolve_fixed_batching(root, presence, batching);
       break;
   }

@@ -144,7 +144,7 @@ update_aggregated_batch_timing(
 
 void
 attach_materialized_inputs_or_pending_jobs(
-    const BatchCompositionPolicy& composition_policy, StarPUSetup* starpu,
+    const BatchCompositionPolicy& composition_policy, const StarPUSetup* starpu,
     std::vector<std::shared_ptr<InferenceJob>>& jobs,
     const std::shared_ptr<InferenceJob>& master, int64_t effective_batch)
 {
@@ -206,13 +206,12 @@ trace_formed_batch_if_enabled(
 }  // namespace
 
 BatchCollector::BatchCollector(
-    InferenceQueue* queue, const RuntimeConfig* opts, StarPUSetup* starpu,
-    std::shared_ptr<InferenceJob>* pending_job,
-    std::shared_ptr<RuntimeObservability> observability,
+    BatchCollectorRuntimeContext runtime,
     const PreparedBatchingContext& prepared, const InflightContext& inflight,
     BatchCollectorBatchingDependencies batching_dependencies)
-    : queue_(queue), opts_(opts), starpu_(starpu), pending_job_(pending_job),
-      observability_(std::move(observability)),
+    : queue_(runtime.queue), opts_(runtime.opts), starpu_(runtime.starpu),
+      pending_job_(runtime.pending_job),
+      observability_(std::move(runtime.observability)),
       inflight_tasks_(inflight.inflight_tasks),
       inflight_cv_(inflight.inflight_cv),
       inflight_mutex_(inflight.inflight_mutex),

@@ -30,7 +30,9 @@ configure_adaptive_batching_for_tests(
     RuntimeConfig& opts, int max_batch_size,
     std::optional<int> min_batch_size = std::nullopt)
 {
-  opts.batching.strategy = BatchingStrategyKind::Adaptive;
+  using enum BatchingStrategyKind;
+
+  opts.batching.strategy = Adaptive;
   set_effective_batch_capacity_for_tests(opts, max_batch_size);
   if (min_batch_size.has_value()) {
     opts.batching.adaptive.min_batch_size =
@@ -41,14 +43,18 @@ configure_adaptive_batching_for_tests(
 inline void
 configure_fixed_batching_for_tests(RuntimeConfig& opts, int batch_size)
 {
-  opts.batching.strategy = BatchingStrategyKind::Fixed;
+  using enum BatchingStrategyKind;
+
+  opts.batching.strategy = Fixed;
   set_effective_batch_capacity_for_tests(opts, batch_size);
 }
 
 inline void
 configure_disabled_batching_for_tests(RuntimeConfig& opts)
 {
-  opts.batching.strategy = BatchingStrategyKind::Disabled;
+  using enum BatchingStrategyKind;
+
+  opts.batching.strategy = Disabled;
   set_effective_batch_capacity_for_tests(opts, 1);
 }
 
