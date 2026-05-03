@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <yaml-cpp/yaml.h>
 
 #include <array>
 #include <atomic>
@@ -13,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -56,6 +58,34 @@ WriteEmptyModelFile(const std::string& name) -> std::filesystem::path
   const auto path = DeterministicTempPath(name);
   std::ofstream(path).put('\0');
   return path;
+}
+
+auto
+WriteExampleConfigWithTempModel(const std::filesystem::path& config_path)
+    -> std::filesystem::path
+{
+  YAML::Node config = YAML::LoadFile(config_path.string());
+  if (!config.IsMap()) {
+    throw std::invalid_argument("example config root must be a map");
+  }
+  const YAML::Node model_node = config["model"];
+  if (!model_node || !model_node.IsScalar()) {
+    throw std::invalid_argument("example config must define a scalar model");
+  }
+
+  const auto model_path = WriteEmptyModelFile(std::format(
+      "config_loader_{}_example_model.pt", config_path.stem().string()));
+  config["model"] = model_path.string();
+
+  YAML::Emitter emitter;
+  emitter << config;
+  if (!emitter.good()) {
+    throw std::runtime_error(emitter.GetLastError());
+  }
+
+  return WriteTempFile(
+      std::format("config_loader_{}_example.yaml", config_path.stem().string()),
+      emitter.c_str());
 }
 
 auto
@@ -3336,26 +3366,8 @@ TEST(ConfigLoader, LoadsVersionedExampleYamlFiles)
     SCOPED_TRACE(config_path.string());
     ASSERT_TRUE(std::filesystem::exists(config_path));
 
-    auto effective_config_path = config_path;
-    if (config_path.filename() == "bert_docker.yml") {
-      std::ifstream input(config_path);
-      ASSERT_TRUE(input.is_open());
-
-      std::ostringstream normalized_yaml;
-      normalized_yaml << input.rdbuf();
-
-      const std::string docker_model_path =
-          "/workspace/models/bert_libtorch.pt";
-      const std::string test_model_path =
-          (repo_root / "models/bert_libtorch.pt").string();
-      const auto path_pos = normalized_yaml.str().find(docker_model_path);
-      ASSERT_NE(path_pos, std::string::npos);
-
-      std::string yaml_text = normalized_yaml.str();
-      yaml_text.replace(path_pos, docker_model_path.size(), test_model_path);
-      effective_config_path =
-          WriteTempFile("config_loader_bert_docker_example.yaml", yaml_text);
-    }
+    const auto effective_config_path =
+        WriteExampleConfigWithTempModel(config_path);
 
     const RuntimeConfig cfg = load_config(effective_config_path.string());
 
