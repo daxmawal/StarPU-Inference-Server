@@ -21,6 +21,10 @@ target_sources(
           ${UTILS_DIR}/config_loader.cpp
           ${MONITORING_DIR}/congestion_monitor.cpp
           ${STARPU_TASK_WORKER_DIR}/starpu_task_worker.cpp
+          ${STARPU_TASK_WORKER_DIR}/batch_capacity_policy.cpp
+          ${STARPU_TASK_WORKER_DIR}/batch_composition_policy.cpp
+          ${STARPU_TASK_WORKER_DIR}/batching_strategy.cpp
+          ${STARPU_TASK_WORKER_DIR}/batching_strategy_input_provider.cpp
           ${STARPU_TASK_WORKER_DIR}/batch_collector_component.cpp
           ${STARPU_TASK_WORKER_DIR}/result_dispatcher_component.cpp
           ${STARPU_TASK_WORKER_DIR}/slot_manager_component.cpp

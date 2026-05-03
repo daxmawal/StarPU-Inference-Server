@@ -13,11 +13,13 @@ outputs:
 verbosity: 0
 address: 127.0.0.1:50062
 metrics_port: 19091
-max_batch_size: 16
+batching_strategy: adaptive
+adaptive_batching:
+  max_batch_size: 16
+  min_batch_size: 1
 max_inflight_tasks: 100
 max_queue_size: 100
 batch_coalesce_timeout_ms: 10
-dynamic_batching: true
 sync: false
 use_cpu: false
 group_cpu_by_numa: true

@@ -32,7 +32,7 @@ Drag the JSON into [ui.perfetto.dev](https://ui.perfetto.dev) and look for these
 event types:
 
 - `request_enqueued` records each incoming request.
-- `batch` spans the time requests spend waiting for a dynamic batch.
+- `batch` spans the time requests spend waiting to be collected into a batch.
 - `batch_build` covers the time spent assembling the batch before handing it off
   to StarPU, flow arrows link to the worker that executes the batch.
 - `batch_submitted` ties a batch to the worker that will execute it.

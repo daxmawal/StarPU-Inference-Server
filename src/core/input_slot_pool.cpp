@@ -234,11 +234,10 @@ InputSlotPool::InputSlotPool(const RuntimeConfig& opts, int slots)
 
 InputSlotPool::InputSlotPool(
     const RuntimeConfig& opts, int slots, Dependencies dependencies)
-    : dependencies_(
+    : bmax_(resolved_batch_capacity(opts.batching)),
+      dependencies_(
           normalize_input_slot_pool_dependencies(std::move(dependencies)))
 {
-  bmax_ = std::max(1, opts.batching.max_batch_size);
-
   if (!opts.model.has_value()) {
     throw std::invalid_argument("No model config provided for InputSlotPool");
   }
