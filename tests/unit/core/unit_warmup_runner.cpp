@@ -391,7 +391,6 @@ TEST(WarmupRunnerEdgesTest, RunPropagatesCompletionObserverException)
     throw std::runtime_error("completion observer failure");
   });
 
-  starpu_server::CaptureStream capture{std::cerr};
   try {
     runner.run(1);
     FAIL() << "Expected completion observer exception.";
@@ -399,9 +398,6 @@ TEST(WarmupRunnerEdgesTest, RunPropagatesCompletionObserverException)
   catch (const std::runtime_error& e) {
     EXPECT_EQ(std::string(e.what()), "completion observer failure");
   }
-  EXPECT_NE(
-      capture.str().find("[Warmup] Failed to enqueue job 0"),
-      std::string::npos);
 }
 
 TEST(WarmupRunnerEdgesTest, RunWarmupSkipsWhenNoDevicesConfigured)

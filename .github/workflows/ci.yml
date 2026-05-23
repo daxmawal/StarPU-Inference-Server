@@ -182,7 +182,8 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Reset reused runner submodules
+      - &reset_reused_runner_submodules
+        name: Reset reused runner submodules
         shell: bash
         run: |
           rm -rf "$GITHUB_WORKSPACE/external"
@@ -192,7 +193,68 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - &prepare_bundled_submodules
+        name: Prepare bundled submodules
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          top_level_submodules=(
+            external/abseil-cpp
+            external/googletest
+            external/grpc
+            external/prometheus-cpp
+            external/protobuf
+            external/utf8_range
+            external/yaml-cpp
+          )
+          grpc_submodules=(
+            third_party/abseil-cpp
+            third_party/boringssl-with-bazel
+            third_party/cares/cares
+            third_party/envoy-api
+            third_party/googleapis
+            third_party/opencensus-proto
+            third_party/opentelemetry
+            third_party/protoc-gen-validate
+            third_party/re2
+            third_party/xds
+            third_party/zlib
+          )
+
+          git submodule sync --recursive
+          for attempt in 1 2 3; do
+            if git submodule update --init --jobs 4 -- "${top_level_submodules[@]}"; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+          git -C external/grpc submodule sync -- "${grpc_submodules[@]}"
+          for attempt in 1 2 3; do
+            if git -C external/grpc submodule update --init --jobs 4 -- "${grpc_submodules[@]}"; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+          git -C external/prometheus-cpp submodule sync -- 3rdparty/civetweb
+          for attempt in 1 2 3; do
+            if git -C external/prometheus-cpp submodule update --init --jobs 4 -- 3rdparty/civetweb; then
+              break
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
 
       - name: Configure and Build
         run: |
@@ -219,17 +281,14 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Reset reused runner submodules
-        shell: bash
-        run: |
-          rm -rf "$GITHUB_WORKSPACE/external"
-          rm -rf "$GITHUB_WORKSPACE/.git/modules/external"
+      - *reset_reused_runner_submodules
 
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Configure and Build (Clang)
         run: |
@@ -260,18 +319,15 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Reset reused runner submodules
-        shell: bash
-        run: |
-          rm -rf "$GITHUB_WORKSPACE/external"
-          rm -rf "$GITHUB_WORKSPACE/.git/modules/external"
+      - *reset_reused_runner_submodules
 
       - name: Checkout base code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.base.sha }}
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Configure and Build baseline (Clang)
         run: |
@@ -303,17 +359,14 @@ jobs:
       CUDA_VISIBLE_DEVICES: ""
 
     steps:
-      - name: Reset reused runner submodules
-        shell: bash
-        run: |
-          rm -rf "$GITHUB_WORKSPACE/external"
-          rm -rf "$GITHUB_WORKSPACE/.git/modules/external"
+      - *reset_reused_runner_submodules
 
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Configure and Build (ASan + UBSan)
         run: |
@@ -351,17 +404,14 @@ jobs:
       CUDA_VISIBLE_DEVICES: ""
 
     steps:
-      - name: Reset reused runner submodules
-        shell: bash
-        run: |
-          rm -rf "$GITHUB_WORKSPACE/external"
-          rm -rf "$GITHUB_WORKSPACE/.git/modules/external"
+      - *reset_reused_runner_submodules
 
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Configure and Build (TSan targeted)
         run: |
@@ -396,17 +446,14 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      - name: Reset reused runner submodules
-        shell: bash
-        run: |
-          rm -rf "$GITHUB_WORKSPACE/external"
-          rm -rf "$GITHUB_WORKSPACE/.git/modules/external"
+      - *reset_reused_runner_submodules
 
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Download build artifacts
         uses: actions/download-artifact@v8
@@ -440,17 +487,14 @@ jobs:
       CTEST_TIMEOUT_E2E_SECONDS: "600"
 
     steps:
-      - name: Reset reused runner submodules
-        shell: bash
-        run: |
-          rm -rf "$GITHUB_WORKSPACE/external"
-          rm -rf "$GITHUB_WORKSPACE/.git/modules/external"
+      - *reset_reused_runner_submodules
 
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - *prepare_bundled_submodules
 
       - name: Download build artifacts
         uses: actions/download-artifact@v8
