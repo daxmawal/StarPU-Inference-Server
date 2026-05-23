@@ -35,6 +35,7 @@
 #include "../../../src/starpu_task_worker/task_runner_internal.hpp"
 #include "support/grpc/server/server_main_test_api.hpp"
 #include "support/utils/batching_trace_logger_test_api.hpp"
+#include "test_batching_config.hpp"
 #include "test_helpers.hpp"
 
 namespace {
@@ -1687,7 +1688,9 @@ write_temp_config_file() -> TempFileGuard
   cfg << "outputs:\n";
   cfg << "  - { name: output0, data_type: TYPE_FP32, dims: [1, 2] }\n";
   cfg << "pool_size: 1\n";
-  cfg << "max_batch_size: 1\n";
+  cfg << "batching_strategy: adaptive\n";
+  cfg << "adaptive_batching:\n";
+  cfg << "  max_batch_size: 1\n";
   cfg << "batch_coalesce_timeout_ms: 0\n";
   cfg.close();
 
@@ -1858,7 +1861,7 @@ TEST(ServerMainArgs, HandleProgramArgumentsParsesLongConfigFlag)
   ASSERT_TRUE(cfg.model.has_value());
   EXPECT_EQ(cfg.model->inputs.size(), 1U);
   EXPECT_EQ(cfg.model->outputs.size(), 1U);
-  EXPECT_EQ(cfg.batching.max_batch_size, 1);
+  EXPECT_EQ(cfg.batching.resolved_max_batch_size, 1);
 }
 
 TEST(ServerMainArgs, HandleProgramArgumentsParsesShortConfigFlag)
@@ -3667,7 +3670,7 @@ TEST(
   opts.server_address = address;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
-  opts.batching.max_batch_size = 16;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(opts, 16);
   opts.name = "fallback_model_name";
   opts.model = starpu_server::ModelConfig{};
   opts.model->name = "configured_model_name";
@@ -3792,7 +3795,7 @@ TEST(
   opts.verbosity = starpu_server::VerbosityLevel::Info;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
-  opts.batching.max_batch_size = 4;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(opts, 4);
   opts.model = starpu_server::ModelConfig{};
   opts.model->name = "shutdown_drain_model";
   opts.model->inputs = {
@@ -3932,7 +3935,7 @@ TEST(
   opts.verbosity = starpu_server::VerbosityLevel::Silent;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
-  opts.batching.max_batch_size = 4;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(opts, 4);
   opts.model = starpu_server::ModelConfig{};
   opts.model->name = "drain_completed_model";
   opts.model->inputs = {
@@ -4055,7 +4058,7 @@ TEST(
   opts.verbosity = starpu_server::VerbosityLevel::Silent;
   opts.congestion.enabled = false;
   opts.batching.max_queue_size = 8;
-  opts.batching.max_batch_size = 4;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(opts, 4);
   opts.model = starpu_server::ModelConfig{};
   opts.model->name = "drain_timeout_model";
   opts.model->inputs = {

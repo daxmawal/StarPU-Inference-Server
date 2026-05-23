@@ -294,7 +294,7 @@ resolve_model_path(const RuntimeConfig& opts) -> std::string
 
 static void
 set_model_loaded_metric(
-    MetricsRecorder* metrics, std::string_view model_label,
+    const MetricsRecorder* metrics, std::string_view model_label,
     std::string_view device, bool loaded)
 {
   if (metrics != nullptr) {
@@ -523,7 +523,7 @@ run_warmup(
     return;
   }
 
-  const int max_batch_size = std::max(1, opts.batching.max_batch_size);
+  const int max_batch_size = resolved_batch_capacity(opts.batching);
   const auto min_requests_for_batches_wide =
       static_cast<long long>(configured_batches) * max_batch_size;
   const int min_requests_for_batches =

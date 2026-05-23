@@ -13,7 +13,7 @@ YAML configuration files it consumes. It assumes you already followed
 
 At a high level, the async gRPC server receives requests on CompletionQueue
 threads, validates and converts tensors, and enqueues jobs for batching (which
-can pass through when `dynamic_batching` is disabled). The StarPU task runner
+can pass through when batching is disabled). The StarPU task runner
 uses slot pools to stage inputs/outputs, submits tasks to StarPU CPU/GPU
 workers, and a result dispatcher returns responses. During startup the server
 loads the model, initializes StarPU, runs warmup, and only then starts serving.
@@ -29,7 +29,7 @@ flowchart LR
   Service --> Validate[Validate + convert tensors]
   Validate --> Queue[InferenceQueue]
 
-  Queue --> Batch["BatchCollector<br/>pass-through when dynamic_batching disabled"]
+  Queue --> Batch["BatchCollector<br/>pass-through when batching is disabled"]
   Batch --> Prepared[Prepared batch queue]
   Prepared --> Runner[StarPUTaskRunner]
 
@@ -80,9 +80,14 @@ configuration is written in YAML and must include the following required keys:
 |`model`|Absolute or relative path to the TorchScript `.pt`/`.ts` file.|
 |`inputs`|Sequence describing each input tensor, every element must define `name`, `data_type`, and `dims`.|
 |`outputs`|Sequence describing each output tensor, every element must define `name`, `data_type`, and `dims`.|
-|`max_batch_size`|Upper bound for per-request batch size.|
-|`batch_coalesce_timeout_ms`|Milliseconds to wait before flushing a dynamic batch.|
+|`batch_coalesce_timeout_ms`|Milliseconds to wait before flushing a pending batch.|
+|`batching_strategy`|Batch collection strategy selected by the user: `disabled`, `adaptive`, or `fixed`.|
 |`pool_size`|Number of reusable input/output buffer slots to preallocate.|
+
+Batch sizing is strategy-specific:
+
+- `adaptive_batching.max_batch_size` and optional `adaptive_batching.min_batch_size` for `batching_strategy: adaptive`
+- `fixed_batching.batch_size` for `batching_strategy: fixed`
 
 Each tensor entry under `inputs` or `outputs` must provide:
 
@@ -98,7 +103,7 @@ Each tensor entry under `inputs` or `outputs` must provide:
 `TYPE_STRING` is defined in the protobuf schema but is not accepted by the
 current runtime datatype mapping yet.
 
-Optional keys unlock batching, logging, and runtime controls:
+Additional keys unlock strategy-specific batching, logging, and runtime controls:
 
 |Key|Description|Default|
 |---|---|---|
@@ -166,7 +171,8 @@ Optional keys for warmup, tracing, and debugging:
 |Key|Description|Default|
 |---|---|---|
 |`verbosity`|Log verbosity level. Alias: `verbose`. Supported values: `0`/`silent`, `1`/`info`, `2`/`stats`, `3`/`debug`, `4`/`trace`.|`0`|
-|`dynamic_batching`|Enable dynamic batching (`true`/`false`).|`true`|
+|`adaptive_batching`|Mapping for adaptive batching options. Supports `max_batch_size` and optional `min_batch_size`.|unset|
+|`fixed_batching`|Mapping for fixed batching options. Supports `batch_size`.|unset|
 |`sync`|Run the StarPU worker pool in synchronous mode (`true`/`false`).|`false`|
 |`trace_enabled`|Emit batching trace JSON (queueing/assignment/submission/completion events) compatible with the Perfetto UI plus a CSV summary of each batch.|`false`|
 |`trace_output`|Directory for the batching Perfetto trace (requires `trace_enabled: true`). When set, the server writes `perfetto_trace.json`, `trace.csv` (worker info, batch size, request IDs, microsecond arrival timestamps, phase timings, warmup batches excluded) and `metrics.csv` (queue size + cumulative rejections over time) there. If unset, it writes `perfetto_trace.json` in the current working directory.|unset|
@@ -175,7 +181,7 @@ Optional keys for warmup, tracing, and debugging:
 |`warmup_batches_per_worker`|Minimum number of full-sized batches each worker executes during the warmup phase. Combined with `max_batch_size` to derive additional warmup requests.|`1`|
 |`seed`|Seed for warmup input RNG and `torch::manual_seed`.|unset|
 
-Traces use the Chrome trace-event JSON format, so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [tracing guide](./tracing.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, using Perfetto, and capturing StarPU FXT traces. Enable it only while profiling dynamic batching, for GPU-wide timelines rely on NVIDIA `nsys`.
+Traces use the Chrome trace-event JSON format, so you can drag the resulting file into [ui.perfetto.dev](https://ui.perfetto.dev) to inspect batching activity. See the [tracing guide](./tracing.md) for a step-by-step walkthrough of enabling the trace, interpreting the JSON, using Perfetto, and capturing StarPU FXT traces. Enable it only while profiling batching behavior, for GPU-wide timelines rely on NVIDIA `nsys`.
 
 During startup the server always schedules a short warmup before accepting real
 traffic. The final number of warmup requests per worker is the maximum between
@@ -266,11 +272,13 @@ outputs:
 verbosity: 4
 address: 127.0.0.1:50051
 metrics_port: 9090
-max_batch_size: 32
+batching_strategy: adaptive
+adaptive_batching:
+  max_batch_size: 32
+  min_batch_size: 1
 max_queue_size: 100
 max_inflight_tasks: 256
 batch_coalesce_timeout_ms: 1000
-dynamic_batching: true
 sync: false
 use_cpu: true
 group_cpu_by_numa: true
@@ -291,6 +299,42 @@ the tensor shapes to the sequence length and hidden size exported by your
 training pipeline. **The sample assumes batches of size 1 and lets the runtime expand
 to `max_batch_size`.** If you enable CPU workers, tune the optional `libtorch`
 block to match your CPU topology and StarPU worker layout.
+
+Example with fixed batching:
+
+```yaml
+name: bert_fixed
+starpu_env:
+  STARPU_SCHED: lws
+model: ../models/bert_libtorch.pt
+inputs:
+  - { name: "input_ids", data_type: "TYPE_INT64", dims: [1, 128] }
+  - { name: "attention_mask", data_type: "TYPE_INT64", dims: [1, 128] }
+outputs:
+  - { name: "output0", data_type: "TYPE_FP32", dims: [1, 128, 768] }
+verbosity: 4
+address: 127.0.0.1:50051
+metrics_port: 9090
+batching_strategy: fixed
+fixed_batching:
+  batch_size: 8
+max_queue_size: 100
+max_inflight_tasks: 256
+batch_coalesce_timeout_ms: 1000
+sync: false
+use_cpu: true
+group_cpu_by_numa: true
+libtorch:
+  intraop_threads: 1
+  interop_threads: 1
+use_cuda:
+  - { device_ids: [0] }
+gpu_model_replication: per_device
+pool_size: 12
+```
+
+Use `fixed` when you want a stable target batch size instead of adaptive
+resizing under queue pressure.
 
 ## 4. Launch the inference server
 

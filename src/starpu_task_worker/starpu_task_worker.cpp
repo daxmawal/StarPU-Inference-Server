@@ -19,8 +19,12 @@
 #include <utility>
 #include <vector>
 
+#include "batch_capacity_policy.hpp"
 #include "batch_collector_component.hpp"
+#include "batch_composition_policy.hpp"
 #include "batching_helpers.hpp"
+#include "batching_strategy.hpp"
+#include "batching_strategy_input_provider.hpp"
 #include "exceptions.hpp"
 #include "inference_task.hpp"
 #include "logger.hpp"
@@ -318,8 +322,19 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
     }
   }
 
+  using enum BatchingStrategyKind;
+
+  const auto strategy_kind =
+      opts_ != nullptr ? resolved_batching_strategy_kind(opts_->batching)
+                       : Disabled;
   batch_collector_ = std::make_unique<BatchCollector>(
-      queue_, opts_, starpu_, &pending_job_, observability_,
+      BatchCollectorRuntimeContext{
+          .queue = queue_,
+          .opts = opts_,
+          .starpu = starpu_,
+          .pending_job = &pending_job_,
+          .observability = observability_,
+      },
       PreparedBatchingContext{
           .prepared_mutex = &prepared_state_.mutex,
           .prepared_cv = &prepared_state_.cv,
@@ -331,6 +346,17 @@ StarPUTaskRunner::StarPUTaskRunner(const StarPUTaskRunnerConfig& config)
           .inflight_cv = &inflight_state_->cv,
           .inflight_mutex = &inflight_state_->mutex,
           .max_inflight_tasks = inflight_state_->max_tasks,
+      },
+      BatchCollectorBatchingDependencies{
+          .capacity_policy = std::make_unique<RuntimeBatchCapacityPolicy>(),
+          .composition_policy =
+              std::make_unique<TensorBatchCompositionPolicy>(),
+          .strategy_input_provider =
+              std::make_unique<RuntimeBatchingStrategyInputProvider>(
+                  opts_, queue_, observability_, &prepared_state_.jobs,
+                  &prepared_state_.mutex, &inflight_state_->tasks,
+                  inflight_state_->max_tasks),
+          .strategy = make_batching_strategy(strategy_kind),
       });
 }
 
@@ -592,7 +618,8 @@ StarPUTaskRunner::can_merge_jobs(
     const std::shared_ptr<InferenceJob>& lhs,
     const std::shared_ptr<InferenceJob>& rhs) -> bool
 {
-  return BatchCollector::can_merge_jobs(lhs, rhs);
+  TensorBatchCompositionPolicy policy{};
+  return policy.can_merge_jobs(lhs, rhs);
 }
 
 auto
@@ -600,7 +627,8 @@ StarPUTaskRunner::merge_input_tensors(
     const std::vector<std::shared_ptr<InferenceJob>>& jobs,
     int64_t total_samples) -> std::vector<torch::Tensor>
 {
-  return BatchCollector::merge_input_tensors(jobs, total_samples);
+  TensorBatchCompositionPolicy policy{};
+  return policy.merge_input_tensors(jobs, total_samples);
 }
 
 auto
@@ -608,7 +636,8 @@ StarPUTaskRunner::merge_input_memory_holders(
     const std::vector<std::shared_ptr<InferenceJob>>& jobs)
     -> std::vector<std::shared_ptr<const void>>
 {
-  return BatchCollector::merge_input_memory_holders(jobs);
+  TensorBatchCompositionPolicy policy{};
+  return policy.merge_input_memory_holders(jobs);
 }
 
 auto

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
+#include <yaml-cpp/yaml.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -12,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -55,6 +58,34 @@ WriteEmptyModelFile(const std::string& name) -> std::filesystem::path
   const auto path = DeterministicTempPath(name);
   std::ofstream(path).put('\0');
   return path;
+}
+
+auto
+WriteExampleConfigWithTempModel(const std::filesystem::path& config_path)
+    -> std::filesystem::path
+{
+  YAML::Node config = YAML::LoadFile(config_path.string());
+  if (!config.IsMap()) {
+    throw std::invalid_argument("example config root must be a map");
+  }
+  const YAML::Node model_node = config["model"];
+  if (!model_node || !model_node.IsScalar()) {
+    throw std::invalid_argument("example config must define a scalar model");
+  }
+
+  const auto model_path = WriteEmptyModelFile(std::format(
+      "config_loader_{}_example_model.pt", config_path.stem().string()));
+  config["model"] = model_path.string();
+
+  YAML::Emitter emitter;
+  emitter << config;
+  if (!emitter.good()) {
+    throw std::runtime_error(emitter.GetLastError());
+  }
+
+  return WriteTempFile(
+      std::format("config_loader_{}_example.yaml", config_path.stem().string()),
+      emitter.c_str());
 }
 
 auto
@@ -108,23 +139,75 @@ struct ConfigLoaderHookGuard {
   ~ConfigLoaderHookGuard() { reset_config_loader_post_parse_hook(); }
 };
 
+class ScopedCurrentPath {
+ public:
+  explicit ScopedCurrentPath(const std::filesystem::path& path)
+      : previous_path_(std::filesystem::current_path())
+  {
+    std::filesystem::current_path(path);
+  }
+
+  ~ScopedCurrentPath()
+  {
+    std::error_code ec;
+    std::filesystem::current_path(previous_path_, ec);
+  }
+
+  ScopedCurrentPath(const ScopedCurrentPath&) = delete;
+  auto operator=(const ScopedCurrentPath&) -> ScopedCurrentPath& = delete;
+
+ private:
+  std::filesystem::path previous_path_;
+};
+
+auto
+repository_root_path() -> std::filesystem::path
+{
+  return std::filesystem::weakly_canonical(
+      std::filesystem::path(__FILE__).parent_path() / ".." / ".." / "..");
+}
+
+auto
+adaptive_batching_yaml(
+    int max_batch_size = 1,
+    std::optional<int> min_batch_size = std::nullopt) -> std::string
+{
+  std::ostringstream yaml;
+  yaml << "batching_strategy: adaptive\n";
+  yaml << "adaptive_batching:\n";
+  if (min_batch_size.has_value()) {
+    yaml << "  min_batch_size: " << *min_batch_size << "\n";
+  }
+  yaml << "  max_batch_size: " << max_batch_size << "\n";
+  return yaml.str();
+}
+
+auto
+fixed_batching_yaml(int batch_size = 1) -> std::string
+{
+  std::ostringstream yaml;
+  yaml << "batching_strategy: fixed\n";
+  yaml << "fixed_batching:\n";
+  yaml << "  batch_size: " << batch_size << "\n";
+  return yaml.str();
+}
+
 auto
 base_model_yaml() -> std::string
 {
   return std::string{
-      "name: config_loader_test\n"
-      "model: {{MODEL_PATH}}\n"
-      "inputs:\n"
-      "  - name: in\n"
-      "    dims: [1]\n"
-      "    data_type: float32\n"
-      "outputs:\n"
-      "  - name: out\n"
-      "    dims: [1]\n"
-      "    data_type: float32\n"
-      "batch_coalesce_timeout_ms: 1\n"
-      "max_batch_size: 1\n"
-      "pool_size: 1\n"};
+             "name: config_loader_test\n"
+             "model: {{MODEL_PATH}}\n"
+             "inputs:\n"
+             "  - name: in\n"
+             "    dims: [1]\n"
+             "    data_type: float32\n"
+             "outputs:\n"
+             "  - name: out\n"
+             "    dims: [1]\n"
+             "    data_type: float32\n"
+             "batch_coalesce_timeout_ms: 1\n"} +
+         adaptive_batching_yaml(1) + "pool_size: 1\n";
 }
 
 struct InvalidConfigCase {
@@ -174,8 +257,22 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
     InvalidConfigCase{
         "InvalidConfigSetsValidFalse",
         [] {
-          auto yaml = base_model_yaml();
-          yaml += "max_batch_size: 0\n";
+          std::string yaml;
+          yaml += "name: config_loader_test\n";
+          yaml += "model: {{MODEL_PATH}}\n";
+          yaml += "inputs:\n";
+          yaml += "  - name: in\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "outputs:\n";
+          yaml += "  - name: out\n";
+          yaml += "    dims: [1]\n";
+          yaml += "    data_type: float32\n";
+          yaml += "batch_coalesce_timeout_ms: 1\n";
+          yaml += "batching_strategy: adaptive\n";
+          yaml += "adaptive_batching:\n";
+          yaml += "  max_batch_size: 0\n";
+          yaml += "pool_size: 1\n";
           return yaml;
         }(),
         std::nullopt, false, false},
@@ -351,7 +448,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "  - name: out\n";
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           yaml += "batch_coalesce_timeout_ms: -5\n";
           return yaml;
@@ -405,7 +502,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -425,7 +522,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -447,7 +544,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
           yaml << "batch_coalesce_timeout_ms: 1\n";
-          yaml << "max_batch_size: 1\n";
+          yaml << adaptive_batching_yaml(1);
           yaml << "pool_size: 1\n";
           return yaml.str();
         }(),
@@ -466,7 +563,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -485,7 +582,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -514,7 +611,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -542,7 +639,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -561,7 +658,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -581,7 +678,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -594,7 +691,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           return yaml;
         }(),
         "Failed to load config: Missing required keys: model, inputs, outputs, "
-        "pool_size, max_batch_size, batch_coalesce_timeout_ms",
+        "pool_size, batch_coalesce_timeout_ms, batching_strategy",
         false, false},
     InvalidConfigCase{
         "NonexistentModelFileSetsValidFalse", base_model_yaml(), std::nullopt,
@@ -610,7 +707,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -626,7 +723,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -646,7 +743,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -666,7 +763,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -686,7 +783,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -706,7 +803,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -725,7 +822,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml += "    dims: [1]\n";
           yaml += "    data_type: float32\n";
           yaml += "batch_coalesce_timeout_ms: 1\n";
-          yaml += "max_batch_size: 1\n";
+          yaml += adaptive_batching_yaml(1);
           yaml += "pool_size: 1\n";
           return yaml;
         }(),
@@ -747,7 +844,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
           yaml << "batch_coalesce_timeout_ms: 1\n";
-          yaml << "max_batch_size: 1\n";
+          yaml << adaptive_batching_yaml(1);
           yaml << "pool_size: 1\n";
           return yaml.str();
         }(),
@@ -774,7 +871,7 @@ const std::vector<InvalidConfigCase> kInvalidConfigCases = {
           yaml << "    dims: [1]\n";
           yaml << "    data_type: float32\n";
           yaml << "batch_coalesce_timeout_ms: 1\n";
-          yaml << "max_batch_size: 1\n";
+          yaml << adaptive_batching_yaml(1);
           yaml << "pool_size: 1\n";
           return yaml.str();
         }(),
@@ -892,9 +989,25 @@ TEST(ConfigLoader, DeviceBlockParsesCpuCudaAndNumaSettings)
 
 TEST(ConfigLoader, BatchingBlockParsesNetworkQueueAndTraceSettings)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   const auto model_path =
       WriteEmptyModelFile("config_loader_batching_block_model.pt");
-  std::string yaml = ReplaceModelPath(base_model_yaml(), model_path);
+  std::string yaml = ReplaceModelPath(
+      std::string{"name: config_loader_test\n"
+                  "model: {{MODEL_PATH}}\n"
+                  "inputs:\n"
+                  "  - name: in\n"
+                  "    dims: [1]\n"
+                  "    data_type: float32\n"
+                  "outputs:\n"
+                  "  - name: out\n"
+                  "    dims: [1]\n"
+                  "    data_type: float32\n"
+                  "batch_coalesce_timeout_ms: 1\n"
+                  "batching_strategy: disabled\n"
+                  "pool_size: 1\n"},
+      model_path);
   const auto trace_dir = MakeUniqueTempDir("config_loader_batching_trace_dir");
 
   yaml += "address: 0.0.0.0:60061\n";
@@ -902,7 +1015,6 @@ TEST(ConfigLoader, BatchingBlockParsesNetworkQueueAndTraceSettings)
   yaml += "max_message_bytes: 65536\n";
   yaml += "max_queue_size: 64\n";
   yaml += "max_inflight_tasks: 8\n";
-  yaml += "dynamic_batching: false\n";
   yaml += "trace_enabled: true\n";
   yaml += "trace_output: " + trace_dir.string() + "\n";
 
@@ -916,7 +1028,7 @@ TEST(ConfigLoader, BatchingBlockParsesNetworkQueueAndTraceSettings)
   EXPECT_EQ(cfg.batching.max_message_bytes, 65536U);
   EXPECT_EQ(cfg.batching.max_queue_size, 64U);
   EXPECT_EQ(cfg.batching.max_inflight_tasks, 8U);
-  EXPECT_FALSE(cfg.batching.dynamic_batching);
+  EXPECT_EQ(cfg.batching.strategy, Disabled);
   EXPECT_TRUE(cfg.batching.trace_enabled);
   EXPECT_EQ(
       cfg.batching.trace_output_path,
@@ -1087,6 +1199,8 @@ TEST(ConfigLoader, LoadsStarpuEnvVariables)
 
 TEST(ConfigLoader, LoadsValidConfig)
 {
+  using enum starpu_server::BatchingStrategyKind;
+
   const auto model_path = WriteEmptyModelFile("config_loader_valid_model.pt");
 
   std::ostringstream yaml;
@@ -1107,9 +1221,11 @@ TEST(ConfigLoader, LoadsValidConfig)
   yaml << "    dims: [1, 1000]\n";
   yaml << "    data_type: float32\n";
   yaml << "verbosity: 3\n";
-  yaml << "max_batch_size: 4\n";
+  yaml << "batching_strategy: adaptive\n";
+  yaml << "adaptive_batching:\n";
+  yaml << "  min_batch_size: 2\n";
+  yaml << "  max_batch_size: 4\n";
   yaml << "pool_size: 2\n";
-  yaml << "dynamic_batching: true\n";
   yaml << "batch_coalesce_timeout_ms: 15\n";
   yaml << "warmup_pregen_inputs: 5\n";
   yaml << "warmup_request_nb: 3\n";
@@ -1140,8 +1256,10 @@ TEST(ConfigLoader, LoadsValidConfig)
   EXPECT_EQ(cfg.model->outputs[0].dims, (std::vector<int64_t>{1, 1000}));
   EXPECT_EQ(cfg.model->outputs[0].type, at::kFloat);
   EXPECT_EQ(cfg.verbosity, VerbosityLevel::Debug);
-  EXPECT_EQ(cfg.batching.max_batch_size, 4);
-  EXPECT_TRUE(cfg.batching.dynamic_batching);
+  EXPECT_EQ(cfg.batching.resolved_max_batch_size, 4);
+  EXPECT_EQ(cfg.batching.strategy, Adaptive);
+  EXPECT_EQ(cfg.batching.adaptive.min_batch_size, 2);
+  EXPECT_EQ(cfg.batching.adaptive.max_batch_size, 4);
   EXPECT_EQ(cfg.batching.batch_coalesce_timeout_ms, 15);
   EXPECT_EQ(cfg.batching.warmup_pregen_inputs, 5U);
   EXPECT_EQ(cfg.batching.warmup_request_nb, 3);
@@ -1174,7 +1292,7 @@ TEST(ConfigLoader, ParsesGpuModelReplicationPolicy)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
   yaml << "use_cuda:\n";
   yaml << "  - { device_ids: [0] }\n";
@@ -1190,6 +1308,411 @@ TEST(ConfigLoader, ParsesGpuModelReplicationPolicy)
   EXPECT_EQ(
       cfg.devices.gpu_model_replication,
       starpu_server::GpuModelReplicationPolicy::PerWorker);
+}
+
+TEST(ConfigLoader, ParsesBatchingStrategy)
+{
+  using enum starpu_server::BatchingStrategyKind;
+
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_batching_strategy_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: batching_strategy\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "batching_strategy: fixed\n";
+  yaml << "fixed_batching:\n";
+  yaml << "  batch_size: 4\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_batching_strategy.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_TRUE(cfg.valid);
+  EXPECT_EQ(cfg.batching.strategy, Fixed);
+  EXPECT_EQ(cfg.batching.fixed.batch_size, 4);
+  EXPECT_EQ(cfg.batching.resolved_max_batch_size, 4);
+}
+
+TEST(ConfigLoader, RejectsInvalidBatchingStrategy)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_invalid_batching_strategy_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: invalid_batching_strategy\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "batching_strategy: invalid_strategy\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_invalid_batching_strategy.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(),
+      expected_log_line(
+          ErrorLevel,
+          "Failed to load config: batching_strategy must be 'disabled', "
+          "'adaptive' or 'fixed' (got 'invalid_strategy')"));
+}
+
+TEST(ConfigLoader, RejectsMissingBatchingStrategy)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_missing_batching_strategy_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: missing_batching_strategy\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "adaptive_batching:\n";
+  yaml << "  max_batch_size: 4\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_missing_batching_strategy.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(),
+      expected_log_line(
+          ErrorLevel,
+          "Failed to load config: Missing required key: batching_strategy"));
+}
+
+TEST(ConfigLoader, RejectsRemovedDynamicBatchingOption)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_removed_dynamic_batching_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: removed_dynamic_batching\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "dynamic_batching: false\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_removed_dynamic_batching.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(), expected_log_line(
+                         ErrorLevel,
+                         "Failed to load config: Unknown configuration option: "
+                         "dynamic_batching"));
+}
+
+TEST(ConfigLoader, RejectsRemovedLegacyMaxBatchSizeOption)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_removed_legacy_batch_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: removed_legacy_batch\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "max_batch_size: 4\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_removed_legacy_batch.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(), expected_log_line(
+                         ErrorLevel,
+                         "Failed to load config: Unknown configuration option: "
+                         "max_batch_size"));
+}
+
+TEST(ConfigLoader, RejectsAdaptiveBatchingBlockWhenStrategyIsFixed)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_fixed_with_adaptive_block_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: fixed_with_adaptive_block\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "batching_strategy: fixed\n";
+  yaml << "adaptive_batching:\n";
+  yaml << "  max_batch_size: 4\n";
+  yaml << "fixed_batching:\n";
+  yaml << "  batch_size: 4\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_fixed_with_adaptive_block.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(),
+      expected_log_line(
+          ErrorLevel,
+          "Failed to load config: adaptive_batching cannot be used with "
+          "batching_strategy 'fixed'"));
+}
+
+TEST(ConfigLoader, RejectsAdaptiveBatchingMinBatchAboveMaxBatch)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_invalid_adaptive_batching_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: invalid_adaptive_batching\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "batching_strategy: adaptive\n";
+  yaml << "adaptive_batching:\n";
+  yaml << "  min_batch_size: 8\n";
+  yaml << "  max_batch_size: 4\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_invalid_adaptive_batching.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(),
+      expected_log_line(
+          ErrorLevel,
+          "Failed to load config: adaptive_batching.min_batch_size must be <= "
+          "adaptive_batching.max_batch_size"));
+}
+
+TEST(ConfigLoader, RejectsUnknownAdaptiveBatchingOption)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_unknown_adaptive_option_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: unknown_adaptive_option\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "batching_strategy: adaptive\n";
+  yaml << "adaptive_batching:\n";
+  yaml << "  max_batch_size: 4\n";
+  yaml << "  unexpected: 1\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_unknown_adaptive_option.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(), expected_log_line(
+                         ErrorLevel,
+                         "Failed to load config: Unknown configuration option: "
+                         "adaptive_batching.unexpected"));
+}
+
+TEST(ConfigLoader, RejectsAdaptiveStrategyWithoutAdaptiveBatchingBlock)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_missing_adaptive_block_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: missing_adaptive_block\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "batching_strategy: adaptive\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_missing_adaptive_block.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(),
+      expected_log_line(
+          ErrorLevel,
+          "Failed to load config: batching_strategy 'adaptive' requires "
+          "adaptive_batching.max_batch_size"));
+}
+
+TEST(ConfigLoader, RejectsFixedStrategyWithoutFixedBatchingBlock)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_missing_fixed_block_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: missing_fixed_block\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "batching_strategy: fixed\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_missing_fixed_block.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(),
+      expected_log_line(
+          ErrorLevel,
+          "Failed to load config: batching_strategy 'fixed' requires "
+          "fixed_batching.batch_size"));
+}
+
+TEST(ConfigLoader, RejectsUnknownFixedBatchingOption)
+{
+  const auto model_path =
+      WriteEmptyModelFile("config_loader_unknown_fixed_option_model.pt");
+
+  std::ostringstream yaml;
+  yaml << "name: unknown_fixed_option\n";
+  yaml << "model: " << model_path.string() << "\n";
+  yaml << "inputs:\n";
+  yaml << "  - name: in\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "outputs:\n";
+  yaml << "  - name: out\n";
+  yaml << "    dims: [1]\n";
+  yaml << "    data_type: float32\n";
+  yaml << "pool_size: 1\n";
+  yaml << "batch_coalesce_timeout_ms: 5\n";
+  yaml << "batching_strategy: fixed\n";
+  yaml << "fixed_batching:\n";
+  yaml << "  batch_size: 4\n";
+  yaml << "  unexpected: 1\n";
+
+  const auto tmp = std::filesystem::temp_directory_path() /
+                   "config_loader_unknown_fixed_option.yaml";
+  std::ofstream(tmp) << yaml.str();
+
+  starpu_server::CaptureStream capture{std::cerr};
+  const RuntimeConfig cfg = load_config(tmp.string());
+
+  EXPECT_FALSE(cfg.valid);
+  EXPECT_EQ(
+      capture.str(), expected_log_line(
+                         ErrorLevel,
+                         "Failed to load config: Unknown configuration option: "
+                         "fixed_batching.unexpected"));
 }
 
 TEST(ConfigLoader, RejectsInvalidGpuModelReplicationPolicy)
@@ -1209,7 +1732,7 @@ TEST(ConfigLoader, RejectsInvalidGpuModelReplicationPolicy)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
   yaml << "gpu_model_replication: invalid_policy\n";
 
@@ -1246,7 +1769,7 @@ TEST(ConfigLoader, RejectsNonSequenceInput)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -1278,7 +1801,7 @@ TEST(ConfigLoader, ParsesRuntimeFlags)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
   yaml << "sync: true\n";
   yaml << "group_cpu_by_numa: true\n";
@@ -1316,7 +1839,7 @@ TEST(ConfigLoader, ParsesVerboseAlias)
   yaml << "    data_type: float32\n";
   yaml << "verbose: trace\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp =
@@ -1346,7 +1869,7 @@ TEST(ConfigLoader, ParsesMaxMessageBytesAndInputSlots)
   yaml << "    data_type: float32\n";
   yaml << "max_message_bytes: 4096\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 3\n";
 
   const auto tmp =
@@ -1666,7 +2189,7 @@ TEST(ConfigLoader, MaxMessageBytesRejectsNegative)
   yaml << "    data_type: float32\n";
   yaml << "max_message_bytes: -1\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -1701,7 +2224,7 @@ TEST(ConfigLoader, MaxMessageBytesRejectsTooSmallForModel)
   yaml << "    data_type: float32\n";
   yaml << "max_message_bytes: 16\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp =
@@ -1758,7 +2281,9 @@ TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "max_batch_size: 0\n";
+  yaml << "batching_strategy: adaptive\n";
+  yaml << "adaptive_batching:\n";
+  yaml << "  max_batch_size: 0\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "pool_size: 1\n";
 
@@ -1770,7 +2295,8 @@ TEST(ConfigLoader, MaxBatchSizeRejectsNonPositive)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   const std::string expected_error =
-      "Failed to load config: max_batch_size must be > 0";
+      "Failed to load config: adaptive_batching.max_batch_size must be > 0 and "
+      "fit in int";
   EXPECT_EQ(capture.str(), expected_log_line(ErrorLevel, expected_error));
 
   EXPECT_FALSE(cfg.valid);
@@ -1804,7 +2330,7 @@ TEST_P(NegativeRuntimeValueCase, MarksConfigInvalid)
   yaml << "    data_type: float32\n";
   yaml << key << ": " << value << "\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -1848,7 +2374,7 @@ TEST(ConfigLoader, PoolSizeRejectsNonPositive)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "pool_size: 0\n";
 
@@ -1882,7 +2408,7 @@ TEST(ConfigLoader, ParsesAddress)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "max_batch_size: 2\n";
+  yaml << adaptive_batching_yaml(2);
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "pool_size: 2\n";
   yaml << "address: 127.0.0.1:50051\n";
@@ -1913,7 +2439,7 @@ TEST(ConfigLoader, ParsesMaxInflightTasks)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "pool_size: 1\n";
   yaml << "max_inflight_tasks: 100\n";
@@ -1946,7 +2472,7 @@ TEST(ConfigLoader, MaxInflightTasksRejectsNegative)
   yaml << "    data_type: float32\n";
   yaml << "max_inflight_tasks: -1\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -1980,7 +2506,7 @@ TEST(ConfigLoader, ParsesMaxQueueSize)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "pool_size: 1\n";
   yaml << "max_queue_size: 50\n";
@@ -2011,7 +2537,7 @@ TEST(ConfigLoader, ParsesCongestionBlock)
   yaml << "  - name: out\n";
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "batch_coalesce_timeout_ms: 1\n";
   yaml << "pool_size: 1\n";
   yaml << "congestion:\n";
@@ -2508,7 +3034,7 @@ TEST(ConfigLoader, MaxQueueSizeRejectsNonPositive)
   yaml << "    data_type: float32\n";
   yaml << "max_queue_size: 0\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp =
@@ -2542,7 +3068,7 @@ TEST(ConfigLoader, BatchingCoherenceRejectsQueueLowerThanMaxBatch)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 8\n";
+  yaml << adaptive_batching_yaml(8);
   yaml << "pool_size: 2\n";
   yaml << "max_queue_size: 4\n";
 
@@ -2577,7 +3103,7 @@ TEST(ConfigLoader, BatchingCoherenceRejectsInflightLowerThanPoolSize)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 4\n";
+  yaml << adaptive_batching_yaml(4);
   yaml << "pool_size: 8\n";
   yaml << "max_queue_size: 32\n";
   yaml << "max_inflight_tasks: 3\n";
@@ -2613,7 +3139,7 @@ TEST(ConfigLoader, BatchingCoherenceAcceptsBoundaryValues)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 8\n";
+  yaml << adaptive_batching_yaml(8);
   yaml << "pool_size: 4\n";
   yaml << "max_queue_size: 8\n";
   yaml << "max_inflight_tasks: 4\n";
@@ -2625,7 +3151,7 @@ TEST(ConfigLoader, BatchingCoherenceAcceptsBoundaryValues)
   const RuntimeConfig cfg = load_config(tmp.string());
 
   EXPECT_TRUE(cfg.valid);
-  EXPECT_EQ(cfg.batching.max_batch_size, 8);
+  EXPECT_EQ(cfg.batching.resolved_max_batch_size, 8);
   EXPECT_EQ(cfg.batching.pool_size, 4);
   EXPECT_EQ(cfg.batching.max_queue_size, 8U);
   EXPECT_EQ(cfg.batching.max_inflight_tasks, 4U);
@@ -2643,8 +3169,8 @@ outputs:
   - name: out
     dims: [1]
     data_type: float32
-max_batch_size: 0
 batch_coalesce_timeout_ms: 1
+batching_strategy: disabled
 pool_size: 1
 )";
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -2659,7 +3185,7 @@ pool_size: 1
     log = capture.str();
   }
   EXPECT_FALSE(cfg.valid);
-  EXPECT_EQ(cfg.batching.max_batch_size, 1);
+  EXPECT_EQ(cfg.batching.resolved_max_batch_size, 1);
   EXPECT_NE(log.find("Missing required key: model"), std::string::npos);
 }
 
@@ -2673,8 +3199,8 @@ outputs:
     dims: [1]
     data_type: float32
 max_queue_size: 0
-max_batch_size: 1
 batch_coalesce_timeout_ms: 1
+batching_strategy: disabled
 pool_size: 1
 )";
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -2702,8 +3228,8 @@ inputs:
   - name: in
     dims: [1]
     data_type: float32
-max_batch_size: 0
 batch_coalesce_timeout_ms: 1
+batching_strategy: disabled
 pool_size: 1
 )";
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -2718,7 +3244,7 @@ pool_size: 1
     log = capture.str();
   }
   EXPECT_FALSE(cfg.valid);
-  EXPECT_EQ(cfg.batching.max_batch_size, 1);
+  EXPECT_EQ(cfg.batching.resolved_max_batch_size, 1);
   EXPECT_NE(log.find("Missing required key: outputs"), std::string::npos);
 }
 
@@ -2741,7 +3267,7 @@ TEST(
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -2786,7 +3312,7 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   yaml << "    dims: [1]\n";
   yaml << "    data_type: float32\n";
   yaml << "batch_coalesce_timeout_ms: 1\n";
-  yaml << "max_batch_size: 1\n";
+  yaml << adaptive_batching_yaml(1);
   yaml << "pool_size: 1\n";
 
   const auto tmp = std::filesystem::temp_directory_path() /
@@ -2812,6 +3338,44 @@ TEST(ConfigLoader, UnsupportedDtypeDuringMaxMessageComputationMarksInvalid)
   EXPECT_EQ(cfg.model->inputs[0].type, at::kComplexFloat);
   ASSERT_EQ(cfg.model->outputs.size(), 1U);
   EXPECT_FALSE(cfg.model->outputs.empty());
+}
+
+TEST(ConfigLoader, LoadsVersionedExampleYamlFiles)
+{
+  const auto repo_root = repository_root_path();
+  const auto working_dir =
+      repo_root /
+      std::format(".config_loader_example_cwd_{}", NextTempArtifactSequence());
+  std::filesystem::create_directories(working_dir);
+  ScopedPermissionRestorer working_dir_cleanup(working_dir);
+  ScopedCurrentPath scoped_current_path(working_dir);
+
+  const std::array example_paths{
+      repo_root / "models/bert.yml",
+      repo_root / "models/bert_docker.yml",
+      repo_root / "models/resnet18.yml",
+      repo_root / "models/resnet18_fixed.yml",
+      repo_root / "models/resnet152.yml",
+      repo_root / "models/vit_l_16.yml",
+      repo_root / "ci/perf/resnet152_ci_perf.yml",
+      repo_root / "ci/perf/resnet152_ci_perf_gpu_only.yml",
+      repo_root / "ci/perf/resnet152_ci_perf_fixed_gpu_only.yml",
+  };
+
+  for (const auto& config_path : example_paths) {
+    SCOPED_TRACE(config_path.string());
+    ASSERT_TRUE(std::filesystem::exists(config_path));
+
+    const auto effective_config_path =
+        WriteExampleConfigWithTempModel(config_path);
+
+    const RuntimeConfig cfg = load_config(effective_config_path.string());
+
+    EXPECT_TRUE(cfg.valid);
+    EXPECT_FALSE(cfg.name.empty());
+    ASSERT_TRUE(cfg.model.has_value());
+    EXPECT_FALSE(cfg.model->path.empty());
+  }
 }
 
 using VerbosityCase =

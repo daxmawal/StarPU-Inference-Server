@@ -241,7 +241,7 @@ make_grpc_model_spec(
       .expected_input_dims = expected_input_dims,
       .expected_input_names = expected_input_names,
       .expected_output_names = expected_output_names,
-      .max_batch_size = opts.batching.max_batch_size};
+      .max_batch_size = resolved_batch_capacity(opts.batching)};
 }
 
 struct ExpectedModelMetadata {

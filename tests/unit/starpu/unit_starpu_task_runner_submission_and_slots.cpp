@@ -58,7 +58,8 @@ TEST_F(
   starpu_server::RuntimeConfig pool_config{};
   pool_config.model = make_model_config("empty_inputs", {}, {});
   pool_config.batching.pool_size = 1;
-  pool_config.batching.max_batch_size = 1;
+  starpu_server::testing::set_effective_batch_capacity_for_tests(
+      pool_config, 1);
 
   starpu_server::InputSlotPool input_pool(pool_config, /*slots=*/1);
   const int slot = input_pool.acquire();
@@ -610,7 +611,7 @@ TEST_F(
   auto model_config = make_model_config(
       "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
 
-  opts_.batching.max_batch_size = 2;
+  set_effective_batch_capacity(2);
   reset_runner_with_model(model_config, /*pool_size=*/2);
   ASSERT_TRUE(starpu_setup_->has_input_pool());
 
@@ -671,7 +672,7 @@ TEST_F(
   auto model_config = make_model_config(
       "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
 
-  opts_.batching.max_batch_size = 2;
+  set_effective_batch_capacity(2);
   reset_runner_with_model(model_config, /*pool_size=*/2);
   ASSERT_TRUE(starpu_setup_->has_input_pool());
 
@@ -703,7 +704,7 @@ TEST_F(
   auto model_config = make_model_config(
       "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
 
-  opts_.batching.max_batch_size = 2;
+  set_effective_batch_capacity(2);
   reset_runner_with_model(model_config, /*pool_size=*/2);
   ASSERT_TRUE(starpu_setup_->has_input_pool());
 
@@ -736,7 +737,7 @@ TEST_F(
   auto model_config = make_model_config(
       "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
 
-  opts_.batching.max_batch_size = 2;
+  set_effective_batch_capacity(2);
   reset_runner_with_model(model_config, /*pool_size=*/2);
   ASSERT_TRUE(starpu_setup_->has_input_pool());
 
@@ -779,7 +780,7 @@ TEST_F(StarPUTaskRunnerFixture, ValidateBatchAndCopyInputsSkipsNullPendingJobs)
   auto model_config = make_model_config(
       "input_only", {make_tensor_config("input0", {2}, at::kFloat)}, {});
 
-  opts_.batching.max_batch_size = 3;
+  set_effective_batch_capacity(3);
   reset_runner_with_model(model_config, /*pool_size=*/3);
   ASSERT_TRUE(starpu_setup_->has_input_pool());
 
@@ -819,7 +820,7 @@ TEST_F(
     ValidateBatchAndCopyInputsInfersBatchFromTensorRank)
 {
   constexpr int64_t kBatchSize = 2;
-  opts_.batching.max_batch_size = kBatchSize;
+  set_effective_batch_capacity(kBatchSize);
 
   auto model_config = make_model_config(
       "ranked_input", {make_tensor_config("input0", {3}, at::kFloat)}, {});

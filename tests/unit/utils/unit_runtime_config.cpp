@@ -201,7 +201,7 @@ TEST(
     ValidateBatchingSettingsCoherenceRejectsNonPositiveMaxBatchSize)
 {
   starpu_server::RuntimeConfig::BatchingSettings batching;
-  batching.max_batch_size = 0;
+  batching.resolved_max_batch_size = 0;
   batching.pool_size = 1;
 
   try {
@@ -209,7 +209,7 @@ TEST(
     FAIL() << "Expected validate_batching_settings_coherence to throw.";
   }
   catch (const std::invalid_argument& error) {
-    EXPECT_EQ(error.what(), std::string("max_batch_size must be > 0"));
+    EXPECT_EQ(error.what(), std::string("resolved_max_batch_size must be > 0"));
   }
 }
 
@@ -218,7 +218,7 @@ TEST(
     ValidateBatchingSettingsCoherenceRejectsNonPositivePoolSize)
 {
   starpu_server::RuntimeConfig::BatchingSettings batching;
-  batching.max_batch_size = 1;
+  batching.resolved_max_batch_size = 1;
   batching.pool_size = 0;
 
   try {
@@ -227,6 +227,64 @@ TEST(
   }
   catch (const std::invalid_argument& error) {
     EXPECT_EQ(error.what(), std::string("pool_size must be > 0"));
+  }
+}
+
+TEST(
+    RuntimeConfigUtils,
+    ValidateBatchingSettingsCoherenceIgnoresInactiveAdaptiveSettingsForFixed)
+{
+  using enum starpu_server::BatchingStrategyKind;
+
+  starpu_server::RuntimeConfig::BatchingSettings batching;
+  batching.strategy = Fixed;
+  batching.resolved_max_batch_size = 4;
+  batching.fixed.batch_size = 4;
+  batching.pool_size = 1;
+  batching.adaptive.min_batch_size = 3;
+  batching.adaptive.max_batch_size = 1;
+
+  EXPECT_NO_THROW(
+      starpu_server::validate_batching_settings_coherence(batching));
+}
+
+TEST(
+    RuntimeConfigUtils,
+    ValidateBatchingSettingsCoherenceIgnoresInactiveFixedSettingsForAdaptive)
+{
+  using enum starpu_server::BatchingStrategyKind;
+
+  starpu_server::RuntimeConfig::BatchingSettings batching;
+  batching.strategy = Adaptive;
+  batching.resolved_max_batch_size = 4;
+  batching.adaptive.min_batch_size = 1;
+  batching.adaptive.max_batch_size = 4;
+  batching.fixed.batch_size = 0;
+  batching.pool_size = 1;
+
+  EXPECT_NO_THROW(
+      starpu_server::validate_batching_settings_coherence(batching));
+}
+
+TEST(
+    RuntimeConfigUtils,
+    ValidateBatchingSettingsCoherenceRejectsNonPositiveFixedBatchSizeWhenActive)
+{
+  using enum starpu_server::BatchingStrategyKind;
+
+  starpu_server::RuntimeConfig::BatchingSettings batching;
+  batching.strategy = Fixed;
+  batching.resolved_max_batch_size = 1;
+  batching.fixed.batch_size = 0;
+  batching.pool_size = 1;
+
+  try {
+    starpu_server::validate_batching_settings_coherence(batching);
+    FAIL() << "Expected validate_batching_settings_coherence to throw.";
+  }
+  catch (const std::invalid_argument& error) {
+    EXPECT_EQ(
+        error.what(), std::string("fixed_batching.batch_size must be > 0"));
   }
 }
 
@@ -261,4 +319,63 @@ TEST(RuntimeConfigUtils, ParseGpuModelReplicationPolicyRejectsUnknownValue)
   EXPECT_THROW(
       starpu_server::parse_gpu_model_replication_policy("invalid_policy"),
       std::invalid_argument);
+}
+
+TEST(RuntimeConfigUtils, BatchingStrategyKindToStringHandlesAllBranches)
+{
+  using starpu_server::BatchingStrategyKind;
+  using enum starpu_server::BatchingStrategyKind;
+
+  EXPECT_EQ(starpu_server::to_string(Disabled), "disabled");
+  EXPECT_EQ(starpu_server::to_string(Adaptive), "adaptive");
+  EXPECT_EQ(starpu_server::to_string(Fixed), "fixed");
+
+  const auto invalid_strategy = static_cast<BatchingStrategyKind>(
+      std::numeric_limits<std::uint8_t>::max());
+  EXPECT_EQ(starpu_server::to_string(invalid_strategy), "disabled");
+}
+
+TEST(RuntimeConfigUtils, ParseBatchingStrategyKindParsesKnownValues)
+{
+  using enum starpu_server::BatchingStrategyKind;
+
+  EXPECT_EQ(starpu_server::parse_batching_strategy_kind("disabled"), Disabled);
+  EXPECT_EQ(starpu_server::parse_batching_strategy_kind("adaptive"), Adaptive);
+  EXPECT_EQ(starpu_server::parse_batching_strategy_kind("fixed"), Fixed);
+}
+
+TEST(RuntimeConfigUtils, ParseBatchingStrategyKindRejectsUnknownValue)
+{
+  EXPECT_THROW(
+      starpu_server::parse_batching_strategy_kind("invalid_strategy"),
+      std::invalid_argument);
+}
+
+TEST(RuntimeConfigUtils, DefaultBatchingStrategyIsDisabled)
+{
+  using enum starpu_server::BatchingStrategyKind;
+
+  starpu_server::RuntimeConfig::BatchingSettings batching;
+  EXPECT_EQ(batching.strategy, Disabled);
+}
+
+TEST(RuntimeConfigUtils, ResolvedBatchCapacityPrefersEffectiveStrategyLimit)
+{
+  using enum starpu_server::BatchingStrategyKind;
+
+  starpu_server::RuntimeConfig::BatchingSettings batching;
+
+  batching.strategy = Adaptive;
+  batching.resolved_max_batch_size = 4;
+  batching.adaptive.max_batch_size = 1;
+  EXPECT_EQ(starpu_server::resolved_batch_capacity(batching), 4);
+
+  batching.strategy = Fixed;
+  batching.resolved_max_batch_size = 6;
+  batching.fixed.batch_size = 1;
+  EXPECT_EQ(starpu_server::resolved_batch_capacity(batching), 6);
+
+  batching.strategy = Disabled;
+  batching.resolved_max_batch_size = 3;
+  EXPECT_EQ(starpu_server::resolved_batch_capacity(batching), 3);
 }
