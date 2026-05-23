@@ -79,6 +79,11 @@ chmod +x starpu_server client_example || true
 mkdir -p "$OUTPUT_DIR"
 rm -f "$OUTPUT_DIR"/*
 
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "Config file not found: $CONFIG_PATH" >&2
+  exit 1
+fi
+
 ./starpu_server --config "$CONFIG_PATH" >"$OUTPUT_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 

@@ -544,6 +544,7 @@ jobs:
     env:
       PERF_SERVER_ADDR: "127.0.0.1:50062"
       PERF_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_gpu_only.yml"
+      PERF_BASELINE_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_baseline.yml"
       PERF_FIXED_SERVER_CONFIG: "../ci/perf/resnet152_ci_perf_fixed_gpu_only.yml"
       PERF_SCHEDULE_CSV: "../ci/perf/ci_perf_resnet.csv"
       PERF_FIXED_SCHEDULE_CSV: "../ci/perf/ci_perf_resnet_smoke.csv"
@@ -591,6 +592,16 @@ jobs:
 
           test -s "$PERF_MODEL_PATH"
 
+      - name: Prepare baseline perf config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git show \
+            "${{ github.event.pull_request.base.sha }}:ci/perf/resnet152_ci_perf_gpu_only.yml" \
+            > ci/perf/resnet152_ci_perf_baseline.yml
+          test -s ci/perf/resnet152_ci_perf_baseline.yml
+
       - name: Run baseline perf benchmark
         shell: bash
         run: |
@@ -598,7 +609,7 @@ jobs:
           bash scripts/run_perf_smoke.sh \
             --build-dir build-clang-baseline \
             --server "$PERF_SERVER_ADDR" \
-            --config "$PERF_SERVER_CONFIG" \
+            --config "$PERF_BASELINE_SERVER_CONFIG" \
             --schedule-csv "$PERF_SCHEDULE_CSV" \
             --output-dir perf-artifacts
 
